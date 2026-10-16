@@ -2,6 +2,10 @@ require "../minitest_helper"
 require "file_utils"
 require "http/server"
 
+private PROJECT_ROOT = File.expand_path("../..", __DIR__)
+private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
+private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
+
 # crystal spec created the fixture tree once in Spec.before_suite
 # (rm_rf + mkdir fresh); the minitest entrypoint runs file-level setup
 # at require time instead, unique per process.
@@ -794,6 +798,18 @@ describe "unarchive plugin" do
     Dir.empty?(dest).must_equal(true)
   end
 
+  it "reports the dest error, not the source error, when both src and dest are missing" do
+    # Ansible's action plugin stats dest BEFORE anything touches src
+    # (unarchive.py: _execute_remote_stat(dest) precedes the transfer and
+    # the module's own source check), so the DEST error wins - issue #131.
+    # This previously reported "Source ... failed to transfer" instead.
+    result = PluginSpecHelper.run("unarchive", {"src" => File.join(TMP_DIR, "does-not-exist.tar.gz"), "dest" => File.join(TMP_DIR, "no-such-dest-dir")})
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_include("must be an existing dir")
+    result["msg"].as_s.wont_include("failed to transfer")
+  end
+
   it "fails with a clear message when dest doesn't already exist" do
     missing_dest = File.join(TMP_DIR, "does-not-exist-dir")
     FileUtils.rm_rf(missing_dest) if Dir.exists?(missing_dest)
@@ -934,5 +950,51 @@ describe "unarchive plugin" do
 
     result["failed"].as_bool.must_equal(true)
     result["warnings"]?.must_be_nil
+  end
+end
+
+# Ansible's unarchive action plugin raises its missing-dest AnsibleActionFail
+# BEFORE any transfer, and that exception escapes the executor's attempt loop
+# entirely (task_executor.py converts it to a result only outside the
+# for-attempt loop): one run, no FAILED - RETRYING lines, and a registered
+# result with NO attempts key (issue #131, live-verified vs 2.19.11 - the
+# module-level source failure in the same shape IS retried, attempts=3).
+describe "unarchive missing dest is not retried" do
+  it "fails once with the dest error, no retrying and no attempts key" do
+    playbook = File.tempname("unarchive-retry", ".yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: unarchive into a missing dir with retries
+            unarchive:
+              src: /nonexistent/krikri_repro.tar.gz
+              dest: /nonexistent_krikri_repro_test_dir
+              remote_src: yes
+            register: res
+            retries: 3
+            delay: 0
+            until: res is succeeded
+            ignore_errors: true
+          - debug:
+              msg: "attempts={{ res.attempts | default('none') }} failed={{ res.failed | default(false) }}"
+      YAML
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+    status.success?.must_equal(true)
+    out = output.to_s
+
+    # The dest error, not the source error, and only ONE failure - no
+    # FAILED - RETRYING lines (the old bug retried the action failure
+    # three times before reporting the wrong, source-side message).
+    out.must_include("must be an existing dir")
+    out.wont_include("failed to transfer")
+    out.wont_include("RETRYING")
+
+    # Ansible's registered shape: failed=True with NO attempts key.
+    out.must_include("attempts=none failed=True")
+  ensure
+    File.delete(playbook) if playbook && File.exists?(playbook)
   end
 end
