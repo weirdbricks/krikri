@@ -6225,6 +6225,26 @@ module Krikri
             if starts_and_ends_with_jinja_delimiters?(yaml.as_s)
               params["_argsplat_block_marker"] = "1"
             end
+            # ansible-core's split_args treats a free-form (non-command) args
+            # string containing an unquoted, whitespace-separated token that
+            # BEGINS with `{%` as one whole Jinja template and finalizes the
+            # RENDERED text as the module args - failing with "Task args must
+            # resolve to a 'dict' not '<Type>'" when it is not one (issue
+            # #149: pip's conditional extra-args one-liner). krikri's kv
+            # tokenizer instead parses those tokens into plain params, so the
+            # shape is flagged here and the executor re-renders + fails the
+            # task through Ansible's finalizer error. A `{%` inside quotes
+            # never starts its token with the marker (the tokenizer glues a
+            # quoted span into a token beginning with the quote character),
+            # and a string that starts AND ends with a Jinja delimiter is the
+            # whole-args shape above - both stay on their existing paths.
+            if !starts_and_ends_with_jinja_delimiters?(yaml.as_s) &&
+               split_shell_like(strip_line_continuation_tokens(yaml.as_s)).any? { |token, _| token.starts_with?("{%") }
+              # The raw text rides along (every plugin's validation ignores
+              # `_`-prefixed keys) so the executor can render the whole
+              # string the way Ansible's finalizer does.
+              params["_jinja_block_args"] = yaml.as_s.strip
+            end
             # Ansible's parse_kv (the function this mirrors for
             # non-command modules) only puts "_raw_params" in the result when
             # the string actually contained tokens with no "=" (leftover
@@ -6491,6 +6511,45 @@ module Krikri
       else
         s
       end
+    end
+
+    # Returns each COMPLETE top-level `{% %}` block construct (the opening
+    # tag through its matching `{% end* %}`, body included) in *s*. Used by
+    # the executor's `_jinja_block_args` handling (see parse_module_params's
+    # marker comment): Ansible's observed finalization type for such an args
+    # string tracks whether any `{% %}` block contributed output, which only
+    # a whole-construct render can answer - a `{% if %}` tag rendered on its
+    # own is a syntax error, and whitespace inside a block splits it across
+    # split_shell_like tokens. Only PAIRED constructs are collected: a
+    # self-contained tag (`{% set x = 1 %}`) can never contribute output,
+    # and rendering it standalone would only re-run its side effects. A
+    # construct nested inside another is consumed by the outer one (Jinja
+    # skips an inner block when the enclosing condition is false, so
+    # rendering the inner standalone would wrongly report output).
+    OPENING_BLOCK_TAGS = {"if", "for", "block", "filter", "macro", "call", "with", "raw"}
+
+    def self.jinja_block_constructs(s : String) : Array(String)
+      constructs = [] of String
+      stack = [] of String
+      start = 0
+      i = 0
+      while (open = s.index("{%", i)) && (close = s.index("%}", open + 2))
+        tag = s[(open + 2)...close].strip
+        # `{%+`/`{%-` whitespace-control markers sit between the delimiter
+        # and the tag keyword.
+        word = tag.split[0]?.to_s.lchop('+').lchop('-')
+        if OPENING_BLOCK_TAGS.includes?(word)
+          stack << word
+          start = open if stack.size == 1
+        elsif word.starts_with?("end") && !stack.empty?
+          stack.pop
+          if stack.empty?
+            constructs << s[start...(close + 2)]
+          end
+        end
+        i = close + 2
+      end
+      constructs
     end
 
     # parse_kv's own whitelist: a free-form command:/shell: token whose
