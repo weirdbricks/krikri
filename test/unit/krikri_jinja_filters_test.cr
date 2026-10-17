@@ -19,7 +19,26 @@ describe Krikri::KrikriJinjaFilters do
   it "registers bool with Ansible's string coercion" do
     render("{{ 'yes' | bool }}").must_equal("True")
     render("{{ 'false' | bool }}").must_equal("False")
-    render("{{ 1 | bool }}").must_equal("False")
+    render("{{ 1 | bool }}").must_equal("True")
+  end
+
+  it "matches to_bool's int/float/fallback semantics with the deprecation warning" do
+    # Verified against real ansible-playbook 2.19: `1 | bool` -> True,
+    # `1.0 | bool` -> True, `2 | bool` -> False, and everything reaching
+    # the fallback (neither keyword set) warns "coerced invalid value"
+    # while bools/recognized keywords never warn. The stderr side of the
+    # warning is only observable end-to-end (ResultDisplay writes to the
+    # real STDERR and this suite has no in-process stderr capture), so
+    # only the rendered value is asserted here.
+    render("{{ value | bool }}", {"value" => JSON.parse("[]")}).must_equal("False")
+    render("{{ value | bool }}", {"value" => JSON::Any.new("maybe")}).must_equal("False")
+    render("{{ value | bool }}", {"value" => JSON::Any.new(1_i64)}).must_equal("True")
+    render("{{ value | bool }}", {"value" => JSON::Any.new(0_i64)}).must_equal("False")
+    render("{{ value | bool }}", {"value" => JSON.parse("1.0")}).must_equal("True")
+    render("{{ value | bool }}", {"value" => JSON::Any.new(2_i64)}).must_equal("False")
+    render("{{ value | bool }}", {"value" => JSON.parse("null")}).must_equal("False")
+    render("{{ value | bool }}", {"value" => JSON.parse("{}")}).must_equal("False")
+    render("{{ value | bool }}", {"value" => JSON::Any.new("Yes")}).must_equal("True")
   end
 
   it "registers ternary with the optional none value" do

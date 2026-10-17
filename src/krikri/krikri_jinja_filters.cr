@@ -210,6 +210,42 @@ module Krikri
       end
     end
 
+    # Ansible's `bool` filter (ansible/plugins/filter/core.py's to_bool):
+    # strings are lowercased and ints stringified before matching the fixed
+    # true/false keyword sets - bools are ints in Python, so `str(True)`
+    # lands on "true" - and anything else is matched as the raw object in
+    # `v in {set}` / `v == 1`, where only a float equal to 1 satisfies the
+    # fallback (1.0 -> True) and a list raises TypeError in the set
+    # membership check (caught as False). Every value that reaches the
+    # fallback instead of an early keyword return ALSO emits core's
+    # deprecation (removed in ansible-core 2.23), observed against real
+    # ansible-playbook 2.19: `{{ 1 | bool }}` -> True, `{{ 1.0 | bool }}`
+    # -> True with "coerced invalid value 1.0 (float)".
+    TRUE_KEYWORDS  = {"yes", "on", "true", "1"}
+    FALSE_KEYWORDS = {"no", "off", "false", "0"}
+
+    def self.ansible_bool(value : JSON::Any) : Bool
+      raw = value.raw
+      keyword = case raw
+                when String      then raw.downcase
+                when Int64, Bool then raw.to_s.downcase
+                end
+      if keyword
+        # Bools and recognized keyword spellings return early, never warn.
+        return true if TRUE_KEYWORDS.includes?(keyword)
+        return false if FALSE_KEYWORDS.includes?(keyword)
+      end
+      # Fallback: only a float equal to 1 is truthy (`v == 1`); strings,
+      # other ints (2 | bool is False), None, lists and dicts are False.
+      result = raw.is_a?(Float64) && raw == 1.0
+      ResultDisplay.emit_core_deprecation(
+        "The `bool` filter coerced invalid value #{ResultDisplay.python_repr(value)} " \
+        "(#{py_type_name(value)}) to #{result ? "True" : "False"}. " \
+        "This feature will be removed from ansible-core version 2.23."
+      )
+      result
+    end
+
     # The engine hands native filters boxed AnyValue payloads (Markup,
     # Undefined, tuples) that py_type_name's JSON::Any input can't carry, so
     # an error raised from a native filter needs its own mapping to the
@@ -740,12 +776,7 @@ module Krikri
       end
 
       KrikriJinja.register_default_json_filter("bool") do |value, _args, _kwargs|
-        raw = value.raw
-        JSON::Any.new(case raw
-        when Bool   then raw
-        when String then ["true", "yes", "1", "on"].includes?(raw.downcase)
-        else             false
-        end)
+        JSON::Any.new(ansible_bool(value))
       end
 
       # ternary is a PASS-THROUGH filter in real Jinja2/Ansible: the filter
