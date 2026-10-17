@@ -1,5 +1,6 @@
 require "../minitest_helper"
 require "../../src/krikri/playbook_parser"
+require "file_utils"
 
 # Round 194 regression cover (andrewrothstein.java-oracle / -jre):
 # a sub-include with `become:` / `become_user:` on the include
@@ -141,6 +142,42 @@ describe "Krikri::PlaybookParser (playbook_parser_include_strict_test.cr)" do
                 notify: restart something
           YAML
       end
+    end
+
+    it "renders the Origin block at the task's position for a disallowed include key" do
+      # issue #156: ansible-core prints the full [ERROR]/Origin block for
+      # a disallowed include attribute, with the Origin at the TASK's
+      # mapping start (line 5, column 7 = the `- name:` key of the task
+      # dict in the playbook below, live-verified vs 2.19.11) - not at
+      # the offending key's own column, and without the
+      # "This error can be suppressed..." line that the `static:`
+      # refusal carries (that line only appears for the static: case).
+      # The allowlist path used to raise with no render at all, so
+      # krikri printed only the [ERROR] line. parse_string can't carry
+      # a source map, so write a real playbook file like
+      # include_directive_args_test.cr does.
+      root = PluginSpecHelper.tmp_path("include_strict_origin")
+      FileUtils.rm_rf(root) if Dir.exists?(root)
+      Dir.mkdir_p(root)
+      path = File.join(root, "site.yml")
+      File.write(path, <<-YAML)
+        - name: t
+          hosts: all
+          gather_facts: false
+          tasks:
+            - name: bad include
+              become: yes
+              include_tasks: /dev/null
+        YAML
+
+      ex = assert_raises(Krikri::PlaybookParser::InvalidIncludeAttributeError) do
+        Krikri::PlaybookParser.parse(File.expand_path(path))
+      end
+      render = ex.render.as(String)
+      render.must_include("[ERROR]: 'become' is not a valid attribute for a TaskInclude\n")
+      render.must_include("Origin: #{File.expand_path(path)}:5:7\n")
+      render.must_include("^ column 7\n")
+      render.wont_include("This error can be suppressed")
     end
   end
 end
