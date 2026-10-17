@@ -312,30 +312,9 @@ module Krikri
         when "string"
           JSON::Any.new(as_string(value))
         when "bool"
-          # Ansible's own `bool` filter (ansible.module_utils.
-          # parsing.convert_bool.boolean(), non-strict) is NOT general
-          # truthiness - it matches only a fixed set of true/false
-          # keywords, and returns false (not a TypeError, not the
-          # string's own truthiness) for anything else. Previously
-          # reused the generic #truthy? helper (correct for `when:`/
-          # `{% if %}` truthiness, wrong here), so ANY non-empty,
-          # non-"0"/"false" string filtered through `| bool` came out
-          # true. Found via geerlingguy.gitlab's own "restart gitlab"
-          # handler: `failed_when: gitlab_restart_handler_failed_when |
-          # bool`, whose default value is the arbitrary expression
-          # STRING `'gitlab_restart.rc != 0'` (not one of the recognized
-          # keywords) - verified directly against ansible-playbook
-          # (`{{ 'gitlab_restart.rc != 0' | bool }}` renders `false`,
-          # not `true`) - previously always true here, always marking
-          # the handler failed regardless of the reconfigure's actual
-          # exit code. Mirrors the Crinja-side `Crinja.filter(:bool)`
-          # (jinja_filters.cr), which already had this right.
-          case as_string(value).downcase
-          when "true", "yes", "on", "1"
-            JSON::Any.new(true)
-          else
-            JSON::Any.new(false)
-          end
+          # Shared with the krikri-jinja registration so the two `bool`
+          # implementations cannot drift (see KrikriJinjaFilters.ansible_bool).
+          JSON::Any.new(KrikriJinjaFilters.ansible_bool(value))
         when "abs"
           JSON::Any.new(numeric(value).abs)
         when "map"
@@ -1516,9 +1495,9 @@ module Krikri
           # "skipped") that would recur in any role using this common
           # required-facts guard pattern.
           JSON::Any.new(FilterCore.difference(as_array(value), as_array(resolve_expression(filter_args))))
-        # ipwrap is not in this when-list: it is an ansible.utils
-        # collection filter, not core, so it falls through to krikri's
-        # unknown-filter failure like ansible-core does (issue #134).
+          # ipwrap is not in this when-list: it is an ansible.utils
+          # collection filter, not core, so it falls through to krikri's
+          # unknown-filter failure like ansible-core does (issue #134).
         when "ipaddr", "ipv4", "ipv6", "ipsubnet", "ipmath",
              "next_nth_usable", "previous_nth_usable",
              "network_in_network", "network_in_usable", "ip4_hex"

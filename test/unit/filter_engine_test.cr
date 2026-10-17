@@ -390,6 +390,21 @@ describe Krikri::VariableSubstitutor::FilterEngine do
     engine.apply(s("some random text"), "bool").as_bool.must_equal(false)
   end
 
+  it "bool filter matches to_bool's int/float/fallback semantics (same helper as the jinja engine)" do
+    # Dispatch-side parity: both `bool` implementations call the shared
+    # KrikriJinjaFilters.ansible_bool, verified against real
+    # ansible-playbook 2.19 (values that reach the fallback warn; the
+    # warning itself is stderr-only and not asserted here).
+    engine.apply(JSON::Any.new(1_i64), "bool").as_bool.must_equal(true)
+    engine.apply(JSON::Any.new(0_i64), "bool").as_bool.must_equal(false)
+    engine.apply(JSON::Any.new(2_i64), "bool").as_bool.must_equal(false)
+    engine.apply(JSON::Any.new(1.0), "bool").as_bool.must_equal(true)
+    engine.apply(JSON.parse("null"), "bool").as_bool.must_equal(false)
+    engine.apply(JSON.parse("[]"), "bool").as_bool.must_equal(false)
+    engine.apply(JSON.parse("{}"), "bool").as_bool.must_equal(false)
+    engine.apply(JSON::Any.new(true), "bool").as_bool.must_equal(true)
+  end
+
   it "returns first/last/min/max of an array" do
     value = JSON.parse(%([3, 1, 2]))
     engine.apply(value, "first").as_i.must_equal(3)
