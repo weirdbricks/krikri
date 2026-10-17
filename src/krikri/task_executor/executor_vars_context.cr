@@ -2141,6 +2141,15 @@ module Krikri
       # before `src`). `result` is reordered to the original order below.
       params.keys.sort!.each do |key|
         value = params[key]
+        # The `_jinja_block_args` raw string (see parse_module_params's
+        # marker comment) must reach expand_templated_args UNRENDERED:
+        # substituting it here would inline-render its `{% %}` blocks and
+        # erase exactly the block-contribution shape the executor's
+        # finalization failure needs to inspect.
+        if key == "_jinja_block_args"
+          result[key] = value
+          next
+        end
         # assert's `that:` is the one module argument Ansible does NOT
         # pre-render: its action plugin compiles each item as a raw
         # EXPRESSION (that's why `that: [a.b >= {{ x }}]` reaches
@@ -2504,7 +2513,7 @@ module Krikri
     # post-template dispatch for a string args value. The sentinel key
     # never reaches the plugin (every plugin's validation now ignores
     # `_`-prefixed keys anyway).
-    private def expand_templated_args(params : Hash(String, String), task : Task? = nil) : Hash(String, String)
+    private def expand_templated_args(params : Hash(String, String), substitutor : VarSubstitutor, task : Task? = nil) : Hash(String, String)
       raw = params.delete("_templated_args")
       # The `{% ... %}`/`{# ... #}` string-args marker (see
       # parse_module_params's marker comment) warns through the SAME
@@ -2514,13 +2523,39 @@ module Krikri
       # (is_possibly_all_template) before anything about the rendered
       # value is known.
       block_marker = params.delete("_argsplat_block_marker")
+      jinja_block_args = params.delete("_jinja_block_args")
       # Ansible warns as soon as it starts resolving such a string args layer
       # (the Ansible module's TaskArgsFinalizer.finalize), BEFORE
       # the value is known to resolve to a dict - so a `copy: "{# c #}"`
-      # still gets the warning and only then fails to resolve. `task` is
+      # still gets the warning and only then fails to resolve, and so does
+      # the unquoted-`{%`-token shape below (the same finalizer pass sees
+      # the string layer first). `task` is
       # nil only where no Task is at hand (never today); the warning's
       # best-effort Origin needs it.
-      emit_argsplat_warning(task) if task && (raw || block_marker)
+      emit_argsplat_warning(task) if task && (raw || block_marker || jinja_block_args)
+      # An unquoted `{%`-starting token made Ansible finalize the WHOLE
+      # free-form string as one Jinja template (see parse_module_params's
+      # `_jinja_block_args` marker comment). The rendered text is not a
+      # dict, so Ansible's finalizer fails the task before the module runs -
+      # including in check mode - per host and per loop item, exactly where
+      # this method runs. The type name is observed Ansible behaviour
+      # (2.19.11): 'NoneType' when no `{% %}` block contributed any output
+      # (all blocks false or empty - the rendered args resolve to nothing),
+      # 'str' when at least one block produced text. The whole string is
+      # rendered first like Ansible's single-template render (surfacing the
+      # k=v text's own `{{ }}` spans and any block syntax error), then the
+      # top-level block constructs decide the contribution - reusing the
+      # same substitutor every other task param renders through, so a true
+      # block's undefined reference fails with the same strict-undefined
+      # finalization error.
+      if jinja_block_args
+        substitutor.substitute(jinja_block_args, strict: true)
+        contributed = PlaybookParser.jinja_block_constructs(jinja_block_args).any? do |construct|
+          rendered = substitutor.substitute(construct, strict: true)
+          !(rendered.strip.empty? || rendered == OMIT_SENTINEL)
+        end
+        raise UndefinedVariableError.new("Task args must resolve to a 'dict' not '#{contributed ? "str" : "NoneType"}'.")
+      end
       return params unless raw
       rendered = raw.strip
       expanded = params.dup
@@ -2795,7 +2830,14 @@ module Krikri
       # free_form_value_position's after-the-colon scan finds it
       # (live-verified vs 2.19.11: `include_tasks: "{{ state }}.yml"` ->
       # innermost Origin column 38, the value token's quote).
-      param_idx, param_col = free_form ? free_form_value_position(lines, module_idx, task.module_name) : (locate_param_value_line(lines, module_idx, msg) || (["include_tasks", "_include_tasks"].includes?(task.module_name) ? free_form_value_position(lines, module_idx, finalization_module_name(task)) : {module_idx, module_col}))
+      # The whole-string 'Task args must resolve to a dict' failure is
+      # raised by Ansible with obj=the string args layer itself, so its
+      # innermost Origin points at the value's first character on the
+      # module key's line, not the module key (live-captured 2.19.11:
+      # `pip: name=supervisor ...` -> 10:12) - the position
+      # free_form_value_position already finds.
+      dict_args_failure = msg.starts_with?("Task args must resolve to a 'dict'")
+      param_idx, param_col = free_form || dict_args_failure ? free_form_value_position(lines, module_idx, task.module_name) : (locate_param_value_line(lines, module_idx, msg) || (["include_tasks", "_include_tasks"].includes?(task.module_name) ? free_form_value_position(lines, module_idx, finalization_module_name(task)) : {module_idx, module_col}))
 
       # When the fourth chained stanza is emitted, the third level's text
       # shortens to the prefix alone - the inner message moves entirely

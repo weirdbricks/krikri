@@ -1815,7 +1815,7 @@ module Krikri
 
       begin
         substitute_block_name_chain(task, substitutor)
-        substituted_params = expand_templated_args(substitute_task_params(task.params, substitutor, native_containers: task.module_name.ends_with?("set_fact"), module_name: task.module_name), task)
+        substituted_params = expand_templated_args(substitute_task_params(task.params, substitutor, native_containers: task.module_name.ends_with?("set_fact"), module_name: task.module_name), substitutor, task)
         substituted_env = substitute_task_environment(task, substitutor)
       rescue ex
         # Same "finalization of task args failed" handling as
@@ -2158,7 +2158,7 @@ module Krikri
       begin
         substitute_block_name_chain(task, substitutor)
         task = resolve_templated_action(task, substitutor)
-        substituted_params = expand_templated_args(substitute_task_params(task.params, substitutor, native_containers: task.module_name.ends_with?("set_fact"), module_name: task.module_name), task)
+        substituted_params = expand_templated_args(substitute_task_params(task.params, substitutor, native_containers: task.module_name.ends_with?("set_fact"), module_name: task.module_name), substitutor, task)
         substituted_env = substitute_task_environment(task, substitutor)
       rescue ex
         # A raised exception during param substitution (e.g. lookup('url',
