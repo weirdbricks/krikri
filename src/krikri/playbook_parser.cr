@@ -2999,7 +2999,7 @@ module Krikri
           source_file, source_map, source_prefix, index)
         raise "include_tasks: missing a file path" unless include_tasks_file
         include_tasks_task = parse_include_tasks(name || include_tasks_written, task_hash, include_tasks_file, play, file_dir,
-          include_file_native_value(include_tasks_value))
+          include_file_native_value(include_tasks_value), source_file, source_map, source_prefix, index)
         include_tasks_task.has_explicit_name = !name.nil?
         include_tasks_task.written_action = include_tasks_written
         return include_tasks_task
@@ -5341,7 +5341,20 @@ module Krikri
     # half-failure: previously crystal would parse the include
     # cleanly, run it, then hit a downstream task error with
     # different (often more confusing) symptoms.
-    private def self.validate_include_keys(task_hash : Hash(YAML::Any, YAML::Any), kind : String, directive_key : String) : Nil
+    # task_pos_prefix is the task's own source-map path (from
+    # task_source_prefix) - the Origin block ansible prints for one of
+    # these refusals sits at the TASK's mapping start, not at the
+    # offending key (live-verified vs 2.19.11: `become: true` on an
+    # include_tasks: reports the `- name:` line/column the task dict
+    # starts at, unlike the `static:` refusal which points at the
+    # static: key itself), so the key-walk-back in
+    # include_attribute_render must not be reused here. The
+    # "This error can be suppressed..." line is likewise absent from
+    # Ansible's block for these keys (it only appears for the static:
+    # refusal), so the message here is the bare first line. Without a
+    # source position the render stays nil and the exception prints
+    # bare, matching every other Origin-bearing parse error here.
+    private def self.validate_include_keys(task_hash : Hash(YAML::Any, YAML::Any), kind : String, directive_key : String, source_file : String? = nil, source_map : YamlSourceMap? = nil, task_pos_prefix : String = "") : Nil
       task_hash.each_key do |key|
         key_str = key.to_s
         # The include directive key itself ("include_tasks",
@@ -5363,7 +5376,13 @@ module Krikri
         # typed exception (vs a bare `raise "..."`) is what the
         # parse_tasks rescue chain looks for to bypass the
         # graceful-degradation "Skipping task" path.
-        raise InvalidIncludeAttributeError.new(key_str, kind)
+        render = nil
+        if source_map && (pos = source_map.at?(task_pos_prefix))
+          render = origin_error_render_at(
+            "'#{key_str}' is not a valid attribute for a #{kind}",
+            source_file, source_map, pos)
+        end
+        raise InvalidIncludeAttributeError.new(key_str, kind, render)
       end
     end
 
@@ -5408,8 +5427,8 @@ module Krikri
       end
     end
 
-    private def self.parse_include_tasks(name : String, task_hash : Hash(YAML::Any, YAML::Any), file_rel : String, play : Play, file_dir : String, include_file_native : JSON::Any? = nil) : Task
-      validate_include_keys(task_hash, "TaskInclude", "include_tasks")
+    private def self.parse_include_tasks(name : String, task_hash : Hash(YAML::Any, YAML::Any), file_rel : String, play : Play, file_dir : String, include_file_native : JSON::Any? = nil, source_file : String? = nil, source_map : YamlSourceMap? = nil, source_prefix : String = "", source_index : Int32 = 0) : Task
+      validate_include_keys(task_hash, "TaskInclude", "include_tasks", source_file, source_map, task_source_prefix(source_prefix, source_index))
 
       task = Task.new(name, "_include_tasks")
       task.include_file = file_rel
@@ -5632,7 +5651,7 @@ module Krikri
       # intentionally NOT validate_include_keys'd, mirroring Ansible's
       # ImportRole inheriting the full Task fattributes. This check
       # only fires for the include_role: shape.
-      validate_include_keys(task_hash, "IncludeRole", "include_role") unless is_static
+      validate_include_keys(task_hash, "IncludeRole", "include_role", source_file, source_map, task_source_prefix(source_prefix, source_index)) unless is_static
 
       role_name = validate_include_role_args(action, role_args, source_file, source_map, source_prefix, source_index)
       raise "include_role: missing required 'name'" unless role_name
