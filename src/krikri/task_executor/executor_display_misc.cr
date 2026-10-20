@@ -997,8 +997,10 @@ module Krikri
         # ("object of type 'dict' has no attribute 'name'") or an
         # undefined reference fails the label (and through the callers,
         # the item) instead of silently rendering the sentinel text.
+        # output: true - a label yielding a dict/list is stringified as
+        # Python repr (`{'a': True}`), as Jinja does, not compact JSON.
         begin
-          rendered = VarSubstitutor.new(vars: vars_context, host_name: host.name).substitute(label, strict: true)
+          rendered = VarSubstitutor.new(vars: vars_context, host_name: host.name).substitute(label, strict: true, output: true)
         rescue ex : UndefinedVariableError | VariableSubstitutor::TemplateSyntaxError
           raise LoopLabelError.new("Failed to template loop_control.label: #{ex.message}")
         end
