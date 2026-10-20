@@ -82,6 +82,12 @@ entrypoint (`.minitest_all.cr`, gitignored), builds one hash-gated binary
 script runs that file directly, and anything after `--` goes to
 `Minitest.run`.
 
+**Live docker tests are off by default**: the `docker_compose_v2` and
+`docker_container published_ports` tests bring real podman/compose projects up (~135s of a
+~230s suite) and skip unless `KRIKRI_DOCKER_TESTS=1`. CI always sets it;
+`krikri-fix-issues` sets it when a fix touches docker code. Run them locally with
+`KRIKRI_DOCKER_TESTS=1 scripts/minitest.sh -- -p 4`.
+
 **Parallel-safety rules** (required for `-- -p N`; full detail in
 `test/minitest_helper.cr`):
 - Per-test scratch space comes from `PluginSpecHelper.tmp_path` - a

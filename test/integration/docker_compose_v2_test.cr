@@ -114,6 +114,7 @@ describe "docker_compose_v2 plugin (live docker)" do
   serial!
 
   it "converges a project and is idempotent on re-run" do
+    skip_unless_live_docker
     skip "docker compose CLI not available" unless compose_available?
 
     dir = File.tempname("dcv2-live", ".d")
@@ -177,6 +178,7 @@ describe "docker_compose_v2 result shape" do
   serial!
 
   it "matches Ansible's up key set and order" do
+    skip_unless_live_docker
     skip "docker compose CLI not available" unless compose_available?
 
     dir = File.tempname("dcv2-shape", ".d")
@@ -205,6 +207,7 @@ describe "docker_compose_v2 result shape" do
   end
 
   it "matches Ansible's down key set and order" do
+    skip_unless_live_docker
     skip "docker compose CLI not available" unless compose_available?
 
     dir = File.tempname("dcv2-shape-down", ".d")

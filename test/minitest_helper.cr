@@ -443,6 +443,14 @@ class Minitest::Spec
     end
   end
 
+  # The live docker_compose_v2 / docker_container tests bring real compose projects and
+  # containers up on podman: ~135s of a ~230s suite, for community.docker modules that are not
+  # core. Off by default; KRIKRI_DOCKER_TESTS=1 runs them (krikri-fix-issues sets it when a fix
+  # touches docker code).
+  def skip_unless_live_docker : Nil
+    skip("live docker/podman tests are off by default; set KRIKRI_DOCKER_TESTS=1") unless ENV["KRIKRI_DOCKER_TESTS"]? == "1"
+  end
+
   # One tmp scope per test: setup, body and teardown all run inside run_one
   # on the same worker fiber, so begin/end here bracket exactly one test.
   def run_one(name : String, proc : Test ->) : Nil

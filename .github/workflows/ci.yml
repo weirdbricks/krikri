@@ -148,8 +148,13 @@ jobs:
         # bug (shared tmp dirs, process-wide cwd/umask/ENV changes, an fd
         # double-close, a Process#wait race, an engine PEM-ordering bug),
         # so a flake here is a bug to fix, not to rerun past.
+        #
+        # KRIKRI_DOCKER_TESTS=1 turns on the live docker_compose_v2 /
+        # docker_container tests, which are skipped by default locally (~135s
+        # of live podman work); CI always runs them.
         env:
           CRYSTAL_CACHE_DIR: /root/.cache/krikri-minitest
+          KRIKRI_DOCKER_TESTS: "1"
         run: scripts/minitest.sh -- -p 4
 
       - name: Lint (ameba)
