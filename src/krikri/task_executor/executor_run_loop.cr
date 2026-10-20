@@ -2102,26 +2102,6 @@ module Krikri
       resolved_task
     end
 
-    # community.routeros.command / community.routeros.facts are network
-    # modules: they talk to the device through the persistent network_cli/
-    # httpapi socket that only a network connection plugin provides. On an
-    # ordinary local/ssh host real ansible still attempts the module and it
-    # fails immediately with "socket_path must be a value" (live-verified
-    # vs 2.19.11 with ansible_connection=local) - a failed task, NOT a
-    # skip. Routing those names to the unavailable-module skip turned the
-    # recap into failed=0/exit 4 where real gives failed=1/exit 2, so they
-    # are carved out of the skip below. Short spellings are accepted too:
-    # the unavailable_module field keeps the name AS WRITTEN, and an
-    # unported bare name never resolves to the FQCN in the first place.
-    NETWORK_ONLY_MODULES = {"community.routeros.command", "community.routeros.facts",
-                            "routeros_command", "routeros_facts"}
-
-    private def network_module_connection_failure?(module_name : String, dispatch_vars : Hash(String, JSON::Any)) : Bool
-      return false unless NETWORK_ONLY_MODULES.includes?(module_name)
-      conn = dispatch_vars["ansible_connection"]?.try(&.as_s?) || "ssh"
-      !({"network_cli", "httpapi", "netconf"}.includes?(conn)) && !conn.starts_with?("ansible.netcommon.")
-    end
-
     private def execute_task_once(
       task : Task,
       host : Host,
@@ -2244,21 +2224,6 @@ module Krikri
       # when_passes?'s defer_unavailable_module comment) before this skip
       # could happen. Same bookkeeping when_passes? would have performed.
       if (unavailable = task.unavailable_module) && python_module_source_for(task).nil?
-        # Network-only modules on a non-network connection: real never
-        # skips these - the module runs and dies on the missing persistent
-        # socket (see NETWORK_ONLY_MODULES). Mirror that as an ordinary
-        # failed module result, through the same failure path as any other
-        # module failure (ignore_errors, rescue, register, the [ERROR]
-        # Origin block and the fatal line all follow from it), and do NOT
-        # count it as a reachable unavailable module.
-        if network_module_connection_failure?(unavailable, dispatch_vars)
-          return apply_changed_failed_when(task, JSON.parse({
-            "changed"               => false,
-            "failed"                => true,
-            "msg"                   => "Task failed: Module failed: socket_path must be a value",
-            "_ansible_error_detail" => "socket_path must be a value",
-          }.to_json), vars_context, host)
-        end
         # The exit-4 accounting for an unported module registers HERE,
         # after arg finalization succeeded (and only for a module that will
         # NOT run - a role-private library/ source dispatches below and is
