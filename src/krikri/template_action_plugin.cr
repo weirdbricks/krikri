@@ -126,6 +126,14 @@ module Krikri
       begin
         template_content = File.read(src)
       rescue ex
+        # Ansible's template action reads the source through
+        # _loader._get_file_contents, whose IOError wrapper is an uncaught
+        # task crash: "Task failed: " prefix, Python's [Errno N] wording,
+        # and the TASK as Origin (a directory src gives Errno 21).
+        if Dir.exists?(src)
+          detail = "An error occurred while trying to read the file '#{src}': [Errno 21] Is a directory: '#{src}'"
+          return ActionResult.crash_failure(detail)
+        end
         return ActionResult.failure("Failed to read template file: #{ex.message}")
       end
 
