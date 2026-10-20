@@ -13858,4 +13858,4 @@ Local probe roles, not Galaxy roles: each probed task registers its result and d
 | `webarchitect609.workrave` | ubuntu | ❌ Divergent - issue #157 (round29870527, 0.9.1783 debug). |
 | `wtanaka.fdupes` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29870563, 0.9.1783 debug). |
 | `wtanaka.r` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29870582, 0.9.1783 debug). |
-| `yoghi.routeros_ansible_role` | rocky | ❌ Divergent - issue #158 (round29870542, 0.9.1783 debug). |
+| `yoghi.routeros_ansible_role` | rocky | 🚫 out of scope: unsupported community module (community.routeros.command/facts), not tracked - see KNOWN_MISSING.md's coverage policy. |
