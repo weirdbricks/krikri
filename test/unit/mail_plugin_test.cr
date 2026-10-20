@@ -100,14 +100,14 @@ describe "community.general.mail plugin" do
     File.write(attach, "fake archive\n")
 
     result = run_mail({
-      "host"            => "127.0.0.1",
-      "port"            => server.port.to_s,
-      "secure"          => "never",
-      "subject"         => "[Ansible] Logs from testhost",
-      "body"            => "Attached are logs from /var/log on testhost.fqdn.",
-      "from"            => "awx@tower.example.com",
-      "to"              => "log_team@example.com",
-      "attach"          => attach,
+      "host"    => "127.0.0.1",
+      "port"    => server.port.to_s,
+      "secure"  => "never",
+      "subject" => "[Ansible] Logs from testhost",
+      "body"    => "Attached are logs from /var/log on testhost.fqdn.",
+      "from"    => "awx@tower.example.com",
+      "to"      => "log_team@example.com",
+      "attach"  => attach,
     })
 
     (result["failed"]?.nil? || result["failed"].as_bool == false).must_equal(true)
@@ -247,10 +247,10 @@ describe "community.general.mail plugin" do
 
   it "skips in check mode like a module without check-mode support" do
     result = run_mail({
-      "subject" => "probe",
-      "to"      => "b@example.com",
-      "host"    => "127.0.0.1",
-      "port"    => "25",
+      "subject"             => "probe",
+      "to"                  => "b@example.com",
+      "host"                => "127.0.0.1",
+      "port"                => "25",
       "_ansible_check_mode" => "True",
     })
     result["skipped"].as_bool.must_equal(true)

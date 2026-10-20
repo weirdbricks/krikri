@@ -204,13 +204,13 @@ module Krikri
         msg = nil
 
         unless append_privs
-          (current.keys - desired.keys).sort!.each do |target|
+          (current.keys - desired.keys).sort!.each do |_|
             next if module_user == "root"
             msg = "Privileges updated"
           end
         end
 
-        (desired.keys - current.keys).sort!.each do |target|
+        (desired.keys - current.keys).sort!.each do |_|
           msg = "New privileges granted"
         end
 

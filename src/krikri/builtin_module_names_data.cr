@@ -9,7 +9,7 @@ module Krikri
   # the same release family, embedded so the controller-resolution check
   # works on a controller with NO ansible-core installed (krikri replaces
   # it). Gzipped base64, decompressed lazily once per process.
-    private BUILTIN_DATA_GZ = <<-GZB64
+  private BUILTIN_DATA_GZ = <<-GZB64
     H4sIAEuoymoC/519247suI7lrwz6edA4tbPOnj7vg/6BfhlgMDActiLClb5ty46I3F8/okRKpEQ5srpQVWkuUpfQlZIo6v/+
     W9MM87A3zb/9z//xb+0f/2is2R5mk1TTvtp1+ODg0Jnmti3HSuBj2PajHXn4bmjatm0OW9JNZ7Z9uA5du5vI6zpjbbMu295c
     xqX7bPaFg5qckxjm3WzX1uVnXcah+2pG016bdVuuw5jHbY/LN+I3K/sEoX6Z2mGOYGRf+vQFcc9mZ4ALOH4sR4S6Zb4Ot2Zb
@@ -267,7 +267,7 @@ module Krikri
     Dflb+uL1+//+P807vVDVUgEA
     GZB64
 
-    private REDIRECTS_DATA_GZ = <<-GZB64
+  private REDIRECTS_DATA_GZ = <<-GZB64
     H4sIAFWuymoC/6y9yZLkOrKm+SoluU5xuRlxMqq61yX9ArWpnQmNpJnxOKcgaebuUS9fUIyqgCoAevaVmyfciO//CU6Yh//z
     j2npnmO//+P//W//5x+3ZZv6bfy6tMvWX9ZhvqvD/zj6/Zj3N/inXcbxTR//53/7x3Pv98vWd8PWt0ffXZr2GJYZFM28D9ex
     f7s+h/EYZq9Yl25qZuU+H80w99tlmG8LCPyR/c0wbzwaPIapufdlPcIibVmGFK9lfE4Vp8OcUt+27XJTtwXuLvx4s/+zBy1x

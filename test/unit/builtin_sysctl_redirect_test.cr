@@ -12,13 +12,13 @@ require "../../src/krikri/plugin_manager"
 # task, krikri skipped it and exited 4).
 describe "ansible.builtin.sysctl legacy redirect" do
   {% for spelling in ["ansible.builtin.sysctl", "ansible.posix.sysctl"] %}
-    it "resolves {{spelling.id}}: to the sysctl plugin, not an unavailable module" do
+    it "resolves {{ spelling.id }}: to the sysctl plugin, not an unavailable module" do
       playbook = Krikri::PlaybookParser.parse_string(<<-YAML)
         - name: play
           hosts: all
           tasks:
             - name: set sysctl
-              {{spelling.id}}:
+              {{ spelling.id }}:
                 name: net.ipv4.ip_nonlocal_bind
                 value: 1
         YAML

@@ -79,11 +79,11 @@ private def with_apt_param_shims(dpkg_status : String, fail_apt : Bool = false, 
   File.chmod(File.join(dir, "stat"), 0o755)
   File.chmod(File.join(dir, "apt-cache"), 0o755)
   env = {
-    "PATH"                => "#{dir}:/usr/bin:/bin",
-    "KRIKRI_APT_CALLS"    => log,
-    "KRIKRI_DPKG_STATUS"  => dpkg_status,
-    "KRIKRI_POLICY_PATH"  => policy_path || "",
-    "KRIKRI_APT_FAIL"     => (fail_apt ? "1" : ""),
+    "PATH"                 => "#{dir}:/usr/bin:/bin",
+    "KRIKRI_APT_CALLS"     => log,
+    "KRIKRI_DPKG_STATUS"   => dpkg_status,
+    "KRIKRI_POLICY_PATH"   => policy_path || "",
+    "KRIKRI_APT_FAIL"      => (fail_apt ? "1" : ""),
     "KRIKRI_APT_OP_STDOUT" => op_stdout,
   }.to_json
   yield env, log

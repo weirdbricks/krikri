@@ -38,8 +38,8 @@ private def with_alternatives_shim(display_output : String, &)
   File.write(File.join(dir, "update-alternatives"), shim)
   File.chmod(File.join(dir, "update-alternatives"), 0o755)
   env = {
-    "PATH"             => "#{dir}:/usr/bin:/bin",
-    "KRIKRI_UA_CALLS"  => log,
+    "PATH"              => "#{dir}:/usr/bin:/bin",
+    "KRIKRI_UA_CALLS"   => log,
     "KRIKRI_UA_DISPLAY" => display_output,
   }.to_json
   yield env, log

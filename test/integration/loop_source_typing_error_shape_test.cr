@@ -228,10 +228,10 @@ describe "loop: source typing errors" do
     output.wont_include("must resolve to a 'list'")
   end
 
-# Bare scalar loop sources (janneojala.strongswan round 5410000:
-# `with_items: strongswan`; probed vs 2.19.11 2026-10-10):
-# - with_items:/with_list: on a bare scalar = ONE literal item
-# - loop: on a bare scalar fails the typing check with 'str'
+  # Bare scalar loop sources (janneojala.strongswan round 5410000:
+  # `with_items: strongswan`; probed vs 2.19.11 2026-10-10):
+  # - with_items:/with_list: on a bare scalar = ONE literal item
+  # - loop: on a bare scalar fails the typing check with 'str'
   it "with_items on a bare string loops once with the literal" do
     _ok, output, _pb = run_play_file(<<-YAML)
       - hosts: all

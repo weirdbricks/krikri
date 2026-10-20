@@ -207,11 +207,11 @@ describe "docker_image_build CLI image lookup" do
     cli = building_cli(1, "", "")
 
     result = PluginSpecHelper.run("docker_image_build", {
-      "name"                 => "krikri/thing",
-      "path"                 => build_dir,
-      "docker_cli"           => cli,
-      "docker_host"          => "unix:///tmp/kop_absent.sock",
-      "_ansible_check_mode"  => "true",
+      "name"                => "krikri/thing",
+      "path"                => build_dir,
+      "docker_cli"          => cli,
+      "docker_host"         => "unix:///tmp/kop_absent.sock",
+      "_ansible_check_mode" => "true",
     })
 
     result["failed"].as_bool.must_equal(false)

@@ -35,10 +35,10 @@ private def with_wildcard_shim(upgrade_output : String, exit_code : Int32 = 0, &
   File.write(File.join(dir, "apt-get"), apt_shim)
   File.chmod(File.join(dir, "apt-get"), 0o755)
   env = {
-    "PATH"                => "#{dir}:/usr/bin:/bin",
-    "KRIKRI_APT_CALLS"    => log,
+    "PATH"                   => "#{dir}:/usr/bin:/bin",
+    "KRIKRI_APT_CALLS"       => log,
     "KRIKRI_APT_UPGRADE_OUT" => upgrade_output,
-    "KRIKRI_APT_EXIT"     => exit_code.to_s,
+    "KRIKRI_APT_EXIT"        => exit_code.to_s,
   }.to_json
   yield env, log
 ensure

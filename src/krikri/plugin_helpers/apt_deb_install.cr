@@ -698,6 +698,7 @@ module Krikri
         remote_exec("rm -f #{shell_single_quote(@params["_policy_rc_d_path"]? || "/usr/sbin/policy-rc.d")}")[:exit_code] == 0
       end
     end
+
     # apt.cr's engine-wide cache-key backfill suppression: a deb: result
     # carries no cache keys on any exit (install_deb exits through its
     # own fail_json/exit_json before main() ever assigns

@@ -14,9 +14,9 @@ require "../../src/krikri/krikri_jinja_filters"
 describe "trailing comma in list literals (conditional_trailing_comma_list_test.cr)" do
   private def vars
     {
-      "ansible_distribution"    => JSON::Any.new("Debian"),
-      "pkginstall_cache_purge"  => JSON::Any.new(true),
-      "d"                       => JSON.parse(%({"a": 1, "b": 2})),
+      "ansible_distribution"   => JSON::Any.new("Debian"),
+      "pkginstall_cache_purge" => JSON::Any.new(true),
+      "d"                      => JSON.parse(%({"a": 1, "b": 2})),
     }
   end
 

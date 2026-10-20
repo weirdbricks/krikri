@@ -205,7 +205,7 @@ describe Krikri::TaskBatcher do
           ansible_user: other
       - name: c
         ansible.builtin.command: echo three
-    YAML
+      YAML
     playbook = Krikri::PlaybookParser.parse_string("- hosts: x\n  tasks:\n" + tasks_yaml.split("\n").map { |l| "  #{l}" }.join("\n"))
     groups = Krikri::TaskBatcher.plan(playbook.plays[0].tasks)
     groups.any? { |g| g.map(&.name).includes?("switch") && g.size > 1 }.must_equal(false)

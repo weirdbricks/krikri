@@ -71,7 +71,7 @@ describe Krikri::LocalExecutor do
     # Ansible hands the dict to subprocess), so the child still sees
     # the byte-exact value...
     it "applies env through the child environment, byte-exact, including shell metacharacters" do
-      secret = "s3cr3t'x\"y\$z`w -dash\nline2"
+      secret = "s3cr3t'x\"y$z`w -dash\nline2"
       result = Krikri::LocalExecutor.exec(
         "printf '%s' \"$KRIKRI_TEST_SECRET\"",
         force_shell: true,

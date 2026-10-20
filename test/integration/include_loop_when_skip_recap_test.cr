@@ -43,20 +43,20 @@ describe "a looped include_tasks: whose when: is false recaps once, not per item
           ansible.builtin.debug:
             msg: included
         YAML
-      "site.yml"           => <<-YAML,
-        - name: target
-          hosts: localhost
-          connection: local
-          gather_facts: false
-          vars:
-            flag: false
-            items: [a, b, c]
-          tasks:
-            - name: looped include all skipped
-              ansible.builtin.include_tasks: subtasks/dummy.yml
-              loop: "{{ items }}"
-              when: flag
-        YAML
+      "site.yml" => <<-YAML,
+      - name: target
+        hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          flag: false
+          items: [a, b, c]
+        tasks:
+          - name: looped include all skipped
+            ansible.builtin.include_tasks: subtasks/dummy.yml
+            loop: "{{ items }}"
+            when: flag
+      YAML
     })
 
     status.success?.must_equal true
@@ -82,19 +82,19 @@ describe "a looped include_tasks: whose when: is false recaps once, not per item
           ansible.builtin.debug:
             msg: included
         YAML
-      "site.yml"           => <<-YAML,
-        - name: target
-          hosts: localhost
-          connection: local
-          gather_facts: false
-          vars:
-            items: [a, b, c]
-          tasks:
-            - name: looped include mixed
-              ansible.builtin.include_tasks: subtasks/dummy.yml
-              loop: "{{ items }}"
-              when: item != 'b'
-        YAML
+      "site.yml" => <<-YAML,
+      - name: target
+        hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          items: [a, b, c]
+        tasks:
+          - name: looped include mixed
+            ansible.builtin.include_tasks: subtasks/dummy.yml
+            loop: "{{ items }}"
+            when: item != 'b'
+      YAML
     })
 
     status.success?.must_equal true
@@ -112,18 +112,18 @@ describe "a looped include_tasks: whose when: is false recaps once, not per item
           ansible.builtin.debug:
             msg: included
         YAML
-      "site.yml"           => <<-YAML,
-        - name: target
-          hosts: localhost
-          connection: local
-          gather_facts: false
-          vars:
-            flag: false
-          tasks:
-            - name: plain include skipped
-              ansible.builtin.include_tasks: subtasks/dummy.yml
-              when: flag
-        YAML
+      "site.yml" => <<-YAML,
+      - name: target
+        hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          flag: false
+        tasks:
+          - name: plain include skipped
+            ansible.builtin.include_tasks: subtasks/dummy.yml
+            when: flag
+      YAML
     })
 
     status.success?.must_equal true

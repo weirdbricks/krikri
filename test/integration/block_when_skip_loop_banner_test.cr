@@ -50,14 +50,14 @@ describe "skipped-block banner shapes (block: when: false)" do
       YAML
 
     lines = output.lines
-    idx = lines.index { |line| line.starts_with?("TASK [looped include in block]") }.not_nil!
+    idx = lines.index! { |line| line.starts_with?("TASK [looped include in block]") }
     # The per-item lines carry a trailing space (the empty -v dump slot),
     # exactly like real's.
     lines[idx + 1].must_equal("skipping: [localhost] => (item=ca) ")
     lines[idx + 2].must_equal("skipping: [localhost] => (item=cert) ")
     lines[idx + 3].must_equal("skipping: [localhost] => (item=key) ")
     lines[idx + 4].must_equal("skipping: [localhost]")
-    idx = lines.index { |line| line.starts_with?("TASK [plain loop in skipped block]") }.not_nil!
+    idx = lines.index! { |line| line.starts_with?("TASK [plain loop in skipped block]") }
     lines[idx + 1].must_equal("skipping: [localhost] => (item=x) ")
     lines[idx + 2].must_equal("skipping: [localhost] => (item=y) ")
     lines[idx + 3].must_equal("skipping: [localhost]")

@@ -250,7 +250,7 @@ describe "htpasswd plugin" do
   # comes from Random::Secure, so identical consecutive salts are
   # astronomically unlikely (64^16 space).
   it "does not reuse the same random salt across runs" do
-    salts = 2.times.map do |i|
+    salts = Array.new(2) do |i|
       path = PluginSpecHelper.tmp_path("htpasswd-salt-fresh-#{i}")
       File.delete(path) if File.exists?(path)
       PluginSpecHelper.run("htpasswd", {
@@ -259,7 +259,7 @@ describe "htpasswd plugin" do
       salt = File.read(path).strip.split(":")[1]["$6$".size..].split("$").first
       File.delete(path)
       salt
-    end.to_a
+    end
 
     (salts[0] != salts[1]).must_equal(true)
   end

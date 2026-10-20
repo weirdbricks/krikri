@@ -28,9 +28,9 @@ URI_STATUS_CODE_TEST_URL = "http://127.0.0.1:#{URI_STATUS_CODE_TEST_ADDRESS.port
 describe "uri status_code list wire forms" do
   it "accepts a stringified JSON list of status codes (the templated-list wire form)" do
     result = PluginSpecHelper.run("uri", {
-      "url"          => URI_STATUS_CODE_TEST_URL,
-      "method"       => "GET",
-      "status_code"  => "[100, 200, 404]",
+      "url"            => URI_STATUS_CODE_TEST_URL,
+      "method"         => "GET",
+      "status_code"    => "[100, 200, 404]",
       "return_content" => "true",
     })
     result["failed"]?.must_be_nil

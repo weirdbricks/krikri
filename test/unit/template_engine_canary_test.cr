@@ -271,6 +271,4 @@ describe "template engine canary" do
     crinja_render("{{ lst.count(1) }}", {"lst" => [1, 2, 1]}).must_equal("2")
     crinja_render("{% do lst.reverse() %}{{ lst | join(',') }}", {"lst" => [1, 2]}).must_equal("2,1")
   end
-
 end
-
