@@ -68,6 +68,12 @@ module Krikri
                 # it (mirroring the value merge).
                 VarOrigin.vars_file_origins(path, [key_str]).each { |k, origin| merged_origins[k] = origin }
               end
+              # A path templated against host facts is only resolvable per
+              # host at runtime, so the reserved-name warning cannot have
+              # happened at play-parse time (literal paths already warned
+              # there, and the per file+key dedup set makes this second
+              # call a no-op for them).
+              PlaybookParser.warn_reserved_toplevel_vars(path, hash.keys.map(&.to_s))
             end
           rescue
             # A vars file that will not parse is skipped rather than
