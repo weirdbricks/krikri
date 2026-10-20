@@ -37,11 +37,15 @@ end
 private def cleanup_docker_local_objects : Nil
   # Remove any containers/networks/images this spec created under its own
   # project name, so a re-run of the suite is clean.
-  Process.run("podman", ["rm", "-f", "#{PROJECT_NAME}-web"], error: IO::Memory.new)
+  # Compose names its containers "<project>-<service>-<n>", so match by project prefix;
+  # removing "<project>-web" alone left every "-web-1" behind.
+  ids = IO::Memory.new
+  Process.run("podman", ["ps", "-a", "-q", "--filter", "name=^#{PROJECT_NAME}-"], output: ids, error: IO::Memory.new)
+  ids.to_s.split.each { |id| Process.run("podman", ["rm", "-f", id], error: IO::Memory.new) }
   Process.run("podman", ["network", "rm", "#{PROJECT_NAME}-default"], error: IO::Memory.new)
   Process.run("podman", ["rmi", "localhost/#{PROJECT_NAME}-shape:1"], error: IO::Memory.new)
 ensure
-  Dir.delete(COMPOSE_PROJECT_DIR) if Dir.exists?(COMPOSE_PROJECT_DIR)
+  FileUtils.rm_rf(COMPOSE_PROJECT_DIR)
 end
 
 describe "docker_container published_ports" do
@@ -169,5 +173,7 @@ describe "docker compose CLI-client prefix (--host)" do
     })
     falsey?(result["failed"]?.try(&.as_bool)).must_equal(true, result.to_json)
     result["changed"].as_bool.must_equal(true)
+  ensure
+    cleanup_docker_local_objects
   end
 end
