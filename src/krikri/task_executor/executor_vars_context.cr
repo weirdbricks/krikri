@@ -1828,8 +1828,19 @@ module Krikri
       # Ansible converts the rendered keyword with the same strict boolean()
       # it applies to any bool keyword, so a templated name such as
       # `become: "{{ ansible_user_id }}"` fails the task instead of being
-      # read as a condition (issue #143).
-      rendered = substitutor.substitute(expr)
+      # read as a condition (issue #143). The TEMPLATE itself is strict
+      # too: ansible-core 2.19 fails the task on an undefined reference
+      # inside a keyword before any boolean conversion happens ("Task
+      # failed: Error processing keyword 'become': 'ansible_user_id' is
+      # undefined", with gather_facts: false the var never becomes a
+      # gathered fact) - the lenient render used to produce the
+      # "undefined" sentinel and fail later with the wrong
+      # could-not-convert wording (issue #159).
+      rendered = begin
+        substitutor.substitute(expr, strict: true)
+      rescue e : UndefinedVariableError
+        raise UndefinedVariableError.new("Task failed: Error processing keyword 'become': #{e.message}")
+      end
       decided = ansible_become_string_boolean(rendered)
       return decided unless decided.nil?
       # KeywordBooleanError (not a plain message) so the failure result
@@ -2722,7 +2733,21 @@ module Krikri
     # conversion failure carries the chain marker, everything else keeps
     # the plain finalization shape.
     private def keyword_failure_json(ex : UndefinedVariableError, task : Task) : JSON::Any
-      ex.is_a?(KeywordBooleanError) ? become_conversion_failure_json(ex, task) : finalization_failure_json(ex, task)
+      return become_conversion_failure_json(ex, task) if ex.is_a?(KeywordBooleanError)
+      # An undefined reference inside the become: template fails with the
+      # same three-link keyword chain as the conversion failure (issue
+      # #159), its innermost link being the bare "'x' is undefined".
+      prefix = "Task failed: Error processing keyword 'become': "
+      if (msg = ex.message) && msg.starts_with?(prefix)
+        result = finalization_failure_json(ex, task)
+        result.as_h["_ansible_keyword_conversion"] = JSON.parse({
+          "keyword"    => "become",
+          "conversion" => msg[prefix.size..],
+          "origin"     => keyword_value_origin(task, "become"),
+        }.to_json)
+        return result
+      end
+      finalization_failure_json(ex, task)
     end
 
     # A task keyword's VALUE's own column (the first non-space character
