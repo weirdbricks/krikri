@@ -79,12 +79,12 @@ jobs:
         # The community.general / community.docker collections are
         # installed too, at the versions the specs were live-captured
         # against: ansible-core alone has neither, so the redirect/
-        # deprecation specs (proxmox_kvm, docker_swarm_service) see
+        # deprecation specs (proxmox_kvm -> community.proxmox, docker_swarm_service) see
         # "No module named 'ansible_collections.community'" and the
         # unported-module paths exit 4 instead of the 2 real ansible gives.
         run: |
           pip3 install --break-system-packages ansible-core==2.19.11
-          ansible-galaxy collection install community.general:12.5.0 community.docker:5.2.1
+          ansible-galaxy collection install community.general:12.5.0 community.docker:5.2.1 community.proxmox:1.3.0
 
       - name: Cache shards
         uses: actions/cache@v4
