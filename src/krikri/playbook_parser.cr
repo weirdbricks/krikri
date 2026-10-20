@@ -2197,6 +2197,23 @@ module Krikri
             play.vars_files << [safe_yaml_to_string(entry)]
           end
         end
+        # ansible-core loads a play's vars_files while finalizing the play,
+        # before any play output - a reserved top-level name in such a file
+        # warns (Origin block and all) on stderr BEFORE the PLAY banner. A
+        # templated path is only resolvable per host at runtime, so only
+        # literal candidates are checked here; the runtime loader in
+        # TaskExecutor#load_vars_files covers those too, and the per
+        # file+key dedup set turns the overlap into a no-op rather than a
+        # double warning.
+        play.vars_files.each do |candidates|
+          candidates.each do |candidate|
+            next if candidate.includes?("{{")
+            path = File.expand_path(candidate, playbook_dir)
+            next unless File.file?(path)
+            warn_reserved_toplevel_vars_file(path)
+            break
+          end
+        end
       end
 
       # serial: accepts a scalar (`serial: 2`, `serial: "50%"`) or a list
@@ -4204,6 +4221,20 @@ module Krikri
           STDERR.puts
         end
       end
+    end
+
+    # Same warning for one play vars_files file, keyed off a parse of the
+    # file itself (the caller only has a candidate path). Tolerant like
+    # the runtime vars_files loader: a missing or unparseable file stays
+    # silent - ansible-playbook does not abort for a vars_files entry it
+    # cannot use either.
+    def self.warn_reserved_toplevel_vars_file(path : String) : Nil
+      return unless File.file?(path)
+      keys = YAML.parse(File.read(path)).as_h?.try(&.keys.map(&.to_s))
+      return unless keys
+      warn_reserved_toplevel_vars(path, keys)
+    rescue
+      nil
     end
 
     # Same ansible-core 2.19 SourceContext format the task-failure Origin
