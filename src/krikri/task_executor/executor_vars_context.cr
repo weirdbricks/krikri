@@ -3480,6 +3480,26 @@ module Krikri
       end
       if h = host
         origin = var_origin_for(task, h, raw, runtime_marker: true)
+        # ansible's data lineage follows a stored value that is itself a
+        # single-variable template: with `gitlab_cond: "{{ gitlab_flag }}"`
+        # and `when: gitlab_cond`, real labels the error with the
+        # INNERMOST source value's defining position (where gitlab_flag's
+        # literal was written), not the templated var's own line -
+        # live-verified vs 2.19.11 (issue #151). The `| default(...)`
+        # spelling chains the same way. An inner var with no defined
+        # origin leaves the outer origin in place rather than guessing.
+        vars = build_vars_context(task, h)
+        name = raw
+        10.times do
+          value = vars[name]?.try(&.raw)
+          break unless value.is_a?(String)
+          m = value.match(/\A\s*\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?:\|\s*default\([^)]*\)\s*)?\}\}\s*\z/)
+          break if m.nil?
+          inner = var_origin_for(task, h, m[1], runtime_marker: true)
+          break if inner.nil?
+          name = m[1]
+          origin = inner
+        end
         case origin
         when FileVarOrigin
           return msg if origin.column <= 0
