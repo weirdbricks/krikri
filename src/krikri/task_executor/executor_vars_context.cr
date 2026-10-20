@@ -412,22 +412,6 @@ module Krikri
         PluginManager.local_connection?(host, vars_context) ? "local" : "ssh"
       )
 
-      # ansible_user_id - real 2.19.11 resolves this identity variable
-      # BEFORE any facts task runs (`become: "{{ ansible_user_id }}"` on
-      # a play's first task renders the username in its load-time
-      # keyword error even though Gathering Facts never ran, issue #143;
-      # the same holds under gather_facts: false). Seeded - fill-only, so
-      # a gathered fact or any author-set var still wins - from the same
-      # getpwuid identity the facts plugin's user collector produces, and
-      # only for controller-side (local) targets: a remote host's
-      # pre-facts identity is the login user on the TARGET, which the
-      # controller cannot know without connecting.
-      unless vars_context.has_key?("ansible_user_id")
-        if PluginManager.local_connection?(host, vars_context) && (pw = PASSWD.getpwuid(LibC.getuid.to_u32))
-          vars_context["ansible_user_id"] = JSON::Any.new(String.new(pw.value.pw_name))
-        end
-      end
-
       # loop_lenient_vars: a LOOPED task's vars: must not hard-fail on the
       # pre-loop render. Ansible only ever evaluates a looped task's
       # vars: per actual loop iteration (item bound) - a zero-iteration

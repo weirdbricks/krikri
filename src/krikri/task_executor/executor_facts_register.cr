@@ -38,32 +38,6 @@ module Krikri
                   @hosts
                 end
 
-      # A play's FIRST task whose templated keyword fails its boolean
-      # conversion fails the host before the implicit facts task would
-      # run - real 2.19.11 prints no Gathering Facts banner and recaps
-      # ok=0 for such a host (`become: "{{ ansible_user_id }}"` on the
-      # first task, issue #143), while the same failure on a LATER task
-      # leaves facts (and the earlier tasks' ok counts) untouched. Only
-      # the first task is checked: that is the ordering the real
-      # transcripts pin down.
-      first_task = @tasks.first?
-      keyword_failed_hosts = [] of Host
-      if first_task && first_task.become_expr
-        @hosts.each do |host|
-          vars_context = build_vars_context(first_task, host)
-          begin
-            resolve_task_become(first_task, VarSubstitutor.new(vars: vars_context, host_name: host.name))
-          rescue e : KeywordBooleanError
-            keyword_failed_hosts << host
-          rescue
-            # Any other failure the pre-flight hits surfaces at the task's
-            # own execution site with the full existing handling; this
-            # check only decides the gathering skip, so it stays silent.
-          end
-        end
-        targets = targets.reject { |host| keyword_failed_hosts.includes?(host) }
-      end
-
       # Nothing to do: every host was gathered by an earlier play. Skip
       # the task banner entirely rather than printing an empty one.
       return if targets.empty?

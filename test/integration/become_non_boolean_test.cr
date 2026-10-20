@@ -46,7 +46,7 @@ describe "a templated become: that renders to a non-boolean fails the task" do
     FileUtils.rm_rf(root) if root
   end
 
-  it "fails the play's FIRST task before Gathering Facts runs (no facts ok, ok=0)" do
+  it "fails a become: on ansible_user_id after Gathering Facts has run" do
     root = File.tempname("become-non-boolean-facts")
     Dir.mkdir_p(root)
 
@@ -66,14 +66,11 @@ describe "a templated become: that renders to a non-boolean fails the task" do
 
     status.success?.must_equal(false, output.to_s)
     output_text = output.to_s
-    # Real templates the play's first task's keywords per host BEFORE the
-    # implicit facts task, so the banner never prints and nothing counts
-    # as ok; the failure value is still the real username.
-    output_text.includes?("Gathering Facts").must_equal(false, output_text)
-    # The rendered value is the controller's own user - the same
-    # getpwuid identity the seeded pre-facts context carries.
+    # Real runs Gathering Facts first (ok: [localhost]), so ansible_user_id
+    # is a gathered fact by the time the become: keyword renders.
+    output_text.includes?("Gathering Facts").must_equal(true, output_text)
     output_text.includes?("The value '#{`id -un`.strip}' could not be converted to 'bool'.").must_equal(true, output_text)
-    output_text.includes?("ok=0").must_equal(true, output_text)
+    output_text.includes?("ok=1").must_equal(true, output_text)
     output_text.includes?("failed=1").must_equal(true, output_text)
   ensure
     FileUtils.rm_rf(root) if root
