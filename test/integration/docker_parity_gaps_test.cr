@@ -39,13 +39,22 @@ private def cleanup_docker_local_objects : Nil
   # project name, so a re-run of the suite is clean.
   # Compose names its containers "<project>-<service>-<n>", so match by project prefix;
   # removing "<project>-web" alone left every "-web-1" behind.
+  # The test may have skipped (no live podman): no podman binary means
+  # nothing was created, and Process.run would raise File::NotFoundError
+  # out of this ensure.
+  if Process.find_executable("podman")
+    cleanup_podman_objects
+  end
+ensure
+  FileUtils.rm_rf(COMPOSE_PROJECT_DIR)
+end
+
+private def cleanup_podman_objects : Nil
   ids = IO::Memory.new
   Process.run("podman", ["ps", "-a", "-q", "--filter", "name=^#{PROJECT_NAME}-"], output: ids, error: IO::Memory.new)
   ids.to_s.split.each { |id| Process.run("podman", ["rm", "-f", id], error: IO::Memory.new) }
   Process.run("podman", ["network", "rm", "#{PROJECT_NAME}-default"], error: IO::Memory.new)
   Process.run("podman", ["rmi", "localhost/#{PROJECT_NAME}-shape:1"], error: IO::Memory.new)
-ensure
-  FileUtils.rm_rf(COMPOSE_PROJECT_DIR)
 end
 
 describe "docker_container published_ports" do

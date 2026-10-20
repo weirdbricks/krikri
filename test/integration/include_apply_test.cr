@@ -90,7 +90,8 @@ describe "apply: keywords reach the tasks an include loads" do
     # the invoking user the way it did before apply: was honoured.
     status.success?.must_equal(false, output)
     output.must_match(/failed=1\b/, output)
-    output.must_include("sudo: unknown user nonexistent_user_xyz_12345", output)
+    # sudo 1.9 says "unknown user X"; sudo-rs (Ubuntu 26 runners) says "user 'X' not found".
+    output.must_match(/sudo: (unknown user nonexistent_user_xyz_12345|user 'nonexistent_user_xyz_12345' not found)/, output)
   ensure
     FileUtils.rm_rf(root) if root
   end

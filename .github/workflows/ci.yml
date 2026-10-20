@@ -75,7 +75,16 @@ jobs:
         # controller's python3 and need it to import the `Ansible`
         # package (the engine degrades to the old undefined/[] behavior
         # without it, which four of those tests fail on by design).
-        run: pip3 install --break-system-packages ansible-core
+        #
+        # The community.general / community.docker collections are
+        # installed too, at the versions the specs were live-captured
+        # against: ansible-core alone has neither, so the redirect/
+        # deprecation specs (proxmox_kvm, docker_swarm_service) see
+        # "No module named 'ansible_collections.community'" and the
+        # unported-module paths exit 4 instead of the 2 real ansible gives.
+        run: |
+          pip3 install --break-system-packages ansible-core==2.19.11
+          ansible-galaxy collection install community.general:12.5.0 community.docker:5.2.1
 
       - name: Cache shards
         uses: actions/cache@v4
