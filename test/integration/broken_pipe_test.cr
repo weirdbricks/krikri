@@ -108,3 +108,25 @@ describe "broken pipe (reader exits early)" do
     end
   end
 end
+
+# The other two shipped entrypoints (bin/krikri, bin/krikri-lint) have
+# the same 1.22 exposure; unlike bin/krikri-playbook they aren't
+# exercised by any real-host round, so their --help path is the
+# practical place a reader-exits-early pipe shows up.
+describe "broken pipe: krikri and krikri-lint entrypoints" do
+  it "krikri --help exits quietly when output is truncated by head" do
+    _, stderr = run_pipeline("#{File.join(PROJECT_ROOT, "bin", "krikri")} --help | head -1 > /dev/null")
+
+    stderr.wont_include("Unhandled exception")
+    stderr.wont_include("Broken pipe")
+    stderr.must_include("RC=0")
+  end
+
+  it "krikri-lint --help exits quietly when output is truncated by head" do
+    _, stderr = run_pipeline("#{File.join(PROJECT_ROOT, "bin", "krikri-lint")} --help | head -1 > /dev/null")
+
+    stderr.wont_include("Unhandled exception")
+    stderr.wont_include("Broken pipe")
+    stderr.must_include("RC=0")
+  end
+end

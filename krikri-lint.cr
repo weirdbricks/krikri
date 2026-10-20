@@ -1,10 +1,18 @@
 # krikri-lint - static analysis for Ansible playbooks and roles
 # Main CLI entry point.
 
+# Same Crystal 1.22 broken-pipe stdio fix as krikri-playbook.cr (see
+# the full explanation there): without this, `bin/krikri-lint ... | head`
+# self-exits 141 on EPIPE instead of raising the catchable IO::Error.
+Signal::PIPE.ignore
+STDOUT.exit_on_broken_pipe = false
+STDERR.exit_on_broken_pipe = false
+
 require "option_parser"
 require "colorize"
 require "./src/krikri/version"
 require "./src/krikri/unsafe_values"
+require "./src/krikri/task_executor/output_routing"
 require "./src/krikri_lint/lint"
 
 module Krikri::Lint
@@ -360,4 +368,8 @@ module Krikri::Lint
   end
 end
 
-Krikri::Lint.main(ARGV)
+begin
+  Krikri::Lint.main(ARGV)
+rescue ex : IO::Error
+  Krikri::OutputRouting.exit_quietly_if_broken_pipe(ex)
+end
