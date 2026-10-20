@@ -410,10 +410,14 @@ because anyone intends to fix them.
   * Short forms match Ansible: `-C` is `--check`, `-D` is `--diff`, `-c` is `--connection`.
     **`-c` previously meant `--check` in this engine and no longer does**, a deliberate breaking change
     so a copied command line behaves the same here. `-d` is kept as an extra alias for `--diff`.
-- Cloud provider modules (`amazon.aws`/`community.aws`, `azure_rm_*`) - not implemented, not planned:
-  controller-side HTTP calls to a cloud API needing real request signing/auth, i.e. a real API client
-  built from scratch, not "another module that shells out to a CLI tool". Revisit only if a specific
-  need justifies it. (The inventory half of this is implemented; see below.)
+- Cloud provider modules: only a narrow AWS/EC2 slice is implemented - `amazon.aws` `ec2_instance`,
+  `ec2_key`, `ec2_security_group`, `ec2_ami_info`, `ec2_vpc_net_info`, `ec2_vpc_subnet_info`,
+  `ec2_metadata_facts` and `iam_user_info` (a hand-built SigV4 API client, `plugin_helpers/ec2_api.cr`;
+  none can be exercised against a real account by the test rounds, see below) - plus the `aws_ec2`
+  inventory plugin. Everything else (`community.aws`, other `amazon.aws` modules, `azure_rm_*`,
+  `google.cloud`, `openstack.cloud`, `community.vmware`) is not implemented and not planned: each
+  needs a real per-provider API client with request signing/auth, not "another module that shells
+  out to a CLI tool". Revisit only if a specific need justifies it.
 - YAML-defined inventory plugins (`plugin:` sources): `host_list`, `ini`, `yaml`, `constructed` and
   `amazon.aws.aws_ec2` are implemented via `src/krikri/inventory_plugins.cr`; aws_ec2 talks to the real
   EC2 API with SigV4 through the vendored `awscr-signer` shard, credentials from the standard `AWS_*`
