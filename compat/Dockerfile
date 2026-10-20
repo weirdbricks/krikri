@@ -6,7 +6,7 @@
 # specifically to avoid a glibc version mismatch between the build host and
 # the container - krikri-playbook is compiled fresh, inside this image,
 # against this image's own glibc.
-FROM docker.io/crystallang/crystal:1.20.3
+FROM docker.io/crystallang/crystal:1.22.0
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \

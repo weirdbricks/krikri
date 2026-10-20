@@ -144,7 +144,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --force    Ignore all up-to-date checks; rebuild the main executables"
             echo "             and every plugin unconditionally"
             echo "  --static-podman  Perform the static release build the easy way: run this"
-            echo "             same script inside docker.io/crystallang/crystal:1.21.1-alpine"
+            echo "             same script inside docker.io/crystallang/crystal:1.22.0-alpine"
             echo "             via podman (repo mounted at /work, a persistent Crystal cache"
             echo "             at ~/.cache/krikri-static mounted at /cache), installing the"
             echo "             Alpine static libs above first. Implies --release --static,"
@@ -217,7 +217,7 @@ if [ "$STATIC_PODMAN" = true ]; then
         || { [ "$(binary_linkage "$OUTPUT_DIR/krikri-playbook")" = "no" ]; }; then
         INNER_ARGS="$INNER_ARGS --force"
     fi
-    PODMAN_IMAGE="docker.io/crystallang/crystal:1.21.1-alpine"
+    PODMAN_IMAGE="docker.io/crystallang/crystal:1.22.0-alpine"
     # gmp-static is required: Alpine's gmp-dev ships no libgmp.a and the
     # link fails with 'cannot find -lgmp' without it (Crystal's Big*
     # types link libgmp).

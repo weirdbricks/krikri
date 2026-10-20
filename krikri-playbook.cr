@@ -3,6 +3,28 @@
 # krikri-playbook - Fast Ansible-compatible automation tool
 # Main CLI entry point
 
+# Crystal 1.22 changed how broken stdio pipes behave, in two ways:
+# the stdlib's default signal handlers (Signal::PIPE.ignore included)
+# moved inside Crystal::System::Signal.setup_default_handlers instead of
+# being guaranteed before user code runs, and IO::FileDescriptor.from_stdio
+# now marks STDOUT/STDERR with exit_on_broken_pipe, so a write to a pipe
+# whose reader has already exited (`krikri-playbook playbook.yml | head -2`,
+# `--help | head -1`, quitting out of a pager) makes the stdlib call
+# LibC.exit(141) itself - a silent signal-style death that bypasses every
+# rescue, instead of raising the catchable IO::Error earlier Crystals
+# produced. Ignore SIGPIPE explicitly (belt for the lazy handler setup) and
+# turn the stdio self-exit off (braces for the actual 1.22 killer), so a
+# truncated pipe surfaces as the ordinary IO::Error that
+# OutputRouting.exit_quietly_if_broken_pipe turns into Ansible's quiet
+# exit 0 - same behavior as Crystal 1.21 and ansible-playbook itself
+# (verified: `--help | head -1` and `--version | head -1` both produce no
+# stderr and PIPESTATUS[0]=0). Deliberately Signal::PIPE.ignore, never
+# .reset: see output_routing.cr for why resetting (kernel kills the
+# process on ANY EPIPE) would be wrong here.
+Signal::PIPE.ignore
+STDOUT.exit_on_broken_pipe = false
+STDERR.exit_on_broken_pipe = false
+
 # Must be required first: redefines top-level puts/print to route
 # through Krikri::OutputRouting, which --forks's per-host fan-out
 # uses to buffer output per fiber. Everything else in the program still

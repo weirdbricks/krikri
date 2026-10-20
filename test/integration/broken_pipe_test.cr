@@ -1,9 +1,17 @@
 require "../minitest_helper"
 
-# Crystal sets SIGPIPE to ignore, so writing to a pipe whose reader has
-# already exited surfaces as an IO::Error rather than killing the
-# process. With nothing rescuing it, `krikri-playbook ... | head -N`
-# dumped a full Crystal stack trace to stderr and exited 1.
+# Broken stdio pipes must surface as IO::Error, not kill the process.
+# The entrypoints guarantee that (krikri-playbook.cr and base_plugin.cr
+# for the plugin binaries): Crystal 1.22 moved the stdlib's default
+# signal handlers (Signal::PIPE.ignore included) inside
+# Crystal::System::Signal.setup_default_handlers instead of guaranteeing
+# them before user code, AND made the stdio streams call LibC.exit(141)
+# themselves on an EPIPE write (IO::FileDescriptor's exit_on_broken_pipe,
+# set by from_stdio) - the latter is what made `krikri-playbook ... |
+# head -N` die silently with 141 on 1.22. The entrypoints ignore SIGPIPE
+# explicitly and turn the stdio self-exit off, restoring the pre-1.22
+# behavior where the EPIPE raises and (with nothing rescuing it) used to
+# dump a full Crystal stack trace and exit 1.
 #
 # ansible-playbook is silent and exits 0 in the same situation
 # (verified directly against ansible-playbook/ansible: `--help | head -1`

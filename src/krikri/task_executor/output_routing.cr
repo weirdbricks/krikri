@@ -27,12 +27,18 @@ module Krikri
       @@buffers[Fiber.current]? || STDOUT
     end
 
-    # Crystal sets SIGPIPE to ignore, so writing to a pipe whose reader
-    # has already exited (`krikri-playbook playbook.yml | head -2`,
-    # `--version | head -1`, quitting out of a pager) surfaces as an
-    # IO::Error instead of quietly killing the process - and, with
-    # nothing rescuing it, dumped a full Crystal stack trace to stderr
-    # and exited 1.
+    # Broken-pipe writes must surface as IO::Error for this rescue to
+    # work. The entrypoints guarantee that (krikri-playbook.cr and
+    # base_plugin.cr for the plugin binaries): Crystal 1.22 moved the
+    # stdlib's default signal handlers (Signal::PIPE.ignore included)
+    # inside Crystal::System::Signal.setup_default_handlers instead of
+    # guaranteeing them before user code, AND made the stdio streams call
+    # LibC.exit(141) themselves on an EPIPE write (IO::FileDescriptor's
+    # exit_on_broken_pipe, set by from_stdio) - the latter is what made
+    # `krikri-playbook playbook.yml | head -2` / `--help | head -1` /
+    # quitting out of a pager die silently with 141 on 1.22 instead of
+    # raising the catchable IO::Error that, with nothing rescuing it,
+    # used to dump a full Crystal stack trace and exit 1.
     #
     # ansible-playbook is silent here and exits 0 (verified against
     # ansible-playbook/ansible: `--help | head -1` and

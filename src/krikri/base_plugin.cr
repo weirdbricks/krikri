@@ -16,6 +16,28 @@ require "./plugin_helpers/stat_fields"
 require "./plugin_helpers/controlling_tty"
 require "./plugin_helpers/ansible_splitlines"
 
+# Crystal 1.22 changed how broken stdio pipes behave, in two ways: the
+# stdlib's default signal handlers (Signal::PIPE.ignore included) moved
+# inside Crystal::System::Signal.setup_default_handlers instead of being
+# guaranteed before user code runs, and IO::FileDescriptor.from_stdio now
+# marks STDOUT/STDERR with exit_on_broken_pipe, so a write to a pipe whose
+# reader has already exited makes the stdlib call LibC.exit(141) itself -
+# a silent signal-style death that bypasses every rescue. Every plugin
+# binary (each plugins/*.cr one-shot and the shared fat-plugin binary,
+# remote or local) is one of those programs, and #run below is exactly one
+# puts of the result JSON to stdout - with the 1.22 defaults, a controller
+# (or ssh) that closed the pipe early would kill the plugin outright
+# instead of letting the write raise a catchable IO::Error and exit
+# non-zero the way Crystal 1.21 did. Ignore SIGPIPE explicitly (belt for
+# the lazy handler setup) and turn the stdio self-exit off (braces for the
+# actual 1.22 killer) here, at require time, so the behavior matches
+# Crystal 1.21 and the controller sees an ordinary failed write rather
+# than a signal death. Deliberately never Signal::PIPE.reset - see
+# output_routing.cr for why.
+Signal::PIPE.ignore
+STDOUT.exit_on_broken_pipe = false
+STDERR.exit_on_broken_pipe = false
+
 module Krikri
   # LibC::Stat's timestamp fields are named differently per libc: glibc
   # (Linux) uses st_atim/st_mtim/st_ctim, while Darwin's BSD-derived libc
