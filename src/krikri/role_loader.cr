@@ -412,7 +412,6 @@ module Krikri
       dependency_default_origins = Hash(String, VarOrigin).new
       dependency_defaults = load_meta_dependencies(role_dir, play, playbook_dir, seen, tasks, handlers, parent_names, parent_paths, parent_defaults, play_scope, parent_default_origins, dependency_default_origins)
 
-      warn_reserved_role_vars(File.join(role_dir, "defaults"))
       defaults = load_vars_file_main(File.join(role_dir, "defaults"))
       # Ansible keeps a role's defaults visible for the rest of the
       # PLAY once that role has run, not just for tasks physically inside
@@ -452,7 +451,6 @@ module Krikri
       # answers for the value that actually wins (see
       # Task#role_default_origins).
       defaults_origins = parent_default_origins.merge(dependency_default_origins).merge(load_vars_file_origins_main(File.join(role_dir, "defaults")))
-      warn_reserved_role_vars(File.join(role_dir, "vars"))
       own_vars, own_var_origins = load_role_own_vars(role_dir, vars_from)
       role_vars = own_vars.dup
       role_var_origins = own_var_origins.dup
@@ -544,6 +542,12 @@ module Krikri
         play.task_timeout = saved_task_timeout
         play.task_timeout_expr = saved_task_timeout_expr
       end
+
+      # Ansible's Role._load_role_data parses tasks and handlers before it
+      # reads vars/ and defaults/, so a fatal task-parse error (e.g. the
+      # removed bare `include:`) pre-empts these warnings entirely.
+      warn_reserved_role_vars(File.join(role_dir, "defaults"))
+      warn_reserved_role_vars(File.join(role_dir, "vars"))
 
       # The argument-spec "Validating arguments..." task only applies to
       # the role's own default ("main") entry point, not an arbitrary
