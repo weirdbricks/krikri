@@ -4178,17 +4178,21 @@ module Krikri
     # with_first_found: accepts either a bare list of candidate paths, or
     # Ansible's dict form - `- files: [...]` with an optional
     # `skip: true` and `paths:` (see #parse_first_found_paths below for
-    # that). Only the first entry is read, matching how the dict form is
-    # written in practice.
+    # that). Ansible's first_found lookup walks EVERY list term: dict
+    # terms' files: concatenate in order and bare strings are candidates
+    # themselves. Frzk.nftables writes a paths:-only first term followed
+    # by the files: term, so reading only the first entry loses the files
+    # entirely and the lookup ends in "No file was found".
     private def self.parse_first_found(yaml : YAML::Any) : Array(String)
       if list = yaml.as_a?
-        first = list.first?
-        if first && (hash = first.as_h?)
-          files = hash["files"]?
-          return [] of String unless files
-          return files.as_a?.try { |a| first_found_candidates(a) } || [files.as_s]
+        return list.flat_map do |entry|
+          if hash = entry.as_h?
+            files = hash["files"]? || next [] of String
+            files.as_a?.try { |a| first_found_candidates(a) } || [files.as_s]
+          else
+            first_found_candidates([entry])
+          end
         end
-        return first_found_candidates(list)
       end
 
       [yaml.as_s]
@@ -4202,14 +4206,10 @@ module Krikri
     end
 
     private def self.first_found_skip?(yaml : YAML::Any) : Bool
-      list = yaml.as_a?
-      return false unless list
-      first = list.first?
-      return false unless first
-      hash = first.as_h?
-      return false unless hash
-
-      hash["skip"]?.try(&.as_bool?) || false
+      return false unless list = yaml.as_a?
+      list.any? do |entry|
+        entry.as_h?.try(&.["skip"]?.try(&.as_bool?)) || false
+      end
     end
 
     # with_first_found:'s own paths: sub-key - only present in the dict
@@ -4221,17 +4221,22 @@ module Krikri
     # roots #resolve_first_found_path otherwise always used - the
     # candidate was never found and the loop silently skipped every time,
     # regardless of which file actually existed under that directory.
+    # Ansible applies a term's paths: only to that term's own files:, so
+    # when several dict terms are listed the paths: that matters is the
+    # one attached to a term that actually names files. A paths:-only
+    # term (Frzk.nftables) contributes no candidates at all - taking its
+    # paths: would wrongly redirect every later term's files away from
+    # the role's vars/ search stack.
     private def self.parse_first_found_paths(yaml : YAML::Any) : Array(String)?
-      list = yaml.as_a?
-      return nil unless list
-      first = list.first?
-      return nil unless first
-      hash = first.as_h?
-      return nil unless hash
-
-      paths = hash["paths"]?
-      return nil unless paths
-      paths.as_a?.try(&.map(&.as_s)) || [paths.as_s]
+      return nil unless list = yaml.as_a?
+      list.each do |entry|
+        next unless hash = entry.as_h?
+        next unless hash["files"]?
+        paths = hash["paths"]?
+        return nil unless paths
+        return paths.as_a?.try(&.map(&.as_s)) || [paths.as_s]
+      end
+      nil
     end
 
     # include_vars: - a controller-side pseudo-module ("_include_vars").
