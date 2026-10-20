@@ -19,7 +19,9 @@ require "json"
 # compiled binary inside the throwaway fedora image (read-only bind
 # mount of this worktree's ./bin, a fresh container per spec) and skips
 # cleanly when podman or that local image is unavailable. Containers are
-# named krikri-kp-fed-*.
+# named krikri-kp-fed-*. The image has ruby baked in (the gem spec needs
+# `gem`), and ~/.cache/krikri-dnf is mounted as libdnf5's cache so repo
+# metadata is downloaded once, not per container.
 FEDORA_IMAGE  = "localhost/krikri-fedora-compat:latest"
 FEDORA_BIN    = File.expand_path("../../bin", __DIR__)
 FEDORA_PREFIX = "krikri-kp-fed-s11"
@@ -45,10 +47,13 @@ def fedora_play(play : String, container : String) : Hash(String, Hash(String, J
   Process.run("podman", ["rm", "-f", FEDORA_PREFIX + container],
     output: Process::Redirect::Close, error: Process::Redirect::Close)
   output = IO::Memory.new
+  dnf_cache = File.join(ENV["XDG_CACHE_HOME"]? || File.join(Path.home, ".cache"), "krikri-dnf")
+  Dir.mkdir_p(dnf_cache)
   Process.run("podman", [
     "run", "--rm", "--name", FEDORA_PREFIX + container,
     "-v", "#{FEDORA_BIN}:/kbin:ro",
     "-v", "#{work}:/work",
+    "-v", "#{dnf_cache}:/var/cache/libdnf5",
     FEDORA_IMAGE,
     "sh", "-c", "/kbin/krikri-playbook -i localhost, -c local play.yml",
   ], output: output, error: output)
@@ -359,8 +364,6 @@ describe "dnf-family plugin result key order (sweep11)" do
       gather_facts: false
       connection: local
       tasks:
-        - command: dnf -y install ruby
-          changed_when: false
         - community.general.gem:
             name: rake
             state: present
