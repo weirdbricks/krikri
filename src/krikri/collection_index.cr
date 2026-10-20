@@ -30,7 +30,6 @@ require "./builtin_module_names_data"
 # refusal only fires when a needed directory/file is DEFINITELY absent
 # from every path real itself would search.
 module Krikri
-
   module CollectionIndex
     # Maximum meta/runtime.yml redirect chain depth before giving up as
     # "unsure" - real's own loader has no explicit cap but no real chain
@@ -245,8 +244,8 @@ module Krikri
         # short-circuiting every redirected name into "resolves".
         if redirects = builtin_redirects("modules")
           return Krikri.builtin_module_names.includes?(leaf) &&
-                 !redirects.has_key?(leaf) &&
-                 !builtin_redirects("action").try(&.has_key?(leaf))
+            !redirects.has_key?(leaf) &&
+            !builtin_redirects("action").try(&.has_key?(leaf))
         end
         return Krikri.builtin_module_names.includes?(leaf)
       end
@@ -314,7 +313,6 @@ module Krikri
         @@builtin_action_redirects = baked_action
         return baked_action
       end
-      nil
     end
 
     # A bare module name's ansible_builtin_runtime.yml redirect target
@@ -468,28 +466,37 @@ module Krikri
       # Action routing: the module file is gone but an action-plugin
       # redirect still resolves the name (bare `yum:` ->
       # ansible.builtin.dnf, live-verified vs 2.19.11).
-      if action_redirects = builtin_redirects("action")
-        if target = action_redirects[name]?
-          result = chain_resolves?("action", target, Set(String).new)
-          return {resolves: result[:resolves], missing_collection_warning: nil} unless result[:resolves].nil?
-        end
+      if resolution = action_redirect_resolution(name)
+        return resolution
       end
 
-      task_collections.each do |entry|
-        next unless entry.count('.') == 1
-        module_result = chain_resolves?("modules", "#{entry}.#{name}", Set(String).new)
-        action_result = module_result[:resolves] == false ? chain_resolves?("action", "#{entry}.#{name}", Set(String).new) : nil
-        if module_result[:resolves] == true || action_result.try(&.[:resolves]) == true
-          return {resolves: true, missing_collection_warning: nil}
-        end
-        # a listed collection that cannot provide it is skipped, not
-        # fatal - real tries the next listed collection (or the legacy
-        # search path) before refusing.
+      if listed_collections_provide?(name, task_collections)
+        return {resolves: true, missing_collection_warning: nil}
       end
 
       return {resolves: true, missing_collection_warning: nil} if library_module?(name, role_path, playbook_dir)
 
       {resolves: false, missing_collection_warning: nil}
+    end
+
+    private def self.action_redirect_resolution(name : String) : Resolution?
+      action_redirects = builtin_redirects("action") || return nil
+      target = action_redirects[name]? || return nil
+      result = chain_resolves?("action", target, Set(String).new)
+      return nil if result[:resolves].nil?
+      {resolves: result[:resolves], missing_collection_warning: nil}
+    end
+
+    # A listed collection that cannot provide the name is skipped, not
+    # fatal - real tries the next listed collection (or the legacy
+    # search path) before refusing.
+    private def self.listed_collections_provide?(name : String, task_collections : Array(String)) : Bool
+      task_collections.any? do |entry|
+        next false unless entry.count('.') == 1
+        module_result = chain_resolves?("modules", "#{entry}.#{name}", Set(String).new)
+        action_result = module_result[:resolves] == false ? chain_resolves?("action", "#{entry}.#{name}", Set(String).new) : nil
+        module_result[:resolves] == true || action_result.try(&.[:resolves]) == true
+      end
     end
 
     # The ImportError text ansible-core's collection loader surfaces when
@@ -600,7 +607,7 @@ module Krikri
     # installation discoverable, unsure.
     private def self.builtin_target?(kind : String, leaf : String) : Bool?
       return builtin_module?(leaf) if kind == "modules"
-      case action_file = builtin_action_file?(leaf)
+      case builtin_action_file?(leaf)
       when true
         return true
       when nil
@@ -664,6 +671,7 @@ module Krikri
       ignore_exts = [".pyc", ".pyo", ".swp", ".bak", "~", ".rpm", ".md", ".txt", ".rst", ".yaml", ".yml", ".ini"]
       roots = [] of String
       roots << File.join(role_path, "library") if role_path
+      roots.concat(PythonFilterRunner.loaded_role_roots("library"))
       roots << File.join(playbook_dir, "library") if playbook_dir && !playbook_dir.empty?
 
       roots.each do |root|

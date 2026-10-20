@@ -78,7 +78,7 @@ module Krikri
       # not role-adjacent directories - Ansible's own gate at Role.load.
       return if collection_name
       @@plugin_roots_mutex.synchronize do
-        {"filter_plugins", "test_plugins"}.each do |subdir|
+        {"filter_plugins", "test_plugins", "library"}.each do |subdir|
           dir = File.join(role_path, subdir)
           next unless Dir.exists?(dir)
           roots = @@loaded_role_plugin_roots[subdir] ||= [] of String
