@@ -94,6 +94,30 @@ describe "reserved variable name warning in role defaults/vars files" do
     FileUtils.rm_rf(src_dir) if src_dir && Dir.exists?(src_dir)
   end
 
+  it "stays silent about defaults/main.yml when the role's tasks fail to parse (tasks load first)" do
+    src_dir = File.tempname("reserved-role-task-error")
+    Dir.mkdir_p(File.join(src_dir, "roles", "r4", "defaults"))
+    Dir.mkdir_p(File.join(src_dir, "roles", "r4", "tasks"))
+    File.write(File.join(src_dir, "roles", "r4", "defaults", "main.yml"), "---\nname: x\n")
+    File.write(File.join(src_dir, "roles", "r4", "tasks", "main.yml"), "---\n- include: other.yml\n")
+    playbook = File.join(src_dir, "pb.yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        gather_facts: false
+        roles:
+          - r4
+      YAML
+
+    output = IO::Memory.new
+    Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output, chdir: src_dir)
+    text = output.to_s
+
+    text.must_include("action plugin has been removed")
+    refute(text.includes?("Found variable using reserved name"))
+  ensure
+    FileUtils.rm_rf(src_dir) if src_dir && Dir.exists?(src_dir)
+  end
+
   it "never warns for a role defaults/vars file with no reserved-name keys" do
     src_dir = File.tempname("reserved-role-clean")
     Dir.mkdir_p(File.join(src_dir, "roles", "r3", "defaults"))
