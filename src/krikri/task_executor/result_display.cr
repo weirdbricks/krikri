@@ -748,6 +748,25 @@ module Krikri
         end
         return
       end
+      # A KEYWORD conversion failure (a templated `become:` that rendered
+      # to a non-boolean - issue #143) is not an action-plugin failure:
+      # real's chain is the three-link keyword shape - "Task failed." at
+      # the task's Origin, then "Error processing keyword 'X'." and the
+      # bare conversion message, BOTH Origin'd at the keyword's value -
+      # never the "Action failed." segment the generic routing below
+      # would give a debug:/fail:/assert: task.
+      if kw = result["_ansible_keyword_conversion"]?.try(&.as_h?)
+        if origin = error_origin_context(source_task)
+          origin_text = kw["origin"]?.try(&.as_s?)
+          keyword = ErrorBlock::Node.new("Error processing keyword '#{kw["keyword"]?.try(&.as_s?)}'.",
+            source_context: origin_text)
+          keyword.with_chain(ErrorBlock::DIRECT_CAUSE, true,
+            ErrorBlock::Node.new(kw["conversion"]?.try(&.as_s?) || "", source_context: origin_text))
+          ErrorBlock.emit(ErrorBlock::Node.new("Task failed.", source_context: origin)
+            .with_chain(ErrorBlock::DIRECT_CAUSE, true, keyword))
+        end
+        return
+      end
       # assert:'s that: conditional failure: two-level chain, the second
       # Origin pointing at the failing that: item (index carried in the
       # internal _ansible_that_index key; when: failures are emitted by

@@ -1825,8 +1825,17 @@ module Krikri
       expr = task.become_expr
       return task.become? unless expr
 
+      # Ansible converts the rendered keyword with the same strict boolean()
+      # it applies to any bool keyword, so a templated name such as
+      # `become: "{{ ansible_user_id }}"` fails the task instead of being
+      # read as a condition (issue #143).
       rendered = substitutor.substitute(expr)
-      ConditionalEvaluator.evaluate(rendered, {} of String => JSON::Any) rescue task.become?
+      decided = ansible_become_string_boolean(rendered)
+      return decided unless decided.nil?
+      # KeywordBooleanError (not a plain message) so the failure result
+      # can render Ansible's own three-link chain with each link Origin'd
+      # at its own source position - see become_conversion_failure_json.
+      raise KeywordBooleanError.new("become", rendered)
     end
 
     # The effective become_user, with the same var-over-keyword origin
@@ -1866,6 +1875,13 @@ module Krikri
       return value if value.is_a?(Bool)
       return value != 0 if value.is_a?(Int)
       return nil unless value.is_a?(String)
+      ansible_become_string_boolean(value)
+    end
+
+    # The string forms of ansible's boolean() (case-insensitive, surrounding
+    # whitespace ignored); nil for anything else, which callers turn into
+    # their own failure rather than a guessed value.
+    private def ansible_become_string_boolean(value : String) : Bool?
       case value.strip.downcase
       when "y", "yes", "on", "1", "true"  then true
       when "n", "no", "off", "0", "false" then false
@@ -2680,6 +2696,56 @@ module Krikri
       h["failed"] = JSON::Any.new(true)
       h["msg"] = JSON::Any.new(finalize_args_failure_message(ex, task))
       Krikri.mark_failed_key_order(JSON::Any.new(h), FAILED_KEY_ORDER_EXCEPTION_FIRST)
+    end
+
+    # The failed result for a KEYWORD conversion failure (a templated
+    # `become:` that rendered to a non-boolean - issue #143):
+    # finalization_failure_json's shape plus the marker the display path
+    # needs to render Ansible's three-link [ERROR] chain ("Task failed."
+    # / "Error processing keyword 'become'." / the conversion message,
+    # the last two both Origin'd at the become: value - live-captured).
+    # Without the marker the generic display path misroutes the brief
+    # through debug:'s action-level "Action failed." shape - a segment
+    # real never prints for a keyword failure, which is not an
+    # action-plugin failure.
+    private def become_conversion_failure_json(ex : KeywordBooleanError, task : Task) : JSON::Any
+      result = finalization_failure_json(ex, task)
+      result.as_h["_ansible_keyword_conversion"] = JSON.parse({
+        "keyword"    => ex.keyword,
+        "conversion" => "The value '#{ex.rendered}' could not be converted to 'bool'.",
+        "origin"     => keyword_value_origin(task, ex.keyword),
+      }.to_json)
+      result
+    end
+
+    # Routes a task-keyword rescue to the right failure shape: a boolean
+    # conversion failure carries the chain marker, everything else keeps
+    # the plain finalization shape.
+    private def keyword_failure_json(ex : UndefinedVariableError, task : Task) : JSON::Any
+      ex.is_a?(KeywordBooleanError) ? become_conversion_failure_json(ex, task) : finalization_failure_json(ex, task)
+    end
+
+    # A task keyword's VALUE's own column (the first non-space character
+    # after the key's colon), scanned forward from the task's own line -
+    # Ansible's keyword-failure chain points both of its lower links
+    # there, not at the key (same convention timeout_keyword_value_origin
+    # applies to timeout:).
+    private def keyword_value_origin(task : Task, keyword : String) : String?
+      path = task.source_file
+      return nil unless path && task.source_line > 0 && File.file?(path)
+      lines = File.read_lines(path)
+      ((task.source_line - 1)...lines.size).each do |idx|
+        line = lines[idx]
+        at = line.index("#{keyword}:")
+        next unless at
+        next unless line[0...at].strip.empty?
+        col = at + keyword.size + 1
+        while col < line.size && line[col] == ' '
+          col += 1
+        end
+        return ErrorBlock.origin_context(path, idx + 1, col + 1)
+      end
+      nil
     end
 
     # command/shell/script/raw written free-form (`command: echo {{ x }}`, also

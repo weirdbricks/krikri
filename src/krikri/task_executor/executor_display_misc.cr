@@ -731,7 +731,12 @@ module Krikri
       # applies at its own call site.
       become = false
       become_user = nil
-      if substitutor && resolve_task_become(task, substitutor)
+      become_resolved = begin
+        substitutor && resolve_task_become(task, substitutor)
+      rescue ex : UndefinedVariableError
+        return keyword_failure_json(ex, task)
+      end
+      if become_resolved
         become = true
         candidate = substituted_become_user
         become_user = (candidate.nil? || candidate.empty?) ? "root" : candidate

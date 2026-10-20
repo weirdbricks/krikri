@@ -1103,7 +1103,11 @@ module Krikri
         wire_vars["ansible_connection"] = JSON::Any.new("local")
       end
 
-      become = resolve_task_become(handler, substitutor)
+      become = begin
+        resolve_task_become(handler, substitutor)
+      rescue ex : UndefinedVariableError
+        return keyword_failure_json(ex, handler)
+      end
 
       config = build_plugin_config(handler, host, substituted_params, wire_vars, substituted_become_user, substituted_env, become_flag: become)
 

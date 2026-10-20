@@ -63,6 +63,22 @@ module Krikri
   class UndefinedVariableError < Exception
   end
 
+  # A task KEYWORD's rendered value that ansible's boolean() refuses
+  # (`become: "{{ ansible_user_id }}"` resolving to a username - issue
+  # #143). Carries the keyword name and the rendered value so the
+  # failure result can build Ansible's own three-link [ERROR] chain
+  # (each link Origin'd separately) instead of re-parsing them out of
+  # the collapsed brief - a value containing a quote would make that
+  # parse unreliable.
+  class KeywordBooleanError < UndefinedVariableError
+    getter keyword : String
+    getter rendered : String
+
+    def initialize(@keyword : String, @rendered : String)
+      super("Task failed: Error processing keyword '#{@keyword}': The value '#{@rendered}' could not be converted to 'bool'.")
+    end
+  end
+
   # A Python list-method call's runtime failure ("'z' is not in list",
   # "pop from empty list", ...) surfacing through a STRICT render: real
   # 2.19.11 words the when:-side failure "Task failed: Error rendering

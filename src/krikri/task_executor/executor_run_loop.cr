@@ -1918,6 +1918,15 @@ module Krikri
         return apply_changed_failed_when(task, violation, vars_context, host)
       end
 
+      # Ansible validates the become: keyword for every task before any
+      # action plugin runs, so a non-boolean templated become: fails debug:
+      # and the other controller-side actions too (issue #143).
+      begin
+        resolve_task_become(task, substitutor)
+      rescue ex : UndefinedVariableError
+        return keyword_failure_json(ex, task)
+      end
+
       if ActionPluginManager.has_action_plugin?(task.module_name)
         # task_host is the TASK's own host, passed only when delegate_to: is
         # in play - synchronize's dest_is_local branch (delegate_to naming
@@ -1975,7 +1984,11 @@ module Krikri
         return apply_changed_failed_when(task, violation, vars_context, host)
       end
 
-      become = resolve_task_become(task, substitutor)
+      become = begin
+        resolve_task_become(task, substitutor)
+      rescue ex : UndefinedVariableError
+        return keyword_failure_json(ex, task)
+      end
       become_user = nil
 
       if become
@@ -2350,6 +2363,15 @@ module Krikri
         return apply_changed_failed_when(task, violation, vars_context, host)
       end
 
+      # Ansible validates the become: keyword before any action plugin runs,
+      # so a non-boolean templated become: fails debug: and the other
+      # controller-side actions too (issue #143).
+      begin
+        resolve_task_become(task, substitutor)
+      rescue ex : UndefinedVariableError
+        return keyword_failure_json(ex, task)
+      end
+
       if ActionPluginManager.has_action_plugin?(task.module_name)
         # task_host is the TASK's own host, passed only when delegate_to: is
         # in play (exec_host above is the delegate-resolved endpoint) - see
@@ -2456,7 +2478,11 @@ module Krikri
       # become: field (async:'s job file resolves it back out via
       # resolve_become) carries the same var-aware verdict the dispatch
       # below uses.
-      become = resolve_task_become(task, substitutor)
+      become = begin
+        resolve_task_become(task, substitutor)
+      rescue ex : UndefinedVariableError
+        return keyword_failure_json(ex, task)
+      end
       become_user = nil
 
       if become
