@@ -1,4 +1,5 @@
 require "json"
+require "./inventory_parser"
 
 module Krikri
   # ansible-core 2.19.11's REGISTERED key order for a FAILED
