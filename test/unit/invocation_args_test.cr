@@ -11,6 +11,11 @@ describe Krikri::ArgspecValidator do
     args["expand_argument_vars"].as_bool.must_equal(true)
   end
 
+  it "reports find's patterns default as [\"*\"] in invocation.module_args" do
+    args = Krikri::ArgspecValidator.invocation_args("ansible.builtin.find", {"paths" => "/tmp"}).as(Hash(String, JSON::Any))
+    args["patterns"].as_a.map(&.as_s).must_equal(["*"])
+  end
+
   it "has no invocation for an unknown module" do
     Krikri::ArgspecValidator.invocation_args("ansible.builtin.nope", {} of String => String).must_be_nil
   end
