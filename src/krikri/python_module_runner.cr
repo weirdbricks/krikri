@@ -56,12 +56,18 @@ module Krikri
     # timesync_provider.sh - must resolve to the script, never the stub.
     MODULE_IGNORE_EXTS = %w[.pyc .pyo .swp .bak ~ .rpm .md .txt .rst .yaml .yml .ini]
 
+    # Between the role's own library/ and the playbook's sit the
+    # library/ dirs of every role loaded so far: ansible adds a role's
+    # library/ to the module path at Role.load and keeps it for the rest
+    # of the run, so a role pulled in through include_role: still sees
+    # its ancestors' custom modules.
     def find_source(module_name : String, role_path : String?, playbook_dir : String?) : String?
       short = short_name(module_name)
       return nil if short.empty?
 
       roots = [] of String
       roots << File.join(role_path, "library") if role_path
+      roots.concat(PythonFilterRunner.loaded_role_roots("library"))
       roots << File.join(playbook_dir, "library") if playbook_dir && !playbook_dir.empty?
 
       roots.each do |root|
