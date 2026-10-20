@@ -26,6 +26,21 @@ module PluginSpecHelper
   @@tmp_mutex = Mutex.new
   @@tmp_dir_by_fiber = {} of Fiber => String
 
+  # MINITEST_TIMINGS=<file> appends one "<seconds>\t<serial|parallel>\t<test>" line per test as it
+  # finishes (appended, not written at exit: minitest's own at_exit hook runs the tests, so a
+  # hook registered here would fire before them). Serial tests are timed inside STATE_MUTEX, so
+  # waiting for the lock is not counted. Each test is recorded several times (only one with real
+  # time), so summarize with scripts/minitest_timings.sh <file>.
+  TIMINGS_PATH  = ENV["MINITEST_TIMINGS"]?
+  TIMINGS_MUTEX = Mutex.new
+
+  def self.record_timing(test : String, serial : Bool, elapsed : Time::Span) : Nil
+    return unless path = TIMINGS_PATH
+    TIMINGS_MUTEX.synchronize do
+      File.open(path, "a") { |file| file.puts "#{elapsed.total_seconds.round(2)}\t#{serial ? "serial" : "parallel"}\t#{test}" }
+    end
+  end
+
   def self.begin_test_tmp : Nil
     dir = File.join(TEST_TMP_BASE, "p", Random::Secure.hex(8))
     FileUtils.rm_rf(dir)
@@ -433,9 +448,15 @@ class Minitest::Spec
   def run_one(name : String, proc : Test ->) : Nil
     PluginSpecHelper.begin_test_tmp
     if serial?
-      PluginSpecHelper::STATE_MUTEX.synchronize { super }
+      PluginSpecHelper::STATE_MUTEX.synchronize do
+        started = Time.instant
+        super
+        PluginSpecHelper.record_timing("#{self.class.name}##{name}", true, Time.instant - started)
+      end
     else
+      started = Time.instant
       super
+      PluginSpecHelper.record_timing("#{self.class.name}##{name}", false, Time.instant - started)
     end
   ensure
     PluginSpecHelper.end_test_tmp
