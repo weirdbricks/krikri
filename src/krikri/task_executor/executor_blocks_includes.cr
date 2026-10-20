@@ -758,6 +758,9 @@ module Krikri
             item_results << JSON::Any.new({"item" => item, "changed" => JSON::Any.new(false), "failed" => JSON::Any.new(true), "ansible_facts" => include_vars_failure_facts(name_key)} of String => JSON::Any)
             next
           end
+          # ansible-core warns on the file's reserved top-level keys as
+          # include_vars loads it, before the task's own result line.
+          PlaybookParser.warn_reserved_toplevel_vars_file(path)
 
           store = (@included_vars[host.name] ||= Hash(String, JSON::Any).new)
           if store_key = include_vars_store_key(task, name_key)
@@ -919,6 +922,9 @@ module Krikri
         finish_include_vars_failure(task, host, "include_vars: could not parse #{path}: #{ex.message}")
         return
       end
+      # ansible-core warns on the file's reserved top-level keys as
+      # include_vars loads it, before the task's own result line.
+      PlaybookParser.warn_reserved_toplevel_vars_file(path)
 
       store = (@included_vars[host.name] ||= Hash(String, JSON::Any).new)
       if store_key = include_vars_store_key(task, name_key)
@@ -1058,6 +1064,9 @@ module Krikri
           finish_include_vars_failure(task, host, "include_vars: could not parse #{path}: #{ex.message}")
           return
         end
+        # ansible-core warns on each dir file's reserved top-level keys as
+        # it loads them, before the task's own result line.
+        PlaybookParser.warn_reserved_toplevel_vars_file(path)
         loaded.each { |key, value| combined[key] = value }
         record_include_var_origins(host, path, loaded)
       end
