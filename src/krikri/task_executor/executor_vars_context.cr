@@ -2703,6 +2703,11 @@ module Krikri
         # false}) - so the key is dropped for the dump and backfilled at
         # register time instead.
         h["_ansible_register_changed"] = JSON::Any.new(false)
+        # A looped debug item is a task-level failure: ansible prints the
+        # per-item line msg-only (no loop bindings) and closes the loop with
+        # the aggregate `fatal: ... "One or more items failed"`; the marker
+        # routes it through the same display path as a when:-failed item.
+        h["_ansible_task_error_msg_only"] = JSON::Any.new(true)
       end
       h["failed"] = JSON::Any.new(true)
       h["msg"] = JSON::Any.new(finalize_args_failure_message(ex, task))
