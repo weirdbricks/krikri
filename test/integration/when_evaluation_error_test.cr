@@ -229,6 +229,81 @@ describe "ignore_errors: on an ordinary (non-when-related) task failure" do
     FileUtils.rm_rf(dir) if dir && Dir.exists?(dir)
   end
 
+  # ansible's data lineage follows a stored value that is itself a
+  # single-variable template: a var whose value is `{{ other }}` (or
+  # `{{ other | default('d') }}`) tested by a bare `when:` is labeled
+  # with the innermost source value's defining position, not the
+  # templated var's own line (live-verified vs 2.19.11, issue #151).
+  it "labels a chained role-default conditional value with the innermost source position" do
+    dir = File.tempname("when-role-chain-origin", ".d")
+    Dir.mkdir(dir)
+    Dir.mkdir_p(File.join(dir, "roles", "testrole", "defaults"))
+    Dir.mkdir_p(File.join(dir, "roles", "testrole", "tasks"))
+    File.write(File.join(dir, "roles", "testrole", "defaults", "main.yml"), <<-YAML)
+      gitlab_flag: "some string"
+      gitlab_cond: "{{ gitlab_flag }}"
+      YAML
+    File.write(File.join(dir, "roles", "testrole", "tasks", "main.yml"), <<-YAML)
+      - name: chained conditional
+        ansible.builtin.debug:
+          msg: hi
+        when: gitlab_cond
+      YAML
+    playbook = File.join(dir, "site.yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        roles:
+          - testrole
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+
+    status.success?.must_equal(false)
+    # gitlab_flag's own value token (`gitlab_flag: "some string"`, value
+    # at col 14), not gitlab_cond's line.
+    expected = "was derived from value of type 'str' at '#{File.join(dir, "roles", "testrole", "defaults", "main.yml")}:1:14'"
+    output.to_s.must_include(expected, output.to_s)
+  ensure
+    FileUtils.rm_rf(dir) if dir && Dir.exists?(dir)
+  end
+
+  it "labels a default-filter-chained role-default conditional value with the innermost source position" do
+    dir = File.tempname("when-role-chain-default-origin", ".d")
+    Dir.mkdir(dir)
+    Dir.mkdir_p(File.join(dir, "roles", "testrole", "defaults"))
+    Dir.mkdir_p(File.join(dir, "roles", "testrole", "tasks"))
+    File.write(File.join(dir, "roles", "testrole", "defaults", "main.yml"), <<-YAML)
+      gitlab_flag: "some string"
+      gitlab_cond: "{{ gitlab_flag | default('d') }}"
+      YAML
+    File.write(File.join(dir, "roles", "testrole", "tasks", "main.yml"), <<-YAML)
+      - name: chained default conditional
+        ansible.builtin.debug:
+          msg: hi
+        when: gitlab_cond
+      YAML
+    playbook = File.join(dir, "site.yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        roles:
+          - testrole
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+
+    status.success?.must_equal(false)
+    expected = "was derived from value of type 'str' at '#{File.join(dir, "roles", "testrole", "defaults", "main.yml")}:1:14'"
+    output.to_s.must_include(expected, output.to_s)
+  ensure
+    FileUtils.rm_rf(dir) if dir && Dir.exists?(dir)
+  end
+
   # Same decoration must survive an include_tasks: hop inside the role:
   # the included file's tasks are parsed outside the role, so without the
   # origins travelling with the values they describe the location silently
