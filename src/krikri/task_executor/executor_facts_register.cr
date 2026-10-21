@@ -159,9 +159,25 @@ module Krikri
           # `setup:` task counts normally.
           @results[host.name]["ok"] += 1
         else
-          puts "failed: [#{host.name}]".colorize(:red)
-          puts "  Error gathering facts: #{error_message}".colorize(:red)
+          if missing = @facts_interpreter_missing[host.name]?
+            interp, remote = missing
+            # Ansible prints a full failed-setup block for a missing
+            # module interpreter (cause chain, sub-event box, fatal line
+            # with the failed_modules payload) - not the generic two-line
+            # failure report. The fatal line gets the red tint like every
+            # neighbouring fatal line; the block's other lines stay plain.
+            report_lines = Krikri::FactsGatherer.interpreter_missing_report(host.name, interp, host.connection_host, remote).split("\n")
+            fatal_line = report_lines.pop
+            report_lines.each { |line| puts line }
+            puts fatal_line.colorize(:red)
+          else
+            puts "failed: [#{host.name}]".colorize(:red)
+            puts "  Error gathering facts: #{error_message}".colorize(:red)
+          end
           @results[host.name]["failed"] += 1
+          # A failed implicit setup halts the host like any failed task -
+          # ansible-playbook runs none of the play's tasks on it afterwards.
+          @halted_hosts.add(host.name)
         end
       end
     end
@@ -189,6 +205,26 @@ module Krikri
       return nil unless conn_type && PluginManager.connection_plugin_not_found?(conn_type)
 
       "Task failed: the connection plugin '#{conn_type}' was not found"
+    end
+
+    # The effective ansible_python_interpreter for the implicit setup
+    # task: Ansible applies role defaults at gather time too, and krikri
+    # stores role defaults unrendered, so the value may itself be Jinja
+    # (e.g. "{{ pypy_dir }}/bin/python"). Host vars win over role
+    # defaults, matching Ansible's precedence.
+    private def effective_python_interpreter(host : Host, vars_context : Hash(String, JSON::Any)) : String?
+      return nil unless host.vars.has_key?("ansible_python_interpreter") ||
+                        @all_role_defaults.has_key?("ansible_python_interpreter")
+
+      context = vars_context.dup
+      @all_role_defaults.each { |key, value| context[key] ||= value }
+      raw = context["ansible_python_interpreter"]?
+      return nil unless raw
+
+      rendered = render_task_var_value(raw, context, host.name)
+      value = rendered.as_s?
+      return nil unless value && !value.empty?
+      value
     end
 
     # "Plugin execution failed on remote" alone hides WHY the plugin
@@ -253,6 +289,14 @@ module Krikri
       end
       params["_remote_connection"] = remote.to_s
       params["_first_gather"] = first_gather_for_host?(host).to_s
+      # Ansible's setup module runs under the host's configured
+      # ansible_python_interpreter (host vars or role defaults, which
+      # Ansible applies at implicit-gather time) and fails Gathering
+      # Facts with rc 127 when it is missing on the target - the facts
+      # plugin performs that check there.
+      if interpreter = effective_python_interpreter(host, vars_context)
+        params["ansible_python_interpreter"] = interpreter
+      end
 
       config = {
         "host" => {
@@ -282,11 +326,22 @@ module Krikri
         if (stderr = result["stderr"]?.try(&.as_s?)) && !stderr.empty?
           msg += "\n  stderr: #{stderr.strip.lines[0, 10].join("\n  stderr: ")}"
         end
+        # The gatherer marks an rc-127 interpreter-not-found failure with
+        # the configured path itself - remember it (and whether this ran
+        # over SSH, which decides which shell-error form ansible shows)
+        # so the report below can print the real fatal block.
+        if (interp = result["interpreter_missing"]?.try(&.as_s?)) && !interp.empty?
+          @facts_interpreter_missing[host.name] = {interp, remote}
+        end
         return {false, msg, result["unreachable"]?.try(&.as_bool?) == true}
       end
 
       if ansible_facts = result["ansible_facts"]?
         @facts_results[host.name] = result
+        # A later successful gather clears any stale interpreter-failure
+        # stamp, so the report below never prints for a host whose facts
+        # eventually came through.
+        @facts_interpreter_missing.delete(host.name)
         facts = Hash(String, JSON::Any).new
         ansible_facts.as_h.each { |key, value| facts[key] = value }
         # Merge, not replace: with the run-scoped fact store this host may
