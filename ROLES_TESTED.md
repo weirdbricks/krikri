@@ -14025,3 +14025,23 @@ Local probe roles, not Galaxy roles: each probed task registers its result and d
 | `onaio.superset` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29876552, 0.9.1814 release). Times: cold py 0.49s vs cr 0.01s; warm py 0.49s vs cr 0.01s. |
 | `ramsailopal.docker_conf` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29876551, 0.9.1814 release). Times: cold py 0.50s vs cr 0.03s; warm py 0.49s vs cr 0.02s. |
 | `vmichel95.azure_pipelines_agent_ctl` | rocky | ✅ Clean (round29876545, 0.9.1814 release). Times: cold py 6.22s vs cr 2.14s; warm py 6.49s vs cr 0.53s. |
+| `AlbanAndrieu.ansible_dns` | rocky | ❌ Divergent - issue #208 (round29876629, 0.9.1815 debug). |
+| `BertRaeymaekers.iim` | ubuntu | ❌ Divergent - issue #209 (round29876620, 0.9.1815 debug). |
+| `BertRaeymaekers.was` | rocky | ❌ Divergent - issue #209 (round29876621, 0.9.1815 debug). |
+| `GuillaumeSmaha.gluu-customization` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29876616, 0.9.1815 debug). |
+| `SoInteractive.firewall` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29876614, 0.9.1815 debug). |
+| `godleon.apt_mirror` | ubuntu | ✅ Clean (round29876610, 0.9.1815 debug). |
+| `ivoamorim.tcpwrappers` | rocky | ✅ Clean (round29876615, 0.9.1815 debug). |
+| `juju4_harden` | ubuntu | ❌ BLOCKED: (round29876618, 0.9.1815 debug). |
+| `kazoo-ansible.freeswitch` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29876611, 0.9.1815 debug). |
+| `leadlineit.mysql_server` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29876617, 0.9.1815 debug). |
+| `officel.selinux` | ubuntu | ✅ Clean (round29876612, 0.9.1815 debug). |
+| `openapphack.java` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29876626, 0.9.1815 debug). |
+| `pandemonium1986.os_appliances` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29876619, 0.9.1815 debug). |
+| `piatrou.user` | ubuntu | ❌ Divergent - issue #210 (round29876624, 0.9.1815 debug). |
+| `redirectionio.nginx_module` | ubuntu | ❌ Divergent - issue #211 (round29876622, 0.9.1815 debug). |
+| `s2ansible.yumrepo_epel` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29876625, 0.9.1815 debug). |
+| `staenker.ipv6-support` | ubuntu | ✅ Clean (round29876628, 0.9.1815 debug). |
+| `stancel.add_digitalocean_dns_entries` | rocky | ⚠ only a community module krikri does not track differs (round29876613, 0.9.1815 debug). |
+| `wtanaka.ufraw` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29876627, 0.9.1815 debug). |
+| `xanmanning.sshuttle` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29876623, 0.9.1815 debug). |
