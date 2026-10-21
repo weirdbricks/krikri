@@ -13920,3 +13920,13 @@ Local probe roles, not Galaxy roles: each probed task registers its result and d
 | `newtonne.backup` | rocky | ✅ Clean (round29875846, 0.9.1805 release). Times: cold py 2.26s vs cr 0.94s; warm py 1.44s vs cr 0.16s. |
 | `opdavies.webmin` | ubuntu | ✅ Clean (round29875845, 0.9.1805 release). Times: cold py 2.77s vs cr 0.69s; warm py 3.50s vs cr 0.11s. |
 | `wtanaka.intellij` | ubuntu | ✅ Clean (round29875839, 0.9.1805 release). Times: cold py 3.88s vs cr 0.78s; warm py 2.45s vs cr 0.13s. |
+| `basisconfig.k8s_prerequisites` | rocky | ✅ Clean (round29875865, 0.9.1805 release). Times: cold py 5.58s vs cr 7.45s; warm py 3.49s vs cr 0.46s. |
+| `caermeglaeddyv.ansible_role_cfssl` | ubuntu | ✅ Clean (round29875868, 0.9.1805 release). Times: cold py 5.71s vs cr 4.43s; warm py 4.80s vs cr 0.56s. |
+| `evogalaxy.elasticsearch` | ubuntu | ✅ Clean (round29875862, 0.9.1805 release). Times: cold py 5.08s vs cr 5.05s; warm py 3.92s vs cr 0.49s. |
+| `iqoption.selenoid-docker` | rocky | ✅ Clean (round29875863, 0.9.1805 release). Times: cold py 5.09s vs cr 7.17s; warm py 4.10s vs cr 0.34s. |
+| `kosssi.apache` | rocky | ✅ Clean (round29875869, 0.9.1805 release). Times: cold py 2.89s vs cr 0.84s; warm py 2.39s vs cr 0.35s. |
+| `localhappiness.ansible_zsh_p10k_role` | rocky | ✅ Clean (round29875871, 0.9.1805 release). Times: cold py 3.25s vs cr 1.10s; warm py 1.73s vs cr 0.35s. |
+| `spector517.openvpn` | ubuntu | ✅ Clean (round29875870, 0.9.1805 release). Times: cold py 4.33s vs cr 3.45s; warm py 3.03s vs cr 0.42s. |
+| `ulrich-sun.kubernetes` | ubuntu | ✅ Clean (round29875864, 0.9.1805 release). Times: cold py 4.66s vs cr 4.31s; warm py 4.67s vs cr 0.46s. |
+| `yauh.mailcatcher` | rocky | ✅ Clean (round29875867, 0.9.1805 release). Times: cold py 1.90s vs cr 0.81s; warm py 1.42s vs cr 0.14s. |
+| `znz_unattended-upgrades` | ubuntu | ❌ BLOCKED: (round29875866, 0.9.1805 release). |
