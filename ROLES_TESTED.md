@@ -13960,3 +13960,8 @@ Local probe roles, not Galaxy roles: each probed task registers its result and d
 | `adlytaibi.sgws_config` | ubuntu | ❌ Divergent - issue #196 (round29875923, 0.9.1806 release). Times: cold py 2.78s vs cr 0.76s; warm py 2.49s vs cr 0.11s. |
 | `cowops.debian-git` | ubuntu | ✅ Clean (round29875925, 0.9.1806 release). Times: cold py 14.95s vs cr 12.60s; warm py 6.00s vs cr 5.20s. |
 | `singleplatform-eng.ansible_role_systemd_service` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29875924, 0.9.1806 release). Times: cold py 3.28s vs cr 1.02s; warm py 3.36s vs cr 0.15s. |
+| `Temelio.skel` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29875941, 0.9.1806 release). Times: cold py 0.47s vs cr 0.01s; warm py 0.47s vs cr 0.01s. |
+| `abaez.sudo` | ubuntu | ❌ Divergent - issue #197 (round29875939, 0.9.1806 release). Times: cold py 15.30s vs cr 5.82s; warm py 19.03s vs cr 1.03s. |
+| `ansiblebit.nginx` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29875940, 0.9.1806 release). Times: cold py 0.44s vs cr 0.01s; warm py 0.44s vs cr 0.01s. |
+| `stefano-m.iptables` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29875942, 0.9.1806 release). Times: cold py 4.68s vs cr 6.75s; warm py 3.73s vs cr 0.50s. |
+| `trombik.grafana` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29875943, 0.9.1806 release). Times: cold py 0.49s vs cr 0.01s; warm py 0.47s vs cr 0.01s. |
