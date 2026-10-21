@@ -895,6 +895,18 @@ module Krikri
         host_name: host.name
       )
 
+      # Same keyword-first ordering as execute_task_once (Ansible templates
+      # become_user before finalizing module args).
+      substituted_become_user = begin
+        resolve_task_become_user(handler, vars_context, substitutor)
+      rescue ex : UndefinedVariableError
+        result = keyword_failure_json(ex, handler)
+        if register_name = handler.register
+          register_result(host, register_name, result) unless register_name.empty?
+        end
+        return result
+      end
+
       # Substitute variables in handler parameters. Same "finalization of
       # task args failed" rescue as execute_task_once/prepare_batch_step
       # (see there) - a handler has no equivalent before this, so a
@@ -985,18 +997,6 @@ module Krikri
         return result
       end
       substituted_params = staged_assemble
-      # Same "finalization failed" shape as the begin/rescue above: a
-      # strict-undefined become_user keyword fails this handler (not the
-      # run), and no module/sudo may run afterward.
-      substituted_become_user = begin
-        resolve_task_become_user(handler, vars_context, substitutor)
-      rescue ex : UndefinedVariableError
-        result = finalization_failure_json(ex, handler)
-        if register_name = handler.register
-          register_result(host, register_name, result) unless register_name.empty?
-        end
-        return result
-      end
 
       # `timeout:` - same resolution and range validation the regular
       # task path runs (see execute_task_once), at the same point: after

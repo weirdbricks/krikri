@@ -2761,6 +2761,22 @@ module Krikri
         }.to_json)
         return result
       end
+      # become_user: the same three-link keyword chain, except the innermost
+      # link points at the VARIABLE definition whose own value fails
+      # (`ihs_user: "{{ ibm_user }}"` in defaults/), not at the keyword value
+      # - live-verified vs ansible-core 2.19.11 on BertRaeymaekers.iim (#209).
+      user_prefix = "Task failed: Error processing keyword 'become_user': "
+      if (msg = ex.message) && msg.starts_with?(user_prefix)
+        conversion = msg[user_prefix.size..]
+        result = finalization_failure_json(ex, task)
+        result.as_h["_ansible_keyword_conversion"] = JSON.parse({
+          "keyword"           => "become_user",
+          "conversion"        => conversion,
+          "origin"            => keyword_value_origin(task, "become_user"),
+          "conversion_origin" => undef_chain_origin_block(task, conversion),
+        }.to_json)
+        return result
+      end
       finalization_failure_json(ex, task)
     end
 
