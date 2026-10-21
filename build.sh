@@ -327,15 +327,16 @@ if [ "$STATIC" = true ]; then
 fi
 echo ""
 
-# fmod symbol-version shim (dynamic Linux builds only): a binary linked
-# on a glibc >= 2.38 host binds libm's fmod to the new fmod@GLIBC_2.38
-# node and refuses to start on older targets (the Ubuntu 22.04
-# benchmark-round hosts: "version `GLIBC_2.38' not found", round
-# 5230000). The reference comes from krikri-jinja's Python-parity float
-# `%`/floor-divide. scripts/fmod_compat.s defines fmod strongly and
-# tail-jumps to the GLIBC_2.2.5 node - which is also what Python on the
-# targets runs, so parity is preserved, not just compatibility. musl
-# static builds have no symbol versioning; macOS has no version nodes.
+# Symbol-version compat shim (dynamic Linux builds only): a binary
+# linked on a glibc >= 2.38 host binds to the new GLIBC_2.38 symbol
+# nodes (libm's fmod, the C23 strtol family) and refuses to start on
+# older targets (the Ubuntu 22.04 benchmark-round hosts: "version
+# `GLIBC_2.38' not found", round 5230000; Rocky 9 likewise for the
+# strtol family, issue #164). scripts/fmod_compat.s defines the
+# affected symbols strongly and tail-jumps to the pre-2.38 nodes -
+# which is also what Python on the targets runs, so parity is
+# preserved, not just compatibility. musl static builds have no symbol
+# versioning; macOS has no version nodes.
 LINK_SHIM_ARGS=""
 if [ "$STATIC" = false ] && [ "$IS_DARWIN" = false ] && [ -f "scripts/fmod_compat.s" ]; then
     SHIM_OBJ="$PWD/$CACHE_ROOT/fmod_compat.o"
