@@ -137,8 +137,12 @@ describe "dnf/yum failed install - Ansible's per-spec failures shape (issue 19)"
     with_failing_dnf_shim(
       "",
       "Public key for epel-release-latest-9.noarchabc.rpm is not installed. Failing package is: epel-release-9-11.el9.noarch\nError: GPG check FAILED\n") do
+      # A remote name is fetched by the plugin first (ansible's fetch_file runs
+      # before dnf), so the GPG path is reached with a staged local rpm.
+      rpm = PluginSpecHelper.tmp_path("epel-release-latest-9.noarch.rpm")
+      File.write(rpm, "")
       result = PluginSpecHelper.run("dnf",
-        {"name" => "http://example.invalid/epel-release-latest-9.noarch.rpm", "state" => "present"},
+        {"name" => rpm, "state" => "present"},
         vars: {"ansible_pkg_mgr" => "dnf"})
 
       result["failed"].as_bool.must_equal(true)
@@ -154,8 +158,10 @@ describe "dnf/yum failed install - Ansible's per-spec failures shape (issue 19)"
     with_failing_dnf_shim(
       " Package          Arch     Version     Repository     Size\nInstalling:\n epel-release     noarch   9-11.el9    @commandline   18 k\n",
       "Public key for epel-release-latest-9.noarchabc.rpm is not installed\nError: GPG check FAILED\n") do
+      rpm = PluginSpecHelper.tmp_path("epel-release-latest-9.noarch.rpm")
+      File.write(rpm, "")
       result = PluginSpecHelper.run("dnf",
-        {"name" => "http://example.invalid/epel-release-latest-9.noarch.rpm", "state" => "present"},
+        {"name" => rpm, "state" => "present"},
         vars: {"ansible_pkg_mgr" => "dnf"})
 
       result["msg"].as_s.must_equal(

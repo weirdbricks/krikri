@@ -1,5 +1,6 @@
 require "json"
 require "./dnf_install_failures"
+require "./http_download"
 require "../base_plugin"
 
 module Krikri
@@ -103,8 +104,14 @@ module Krikri
       # spec for anything rpm cannot name (a group, a URL/local RPM, a
       # virtual provide) - a stable, deterministic string either way.
       private def rpm_nevra(pkg : String) : String
+        # A downloaded remote RPM is staged to a local file (see handle_install),
+        # which the RPM database does not know by path: `rpm -q <path>` falls
+        # back to the path and leaks the temp name into "Installed:". Ansible's
+        # remote-rpm results name the package from the file's own header, so
+        # query the file with `rpm -qp` instead.
+        query = pkg.starts_with?("/") && pkg.ends_with?(".rpm") ? "rpm -qp" : "rpm -q"
         result = remote_exec_tolerating_unknown_repo(
-          "rpm -q --qf '%{NAME}-%{VERSION}-%{RELEASE}.%{ARCH}' #{quote_package(pkg)}"
+          "#{query} --qf '%{NAME}-%{VERSION}-%{RELEASE}.%{ARCH}' #{quote_package(pkg)}"
         )
         out = result[:stdout].strip
         return pkg if result[:exit_code] != 0 || out.empty? || out.includes?("not installed")
@@ -572,7 +579,86 @@ module Krikri
         Array(String).from_json(trimmed) rescue nil
       end
 
+      # A name containing '://' is a remote RPM: ansible's dnf module
+      # downloads it itself (dnf.py _parse_spec_group_file calls fetch_file
+      # for every such name) before any transaction runs, so a failed fetch
+      # surfaces as urllib-shaped "Failure downloading <url>, <msg>" with
+      # the module's own msg-only result. Staging the file here hands dnf
+      # the local path, as ansible does, instead of letting dnf's libdnf/curl
+      # stack fetch the URL and fail with its own wording.
       private def handle_install(names : Array(String), options : String) : PluginResult
+        staged = [] of String
+        begin
+          local_names = [] of String
+          names.each do |name|
+            unless remote_rpm_url?(name)
+              local_names << name
+              next
+            end
+            begin
+              local_names << stage_remote_rpm(name.strip, staged)
+            rescue ex
+              return PluginResult.new(
+                changed: false,
+                failed: true,
+                msg: "Failure downloading #{name}, #{remote_rpm_failure_detail(ex)}"
+              )
+            end
+          end
+          handle_install_local(local_names, options)
+        ensure
+          # Ansible deletes its fetched temp via add_cleanup_file at module
+          # exit, so the staged RPM lives for the whole install and is only
+          # removed here, after the transaction result is built.
+          staged.each { |path| File.delete(path) rescue nil }
+        end
+      end
+
+      private def remote_rpm_url?(name : String) : Bool
+        stripped = name.strip
+        stripped.starts_with?("http://") || stripped.starts_with?("https://") || stripped.starts_with?("ftp://")
+      end
+
+      # Fetch a remote RPM through the same HTTPDownload helper unarchive and
+      # the apt deb: path use. The `.rpm` suffix matters: the local-file
+      # branches of handle_install_local key off the name ending in `.rpm`.
+      private def stage_remote_rpm(url : String, staged : Array(String)) : String
+        tmp = File.tempfile(".krikri-playbook-rpm-", ".rpm")
+        path = tmp.path
+        tmp.close
+        staged << path
+        PluginHelpers::HTTPDownload.download(url, path, remote_rpm_download_options)
+        path
+      end
+
+      # ansible's fetch_url defaults (15s connect / 30s read, 5 redirects,
+      # the ansible-httpget User-Agent), as in apt_deb_install.cr and unarchive.cr.
+      private def remote_rpm_download_options : PluginHelpers::HTTPDownload::Options
+        PluginHelpers::HTTPDownload::Options.new(
+          connect_timeout: 15.seconds,
+          read_timeout: 30.seconds,
+          max_redirects: 5,
+          headers: HTTP::Headers{"User-Agent" => "ansible-httpget"},
+        )
+      end
+
+      # fetch_file interpolates fetch_url's info['msg'] verbatim, which is the
+      # text HTTPDownload carries for UrlError, ConnectionFailure and HttpError.
+      # A ContentCopy failure has no info['msg'] (fetch_url already returned),
+      # so the exception's own reason is the closest honest detail.
+      private def remote_rpm_failure_detail(ex : Exception) : String
+        if ex.is_a?(PluginHelpers::HTTPDownload::FetchError)
+          case ex.kind
+          when .url_error?, .connection_failure?, .http_error?
+            return ex.info_msg
+          when .content_copy?
+            return ex.reason unless ex.reason.empty?
+          end
+        end
+        ex.message || ex.class.name
+      end
+
+      private def handle_install_local(names : Array(String), options : String) : PluginResult
         # Check if update_only is set
         update_only = true?(@params["update_only"]?)
 
