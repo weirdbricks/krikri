@@ -55,7 +55,21 @@ module Krikri
         # not just the playbook itself - role_loader is this codebase's
         # single doorway for role-file YAML, so the check lives here.
         PlaybookParser.check_template_quoting(path, text)
-        @@parsed_yaml_cache[path] = YAML.parse(text)
+        # A YAML syntax error inside a role file (e.g. an unknown escape
+        # in a double-quoted scalar in tasks/main.yml) is Ansible's
+        # playbook-load refusal (rc=4, "[ERROR]: YAML parsing failed" with
+        # the file's Origin block), not a per-play soft-skip - so it must
+        # surface as YamlSyntaxError, the same class parse_string wraps
+        # its own YAML.parse in, which the per-play rescue re-raises to
+        # keep the Origin block intact. Letting the raw YAML::ParseException
+        # escape instead got caught as a generic per-play failure and
+        # degraded to "Warning: Failed to parse play N" + "No valid plays
+        # found" (rc=1) - ansible prints neither.
+        begin
+          @@parsed_yaml_cache[path] = YAML.parse(text)
+        rescue ex : YAML::ParseException
+          raise YamlSyntaxError.new(path, text, ex)
+        end
       end
     end
 
