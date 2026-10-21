@@ -1114,6 +1114,19 @@ module Krikri
       return result unless File.exists?(path)
 
       yaml = cached_yaml(path)
+      # ansible-core 2.19's loader warns on duplicate top-level keys in
+      # every vars-style file it loads (defaults/, vars/, include_vars),
+      # not just tasks/meta (issue 193: virhi.apache's defaults/main.yml).
+      # The source-map cache makes each file warn at most once per run.
+      # .json files go through Ansible's JSON loader path, whose
+      # constructor never emits the YAML duplicate-key warning. A scan
+      # failure must never break loading.
+      unless path.ends_with?(".json")
+        begin
+          cached_source_map(path)
+        rescue
+        end
+      end
       if hash = yaml.as_h?
         hash.each { |key, value| result[key.to_s] = Vault.maybe_decrypt_json(Vault.yaml_value_to_json(value)) }
       end
