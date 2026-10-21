@@ -170,6 +170,26 @@ describe "cron plugin" do
     result["msg"].as_s.must_include("job")
   end
 
+  it "fails when the crontab binary is missing, even with cron_file:" do
+    # Ansible's CronTab.__init__ resolves crontab via get_bin_path(required=True)
+    # before any read or write, so a cron_file: task still fatals on a host
+    # without the binary. Run the plugin with a PATH that has no crontab
+    # (find_required_binary also probes /sbin:/usr/sbin:/usr/local/sbin, none
+    # of which hold crontab on a normal system).
+    empty_dir = tmp_path("cron-empty-path-dir")
+    Dir.mkdir_p(empty_dir)
+
+    result = PluginSpecHelper.run("cron", {
+      "name" => "run lynis",
+      "job" => "/bin/true",
+      "cron_file" => tmp_path("cron-no-crontab.txt"), "user" => "root",
+    }, env: {"PATH" => empty_dir})
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_include(%(Failed to find required executable "crontab"))
+    File.exists?(tmp_path("cron-no-crontab.txt")).must_equal(false)
+  end
+
   describe "env: yes" do
     it "writes a NAME=\"value\" line at the top of the file" do
       path = tmp_path("cron-env-create.txt")
