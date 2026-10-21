@@ -484,6 +484,14 @@ module Krikri
       rescue ex : Socket::ConnectError
         # this hop is the one that failed, so its URL is the one to re-probe
         raise Exception.new(PluginHelpers::SocketConnect.urlopen_error_text(uri, ex) || ex.message)
+      rescue ex : IO::TimeoutError
+        # urllib wraps a connect timeout in URLError, so Ansible reports
+        # "Request failed: <urlopen error timed out>" (live-verified vs
+        # 2.19: a uri task against a blackhole IP with timeout: 2);
+        # a timeout later in the exchange is a bare socket.timeout and
+        # keeps its existing text.
+        raise Exception.new("<urlopen error timed out>") if ex.message == "Connect timed out"
+        raise ex
       end
 
       cookie_acc.try(&.concat(response_cookies(response.headers)))
