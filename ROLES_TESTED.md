@@ -13955,3 +13955,8 @@ Local probe roles, not Galaxy roles: each probed task registers its result and d
 | `robertdebock.vsftpd` | ubuntu | ✅ Clean (round29875903, 0.9.1805 release). Times: cold py 18.96s vs cr 4.85s; warm py 6.10s vs cr 0.17s. |
 | `tschifftner.redis` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29875900, 0.9.1805 release). Times: cold py 3.07s vs cr 0.89s; warm py 2.54s vs cr 0.14s. |
 | `vi7.docker` | ubuntu | ❌ Divergent - issue #195 (round29875901, 0.9.1805 release). Times: cold py 7.12s vs cr 5.43s; warm py 6.30s vs cr 1.31s. |
+| `Aplyca_WebApp` | ubuntu | ❌ BLOCKED: (round29875927, 0.9.1806 release). |
+| `aairey.dotfiles` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29875926, 0.9.1806 release). Times: cold py 18.57s vs cr 18.78s; warm py 18.98s vs cr 17.63s. |
+| `adlytaibi.sgws_config` | ubuntu | ❌ Divergent - issue #196 (round29875923, 0.9.1806 release). Times: cold py 2.78s vs cr 0.76s; warm py 2.49s vs cr 0.11s. |
+| `cowops.debian-git` | ubuntu | ✅ Clean (round29875925, 0.9.1806 release). Times: cold py 14.95s vs cr 12.60s; warm py 6.00s vs cr 5.20s. |
+| `singleplatform-eng.ansible_role_systemd_service` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29875924, 0.9.1806 release). Times: cold py 3.28s vs cr 1.02s; warm py 3.36s vs cr 0.15s. |
