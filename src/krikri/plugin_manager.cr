@@ -1422,6 +1422,8 @@ module Krikri
 
     BECOME_PREMATURE_END = "Premature end of stream waiting for become success."
 
+    BECOME_CHOWN_FAILURE = "Failed to change ownership of the temporary files Ansible (via chmod nor setfacl) needs to create despite connecting as a privileged user. Unprivileged become user would be unable to read the file."
+
     # sudo exits before the plugin ever runs (e.g. "sudo: a password is
     # required"): ansible-core 2.19.11 books this as the local connection's
     # become failure with the sudo stderr appended, not as unparseable
@@ -1434,6 +1436,26 @@ module Krikri
         "failed"              => true,
         "msg"                 => "Task failed: #{BECOME_PREMATURE_END}\n>>> Standard Error\n#{stderr.strip}",
         "_connection_failure" => true,
+      }.to_json)
+    end
+
+    # ansible-core 2.19, connection user an admin (root is in the default
+    # admin_users) and become_user absent on the target: _fixup_perms2
+    # (ansible/plugins/action/__init__.py:698-710) fails the task itself
+    # ("Task failed: Failed to change ownership of the temporary files ...")
+    # before the module ever runs, instead of letting sudo's own error
+    # surface. Krikri reaches the same state as sudo printing
+    # "sudo: unknown user <user>" and exiting nonzero, which
+    # interpret_remote_result alone would word as a generic plugin failure.
+    def self.become_chown_failure_result(exit_code : Int32, stderr : String, become_user : String?, remote_user : String?) : JSON::Any?
+      return nil if exit_code == 0
+      return nil unless remote_user == "root"
+      return nil unless become_user && !become_user.empty?
+      return nil unless stderr.lines.any? { |line| line.strip == "sudo: unknown user #{become_user}" }
+      JSON.parse({
+        "changed" => false,
+        "failed"  => true,
+        "msg"     => "Task failed: #{BECOME_CHOWN_FAILURE}",
       }.to_json)
     end
 
@@ -1848,6 +1870,14 @@ module Krikri
 
       return task_timeout_marker(task_timeout) if task_timeout_kill?(started, task_timeout, result)
 
+      # ansible fails the task itself when the connection user is root and
+      # the become_user does not exist (see become_chown_failure_result);
+      # mirror that wording before the generic parse gets a look in.
+      if become_needed?(become, become_user, conn.user) &&
+         (failure = become_chown_failure_result(result[:exit_code], result[:stderr], become_user, conn.user))
+        return failure
+      end
+
       interpreted = interpret_remote_result(result[:exit_code], result[:stdout], result[:stderr])
 
       # Item 6a's safety net. Skipping the verification round trip means
@@ -1877,6 +1907,10 @@ module Krikri
           extra_args: extra_args
         )
         return task_timeout_marker(task_timeout) if task_timeout_kill?(started, task_timeout, retry_result)
+        if become_needed?(become, become_user, conn.user) &&
+           (failure = become_chown_failure_result(retry_result[:exit_code], retry_result[:stderr], become_user, conn.user))
+          return failure
+        end
         return interpret_remote_result(retry_result[:exit_code], retry_result[:stdout], retry_result[:stderr])
       end
 

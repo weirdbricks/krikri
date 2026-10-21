@@ -732,6 +732,16 @@ module Krikri
         end
         return
       end
+      # ansible's _fixup_perms2 raises this AnsibleError from the action
+      # plugin, so real collapses it to the single "Task failed." segment
+      # with no "Module failed." middle (action/__init__.py:706-710).
+      if msg.starts_with?("Task failed: #{PluginManager::BECOME_CHOWN_FAILURE}")
+        if origin = error_origin_context(source_task)
+          ErrorBlock.emit(ErrorBlock::Node.new("Task failed.", source_context: origin)
+            .with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(msg["Task failed: ".size..])))
+        end
+        return
+      end
       # A templated `timeout:` that resolved to a non-integer (the
       # executor's task_timeout_conversion_failure): the brief is real's
       # exact wording; the chain is a best-effort two-link approximation

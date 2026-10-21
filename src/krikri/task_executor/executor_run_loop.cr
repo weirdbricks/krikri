@@ -1647,7 +1647,16 @@ module Krikri
       script_results = run_batch_script(host, conn, steps)
       interpreted = Hash(Int32, JSON::Any).new
       script_results.each do |idx, step_result|
-        interpreted[idx] = PluginManager.interpret_remote_result(step_result.exit_code, step_result.stdout, step_result.stderr)
+        step = steps[idx]
+        become = !step.become_user.nil?
+        # ansible fails the task itself when the connection user is root
+        # and the become_user does not exist (see become_chown_failure_result);
+        # the batch path must word it the same way the one-shot
+        # PluginManager path does, before the generic parse gets a look in.
+        failure = if PluginManager.become_needed?(become, step.become_user, conn.user)
+                    PluginManager.become_chown_failure_result(step_result.exit_code, step_result.stderr, step.become_user, conn.user)
+                  end
+        interpreted[idx] = failure || PluginManager.interpret_remote_result(step_result.exit_code, step_result.stdout, step_result.stderr)
       end
       interpreted
     end
