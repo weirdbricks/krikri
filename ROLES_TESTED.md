@@ -13945,3 +13945,8 @@ Local probe roles, not Galaxy roles: each probed task registers its result and d
 | `dmitrii-ageev.logrotate` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29875880, 0.9.1805 release). Times: cold py 1.93s vs cr 0.77s; warm py 2.60s vs cr 0.12s. |
 | `grycap.sage_edc` | ubuntu | ✅ Clean (round29875878, 0.9.1805 release). Times: cold py 441.84s vs cr 388.88s; warm py 52.75s vs cr 1.77s. |
 | `johanmeiring.ubuntu-ecs-agent` | ubuntu | ✅ Clean (round29875876, 0.9.1805 release). Times: cold py 99.31s vs cr 47.76s; warm py 38.73s vs cr 1.49s. |
+| `chilcano.minishift` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29875897, 0.9.1805 release). Times: cold py 0.45s vs cr 0.02s; warm py 0.44s vs cr 0.01s. |
+| `kmezynski.pyenv` | ubuntu | ✅ Clean (round29875895, 0.9.1805 release). Times: cold py 136.08s vs cr 137.98s; warm py 13.89s vs cr 11.42s. |
+| `softasap.sa-php-fpm` | ubuntu | ❌ Divergent - issue #194 (round29875899, 0.9.1805 release). Times: cold py 10.49s vs cr 1.95s; warm py 3.36s vs cr 1.62s. |
+| `triplepoint.rtl_433` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29875896, 0.9.1805 release). Times: cold py 6.66s vs cr 8.14s; warm py 6.09s vs cr 0.45s. |
+| `wangsha.docker-redis` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29875898, 0.9.1805 release). Times: cold py 0.83s vs cr 0.02s; warm py 0.64s vs cr 0.01s. |
