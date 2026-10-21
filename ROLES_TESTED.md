@@ -13930,3 +13930,13 @@ Local probe roles, not Galaxy roles: each probed task registers its result and d
 | `ulrich-sun.kubernetes` | ubuntu | ✅ Clean (round29875864, 0.9.1805 release). Times: cold py 4.66s vs cr 4.31s; warm py 4.67s vs cr 0.46s. |
 | `yauh.mailcatcher` | rocky | ✅ Clean (round29875867, 0.9.1805 release). Times: cold py 1.90s vs cr 0.81s; warm py 1.42s vs cr 0.14s. |
 | `znz_unattended-upgrades` | ubuntu | ❌ BLOCKED: (round29875866, 0.9.1805 release). |
+| `MarioDevment.java8` | ubuntu | ✅ Clean (round29875876, 0.9.1805 release). Times: cold py 2.88s vs cr 0.82s; warm py 1.37s vs cr 0.32s. |
+| `RedHatGov.kvm` | rocky | ✅ Clean (round29875871, 0.9.1805 release). Times: cold py 4.31s vs cr 6.06s; warm py 3.70s vs cr 0.50s. |
+| `adipriyantobpn.repo-centos` | rocky | ✅ Clean (round29875875, 0.9.1805 release). Times: cold py 2.03s vs cr 0.84s; warm py 2.60s vs cr 0.15s. |
+| `antoniobarbaro.tools` | rocky | ✅ Clean (round29875877, 0.9.1805 release). Times: cold py 2.86s vs cr 0.85s; warm py 2.46s vs cr 0.15s. |
+| `kristopherkram.github_release` | ubuntu | ✅ Clean (round29875868, 0.9.1805 release). Times: cold py 1.72s vs cr 0.59s; warm py 1.50s vs cr 0.12s. |
+| `pescobar.postgres` | ubuntu | ✅ Clean (round29875870, 0.9.1805 release). Times: cold py 1.78s vs cr 0.83s; warm py 1.40s vs cr 0.12s. |
+| `rahul0705.certbot` | ubuntu | ✅ Clean (round29875872, 0.9.1805 release). Times: cold py 3.79s vs cr 0.99s; warm py 3.44s vs cr 0.33s. |
+| `shomatan.php-fpm` | ubuntu | ✅ Clean (round29875874, 0.9.1805 release). Times: cold py 6.97s vs cr 6.70s; warm py 3.51s vs cr 0.43s. |
+| `tobias_richter.apt_mark` | rocky | ✅ Clean (round29875873, 0.9.1805 release). Times: cold py 3.21s vs cr 0.89s; warm py 2.74s vs cr 0.16s. |
+| `tseho.server` | rocky | ✅ Clean (round29875869, 0.9.1805 release). Times: cold py 5.04s vs cr 10.14s; warm py 3.51s vs cr 0.50s. |
