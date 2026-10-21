@@ -353,6 +353,9 @@ module Krikri
         )
       end
 
+      # The request as written, before parse_package_names dedupes it.
+      @requested_names : Array(String)? = nil
+
       private def parse_package_names : Array(String)
         names = names_from_name_param || [] of String
 
@@ -372,6 +375,11 @@ module Krikri
           names = raw_param.split.reject(&.empty?)
         end
 
+        # The install/remove commands take the deduped list, but the install
+        # failure's `failures` entries follow the request as written - Ansible
+        # reports one "No package X available." per requested spec, duplicates
+        # kept (see DnfInstallFailures#parse_dnf_install_failures).
+        @requested_names = names
         names.uniq
       end
 
@@ -814,8 +822,9 @@ module Krikri
         if result[:exit_code] != 0
           # Ansible's dnf module reports a partially-unresolvable install
           # batch with its own canned msg ("Failed to install some of the
-          # specified packages") and one deduped "No package X available."
-          # entry per missing spec parsed out of dnf's output - NOT the
+          # specified packages") and one "No package X available." entry
+          # per requested spec (duplicates kept - dnf itself prints each
+          # missing spec once) parsed out of dnf's output - NOT the
           # raw dnf stderr/stdout dump the fallback below keeps for
           # outputs nothing in parses (repo metadata/404-class errors).
           # Ansible's dnf fails the GPG check via a bare fail_json(msg=...)
@@ -827,7 +836,7 @@ module Krikri
           if depsolve_msg = depsolve_failure_msg(result[:stdout] + "\n" + result[:stderr])
             return {changed: false, message: nil, output: result[:stdout], failure: PluginResult.new(changed: false, failed: true, msg: depsolve_msg, results: [] of String, rc: result[:exit_code], key_order: %w[changed msg rc results failed])}
           end
-          if failures = parse_dnf_install_failures(result[:stdout], result[:stderr])
+          if failures = parse_dnf_install_failures(result[:stdout], result[:stderr], @requested_names)
             return {changed: false, message: nil, output: result[:stdout], failure: failure_result("Failed to install some of the specified packages", failures, result[:exit_code])}
           end
           return {changed: false, message: nil, output: result[:stdout], failure: failure_result("Failed to install packages", error_lines(result), result[:exit_code])}
