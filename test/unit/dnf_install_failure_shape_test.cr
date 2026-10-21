@@ -29,6 +29,15 @@ MISSING_PKG_STDERR = "Error: Unable to find a match: redhat-lsb-core\n"
 MODULAR_STDOUT = "All matches were filtered out by modular filtering for argument: mysql-devel\n"
 MODULAR_STDERR = "Error: All matches for argument: mysql-devel were filtered out by modular filtering\n"
 
+# Issue #216 (Rocky 9, perl-File-Temp install walled behind exclude=perl-Carp
+# in /etc/dnf/dnf.conf): the depsolve "Problem: ..." block the dnf4 CLI
+# prints - twice, because `package:` shells `dnf install ... || yum install ...`
+# and each binary prints its own copy - is real ansible's depsolve catch
+# msg verbatim after the "Depsolve Error occurred: " prefix, NOT an input to
+# the per-spec failures parser (nothing in it matches those lines).
+DEPSOLVE_STDERR = "Error: \n Problem: package perl-File-Temp-1:0.231.100-4.el9.noarch from appstream requires perl(Carp), but none of the providers can be installed\n  - conflicting requests\n  - package perl-Carp-1.50-460.el9.0.1.noarch from appstream is filtered out by exclude filtering\n(try to add '--skip-broken' to skip uninstallable packages or '--nobest' to use not only best candidate packages)\nError: \n Problem: package perl-File-Temp-1:0.231.100-4.el9.noarch from appstream requires perl(Carp), but none of the providers can be installed\n  - conflicting requests\n  - package perl-Carp-1.50-460.el9.0.1.noarch from appstream is filtered out by exclude filtering\n(try to add '--skip-broken' to skip uninstallable packages or '--nobest' to use not only best candidate packages)\n"
+DEPSOLVE_MSG    = "Depsolve Error occurred: \n Problem: package perl-File-Temp-1:0.231.100-4.el9.noarch from appstream requires perl(Carp), but none of the providers can be installed\n  - conflicting requests\n  - package perl-Carp-1.50-460.el9.0.1.noarch from appstream is filtered out by exclude filtering"
+
 private def with_failing_dnf_shim(stdout : String, stderr : String, &)
   shim_dir = PluginSpecHelper.tmp_path("fake-dnf-fail")
   Dir.mkdir_p(shim_dir)
@@ -170,6 +179,22 @@ describe "dnf/yum failed install - Ansible's per-spec failures shape (issue 19)"
     end
   end
 
+  it "reports ansible's depsolve shape from package: (issue 216)" do
+    with_failing_dnf_shim("", DEPSOLVE_STDERR) do
+      result = PluginSpecHelper.run("package",
+        {"name" => "perl-File-Temp", "state" => "present", "use" => "dnf"})
+
+      result["failed"].as_bool.must_equal(true)
+      result["changed"].as_bool.must_equal(false)
+      result["msg"].as_s.must_equal(DEPSOLVE_MSG)
+      result["failures"].as_a.map(&.as_s).must_equal([] of String)
+      result["results"].as_a.must_equal([] of JSON::Any)
+      result["rc"].as_i.must_equal(1)
+      result.as_h.has_key?("stderr").must_equal(false)
+      result.as_h.keys.first(6).must_equal(["changed", "failures", "msg", "rc", "results", "failed"])
+    end
+  end
+
   it "produces the same shape from package: state latest (issue 114)" do
     # Real ansible fails `state: latest` for a missing package like
     # `state: present` (msg "Failed to install some of the specified
@@ -220,5 +245,21 @@ describe "DnfInstallFailures parser - requested expansion (issue 213)" do
 
     DnfFailuresParseHarness.new.parse_dnf_install_failures(stdout, stderr, ["other-pkg"]).must_equal(
       ["mysql-devel All matches were filtered out by modular filtering for argument: mysql-devel"])
+  end
+end
+
+describe "DnfInstallFailures depsolve_failure_msg (issue 216)" do
+  it "lifts the whole 'Problem:' block as ansible's Depsolve Error msg" do
+    DnfFailuresParseHarness.new.depsolve_failure_msg(DEPSOLVE_STDERR).must_equal(DEPSOLVE_MSG)
+  end
+
+  it "returns nil for outputs nothing depsolve-shaped" do
+    DnfFailuresParseHarness.new.depsolve_failure_msg("No match for argument: foo\n").must_be_nil
+    DnfFailuresParseHarness.new.depsolve_failure_msg("").must_be_nil
+  end
+
+  it "stops at the first block when a later Problem block follows (dnf+yum compound output)" do
+    third_block = DEPSOLVE_STDERR + "Problem: package another-1.0.noarch from appstream is filtered out\n(try to add '--allowerasing')\n"
+    DnfFailuresParseHarness.new.depsolve_failure_msg(third_block).must_equal(DEPSOLVE_MSG)
   end
 end
