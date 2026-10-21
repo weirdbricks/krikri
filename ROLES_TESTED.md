@@ -13950,3 +13950,8 @@ Local probe roles, not Galaxy roles: each probed task registers its result and d
 | `softasap.sa-php-fpm` | ubuntu | ❌ Divergent - issue #194 (round29875899, 0.9.1805 release). Times: cold py 10.49s vs cr 1.95s; warm py 3.36s vs cr 1.62s. |
 | `triplepoint.rtl_433` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29875896, 0.9.1805 release). Times: cold py 6.66s vs cr 8.14s; warm py 6.09s vs cr 0.45s. |
 | `wangsha.docker-redis` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29875898, 0.9.1805 release). Times: cold py 0.83s vs cr 0.02s; warm py 0.64s vs cr 0.01s. |
+| `SimpliField.google_auth` | ubuntu | ✅ Clean (round29875899, 0.9.1805 release). Times: cold py 2.78s vs cr 1.31s; warm py 4.56s vs cr 0.32s. |
+| `larixsource.ec2-mysql` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29875902, 0.9.1805 release). Times: cold py 0.52s vs cr 0.01s; warm py 0.53s vs cr 0.01s. |
+| `robertdebock.vsftpd` | ubuntu | ✅ Clean (round29875903, 0.9.1805 release). Times: cold py 18.96s vs cr 4.85s; warm py 6.10s vs cr 0.17s. |
+| `tschifftner.redis` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29875900, 0.9.1805 release). Times: cold py 3.07s vs cr 0.89s; warm py 2.54s vs cr 0.14s. |
+| `vi7.docker` | ubuntu | ❌ Divergent - issue #195 (round29875901, 0.9.1805 release). Times: cold py 7.12s vs cr 5.43s; warm py 6.30s vs cr 1.31s. |
