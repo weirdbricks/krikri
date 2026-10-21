@@ -35,7 +35,7 @@ URI_TEST_SERVER = HTTP::Server.new do |context|
   # Echoes the request headers roles most commonly probe for, so specs
   # can assert what the plugin actually put on the wire.
   if request.method == "GET" && request.path == "/echo-headers"
-    picked = {"authorization" => request.headers["Authorization"]?, "cache_control" => request.headers["Cache-Control"]?, "accept_encoding" => request.headers["Accept-Encoding"]?, "user_agent" => request.headers["User-Agent"]?}
+    picked = {"authorization" => request.headers["Authorization"]?, "cache_control" => request.headers["Cache-Control"]?, "accept_encoding" => request.headers["Accept-Encoding"]?, "user_agent" => request.headers["User-Agent"]?, "connection" => request.headers["Connection"]?}
     response.status_code = 200
     response.headers["Content-Type"] = "application/json"
     response.print(picked.to_json)
@@ -378,6 +378,11 @@ describe "uri plugin" do
   it "sends cache-control: no-cache when force is set" do
     result = PluginSpecHelper.run("uri", {"url" => "#{URI_BASE}/echo-headers", "force" => "true"})
     result["json"]["cache_control"].as_s.must_equal("no-cache")
+  end
+
+  it "sends Connection: close like urllib" do
+    result = PluginSpecHelper.run("uri", {"url" => "#{URI_BASE}/echo-headers"})
+    result["json"]["connection"].as_s.must_equal("close")
   end
 
   it "does not send cache-control by default" do
