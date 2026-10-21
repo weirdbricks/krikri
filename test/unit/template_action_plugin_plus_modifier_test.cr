@@ -32,9 +32,9 @@ describe Krikri::TemplateActionPlugin do
     result = plugin.execute
 
     result.success?.must_equal(true)
-    # The plugin appends a trailing newline to rendered content (Ansible's template output always ends with one) - hence the final \n.
+    # Ansible appends only the difference between the source's and the render's trailing newlines, and this source has none.
     result.modified_params.not_nil!["content"].must_equal(
-      "ExecStart=/usr/bin/docuum \nStandardOutput=syslog\n\nRestart=on-failure\n"
+      "ExecStart=/usr/bin/docuum \nStandardOutput=syslog\n\nRestart=on-failure"
     )
   ensure
     File.delete(tmp) if tmp && File.exists?(tmp)

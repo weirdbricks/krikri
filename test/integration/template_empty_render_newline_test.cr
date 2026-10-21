@@ -51,14 +51,32 @@ describe "a template whose rendered output is the empty string" do
     end
   end
 
-  it "still appends the trailing newline to non-empty output" do
-    # Same convention as above, but for a render that produced content:
-    # a non-empty rendered file must still end with exactly one "\n"
-    # even when the template body itself had no trailing newline.
+  it "does not add a newline the template source never had" do
+    # Live-verified vs ansible-core 2.19.11: the trailing-newline
+    # convention is a count comparison, not a guaranteed append - a
+    # template source ending without a newline yields a file without
+    # one too; krikri used to append exactly one "\n" regardless.
     src, dest, playbook, _ = run_template(
       "{% for u in users %}x{% endfor %}hello", "nonempty-render")
     begin
-      File.read(dest).must_equal("hello\n")
+      File.read(dest).must_equal("hello")
+    ensure
+      File.delete(src)
+      File.delete(dest)
+      File.delete(playbook)
+    end
+  end
+
+  it "restores every trailing newline the template source lost" do
+    # Live-verified vs ansible-core 2.19: the template action counts the
+    # trailing newlines of the source against those of the rendered
+    # result and appends the difference, so a source ending in two
+    # newlines keeps both in the file even though the engine chomped
+    # one; krikri used to append at most one regardless.
+    src, dest, playbook, _ = run_template(
+      "{% for u in users %}x{% endfor %}hello\n\n", "trailing-newline-count")
+    begin
+      File.read(dest).must_equal("hello\n\n")
     ensure
       File.delete(src)
       File.delete(dest)

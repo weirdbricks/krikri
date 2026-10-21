@@ -2,6 +2,7 @@ require "json"
 require "digest/md5"
 require "krikri-jinja/krikri_jinja"
 require "./krikri_jinja_filters"
+require "./needle_lookup"
 require "./jinja_host_context"
 require "./template_search_path_loader"
 require "./base_action_plugin"
@@ -368,8 +369,20 @@ module Krikri
       # An empty render stays empty (live-verified vs 2.19.11: a template
       # whose output is "" writes a 0-byte file and reruns `ok` against an
       # existing empty dest) - only non-empty output gets the newline.
-      rendered += "\n" unless rendered.empty? || rendered.ends_with?("\n")
+      # Ansible's own _post_render_mutation doesn't just append one \n:
+      # it counts the trailing newlines of the template SOURCE against
+      # those of the rendered result and appends the difference, so a
+      # source ending in two newlines stays two after Jinja chomps one
+      # and trim_blocks eats block-tag ones (live-verified: a source
+      # ending "{% endfor %}\n\n" writes both newlines after the loop).
+      if !rendered.empty? && (missing = trailing_newline_count(content) - trailing_newline_count(rendered)) > 0
+        rendered += "\n" * missing
+      end
       rendered
+    end
+
+    private def trailing_newline_count(string : String) : Int32
+      string.size - string.rstrip('\n').size
     end
 
     # Engine-scope conversion for the template render's variable loading.

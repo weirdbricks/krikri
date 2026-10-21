@@ -65,7 +65,9 @@ describe "a .j2 template rendered through the template action plugin" do
       TPL
     status.success?.must_equal(true, output)
     output.wont_include("unclosed", output)
-    dest.must_equal("[end]\n")
+    # The <<- heredoc above has no final newline, and Ansible writes only
+    # the trailing newlines the template source had.
+    dest.must_equal("[end]")
   end
 
   it "renders jinja2's format filter against keyword arguments" do
