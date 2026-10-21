@@ -195,6 +195,12 @@ krikri aims for byte-for-byte identical stdout/stderr/exit code to `ansible-play
   and `postgresql_privs`'s multi-privilege list come from a Python set/frozenset in real
   (nondeterministic across Ansible runs themselves); krikri keeps the declared order. Other
   `ansible-core` releases may differ; 2.19.11 is the reference.
+- `apt:`/`apt_repository:` update-cache retry warnings against a repo with no Release file
+  (`webbylab.nginx-proxy`, #220): real's python-apt exception text includes a libapt-only
+  `W:Repositories should provide a clear-signed InRelease file...` line the apt CLI never prints, and
+  which attempt quotes which lines varies run to run on the same host (two real runs disagreed on
+  attempts 1 and 4). The `Sleeping for N seconds` values are random jitter in both engines. Krikri
+  reproduces the failure, retry count and final classification but not these bytes.
 
 ### Differential-fuzz residual leniency between the two Jinja evaluators
 
