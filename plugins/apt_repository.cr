@@ -294,10 +294,14 @@ module Krikri
           # reverted before failing, live-verified vs 2.19.11, round
           # 5215000 confirm: real changed=8 vs krikri changed=9 in the
           # recap came from this +1).
+          # 'unknown reason' only when no attempt ever ran - ansible's
+          # fallback is `err if err` on the exception OBJECT (see
+          # update_cache_with_repo_retry), so a bare FetchFailedException's
+          # empty reason is quoted verbatim.
           result = PluginResult.new(
             changed: false,
             failed: true,
-            msg: "Failed to update apt cache after #{retries} retries: #{outcome[:last_reason].empty? ? "unknown reason" : outcome[:last_reason]}"
+            msg: "Failed to update apt cache after #{retries} retries: #{retries <= 0 ? "unknown reason" : outcome[:last_reason]}"
           )
           result.extra["warnings"] = JSON.parse(@warnings.to_json) unless @warnings.empty?
           return result
@@ -335,10 +339,11 @@ module Krikri
           # sources list before its final fail_json regardless of which
           # direction the change went.
           File.write(file, original_content)
+          # Same 'unknown reason' semantics as the add() path above.
           result = PluginResult.new(
             changed: false,
             failed: true,
-            msg: "Failed to update apt cache after #{retries} retries: #{outcome[:last_reason].empty? ? "unknown reason" : outcome[:last_reason]}"
+            msg: "Failed to update apt cache after #{retries} retries: #{retries <= 0 ? "unknown reason" : outcome[:last_reason]}"
           )
           result.extra["warnings"] = JSON.parse(@warnings.to_json) unless @warnings.empty?
           return result
@@ -413,7 +418,11 @@ module Krikri
     # - apt_repository's own wording, without apt.py's "retries" - then
     # the exponential backoff sleep, then the sleeping warn), and after
     # the budget is exhausted a final "Failed to update apt cache after
-    # N retries: <err or 'unknown reason'>" fail_json. Every
+    # N retries: <err>" fail_json - its 'unknown reason' fallback is
+    # `err if err` on the caught exception OBJECT, always truthy once any
+    # attempt raised, so it fires only when NO attempt ever ran
+    # (update_cache_retries <= 0) and a bare FetchFailedException's empty
+    # str() is quoted verbatim as an empty reason. Every
     # FetchFailedException shape counts as a failed attempt: nonzero
     # exit, the bare fetch-failure markers, AND the signature class
     # (GPG error / unsigned repo) that apt-get itself only WARNs about
