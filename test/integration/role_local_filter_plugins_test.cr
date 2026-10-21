@@ -86,7 +86,9 @@ describe "role-local filter_plugins/*.py custom filters" do
 
     status.success?.must_equal(true, output)
     output.wont_include("No filter named", output)
-    File.read(dest).must_equal("value=20\n")
+    # The <<- heredoc written to out.conf.j2 has no final newline, and
+    # Ansible writes only the trailing newlines the template source had.
+    File.read(dest).must_equal("value=20")
   ensure
     FileUtils.rm_rf(root) if root
   end

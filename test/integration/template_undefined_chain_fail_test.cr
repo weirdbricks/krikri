@@ -92,9 +92,9 @@ describe "a .j2 reading a var whose chain bottoms out at an undefined name" do
     status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
 
     status.success?.must_equal(true)
-    # The render's own trailing-newline convention (see render_once) rides
-    # the file, so the squiggly heredoc needs the "\n" appended.
-    File.read(dest).must_equal(<<-OUT + "\n")
+    # The <<- heredoc source has no final newline, and Ansible writes only
+    # the trailing newlines the template source had.
+    File.read(dest).must_equal(<<-OUT)
       def=False
       dflt=[fallback]
       exe=present

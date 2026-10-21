@@ -53,7 +53,9 @@ describe "template:'s {% include %} resolves against the role's templates/ root,
 
     status.success?.must_equal(true)
     output.to_s.wont_include("could not be found")
-    File.read(File.join(src_dir, "out.cfg")).must_equal("top\nmiddlebottom\n")
+    # The <<- heredoc written to haproxy.cfg.j2 has no final newline, and
+    # Ansible writes only the trailing newlines the template source had.
+    File.read(File.join(src_dir, "out.cfg")).must_equal("top\nmiddlebottom")
   ensure
     FileUtils.rm_rf(src_dir) if src_dir
   end
@@ -98,7 +100,9 @@ describe "template:'s {% include %} resolves against the role's templates/ root,
 
     status.success?.must_equal(true, output.to_s)
     output.to_s.wont_include("could not be found")
-    File.read(File.join(src_dir, "out.conf")).must_equal("top\nmiddlebottom\n")
+    # The <<- heredoc written to nsswitch.conf.j2 has no final newline, and
+    # Ansible writes only the trailing newlines the template source had.
+    File.read(File.join(src_dir, "out.conf")).must_equal("top\nmiddlebottom")
   ensure
     FileUtils.rm_rf(src_dir) if src_dir
   end
