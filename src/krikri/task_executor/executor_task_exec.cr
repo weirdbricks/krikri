@@ -17,6 +17,12 @@ module Krikri
       end
     end
 
+    # Hosts' vars_files results are cached per (host, hostvars generation),
+    # since a path templated against facts re-resolves per generation.
+    private def vars_files_cache_key(host : Host) : String
+      "#{host.name}\u0000#{@hv_generation}"
+    end
+
     # Multi-host counterpart to execute_include_tasks (the no-loop case
     # only - see task_has_loop?): resolves when:/the included file's path
     # PER HOST first (cheap - local template substitution, no remote
@@ -35,7 +41,7 @@ module Krikri
       # templated against a fact (`vars-{{ ansible_os_family }}.yml`)
       # resolves to nothing at that point. Caching that empty result per
       # host would poison every later task.
-      cache_key = "#{host.name}\u0000#{@hv_generation}"
+      cache_key = vars_files_cache_key(host)
       if cached = @vars_files_cache[cache_key]?
         return cached
       end
