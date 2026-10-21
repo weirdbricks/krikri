@@ -156,13 +156,7 @@ module Krikri
         rescue ex : FetchError
           raise ex
         rescue ex : IO::TimeoutError
-          # A connect timeout is raised before urllib hands the request
-          # to the socket layer and comes back wrapped in a URLError
-          # ("Request failed: <urlopen error timed out>"); a timeout
-          # waiting for the response head is a bare socket.timeout
-          # ("Connection failure: timed out"). Crystal reports the two
-          # with different messages.
-          raise connect_timeout?(ex) ? FetchError.new(FetchError::Kind::UrlError, "Request failed: <urlopen error timed out>") : FetchError.new(FetchError::Kind::ConnectionFailure, "Connection failure: timed out")
+          raise timeout_failure(ex)
         rescue Socket::Addrinfo::Error
           # getaddrinfo EAI_NONAME surfaces in urllib as socket.gaierror -2.
           raise FetchError.new(FetchError::Kind::UrlError, "Request failed: <urlopen error [Errno -2] Name or service not known>")
@@ -176,9 +170,75 @@ module Krikri
           text = SocketConnect.urlopen_error_text(uri, ex) ||
                  "<urlopen error #{ex.message || ex.class.name}>"
           raise FetchError.new(FetchError::Kind::UrlError, "Request failed: #{text}")
+        rescue ex : OpenSSL::SSL::Error
+          reason = hostname_mismatch_reason(uri)
+          if reason
+            raise FetchError.new(FetchError::Kind::UrlError, "Request failed: <urlopen error [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: #{reason} (_ssl.c:1147)>")
+          end
+          raise ex
         end
       ensure
         client.try(&.close)
+      end
+
+      # urllib sends SNI on every TLS request, so certificate-vhosting servers
+      # (CDNs, shared hosts) answer it with the certificate the requested
+      # hostname expects, and word a wrong-name certificate as
+      # CERTIFICATE_VERIFY_FAILED only after the certificate CHAIN verified
+      # ("Hostname mismatch, certificate is not valid for '<host>'."), while
+      # Crystal surfaces the same case as a raw OpenSSL handshake error. This
+      # probe re-runs the handshake the way urllib's does - SNI, chain
+      # verification, and only a post-handshake hostname validation - so the
+      # caller can reword only the chain-verified-but-name-wrong case; a chain
+      # problem (such as self-signed or unknown issuer) fails the handshake
+      # itself and returns nil, keeping Crystal's original wording. IP-literal
+      # hosts are skipped: Python words those mismatches differently.
+      #
+      # OpenSSL::SSL::Socket::Client can't run this probe: its `hostname:`
+      # argument sends SNI but also asks OpenSSL to verify the hostname in the
+      # same handshake, failing on the very mismatch being decoded here. So the
+      # probe drives LibSSL directly, exactly like Client#initialize but
+      # without the X509_VERIFY_PARAM set1_host call.
+      private def self.hostname_mismatch_reason(uri : URI) : String?
+        host = uri.host
+        return nil unless host && !::Socket::IPAddress.valid?(host)
+
+        context = OpenSSL::SSL::Context::Client.new
+        ssl = LibSSL.ssl_new(context)
+        return nil unless ssl
+
+        tcp = TCPSocket.new(host, uri.port || 443)
+        begin
+          bio = OpenSSL::BIO.new(tcp)
+          LibSSL.ssl_set_bio(ssl, bio.to_unsafe, bio.to_unsafe)
+          # Without SNI the server may pick a different certificate, and the
+          # chain check would then fail where urllib's succeeds.
+          LibSSL.ssl_ctrl(
+            ssl,
+            LibSSL::SSLCtrl::SET_TLSEXT_HOSTNAME,
+            LibSSL::TLSExt::NAMETYPE_host_name,
+            host.to_unsafe.as(Pointer(Void)),
+          )
+          return nil unless LibSSL.ssl_connect(ssl) == 1
+          cert = LibSSL.ssl_get_peer_certificate(ssl)
+          return nil unless cert
+
+          result = OpenSSL::SSL::HostnameValidation.validate_hostname(host, cert)
+          begin
+            return nil if result == OpenSSL::SSL::HostnameValidation::Result::MatchFound
+            "Hostname mismatch, certificate is not valid for '#{host}'."
+          ensure
+            LibCrypto.x509_free(cert)
+          end
+        ensure
+          # SSL_set_bio transfers the BIO to the SSL object, so SSL_free is
+          # what disposes of it (as in Socket#finalize); the TCP socket is
+          # this code's own sync_close equivalent.
+          LibSSL.ssl_free(ssl)
+          tcp.close rescue nil
+        end
+      rescue
+        nil
       end
 
       # The 401-challenge retry and the redirect hop, both of which re-run
@@ -238,6 +298,20 @@ module Krikri
         code = response.status_code
         reason = response.status_message || response.status.description
         FetchError.new(FetchError::Kind::HttpError, "HTTP Error #{code}: #{reason}", status_code: code)
+      end
+
+      # A connect timeout is raised before urllib hands the request
+      # to the socket layer and comes back wrapped in a URLError
+      # ("Request failed: <urlopen error timed out>"); a timeout
+      # waiting for the response head is a bare socket.timeout
+      # ("Connection failure: timed out"). Crystal reports the two
+      # with different messages.
+      private def self.timeout_failure(ex : IO::TimeoutError) : FetchError
+        if connect_timeout?(ex)
+          FetchError.new(FetchError::Kind::UrlError, "Request failed: <urlopen error timed out>")
+        else
+          FetchError.new(FetchError::Kind::ConnectionFailure, "Connection failure: timed out")
+        end
       end
 
       private def self.connect_timeout?(ex : IO::TimeoutError) : Bool
