@@ -760,8 +760,11 @@ module Krikri
           origin_text = kw["origin"]?.try(&.as_s?)
           keyword = ErrorBlock::Node.new("Error processing keyword '#{kw["keyword"]?.try(&.as_s?)}'.",
             source_context: origin_text)
+          # become_user's innermost link points at the variable definition
+          # that failed, not at the keyword value (see keyword_failure_json).
+          conversion_origin = kw["conversion_origin"]?.try(&.as_s?) || origin_text
           keyword.with_chain(ErrorBlock::DIRECT_CAUSE, true,
-            ErrorBlock::Node.new(kw["conversion"]?.try(&.as_s?) || "", source_context: origin_text))
+            ErrorBlock::Node.new(kw["conversion"]?.try(&.as_s?) || "", source_context: conversion_origin))
           ErrorBlock.emit(ErrorBlock::Node.new("Task failed.", source_context: origin)
             .with_chain(ErrorBlock::DIRECT_CAUSE, true, keyword))
         end
