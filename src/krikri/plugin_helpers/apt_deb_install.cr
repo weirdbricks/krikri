@@ -1,3 +1,5 @@
+require "./http_download"
+
 module Krikri
   # The `deb:` install machinery of the `apt` module, shared by the
   # `package` module's apt backend (whose `deb:` tasks previously fell
@@ -65,13 +67,22 @@ module Krikri
           path = tmp.path
           downloaded_tmp = tmp.path
           tmp.close
-          download_result = remote_exec("curl -fsSL -o #{shell_single_quote(path)} #{shell_single_quote(deb_source)}")
-          if download_result[:exit_code] != 0
+          # Ansible's apt module fetches the URL through fetch_url and
+          # fetch_file interpolates fetch_url's info['msg'] verbatim into
+          # "Failure downloading <url>, <msg>" - so the fetch goes through
+          # the same HTTPDownload helper get_url/unarchive use (its
+          # FetchError kinds carry exactly that info['msg'] text), not
+          # through curl, whose own error wording ("curl: (22) The
+          # requested URL returned error: 404") used to surface here
+          # instead (issue #205, prince_13.5 ubuntu22.04 404).
+          begin
+            PluginHelpers::HTTPDownload.download(deb_source, path, download_options)
+          rescue ex
             File.delete(path) rescue nil
             return PluginResult.new(
               changed: false,
               failed: true,
-              msg: "Failed to download #{deb_source}: #{download_result[:stderr]}"
+              msg: "Failure downloading #{deb_source}, #{download_failure_detail(ex)}"
             )
           end
         end
@@ -89,6 +100,37 @@ module Krikri
       ensure
         File.delete(downloaded_tmp) if downloaded_tmp
       end
+    end
+
+    # The same fetch_file-shaped download unarchive uses: ansible's own
+    # fetch_url defaults (15s connect / 30s read, 5 redirects, the
+    # ansible-httpget User-Agent), so a deb: URL behaves like every other
+    # fetch_url download instead of growing its own curl quirks.
+    private def download_options : PluginHelpers::HTTPDownload::Options
+      PluginHelpers::HTTPDownload::Options.new(
+        connect_timeout: 15.seconds,
+        read_timeout: 30.seconds,
+        max_redirects: 5,
+        headers: HTTP::Headers{"User-Agent" => "ansible-httpget"},
+      )
+    end
+
+    # fetch_file (apt.py's path) interpolates fetch_url's info['msg']
+    # verbatim into "Failure downloading <url>, <msg>" - a UrlError,
+    # ConnectionFailure or HttpError carries exactly that text. A
+    # ContentCopy failure happens after fetch_url already returned (no
+    # info['msg']), so the exception's own reason is the closest honest
+    # detail available.
+    private def download_failure_detail(ex : Exception) : String
+      if ex.is_a?(PluginHelpers::HTTPDownload::FetchError)
+        case ex.kind
+        when .url_error?, .connection_failure?, .http_error?
+          return ex.info_msg
+        when .content_copy?
+          return ex.reason unless ex.reason.empty?
+        end
+      end
+      ex.message || ex.class.name
     end
 
     # The metadata-read + idempotency + install half of #handle_deb,
