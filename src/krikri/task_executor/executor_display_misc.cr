@@ -324,8 +324,27 @@ module Krikri
         end
         child = NameTemplateContext.new
         child.origin = origin
+        counter_before = state.counter
         child_out = marker_render_chunks(raw, active_substitutor, span_vars, task, host, child, state, depth + 1, nil)
         finalized = complete_name_context(child, state, child_out)
+        # A referenced SINGLE expression that fails on its own - directly, or
+        # through a variable it reads (`a: "{{ b }}"`, `b` failing) - fails the
+        # whole span in ansible-core 2.19: `{{ ', '.join(base_list) }}` banners
+        # as one `<< error 1 - ... >>` marker, never with the marker text
+        # spliced in as the list (which iterates per character). A multi-part
+        # value still renders inline (`'x-' ~ v`). Nested contexts number their
+        # errors through the same counter, so any error bumps it; the warning
+        # blocks were emitted just above.
+        if state.counter > counter_before && single_span_template?(raw) &&
+           (first_marker = finalized.match(/<< error \d+ - .*? >>/))
+          # The banner names the failure ansible's strict evaluation of the
+          # value reports (the guard-routed else arm), while the warning
+          # block above keeps the lenient render's own message.
+          if (strict_msg = strict_value_message(raw, span_vars, host))
+            return {"<< error #{counter_before + 1} - #{strict_msg} >>", false}
+          end
+          return {first_marker[0], false}
+        end
         span_vars = span_vars.dup
         span_vars[ident] = JSON::Any.new(finalized)
         active_substitutor = VarSubstitutor.new(vars: span_vars, host_name: host.name)
@@ -387,6 +406,16 @@ module Krikri
       else
         {markers, false}
       end
+    end
+
+    # The message strict substitution of a single referenced value raises
+    # (nil when it renders cleanly or fails with something other than an
+    # undefined name).
+    private def strict_value_message(raw : String, vars : Hash(String, JSON::Any), host : Host) : String?
+      VarSubstitutor.new(vars: vars, host_name: host.name).substitute(raw, strict: true)
+      nil
+    rescue e : UndefinedVariableError
+      e.message.to_s
     end
 
     # Whether a span's expression combines operand values with a binary

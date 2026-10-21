@@ -1657,8 +1657,11 @@ module Krikri
           current = evaluate_bare_mustache_preserving_type(raw, vars_context) || begin
             inner = raw.strip
             if inner.starts_with?("{{") && inner.ends_with?("}}") && inner.scan("{{").size == 1
-              inner = inner[2..-3].strip
-              rendered = VariableSubstitutor::ExpressionEvaluator.new(vars_context).evaluate(inner)
+              # Strict, like ansible's own loop-source templating: an undefined
+              # name inside the expression (`[user_name] + extra_list`) fails the
+              # task with "'user_name' is undefined" - the lenient evaluator
+              # turned it into a None item and the task ran (issue #210).
+              rendered = VarSubstitutor.new(vars: vars_context).substitute(raw.strip, strict: true)
               Krikri.parse_json_or_python_literal(rendered)
             else
               # MIXED literal-plus-expression text (`mixed: "a-{{

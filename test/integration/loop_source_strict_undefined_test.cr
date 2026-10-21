@@ -52,6 +52,56 @@ describe "undefined loop: source is strict" do
     output.must_include("failed=1")
   end
 
+  # Issue #210 - a loop source that is a variable whose own stored value is
+  # a complex template with an undefined name inside (`[undef] + extra`).
+  # Ansible fails the task on the undefined name; the lenient expression
+  # evaluator used to turn it into a single None item and the task ran.
+  it "fails a loop over a template value that consumes an undefined name" do
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          base_list: "{{ [undef_name] + extra_list }}"
+          extra_list: []
+        tasks:
+          - name: looped
+            ansible.builtin.debug:
+              msg: "{{ item }}"
+            loop: "{{ base_list }}"
+            ignore_errors: true
+          - name: sentinel
+            ansible.builtin.debug:
+              msg: "done"
+      YAML
+
+    status.exit_code.must_equal(0)
+    output.must_include("'undef_name' is undefined")
+    output.wont_include("item=None")
+    output.must_include("ignored=1")
+  end
+
+  # Issue #210 - a guarded conditional whose guard routes AROUND its access
+  # arm (`user_group.base if user_group is defined else user_name`, both
+  # undefined). Ansible reads only the else arm, so the failure names
+  # 'user_name'; krikri used to blame the access arm's root 'user_group'.
+  it "names the else-arm variable of a guarded conditional" do
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: guarded
+            ansible.builtin.debug:
+              msg: "{{ user_group.base if user_group is defined else user_name }}"
+            ignore_errors: true
+      YAML
+
+    status.exit_code.must_equal(0)
+    output.must_include("Error while resolving value for 'msg': 'user_name' is undefined")
+    output.wont_include("'user_group' is undefined")
+  end
+
   # Scenario 1 - body DOES reference item: must now name the loop source,
   # not `item`.
   it "names the loop-source variable even when the body references item" do
