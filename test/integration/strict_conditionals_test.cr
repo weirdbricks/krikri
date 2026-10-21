@@ -108,6 +108,42 @@ describe "strict boolean conditionals" do
     output.wont_include("\"msg\": \"TASK-RAN\"")
   end
 
+  # Issue #218 (arnobirchler.docker): a lazily-stored list whose item is
+  # itself a template (`docker_users: ["{{ sudoer }}"]`) read bare by
+  # `when:`. Real renders the deciding value at decision time, so the
+  # undefined reference inside the ITEM fails the conditional - with the
+  # missing-name message and real's third chain record pointing at the
+  # item's own defining site - never the list-type ConditionalBooleanError
+  # the unrendered raw shape raises, and never the ALLOW_BROKEN_CONDITIONALS
+  # hint (an undefined reference is not a non-boolean result).
+  it "fails a bare list whose item is an undefined template on the item's reference, with real's three-record chain" do
+    yaml = <<-YAML
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          docker_users:
+            - "{{ sudoer }}"
+        tasks:
+          - name: gated
+            ansible.builtin.debug:
+              msg: "TASK-RAN"
+            when: docker_users
+      YAML
+
+    status, output = run_playbook(yaml)
+
+    status.exit_code.must_equal(2)
+    output.must_include("[ERROR]: Task failed: Error while evaluating conditional: 'sudoer' is undefined")
+    # The middle chain record is the bare conditional-evaluation failure;
+    # the missing-name cause follows with its own Origin stanza.
+    output.must_include("Error while evaluating conditional.")
+    output.must_include("'sudoer' is undefined\nOrigin: ")
+    output.wont_include("derived from value of type 'list'")
+    output.wont_include("ALLOW_BROKEN_CONDITIONALS")
+    output.wont_include("\"msg\": \"TASK-RAN\"")
+  end
+
   it "accepts a genuine boolean" do
     status, output = run_playbook(playbook_for("real_bool"))
 

@@ -62,6 +62,15 @@ module Krikri
       nil
     end
 
+    # Every position whose path ends with *suffix*, in document order -
+    # the counting form of #suffix_at?, for callers that must refuse an
+    # ambiguous origin (two matches = two candidate defining sites; the
+    # caller's exactly-one-match rule then hides the origin instead of
+    # mislabeling it).
+    def all_suffix_at?(suffix : String) : Array(Pos)
+      @positions.select { |path, _| path.ends_with?(suffix) }.values
+    end
+
     # The top-level sequence entries as (index, start line) pairs sorted
     # by position - for a playbook these are its plays, letting callers
     # locate which play a given source line belongs to.

@@ -3051,9 +3051,25 @@ module Krikri
       # maintains): `when: my_list` with `my_list: []` (or `my_dict:
       # {}`) always ran the task, verified directly against real
       # Python's own `bool([])`/`bool({})`.
+      # Real renders the deciding container's own stored template text
+      # (each lazily-templated item/value) at conditional-decision time,
+      # so an undefined reference inside a list's item surfaces there:
+      # ansible-core 2.19 fails the task with
+      # "Task failed: Error while evaluating conditional: 'sudoer' is
+      # undefined" (issue #218, arnobirchler.docker's
+      # `docker_users: ["{{ sudoer }}"]` under a bare
+      # `when: docker_users`), not with the container-type
+      # ConditionalBooleanError this engine used to raise straight off
+      # the unrendered raw shape (with `sudoer` defined both engines
+      # already agree on that container-type error). Rendering only
+      # decides raise-vs-pass; the rendered values are discarded -
+      # per-item rendering never changes a container's own length or
+      # type, so the decision below stays on the raw shape, and
+      # execution-resolved leaves keep their never-rerendered gate.
       if resolved = VariableSubstitutor::VariableLookup.new(vars).resolve(condition)
         case raw = resolved.raw
         when Hash
+          render_container_leaves_strictly(resolved, vars)
           if strict && !allow_broken_conditionals?
             raise ConditionalBooleanError.new(
               "Conditional result (#{raw.empty? ? "False" : "True"}) was derived from value of type 'dict'. " \
@@ -3061,6 +3077,7 @@ module Krikri
           end
           return !raw.empty?
         when Array
+          render_container_leaves_strictly(resolved, vars)
           if strict && !allow_broken_conditionals?
             raise ConditionalBooleanError.new(
               "Conditional result (#{raw.empty? ? "False" : "True"}) was derived from value of type 'list'. " \
@@ -3181,6 +3198,31 @@ module Krikri
         false
       else
         true
+      end
+    end
+
+    # Strictly renders every template-bearing string leaf of a resolved
+    # container *resolved* (item of a list, value of a dict, recursively),
+    # the way real renders the deciding value when a bare `when:` reaches
+    # it. The rendered values are discarded - a leaf render that CONSUMED
+    # an undefined reference raises (its UndefinedVariableError propagates
+    # to the caller, so the task fails with real's
+    # "Error while evaluating conditional: 'X' is undefined" instead of
+    # this engine's container-type error), a leaf that renders cleanly
+    # contributes nothing. The unsafe gate mirrors VariableLookup#
+    # rerender_if_templated's: execution-resolved text (registered
+    # results, facts, task-resolved values) is verbatim content, never
+    # re-rendered.
+    private def self.render_container_leaves_strictly(resolved : JSON::Any, vars : Hash(String, JSON::Any)) : Nil
+      case raw = resolved.raw
+      when Array
+        raw.each { |item| render_container_leaves_strictly(item, vars) }
+      when Hash
+        raw.each_value { |value| render_container_leaves_strictly(value, vars) }
+      when String
+        return unless raw.includes?("{{") || raw.includes?("{%") || raw.includes?("{#")
+        return if UnsafeValues.unsafe_text?(raw)
+        VarSubstitutor.new(vars: vars).substitute(raw, strict: true)
       end
     end
 
