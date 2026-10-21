@@ -24,12 +24,8 @@
 # "set this connection variable for every host" flags, VaultCli for the
 # password prompts, Vault for the vault sources).
 
-# Same Crystal 1.22 broken-pipe stdio fix as krikri-playbook.cr (see
-# the full explanation there): without this, `bin/krikri ... | head -1`
-# self-exits 141 on EPIPE instead of raising the catchable IO::Error.
-Signal::PIPE.ignore
-STDOUT.exit_on_broken_pipe = false
-STDERR.exit_on_broken_pipe = false
+# Same Crystal 1.22 broken-pipe stdio fix as krikri-playbook.cr.
+require "./src/krikri/stdio_pipe_guard"
 
 require "option_parser"
 require "colorize"
