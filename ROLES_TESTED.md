@@ -13940,3 +13940,8 @@ Local probe roles, not Galaxy roles: each probed task registers its result and d
 | `shomatan.php-fpm` | ubuntu | ✅ Clean (round29875874, 0.9.1805 release). Times: cold py 6.97s vs cr 6.70s; warm py 3.51s vs cr 0.43s. |
 | `tobias_richter.apt_mark` | rocky | ✅ Clean (round29875873, 0.9.1805 release). Times: cold py 3.21s vs cr 0.89s; warm py 2.74s vs cr 0.16s. |
 | `tseho.server` | rocky | ✅ Clean (round29875869, 0.9.1805 release). Times: cold py 5.04s vs cr 10.14s; warm py 3.51s vs cr 0.50s. |
+| `cans.celery-worker-setup` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29875879, 0.9.1805 release). Times: cold py 2.87s vs cr 0.95s; warm py 2.40s vs cr 0.14s. |
+| `cans.gitvenv` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29875877, 0.9.1805 release). Times: cold py 1.83s vs cr 0.76s; warm py 1.41s vs cr 0.15s. |
+| `dmitrii-ageev.logrotate` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29875880, 0.9.1805 release). Times: cold py 1.93s vs cr 0.77s; warm py 2.60s vs cr 0.12s. |
+| `grycap.sage_edc` | ubuntu | ✅ Clean (round29875878, 0.9.1805 release). Times: cold py 441.84s vs cr 388.88s; warm py 52.75s vs cr 1.77s. |
+| `johanmeiring.ubuntu-ecs-agent` | ubuntu | ✅ Clean (round29875876, 0.9.1805 release). Times: cold py 99.31s vs cr 47.76s; warm py 38.73s vs cr 1.49s. |
