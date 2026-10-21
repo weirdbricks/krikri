@@ -105,6 +105,12 @@ module Krikri
       if failure = cron_param_failure(name, env, insertafter, insertbefore)
         return failure
       end
+      # Ansible's CronTab.__init__ resolves the crontab binary with
+      # get_bin_path(required=True) before any read or write, so even a
+      # cron_file: entry (binary never invoked) fails on a host without it.
+      unless find_required_binary("crontab")
+        return PluginResult.new(changed: false, failed: true, msg: missing_executable_message("crontab"))
+      end
       state = @params["state"]? || "present"
       job = @params["job"]?
 
