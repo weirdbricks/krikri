@@ -7,10 +7,12 @@ module Krikri
   module VariableSubstitutor
     # Raised when an ordering comparison (`<`, `<=`, `>`, `>=`) gets
     # operands Jinja2/Python cannot compare - a container against
-    # anything, nil/None against anything, a non-numeric string against a
-    # number, a boolean against a non-numeric string. Jinja2 raises
-    # TypeError ("'<=' not supported between instances of 'dict' and
-    # 'float'") and ansible-playbook fails the task; this evaluator
+    # anything, nil/None against anything, any string against a number,
+    # a boolean against a string. Python only ever orders int/float/bool
+    # mutually and str mutually, so ansible-playbook fails the task on
+    # `'10' >= 1` with "'>=' not supported between instances of
+    # '_AnsibleTaggedStr' and 'int'" (live-verified, issue #219; a yaml
+    # string carries a datatag, hence the name). This evaluator
     # historically stringified both operands and compared the texts,
     # silently answering where Ansible fails (found by
     # bin/differential_fuzz against the krikri-jinja engine, which already
@@ -365,10 +367,11 @@ module Krikri
       end
 
       # Only the operand classes Python cross-compares numerically - a
-      # String is deliberately absent, unlike #numeric_or_nil which also
-      # parses numeric strings for the deliberately-lenient ORDERING
-      # comparisons below (real Python answers `'7' == 7` False, never
-      # an error, and only the ordering comparisons are class-strict).
+      # String is deliberately absent, because Python never treats a
+      # string as a number: `'7' == 7` is False, and `'7' < 7` is a
+      # TypeError. Numeric strings get parsed only in the two-raw-strings
+      # ordering cascade (#numeric_or_nil), where Python's own
+      # str-vs-str ordering already applies.
       private def equality_numeric_or_nil(value : JSON::Any) : Float64?
         case raw = value.raw
         when Int64   then raw.to_f64
@@ -396,37 +399,34 @@ module Krikri
       # `missing_var < '17'` -> "True").
       #
       # Deliberately KEPT lenient (pre-existing, load-bearing for real
-      # roles whose values are strings from module stdout):
-      # - two raw Strings compare as strings (int/float-parsable pairs
-      #   numerically first, exactly as before), matching Python's own
-      #   lexicographic str-vs-str ordering;
-      # - a numeric string against a real number compares numerically
-      #   ("7" < 10).
+      # roles whose values are strings from module stdout): two raw
+      # Strings compare as strings (int/float-parsable pairs numerically
+      # first, exactly as before), matching Python's own lexicographic
+      # str-vs-str ordering. But a String paired with a real number is
+      # never parsed as a number: ansible fails `'10' >= 1` (a role
+      # default compared to a numeric literal, issue #219) with "'>=' not
+      # supported between instances of '_AnsibleTaggedStr' and 'int'".
       # A Bool orders numerically as its int-subclass value (True == 1 in
       # Python: `True > False` and `bool_var < 2` are valid Python).
       private def compare_values(left : JSON::Any, right : JSON::Any, op : String) : Int32
-        left_num = numeric_or_nil(left)
-        right_num = numeric_or_nil(right)
-
         # Two raw strings: keep the historical numeric-first cascade for
         # numeric-string pairs, lexicographic for anything else (Python's
         # own str-vs-str semantics).
         if left.raw.is_a?(String) && right.raw.is_a?(String)
+          left_num = numeric_or_nil(left)
+          right_num = numeric_or_nil(right)
           if left_num && right_num
             return (left_num <=> right_num) || 0
           end
           return left.as_s <=> right.as_s
         end
 
-        # Bool coerces to its Python int-subclass value for ordering.
-        # (A nil-check, not an `if raw = ...` truthiness test: False is a
-        # valid Bool operand and would skip the branch.)
-        if (left_bool = left.raw.as?(Bool)).is_a?(Bool)
-          left_num = left_bool ? 1.0 : 0.0
-        end
-        if (right_bool = right.raw.as?(Bool)).is_a?(Bool)
-          right_num = right_bool ? 1.0 : 0.0
-        end
+        # Cross-class path never parses a String as a number (ansible
+        # refuses the comparison the way Python does, see above); Bool
+        # already coerces to its int-subclass value in
+        # #equality_numeric_or_nil.
+        left_num = equality_numeric_or_nil(left)
+        right_num = equality_numeric_or_nil(right)
 
         if left_num && right_num
           return (left_num <=> right_num) || 0
@@ -438,10 +438,13 @@ module Krikri
 
       # Python's own class name for a JSON::Any operand, for the
       # TypeError-style message above (real message: "'<=' not supported
-      # between instances of 'dict' and 'float'").
+      # between instances of 'dict' and 'float'"). Strings are named the
+      # way ansible names them in that message, '_AnsibleTaggedStr' - its
+      # yaml loader tags strings, so they are not plain 'str' (issue
+      # #219).
       private def python_type_name(value : JSON::Any) : String
         case value.raw
-        when String  then "str"
+        when String  then "_AnsibleTaggedStr"
         when Int64   then "int"
         when Float64 then "float"
         when Bool    then "bool"

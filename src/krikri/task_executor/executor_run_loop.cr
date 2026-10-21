@@ -943,6 +943,11 @@ module Krikri
         # with the plain prefix and no conditional wrapper (probed vs
         # 2.19.11 2026-10-10, `when: lst.index('z') == 1`).
         raise WhenEvaluationError.new("Task failed: Error rendering expression: #{ex.message}")
+      rescue ex : ConditionalEvaluator::OrderingTypeError
+        # A str-vs-number ordering comparison ('10' >= 1): Python's TypeError
+        # is an expression render failure in ansible too, framed the same way
+        # as the list-method one above (issue #219).
+        raise WhenEvaluationError.new("Task failed: Error rendering expression: #{ex.message}")
       rescue ex : Krikri::FilterPluginError
         # A FILTER plugin's runtime failure (e.g. length on None) - real
         # prints its wrapper message with the plain "Task failed: " prefix

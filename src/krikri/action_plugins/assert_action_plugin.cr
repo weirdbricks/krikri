@@ -188,6 +188,8 @@ module Krikri
       ConditionalEvaluator.evaluate(substituted, @vars, strict: true, raise_undefined: true)
     rescue ex : PlusMinusOperandError
       raise RenderExpressionError.new("Error rendering expression: #{ex.message}")
+    rescue ex : ConditionalEvaluator::OrderingTypeError
+      raise RenderExpressionError.new("Error rendering expression: #{ex.message}")
     end
 
     private def failure_result(failing : String) : ActionResult
