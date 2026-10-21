@@ -1534,9 +1534,7 @@ module Krikri
           params["src"] = src
         else
           # Ansible's _find_needle miss on the controller - a relative src,
-          # so the failure carries the full Searched-in list (both
-          # connection flavors live-verified against 2.19.11).
-          return controller_missing_copy_local_result(src, candidates) if local_connection
+          # so the failure carries the full Searched-in list.
           return controller_missing_copy_result(src, candidates)
         end
       elsif local_connection
@@ -1548,7 +1546,7 @@ module Krikri
         lookup_path = src.starts_with?('~') ? (File.expand_path(src, home: true) rescue src) : src
         is_directory = Dir.exists?(lookup_path) rescue false
         return params if is_directory
-        return controller_missing_copy_local_result(src, [] of String) unless File.exists?(lookup_path)
+        return controller_missing_copy_result(src, [] of String) unless File.exists?(lookup_path)
         return params
       end
 
@@ -1649,27 +1647,15 @@ module Krikri
     end
 
     # Ansible's own failure text for a controller-side src: miss
-    # (copy action plugin) - byte-identical to the unarchive variant
-    # below so divergence triage compares cleanly against a
-    # ansible-playbook run of the same role. A relative src carries the
-    # full Searched-in list (Ansible's AnsibleFileNotFound paths); an
-    # absolute one carries none (Ansible's absolute lookup branch never
-    # populates one).
+    # (copy action plugin). Real 2.19.11 prefixes the fatal msg with
+    # "Unexpected AnsibleActionFail error: " on EVERY connection type
+    # (local and ssh both live-verified) - copy's action-level fail is
+    # re-raised through the controller rather than collapsed into a
+    # "Task failed: " wrapper, unlike script/unarchive. A relative src
+    # carries the full Searched-in list (Ansible's AnsibleFileNotFound
+    # paths); an absolute one carries none (Ansible's absolute lookup
+    # branch never populates one).
     private def controller_missing_copy_result(src : String, candidates : Array(String)) : JSON::Any
-      result = JSON.parse({
-        "changed" => false,
-        "failed"  => true,
-        "msg"     => "Task failed: #{NeedleLookup.not_found_message(src, candidates)}",
-      }.to_json)
-      Krikri.mark_failed_key_order(result, FAILED_KEY_ORDER_MSG_FIRST)
-      result
-    end
-
-    # copy:'s controller-side src: miss on a LOCAL connection: real
-    # 2.19.11's fatal msg carries the "Unexpected AnsibleActionFail
-    # error: " prefix itself, WITHOUT the "Task failed: " prefix the
-    # remote-host variant above carries (both live-verified).
-    private def controller_missing_copy_local_result(src : String, candidates : Array(String)) : JSON::Any
       result = JSON.parse({
         "changed" => false,
         "failed"  => true,
