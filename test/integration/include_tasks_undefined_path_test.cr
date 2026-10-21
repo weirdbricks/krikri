@@ -41,4 +41,21 @@ describe "include_tasks: with a failing templated path" do
     output.must_include("Finalization of task args for 'ansible.builtin.include_tasks' failed: Error while resolving value for '_raw_params': 'state' is undefined")
     output.wont_include("undefined.yml")
   end
+
+  it "points the innermost Origin at the file: value's quote in dict form" do
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: "Desired state is {{ state }}"
+            ansible.builtin.include_tasks:
+              file: "{{ state }}.yml"
+      YAML
+
+    status.exit_code.must_equal(2)
+    output.must_include("Error while resolving value for '_raw_params': 'state' is undefined")
+    output.must_match(/Origin: \S+\.yml:7:15\n/)
+    output.must_include(" " * 16 + "^ column 15\n")
+  end
 end

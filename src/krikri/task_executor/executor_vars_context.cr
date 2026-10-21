@@ -2946,6 +2946,11 @@ module Krikri
       # free_form_value_position's after-the-colon scan finds it
       # (live-verified vs 2.19.11: `include_tasks: "{{ state }}.yml"` ->
       # innermost Origin column 38, the value token's quote).
+      # Dict-form include_tasks raises the same '_raw_params' message even
+      # though its value sits on the later `file:` line (issue #202,
+      # philnewm.vagrant_box_prep) - locate_param_key_position finds that
+      # value's first character (quote included); the free-form scan stays
+      # as the fallback for shapes with no `file:` key.
       # The whole-string 'Task args must resolve to a dict' failure is
       # raised by Ansible with obj=the string args layer itself, so its
       # innermost Origin points at the value's first character on the
@@ -2953,7 +2958,8 @@ module Krikri
       # `pip: name=supervisor ...` -> 10:12) - the position
       # free_form_value_position already finds.
       dict_args_failure = msg.starts_with?("Task args must resolve to a 'dict'")
-      param_idx, param_col = free_form || dict_args_failure ? free_form_value_position(lines, module_idx, task.module_name) : (locate_param_value_line(lines, module_idx, msg) || (["include_tasks", "_include_tasks"].includes?(task.module_name) ? free_form_value_position(lines, module_idx, finalization_module_name(task)) : {module_idx, module_col}))
+      include_tasks = ["include_tasks", "_include_tasks"].includes?(task.module_name)
+      param_idx, param_col = free_form || dict_args_failure ? free_form_value_position(lines, module_idx, task.module_name) : (locate_param_value_line(lines, module_idx, msg) || (include_tasks ? ((msg.starts_with?("Error while resolving value for '_raw_params':") ? locate_param_key_position(lines, module_idx, "file") : nil) || free_form_value_position(lines, module_idx, finalization_module_name(task))) : {module_idx, module_col}))
 
       # When the fourth chained stanza is emitted, the third level's text
       # shortens to the prefix alone - the inner message moves entirely
