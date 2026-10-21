@@ -1140,10 +1140,25 @@ module Krikri
     private def resolve_pinned_version(name : String, version : String) : String?
       probe = remote_exec("apt-cache policy #{shell_single_quote(name)}")
       return nil unless probe[:exit_code] == 0
-      probe[:stdout].split('\n').each do |line|
-        tokens = line.strip.split
-        tokens.delete("***")
-        next unless first = tokens.first?
+      # Ansible matches the pin against the version table only - the
+      # package header (`htop:`) and the Installed:/Candidate: lines are
+      # never candidates, so a `*` pin must not resolve to the header.
+      # Below the "Version table:" marker, rows at the table's own
+      # indentation are versions (the installed row's `***` marker reads
+      # as blank, per apt-cache's column layout); the deeper-indented
+      # rows under it are the per-mirror origin lines.
+      lines = probe[:stdout].split('\n')
+      start = lines.index(&.includes?("Version table:")) || return nil
+      table_indent : Int32? = nil
+      lines[(start + 1)..].each do |raw|
+        line = raw.gsub("***", "   ")
+        stripped = line.strip
+        indent = line.size - line.lstrip.size
+        table_indent = indent if table_indent.nil? && !stripped.empty?
+        base = table_indent
+        break if base.nil? || stripped.empty? || indent < base
+        next if indent > base
+        next unless first = stripped.split.first?
         return first if version_pin_matches?(version, first)
       end
       nil

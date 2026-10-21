@@ -103,6 +103,56 @@ describe "apt plugin pinned-version validation" do
   end
 end
 
+# Stub PATH dir like with_bad_pin_shim, but `apt-cache policy` prints a
+# realistic full stanza (package header, Installed:/Candidate: lines, the
+# Version table's version row AND a deeper-indented mirror row) and
+# `apt-get` logs every invocation and exits 0.
+private def with_htop_policy_shim(&)
+  dir = File.join(Dir.tempdir, "krikri-apt-htop-policy-#{Random.rand(1_000_000)}")
+  log = File.join(dir, "calls.log")
+  FileUtils.mkdir_p(dir)
+  File.write(File.join(dir, "apt-get"), <<-'SHIM')
+    #!/bin/sh
+    echo "$@" >> "$KRIKRI_APT_CALLS"
+    exit 0
+  SHIM
+  File.write(File.join(dir, "apt-cache"), <<-'CACHE_SHIM')
+    #!/bin/sh
+    printf 'htop:\n  Installed: (none)\n  Candidate: 3.4.1-5\n  Version table:\n     3.4.1-5 500\n        500 https://deb.debian.org/debian trixie/main amd64 Packages\n'
+  CACHE_SHIM
+  File.write(File.join(dir, "stat"), "#!/bin/sh\necho 100\n")
+  File.chmod(File.join(dir, "apt-get"), 0o755)
+  File.chmod(File.join(dir, "apt-cache"), 0o755)
+  File.chmod(File.join(dir, "stat"), 0o755)
+  env = {"PATH" => "#{dir}:/usr/bin:/bin", "KRIKRI_APT_CALLS" => log}.to_json
+  yield env, log
+ensure
+  FileUtils.rm_rf(dir) if dir
+end
+
+describe "apt plugin wildcard pin version-table resolution" do
+  # A wildcard pin must fnmatch the version table's rows only:
+  # apt-cache policy's package header, Installed:/Candidate: lines and
+  # mirror rows are not versions, and a `*` pin used to match the header
+  # first, handing apt-get `htop=htop:` ("Version 'htop:' ... was not
+  # found", exit 2).
+  it "resolves a wildcard pin to a version-table row, never the package header" do
+    with_htop_policy_shim do |env, log|
+      result = PluginSpecHelper.run("apt", {
+        "name"         => "htop=*",
+        "state"        => "present",
+        "_environment" => env,
+      })
+
+      result["failed"]?.try(&.as_bool?).must_be_nil
+      install_calls = File.exists?(log) ? File.read_lines(log).select(&.includes?(" install ")) : [] of String
+      install_calls.size.must_equal(1)
+      install_calls[0].includes?("htop=3.4.1-5").must_equal(true)
+      install_calls[0].includes?("htop:").must_equal(false)
+    end
+  end
+end
+
 # state=latest's own wildcard-pin handling: real install() fnmatches the
 # pin against the INSTALLED version first, so an installed `bash=5.*` on a
 # 5.2-1 host is a no-op with no apt-get call at all, and otherwise the
