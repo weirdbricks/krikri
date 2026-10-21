@@ -175,6 +175,14 @@ module Krikri
         JSON::Any.new(result)
       when Array
         JSON::Any.new(raw.map { |item| yaml_value_to_json(item) })
+      when Float64
+        # Crystal's Float64#to_json raises JSON::Error for NaN/infinite
+        # floats ("Infinity not allowed in JSON"), which aborted the whole
+        # parse for a perfectly legal YAML value like a role default
+        # `x: .inf`. JSON::Any holds the raw float fine in memory; only
+        # serializing it back to JSON text would fail, and ansible (whose
+        # loader produces the same Python float) accepts the role.
+        JSON::Any.new(raw)
       else
         JSON.parse(value.to_json)
       end
