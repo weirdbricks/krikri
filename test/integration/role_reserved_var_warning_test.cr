@@ -139,4 +139,24 @@ describe "reserved variable name warning in role defaults/vars files" do
   ensure
     FileUtils.rm_rf(src_dir) if src_dir && Dir.exists?(src_dir)
   end
+
+  it "never warns for a role vars/main.yml with a top-level vars: key" do
+    src_dir = File.tempname("reserved-role-vars-key")
+    Dir.mkdir_p(File.join(src_dir, "roles", "r5", "vars"))
+    File.write(File.join(src_dir, "roles", "r5", "vars", "main.yml"), "---\nvars:\n  foo: \"bar\"\n")
+    playbook = File.join(src_dir, "pb.yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        gather_facts: false
+        roles:
+          - r5
+      YAML
+
+    output = IO::Memory.new
+    Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output, chdir: src_dir)
+
+    refute(output.to_s.includes?("Found variable using reserved name"))
+  ensure
+    FileUtils.rm_rf(src_dir) if src_dir && Dir.exists?(src_dir)
+  end
 end
