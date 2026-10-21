@@ -97,6 +97,77 @@ module Krikri
   module FactsGatherer
     extend self
 
+    # Whether *path* cannot be executed on this machine - the check
+    # Ansible's interpreter discovery effectively performs before
+    # failing with rc 127. A leading "~/" is the invoking user's home;
+    # anything containing "/" must exist as an executable file, while a
+    # bare name must resolve on PATH. "auto" and its variants are
+    # discovery requests, not paths - Ansible never reports them missing.
+    def interpreter_missing?(path : String) : Bool
+      return false if path.starts_with?("auto")
+      if path.starts_with?("~/") && (home = ENV["HOME"]?)
+        path = "#{home}/#{path[2..]}"
+      end
+      if path.includes?('/')
+        !File::Info.executable?(path)
+      else
+        Process.find_executable(path).nil?
+      end
+    end
+
+    # The exact block ansible-playbook prints when the implicit setup
+    # module dies with rc 127 on a missing interpreter (live-verified
+    # output): the failed-task banner, the cause chain, the sub-event
+    # box carrying the module's own message, and the fatal line with
+    # ansible's failed_modules payload. The fatal line is returned
+    # uncoloured as its last line - the executor applies the red tint
+    # there, like every other fatal line, without touching the rest.
+    #
+    # module_stdout/module_stderr differ by transport: over a real SSH
+    # round trip the interpreter error is the remote shell's
+    # ("/bin/sh: line 1: ... No such file or directory") and the
+    # connection-closed notice lands in stderr, while on
+    # ansible_connection=local the controller's own /bin/sh raises
+    # "not found" on stderr and stdout is empty.
+    #
+    # The JSON's key order follows ansible's observed failed_modules
+    # payload exactly, so it is written with JSON.build in that order
+    # rather than left to a hash's iteration - the escaped \r\n inside
+    # the shell strings is how ansible displays them inside the JSON.
+    def interpreter_missing_report(host_name : String, interpreter : String, connection_addr : String, remote : Bool) : String
+      module_stderr = remote ? "Shared connection to #{connection_addr} closed.\r\n" : "/bin/sh: 1: #{interpreter}: not found\n"
+      module_stdout = remote ? "/bin/sh: line 1: #{interpreter}: No such file or directory\r\n" : ""
+      not_found_msg = "The module interpreter '#{interpreter}' was not found."
+      failed_modules_msg = "The following modules failed to execute: ansible.legacy.setup."
+      sub_event_msg = "The module interpreter '#{interpreter}' was not found. Consider overriding the configured interpreter path for this host. See stdout/stderr for the returned output."
+
+      # Ansible's fatal line prints the failed_modules payload with a
+      # space after every ':' and ',' - JSON.build emits compact JSON,
+      # so the payload is assembled by hand in ansible's observed key
+      # order, with each value escaped by String#to_json (the \r\n
+      # inside the shell strings stays escaped exactly as ansible
+      # displays it).
+      fatal_json = %({"ansible_facts": {}, "changed": false, "failed_modules": {"ansible.legacy.setup": {"exception": "(traceback unavailable)", "failed": true, "module_stderr": #{module_stderr.to_json}, "module_stdout": #{module_stdout.to_json}, "msg": #{not_found_msg.to_json}, "rc": 127}}, "msg": #{failed_modules_msg.to_json}})
+
+      [
+        "[ERROR]: Task failed: Action failed: #{failed_modules_msg}",
+        "",
+        "Task failed: Action failed.",
+        "",
+        "<<< caused by >>>",
+        "",
+        failed_modules_msg,
+        "",
+        "+--[ Sub-Event 1 of 1 ]---",
+        "| ",
+        "| #{sub_event_msg}",
+        "| ",
+        "+--[ End Sub-Event ]---",
+        "",
+        "fatal: [#{host_name}]: FAILED! => #{fatal_json}",
+      ].join("\n")
+    end
+
     # Runs *command* with *args* directly (no shell), capturing stdout only
     # (stderr discarded) - equivalent to `` `command 2>/dev/null` `` but without
     # forking an intermediate `/bin/sh -c`. Returns "" if the binary can't be
@@ -2523,6 +2594,27 @@ module Krikri
       fact_path = params.try(&.["fact_path"]?).try(&.as_s?) || DEFAULT_FACT_PATH
 
       remote_connection = params.try(&.["_remote_connection"]?).try(&.as_s?) == "true"
+
+      # Ansible's setup module runs under the host's configured
+      # ansible_python_interpreter and fails Gathering Facts with rc 127
+      # ("/bin/sh: 1: <path>: not found") when that interpreter is
+      # missing - it never falls back to another python. Mirror that
+      # instead of gathering under whatever interpreter this machine has.
+      if (interpreter = params.try(&.["ansible_python_interpreter"]?).try(&.as_s?)) &&
+         !interpreter.empty? && interpreter_missing?(interpreter)
+        return {
+          "changed" => false,
+          "failed"  => true,
+          "msg"     => "The module interpreter '#{interpreter}' was not found. Consider overriding the configured interpreter path for this host. See stdout/stderr for the returned output.",
+          "stderr"  => "/bin/sh: 1: #{interpreter}: not found",
+          "rc"      => 127,
+          # Not an ansible result key - a marker for the executor, which
+          # needs the configured path itself to reproduce ansible's
+          # interpreter-not-found fatal block (the msg alone only carries
+          # it embedded in prose).
+          "interpreter_missing" => interpreter,
+        }.to_json
+      end
 
       facts = gather_facts(requested_subset, remote_connection, gather_timeout, fact_path)
 
