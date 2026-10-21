@@ -1832,7 +1832,7 @@ module Krikri
         # here put the block ahead of the previous task's changed: line
         # (issue #14, pylabs.nginx). The display path prints it under this
         # task's own banner, just before the fatal line.
-        if ex.is_a?(UndefinedVariableError) && (text = finalization_error_block_text(task, ex))
+        if ex.is_a?(UndefinedVariableError) && (text = finalization_error_block_text(task, ex, host))
           TaskExecutor.stash_finalization_error_block(failed, text)
         end
         # Not routed through apply_changed_failed_when - same reasoning as
@@ -2200,7 +2200,7 @@ module Krikri
         # display path prints it under this task's own banner, just before
         # the fatal line; the solo path's display comes through the same
         # flush, at the same relative position the inline print had.
-        if ex.is_a?(UndefinedVariableError) && (text = finalization_error_block_text(task, ex))
+        if ex.is_a?(UndefinedVariableError) && (text = finalization_error_block_text(task, ex, host))
           TaskExecutor.stash_finalization_error_block(result, text)
         end
         # Deliberately NOT routed through apply_changed_failed_when:

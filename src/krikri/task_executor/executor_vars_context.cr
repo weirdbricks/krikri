@@ -58,7 +58,7 @@ module Krikri
 
       # vars_files overwrite the whole baseA but lose to the role-var and
       # task-var layers.
-      cache_key = "#{host.name}\u0000#{@hv_generation}"
+      cache_key = vars_files_cache_key(host)
       if (vf = load_vars_files(host)) && vf.has_key?(name)
         set.call(@vars_files_origins_cache[cache_key]?.try(&.[name]?))
       end
@@ -2325,6 +2325,12 @@ module Krikri
           # for each shape), never the bare "Action failed" chain a
           # non-wrapped raise fell into.
           raise UndefinedVariableError.new("Error while resolving value for '#{key}': #{e.message}")
+        rescue e : VarSubstitutor::UndecryptableVaultError
+          # An undecryptable vault reference fails the same finalization
+          # chain, and real 2.19 wraps the failed template itself as
+          # "Error rendering template:" regardless of whether the arg is
+          # a scalar or a container (live-verified 2.19.11, both shapes).
+          raise UndefinedVariableError.new("Error while resolving value for '#{key}': Error rendering template: #{e.message}")
         rescue e : Exception
           # Same routing for any LOOKUP plugin's failure ("The lookup
           # plugin 'file' failed: Unable to access ..."); everything
@@ -2860,8 +2866,8 @@ module Krikri
     # included tasks file otherwise - ansible-core prints the block with
     # the task's defining file either way, live-captured on a role task);
     # when the task can't be located there, no block is printed.
-    private def emit_finalization_error_block(task : Task, ex : UndefinedVariableError) : Nil
-      if text = finalization_error_block_text(task, ex)
+    private def emit_finalization_error_block(task : Task, ex : UndefinedVariableError, host : Host) : Nil
+      if text = finalization_error_block_text(task, ex, host)
         return unless @@finalization_error_chain_seen.add?(text)
         puts text
       end
@@ -2872,7 +2878,7 @@ module Krikri
     # (see stash_finalization_error_block). Returns nil when the task's
     # source can't be located - no block either way, same as the emit-time
     # behavior this was split from.
-    private def finalization_error_block_text(task : Task, ex : UndefinedVariableError) : String?
+    private def finalization_error_block_text(task : Task, ex : UndefinedVariableError, host : Host) : String?
       path = task.source_file || @playbook_file
       return nil unless path && File.file?(path)
 
@@ -2897,6 +2903,20 @@ module Krikri
       if (m = msg.match(test_plugin_pattern)) && !m[2].empty?
         l3 = m[1] + "."
         plugin_cause = m[2]
+      end
+
+      # The undecryptable-vault case splits the same way, and its
+      # innermost stanza gets its own Origin at the vault variable's
+      # DEFINITION (live-captured 2.19.11; see vault_value_failure_origin
+      # for the exactly-one-match rule) - when that definition can't be
+      # located unambiguously the three-level block keeps the full
+      # message instead, never a mislabeled Origin.
+      vault_cause = nil
+      if (m = msg.match(/\AError while resolving value for '([^']+)': Error rendering template: (Attempt to use undecryptable variable: .+)\z/m)) &&
+         (vault_origin = vault_value_failure_origin(task, m[1], host))
+        l3 = "Error while resolving value for '#{m[1]}': Error rendering template."
+        vault_cause = m[2] + "\n" +
+                      origin_context_block(vault_origin.path, File.read_lines(vault_origin.path), vault_origin.line, vault_origin.column)
       end
 
       name_line = locate_name_line(lines, task)
@@ -2965,6 +2985,10 @@ module Krikri
         elsif chain_stanza
           io << "\n<<< caused by >>>\n\n"
           io << chain_stanza
+          io << "\n"
+        elsif vault_cause
+          io << "\n<<< caused by >>>\n\n"
+          io << vault_cause
           io << "\n"
         else
           io << "\n"
@@ -3075,6 +3099,52 @@ module Krikri
         rescue e : UndefinedVariableError
           next unless e.message == message
           matches << origin
+        end
+      end
+      matches.size == 1 ? matches[0] : nil
+    end
+
+    # The unique var-layer DEFINITION whose raw value is an encrypted
+    # vault blob the supplied secrets cannot open - the Origin real
+    # 2.19.11 points an arg-finalization [ERROR] chain's undecryptable-
+    # variable link at, the `!vault` token of the defining vars file
+    # (live-captured). Same layer merge and exactly-one-match protection
+    # as value_failure_var_origin; each candidate blob is probed through
+    # the substitutor so a secret that DOES decrypt it drops out, and an
+    # ambiguous or lineage-less definition yields nil so no origin gets
+    # mislabeled.
+    private def vault_value_failure_origin(task : Task, key : String, host : Host) : FileVarOrigin?
+      seed = task.params[key]?
+      return nil unless seed.is_a?(String)
+      merged = {} of String => JSON::Any
+      origins = {} of String => VarOrigin
+      merge_var_layer(merged, origins, @play_vars, @play_var_origins)
+      # Real 2.19.11 points the innermost Origin at the `!vault` token of
+      # a vars_files entry too (issue #196, live-captured): vars_files sit
+      # above the play-var layer, below the role/task ones, so they merge
+      # in the same order var_origin_for resolves a name's defining layer.
+      merge_var_layer(merged, origins, load_vars_files(host), @vars_files_origins_cache[vars_files_cache_key(host)]?)
+      merge_var_layer(merged, origins, task.role_defaults, task.role_default_origins)
+      merge_var_layer(merged, origins, @all_role_defaults, @all_role_default_origins)
+      merge_var_layer(merged, origins, task.role_vars, task.role_var_origins)
+      merge_var_layer(merged, origins, @all_role_vars, @all_role_var_origins)
+      merge_var_layer(merged, origins, task.vars, task.vars_origins)
+      merge_var_layer(merged, origins, @extra_vars, @extra_var_origins)
+
+      reachable = candidate_reachable_keys(merged, seed)
+      matches = [] of FileVarOrigin
+      merged.each do |name, value|
+        next if reachable && !reachable.includes?(name)
+        raw = value.raw
+        next unless raw.is_a?(String) && raw.includes?("$ANSIBLE_VAULT")
+        origin = origins[name]?
+        next unless origin.is_a?(FileVarOrigin) && origin.column > 0 && File.file?(origin.path)
+        begin
+          VarSubstitutor.new(vars: merged).substitute(raw, strict: true)
+        rescue VarSubstitutor::UndecryptableVaultError
+          matches << origin
+        rescue
+          next
         end
       end
       matches.size == 1 ? matches[0] : nil

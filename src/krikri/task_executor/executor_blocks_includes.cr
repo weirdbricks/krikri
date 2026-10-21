@@ -1436,7 +1436,7 @@ module Krikri
       else
         key = free_form_call?(task) ? "_raw_params" : "file"
         ex = UndefinedVariableError.new("Error while resolving value for '#{key}': #{message}")
-        emit_finalization_error_block(task, ex)
+        emit_finalization_error_block(task, ex, host)
         result = finalization_failure_json(ex, task)
       end
       # real registers the failed result like any other task failure
@@ -2195,7 +2195,7 @@ module Krikri
       # _raw_params - the same key convention the include_vars path's
       # undefined branch uses.
       wrapped = UndefinedVariableError.new("Error while resolving value for '_raw_params': #{ex.message}")
-      emit_finalization_error_block(task, wrapped)
+      emit_finalization_error_block(task, wrapped, host)
       result = finalization_failure_json(wrapped, task)
       if register_name = task.register
         register_result(host, register_name, result) unless register_name.empty?
