@@ -82,7 +82,7 @@ describe "local plugin daemon (ansible_connection=local)" do
 
   it "runs a become_user task through the daemon when the escalation is a no-op (become_user == invoking user)" do
     user = ENV["USER"]? || "root"
-    status, stdout, _stderr = run_playbook(<<-YAML)
+    status, stdout, stderr = run_playbook(<<-YAML)
       - hosts: localhost
         connection: local
         gather_facts: false
@@ -95,9 +95,9 @@ describe "local plugin daemon (ansible_connection=local)" do
           - debug: msg="saw={{ out.stdout }}"
       YAML
 
-    status.success?.must_equal(true)
-    stdout.includes?("saw=become-daemon").must_equal(true)
-    stdout.includes?("failed=0").must_equal(true)
+    status.success?.must_equal(true, "stdout:\n#{stdout}\nstderr:\n#{stderr}")
+    stdout.includes?("saw=become-daemon").must_equal(true, "stdout:\n#{stdout}\nstderr:\n#{stderr}")
+    stdout.includes?("failed=0").must_equal(true, "stdout:\n#{stdout}\nstderr:\n#{stderr}")
   end
 
   it "produces byte-identical stdout with the daemon disabled (--no-persistent-daemon)" do
