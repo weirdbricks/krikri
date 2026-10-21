@@ -1,6 +1,7 @@
 require "../minitest_helper"
 require "file_utils"
 require "json"
+require "../../src/krikri/plugin_helpers/dnf_install_failures"
 
 # Issue #19 (Rocky, dnf failure output gap): ansible-core 2.19's dnf
 # module (dnf4 backend) reports a failed install with its own canned
@@ -51,6 +52,10 @@ private def with_failing_dnf_shim(stdout : String, stderr : String, &)
   end
 ensure
   FileUtils.rm_r(shim_dir) if shim_dir
+end
+
+private class DnfFailuresParseHarness
+  include Krikri::PluginHelpers::DnfInstallFailures
 end
 
 describe "dnf/yum failed install - Ansible's per-spec failures shape (issue 19)" do
@@ -184,5 +189,36 @@ describe "dnf/yum failed install - Ansible's per-spec failures shape (issue 19)"
       result.as_h.has_key?("stderr").must_equal(false)
       result.as_h.keys.first(5).must_equal(["msg", "failures", "results", "rc", "failed"])
     end
+  end
+end
+
+describe "DnfInstallFailures parser - requested expansion (issue 213)" do
+  it "expands one entry per requested occurrence when requested is given" do
+    stdout = "No match for argument: bison-devel\nNo match for argument: libmcrypt-devel\nNo match for argument: libmcrypt\nNo match for argument: re2c\n"
+    stderr = "Error: Unable to find a match: bison-devel libmcrypt-devel libmcrypt re2c libmcrypt-devel\n"
+
+    DnfFailuresParseHarness.new.parse_dnf_install_failures(stdout, stderr,
+      ["bison-devel", "libmcrypt-devel", "libmcrypt", "re2c", "libmcrypt-devel"]).must_equal(
+      ["No package bison-devel available.",
+       "No package libmcrypt-devel available.",
+       "No package libmcrypt available.",
+       "No package re2c available.",
+       "No package libmcrypt-devel available."])
+  end
+
+  it "still dedupes when requested is nil" do
+    stdout = "No match for argument: foo\nNo match for argument: bar\n"
+    stderr = "Error: Unable to find a match: foo bar\n"
+
+    DnfFailuresParseHarness.new.parse_dnf_install_failures(stdout, stderr).must_equal(
+      ["No package foo available.", "No package bar available."])
+  end
+
+  it "trails parsed entries missing from the requested list in parse order" do
+    stdout = "All matches were filtered out by modular filtering for argument: mysql-devel\n"
+    stderr = "Error: All matches for argument: mysql-devel were filtered out by modular filtering\n"
+
+    DnfFailuresParseHarness.new.parse_dnf_install_failures(stdout, stderr, ["other-pkg"]).must_equal(
+      ["mysql-devel All matches were filtered out by modular filtering for argument: mysql-devel"])
   end
 end
