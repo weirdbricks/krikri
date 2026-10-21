@@ -738,10 +738,22 @@ module Krikri
           if pos && (line = pos[0]) > 0
             # The map records the VALUE position; walk back to the key's
             # own column on the same line (same walk-back
-            # include_attribute_render does).
+            # include_attribute_render does). A block-mapping value starts
+            # on a LATER line (its first child), so the key can sit on an
+            # earlier line: Ansible points the Origin at the key itself,
+            # so search upward for the nearest line that opens with it.
             src_line = File.read_lines(meta_path)[line - 1]?
             key_idx = src_line.try(&.index("#{key_str}:"))
-            pos = {line, key_idx + 1} if key_idx
+            if key_idx
+              pos = {line, key_idx + 1}
+            else
+              lines = File.read_lines(meta_path)
+              key_line = line.downto(1).find { |line_no| lines[line_no - 1].lstrip.starts_with?("#{key_str}:") }
+              if key_line
+                indent = lines[key_line - 1].size - lines[key_line - 1].lstrip.size
+                pos = {key_line, indent + 1}
+              end
+            end
           end
           render = pos ? PlaybookParser.origin_error_render_at(message, meta_path, map, pos) : nil
           raise PlaybookParser::InvalidIncludeAttributeError.new(key_str, "RoleMetadata", render)
