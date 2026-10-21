@@ -4035,7 +4035,11 @@ module Krikri
     # with one of these names emits "[WARNING]: Found variable using
     # reserved name 'X'." with an Origin block naming the var key's own
     # position - live-verified byte-for-byte vs 2.19.11 (play vars and
-    # task vars both warn, at definition/compile time).
+    # task vars both warn, at definition/compile time). `vars` itself is
+    # NOT in the list: ansible's warn_if_reserved does
+    # `varnames.discard('vars')` (it is added internally, so safe to
+    # ignore), so a `vars:` key never warns there - a top-level `vars:`
+    # in a role's vars/main.yml must stay silent too.
     RESERVED_VAR_NAMES = %w[
       action always any_errors_fatal args async async_val become become_exe
       become_flags become_method become_user block changed_when check_mode
@@ -4046,7 +4050,7 @@ module Krikri
       max_fail_percentage module_defaults name namespace no_log notify now
       omit order poll port post_tasks pre_tasks q query range register
       remote_user rescue retries roles run_once serial strategy tags tasks
-      throttle timeout undef until vars vars_files vars_prompt when
+      throttle timeout undef until vars_files vars_prompt when
     ]
 
     private def self.play_start_line(source_map : YamlSourceMap?, index : Int32) : Int32
