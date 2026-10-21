@@ -2823,6 +2823,16 @@ module Krikri
     private def finalization_module_name(task : Task) : String
       name = PlaybookParser.resolve_module_name(task.module_name) ||
              fallback_finalization_module_name(task.module_name)
+      # Ansible names a redirected module by its redirect target in this
+      # message, even when the task was spelled ansible.builtin.* (live
+      # 2.19.x: both `authorized_key:` and `ansible.builtin.authorized_key:`
+      # report 'ansible.posix.authorized_key', bare `mount:` reports
+      # 'ansible.posix.mount'). Dispatch still uses the builtin FQCN; only
+      # the reported name follows the redirect.
+      if name.starts_with?("ansible.builtin.") &&
+         (redirected = CollectionIndex.builtin_module_redirect(name.lchop("ansible.builtin.")))
+        return redirected
+      end
       # engine-internal pseudo modules (_include_vars, ...) are real actions
       name = "ansible.builtin.#{name.lchop('_')}" if name.starts_with?('_')
       name
@@ -2922,11 +2932,17 @@ module Krikri
       name_line = locate_name_line(lines, task)
       if name_line
         name_idx, name_col = name_line
+        # Locate by the module name AS WRITTEN in the source: for a
+        # redirected builtin spelled with its FQCN
+        # (`ansible.builtin.authorized_key:`) the reported name is the
+        # redirect target (ansible.posix.authorized_key), which matches
+        # nothing in the playbook text and would drop the whole block.
         # Engine-internal pseudo modules (include_tasks parses as
-        # _include_tasks) never appear as-written in the source - locate
-        # by the user-visible FQCN finalization_module_name resolves to,
-        # whose short form still matches a bare-name line.
-        module_line = locate_module_key_line(lines, name_idx, finalization_module_name(task))
+        # _include_tasks) never appear as-written, so they still rely on
+        # the finalization_module_name fallback, whose short form matches
+        # a bare-name line.
+        module_line = locate_module_key_line(lines, name_idx, task.module_name) ||
+                      locate_module_key_line(lines, name_idx, finalization_module_name(task))
         return unless module_line
         module_idx, module_col = module_line
         two_level = false
