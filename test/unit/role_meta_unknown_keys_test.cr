@@ -79,6 +79,29 @@ describe "RoleLoader meta/main.yml RoleMetadata key validation (issue 81)" do
     ex.message.to_s.must_equal("'first_bad' is not a valid attribute for a RoleMetadata")
   end
 
+  it "points a block-mapping unknown key's Origin at its own line, not its first child's" do
+    # Ansible points the Origin at the unknown KEY itself, but a block
+    # value makes the source map record the first CHILD's position, so
+    # the same-line walk-back never sees the key - ansigenome_info's
+    # shape (issue #208) reported meta/main.yml:27:3 instead of 26:1.
+    build_role("block_bad_meta", <<-YAML)
+      galaxy_info:
+        author: a
+      ansigenome_info:
+        galaxy_id: ''
+      YAML
+
+    ex = assert_raises(Krikri::PlaybookParser::InvalidIncludeAttributeError) do
+      Krikri::RoleLoader.load_roles(roles_yaml("- block_bad_meta"), fresh_play, @roles_root)
+    end
+    ex.key.must_equal("ansigenome_info")
+    render = ex.render
+    render.wont_be_nil
+    # ansigenome_info: is the 3rd line of the heredoc's meta content.
+    render.to_s.must_include("meta/main.yml:3:1")
+    render.to_s.must_include("^ column 1")
+  end
+
   it "still loads a meta/main.yml using only RoleMetadata's allowed keys" do
     # galaxy_info, dependencies, collections, argument_specs and
     # allow_duplicates are all on RoleMetadata's fattributes - the new
