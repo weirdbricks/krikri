@@ -3128,21 +3128,88 @@ module Krikri
         next if skip_key && key == skip_key
         next if reachable && !reachable.includes?(key)
         raw = value.raw
-        next unless raw.is_a?(String) && raw.includes?("{{") &&
-                    !raw.includes?("{%") && !raw.includes?("{#") &&
-                    !UnsafeValues.unsafe_text?(raw)
-        next if required_text && !raw.includes?(required_text)
-        next if raw.includes?("lookup(") || raw.includes?("query(")
-        origin = origins[key]?
-        next unless origin.is_a?(FileVarOrigin) && origin.column > 0 && File.file?(origin.path)
-        begin
-          VarSubstitutor.new(vars: merged).substitute(raw, strict: true)
-        rescue e : UndefinedVariableError
-          next unless e.message == message
-          matches << origin
+        if raw.is_a?(String)
+          next unless raw.includes?("{{") &&
+                      !raw.includes?("{%") && !raw.includes?("{#") &&
+                      !UnsafeValues.unsafe_text?(raw)
+          next if required_text && !raw.includes?(required_text)
+          next if raw.includes?("lookup(") || raw.includes?("query(")
+          origin = origins[key]?
+          next unless origin.is_a?(FileVarOrigin) && origin.column > 0 && File.file?(origin.path)
+          begin
+            VarSubstitutor.new(vars: merged).substitute(raw, strict: true)
+          rescue e : UndefinedVariableError
+            next unless e.message == message
+            matches << origin
+          end
+        else
+          # A container-typed definition (a list of lazily-templated
+          # items, a dict of templated values): the failing link lives in
+          # a LEAF, and real's lineage points the innermost stanza at the
+          # LEAF's own source position (issue #218:
+          # `docker_users: ["{{ sudoer }}"]` under `when: docker_users`
+          # -> Origin at the item, defaults main.yml:31:5 - not the
+          # `docker_users:` key line). The same gates as the string scan
+          # apply per leaf; the exactly-one-match rule protects against
+          # ambiguity the same way.
+          origin = origins[key]?
+          next unless origin.is_a?(FileVarOrigin) && origin.column > 0 && File.file?(origin.path)
+          next unless leaf_pos = failing_container_leaf_pos(key, value, message, required_text, merged, origin.path)
+          matches << FileVarOrigin.new(origin.path, leaf_pos[0], leaf_pos[1])
         end
       end
       matches.size == 1 ? matches[0] : nil
+    end
+
+    # The source position of the unique string leaf inside a container
+    # var's value whose strict render fails with EXACTLY *message* - the
+    # leaf's own mark in the defining file's YAML source map (an item of
+    # a list, a dict value), the position real 2.19.11's lineage points
+    # the innermost chain stanza at for a failure reached through the
+    # container. nil on zero or multiple failing leaves, or when the
+    # file's source map has no unambiguous node for the leaf's path -
+    # the exactly-one-match rule every origin scan here follows, so no
+    # origin is ever mislabeled.
+    private def failing_container_leaf_pos(key : String, value : JSON::Any, message : String, required_text : String?, vars : Hash(String, JSON::Any), file_path : String) : {Int32, Int32}?
+      suffixes = [] of String
+      collect_failing_leaf_paths(value, message, required_text, vars, [] of String, suffixes)
+      return nil unless suffixes.size == 1
+      map = Krikri::YamlSourceMap.scan(File.read(file_path))
+      positions = map.all_suffix_at?("#{key}/#{suffixes[0]}")
+      return nil unless positions.size == 1
+      positions[0]
+    end
+
+    # The "<key>/<index>"-style path suffixes of every string leaf inside
+    # *value* whose strict render fails with EXACTLY *message*, walked in
+    # the container's own shape (list indices, dict keys, nested
+    # containers recurse). The same gates as the string scan above apply
+    # per leaf; a scan failure of any other kind is skipped, never
+    # propagated - this scan only runs on error-display paths.
+    private def collect_failing_leaf_paths(value : JSON::Any, message : String, required_text : String?, vars : Hash(String, JSON::Any), path : Array(String), matches : Array(String)) : Nil
+      case raw = value.raw
+      when Array
+        raw.each_with_index do |item, idx|
+          collect_failing_leaf_paths(item, message, required_text, vars, path + [idx.to_s], matches)
+        end
+      when Hash
+        raw.each do |key, item|
+          collect_failing_leaf_paths(item, message, required_text, vars, path + [key], matches)
+        end
+      when String
+        return unless raw.includes?("{{") &&
+                      !raw.includes?("{%") && !raw.includes?("{#") &&
+                      !UnsafeValues.unsafe_text?(raw)
+        return if required_text && !raw.includes?(required_text)
+        return if raw.includes?("lookup(") || raw.includes?("query(")
+        begin
+          VarSubstitutor.new(vars: vars).substitute(raw, strict: true)
+        rescue e : UndefinedVariableError
+          matches << path.join("/") if e.message == message
+        rescue
+          nil
+        end
+      end
     end
 
     # The unique var-layer DEFINITION whose raw value is an encrypted
@@ -3780,14 +3847,38 @@ module Krikri
       return unless key_line
       key_idx, key_col = key_line
 
+      # The THIRD chain record real 2.19.11 adds when the conditional's
+      # missing reference was reached through a failing VAR VALUE (a
+      # lazily-stored list's item, issue #218: `docker_users: ["{{
+      # sudoer }}"]` under `when: docker_users`): the middle link shortens
+      # to the bare "Error while evaluating conditional." and the bare
+      # missing-name cause follows with its own Origin at the failing
+      # value's defining site. A direct undefined reference in the when:
+      # text itself has no failing value to point at - the two-record
+      # block stays as it is.
+      mid = nil
+      cause_stanza = nil
+      if (m = inner.match(/\AError while evaluating conditional: '([A-Za-z_][A-Za-z0-9_]*)' is undefined\z/)) &&
+         (origin = undef_chain_var_origin(task, m[1], reachable_from: raw))
+        mid = "Error while evaluating conditional."
+        cause_stanza = "'#{m[1]}' is undefined\n" +
+                       origin_context_block(origin.path, File.read_lines(origin.path), origin.line, origin.column)
+      end
+
       text = String.build do |io|
         io << "[ERROR]: Task failed: " << inner << "\n"
         io << "\nTask failed.\n"
         io << origin_context_block(path, lines, name_idx + 1, name_col)
         io << "\n<<< caused by >>>\n\n"
-        io << inner << "\n"
+        io << (mid || inner) << "\n"
         io << origin_context_block(path, lines, key_idx + 1, key_col)
-        io << "\n"
+        if cause_stanza
+          io << "\n<<< caused by >>>\n\n"
+          io << cause_stanza
+          io << "\n"
+        else
+          io << "\n"
+        end
         # Real prints the ALLOW_BROKEN_CONDITIONALS hint after the chain
         # for every conditional failure EXCEPT the two compile/runtime
         # wording classes that don't get it (live-verified vs 2.19.11:
