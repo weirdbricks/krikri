@@ -418,6 +418,12 @@ module Krikri
         @facts[host.name][key] = value
         if high_precedence
           @set_facts[host.name][key] = value
+          # set_fact's own result is applied here (real's
+          # vars/manager.py set_host_facts), which is where real warns -
+          # before that task's ok: line - for a reserved-name key; the
+          # merge only runs for an applied result, so a skipped task
+          # stays silent like real's skipped-task path.
+          warn_reserved_set_fact_key(task, key) if task
           # The value token's position in the set_fact task's own source
           # file - real's data lineage for a set_fact-sourced value
           # points there (unlike a gathered fact or registered result,
@@ -440,6 +446,30 @@ module Krikri
       end
       @facts_dict_cache.delete(host.name)
       @hv_generation += 1
+    end
+
+    # Real (2.19, live-verified) prints, on stderr immediately before the
+    # set_fact task's ok: line, the same reserved-name warning the
+    # vars:-key path emits - "[WARNING]: Found variable using reserved
+    # name '<key>'." plus the key's own Origin block and a blank line -
+    # once per key position per run (Display.warning's dedup). The Origin
+    # scan is ResultDisplay.set_fact_key_origin's; merge_ansible_facts
+    # runs inside concurrent per-host fibers, so the dedup set needs the
+    # mutex like playbook_parser.cr's @@reserved_toplevel_var_warnings.
+    @@reserved_set_fact_warnings = Set(String).new
+    RESERVED_SET_FACT_WARN_MUTEX = Mutex.new
+
+    private def warn_reserved_set_fact_key(task : Task, key : String) : Nil
+      return unless PlaybookParser::RESERVED_VAR_NAMES.includes?(key)
+      return unless origin = ResultDisplay.set_fact_key_origin(task, key)
+      dedup_key = "#{key}\n#{origin}"
+      RESERVED_SET_FACT_WARN_MUTEX.synchronize do
+        return if @@reserved_set_fact_warnings.includes?(dedup_key)
+        @@reserved_set_fact_warnings << dedup_key
+        STDERR.puts "[WARNING]: Found variable using reserved name '#{key}'."
+        STDERR.puts origin
+        STDERR.puts
+      end
     end
 
     # with_first_found: yields exactly one item - the first candidate path

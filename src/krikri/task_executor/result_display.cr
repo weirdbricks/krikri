@@ -955,7 +955,10 @@ module Krikri
     # line/column inside the task, found by scanning the task's source
     # lines for the key followed by ':' (a quoted key points at the
     # opening quote, like Ansible's per-key Origin).
-    private def self.set_fact_key_origin(task : Task, key : String) : String?
+    # Public so TaskExecutor's set_fact reserved-name warning (issued from
+    # merge_ansible_facts, outside this result-dump path) can reuse the same
+    # per-key Origin scan.
+    def self.set_fact_key_origin(task : Task, key : String) : String?
       path = task.source_file
       return nil unless path && task.source_line > 0 && File.file?(path)
 
