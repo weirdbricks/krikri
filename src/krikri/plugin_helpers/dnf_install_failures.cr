@@ -35,6 +35,12 @@ module Krikri
       # to install some of the requested packages - no stderr key.
       DNF_INSTALL_FAILURE_ORDER = %w[msg failures results rc failed]
 
+      # Ansible's observed depsolve-failure key order (live on Rocky,
+      # dnf4 backend): alphabetical - changed, failures, msg, rc,
+      # results - with no stderr key, and the controller-appended
+      # `failed` trailing like every other registered order.
+      DNF_DEPSOLVE_FAILURE_ORDER = %w[changed failures msg rc results failed]
+
       def parse_dnf_install_failures(stdout : String, stderr : String, requested : Array(String)? = nil) : Array(String)?
         # dnf reports the same missing spec on both stderr and stdout
         # (per-argument line + summary line), so parsing itself still
@@ -70,6 +76,24 @@ module Krikri
         else
           parsed
         end
+      end
+
+      # Ansible's dnf module catches the libdnf DepsolveError and fails with
+      # "Depsolve Error occurred: " + str(exception), which is the whole
+      # "Problem: ..." block (every "- ..." detail line) and not the CLI's
+      # trailing "(try to add '--allowerasing' ...)" hint (issue #60).
+      def depsolve_failure_msg(output : String) : String?
+        lines = output.lines.map(&.rstrip)
+        start = lines.index { |line| line.lstrip.starts_with?("Problem") && line.includes?(":") }
+        return nil unless start
+        block = [] of String
+        lines[start..].each do |line|
+          # The compound `dnf ... || yum ...` prints a second "Error:" block
+          # when the hint line is missing from one copy; ansible never sees it.
+          break if line.lstrip.starts_with?("(try to add") || line.starts_with?("Error") || line.strip.empty?
+          block << line
+        end
+        "Depsolve Error occurred: \n" + block.join("\n")
       end
 
       private def parse_line(stripped : String, add : Proc(String, Nil)) : Nil

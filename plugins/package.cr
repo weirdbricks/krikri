@@ -598,6 +598,25 @@ module Krikri
     # for a nonexistent package is a failed task with rc 1, not a
     # changed: true success.
     private def dnf_install_failure_result(name : String, install_result : NamedTuple(exit_code: Int32, stdout: String, stderr: String)) : PluginResult
+      # A depsolve failure ("Problem: ..." block) matches none of the
+      # parse_dnf_install_failures lines, so it used to fall through to
+      # the raw stderr dump below - with the Problem block duplicated,
+      # because this `dnf install ... || yum install ...` compound prints
+      # it once per package-manager binary. Real ansible's depsolve catch
+      # reports the whole block once as the msg, with an empty failures
+      # list, no stderr key, and the alphabetical key order its module
+      # dict gets there: changed, failures, msg, rc, results (issue #216).
+      if depsolve_msg = depsolve_failure_msg(install_result[:stdout] + "\n" + install_result[:stderr])
+        return PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: depsolve_msg,
+          failures: [] of String,
+          results: [] of String,
+          rc: install_result[:exit_code],
+          key_order: PluginHelpers::DnfInstallFailures::DNF_DEPSOLVE_FAILURE_ORDER
+        )
+      end
       if failures = parse_dnf_install_failures(install_result[:stdout], install_result[:stderr])
         PluginResult.new(
           changed: false,
