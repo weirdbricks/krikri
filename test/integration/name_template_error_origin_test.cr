@@ -25,6 +25,37 @@ private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 
 describe "task name template error warning blocks" do
+  # Issue #210 - a name that splices a failing variable's value into a
+  # complex expression (`{{ ', '.join(base_list) }}`). Ansible fails the
+  # whole span and banners one `<< error 1 - ... >>` marker; the marker
+  # text used to be fed to join() as a string and banner per character.
+  it "banners a span over a failing variable as one error marker" do
+    src_dir = File.tempname("name-warn-span-join")
+    Dir.mkdir_p(src_dir)
+    File.write(File.join(src_dir, "pb.yml"), <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          base_list: "{{ [undef_name] + extra_list }}"
+          extra_list: []
+        tasks:
+          - name: Groups {{ ', '.join(base_list) }} created
+            ansible.builtin.debug:
+              msg: hi
+            ignore_errors: true
+      YAML
+
+    output = IO::Memory.new
+    Process.run(BINARY, ["-i", INVENTORY, "pb.yml"], output: output, error: output, chdir: src_dir)
+
+    stdout = output.to_s
+    stdout.must_include("TASK [Groups << error 1 - 'undef_name' is undefined >> created]")
+    stdout.wont_include("TASK [Groups <, <,")
+  ensure
+    FileUtils.rm_rf(src_dir) if src_dir
+  end
+
   it "points a role task's direct name error at the role tasks file" do
     src_dir = File.tempname("name-warn-role-task")
     Dir.mkdir_p(File.join(src_dir, "roles", "e2", "tasks"))

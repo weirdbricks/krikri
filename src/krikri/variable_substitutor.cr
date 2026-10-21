@@ -1823,7 +1823,7 @@ module Krikri
     end
 
     private def evaluate_stripped_span(stripped : String, strict : Bool, output : Bool, native : Bool, evaluator) : String
-      raise_if_strict_undefined(stripped) if strict
+      raise_if_strict_undefined(stripped, output) if strict
       if native && (nv = native_scalar(stripped, evaluator))
         nv
       elsif strict
@@ -2663,7 +2663,7 @@ module Krikri
     # other shape (filters, operators, function calls, literals) is left
     # alone regardless of strict: - see UndefinedVariableError's own
     # comment for why that's deliberate, not a gap in this check.
-    private def raise_if_strict_undefined(inner : String) : Nil
+    private def raise_if_strict_undefined(inner : String, output : Bool = false) : Nil
       unless inner.matches?(REGEX_BARE_VAR_REF)
         # Not a bare reference - but a filter chain STARTING from an
         # undefined bare reference is just as strictly fatal in
@@ -2733,9 +2733,17 @@ module Krikri
         # `_docker_pip_packages[ansible_facts['os_family']]` on Debian,
         # every level resolves, the final value is the list ["docker"],
         # and ExpressionEvaluator's stringify returns its real text.
+        # A conditional (`user_group.base if user_group is defined else
+        # user_name`) is not an access chain: ansible only reads the arm
+        # its guard selects, so the root of the access arm must not be
+        # blamed when the guard routes around it (issue #210 - ansible
+        # reports the else arm's undefined name, 'user_name'). The lenient
+        # name-banner render (output) still blames the access arm, which is
+        # what ansible's warning block shows, so only the strict path changes.
         if inner.matches?(/\A[A-Za-z_]/) &&
            (inner.includes?('.') || inner.includes?('[')) &&
            !inner.includes?('(') && !inner.includes?('|') &&
+           (output || !inner.matches?(/\s(if|else)\s/)) &&
            Krikri.expression_resolves_to_undefined?(inner, @vars)
           raise UndefinedVariableError.new(Krikri.strict_undefined_message(inner, @vars))
         end
@@ -2756,7 +2764,10 @@ module Krikri
         # lsb-release, verified live against ansible-core 2.19.4: renders
         # to the omit marker, never raises) - so the access-chain probe
         # must not re-flag what the tolerant-filter rule already forgave.
-        if undefined_name = Krikri.undefined_access_chain_source(inner, @vars)
+        # Not for a conditional (see the dotted-chain probe above): its
+        # leading `root.attr` is only one arm, and ansible reports whichever
+        # arm the guard reads, so the root must not be blamed up front.
+        if (output || !inner.matches?(/\s(if|else)\s/)) && (undefined_name = Krikri.undefined_access_chain_source(inner, @vars))
           raise UndefinedVariableError.new(Krikri.strict_undefined_message(undefined_name, @vars)) unless Krikri.undefined_tolerant_first_filter?(inner)
         end
         # Issue #101 (round-confirmed vs ansible-core 2.19): indexing PAST
