@@ -2231,7 +2231,7 @@ module Krikri
       # Parse play-level vars
       if vars_yaml = yaml["vars"]?.try(&.as_h?)
         vars_yaml.each do |key, value|
-          play.vars[key.to_s] = Vault.maybe_decrypt_json(JSON.parse(value.to_json))
+          play.vars[key.to_s] = Vault.maybe_decrypt_json(Vault.yaml_value_to_json(value))
           if source_map && source_file && (pos = source_map.at?("#{index}/vars/#{key}"))
             play.var_origins[key.to_s] = FileVarOrigin.new(File.expand_path(source_file), pos[0], pos[1])
           end
@@ -2736,7 +2736,7 @@ module Krikri
       import_delegate = hash["delegate_to"]?.try { |v| safe_yaml_to_string(v) }
       import_vars = Hash(String, JSON::Any).new
       if vars_yaml = hash["vars"]?.try(&.as_h?)
-        vars_yaml.each { |key, value| import_vars[key.to_s] = Vault.maybe_decrypt_json(JSON.parse(value.to_json)) }
+        vars_yaml.each { |key, value| import_vars[key.to_s] = Vault.maybe_decrypt_json(Vault.yaml_value_to_json(value)) }
       end
 
       imported_tasks.each do |task|
@@ -4342,7 +4342,7 @@ module Krikri
 
       if vars_yaml = task_hash["vars"]?.try(&.as_h?)
         vars = Hash(String, JSON::Any).new
-        vars_yaml.each { |key, value| vars[key.to_s] = Vault.maybe_decrypt_json(JSON.parse(value.to_json)) }
+        vars_yaml.each { |key, value| vars[key.to_s] = Vault.maybe_decrypt_json(Vault.yaml_value_to_json(value)) }
         task.vars = vars
       end
 
@@ -4718,7 +4718,7 @@ module Krikri
       # ConditionalEvaluator's recursive re-templating.
       if vars_yaml = task_hash["vars"]?.try(&.as_h?)
         vars = Hash(String, JSON::Any).new
-        vars_yaml.each { |key, value| vars[key.to_s] = Vault.maybe_decrypt_json(JSON.parse(value.to_json)) }
+        vars_yaml.each { |key, value| vars[key.to_s] = Vault.maybe_decrypt_json(Vault.yaml_value_to_json(value)) }
         task.vars = vars
       end
 
@@ -5448,7 +5448,7 @@ module Krikri
       task.include_apply_check_mode_expr = template_expression(args["check_mode"]?)
       if vars_yaml = args["vars"]?.try(&.as_h?)
         vars = Hash(String, JSON::Any).new
-        vars_yaml.each { |key, value| vars[key.to_s] = Vault.maybe_decrypt_json(JSON.parse(value.to_json)) }
+        vars_yaml.each { |key, value| vars[key.to_s] = Vault.maybe_decrypt_json(Vault.yaml_value_to_json(value)) }
         task.include_apply_vars = vars
       end
       task.include_apply_when = args["when"]?.try { |v| condition_to_string(v) }
@@ -5474,7 +5474,7 @@ module Krikri
 
       if vars_yaml = task_hash["vars"]?.try(&.as_h?)
         vars = Hash(String, JSON::Any).new
-        vars_yaml.each { |key, value| vars[key.to_s] = Vault.maybe_decrypt_json(JSON.parse(value.to_json)) }
+        vars_yaml.each { |key, value| vars[key.to_s] = Vault.maybe_decrypt_json(Vault.yaml_value_to_json(value)) }
         task.include_vars = vars
         # Also into task.vars (build_vars_context's normal task-vars tier) -
         # Ansible's `vars:` on an include_tasks: is visible to the
@@ -5739,7 +5739,7 @@ module Krikri
 
       if vars_yaml = task_hash["vars"]?.try(&.as_h?)
         vars = Hash(String, JSON::Any).new
-        vars_yaml.each { |key, value| vars[key.to_s] = Vault.maybe_decrypt_json(JSON.parse(value.to_json)) }
+        vars_yaml.each { |key, value| vars[key.to_s] = Vault.maybe_decrypt_json(Vault.yaml_value_to_json(value)) }
         task.include_role_vars = vars
       end
       parse_include_apply(task, role_args["apply"]?)

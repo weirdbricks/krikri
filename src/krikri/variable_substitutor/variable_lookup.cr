@@ -5,6 +5,19 @@ require "./jinja_renderer"
 
 module Krikri
   module VariableSubstitutor
+    # Python str() formatting of a float: ansible renders every float
+    # variable through Python's str(), whose non-finite output is
+    # "inf"/"-inf"/"nan" - Crystal's own Float64#to_s prints
+    # "Infinity"/"NaN" instead, which would leak into every rendered
+    # template and debug: msg. A role default like `x: .inf` (legal YAML,
+    # accepted by ansible) is exactly how such a float reaches us.
+    def self.py_float_str(value : Float64) : String
+      return "nan" if value.nan?
+      return "inf" if value == Float64::INFINITY
+      return "-inf" if value == -Float64::INFINITY
+      value.to_s
+    end
+
     # VariableLookup - Handles all forms of variable access
     # - Simple: {{ myvar }}
     # - Nested: {{ user.name.first }}
@@ -1192,7 +1205,7 @@ module Krikri
           # typed Int64/Int32 union member directly, no narrowing.
           value.raw.to_s
         when Float64
-          value.as_f.to_s
+          VariableSubstitutor.py_float_str(value.as_f)
         when Bool
           value.as_bool ? "True" : "False"
         when Array
