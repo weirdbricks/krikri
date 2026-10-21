@@ -13985,3 +13985,23 @@ Local probe roles, not Galaxy roles: each probed task registers its result and d
 | `svendewindt.deb_base` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29875964, 0.9.1806 debug). |
 | `trfore.omada_install` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29875966, 0.9.1806 debug). |
 | `yurihs.borg_client` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29875967, 0.9.1806 debug). |
+| `atsaki.nfs` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29876416, 0.9.1810 debug). |
+| `back-2-95.aws-efs` | ubuntu | ❌ Divergent - issue #203 (round29876428, 0.9.1810 debug). |
+| `bradfordwagner.pack` | rocky | ✅ Clean (round29876429, 0.9.1810 debug). |
+| `chilcano.apache-nifi-toolkit` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29876431, 0.9.1810 debug). |
+| `cloudweeb.mod_pagespeed` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29876413, 0.9.1810 debug). |
+| `dimmaryanto93.sonatype_nexus_oss` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29876417, 0.9.1810 debug). |
+| `frite.recon_package_manager` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29876423, 0.9.1810 debug). |
+| `githubixx.flanneld` | ubuntu | ❌ Divergent - issue #204 (round29876426, 0.9.1810 debug). |
+| `ilmarkerm.oracle-install` | ubuntu | ✅ Clean (round29876424, 0.9.1810 debug). |
+| `mauroveron.baseline` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29876419, 0.9.1810 debug). |
+| `mcouliba.openshift_codeready_workspaces` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29876430, 0.9.1810 debug). |
+| `naoyayamamoto.awslogs_ec2` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29876418, 0.9.1810 debug). |
+| `networklore.nrpe-client` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29876420, 0.9.1810 debug). |
+| `ontic.prince` | ubuntu | ❌ Divergent - issue #205 (round29876422, 0.9.1810 debug). |
+| `pgporada.httpd` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29876421, 0.9.1810 debug). |
+| `pmikus.samba` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29876425, 0.9.1810 debug). |
+| `softasap.sa-doxygen` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29876427, 0.9.1810 debug). |
+| `viasite-ansible.git` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29876415, 0.9.1810 debug). |
+| `xbufu.terraform` | ubuntu | ✅ Clean (round29876412, 0.9.1810 debug). |
+| `yfix.mc` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29876414, 0.9.1810 debug). |
