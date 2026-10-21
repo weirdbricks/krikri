@@ -14085,3 +14085,23 @@ Local probe roles, not Galaxy roles: each probed task registers its result and d
 | `ontic.kong` | rocky | ❌ Divergent - issue #217 (round29876870, 0.9.1822 release). Times: cold py 141.98s vs cr 13.75s; warm py 4.60s vs cr 3.05s. |
 | `sparknsh.package` | ubuntu | ✅ Clean (round29876863, 0.9.1822 release). Times: cold py 33.17s vs cr 34.99s; warm py 3.17s vs cr 0.14s. |
 | `tenequm.firewall` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29876873, 0.9.1822 release). Times: cold py 7.24s vs cr 4.27s; warm py 5.72s vs cr 0.47s. |
+| `AlphaHydrae.ssh-known-host` | ubuntu | ✅ Clean (round29876966, 0.9.1827 debug). |
+| `Oefenweb.updatedb` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29876965, 0.9.1827 debug). |
+| `RedHatOfficial_rhel9_stig_gui` | ubuntu | ❌ BLOCKED: (round29876961, 0.9.1827 debug). |
+| `aaronpederson.certbot` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29876957, 0.9.1827 debug). |
+| `akhilin.ansible_role_python` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29876967, 0.9.1827 debug). |
+| `akmal-spacelift.ansible-hello-world-role` | ubuntu | ✅ Clean (round29876964, 0.9.1827 debug). |
+| `arnobirchler.docker` | ubuntu | ❌ Divergent - issue #218 (round29876954, 0.9.1827 debug). |
+| `awasilyev.apache-container` | rocky | ✅ Clean (round29876955, 0.9.1827 debug). |
+| `calphool.s3fs` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29876951, 0.9.1827 debug). |
+| `capitanh.mongodb-ansible-role` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29876963, 0.9.1827 debug). |
+| `cevich.parallel_git_repos` | ubuntu | ❌ Divergent - issue #219 (round29876962, 0.9.1827 debug). |
+| `clearlinux.keystone` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29876952, 0.9.1827 debug). |
+| `daniel-rhoades.aws-ecs-autoscale` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29876968, 0.9.1827 debug). |
+| `don_rumata.ansible_role_install_dotnet` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29876956, 0.9.1827 debug). |
+| `gzm55.require_become_root` | rocky | ✅ Clean (round29876969, 0.9.1827 debug). |
+| `inhumantsar.awx` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29876960, 0.9.1827 debug). |
+| `javicv.manage_packages` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29876953, 0.9.1827 debug). |
+| `palkan-ansible.phantomjs` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29876958, 0.9.1827 debug). |
+| `shomatan.mariadb` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29876959, 0.9.1827 debug). |
+| `webbylab.nginx-proxy` | ubuntu | ❌ Divergent - issue #220 (round29876950, 0.9.1827 debug). |
