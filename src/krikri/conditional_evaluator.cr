@@ -124,6 +124,15 @@ module Krikri
     class UndefinedVariableError < Exception
     end
 
+    # An ordering comparison (`<`, `<=`, `>`, `>=`) between a string and a
+    # number. Python raises TypeError there and ansible fails the task
+    # with "Error rendering expression: '>=' not supported between
+    # instances of '_AnsibleTaggedStr' and 'int'" (issue #219: a role
+    # default `'10'` asserted `| default(0) >= 1`). assert: and when:
+    # each rescue it and frame it as an expression render error.
+    class OrderingTypeError < Exception
+    end
+
     # Raised (before any substitution) when a conditional expression
     # carries template delimiters - Ansible's own failure class for an
     # expression Jinja cannot parse (see #template_delimiter_error). The
@@ -1641,6 +1650,8 @@ module Krikri
 
       left = evaluate_value(left_expr, vars, raise_undefined)
       right = evaluate_value(right_expr, vars, raise_undefined)
+
+      ordering_type_check!(left, right, operator) if ["<", ">", "<=", ">="].includes?(operator)
 
       case operator
       when "=="
@@ -3795,6 +3806,36 @@ module Krikri
       when Int64   then value.to_f64
       when Float64 then value
       when Bool    then value ? 1.0 : 0.0
+      end
+    end
+
+    # Python never orders a str against a number, so ansible fails the task
+    # on `'10' >= 1` where the numeric-string cascade below would answer
+    # it (issue #219). Two strings, two numbers and the Nil/Array cases
+    # keep their existing behaviour.
+    private def self.ordering_type_check!(left : String | Int64 | Float64 | Bool | Nil | Array(String),
+                                          right : String | Int64 | Float64 | Bool | Nil | Array(String),
+                                          operator : String) : Nil
+      mixed = (left.is_a?(String) && ordering_number?(right)) || (ordering_number?(left) && right.is_a?(String))
+      return unless mixed
+
+      raise OrderingTypeError.new(
+        "'#{operator}' not supported between instances of '#{ordering_type_name(left)}' and '#{ordering_type_name(right)}'")
+    end
+
+    private def self.ordering_number?(value : String | Int64 | Float64 | Bool | Nil | Array(String)) : Bool
+      value.is_a?(Int64) || value.is_a?(Float64) || value.is_a?(Bool)
+    end
+
+    # Ansible names a YAML-sourced string '_AnsibleTaggedStr' in these
+    # messages (its loader tags every string), not Python's plain 'str'.
+    private def self.ordering_type_name(value : String | Int64 | Float64 | Bool | Nil | Array(String)) : String
+      case value
+      when String  then "_AnsibleTaggedStr"
+      when Int64   then "int"
+      when Float64 then "float"
+      when Bool    then "bool"
+      else              "object"
       end
     end
 

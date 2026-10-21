@@ -18,10 +18,10 @@ describe "assert plugin" do
   end
 
   it "fails at the first failing condition, with the default failure message" do
-    result = PluginSpecHelper.run("assert", {"that" => that_json("my_param <= 100", "my_param >= 0")}, {"my_param" => "150"})
+    result = PluginSpecHelper.run("assert", {"that" => that_json("my_param | int <= 100", "my_param | int >= 0")}, {"my_param" => "150"})
     result["failed"].as_bool.must_equal(true)
     result["msg"].as_s.must_equal("Assertion failed")
-    result["assertion"].as_s.must_equal("my_param <= 100")
+    result["assertion"].as_s.must_equal("my_param | int <= 100")
     result["evaluated_to"].as_bool.must_equal(false)
   end
 
@@ -41,7 +41,7 @@ describe "assert plugin" do
   end
 
   it "evaluates a {{ }}-wrapped condition with dotted variable access" do
-    result = PluginSpecHelper.run("assert", {"that" => that_json("{{ my_param > 100 }}")}, {"my_param" => "150"})
+    result = PluginSpecHelper.run("assert", {"that" => that_json("{{ my_param | int > 100 }}")}, {"my_param" => "150"})
     falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
   end
 

@@ -41,8 +41,9 @@ describe Krikri::VariableSubstitutor::ComparisonEvaluator do
     # engine, which already raises exactly what Jinja2 3.1.6 raises.
     # Deliberately KEPT lenient: two raw strings (int/float-parsable
     # pairs numerically first, exactly as before - module stdout values
-    # are strings in real roles), and a numeric string against a real
-    # number.
+    # are strings in real roles). A string is never parsed as a number
+    # against a real-number operand: ansible fails a role default
+    # `'10' >= 1` (issue #219) the way Python does.
 
     it "raises on a container vs number ordering comparison" do
       v = Hash(String, JSON::Any).new
@@ -79,11 +80,22 @@ describe Krikri::VariableSubstitutor::ComparisonEvaluator do
       end
     end
 
-    it "still compares a numeric string against a real number" do
+    it "raises on a numeric string vs real-number ordering comparison" do
       v = Hash(String, JSON::Any).new
       v["str_num"] = JSON::Any.new("17")
       evaluator = Krikri::VariableSubstitutor::ComparisonEvaluator.new(v)
-      evaluator.evaluate("str_num < 20").must_equal("true")
+      assert_raises_message(Krikri::VariableSubstitutor::ComparisonTypeError, /'<' not supported between instances of '_AnsibleTaggedStr' and 'int'/) do
+        evaluator.evaluate("str_num < 20")
+      end
+    end
+
+    it "raises on a real-number vs numeric string ordering comparison" do
+      v = Hash(String, JSON::Any).new
+      v["str_num"] = JSON::Any.new("10")
+      evaluator = Krikri::VariableSubstitutor::ComparisonEvaluator.new(v)
+      assert_raises_message(Krikri::VariableSubstitutor::ComparisonTypeError, /'>' not supported between instances of 'int' and '_AnsibleTaggedStr'/) do
+        evaluator.evaluate("20 > str_num")
+      end
     end
 
     it "still compares two strings lexicographically" do
