@@ -13910,3 +13910,13 @@ Local probe roles, not Galaxy roles: each probed task registers its result and d
 | `vduseev.easyrsa` | ubuntu | ❌ Divergent - issue #192 (round29875663, 0.9.1800 release). Times: cold py 4.40s vs cr 9.61s; warm py 3.21s vs cr 0.30s. |
 | `vevmesteren.nodejs-forever` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29875622, 0.9.1800 release). Times: cold py 0.60s vs cr 0.01s; warm py 0.59s vs cr 0.02s. |
 | `virhi.apache` | rocky | ❌ Divergent - issue #193 (round29875632, 0.9.1800 release). Times: cold py 0.47s vs cr 0.02s; warm py 0.46s vs cr 0.01s. |
+| `CSCfi.shibboleth_idp_proxy` | ubuntu | ✅ Clean (round29875847, 0.9.1805 release). Times: cold py 2.76s vs cr 0.74s; warm py 1.55s vs cr 0.11s. |
+| `FrogyYen.centos7-mariadb` | ubuntu | ✅ Clean (round29875843, 0.9.1805 release). Times: cold py 2.90s vs cr 0.75s; warm py 1.65s vs cr 0.13s. |
+| `dubzland.certbot_rfc2136` | ubuntu | ✅ Clean (round29875841, 0.9.1805 release). Times: cold py 1.69s vs cr 0.73s; warm py 2.41s vs cr 0.11s. |
+| `elnebuloso.docker-pip` | rocky | ✅ Clean (round29875842, 0.9.1805 release). Times: cold py 5.58s vs cr 8.36s; warm py 3.91s vs cr 0.45s. |
+| `f500.php_dev` | rocky | ✅ Clean (round29875840, 0.9.1805 release). Times: cold py 2.22s vs cr 0.97s; warm py 1.60s vs cr 0.16s. |
+| `glisha.adauth` | rocky | ✅ Clean (round29875848, 0.9.1805 release). Times: cold py 2.24s vs cr 0.91s; warm py 1.46s vs cr 0.15s. |
+| `lean_delivery.endeca_cas` | rocky | ✅ Clean (round29875844, 0.9.1805 release). Times: cold py 2.16s vs cr 0.82s; warm py 3.59s vs cr 0.15s. |
+| `newtonne.backup` | rocky | ✅ Clean (round29875846, 0.9.1805 release). Times: cold py 2.26s vs cr 0.94s; warm py 1.44s vs cr 0.16s. |
+| `opdavies.webmin` | ubuntu | ✅ Clean (round29875845, 0.9.1805 release). Times: cold py 2.77s vs cr 0.69s; warm py 3.50s vs cr 0.11s. |
+| `wtanaka.intellij` | ubuntu | ✅ Clean (round29875839, 0.9.1805 release). Times: cold py 3.88s vs cr 0.78s; warm py 2.45s vs cr 0.13s. |
