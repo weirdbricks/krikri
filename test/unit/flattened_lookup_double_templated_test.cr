@@ -74,7 +74,7 @@ describe "Krikri::VariableSubstitutor::JinjaRenderer engine flattened lookups (f
     v["l"] = JSON.parse(%(["a", "b"]))
     renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
 
-    renderer.evaluate_value!("query('flattened', l)").not_nil!.as_a.map(&.as_s).must_equal(["a", "b"])
+    renderer.evaluate_value!("query('flattened', l)").not_nil!.as_a.map(&.as_s).must_equal(["a", "b"]) # ameba:disable Lint/NotNil
   end
 
   it "re-templates a double-templated term into the real flattened list" do
@@ -82,7 +82,7 @@ describe "Krikri::VariableSubstitutor::JinjaRenderer engine flattened lookups (f
     v["l"] = JSON.parse(%(["a", "b"]))
     renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
 
-    renderer.evaluate_value!("query('flattened', '{{ l }}')").not_nil!.as_a.map(&.as_s).must_equal(["a", "b"])
+    renderer.evaluate_value!("query('flattened', '{{ l }}')").not_nil!.as_a.map(&.as_s).must_equal(["a", "b"]) # ameba:disable Lint/NotNil
   end
 
   it "keeps scalar lookup('flattened', bare_list) comma-joined" do

@@ -32,7 +32,7 @@ end
 describe "hostvars entry group_names" do
   it "renders the host's own groups through the template path" do
     out_path = PluginSpecHelper.tmp_path("gn-out.txt")
-    status, output = run_with_inventory(
+    status, _output = run_with_inventory(
       "[webservers]\nmyhost ansible_connection=local\n",
       <<-YAML
         - hosts: webservers

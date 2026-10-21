@@ -42,7 +42,7 @@ private def with_held_listener(& : Int32 ->)
   listener = TCPServer.new("127.0.0.1", 0)
   begin
     held = Channel(Socket?).new
-    accept_fiber = spawn do
+    spawn do
       # Accept but never speak: no startup-packet reply, so the
       # client's startup/auth exchange never completes.
       sock = listener.accept?

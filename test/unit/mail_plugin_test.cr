@@ -32,7 +32,7 @@ private class FakeSMTP
     end
   end
 
-  private def handle(conn : TCPSocket) : Nil
+  private def handle(conn : TCPSocket) : Nil # ameba:disable Metrics/CyclomaticComplexity
     conn << "220 fake ESMTP ready\r\n"
     data_mode = false
     data = IO::Memory.new

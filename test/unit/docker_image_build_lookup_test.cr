@@ -168,14 +168,14 @@ describe "docker_image_build CLI image lookup" do
 
   it "fails in the call_cli_json_stream shape when an ls line starts with { but is not JSON" do
     path = PluginSpecHelper.tmp_path("dib-badjson-docker")
-    File.write(path, <<-SCRIPT)
+    File.write(path, <<-'SCRIPT')
       #!/bin/sh
       case " $* " in
         *" info "*)
           printf '%s' '{"ClientInfo": {"Plugins": [{"Name": "buildx", "Version": "v0.17.0"}]}}'
           ;;
         *" image ls "*)
-          printf '%s\\n' '{ broken'
+          printf '%s\n' '{ broken'
           ;;
         *" buildx build "*)
           echo 'buildx must not run here' >&2
@@ -274,7 +274,6 @@ describe "docker_image_build CLI image lookup" do
   end
 
   it "runs the build when the only row has a different tag" do
-    row = %({"Repository": "valid-name", "Tag": "other", "Digest": "", "ID": "sha256:abc"})
     cli = building_cli(1, "", "no build should matter here\n", post_ls_row: nil)
 
     result = PluginSpecHelper.run("docker_image_build", {

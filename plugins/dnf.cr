@@ -234,7 +234,7 @@ module Krikri
       nil
     end
 
-    def execute : PluginResult
+    def execute : PluginResult # ameba:disable Metrics/CyclomaticComplexity
       resolve_backend
 
       if failure = arg_spec_rejection

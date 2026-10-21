@@ -28,8 +28,7 @@ module Krikri
       return statuses if packages.empty?
 
       name_list = packages.map { |pkg| shell_single_quote(split_name_version(pkg)[0]) }.join(" ")
-      result = remote_exec("dpkg-query -W -f='${db:Status-Abbrev} ${Version} ${Package}
-' #{name_list} 2>/dev/null")
+      result = remote_exec("dpkg-query -W -f='${db:Status-Abbrev} ${Version} ${Package}\n' #{name_list} 2>/dev/null")
       result[:stdout].each_line do |line|
         parts = line.split(/\s+/, 3)
         next unless parts.size == 3
@@ -95,7 +94,7 @@ module Krikri
     # The metadata-read + idempotency + install half of #handle_deb,
     # shared by the URL (downloaded temp path) and local-file cases so a
     # local deb: path never gains URL-only behavior.
-    private def install_deb_file(path : String, lock_timeout : Int32, messages : Array(String), changed : Bool) : PluginResult
+    private def install_deb_file(path : String, lock_timeout : Int32, messages : Array(String), changed : Bool) : PluginResult # ameba:disable Metrics/CyclomaticComplexity
       # python-apt's DebPackage construction is the FIRST thing real
       # install_deb does, and its SystemError text IS the registered
       # failure msg ("Unable to install package: <e>" - round-99500x
@@ -170,9 +169,10 @@ module Krikri
       # goes through dpkg's own Debian-version ordering (not a
       # reimplemented comparator) and only when the name is installed at
       # a DIFFERENT version than the deb carries.
-      if installed_deb_ver && pkg_version && installed_deb_ver != pkg_version &&
+      if (deb_installed_ver = installed_deb_ver) && (deb_pkg_ver = pkg_version) &&
+         deb_installed_ver != deb_pkg_ver &&
          !true?(@params["force"]?) && !true?(@params["allow_downgrade"]?) &&
-         dpkg_version_compares([{installed_deb_ver.not_nil!, ">", pkg_version.not_nil!}])[0]
+         dpkg_version_compares([{deb_installed_ver, ">", deb_pkg_ver}])[0]
         return PluginResult.new(changed: false, failed: true,
           msg: "A later version is already installed")
       end
@@ -211,10 +211,10 @@ module Krikri
         sat_pair_group = [] of Int32
         dep_groups.each_with_index do |alternatives, group_idx|
           alternatives.each do |alternative|
-            next unless alternative.oper && alternative.version
+            next unless (alt_oper = alternative.oper) && (alt_version = alternative.version)
             st = statuses[alternative.name.split(":").first]?
-            next unless st && st[0] && st[1]
-            compare_pairs << {st[1].not_nil!, alternative.oper.not_nil!, alternative.version.not_nil!}
+            next unless st && st[0] && (st_version = st[1])
+            compare_pairs << {st_version, alt_oper, alt_version}
             sat_pair_group << group_idx
           end
         end
@@ -287,25 +287,25 @@ module Krikri
         unsatisfied.each_with_index do |alternatives, group_idx|
           alternatives.each_with_index do |alternative, alt_idx|
             res = candidates[alternative.name]?
-            next unless res && res[0] && res[1]
-            next unless alternative.oper && alternative.version
+            next unless res && res[0] && (res_version = res[1])
+            next unless (alt_oper = alternative.oper) && (alt_version = alternative.version)
             res_pair_slot[{group_idx, alt_idx}] = res_pairs.size
-            res_pairs << {res[1].not_nil!, alternative.oper.not_nil!, alternative.version.not_nil!}
+            res_pairs << {res_version, alt_oper, alt_version}
           end
         end
         unsatisfied.each_with_index do |alternatives, group_idx|
           alternatives.each_with_index do |alternative, alt_idx|
             res = candidates[alternative.name]?
             next unless res && res[0] && res[1].nil?
-            next unless alternative.oper && alternative.version
+            next unless (alt_oper = alternative.oper) && (alt_version = alternative.version)
             providers = providers_map[alternative.name]?
             next unless providers && providers.size == 1
             provider = providers[0].split(":").first
             next if provider_statuses[provider]?.try(&.[0])
             pres = provider_candidates[provider]?
-            next unless pres && pres[0] && pres[1]
+            next unless pres && pres[0] && (pres_version = pres[1])
             prov_pair_slot[{group_idx, alt_idx}] = res_pairs.size
-            res_pairs << {pres[1].not_nil!, alternative.oper.not_nil!, alternative.version.not_nil!}
+            res_pairs << {pres_version, alt_oper, alt_version}
           end
         end
         res_answers = dpkg_version_compares(res_pairs)
@@ -502,7 +502,7 @@ module Krikri
           fields[cur] = "#{fields[cur]} #{line.strip}"
         elsif (m = line.match(/^([A-Za-z0-9][A-Za-z0-9-]*):[ \t]*(.*)$/))
           current = m[1]
-          fields[current.not_nil!] = m[2].strip
+          fields[current.as(String)] = m[2].strip
         end
       end
       fields

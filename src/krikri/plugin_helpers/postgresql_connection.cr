@@ -219,7 +219,7 @@ module Krikri
             raise DB::ConnectionRefused.new(cause: ConnectTimeoutCause.new(deadline)) if at && at >= deadline
             raise ex
           end
-          mutex.synchronize { handed_off.not_nil! }
+          mutex.synchronize { handed_off.not_nil! } # ameba:disable Lint/NotNil
         when timeout(deadline)
           mutex.synchronize do
             expired = true

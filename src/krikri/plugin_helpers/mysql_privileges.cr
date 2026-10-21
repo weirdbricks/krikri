@@ -132,6 +132,7 @@ module Krikri
         ops
       end
 
+      # ameba:disable Metrics/CyclomaticComplexity
       private def self.plan_target(
         ops : Array(Op), target : String, desired_privs : Set(String),
         current_privs : Set(String)?, append_privs : Bool,

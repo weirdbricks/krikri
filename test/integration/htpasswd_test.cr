@@ -243,7 +243,7 @@ describe "htpasswd plugin" do
     hash.starts_with?("$6$").must_equal(true)
     salt = hash["$6$".size..].split("$").first
     salt.size.must_equal(16)
-    salt.each_char.all? { |c| "./0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz".includes?(c) }.must_equal(true)
+    salt.each_char.all? { |char| "./0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz".includes?(char) }.must_equal(true)
   end
 
   # Two fresh hashes of the same password must not reuse a salt: the salt

@@ -18,7 +18,6 @@ private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 
 private def run_block_playbook(ignore_block : String, child_ignore : String? = nil) : String
-  child_line = child_ignore ? "          ignore_errors: #{child_ignore}\n" : ""
   playbook = File.tempname("block-ignore", ".yml")
   File.write(playbook, <<-YAML
     - hosts: localhost

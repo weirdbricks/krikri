@@ -91,7 +91,7 @@ module Krikri
       flag ? "list #{flag}" : "list #{query}"
     end
 
-    def execute : PluginResult
+    def execute : PluginResult # ameba:disable Metrics/CyclomaticComplexity
       if failure = arg_spec_rejection
         return failure
       end
