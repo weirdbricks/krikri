@@ -862,6 +862,28 @@ module Krikri
       ok_result
     end
 
+    # Ansible's package action plugin delegates to apt.py, which resolves
+    # every requested name against the apt cache BEFORE apt-get runs and
+    # fails the task with apt.py's own "No package matching 'X' is
+    # available" (no stderr key) when a name can't be located. apt-get
+    # itself only surfaces the same miss as a non-zero exit with "E:
+    # Unable to locate package X" on stderr, so the install/latest
+    # failure branches below map that stderr shape onto apt.py's message.
+    # Only a requested name counts: a missing *dependency* means
+    # ansible's own resolution succeeded and apt-get genuinely failed,
+    # which keeps the raw "Failed to install" result. Returns the first
+    # requested name (list order, ansible's resolution order) apt
+    # reported missing; nil when no requested name is in the stderr.
+    # Issue #194, live-verified against ansible-playbook 2.19.11.
+    private def apt_unlocatable_name(stderr : String, names : Array(String)) : String?
+      missing = stderr.scan(/E: Unable to locate package (\S+)/).map(&.[1])
+      names.each do |requested|
+        base_name = requested.split('=').first
+        return base_name if missing.includes?(base_name)
+      end
+      nil
+    end
+
     private def handle_apt(name : String, state : String, names : Array(String), pkg_tokens : String) : PluginResult
       # A `deb:` install (URL or local .deb) carries no name: - ansible's
       # package action plugin forwards deb: verbatim to apt.py, whose
@@ -1011,12 +1033,23 @@ module Krikri
               msg: had_no_effect ? "Package #{name} already satisfied" : "Package #{name} installed"
             )
           else
-            PluginResult.new(
-              changed: false,
-              failed: true,
-              msg: "Failed to install #{name}: #{install_result[:stderr]}",
-              stderr: install_result[:stderr]
-            )
+            # A locate miss on a requested name is apt.py's own candidate
+            # resolution failing (see apt_unlocatable_name) - the raw
+            # "Failed to install" result is for everything else.
+            if missing = apt_unlocatable_name(install_result[:stderr], names)
+              PluginResult.new(
+                changed: false,
+                failed: true,
+                msg: "No package matching '#{missing}' is available"
+              )
+            else
+              PluginResult.new(
+                changed: false,
+                failed: true,
+                msg: "Failed to install #{name}: #{install_result[:stderr]}",
+                stderr: install_result[:stderr]
+              )
+            end
           end
         end
       when "absent"
@@ -1155,6 +1188,14 @@ module Krikri
         # latest" - `dpkg -l keepalived` on the host confirmed it was
         # never installed at all.
         if upgrade_result[:exit_code] != 0
+          # Same locate-miss mapping as the present-state branch above.
+          if missing = apt_unlocatable_name(upgrade_result[:stderr], names)
+            return PluginResult.new(
+              changed: false,
+              failed: true,
+              msg: "No package matching '#{missing}' is available"
+            )
+          end
           return PluginResult.new(
             changed: false,
             failed: true,
