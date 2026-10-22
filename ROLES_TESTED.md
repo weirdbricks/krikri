@@ -14255,3 +14255,13 @@ Local probe roles, not Galaxy roles: each probed task registers its result and d
 | `mrxcitement.dotfiles` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29878525, 0.9.1856 release). Times: cold py 3.26s vs cr 0.79s; warm py 1.85s vs cr 0.13s. |
 | `sleif.docker` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29878529, 0.9.1856 release). Times: cold py 10.99s vs cr 5.50s; warm py 11.65s vs cr 0.62s. |
 | `stancel.install_certbot_ssl_certs` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29878530, 0.9.1856 release). Times: cold py 3.22s vs cr 1.15s; warm py 2.39s vs cr 0.22s. |
+| `HUIT-AcademicTechnology-Ops.ansible-role-splunk-universal-forwarder` | ubuntu | ❌ Divergent - issue #251 (round29878532, 0.9.1856 debug). |
+| `Jooho.okd_prerequisites` | ubuntu | ❌ Divergent - issue #252 (round29878538, 0.9.1856 debug). |
+| `alexanderjardim.newrelic-java-agent` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29878533, 0.9.1856 debug). |
+| `egeneralov.redmine` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29878536, 0.9.1856 debug). |
+| `jdauphant.vagrant` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29878539, 0.9.1856 debug). |
+| `jeqo.oracle-weblogic` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29878534, 0.9.1856 debug). |
+| `lotusnoir.apps_squid_exporter` | rocky | ❌ Divergent - issue #253 (round29878531, 0.9.1856 debug). |
+| `lunik.coredns` | rocky | ❌ Divergent - issue #254 (round29878535, 0.9.1856 debug). |
+| `trombik.ssh` | rocky | ✅ Clean (round29878537, 0.9.1856 debug). |
+| `tyoshii.apache-mod-h264-streaming` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29878530, 0.9.1856 debug). |
