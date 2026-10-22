@@ -3509,8 +3509,20 @@ module Krikri
       # column too (col 14 for `    - debug: msg=...`, live-verified vs
       # 2.19.11). The `key:` flow-dict needle keeps pointing at the key,
       # like the block-style scan below.
+      # YAML alignment padding before a block-style key's colon is legal,
+      # and ansible-core 2.19 still points the innermost Origin at the
+      # VALUE token's first character through it (issue #241 round:
+      # msghaleb.azure-vms' `client_id    : "..."` -> column 41, the
+      # quote; even a tab between key and colon still lands there with
+      # tabs counted one column each, live-captured vs 2.19.11) - so the
+      # needles tolerate spaces/tabs before the colon. The key itself
+      # must still stand alone, preceded by start-of-line or whitespace
+      # (the `- ` list-marker case included): `client_id` is not the key
+      # of an `xclient_id:` line, which would misplace the Origin onto a
+      # longer identifier's match.
       module_line = lines[from_idx]
-      if (key_idx = module_line.index("#{key}:")) && key_idx > 0 && module_line[key_idx - 1].whitespace?
+      key_needle = /#{Regex.escape(key)}[ \t]*:/
+      if (m = module_line.match(key_needle)) && (key_idx = m.begin(0)) > 0 && module_line[key_idx - 1].whitespace?
         return {from_idx, key_idx + 1}
       end
       if (key_idx = module_line.index("#{key}=")) && key_idx > 0 && module_line[key_idx - 1].whitespace?
@@ -3522,9 +3534,9 @@ module Krikri
         line = lines[idx]
         stripped = line.strip
         break if stripped.starts_with?("- ")
-        if (key_idx = line.index("#{key}:"))
-          rest = line[(key_idx + key.size + 1)..]
-          column = key_idx + key.size + 1 + (rest.size - rest.lstrip.size) + 1
+        if (m = key_needle.match(line)) && (key_idx = m.begin(0)) && (key_idx == 0 || line[key_idx - 1].whitespace?)
+          rest = line[m.end(0)..]
+          column = m.end(0) + (rest.size - rest.lstrip.size) + 1
           return {idx, column}
         end
       end
