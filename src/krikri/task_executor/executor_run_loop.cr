@@ -1217,6 +1217,13 @@ module Krikri
       msg = decorate_conditional_value_origin(task, msg, host) if task
       fields = {"changed" => false, "failed" => true, "msg" => msg}
       fields["_ansible_task_error_msg_only"] = true if task && debug_module?(task)
+      # A conditional-EVALUATION failure's [ERROR] chain was already
+      # emitted by emit_when_error_chain on the catch site - the marker
+      # (like loop_error_result's) keeps ResultDisplay's generic failure
+      # block from printing a second, differently-shaped one. Var-render
+      # failures stay unmarked: their pre-existing display shape IS the
+      # generic path's.
+      fields["_ansible_when_error_emitted"] = true if conditional_evaluation_failure?(msg)
       JSON.parse(fields.to_json)
     end
 
