@@ -2691,6 +2691,9 @@ module Krikri
       return msg unless ex.is_a?(UndefinedVariableError)
       return msg if msg.starts_with?("Error processing keyword") || msg.starts_with?("Task failed:")
       msg = msg.sub("Error while resolving value for 'cmd':", "Error while resolving value for '_raw_params':") if free_form_raw_command?(task)
+      # include_vars's other args live under 'file' in krikri, but the
+      # free-form path Ansible reports as '_raw_params' (issue #230).
+      msg = msg.sub("Error while resolving value for 'file':", "Error while resolving value for '_raw_params':") if free_form_include_vars?(task)
 
       "Task failed: Finalization of task args for '#{finalization_module_name(task)}' failed: #{msg}"
     end
@@ -2811,14 +2814,28 @@ module Krikri
       free_form_call?(task)
     end
 
+    # Free-form include_vars carries its path as Ansible's `_raw_params` too
+    # (`include_vars: "{{ undefined }}"` -> "Error while resolving value for
+    # '_raw_params': 'undefined' is undefined", live-captured 2.19.11), but
+    # the task's module name is the engine-internal `_include_vars`, which
+    # free_form_call?'s as-written short-name match never finds in the
+    # playbook source.
+    private def free_form_include_vars?(task : Task) : Bool
+      task.include_vars? && free_form_value_in_source?(task, "include_vars")
+    end
+
     # True when the task's module key carries an inline value (`module: text`,
     # `module: >`), i.e. the argument arrives as `_raw_params` rather than a
     # `key: value` mapping.
     private def free_form_call?(task : Task) : Bool
+      free_form_value_in_source?(task, task.module_name.split(".").last)
+    end
+
+    private def free_form_value_in_source?(task : Task, short_name : String) : Bool
       path = task.source_file
       return false unless path && task.source_line > 0 && File.file?(path)
       lines = File.read_lines(path)
-      short = Regex.escape(task.module_name.split(".").last)
+      short = Regex.escape(short_name)
       matcher = /\A(?:ansible\.(?:builtin|legacy)\.)?#{short}:/
       ((task.source_line - 1)...Math.min(lines.size, task.source_line + 40)).each do |idx|
         stripped = lines[idx].strip.lchop("- ").strip
@@ -2914,7 +2931,9 @@ module Krikri
       lines = File.read_lines(path)
       msg = ex.message || ""
       free_form = free_form_raw_command?(task)
+      free_form_include_vars = free_form_include_vars?(task)
       msg = msg.sub("Error while resolving value for 'cmd':", "Error while resolving value for '_raw_params':") if free_form
+      msg = msg.sub("Error while resolving value for 'file':", "Error while resolving value for '_raw_params':") if free_form_include_vars
       l3 = msg
       l2 = "Finalization of task args for '#{finalization_module_name(task)}' failed."
       l1 = "Task failed: Finalization of task args for '#{finalization_module_name(task)}' failed: #{msg}"
@@ -2986,6 +3005,12 @@ module Krikri
       # philnewm.vagrant_box_prep) - locate_param_key_position finds that
       # value's first character (quote included); the free-form scan stays
       # as the fallback for shapes with no `file:` key.
+      # Free-form include_vars reaches this block through its own 'file'
+      # wrapping (issue #230), and its `_raw_params` value sits on the
+      # module key's line exactly like the free-form include_tasks shapes
+      # below - only here free_form_value_position locates it (live-
+      # captured 2.19.11: `include_vars: "{{ include_vars }}"` -> column
+      # 17, the value token's quote).
       # The whole-string 'Task args must resolve to a dict' failure is
       # raised by Ansible with obj=the string args layer itself, so its
       # innermost Origin points at the value's first character on the
@@ -2994,7 +3019,7 @@ module Krikri
       # free_form_value_position already finds.
       dict_args_failure = msg.starts_with?("Task args must resolve to a 'dict'")
       include_tasks = ["include_tasks", "_include_tasks"].includes?(task.module_name)
-      param_idx, param_col = free_form || dict_args_failure ? free_form_value_position(lines, module_idx, task.module_name) : (locate_param_value_line(lines, module_idx, msg) || (include_tasks ? ((msg.starts_with?("Error while resolving value for '_raw_params':") ? locate_param_key_position(lines, module_idx, "file") : nil) || free_form_value_position(lines, module_idx, finalization_module_name(task))) : {module_idx, module_col}))
+      param_idx, param_col = free_form || dict_args_failure || free_form_include_vars ? free_form_value_position(lines, module_idx, task.module_name) : (locate_param_value_line(lines, module_idx, msg) || (include_tasks ? ((msg.starts_with?("Error while resolving value for '_raw_params':") ? locate_param_key_position(lines, module_idx, "file") : nil) || free_form_value_position(lines, module_idx, finalization_module_name(task))) : {module_idx, module_col}))
 
       # When the fourth chained stanza is emitted, the third level's text
       # shortens to the prefix alone - the inner message moves entirely

@@ -91,6 +91,33 @@ describe "include_vars: with a failing templated path" do
     output.wont_include("file not found: undefined")
   end
 
+  # Free-form include_vars names its failing arg `_raw_params` the way the
+  # command-family does - Ansible's innermost Origin points at the VALUE
+  # token after the module key (live-captured 2.19.11: `- include_vars:
+  # "{{ undefined }}"` -> column 17, the quote), NOT at the module key.
+  # krikri's target arg is its own `file`-keyed include_vars_file, and the
+  # task's engine-internal module name (`_include_vars`) hid the free-form
+  # shape from the code that maps `file:` errors onto `_raw_params`
+  # (issue #230). The dict form keeps the plain 'file' wording (its value
+  # really is the file: param).
+  it "reports a bare free-form path failure as _raw_params with the innermost Origin at the value" do
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: direct undefined path
+            include_vars: "{{ users }}"
+      YAML
+
+    status.exit_code.must_equal(2)
+    output.must_include("Task failed: Finalization of task args for 'ansible.builtin.include_vars' failed: Error while resolving value for '_raw_params': 'users' is undefined")
+    output.must_include("Error while resolving value for '_raw_params': 'users' is undefined\n")
+    output.must_match(/Origin: \S+\.yml:6:21\n/)
+    output.must_include(" " * 20 + "^ column 21\n")
+    output.wont_include("Error while resolving value for 'file'")
+  end
+
   it "does not silently fall through to a later first_found candidate when an earlier candidate's template is undefined" do
     status, output = run_in_role_tree(<<-YAML)
       - hosts: localhost
