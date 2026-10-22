@@ -510,6 +510,48 @@ describe Krikri::RoleLoader do
     tasks.map(&.name).count("shared task").must_equal(2)
   end
 
+  # ansible-core has no meta-dependency cycle check: Role.load loads
+  # dependencies eagerly and recursively, and the recursion error aborts
+  # the whole run whatever allow_duplicates says (live-verified vs
+  # 2.19.11, issue #235: ngotnghet.httpd's meta/main.yml listed itself).
+  # Krikri's seen-set dedup used to swallow the cycle as the ordinary
+  # already-loaded case and exit 0.
+  it "raises Ansible's recursion error for a role whose meta lists itself as a dependency" do
+    build_role("self_cycle") do |role|
+      role.tasks("- name: t\n  ansible.builtin.debug:\n    msg: hi\n")
+      role.meta("dependencies:\n  - self_cycle\n")
+    end
+
+    error = assert_raises(Krikri::RoleDependencyCycleError) do
+      Krikri::RoleLoader.load_roles(roles_yaml("- self_cycle"), fresh_play, roles_root)
+    end
+    (error.message || "").must_equal(
+      "A recursion loop was detected with the roles specified. Make sure child roles do not have dependencies on parent roles: maximum recursion depth exceeded")
+    (error.render || "").includes?("Origin: ").must_equal(true)
+    (error.render || "").includes?("self_cycle/meta/main.yml").must_equal(true)
+  end
+
+  it "raises Ansible's recursion error for an A->B->A dependency cycle" do
+    build_role("cycle_a") do |role|
+      role.tasks("- name: a task\n  ansible.builtin.debug:\n    msg: a\n")
+      role.meta("dependencies:\n  - cycle_b\n")
+    end
+
+    build_role("cycle_b") do |role|
+      role.tasks("- name: b task\n  ansible.builtin.debug:\n    msg: b\n")
+      role.meta("dependencies:\n  - cycle_a\n")
+    end
+
+    error = assert_raises(Krikri::RoleDependencyCycleError) do
+      Krikri::RoleLoader.load_roles(roles_yaml("- cycle_a"), fresh_play, roles_root)
+    end
+    (error.message || "").must_equal(
+      "A recursion loop was detected with the roles specified. Make sure child roles do not have dependencies on parent roles: maximum recursion depth exceeded")
+    # The Origin belongs to the meta entry that CLOSED the loop - cycle_b
+    # re-declaring cycle_a - not to the play-level entry that started it.
+    (error.render || "").includes?("cycle_b/meta/main.yml").must_equal(true)
+  end
+
   it "raises with a clear message when the role directory can't be found" do
     # Ansible 2.19.11's message names the full search-path list it looked
     # through (definition.py's "the role '<name>' was not found in

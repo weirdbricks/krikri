@@ -873,6 +873,20 @@ rescue ex : Krikri::RoleNotFoundError
     STDERR.puts "[ERROR]: #{ex.message}".colorize(:red)
   end
   exit 1
+rescue ex : Krikri::RoleDependencyCycleError
+  # A meta/main.yml dependency cycle (a role listing itself, or any
+  # A->B->A chain) is Ansible's own whole-run refusal at rc=1 - Role.load
+  # recurses into dependencies with no cycle check until the recursion
+  # limit surfaces as an AnsibleError - on STDERR with an Origin block
+  # at the dependency entry that closed the loop (live-verified vs
+  # 2.19.11, issue #235). NOT the parser-error 4, and not the executor's
+  # per-task include failure shapes.
+  if render = ex.render
+    STDERR.print render
+  else
+    STDERR.puts "[ERROR]: #{ex.message}".colorize(:red)
+  end
+  exit 1
 rescue ex : Krikri::StaticImportMissingFileError
   # import_tasks:' resolved file genuinely missing is Ansible's
   # own DataLoader AnsibleError - on STDERR, NO Origin block, and rc=1

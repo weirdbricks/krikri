@@ -349,6 +349,12 @@ module Krikri
       # role's own vars, resolved like tasks_from (issue #128 found
       # krikri parsed the include_role key but discarded it).
       vars_from : String? = nil,
+      # The role dirs on THIS dependency chain still being loaded (the
+      # ancestors in flight, including the declaring role) - what the
+      # cycle check below tests against, NOT the seen set, so a diamond
+      # (a role reachable again after its ancestors finished) keeps
+      # loading while a cycle raises.
+      in_flight : Set(String) = Set(String).new,
     )
       # When a play-level `roles:` entry's own meta/main.yml DEPENDENCY
       # names a role that is nowhere on disk, the raise carries the
@@ -362,6 +368,17 @@ module Krikri
       unless role_dir
         raise RoleNotFoundError.new(role_not_found_message(name, playbook_dir, dependency_declaring_dir, play.collections))
       end
+
+      # ansible-core has no cycle check at all: Role.load recurses into
+      # meta dependencies until Python's recursion limit, and the
+      # resulting error aborts the whole run whatever allow_duplicates
+      # says. This must sit BEFORE the seen-set dedup return below - a
+      # cycle's re-entry carries the same dedup key the enclosing chain
+      # added a moment ago, so dedup alone reads it as the ordinary
+      # already-loaded case and silently swallows it (issue #235:
+      # ngotnghet.httpd's meta/main.yml listed itself; krikri exited 0
+      # with an empty play where ansible exits 1).
+      raise_if_dependency_cycle(in_flight, role_dir)
 
       # An already-loaded role contributes no defaults a second time -
       # its tasks (and their defaults) are already in the play. The key
@@ -424,7 +441,16 @@ module Krikri
       # "nested inside" the declaring role's own tasks the way an
       # include_role: call is.
       dependency_default_origins = Hash(String, VarOrigin).new
-      dependency_defaults = load_meta_dependencies(role_dir, play, playbook_dir, seen, tasks, handlers, parent_names, parent_paths, parent_defaults, play_scope, parent_default_origins, dependency_default_origins)
+      # The ensure pop matters for diamond-shaped graphs, where the SAME
+      # in_flight set is shared by sibling chains: without it, a role
+      # reached through ancestor B would look in-flight to ancestor C's
+      # chain and read as a false cycle.
+      begin
+        in_flight.add(role_dir)
+        dependency_defaults = load_meta_dependencies(role_dir, play, playbook_dir, seen, tasks, handlers, parent_names, parent_paths, parent_defaults, play_scope, parent_default_origins, dependency_default_origins, in_flight)
+      ensure
+        in_flight.delete(role_dir)
+      end
 
       defaults = load_vars_file_main(File.join(role_dir, "defaults"))
       # Ansible keeps a role's defaults visible for the rest of the
@@ -765,7 +791,7 @@ module Krikri
     # dependencies winning over earlier ones on a name collision, matching
     # Ansible's load order), for the declaring role to merge under
     # its own - see `load_role`'s `dependency_defaults` comment.
-    private def self.load_meta_dependencies(role_dir : String, play : Play, playbook_dir : String, seen : Set(String), tasks : Array(Task), handlers : Array(Task), parent_names : Array(String) = [] of String, parent_paths : Array(String) = [] of String, parent_defaults : Hash(String, JSON::Any) = Hash(String, JSON::Any).new, play_scope : Bool = false, parent_default_origins : Hash(String, VarOrigin) = Hash(String, VarOrigin).new, collected_origins : Hash(String, VarOrigin) = Hash(String, VarOrigin).new) : Hash(String, JSON::Any)
+    private def self.load_meta_dependencies(role_dir : String, play : Play, playbook_dir : String, seen : Set(String), tasks : Array(Task), handlers : Array(Task), parent_names : Array(String) = [] of String, parent_paths : Array(String) = [] of String, parent_defaults : Hash(String, JSON::Any) = Hash(String, JSON::Any).new, play_scope : Bool = false, parent_default_origins : Hash(String, VarOrigin) = Hash(String, VarOrigin).new, collected_origins : Hash(String, VarOrigin) = Hash(String, VarOrigin).new, in_flight : Set(String) = Set(String).new) : Hash(String, JSON::Any)
       collected = Hash(String, JSON::Any).new
       meta_path = find_main_file(File.join(role_dir, "meta")) || File.join(role_dir, "meta", "main.yml")
       return collected unless File.exists?(meta_path)
@@ -785,7 +811,7 @@ module Krikri
         before_count = tasks.size
         dep_default_origins = Hash(String, VarOrigin).new
         dep_defaults = begin
-          load_role(dep_name, dep_vars, dep_tags, play, playbook_dir, seen, tasks, handlers, nil, parent_names, parent_paths, parent_defaults, parent_default_origins, dep_origins, play_scope: play_scope, role_version: dep_version, role_when: dep_when, default_origins_out: dep_default_origins, dependency_declaring_dir: role_dir)
+          load_role(dep_name, dep_vars, dep_tags, play, playbook_dir, seen, tasks, handlers, nil, parent_names, parent_paths, parent_defaults, parent_default_origins, dep_origins, play_scope: play_scope, role_version: dep_version, role_when: dep_when, default_origins_out: dep_default_origins, dependency_declaring_dir: role_dir, in_flight: in_flight)
         rescue ex : RoleNotFoundError
           # A missing DEPENDENCY reports its Origin at the dependency
           # entry inside the declaring role's own meta/main.yml (issue #12,
@@ -801,6 +827,17 @@ module Krikri
             ex.render = PlaybookParser.origin_error_render_at(
               ex.message.to_s, meta_path, cached_source_map(meta_path), pos)
           end
+          raise ex
+        rescue ex : RoleDependencyCycleError
+          # The raise site (deep in #load_role) has no source context, so
+          # point the Origin at the dependency entry that closed the
+          # loop - the position Ansible's own Origin reports for this
+          # error (the entry's start, live-verified vs 2.19.11). A
+          # non-nil render means the raise was re-raised through from a
+          # deeper dependency's meta and already carries ITS entry's
+          # Origin; the innermost declaring meta wins, like Ansible's
+          # recursion unwinds to the re-entry point first.
+          attach_cycle_origin(ex, meta_path, dep_index)
           raise ex
         end
         apply_role_when(tasks, before_count, dep_when)
@@ -846,6 +883,23 @@ module Krikri
       else
         map.at?(prefix)
       end
+    end
+
+    # See the call site in #load_role for why this is not the seen-set dedup.
+    private def self.raise_if_dependency_cycle(in_flight : Set(String), role_dir : String) : Nil
+      return unless in_flight.includes?(File.expand_path(role_dir))
+      raise RoleDependencyCycleError.new(
+        "A recursion loop was detected with the roles specified. Make sure child roles do not have dependencies on parent roles: maximum recursion depth exceeded")
+    end
+
+    # Origin of a dependency cycle error: see the rescue site in
+    # #load_meta_dependencies.
+    private def self.attach_cycle_origin(ex : RoleDependencyCycleError, meta_path : String, dep_index : Int32) : Nil
+      return unless ex.render.nil?
+      pos = cached_source_map(meta_path).at?("dependencies/#{dep_index}")
+      return unless pos
+      ex.render = PlaybookParser.origin_error_render_at(
+        ex.message.to_s, meta_path, cached_source_map(meta_path), pos)
     end
 
     # The not-found message for a role load: the dependency context's own
