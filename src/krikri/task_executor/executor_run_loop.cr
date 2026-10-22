@@ -1872,6 +1872,7 @@ module Krikri
       end
 
       warn_groupby_storage(task)
+      warn_markup_storage(task)
       substituted_params = resolve_role_relative_src(task, substituted_params)
       # Same pre-inline copy src+content gate as execute_task_once (see
       # there) - the batched path must fail identically.
@@ -2323,6 +2324,7 @@ module Krikri
       end
 
       warn_groupby_storage(task)
+      warn_markup_storage(task)
       substituted_params = resolve_role_relative_src(task, substituted_params)
       # Ansible's copy ACTION plugin rejects src+content together before
       # anything else runs (even before the src file lookup) - live-

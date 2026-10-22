@@ -3395,6 +3395,103 @@ module Krikri
       end
     end
 
+    # ansible-core 2.19.11's task-arg finalization plays its parameter
+    # values through variable storage, which warns whenever the value is
+    # still a jinja2 Markup (a str subclass) instead of a plain str: the
+    # `safe` filter hands back Markup, and the string-shaping filters that
+    # route through markupsafe's soft_str (trim, string, default, d,
+    # lower, upper, capitalize, title) leave it a Markup. Storage can't
+    # keep the subclass, so ansible converts it to 'str' and prints
+    # "[WARNING]: Type 'Markup' is unsupported in variable storage,
+    # converting to 'str'." with an Origin block at the param's value
+    # token (the opening quote for a quoted block-style value), deduped
+    # to one display for a loop's items (live-verified vs 2.19.11).
+    # Text-level approximation of ansible's value-type check -
+    # live-verified shapes: "{{ item|safe|trim }}" / "{{ d | safe }}" /
+    # "{{ d | safe | string }}" / "{{ d | safe | default('q') }}" warn;
+    # a chain filter that rebuilds the value from scratch (replace, ...)
+    # has already un-Markup'd it, and text around the expression
+    # ("{{ d | safe }}/x") never yields a lone whole-value Markup, so
+    # neither warns.
+    @@markup_storage_warnings = Set(String).new
+
+    private def warn_markup_storage(task : Task) : Nil
+      path = task.source_file || @playbook_file
+      return unless path && File.file?(path)
+      task.params.each do |key, value|
+        next unless markup_reaches_storage?(value)
+        lines = File.read_lines(path) rescue next
+        found_module_idx, module_col = module_key_position(lines, task)
+        next unless found_module_idx
+        param_idx, param_col = locate_param_key_position(lines, found_module_idx, key) ||
+                               {found_module_idx, module_col}
+        text = "[WARNING]: Type 'Markup' is unsupported in variable storage, converting to 'str'."
+        dedup_key = "#{path}:#{param_idx + 1}:#{param_col}"
+        next unless @@markup_storage_warnings.add?(dedup_key)
+        STDERR.puts text
+        STDERR.puts origin_context_block(path, lines, param_idx + 1, param_col)
+        STDERR.puts
+      end
+    end
+
+    MARKUP_STORAGE_PRESERVING_FILTERS = %w[trim safe string default d lower upper capitalize title]
+
+    # True when the whole param (stripped) is one `{{ ... }}` expression
+    # whose `safe`-producing Markup survives its remaining chain: every
+    # filter after the last `safe` must be in
+    # MARKUP_STORAGE_PRESERVING_FILTERS (any other filter hands back a
+    # plain str, so storage never sees a Markup).
+    private def markup_reaches_storage?(value : String) : Bool
+      stripped = value.strip
+      return false unless stripped.size > 4 &&
+                          stripped.starts_with?("{{") && stripped.ends_with?("}}") &&
+                          !stripped[2...-2].includes?("{{")
+      segments = markup_filter_segments(stripped[2...-2].strip)
+      safe_idx = nil
+      segments.each_index { |idx| safe_idx = idx if idx > 0 && markup_filter_name(segments[idx]) == "safe" }
+      return false unless safe_idx
+      segments[(safe_idx + 1)..].all? { |segment| markup_filter_name(segment).in?(MARKUP_STORAGE_PRESERVING_FILTERS) }
+    end
+
+    # A filter chain's `|`-separated segments split only at the chain's
+    # top level: parentheses, brackets and string literals keep their
+    # content together, so an argument like default('a|b') stays one
+    # segment instead of ending the passthrough check early.
+    private def markup_filter_segments(inner : String) : Array(String)
+      segments = [] of String
+      start = 0
+      depth = 0
+      quote = nil
+      inner.each_char_with_index do |char, idx|
+        if quote
+          quote = nil if char == quote
+        else
+          case char
+          when '\'', '"'
+            quote = char
+          when '(', '[', '{'
+            depth += 1
+          when ')', ']', '}'
+            depth -= 1
+          when '|'
+            if depth.zero?
+              segments << inner[start...idx].strip
+              start = idx + 1
+            end
+          end
+        end
+      end
+      segments << inner[start..].strip
+      segments
+    end
+
+    # A chain segment's filter name: the leading identifier it is spelled
+    # with ("default" in default('q')); "" when the segment doesn't spell
+    # a filter name.
+    private def markup_filter_name(segment : String) : String
+      (match = segment.match(/\A[A-Za-z_][A-Za-z0-9_]*/)) ? match[0] : ""
+    end
+
     # Whether a groupby result survives to the value's storage: the
     # chain after `groupby(...)` must not transform the pairs away. A
     # `| map(...)` (attribute extraction or per-item filter) and the

@@ -151,7 +151,10 @@ module Krikri
       active_states = @params["active_connection_states"]?.try { |raw| raw.split(',').map(&.strip) } || PluginHelpers::ProcNetTcp::DEFAULT_ACTIVE_STATES
       exclude_hexes = @params["exclude_hosts"]?.try { |raw| raw.split(',').map(&.strip).compact_map { |excluded| PluginHelpers::ProcNetTcp.ipv4_to_hex(excluded) } } || [] of String
       sleep_interval = (@params["sleep"]? || "1").to_i.seconds
-      deadline = Time.instant + timeout.seconds
+      # Ansible budgets the delay inside the timeout: wait_for.py sets
+      # end = start + timeout before sleeping the delay, so with delay:2 +
+      # timeout:3 it still gives up (elapsed=3) when the 3s are up, not 5s
+      deadline = started + timeout.seconds
 
       loop do
         connections = PluginHelpers::ProcNetTcp.parse(read_proc_net_tcp)
@@ -180,7 +183,9 @@ module Krikri
     private def poll_until_satisfied(port : Int32?, path : String?, timeout : Int32, started : Time::Instant) : PluginResult
       up = (@params["state"]? || "started").in?("started", "present")
       sleep_interval = (@params["sleep"]? || "1").to_i.seconds
-      deadline = Time.instant + timeout.seconds
+      # Same budget as wait_for.py: the delay is spent inside the timeout,
+      # so a delay+timeout wait still fails at elapsed=timeout
+      deadline = started + timeout.seconds
 
       loop do
         satisfied, match = check_condition(port, path, up, deadline)
@@ -258,13 +263,31 @@ module Krikri
         if up && (regex = @params["search_regex"]?)
           check_port_regex(port, regex, deadline)
         else
-          {port_connectable?(port) == up, nil}
+          {port_connectable?(port, deadline) == up, nil}
         end
       elsif path
         check_path(path, up)
       else
         raise "unreachable"
       end
+    end
+
+    # ansible's wait_for.py caps every connect attempt at
+    # min(connect_timeout, ceil(seconds left to the end deadline))
+    # (alt_connect_timeout): against a port whose connect only ever
+    # times out (a container port not yet published answers nothing, e.g.
+    # 0.0.0.0:6379) an attempt launched close to the deadline would
+    # otherwise burn its whole connect_timeout and push the reported
+    # elapsed past the timeout by that much - krikri reported elapsed
+    # 305 for timeout=300 where ansible reported 300.
+    # Ceil of a positive remaining is already >= 1, matching ansible's
+    # own attempt loop (which only attempts while time remains); an
+    # attempt pitching the deadline keeps 1s too.
+    private def connect_timeout_for(deadline : Time::Instant) : Time::Span
+      cap = (deadline - Time.instant).total_seconds.ceil.to_i.seconds
+      cap = 1.second if cap <= Time::Span.zero
+      timeout = (@params["connect_timeout"]? || "5").to_i.seconds
+      timeout < cap ? timeout : cap
     end
 
     # search_regex matched against data read from an open socket, not
@@ -281,7 +304,7 @@ module Krikri
     # does on any not-yet-satisfied iteration.
     private def check_port_regex(port : Int32, regex : String, deadline : Time::Instant) : {Bool, Regex::MatchData?}
       host = @params["host"]? || "127.0.0.1"
-      connect_timeout = (@params["connect_timeout"]? || "5").to_i.seconds
+      connect_timeout = connect_timeout_for(deadline)
       # Ansible compiles search_regex with re.MULTILINE (wait_for.py) -
       # Python's re.M only moves ^/$ to line boundaries; `.` must NOT cross
       # newlines. Crystal's MULTILINE constant implies DOTALL (regex.cr maps
@@ -314,9 +337,9 @@ module Krikri
       {false, nil}
     end
 
-    private def port_connectable?(port : Int32) : Bool
+    private def port_connectable?(port : Int32, deadline : Time::Instant) : Bool
       host = @params["host"]? || "127.0.0.1"
-      connect_timeout = (@params["connect_timeout"]? || "5").to_i.seconds
+      connect_timeout = connect_timeout_for(deadline)
 
       socket = TCPSocket.new(host, port, connect_timeout: connect_timeout)
       socket.close
