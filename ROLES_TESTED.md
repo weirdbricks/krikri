@@ -14205,3 +14205,13 @@ Local probe roles, not Galaxy roles: each probed task registers its result and d
 | `rpcpool.solana_rpc` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29877843, 0.9.1839 release). Times: cold py 0.50s vs cr 0.01s; warm py 0.61s vs cr 0.01s. |
 | `ryezone_labs.edge_firewall` | ubuntu | ✅ Clean (round29877840, 0.9.1839 release). Times: cold py 44.09s vs cr 4.47s; warm py 36.37s vs cr 0.95s. |
 | `serlophug.haproxy` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29877841, 0.9.1839 release). Times: cold py 0.51s vs cr 0.01s; warm py 0.51s vs cr 0.01s. |
+| `HauptJ.mariadb` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29878272, 0.9.1849 debug). |
+| `alexey-medvedchikov.repmgr` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29878273, 0.9.1849 debug). |
+| `amaabca.common` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29878279, 0.9.1849 debug). |
+| `andrewrothstein.ollama` | rocky | ✅ Clean (round29878281, 0.9.1849 debug). |
+| `cans.ssh-authorize` | ubuntu | ❌ Divergent - issue #243 (round29878276, 0.9.1849 debug). |
+| `dcos.dcos_requirements` | ubuntu | ❌ Divergent - issue #244 (round29878274, 0.9.1849 debug). |
+| `kbrebanov.gerrit` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29878278, 0.9.1849 debug). |
+| `klingac.ansible_role_envfiles` | rocky | ❌ Divergent - issue #245 (round29878277, 0.9.1849 debug). |
+| `opsxcq.linux_server` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29878275, 0.9.1849 debug). |
+| `victorock.download` | ubuntu | ✅ Clean (round29878280, 0.9.1849 debug). |
