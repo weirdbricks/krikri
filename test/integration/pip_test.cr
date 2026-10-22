@@ -460,6 +460,47 @@ describe "pip plugin" do
         FileUtils.rm_rf(shim_dir)
       end
     end
+
+    # Issue #226: discovery used to probe candidates with
+    # `-m pip --version`, so a host whose pip CLI is broken (vendored
+    # urllib3 failing on Python 3.10+) but whose pip MODULE is present
+    # fell back to bare `pip3`, while ansible's _have_pip_module only
+    # checks the pip package is importable and still runs
+    # `[python, -m, pip, install ...]`, failing from that command. The
+    # shim python3 answers the presence-only import check but fails
+    # every `-m pip` invocation, and pip3 is absent from the shim PATH:
+    # getting past discovery to the install's own failure proves the
+    # probe no longer gates on pip's CLI.
+    it "selects an interpreter whose pip module is present but whose pip CLI is broken" do
+      shim_dir = File.tempname("/tmp", ".krikri-spec-pip-bin")
+      Dir.mkdir(shim_dir)
+      File.write(File.join(shim_dir, "python3"), <<-SH
+        #!/bin/sh
+        if [ "$1" = "-c" ]; then
+          exit 0
+        fi
+        echo "krikri-fake-broken-pip stdout"
+        echo "krikri-fake-broken-pip stderr" >&2
+        exit 1
+        SH
+      )
+      File.chmod(File.join(shim_dir, "python3"), 0o755)
+      File.symlink("/bin/sh", File.join(shim_dir, "sh"))
+      begin
+        result = PluginSpecHelper.run("pip", {
+          "name"         => "definitely-not-a-real-package-xyz",
+          "_environment" => {"PATH" => shim_dir}.to_json,
+        })
+
+        result["failed"].as_bool.must_equal(true)
+        msg = result["msg"].as_s
+        msg.must_include("stdout: krikri-fake-broken-pip stdout")
+        msg.must_include("\n:stderr: krikri-fake-broken-pip stderr")
+        msg.includes?("Failed to install").must_equal(false)
+      ensure
+        FileUtils.rm_rf(shim_dir)
+      end
+    end
   end
 
   # virtualenv_command / virtualenv_site_packages argument plumbing,
