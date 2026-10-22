@@ -14235,3 +14235,13 @@ Local probe roles, not Galaxy roles: each probed task registers its result and d
 | `marsante.medshakeehr` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29878395, 0.9.1853 release). Times: cold py 4.17s vs cr 5.77s; warm py 3.90s vs cr 0.48s. |
 | `simeononsecurity.linux_update` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29878392, 0.9.1853 release). Times: cold py 0.50s vs cr 0.01s; warm py 0.56s vs cr 0.01s. |
 | `webarchitect609.ansible_role_supervisor` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29878391, 0.9.1853 release). Times: cold py 0.51s vs cr 0.01s; warm py 0.52s vs cr 0.01s. |
+| `CyVerse-Ansible.ansible_dadi` | ubuntu | ❌ Divergent - issue #249 (round29878437, 0.9.1855 release). Times: cold py 21.72s vs cr 32.50s; warm py 16.55s vs cr 12.39s. |
+| `Dalee.install-java8` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29878436, 0.9.1855 release). Times: cold py 0.48s vs cr 0.01s; warm py 0.46s vs cr 0.01s. |
+| `Jooho.kvm_cloud_init_vm` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29878435, 0.9.1855 release). Times: cold py 5.40s vs cr 4.10s; warm py 2.96s vs cr 0.50s. |
+| `a1max1.spadeApache` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29878433, 0.9.1855 release). Times: cold py 0.47s vs cr 0.01s; warm py 0.48s vs cr 0.01s. |
+| `clouddrove.ansible_role_docker_redis` | ubuntu | ❌ Divergent - issue #250 (round29878429, 0.9.1855 release). Times: cold py 356.04s vs cr 328.01s; warm py 356.07s vs cr 309.98s. |
+| `deimosfr.graphite` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29878430, 0.9.1855 release). Times: cold py 0.52s vs cr 0.01s; warm py 0.47s vs cr 0.01s. |
+| `hxpro.mysql` | ubuntu | ✅ Clean (round29878431, 0.9.1855 release). Times: cold py 5.87s vs cr 5.33s; warm py 4.56s vs cr 0.79s. |
+| `robertdebock.update_pip_packages` | rocky | ⚠ only a community module krikri does not track differs (round29878432, 0.9.1855 release). Times: cold py 7.50s vs cr 2.85s; warm py 5.86s vs cr 0.46s. |
+| `ryezone_labs.dns` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29878438, 0.9.1855 release). Times: cold py 2.61s vs cr 1.15s; warm py 2.07s vs cr 0.43s. |
+| `ryezone_labs.packer_init` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29878434, 0.9.1855 release). Times: cold py 6.16s vs cr 6.48s; warm py 5.12s vs cr 0.50s. |
