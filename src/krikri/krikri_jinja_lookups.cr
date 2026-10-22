@@ -242,7 +242,40 @@ module Krikri
     private def self.lookup_template(ctx : KrikriJinja::Context, path : String,
                                      kwargs : Hash(String, AnyValue), role_path : String?) : AnyValue
       resolved = LookupPlugins.resolve_template_lookup_path(path, role_path)
-      return AnyValue.new(nil) unless File.exists?(resolved)
+      unless File.exists?(resolved)
+        # find_file_in_search_path prints this warning for a lookup file
+        # the search paths cannot find, for every errors mode
+        # (live-verified vs 2.19.11: warn and ignore carry the task
+        # past the missing file, strict still fails after the warning).
+        ResultDisplay.emit_display_warning(
+          "Unable to find '#{path}' in expected paths (use -vvvvv to see paths)"
+        )
+        # The generic lookup errors= option decides what the missing
+        # file does (live-verified 2.19.11 against every mode): only
+        # strict, the default, fails the task; warn warns and carries
+        # on, ignore just carries on, and both
+        # return None ([ ] under wantlist=True), never the raise. The
+        # old silent nil matched the lenient modes but masked strict's
+        # failure, which is what issue #248's role rode through.
+        errors_option = kwargs["errors"]?.try { |value| text(value).strip.downcase }
+        if errors_option == "warn"
+          ResultDisplay.emit_display_warning(
+            "An error occurred while running the lookup plugin 'template': the template file #{path} could not be found for the lookup"
+          )
+          return truthy?(kwargs["wantlist"]?) ? AnyValue.new([] of AnyValue) : AnyValue.new(nil)
+        end
+        return truthy?(kwargs["wantlist"]?) ? AnyValue.new([] of AnyValue) : AnyValue.new(nil) if errors_option == "ignore"
+        # template.py raises with the term AS GIVEN ("the template file
+        # %s could not be found for the lookup" % term, never the
+        # search-path-joined candidate: live-verified 2.19.11 for an
+        # absolute term outside any role AND a relative one inside one)
+        # and the generic wrapper prefixes the message as "The lookup
+        # plugin 'template' failed: ..." - the same typed LookupError
+        # routing the 'cartesian' raise travels.
+        raise Krikri::PythonLookupRunner::LookupError.new(
+          "The lookup plugin 'template' failed: the template file #{path} could not be found for the lookup"
+        )
+      end
       content = File.read(resolved)
       first_line_end = content.index('\n')
       first_line = first_line_end ? content[0...first_line_end] : content
