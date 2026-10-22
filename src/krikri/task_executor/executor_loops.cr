@@ -1161,10 +1161,17 @@ module Krikri
           return nil unless task.source_line > 0 && task.source_line <= lines.size
           task.source_line - 1
         end
+      # A next-TASK entry ends the scan; a module param's own nested
+      # sequence element (`argv:`'s `- "true"`, deeper-indented than the
+      # task's `- `) must not - a `loop:` key written AFTER such a param
+      # was never found and the cause stanza lost its Origin entirely
+      # (live-verified vs 2.19.11, issue #239: real pins the loop VALUE
+      # token for both the undefined and the type-error cause).
+      task_indent = lines[from_idx].size - lines[from_idx].lstrip.size
       ((from_idx + 1)...lines.size).each do |idx|
         line = lines[idx]
         stripped = line.strip
-        break if stripped.starts_with?("- ") && idx != from_idx
+        break if stripped.starts_with?("- ") && idx != from_idx && (line.size - line.lstrip.size) <= task_indent
         key_text = "#{kind}:"
         next unless stripped.starts_with?(key_text)
         key_idx = line.index(key_text)
