@@ -14245,3 +14245,13 @@ Local probe roles, not Galaxy roles: each probed task registers its result and d
 | `robertdebock.update_pip_packages` | rocky | ⚠ only a community module krikri does not track differs (round29878432, 0.9.1855 release). Times: cold py 7.50s vs cr 2.85s; warm py 5.86s vs cr 0.46s. |
 | `ryezone_labs.dns` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29878438, 0.9.1855 release). Times: cold py 2.61s vs cr 1.15s; warm py 2.07s vs cr 0.43s. |
 | `ryezone_labs.packer_init` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29878434, 0.9.1855 release). Times: cold py 6.16s vs cr 6.48s; warm py 5.12s vs cr 0.50s. |
+| `adarnimrod.syslog-forward` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29878528, 0.9.1856 release). Times: cold py 0.50s vs cr 0.04s; warm py 0.50s vs cr 0.03s. |
+| `ashokc.filebeat` | ubuntu | ✅ Clean (round29878527, 0.9.1856 release). Times: cold py 28.72s vs cr 20.47s; warm py 13.09s vs cr 0.83s. |
+| `ashokc.kibana` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29878526, 0.9.1856 release). Times: cold py 3.07s vs cr 0.78s; warm py 2.50s vs cr 0.15s. |
+| `brentwg.pip` | ubuntu | ✅ Clean (round29878523, 0.9.1856 release). Times: cold py 16.51s vs cr 8.33s; warm py 6.09s vs cr 0.13s. |
+| `javiergayala.users` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29878524, 0.9.1856 release). Times: cold py 0.56s vs cr 0.01s; warm py 0.53s vs cr 0.01s. |
+| `jumperfly.kubernetes_master` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29878521, 0.9.1856 release). Times: cold py 54.29s vs cr 15.82s; warm py 23.00s vs cr 1.54s. |
+| `memiah.aws-ec2` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29878522, 0.9.1856 release). Times: cold py 0.50s vs cr 0.02s; warm py 0.50s vs cr 0.02s. |
+| `mrxcitement.dotfiles` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29878525, 0.9.1856 release). Times: cold py 3.26s vs cr 0.79s; warm py 1.85s vs cr 0.13s. |
+| `sleif.docker` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29878529, 0.9.1856 release). Times: cold py 10.99s vs cr 5.50s; warm py 11.65s vs cr 0.62s. |
+| `stancel.install_certbot_ssl_certs` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29878530, 0.9.1856 release). Times: cold py 3.22s vs cr 1.15s; warm py 2.39s vs cr 0.22s. |
