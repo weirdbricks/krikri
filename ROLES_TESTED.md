@@ -14215,3 +14215,13 @@ Local probe roles, not Galaxy roles: each probed task registers its result and d
 | `klingac.ansible_role_envfiles` | rocky | ❌ Divergent - issue #245 (round29878277, 0.9.1849 debug). |
 | `opsxcq.linux_server` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29878275, 0.9.1849 debug). |
 | `victorock.download` | ubuntu | ✅ Clean (round29878280, 0.9.1849 debug). |
+| `alahiff.slurm` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29878330, 0.9.1852 release). Times: cold py 0.44s vs cr 0.01s; warm py 0.43s vs cr 0.01s. |
+| `ansible-city.kafka` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29878325, 0.9.1852 release). Times: cold py 0.48s vs cr 0.01s; warm py 0.44s vs cr 0.01s. |
+| `cmprescott.jre` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29878322, 0.9.1852 release). Times: cold py 0.46s vs cr 0.01s; warm py 0.45s vs cr 0.01s. |
+| `dcos.dcos_agent` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29878323, 0.9.1852 release). Times: cold py 4.00s vs cr 3.06s; warm py 2.92s vs cr 0.38s. |
+| `dcos.dcos_bootstrap` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29878324, 0.9.1852 release). Times: cold py 4.04s vs cr 5.22s; warm py 2.84s vs cr 0.38s. |
+| `dcos.dcos_master` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29878327, 0.9.1852 release). Times: cold py 6.02s vs cr 4.74s; warm py 3.08s vs cr 0.37s. |
+| `dinivas.consul` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29878321, 0.9.1852 release). Times: cold py 1.72s vs cr 0.79s; warm py 2.39s vs cr 0.12s. |
+| `gtrafimenkov.golang` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29878328, 0.9.1852 release). Times: cold py 3.35s vs cr 1.10s; warm py 3.88s vs cr 0.55s. |
+| `hoplacloud.wordpress` | rocky | ❌ Divergent - issue #246 (round29878326, 0.9.1852 release). Times: cold py 67.16s vs cr 217.03s; warm py 29.28s vs cr 1.42s. |
+| `lotusnoir.apps_tomcat` | ubuntu | ❌ Divergent - issue #247 (round29878329, 0.9.1852 release). Times: cold py 2.83s vs cr 0.86s; warm py 2.47s vs cr 0.33s. |
