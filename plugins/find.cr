@@ -328,7 +328,28 @@ module Krikri
       stat_hash.delete("blocks")
       stat_hash.delete("device_type")
 
-      stat_hash
+      reorder_stat_owners_after_ctime(stat_hash)
+    end
+
+    # The stat field table is shared with the stat module, whose shape keeps
+    # gr_name/pw_name at the tail; real find's per-file dicts instead place
+    # them immediately after ctime, so find alone reorders rather than
+    # disturbing the shared table's own order.
+    private def reorder_stat_owners_after_ctime(stat_hash : Hash(String, JSON::Any)) : Hash(String, JSON::Any)
+      gr_name = stat_hash["gr_name"]?
+      pw_name = stat_hash["pw_name"]?
+      return stat_hash unless stat_hash["ctime"]? && gr_name && pw_name
+
+      ordered = Hash(String, JSON::Any).new
+      stat_hash.each do |key, value|
+        next if key == "gr_name" || key == "pw_name"
+        ordered[key] = value
+        if key == "ctime"
+          ordered["gr_name"] = gr_name
+          ordered["pw_name"] = pw_name
+        end
+      end
+      ordered
     end
 
     # Lists every path under search_path (not including search_path

@@ -16,6 +16,11 @@ describe Krikri::ArgspecValidator do
     args["patterns"].as_a.map(&.as_s).must_equal(["*"])
   end
 
+  it "orders find's invocation.module_args supplied args first, then defaults" do
+    args = Krikri::ArgspecValidator.invocation_args("ansible.builtin.find", {"recurse" => "true", "paths" => "/tmp/x", "hidden" => "false", "age" => "1d"}).as(Hash(String, JSON::Any))
+    args.keys.must_equal(%w[age hidden paths recurse patterns read_whole_file file_type age_stamp follow get_checksum checksum_algorithm use_regex exact_mode excludes contains size depth mode encoding limit])
+  end
+
   it "has no invocation for an unknown module" do
     Krikri::ArgspecValidator.invocation_args("ansible.builtin.nope", {} of String => String).must_be_nil
   end

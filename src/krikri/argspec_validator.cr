@@ -780,7 +780,17 @@ module Krikri
       return nil if options.empty?
       provided, _unsupported = collect_provided(params, options, consumed_keys(entry))
       result = Hash(String, JSON::Any).new
-      options.each do |name, spec|
+      # Ansible's controller sorts the caller's own args alphabetically, and
+      # AnsibleModule fills spec defaults in a second pass over the argspec:
+      # non-null defaults land in declaration order before the null ones, so
+      # the result never reads in the spec table's own order.
+      supplied = options.keys.select { |name| provided.has_key?(name) }
+      supplied.sort!
+      unsupplied = options.keys - supplied
+      defaulted = unsupplied.select { |name| !options[name]["default"]?.try(&.raw).nil? }
+      nulls = unsupplied - defaulted
+      (supplied + defaulted + nulls).each do |name|
+        spec = options[name]
         if (raw = provided[name]?) && raw == Krikri::NONE_SENTINEL
           result[name] = JSON::Any.new(nil)
         elsif raw = provided[name]?
