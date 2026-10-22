@@ -14125,3 +14125,23 @@ Local probe roles, not Galaxy roles: each probed task registers its result and d
 | `triplepoint.wireguard` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29877062, 0.9.1829 release). Times: cold py 7.26s vs cr 7.31s; warm py 5.80s vs cr 1.76s. |
 | `uspdev.sambadc` | ubuntu | ❌ Divergent - issue #223 (round29877059, 0.9.1829 release). Times: cold py 44.64s vs cr 40.43s; warm py 14.42s vs cr 3.67s. |
 | `wtanaka.whois` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29877058, 0.9.1829 release). Times: cold py 0.52s vs cr 0.01s; warm py 0.58s vs cr 0.01s. |
+| `Anthony25.kubernetes-nextcloud` | ubuntu | ❌ Divergent - issue #224 (round29877156, 0.9.1831 debug). |
+| `amaczuga.env-bootstrap` | ubuntu | ✅ Clean (round29877168, 0.9.1831 debug). |
+| `anarcher.volume` | rocky | ✅ Clean (round29877167, 0.9.1831 debug). |
+| `basisconfig.kubetools` | rocky | ❌ Divergent - issue #225 (round29877159, 0.9.1831 debug). |
+| `brianhartsock.mdadm` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29877165, 0.9.1831 debug). |
+| `darkraiden.ansible-aws` | ubuntu | ❌ Divergent - issue #226 (round29877166, 0.9.1831 debug). |
+| `dblenkus.common` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29877161, 0.9.1831 debug). |
+| `freehck.kafka` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29877171, 0.9.1831 debug). |
+| `gcoop-libre.pure-ftpd` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29877169, 0.9.1831 debug). |
+| `gunkiniu.zabbix-agent` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29877170, 0.9.1831 debug). |
+| `hmschreck.metricbeat` | ubuntu | ✅ Clean (round29877164, 0.9.1831 debug). |
+| `honzamach.postgresql` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29877172, 0.9.1831 debug). |
+| `kurron_elastic-stack` | ubuntu | ❌ BLOCKED: (round29877162, 0.9.1831 debug). |
+| `mglaman.atom` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29877174, 0.9.1831 debug). |
+| `mk-ansible-roles.sap_hana_preconfigure` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29877158, 0.9.1831 debug). |
+| `mkoprek.phpfpm` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29877157, 0.9.1831 debug). |
+| `modcloth.nginx-nr-agent` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29877173, 0.9.1831 debug). |
+| `sckol.ansible_role_wireguard` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29877163, 0.9.1831 debug). |
+| `serlophug.Rproject` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29877175, 0.9.1831 debug). |
+| `vmware.greengrass_init` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29877160, 0.9.1831 debug). |
