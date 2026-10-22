@@ -143,11 +143,9 @@ module Krikri
       @indent : Int32? = nil
       @indents = [] of Int32?
       @flow_level = 0
-      @root_context = false
       @sequence_context = false
       @mapping_context = false
       @simple_key_context = false
-      @open_ended = false
 
       def initialize(@best_indent : Int32, @default_flow : Bool?, @sort_keys : Bool, @best_width : Int32)
         @best_indent = 2 unless 1 < @best_indent && @best_indent < 10
@@ -155,19 +153,16 @@ module Krikri
       end
 
       def dump(value : JSON::Any) : String
-        emit_node(value, root: true)
+        emit_node(value)
         write_indent
-        if @open_ended
-          @io << "..."
-          @column += 3
-          write_indent
-        end
+        # No "..." document-end marker even for a root plain scalar: Ansible's
+        # to_yaml goes through libyaml (CSafeDumper), which writes none (live:
+        # to_yaml(None) == "null\n"); pure-Python PyYAML would add "...".
         @io.to_s
       end
 
       # ---- node dispatch -------------------------------------------------
-      private def emit_node(value : JSON::Any, root : Bool = false, sequence : Bool = false, mapping : Bool = false, simple_key : Bool = false) : Nil
-        @root_context = root
+      private def emit_node(value : JSON::Any, sequence : Bool = false, mapping : Bool = false, simple_key : Bool = false) : Nil
         @sequence_context = sequence
         @mapping_context = mapping
         @simple_key_context = simple_key
@@ -480,7 +475,6 @@ module Krikri
         @whitespace = whitespace
         @indention = @indention && indention
         @column += data.size
-        @open_ended = false
         @io << data
       end
 
@@ -507,7 +501,6 @@ module Krikri
       # loop's own logic so the loop itself stays readable; each returns
       # the new start offset for the next chunk.
       private def write_plain(text : String, split : Bool) : Nil
-        @open_ended = true if @root_context
         return if text.empty?
 
         unless @whitespace

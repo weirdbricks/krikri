@@ -250,7 +250,13 @@ module Krikri
         content = first_line_end ? content[(first_line_end + 1)..] : ""
       end
       extra = kwargs["template_vars"]?.try(&.raw.as?(Hash(String, AnyValue))) || {} of String => AnyValue
-      AnyValue.new(render_nested(ctx, content, extra).chomp)
+      # Ansible's template lookup keeps the template's trailing newlines
+      # (live-verified vs ansible-core 2.19.11), so restore whatever the
+      # source had beyond the rendered result's own, as lookup_file.cr does.
+      rendered = render_nested(ctx, content, extra)
+      missing = (content.size - content.rstrip('\n').size) - (rendered.size - rendered.rstrip('\n').size)
+      rendered += "\n" * missing if !rendered.empty? && missing > 0
+      AnyValue.new(rendered)
     rescue KrikriJinja::TemplateError
       AnyValue.new(nil)
     end
