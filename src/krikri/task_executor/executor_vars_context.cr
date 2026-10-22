@@ -3691,11 +3691,28 @@ module Krikri
     # positions, so the task is located by its `- name:` line (same
     # approach as locate_name_line's callers).
     private def locate_conditional_origin(lines : Array(String), name_idx : Int32, key : String, raw : String) : {Int32, Int32}?
+      anchor = lines[name_idx]
+      anchor_indent = anchor.size - anchor.lstrip.size
+      # The task's keywords ("when:"/"when" callers pass) stand at the
+      # task entry's own indent; a named task's anchor is its "- name:"
+      # dash line (keys = dash indent + 2), a nameless fallback's anchor
+      # already IS a key line.
+      task_key_indent = anchor.strip.starts_with?("- ") ? anchor_indent + 2 : anchor_indent
       ((name_idx + 1)...lines.size).each do |idx|
         line = lines[idx]
         stripped = line.strip
-        break if stripped.starts_with?("- ")
-        next unless stripped.starts_with?("#{key}:")
+        # The scan runs "to the next task", and Ansible's own display
+        # locates the conditional at the task's own keyword regardless
+        # of what the task map happens to hold before it: a DEEPER
+        # "- " line is a nested list still belonging to this task (the
+        # real-role shape of issue #247 - lotusnoir.apps_consul_exporter's
+        # `vars:` first_found list before its `when:`), while the next
+        # task's dash sits at the anchor's own dash indent.
+        break if stripped.starts_with?("- ") && (line.size - line.lstrip.size) <= task_key_indent - 2
+        # Equally, a nested entry's own deeper-indented `when:` (a
+        # subtask's or a nested mapping's) is not this task's keyword -
+        # accepting it would mislabel the Origin.
+        next unless stripped.starts_with?("#{key}:") && (line.size - line.lstrip.size) == task_key_indent
         rest = line[line.index!("#{key}:") + key.size + 1..]
         if rest.lstrip.empty?
           # Folded list form: scan the item lines for the raw conditional.
@@ -3903,7 +3920,25 @@ module Krikri
         # supported in expressions: ..." - create_template_error's own
         # sentence, joined to the parser's cause), not the colon form
         # the filter/test-name class uses.
-        inner.starts_with?("Syntax error in expression.")
+        inner.starts_with?("Syntax error in expression.") ||
+        # A filter/test plugin's RUNTIME failure inside a conditional is
+        # real 2.19's same display class, not a bare fatal line (issue
+        # #247, lotusnoir.apps_consul_exporter: `when: (params | length
+        # > 0)` with a first_found no-match None): the two-level [ERROR]
+        # chain block and the "Task failed: "-prefixed {"msg": ...}
+        # fatal JSON, exactly like the wording classes above.
+        inner.starts_with?("The filter plugin ") || inner.starts_with?("The test plugin ")
+    end
+
+    # Real prints the ALLOW_BROKEN_CONDITIONALS hint after a conditional
+    # failure's block for every wording class EXCEPT the compile/runtime
+    # ones that end the block at the Origin (live-verified vs 2.19.11).
+    private def conditional_hint_suppressed?(inner : String) : Bool
+      inner.starts_with?("Error while evaluating conditional:") ||
+        inner.starts_with?("Syntax error in expression:") ||
+        inner.starts_with?("Syntax error in expression.") ||
+        inner.starts_with?("The filter plugin ") ||
+        inner.starts_with?("The test plugin ")
     end
 
     # The two-level [ERROR] chain Ansible prints on stdout BEFORE the fatal
@@ -3983,14 +4018,13 @@ module Krikri
           io << "\n"
         end
         # Real prints the ALLOW_BROKEN_CONDITIONALS hint after the chain
-        # for every conditional failure EXCEPT the two compile/runtime
-        # wording classes that don't get it (live-verified vs 2.19.11:
-        # an undefined reference and a "Syntax error in expression:"
-        # filter/test-name failure both end the block at the Origin; the
+        # for every conditional failure EXCEPT the compile/runtime
+        # wording classes that don't get it (live-verified vs 2.19.11: an
+        # undefined reference, a "Syntax error in expression:"
+        # filter/test-name failure, and a filter/test plugin's runtime
+        # failure (issue #247) all end the block at the Origin; the
         # non-bool "Conditional result" failure carries the hint).
-        unless inner.starts_with?("Error while evaluating conditional:") ||
-               inner.starts_with?("Syntax error in expression:") ||
-               inner.starts_with?("Syntax error in expression.")
+        unless conditional_hint_suppressed?(inner)
           io << "Broken conditionals can be temporarily allowed with the `ALLOW_BROKEN_CONDITIONALS` configuration option.\n"
           io << "\n"
         end

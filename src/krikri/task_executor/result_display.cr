@@ -799,7 +799,11 @@ module Krikri
       # second block here would duplicate it wrapped in a bogus
       # "Module failed:" segment. The compile-time filter/test-name
       # wording is the same story (conditional_evaluation_failure?
-      # now recognizes it there).
+      # now recognizes it there), as is the filter/test plugin RUNTIME
+      # failure class (issue #247) - marked on the result because the
+      # same wording raised from a TASK ARG (not a when:) keeps its own
+      # generic block here.
+      return if result["_ansible_when_error_emitted"]?.try(&.as_bool?) == true
       return if msg.includes?("Conditional result") ||
                 msg.includes?("Syntax error in expression")
 
