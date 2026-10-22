@@ -5030,16 +5030,7 @@ module Krikri
         io << "[ERROR]: " << message << "\n"
         if path && pos && File.file?(path)
           line, col = pos
-          lines = File.read_lines(path)
-          io << "Origin: " << File.expand_path(path) << ":" << line << ":" << col << "\n"
-          io << "\n"
-          label_width = line.to_s.size
-          start_idx = Math.max(0, (line - 1) - 2)
-          (start_idx..(line - 1)).each do |idx|
-            src = lines[idx].chomp.gsub('\t', ' ')
-            io << (idx + 1).to_s.rjust(label_width) << (src.empty? ? "" : " ") << src << "\n"
-          end
-          io << " " * label_width << " " << " " * (col - 1) << "^ column " << col << "\n"
+          io << ErrorBlock.origin_context(File.expand_path(path), line, col) << "\n"
         end
         io << "\n"
       end
@@ -5074,16 +5065,7 @@ module Krikri
         io << "[ERROR]: " << message << "\n"
         if path && source_map && (pos = source_map.at?(prefix)) && File.file?(path)
           line, col = pos
-          lines = File.read_lines(path)
-          io << "Origin: " << File.expand_path(path) << ":" << line << ":" << col << "\n"
-          io << "\n"
-          label_width = line.to_s.size
-          start_idx = Math.max(0, (line - 1) - 2)
-          (start_idx..(line - 1)).each do |idx|
-            src = lines[idx].chomp.gsub('\t', ' ')
-            io << (idx + 1).to_s.rjust(label_width) << (src.empty? ? "" : " ") << src << "\n"
-          end
-          io << " " * label_width << " " << " " * (col - 1) << "^ column " << col << "\n"
+          io << ErrorBlock.origin_context(File.expand_path(path), line, col) << "\n"
         end
         io << "\n"
       end
