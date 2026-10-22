@@ -1344,6 +1344,27 @@ module Krikri
     end
   end
 
+  # A role's meta/main.yml dependencies forming a cycle (a role listing
+  # itself, or any A->B->A chain). Ansible loads meta dependencies
+  # eagerly and recursively with NO cycle check - Role.load simply
+  # recurses until it hits Python's recursion limit, and the
+  # RecursionError surfaces as a whole-run refusal (rc=1, on STDERR,
+  # with an Origin block at the dependency entry that closed the loop,
+  # live-verified vs 2.19.11) regardless of allow_duplicates. A separate
+  # class from RoleNotFoundError because the executor's include-role
+  # rescue chain reroutes that one per task; a cycle is a load-time
+  # refusal in Ansible, never a per-task skip.
+  class RoleDependencyCycleError < Exception
+    # Attached by #load_meta_dependencies, which owns the declaring
+    # role's meta/main.yml source map - the loader raise site itself has
+    # no source context.
+    property render : String?
+
+    def initialize(message : String, @render : String? = nil)
+      super(message)
+    end
+  end
+
   # Ansible's `import_tasks:`/`import_role:` are genuinely STATIC,
   # parse-time constructs - the templated file/role path may reference
   # vars/vars_files/extra-vars only, never facts (which don't exist yet
@@ -1962,6 +1983,11 @@ module Krikri
           # comment: Ansible refuses the whole run for a missing
           # role (play-level or a role's own meta/main.yml dependency),
           # not a per-play soft-skip.
+          raise ex
+        rescue ex : RoleDependencyCycleError
+          # Same bypass, same reason - Ansible refuses the whole run
+          # when a role's meta dependencies form a cycle (rc=1), not a
+          # per-play soft-skip. See that class's own comment.
           raise ex
         rescue ex : InvalidIncludeAttributeError
           # Same bypass as RoleNotFoundError above -
