@@ -2980,7 +2980,8 @@ module Krikri
         # the finalization_module_name fallback, whose short form matches
         # a bare-name line.
         module_line = locate_module_key_line(lines, name_idx, task.module_name) ||
-                      locate_module_key_line(lines, name_idx, finalization_module_name(task))
+                      locate_module_key_line(lines, name_idx, finalization_module_name(task)) ||
+                      directive_mapping_module_position(lines, name_idx)
         return unless module_line
         module_idx, module_col = module_line
         two_level = false
@@ -3497,6 +3498,31 @@ module Krikri
         if stripped.starts_with?("#{module_name}:") || stripped.starts_with?("#{short}:")
           return {idx, line.size - line.lstrip.size + 1}
         end
+      end
+      nil
+    end
+
+    # A mapping-form `action:`/`local_action:` directive names its module on
+    # a `module:` key, so no task line starts with the module name and
+    # locate_module_key_line finds nothing (cans.ssh-authorize's
+    # `local_action:` / `    module: stat`) - which used to drop the whole
+    # [ERROR] chain. Real 2.19.11 still prints the chain for this shape and
+    # points the middle Origin at the `module:` value's first token
+    # (tasks/main.yml:4:13, live-captured) - the value-token position
+    # locate_param_key_position already returns for a block-style param.
+    # Only a directive key standing alone is the mapping form; a free-form
+    # value names the module inline, where Ansible's own finalization never
+    # reads a `module:` key out of the string, so those keep the previous
+    # no-block behaviour.
+    private def directive_mapping_module_position(lines : Array(String), from_idx : Int32) : {Int32, Int32}?
+      directive_needle = /\A(?:ansible\.(?:builtin|legacy)\.)?(?:action|local_action)[ \t]*:/
+      ((from_idx + 1)...lines.size).each do |idx|
+        line = lines[idx]
+        stripped = line.strip
+        break if stripped.starts_with?("- ")
+        next unless (m = directive_needle.match(stripped))
+        return nil unless stripped[m.end(0)..].strip.empty?
+        return locate_param_key_position(lines, idx, "module")
       end
       nil
     end
