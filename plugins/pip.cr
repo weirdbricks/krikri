@@ -323,7 +323,16 @@ module Krikri
       candidates.concat(names.flat_map { |name| ["/usr/bin/#{name}", "/usr/local/bin/#{name}"] })
 
       quoted = candidates.uniq.map { |candidate| Shell.single_quote(candidate) }.join(" ")
-      result = remote_exec("for interp in #{quoted}; do if \"$interp\" -m pip --version >/dev/null 2>&1; then echo \"$interp\"; exit 0; fi; done; exit 1")
+      # ansible only checks the pip PACKAGE is importable and never
+      # runs pip's CLI when choosing its module invocation, so the
+      # probe must not gate on pip's own CLI health: on a host with a
+      # broken pip CLI (vendored urllib3 failing on Python 3.10+)
+      # ansible still runs `python -m pip install ...` and fails from
+      # that command, while a `--version` probe here made discovery
+      # fall through to bare `pip3` instead. The winner is printed as
+      # an absolute path because ansible's cmd carries sys.executable
+      # (e.g. /usr/bin/python3), not the bare candidate name.
+      result = remote_exec("for interp in #{quoted}; do if \"$interp\" -c 'import importlib.util,sys; sys.exit(0 if importlib.util.find_spec(\"pip\") else 1)' >/dev/null 2>&1; then command -v \"$interp\"; exit 0; fi; done; exit 1")
       return nil unless result[:exit_code] == 0
 
       interpreter = result[:stdout].strip
@@ -665,11 +674,12 @@ module Krikri
       # through the `elsif spec` branch above and are handled directly
       # below, one per name.
       quoted_target = requirements ? target : split_requirements(target).map { |tval| Process.quote(tval) }.join(" ")
+      argv = install_argv(pip_bin, upgrade, extra, requirements, target)
       cmd = with_umask(with_chdir("#{break_system_packages_env}#{quoted_command(pip_bin)} install #{upgrade ? "--upgrade " : ""}#{extra_tokens(extra)} #{quoted_target}".strip))
       result = remote_exec(cmd)
 
       unless result[:exit_code] == 0
-        return PluginResult.new(changed: false, failed: true, msg: "Failed to install: #{result[:stderr]}", stdout: result[:stdout], stderr: result[:stderr])
+        return PluginResult.new(changed: false, failed: true, msg: pip_failure_msg(result[:stdout], result[:stderr]), include_empty_msg: true, cmd: argv)
       end
 
       # Ansible's own changed-detection for BOTH present and
@@ -690,6 +700,21 @@ module Krikri
       # relative order; the missing echo keys are a known set gap.
       PluginResult.new(changed: changed, failed: false, msg: "Package installed", stdout: result[:stdout],
         key_order: ["changed", "stdout"])
+    end
+
+    private def install_argv(pip_bin : String, upgrade : Bool, extra : String, requirements : String?, target : String) : Array(String)
+      argv_target = requirements ? target.split(' ').reject(&.empty?) : split_requirements(target)
+      pip_bin.split(' ').reject(&.empty?) + ["install"] + (upgrade ? ["--upgrade"] : [] of String) + extra.split(' ').reject(&.empty?) + argv_target
+    end
+
+    # ansible's _fail reports only cmd (the argv it ran) and msg, and
+    # always emits a msg key even when both halves are empty
+    # (fail_json(msg="")), so no stdout/stderr keys and no empty-msg
+    # omission here.
+    private def pip_failure_msg(stdout : String, stderr : String) : String
+      msg = stdout.empty? ? "" : "stdout: #{stdout}"
+      msg += "\n:stderr: #{stderr}" unless stderr.empty?
+      msg
     end
 
     # Resolve what to pass to `pip install`: a requirements file, a
