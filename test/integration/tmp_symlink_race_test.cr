@@ -79,11 +79,12 @@ describe "plugin temp-file symlink race hardening" do
     # ...and the staging path is in Ansible's own module-tmpdir shape
     # (this is what deterministically fails against the old code, whose
     # result src was /tmp/.krikri-playbook-unarchive-<6 digits>), with
-    # the splitext'd basename: race.tar.gz -> race.tar<8 random>.gz
-    # (Python splitext keeps ".tar" in the stem, ext is just ".gz").
+    # Ansible's own staged-name shape (fetch_file's _split_multiext):
+    # race.tar.gz -> race<8 random>.tar.gz - the last two suffix
+    # components move to the tempfile's suffix, unlike splitext.
     staging = result["src"].as_s
     staging.wont_match(/-[0-9]{6}$/)
-    staging.must_match(/\/\.ansible\/tmp\/ansible-tmp-[\d.]+-\d+-\d+\/race\.tar[a-z0-9]{8}\.gz$/)
+    staging.must_match(/\/\.ansible\/tmp\/ansible-tmp-[\d.]+-\d+-\d+\/race[a-z0-9]{8}\.tar\.gz$/)
     # ...and the ansible-tmp module dir was cleaned up with the file.
     Dir.exists?(File.dirname(staging)).must_equal(false)
   end
