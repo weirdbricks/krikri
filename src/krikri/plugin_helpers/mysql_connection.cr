@@ -1,4 +1,6 @@
+require "json"
 require "uri"
+require "../base_plugin"
 require "system/user"
 
 module Krikri
@@ -15,6 +17,24 @@ module Krikri
       # params always win over it - it only fills in what a task didn't
       # pass explicitly.
       DEFAULT_OPTION_FILE = "~/.my.cnf"
+
+      # ansible.mysql's get_server_implementation() runs right after the
+      # connection in mysql_db/mysql_info/mysql_query/mysql_variables and
+      # module.warn()s whenever SELECT VERSION() contains "mariadb": the
+      # text lands on the console (deduplicated per run) and in the task
+      # result's `warnings`. mysql_user never calls it, so it stays silent.
+      MARIADB_WARNING = "MariaDB has been detected: its support will be dropped in 6.0.0. " \
+                        "For MariaDB automation, please use the ansible.mariadb collection instead."
+
+      def self.add_mariadb_warning(result : PluginResult, version : String) : PluginResult
+        return result unless version.downcase.includes?("mariadb")
+
+        existing = result.extra["warnings"]?.try(&.as_a?)
+        texts = existing ? existing.map(&.as_s) : [] of String
+        texts << MARIADB_WARNING unless texts.includes?(MARIADB_WARNING)
+        result.extra["warnings"] = JSON::Any.new(texts.map { |text| JSON::Any.new(text) })
+        result
+      end
 
       # unix_socket, given, takes precedence over host/port (matches
       # Ansible's mysql_db/mysql_user own login_unix_socket precedence).
