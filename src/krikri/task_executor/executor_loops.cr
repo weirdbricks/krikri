@@ -799,6 +799,18 @@ module Krikri
           bare = raw.strip
           if bare.starts_with?("{{") && bare.ends_with?("}}")
             bare = bare[2..-3].strip
+            # Ansible fails a nested/together source whose filter chain
+            # pipes a genuinely undefined variable through a strict filter
+            # (issue #242: `{{ groups.x | union(cert) }}` with no such
+            # group), so with when: false the task prints a single
+            # skipping line - not one per item of the defined sides. The
+            # lenient evaluator below instead reads the missing side as
+            # empty and iterates the others; intercept before it runs so
+            # the raise routes through resolve_loop_items_or_raise's
+            # skip-vs-fail handling.
+            if undefined_name = Krikri.undefined_filter_chain_source(bare, vars_context)
+              raise UndefinedVariableError.new(Krikri.strict_undefined_message(undefined_name, vars_context))
+            end
             result = expression_evaluator_for(vars_context).evaluate(bare)
             if result == "undefined"
               raise UndefinedVariableError.new(Krikri.strict_undefined_message(bare, vars_context))
@@ -854,6 +866,18 @@ module Krikri
           bare = raw.strip
           if bare.starts_with?("{{") && bare.ends_with?("}}")
             bare = bare[2..-3].strip
+            # Ansible fails a nested/together source whose filter chain
+            # pipes a genuinely undefined variable through a strict filter
+            # (issue #242: `{{ groups.x | union(cert) }}` with no such
+            # group), so with when: false the task prints a single
+            # skipping line - not one per item of the defined sides. The
+            # lenient evaluator below instead reads the missing side as
+            # empty and iterates the others; intercept before it runs so
+            # the raise routes through resolve_loop_items_or_raise's
+            # skip-vs-fail handling.
+            if undefined_name = Krikri.undefined_filter_chain_source(bare, vars_context)
+              raise UndefinedVariableError.new(Krikri.strict_undefined_message(undefined_name, vars_context))
+            end
             result = expression_evaluator_for(vars_context).evaluate(bare)
             if result == "undefined"
               raise UndefinedVariableError.new(Krikri.strict_undefined_message(bare, vars_context))
