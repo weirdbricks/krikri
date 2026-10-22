@@ -273,6 +273,13 @@ module Krikri
     # source keyword and template string are carried for the executor to
     # resolve at execution time (mirrors loop_fileglob).
     property loop_template_kind : String?
+    # Which keyword carried a LITERAL loop list (`loop:` vs `with_items:`).
+    # loop_template_kind only marks loop sources that need templating, but
+    # the executor's undefined-item Origin reporting must still land under
+    # the keyword that actually holds the failing list element - ansible
+    # reports `with_items:` there, not its generic `loop:` default
+    # (live-verified vs 2.19.11, issue #228).
+    property loop_literal_kind : String?
     property loop_template : String?
     # true only for the single-element-array template form (`with_items:
     # ["{{ some_list }}"]`) - see #find_loop_template's own comment for why
@@ -729,6 +736,7 @@ module Krikri
       @loop_first_found_string_form = false
       @loop_first_found_paths = nil
       @loop_template_kind = nil
+      @loop_literal_kind = nil
       @loop_template = nil
       @loop_flattened = nil
       @loop_subelements_list = nil
@@ -3680,10 +3688,15 @@ module Krikri
       elsif loop_yaml = task_hash["loop"]?.try(&.as_a?)
         task.loop = loop_yaml.map { |item| JSON.parse(item.to_json) }
         task.loop_items = task.loop
+        # Literal lists need no templating, but ansible still pins an
+        # undefined-item failure's Origin under the keyword that carried
+        # the list (with_items: vs loop:) - issue #228.
+        task.loop_literal_kind = "loop"
       elsif with_items = task_hash["with_items"]?.try(&.as_a?)
         task.loop = with_items.map { |item| JSON.parse(item.to_json) }
         task.loop_items = task.loop
         task.loop_items_needs_flatten = true
+        task.loop_literal_kind = "with_items"
       elsif with_list = task_hash["with_list"]?
         # with_list: IS loop: under its legacy name - see parse_with_list_items.
         task.loop_items = parse_with_list_items(with_list)

@@ -1124,8 +1124,12 @@ module Krikri
     # we're looking at - the written `loop:`/`with_<lookup>:` key line
     # after the task's own `- name:`/start, column just past `<key>: `
     # (the same value-token convention locate_param_key_position uses).
-    private def locate_loop_source_line(lines : Array(String), task : Task) : {Int32, Int32}?
-      kind = task.loop_template_kind || "loop"
+    # When `missing` names the undefined variable ansible reported on, the
+    # position narrows to the first list ELEMENT whose own template
+    # references it - ansible templates the items in order and stops at
+    # the first failing one (issue #228).
+    private def locate_loop_source_line(lines : Array(String), task : Task, missing : String? = nil) : {Int32, Int32}?
+      kind = task.loop_template_kind || task.loop_literal_kind || "loop"
       from_idx =
         if base = locate_name_line(lines, task)
           base[0]
@@ -1144,12 +1148,16 @@ module Krikri
         rest = line[(key_idx + kind.size + 1)..]
         if rest.strip.empty?
           # Block-sequence value (`with_items:` with the item on the next
-          # line): real 2.19 pins the Origin at the FIRST list element's
-          # value token, not at the end of the key line (issue #88).
+          # line): real 2.19 pins the Origin at a list element's value
+          # token, not at the end of the key line (issue #88). With the
+          # reported undefined name it is the first element whose own
+          # template uses that name - ansible templates the items in
+          # order and stops at the first failing one (issue #228).
           # Sequence entries may sit at the SAME indent as their key in
           # YAML, so only a dedent (the next task/play) ends the search;
           # blank and comment-only lines are skipped in between.
           key_indent = line.size - line.lstrip.size
+          first_element_pos = nil
           ((idx + 1)...lines.size).each do |val_idx|
             val_line = lines[val_idx]
             val_stripped = val_line.strip
@@ -1158,15 +1166,58 @@ module Krikri
             if val_stripped.starts_with?("- ")
               dash_idx = val_line.size - val_line.lstrip.size
               after_dash = val_line[(dash_idx + 1)..]
-              return {val_idx, dash_idx + 2 + (after_dash.size - after_dash.lstrip.size)}
+              pos = {val_idx, dash_idx + 2 + (after_dash.size - after_dash.lstrip.size)}
+              if missing
+                first_element_pos ||= pos
+                return pos if loop_element_references_missing?(after_dash, missing)
+              else
+                return pos
+              end
+            else
+              break
             end
-            break
           end
+          return first_element_pos if first_element_pos
+        end
+        if missing && (quote_pos = first_missing_quoted_element(rest, missing))
+          # Flow-list value: ansible's Origin is the FAILING element's
+          # opening quote, not the `[` that starts the list
+          # (live-verified vs 2.19.11, issue #228).
+          return {idx, key_idx + kind.size + 1 + quote_pos + 1}
         end
         column = key_idx + kind.size + 1 + (rest.size - rest.lstrip.size) + 1
         return {idx, column}
       end
       nil
+    end
+
+    # Does a block-sequence loop element's raw value text reference the
+    # undefined name the failure reported? Word boundaries keep
+    # `group_git_cloning` from matching inside `all_group_git_cloning`
+    # (issue #228's defining repro).
+    private def loop_element_references_missing?(after_dash : String, missing : String) : Bool
+      return false unless after_dash.includes?("{{")
+      !!after_dash.match(/\b#{Regex.escape(missing)}\b/)
+    end
+
+    # Inline flow-list value (`["ok", "{{ undef }}"]`, the text after the
+    # loop keyword): 0-based offset of the opening quote of the first
+    # quoted scalar whose own {{ }} template references the undefined
+    # name. Quoted, because that quote is the value token ansible pins
+    # the Origin at (issue #228).
+    private def first_missing_quoted_element(rest : String, missing : String) : Int32?
+      missing_re = /\b#{Regex.escape(missing)}\b/
+      first_pos = nil
+      {/"([^"]*)"/, /'([^']*)'/}.each do |pattern|
+        rest.scan(pattern).each do |match|
+          body = match[1]?
+          next unless body
+          next unless body.includes?("{{") && !!body.match(missing_re)
+          pos = match.begin(0)
+          first_pos = pos if first_pos.nil? || pos < first_pos
+        end
+      end
+      first_pos
     end
 
     # Ansible resolves a task's module/action plugin before it ever
