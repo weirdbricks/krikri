@@ -119,6 +119,20 @@ module Krikri
         return "undefined" unless path
         resolved_path = resolve_template_lookup_path(path)
 
+        # Ansible's template lookup fails a file it cannot find, and
+        # find_file_in_search_path warns "Unable to find '<term>' in
+        # expected paths" before that decision, for every errors mode
+        # (live-verified vs 2.19.11). The rescue-to-"undefined" below
+        # stays for RENDER failures only - it used to swallow the
+        # missing file too, so a strictly-expected lookup put the
+        # literal "undefined" into the task arg instead of Ansible's
+        # task failure (issue #248). Under the generic errors= option,
+        # 'warn' and 'ignore' go on with a None result (warn merely
+        # adds an error_as_warning line; [] under wantlist=True has no
+        # meaning in this scalar evaluator, the empty render matches
+        # lookup_pipe's ignore branch above).
+        return missing_template_result(path, kwargs) unless File.exists?(resolved_path)
+
         # template_vars=dict(...) - Ansible's own template lookup
         # plugin merges this kwarg's dict into the vars available to
         # the rendered template, ON TOP of (never replacing) the
@@ -156,11 +170,7 @@ module Krikri
           # right after this lookup (its own get_vars.j2 opens with
           # `#jinja2: lstrip_blocks: True`), which saw that line
           # prepended to the real JSON and raised "invalid JSON input".
-          first_line_end = template_content.index('\n')
-          first_line = first_line_end ? template_content[0...first_line_end] : template_content
-          if first_line.strip.starts_with?("#jinja2:")
-            template_content = first_line_end ? template_content[(first_line_end + 1)..] : ""
-          end
+          template_content = strip_jinja2_config_directive(template_content)
 
           renderer = render_vars.same?(@vars) ? jinja_renderer : JinjaRenderer.new(render_vars, @decode)
           # Ansible's template lookup keeps the template's trailing newlines
@@ -177,6 +187,66 @@ module Krikri
         rescue
           "undefined"
         end
+      end
+
+      # A `#jinja2: key:value, ...` directive on the template's very
+      # first line (Ansible's own per-template Jinja2 config
+      # override) is metadata for the renderer, not template
+      # content - Ansible strips it before rendering.
+      # TemplateActionPlugin already does this for the `template:`
+      # module; this lookup plugin never did, so the directive
+      # leaked into the returned text as a literal "#jinja2: ..."
+      # line - fatal for bimdata.ferm's own `| from_json` pipeline
+      # right after this lookup (its own get_vars.j2 opens with
+      # `#jinja2: lstrip_blocks: True`), which saw that line
+      # prepended to the real JSON and raised "invalid JSON input".
+      private def strip_jinja2_config_directive(template_content : String) : String
+        first_line_end = template_content.index('\n')
+        first_line = first_line_end ? template_content[0...first_line_end] : template_content
+        if first_line.strip.starts_with?("#jinja2:")
+          first_line_end ? template_content[(first_line_end + 1)..] : ""
+        else
+          template_content
+        end
+      end
+
+      # Ansible's template lookup fails a file it cannot find, and
+      # find_file_in_search_path warns "Unable to find '<term>' in
+      # expected paths" before that decision, for every errors mode
+      # (live-verified vs 2.19.11). Render failures keep their
+      # rescue-to-"undefined" in lookup_template - that rescue used to
+      # swallow the missing file too, so a strictly-expected lookup put
+      # the literal "undefined" into the task arg instead of Ansible's
+      # task failure (issue #248). Under the generic errors= option,
+      # 'warn' and 'ignore' go on with a None result (warn merely
+      # adds an error_as_warning line; [] under wantlist=True has no
+      # meaning in this scalar evaluator, the empty render matches
+      # lookup_pipe's ignore branch above); this helper returns ""
+      # for those and raises for everything else.
+      private def missing_template_result(path : String, kwargs : Array(String)) : String
+        ResultDisplay.emit_display_warning(
+          "Unable to find '#{path}' in expected paths (use -vvvvv to see paths)"
+        )
+        mode = kwargs.find(&.strip.starts_with?("errors=")).try do |kwarg|
+          kwarg.strip.partition('=').last.strip.delete("'\"").downcase
+        end
+        if mode == "warn"
+          ResultDisplay.emit_display_warning(
+            "An error occurred while running the lookup plugin 'template': the template file #{path} could not be found for the lookup"
+          )
+          return ""
+        elsif mode == "ignore"
+          return ""
+        end
+        # template.py raises with the term AS GIVEN ("the template
+        # file %s could not be found for the lookup" % term, never
+        # the role-joined search candidate; live-verified 2.19.11)
+        # and the generic wrapper prefixes "The lookup plugin
+        # 'template' failed: ..." - the same typed LookupError the
+        # cartesian raise rides as a hard task failure.
+        raise Krikri::PythonLookupRunner::LookupError.new(
+          "The lookup plugin 'template' failed: the template file #{path} could not be found for the lookup"
+        )
       end
 
       private def lookup_dict(parts : Array(String)) : String
