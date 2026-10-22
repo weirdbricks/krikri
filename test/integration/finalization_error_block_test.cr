@@ -42,3 +42,37 @@ describe "task-arg finalization error block (nameless tasks)" do
     File.delete(playbook) if playbook && File.exists?(playbook)
   end
 end
+
+describe "task-arg finalization error block (flow-style k=v string args, issue #237)" do
+  it "points a non-first k=v key's undefined failure at the string args start" do
+    # ansible's string args layer carries the Origin, so the failing
+    # `value=` key points at the whole args string's first character
+    # (col 16 = just past `debconf: `), not at the key itself (col 38).
+    playbook = File.tempname("finalization-block-kv", ".yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        gather_facts: false
+        connection: local
+        tasks:
+          - name: X
+            debconf: name='a' question='b' value='{{ undef_var | quote }}' vtype='password'
+          - name: sentinel
+            ansible.builtin.debug:
+              msg: SHOULD-RUN-AFTER
+      YAML
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+    text = output.to_s
+
+    status.exit_code.must_equal(2)
+    text.must_include("[ERROR]: Task failed: Finalization of task args for 'ansible.builtin.debconf' failed: Error while resolving value for 'value': 'undef_var' is undefined")
+    text.must_include("\nTask failed.\nOrigin: #{playbook}:5:7")
+    text.must_include("\nFinalization of task args for 'ansible.builtin.debconf' failed.\nOrigin: #{playbook}:6:7")
+    text.must_include("Error while resolving value for 'value': 'undef_var' is undefined\nOrigin: #{playbook}:6:16\n")
+    text.must_include("6       debconf: name='a' question='b' value='{{ undef_var | quote }}' vtype='password'\n                 ^ column 16\n")
+    output.to_s.must_match(/failed=1/)
+    output.to_s.wont_include("SHOULD-RUN-AFTER")
+  ensure
+    File.delete(playbook) if playbook && File.exists?(playbook)
+  end
+end

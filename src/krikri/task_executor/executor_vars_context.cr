@@ -3499,16 +3499,24 @@ module Krikri
     end
 
     private def locate_param_key_position(lines : Array(String), from_idx : Int32, key : String) : {Int32, Int32}?
-      # Flow style (`- debug: msg="..."`): the param sits on the module
-      # key's own line - Ansible's inner Origin points at the param KEY's
-      # first character there (col 14 for `    - debug: msg=...`,
-      # live-verified vs 2.19.11), the same key-start convention the
-      # block-style scan below uses.
+      # Flow style (`- debug: msg="..."`) / free-form k=v: the param sits
+      # on the module key's own line. ansible's observed behaviour for a
+      # `key=` arg (issue #237): the string args layer carries the origin,
+      # so every key inside it points at the string start - the first
+      # non-space char after the module key's colon, the position
+      # free_form_value_position finds - not at the failing key's own
+      # column; for the FIRST key that start is coincidentally the key's
+      # column too (col 14 for `    - debug: msg=...`, live-verified vs
+      # 2.19.11). The `key:` flow-dict needle keeps pointing at the key,
+      # like the block-style scan below.
       module_line = lines[from_idx]
-      ["#{key}:", "#{key}="].each do |needle|
-        if (key_idx = module_line.index(needle)) && key_idx > 0 && module_line[key_idx - 1].whitespace?
-          return {from_idx, key_idx + 1}
-        end
+      if (key_idx = module_line.index("#{key}:")) && key_idx > 0 && module_line[key_idx - 1].whitespace?
+        return {from_idx, key_idx + 1}
+      end
+      if (key_idx = module_line.index("#{key}=")) && key_idx > 0 && module_line[key_idx - 1].whitespace?
+        colon_idx = module_line.index(':') || 0
+        rest = module_line[(colon_idx + 1)..]
+        return {from_idx, colon_idx + 1 + (rest.size - rest.lstrip.size) + 1}
       end
       ((from_idx + 1)...lines.size).each do |idx|
         line = lines[idx]
