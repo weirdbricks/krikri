@@ -3465,7 +3465,19 @@ module Krikri
         stripped = line.strip
         next unless stripped.starts_with?("- ")
         next unless (name_match = stripped.match(/\A-\s*name:\s*(.+)\z/))
-        if name_match[1].strip.gsub(/\A["']|["']\z/, "") == task.name
+        raw_name = name_match[1].strip
+        # Only a scalar wrapped by the SAME quote char at both ends was
+        # actually a quoted string: quotes are only special at a scalar's
+        # START, so an unquoted plain-scalar name may legitimately end
+        # with a quote char (issue #244's name ends in 'image_commit'),
+        # and shaving that trailing quote off made this lookup stop
+        # matching the parsed name - silently demoting the task's
+        # finalization-error chain from three levels to two.
+        quoted_name = raw_name.size >= 2 &&
+                      ((raw_name[0] == '"' && raw_name[-1] == '"') ||
+                       (raw_name[0] == '\'' && raw_name[-1] == '\''))
+        name_value = quoted_name ? raw_name[1..-2] : raw_name
+        if name_value == task.name
           col = line.index("name")
           return {idx, (col || 0) + 1} if col
         end
