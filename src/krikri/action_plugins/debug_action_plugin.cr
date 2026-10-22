@@ -163,7 +163,23 @@ module Krikri
         raw = value.as_s
         return value if UnsafeValues.unsafe_text?(raw)
         return value unless raw.includes?("{{")
-        JSON::Any.new(VarSubstitutor.new(vars: @vars, host_name: @host.name).substitute(raw))
+        # A string leaf that is WHOLLY one `{{ expr }}` span keeps the
+        # expression's structured value: ansible-core's Templar templates
+        # container values element-by-element, and a single-span element
+        # keeps the result's native type (real: `envfiles_list:
+        # ["{{ _envfile_default }}"]` prints as a list HOLDING a dict,
+        # never the JSON text substitute collapses it to). The structured
+        # evaluation runs through the engine's lazy variable preparation,
+        # which renders any template still inside the result - a dict
+        # whose values are themselves `{{ other }}` chains (the real
+        # role's _envfile_default shape) comes out fully rendered.
+        structured = lazy_leaf_structured(raw)
+        if structured
+          structured
+        else
+          substituted = VarSubstitutor.new(vars: @vars, host_name: @host.name).substitute(raw)
+          JSON::Any.new(substituted)
+        end
       when Array
         JSON::Any.new(value.as_a.map { |item| render_lazy_templates(item) })
       when Hash
@@ -172,6 +188,23 @@ module Krikri
         JSON::Any.new(rendered)
       else
         value
+      end
+    end
+
+    # nil whenever the structured span evaluation does not apply or the
+    # span's own strings bottom out at an undefined reference: the
+    # pre-existing lenient substitute above keeps rendering those (a
+    # used-that-way undefined decision this fix does not change). A
+    # TemplateRecursionError is deliberately NOT rescued - the cycle
+    # re-pass through substitute would trip the same guard later, while
+    # swallowing it here re-ran a possibly side-effecting resolution
+    # looking for a value that cannot exist (see
+    # Rerender.re_raise_recursion's rationale).
+    private def lazy_leaf_structured(raw : String) : JSON::Any?
+      begin
+        VariableSubstitutor::Rerender.whole_span_structured(@vars, raw)
+      rescue Krikri::UndefinedVariableError
+        nil
       end
     end
 

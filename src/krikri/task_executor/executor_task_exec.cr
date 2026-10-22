@@ -1406,7 +1406,28 @@ module Krikri
               # Hash to begin with.
               return deep_render_item(JSON::Any.new(raw2), vars_context, host_name, depth + 1, strict: strict)
             end
-            return native
+            # A plain VARIABLE reference resolving to a container whose
+            # string leaves are still unrendered templates (the real
+            # shape behind issue 245: `envfiles_list: ["{{ _
+            # envfile_default }}"]`, _envfile_default in vars/main.yml
+            # holding `path: "{{ envfile_path_default }}"`) handed the
+            # stored value back EXACTLY as written - the loop item was
+            # bound with literal `{{ x }}` text where ansible-core's own
+            # loop-source templating has every nested leaf RENDERED
+            # before iteration (real's item header prints
+            # item={'path': '/etc/environment', ...}). Rerendering those
+            # leaves with the same engine-side recursive pass variable
+            # preparation uses keeps the resolved container's native
+            # type; a side-effecting leaf still runs exactly once (the
+            # pass evaluates each leaf itself, never via substitute's
+            # re-render probe twice). With strict: false such a leaf
+            # keeps its raw form instead of failing, matching this
+            # method's pre-existing leniency for mixed-text leaves.
+            return VariableSubstitutor::JinjaRenderer.rerender_nested_templates(
+              native,
+              VarSubstitutor.new(vars: vars_context, host_name: host_name),
+              defer_unresolved: !strict,
+            )
           end
 
           # `native` is nil here for anything past a bare/dotted
