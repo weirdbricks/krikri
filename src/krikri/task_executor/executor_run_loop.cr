@@ -2970,6 +2970,17 @@ module Krikri
             if !failed_when_result && (suppressed = hash.delete("exception"))
               hash["failed_when_suppressed_exception"] = suppressed
             end
+            # A failed_when:-failed result with NO msg key finalizes through
+            # AnsibleActionCapturedError.normalize_result_exception, whose
+            # message defaults to "Unknown error." - only an EMPTY msg keeps
+            # the bare "Action failed." block (live-verified vs 2.19.11). The
+            # markers route the display through the generic action-level
+            # chain, the same shape include_vars' own action failure uses.
+            if failed_when_result && !hash.has_key?("msg")
+              hash["msg"] = JSON::Any.new("Task failed: Action failed: Unknown error.")
+              hash["_ansible_action_level"] = JSON::Any.new(true)
+              hash["_ansible_error_detail"] = JSON::Any.new("Action failed: Unknown error.")
+            end
           end
         rescue e : ConditionalEvaluator::ConditionalBooleanError | ConditionalEvaluator::UndefinedVariableError | VariableSubstitutor::FilterEngine::UnknownFilterError
           hash["failed"] = JSON::Any.new(true)

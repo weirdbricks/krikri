@@ -826,7 +826,10 @@ module Krikri
       # failure) hands the block its own text via _ansible_error_detail.
       msg = result["_ansible_error_detail"]?.try(&.as_s?) || msg
       # failed_when: turned an otherwise successful module result into a
-      # failure: Ansible's block is just "Task failed: Action failed."
+      # failure with an EMPTY msg: Ansible's block is just "Task failed:
+      # Action failed." - an ABSENT msg gets "Unknown error." appended by
+      # normalize_result_exception and reaches the action-level chain below
+      # (the executor fills that msg in before display).
       if result["failed_when_result"]?.try(&.as_bool?) == true && result["msg"]?.try(&.as_s?).to_s.empty?
         root = ErrorBlock::Node.new("Task failed.", source_context: origin)
         ErrorBlock.emit(root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new("Action failed.")))
