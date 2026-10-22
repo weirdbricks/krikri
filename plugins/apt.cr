@@ -1300,7 +1300,18 @@ module Krikri
             end
           else
             resolvable, candidate = apt_candidate(base_name)
-            unless resolvable
+            # A name that is only referenced by other packages'
+            # dependencies still prints an `apt-cache policy` stanza
+            # ("Candidate: (none)"), but python-apt sees no versions and
+            # no providers, so it is a miss too - the same provider walk
+            # handle_latest below does (live-verified vs
+            # ansible-playbook 2.19.11: `state: present` on
+            # virtualbox-5.2 fails "No package matching 'virtualbox-5.2'
+            # is available" in normal AND check mode, before any apt-get
+            # call). Installed names never reach this branch (the
+            # installed short-circuit above skips them), so the provider
+            # probe alone decides here.
+            if !resolvable || (candidate.nil? && (apt_reverse_provides_batch([base_name])[base_name]? || [] of String).empty?)
               return PluginResult.new(
                 changed: false,
                 failed: true,
@@ -1772,6 +1783,26 @@ module Krikri
         spec_list = active_packages.map do |pkg|
           base_name, pinned_version = split_name_version(pkg)
           resolvable, candidate = apt_candidate(base_name)
+          # install() runs the same cache lookup for state=latest as for
+          # present: a name apt-cache has never heard of fails with
+          # "No package matching 'X' is available" before any apt-get call
+          # (no cache_* keys), not apt-get's "has no installation candidate".
+          # A name that is only referenced by other packages' dependencies
+          # still prints an `apt-cache policy` stanza ("Candidate: (none)"),
+          # but python-apt sees no versions and no providers, so it is a
+          # miss too.
+          unknown = !resolvable
+          if !unknown && candidate.nil? && pinned_version.nil?
+            no_providers = (apt_reverse_provides_batch([base_name])[base_name]? || [] of String).empty?
+            unknown = no_providers && !(dpkg_installed_status([base_name])[base_name]?.try(&.[0]) || false)
+          end
+          if pinned_version.nil? && unknown
+            return PluginResult.new(
+              changed: false,
+              failed: true,
+              msg: "No package matching '#{base_name}' is available"
+            )
+          end
           version = pinned_version || candidate
           unless pinned_version || version || !resolvable
             # A purely virtual name (Candidate: (none)) with state=latest:
