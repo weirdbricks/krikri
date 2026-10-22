@@ -399,6 +399,15 @@ because anyone intends to fix them.
   inline `<< error ... >>` banner marker in the task header instead of the warning line. No outcome or
   recap changes (found via `coopdevs.backups_role`).
 
+### Test-environment notes: output that is nondeterministic by nature
+
+- **`samba-tool` stderr differs on every run (`uspdev.sambadc`).** A failed `samba-tool domain
+  provision` embeds python log timestamps, pids, ASLR-randomised stack-frame addresses and a random
+  "first record" in the LDB repack lines in its JSON `stderr`. Two runs of real Ansible differ from
+  each other the same way, so `krikri-role-tester` masks these in `Compare::MASKS`
+  (`samba-log-timestamp`, `samba-pid`, `samba-stack-address`, `samba-repack-record`). Not a krikri
+  gap; the Samba 4.15 token-stack panic itself reproduces identically on both engines.
+
 ### Everything else
 
 - **`ansible-playbook`'s CLI flag surface is fully covered by name, and all but one flag is
