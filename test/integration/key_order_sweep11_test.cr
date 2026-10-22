@@ -19,12 +19,12 @@ require "json"
 # compiled binary inside the throwaway fedora image (read-only bind
 # mount of this worktree's ./bin, a fresh container per spec) and skips
 # cleanly when podman or that local image is unavailable. Containers are
-# named krikri-kp-fed-*. The image has ruby baked in (the gem spec needs
+# named krikri-spec___fed-*. The image has ruby baked in (the gem spec needs
 # `gem`), and ~/.cache/krikri-dnf is mounted as libdnf5's cache so repo
 # metadata is downloaded once, not per container.
 FEDORA_IMAGE  = "localhost/krikri-fedora-compat:latest"
 FEDORA_BIN    = File.expand_path("../../bin", __DIR__)
-FEDORA_PREFIX = "krikri-kp-fed-s11"
+FEDORA_PREFIX = "krikri-spec___fed-s11"
 
 def fedora_image? : Bool
   # No podman at all (CI's job container) would raise File::NotFoundError

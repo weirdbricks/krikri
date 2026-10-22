@@ -23,7 +23,7 @@ require "../minitest_helper"
 # The socket is a podman `system service` endpoint
 # (`podman system service --time=0 unix:///tmp/krikri-kp-dk.sock`); the
 # specs skip when it is not up. Everything here is scoped to the
-# krikri-kp-dk-ipam- name prefix and removed again.
+# krikri-spec___dk-ipam- name prefix and removed again.
 DOCKER_IPAM_SOCKET      = "unix:///tmp/krikri-kp-dk.sock"
 DOCKER_IPAM_SOCKET_PATH = "/tmp/krikri-kp-dk.sock"
 
@@ -42,7 +42,7 @@ describe "docker_network ipam_config" do
 
   it "creates a fully-specified pool with the daemon-side IPAM applied" do
     skip("no Docker-API socket at #{DOCKER_IPAM_SOCKET_PATH}") unless docker_ipam_socket?
-    name = "krikri-kp-dk-ipam-create"
+    name = "krikri-spec___dk-ipam-create"
     result = PluginSpecHelper.run("docker_network", docker_ipam_params(name, {"ipam_config" => FULL_POOL}))
 
     result["changed"].as_bool.must_equal(true)
@@ -56,7 +56,7 @@ describe "docker_network ipam_config" do
 
   it "re-creates a fully-specified pool on rerun, exactly like real against podman's readback" do
     skip("no Docker-API socket at #{DOCKER_IPAM_SOCKET_PATH}") unless docker_ipam_socket?
-    name = "krikri-kp-dk-ipam-rerun"
+    name = "krikri-spec___dk-ipam-rerun"
     PluginSpecHelper.run("docker_network", docker_ipam_params(name, {"ipam_config" => FULL_POOL}))
     result = PluginSpecHelper.run("docker_network", docker_ipam_params(name, {"ipam_config" => FULL_POOL}))
 
@@ -71,7 +71,7 @@ describe "docker_network ipam_config" do
 
   it "leaves a subnet-only pool idempotent on rerun (readback covers every non-null key)" do
     skip("no Docker-API socket at #{DOCKER_IPAM_SOCKET_PATH}") unless docker_ipam_socket?
-    name = "krikri-kp-dk-ipam-subnet"
+    name = "krikri-spec___dk-ipam-subnet"
     subnet_only = %([{"subnet": "10.99.71.0/24"}])
     PluginSpecHelper.run("docker_network", docker_ipam_params(name, {"ipam_config" => subnet_only}))
     result = PluginSpecHelper.run("docker_network", docker_ipam_params(name, {"ipam_config" => subnet_only}))
@@ -83,7 +83,7 @@ describe "docker_network ipam_config" do
 
   it "reports real's check_mode drift diff (differences + exists-led before/after)" do
     skip("no Docker-API socket at #{DOCKER_IPAM_SOCKET_PATH}") unless docker_ipam_socket?
-    name = "krikri-kp-dk-ipam-diff"
+    name = "krikri-spec___dk-ipam-diff"
     PluginSpecHelper.run("docker_network", docker_ipam_params(name, {"ipam_config" => FULL_POOL}))
     result = PluginSpecHelper.run_raw("docker_network", {
       "name"                => JSON::Any.new(name),
@@ -119,7 +119,7 @@ describe "docker_network ipam_config" do
 
   it "reports real's check_mode create diff (empty differences, exists false -> true)" do
     skip("no Docker-API socket at #{DOCKER_IPAM_SOCKET_PATH}") unless docker_ipam_socket?
-    name = "krikri-kp-dk-ipam-cdiff"
+    name = "krikri-spec___dk-ipam-cdiff"
     result = PluginSpecHelper.run_raw("docker_network", {
       "name"                => JSON::Any.new(name),
       "docker_host"         => JSON::Any.new(DOCKER_IPAM_SOCKET),
@@ -136,7 +136,7 @@ describe "docker_network ipam_config" do
 
   it "fails an invalid subnet CIDR with real's wording" do
     skip("no Docker-API socket at #{DOCKER_IPAM_SOCKET_PATH}") unless docker_ipam_socket?
-    result = PluginSpecHelper.run("docker_network", docker_ipam_params("krikri-kp-dk-ipam-badcidr",
+    result = PluginSpecHelper.run("docker_network", docker_ipam_params("krikri-spec___dk-ipam-badcidr",
       {"ipam_config" => %([{"subnet": "10.99.0.0/33"}])}))
 
     result["failed"].as_bool.must_equal(true)
@@ -145,7 +145,7 @@ describe "docker_network ipam_config" do
 
   it "fails a pool without a subnet with real's re.match(None) TypeError text" do
     skip("no Docker-API socket at #{DOCKER_IPAM_SOCKET_PATH}") unless docker_ipam_socket?
-    result = PluginSpecHelper.run("docker_network", docker_ipam_params("krikri-kp-dk-ipam-nosubnet",
+    result = PluginSpecHelper.run("docker_network", docker_ipam_params("krikri-spec___dk-ipam-nosubnet",
       {"ipam_config" => %([{"gateway": "10.99.5.1"}])}))
 
     result["failed"].as_bool.must_equal(true)
@@ -158,7 +158,7 @@ describe "docker_network ipam_driver passthrough" do
 
   it "creates with the requested IPAM driver and treats a matching readback as converged" do
     skip("no Docker-API socket at #{DOCKER_IPAM_SOCKET_PATH}") unless docker_ipam_socket?
-    name = "krikri-kp-dk-ipam-driver"
+    name = "krikri-spec___dk-ipam-driver"
     result = PluginSpecHelper.run("docker_network", docker_ipam_params(name,
       {"ipam_driver" => "default", "ipam_config" => %([{"subnet": "10.99.73.0/24"}])}))
 

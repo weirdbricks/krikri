@@ -325,7 +325,7 @@ describe "firewalld registered shapes (round994003, podman container)" do
           "/kbin/krikri-playbook -i localhost, -c local /work/play.yml"
     run_output = IO::Memory.new
     Process.run("podman", [
-      "run", "--rm", "--name", "krikri-kp-fw994003",
+      "run", "--rm", "--name", "krikri-spec___fw994003",
       "-v", "#{File.dirname(BINARY)}:/kbin:ro",
       "-v", "#{work}:/work",
       "-v", "#{shims}:/shims:ro",

@@ -22,7 +22,7 @@ require "../minitest_helper"
 # Config.Cmd/Config.Entrypoint straight off the daemon's inspect output -
 # the exact field real compares against. The socket is
 # `/tmp/krikri-kp-dk2.sock`; every spec skips when it is not up, and
-# every container here is named krikri-kp-dk2-cl-*.
+# every container here is named krikri-spec___dk2-cl-*.
 DOCKER_CMD_LIST_SOCKET      = "unix:///tmp/krikri-kp-dk2.sock"
 DOCKER_CMD_LIST_SOCKET_PATH = "/tmp/krikri-kp-dk2.sock"
 DOCKER_CMD_LIST_BINARY      = File.expand_path("../../bin/krikri-playbook", __DIR__)
@@ -57,7 +57,7 @@ describe "docker_container list-valued command params" do
 
   it "passes a YAML list command to the daemon as an argv list" do
     skip("no Docker-API socket at #{DOCKER_CMD_LIST_SOCKET_PATH}") unless docker_cmd_list_socket?
-    name = "krikri-kp-dk2-cl-list"
+    name = "krikri-spec___dk2-cl-list"
     docker_cmd_list_remove(name)
     begin
       output = docker_cmd_list_play(<<-YAML)
@@ -83,7 +83,7 @@ describe "docker_container list-valued command params" do
 
   it "keeps an element containing spaces as one argv element" do
     skip("no Docker-API socket at #{DOCKER_CMD_LIST_SOCKET_PATH}") unless docker_cmd_list_socket?
-    name = "krikri-kp-dk2-cl-spaces"
+    name = "krikri-spec___dk2-cl-spaces"
     docker_cmd_list_remove(name)
     begin
       docker_cmd_list_play(<<-YAML)
@@ -107,7 +107,7 @@ describe "docker_container list-valued command params" do
 
   it "shell-splits a string command exactly like Ansible's shlex.split" do
     skip("no Docker-API socket at #{DOCKER_CMD_LIST_SOCKET_PATH}") unless docker_cmd_list_socket?
-    name = "krikri-kp-dk2-cl-str"
+    name = "krikri-spec___dk2-cl-str"
     docker_cmd_list_remove(name)
     begin
       docker_cmd_list_play(<<-YAML)
@@ -131,7 +131,7 @@ describe "docker_container list-valued command params" do
 
   it "passes a list entrypoint through unchanged" do
     skip("no Docker-API socket at #{DOCKER_CMD_LIST_SOCKET_PATH}") unless docker_cmd_list_socket?
-    name = "krikri-kp-dk2-cl-ep-list"
+    name = "krikri-spec___dk2-cl-ep-list"
     docker_cmd_list_remove(name)
     begin
       docker_cmd_list_play(<<-YAML)
@@ -157,7 +157,7 @@ describe "docker_container list-valued command params" do
 
   it "keeps a string entrypoint as one argv element like Ansible's list conversion" do
     skip("no Docker-API socket at #{DOCKER_CMD_LIST_SOCKET_PATH}") unless docker_cmd_list_socket?
-    name = "krikri-kp-dk2-cl-ep-str"
+    name = "krikri-spec___dk2-cl-ep-str"
     docker_cmd_list_remove(name)
     begin
       docker_cmd_list_play(<<-YAML)
@@ -184,8 +184,8 @@ describe "docker_container list-valued command params" do
 
   it "creates the same binds from a list volumes as from the string form" do
     skip("no Docker-API socket at #{DOCKER_CMD_LIST_SOCKET_PATH}") unless docker_cmd_list_socket?
-    list_name = "krikri-kp-dk2-cl-vol-list"
-    string_name = "krikri-kp-dk2-cl-vol-str"
+    list_name = "krikri-spec___dk2-cl-vol-list"
+    string_name = "krikri-spec___dk2-cl-vol-str"
     docker_cmd_list_remove(list_name)
     docker_cmd_list_remove(string_name)
     begin
@@ -227,7 +227,7 @@ describe "docker_container list-valued command params" do
 
   it "is idempotent when a list command reruns unchanged" do
     skip("no Docker-API socket at #{DOCKER_CMD_LIST_SOCKET_PATH}") unless docker_cmd_list_socket?
-    name = "krikri-kp-dk2-cl-idem"
+    name = "krikri-spec___dk2-cl-idem"
     docker_cmd_list_remove(name)
     begin
       output = docker_cmd_list_play(<<-YAML)
@@ -268,7 +268,7 @@ describe "docker_container list-valued command params" do
   it "records the argv list in a check_mode create action" do
     skip("no Docker-API socket at #{DOCKER_CMD_LIST_SOCKET_PATH}") unless docker_cmd_list_socket?
     result = PluginSpecHelper.run_raw("docker_container",
-      {"name" => JSON::Any.new("krikri-kp-dk2-cl-cm"), "image" => JSON::Any.new(DOCKER_CMD_LIST_IMAGE),
+      {"name" => JSON::Any.new("krikri-spec___dk2-cl-cm"), "image" => JSON::Any.new(DOCKER_CMD_LIST_IMAGE),
        "command" => JSON::Any.new("[\"sh\", \"-c\", \"echo hello world\"]"),
        "state" => JSON::Any.new("present"), "docker_host" => JSON::Any.new(DOCKER_CMD_LIST_SOCKET),
        "_ansible_check_mode" => JSON::Any.new(true)})

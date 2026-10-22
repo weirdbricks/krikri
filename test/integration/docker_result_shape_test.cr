@@ -15,7 +15,7 @@ require "../minitest_helper"
 # The socket is a podman `system service` endpoint
 # (`podman system service --time=0 unix:///tmp/krikri-kp-dk.sock`); the
 # specs skip when it is not up. Nothing here creates a container,
-# network or image outside the krikri-kp-dk- prefix.
+# network or image outside the krikri-spec___dk- prefix.
 DOCKER_RESULT_SHAPE_SOCKET = "unix:///tmp/krikri-kp-dk.sock"
 
 def docker_shape_params(name : String, extra : Hash(String, String) = {} of String => String) : Hash(String, String)
@@ -41,7 +41,7 @@ describe "docker result shape: docker_network" do
   # (present() pops `actions` again once a real run finishes)
   it "matches Ansible's create key set and order" do
     skip("no Docker-API socket at #{DOCKER_RESULT_SHAPE_SOCKET_PATH}") unless docker_shape_socket?
-    result = PluginSpecHelper.run("docker_network", docker_shape_params("krikri-kp-dk-shape-n"))
+    result = PluginSpecHelper.run("docker_network", docker_shape_params("krikri-spec___dk-shape-n"))
     docker_shape_keys(result).must_equal(["changed", "network", "failed"])
     result["changed"].as_bool.must_equal(true)
     result["failed"].as_bool.must_equal(false)
@@ -52,51 +52,51 @@ describe "docker result shape: docker_network" do
       "Internal", "Attachable", "Ingress", "ConfigFrom", "ConfigOnly",
       "Containers", "Options", "Labels",
     ])
-    result["network"]["Name"].as_s.must_equal("krikri-kp-dk-shape-n")
+    result["network"]["Name"].as_s.must_equal("krikri-spec___dk-shape-n")
     result["network"]["Driver"].as_s.must_equal("bridge")
 
-    PluginSpecHelper.run("docker_network", docker_shape_params("krikri-kp-dk-shape-n", {"state" => "absent"}))
+    PluginSpecHelper.run("docker_network", docker_shape_params("krikri-spec___dk-shape-n", {"state" => "absent"}))
   end
 
   it "matches Ansible's unchanged rerun key set and order" do
     skip("no Docker-API socket at #{DOCKER_RESULT_SHAPE_SOCKET_PATH}") unless docker_shape_socket?
-    PluginSpecHelper.run("docker_network", docker_shape_params("krikri-kp-dk-shape-n2"))
-    result = PluginSpecHelper.run("docker_network", docker_shape_params("krikri-kp-dk-shape-n2"))
+    PluginSpecHelper.run("docker_network", docker_shape_params("krikri-spec___dk-shape-n2"))
+    result = PluginSpecHelper.run("docker_network", docker_shape_params("krikri-spec___dk-shape-n2"))
     docker_shape_keys(result).must_equal(["changed", "network", "failed"])
     result["changed"].as_bool.must_equal(false)
 
-    PluginSpecHelper.run("docker_network", docker_shape_params("krikri-kp-dk-shape-n2", {"state" => "absent"}))
+    PluginSpecHelper.run("docker_network", docker_shape_params("krikri-spec___dk-shape-n2", {"state" => "absent"}))
   end
 
   # real check_mode create: {"changed", "actions", "network", "diff", "failed"}
   it "matches Ansible's check_mode create key set and order" do
     skip("no Docker-API socket at #{DOCKER_RESULT_SHAPE_SOCKET_PATH}") unless docker_shape_socket?
     result = PluginSpecHelper.run_raw("docker_network",
-      {"name" => JSON::Any.new("krikri-kp-dk-shape-n3"), "docker_host" => JSON::Any.new(DOCKER_RESULT_SHAPE_SOCKET), "_ansible_check_mode" => JSON::Any.new(true)})
+      {"name" => JSON::Any.new("krikri-spec___dk-shape-n3"), "docker_host" => JSON::Any.new(DOCKER_RESULT_SHAPE_SOCKET), "_ansible_check_mode" => JSON::Any.new(true)})
     docker_shape_keys(result).must_equal(["changed", "actions", "network", "diff", "failed"])
     result["changed"].as_bool.must_equal(true)
-    result["actions"].as_a.map(&.as_s).must_equal(["Created network krikri-kp-dk-shape-n3 with driver bridge"])
+    result["actions"].as_a.map(&.as_s).must_equal(["Created network krikri-spec___dk-shape-n3 with driver bridge"])
     # nothing was actually created, so `network` is Ansible's null
     result["network"].raw.must_be_nil
     result["diff"]["differences"].as_a.size.must_equal(0)
     # check_mode created nothing, so removing it is a no-op too
-    PluginSpecHelper.run("docker_network", docker_shape_params("krikri-kp-dk-shape-n3", {"state" => "absent"}))
+    PluginSpecHelper.run("docker_network", docker_shape_params("krikri-spec___dk-shape-n3", {"state" => "absent"}))
   end
 
   # real removed: {"changed": true, "actions": ["Removed network X"], "failed": false}
   it "matches Ansible's removed key set and order" do
     skip("no Docker-API socket at #{DOCKER_RESULT_SHAPE_SOCKET_PATH}") unless docker_shape_socket?
-    PluginSpecHelper.run("docker_network", docker_shape_params("krikri-kp-dk-shape-n4"))
-    result = PluginSpecHelper.run("docker_network", docker_shape_params("krikri-kp-dk-shape-n4", {"state" => "absent"}))
+    PluginSpecHelper.run("docker_network", docker_shape_params("krikri-spec___dk-shape-n4"))
+    result = PluginSpecHelper.run("docker_network", docker_shape_params("krikri-spec___dk-shape-n4", {"state" => "absent"}))
     docker_shape_keys(result).must_equal(["changed", "actions", "failed"])
     result["changed"].as_bool.must_equal(true)
-    result["actions"].as_a.map(&.as_s).must_equal(["Removed network krikri-kp-dk-shape-n4"])
+    result["actions"].as_a.map(&.as_s).must_equal(["Removed network krikri-spec___dk-shape-n4"])
   end
 
   # real already-absent: {"changed": false, "actions": [], "failed": false}
   it "matches Ansible's already-absent key set and order" do
     skip("no Docker-API socket at #{DOCKER_RESULT_SHAPE_SOCKET_PATH}") unless docker_shape_socket?
-    result = PluginSpecHelper.run("docker_network", docker_shape_params("krikri-kp-dk-shape-absent", {"state" => "absent"}))
+    result = PluginSpecHelper.run("docker_network", docker_shape_params("krikri-spec___dk-shape-absent", {"state" => "absent"}))
     docker_shape_keys(result).must_equal(["changed", "actions", "failed"])
     result["changed"].as_bool.must_equal(false)
     result["actions"].as_a.must_be_empty
@@ -106,21 +106,21 @@ describe "docker result shape: docker_network" do
   # the absent path records an EMPTY diff dict in check_mode
   it "matches Ansible's check_mode removal key set and order" do
     skip("no Docker-API socket at #{DOCKER_RESULT_SHAPE_SOCKET_PATH}") unless docker_shape_socket?
-    PluginSpecHelper.run("docker_network", docker_shape_params("krikri-kp-dk-shape-n5"))
+    PluginSpecHelper.run("docker_network", docker_shape_params("krikri-spec___dk-shape-n5"))
     result = PluginSpecHelper.run_raw("docker_network",
-      {"name" => JSON::Any.new("krikri-kp-dk-shape-n5"), "docker_host" => JSON::Any.new(DOCKER_RESULT_SHAPE_SOCKET),
+      {"name" => JSON::Any.new("krikri-spec___dk-shape-n5"), "docker_host" => JSON::Any.new(DOCKER_RESULT_SHAPE_SOCKET),
        "state" => JSON::Any.new("absent"), "_ansible_check_mode" => JSON::Any.new(true)})
     docker_shape_keys(result).must_equal(["changed", "actions", "diff", "failed"])
     result["changed"].as_bool.must_equal(true)
     # still there - check_mode removed nothing
-    PluginSpecHelper.run("docker_network", docker_shape_params("krikri-kp-dk-shape-n5", {"state" => "absent"}))
+    PluginSpecHelper.run("docker_network", docker_shape_params("krikri-spec___dk-shape-n5", {"state" => "absent"}))
   end
 
   # real: {"failed", "msg", "changed", "exception"}
   it "matches Ansible's failure key set and order" do
     skip("no Docker-API socket at #{DOCKER_RESULT_SHAPE_SOCKET_PATH}") unless docker_shape_socket?
     result = PluginSpecHelper.run("docker_network",
-      docker_shape_params("krikri-kp-dk-shape-n6", {"driver" => "nosuchdriver"}))
+      docker_shape_params("krikri-spec___dk-shape-n6", {"driver" => "nosuchdriver"}))
     docker_shape_keys(result).must_equal(["failed", "msg", "changed", "exception"])
     result["failed"].as_bool.must_equal(true)
     result["changed"].as_bool.must_equal(false)
@@ -135,7 +135,7 @@ describe "docker result shape: docker_network_info" do
   it "matches Ansible's not-found key set and order" do
     skip("no Docker-API socket at #{DOCKER_RESULT_SHAPE_SOCKET_PATH}") unless docker_shape_socket?
     result = PluginSpecHelper.run("docker_network_info",
-      {"name" => "krikri-kp-dk-shape-ni-absent", "docker_host" => DOCKER_RESULT_SHAPE_SOCKET})
+      {"name" => "krikri-spec___dk-shape-ni-absent", "docker_host" => DOCKER_RESULT_SHAPE_SOCKET})
     docker_shape_keys(result).must_equal(["changed", "exists", "network", "failed"])
     result["changed"].as_bool.must_equal(false)
     result["exists"].as_bool.must_equal(false)
@@ -146,7 +146,7 @@ describe "docker result shape: docker_network_info" do
 
   it "matches Ansible's found key set and order" do
     skip("no Docker-API socket at #{DOCKER_RESULT_SHAPE_SOCKET_PATH}") unless docker_shape_socket?
-    name = "krikri-kp-dk-shape-ni"
+    name = "krikri-spec___dk-shape-ni"
     PluginSpecHelper.run("docker_network", docker_shape_params(name))
     result = PluginSpecHelper.run("docker_network_info",
       {"name" => name, "docker_host" => DOCKER_RESULT_SHAPE_SOCKET})
@@ -166,7 +166,7 @@ describe "docker result shape: docker_network_info" do
   end
 end
 
-# A tiny local image, re-tagged under the krikri-kp-dk- prefix so the
+# A tiny local image, re-tagged under the krikri-spec___dk- prefix so the
 # specs below can exercise the present/absent paths without a registry
 # and without touching any image the machine already had.
 module DockerImageShapeSpec
@@ -186,14 +186,14 @@ describe "docker result shape: docker_image" do
   serial!
 
   # The daemon only resolves a fully-qualified reference, so the specs
-  # below tag a tiny local image under the krikri-kp-dk- prefix rather
+  # below tag a tiny local image under the krikri-spec___dk- prefix rather
   # than reaching for a registry.
   # real: {"changed": false, "actions": [], "image": {<inspect>}, "failed": false}
   it "matches Ansible's present key set and order" do
     skip("no Docker-API socket at #{DOCKER_RESULT_SHAPE_SOCKET_PATH}") unless docker_shape_socket?
     DockerImageShapeSpec.tag_image
     result = PluginSpecHelper.run("docker_image",
-      {"name" => "krikri-kp-dk-img", "tag" => "1", "source" => "local", "docker_host" => DOCKER_RESULT_SHAPE_SOCKET})
+      {"name" => "krikri-spec___dk-img", "tag" => "1", "source" => "local", "docker_host" => DOCKER_RESULT_SHAPE_SOCKET})
     docker_shape_keys(result).must_equal(["changed", "actions", "image", "failed"])
     result["changed"].as_bool.must_equal(false)
     result["actions"].as_a.must_be_empty
@@ -209,12 +209,12 @@ describe "docker result shape: docker_image" do
   it "matches Ansible's check_mode pull key set and order" do
     skip("no Docker-API socket at #{DOCKER_RESULT_SHAPE_SOCKET_PATH}") unless docker_shape_socket?
     result = PluginSpecHelper.run_raw("docker_image",
-      {"name" => JSON::Any.new("krikri-kp-dk-img-cm"), "tag" => JSON::Any.new("1"),
+      {"name" => JSON::Any.new("krikri-spec___dk-img-cm"), "tag" => JSON::Any.new("1"),
        "source" => JSON::Any.new("pull"), "docker_host" => JSON::Any.new(DOCKER_RESULT_SHAPE_SOCKET),
        "_ansible_check_mode" => JSON::Any.new(true)})
     docker_shape_keys(result).must_equal(["changed", "actions", "image", "failed"])
     result["changed"].as_bool.must_equal(true)
-    result["actions"].as_a.map(&.as_s).must_equal(["Pulled image krikri-kp-dk-img-cm:1"])
+    result["actions"].as_a.map(&.as_s).must_equal(["Pulled image krikri-spec___dk-img-cm:1"])
     # nothing was pulled, so `image` is Ansible's seeded empty dict
     result["image"].as_h.empty?.must_equal(true)
   end
@@ -224,17 +224,17 @@ describe "docker result shape: docker_image" do
     skip("no Docker-API socket at #{DOCKER_RESULT_SHAPE_SOCKET_PATH}") unless docker_shape_socket?
     DockerImageShapeSpec.tag_image
     result = PluginSpecHelper.run("docker_image",
-      {"name" => "krikri-kp-dk-img", "tag" => "1", "state" => "absent", "docker_host" => DOCKER_RESULT_SHAPE_SOCKET})
+      {"name" => "krikri-spec___dk-img", "tag" => "1", "state" => "absent", "docker_host" => DOCKER_RESULT_SHAPE_SOCKET})
     docker_shape_keys(result).must_equal(["changed", "actions", "image", "failed"])
     result["changed"].as_bool.must_equal(true)
-    result["actions"].as_a.map(&.as_s).must_equal(["Removed image krikri-kp-dk-img:1"])
+    result["actions"].as_a.map(&.as_s).must_equal(["Removed image krikri-spec___dk-img:1"])
     result["image"]["state"].as_s.must_equal("Deleted")
   end
 
   it "matches Ansible's already-absent key set and order" do
     skip("no Docker-API socket at #{DOCKER_RESULT_SHAPE_SOCKET_PATH}") unless docker_shape_socket?
     result = PluginSpecHelper.run("docker_image",
-      {"name" => "krikri-kp-dk-img", "tag" => "1", "state" => "absent", "docker_host" => DOCKER_RESULT_SHAPE_SOCKET})
+      {"name" => "krikri-spec___dk-img", "tag" => "1", "state" => "absent", "docker_host" => DOCKER_RESULT_SHAPE_SOCKET})
     docker_shape_keys(result).must_equal(["changed", "actions", "image", "failed"])
     result["changed"].as_bool.must_equal(false)
     result["actions"].as_a.must_be_empty
@@ -244,17 +244,17 @@ describe "docker result shape: docker_image" do
   it "matches Ansible's missing-image failure key set and order" do
     skip("no Docker-API socket at #{DOCKER_RESULT_SHAPE_SOCKET_PATH}") unless docker_shape_socket?
     result = PluginSpecHelper.run("docker_image",
-      {"name" => "krikri-kp-dk-nope", "tag" => "9", "source" => "local", "docker_host" => DOCKER_RESULT_SHAPE_SOCKET})
+      {"name" => "krikri-spec___dk-nope", "tag" => "9", "source" => "local", "docker_host" => DOCKER_RESULT_SHAPE_SOCKET})
     docker_shape_keys(result).must_equal(["failed", "msg", "changed", "exception"])
     result["failed"].as_bool.must_equal(true)
-    result["msg"].as_s.must_equal("Cannot find the image krikri-kp-dk-nope:9 locally.")
+    result["msg"].as_s.must_equal("Cannot find the image krikri-spec___dk-nope:9 locally.")
   end
 end
 
 # A throwaway config file under the spec scratch space - these specs never
 # touch the machine's real ~/.docker/config.json.
 def docker_login_config : String
-  path = PluginSpecHelper.tmp_path("krikri-kp-dk-login-config.json")
+  path = PluginSpecHelper.tmp_path("krikri-spec___dk-login-config.json")
   File.write(path, %({"auths": {"https://registry-1.docker.io/v1/": {"auth": "a3Jpa3JyaTpib2d1cw=="}}}))
   path
 end
@@ -326,7 +326,7 @@ describe "docker result shape: docker_login" do
   end
 end
 
-# Only ever touches the krikri-kp-dk-* containers these specs create.
+# Only ever touches the krikri-spec___dk-* containers these specs create.
 def remove_krikri_kp_dk_container(name : String) : Nil
   Process.run("podman", ["rm", "-f", name], output: Process::Redirect::Close, error: Process::Redirect::Close)
 end
@@ -334,7 +334,7 @@ end
 describe "docker result shape: docker_container" do
   serial!
 
-  # A tiny local image; the specs only ever create krikri-kp-dk-* containers.
+  # A tiny local image; the specs only ever create krikri-spec___dk-* containers.
   CONTAINER_IMAGE = "docker.io/library/alpine:latest"
 
   # real: {"changed": true, "container": {<inspect>}, "failed": false} - the
@@ -342,7 +342,7 @@ describe "docker result shape: docker_container" do
   # the daemon's, passed straight through.
   it "matches Ansible's create key set and order" do
     skip("no Docker-API socket at #{DOCKER_RESULT_SHAPE_SOCKET_PATH}") unless docker_shape_socket?
-    name = "krikri-kp-dk-shape-c"
+    name = "krikri-spec___dk-shape-c"
     remove_krikri_kp_dk_container(name)
     result = PluginSpecHelper.run("docker_container", {
       "name" => name, "image" => CONTAINER_IMAGE, "command" => "sleep 30",
@@ -367,7 +367,7 @@ describe "docker result shape: docker_container" do
   # dict per operation, and no `container` (nothing was actually created).
   it "matches Ansible's check_mode create key set and order" do
     skip("no Docker-API socket at #{DOCKER_RESULT_SHAPE_SOCKET_PATH}") unless docker_shape_socket?
-    name = "krikri-kp-dk-shape-c2"
+    name = "krikri-spec___dk-shape-c2"
     remove_krikri_kp_dk_container(name)
     result = PluginSpecHelper.run_raw("docker_container",
       {"name" => JSON::Any.new(name), "image" => JSON::Any.new(CONTAINER_IMAGE),
@@ -388,7 +388,7 @@ describe "docker result shape: docker_container" do
   # no container facts at all
   it "matches Ansible's removed key set and order" do
     skip("no Docker-API socket at #{DOCKER_RESULT_SHAPE_SOCKET_PATH}") unless docker_shape_socket?
-    name = "krikri-kp-dk-shape-c3"
+    name = "krikri-spec___dk-shape-c3"
     remove_krikri_kp_dk_container(name)
     PluginSpecHelper.run("docker_container", {
       "name" => name, "image" => CONTAINER_IMAGE, "command" => "sleep 30",
@@ -404,7 +404,7 @@ describe "docker result shape: docker_container" do
   it "matches Ansible's already-absent key set and order" do
     skip("no Docker-API socket at #{DOCKER_RESULT_SHAPE_SOCKET_PATH}") unless docker_shape_socket?
     result = PluginSpecHelper.run("docker_container", {
-      "name" => "krikri-kp-dk-shape-gone", "state" => "absent",
+      "name" => "krikri-spec___dk-shape-gone", "state" => "absent",
       "docker_host" => DOCKER_RESULT_SHAPE_SOCKET,
     })
     docker_shape_keys(result).must_equal(["changed", "failed"])
@@ -413,15 +413,15 @@ describe "docker result shape: docker_container" do
 
   it "matches Ansible's missing-image failure key set and order" do
     skip("no Docker-API socket at #{DOCKER_RESULT_SHAPE_SOCKET_PATH}") unless docker_shape_socket?
-    name = "krikri-kp-dk-shape-c4"
+    name = "krikri-spec___dk-shape-c4"
     remove_krikri_kp_dk_container(name)
     result = PluginSpecHelper.run("docker_container", {
-      "name" => name, "image" => "krikri-kp-dk-nosuchimage:9", "command" => "sleep 30",
+      "name" => name, "image" => "krikri-spec___dk-nosuchimage:9", "command" => "sleep 30",
       "docker_host" => DOCKER_RESULT_SHAPE_SOCKET,
     })
     docker_shape_keys(result).must_equal(["failed", "msg", "changed", "exception"])
     result["failed"].as_bool.must_equal(true)
-    result["msg"].as_s.must_include("Error pulling image krikri-kp-dk-nosuchimage:9 - ")
+    result["msg"].as_s.must_include("Error pulling image krikri-spec___dk-nosuchimage:9 - ")
     remove_krikri_kp_dk_container(name)
   end
 
@@ -429,7 +429,7 @@ describe "docker result shape: docker_container" do
   # that needs to create a container but named no image at all.
   it "fails a container-less create with Ansible's own wording" do
     skip("no Docker-API socket at #{DOCKER_RESULT_SHAPE_SOCKET_PATH}") unless docker_shape_socket?
-    name = "krikri-kp-dk-shape-noimage"
+    name = "krikri-spec___dk-shape-noimage"
     remove_krikri_kp_dk_container(name)
     result = PluginSpecHelper.run("docker_container", {
       "name" => name, "command" => "sleep 30",
@@ -444,7 +444,7 @@ describe "docker result shape: docker_container" do
   # the repository percent-encoded) and the daemon's own message.
   it "reports a failed pull in Ansible's own SDK wording" do
     skip("no Docker-API socket at #{DOCKER_RESULT_SHAPE_SOCKET_PATH}") unless docker_shape_socket?
-    name = "krikri-kp-dk-shape-pull"
+    name = "krikri-spec___dk-shape-pull"
     remove_krikri_kp_dk_container(name)
     result = PluginSpecHelper.run("docker_container", {
       "name" => name, "image" => "kop.invalid/nope:1", "command" => "sleep 30",
@@ -466,7 +466,7 @@ describe "docker result shape: docker_container" do
   # here as SIGTERM/10.
   it "creates a container whose Config sets neither StopSignal nor StopTimeout" do
     skip("no Docker-API socket at #{DOCKER_RESULT_SHAPE_SOCKET_PATH}") unless docker_shape_socket?
-    name = "krikri-kp-dk-shape-stopcfg"
+    name = "krikri-spec___dk-shape-stopcfg"
     remove_krikri_kp_dk_container(name)
     result = PluginSpecHelper.run("docker_container", {
       "name" => name, "image" => CONTAINER_IMAGE, "command" => "sleep 30",
@@ -501,8 +501,8 @@ describe "docker result shape: docker_container check-mode create payload" do
 
   it "records only the stdio flags, image and exposed ports for a plain create" do
     skip("no Docker-API socket at #{DOCKER_RESULT_SHAPE_SOCKET_PATH}") unless docker_shape_socket?
-    remove_krikri_kp_dk_container("krikri-kp-dk-shape-cp-plain")
-    payload = docker_shape_create_payload("krikri-kp-dk-shape-cp-plain", {} of String => JSON::Any)
+    remove_krikri_kp_dk_container("krikri-spec___dk-shape-cp-plain")
+    payload = docker_shape_create_payload("krikri-spec___dk-shape-cp-plain", {} of String => JSON::Any)
     payload.as_h.keys.to_a.must_equal(
       ["Cmd", "AttachStdout", "AttachStderr", "AttachStdin", "StdinOnce", "OpenStdin", "Image", "ExposedPorts"])
     payload["ExposedPorts"].as_h.must_be_empty
@@ -510,8 +510,8 @@ describe "docker result shape: docker_container check-mode create payload" do
 
   it "records each given option under Ansible's own key, in Ansible's own order" do
     skip("no Docker-API socket at #{DOCKER_RESULT_SHAPE_SOCKET_PATH}") unless docker_shape_socket?
-    remove_krikri_kp_dk_container("krikri-kp-dk-shape-cp-full")
-    payload = docker_shape_create_payload("krikri-kp-dk-shape-cp-full", {
+    remove_krikri_kp_dk_container("krikri-spec___dk-shape-cp-full")
+    payload = docker_shape_create_payload("krikri-spec___dk-shape-cp-full", {
       "env"            => JSON::Any.new(%({"A":"b"})),
       "hostname"       => JSON::Any.new("kophost"),
       "labels"         => JSON::Any.new(%({"kop":"1"})),
@@ -545,8 +545,8 @@ describe "docker result shape: docker_container check-mode create payload" do
   # option list gives it, not alphabetical order.
   it "puts a lone env: right after the stdio flags" do
     skip("no Docker-API socket at #{DOCKER_RESULT_SHAPE_SOCKET_PATH}") unless docker_shape_socket?
-    remove_krikri_kp_dk_container("krikri-kp-dk-shape-cp-env")
-    payload = docker_shape_create_payload("krikri-kp-dk-shape-cp-env", {"env" => JSON::Any.new(%({"Z":"y"}))})
+    remove_krikri_kp_dk_container("krikri-spec___dk-shape-cp-env")
+    payload = docker_shape_create_payload("krikri-spec___dk-shape-cp-env", {"env" => JSON::Any.new(%({"Z":"y"}))})
     payload.as_h.keys.to_a.must_equal([
       "Cmd", "AttachStdout", "AttachStderr", "AttachStdin", "StdinOnce", "OpenStdin",
       "Env", "Image", "ExposedPorts",
@@ -576,7 +576,7 @@ describe "docker result shape: docker_container check-mode recreate" do
 
   it "leads with Ansible's stopped action for a running container" do
     skip("no Docker-API socket at #{DOCKER_RESULT_SHAPE_SOCKET_PATH}") unless docker_shape_socket?
-    name = "krikri-kp-dk-shape-rec1"
+    name = "krikri-spec___dk-shape-rec1"
     remove_krikri_kp_dk_container(name)
     begin
       container_id = docker_shape_started(name)["container"]["Id"].as_s
@@ -596,7 +596,7 @@ describe "docker result shape: docker_container check-mode recreate" do
 
   it "records no stopped action for an already stopped container" do
     skip("no Docker-API socket at #{DOCKER_RESULT_SHAPE_SOCKET_PATH}") unless docker_shape_socket?
-    name = "krikri-kp-dk-shape-rec2"
+    name = "krikri-spec___dk-shape-rec2"
     remove_krikri_kp_dk_container(name)
     begin
       PluginSpecHelper.run("docker_container", {
@@ -622,7 +622,7 @@ describe "docker result shape: docker_container list-form env" do
 
   it "keeps a comma-carrying env element whole" do
     skip("no Docker-API socket at #{DOCKER_RESULT_SHAPE_SOCKET_PATH}") unless docker_shape_socket?
-    name = "krikri-kp-dk-shape-envlist"
+    name = "krikri-spec___dk-shape-envlist"
     remove_krikri_kp_dk_container(name)
     begin
       result = PluginSpecHelper.run_raw("docker_container",
@@ -654,7 +654,7 @@ describe "docker result shape: docker_container list command" do
 
   it "matches Ansible's create key set and order for a list command" do
     skip("no Docker-API socket at #{DOCKER_SHAPE_CMD_SOCKET_PATH}") unless File.exists?(DOCKER_SHAPE_CMD_SOCKET_PATH)
-    name = "krikri-kp-dk2-shape-cmd"
+    name = "krikri-spec___dk2-shape-cmd"
     remove_krikri_kp_dk_container(name)
     result = PluginSpecHelper.run_raw("docker_container",
       {"name" => JSON::Any.new(name), "image" => JSON::Any.new("docker.io/library/alpine:latest"),
@@ -669,7 +669,7 @@ describe "docker result shape: docker_container list command" do
   it "records Ansible's argv list in the check_mode create action" do
     skip("no Docker-API socket at #{DOCKER_SHAPE_CMD_SOCKET_PATH}") unless File.exists?(DOCKER_SHAPE_CMD_SOCKET_PATH)
     result = PluginSpecHelper.run_raw("docker_container",
-      {"name" => JSON::Any.new("krikri-kp-dk2-shape-cmd-cm"), "image" => JSON::Any.new("docker.io/library/alpine:latest"),
+      {"name" => JSON::Any.new("krikri-spec___dk2-shape-cmd-cm"), "image" => JSON::Any.new("docker.io/library/alpine:latest"),
        "command" => JSON::Any.new("[\"sh\", \"-c\", \"echo hello world\"]"),
        "docker_host" => JSON::Any.new(DOCKER_SHAPE_CMD_SOCKET),
        "_ansible_check_mode" => JSON::Any.new(true)})

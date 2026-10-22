@@ -25,7 +25,7 @@ describe "docker_network_info plugin" do
     # not the connect text - the same convention as the SDK specs.
     skip "python requests not importable, the SDK gate would answer first" unless PluginSpecHelper.docker_sdk_importable?
     result = PluginSpecHelper.run("docker_network_info", {
-      "name"        => "krikri-spec-unreachable",
+      "name"        => "krikri-spec___unreachable",
       "docker_host" => "unix:///nonexistent/krikri-no-such-#{Process.pid}.sock",
     })
     result["failed"].as_bool.must_equal(true)
@@ -44,7 +44,7 @@ describe "docker_network_info plugin" do
     skip("no reachable docker daemon") unless PluginSpecHelper.docker_daemon_reachable?
 
     result = PluginSpecHelper.run("docker_network_info", {
-      "name" => "krikri-spec-definitely-absent-#{Process.pid}",
+      "name" => "krikri-spec___definitely-absent-#{Process.pid}",
     })
     falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
     result["exists"].as_bool.must_equal(false)

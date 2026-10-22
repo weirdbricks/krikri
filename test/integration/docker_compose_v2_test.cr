@@ -120,7 +120,7 @@ describe "docker_compose_v2 plugin (live docker)" do
     dir = File.tempname("dcv2-live", ".d")
     Dir.mkdir(dir)
     File.write(File.join(dir, "compose.yaml"), live_compose_yaml)
-    project_name = "krikri-spec-#{Process.pid}"
+    project_name = "krikri-spec___#{Process.pid}"
 
     first = PluginSpecHelper.run("docker_compose_v2", {
       "project_src"  => dir,
@@ -162,7 +162,7 @@ describe "docker_compose_v2 plugin (live docker)" do
   ensure
     if dir && Dir.exists?(dir)
       cleanup_err = IO::Memory.new
-      Process.run("docker", ["compose", "-p", "krikri-spec-#{Process.pid}", "down", "--volumes", "--remove-orphans"], error: cleanup_err)
+      Process.run("docker", ["compose", "-p", "krikri-spec___#{Process.pid}", "down", "--volumes", "--remove-orphans"], error: cleanup_err)
       FileUtils.rm_r(dir)
     end
   end
@@ -184,7 +184,7 @@ describe "docker_compose_v2 result shape" do
     dir = File.tempname("dcv2-shape", ".d")
     Dir.mkdir(dir)
     File.write(File.join(dir, "compose.yaml"), live_compose_yaml)
-    project_name = "krikri-kp-dk2-shape-#{Process.pid}"
+    project_name = "krikri-spec___dk2-shape-#{Process.pid}"
     begin
       up = PluginSpecHelper.run("docker_compose_v2", {
         "project_src" => dir, "project_name" => project_name,
@@ -213,7 +213,7 @@ describe "docker_compose_v2 result shape" do
     dir = File.tempname("dcv2-shape-down", ".d")
     Dir.mkdir(dir)
     File.write(File.join(dir, "compose.yaml"), live_compose_yaml)
-    project_name = "krikri-kp-dk2-shape-#{Process.pid}"
+    project_name = "krikri-spec___dk2-shape-#{Process.pid}"
     begin
       PluginSpecHelper.run("docker_compose_v2", {
         "project_src" => dir, "project_name" => project_name,

@@ -22,12 +22,12 @@ require "../minitest_helper"
 #    target docker's own default socket and fail.
 #
 # The socket is the podman `system service` endpoint. The specs skip when
-# it is not up. Everything is scoped to the krikri-spec-#{Process.pid}
+# it is not up. Everything is scoped to the krikri-spec___#{Process.pid}
 # prefix, so these can run alongside the other daemon-dependent specs
 # (they serialize instead of sharing container names).
 PODMANN_SOCKET      = "unix:///run/user/1000/podman/podman.sock"
 PODMANN_SOCKET_PATH = "/run/user/1000/podman/podman.sock"
-PROJECT_NAME        = "krikri-spec-#{Process.pid}"
+PROJECT_NAME        = "krikri-spec___#{Process.pid}"
 COMPOSE_PROJECT_DIR = File.tempname("krikri-docker-parity", ".d")
 
 private def podman_socket? : Bool
@@ -63,7 +63,7 @@ describe "docker_container published_ports" do
   it "binds published_ports into HostConfig.PortBindings with HostIp 0.0.0.0" do
     skip_unless_live_docker
     skip("no podman socket at #{PODMANN_SOCKET_PATH}") unless podman_socket?
-    name = "krikri-spec-#{Process.pid}-pubport"
+    name = "krikri-spec___#{Process.pid}-pubport"
     begin
       result = PluginSpecHelper.run("docker_container", {
         "name"            => name,
@@ -90,7 +90,7 @@ describe "docker_container published_ports" do
   it "keeps `ports:` (the alias) binding the same way" do
     skip_unless_live_docker
     skip("no podman socket at #{PODMANN_SOCKET_PATH}") unless podman_socket?
-    name = "krikri-spec-#{Process.pid}-pubport-alias"
+    name = "krikri-spec___#{Process.pid}-pubport-alias"
     begin
       result = PluginSpecHelper.run("docker_container", {
         "name"        => name,
@@ -115,7 +115,7 @@ describe "docker_container published_ports" do
   it "is idempotent on re-run (allow_more_present subset match)" do
     skip_unless_live_docker
     skip("no podman socket at #{PODMANN_SOCKET_PATH}") unless podman_socket?
-    name = "krikri-spec-#{Process.pid}-pubport-idem"
+    name = "krikri-spec___#{Process.pid}-pubport-idem"
     begin
       PluginSpecHelper.run("docker_container", {
         "name"            => name,
@@ -144,7 +144,7 @@ describe "docker_network ipam_config no-subnet key order" do
 
   it "registers the exception-path key order (failed, ansible_facts, changed, exception, msg, warnings) on a pool lacking subnet" do
     skip("no podman socket at #{PODMANN_SOCKET_PATH}") unless podman_socket?
-    name = "krikri-spec-#{Process.pid}-net-nosubnet"
+    name = "krikri-spec___#{Process.pid}-net-nosubnet"
     begin
       result = PluginSpecHelper.run("docker_network", {
         "name"        => name,

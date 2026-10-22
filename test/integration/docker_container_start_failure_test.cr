@@ -20,7 +20,7 @@ require "../minitest_helper"
 # The socket is a podman `system service` endpoint
 # (`podman system service --time=0 unix:///tmp/krikri-kp-dk.sock`); the
 # specs skip when it is not up. Everything here is scoped to the
-# krikri-kp-dk-start- name prefix and removed again.
+# krikri-spec___dk-start- name prefix and removed again.
 DOCKER_START_SOCKET      = "unix:///tmp/krikri-kp-dk.sock"
 DOCKER_START_SOCKET_PATH = "/tmp/krikri-kp-dk.sock"
 
@@ -52,12 +52,12 @@ describe "docker_container start failure" do
   it "reports a fresh create-and-start failure with real's Error starting container wording" do
     skip("no Docker-API socket at #{DOCKER_START_SOCKET_PATH}") unless docker_start_socket?
 
-    first = PluginSpecHelper.run("docker_container", docker_start_params("krikri-kp-dk-start-first"))
+    first = PluginSpecHelper.run("docker_container", docker_start_params("krikri-spec___dk-start-first"))
     first["changed"].as_bool.must_equal(true)
 
-    second = PluginSpecHelper.run("docker_container", docker_start_params("krikri-kp-dk-start-second"))
-    docker_start_cleanup("krikri-kp-dk-start-first")
-    docker_start_cleanup("krikri-kp-dk-start-second")
+    second = PluginSpecHelper.run("docker_container", docker_start_params("krikri-spec___dk-start-second"))
+    docker_start_cleanup("krikri-spec___dk-start-first")
+    docker_start_cleanup("krikri-spec___dk-start-second")
 
     second["failed"].as_bool.must_equal(true)
     second.as_h.keys.must_equal(["failed", "msg", "changed", "exception"])
@@ -75,18 +75,18 @@ describe "docker_container start failure" do
   it "reports starting an existing stopped container with the same wording" do
     skip("no Docker-API socket at #{DOCKER_START_SOCKET_PATH}") unless docker_start_socket?
 
-    name = "krikri-kp-dk-start-existing"
+    name = "krikri-spec___dk-start-existing"
     PluginSpecHelper.run("docker_container", docker_start_params(name))
     # Steal the port from underneath the plugin: stop the running
     # container, start a squatter on the same host port, then ask the
     # plugin to start the (stopped) first container again.
     PluginSpecHelper.run("docker_container", {"name" => name, "state" => "stopped", "docker_host" => DOCKER_START_SOCKET})
-    squatter = PluginSpecHelper.run("docker_container", docker_start_params("krikri-kp-dk-start-squatter"))
+    squatter = PluginSpecHelper.run("docker_container", docker_start_params("krikri-spec___dk-start-squatter"))
     squatter["changed"].as_bool.must_equal(true)
 
     result = PluginSpecHelper.run("docker_container", docker_start_params(name))
     docker_start_cleanup(name)
-    docker_start_cleanup("krikri-kp-dk-start-squatter")
+    docker_start_cleanup("krikri-spec___dk-start-squatter")
 
     result["failed"].as_bool.must_equal(true)
     msg = result["msg"].as_s
