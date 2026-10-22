@@ -72,4 +72,34 @@ describe "task-arg finalization error block (role-sourced tasks)" do
   ensure
     FileUtils.rm_rf(tempdir) if tempdir
   end
+
+  it "keeps the three-level chain for a plain-scalar task name ending with a quote char" do
+    tempdir = File.tempname("final-block-quote").tap { |dir| Dir.mkdir(dir) }
+    role = File.join(tempdir, "roles", "blockrole3")
+    FileUtils.mkdir_p(File.join(role, "tasks"))
+    playbook = File.join(tempdir, "site.yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        gather_facts: false
+        roles:
+          - blockrole3
+      YAML
+    tasks_file = File.join(role, "tasks", "main.yml")
+    File.write(tasks_file, <<-YAML)
+      - name: Defining DC/OS by using 'version' or, more specifically, 'image_commit'
+        ansible.builtin.set_fact:
+          pkg: "{{ __role_pkg }}"
+      YAML
+    output = IO::Memory.new
+    Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+    text = output.to_s
+
+    text.must_include("[ERROR]: Task failed: Finalization of task args for 'ansible.builtin.set_fact' failed: Error while resolving value for 'pkg': '__role_pkg' is undefined")
+    text.must_include("\nTask failed.\nOrigin: #{tasks_file}:1:3")
+    text.must_include("\n<<< caused by >>>\n\nFinalization of task args for 'ansible.builtin.set_fact' failed.\nOrigin: #{tasks_file}:2:3")
+    text.must_include("Error while resolving value for 'pkg': '__role_pkg' is undefined\nOrigin: #{tasks_file}:3:10")
+    text.must_include("fatal: [localhost]: FAILED! => {\"changed\": false, \"msg\": \"Task failed: Finalization of task args for 'ansible.builtin.set_fact' failed: Error while resolving value for 'pkg': '__role_pkg' is undefined\"}")
+  ensure
+    FileUtils.rm_rf(tempdir) if tempdir
+  end
 end
