@@ -717,6 +717,13 @@ module Krikri
       headers = HTTP::Headers.new
       headers["User-Agent"] = @params["http_agent"]? || "ansible-httpget"
 
+      # urllib's AbstractHTTPHandler.do_open always sends 'Connection:
+      # close', so servers answer "connection": "close" in the result;
+      # without it Crystal's client leaves HTTP/1.1 keep-alive in play and
+      # the echoed header reads "keep-alive". Set before the user-headers
+      # merge so an explicit Connection header still wins.
+      headers["Connection"] = "close"
+
       # force: real urls.py's open() sends 'cache-control: no-cache' to
       # bypass any caching layer between here and the server.
       headers["Cache-Control"] = "no-cache" if true?(@params["force"]?)
