@@ -716,3 +716,128 @@ describe "strict-undefined loop ITEM entries and dict-subscript-miss messages" d
     output.must_include("failed=1")
   end
 end
+
+# Issue #242 (opencore.keystores): a with_nested/with_together SIDE is
+# itself a filter chain over a genuinely undefined variable (`{{ groups.servers
+# | union(client_certificates) }}` with no such group). Ansible fails that
+# side's chain at loop resolution - the strict rule this file pins for loop: -
+# and because the task's own when: is False, that verdict surfaces as ONE bare
+# `skipping: [host]` line, never per-item skips of the other side's product.
+# The lenient nested/together fallback used to read the undefined side as
+# empty and iterate the other side instead.
+describe "with_nested/with_together sides are strict filter chains (issue #242)" do
+  it "prints one bare skipping line for a when: false nested loop whose side fails on an undefined filter chain" do
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        gather_facts: false
+        tasks:
+          - name: cert steps
+            ansible.builtin.debug:
+              msg: "step {{ item.1 }}"
+            with_nested:
+              - "{{ groups.servers | union(client_certificates) }}"
+              - ['csr', 'crt']
+            when: false
+          - name: sentinel
+            ansible.builtin.debug:
+              msg: "SENTINEL-242"
+      YAML
+
+    status.success?.must_equal(true)
+    lines = output.lines.map(&.chomp).select(&.starts_with?("skipping:"))
+    lines.size.must_equal(1)
+    lines[0].must_equal("skipping: [localhost]")
+    output.wont_include("(item=")
+    output.must_include("skipped=1")
+    output.must_include("failed=0")
+    output.must_include("SENTINEL-242")
+  end
+
+  it "skips a when: false together loop per item when a defined filter chain feeds it" do
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        gather_facts: false
+        vars:
+          servers: [user1, user2]
+          client_certificates: [csr, crt]
+        tasks:
+          - name: cert steps
+            ansible.builtin.debug:
+              msg: "step {{ item.1 }}"
+            with_together:
+              - "{{ servers | union(client_certificates) }}"
+              - ['csr', 'crt']
+            when: false
+      YAML
+
+    status.success?.must_equal(true)
+    # with_together ZIPS columns elementwise (padded with None), so the
+    # union's 4-element column vs ['csr','crt'] yields 4 pairs; per-item
+    # skipping is what proves the defined side still iterates instead of
+    # a loop-resolution failure or a collapse to one bare skip.
+    lines = output.lines.map(&.chomp).select(&.starts_with?("skipping:"))
+    lines.count(&.includes?("(item=")).must_equal(4)
+    lines.count(&.==("skipping: [localhost]")).must_equal(1)
+  end
+
+  it "still iterates a defined union side per pair" do
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        gather_facts: false
+        vars:
+          servers: [user1, user2]
+          client_certificates: [csr, crt]
+        tasks:
+          - name: cert steps
+            ansible.builtin.debug:
+              msg: "{{ item.0 }}-{{ item.1 }}"
+            with_nested:
+              - "{{ servers | union(client_certificates) }}"
+              - ['csr', 'crt']
+            register: result
+          - name: assert
+            ansible.builtin.assert:
+              that:
+                - result.results | length == 8
+      YAML
+
+    status.success?.must_equal(true)
+    output.must_include("All assertions passed")
+  end
+
+  it "fails a when:-less nested loop whose side pipes an undefined variable through a strict filter" do
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        gather_facts: false
+        tasks:
+          - name: cert steps
+            ansible.builtin.debug:
+              msg: "step {{ item.1 }}"
+            with_nested:
+              - "{{ groups.servers | union(client_certificates) }}"
+              - ['csr', 'crt']
+      YAML
+
+    status.exit_code.must_equal(2)
+    output.must_include("undefined")
+    output.must_include("failed=1")
+  end
+
+  it "fails a when:-less together loop whose side pipes an undefined variable through a strict filter" do
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        gather_facts: false
+        tasks:
+          - name: cert steps
+            ansible.builtin.debug:
+              msg: "step {{ item.1 }}"
+            with_together:
+              - "{{ groups.servers | union(client_certificates) }}"
+              - ['csr', 'crt']
+      YAML
+
+    status.exit_code.must_equal(2)
+    output.must_include("undefined")
+    output.must_include("failed=1")
+  end
+end
