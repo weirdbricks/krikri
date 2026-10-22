@@ -3982,6 +3982,16 @@ module Krikri
           # the failing ELEMENT rather than the first one (issue #228).
           cause_context = origin_context_block(path, lines, pos[0] + 1, pos[1])
         end
+      elsif inner.to_s.match(/\Aobject of type '[^']+' has no attribute '[^']+'\z/) &&
+            task_has_loop_source?(task) &&
+            (pos = locate_loop_source_line(lines, task))
+        # A loop source that IS defined but has the wrong shape (`loop:
+        # "{{ sensu_backend.namespaces }}"` with sensu_backend a dict)
+        # gets the same loop-VALUE-token Origin on its cause stanza as
+        # the undefined case above - live-verified vs 2.19.11, issue
+        # #239. No `missing:` name: there is no undefined variable for
+        # the element-narrowing to key on.
+        cause_context = origin_context_block(path, lines, pos[0] + 1, pos[1])
       end
 
       text = String.build do |io|

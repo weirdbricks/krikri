@@ -1706,6 +1706,51 @@ module Krikri
       end
     end
 
+    # Real 2.19.11 (live-verified, issue #239) warns on stderr at a LOOPED
+    # include_tasks:'s run time - right after the TASK banner, before the
+    # first `included:` line - when loop_control.loop_var names a reserved
+    # word the per-iteration binding would shadow:
+    #
+    #   [WARNING]: Found variable using reserved name 'namespace'.
+    #   Origin: <abs task file>:<line>:<col>   <- the loop_var VALUE token
+    #   (2 preceding source lines + caret, origin_context_block layout)
+    #
+    # Only include_tasks: warns - a plain module task with the same
+    # loop_control: stays silent (live-verified) - and only when a loop
+    # actually binds the name: a non-looped include's loop_control is
+    # ignored, no variable is bound, and nothing warns. Deduped per Origin
+    # position like Display.warning's dedup, under a mutex because the
+    # per-host fibers of the looped include path can reach this
+    # concurrently.
+    @@reserved_loop_var_warnings = Set(String).new
+    RESERVED_LOOP_VAR_WARN_MUTEX = Mutex.new
+
+    private def warn_reserved_loop_var(task : Task) : Nil
+      return unless task.include_tasks?
+      return unless task_has_loop?(task)
+      loop_var = task.loop_var
+      return unless loop_var && PlaybookParser::RESERVED_VAR_NAMES.includes?(loop_var)
+      path = task.source_file || @playbook_file
+      return unless path && File.file?(path)
+      lines = File.read_lines(path)
+      name_idx =
+        if located = locate_name_line(lines, task)
+          located[0]
+        else
+          return unless task.source_line > 0 && task.source_line <= lines.size
+          task.source_line - 1
+        end
+      return unless (pos = locate_param_key_position(lines, name_idx, "loop_var"))
+      dedup_key = "#{File.expand_path(path)}:#{pos[0] + 1}:#{pos[1]}"
+      RESERVED_LOOP_VAR_WARN_MUTEX.synchronize do
+        return if @@reserved_loop_var_warnings.includes?(dedup_key)
+        @@reserved_loop_var_warnings << dedup_key
+        STDERR.puts "[WARNING]: Found variable using reserved name '#{loop_var}'."
+        STDERR.puts origin_context_block(path, lines, pos[0] + 1, pos[1])
+        STDERR.puts
+      end
+    end
+
     # Runs a nested task list (block:/rescue:/always:), printing its own
     # TASK header per task since these live inside a block rather than the
     # play's top-level task list, so `run` never prints one for them. Stops
@@ -1803,6 +1848,10 @@ module Krikri
         # The item is exposed as `item` (Ansible's default) and, when
         # loop_control.loop_var is set, under that custom name too (e.g.
         # `mount` in dev-sec os_hardening's per-mountpoint include loop).
+        # Real only warns about a reserved loop_var name once the loop
+        # actually binds it - an undefined loop source never binds and
+        # stays silent (live-verified vs 2.19.11, issue #239).
+        warn_reserved_loop_var(task)
         loop_var = task.loop_var
         index_var = task.index_var
         unsafe_items = loop_items_derive_from_unsafe_data?(task, host.name)
