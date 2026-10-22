@@ -1,4 +1,5 @@
 require "../minitest_helper"
+require "../../src/krikri/playbook_parser"
 
 # ansible-core 2.19.11's console output and registered-result shape
 # for the community.mysql -> ansible.mysql collection-redirect
@@ -48,9 +49,16 @@ private PLAY_HEADER = [
 ]
 
 # `tasks` are task lines already indented for the play's `tasks:` list.
-private def run_play(tasks : Array(String)) : {Bool, String}
+# `collections` mirrors the play-level `collections:` keyword - real's
+# loader searches the listed collections for bare (non-FQCN) module
+# names and refuses the whole play when a bare unsupported name can't
+# be qualified without it, so the bare-spelling tests below name their
+# collection the same way real needs (krikri's own bare-name warning
+# path cannot depend on it: MODULE_SEARCH_COLLECTIONS is global).
+private def run_play(tasks : Array(String), collections : Array(String) = [] of String) : {Bool, String}
   playbook = File.tempname("mysql-redirect-deprecation", ".yml")
   body = PLAY_HEADER.dup
+  body << "  collections: [#{collections.join(", ")}]" unless collections.empty?
   body << "  tasks:"
   body.concat(tasks)
   File.write(playbook, body.join("\n") + "\n")
@@ -171,5 +179,83 @@ describe "community.mysql redirect deprecation" do
     # (the console [DEPRECATION WARNING] line above carries the same msg
     # text, so match the dump-escaped form here).
     output.scan("\\\"msg\\\": \\\"community.mysql.mysql_info has been deprecated. Use ansible.mysql.mysql_info instead.\\\"").size.must_equal(1)
+  end
+end
+
+# The unsupported end of the same redirect (see the header above):
+# mysql_replication and mysql_role are NOT krikri-supported modules (the
+# coverage bar), but real prints their task-load-time [DEPRECATION
+# WARNING] exactly like the supported modules' ones - the
+# hoplacloud.wordpress round diverged on the missing mysql_replication
+# line (github issue 246). So the table covers them anyway, and these
+# mirror proxmox_kvm_redirect_deprecation_test.cr's unsupported-module
+# shape: every task when:-gated (an unguarded one would fail the run
+# through reachable_unavailable_modules) and the deprecations result
+# entry asserted directly against the table helpers rather than through
+# a register: (the module never executes, so no result is produced to
+# attach an entry to).
+describe "community.mysql unsupported-module redirect deprecation" do
+  it "warns at task-load time for when-skipped mysql_replication and mysql_role tasks" do
+    success, output = run_play([
+      "    - name: replication probe",
+      "      community.mysql.mysql_replication:",
+      "        mode: getprimary",
+      "      when: false",
+      "    - name: role probe",
+      "      community.mysql.mysql_role:",
+      "      when: false",
+    ])
+    success.must_equal(true, output)
+    output.includes?(TRAILER_LINE).must_equal(true, output)
+    output.includes?(deprecation_line("mysql_replication")).must_equal(true, output)
+    output.includes?(deprecation_line("mysql_role")).must_equal(true, output)
+    # The stderr lines land before the play banner, like Ansible's
+    # task-load-time emission.
+    trailer_idx = output.index!(TRAILER_LINE)
+    play_idx = output.index!("PLAY [localhost]")
+    (trailer_idx < play_idx).must_equal(true, output)
+  end
+
+  it "warns with the resolved community.mysql FQCN for the bare mysql_replication spelling" do
+    # The bare unsupported spelling stays bare in task.module_name
+    # (resolve_module_name comes up empty), so this exercises
+    # MODULE_SEARCH_COLLECTIONS' qualification in
+    # redirect_deprecation_lookup.
+    success, output = run_play([
+      "    - name: bare replication",
+      "      mysql_replication:",
+      "        mode: getprimary",
+      "      when: false",
+    ], collections: ["community.mysql"])
+    success.must_equal(true, output)
+    output.includes?(TRAILER_LINE).must_equal(true, output)
+    # The line echoes the RESOLVED community.mysql FQCN, never the
+    # as-written bare spelling.
+    output.includes?(deprecation_line("mysql_replication")).must_equal(true, output)
+  end
+
+  it "carries the redirect msg, collection and removal version in the direct table lookups" do
+    %w[mysql_replication mysql_role].each do |module_name|
+      Krikri::PlaybookParser.redirect_deprecation_text("community.mysql.#{module_name}").must_equal(
+        "community.mysql.#{module_name} has been deprecated. " \
+        "Use ansible.mysql.#{module_name} instead. " \
+        "This feature will be removed from collection 'community.mysql' version 6.0.0.")
+      # The bare spelling must resolve to the same entry through
+      # MODULE_SEARCH_COLLECTIONS, despite the module being
+      # unimplemented.
+      Krikri::PlaybookParser.redirect_deprecation_text(module_name).must_equal(
+        Krikri::PlaybookParser.redirect_deprecation_text("community.mysql.#{module_name}"))
+      entry = Krikri::PlaybookParser.redirect_deprecation_result_entry("community.mysql.#{module_name}")
+      flunk("no deprecations result entry for #{module_name}") unless entry
+      entry = entry.not_nil!
+      # The msg carries NO removal tail; only the console line does.
+      entry["msg"].as_s.must_equal(
+        "community.mysql.#{module_name} has been deprecated. " \
+        "Use ansible.mysql.#{module_name} instead.")
+      entry["collection_name"].as_s.must_equal("community.mysql")
+      entry["version"].as_s.must_equal("6.0.0")
+      entry["deprecator"]["resolved_name"].as_s.must_equal("community.mysql")
+      entry["deprecator"]["type"].as_s?.must_equal(nil)
+    end
   end
 end

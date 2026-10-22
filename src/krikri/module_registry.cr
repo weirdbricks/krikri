@@ -629,22 +629,28 @@ module Krikri
     # whatever the module's support state: the community.mysql entries
     # redirect to their ansible.mysql.* homes (removal_version 6.0.0,
     # warning_text "Use ansible.mysql.<module> instead." - installed
-    # community.mysql 5.0.2; mysql_replication/mysql_role redirect the
-    # same way but are not krikri-supported modules, so they are
-    # deliberately absent: an unsupported module's divergence is out of
-    # scope per the coverage bar). community.general.proxmox_kvm is
-    # ALSO not krikri-supported - only its parse-time stderr
-    # deprecation is observable (the inoxio.proxmox_vms role round):
-    # community.general moved all proxmox content to community.proxmox
-    # and its meta/runtime.yml marks proxmox_kvm deprecated with
-    # removal_version 15.0.0, warning_text naming the new home.
+    # community.mysql 5.0.2), and that includes mysql_replication and
+    # mysql_role even though neither is a krikri-supported module: real
+    # prints their load-time [DEPRECATION WARNING] alongside the
+    # supported modules' ones (the hoplacloud.wordpress round, which
+    # diverged on the missing mysql_replication line alone - the
+    # warning is observable even though the module never executes; the
+    # same reasoning keeps proxmox_kvm here).
+    # community.general.proxmox_kvm is not krikri-supported either -
+    # only its parse-time stderr deprecation is observable (the
+    # inoxio.proxmox_vms role round): community.general moved all
+    # proxmox content to community.proxmox and its meta/runtime.yml
+    # marks proxmox_kvm deprecated with removal_version 15.0.0,
+    # warning_text naming the new home.
     REDIRECT_DEPRECATIONS = {
-      "community.mysql.mysql_db"        => {warning_text: "Use ansible.mysql.mysql_db instead.", collection: "community.mysql", version: "6.0.0"},
-      "community.mysql.mysql_info"      => {warning_text: "Use ansible.mysql.mysql_info instead.", collection: "community.mysql", version: "6.0.0"},
-      "community.mysql.mysql_query"     => {warning_text: "Use ansible.mysql.mysql_query instead.", collection: "community.mysql", version: "6.0.0"},
-      "community.mysql.mysql_user"      => {warning_text: "Use ansible.mysql.mysql_user instead.", collection: "community.mysql", version: "6.0.0"},
-      "community.mysql.mysql_variables" => {warning_text: "Use ansible.mysql.mysql_variables instead.", collection: "community.mysql", version: "6.0.0"},
-      "community.general.proxmox_kvm"   => {warning_text: "The proxmox content has been moved to community.proxmox.", collection: "community.general", version: "15.0.0"},
+      "community.mysql.mysql_db"          => {warning_text: "Use ansible.mysql.mysql_db instead.", collection: "community.mysql", version: "6.0.0"},
+      "community.mysql.mysql_info"        => {warning_text: "Use ansible.mysql.mysql_info instead.", collection: "community.mysql", version: "6.0.0"},
+      "community.mysql.mysql_query"       => {warning_text: "Use ansible.mysql.mysql_query instead.", collection: "community.mysql", version: "6.0.0"},
+      "community.mysql.mysql_replication" => {warning_text: "Use ansible.mysql.mysql_replication instead.", collection: "community.mysql", version: "6.0.0"},
+      "community.mysql.mysql_role"        => {warning_text: "Use ansible.mysql.mysql_role instead.", collection: "community.mysql", version: "6.0.0"},
+      "community.mysql.mysql_user"        => {warning_text: "Use ansible.mysql.mysql_user instead.", collection: "community.mysql", version: "6.0.0"},
+      "community.mysql.mysql_variables"   => {warning_text: "Use ansible.mysql.mysql_variables instead.", collection: "community.mysql", version: "6.0.0"},
+      "community.general.proxmox_kvm"     => {warning_text: "The proxmox content has been moved to community.proxmox.", collection: "community.general", version: "15.0.0"},
     }
 
     # The table entry for a module name, together with the FQCN the
@@ -654,7 +660,8 @@ module Krikri
     # the same way before record_deprecation fires, so the console line
     # echoes the resolved FQCN, never the as-written spelling. The
     # qualification matters only for names krikri does not implement
-    # natively (proxmox_kvm): task.module_name keeps the as-written
+    # natively (proxmox_kvm, mysql_replication/mysql_role):
+    # task.module_name keeps the as-written
     # bare name when resolve_module_name comes up empty, so without it
     # the bare spelling would go unwarned; a supported module's bare
     # spelling already arrives here resolved.

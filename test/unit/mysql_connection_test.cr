@@ -4,6 +4,21 @@ require "../../src/krikri/plugin_helpers/mysql_connection"
 describe Krikri::PluginHelpers::MysqlConnection do
   serial! # mutates process-global state (ENV / engine settings)
 
+  describe ".add_mariadb_warning" do
+    it "adds the ansible.mysql MariaDB warning once for a MariaDB version string" do
+      result = Krikri::PluginResult.new(changed: false, failed: false)
+      Krikri::PluginHelpers::MysqlConnection.add_mariadb_warning(result, "10.11.6-MariaDB-0ubuntu0.24.04.1")
+      Krikri::PluginHelpers::MysqlConnection.add_mariadb_warning(result, "10.11.6-MariaDB")
+      result.extra["warnings"].as_a.map(&.as_s).must_equal([Krikri::PluginHelpers::MysqlConnection::MARIADB_WARNING])
+    end
+
+    it "leaves a plain MySQL version string without warnings" do
+      result = Krikri::PluginResult.new(changed: false, failed: false)
+      Krikri::PluginHelpers::MysqlConnection.add_mariadb_warning(result, "8.4.0")
+      result.extra.has_key?("warnings").must_equal(false)
+    end
+  end
+
   describe ".build_uri" do
     it "defaults to localhost:3306, with the current OS user as the connection username" do
       PluginSpecHelper::ENV_MUTEX.synchronize do

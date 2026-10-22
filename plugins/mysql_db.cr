@@ -140,16 +140,18 @@ module Krikri
       )
 
       DB.open(uri) do |dbcon|
+        server_version = dbcon.query_one("SELECT VERSION()", as: String)
         existing = dbcon.query_all("SHOW DATABASES", as: String)
 
-        case state
-        when "present"
-          ensure_present(dbcon, db_list, db_name, existing, json_db, json_db_list, check_mode)
-        when "absent"
-          ensure_absent(dbcon, db_list, db_name, existing, json_db, json_db_list, check_mode)
-        else
-          PluginResult.new(changed: false, failed: true, msg: "state must be 'present' or 'absent', got '#{state}'")
-        end
+        result = case state
+                 when "present"
+                   ensure_present(dbcon, db_list, db_name, existing, json_db, json_db_list, check_mode)
+                 when "absent"
+                   ensure_absent(dbcon, db_list, db_name, existing, json_db, json_db_list, check_mode)
+                 else
+                   PluginResult.new(changed: false, failed: true, msg: "state must be 'present' or 'absent', got '#{state}'")
+                 end
+        PluginHelpers::MysqlConnection.add_mariadb_warning(result, server_version)
       end
     rescue ex : DB::ConnectionRefused
       PluginHelpers::DbErrors.connection_failed(ex, "MySQL")
