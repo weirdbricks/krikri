@@ -3936,7 +3936,7 @@ module Krikri
       if m = inner.to_s.match(/\A'([A-Za-z_][A-Za-z0-9_]*)' is undefined\z/)
         if origin = undef_chain_var_origin(task, m[1])
           cause_context = origin_context_block(origin.path, File.read_lines(origin.path), origin.line, origin.column)
-        elsif task_has_loop_source?(task) && (pos = locate_loop_source_line(lines, task))
+        elsif task_has_loop_source?(task) && (pos = locate_loop_source_line(lines, task, missing: m[1]))
           # An UNDEFINED loop source (`loop: "{{ wordpress_sites }}"`) has
           # no defining var for undef_chain_var_origin to find - but real
           # still pins the cause stanza's Origin at the loop keyword's
@@ -3944,7 +3944,9 @@ module Krikri
           # 2.19.11: `loop: "{{ wordpress_sites }}"` reports the loop
           # line/column with the usual excerpt+caret, issue #12,
           # armov.zabbix_agent2_lit_trellis_custom). Without this the
-          # caused-by stanza printed with no Origin block at all.
+          # caused-by stanza printed with no Origin block at all. The
+          # undefined name goes along so a literal list's Origin lands on
+          # the failing ELEMENT rather than the first one (issue #228).
           cause_context = origin_context_block(path, lines, pos[0] + 1, pos[1])
         end
       end
