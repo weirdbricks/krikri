@@ -707,7 +707,10 @@ module Krikri
         run_action(name, "stop", "Service stopped")
       when "restarted"
         return would("restart #{name}") if @check_mode
-        run_action(name, "restart", "Service restarted")
+        # Delegating to systemd_service.py: an INACTIVE unit gets `start`,
+        # never `restart`, so a failure reads "Unable to start service ...".
+        action = @manager == Manager::Systemd && !is_running ? "start" : "restart"
+        run_action(name, action, "Service restarted")
       else # "reloaded" - validated by the caller
         # Ansible's service module: `state: reloaded` reloads a
         # RUNNING service but STARTS an inactive one (systemctl reload

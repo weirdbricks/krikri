@@ -280,6 +280,8 @@ describe "service plugin - parameter coverage" do
       end
     end
 
+    # The shim unit is inactive, and Ansible starts (not restarts) an
+    # inactive unit for state: restarted, so the failure says "start".
     it "uses Unable-to wording with the unit name on a failed state: restarted" do
       with_failing_service_shims do |env, _log|
         result = PluginSpecHelper.run("service", {
@@ -291,7 +293,7 @@ describe "service plugin - parameter coverage" do
 
         result["failed"].as_bool.must_equal(true)
         result["msg"].as_s.must_equal(
-          "Unable to restart service krikri-fake-svc: Job for krikri-fake-svc.service failed because the control process exited with error code.\n"
+          "Unable to start service krikri-fake-svc: Job for krikri-fake-svc.service failed because the control process exited with error code.\n"
         )
       end
     end
