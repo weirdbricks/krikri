@@ -1025,9 +1025,18 @@ module Krikri
 
     # Real get_url's url_filename: basename of the URL's path component,
     # 'index.html' when the path has no basename (its own documented
-    # fallback).
+    # fallback). Python's os.path.basename keeps the empty tail of a
+    # trailing-slash path (os.path.basename("/ffmpeg/") == ""), so Ansible
+    # saves such downloads as index.html; Crystal's File.basename strips
+    # the slash and would name them after the directory instead. Found
+    # benchmarking ucsdlib.ffmpeg (issue #231): its
+    # https://johnvansickle.com/ffmpeg/ fetch into a directory dest
+    # landed at <dir>/ffmpeg, so the role's next grep on index.html
+    # had nothing to find.
     private def url_filename(url : String) : String
-      fn = File.basename(URI.parse(url).path || "")
+      path = URI.parse(url).path || ""
+      slash = path.rindex("/")
+      fn = slash ? path[(slash + 1)..] : path
       fn.empty? ? "index.html" : fn
     end
 

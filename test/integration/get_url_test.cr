@@ -82,6 +82,13 @@ private GET_URL_TEST_SERVER = HTTP::Server.new do |context|
   when "/pkg-1.0.tar.gz"
     context.response.status_code = 200
     context.response.print(FILE_CONTENT)
+  when "/ffmpeg/"
+    # Trailing-slash path shape (like the ucsdlib.ffmpeg role's
+    # https://johnvansickle.com/ffmpeg/): os.path.basename("/ffmpeg/") is
+    # the empty string, so a directory dest falls back to index.html.
+    context.response.status_code = 200
+    context.response.headers["Content-Length"] = FILE_CONTENT.bytesize.to_s
+    context.response.print(FILE_CONTENT)
   when "/file.txt.sha256-bare"
     context.response.status_code = 200
     context.response.print("#{FILE_CHECKSUM}\n")
@@ -926,6 +933,30 @@ describe "get_url plugin" do
     File.read(File.join(dest_dir, "pkg-1.0.tar.gz")).must_equal(FILE_CONTENT)
   ensure
     FileUtils.rm_rf(dest_dir) if dest_dir && Dir.exists?(dest_dir)
+  end
+
+  it "names a directory-dest download index.html when the URL's path ends in a slash" do
+    # Python's os.path.basename keeps the empty tail of a trailing-slash
+    # path ("/ffmpeg/" -> ""), so Ansible saves such a download under its
+    # index.html fallback; Crystal's File.basename strips the slash and
+    # would write <dir>/ffmpeg. Found benchmarking ucsdlib.ffmpeg (issue
+    # #231): its https://johnvansickle.com/ffmpeg/ fetch into a directory
+    # dest then broke the role's next grep on index.html.
+    parent = PluginSpecHelper.tmp_path("geturl-slash-#{Random::Secure.hex(4)}")
+    dest_dir = File.join(parent, "dl")
+    Dir.mkdir_p(dest_dir)
+
+    result = PluginSpecHelper.run("get_url", {
+      "url"  => "#{GET_URL_TEST_BASE}/ffmpeg/",
+      "dest" => dest_dir,
+    })
+
+    result["changed"].as_bool.must_equal(true)
+    falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+    result["dest"].as_s.must_equal(File.join(dest_dir, "index.html"))
+    File.read(File.join(dest_dir, "index.html")).must_equal(FILE_CONTENT)
+  ensure
+    FileUtils.rm_rf(parent) if parent
   end
 
   it "is idempotent on a directory-dest rerun (always re-requests, then content-compares the final dest)" do
