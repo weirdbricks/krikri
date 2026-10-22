@@ -578,7 +578,7 @@ describe Krikri::VariableSubstitutor::JinjaRenderer do
     v = Hash(String, JSON::Any).new
     v["my_var"] = JSON::Any.new("computed")
     renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
-    renderer.render(%({{ lookup('template', '#{path}') }})).must_equal("value is computed")
+    renderer.render(%({{ lookup('template', '#{path}') }})).must_equal("value is computed\n")
   end
 
   # Real find_file_in_search_path(variables, 'templates', term): a
@@ -598,7 +598,7 @@ describe Krikri::VariableSubstitutor::JinjaRenderer do
     v = Hash(String, JSON::Any).new
     v["role_path"] = JSON::Any.new(role_dir)
     renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
-    renderer.render(%({{ lookup('template', 'redis.conf.j2') }})).must_equal("from templates dir")
+    renderer.render(%({{ lookup('template', 'redis.conf.j2') }})).must_equal("from templates dir\n")
   end
 
   it "falls back to the role's files/ dir and role root for a relative lookup('template', ...) term" do
@@ -610,8 +610,8 @@ describe Krikri::VariableSubstitutor::JinjaRenderer do
     v = Hash(String, JSON::Any).new
     v["role_path"] = JSON::Any.new(role_dir)
     renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
-    renderer.render(%({{ lookup('template', 'plain.txt') }})).must_equal("from files dir")
-    renderer.render(%({{ lookup('template', 'root.txt') }})).must_equal("from role root")
+    renderer.render(%({{ lookup('template', 'plain.txt') }})).must_equal("from files dir\n")
+    renderer.render(%({{ lookup('template', 'root.txt') }})).must_equal("from role root\n")
   end
 
   it "renders lookup('template', path, template_vars=dict(...)) merging the kwarg's dict into the rendered template's own vars" do
@@ -629,7 +629,7 @@ describe Krikri::VariableSubstitutor::JinjaRenderer do
 
     v = Hash(String, JSON::Any).new
     renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
-    renderer.render(%({{ lookup('template', '#{path}', template_vars=dict(app_name='myapp', var_type='prod')) }})).must_equal("myapp-prod")
+    renderer.render(%({{ lookup('template', '#{path}', template_vars=dict(app_name='myapp', var_type='prod')) }})).must_equal("myapp-prod\n")
   end
 
   it "strips a #jinja2: directive line from lookup('template', ...) output, same as the template: module" do
@@ -640,7 +640,7 @@ describe Krikri::VariableSubstitutor::JinjaRenderer do
     v = Hash(String, JSON::Any).new
     v["my_var"] = JSON::Any.new("computed")
     renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
-    renderer.render(%({{ lookup('template', '#{path}') }})).must_equal("value is computed")
+    renderer.render(%({{ lookup('template', '#{path}') }})).must_equal("value is computed\n")
   end
 
   it "resolves namespace()-accumulated items through a nested lookup('template', ..., template_vars=dict(...)) round-trip via to_json/from_json" do

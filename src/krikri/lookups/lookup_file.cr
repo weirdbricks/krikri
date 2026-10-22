@@ -112,10 +112,9 @@ module Krikri
         # lookup('template', path[, template_vars=dict(...)]) - renders
         # a local (controller-side) `.j2` file through the same Crinja
         # pipeline `template:` tasks use, against this expression's own
-        # vars, and returns the rendered text with one trailing newline
-        # stripped (matches Ansible's own template lookup plugin,
-        # which is explicitly documented to strip a single trailing
-        # newline the way Jinja2's own template rendering leaves one).
+        # vars, and returns the rendered text with the template's own
+        # trailing newlines kept (Ansible's template lookup keeps them;
+        # see the reconciliation at the end of the render below).
         path = parts[1]?.try { |part| evaluate(part.strip) }
         return "undefined" unless path
         resolved_path = resolve_template_lookup_path(path)
@@ -164,7 +163,17 @@ module Krikri
           end
 
           renderer = render_vars.same?(@vars) ? jinja_renderer : JinjaRenderer.new(render_vars, @decode)
-          renderer.render(template_content).chomp
+          # Ansible's template lookup keeps the template's trailing newlines
+          # (live-verified vs ansible-core 2.19.11: a file holding exactly
+          # "plain text\n" yields "plain text\n", and a role's loop item
+          # built from a template file keeps its final "\n"). Jinja chomps
+          # one of them when rendering, so put back whatever the source had
+          # beyond the rendered result's own trailing newlines, the same
+          # reconciliation the template: action uses.
+          rendered = renderer.render(template_content)
+          missing = (template_content.size - template_content.rstrip('\n').size) - (rendered.size - rendered.rstrip('\n').size)
+          rendered += "\n" * missing if !rendered.empty? && missing > 0
+          rendered
         rescue
           "undefined"
         end

@@ -16,4 +16,11 @@ describe Krikri::PyDump do
     Krikri::PyDump.yaml(JSON.parse(%(["123", "yes", "a b", ""]))).must_equal("['123', 'yes', a b, '']\n")
     Krikri::PyDump.yaml(JSON.parse(%([{"k": "v"}, [4, 5]])), 4, false).must_equal("-   k: v\n-   - 4\n    - 5\n")
   end
+
+  # Ansible's to_yaml writes through libyaml, which emits no "..." after a
+  # root plain scalar (live: to_yaml(None) == "null\n", to_yaml("x") == "x\n").
+  it "writes no document-end marker after a root plain scalar" do
+    Krikri::PyDump.yaml(JSON::Any.new(nil)).must_equal("null\n")
+    Krikri::PyDump.yaml(JSON::Any.new("x")).must_equal("x\n")
+  end
 end

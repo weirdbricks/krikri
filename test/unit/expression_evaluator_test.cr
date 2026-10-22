@@ -771,7 +771,7 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
     v = Hash(String, JSON::Any).new
     v["my_var"] = JSON::Any.new("computed")
     evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
-    evaluator.evaluate(%(lookup('template', '#{path}'))).must_equal("value is computed")
+    evaluator.evaluate(%(lookup('template', '#{path}'))).must_equal("value is computed\n")
   end
 
   # Real find_file_in_search_path(variables, 'templates', term): a
@@ -787,7 +787,7 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
     v = Hash(String, JSON::Any).new
     v["role_path"] = JSON::Any.new(role_dir)
     evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
-    evaluator.evaluate(%(lookup('template', 'redis.conf.j2'))).must_equal("from templates dir")
+    evaluator.evaluate(%(lookup('template', 'redis.conf.j2'))).must_equal("from templates dir\n")
   end
 
   it "strips a leading #jinja2: directive line from lookup('template', path)'s rendered output" do
@@ -807,7 +807,7 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
     v = Hash(String, JSON::Any).new
     v["my_var"] = JSON::Any.new("computed")
     evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
-    evaluator.evaluate(%(lookup('template', '#{path}'))).must_equal("value is computed")
+    evaluator.evaluate(%(lookup('template', '#{path}'))).must_equal("value is computed\n")
   end
 
   it "evaluates lookup('template', path, template_vars=dict(...)) merging the kwarg's dict into the rendered template's own vars" do
@@ -826,7 +826,7 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
     v = Hash(String, JSON::Any).new
     v["my_var"] = JSON::Any.new("computed")
     evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
-    evaluator.evaluate(%(lookup('template', '#{path}', template_vars=dict(app_name='ferm')))).must_equal("ferm-computed")
+    evaluator.evaluate(%(lookup('template', '#{path}', template_vars=dict(app_name='ferm')))).must_equal("ferm-computed\n")
   end
 
   it "evaluates lookup('password', path) generating and persisting a password across calls" do
