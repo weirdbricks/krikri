@@ -2081,7 +2081,7 @@ module Krikri
     private def render_debug_msg_leaves(substitutor : VarSubstitutor, node : JSON::Any) : JSON::Any
       case raw = node.raw
       when String
-        JSON::Any.new(substitutor.substitute(raw, strict: true, output: true))
+        msg_leaf_rendered(substitutor, raw)
       when Array
         JSON::Any.new(raw.map { |item| render_debug_msg_leaves(substitutor, item) })
       when Hash
@@ -2091,6 +2091,26 @@ module Krikri
       else
         node
       end
+    end
+
+    # A list/dict msg leaf that is WHOLLY one `{{ expr }}` span keeps the
+    # expression's structured value: real templates the msg container
+    # element-by-element (the same per-leaf rule the text rendering here
+    # follows) and a single-span element keeps its native type, so
+    # `msg: ["{{ dict_var }}"]` shows a real dict (the same native-typing
+    # bar the `var:` path and every structured set_fact leaf already pass)
+    # - the old substitute-only leaf collapsed it to the quoted
+    # JSON/repr text string. Undefined spans and mixed text fall back to
+    # the strict substitute below, which owns exactly what real fails
+    # with there ('missing' is undefined) and what renders as text.
+    private def msg_leaf_rendered(substitutor : VarSubstitutor, raw : String) : JSON::Any
+      stripped = raw.strip
+      if stripped.starts_with?("{{") && stripped.ends_with?("}}") &&
+         raw.split("{{").size == 2 && raw.split("}}").size == 2 &&
+         (structured = VariableSubstitutor::Rerender.whole_span_structured(substitutor.vars, stripped))
+        return structured
+      end
+      JSON::Any.new(substitutor.substitute(raw, strict: true, output: true))
     end
 
     # Whole-single-span template leaves of a JSON-container set_fact
