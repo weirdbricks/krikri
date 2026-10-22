@@ -5,6 +5,7 @@ require "http/client"
 require "uri"
 require "../src/krikri/base_plugin"
 require "../src/krikri/plugin_helpers/http_download"
+require "../src/krikri/plugin_helpers/multiext_split"
 
 module Krikri
   # Unarchive plugin - extracts an archive into a directory. Compatible
@@ -261,12 +262,15 @@ module Krikri
       tmpdir = expand_tilde("~/.ansible/tmp/ansible-tmp-#{sprintf("%.7f", Time.local.to_unix_f)}-#{Process.pid}-#{Random.rand(100_000_000_000_000..999_999_999_999_999)}")
       Dir.mkdir_p(tmpdir, mode: 0o700)
 
-      # Python os.path.splitext on the URL basename (query string
-      # ignored) - for .tar.gz that yields ext ".gz", which is exactly
-      # how Ansible's staged name loses the ".tar" part.
+      # fetch_file (ansible/module_utils/urls.py) names the staged
+      # tempfile after the URL basename's last two suffix components
+      # (_split_multiext, count=2), NOT os.path.splitext - the splitext
+      # form would keep ".tar" in the prefix and read
+      # ...tar<rand8>.gz, and since this staged path comes back as
+      # `src` in unarchive's output (see the block comment above),
+      # getting it wrong is visible to the byte-comparison rounds.
       basename = File.basename(URI.parse(src).path || src)
-      dot = basename.rindex('.')
-      stem, ext = dot && dot > 0 ? {basename[0...dot], basename[dot..]} : {basename, ""}
+      stem, ext = UnarchivePlugin.split_multiext(basename)
 
       tmp_download_path = create_staged_download(tmpdir, stem, ext)
       unless tmp_download_path
@@ -307,6 +311,15 @@ module Krikri
         end
       end
       ex.message || ex.class.name
+    end
+
+    # fetch_file's _split_multiext(name, min=3, max=4, count=2), kept as
+    # a public class method so the algorithm is reachable from a unit
+    # test; the implementation lives in PluginHelpers::MultiextSplit
+    # (own file - a spec can't require this one without hitting its
+    # STDIN entry point).
+    def self.split_multiext(name : String) : {String, String}
+      PluginHelpers::MultiextSplit.split(name)
     end
 
     # Python tempfile.mkstemp naming (stem prefix, ext suffix, 8 random
