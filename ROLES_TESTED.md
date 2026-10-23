@@ -14394,3 +14394,13 @@ Local probe roles, not Galaxy roles: each probed task registers its result and d
 | `robertdebock.restore` | rocky | ✅ Clean (round29879461, 0.9.1879 debug). |
 | `silviuvulcan.graylogsidecar` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29879462, 0.9.1879 debug). |
 | `tschifftner.automysqlbackup` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29879460, 0.9.1879 debug). |
+| `autechgemz.systemd_timesyncd` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29879469, 0.9.1879 debug). |
+| `calvinbui.ansible_collabora_docker` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29879470, 0.9.1879 debug). |
+| `cnstechnicalgroup.sqlserver-client` | ubuntu | ❌ Divergent - issue #277 (round29879468, 0.9.1879 debug). |
+| `micko920.role_caddy_config` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29879477, 0.9.1879 debug). |
+| `mrlesmithjr.iptables` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29879475, 0.9.1879 debug). |
+| `mrlesmithjr.open-iscsi` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29879474, 0.9.1879 debug). |
+| `pinkeen.interactive-users` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29879476, 0.9.1879 debug). |
+| `pixelart.phpstorm` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29879472, 0.9.1879 debug). |
+| `robertdebock.bios_update` | rocky | ✅ Clean (round29879473, 0.9.1879 debug). |
+| `robertdebock.sosreport` | rocky | ❌ Divergent - issue #278 (round29879471, 0.9.1879 debug). |
