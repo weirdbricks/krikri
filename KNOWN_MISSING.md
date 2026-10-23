@@ -153,6 +153,11 @@ krikri aims for byte-for-byte identical stdout/stderr/exit code to `ansible-play
 - `community.general.filesystem`'s `value of fstype must be one of: ...` is built by real from a
   Python set of strings, so **Python string-hash randomization** reorders it per process -
   unmatchable by design; the generator masks it (`FSTYPE-SET-ORDER` in masks.cr).
+- `unarchive`'s "Failed to find handler for ..." message joins the per-handler failure reasons
+  (`Command ... could not handle archive`, `Unable to find required ... binary`) from a Python set
+  of strings, so **string-hash randomization** reorders them per process (every sample differs,
+  even cold vs warm of one round) - unmatchable by design; krikri emits a fixed order
+  (issue #255, earlier #112).
 - `-vvv` module-execution mechanics lines (`ESTABLISH LOCAL CONNECTION ...`, `EXEC`/`PUT`,
   `Using module file ...`, `Pipelining is enabled.`): no interpreter, module file or staged tmp dir
   exists here, and those lines embed per-run random `ansible-tmp-<epoch>-<pid>-<random>` paths. Masked
