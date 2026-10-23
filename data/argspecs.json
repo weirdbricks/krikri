@@ -9914,6 +9914,56 @@
   "required_one_of": [],
   "required_together": []
  },
+ "community.general.cpanm": {
+  "mutually_exclusive": [],
+  "options": {
+   "name": {
+    "type": "str",
+    "aliases": [
+     "pkg"
+    ]
+   },
+   "from_path": {
+    "type": "path"
+   },
+   "notest": {
+    "type": "bool",
+    "default": false
+   },
+   "locallib": {
+    "type": "path"
+   },
+   "mirror": {
+    "type": "str"
+   },
+   "mirror_only": {
+    "type": "bool",
+    "default": false
+   },
+   "installdeps": {
+    "type": "bool",
+    "default": false
+   },
+   "executable": {
+    "type": "path"
+   },
+   "mode": {
+    "type": "str",
+    "choices": [
+     "compatibility",
+     "new"
+    ],
+    "default": "compatibility"
+   },
+   "name_check": {
+    "type": "str"
+   }
+  },
+  "required_by": {},
+  "required_if": [],
+  "required_one_of": [],
+  "required_together": []
+ },
  "community.general.easy_install": {
   "mutually_exclusive": [],
   "options": {
