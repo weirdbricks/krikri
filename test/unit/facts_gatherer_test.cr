@@ -281,8 +281,16 @@ describe Krikri::FactsGatherer do
       Krikri::FactsGatherer.fqdn_from_getent_hosts("10.0.0.5 short alias.example.com other").must_equal("alias.example.com")
     end
 
-    it "returns empty when every name is dotless, triggering the plain-hostname fallback" do
-      Krikri::FactsGatherer.fqdn_from_getent_hosts("127.0.0.1 myhost").must_equal("")
+    it "falls back to the reverse line's canonical name when every name is dotless" do
+      # Python's getfqdn falls back to the reverse lookup's own canonical
+      # name, NOT the machine's current hostname: seen live when a role
+      # added `127.0.1.1 testhost <machine-short-name>` to /etc/hosts and
+      # ansible-playbook reported ansible_fqdn "testhost" while the
+      # machine named itself the long one - a System.hostname fallback
+      # kept a later `hostname: name={{ ansible_fqdn }}` task ok where
+      # ansible reported changed.
+      Krikri::FactsGatherer.fqdn_from_getent_hosts("127.0.0.1 myhost").must_equal("myhost")
+      Krikri::FactsGatherer.fqdn_from_getent_hosts("127.0.1.1 testhost b29879416rockyl3dmailserv").must_equal("testhost")
     end
 
     it "returns empty for a bare address with no names at all" do
