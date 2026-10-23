@@ -13272,7 +13272,7 @@ Local probe roles, not Galaxy roles: each probed task registers its result and d
 | `bmeme.mule` | rocky | ❌ divergent (round29865034, 0.9.1687 release): krikri issue #59. Times: cold py 14.74s vs cr 12.81s; warm py 15.08s vs cr 5.57s. |
 | `bodsch.icingadb` | ubuntu | ❌ divergent (round29864965, 0.9.1687 release): krikri issue #56. Times: cold py 28.82s vs cr 19.06s; warm py 9.76s vs cr 1.74s. |
 | `bodsch.pacman` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29864951, 0.9.1687 release). Times: cold py 4.54s vs cr 3.74s; warm py 3.90s vs cr 0.48s. |
-| `chouseknecht_minishift` | rocky | ⛔ blocked: TIMED_OUT_OR_CRASHED (round29864956, 0.9.1687 release); not analysed. |
+| `chouseknecht_minishift` | ubuntu | ❌ BLOCKED: (round29878570, 0.9.1856 debug). |
 | `clayman74.docker` | ubuntu | ✅ clean, byte-identical cold and warm (round29864995, 0.9.1687 release). Times: cold py 4.06s vs cr 3.77s; warm py 2.86s vs cr 0.35s. |
 | `croissant.git` | ubuntu | ❌ divergent (round29865037, 0.9.1687 release): only timestamps/delta differ in a both-fail make install; mask candidate, no issue. Times: cold py 111.54s vs cr 102.32s; warm py 17.55s vs cr 6.23s. |
 | `darexsu.lemp` | ubuntu | ✅ clean, byte-identical cold and warm (round29865011, 0.9.1687 release). Times: cold py 5.39s vs cr 4.25s; warm py 4.02s vs cr 0.67s. |
@@ -14265,3 +14265,12 @@ Local probe roles, not Galaxy roles: each probed task registers its result and d
 | `lunik.coredns` | rocky | ❌ Divergent - issue #254 (round29878535, 0.9.1856 debug). |
 | `trombik.ssh` | rocky | ✅ Clean (round29878537, 0.9.1856 debug). |
 | `tyoshii.apache-mod-h264-streaming` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29878530, 0.9.1856 debug). |
+| `ansiblebit.git` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29878569, 0.9.1856 debug). |
+| `brucellino.fgapi-db` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29878576, 0.9.1856 debug). |
+| `clouddrove.ansible_role_mount_efs` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29878572, 0.9.1856 debug). |
+| `indigo-dc.kubernetes` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29878574, 0.9.1856 debug). |
+| `mrlesmithjr.kibana` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29878573, 0.9.1856 debug). |
+| `roles-ansible.rustdesk` | rocky | ❌ Divergent - issue #255 (round29878568, 0.9.1856 debug). |
+| `scholdan.certbot_dns` | ubuntu | ❌ Divergent - issue #256 (round29878571, 0.9.1856 debug). |
+| `terkea.beats` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29878575, 0.9.1856 debug). |
+| `vklysoff.etckeeper` | ubuntu | ✅ Clean (round29878567, 0.9.1856 debug). |
