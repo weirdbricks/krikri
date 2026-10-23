@@ -209,6 +209,11 @@ describe "git plugin" do
 
     result["changed"].as_bool.must_equal(true)
     falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+    # git.py's clone() takes the --depth --branch path for a tag, so
+    # neither engine has got anything to warn about here - pinning that
+    # separately from the sha case guards against the warning ever being
+    # attached unconditionally.
+    result["warnings"]?.must_be_nil
     File.read(File.join(dest, "file.txt")).strip.must_equal("one")
   end
 
@@ -222,7 +227,26 @@ describe "git plugin" do
 
     result["changed"].as_bool.must_equal(true)
     falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+    # Issue #279 (baztian.git role): on this same input real ansible ends
+    # the task output with
+    # [WARNING]: Ignoring depth argument. Shallow clones are only available
+    # for HEAD, branches, tags or in combination with refspec.
+    # - the warning is collected on the module before its full clone, so
+    # the succeeding checkout's result still carries it; krikri used to
+    # print nothing at all.
+    result["warnings"].as_a.map(&.as_s).must_equal([
+      "Ignoring depth argument. Shallow clones are only available for HEAD, branches, tags or in combination with refspec.",
+    ])
     File.read(File.join(dest, "file.txt")).strip.must_equal("one")
+
+    # The second run takes the update path over the existing repo, where
+    # git.py's fetch() under depth: (and a sha version) falls back to a
+    # full fetch with NO module.warn call at all - the collected warning
+    # exists only on the fresh clone's result, and repeating it here would
+    # itself be a divergence.
+    second = PluginSpecHelper.run("git", {"repo" => repo, "dest" => dest, "version" => shas["first_sha"], "depth" => "1"})
+    second["changed"].as_bool.must_equal(false)
+    second["warnings"]?.must_be_nil
   end
 
   it "fails with a clear message for an unresolvable version" do
