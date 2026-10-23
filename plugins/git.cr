@@ -62,6 +62,16 @@ module Krikri
     @reference : String?
     @separate_git_dir : String?
     @gpg_allowlist : Array(String) = [] of String
+    # git.py's clone() module.warn()s (BEFORE running the clone) when a
+    # depth: comes with a version only a full fetch can reach (commit
+    # sha), and AnsibleModule appends collected warnings to whichever
+    # payload the module finally exits with. do_clone returns nil on
+    # success, so the warning rides this ivar to execute_checked's final
+    # result (issue #279, baztian.git: real ansible prints the [WARNING]
+    # line, krikri printed nothing). git.py's fetch() itself warns nothing
+    # under depth: - it just falls back to a full fetch - so the update
+    # path must never set this, leaving the second run silent.
+    @depth_ignored_warning : String?
 
     # run_command(..., check_rc=True) in git.py: a non-zero exit from the
     # ls-remote branch/tag probes ends the module with basic.py's own
@@ -420,8 +430,13 @@ module Krikri
       # carries remote_url_changed, even when false; krikri doesn't emit
       # that key yet). One order list covers both since absent keys are
       # skipped. msg is krikri-only and trails the pins.
-      PluginResult.new(changed: changed, failed: false, msg: msg, before: before, after: after,
+      result = PluginResult.new(changed: changed, failed: false, msg: msg, before: before, after: after,
         key_order: ["changed", "before", "remote_url_changed", "after"])
+      # The clone path is where a plugin captured warning text must land
+      # (the update path never warns); git.py's check-mode/clone:no
+      # ls-remote exit short-circuits before its clone(), like ours above.
+      attach_depth_ignored_warning(result)
+      result
     end
 
     # AnsibleModule argument validation: mutually_exclusive pairs and
@@ -504,6 +519,15 @@ module Krikri
       r[:exit_code] == 0
     end
 
+    # The extra["warnings"] channel unarchive's attach_warning uses and
+    # ResultDisplay prints `[WARNING]: <text>` lines from.
+    private def attach_depth_ignored_warning(result : PluginResult) : PluginResult
+      if warning = @depth_ignored_warning
+        result.extra["warnings"] = JSON.parse([warning].to_json)
+      end
+      result
+    end
+
     private def do_clone(dest : String, single_branch : Bool) : PluginResult?
       parent = File.dirname(dest)
       Dir.mkdir_p(parent) unless Dir.exists?(parent)
@@ -521,8 +545,11 @@ module Krikri
           argv += ["--depth", dep, "--branch", @version]
           branch_added = true
         else
-          # Ansible warns and ignores depth for refs that cannot be
-          # fetched directly (commit shas) - a full clone follows instead.
+          # git.py's clone() warns with exactly this text and ignores depth
+          # for refs that cannot be fetched directly (commit shas) - a full
+          # clone follows instead; the collected text still has to ride
+          # the module's final payload (see @depth_ignored_warning).
+          @depth_ignored_warning = "Ignoring depth argument. Shallow clones are only available for HEAD, branches, tags or in combination with refspec."
         end
       end
       if reference = @reference
