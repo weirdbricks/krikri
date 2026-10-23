@@ -14274,3 +14274,13 @@ Local probe roles, not Galaxy roles: each probed task registers its result and d
 | `scholdan.certbot_dns` | ubuntu | ❌ Divergent - issue #256 (round29878571, 0.9.1856 debug). |
 | `terkea.beats` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29878575, 0.9.1856 debug). |
 | `vklysoff.etckeeper` | ubuntu | ✅ Clean (round29878567, 0.9.1856 debug). |
+| `antmelekhin.confluence` | ubuntu | ❌ Divergent - issue #257 (round29878651, 0.9.1858 debug). |
+| `hax0rbana_adam.nginx` | rocky | ✅ Clean (round29878652, 0.9.1858 debug). |
+| `hengamer03.ansible-colorprompt` | ubuntu | ✅ Clean (round29878649, 0.9.1858 debug). |
+| `juju4.maxmind` | ubuntu | ❌ Divergent - issue #258 (round29878653, 0.9.1858 debug). |
+| `ksingh7.cosbench` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29878645, 0.9.1858 debug). |
+| `mullholland.adguardhome_docker` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29878648, 0.9.1858 debug). |
+| `mullholland.sysctl` | ubuntu | ✅ Clean (round29878647, 0.9.1858 debug). |
+| `omiguelperez.ec2_staging_deploy` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29878654, 0.9.1858 debug). |
+| `sleepy-nols.jellyfin` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29878646, 0.9.1858 debug). |
+| `wtanaka.autofs` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29878650, 0.9.1858 debug). |
