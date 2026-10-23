@@ -14384,3 +14384,13 @@ Local probe roles, not Galaxy roles: each probed task registers its result and d
 | `tjarrett.drush` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29879386, 0.9.1876 release). Times: cold py 5.08s vs cr 0.70s; warm py 1.85s vs cr 0.12s. |
 | `veselahouba.openssl` | ubuntu | ❌ Divergent - issue #275 (round29879384, 0.9.1876 release). Times: cold py 2.22s vs cr 3.98s; warm py 2.69s vs cr 3.39s. |
 | `wtanaka.virtualenv` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29879387, 0.9.1876 release). Times: cold py 0.45s vs cr 0.01s; warm py 0.45s vs cr 0.01s. |
+| `andrewrothstein.orientdb` | rocky | ✅ Clean (round29879465, 0.9.1879 debug). |
+| `entanet_devops.ansible_role_netbox` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29879463, 0.9.1879 debug). |
+| `hax0rbana_adam.lnbits` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29879469, 0.9.1879 debug). |
+| `mcgrof.install_vagrant` | ubuntu | ✅ Clean (round29879466, 0.9.1879 debug). |
+| `mrlesmithjr.consul` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29879468, 0.9.1879 debug). |
+| `mrlesmithjr.graphite` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29879467, 0.9.1879 debug). |
+| `robertdebock.debug` | ubuntu | ❌ Divergent - issue #276 (round29879464, 0.9.1879 debug). |
+| `robertdebock.restore` | rocky | ✅ Clean (round29879461, 0.9.1879 debug). |
+| `silviuvulcan.graylogsidecar` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29879462, 0.9.1879 debug). |
+| `tschifftner.automysqlbackup` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29879460, 0.9.1879 debug). |
