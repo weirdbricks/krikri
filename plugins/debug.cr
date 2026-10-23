@@ -84,6 +84,11 @@ module Krikri
         result.key_order = [var_name]
       else
         result.msg = msg.to_s
+        # An EXPLICIT msg: '' keeps its "msg": "" key on the wire, like
+        # any exit_json(msg = "") would (ansible's registered var carries
+        # it too) - only an ABSENT msg is omitted, and that path took the
+        # Hello world! default above.
+        result.include_empty_msg = true if msg
         # Ansible's registered debug msg result runs msg, failed, changed
         # (live-verified vs 2.19.11).
         result.key_order = ["msg"]

@@ -589,6 +589,22 @@ module Krikri
 
       if verbose_always
         cleaned = module_name.try(&.ends_with?("debug")) ? debug_clean_result(result) : clean_for_display(result)
+        # Ansible's strategy merges the loop item under its loop var name
+        # into the result before the callback runs, and for debug msg
+        # results _clean_results drops only keys that are neither among
+        # its kept set nor underscore-prefixed - so a loop var whose own
+        # name starts with `_` (e.g. __out) survives into the dump, while
+        # the default `item` and ansible_loop_var are cleaned away
+        # (live-verified vs 2.19.11). Module results reach display without
+        # the loop bindings, so re-merge only the key Ansible keeps.
+        if result["msg"]? && (item = loop_item)
+          var_name = loop_var_name.try { |name| !name.empty? ? name : nil } || "item"
+          if var_name.starts_with?('_')
+            h = cleaned.as_h.try(&.dup) || Hash(String, JSON::Any).new
+            h[var_name] = item
+            cleaned = JSON::Any.new(h)
+          end
+        end
         puts "#{status}: [#{host_label}]#{suffix} => #{dump_pretty(cleaned)}"
       elsif Krikri::RunOptions.verbosity >= 1
         # Real -v/-vv appends the whole (cleaned) result as a single-line
@@ -1742,7 +1758,7 @@ module Krikri
     def self.python_repr(value : JSON::Any) : String
       case raw = value.raw
       when Hash(String, JSON::Any)
-        inner = raw.map { |k, v| "'#{k}': #{python_repr(v)}" }.join(", ")
+        inner = raw.map { |k, v| "#{python_repr_string(k)}: #{python_repr(v)}" }.join(", ")
         "{#{inner}}"
       when Array(JSON::Any)
         "[" + raw.map { |v| python_repr(v) }.join(", ") + "]"
@@ -1753,8 +1769,36 @@ module Krikri
       when Int64, Int32, Float64
         raw.to_s
       else
-        "'" + value.to_s.gsub("\\", "\\\\").gsub("'", "\\'") + "'"
+        python_repr_string(raw.as(String))
       end
+    end
+
+    # Ansible's loop-item label is Python's repr() of the item, so a string
+    # item holding terminal color codes (ssh-audit output) prints as
+    # `\x1b[0;36m`, never as the raw ESC byte. Python quotes with ' unless
+    # the string holds ' and no ", and escapes control bytes as \n/\r/\t or
+    # lowercase \xNN. Backslashes double first so the escapes inserted
+    # afterwards survive untouched.
+    private def self.python_repr_string(raw : String) : String
+      quote = raw.includes?("'") && !raw.includes?("\"") ? "\"" : "'"
+      escaped = String.build do |io|
+        raw.each_char do |char|
+          case char
+          when '\\'     then io << "\\\\"
+          when '\n'     then io << "\\n"
+          when '\r'     then io << "\\r"
+          when '\t'     then io << "\\t"
+          when quote[0] then io << '\\' << char
+          else
+            if char.ord < 0x20 || char.ord == 0x7f
+              io << "\\x" << char.ord.to_s(16).rjust(2, '0')
+            else
+              io << char
+            end
+          end
+        end
+      end
+      "#{quote}#{escaped}#{quote}"
     end
 
     private def self.python_json_value(value : JSON::Any) : String
