@@ -87,6 +87,49 @@ describe Krikri::FactsGatherer do
     expect(facts["ansible_processor_threads_per_core"].as_i64 > 0).must_equal(true)
   end
 
+  it "parses a real x86 cpuinfo into ansible's flat [index, vendor, model] list" do
+    # ansible-core's Linux get_cpu_facts appends the value of every
+    # 'processor'/'vendor_id'/'model name' line to ONE flat list in
+    # cpuinfo order: [index, vendor, model] per logical CPU. On x86 index
+    # 1 is the vendor, which is the slot roles-ansible.amdgpu_firmware's
+    # `when: ansible_processor[1] == 'AuthenticAMD'` reads - krikri used
+    # to publish only the first 'model name' string instead, so that
+    # whole condition died with "undefined". The keys between
+    # ('cpu family', 'model', 'cpu MHz', ...) must NOT contribute.
+    two_cpus = <<-CPUDATA
+      processor\t: 0
+      vendor_id\t: AuthenticAMD
+      cpu family\t: 25
+      model\t\t: 80
+      model name\t: AMD Ryzen 9 5900X 12-Core Processor
+      processor\t: 1
+      vendor_id\t: AuthenticAMD
+      cpu family\t: 25
+      model\t\t: 80
+      model name\t: AMD Ryzen 9 5900X 12-Core Processor
+      CPUDATA
+    Krikri::FactsGatherer.parse_processor_list(two_cpus).must_equal([
+      "0", "AuthenticAMD", "AMD Ryzen 9 5900X 12-Core Processor",
+      "1", "AuthenticAMD", "AMD Ryzen 9 5900X 12-Core Processor",
+    ])
+  end
+
+  it "collects the arm/power 'Processor'/'cpu' keys ansible also appends" do
+    # The same four-alternatives key set covers non-x86 layouts; whatever
+    # of those keys exist all land in the list, in file order.
+    arm = "Processor\t: FOO\n"
+    Krikri::FactsGatherer.parse_processor_list(arm).must_equal(["FOO"])
+    power = "cpu\t: POWER9 (raw), altivec supported\n"
+    Krikri::FactsGatherer.parse_processor_list(power).must_equal(["POWER9 (raw), altivec supported"])
+  end
+
+  it "publishes the parsed-from-real-cpuinfo list as the ansible_processor fact" do
+    facts = JSON.parse(Krikri::FactsGatherer.run(nil))["ansible_facts"].as_h
+    facts["ansible_processor"]?.wont_be_nil
+    live = facts["ansible_processor"].as_a.map(&.as_s)
+    live.must_equal(Krikri::FactsGatherer.parse_processor_list(File.read("/proc/cpuinfo")))
+  end
+
   it "honours gather_subset from the config it is handed" do
     # The daemon hands over an already-parsed JSON::Any rather than a
     # STDIN string, so this is the shape that matters now.
