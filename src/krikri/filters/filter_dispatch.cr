@@ -206,7 +206,23 @@ module Krikri
           # own loop source, round 5300002 (Ansible's `vars` magic var is
           # always a dict) - returned empty and the task silently
           # skipped, failing the play downstream on the missing variable.
-          container = value.raw.is_a?(Hash) ? JSON::Any.new(as_hash(value).keys.map { |key| JSON::Any.new(key) }) : value
+          # A STRING operand iterates to its CHARACTERS the same way
+          # (`for element in "..."` is Python's own per-char iteration,
+          # live-verified vs ansible-playbook 2.19.11: a str-typed
+          # combined-list var like timorunge.custom_nginx's
+          # `custom_nginx_all_directories` - GitHub issue #282 - yields
+          # one file item per character, not one per directory), a char
+          # is never a Sequence so the levels machinery below never
+          # recurses on it, and #as_array's non-array coercion turned
+          # this operand into [] instead.
+          container = case value.raw
+                      when Hash
+                        JSON::Any.new(as_hash(value).keys.map { |key| JSON::Any.new(key) })
+                      when String
+                        JSON::Any.new(value.as_s.chars.map { |char| JSON::Any.new(char.to_s) })
+                      else
+                        value
+                      end
           JSON::Any.new(flatten_array(as_array(container), levels, skip_nulls))
         when "reverse"
           case value.raw
@@ -894,7 +910,36 @@ module Krikri
           # reach this one.
           args = split_top_level_args(filter_args)
           algorithm = (args[0]?.try { |arg| as_string(resolve_expression(arg)) } || "sha1").downcase
-          JSON::Any.new(FilterCore.hash(as_string(value), algorithm))
+          container = value.raw.is_a?(Array) || value.raw.is_a?(Hash)
+          hash_source = if container
+                          # Ansible's filter hashes to_bytes(<the whole
+                          # native value>) - for a list/dict that is
+                          # Python's str(), i.e. the repr form
+                          # (`['/usr/local/nginx', '/usr/local/nginx/build']`,
+                          # single quotes and ", " separators), not the
+                          # internal JSON spelling as_string emits
+                          # (`["/usr/local/nginx","/usr/local/nginx/build"]`):
+                          # timorunge.custom_nginx hashes role vars holding
+                          # LISTS whose elements are themselves templates, and
+                          # the sha1s diverged byte for byte on exactly this
+                          # text (issue #282, live-verified vs 2.19). Python's
+                          # str/repr walks nested containers too, so
+                          # VariableLookup's repr (the same shape Ansible
+                          # renders for `{{ listvar }}` in template text) is
+                          # applied recursively, not just at the top. Deep
+                          # rendering of every element template already
+                          # happened before the filter chain head landed
+                          # here; a full-structure consumer like this (and
+                          # to_json) reads every leaf, so a deferred-undefined
+                          # leaf left raw by defer_unresolved must still
+                          # fail the chain ("'x' is undefined") instead of
+                          # hashing its raw text.
+                          VariableLookup.new(@vars || Hash(String, JSON::Any).new)
+                            .python_repr(strict_render_deferred_leaves(value))
+                        else
+                          as_string(value)
+                        end
+          JSON::Any.new(FilterCore.hash(hash_source, algorithm))
         when "password_hash"
           # password_hash(hashtype='sha512', salt=None, rounds=None) -
           # Ansible's own filter (passlib-backed), a salted crypt(3)
