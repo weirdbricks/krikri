@@ -810,18 +810,26 @@ module Krikri
         return
       end
 
-      begin
-        return unless when_passes?(task, vars_context, host)
-      rescue ex : WhenEvaluationError
-        swallow_when_error(task, host, ex)
-        return
-      end
-
-      # The file may be chosen by with_first_found (exposed as `item`) or
-      # given directly; either way it is templated. strict: true inside
-      # resolve_first_found (round174 matrix scenario 5b) can now raise
-      # for a genuinely undefined candidate template - when: was already
-      # checked above, so this is purely the loop-source failure.
+      # Ansible resolves the with_first_found: lookup BEFORE the task's
+      # when: is ever evaluated - the loop keyword's lookup is task
+      # finalization, the conditional only sees each candidate it produced
+      # (live-verified vs 2.19.11 with a minimal repro, issue #256). That
+      # order encodes all of the bug's observed consequences: a
+      # no-candidate list FAILS the task even when when: is false (real's
+      # run() only ever defers AnsibleUndefinedVariable out of the loop
+      # source; a lookup failure propagates straight to a fatal), and a
+      # when:-false verdict over a found candidate skips as the
+      # single-item loop it really is - see the item label below.
+      #
+      # The one deferred shape (real's exact `except
+      # AnsibleUndefinedVariable: items = None; self._loop_eval_error`
+      # bookkeeping): an UNDEFINED reference inside the keyword's own
+      # value (the strict scalar string form) is SAVED and only raised
+      # after a when: that survives the conditional, leaving a clean
+      # False to skip the itemless way - same precedence rule
+      # resolve_loop_items_or_raise already encodes for general loop:
+      # sources (round 701114/821007 cases A/B).
+      deferred_undef_error : UndefinedVariableError? = nil
       items = begin
         resolve_first_found(task, host, vars_context)
       rescue ex : LoopLookupError
@@ -835,9 +843,12 @@ module Krikri
         emit_loop_source_error_block(task, ex)
         finish_single_task(task, host, loop_source_error_result(ex), vars_context: vars_context)
         return
-      rescue ex : UndefinedVariableError | FirstFoundLookupError
+      rescue ex : FirstFoundLookupError
         finish_include_vars_failure(task, host, ex.message || "is undefined")
         return
+      rescue ex : UndefinedVariableError
+        deferred_undef_error = ex
+        nil
       end
 
       if items
@@ -877,12 +888,58 @@ module Krikri
           vars_context[lv] = items.first
         end
       end
-      # Ansible prints the loop item on every result line of a
-      # with_first_found: task (`ok: [host] => (item=...)`) - the found
-      # candidate is the loop item, so the ok line carries its label just
-      # like the looped include_vars: branch above.
-      first_found_item_label = (items && !items.empty?) ? item_display(items.first) : nil
 
+      # The empty-match case above returned, so a surviving items list
+      # carries the found candidate; the plain no-with_first_found path
+      # keeps both nil and gets when_passes?'s own itemless skip exactly
+      # as before. Ansible puts the found candidate on every result line
+      # of a with_first_found: task (`ok:`/`skipping: => (item=...)`)
+      # because it is the loop item, so both verdicts below carry it.
+      first_found_item = items.try(&.first?)
+      first_found_item_label = first_found_item ? item_display(first_found_item) : nil
+      begin
+        when_verdict = when_passes?(task, vars_context, host,
+          item_label: first_found_item_label,
+          # defer_stats: the skipped increment belongs to this call site -
+          # one per-task entry, the loop finisher's own bookkeeping - so
+          # the per-item line when_passes? prints must not count a second
+          # one.
+          defer_stats: first_found_item_label != nil,
+          item: first_found_item)
+        unless when_verdict
+          if first_found_item_label
+            # The bare trailing line real's loop finisher closes an
+            # all-items-skipped loop with (All items skipped at -v,
+            # live-verified vs 2.19.11); the per-item `skipping: =>
+            # (item=...)` line printed above came from when_passes?
+            # itself.
+            @results[host.name]["skipped"] += 1
+            puts Krikri::Oneline.skip_line(host.name,
+              Krikri::ResultDisplay.skip_line_suffix_all_skipped(changed: !debug_module?(task))).colorize(:cyan)
+          end
+          return
+        end
+      rescue ex : WhenEvaluationError
+        # The deferred loop error takes precedence over the conditional's
+        # own failure: real's conditional stage re-raises _loop_eval_error
+        # there (the conditional's own message is shown only at -v), the
+        # same precedence resolve_loop_items_or_raise's case B encodes.
+        if deferred = deferred_undef_error
+          finish_include_vars_failure(task, host, deferred.message || "is undefined")
+          return
+        end
+        swallow_when_error(task, host, ex)
+        return
+      end
+      # Only a False when: stops real from raising the saved loop error -
+      # a passing verdict reaches the raise.
+      if deferred = deferred_undef_error
+        finish_include_vars_failure(task, host, deferred.message || "is undefined")
+        return
+      end
+
+      # The file may be chosen by with_first_found (exposed as `item`) or
+      # given directly; either way it is templated.
       substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
       candidate = begin
         substitutor.scan_strict_include_vars_path(task.include_vars_file || "", task.vars)
