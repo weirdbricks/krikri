@@ -541,10 +541,10 @@ module Krikri
     private def load_handler_include_file(handler : Task, host : Host, vars_context : Hash(String, JSON::Any)) : {String, Array(Task), Bool}
       path_substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
       file_rel = path_substitutor.substitute(handler.include_file.as(String))
-      resolved_path = PlaybookParser.resolve_include_path(file_rel, handler.include_file_dir.as(String))
+      resolved_path = PlaybookParser.resolve_include_path(file_rel, handler.include_file_dir.as(String), File.expand_path(@playbook_dir))
 
       unless File.exists?(resolved_path)
-        fail_include_tasks_file_not_found(handler, host, resolved_path)
+        fail_include_tasks_file_not_found(handler, host, resolved_path, file_rel)
         return {resolved_path, [] of Task, true}
       end
 
