@@ -1244,12 +1244,21 @@ module Krikri
         # inner): a value re-rendered inside a strict templating operation
         # is rendered strictly in real ansible-core too.
         if VarSubstitutor.strict_span_active?
-          return Krikri::VarSubstitutor.new(vars: render_vars).substitute(raw, strict: true)
+          return Krikri::VarSubstitutor.new(vars: render_vars).substitute(raw, strict: true, output: !VarSubstitutor.single_top_level_span?(inner))
         end
         if (raw.split("{{").size - 1) == 1 && (raw.split("}}").size - 1) == 1 && inner.starts_with?("{{") && inner.ends_with?("}}")
           ExpressionEvaluator.new(render_vars).evaluate(inner[2..-3].strip)
         else
-          Krikri::VarSubstitutor.new(render_vars).substitute(raw)
+          # Mixed text (literal characters outside the `{{ }}` spans) is a
+          # plain str in real Jinja - whose interpolation of a container
+          # inside that text is Python's repr, so the spans must render in
+          # the repr form here as well, not the internal JSON-compact one
+          # (the same output:!single-span convention the module-arg path
+          # records - GitHub issue #282: `{{ all }}` whose value is
+          # `"{{ dirs }} + {{ extra }}"` must fashion the same
+          # `['a', 'b'] + ['c']` text whether the whole value renders
+          # through this shared re-render or as a task param).
+          Krikri::VarSubstitutor.new(render_vars).substitute(raw, output: true)
         end
       end
     end

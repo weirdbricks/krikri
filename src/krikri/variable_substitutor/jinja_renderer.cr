@@ -692,8 +692,33 @@ module Krikri
         structured = Rerender.whole_span_structured(substitutor.vars, raw)
         return structured if structured
 
+        # The whole-span fast path needs ONE top-level `{{` spanning the
+        # whole value, which is exactly the definition
+        # VarSubstitutor.single_top_level_span? implements (quote-aware,
+        # unlike the naked starts_with/ends_with check this used until
+        # GitHub issue #282): `"{{ dirs }} + {{ extra | default(omit) }}"`
+        # also starts with `{{` and ends with `}}` while holding TWO
+        # spans and literal text between them, so it was funnelled into
+        # render_pure_mustache_value, whose container-shape heuristic
+        # then re-evaluated the brace-mangled inner text (`dirs }} + {{
+        # extra ...`) as an expression - the engine silently evaluated
+        # only the leading name and the whole value collapsed to the
+        # FIRST span's own list (`['a', 'b']`), dropping the literal
+        # remainder. timorunge.custom_nginx's own vars/main.yml builds
+        # its directory list exactly that way and hashes the rendered
+        # TEXT (`{{ custom_nginx_all_directories | hash('sha1') }}` into
+        # checksum_catalog.yml.j2), so the dropped remainder diverged
+        # the catalog from real ansible (real core.py hashes the
+        # plain-str render "['a', 'b'] + ['c']"). Also pass output: for
+        # everything that is NOT a whole single span - mixed text is a
+        # plain str in real Jinja, whose interpolation of a container
+        # literal is Python's repr, so the string's own content has to
+        # be the repr form, not the JSON-compact internal one (the same
+        # convention the module-arg finalization path records at
+        # executor_vars_context.cr's native_containers branch).
+        whole_span = VarSubstitutor.single_top_level_span?(raw.strip)
         begin
-          rendered = substitutor.substitute(raw, strict: true)
+          rendered = substitutor.substitute(raw, strict: true, output: !whole_span)
         rescue e : Krikri::UndefinedVariableError
           # The defer_unresolved carve-out (see the cheat-sheet comment on
           # #rerender_nested_templates above): out of a strict render that
@@ -707,7 +732,7 @@ module Krikri
           return mark_deferred_undefined_leaf(e, raw, value, deferred_leaves)
         end
         stripped = raw.strip
-        if stripped.starts_with?("{{") && stripped.ends_with?("}}")
+        if whole_span
           render_pure_mustache_value(rendered, stripped, substitutor)
         else
           JSON::Any.new(rendered)

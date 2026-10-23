@@ -284,7 +284,23 @@ module Krikri
             if resolved && (rv = resolved.raw).is_a?(String) && !side_effecting_call?(rv)
               @lookup.rerender_var_value(resolved)
             else
-              resolved
+              # A stored CONTAINER is resolved here raw - but its
+              # elements can still carry their own unrendered `{{ }}`
+              # strings, and Ansible resolves a referenced variable
+              # recursively, rendering each nested string BEFORE the
+              # repr interpolation: a var
+              # `dirs: ["{{ prefix }}", "{{ prefix }}/build"]`
+              # (timorunge.custom_nginx, GitHub issue #282) reprs into
+              # mixed text as `['/usr/local/nginx', ...]`, never as
+              # `['{{ prefix }}', ...]`; the role then hashes that repr
+              # text, so every raw leaf hashed differently from ansible.
+              # Re-render through the same helper the plain-lookup
+              # fallback uses (unsafe gates + hostvars scope included);
+              # a nil from its unsafe gates - the render refused on
+              # purpose - must leave the verbatim raw in place
+              # (ansible-core's AnsibleUnsafe semantics), and non-string
+              # scalars never entered it at all.
+              retemplated_lookup_value(resolved, expr) || resolved
             end
           elsif side_effecting_call?(expr)
             nil
