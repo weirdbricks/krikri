@@ -898,6 +898,17 @@ module Krikri
       ok_result
     end
 
+    # apt.py sends a name containing any of `*?[]!` through its fnmatch
+    # expansion, which fails a no-match with the plural "No package(s)
+    # matching 'X' available" (no "is") instead of the plain-name wording.
+    private def no_package_msg(name : String) : String
+      if name.matches?(/[*?\[\]!]/)
+        "No package(s) matching '#{name}' available"
+      else
+        "No package matching '#{name}' is available"
+      end
+    end
+
     # Ansible's package action plugin delegates to apt.py, which resolves
     # every requested name against the apt cache BEFORE apt-get runs and
     # fails the task with apt.py's own "No package matching 'X' is
@@ -1075,7 +1086,7 @@ module Krikri
             return PluginResult.new(
               changed: false,
               failed: true,
-              msg: "No package matching '#{name}' is available",
+              msg: no_package_msg(name),
               rc: sim[:exit_code],
               stderr: sim[:stderr].empty? ? sim[:stdout] : sim[:stderr]
             )
@@ -1124,7 +1135,7 @@ module Krikri
               PluginResult.new(
                 changed: false,
                 failed: true,
-                msg: "No package matching '#{missing}' is available"
+                msg: no_package_msg(missing)
               )
             else
               PluginResult.new(
@@ -1284,7 +1295,7 @@ module Krikri
             return PluginResult.new(
               changed: false,
               failed: true,
-              msg: "No package matching '#{missing}' is available"
+              msg: no_package_msg(missing)
             )
           end
           return PluginResult.new(
