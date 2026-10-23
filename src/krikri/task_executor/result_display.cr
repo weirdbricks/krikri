@@ -388,13 +388,18 @@ module Krikri
       if no_log
         # Ansible 2.19 DOES print the error block for a failed no_log task
         # (with the raw, uncensored message - an upstream leak), but
-        # krikri deliberately does not replicate that leak: the block
-        # would echo the secret this control exists to hide. Everything
-        # else matches Ansible 2.19.11: a solo failed no_log task prints the
+        # krikri replicates it ONLY where the message is one of copy's
+        # fixed controller-side required-argument texts: ansible
+        # generates those itself, so they can carry no secret (issue
+        # #271) and the block owes Ansible's output nothing less. Every
+        # other failure's block would echo the very thing this control
+        # exists to hide, so those stay suppressed. Everything else
+        # matches Ansible 2.19.11: a solo failed no_log task prints the
         # censored fatal dump (which carries no secret) plus "...ignoring"
         # when ignore_errors: caught it; ok/changed and looped results
         # stay bare status lines (live-verified against 2.19.11).
         if failed && item_label.nil?
+          emit_task_error_block(source_task, result, msg) if no_log_error_block_allowed?(module_name, msg)
           puts "fatal: [#{host_label}]: FAILED! => {\"censored\": \"the output has been hidden due to the fact that 'no_log: true' was specified for this result\", \"changed\": #{changed}}".colorize(:red)
           puts "...ignoring".colorize(:red) if ignore_errors
           return
@@ -657,15 +662,44 @@ module Krikri
       end
     end
 
+    # The copy result messages safe to show in the `[ERROR]: Task
+    # failed:` block even under no_log: real ansible prints the block
+    # for every failed no_log task with the raw msg, but these three are
+    # copy's controller-side required-argument texts - fixed strings
+    # ansible composes itself (copy.py's own required-arg checks), so
+    # they carry none of the data a no_log task holds and the block can
+    # print without leaking (issue #271).
+    private NO_LOG_SAFE_MSGS = {
+      "src and content are mutually exclusive",
+      "src (or content) is required",
+      "dest is required",
+    }
+
+    private def self.no_log_error_block_allowed?(module_name : String?, msg : String) : Bool
+      copy_task = module_name.try { |name| name == "copy" || name.ends_with?(".copy") }
+      !!(copy_task && NO_LOG_SAFE_MSGS.includes?(msg))
+    end
+
     # Builds and prints ansible-core 2.19's `[ERROR]: Task failed:`
     # block for a failed task result, labeled with the task's parsed
     # playbook origin. No-op when the task has no parsed position, the
     # failure is a conditional-evaluation failure (whose two-level chain
     # is emitted by TaskExecutor's own emit_when_error_chain, including
-    # the `when:` value's own Origin), or no_log is hiding the result.
+    # the `when:` value's own Origin), or no_log hides the result -
+    # except copy's fixed required-argument texts, the one class whose
+    # uncensored block carries no secret (see no_log_error_block_allowed?
+    # above).
     private def self.emit_task_error_block(source_task : Task?, result : JSON::Any, msg : String) : Nil
       return unless source_task
-      return if source_task.no_log?
+      # no_log's block suppression is lifted only for copy's fixed
+      # controller-side required-argument texts (issue #271) - ansible's
+      # own block here carries the raw msg, which would otherwise echo
+      # the data no_log exists to hide. The no_log display branch calls
+      # this method only for those messages already; the same gate here
+      # keeps every other caller (loop items, helpers) equally blocked.
+      if source_task.no_log?
+        return unless no_log_error_block_allowed?(source_task.module_name, msg)
+      end
       # A loop-source typing/lookup failure ("The `loop` value must
       # resolve to a 'list', not 'X'." / a lookup plugin's type refusal)
       # gets its own block from the executor's
