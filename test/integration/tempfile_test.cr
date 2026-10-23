@@ -30,6 +30,14 @@ describe "tempfile plugin" do
     File.delete(path)
   end
 
+  it "names the file like Python's mkstemp: prefix plus 8 lowercase/digit/underscore chars" do
+    result = PluginSpecHelper.run("tempfile", {} of String => String)
+
+    path = result["path"].as_s
+    File.basename(path).must_match(/\Aansible\.[a-z0-9_]{8}\z/)
+    File.delete(path)
+  end
+
   it "creates the file under path: when given" do
     dir = File.join(PluginSpecHelper::PROJECT_ROOT, "test", "tmp")
     Dir.mkdir_p(dir)

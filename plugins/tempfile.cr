@@ -41,12 +41,11 @@ module Krikri
         return PluginResult.new(changed: false, failed: true, msg: failure_msg(dir, errno, state))
       end
 
-      result = remote_exec(mktemp_command(state, dir))
-      unless result[:exit_code] == 0
-        return PluginResult.new(changed: false, failed: true, msg: "Failed to create temporary #{state}: #{result[:stderr].strip}")
+      path = begin
+        create_unique(state, dir || Dir.tempdir)
+      rescue ex : File::Error
+        return PluginResult.new(changed: false, failed: true, msg: "Failed to create temporary #{state}: #{ex.message}")
       end
-
-      path = result[:stdout].strip
       # Real tempfile's success result runs changed, path, then the
       # add_path_info stat block, then failed (live-verified vs 2.19.11
       # via a registered result, state file and directory alike; msg: ""
@@ -193,16 +192,23 @@ module Krikri
       end
     end
 
-    private def mktemp_command(state : String, dir : String?) : String
-      template = "#{name_prefix}XXXXXX#{name_suffix}"
-      full_template = dir ? "#{dir.chomp('/')}/#{template}" : template
-      mktemp_flag = state == "directory" ? "-d " : ""
-
-      dir ? "mktemp #{mktemp_flag}#{shell_quote(full_template)}" : "mktemp #{mktemp_flag}--tmpdir #{shell_quote(template)}"
-    end
-
-    private def shell_quote(str : String) : String
-      "'" + str.gsub("'", "'\\''") + "'"
+    # coreutils mktemp would hand back 6 mixed-case characters; Python's
+    # mkstemp/mkdtemp name is 8 lowercase/digit/underscore characters, and
+    # that name is echoed in later task output (e.g. an unarchive "Failed to
+    # find handler" message), so its length shows in the bytes. Created
+    # exclusively with the same 0600 (file) / 0700 (directory) modes.
+    private def create_unique(state : String, dir : String) : String
+      base = dir.chomp('/')
+      loop do
+        path = "#{base}/#{name_prefix}#{random_name}#{name_suffix}"
+        next if File.info?(path, follow_symlinks: false)
+        if state == "directory"
+          Dir.mkdir(path, 0o700)
+        else
+          File.open(path, "w", 0o600) { }
+        end
+        return path
+      end
     end
   end
 end
