@@ -14334,3 +14334,13 @@ Local probe roles, not Galaxy roles: each probed task registers its result and d
 | `securenetwrk.gold_config` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29878883, 0.9.1865 debug). |
 | `sorrowless.haproxy` | ubuntu | ✅ Clean (round29878881, 0.9.1865 debug). |
 | `xanmanning.vscode` | ubuntu | ✅ Clean (round29878879, 0.9.1865 debug). |
+| `azavea.pcp` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29878968, 0.9.1868 debug). |
+| `bbaassssiiee.postgres_ssl` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29878970, 0.9.1868 debug). |
+| `f5devcentral.bigiq_create_ve` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29878972, 0.9.1868 debug). |
+| `jumperfly.cfssl` | rocky | ❌ Divergent - issue #267 (round29878976, 0.9.1868 debug). |
+| `l3d.restic_archiver` | ubuntu | ✅ Clean (round29878971, 0.9.1868 debug). |
+| `lchabert.lsyncd` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29878969, 0.9.1868 debug). |
+| `marvel-nccr.aiidalab_server` | rocky | ✅ Clean (round29878974, 0.9.1868 debug). |
+| `reynn.jenkins-swarm` | ubuntu | ✅ Clean (round29878973, 0.9.1868 debug). |
+| `tobias_richter.debian_unstable` | ubuntu | ✅ Clean (round29878975, 0.9.1868 debug). |
+| `woodendoors.ansible_adguard_home` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29878967, 0.9.1868 debug). |
