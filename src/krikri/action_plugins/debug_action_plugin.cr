@@ -70,9 +70,13 @@ module Krikri
       return debug_var(var_name) if var_name
 
       # Ansible's registered debug msg result runs msg, failed, changed
-      # (live-verified vs 2.19.11 via `{{ r | to_json }}`).
+      # (live-verified vs 2.19.11 via `{{ r | to_json }}`), and an
+      # explicitly empty msg stays in that dict (`"msg": ""`) - its
+      # exit_json emits the msg key even when the caller passed "" - so the
+      # empty key must reach the dump, both for the loop-item and the
+      # non-loop case.
       final = result_json(false, false, msg.to_s, {"_ansible_verbose_always" => JSON::Any.new(true)},
-        key_order: ["msg", "failed", "changed"])
+        key_order: ["msg", "failed", "changed"], include_empty_msg: true)
       if (typed = native_msg) && typed.as_s?.nil?
         return ActionResult.final(JSON.parse({
           "changed"                 => false,
@@ -238,8 +242,8 @@ module Krikri
       end
     end
 
-    private def result_json(changed : Bool, failed : Bool, msg : String, extra : Hash(String, JSON::Any) = Hash(String, JSON::Any).new, key_order : Array(String)? = nil) : JSON::Any
-      ActionResult.plugin_result_json(changed, failed, msg, extra, key_order: key_order)
+    private def result_json(changed : Bool, failed : Bool, msg : String, extra : Hash(String, JSON::Any) = Hash(String, JSON::Any).new, key_order : Array(String)? = nil, include_empty_msg : Bool = false) : JSON::Any
+      ActionResult.plugin_result_json(changed, failed, msg, extra, key_order: key_order, include_empty_msg: include_empty_msg)
     end
   end
 end

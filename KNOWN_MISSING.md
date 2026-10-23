@@ -413,6 +413,13 @@ because anyone intends to fix them.
   (`samba-log-timestamp`, `samba-pid`, `samba-stack-address`, `samba-repack-record`). Not a krikri
   gap; the Samba 4.15 token-stack panic itself reproduces identically on both engines.
 
+- **Host-key fingerprints and `stat` timestamps differ per host (`HomeSecExplorer.sshaudit`).** The
+  role regenerates SSH host keys, so the `ssh-audit` `(fin) ssh-ed25519/ssh-rsa: SHA256:...` lines
+  echoed by its results `debug` loop are random on every host, and the `with_items` dump of
+  `find`/`stat` results for the removed host keys carries `atime`/`mtime`/`ctime` of the moment they
+  were created. The ansible and krikri runs are on different hosts, so these values cannot match;
+  the structure around them (item repr, `__hsesa_sshaudit_out` var dump) does. Not a krikri gap.
+
 ### Everything else
 
 - **`ansible-playbook`'s CLI flag surface is fully covered by name, and all but one flag is

@@ -2,6 +2,7 @@ require "../minitest_helper"
 require "../../src/krikri/output_banner"
 require "../../src/krikri/task_executor/output_routing"
 require "../../src/krikri/playbook_parser"
+require "../../src/krikri/plugin_manager"
 require "../../src/krikri/run_options"
 require "../../src/krikri/task_executor/result_display"
 
@@ -143,6 +144,39 @@ describe Krikri::ResultDisplay do
       out.must_equal("ok: [localhost] => (item=a) => {\n    \"msg\": \"loop item: a\"\n}\n")
     end
 
+    # Ansible's strategy merges the loop item under its loop var name into
+    # the result before the callback runs, and _clean_results keeps
+    # underscore-prefixed keys - so a loop var named like `__out` survives
+    # the dump while a plain `item` (and ansible_loop_var) is cleaned away
+    # (live-verified vs 2.19.11).
+    it "keeps an underscore-prefixed loop_var in a looped debug msg dump" do
+      result = JSON.parse(%({"changed": false, "msg": "Before:", "_ansible_verbose_always": true}))
+      out = capture_output { Krikri::ResultDisplay.display_result(host, result, false, item_label: "Before:", module_name: "ansible.builtin.debug", loop_item: JSON::Any.new("Before:"), loop_var_name: "__out") }
+      out.must_equal("ok: [localhost] => (item=Before:) => {\n    \"__out\": \"Before:\",\n    \"msg\": \"Before:\"\n}\n")
+    end
+
+    # An explicitly empty debug msg is NOT dropped by the action plugin
+    # (real exit_json always emits the msg key, msg='' included), so its
+    # dump still shows `{"__out": "", "msg": ""}` - not the bare `{}`
+    # a lost msg would collapse to.
+    it "keeps an empty msg and the underscore loop var in a looped debug dump" do
+      result = JSON.parse(%({"changed": false, "msg": "", "_ansible_verbose_always": true}))
+      out = capture_output { Krikri::ResultDisplay.display_result(host, result, false, item_label: "", module_name: "ansible.builtin.debug", loop_item: JSON::Any.new(""), loop_var_name: "__out") }
+      out.must_equal("ok: [localhost] => (item=) => {\n    \"__out\": \"\",\n    \"msg\": \"\"\n}\n")
+    end
+
+    it "dumps an empty debug msg as the msg key instead of an empty dict" do
+      result = JSON.parse(%({"changed": false, "msg": "", "_ansible_verbose_always": true}))
+      out = capture_output { Krikri::ResultDisplay.display_result(host, result, false, module_name: "ansible.builtin.debug") }
+      out.must_equal("ok: [localhost] => {\n    \"msg\": \"\"\n}\n")
+    end
+
+    it "drops a plain default item from a looped debug msg dump" do
+      result = JSON.parse(%({"changed": false, "msg": "Before:", "_ansible_verbose_always": true}))
+      out = capture_output { Krikri::ResultDisplay.display_result(host, result, false, item_label: "Before:", module_name: "ansible.builtin.debug", loop_item: JSON::Any.new("Before:")) }
+      out.must_equal("ok: [localhost] => (item=Before:) => {\n    \"msg\": \"Before:\"\n}\n")
+    end
+
     it "keeps the single-line fatal dump for a failed non-loop result" do
       result = JSON.parse(%({"changed": true, "failed": true, "msg": "non-zero return code", "rc": 1}))
       out = capture_output { Krikri::ResultDisplay.display_result(host, result, false) }
@@ -199,6 +233,31 @@ describe Krikri::ResultDisplay do
       result = JSON.parse(%({"changed": false, "failed": true, "msg": "SECRET_SENTINEL"}))
       out = capture_output { Krikri::ResultDisplay.display_result(host, result, false, no_log: true, ignore_errors: true) }
       out.must_equal("fatal: [localhost]: FAILED! => {\"censored\": \"the output has been hidden due to the fact that 'no_log: true' was specified for this result\", \"changed\": false}\n...ignoring\n")
+    end
+  end
+
+  describe ".python_repr" do
+    # The item label is Python's repr() of the item: control bytes (ESC
+    # from terminal color codes, \t) come out as escape sequences, never
+    # raw (live-verified vs 2.19.11).
+    it "escapes control characters with the \\xNN and named escapes Python repr uses" do
+      Krikri::ResultDisplay.python_repr(JSON::Any.new("a\tb")).must_equal("'a\\tb'")
+      Krikri::ResultDisplay.python_repr(JSON::Any.new("\u001b[0;36m# general\u001b[0m")).must_equal("'\\x1b[0;36m# general\\x1b[0m'")
+      Krikri::ResultDisplay.python_repr(JSON::Any.new("nl\r\n\x01\x0b\x7f")).must_equal("'nl\\r\\n\\x01\\x0b\\x7f'")
+    end
+
+    it "applies the same escaping to strings nested in lists and to dict keys" do
+      Krikri::ResultDisplay.python_repr(JSON.parse(%(["a\\tb"]))).must_equal("['a\\tb']")
+      Krikri::ResultDisplay.python_repr(JSON.parse(%({"k\\u0001": "v"}))).must_equal("{'k\\x01': 'v'}")
+    end
+
+    # Python's quote choice: double quotes only when the string holds '
+    # and no " - the ' then needs no escape; with both it stays ' and the
+    # ' is escaped. Backslashes double.
+    it "matches Python's quote choice and backslash doubling" do
+      Krikri::ResultDisplay.python_repr(JSON::Any.new("it's")).must_equal("\"it's\"")
+      Krikri::ResultDisplay.python_repr(JSON::Any.new("both ' and \"")).must_equal("'both \\' and \"'")
+      Krikri::ResultDisplay.python_repr(JSON::Any.new("back\\slash")).must_equal("'back\\\\slash'")
     end
   end
 end
