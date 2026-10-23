@@ -14314,3 +14314,13 @@ Local probe roles, not Galaxy roles: each probed task registers its result and d
 | `sysco-middleware.oracle-weblogic` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29878799, 0.9.1863 debug). |
 | `trombik.argus_clients` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29878806, 0.9.1863 debug). |
 | `wtanaka.make` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29878807, 0.9.1863 debug). |
+| `ChristopherDavenport.ellucian-tomcat` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29878806, 0.9.1863 debug). |
+| `andrewrothstein.sshkey` | rocky | ❌ Divergent - issue #263 (round29878808, 0.9.1863 debug). |
+| `gliech.lxd` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29878812, 0.9.1863 debug). |
+| `hoplacloud.letsencrypt` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29878809, 0.9.1863 debug). |
+| `hxpro.bootstrap` | ubuntu | ✅ Clean (round29878807, 0.9.1863 debug). |
+| `idealista.prom2teams-role` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29878810, 0.9.1863 debug). |
+| `kurron.docker-host` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29878805, 0.9.1863 debug). |
+| `marcusburghardt.ansible_role_openscap` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29878803, 0.9.1863 debug). |
+| `teknipc.mercure` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29878811, 0.9.1863 debug). |
+| `vdzhorov.wkhtmltopdf` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29878804, 0.9.1863 debug). |
