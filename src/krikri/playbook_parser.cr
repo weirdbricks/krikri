@@ -2529,7 +2529,7 @@ module Krikri
     # tasks/main.yml does exactly this (`include_tasks: tasks/set_vars.
     # yml`) - a common enough convention (explicit `tasks/` prefix even
     # from within the tasks dir) that this isn't specific to one role.
-    def self.resolve_include_path(file_rel : String, file_dir : String) : String
+    def self.resolve_include_path(file_rel : String, file_dir : String, missing_dir : String? = nil) : String
       direct = File.expand_path(file_rel, file_dir)
       if File.exists?(direct)
         # Ansible's DataLoader.path_dwim_relative returns its first
@@ -2580,6 +2580,11 @@ module Krikri
 
         via_role_root = File.expand_path(file_rel, role_root)
         return via_role_root if File.exists?(via_role_root)
+
+        # A role include that matches nowhere reports the LAST candidate
+        # Ansible tried, which is the playbook directory, not the
+        # including file's own directory.
+        return File.expand_path(file_rel, missing_dir) if missing_dir
       end
 
       direct

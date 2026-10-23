@@ -192,6 +192,14 @@ describe "PlaybookParser include directive argument validation" do
     ex.render.wont_include("Origin:")
   end
 
+  it "reports a missing role include against the playbook dir, not the role tasks dir" do
+    root = File.expand_path(PluginSpecHelper.tmp_path("incdir_role_missing_path"))
+    tasks_dir = File.join(root, "roles", "r", "tasks")
+    Dir.mkdir_p(tasks_dir)
+    Krikri::PlaybookParser.resolve_include_path("prepare-Rocky.yml", tasks_dir, root)
+      .must_equal(File.join(root, "prepare-Rocky.yml"))
+  end
+
   it "validates import_role arguments BEFORE the static role-existence check" do
     root = PluginSpecHelper.tmp_path("incdir_import_role_order")
     # The role DOES exist here - the bad option is still what aborts.

@@ -158,10 +158,10 @@ module Krikri
           fail_include_tasks_undefined_var(task, host, ex)
           next
         end
-        resolved_path = PlaybookParser.resolve_include_path(file_rel, task.include_file_dir.as(String))
+        resolved_path = PlaybookParser.resolve_include_path(file_rel, task.include_file_dir.as(String), File.expand_path(@playbook_dir))
 
         unless File.exists?(resolved_path)
-          fail_include_tasks_file_not_found(task, host, resolved_path)
+          fail_include_tasks_file_not_found(task, host, resolved_path, file_rel)
           next
         end
 
@@ -2134,10 +2134,10 @@ module Krikri
         fail_include_tasks_undefined_var(task, host, ex)
         return :ok
       end
-      resolved_path = PlaybookParser.resolve_include_path(file_rel, task.include_file_dir.as(String))
+      resolved_path = PlaybookParser.resolve_include_path(file_rel, task.include_file_dir.as(String), File.expand_path(@playbook_dir))
 
       unless File.exists?(resolved_path)
-        fail_include_tasks_file_not_found(task, host, resolved_path)
+        fail_include_tasks_file_not_found(task, host, resolved_path, file_rel)
         return :ok
       end
 
@@ -2349,7 +2349,7 @@ module Krikri
     # task counts as failed only - ignore_errors: does NOT apply
     # (live-verified: failed=1 ignored=0 with ignore_errors: true) -
     # and the play halts for the host (rc=2).
-    private def fail_include_tasks_file_not_found(task : Task, host : Host, resolved_path : String) : Nil
+    private def fail_include_tasks_file_not_found(task : Task, host : Host, resolved_path : String, rendered_file : String) : Nil
       message = "Could not find or access '#{resolved_path}' on the Ansible Controller: Unable to retrieve file contents.\n" \
                 "Could not find or access '#{resolved_path}' on the Ansible Controller.\n" \
                 "If you are using a module and expect the file to exist on the remote, see the remote_src option: [Errno 2] No such file or directory: '#{resolved_path}'"
@@ -2360,9 +2360,11 @@ module Krikri
       # (`"include": 21`) even though the path it resolved from was that
       # literal's Python str(), so the parser-supplied native value wins
       # whenever there is one.
-      include_json = task.include_file_native.try(&.to_json) || task.include_file.to_s.to_json
+      # A templated path is echoed RENDERED (`prepare-Rocky.yml`), not as
+      # written.
+      include_json = task.include_file_native.try(&.to_json) || rendered_file.to_json
       if Krikri::Oneline.enabled?
-        puts "#{connection_host} | FAILED! => #{ResultDisplay.dump_oneline_json(JSON.parse({"changed" => false, "include" => task.include_file_native || JSON.parse(task.include_file.to_s.to_json), "reason" => message}.to_json))}".colorize(:red)
+        puts "#{connection_host} | FAILED! => #{ResultDisplay.dump_oneline_json(JSON.parse({"changed" => false, "include" => task.include_file_native || JSON.parse(rendered_file.to_json), "reason" => message}.to_json))}".colorize(:red)
       else
         delegate_target = delegate_display_target(task, host)
         fatal_host_label = delegate_target ? "#{host.name} -> #{delegate_target}" : connection_host
