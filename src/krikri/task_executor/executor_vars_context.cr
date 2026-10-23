@@ -3877,7 +3877,12 @@ module Krikri
     # guessed at. A compound when: expression has no single defining
     # var, so real's lineage there labels the when: token itself -
     # handled below for the one captured shape ('int', issue #21).
-    private def decorate_conditional_value_origin(task : Task, msg : String, host : Host? = nil, operand : String? = nil) : String
+    # `clause_key`/`clause_raw` name the conditional clause whose strict
+    # result is being decorated ("when" by default): the RUNTIME-sourced
+    # and compound-expression branches below locate the ORIGINATING
+    # clause's value token, so changed_when:/failed_when: callers pass
+    # their own clause key and raw text, not the when: shape.
+    private def decorate_conditional_value_origin(task : Task, msg : String, host : Host? = nil, operand : String? = nil, clause_key : String = "when", clause_raw : String? = nil) : String
       return msg unless msg.includes?("Conditionals must have a boolean result")
       return msg if msg.includes?(" at '") || msg.includes?(" at \"")
       raw = operand || task.when_condition.to_s.strip
@@ -3899,7 +3904,7 @@ module Krikri
           ident = m[1]
           value = build_vars_context(task, h)[ident]?.try(&.raw)
           if value.is_a?(String) && !value.empty? && var_origin_for(task, h, ident, runtime_marker: true)
-            return decorate_conditional_value_origin(task, msg, h, ident)
+            return decorate_conditional_value_origin(task, msg, h, ident, clause_key, clause_raw)
           end
         end
         # An and/or chain returns one operand's own value, so real labels
@@ -3907,14 +3912,14 @@ module Krikri
         # (`nvm_dir and not nvm_profile` with both "" -> nvm_dir's play-var
         # position, live-verified 2.19.11).
         if (h = host) && (deciding = deciding_bare_operand(task, h, raw))
-          return decorate_conditional_value_origin(task, msg, h, deciding)
+          return decorate_conditional_value_origin(task, msg, h, deciding, clause_key, clause_raw)
         end
         # Any other compound when: (`x is defined and x|length`,
         # `lst | d([], true)`): the tested value is created by the
         # expression itself, and real reports the when: value token's
         # position - the same position as the second Origin: block,
         # whatever the value's type (int, str, list, ... live-verified).
-        return msg unless (tok = when_token_position(task))
+        return msg unless (tok = when_token_position(task, clause_key, clause_raw))
         return with_origin_clause(msg, "'#{tok[0]}:#{tok[1]}:#{tok[2]}'")
       end
       if h = host
@@ -3953,7 +3958,7 @@ module Krikri
           # Registered result or gathered fact: real's lineage labels
           # the conditional's own when: token position (live-verified
           # 2.19.11).
-          return msg unless (tok = when_token_position(task))
+          return msg unless (tok = when_token_position(task, clause_key, clause_raw))
           return msg.sub(/was derived from value of type '([a-zA-Z]+)'/) do
             "was derived from value of type '#{$1}' at '#{tok[0]}:#{tok[1]}:#{tok[2]}'"
           end
@@ -4033,7 +4038,11 @@ module Krikri
     # the position real's data lineage reports for a RUNTIME-sourced
     # value (registered result, gathered fact; live-verified 2.19.11).
     # Same best-effort name-line location emit_when_error_chain uses.
-    private def when_token_position(task : Task) : {String, Int32, Int32}?
+    # changed_when:/failed_when: reuse this same locator (issue #262):
+    # their strict non-boolean errors are lineage-labeled with the
+    # clause's own value token too (jgkim.atom's
+    # `failed_when: return_value.rc` -> tasks/main.yml:6:16).
+    private def when_token_position(task : Task, key : String = "when", raw : String? = nil) : {String, Int32, Int32}?
       path = task.source_file || @playbook_file
       return nil unless path && File.file?(path)
       lines = File.read_lines(path)
@@ -4043,7 +4052,7 @@ module Krikri
                    return nil unless task.source_line > 0 && task.source_line <= lines.size
                    task.source_line - 1
                  end
-      locate_conditional_origin(lines, name_idx, "when", task.when_condition.to_s)
+      locate_conditional_origin(lines, name_idx, key, raw || task.when_condition.to_s)
         .try { |(idx, col)| {File.expand_path(path), idx + 1, col} }
     end
 
