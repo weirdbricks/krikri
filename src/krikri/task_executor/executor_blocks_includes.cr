@@ -738,10 +738,12 @@ module Krikri
           path = resolve_include_vars_path(task, candidate)
 
           unless path
-            delegate_target = delegate_display_target(task, host, item_context)
-            failed_host_label = delegate_target ? "#{host.name} -> #{delegate_target}" : host.name
-            puts "failed: [#{failed_host_label}] => (item=#{item_label})".colorize(:red)
-            puts "  Message: include_vars: file not found: #{candidate}".colorize(:red)
+            # A missing per-item file fails THAT item the way every action
+            # failure reads in real's loop output: the [ERROR] block over
+            # the task's own source position, then the failed dump
+            # (live-verified vs 2.19.11, issue #264) - not a one-line
+            # status + Message pair.
+            display_include_vars_item_failure(task, host, item_context, item, item_label, "include_vars: file not found: #{candidate}")
             failed = true
             item_results << JSON::Any.new({"item" => item, "changed" => JSON::Any.new(false), "failed" => JSON::Any.new(true), "ansible_facts" => include_vars_failure_facts(name_key)} of String => JSON::Any)
             next
@@ -750,10 +752,10 @@ module Krikri
           loaded = begin
             RoleLoader.load_vars_file(path)
           rescue ex
-            delegate_target = delegate_display_target(task, host, item_context)
-            failed_host_label = delegate_target ? "#{host.name} -> #{delegate_target}" : host.name
-            puts "failed: [#{failed_host_label}] => (item=#{item_label})".colorize(:red)
-            puts "  Message: include_vars: could not parse #{path}: #{ex.message}".colorize(:red)
+            # A file that exists but fails to parse is the same per-item
+            # action-failure shape as the missing file above - the same
+            # two failure classes the non-looped display treats alike.
+            display_include_vars_item_failure(task, host, item_context, item, item_label, "include_vars: could not parse #{path}: #{ex.message}")
             failed = true
             item_results << JSON::Any.new({"item" => item, "changed" => JSON::Any.new(false), "failed" => JSON::Any.new(true), "ansible_facts" => include_vars_failure_facts(name_key)} of String => JSON::Any)
             next
@@ -1509,6 +1511,30 @@ module Krikri
         register_result(host, register_name, result) unless register_name.empty?
       end
       ResultDisplay.display_result(host, result, @diff_mode, ignore_errors: task.ignore_errors?, module_name: task.module_name, delegate_target: delegate_display_target(task, host), source_task: task)
+    end
+
+    # A looped include_vars:'s per-item load failure (missing/unparsable
+    # file) displays exactly like a solo one: Ansible runs the include_vars
+    # action plugin once per loop item, so a failing item produces the
+    # ordinary action-failure result - the [ERROR] "Task failed: Action
+    # failed: Unknown error." block over the task's own source position,
+    # then that item's `failed: [host] (item=X) => {dict}` line carrying the
+    # same keys the non-looped failure shows (live-verified vs 2.19.11,
+    # issue #264: a with_items: include_vars whose later item's file the
+    # role does not ship). The loop bindings in the dump are ResultDisplay's
+    # own per-item additions (ansible_loop_var + the item), not this dict's.
+    private def display_include_vars_item_failure(task : Task, host : Host, item_context : Hash(String, JSON::Any), item : JSON::Any, item_label : String, message : String) : Nil
+      name_key, _ = include_vars_name_shape(task)
+      h = Hash(String, JSON::Any).new
+      h["ansible_facts"] = include_vars_failure_facts(name_key)
+      h["ansible_included_var_files"] = JSON::Any.new([] of JSON::Any)
+      h["changed"] = JSON::Any.new(false)
+      h["failed"] = JSON::Any.new(true)
+      h["message"] = JSON::Any.new(include_vars_failure_detail(task, message) || message)
+      h["msg"] = JSON::Any.new("Task failed: Action failed: Unknown error.")
+      h["_ansible_action_level"] = JSON::Any.new(true)
+      h["_ansible_error_detail"] = JSON::Any.new("Action failed: Unknown error.")
+      ResultDisplay.display_result(host, JSON::Any.new(h), @diff_mode, item_label: item_label, ignore_errors: task.ignore_errors?, module_name: task.module_name, delegate_target: delegate_display_target(task, host, item_context), source_task: task, loop_item: item, loop_var_name: task.loop_var)
     end
 
     # The "Could not find or access '<file>'" message Ansible 2.19.11
