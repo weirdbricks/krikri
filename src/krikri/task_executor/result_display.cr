@@ -693,6 +693,13 @@ module Krikri
 
     private def self.no_log_error_block_allowed?(module_name : String?, msg : String) : Bool
       copy_task = module_name.try { |name| name == "copy" || name.ends_with?(".copy") }
+      # The template action's non-iteration TypeError joins them, keyed
+      # on the message shape rather than the module: ansible composes
+      # the whole wording from a Python type name (issue #274 -
+      # live-verified: real prints the block before the censored fatal
+      # line), so like the copy texts it names no part of the task's
+      # data - only what kind of value refuses to iterate.
+      return true if msg =~ /\ATask failed: Error rendering template: '[\w.]+' object is not iterable\z/
       !!(copy_task && NO_LOG_SAFE_MSGS.includes?(msg))
     end
 

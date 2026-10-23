@@ -511,9 +511,13 @@ module Krikri
       # `socket.getfqdn()`, which is NOT `hostname -f`: it forward-resolves
       # the hostname to an address, then REVERSE-resolves that address, and
       # returns the first of the reverse lookup's canonical name + aliases
-      # that contains a dot. The two genuinely diverge when a role sets a
-      # short hostname AND colocates it on the /etc/hosts loopback line
-      # (oasis_roles.hostname's own pattern, found live): reverse-resolving
+      # that contains a dot, else that lookup's own canonical name
+      # (CPython's `name = hostname` fallback on the all-dotless branch -
+      # NOT the machine's current hostname, since a /etc/hosts line's
+      # canonical name can differ from the machine name itself). The two
+      # genuinely diverge when a role sets a short hostname AND colocates
+      # it on the /etc/hosts loopback line (oasis_roles.hostname's own
+      # pattern, found live): reverse-resolving
       # 127.0.0.1 there yields "localhost localhost.localdomain", and the
       # dotless "localhost" is skipped in favor of "localhost.localdomain",
       # so ansible-playbook reports ansible_fqdn as
@@ -523,21 +527,23 @@ module Krikri
       # making this engine falsely idempotent there. `getent hosts` reads
       # the same NSS sources Python's socket module does, without assuming
       # python3 exists on the managed node. The old `hostname -f` fallback
-      # chain is kept only for hosts with no resolvable name at all (a
-      # minimal container image with no DNS setup), where getent gives us
-      # nothing to reverse-resolve and `hostname -f` fails outright to
-      # empty stdout - there it still lands on the plain hostname, the
-      # same fallback Ansible's getfqdn itself documents.
+      # chain is kept only for hosts where getent yields no usable name
+      # at all (a minimal container image with no DNS setup): nothing to
+      # reverse-resolve, or a reverse answer with no name field, then
+      # `hostname -f` fails outright to empty stdout and it still lands
+      # on the plain hostname, the same final fallback Ansible's getfqdn
+      # itself documents.
       fqdn = ""
       ip = capture("getent", ["ahosts", hostname]).split("\n").first?.try(&.split.first?)
       unless ip.nil? || ip.empty?
         reverse = capture("getent", ["hosts", ip]).split("\n").first?
         unless reverse.nil?
+          # socket.getfqdn()'s all-dotless fallback is the reverse
+          # lookup's own canonical name (CPython's `name = hostname`
+          # branch), which the helper returns directly; only when getent
+          # yields no usable reverse answer at all does control fall
+          # through to the `hostname -f` chain below.
           fqdn = fqdn_from_getent_hosts(reverse)
-          # socket.getfqdn()'s own fallback: a successful reverse lookup
-          # whose every name is dotless returns the plain hostname, NOT
-          # `hostname -f`'s answer.
-          fqdn = hostname if fqdn.empty?
         end
       end
       fqdn = capture("hostname", ["-f"]) if fqdn.empty?
@@ -561,8 +567,19 @@ module Krikri
     # socket.getfqdn()'s final step over one `getent hosts <ip>` line
     # ("<ip> <canonical> [alias ...]"): the canonical name is checked
     # first (Python's `aliases.insert(0, hostname)`), then the aliases in
-    # order, and the first entry containing a dot wins - "" when none
-    # does, which the caller maps to the plain-hostname fallback.
+    # order, and the first entry containing a dot wins.
+    #
+    # When every name on the line is dotless, CPython's `name = hostname`
+    # branch returns the reverse lookup's own canonical name - NOT the
+    # machine's current hostname: a role can add a line like
+    # `127.0.1.1 testhost <machine-name>` whose canonical name ("testhost")
+    # is unrelated to the machine name, and ansible-playbook then reports
+    # ansible_fqdn = "testhost". A System.hostname fallback instead would
+    # report the machine name and keep a later
+    # `hostname: name={{ ansible_fqdn }}` task ok where ansible reports
+    # changed every run. "" stays reserved for a line with no name field
+    # at all (gethostbyaddr failing), which the caller maps to the
+    # `hostname -f` chain.
     def fqdn_from_getent_hosts(output : String) : String
       fields = output.split
       return "" if fields.size < 2
@@ -570,7 +587,7 @@ module Krikri
       fields[1..].each do |name|
         return name if name.includes?(".")
       end
-      ""
+      fields[1]
     end
 
     # Parse an /etc/lsb-release payload into the ansible_lsb dict as a pure

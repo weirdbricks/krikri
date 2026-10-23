@@ -23,6 +23,22 @@ module Krikri
     # "Failed to render template" wrapper and no line prefix.
     @render_error_undefined : Bool = false
 
+    # Set alongside @render_error when the render died with the engine's
+    # "<CrystalClass> is not iterable" raw message (render_for's else arm,
+    # e.g. `{% for x in v %}` over a defined-but-null var). Real 2.19.11
+    # does not fail with a rendered-but-generic "Failed to render
+    # template" wording: the iteration TypeError unwinds out of the
+    # action plugin UNCAUGHT, carrying the value's PYTHON type name (the
+    # engine's Crystal one never appears), and takes the same crash shape
+    # as the #jinja2: directive failure: "Task failed: Error rendering
+    # template: 'NoneType' object is not iterable" (live-verified, issue
+    # #274), the [ERROR] block's cause pointing at the template FILE's
+    # Origin exactly like it - path only, no line/column. Holds the full
+    # cause wording (nil when the raw type is not one whose Python name
+    # this engine surface can state with certainty - see
+    # #not_iterable_ansible_wording).
+    @render_error_not_iterable : String? = nil
+
     # Set when the template's own leading `#jinja2:` directive line
     # failed Ansible's literal_eval/type validation (see
     # #extract_jinja2_directive): the crash's Origin is the TEMPLATE
@@ -165,6 +181,14 @@ module Krikri
           # The engine's own "line N: " prefix is dropped: the bare
           # ansible-core wording carries no line info.
           return ActionResult.crash_failure(msg, src, undef_chain: true)
+        end
+        if wording = @render_error_not_iterable
+          # The scalar-iteration TypeError takes the same UNCAUGHT crash
+          # shape ("Task failed: Error rendering template: 'NoneType'
+          # object is not iterable", live-verified, issue #274) - no
+          # undef chain, though: a null value's Origin is the TEMPLATE
+          # file itself, unlike an undefined var's layered definition.
+          return ActionResult.crash_failure(wording, src)
         end
         detail = @render_error ? ": #{@render_error}" : ""
         return ActionResult.failure("Failed to render template#{detail}")
@@ -344,12 +368,49 @@ module Krikri
       @directive_error = ex.message
       nil
     rescue ex : KrikriJinja::TemplateError
+      @render_error_not_iterable = not_iterable_ansible_wording(ex)
       @render_error_undefined = ex.kind == KrikriJinja::ErrorKind::Undefined
       @render_error = ansible_wording(ex, line_prefix: !@render_error_undefined)
       nil
     rescue ex
       @render_error = ex.message
       nil
+    end
+
+    # The ansible-core crash wording for a render_for else-arm death,
+    # nil when this surface cannot state the Python name. The engine's
+    # raw message is "<CrystalClass> is not iterable" with the class
+    # names Crystal prints ({"Nil", "Bool", "Int64", "Float64"} for the
+    # scalars, the namespace prefixed one for everything else -
+    # "KrikriJinja::BigIntValue", "Krikri::DateTime"), so the shape is
+    # matched on the fully qualified name and mapped by the LAST part.
+    # Only names whose Python correspondence is live-verified against
+    # real 2.19.11 for THIS path get a mapping: None cannot carry a
+    # datatag (a playbook var `al:` reports plain 'NoneType'), bools
+    # report plain 'bool', int/float VARS keep their YAML datatags
+    # ('_AnsibleTaggedInt' / '_AnsibleTaggedFloat', live-verified - the
+    # engine carries no tag state today, so a template-local untainted
+    # `1.5` iterating is reported as a tagged one too), computed
+    # oversized ints arrive here only through the template's own
+    # arithmetic (untagged in real: 'int'), and the datetime host
+    # objects map to their module-qualified Python names. Everything
+    # else (engine-internal Markup/Callable/Loop* - a Python Markup is a
+    # str and would NOT fail iteration) keeps the generic render
+    # failure wording rather than claiming behavior real does not have.
+    private def not_iterable_ansible_wording(ex : KrikriJinja::TemplateError) : String?
+      match = ex.raw_message.match(/\A(?:\w+::)*(?<cls>\w+) is not iterable\z/)
+      return nil unless match
+      py_type = case match["cls"]
+                when "Nil"         then "NoneType"
+                when "Bool"        then "bool"
+                when "Int64"       then "_AnsibleTaggedInt"
+                when "Float64"     then "_AnsibleTaggedFloat"
+                when "BigIntValue" then "int"
+                when "DateTime"    then "datetime.datetime"
+                when "TimeDelta"   then "datetime.timedelta"
+                else                    return nil
+                end
+      "Error rendering template: '#{py_type}' object is not iterable"
     end
 
     # Renders through the engine once and applies Ansible's own
