@@ -2846,6 +2846,42 @@ module Krikri
       JSON::Any.new(hash)
     end
 
+    # The *_when_result text for a changed_when:/failed_when: evaluation
+    # that RAISED. ansible-core 2.19's strict conditional-type error
+    # ("Conditional result (...) was derived from value of type 'int'.
+    # Conditionals must have a boolean result.") is raised at the CHECK
+    # step, outside task_executor.py's `except AnsibleError` conditional-
+    # evaluation trap: its stored text carries NO "Error while evaluating
+    # conditional: " prefix (issue #262 - jgkim.atom's
+    # `failed_when: return_value.rc` stored the prefixed shape, real the
+    # bare lineage-decorated one) and gets the same decoration when:
+    # already owns. Every other raise shape keeps the prefixed trap
+    # wording - including the other ConditionalBooleanError variants
+    # (e.g. the Omit scalar), which the issue's observed check-step
+    # wording never covers.
+    private def changed_failed_when_error_text(task : Task, key : String, raw : String?, host : Host, exc : Exception) : String
+      message = exc.message || ""
+      unless exc.is_a?(ConditionalEvaluator::ConditionalBooleanError) && message.starts_with?("Conditional result (")
+        return "Error while evaluating conditional: #{message}"
+      end
+      # A reference to the task's OWN register is the one runtime value
+      # the lineage lookup can't classify here: the register is merged
+      # into this clause's evaluation context but is not applied into
+      # the origin-tracked layers until after the result finalizes, so
+      # the bare-reference branch of decorate_conditional_value_origin
+      # would find no origin and leave the message undecorated. Real
+      # treats registered-result lineage as runtime and labels the
+      # clause's own value token (bare self-register dict shape
+      # live-verified vs 2.19.11). Compound forms reach the same clause
+      # token through the decorate path's compound branch by
+      # construction, so only the bare identifier needs pinning here.
+      if (reg = task.register) && !reg.empty? && raw.try(&.strip) == reg
+        return message unless (tok = when_token_position(task, key, raw))
+        return with_origin_clause(message, "'#{tok[0]}:#{tok[1]}:#{tok[2]}'")
+      end
+      decorate_conditional_value_origin(task, message, host, operand: raw, clause_key: key, clause_raw: raw)
+    end
+
     private def apply_changed_failed_when(task : Task, result : JSON::Any, vars_context : Hash(String, JSON::Any), host : Host) : JSON::Any
       # A templated action's resolved module name only exists on the
       # shallow copy resolve_templated_action made inside execute_task_once,
@@ -2941,7 +2977,10 @@ module Krikri
         # that RAISES sets failed=True and records the error text -
         # with Ansible's own "Error while evaluating conditional: "
         # prefix - in changed_when_result/failed_when_result, and never
-        # touches the module's own msg. This used to overwrite msg with
+        # touches the module's own msg. The one observed exception is
+        # the strict conditional-type wording, stored bare and
+        # lineage-decorated instead (changed_failed_when_error_text,
+        # issue #262). This used to overwrite msg with
         # the evaluation error, so an argspec-violation result
         # (unsupported parameter) with a broken changed_when: reported
         # "object of type 'dict' has no attribute 'stat'" as its msg
@@ -2964,7 +3003,7 @@ module Krikri
           end
         rescue e : ConditionalEvaluator::ConditionalBooleanError | ConditionalEvaluator::UndefinedVariableError | VariableSubstitutor::FilterEngine::UnknownFilterError
           hash["failed"] = JSON::Any.new(true)
-          hash["changed_when_result"] = JSON::Any.new("Error while evaluating conditional: #{e.message || ""}")
+          hash["changed_when_result"] = JSON::Any.new(changed_failed_when_error_text(task, "changed_when", changed_when, host, e))
         end
 
         begin
@@ -2993,7 +3032,7 @@ module Krikri
           end
         rescue e : ConditionalEvaluator::ConditionalBooleanError | ConditionalEvaluator::UndefinedVariableError | VariableSubstitutor::FilterEngine::UnknownFilterError
           hash["failed"] = JSON::Any.new(true)
-          hash["failed_when_result"] = JSON::Any.new("Error while evaluating conditional: #{e.message || ""}")
+          hash["failed_when_result"] = JSON::Any.new(changed_failed_when_error_text(task, "failed_when", failed_when, host, e))
         end
       end
 
