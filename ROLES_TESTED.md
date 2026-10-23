@@ -14304,3 +14304,13 @@ Local probe roles, not Galaxy roles: each probed task registers its result and d
 | `secfigo.inspec` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29878797, 0.9.1863 debug). |
 | `tobias_richter.apt_cacher_ng` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29878799, 0.9.1863 debug). |
 | `vahubert.apache` | rocky | ✅ Clean (round29878793, 0.9.1863 debug). |
+| `eddyhub.restic` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29878800, 0.9.1863 debug). |
+| `hudecof.atlassian_jira` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29878801, 0.9.1863 debug). |
+| `kbrebanov.postgresql` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29878802, 0.9.1863 debug). |
+| `markwilde.php` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29878803, 0.9.1863 debug). |
+| `mcgrof.update_ssh_config_vagrant` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29878804, 0.9.1863 debug). |
+| `robertdebock.gitea` | rocky | ✅ Clean (round29878805, 0.9.1863 debug). |
+| `shomatan.firewalld` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29878798, 0.9.1863 debug). |
+| `sysco-middleware.oracle-weblogic` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29878799, 0.9.1863 debug). |
+| `trombik.argus_clients` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29878806, 0.9.1863 debug). |
+| `wtanaka.make` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29878807, 0.9.1863 debug). |
