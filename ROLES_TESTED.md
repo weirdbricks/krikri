@@ -14284,3 +14284,13 @@ Local probe roles, not Galaxy roles: each probed task registers its result and d
 | `omiguelperez.ec2_staging_deploy` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29878654, 0.9.1858 debug). |
 | `sleepy-nols.jellyfin` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29878646, 0.9.1858 debug). |
 | `wtanaka.autofs` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29878650, 0.9.1858 debug). |
+| `danielsreichenbach.lldap` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29878712, 0.9.1860 debug). |
+| `fastlorenzo.redelk_client` | ubuntu | ❌ Divergent - issue #259 (round29878714, 0.9.1860 debug). |
+| `istvano.kail` | rocky | ✅ Clean (round29878719, 0.9.1860 debug). |
+| `micko920.role_ntp` | rocky | ❌ Divergent - issue #260 (round29878715, 0.9.1860 debug). |
+| `mrlesmithjr.openjdk` | ubuntu | ✅ Clean (round29878716, 0.9.1860 debug). |
+| `particledecay.github_config` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29878717, 0.9.1860 debug). |
+| `robertdebock.ad_auth` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29878718, 0.9.1860 debug). |
+| `roles-ansible.amdgpu_firmware` | rocky | ❌ Divergent - issue #261 (round29878721, 0.9.1860 debug). |
+| `webarchitect609.yandex_disk_cli` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29878713, 0.9.1860 debug). |
+| `wunzeco.sonarqube-docker` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29878720, 0.9.1860 debug). |
