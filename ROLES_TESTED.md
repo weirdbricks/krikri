@@ -14404,3 +14404,13 @@ Local probe roles, not Galaxy roles: each probed task registers its result and d
 | `pixelart.phpstorm` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29879472, 0.9.1879 debug). |
 | `robertdebock.bios_update` | rocky | ✅ Clean (round29879473, 0.9.1879 debug). |
 | `robertdebock.sosreport` | rocky | ❌ Divergent - issue #278 (round29879471, 0.9.1879 debug). |
+| `EGI-Foundation.cmd` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29879592, 0.9.1880 release). Times: cold py 0.56s vs cr 0.01s; warm py 0.54s vs cr 0.01s. |
+| `baztian.git` | ubuntu | ❌ Divergent - issue #279 (round29879586, 0.9.1880 release). Times: cold py 110.32s vs cr 91.55s; warm py 19.12s vs cr 2.55s. |
+| `cmacrae.gitlab` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29879594, 0.9.1880 release). Times: cold py 3.46s vs cr 0.78s; warm py 3.14s vs cr 0.15s. |
+| `silviuvulcan.filebeat` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29879590, 0.9.1880 release). Times: cold py 0.56s vs cr 0.01s; warm py 0.57s vs cr 0.01s. |
+| `sparkklabs.duply` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29879591, 0.9.1880 release). Times: cold py 0.56s vs cr 0.01s; warm py 0.55s vs cr 0.01s. |
+| `tconstans.apache_formation` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29879589, 0.9.1880 release). Times: cold py 4.24s vs cr 6.16s; warm py 2.92s vs cr 0.35s. |
+| `triplepoint.home_assistant` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29879587, 0.9.1880 release). Times: cold py 32.00s vs cr 10.88s; warm py 24.51s vs cr 1.96s. |
+| `vbotka.freebsd_pf` | rocky | ⚠ only a community module krikri does not track differs (round29879593, 0.9.1880 release). Times: cold py 72.73s vs cr 5.71s; warm py 74.82s vs cr 0.52s. |
+| `wangsha.docker-generic-image` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29879588, 0.9.1880 release). Times: cold py 9.27s vs cr 4.14s; warm py 9.19s vs cr 0.77s. |
+| `zorlin.rust` | rocky | ❌ Divergent - issue #280 (round29879595, 0.9.1880 release). Times: cold py 139.98s vs cr 69.08s; warm py 4.17s vs cr 1.05s. |
