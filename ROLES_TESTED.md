@@ -14424,3 +14424,13 @@ Local probe roles, not Galaxy roles: each probed task registers its result and d
 | `ryezone_labs.ssh` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29879658, 0.9.1882 debug). |
 | `sparkklabs.server` | ubuntu | ✅ Clean (round29879660, 0.9.1882 debug). |
 | `wtanaka.openvpn` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29879661, 0.9.1882 debug). |
+| `Duologic.packagecloud` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29879663, 0.9.1882 debug). |
+| `andrewrothstein.dnsmasq_configure` | ubuntu | ✅ Clean (round29879661, 0.9.1882 debug). |
+| `andrewrothstein.dotnet_deps` | rocky | ✅ Clean (round29879664, 0.9.1882 debug). |
+| `apkawa.docker` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29879660, 0.9.1882 debug). |
+| `gnavalesi.ansible_elastic_apm_server` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29879666, 0.9.1882 debug). |
+| `jpnewman.artifactory` | rocky | ✅ Clean (round29879662, 0.9.1882 debug). |
+| `mjcramer.system` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29879665, 0.9.1882 debug). |
+| `pandemonium1986.os_requirements` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29879668, 0.9.1882 debug). |
+| `timorunge.custom_nginx` | ubuntu | ❌ Divergent - issue #282 (round29879659, 0.9.1882 debug). |
+| `wtanaka.keepassx` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29879667, 0.9.1882 debug). |
