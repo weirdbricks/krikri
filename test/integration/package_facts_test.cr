@@ -1,4 +1,5 @@
 require "../minitest_helper"
+require "../../src/krikri/plugin_helpers/python_apt_probe"
 
 # The package_facts plugin enumerates the real installed packages (read-only).
 # On any Unix-like host there is at least one package manager present.
@@ -224,5 +225,23 @@ describe "package_facts plugin" do
     entry["arch"].as_s.wont_be_empty
     entry["category"].as_s.wont_be_empty
     entry["origin"].as_s.wont_be_nil
+  end
+end
+
+describe Krikri::PluginHelpers::PythonAptProbe do
+  it "treats a missing interpreter as just an unusable candidate, not a crash" do
+    Krikri::PluginHelpers::PythonAptProbe.imports_python_apt?(["/nonexistent/python"]).must_equal(false)
+  end
+
+  it "treats a nonzero import exit as unusable, like a python without python3-apt" do
+    Krikri::PluginHelpers::PythonAptProbe.imports_python_apt?(["/usr/bin/false"]).must_equal(false)
+  end
+
+  it "keeps probing later candidates until one imports python-apt" do
+    # The real manager's respawn semantics live here: one importing
+    # candidate is enough - here this suite host's own /usr/bin/python3,
+    # the same python3-apt-bearing host the package_facts specs above
+    # already assume.
+    Krikri::PluginHelpers::PythonAptProbe.imports_python_apt?(["/nonexistent/python", "/usr/bin/python3"]).must_equal(true)
   end
 end

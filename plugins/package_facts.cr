@@ -2,6 +2,7 @@
 
 require "json"
 require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/python_apt_probe"
 
 module Krikri
   # PackageFacts Plugin - populate the ansible_facts.packages dict with the
@@ -55,12 +56,28 @@ module Krikri
   #     + keep-going path), and only if NO manager yielded packages does
   #     the task fail with "Could not detect a supported package manager
   #     from the following list: [...], or the required Python library is
-  #     not installed. Check warnings for details."
+  #     not installed. Check warnings for details." The apt manager is
+  #     unusable whenever no system python can import python3-apt - real
+  #     respawns into /usr/bin/python3 to find it, and when nothing can,
+  #     the apt manager gathers nothing (issue #276, robertdebock.debug).
   class PackageFactsPlugin < BasePlugin
     # krikri's gatherable set, in Ansible's sorted-name order (apt
     # before rpm) so 'auto' expansion order matches the Ansible module's
     # iteration order.
     AUTO_DETECT_MANAGERS = ["apt", "rpm"]
+
+    # Ansible's full auto-detection name set (package_facts.py's
+    # PKG_MANAGER_NAMES): the sorted get_all_pkg_managers class names
+    # (apk, apt, pacman, pkg, pkg_info, portage, rpm) with ALIASES
+    # appended in ALIASES-dict order (rpm's dnf/dnf5/yum/zypper, pkg's
+    # pkg5/pkgng, pkg_info's openbsd_pkg). Querying still iterates this
+    # engine's gatherable pair (AUTO_DETECT_MANAGERS), but the found==0
+    # failure message prints the FULL set: real builds its message from
+    # its own PKG_MANAGER_NAMES, and on a python3-apt-less host real
+    # listed all 14 names where the gatherable pair would have shown
+    # ['apt', 'rpm'] (issue #276, robertdebock.debug).
+    ANSIBLE_PKG_MANAGER_NAMES = ["apk", "apt", "pacman", "pkg", "pkg_info", "portage",
+                                 "rpm", "dnf", "dnf5", "yum", "zypper", "pkg5", "pkgng", "openbsd_pkg"]
 
     # Canonical names this engine can gather + Ansible's ALIASES
     # (package_facts.py, added in ansible-core 2.18). No "dpkg":
@@ -109,10 +126,28 @@ module Krikri
 
       # 'auto' expands in place: real code appends every known manager name
       # after the user's entries then removes 'auto', preserving user order.
+      # Querying runs this engine's gatherable pair (real's other names
+      # aren't implemented here at all); the failure message instead keeps
+      # real's own expansion, built below into failure_managers.
       managers = requested.dup
       if requested.includes?("auto")
         managers.concat(AUTO_DETECT_MANAGERS)
         managers.delete("auto")
+      end
+
+      # Real's found==0 failure prints its own post-expansion list: the
+      # user's names plus the FULL PKG_MANAGER_NAMES set (aliases
+      # included), with the first 'auto' removed, so plain 'auto' prints
+      # all 14 names (and 'rpm,auto' would print 'rpm' twice). Limiting
+      # the message to this engine's gatherable pair diverged on the
+      # python3-apt-less robertdebock.debug host (issue #276): real said
+      # ['apk', 'apt', ..., 'openbsd_pkg'] on the identical failure.
+      failure_managers = managers
+      if requested.includes?("auto")
+        failure_managers = requested.dup.concat(ANSIBLE_PKG_MANAGER_NAMES)
+        if first_auto = failure_managers.index("auto")
+          failure_managers.delete_at(first_auto)
+        end
       end
 
       packages = Hash(String, JSON::Any).new
@@ -140,7 +175,7 @@ module Krikri
         end
       end
 
-      return no_manager_result(managers) if found == 0
+      return no_manager_result(failure_managers) if found == 0
 
       # Ansible 2.19.11 registered package_facts result (live-verified):
       # ansible_facts, failed, changed - the module's exit_json passes no
@@ -181,8 +216,10 @@ module Krikri
       !Process.find_executable(cmd).nil?
     end
 
-    # Ansible's found==0 failure, phrased with the (post-expansion)
-    # manager list and verified live against ansible-core 2.19.4:
+    # Ansible's found==0 failure, phrased with real code's own
+    # post-expansion manager list (for 'auto' requests that's Ansible's
+    # FULL PKG_MANAGER_NAMES + ALIASES, see execute) and verified live
+    # against ansible-core 2.19.4:
     # "Could not detect a supported package manager from the following
     # list: ['rpm'], or the required Python library is not installed.
     # Check warnings for details."
@@ -207,7 +244,20 @@ module Krikri
     # apt_release_origin reads it from /var/lib/apt/lists instead (""
     # matches python-apt's when no apt lists exist, e.g. the
     # origins[0].origin == '' "now" archive case).
+    #
+    # Real ansible's apt manager (package_facts.py's APT, extending
+    # module_utils' RespawningLibMgr) only counts as available when SOME
+    # system python can import python3-apt: the module interpreter first,
+    # then real respawns the module under /usr/bin/python3. When no
+    # candidate can import it, real warns and the apt manager yields
+    # NOTHING - on python3-apt-less Debian/Ubuntu hosts even a bare
+    # `manager: auto` then fails with the found==0 message. krikri used
+    # to read dpkg-query unconditionally and wrongly succeeded there
+    # (issue #276, robertdebock.debug); dpkg-query is only this
+    # implementation's stand-in for python-apt's own Cache listing, not a
+    # substitute for its system-python requirement.
     private def apt_packages : Hash(String, JSON::Any)
+      return {} of String => JSON::Any unless PluginHelpers::PythonAptProbe.imports_python_apt?
       result = Hash(String, JSON::Any).new
       origin = apt_release_origin
       stdout = capture("dpkg-query", ["-W", "-f=${Package}\\t${Version}\\t${Architecture}\\t${Section}\\n"])
