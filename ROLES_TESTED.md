@@ -14364,3 +14364,13 @@ Local probe roles, not Galaxy roles: each probed task registers its result and d
 | `hudecof.banners` | ubuntu | ✅ Clean (round29879057, 0.9.1870 debug). |
 | `innohub-ansible.ruby-install` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29879058, 0.9.1870 debug). |
 | `palkan-ansible.postgresql` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29879059, 0.9.1870 debug). |
+| `kliwniloc.borgbackup` | rocky | ❌ Divergent - issue #270 (round29879071, 0.9.1870 debug). |
+| `kravietz.ipsec` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29879067, 0.9.1870 debug). |
+| `libyanspiderllc.monarx_agent` | ubuntu | ✅ Clean (round29879070, 0.9.1870 debug). |
+| `luisico.webapp` | rocky | ❌ Divergent - issue #271 (round29879069, 0.9.1870 debug). |
+| `mrlesmithjr.drbd` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29879065, 0.9.1870 debug). |
+| `mrlesmithjr.gitlab-ce` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29879064, 0.9.1870 debug). |
+| `opentelekomcloud_infra.telegraf` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29879068, 0.9.1870 debug). |
+| `redbeard28.pyazuremodules` | ubuntu | ❌ Divergent - issue #272 (round29879066, 0.9.1870 debug). |
+| `silviuvulcan.kibana` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29879062, 0.9.1870 debug). |
+| `udelarinterior.matrix_synapse` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29879063, 0.9.1870 debug). |
