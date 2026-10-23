@@ -667,7 +667,8 @@ describe "get_url plugin" do
 
       result["failed"].as_bool.must_equal(true)
       result["msg"].as_s.must_equal("failed to create temporary content file: timed out")
-      result["elapsed"].as_i.must_equal(0)
+      # elapsed is the real run time, so the 1s timeout shows up in it.
+      result["elapsed"].as_i.must_equal(1)
       result["url"]?.must_be_nil
       result["dest"]?.must_be_nil
       result["status_code"]?.must_be_nil

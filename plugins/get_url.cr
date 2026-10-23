@@ -303,11 +303,11 @@ module Krikri
       # the STAGED copy, so the request always happens first - which is
       # why a download into an unwritable directory reports the
       # destination error rather than a download error.
-      if failure = destination_failure_result(tmp_path, dest, url)
+      if failure = destination_failure_result(tmp_path, dest, url, elapsed)
         return failure
       end
 
-      if checksum && (mismatch = checksum_mismatch_result(tmp_path, dest, url, checksum))
+      if checksum && (mismatch = checksum_mismatch_result(tmp_path, dest, url, checksum, elapsed))
         return mismatch
       end
 
@@ -435,7 +435,7 @@ module Krikri
         # get_url.py's own copyfileobj handler: the request was fine, so
         # only elapsed comes with it - no url, no dest.
         PluginResult.new(changed: false, failed: true,
-          msg: "failed to create temporary content file: #{ex.reason}", elapsed: 0)
+          msg: "failed to create temporary content file: #{ex.reason}", elapsed: elapsed)
       else
         PluginResult.new(changed: false, failed: true, msg: ex.info_msg, url: url, dest: dest, elapsed: elapsed)
       end
@@ -445,7 +445,7 @@ module Krikri
     # dest must be writable and then readable; a dest that does not exist
     # yet needs an existing and then writable parent directory. Returns
     # nil when dest is usable.
-    private def destination_failure_result(tmp_path : String, dest : String, url : String) : PluginResult?
+    private def destination_failure_result(tmp_path : String, dest : String, url : String, elapsed : Int32) : PluginResult?
       msg = if File.exists?(dest)
               if !File::Info.writable?(dest)
                 "Destination #{dest} is not writable"
@@ -462,7 +462,7 @@ module Krikri
             end
       return nil unless msg
 
-      post_download_failure_result(msg, tmp_path, dest, url, nil)
+      post_download_failure_result(msg, tmp_path, dest, url, nil, elapsed)
     end
 
     # The result shape every failure raised AFTER a successful request
@@ -478,12 +478,13 @@ module Krikri
       dest : String,
       url : String,
       checksum_dest : String?,
+      elapsed : Int32,
     ) : PluginResult
       checksum_src = native_checksum(tmp_path, "sha1")
       File.delete(tmp_path) if File.exists?(tmp_path)
       result = PluginResult.new(changed: false, failed: true, msg: msg,
         checksum_dest: checksum_dest, checksum_src: checksum_src,
-        dest: dest, elapsed: 0, url: url, src: tmp_path)
+        dest: dest, elapsed: elapsed, url: url, src: tmp_path)
       add_path_info(result, dest)
       result
     end
@@ -495,7 +496,7 @@ module Krikri
     # is evaluated the download is still only staged, so nothing has
     # changed yet (and the module-level result dict carries its initial
     # changed=False).
-    private def checksum_mismatch_result(tmp_path : String, dest : String, url : String, checksum : {String, String}) : PluginResult?
+    private def checksum_mismatch_result(tmp_path : String, dest : String, url : String, checksum : {String, String}, elapsed : Int32) : PluginResult?
       algorithm, expected = checksum
       actual = native_checksum(tmp_path, algorithm)
       return nil if actual == expected
@@ -503,7 +504,8 @@ module Krikri
       post_download_failure_result(
         "The checksum for #{tmp_path} did not match #{expected}; it was #{actual}.",
         tmp_path, dest, url,
-        File.exists?(dest) ? native_checksum(dest, "sha1") : nil
+        File.exists?(dest) ? native_checksum(dest, "sha1") : nil,
+        elapsed
       )
     end
 
