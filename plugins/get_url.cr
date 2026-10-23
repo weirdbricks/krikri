@@ -276,16 +276,18 @@ module Krikri
       last_mod_time : Time? = nil,
     ) : PluginResult
       tmp_path = staging_path(dest_param)
+      started = Time.utc
       info = begin
         download(request_url, tmp_path, force, last_mod_time)
       rescue ex : PluginHelpers::HTTPDownload::FetchError
         File.delete(tmp_path) if File.exists?(tmp_path)
-        return not_modified_result(ex.info_msg, url, dest_param) if ex.status_code == 304
-        return fetch_failure_result(ex, url, dest_param)
+        return not_modified_result(ex.info_msg, url, dest_param, elapsed_since(started)) if ex.status_code == 304
+        return fetch_failure_result(ex, url, dest_param, elapsed_since(started))
       rescue ex
         File.delete(tmp_path) if File.exists?(tmp_path)
-        return fetch_failure_result(ex, url, dest_param)
+        return fetch_failure_result(ex, url, dest_param, elapsed_since(started))
       end
+      elapsed = elapsed_since(started)
       info = info.as(PluginHelpers::HTTPDownload::Result)
 
       # Directory dest: the real filename comes from the FINAL response -
@@ -364,7 +366,7 @@ module Krikri
       result = PluginResult.new(changed: changed, failed: false,
         msg: "OK (#{info.headers["Content-Length"]? || "unknown"} bytes)",
         checksum_dest: checksum_dest, checksum_src: native_checksum(dest, "sha1"),
-        dest: dest, elapsed: 0, url: url, src: tmp_path,
+        dest: dest, elapsed: elapsed, url: url, src: tmp_path,
         md5sum: native_checksum(dest, "md5"), status_code: status_code,
         key_order: SUCCESS_KEY_ORDER)
       add_path_info(result, dest)
@@ -383,9 +385,9 @@ module Krikri
     # uid/gid/owner/group/mode/state/size keys still attach (Ansible's
     # exit_json runs add_path_info on every exit). Live-verified against
     # ansible-core 2.19.11 over a local http.server.
-    private def not_modified_result(msg : String, url : String, dest : String) : PluginResult
+    private def not_modified_result(msg : String, url : String, dest : String, elapsed = 0) : PluginResult
       result = PluginResult.new(changed: false, failed: false,
-        url: url, dest: dest, msg: msg, status_code: 304, elapsed: 0)
+        url: url, dest: dest, msg: msg, status_code: 304, elapsed: elapsed)
       add_path_info(result, dest)
       result
     end
@@ -404,32 +406,38 @@ module Krikri
     # `dest` is Ansible's own dest param, i.e. a directory dest stays the
     # directory here (the filename is only derived after a request that
     # came back).
-    private def fetch_failure_result(ex : Exception, url : String, dest : String) : PluginResult
+    private def fetch_failure_result(ex : Exception, url : String, dest : String, elapsed = 0) : PluginResult
       result = case ex
                when PluginHelpers::HTTPDownload::FetchError
-                 fetch_error_result(ex, url, dest)
+                 fetch_error_result(ex, url, dest, elapsed)
                else
                  # Anything else on this path died on the socket layer,
                  # where urllib would have wrapped it in a URLError.
                  PluginResult.new(changed: false, failed: true,
-                   msg: "Request failed: <urlopen error #{ex.message}>", url: url, dest: dest, elapsed: 0)
+                   msg: "Request failed: <urlopen error #{ex.message}>", url: url, dest: dest, elapsed: elapsed)
                end
       add_path_info(result, dest)
       result
     end
 
-    private def fetch_error_result(ex : PluginHelpers::HTTPDownload::FetchError, url : String, dest : String) : PluginResult
+    # Ansible's elapsed is whole seconds of wall-clock time spent in the
+    # request (a DNS failure on a slow resolver reports 5, not 0).
+    private def elapsed_since(started : Time) : Int32
+      (Time.utc - started).total_seconds.to_i
+    end
+
+    private def fetch_error_result(ex : PluginHelpers::HTTPDownload::FetchError, url : String, dest : String, elapsed = 0) : PluginResult
       case ex.kind
       when PluginHelpers::HTTPDownload::FetchError::Kind::HttpError
         PluginResult.new(changed: false, failed: true, msg: "Request failed",
-          status_code: ex.status_code, response: ex.info_msg, url: url, dest: dest, elapsed: 0)
+          status_code: ex.status_code, response: ex.info_msg, url: url, dest: dest, elapsed: elapsed)
       when PluginHelpers::HTTPDownload::FetchError::Kind::ContentCopy
         # get_url.py's own copyfileobj handler: the request was fine, so
         # only elapsed comes with it - no url, no dest.
         PluginResult.new(changed: false, failed: true,
           msg: "failed to create temporary content file: #{ex.reason}", elapsed: 0)
       else
-        PluginResult.new(changed: false, failed: true, msg: ex.info_msg, url: url, dest: dest, elapsed: 0)
+        PluginResult.new(changed: false, failed: true, msg: ex.info_msg, url: url, dest: dest, elapsed: elapsed)
       end
     end
 
