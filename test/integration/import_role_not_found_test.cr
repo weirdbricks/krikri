@@ -71,6 +71,35 @@ describe "static import_role: naming a missing role" do
     FileUtils.rm_rf(dir)
   end
 
+  it "reports the playbook-dir search list for an import_role: in a role's own tasks/main.yml" do
+    # Real 2.19 reports <playbook>/roles:...:<playbook>, not the
+    # role's tasks/ dir, however deep the import sits.
+    dir = PluginSpecHelper.tmp_path("import-role-missing-in-role", Random::Secure.hex(4))
+    FileUtils.rm_rf(dir)
+    FileUtils.mkdir_p(File.join(dir, "roles", "r1", "tasks"))
+    File.write(File.join(dir, "roles", "r1", "tasks", "main.yml"), <<-YAML)
+      - import_role:
+          name: nonexistent.role
+      YAML
+    File.write(File.join(dir, "site.yml"), <<-YAML)
+      - hosts: localhost
+        gather_facts: false
+        connection: local
+        roles:
+          - r1
+      YAML
+
+    status, output = run_playbook(dir)
+
+    output.must_include("[ERROR]: the role 'nonexistent.role' was not found in #{dir}/roles:")
+    output.must_include(":#{dir}\n")
+    output.wont_include("tasks/roles")
+    exit_code = status.exit_code
+    exit_code.must_equal(1)
+
+    FileUtils.rm_rf(dir)
+  end
+
   it "reports Ansible's wrapped fatal through an include_tasks:-loaded role file" do
     # roles/r3/tasks/sub/x.yml does `import_role: name=nonexistent.role`:
     # the include task itself is Ansible's fatal include failure (the

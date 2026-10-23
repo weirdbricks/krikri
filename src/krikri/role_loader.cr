@@ -576,8 +576,8 @@ module Krikri
       play.task_timeout = role_timeout[0] if role_timeout[0]
       play.task_timeout_expr = role_timeout[1] if role_timeout[1]
       begin
-        role_tasks = load_tasks_file(tasks_path, play, known_vars, role_dir)
-        role_handlers = load_tasks_file(find_main_file(File.join(role_dir, "handlers")) || File.join(role_dir, "handlers", "main.yml"), play, known_vars, role_dir)
+        role_tasks = load_tasks_file(tasks_path, play, known_vars, role_dir, playbook_dir)
+        role_handlers = load_tasks_file(find_main_file(File.join(role_dir, "handlers")) || File.join(role_dir, "handlers", "main.yml"), play, known_vars, role_dir, playbook_dir)
       ensure
         play.task_timeout = saved_task_timeout
         play.task_timeout_expr = saved_task_timeout_expr
@@ -1327,7 +1327,7 @@ module Krikri
       task
     end
 
-    private def self.load_tasks_file(path : String, play : Play, known_vars : Hash(String, JSON::Any)? = nil, role_dir : String? = nil) : Array(Task)
+    private def self.load_tasks_file(path : String, play : Play, known_vars : Hash(String, JSON::Any)? = nil, role_dir : String? = nil, playbook_dir : String? = nil) : Array(Task)
       return [] of Task unless File.exists?(path)
 
       yaml = cached_yaml(path)
@@ -1337,7 +1337,9 @@ module Krikri
       # `library/` search root, threaded through so the parse-time
       # unimplemented-module hard-stop finds a role-private module
       # source exactly where the executor later will.
-      PlaybookParser.parse_tasks(yaml.as_a, play, "task in #{path}", File.dirname(path), known_vars, role_dir, nil, path, cached_source_map(path))
+      # playbook_dir makes a static import_role: inside the role report
+      # ansible's playbook-basedir search list, not the tasks/ dir's.
+      PlaybookParser.parse_tasks(yaml.as_a, play, "task in #{path}", File.dirname(path), known_vars, role_dir, playbook_dir, path, cached_source_map(path))
     end
   end
 end
