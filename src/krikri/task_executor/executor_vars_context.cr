@@ -3858,6 +3858,26 @@ module Krikri
       return msg if msg.includes?(" at '") || msg.includes?(" at \"")
       raw = operand || task.when_condition.to_s.strip
       unless raw.matches?(/\A[A-Za-z_][A-Za-z0-9_]*\z/)
+        # ansible's `default` filter is a pass-through for a defined
+        # variable, so the conditional's tested value keeps that
+        # variable's own lineage: real 2.19 labels its strict-conditional
+        # error with the variable's DEFINING position, not the when: token
+        # (issue #251, HUIT-AcademicTechnology-Ops.ansible-role-splunk-
+        # universal-forwarder: role-defaults `splunk_uf_inputs_conf_
+        # template: inputs.conf.j2` behind `var | default(false)` was
+        # labeled defaults/main.yml:21:33 by real and tasks/main.yml:54:9
+        # by us). Only a defined non-empty string is that observed
+        # pass-through shape; a fresh fallback value (`lst | d([], true)`,
+        # an undefined variable) has no lineage to follow, and when even a
+        # pass-through value's origin can't be found, the compound
+        # when:-token labeling below stays in charge rather than guessing.
+        if (h = host) && (m = raw.match(/\A\s*([A-Za-z_][A-Za-z0-9_]*)\s*\|\s*d(?:efault)?\s*\(.*\)\s*\z/))
+          ident = m[1]
+          value = build_vars_context(task, h)[ident]?.try(&.raw)
+          if value.is_a?(String) && !value.empty? && var_origin_for(task, h, ident, runtime_marker: true)
+            return decorate_conditional_value_origin(task, msg, h, ident)
+          end
+        end
         # An and/or chain returns one operand's own value, so real labels
         # the error with that operand variable's defining origin
         # (`nvm_dir and not nvm_profile` with both "" -> nvm_dir's play-var

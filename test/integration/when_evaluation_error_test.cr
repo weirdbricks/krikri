@@ -304,6 +304,86 @@ describe "ignore_errors: on an ordinary (non-when-related) task failure" do
     FileUtils.rm_rf(dir) if dir && Dir.exists?(dir)
   end
 
+  # ansible's `default` filter passes a DEFINED variable's own value
+  # straight through, so the conditional's tested value keeps that
+  # variable's lineage: with role defaults
+  # `splunk_uf_inputs_conf_template: inputs.conf.j2` behind the task's
+  # `when: splunk_uf_inputs_conf_template | default(false)`, real 2.19
+  # labels the error with the defaults file's value position, NOT the
+  # when: token's (issue #251, live-verified).
+  it "labels a `var | default(false)` when: error with the variable's role-defaults position" do
+    dir = File.tempname("when-default-passthrough-origin", ".d")
+    Dir.mkdir(dir)
+    Dir.mkdir_p(File.join(dir, "roles", "testrole", "defaults"))
+    Dir.mkdir_p(File.join(dir, "roles", "testrole", "tasks"))
+    File.write(File.join(dir, "roles", "testrole", "defaults", "main.yml"), <<-YAML)
+      splunk_uf_inputs_conf_template: inputs.conf.j2
+      YAML
+    File.write(File.join(dir, "roles", "testrole", "tasks", "main.yml"), <<-YAML)
+      - name: default passthrough conditional
+        ansible.builtin.debug:
+          msg: never runs
+        when: splunk_uf_inputs_conf_template | default(false)
+      YAML
+    playbook = File.join(dir, "site.yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        roles:
+          - testrole
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+
+    status.success?.must_equal(false)
+    # Value token `inputs.conf.j2` starts at column 33 - the same column
+    # as issue #251's real-world label (defaults/main.yml:21:33).
+    expected = "was derived from value of type 'str' at '#{File.join(dir, "roles", "testrole", "defaults", "main.yml")}:1:33'"
+    output.to_s.must_include(expected, output.to_s)
+  ensure
+    FileUtils.rm_rf(dir) if dir && Dir.exists?(dir)
+  end
+
+  # The `lst | d([], true)` shape's fallback is a fresh value with no
+  # lineage of its own, and real keeps labeling it at the when: value
+  # token - the defined-string pass-through relabeling must not catch it.
+  it "keeps labeling a fresh `d([], true)` fallback value at the when: token" do
+    dir = File.tempname("when-default-fresh-origin", ".d")
+    Dir.mkdir(dir)
+    Dir.mkdir_p(File.join(dir, "roles", "testrole", "defaults"))
+    Dir.mkdir_p(File.join(dir, "roles", "testrole", "tasks"))
+    File.write(File.join(dir, "roles", "testrole", "defaults", "main.yml"), <<-YAML)
+      splunk_uf_list: []
+      YAML
+    File.write(File.join(dir, "roles", "testrole", "tasks", "main.yml"), <<-YAML)
+      - name: fresh fallback conditional
+        ansible.builtin.debug:
+          msg: never runs
+        when: splunk_uf_list | d([], true)
+      YAML
+    playbook = File.join(dir, "site.yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        roles:
+          - testrole
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+
+    status.success?.must_equal(false)
+    # when: sits on line 4 at column 9 (the task keyword's own value
+    # token), the pre-fix compound-shape behavior.
+    expected = "was derived from value of type 'list' at '#{File.join(dir, "roles", "testrole", "tasks", "main.yml")}:4:9'"
+    output.to_s.must_include(expected, output.to_s)
+  ensure
+    FileUtils.rm_rf(dir) if dir && Dir.exists?(dir)
+  end
+
   # Same decoration must survive an include_tasks: hop inside the role:
   # the included file's tasks are parsed outside the role, so without the
   # origins travelling with the values they describe the location silently
