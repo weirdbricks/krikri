@@ -14454,3 +14454,13 @@ Local probe roles, not Galaxy roles: each probed task registers its result and d
 | `pinkeen.sudo` | rocky | ✅ Clean (round29879942, 0.9.1884 release). Times: cold py 3.60s vs cr 1.10s; warm py 3.12s vs cr 0.19s. |
 | `tenequm.php` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29879950, 0.9.1884 release). Times: cold py 0.50s vs cr 0.01s; warm py 0.48s vs cr 0.01s. |
 | `zaxos.swapfile-ansible-role` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29879944, 0.9.1884 release). Times: cold py 0.44s vs cr 0.02s; warm py 0.44s vs cr 0.01s. |
+| `ANXS.generic-directories` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29879955, 0.9.1884 release). Times: cold py 2.67s vs cr 0.72s; warm py 1.37s vs cr 0.18s. |
+| `hyperfoil.hyperfoil_shutdown` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29879956, 0.9.1884 release). Times: cold py 2.11s vs cr 0.79s; warm py 1.53s vs cr 0.16s. |
+| `incubateurpe.pacemaker` | rocky | ✅ Clean (round29879954, 0.9.1884 release). Times: cold py 5.66s vs cr 9.37s; warm py 3.85s vs cr 0.58s. |
+| `indigo-dc.galaxy-tools` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29879953, 0.9.1884 release). Times: cold py 0.44s vs cr 0.01s; warm py 0.44s vs cr 0.01s. |
+| `micalexander.python3` | rocky | ❌ Divergent - issue #283 (round29879952, 0.9.1884 release). Times: cold py 3.16s vs cr 1.03s; warm py 2.84s vs cr 0.21s. |
+| `mrlesmithjr.conntrackd` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29879951, 0.9.1884 release). Times: cold py 0.51s vs cr 0.01s; warm py 0.47s vs cr 0.01s. |
+| `mrlesmithjr.iscsitarget` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29879950, 0.9.1884 release). Times: cold py 0.44s vs cr 0.01s; warm py 0.43s vs cr 0.01s. |
+| `opichon.docker_mailhog` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29879947, 0.9.1884 release). Times: cold py 8.04s vs cr 5.85s; warm py 8.77s vs cr 0.80s. |
+| `sansible.consul` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29879948, 0.9.1884 release). Times: cold py 0.44s vs cr 0.01s; warm py 0.44s vs cr 0.01s. |
+| `veselahouba.rsyslog` | ubuntu | ✅ Clean (round29879949, 0.9.1884 release). Times: cold py 17.71s vs cr 11.12s; warm py 6.21s vs cr 0.19s. |
