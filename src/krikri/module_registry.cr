@@ -312,6 +312,8 @@ module Krikri
       # round 300033 calls it). install-only by nature - the Ansible module
       # has no absent state either.
       "community.general.easy_install",
+      # cpanm: Perl module installs (systemli.spamassasin's DMARC plugin).
+      "community.general.cpanm",
       # mysql_variables (0.9.942): MySQL/MariaDB global variable query/
       # set over the wire protocol, same shared connection path as the
       # other community.mysql plugins (Oefenweb.percona_server round
