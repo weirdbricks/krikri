@@ -14434,3 +14434,13 @@ Local probe roles, not Galaxy roles: each probed task registers its result and d
 | `pandemonium1986.os_requirements` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29879668, 0.9.1882 debug). |
 | `timorunge.custom_nginx` | ubuntu | ❌ Divergent - issue #282 (round29879659, 0.9.1882 debug). |
 | `wtanaka.keepassx` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29879667, 0.9.1882 debug). |
+| `capitanh.common-ansible-role` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29879941, 0.9.1884 release). Times: cold py 15.16s vs cr 9.58s; warm py 12.40s vs cr 1.78s. |
+| `cyberitas.node10` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29879943, 0.9.1884 release). Times: cold py 4.92s vs cr 8.50s; warm py 4.45s vs cr 0.53s. |
+| `danbohea.google-chrome` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29879939, 0.9.1884 release). Times: cold py 3.33s vs cr 1.27s; warm py 2.41s vs cr 0.81s. |
+| `hax0rbana_adam.grafana` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29879944, 0.9.1884 release). Times: cold py 1.89s vs cr 0.66s; warm py 1.52s vs cr 0.13s. |
+| `kovarus.networkbackup` | ubuntu | ✅ Clean (round29879938, 0.9.1884 release). Times: cold py 2.89s vs cr 0.73s; warm py 2.47s vs cr 0.11s. |
+| `rsicart.smtpdebuggingserver` | ubuntu | ✅ Clean (round29879940, 0.9.1884 release). Times: cold py 5.67s vs cr 1.17s; warm py 2.27s vs cr 0.12s. |
+| `sansible.prometheus_alertmanager` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29879936, 0.9.1884 release). Times: cold py 0.55s vs cr 0.01s; warm py 0.47s vs cr 0.01s. |
+| `shomatan.l2tp-ipsec-server` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29879937, 0.9.1884 release). Times: cold py 0.54s vs cr 0.01s; warm py 0.46s vs cr 0.01s. |
+| `triplepoint.mosquitto` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29879942, 0.9.1884 release). Times: cold py 28.97s vs cr 9.19s; warm py 46.45s vs cr 3.17s. |
+| `xanmanning.awscli` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29879945, 0.9.1884 release). Times: cold py 3.52s vs cr 0.74s; warm py 2.90s vs cr 0.15s. |
