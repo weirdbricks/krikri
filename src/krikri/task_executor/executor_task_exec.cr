@@ -154,6 +154,44 @@ module Krikri
         end
       end
 
+      # Role form: real templates the whole argument_spec - every option's
+      # `default:` expression included - while finalizing the SYNTHESIZED
+      # task's own args, before its action plugin ever templates a value
+      # out of task_vars. So a spec default whose own template is
+      # undefined must fail the task HERE, in the finalization shape with
+      # Origins inside the spec file (kliwniloc.borgbackup's
+      # `borg_server_host_url: default: "{{ borg_server_host }}"` with
+      # borg_server_host undefined, issue #270) - not in the inside-the-
+      # action-plugin shape the var-value loop below used to hit first
+      # only because this engine's ordering was inverted. The resolution
+      # is carried into the validation loop so no spec default is ever
+      # templated twice.
+      resolved_defaults : Hash(String, JSON::Any)? = nil
+      unless task.validate_argument_spec_inline?
+        spec_file = task.role_path.try { |dir| File.join(dir, "meta", "argument_specs.yml") }
+        if spec_file.is_a?(String) && File.file?(spec_file)
+          spec_lines = File.read_lines(spec_file)
+          failed_spec_default : {String, String}? = nil
+          spec_default_resolutions = Hash(String, JSON::Any).new
+          options.each do |option_name, spec|
+            default = spec["default"]?
+            next unless default && (raw_default = default.raw).is_a?(String) && raw_default.includes?("{{")
+            begin
+              substitutor.scan_strict_expression_refs(raw_default)
+              rendered = substitutor.substitute(raw_default, strict: true)
+              spec_default_resolutions[option_name] = Krikri.parse_json_or_python_literal(rendered)
+            rescue ex : UndefinedVariableError
+              failed_spec_default = {option_name, ex.message || ""}
+              break
+            end
+          end
+          if failure = failed_spec_default
+            return validate_args_spec_finalization_failure(task, host, failure[1], options, spec_file, spec_lines, failure[0])
+          end
+          resolved_defaults = spec_default_resolutions
+        end
+      end
+
       # The action plugin validates combine_vars(args_from_task_vars,
       # provided_arguments) in BOTH forms (2.19.11 source + live: an
       # inline task's required option is satisfied by a play var of the
@@ -208,21 +246,33 @@ module Krikri
         # regardless of the option's presence - this engine used to
         # resolve it leniently to undefined, pass the task, and only
         # fail three tasks later at a `when:` on the same expression.
+        # The role form resolves these in the finalization-shaped prepass
+        # above; this loop only re-templates when the spec file couldn't
+        # be located there (or the spec is the inline form's).
         resolved_default = nil
         if (default = spec["default"]?) && (raw_default = default.raw).is_a?(String) && raw_default.includes?("{{")
-          begin
-            # The strict substitute only reaches bare refs and simple
-            # chains - argument-spec defaults are arbitrary compound
-            # expressions (rke2's `'server' if inventory_hostname in
-            # groups[rke2_servers_group_name] else ...` ternary), so run
-            # the dict-miss/undefined-ref scan over the whole expression
-            # as well.
-            substitutor.scan_strict_expression_refs(raw_default)
-            rendered = substitutor.substitute(raw_default, strict: true)
-            resolved_default = Krikri.parse_json_or_python_literal(rendered)
-          rescue ex : UndefinedVariableError
-            errors << "Error while resolving value for 'argument_spec': #{ex.message}"
-            next
+          if pre_resolved = resolved_defaults.try(&.[option_name]?)
+            resolved_default = pre_resolved
+          else
+            # Inline form (or a role form whose spec file couldn't be
+            # located on disk), where the templating failure keeps this
+            # engine's non-finalization handling - the role form's
+            # equivalent failure already surfaced first in the
+            # finalization-shaped check above.
+            begin
+              # The strict substitute only reaches bare refs and simple
+              # chains - argument-spec defaults are arbitrary compound
+              # expressions (rke2's `'server' if inventory_hostname in
+              # groups[rke2_servers_group_name] else ...` ternary), so run
+              # the dict-miss/undefined-ref scan over the whole expression
+              # as well.
+              substitutor.scan_strict_expression_refs(raw_default)
+              rendered = substitutor.substitute(raw_default, strict: true)
+              resolved_default = Krikri.parse_json_or_python_literal(rendered)
+            rescue ex : UndefinedVariableError
+              errors << "Error while resolving value for 'argument_spec': #{ex.message}"
+              next
+            end
           end
         elsif default = spec["default"]?
           resolved_default = default
@@ -396,6 +446,111 @@ module Krikri
       end
       return unless @@validate_args_error_blocks_seen.add?(text)
       puts text
+    end
+
+    # The failure path for the ROLE form's argument_spec itself failing to
+    # template while finalizing the synthesized task's own args (issue
+    # #270, kliwniloc.borgbackup): same result hash / display / stats /
+    # halt treatment as validate_args_templating_failure, with the
+    # finalization wrapper's own message and [ERROR] block.
+    private def validate_args_spec_finalization_failure(task : Task, host : Host, undef_message : String, options : Hash(String, JSON::Any), spec_file : String, spec_lines : Array(String), failed_option : String) : Nil
+      message = "Finalization of task args for '#{finalization_module_name(task)}' failed: Error while resolving value for 'argument_spec': #{undef_message}"
+      emit_validate_args_spec_finalization_block(task, undef_message, options, spec_file, spec_lines, failed_option)
+      result = JSON::Any.new({
+        "changed" => JSON::Any.new(false),
+        "failed"  => JSON::Any.new(true),
+        "msg"     => JSON::Any.new("Task failed: #{message}"),
+      } of String => JSON::Any)
+      ignore_errors = resolve_task_ignore_errors(task, host: host)
+      ResultDisplay.display_result(host, result, @diff_mode, ignore_errors: ignore_errors, module_name: task.module_name, delegate_target: delegate_display_target(task, host), source_task: task)
+      ResultDisplay.update_stats(@results[host.name], result, ignore_errors)
+      @halted_hosts.add(host.name) unless ignore_errors
+    end
+
+    # The [ERROR] block real 2.19.11 prints before the fatal line when the
+    # ROLE form's argument_spec itself fails to template during
+    # finalization of the synthesized task's own args (issue #270,
+    # kliwniloc.borgbackup: borg_server_host_url's `default: "{{ borg_
+    # server_host }}"` with borg_server_host undefined): four chained
+    # stanzas - the "Task failed." segment whose body is the action-call
+    # repr and whose Origin is <unknown> (the exception carries no task
+    # source of its own), a finalization-wrapper stanza whose body is the
+    # bare action name (likewise Origin <unknown>), and two stanzas whose
+    # Origins BOTH point into the spec file: the resolvable-argument
+    # failure at the FIRST option's key line (not the failing option's -
+    # same first-key anchoring as the finalization chain's block-style-
+    # mapping case, live-captured on issue #265) and the undefined-
+    # variable cause at the failing option's `default:` value token.
+    # Deduped by full text like every other block (Display._deduplicate).
+    private def emit_validate_args_spec_finalization_block(task : Task, undef_message : String, options : Hash(String, JSON::Any), spec_file : String, spec_lines : Array(String), failed_option : String) : Nil
+      text = String.build do |io|
+        io << "[ERROR]: Task failed: Finalization of task args for '#{finalization_module_name(task)}' failed: Error while resolving value for 'argument_spec': " << undef_message << "\n"
+        io << "\nTask failed.\n"
+        io << "Origin: <unknown>\n"
+        io << "\n" << shorten_event_text(validate_args_action_repr(task, options)) << "\n"
+        io << "\n<<< caused by >>>\n\n"
+        io << "Finalization of task args for '#{finalization_module_name(task)}' failed.\n"
+        io << "Origin: <unknown>\n"
+        io << "\n" << finalization_module_name(task) << "\n"
+        io << "\n<<< caused by >>>\n\n"
+        io << "Error while resolving value for 'argument_spec'.\n"
+        first_option = options.each_key.next
+        if first_option.is_a?(String) && (pos = spec_option_key_position(spec_lines, first_option))
+          io << origin_context_block(spec_file, spec_lines, pos[0] + 1, pos[1])
+        end
+        io << "\n<<< caused by >>>\n\n"
+        io << undef_message << "\n"
+        if pos = spec_option_default_value_position(spec_lines, failed_option)
+          io << origin_context_block(spec_file, spec_lines, pos[0] + 1, pos[1])
+        end
+        io << "\n"
+      end
+      return unless @@validate_args_error_blocks_seen.add?(text)
+      puts text
+    end
+
+    # An option's key-line position in meta/argument_specs.yml (the
+    # stanza-3 origin): the first BLOCK key line of that name - column at
+    # the key's first character. Comment and flow-valued lines never
+    # anchor an Origin.
+    private def spec_option_key_position(lines : Array(String), option_name : String) : {Int32, Int32}?
+      key_needle = /#{Regex.escape(option_name)}[ \t]*:/
+      lines.each_with_index do |line, idx|
+        next if line.lstrip.starts_with?('#')
+        m = key_needle.match(line)
+        next unless m
+        key_idx = m.begin(0)
+        next unless key_idx == 0 || line[key_idx - 1].whitespace?
+        remainder = line[m.end(0)..].strip
+        next unless remainder.empty? || remainder.starts_with?('#')
+        return {idx, line.size - line.lstrip.size + 1}
+      end
+      nil
+    end
+
+    # The failing option's `default:` value-token position (the stanza-4
+    # origin): the first `default:` key under that option (deeper indent,
+    # before the block ends at the option's own indent level), column at
+    # the value token's first character, quote included. A default whose
+    # template wraps to a later line (block scalar) gets no Origin rather
+    # than a mislabeled one.
+    private def spec_option_default_value_position(lines : Array(String), option_name : String) : {Int32, Int32}?
+      return nil unless key_pos = spec_option_key_position(lines, option_name)
+      key_idx = key_pos[0]
+      key_indent = lines[key_idx].size - lines[key_idx].lstrip.size
+      (key_idx + 1...lines.size).each do |idx|
+        line = lines[idx]
+        content = line.lstrip
+        next if content.empty?
+        break unless (line.size - content.size) > key_indent
+        break if content.starts_with?("- ")
+        next unless content.starts_with?("default:")
+        value = line[(line.size - content.size + "default".size + 1)..]
+        value_text = value.strip
+        return nil unless value_text.includes?("{{")
+        return {idx, line.size - content.size + "default:".size + (value.size - value.lstrip.size) + 1}
+      end
+      nil
     end
 
     # The python-repr'd action-call event text all validate-args [ERROR]
