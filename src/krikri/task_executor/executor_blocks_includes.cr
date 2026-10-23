@@ -750,7 +750,12 @@ module Krikri
           end
 
           loaded = begin
-            RoleLoader.load_vars_file(path)
+            RoleLoader.load_include_vars_file(path)
+          rescue ex : RoleLoader::VarsFileNotDictError
+            display_include_vars_item_failure(task, host, item_context, item, item_label, "include_vars: not a dictionary: #{ex.message}")
+            failed = true
+            item_results << JSON::Any.new({"item" => item, "changed" => JSON::Any.new(false), "failed" => JSON::Any.new(true), "ansible_facts" => include_vars_failure_facts(name_key)} of String => JSON::Any)
+            next
           rescue ex
             # A file that exists but fails to parse is the same per-item
             # action-failure shape as the missing file above - the same
@@ -976,7 +981,18 @@ module Krikri
       end
 
       loaded = begin
-        RoleLoader.load_vars_file(path)
+        RoleLoader.load_include_vars_file(path)
+      rescue ex : RoleLoader::VarsFileNotDictError
+        # with_first_found makes the found file a one-item loop, so
+        # Ansible prints the failure as `failed: [host] (item=...)` with
+        # the loop bindings in the dump.
+        if (fi = first_found_item) && (label = first_found_item_label)
+          display_include_vars_item_failure(task, host, vars_context, fi, label, "include_vars: not a dictionary: #{ex.message}")
+          include_vars_failure_stats(task, host)
+        else
+          finish_include_vars_failure(task, host, "include_vars: not a dictionary: #{ex.message}")
+        end
+        return
       rescue ex
         finish_include_vars_failure(task, host, "include_vars: could not parse #{path}: #{ex.message}")
         return
@@ -1383,6 +1399,8 @@ module Krikri
         include_vars_file_not_found_message(task, message.sub("include_vars: file not found: ", ""))
       elsif message.ends_with?(" directory does not exist")
         message
+      elsif message.starts_with?("include_vars: not a dictionary: ")
+        message.sub("include_vars: not a dictionary: ", "")
       elsif message.starts_with?("include_vars: could not parse ")
         # PyYAML's MarkedYAMLError text: "<While context> <problem>."
         raw = message.sub(/\Ainclude_vars: could not parse [^:]*: /, "")
@@ -1480,7 +1498,7 @@ module Krikri
         h["warnings"] = JSON::Any.new(["Invalid request to find a file that matches a \"null\" value"].map { |text| JSON::Any.new(text) })
         Krikri.mark_failed_key_order(JSON::Any.new(h), FAILED_KEY_ORDER_INCLUDE_VARS)
         result = JSON::Any.new(h)
-      elsif message.starts_with?("include_vars: file not found: ") || message.starts_with?("include_vars: could not parse ") || message.ends_with?(" directory does not exist")
+      elsif message.starts_with?("include_vars: file not found: ") || message.starts_with?("include_vars: could not parse ") || message.starts_with?("include_vars: not a dictionary: ") || message.ends_with?(" directory does not exist")
         detail = include_vars_failure_detail(task, message) || message
         h["ansible_facts"] = include_vars_wrapped_facts(name_key, Hash(String, JSON::Any).new)
         h["ansible_included_var_files"] = JSON::Any.new([] of JSON::Any)

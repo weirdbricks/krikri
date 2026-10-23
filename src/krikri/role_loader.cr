@@ -1200,6 +1200,22 @@ module Krikri
       result
     end
 
+    class VarsFileNotDictError < Exception
+    end
+
+    # include_vars (unlike defaults/ or vars/ loading) refuses a file whose
+    # top level is anything but a mapping - e.g. a tasks-style list - with
+    # "<path> must be stored as a dictionary/hash". An empty file is fine.
+    def self.load_include_vars_file(path : String) : Hash(String, JSON::Any)
+      if File.exists?(path)
+        raw = cached_yaml(path).raw
+        unless raw.nil? || raw.is_a?(Hash)
+          raise VarsFileNotDictError.new("#{path} must be stored as a dictionary/hash")
+        end
+      end
+      load_vars_file(path)
+    end
+
     # Loads a role's defaults/ or vars/ - Ansible supports EITHER a
     # single `main.yml` file OR a `main/` directory of multiple `*.yml`
     # files (same convention `tasks/main/` uses), merged together in
