@@ -14464,3 +14464,13 @@ Local probe roles, not Galaxy roles: each probed task registers its result and d
 | `opichon.docker_mailhog` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29879947, 0.9.1884 release). Times: cold py 8.04s vs cr 5.85s; warm py 8.77s vs cr 0.80s. |
 | `sansible.consul` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29879948, 0.9.1884 release). Times: cold py 0.44s vs cr 0.01s; warm py 0.44s vs cr 0.01s. |
 | `veselahouba.rsyslog` | ubuntu | ✅ Clean (round29879949, 0.9.1884 release). Times: cold py 17.71s vs cr 11.12s; warm py 6.21s vs cr 0.19s. |
+| `JulianArevalo.oracle-java` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29879958, 0.9.1884 release). Times: cold py 0.49s vs cr 0.03s; warm py 0.50s vs cr 0.02s. |
+| `diodonfrost.sops` | rocky | ✅ Clean (round29879964, 0.9.1884 release). Times: cold py 11.99s vs cr 11.39s; warm py 3.32s vs cr 0.88s. |
+| `entanet_devops.ansible_role_supervisor` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29879955, 0.9.1884 release). Times: cold py 0.44s vs cr 0.01s; warm py 0.44s vs cr 0.01s. |
+| `fouadsemaan.spark` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29879961, 0.9.1884 release). Times: cold py 0.47s vs cr 0.01s; warm py 0.47s vs cr 0.01s. |
+| `jgoodall.zeromq` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29879957, 0.9.1884 release). Times: cold py 11.86s vs cr 7.83s; warm py 6.73s vs cr 2.37s. |
+| `joenyland.vim` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29879962, 0.9.1884 release). Times: cold py 3.62s vs cr 0.90s; warm py 1.96s vs cr 0.17s. |
+| `mrlesmithjr.fail2ban` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29879956, 0.9.1884 release). Times: cold py 0.63s vs cr 0.01s; warm py 0.54s vs cr 0.01s. |
+| `sparkklabs.dotdocker` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29879959, 0.9.1884 release). Times: cold py 8.11s vs cr 5.48s; warm py 8.66s vs cr 0.56s. |
+| `vicenteg.mysql_server` | rocky | ✅ Clean (round29879960, 0.9.1884 release). Times: cold py 7.25s vs cr 1.92s; warm py 4.93s vs cr 0.69s. |
+| `warhorse.swag_docker` | ubuntu | ✅ Clean (round29879963, 0.9.1884 release). Times: cold py 111.51s vs cr 39.07s; warm py 50.89s vs cr 1.27s. |
