@@ -73,6 +73,35 @@ describe "ansible_ssh_user/ansible_ssh_host/ansible_ssh_port legacy aliases" do
     File.delete(playbook) if playbook && File.exists?(playbook)
   end
 
+  it "banners a task name referencing the alias as an undefined-error marker while the args resolve" do
+    # hannseman.raspbian: `name: setup ssh user {{ ansible_ssh_user }}`
+    # with only ansible_user set banners as `<< error 1 - ... >>` on
+    # ansible-playbook (live-verified), while the task's args still
+    # resolve the alias.
+    inventory = File.tempname("ansible-ssh-user-inv", ".ini")
+    File.write(inventory, "node ansible_connection=local ansible_user=root\n")
+
+    playbook = File.tempname("ansible-ssh-user-name", ".yml")
+    File.write(playbook, <<-YAML)
+      - name: repro
+        hosts: all
+        gather_facts: false
+        tasks:
+          - name: setup ssh user {{ ansible_ssh_user }}
+            ansible.builtin.debug:
+              msg: "user={{ ansible_ssh_user }}"
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", inventory, playbook], output: output, error: output)
+    status.success?.must_equal(true)
+    output.to_s.must_include("TASK [setup ssh user << error 1 - 'ansible_ssh_user' is undefined >>]")
+    output.to_s.must_include("user=root")
+  ensure
+    File.delete(inventory) if inventory && File.exists?(inventory)
+    File.delete(playbook) if playbook && File.exists?(playbook)
+  end
+
   it "fails a loop: source list referencing the alias (Ansible's scoping)" do
     # round900321 f500.bashrc, live-verified against ansible-playbook:
     # `loop: ["{{ ansible_ssh_user }}"]` with only ansible_user set is a

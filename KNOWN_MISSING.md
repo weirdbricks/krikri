@@ -420,6 +420,13 @@ because anyone intends to fix them.
   were created. The ansible and krikri runs are on different hosts, so these values cannot match;
   the structure around them (item repr, `__hsesa_sshaudit_out` var dump) does. Not a krikri gap.
 
+- **Mounting tmpfs over `/tmp` kills real Ansible's own module run (`hannseman.raspbian`).** Ansible
+  unpacks each AnsiballZ payload into `/tmp/ansible_<module>_payload_*`; `mount:` of a tmpfs on `/tmp`
+  hides that directory mid-run, so ansible-core fails with "Module result deserialization failed" and
+  stops the play (exit 2), leaving every later task unapplied (warm run then shows `changed` where
+  krikri shows `ok`). krikri's plugins are standalone binaries with no payload in `/tmp`, so the mount
+  succeeds and the play continues. An artifact of Ansible's execution model, not a krikri gap.
+
 ### Everything else
 
 - **`ansible-playbook`'s CLI flag surface is fully covered by name, and all but one flag is

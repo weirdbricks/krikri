@@ -186,7 +186,12 @@ module Krikri
       return task.name if task.templated_action && !task.has_explicit_name?
       return lenient_task_name(task, host) if task.name.includes?("{%") || task.name.includes?("{#")
 
-      vars_context = build_vars_context(task, host)
+      # Name templating, like loop-source resolution, runs before Ansible's
+      # `ansible_ssh_user`/`_host`/`_port` alias synthesis: hannseman.raspbian's
+      # `name: setup ssh user {{ ansible_ssh_user }}` banners as
+      # `<< error 1 - 'ansible_ssh_user' is undefined >>` while the same
+      # reference in the task's args resolves.
+      vars_context = build_vars_context(task, host, include_legacy_ssh_aliases: false)
       substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
 
       state = NameTemplateErrorState.new
