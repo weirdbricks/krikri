@@ -136,6 +136,15 @@ module Krikri
     property source_file : String? = nil
     property source_line : Int32 = 0
     property source_col : Int32 = 0
+    # The file/line/col of an import_tasks: line's own `when:` VALUE token
+    # that was statically ANDed onto this task - the position real 2.19
+    # points the conditional-failure chain's "caused by" Origin at for an
+    # inlined task (the IMPORTING file, not the inlined task's own file,
+    # where no `when:` exists to locate; Jooho.okd_prerequisites issue
+    # #252). nil when the task carries no statically inherited import
+    # when:, or when its own when: also contributed to the merged
+    # condition.
+    property inherited_when_origin : {String, Int32, Int32}? = nil
     property when_condition : String?
     # The when: LIST's own per-item condition strings, kept alongside the
     # " and "-joined `when_condition` so the STRICT when: evaluation path
@@ -2794,6 +2803,20 @@ module Krikri
           # un-merged child conditions as its own_items suffix.
           own_when_condition = task.when_condition
           own_when_condition_list = task.when_condition_list
+          # Real's two-level conditional-failure chain points the "caused
+          # by" Origin of an inlined import task's undefined-when failure
+          # at the IMPORTING file's `when:` value token (issue #252,
+          # Jooho.okd_prerequisites), which the executor can't find in the
+          # task's own file because the when: lives here, on the import
+          # line. Only a child with no own when: qualifies - with one, the
+          # merged condition spans both files and the child's own site is
+          # still locatable in its file.
+          if own_when_condition.nil? && own_when_condition_list.nil? &&
+             task.inherited_when_origin.nil? &&
+             hash["when"]?.try(&.as_a?).nil? && (import_source = source_file) &&
+             (when_pos = source_map.try(&.at?(task_source_prefix(source_prefix, source_index) + "/when")))
+            task.inherited_when_origin = {File.expand_path(import_source), when_pos[0], when_pos[1]}
+          end
           task.when_condition = task.when_condition ? "(#{import_when}) and (#{task.when_condition})" : import_when
           # Same prepend in list form - the parent's per-item conditions
           # come before the child's own (see Task#when_condition_list).
