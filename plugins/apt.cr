@@ -171,7 +171,7 @@ module Krikri
       result = execute_inner
       # an unhandled module exception (python-apt's SystemError) never reaches
       # exit_json, so its failure carries no cache_updated key
-      result.extra["cache_updated"] = JSON.parse(@cache_updated.to_json) unless result.extra.has_key?("_ansible_error_detail") || @omit_cache_updated || result.msg.to_s.starts_with?("No package matching")
+      result.extra["cache_updated"] = JSON.parse(@cache_updated.to_json) unless result.extra.has_key?("_ansible_error_detail") || @omit_cache_updated || result.msg.to_s.starts_with?("No package matching") || result.msg.to_s.starts_with?("No package(s) matching")
       result
     end
 
@@ -1072,6 +1072,17 @@ module Krikri
       name_param.split(",").map(&.strip)
     end
 
+    # apt.py routes a name containing any of `*?[]!` through its fnmatch
+    # expansion, which fails a no-match with the plural "No package(s)
+    # matching 'X' available" (no "is") instead of the plain-name wording.
+    private def no_package_msg(name : String) : String
+      if name.matches?(/[*?\[\]!]/)
+        "No package(s) matching '#{name}' available"
+      else
+        "No package matching '#{name}' is available"
+      end
+    end
+
     # Ansible's apt module supports real apt's own `name=version`
     # pinning syntax (e.g. `rabbitmq-server={{ rabbitmq_version }}-1`,
     # geerlingguy.rabbitmq's own install task) - `dpkg -l` doesn't
@@ -1315,7 +1326,7 @@ module Krikri
               return PluginResult.new(
                 changed: false,
                 failed: true,
-                msg: "No package matching '#{base_name}' is available"
+                msg: no_package_msg(base_name)
               )
             end
             candidates[base_name] = candidate
@@ -1800,7 +1811,7 @@ module Krikri
             return PluginResult.new(
               changed: false,
               failed: true,
-              msg: "No package matching '#{base_name}' is available"
+              msg: no_package_msg(base_name)
             )
           end
           version = pinned_version || candidate
