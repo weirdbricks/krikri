@@ -4657,6 +4657,25 @@ module Krikri
         task.loop_template_kind = template_loop[0]
         task.loop_template = template_loop[1]
         task.loop_template_array_wrapped = template_loop[2]
+      elsif with_items = task_hash["with_items"]?.try(&.as_a?)
+        # A literal with_items: array never parsed here (the generic task
+        # parser sets it for every OTHER module), so include_vars: "{{ item
+        # }}" paired with `with_items: ["{{ shell | basename }}.yml", "{{
+        # pkg_mgr }}.yml"]` ran the include exactly ONCE with item unbound
+        # and fataled "Error while resolving value for '_raw_params':
+        # 'item' is undefined" where Ansible runs the include once per item
+        # and fails a first absent file per-item while later items still
+        # execute (dotstrap.fzf's own "setup" task, round 29878882, issue
+        # #264). Deliberately placed after find_loop_template, like the
+        # same branch in the generic and include_tasks: parsers, so the
+        # single-bare-template array form (`with_items: ["{{ some_list
+        # }}"]`) is still recognized as a whole-list template source - a
+        # literal-array branch ahead of it would swallow that form as one
+        # literal item string.
+        task.loop = with_items.map { |item| JSON.parse(item.to_json) }
+        task.loop_items = task.loop
+        task.loop_items_needs_flatten = true
+        task.loop_literal_kind = "with_items"
       elsif with_list = task_hash["with_list"]?
         # with_list: IS loop: under its legacy name - see parse_with_list_items.
         task.loop_items = parse_with_list_items(with_list)
