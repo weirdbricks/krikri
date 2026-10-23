@@ -14324,3 +14324,13 @@ Local probe roles, not Galaxy roles: each probed task registers its result and d
 | `marcusburghardt.ansible_role_openscap` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29878803, 0.9.1863 debug). |
 | `teknipc.mercure` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29878811, 0.9.1863 debug). |
 | `vdzhorov.wkhtmltopdf` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29878804, 0.9.1863 debug). |
+| `bearandgiraffe.ruby` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29878884, 0.9.1865 debug). |
+| `dotstrap.fzf` | rocky | ❌ Divergent - issue #264 (round29878882, 0.9.1865 debug). |
+| `l3d.amdgpu_firmware` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29878875, 0.9.1865 debug). |
+| `mklettner.graylog_collector` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29878876, 0.9.1865 debug). |
+| `opichon.mysql-backup` | ubuntu | ❌ Divergent - issue #265 (round29878877, 0.9.1865 debug). |
+| `redbeard28.azurecli` | rocky | ❌ Divergent - issue #266 (round29878880, 0.9.1865 debug). |
+| `roquie.ansible-ntpdate` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29878878, 0.9.1865 debug). |
+| `securenetwrk.gold_config` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29878883, 0.9.1865 debug). |
+| `sorrowless.haproxy` | ubuntu | ✅ Clean (round29878881, 0.9.1865 debug). |
+| `xanmanning.vscode` | ubuntu | ✅ Clean (round29878879, 0.9.1865 debug). |
