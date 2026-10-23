@@ -483,6 +483,86 @@ module Krikri
       puts run_and_capture
     end
 
+    # Emulates the basic.py AnsibleModule init every real module runs before
+    # its own code (2.19.11): _set_cwd checks os.access(os.getcwd(), F_OK|R_OK)
+    # and, when the process cwd is not accessible to the process user (the
+    # module ran under `become` via sudo from the connecting user's login dir,
+    # e.g. /root mode 700 while the module itself runs as the become user),
+    # falls back to the tmpdir property. That property expands remote_tmp -
+    # the ansible_remote_tmp var if the task set one, else the
+    # DEFAULT_REMOTE_TMP default ~/.ansible/tmp - through
+    # os.path.expandvars+expanduser against the process HOME (under sudo that
+    # is the become user's home), and when the directory does not exist
+    # creates it with os.makedirs(mode=0o700) and self.warn()s the text
+    # below. The warning rides the module result's `warnings` list (init
+    # precedes any fail_json, so it rides failure exits too) and prints as a
+    # [WARNING] line on stderr - which lands after the PLAY RECAP in the
+    # role-tester's stdout+stderr capture. Cold-run only: the directory
+    # persists, so warm runs find it and stay silent. Found via
+    # HUIT-AcademicTechnology-Ops.ansible-role-splunk-universal-forwarder
+    # (issue #251): the "accept license and start splunk" shell task with
+    # become_user: splunk is the only module run that takes the fallback.
+    private def remote_tmp_init_warning : String?
+      cwd_accessible = begin
+        cwd = Dir.current
+        File.exists?(cwd) && File.readable?(cwd)
+      rescue
+        false
+      end
+      return nil if cwd_accessible
+
+      configured = @vars["ansible_remote_tmp"]?.try(&.as_s?)
+      basedir = expand_tilde(expand_dollar_vars(configured && !configured.empty? ? configured : "~/.ansible/tmp"))
+      return nil if basedir.empty? || File.exists?(basedir)
+
+      # os.makedirs(path, mode=0o700) modes every directory component it
+      # creates; walk the missing prefixes so an existing parent keeps its
+      # mode. A failed creation silently drops the warning (real's makedirs
+      # OSError goes down the error_as_warning system-tmp fallback instead).
+      missing = [] of String
+      walk = basedir
+      until walk == "/" || walk == "." || File.exists?(walk)
+        missing << walk
+        walk = File.dirname(walk)
+      end
+      begin
+        missing.reverse_each { |dir| Dir.mkdir(dir, 0o700) }
+      rescue File::Error
+        return nil
+      end
+
+      "Module remote_tmp #{basedir} did not exist and was created with a mode of 0700, this may cause issues when running as another user. To avoid this, create the remote_tmp dir with the correct permissions manually"
+    end
+
+    # os.path.expandvars: $name and ${name} expand from the process
+    # environment; an undefined name is left verbatim (no error).
+    private def expand_dollar_vars(path : String) : String
+      String.build do |expanded|
+        pos = 0
+        path.scan(/\$(\{(\w+)\}|(\w+))/) do |match|
+          expanded << path[pos...match.begin(0)]
+          name = match[2]? || match[3]?
+          expanded << ((name && ENV[name]?) || match[0])
+          pos = match.end(0)
+        end
+        expanded << path[pos..]
+      end
+    end
+
+    # Merges a module-init warning into a finished result's `warnings` list.
+    # Ours goes FIRST: module init runs before the plugin's own code, so
+    # Ansible's collected warnings list has the init warning ahead of any
+    # the plugin body accumulated (e.g. apt_lock_retry's retry warnings).
+    private def attach_remote_tmp_warning(result : PluginResult, warning_text : String?) : PluginResult
+      return result unless warning_text
+
+      existing = result.extra["warnings"]?.try(&.as_a?) || [] of JSON::Any
+      texts = existing.map { |entry| entry.as_s? || entry.to_s }
+      texts.unshift(warning_text) unless texts.includes?(warning_text)
+      result.extra["warnings"] = JSON::Any.new(texts.map { |text| JSON::Any.new(text) })
+      result
+    end
+
     # Same as #run, but returns the JSON result as a String instead of
     # printing it - the piece #run itself needs, and also what the
     # persistent daemon dispatch (SUGGESTED_PERFORMANCE_IMPROVEMENTS.md
@@ -494,7 +574,8 @@ module Krikri
     # around this, so every existing one-shot call site (every plugin's
     # own driver trailer) is unaffected.
     def run_and_capture : String
-      finalize_result(execute).to_json
+      remote_tmp_warning = remote_tmp_init_warning
+      finalize_result(attach_remote_tmp_warning(execute, remote_tmp_warning)).to_json
     rescue ex : BoolParamError
       # The message is already the exact user-facing failure Ansible
       # produces at module setup (parameters.py's check_type_bool wrapper,
@@ -502,7 +583,7 @@ module Krikri
       # instead of the generic "Plugin execution failed: " wrapper real
       # never produces, same reasoning as the OwnerLookupFailure rescue
       # below.
-      PluginResult.new(changed: false, failed: true, msg: ex.message || "invalid boolean parameter").to_json
+      attach_remote_tmp_warning(PluginResult.new(changed: false, failed: true, msg: ex.message || "invalid boolean parameter"), remote_tmp_warning).to_json
     rescue ex : OwnerLookupFailure
       # The message is already the exact user-facing failure
       # Ansible produces ("chown failed: failed to look up user <name>"
@@ -513,7 +594,7 @@ module Krikri
       # rather than return PluginResult so every plugin applying
       # file-common owner:/group: args gets Ansible's failure shape
       # without each one hand-rolling it.
-      PluginResult.new(changed: false, failed: true, msg: ex.message || "owner lookup failed").to_json
+      attach_remote_tmp_warning(PluginResult.new(changed: false, failed: true, msg: ex.message || "owner lookup failed"), remote_tmp_warning).to_json
     rescue ex : SdkImportGateError
       # The Docker SDK import gate (docker_client.cr's sdk_import_gate)
       # raises rather than returning a PluginResult so every SDK-based
@@ -521,8 +602,12 @@ module Krikri
       # shared DockerClient.build - the message is real's own
       # missing_required_lib wording, the detail belongs in the [ERROR]
       # block only, like the OwnerLookupFailure reasoning above.
-      PluginResult.new(changed: false, failed: true, msg: ex.message || "", _ansible_error_detail: ex.detail).to_json
+      attach_remote_tmp_warning(PluginResult.new(changed: false, failed: true, msg: ex.message || "", _ansible_error_detail: ex.detail), remote_tmp_warning).to_json
     rescue ex : Exception
+      # The engine-internal crash shape ("Plugin execution failed: ")
+      # deliberately does NOT carry the init warning: real's module crash
+      # wrapper rebuilds the result without the warnings collected during
+      # init (see ResultDisplay#module_crash_result? for the same shape).
       error_result = PluginResult.new(
         changed: false,
         failed: true,
