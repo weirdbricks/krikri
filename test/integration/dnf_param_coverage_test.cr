@@ -1,5 +1,6 @@
 require "../minitest_helper"
 require "file_utils"
+require "../../src/krikri/plugin_helpers/dnf_install_failures"
 
 # Proactive parameter-coverage pass for the dnf/yum plugin family
 # (src/krikri/plugin_helpers/rpm_package.cr's build_dnf_options).
@@ -18,6 +19,18 @@ require "file_utils"
 
 RECORDING_DNF = <<-'SH'
 #!/bin/sh
+# The repo-availability probe `package_installed?` runs before the
+# whatprovides fallback (issue #280's fix) is not one of the install/
+# transaction argvs these specs assert, so it answers silently instead
+# of joining the recorded log - an empty KRIKRI_FAKE_DNF_AVAILABLE
+# keeps its default answer (no such repo row), which leaves every
+# existing example on the exact same fallback path it had before.
+case "$*" in
+  "-q list --available "*)
+    [ -n "${KRIKRI_FAKE_DNF_AVAILABLE:-}" ] && exit 0
+    exit 1
+    ;;
+esac
 printf '%s\n' "$*" >> "${KRIKRI_FAKE_DNF_LOG:-/dev/null}"
 echo "Installed:"
 echo "  fake-pkg"
@@ -359,6 +372,163 @@ describe "dnf plugin - parameter coverage (CLI-invocation shape)" do
       bad["msg"].as_s.must_equal(
         "value of use_backend must be one of: auto, dnf, yum, yum4, dnf4, dnf5, got: portage")
       File.read_lines(log).size.must_equal(1)
+    end
+  end
+end
+
+# Issue #280 (Rocky 9, zorlin.rust, round round29879595): `dnf: name:
+# [curl, gcc], state: present` on a host with curl-minimal installed -
+# curl-minimal Provides: the "curl" capability - must still reach the
+# install batch. Real ansible resolves `curl` to the repo package of
+# that exact name and fails the task with dnf's own Depsolve Error
+# (curl conflicts with curl-minimal; rc 1, failures/results []), while
+# the whatprovides fallback in package_installed? classified curl as
+# already installed and the task reported ok/changed, installing only
+# gcc. Verified live: `dnf -q list --available curl` exits 0 there,
+# `dnf -q list --available php-json` (a purely virtual name with no
+# repo row of its own) exits 1. dnf/rpm are not on the spec host, so a
+# dispatching fake rpm/dnf builds the Rocky resolution table by hand:
+# plain `rpm -q` never matches, the whatprovides lookup matches what
+# KRIKRI_FAKE_RPM_PROVIDES lists, the availability probe matches what
+# KRIKRI_FAKE_DNF_AVAILABLE lists, and KRIKRI_FAKE_DNF_DEPSOLVE turns
+# the install invocation into the depsolve failure real dnf printed.
+private ISSUE280_PROBLEM_BLOCK = [
+  " Problem: problem with installed package curl-minimal-7.76.1-26.el9_3.2.0.1.x86_64",
+  "  - package curl-minimal-7.76.1-40.el9.x86_64 from baseos conflicts with curl provided by curl-7.76.1-40.el9_8.8.x86_64 from baseos",
+  "  - cannot install the best candidate for the job",
+].join("\n")
+
+# What the real dnf CLI printed to stderr on that host's `dnf install
+# curl` attempt - the Problem block inside the Error: framing, plus
+# its trailing "(try to add ...)" hint line, which the module's own
+# parse (and krikri's depsolve_failure_msg) deliberately leaves out.
+private ISSUE280_DEPSOLVE_STDERR = [
+  "Error: ",
+  ISSUE280_PROBLEM_BLOCK,
+  "(try to add '--skip-broken' to skip uninstallable packages or '--nobest' to use not only best candidate packages)",
+].join("\n")
+
+# The module's own catch ("Depsolve Error occurred: " + the exception),
+# not the CLI's trailing "(try to add ..." hint line.
+private ISSUE280_DEPSOLVE_MSG = "Depsolve Error occurred: \n" + ISSUE280_PROBLEM_BLOCK
+
+private ISSUE280_RPM = <<-'SH'
+#!/bin/sh
+[ "$2" = "--whatprovides" ] || exit 1
+for n in ${KRIKRI_FAKE_RPM_PROVIDES:-}; do
+  [ "$3" = "$n" ] && exit 0
+done
+exit 1
+SH
+
+private ISSUE280_DNF = <<-'SH'
+#!/bin/sh
+# Logs EVERY voyage including the availability probe (unlike the
+# shared RECORDING_DNF above) so these specs can assert the exact
+# question dnf got asked before anything was installed.
+printf '%s\n' "$*" >> "${KRIKRI_FAKE_DNF_LOG:?}"
+case "$2/$3" in
+  "list/--available")
+    for n in ${KRIKRI_FAKE_DNF_AVAILABLE:-}; do
+      [ "$4" = "$n" ] && exit 0
+    done
+    exit 1
+    ;;
+esac
+if [ -n "${KRIKRI_FAKE_DNF_DEPSOLVE:-}" ]; then
+  printf '%s\n' "${KRIKRI_FAKE_DNF_DEPSOLVE}" >&2
+  exit 1
+fi
+echo "Installed:"
+echo "  fake-pkg"
+exit 0
+SH
+
+# Installs the dispatching fake rpm/dnf and a fresh argv log at the
+# front of PATH. Unlike #with_recording_pkg_managers this dummy dnf
+# logs EVERY invocation including the availability probe, so a spec
+# can assert the exact probe/install sequence. Like the helper above,
+# everything travels through ENV, so the whole block holds ENV_MUTEX
+# against the parallel workers.
+private def with_issue280_pkg_managers(provides : Array(String) = [] of String, available : Array(String) = [] of String, depsolve : Bool = false, &)
+  PluginSpecHelper::ENV_MUTEX.synchronize do
+    bin_dir = File.tempname("krikri-issue280-fakes")
+    Dir.mkdir_p(bin_dir)
+    rpm = File.join(bin_dir, "rpm")
+    File.write(rpm, ISSUE280_RPM)
+    File.chmod(rpm, 0o755)
+    dnf = File.join(bin_dir, "dnf")
+    File.write(dnf, ISSUE280_DNF)
+    File.chmod(dnf, 0o755)
+
+    log = File.tempname("krikri-issue280-dnf-log")
+    previous_path = ENV["PATH"]?
+    previous_log = ENV["KRIKRI_FAKE_DNF_LOG"]?
+    previous_provides = ENV["KRIKRI_FAKE_RPM_PROVIDES"]?
+    previous_available = ENV["KRIKRI_FAKE_DNF_AVAILABLE"]?
+    previous_depsolve = ENV["KRIKRI_FAKE_DNF_DEPSOLVE"]?
+    ENV["PATH"] = "#{bin_dir}:#{ENV["PATH"]?}"
+    ENV["KRIKRI_FAKE_DNF_LOG"] = log
+    ENV["KRIKRI_FAKE_RPM_PROVIDES"] = provides.join(" ")
+    ENV["KRIKRI_FAKE_DNF_AVAILABLE"] = available.join(" ")
+    ENV["KRIKRI_FAKE_DNF_DEPSOLVE"] = depsolve ? ISSUE280_DEPSOLVE_STDERR : ""
+    begin
+      yield log
+    ensure
+      previous_path ? (ENV["PATH"] = previous_path) : ENV.delete("PATH")
+      previous_log ? (ENV["KRIKRI_FAKE_DNF_LOG"] = previous_log) : ENV.delete("KRIKRI_FAKE_DNF_LOG")
+      previous_provides ? (ENV["KRIKRI_FAKE_RPM_PROVIDES"] = previous_provides) : ENV.delete("KRIKRI_FAKE_RPM_PROVIDES")
+      previous_available ? (ENV["KRIKRI_FAKE_DNF_AVAILABLE"] = previous_available) : ENV.delete("KRIKRI_FAKE_DNF_AVAILABLE")
+      previous_depsolve ? (ENV["KRIKRI_FAKE_DNF_DEPSOLVE"] = previous_depsolve) : ENV.delete("KRIKRI_FAKE_DNF_DEPSOLVE")
+      FileUtils.rm_r(bin_dir)
+      File.delete(log) if File.exists?(log)
+    end
+  end
+end
+
+describe "dnf plugin - same-name repo package vs a Provides: match (issue 280)" do
+  it "sends an available-name package to the install batch despite a Provides: match" do
+    with_issue280_pkg_managers(provides: ["curl"], available: ["curl"]) do |log|
+      result = PluginSpecHelper.run("dnf", {"name" => "curl", "state" => "present"})
+      falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+      File.read_lines(log).must_equal([
+        "-q list --available curl",
+        "install #{BASELINE_OPTIONS} curl",
+      ])
+    end
+  end
+
+  it "keeps a purely virtual name on the Provides: fallback (no repo row)" do
+    with_issue280_pkg_managers(provides: ["php-json"], available: [] of String) do |log|
+      result = PluginSpecHelper.run("dnf", {"name" => "php-json", "state" => "present"})
+      falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+      result["changed"].as_bool.must_equal(false)
+      result["msg"].as_s.must_equal("Nothing to do")
+      # The probe finds no repo row, so the name stays 'installed' via
+      # its Provides: and no install transaction may run.
+      File.read_lines(log).must_equal(["-q list --available php-json"])
+    end
+  end
+
+  it "fails the [curl, gcc] batch with dnf's own depsolve error, like real dnf" do
+    with_issue280_pkg_managers(provides: ["curl"], available: ["curl", "gcc"], depsolve: true) do |log|
+      result = PluginSpecHelper.run("dnf", {"name" => %(["curl", "gcc"]), "state" => "present"})
+      result["failed"].as_bool.must_equal(true)
+      result["changed"].as_bool.must_equal(false)
+      result["msg"].as_s.must_equal(ISSUE280_DEPSOLVE_MSG)
+      result["failures"].as_a.map(&.as_s).must_equal([] of String)
+      result["results"].as_a.must_equal([] of JSON::Any)
+      result["rc"].as_i.must_equal(1)
+      result.as_h.keys.first(6).must_equal Krikri::PluginHelpers::DnfInstallFailures::DNF_DEPSOLVE_FAILURE_ORDER
+      # Both names travel in ONE install batch - the divergence seen on
+      # the real host was gcc silently installing on its own while the
+      # batch only ever saw gcc.
+      File.read_lines(log).last.must_equal(
+        "install #{BASELINE_OPTIONS} curl gcc")
+      File.read_lines(log).first(2).must_equal([
+        "-q list --available curl",
+        "-q list --available gcc",
+      ])
     end
   end
 end
