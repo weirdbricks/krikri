@@ -4079,8 +4079,28 @@ module Krikri
 
       raw = task.when_condition.to_s
       key_line = locate_conditional_origin(lines, name_idx, "when", raw)
-      return unless key_line
-      key_idx, key_col = key_line
+      # A statically-imported task's failing `when:` lives on the IMPORTING
+      # file's import_tasks: line, not in the task's own file (the parser
+      # ANDed it in), so the own-file scan finds nothing - real 2.19 still
+      # prints the chain, with the "caused by" Origin pinned at the import
+      # line's when: VALUE token in the importing file (issue #252,
+      # Jooho.okd_prerequisites: okd-host.yml's first task reports
+      # tasks/main.yml's `when: node_type == 'okd-host'`).
+      if key_line
+        key_idx, key_col = key_line
+        cause_path = path
+        cause_lines = lines
+      elsif (inherited = task.inherited_when_origin) &&
+            (cause_path = inherited[0]) && File.file?(cause_path)
+        cause_lines = File.read_lines(cause_path)
+        # The stored source-map position is already 1-based (unlike
+        # locate_conditional_origin's 0-based line index); the block below
+        # re-adds the 1.
+        key_idx = inherited[1] - 1
+        key_col = inherited[2]
+      else
+        return
+      end
 
       # The THIRD chain record real 2.19.11 adds when the conditional's
       # missing reference was reached through a failing VAR VALUE (a
@@ -4106,7 +4126,7 @@ module Krikri
         io << origin_context_block(path, lines, name_idx + 1, name_col)
         io << "\n<<< caused by >>>\n\n"
         io << (mid || inner) << "\n"
-        io << origin_context_block(path, lines, key_idx + 1, key_col)
+        io << origin_context_block(cause_path, cause_lines, key_idx + 1, key_col)
         if cause_stanza
           io << "\n<<< caused by >>>\n\n"
           io << cause_stanza
