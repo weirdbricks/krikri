@@ -1132,6 +1132,24 @@ module Krikri
         result = remote_exec("rpm -q #{shell_single_quote(base_name)} 2>/dev/null")
         return true if result[:exit_code] == 0
 
+        # But never let a Provides: hit stand in for a name the repos
+        # carry themselves: Ansible's dnf module hands `name:` to
+        # python-dnf untouched, which resolves it to the repo package
+        # of that exact name - a depsolve-level fatal on Rocky 9, where
+        # `dnf: name: curl` on a host whose curl-minimal Provides:
+        # "curl" fails the task (curl conflicts with curl-minimal;
+        # zorlin.rust round round29879595, issue #280), not the
+        # already-installed no-op this fallback used to answer. Asking
+        # dnf/yum for the name itself separates those: a package of
+        # this exact name is available -> report not-installed so the
+        # install batch runs (and dnf reports its own failure through
+        # the already-shaped depsolve/no-match paths); a purely
+        # virtual name like RHEL 9's `php-json` has no repo row,
+        # this listing fails (like every other error: no binary, dead
+        # repos), and the `--whatprovides` fallback below keeps those.
+        available = remote_exec("#{pkg_manager_binary} -q list --available #{shell_single_quote(base_name)} 2>/dev/null")
+        return false if available[:exit_code] == 0
+
         result = remote_exec("rpm -q --whatprovides #{shell_single_quote(base_name)} 2>/dev/null")
         result[:exit_code] == 0
       end
