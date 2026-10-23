@@ -923,6 +923,14 @@ module Krikri
           if depsolve_msg = depsolve_failure_msg(result[:stdout] + "\n" + result[:stderr])
             return {changed: false, message: nil, output: result[:stdout], failure: PluginResult.new(changed: false, failed: true, msg: depsolve_msg, failures: [] of String, results: [] of String, rc: result[:exit_code], key_order: PluginHelpers::DnfInstallFailures::DNF_DEPSOLVE_FAILURE_ORDER)}
           end
+          # A repo-metadata download failure (the repo's repomd.xml
+          # 404s) matches none of the parse lines and used to reach the
+          # error-lines dump below; ansible's module reports just
+          # libdnf's "Failed to download metadata for repo ..." text
+          # with neither a stderr nor a failures key (issue #267).
+          if metadata_msg = repo_metadata_failure_msg(result[:stdout] + "\n" + result[:stderr])
+            return {changed: false, message: nil, output: result[:stdout], failure: PluginResult.new(changed: false, failed: true, msg: metadata_msg, results: [] of String, rc: result[:exit_code], key_order: PluginHelpers::DnfInstallFailures::DNF_METADATA_FAILURE_ORDER)}
+          end
           if failures = parse_dnf_install_failures(result[:stdout], result[:stderr], @requested_names)
             return {changed: false, message: nil, output: result[:stdout], failure: failure_result("Failed to install some of the specified packages", failures, result[:exit_code])}
           end

@@ -617,6 +617,23 @@ module Krikri
           key_order: PluginHelpers::DnfInstallFailures::DNF_DEPSOLVE_FAILURE_ORDER
         )
       end
+      # A repo-metadata download failure (the repo's repodata/repomd.xml
+      # 404s) matches none of the parse_dnf_install_failures lines
+      # either, so it used to hit the raw-stderr dump below - with a
+      # stderr key, and with the compound's duplicate copy. Real
+      # ansible's dnf module reports just libdnf's "Failed to download
+      # metadata for repo ..." text, results [], rc 1, and neither a
+      # stderr nor a failures key (issue #267).
+      if metadata_msg = repo_metadata_failure_msg(install_result[:stdout] + "\n" + install_result[:stderr])
+        return PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: metadata_msg,
+          results: [] of String,
+          rc: install_result[:exit_code],
+          key_order: PluginHelpers::DnfInstallFailures::DNF_METADATA_FAILURE_ORDER
+        )
+      end
       if failures = parse_dnf_install_failures(install_result[:stdout], install_result[:stderr])
         PluginResult.new(
           changed: false,
