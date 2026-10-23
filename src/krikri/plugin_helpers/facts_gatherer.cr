@@ -1468,6 +1468,27 @@ module Krikri
       [(value >> 24) & 0xFF, (value >> 16) & 0xFF, (value >> 8) & 0xFF, value & 0xFF].join(".")
     end
 
+    # ansible_processor - ansible-core's Linux get_cpu_facts appends the
+    # value of EVERY /proc/cpuinfo line whose key is exactly one of
+    # 'processor', 'vendor_id', 'model name', 'Processor', 'cpu' or
+    # 'Vendor' to ONE flat list, in file order: per x86 logical CPU that
+    # is [index, vendor, model] - roles-ansible.amdgpu_firmware's
+    # `when: ansible_processor[1] == 'AuthenticAMD'` reads the vendor
+    # slot, and the old "first 'model name' string alone" shape made
+    # every such list index die with "undefined". ARM and other layouts
+    # contribute whatever of those keys exist. Lines without a colon
+    # still contribute "" when their whole text is a key, matching
+    # ansible's split()/IndexError handling.
+    def parse_processor_list(cpuinfo : String) : Array(String)
+      processors = [] of String
+      cpuinfo.each_line do |line|
+        key, _, val = line.partition(":")
+        next unless {"processor", "vendor_id", "model name", "Processor", "cpu", "Vendor"}.includes?(key.strip)
+        processors << val.strip
+      end
+      processors
+    end
+
     def gather_hardware_facts(facts)
       # Memory facts - manual parsing of /proc/meminfo
       if File.exists?("/proc/meminfo")
@@ -1561,9 +1582,10 @@ module Krikri
           facts["ansible_processor_threads_per_core"] = siblings_match[1].to_i64 // cores_match[1].to_i64
         end
 
-        if match = cpuinfo.match(/model name\s+:\s+(.+)/)
-          facts["ansible_processor"] = [match[1].strip]
-        end
+        # ansible_processor - ansible-core's Linux get_cpu_facts builds
+        # ONE flat list across all logical CPUs (see parse_processor_list);
+        # the count/cores/threads above keep their own parsing.
+        facts["ansible_processor"] = parse_processor_list(cpuinfo)
       end
 
       # ansible_processor_nproc - Ansible's processor collector
