@@ -14444,3 +14444,13 @@ Local probe roles, not Galaxy roles: each probed task registers its result and d
 | `shomatan.l2tp-ipsec-server` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29879937, 0.9.1884 release). Times: cold py 0.54s vs cr 0.01s; warm py 0.46s vs cr 0.01s. |
 | `triplepoint.mosquitto` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29879942, 0.9.1884 release). Times: cold py 28.97s vs cr 9.19s; warm py 46.45s vs cr 3.17s. |
 | `xanmanning.awscli` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29879945, 0.9.1884 release). Times: cold py 3.52s vs cr 0.74s; warm py 2.90s vs cr 0.15s. |
+| `andrewrothstein.iperf` | rocky | ✅ Clean (round29879948, 0.9.1884 release). Times: cold py 7.21s vs cr 2.95s; warm py 4.36s vs cr 0.49s. |
+| `bendews.cloudflared` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29879947, 0.9.1884 release). Times: cold py 8.52s vs cr 5.77s; warm py 8.90s vs cr 1.00s. |
+| `hyperfoil.hyperfoil_test` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29879946, 0.9.1884 release). Times: cold py 1.96s vs cr 0.83s; warm py 1.51s vs cr 0.15s. |
+| `infOpen.vagrant` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29879949, 0.9.1884 release). Times: cold py 0.44s vs cr 0.01s; warm py 0.44s vs cr 0.01s. |
+| `mcgrof.libvirt_user` | ubuntu | ✅ Clean (round29879943, 0.9.1884 release). Times: cold py 75.56s vs cr 62.27s; warm py 22.37s vs cr 4.37s. |
+| `mrlesmithjr.ansible-control-machine` | ubuntu | ✅ Clean (round29879941, 0.9.1884 release). Times: cold py 25.22s vs cr 15.79s; warm py 4.47s vs cr 0.20s. |
+| `mrlesmithjr.hashicorp-toolbox` | ubuntu | ✅ Clean (round29879945, 0.9.1884 release). Times: cold py 2.77s vs cr 1.01s; warm py 3.33s vs cr 0.11s. |
+| `pinkeen.sudo` | rocky | ✅ Clean (round29879942, 0.9.1884 release). Times: cold py 3.60s vs cr 1.10s; warm py 3.12s vs cr 0.19s. |
+| `tenequm.php` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29879950, 0.9.1884 release). Times: cold py 0.50s vs cr 0.01s; warm py 0.48s vs cr 0.01s. |
+| `zaxos.swapfile-ansible-role` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29879944, 0.9.1884 release). Times: cold py 0.44s vs cr 0.02s; warm py 0.44s vs cr 0.01s. |
