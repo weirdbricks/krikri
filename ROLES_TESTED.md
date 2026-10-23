@@ -14354,3 +14354,13 @@ Local probe roles, not Galaxy roles: each probed task registers its result and d
 | `spk83.jupyter-r-deps` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29878973, 0.9.1868 debug). |
 | `systemli.spamassasin` | ubuntu | ❌ Divergent - issue #268 (round29878980, 0.9.1868 debug). |
 | `wtanaka.vagrant` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29878979, 0.9.1868 debug). |
+| `HomeSecExplorer.sshaudit` | ubuntu | ❌ Divergent - issue #269 (round29879061, 0.9.1870 debug). |
+| `chris-short.ansible-role-papertrail` | ubuntu | ✅ Clean (round29879063, 0.9.1870 debug). |
+| `cyberitas.imagemagick` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29879062, 0.9.1870 debug). |
+| `darexsu.gitlab` | rocky | ✅ Clean (round29879056, 0.9.1870 debug). |
+| `fouadsemaan.azurecli` | ubuntu | ✅ Clean (round29879055, 0.9.1870 debug). |
+| `gabops.influxdata_repo` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29879064, 0.9.1870 debug). |
+| `grycap.kubeoscarui` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29879060, 0.9.1870 debug). |
+| `hudecof.banners` | ubuntu | ✅ Clean (round29879057, 0.9.1870 debug). |
+| `innohub-ansible.ruby-install` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29879058, 0.9.1870 debug). |
+| `palkan-ansible.postgresql` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29879059, 0.9.1870 debug). |
