@@ -41,6 +41,15 @@ module Krikri
       # `failed` trailing like every other registered order.
       DNF_DEPSOLVE_FAILURE_ORDER = %w[changed failures msg rc results failed]
 
+      # Ansible's observed repo-metadata-failure key order (live on
+      # Rocky, dnf4 backend): alphabetical - changed, msg, rc, results -
+      # with neither a stderr key NOR a `failures` key (the module's
+      # metadata-download except block does a bare fail_json(msg=, rc=1)
+      # - a metadata failure carries no per-spec failure list), the
+      # controller-appended `failed` trailing like every other
+      # registered order (issue #267).
+      DNF_METADATA_FAILURE_ORDER = %w[changed msg rc results failed]
+
       def parse_dnf_install_failures(stdout : String, stderr : String, requested : Array(String)? = nil) : Array(String)?
         # dnf reports the same missing spec on both stderr and stdout
         # (per-argument line + summary line), so parsing itself still
@@ -94,6 +103,24 @@ module Krikri
           block << line
         end
         "Depsolve Error occurred: \n" + block.join("\n")
+      end
+
+      # Ansible's dnf module reports a repo-metadata download failure
+      # (the repo's repodata/repomd.xml 404s) as JUST libdnf's own error
+      # text - its "Failed to download metadata for repo 'x': ..."
+      # summary line with dnf's "Error: " prefix stripped (issue #267)
+      # - and NOT the per-spec failures shape above: a metadata failure
+      # carries no failures list at all. The compound `dnf ... || yum
+      # ...` prints the line once per package-manager binary (yum's
+      # retry replays the identical failure against the same dead
+      # repo), so only the first hit - the task's own dnf attempt - is
+      # what ansible's msg holds.
+      def repo_metadata_failure_msg(output : String) : String?
+        lines = output.lines.map(&.rstrip)
+        return nil unless line = lines.find { |candidate| candidate.includes?("Failed to download metadata for repo") }
+        stripped = line.strip
+        stripped = stripped[7..] if stripped.starts_with?("Error: ")
+        stripped.strip
       end
 
       private def parse_line(stripped : String, add : Proc(String, Nil)) : Nil

@@ -118,9 +118,12 @@ describe "dnf/yum failed install - Ansible's per-spec failures shape (issue 19)"
   end
 
   it "keeps the raw-line fallback for outputs nothing parses (dnf)" do
+    # Only outputs matching NEITHER the metadata-download helper (now
+    # its own ansible shape, issue 267) NOR the per-spec parser reach
+    # the raw dump.
     with_failing_dnf_shim(
-      "Errors during downloading metadata for repo 'baseos':\n",
-      "Error: Failed to download metadata for repo 'baseos'\n") do
+      "Unexpected transaction failure text that matches no known pattern\n",
+      "") do
       result = PluginSpecHelper.run("dnf",
         {"name" => "redhat-lsb-core", "state" => "present"},
         vars: {"ansible_pkg_mgr" => "dnf"})
@@ -128,8 +131,7 @@ describe "dnf/yum failed install - Ansible's per-spec failures shape (issue 19)"
       result["failed"].as_bool.must_equal(true)
       result["msg"].as_s.must_equal("Failed to install packages")
       result["failures"].as_a.map(&.as_s).must_equal(
-        ["Error: Failed to download metadata for repo 'baseos'",
-         "Errors during downloading metadata for repo 'baseos':"])
+        ["Unexpected transaction failure text that matches no known pattern"])
     end
   end
 
@@ -267,5 +269,71 @@ describe "DnfInstallFailures depsolve_failure_msg (issue 216)" do
   it "stops at the first block when a later Problem block follows (dnf+yum compound output)" do
     third_block = DEPSOLVE_STDERR + "Problem: package another-1.0.noarch from appstream is filtered out\n(try to add '--allowerasing')\n"
     DnfFailuresParseHarness.new.depsolve_failure_msg(third_block).must_equal(DEPSOLVE_MSG)
+  end
+end
+
+# Issue #267 (Rocky, `package: name=cfssl-1.3.2 state=installed` with a
+# yum repo whose repodata/repomd.xml 404s): real ansible's dnf module
+# reports a metadata-download failure as JUST libdnf's own error text -
+# the "Failed to download metadata for repo" summary line with dnf's
+# "Error: " prefix stripped - with results [], rc 1 and NO stderr
+# (previously the raw dnf stderr became msg + a stderr key) and NO
+# failures list. Same shape from both shell-out paths, like the
+# depsolve catch: `package:`'s own dnf/yum compound and the dnf/yum
+# plugins' shared install batch.
+METADATA_404_MSG    = "Failed to download metadata for repo 'cfssl': Cannot download repomd.xml: Cannot download repodata/repomd.xml: All mirrors were tried"
+METADATA_404_STDERR = "Errors during downloading metadata for repository 'cfssl':\n  - Status code: 404 for https://dl.bintray.com/jumperfly/yum/cfssl/stable/repodata/repomd.xml (IP: 3.95.117.170)\n" +
+                      "Error: " + METADATA_404_MSG + "\n"
+
+describe "dnf/yum repo-metadata download failure - ansible's bare msg shape (issue 267)" do
+  serial!
+
+  it "reports just libdnf's metadata text from package: state installed" do
+    with_failing_dnf_shim("", METADATA_404_STDERR) do
+      result = PluginSpecHelper.run("package",
+        {"name" => "cfssl-1.3.2", "state" => "installed", "use" => "dnf"})
+
+      result["failed"].as_bool.must_equal(true)
+      result["changed"].as_bool.must_equal(false)
+      result["msg"].as_s.must_equal(METADATA_404_MSG)
+      result["results"].as_a.must_equal([] of JSON::Any)
+      result["rc"].as_i.must_equal(1)
+      result.as_h.has_key?("stderr").must_equal(false)
+      result.as_h.has_key?("failures").must_equal(false)
+      result.as_h.keys.first(5).must_equal(["changed", "msg", "rc", "results", "failed"])
+    end
+  end
+
+  it "reports the same shape from the dnf plugin's install path" do
+    with_failing_dnf_shim("", METADATA_404_STDERR) do
+      result = PluginSpecHelper.run("dnf",
+        {"name" => "cfssl-1.3.2", "state" => "present"},
+        vars: {"ansible_pkg_mgr" => "dnf"})
+
+      result["failed"].as_bool.must_equal(true)
+      result["msg"].as_s.must_equal(METADATA_404_MSG)
+      result["results"].as_a.must_equal([] of JSON::Any)
+      result["rc"].as_i.must_equal(1)
+      result.as_h.has_key?("stderr").must_equal(false)
+      result.as_h.has_key?("failures").must_equal(false)
+      result.as_h.keys.first(5).must_equal(["changed", "msg", "rc", "results", "failed"])
+    end
+  end
+
+  it "reports one bare msg when the dnf||yum compound prints the line twice" do
+    # The compound prints its own copy per package-manager binary; the
+    # reported msg keeps only the first (the task's own dnf attempt).
+    DnfFailuresParseHarness.new.repo_metadata_failure_msg(METADATA_404_STDERR * 2).must_equal(METADATA_404_MSG)
+  end
+end
+
+describe "DnfInstallFailures repo_metadata_failure_msg (issue 267)" do
+  it "strips dnf's Error: prefix from the summary line" do
+    DnfFailuresParseHarness.new.repo_metadata_failure_msg(METADATA_404_STDERR).must_equal(METADATA_404_MSG)
+  end
+
+  it "returns nil for outputs without the metadata-download line" do
+    DnfFailuresParseHarness.new.repo_metadata_failure_msg(MISSING_PKG_STDOUT + MISSING_PKG_STDERR).must_be_nil
+    DnfFailuresParseHarness.new.repo_metadata_failure_msg("").must_be_nil
   end
 end
