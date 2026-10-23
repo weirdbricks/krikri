@@ -3615,6 +3615,19 @@ module Krikri
       nil
     end
 
+    # Whether *line* opens the NEXT task. A `- ` line nested deeper than the
+    # task's own list marker is data (a `with_items:` entry, a list-valued
+    # param) and ansible's origin scan runs through it - the [ERROR] chain
+    # for a looped task whose loop list precedes the module key (issue #263)
+    # was dropped by stopping at the first such line.
+    private def next_task_marker?(lines : Array(String), from_idx : Int32, line : String) : Bool
+      return false unless line.lstrip.starts_with?("- ")
+      anchor = lines[from_idx]
+      anchor_indent = anchor.size - anchor.lstrip.size
+      indent = line.size - line.lstrip.size
+      anchor.lstrip.starts_with?("- ") ? indent <= anchor_indent : indent < anchor_indent
+    end
+
     # The task's module key line (first non-`- ` line after the name
     # whose stripped text starts with the invoked or FQCN-stripped module
     # name); column is the key's first character.
@@ -3623,7 +3636,7 @@ module Krikri
       ((from_idx + 1)...lines.size).each do |idx|
         line = lines[idx]
         stripped = line.strip
-        break if stripped.starts_with?("- ")
+        break if next_task_marker?(lines, from_idx, line)
         if stripped.starts_with?("#{module_name}:") || stripped.starts_with?("#{short}:")
           return {idx, line.size - line.lstrip.size + 1}
         end
@@ -3648,7 +3661,7 @@ module Krikri
       ((from_idx + 1)...lines.size).each do |idx|
         line = lines[idx]
         stripped = line.strip
-        break if stripped.starts_with?("- ")
+        break if next_task_marker?(lines, from_idx, line)
         next unless (m = directive_needle.match(stripped))
         return nil unless stripped[m.end(0)..].strip.empty?
         return locate_param_key_position(lines, idx, "module")
@@ -3699,8 +3712,7 @@ module Krikri
       end
       ((from_idx + 1)...lines.size).each do |idx|
         line = lines[idx]
-        stripped = line.strip
-        break if stripped.starts_with?("- ")
+        break if next_task_marker?(lines, from_idx, line)
         if (m = key_needle.match(line)) && (key_idx = m.begin(0)) && (key_idx == 0 || line[key_idx - 1].whitespace?)
           rest = line[m.end(0)..]
           column = m.end(0) + (rest.size - rest.lstrip.size) + 1
