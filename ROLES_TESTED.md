@@ -14374,3 +14374,13 @@ Local probe roles, not Galaxy roles: each probed task registers its result and d
 | `redbeard28.pyazuremodules` | ubuntu | ❌ Divergent - issue #272 (round29879066, 0.9.1870 debug). |
 | `silviuvulcan.kibana` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29879062, 0.9.1870 debug). |
 | `udelarinterior.matrix_synapse` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29879063, 0.9.1870 debug). |
+| `Aplyca.LAMP` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29879388, 0.9.1876 release). Times: cold py 0.57s vs cr 0.04s; warm py 0.57s vs cr 0.04s. |
+| `baztian.other_installs` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29879391, 0.9.1876 release). Times: cold py 3.29s vs cr 0.76s; warm py 2.86s vs cr 0.23s. |
+| `chouseknecht.minishift` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29879382, 0.9.1876 release). Times: cold py 50.03s vs cr 40.15s; warm py 11.43s vs cr 2.14s. |
+| `devops.chrony` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29879385, 0.9.1876 release). Times: cold py 0.45s vs cr 0.01s; warm py 0.44s vs cr 0.01s. |
+| `honatas.openjdk_ppa` | ubuntu | ❌ Divergent - issue #273 (round29879390, 0.9.1876 release). Times: cold py 16.43s vs cr 10.49s; warm py 3.87s vs cr 1.04s. |
+| `l3d.mailserver_preperation` | rocky | ❌ Divergent - issue #274 (round29879383, 0.9.1876 release). Times: cold py 33.42s vs cr 11.98s; warm py 47.71s vs cr 1.76s. |
+| `mplachter.kafka-manager` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29879389, 0.9.1876 release). Times: cold py 0.46s vs cr 0.01s; warm py 0.46s vs cr 0.01s. |
+| `tjarrett.drush` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29879386, 0.9.1876 release). Times: cold py 5.08s vs cr 0.70s; warm py 1.85s vs cr 0.12s. |
+| `veselahouba.openssl` | ubuntu | ❌ Divergent - issue #275 (round29879384, 0.9.1876 release). Times: cold py 2.22s vs cr 3.98s; warm py 2.69s vs cr 3.39s. |
+| `wtanaka.virtualenv` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29879387, 0.9.1876 release). Times: cold py 0.45s vs cr 0.01s; warm py 0.45s vs cr 0.01s. |
