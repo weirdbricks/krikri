@@ -1233,6 +1233,27 @@ module Krikri
       end
     end
 
+    # The [ERROR] block that precedes a LOOPED task's per-item
+    # ssh-unreachable `failed:` line (issue #275), whose shape follows the
+    # ORIGIN host's own connection:
+    # - origin over ssh: real prints the collapsed single segment - just
+    #   the "Task failed: Failed to connect ..." brief carrying the task's
+    #   Origin, no second segment, no cause section. Observed on the #275
+    #   round's real ssh-origin repro.
+    # - ansible_connection=local origin: the two-segment chain - "Task
+    #   failed." with the task Origin, then the bare ssh failure under
+    #   "<<< caused by >>>".
+    # The bare ssh failure keeps its own empty events list in the chained
+    # form so collapse never folds the two segments back into one (it
+    # mirrors the ssh connection plugin's own exception event).
+    # Public only so the unit suite can pin both shapes directly (same
+    # reason task_error_chain is).
+    def self.loop_unreachable_error_node(msg : String, origin : String?, local_origin : Bool) : ErrorBlock::Node
+      return ErrorBlock::Node.new(msg, source_context: origin) unless local_origin
+      ErrorBlock::Node.new("Task failed.", source_context: origin)
+        .with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(msg["Task failed: ".size..], events: [] of ErrorBlock::Node))
+    end
+
     # Display an ad-hoc `ansible` command's result, matching
     # ansible's own default ("minimal") callback: `host | STATUS | rc=N >>`
     # followed by raw stdout for command-shaped modules (rc + stdout

@@ -6,6 +6,7 @@ require "./jinja_host_context"
 require "./vault"
 require "./unsafe_values"
 require "./variable_substitutor/filter_engine"
+require "./lookups/inventory_pattern"
 
 module Krikri
   # Ansible's `lookup()` / `query()` / `q()` on the krikri-jinja engine.
@@ -240,6 +241,34 @@ module Krikri
         AnyValue.new(LookupPlugins.csvfile_lookup(text(first)))
       when "ini"
         AnyValue.new(LookupPlugins.ini_lookup(text(first)))
+      when "inventory_hostnames"
+        # inventory_hostnames over the `groups` magic var - the same
+        # throwaway-InventoryManager plugin the hand-rolled evaluator
+        # implements for direct `{{ lookup('inventory_hostnames', ...) }}`
+        # text, on shared InventoryPatterns machinery. This arm is what
+        # every legacy `with_inventory_hostnames:` loop source actually
+        # rides: TaskExecutor#resolve_loop_lookup evaluates the source as
+        # `query('inventory_hostnames', term, wantlist=True)` HERE, so
+        # without the arm such loops fell through to python_lookup and
+        # failed with "lookup plugin (inventory_hostnames) not found"
+        # (and the false-block skip path degraded them to one bare
+        # skipping line instead of per-item lines).
+        # variables['groups'] is in every real task's context; absent
+        # here, the real plugin's throwaway manager is empty, so matching
+        # means an empty result (+ its own unmatched-pattern warning),
+        # never a failure.
+        groups = ctx.host_context.as?(JinjaHostContext)
+          .try(&.vars["groups"]?.try(&.as_h?)) || {} of String => JSON::Any
+        hosts = InventoryPatterns.pattern_hosts(
+          flatten(terms).map { |term| text(term) },
+          InventoryPatterns.groups_from_vars(groups)
+        )
+        # query() is Ansible's list-forcing sibling, and a SCALAR lookup()
+        # of an EMPTY match renders [] (a real empty list), not "" - the
+        # exact convention the hand-rolled lookup_inventory_hostnames
+        # already pins (verified vs ansible-core 2.19.4).
+        list_form = query_mode || truthy?(kwargs["wantlist"]?) || hosts.empty?
+        list_form ? AnyValue.new(hosts.map { |host| AnyValue.new(host) }) : AnyValue.new(hosts.join(","))
       else
         python_lookup(name, terms, kwargs, ctx)
       end
