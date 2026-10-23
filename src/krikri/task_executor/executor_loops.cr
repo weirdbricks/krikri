@@ -2029,6 +2029,58 @@ module Krikri
 
           item_delegate = delegate_hosts.try(&.[idx])
           delegate_target = item_delegate && item_delegate != host ? item_delegate.name : nil
+
+          # An SSH-level unreachable loop item displays as ansible's own
+          # per-item `failed:` line (the result carries no `failed` flag,
+          # so the generic display below used to show it as bare `ok:` -
+          # issue #275's looped unreachable-delegate repro). Real instead
+          # prints the item's [ERROR]/"Task failed." connection block
+          # right before its `failed:` line (identical repeats dedup at
+          # Display level, so a whole loop against one dead delegate shows
+          # the block once); the msg is the task-level error brief + the
+          # ssh transport's own error, never the "Failed to upload ..."
+          # framing this engine's dispatch produces, because ansible's
+          # exception there is raised by the ssh connection plugin. The
+          # block's shape follows the ORIGIN host's own connection - sole
+          # brief segment for an ssh origin, the chain for a local one
+          # (see loop_unreachable_error_node for real's two shapes).
+          if unreachable_task_result?(result) && !Krikri::Oneline.enabled? && !resolve_task_no_log(task, base_vars_context)
+            unreachable_msg = unreachable_loop_item_msg(result)
+            if result_h = result.as_h?
+              # ansible's converted item result carries no transport
+              # stderr and no module invocation (the module never ran);
+              # the exception placeholder is what real's aggregate fatal
+              # shows per entry.
+              result_h.delete("stderr")
+              result_h.delete("invocation")
+              result_h["msg"] = JSON::Any.new(unreachable_msg)
+              result_h["exception"] = JSON::Any.new("(traceback unavailable)")
+            end
+            ErrorBlock.emit(ResultDisplay.loop_unreachable_error_node(
+              unreachable_msg,
+              ResultDisplay.error_origin_context(task),
+              local_origin: PluginManager.local_connection?(host, base_vars_context || {} of String => JSON::Any),
+            ))
+            host_label = delegate_target ? "#{host.name} -> #{delegate_target}" : host.name
+            dump = JSON::Any.new({
+              "ansible_loop_var" => JSON::Any.new(task.loop_var || "item"),
+              "changed"          => JSON::Any.new(changed),
+              "msg"              => JSON::Any.new(unreachable_msg),
+              "unreachable"      => JSON::Any.new(true),
+            })
+            append_loop_item_bindings(task, dump.as_h, item, idx)
+            # Real's per-item dump strips the exception the block above
+            # already displayed (only the aggregate fatal's own results
+            # array keeps it).
+            display_dump = JSON::Any.new(dump.as_h.reject("exception"))
+            puts "failed: [#{host_label}] (item=#{item_label}) => #{ResultDisplay.python_json_dump(display_dump)}".colorize(:red)
+            result_hash = result.as_h.dup
+            result_hash.reject! { |key, _| key.starts_with?("_ansible_") }
+            append_loop_item_bindings(task, result_hash, item, idx)
+            results << JSON::Any.new(result_hash)
+            next
+          end
+
           # A batch-prepared (or solo) finalization failure carries its
           # [ERROR] chain block stashed on the result (see
           # stash_finalization_error_block) - print it in iteration order,
@@ -2130,8 +2182,42 @@ module Krikri
         # non-looped path, and report_unreachable has already halted (or
         # ignored) the host, so the failed-based halt below is skipped.
         if any_unreachable
-          delegate_target = delegate_display_target(task, host, base_vars_context)
-          report_unreachable(task, host, @unreachable_ssh_errors[host.name]?, no_log: resolve_task_no_log(task, base_vars_context), delegate_target: delegate_target)
+          if Krikri::Oneline.enabled? || resolve_task_no_log(task, base_vars_context)
+            # The oneline callback's own aggregate line and no_log's
+            # censorship keep the single-task unreachable report; the
+            # custom closure below would echo what no_log exists to hide.
+            delegate_target = delegate_display_target(task, host, base_vars_context)
+            report_unreachable(task, host, @unreachable_ssh_errors[host.name]?, no_log: resolve_task_no_log(task, base_vars_context), delegate_target: delegate_target)
+          else
+            # Real closes a looped unreachable task with the loop
+            # aggregate's own fatal: the label carries the RAW
+            # delegate_to text - ansible builds the task-level host label
+            # straight off the task keyword, so `{{ ctl }}`/`{{ item }}`
+            # print literally even though the per-item lines above carry
+            # the resolved per-item names - the loop's own aggregate msg
+            # ("All items completed", even with skipped entries in the
+            # mix), and the registered per-item entries inside, with
+            # "exception": "(traceback unavailable)" per converted item
+            # and no `skipped` key.
+            fatal_label = (delegate = task.delegate_to) && !delegate.empty? ? "#{host.name} -> #{delegate}" : host.name
+            fatal_json = JSON::Any.new({
+              "changed"     => JSON::Any.new(false),
+              "msg"         => JSON::Any.new("All items completed"),
+              "results"     => JSON::Any.new(results),
+              "unreachable" => JSON::Any.new(true),
+            })
+            puts "fatal: [#{fatal_label}]: UNREACHABLE! => #{ResultDisplay.python_json_dump(fatal_json)}".colorize(:red)
+            if task.ignore_unreachable?
+              # Same accounting report_unreachable's ignored branch does:
+              # the run carries on (rc 0), the task counts ok AND ignored.
+              @results[host.name]["ok"] += 1
+              @results[host.name]["ignored"] += 1
+              puts "...ignoring".colorize(:cyan)
+            else
+              @results[host.name]["unreachable"] += 1
+              @halted_hosts << host.name
+            end
+          end
           @unreachable_hosts << host.name unless task.ignore_unreachable?
         else
           aggregate_result = JSON.parse({
@@ -2189,6 +2275,17 @@ module Krikri
       end
 
       halt_if_failed(task, host, any_failed && !any_unreachable)
+    end
+
+    # The msg real gives an SSH-level unreachable loop item: the task-level
+    # error brief + the ssh transport's own error detail, stripped of the
+    # "Failed to upload ...: " framing this engine's dispatch puts in front
+    # of it - ansible's exception there is raised by the ssh connection
+    # plugin, so the detail is just its `ssh: ...` line (the same detail
+    # the non-looped report_unreachable path extracts).
+    private def unreachable_loop_item_msg(result : JSON::Any) : String
+      detail = ssh_transport_detail(result["stderr"]?.try(&.as_s?) || result["msg"]?.try(&.as_s?) || "")
+      "Task failed: Failed to connect to the host via ssh: #{detail}"
     end
 
     # A LOOPED task's templated notify: resolves PER ITEM. ansible-core
