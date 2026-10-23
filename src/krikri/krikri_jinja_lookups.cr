@@ -114,6 +114,16 @@ module Krikri
         # hostile target's `{{ lookup('pipe', ...) }}`-shaped stdout
         # flowing into a lookup term must print verbatim, not execute.
         next term if UnsafeValues.unsafe_text?(raw)
+        # Same ansible-core 2.19 "Jinja constant strings should not contain
+        # embedded templates" warning the hand-rolled lookup dispatch emits
+        # for its own re-render of such a term: this is the native-typed
+        # whole-span route (set_fact values, debug msg containers), where
+        # the same double-templated lookup constant renders HERE instead -
+        # leaving that route silent would warn for one idiom shape and not
+        # another. Only with a task param registered on the current fiber
+        # (no task context, no warning), and before the render, matching
+        # where _trust_jinja_constants warns.
+        VariableSubstitutor::ExpressionEvaluator.emit_jinja_const_template_warning if raw.includes?("{{")
         rendered = begin
           render_nested(ctx, raw)
         rescue

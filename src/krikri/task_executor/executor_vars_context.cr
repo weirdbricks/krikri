@@ -2182,6 +2182,7 @@ module Krikri
       substitutor : VarSubstitutor,
       native_containers : Bool = false,
       module_name : String? = nil,
+      task : Task? = nil,
     ) : Hash(String, String)
       result = Hash(String, String).new
 
@@ -2279,6 +2280,15 @@ module Krikri
         # stored the second run's output. Undefined/None/omit results fall
         # back to the plain substitution, which owns the strict-undefined
         # error and the NONE/OMIT sentinel flows.
+        # While finalizing THIS param, register its (task, key) on the
+        # current fiber so the evaluator can originate the "Jinja
+        # constant strings should not contain embedded templates"
+        # warning at the param's value position (issue #259) - ansible
+        # inherits the templated value's Origin onto its embedded
+        # lookup-arg constants, and the evaluator has no task context of
+        # its own. Popping in the begin's ensure keeps the stack
+        # consistent through the strict-undefined rescues too.
+        VarSubstitutor.set_current_task_param(task.source_file, task.source_line, key) if task
         debug_msg = key == "msg" && module_name == "ansible.builtin.debug"
         begin
           # inside the begin: native_typed_value's strict-undefined check must
@@ -2362,6 +2372,8 @@ module Krikri
           # own routing.
           raise UndefinedVariableError.new("Error while resolving value for '#{key}': #{e.message}") if e.message.try(&.starts_with?("The lookup plugin '"))
           raise e
+        ensure
+          VarSubstitutor.pop_current_task_param if task
         end
 
         # A block-tag template (`{%`/`{#`) that renders to a literally

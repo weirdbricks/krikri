@@ -42,12 +42,57 @@ module Krikri
       # helper - every lookup type shares the same "an argument may
       # itself carry an unrendered `{{ }}` span" possibility, so fixing
       # it here covers all of them uniformly instead of one at a time.
+      # ansible-core 2.19's warning for exactly the double-templated
+      # literal rendered below: a template-looking string CONSTANT inside
+      # an expression (jinja_bits.py's _access_const) is tagged
+      # _JinjaConstTemplate and re-rendered when the lookup runs, warning
+      # once per constant at lookup-terms processing with the Origin
+      # inherited from the value being templated - for module-arg
+      # finalization that origin is the task param's VALUE position
+      # (live-verified vs 2.19.11 alongside the rest of the block shape).
+      # The evaluator has no task context of its own, so the executor
+      # registers the (task, param key) being finalized on the current
+      # fiber (VarSubstitutor#current_task_param); with no registration
+      # (var files, template files, when:/name: routes - the is_conditional
+      # variant among them) nothing is emitted, best-effort like the rest
+      # of this evaluator's Origin work. Dedup per
+      # distinct Origin per run - the message and help text are constants,
+      # so the Origin is the only variable part of real's formatted
+      # [WARNING] block, which is what Display._deduplicate keys on;
+      # concurrent per-host finalizations share the set, hence the mutex
+      # (same reason as RESERVED_SET_FACT_WARN_MUTEX).
+      @@jinja_const_template_warned = Set(String).new
+      JINJA_CONST_TEMPLATE_WARN_MUTEX = Mutex.new
+
+      # Public because the krikri-jinja engine's own lookup-terms re-render
+      # (krikri_jinja_lookups.cr's prepare_lookup_terms - the native-typed
+      # whole-span route set_fact values and debug msgs take) renders the
+      # same constants the same way and must warn the same way.
+      def self.emit_jinja_const_template_warning : Nil
+        return unless site = VarSubstitutor.current_task_param
+        return unless origin = ResultDisplay.param_value_origin(site.source_file, site.source_line, site.key)
+        JINJA_CONST_TEMPLATE_WARN_MUTEX.synchronize do
+          return if @@jinja_const_template_warned.includes?(origin)
+          @@jinja_const_template_warned << origin
+          STDERR.puts "[WARNING]: Jinja constant strings should not contain embedded templates. This feature will be disabled by default in ansible-core 2.23."
+          STDERR.puts origin
+          STDERR.puts
+          STDERR.puts "Use inline expressions, for example: `msg: \"{{ lookup('env', '{{ a_var }}') }}\"` becomes `msg: \"{{ lookup('env', a_var) }}\"`"
+          STDERR.puts
+        end
+      end
+
+      private def warn_jinja_const_embedded_template : Nil
+        ExpressionEvaluator.emit_jinja_const_template_warning
+      end
+
       private def rerender_double_templated_literal(part : String) : String
         stripped = part.strip
         return part unless literal = sole_quoted_literal?(stripped)
         return part unless literal.includes?("{{") && literal.includes?("}}")
 
         quote = stripped[0]
+        warn_jinja_const_embedded_template
         rendered = jinja_renderer.render!(literal)
         # A render that comes back CONTAINER-shaped (the term named a list
         # or dict variable, so the render emits its Python repr or JSON
