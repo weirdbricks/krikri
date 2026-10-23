@@ -917,7 +917,7 @@ module Krikri
       # not, so a notified handler with `copy: "{{ d }}"` silently diverged
       # from Ansible's stderr.
       begin
-        substituted_params = expand_templated_args(substitute_task_params(handler.params, substitutor, native_containers: handler.module_name.ends_with?("set_fact"), module_name: handler.module_name), substitutor, handler)
+        substituted_params = expand_templated_args(substitute_task_params(handler.params, substitutor, native_containers: handler.module_name.ends_with?("set_fact"), module_name: handler.module_name, task: handler), substitutor, handler)
         substituted_env = substitute_task_environment(handler, substitutor)
       rescue ex
         result = finalization_failure_json(ex, handler)

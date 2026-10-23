@@ -1004,13 +1004,24 @@ module Krikri
     # the value, not the key). Same best-effort text scan as
     # set_fact_key_origin above, but the caret lands on the first
     # non-space character after `key:`.
-    private def self.task_param_value_origin(task : Task, key : String) : String?
-      path = task.source_file
-      return nil unless path && task.source_line > 0 && File.file?(path)
+    # Public (same reason as set_fact_key_origin) so the lookup dispatch's
+    # Jinja-const embedded-template warning - emitted from inside the
+    # expression evaluator while THIS param is being finalized, and the
+    # evaluator otherwise has no route to the task (issue #259) - can
+    # produce the same value-position Origin real's warning carries.
+    # When the caller already carries just the param's source position
+    # (the evaluator, which can't name Task at all - see
+    # VarSubstitutor#current_task_param), use param_value_origin.
+    def self.task_param_value_origin(task : Task, key : String) : String?
+      param_value_origin(task.source_file, task.source_line, key)
+    end
+
+    def self.param_value_origin(path : String?, source_line : Int32, key : String) : String?
+      return nil unless path && source_line > 0 && File.file?(path)
 
       lines = File.read_lines(path)
       needle = "#{key}:"
-      ((task.source_line - 1)...lines.size).each do |idx|
+      ((source_line - 1)...lines.size).each do |idx|
         line = lines[idx]
         at = line.index(needle)
         next unless at

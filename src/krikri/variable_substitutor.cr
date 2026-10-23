@@ -1316,6 +1316,39 @@ module Krikri
       (@@strict_span_depth[Fiber.current]? || 0) > 0
     end
 
+    # Fiber-scoped stack of "the task param value this fiber is templating
+    # right now" - pushed by TaskExecutor exactly around the substitution
+    # of ONE param during module-arg finalization and popped in an ensure.
+    # The expression evaluator has no task context of its own, so when it
+    # renders an embedded `{{ }}` span inside a quoted lookup argument
+    # (rerender_double_templated_literal, lookup_dispatch.cr) it reads
+    # this to locate the warning's Origin the way ansible-core 2.19
+    # inherits the templated value's origin onto its embedded constants.
+    # A stack, not a single value, for the same nesting reason as
+    # #enter_span_memo_scope: a param's own rendering can descend into
+    # further synthesized renders (a whole-args dict's per-leaf
+    # substitution) that would otherwise overwrite the outer param.
+    # Stores just the param's source position (not the Task object):
+    # the plugin binaries compile this templating engine without the
+    # playbook parser, so Task is not a type the whole program shares.
+    record TemplatedParamSite, source_file : String?, source_line : Int32, key : String
+    @@templated_task_param = {} of Fiber => Array(TemplatedParamSite)
+
+    def self.set_current_task_param(source_file : String?, source_line : Int32, key : String) : Nil
+      (@@templated_task_param[Fiber.current] ||= Array(TemplatedParamSite).new).push(TemplatedParamSite.new(source_file, source_line, key))
+    end
+
+    def self.pop_current_task_param : Nil
+      fiber = Fiber.current
+      return unless stack = @@templated_task_param[fiber]?
+      stack.pop
+      @@templated_task_param.delete(fiber) if stack.empty?
+    end
+
+    def self.current_task_param : TemplatedParamSite?
+      @@templated_task_param[Fiber.current]?.try(&.last?)
+    end
+
     # Per-host registry of UNSAFE variable names - names whose current
     # value was produced by EXECUTION (a `register:`ed module result, a
     # `set_fact:` write, or a gathered fact) rather than read out of a
