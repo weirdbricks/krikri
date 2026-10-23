@@ -14294,3 +14294,13 @@ Local probe roles, not Galaxy roles: each probed task registers its result and d
 | `roles-ansible.amdgpu_firmware` | rocky | ❌ Divergent - issue #261 (round29878721, 0.9.1860 debug). |
 | `webarchitect609.yandex_disk_cli` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29878713, 0.9.1860 debug). |
 | `wunzeco.sonarqube-docker` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29878720, 0.9.1860 debug). |
+| `Aplyca.PHP` | ubuntu | ✅ Clean (round29878800, 0.9.1863 debug). |
+| `FloeDesignTechnologies.drush` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29878798, 0.9.1863 debug). |
+| `insight_w3f.polkadot_health_check` | rocky | ✅ Clean (round29878801, 0.9.1863 debug). |
+| `jgkim.atom` | ubuntu | ❌ Divergent - issue #262 (round29878792, 0.9.1863 debug). |
+| `matic-insurance.nginx_container` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29878796, 0.9.1863 debug). |
+| `oasis_roles.upload_files` | ubuntu | ✅ Clean (round29878794, 0.9.1863 debug). |
+| `pinkeen.gearmand` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29878795, 0.9.1863 debug). |
+| `secfigo.inspec` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29878797, 0.9.1863 debug). |
+| `tobias_richter.apt_cacher_ng` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29878799, 0.9.1863 debug). |
+| `vahubert.apache` | rocky | ✅ Clean (round29878793, 0.9.1863 debug). |
