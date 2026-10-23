@@ -3062,6 +3062,31 @@ module Krikri
         l3 = cm[1] + "."
       end
 
+      # A block-style MAPPING param chains one level DEEPER still
+      # (ansible-core 2.19.11 live-captured on issue #265,
+      # opichon.mysql-backup's docker_container env): the params stanza
+      # shortens to "Error while resolving value for 'K'." with Origin at
+      # the mapping's FIRST key, and a fourth stanza holds the plain
+      # "'V' is undefined" with Origin at the failing value token's first
+      # character (quote included). Only the plain-undefined message on a
+      # genuinely block-style param takes this turn: a flow value (text
+      # after `K:`), a `- ` entry under the key and a mapping without a
+      # `{{ }}` value naming V keep the param's own origin and the
+      # three-stanza block. The var-definition chain above stays ahead: a
+      # var whose own definition bottoms out at the same message is
+      # ansible's OTHER fourth-stanza shape (issue #36) - when that
+      # stanza applies, this one does not.
+      mapping_key_pos : {Int32, Int32}? = nil
+      mapping_val_stanza : String? = nil
+      if chain_stanza.nil? &&
+         (mm = msg.match(/\AError while resolving value for '([^']+)': '([A-Za-z_][A-Za-z0-9_]*)' is undefined\z/)) &&
+         (mp = mapping_value_failure_origin(lines, module_idx, mm[1], mm[2]))
+        l3 = "Error while resolving value for '#{mm[1]}'."
+        mapping_key_pos = mp[0]
+        mapping_val_stanza = "'#{mm[2]}' is undefined\n" +
+                             origin_context_block(path, lines, mp[1][0] + 1, mp[1][1])
+      end
+
       text = String.build do |io|
         io << "[ERROR]: " << l1 << "\n"
         if two_level
@@ -3076,8 +3101,13 @@ module Krikri
         end
         io << "\n<<< caused by >>>\n\n"
         io << l3 << "\n"
-        io << origin_context_block(path, lines, param_idx + 1, param_col)
-        if cause = plugin_cause
+        stanza3_pos = mapping_key_pos || {param_idx, param_col}
+        io << origin_context_block(path, lines, stanza3_pos[0] + 1, stanza3_pos[1])
+        if mapping_val_stanza
+          io << "\n<<< caused by >>>\n\n"
+          io << mapping_val_stanza
+          io << "\n"
+        elsif cause = plugin_cause
           io << "\n<<< caused by >>>\n\n"
           io << cause << "\n"
           io << "\n"
@@ -3137,6 +3167,101 @@ module Krikri
       return nil unless origin
       "'#{m[3]}' is undefined\n" +
         origin_context_block(origin.path, File.read_lines(origin.path), origin.line, origin.column)
+    end
+
+    # Stanza 3 and 4's Origins for an undefined failure under a
+    # block-style MAPPING param: the mapping's FIRST entry line (column =
+    # indent+1 - ansible-core 2.19.11 points stanza 3 there, not at the
+    # `K:` key itself, live-captured on issue #265's failing
+    # docker_container env block) and the failing value token's first
+    # character (stanza 4, quote included - the column formula
+    # locate_param_key_position applies, so aligning whitespace before
+    # the value is skipped like issue #241's). Returns nil - and the
+    # previous three-stanza block - unless every gate the behaviour
+    # depends on matches: the `K:` line carries nothing after its colon
+    # (whitespace or a comment only - a flow value keeps the param's own
+    # value position), the next non-blank line is deeper than the key and
+    # a mapping entry (not a `- ` list item - the list is ansible's param
+    # level, never a mapping key nested under it), and inside the block
+    # (entries until indentation returns to the key's level) the first
+    # (or only) entry referencing V inside a `{{ }}` span locates the
+    # value token; no such entry keeps the param's own position.
+    private def mapping_value_failure_origin(lines : Array(String), from_idx : Int32, key : String, var : String) : ({ {Int32, Int32}, {Int32, Int32} } | Nil)
+      key_needle = /#{Regex.escape(key)}[ \t]*:/
+      key_indent = 0
+      key_line_idx = nil
+      idx = from_idx + 1
+      while idx < lines.size
+        line = lines[idx]
+        break if next_task_marker?(lines, from_idx, line)
+        if (m = key_needle.match(line)) && (key_idx = m.begin(0)) && (key_idx == 0 || line[key_idx - 1].whitespace?)
+          remainder = line[m.end(0)..].strip
+          if remainder.empty? || remainder.starts_with?('#')
+            key_line_idx = idx
+            key_indent = line.size - line.lstrip.size
+            break
+          end
+        end
+        idx += 1
+      end
+
+      first_entry_idx = nil
+      if kl = key_line_idx
+        eidx = kl + 1
+        while eidx < lines.size
+          line = lines[eidx]
+          if line.strip.empty?
+            eidx += 1
+            next
+          end
+          break unless (line.size - line.lstrip.size) > key_indent && !line.lstrip.starts_with?("- ")
+          first_entry_idx = eidx
+          break
+        end
+      end
+      return nil unless first_entry_idx
+
+      entry_line = lines[first_entry_idx]
+      key_origin : {Int32, Int32} = {first_entry_idx, (entry_line.size - entry_line.lstrip.size) + 1}
+
+      eidx = first_entry_idx
+      while eidx < lines.size
+        line = lines[eidx]
+        if line.strip.empty? || line.lstrip.starts_with?('#')
+          eidx += 1
+          next
+        end
+        # The mapping's own entries end where indentation returns to the
+        # `K:` key's level - anything at or above it belongs to the task
+        # (the module's next param, ignore_errors, the next task).
+        return nil unless (line.size - line.lstrip.size) > key_indent
+        if template_span_refs_var?(line, var) && (colon = line.index(':'))
+          # The value token's first character after the entry's key+colon
+          # (quote included); deeper list-item entries carry no key and
+          # no token position to report, so they keep scanning.
+          value = line[(colon + 1)..]
+          return {key_origin, {eidx, colon + 1 + ((value.size - value.lstrip.size) + 1)}}
+        end
+        eidx += 1
+      end
+      nil
+    end
+
+    # Whether any `{{ ... }}` span in *line* names *var* as a whole
+    # identifier: substring neighbours must not count (a failing
+    # MYSQL_PASSWORD value shapes the Origin, a neighbouring
+    # MYSQL_PASSWORDS line must not take its place).
+    private def template_span_refs_var?(line : String, var : String) : Bool
+      return false unless line.includes?("{{")
+      word = /\b#{Regex.escape(var)}\b/
+      pos = 0
+      while start = line.index("{{", pos)
+        close = line.index("}}", start + 2)
+        break unless close
+        return true if line[(start + 2)...close].match(word)
+        pos = close + 2
+      end
+      false
     end
 
     # The unique var-layer DEFINITION whose plain-`{{ }}` own value
