@@ -14414,3 +14414,13 @@ Local probe roles, not Galaxy roles: each probed task registers its result and d
 | `vbotka.freebsd_pf` | rocky | ⚠ only a community module krikri does not track differs (round29879593, 0.9.1880 release). Times: cold py 72.73s vs cr 5.71s; warm py 74.82s vs cr 0.52s. |
 | `wangsha.docker-generic-image` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29879588, 0.9.1880 release). Times: cold py 9.27s vs cr 4.14s; warm py 9.19s vs cr 0.77s. |
 | `zorlin.rust` | rocky | ❌ Divergent - issue #280 (round29879595, 0.9.1880 release). Times: cold py 139.98s vs cr 69.08s; warm py 4.17s vs cr 1.05s. |
+| `SoInteractive.rabbitmq` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29879657, 0.9.1882 debug). |
+| `Yannik.php` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29879659, 0.9.1882 debug). |
+| `dockpack.base_python` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29879655, 0.9.1882 debug). |
+| `freehck.k8s` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29879652, 0.9.1882 debug). |
+| `lean_delivery.oracle_instant_client` | ubuntu | ❌ Divergent - issue #281 (round29879654, 0.9.1882 debug). |
+| `marvel-nccr.abinit` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29879656, 0.9.1882 debug). |
+| `net2grid.openldap_server` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29879653, 0.9.1882 debug). |
+| `ryezone_labs.ssh` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29879658, 0.9.1882 debug). |
+| `sparkklabs.server` | ubuntu | ✅ Clean (round29879660, 0.9.1882 debug). |
+| `wtanaka.openvpn` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29879661, 0.9.1882 debug). |
