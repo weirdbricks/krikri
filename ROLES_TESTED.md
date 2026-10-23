@@ -14344,3 +14344,13 @@ Local probe roles, not Galaxy roles: each probed task registers its result and d
 | `reynn.jenkins-swarm` | ubuntu | ✅ Clean (round29878973, 0.9.1868 debug). |
 | `tobias_richter.debian_unstable` | ubuntu | ✅ Clean (round29878975, 0.9.1868 debug). |
 | `woodendoors.ansible_adguard_home` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29878967, 0.9.1868 debug). |
+| `freehck.k8s_base` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29878977, 0.9.1868 debug). |
+| `freehck.k8s_init` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29878978, 0.9.1868 debug). |
+| `hoplacloud.apache_php` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29878975, 0.9.1868 debug). |
+| `hoplacloud.git` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29878976, 0.9.1868 debug). |
+| `l3d.prometheus_libvirt_exporter` | ubuntu | ✅ Clean (round29878974, 0.9.1868 debug). |
+| `manala.dnsmasq` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29878972, 0.9.1868 debug). |
+| `socketwench_pantheon_terminus` | ubuntu | ❌ BLOCKED: (round29878981, 0.9.1868 debug). |
+| `spk83.jupyter-r-deps` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29878973, 0.9.1868 debug). |
+| `systemli.spamassasin` | ubuntu | ❌ Divergent - issue #268 (round29878980, 0.9.1868 debug). |
+| `wtanaka.vagrant` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29878979, 0.9.1868 debug). |
