@@ -14474,3 +14474,13 @@ Local probe roles, not Galaxy roles: each probed task registers its result and d
 | `sparkklabs.dotdocker` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29879959, 0.9.1884 release). Times: cold py 8.11s vs cr 5.48s; warm py 8.66s vs cr 0.56s. |
 | `vicenteg.mysql_server` | rocky | ✅ Clean (round29879960, 0.9.1884 release). Times: cold py 7.25s vs cr 1.92s; warm py 4.93s vs cr 0.69s. |
 | `warhorse.swag_docker` | ubuntu | ✅ Clean (round29879963, 0.9.1884 release). Times: cold py 111.51s vs cr 39.07s; warm py 50.89s vs cr 1.27s. |
+| `claranet.memcached` | ubuntu | ✅ Clean (round29879970, 0.9.1884 release). Times: cold py 18.19s vs cr 10.71s; warm py 7.61s vs cr 0.26s. |
+| `egdoc.google_chrome` | rocky | ❌ Divergent - issue #284 (round29879963, 0.9.1884 release). Times: cold py 2.84s vs cr 1.23s; warm py 2.32s vs cr 0.37s. |
+| `hannseman.raspbian` | ubuntu | ❌ Divergent - issue #285 (round29879966, 0.9.1884 release). Times: cold py 42.79s vs cr 51.94s; warm py 212.43s vs cr 4.88s. |
+| `hax0rbana_adam.mosquitto` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29879969, 0.9.1884 release). Times: cold py 4.07s vs cr 1.30s; warm py 2.53s vs cr 0.69s. |
+| `insight_w3f.polkadot_base` | ubuntu | ✅ Clean (round29879962, 0.9.1884 release). Times: cold py 149.87s vs cr 62.04s; warm py 130.05s vs cr 39.86s. |
+| `lukaspustina.motd` | ubuntu | ❌ Divergent - issue #286 (round29879968, 0.9.1884 release). Times: cold py 14.17s vs cr 9.60s; warm py 4.91s vs cr 0.20s. |
+| `m13tlabs.dev` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29879965, 0.9.1884 release). Times: cold py 3.23s vs cr 0.93s; warm py 2.52s vs cr 0.15s. |
+| `noobient.desktopcheck` | ubuntu | ✅ Clean (round29879964, 0.9.1884 release). Times: cold py 4.21s vs cr 1.93s; warm py 2.91s vs cr 1.32s. |
+| `supertarto.openjdk` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29879967, 0.9.1884 release). Times: cold py 2.30s vs cr 0.79s; warm py 3.09s vs cr 0.16s. |
+| `wtanaka.wireshark` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29879971, 0.9.1884 release). Times: cold py 0.44s vs cr 0.01s; warm py 0.44s vs cr 0.01s. |
