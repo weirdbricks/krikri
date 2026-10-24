@@ -1758,4 +1758,29 @@ describe "JinjaRenderer.rerender_nested_templates chain-undefined leaf marking (
 
     result.as_s.must_equal("{{ bind_addr }}")
   end
+
+  it "keeps the trailing newline trim_blocks eats after a folded scalar's bare block tag (issue 287)" do
+    # The folded `shell: >` shape from issue 287: folding joins the
+    # source lines into ONE line, so the scalar's only newline is its
+    # own terminator, and trim_blocks eats it right after `{% endif %}`.
+    # Ansible's do_template counts the source's trailing newlines
+    # against the rendered result's and appends the deficit
+    # (live-verified: `cmd == "echo /tmp/x.phar \n"`), so the newline is
+    # part of the rendered command even when the if-branch is off.
+    v = {"p" => JSON::Any.new("/tmp/x.phar")}
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
+
+    template = %(echo {{ p }} {% if (zzz is defined) %} --bin-dir={{ zzz }} {% endif %}\n)
+    renderer.render(template).must_equal("echo /tmp/x.phar \n")
+  end
+
+  it "appends the deficit when a block tag ends the source past a defined body" do
+    # Same count-vs-count convention, body-lives branch: without the
+    # append the source's final newline (after `{% endif %}`) is gone
+    # and the result ends mid-word with `x`.
+    v = {"p" => JSON::Any.new("1"), "q" => JSON::Any.new(true)}
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
+
+    renderer.render("echo {{ p }}\n{% if q %}x{% endif %}\n").must_equal("echo 1\nx\n")
+  end
 end
