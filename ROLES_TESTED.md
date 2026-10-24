@@ -14744,3 +14744,13 @@ Local probe roles, not Galaxy roles: each probed task registers its result and d
 | `sorrowless.prometheus_blackbox_exporter` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29881037, 0.9.1916 debug). |
 | `thulium_drake.journald` | rocky | ✅ Clean (round29881035, 0.9.1916 debug). |
 | `wtanaka.tor` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29881034, 0.9.1916 debug). |
+| `AerisCloud.glusterfs` | rocky | ✅ Clean (round29881041, 0.9.1916 debug). |
+| `Akman.timezone` | ubuntu | ✅ Clean (round29881040, 0.9.1916 debug). |
+| `andrewrothstein.dotnet-runtime` | rocky | ❌ Divergent - issue #321 (round29881035, 0.9.1916 debug). |
+| `aries1980.k9s` | ubuntu | ✅ Clean (round29881036, 0.9.1916 debug). |
+| `codingbunch.docker-registry` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29881043, 0.9.1916 debug). |
+| `galaxyproject.galaxy_toolshed` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29881042, 0.9.1916 debug). |
+| `hax0rbana_adam.minecraft_bedrock_edition` | ubuntu | ✅ Clean (round29881038, 0.9.1916 debug). |
+| `indigo-dc.spark-mesos` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29881034, 0.9.1916 debug). |
+| `tomi77.grunt` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29881039, 0.9.1916 debug). |
+| `wesmarcum.sudo` | rocky | ✅ Clean (round29881037, 0.9.1916 debug). |
