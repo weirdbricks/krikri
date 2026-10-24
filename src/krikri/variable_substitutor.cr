@@ -569,6 +569,35 @@ module Krikri
     end
   end
 
+  # ansible-core 2.19 words a dict-subscript miss differently by key:
+  # any key with text in it gets the templar's dict-typed rewording
+  # ("object of type 'dict' has no attribute 'nope'"), but an
+  # EMPTY-string key never reaches that rewording - it falls through
+  # to Python's getattr on the lazy templated-dict wrapper, which
+  # reports the wrapper's full dotted class path instead
+  # ("'ansible._internal._templating._lazy_containers.
+  # _AnsibleLazyTemplateDict object' has no attribute ''"; both
+  # live-verified vs 2.19.11 on `{{ groups[k] }}` with `k: ''` vs
+  # `k: 'nope'`).
+  LAZY_TEMPLATE_DICT_TYPE = "ansible._internal._templating._lazy_containers._AnsibleLazyTemplateDict"
+
+  def self.dict_attribute_miss_message(missing_key : String, miss_type : String) : String
+    if missing_key.empty?
+      "'#{LAZY_TEMPLATE_DICT_TYPE} object' has no attribute ''"
+    else
+      "object of type '#{miss_type}' has no attribute '#{missing_key}'"
+    end
+  end
+
+  # The engine's own attribute-miss wording ("'dict object' has no
+  # attribute 'k'") rewritten into ansible-core's, including the
+  # empty-string-key exception dict_attribute_miss_message covers.
+  def self.jinja_attribute_miss_wording(engine_message : String) : String
+    engine_message
+      .gsub(/'(\w+) object' has no attribute ''\z/, "'#{LAZY_TEMPLATE_DICT_TYPE} object' has no attribute ''")
+      .gsub(/'(\w+) object' has no attribute/, "object of type '\\1' has no attribute")
+  end
+
   def self.dict_attribute_miss_name(expr : String, vars : Hash(String, JSON::Any)) : String?
     @@miss_type = "dict"
     return nil unless expr.matches?(/\A[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*|\[[^\[\]]+\])*\z/)
@@ -659,7 +688,7 @@ module Krikri
   # attribute-error wording, everything else the classic "'x' is undefined".
   def self.strict_undefined_message(expr : String, vars : Hash(String, JSON::Any)) : String
     if missing_key = dict_attribute_miss_name(expr, vars)
-      "object of type '#{@@miss_type}' has no attribute '#{missing_key}'"
+      dict_attribute_miss_message(missing_key, @@miss_type)
     else
       # Real names the chain's ROOT variable, never the whole expression
       # ("'missing' is undefined", not "'missing['key']' is undefined" -
@@ -828,8 +857,9 @@ module Krikri
     # ("'dict object' has no attribute 'x'"); ansible-core 2.19's
     # templar words the same failure "object of type 'dict' has no
     # attribute 'x'" (live-verified matrix, all of arg/when/loop/
-    # template contexts).
-    msg = msg.gsub(/'(\w+) object' has no attribute/, "object of type '\\1' has no attribute")
+    # template contexts) - with the empty-string-key lazy-dict shape
+    # the shared rewording folds in.
+    msg = jinja_attribute_miss_wording(msg)
     # A consumed undefined the engine blames on a name that IS defined
     # means the name's own stored value is a template that fails to
     # render (`badvar: "{{ undefined_deep }}"` consumed by
@@ -2471,7 +2501,7 @@ module Krikri
       root = block_tag_ref_root(ident)
       raise UndefinedVariableError.new("'#{root}' is undefined") unless @vars.has_key?(root)
       if missing_key = Krikri.dict_attribute_miss_name(ident, @vars)
-        raise UndefinedVariableError.new("object of type '#{Krikri.miss_type}' has no attribute '#{missing_key}'")
+        raise UndefinedVariableError.new(Krikri.dict_attribute_miss_message(missing_key, Krikri.miss_type))
       end
     end
 

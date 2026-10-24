@@ -621,6 +621,64 @@ describe "strict-undefined loop ITEM entries and dict-subscript-miss messages" d
     output.must_include("failed=1")
   end
 
+  # Issue #319 (lean_delivery.solr_cloud): an EMPTY subscript key words the
+  # miss with the lazy dict's class path instead, and the loop source's
+  # defining var carries the cause stanza's Origin (live-verified 2.19.11).
+  it "words an empty-key groups subscript with the lazy-dict class and points at the defining var" do
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          zk_group: ''
+          zk_list: '{{ groups[zk_group] | list }}'
+        tasks:
+          - name: looped
+            ansible.builtin.debug:
+              msg: "{{ item }}"
+            loop: '{{ zk_list }}'
+      YAML
+
+    status.exit_code.must_equal(2)
+    output.must_include("'ansible._internal._templating._lazy_containers._AnsibleLazyTemplateDict object' has no attribute ''")
+    output.wont_include("object of type 'dict' has no attribute ''")
+  end
+
+  it "chains the defining var's Origin under an arg-finalization failure" do
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          zk_group: ''
+          zk_list: '{{ groups[zk_group] | list }}'
+        tasks:
+          - name: direct
+            ansible.builtin.debug:
+              msg: '{{ zk_list }}'
+      YAML
+
+    status.exit_code.must_equal(2)
+    output.must_include("Error while resolving value for 'msg'.")
+    output.must_include("zk_list: '{{ groups[zk_group] | list }}'")
+  end
+
+  it "keeps the dict wording for a non-empty missing groups key" do
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: direct
+            ansible.builtin.debug:
+              msg: "{{ groups['nope'] }}"
+      YAML
+
+    status.exit_code.must_equal(2)
+    output.must_include("object of type 'dict' has no attribute 'nope'")
+    output.wont_include("_AnsibleLazyTemplateDict")
+  end
+
   it "uses the same attribute-error message for a dynamic bracket key" do
     status, output = run_playbook(<<-YAML)
       - hosts: localhost
