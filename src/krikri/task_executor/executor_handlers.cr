@@ -907,6 +907,14 @@ module Krikri
         return result
       end
 
+      # Same no_log keyword-templating probe as execute_task_once (issue
+      # #317): a notified handler whose templated no_log: references an
+      # undefined variable fails like any other task instead of running
+      # masked.
+      if undefined = no_log_keyword_undefined_error(handler, vars_context)
+        return no_log_keyword_failure_json(handler, undefined)
+      end
+
       # Substitute variables in handler parameters. Same "finalization of
       # task args failed" rescue as execute_task_once/prepare_batch_step
       # (see there) - a handler has no equivalent before this, so a
