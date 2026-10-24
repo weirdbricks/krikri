@@ -264,4 +264,38 @@ describe Krikri::BatchScript do
     # ...as does the per-user base the parent now lives under.
     script.must_include(%(if [ -L "$B" ] || { [ -e "$B" ] && [ "$(stat -c %u "$B" 2>/dev/null)" != "$(id -u)" ]; }))
   end
+
+  it "restores the captured login umask after setup, before the first step runs" do
+    # Regression for issue #326: the script's own umask 077 used to cover
+    # every plugin step, but real Ansible runs module code under the
+    # connecting user's login umask (typically 022), so a `file:` task
+    # creating a missing ancestor (Dir.mkdir, e.g. /var/www) reported
+    # "mode": "0700" where real ansible reports "0755". 077 protects only
+    # the batch-dir setup: $D is chmod 700 explicitly, so its step
+    # .out/.err files stay owner-private under the restored umask.
+    steps = [Krikri::BatchScript::Step.new("/bin/bash", "umask", false)]
+    script = build("t-umask-restore", steps)
+
+    # A missing marker degrades to the script's end, so any ordering
+    # check that requires it EARLIER fails loudly.
+    capture_idx = script.index("U=$(umask)") || script.size
+    setup_idx = script.index("umask 077") || script.size
+    chmod_idx = script.index(%(chmod 700 "$D")) || script.size
+    dumpfn_idx = script.index("dump_one() {") || script.size
+    restore_idx = script.index(%(umask "$U")) || script.size
+    first_step_idx = script.index("| /bin/bash") || script.size
+    (capture_idx < setup_idx).must_equal(true)
+    (chmod_idx < dumpfn_idx).must_equal(true)
+    (dumpfn_idx < restore_idx).must_equal(true)
+    (restore_idx < first_step_idx).must_equal(true)
+
+    # Behaviorally: impose a restrictive login umask from OUTSIDE the
+    # generated script (the suite process's own umask must never change),
+    # then the step must observe the remembered pre-077 value - without
+    # the capture/restore the step would still print the setup's 077.
+    output = run_script("umask 0027\n" + script)
+    results = Krikri::BatchScript.parse(output)
+    results[0]?.wont_be_nil
+    results[0].stdout.must_equal("0027\n")
+  end
 end
