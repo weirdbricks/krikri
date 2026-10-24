@@ -874,7 +874,10 @@ module Krikri
     # changed only when apt's own summary says something was installed.
     private def handle_install(packages : Array(String), messages : Array(String), changed : Bool, lock_timeout : Int32, build_dep : Bool = false, fixed_state : Bool = false, deb_deps : Bool = false) : PluginResult
       pkg_list = packages.map { |pkg| Process.quote(pkg) }.join(" ")
-      cmd = "DEBIAN_FRONTEND=noninteractive #{apt_get_bin} -y #{expand_dpkg_options} install #{pkg_list}".squeeze(' ')
+      # Ansible's apt module runs apt-get with LANGUAGE/LC_ALL=C (run_command
+      # environ update), so maintainer scripts never see the host's
+      # unsupported LANG=en_US.UTF-8 (eddyhub.gnome_shell: dpkg failed here, ok there).
+      cmd = "DEBIAN_FRONTEND=noninteractive LANGUAGE=C LC_ALL=C #{apt_get_bin} -y #{expand_dpkg_options} install #{pkg_list}".squeeze(' ')
       result = apt_install_with_implicit_cache_retry(cmd, lock_timeout, ->remote_exec(String))
       if result[:exit_code] != 0
         failed_result = PluginResult.new(
@@ -1103,7 +1106,7 @@ module Krikri
             )
           end
 
-          install_result = apt_install_with_implicit_cache_retry("DEBIAN_FRONTEND=noninteractive apt-get install -y #{dpkg_opts} #{shell_pkg}".squeeze(' '), lock_timeout, ->remote_exec(String))
+          install_result = apt_install_with_implicit_cache_retry("DEBIAN_FRONTEND=noninteractive LANGUAGE=C LC_ALL=C apt-get install -y #{dpkg_opts} #{shell_pkg}".squeeze(' '), lock_timeout, ->remote_exec(String))
           if install_result[:exit_code] == 0
             # A requested name can be a virtual package already
             # satisfied by something else installed (`php-dom`/
@@ -1189,7 +1192,7 @@ module Krikri
             )
           end
 
-          remove_result = apt_with_lock_retry("DEBIAN_FRONTEND=noninteractive apt-get remove -y #{dpkg_opts} #{shell_pkg}".squeeze(' '), lock_timeout, ->remote_exec(String))
+          remove_result = apt_with_lock_retry("DEBIAN_FRONTEND=noninteractive LANGUAGE=C LC_ALL=C apt-get remove -y #{dpkg_opts} #{shell_pkg}".squeeze(' '), lock_timeout, ->remote_exec(String))
           if remove_result[:exit_code] == 0
             PluginResult.new(
               changed: true,
@@ -1273,7 +1276,7 @@ module Krikri
         # /var/lib/apt/lists/, is NOT retried by ansible-playbook
         # either - it fails outright with "No package matching 'w3m' is
         # available").
-        upgrade_result = apt_install_with_implicit_cache_retry("DEBIAN_FRONTEND=noninteractive apt-get install -y #{dpkg_opts} #{shell_pkg}".squeeze(' '), lock_timeout, ->remote_exec(String))
+        upgrade_result = apt_install_with_implicit_cache_retry("DEBIAN_FRONTEND=noninteractive LANGUAGE=C LC_ALL=C apt-get install -y #{dpkg_opts} #{shell_pkg}".squeeze(' '), lock_timeout, ->remote_exec(String))
 
         # apt-get prints its "N upgraded, M newly installed" summary line
         # during dependency RESOLUTION, before any package is actually
@@ -1365,7 +1368,7 @@ module Krikri
       cmd = "#{apt_get_bin} -y #{flags} #{upgrade_command}"
       cmd += " -t '#{@params["default_release"]?}'" if @params["default_release"]?
 
-      result = apt_with_lock_retry("DEBIAN_FRONTEND=noninteractive #{cmd}".squeeze(' '), lock_timeout, ->remote_exec(String))
+      result = apt_with_lock_retry("DEBIAN_FRONTEND=noninteractive LANGUAGE=C LC_ALL=C #{cmd}".squeeze(' '), lock_timeout, ->remote_exec(String))
       if result[:exit_code] != 0
         return PluginResult.new(
           changed: false,
