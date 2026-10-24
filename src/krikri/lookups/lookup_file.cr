@@ -48,6 +48,16 @@ module Krikri
         # "\n", which drops exactly one trailing blank line same as a
         # plain `.rstrip()` would for the common no-embedded-blank-
         # lines case this covers).
+        # A None term (the rerender's null-carry marker, issue #294) fails
+        # the same way but WITHOUT collapsing to an empty path first:
+        # ansible-core's find_file_in_search_path warns "Invalid request to
+        # find a file that matches a \"null\" value" (live-verified vs
+        # 2.19.11, after the Jinja-constant warning and before the task
+        # failure) and the error names None plainly, not '-quoted.
+        if parts[1]? == LOOKUP_NONE_TERM
+          ResultDisplay.emit_display_warning("Invalid request to find a file that matches a \"null\" value")
+          raise "The lookup plugin 'file' failed: Unable to access the file None: File not found. Use -vvvvv to see paths searched."
+        end
         path = parts[1]?.try { |part| evaluate(part.strip) }
         return "undefined" unless path
         resolved_path = resolve_lookup_path(path)
