@@ -1583,6 +1583,7 @@ module Krikri
         # and it silently didn't exist here: pre-strict templates read it as
         # an undefined value, 2.19-parity strictness fails the task on it.
         interpreted = attach_batch_step_invocation(task, steps[idx], interpreted)
+        interpreted = shape_script_result(task, interpreted)
         cache[task] = {apply_changed_failed_when(task, interpreted, vars_context, host), vars_context}
       end
     end
@@ -2586,6 +2587,7 @@ module Krikri
         return task_timeout_result(period)
       end
       result = shape_raw_result(task, result)
+      result = shape_script_result(task, result)
       result = attach_invocation(task, substituted_params, result)
       apply_changed_failed_when(task, result, vars_context, host)
     end
@@ -2627,6 +2629,36 @@ module Krikri
       hash.each do |key, value|
         shaped[key] = value unless shaped.has_key?(key) || dropped.includes?(key)
       end
+      JSON::Any.new(shaped)
+    end
+
+    SCRIPT_MODULES = {"script", "ansible.builtin.script", "ansible.legacy.script"}
+
+    # script is an ACTION plugin in real: ansible-core's script.py action
+    # runs the transferred file itself and returns its OWN result dict (no
+    # inner module), so task_executor's maybe_raise_on_result sees that dict
+    # before any module-context wrap and raises AnsibleActionCapturedError -
+    # a non-zero-exit failure renders "Task failed: Action failed: <msg>",
+    # not the "Module failed:" wording a module-reflected result would get
+    # (live-verified vs 2.19.11). ADD-only shaping, unlike raw's reshaped
+    # contract above: the visible keys and their order must stay untouched,
+    # and every visible surface (the fatal dump's clean_for_display strip,
+    # register_result's `_ansible_*` reject) already hides `_ansible_*`
+    # recursively, so only the failure renderer's collapse lookup reads
+    # them. Gated on an `rc` key: only a result the script's own execution
+    # produced carries one - the argspec-class plugin failures (mutual
+    # exclusion / required_one_of) come from real's validate_argument_spec
+    # raise, whose chain krikri renders WITHOUT the "Action failed."
+    # segment (that rendering already matches real, and must not change).
+    private def shape_script_result(task : Task, result : JSON::Any) : JSON::Any
+      return result unless SCRIPT_MODULES.includes?(task.action_name || task.module_name)
+      hash = result.as_h? || return result
+      return result unless hash["failed"]?.try(&.as_bool?) && hash.has_key?("rc")
+      msg = hash["msg"]?.try(&.as_s?)
+      return result unless msg && !msg.empty?
+      shaped = hash.dup
+      shaped["_ansible_action_level"] = JSON::Any.new(true)
+      shaped["_ansible_error_detail"] = JSON::Any.new("Action failed: #{msg}")
       JSON::Any.new(shaped)
     end
 

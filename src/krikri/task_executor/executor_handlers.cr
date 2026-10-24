@@ -1144,6 +1144,11 @@ module Krikri
       if period = marker_task_timeout(result)
         return task_timeout_result(period)
       end
+      # Same module-result marking the solo path does inside
+      # execute_task_once - a failing script HANDLER renders the same
+      # "Action failed:" header a failing script task does (real has one
+      # action-plugin code path for both).
+      result = shape_script_result(handler, result)
 
       # A handler's own changed_when:/failed_when:/register: were
       # entirely unapplied - this method just returned the raw plugin
