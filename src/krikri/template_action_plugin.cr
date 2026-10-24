@@ -398,6 +398,12 @@ module Krikri
     # str and would NOT fail iteration) keeps the generic render
     # failure wording rather than claiming behavior real does not have.
     private def not_iterable_ansible_wording(ex : KrikriJinja::TemplateError) : String?
+      # indent's non-string TypeError is likewise an uncaught filter-plugin
+      # failure in real (a macro with no output hands it None), with the
+      # same crash shape and the template FILE as Origin.
+      if ex.raw_message.includes?("unsupported operand type(s) for +=:")
+        return "The filter plugin 'ansible.builtin.indent' failed: #{ex.raw_message}"
+      end
       match = ex.raw_message.match(/\A(?:\w+::)*(?<cls>\w+) is not iterable\z/)
       return nil unless match
       py_type = case match["cls"]
