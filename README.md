@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.1913-blue)](https://github.com/weirdbricks/krikri)
+[![Version](https://img.shields.io/badge/version-0.9.1915-blue)](https://github.com/weirdbricks/krikri)
 [![Compatibility](https://img.shields.io/badge/ansible--core-2.19.11-brightgreen)](#-what-is-krikri)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 [![Homebrew](https://img.shields.io/badge/homebrew-tap-blue)](#install-via-homebrew-macoslinux-prebuilt-binaries)
@@ -24,11 +24,11 @@ equivalent) and `krikri-lint` (the `ansible-lint` equivalent).
 | By the numbers | |
 |---|---|
 | Compatibility target | ansible-core 2.19.11 (byte-for-byte console output) |
-| Real Galaxy roles tested on real hosts | 7,800 ([status per role](ROLES_TESTED.md)) |
+| Real Galaxy roles tested on real hosts | 8,000+ ([status per role](ROLES_TESTED.md)) |
 | Open gaps | [GitHub issues](https://github.com/weirdbricks/krikri/issues) |
 | Deliberate scope cuts | [KNOWN_MISSING.md](KNOWN_MISSING.md) |
-| Third-party collection modules natively ported | 62 |
-| Automated tests | 7,800+ passing |
+| Third-party collection modules natively ported | 80 |
+| Automated tests | 8,700+ passing |
 | Cold run vs. `ansible-playbook` | 2.36x faster |
 | Warm run vs. `ansible-playbook` | 7.17x faster |
 | Fastest of the three benchmarked engines | 57 of 61 roles (93%) |
@@ -44,7 +44,7 @@ What changes when you swap `ansible-playbook` for `krikri-playbook`:
 | Module execution | Each module is a small native binary, uploaded once and cached - no per-task Python interpreter startup or module templating. The biggest source of the speedup (see **Performance**). |
 | Target architecture | Module binaries are compiled for the controller's CPU architecture (real Ansible ships Python modules, so it has no such constraint). A different-arch target (an x86_64 controller managing a Raspberry Pi, say) gets binaries from a `plugins-<arch>/` directory next to the `krikri-playbook` executable when one was built there - run `./build.sh` on a machine of that architecture and copy the resulting `bin/plugins/` directory across as `plugins-<arch>/`. Without one, the run fails immediately with those instructions, before uploading anything the target could not execute. |
 | SSH round trips | Consecutive tasks for the same host are batched into one round trip (`--no-batching` to disable). |
-| Third-party collection modules | Not vendored wholesale: a `community.*` module runs only once ported to a native plugin (list: `AVAILABLE_PLUGINS` in `src/krikri/playbook_parser.cr`); anything else fails with `krikri does not yet have module 'x.y.z' implemented`. A role's own `library/*.py` modules work as usual. |
+| Third-party collection modules | Not vendored wholesale: a `community.*` module runs only once ported to a native plugin (list: `AVAILABLE_PLUGINS` in `src/krikri/module_registry.cr`); anything else fails with `krikri does not yet have module 'x.y.z' implemented`. A role's own `library/*.py` modules work as usual. |
 | Cloud provider modules | Out of scope, except AWS/EC2 (`ec2_instance` and its supporting modules, `aws_ec2` inventory). |
 
 ---
