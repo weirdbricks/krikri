@@ -3894,6 +3894,32 @@ module Krikri
         rest = module_line[(colon_idx + 1)..]
         return {from_idx, colon_idx + 1 + (rest.size - rest.lstrip.size) + 1}
       end
+      # k=v args folded onto the line(s) after an EMPTY module value
+      # (`user:\n    name={{ delete_user }}`): YAML folds everything after
+      # the colon into ONE plain scalar, so ansible's string-args layer
+      # sees a single string and - like the same-line k=v case above (issue
+      # #237) - every key inside it carries the STRING's origin: the first
+      # non-space char of the first following non-blank line (issue #311,
+      # s2ansible.deluser: with `delete_user` undefined, ansible-core
+      # 2.19.11 puts the innermost Origin at 4:5 with the caret under
+      # `name=`, not at the module key's 3:3). A `key:` first line opens a
+      # block-style mapping, which is a different shape: that scan below
+      # must keep winning and pointing at the mapping's own value.
+      if (folded_colon = module_line.index(':')) && module_line[(folded_colon + 1)..].strip.empty?
+        module_indent = module_line.size - module_line.lstrip.size
+        ((from_idx + 1)...lines.size).each do |idx|
+          line = lines[idx]
+          break if next_task_marker?(lines, from_idx, line)
+          next if line.strip.empty?
+          block_here = (bm = key_needle.match(line)) && (bk = bm.begin(0)) &&
+                       (bk == 0 || line[bk - 1].whitespace?) &&
+                       (line.size - line.lstrip.size) > module_indent
+          if !block_here && (kv = line.index("#{key}=")) && (kv == 0 || line[kv - 1].whitespace?)
+            return {idx, line.size - line.lstrip.size + 1}
+          end
+          break
+        end
+      end
       ((from_idx + 1)...lines.size).each do |idx|
         line = lines[idx]
         break if next_task_marker?(lines, from_idx, line)

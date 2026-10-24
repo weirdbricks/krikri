@@ -102,4 +102,43 @@ describe "task-arg finalization error block (role-sourced tasks)" do
   ensure
     FileUtils.rm_rf(tempdir) if tempdir
   end
+
+  it "points a next-line k=v string's undefined key at the folded string's start, not the module key (issue #311)" do
+    tempdir = File.tempname("final-block-kv-fold").tap { |dir| Dir.mkdir(dir) }
+    role = File.join(tempdir, "roles", "deluserfoldrole")
+    FileUtils.mkdir_p(File.join(role, "tasks"))
+    playbook = File.join(tempdir, "site.yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        gather_facts: false
+        roles:
+          - deluserfoldrole
+      YAML
+    tasks_file = File.join(role, "tasks", "main.yml")
+    File.write(tasks_file, <<-YAML)
+      ---
+      - name: delete user
+        user:#{" "}
+          name={{ delete_user }}
+          state=absent
+      YAML
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+    text = output.to_s
+
+    # ansible-core 2.19.11: the k=v string folds whole after the empty
+    # module value, so the innermost stanza's Origin is the string's first
+    # character (4:5, context lines 2-4, caret under `name=`); krikri
+    # pointed the same stanza at the module key (3:3) instead.
+    text.must_include("[ERROR]: Task failed: Finalization of task args for 'ansible.builtin.user' failed: Error while resolving value for 'name': 'delete_user' is undefined")
+    text.must_include("\nTask failed.\nOrigin: #{tasks_file}:2:3")
+    text.must_include("\nFinalization of task args for 'ansible.builtin.user' failed.\nOrigin: #{tasks_file}:3:3")
+    text.must_include("Error while resolving value for 'name': 'delete_user' is undefined\nOrigin: #{tasks_file}:4:5\n")
+    text.must_include("2 - name: delete user\n3   user: \n4     name={{ delete_user }}\n      ^ column 5\n")
+    text.must_include(%(fatal: [localhost]: FAILED! => {"changed": false, "msg": "Task failed: Finalization of task args for 'ansible.builtin.user' failed: Error while resolving value for 'name': 'delete_user' is undefined"}))
+    status.exit_code.must_equal(2)
+    output.to_s.must_match(/failed=1/)
+  ensure
+    FileUtils.rm_rf(tempdir) if tempdir
+  end
 end
