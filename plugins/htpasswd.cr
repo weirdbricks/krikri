@@ -2,8 +2,10 @@
 
 require "json"
 require "random"
+require "file_utils"
 require "../src/krikri/base_plugin"
 require "../src/krikri/plugin_helpers/file_attrs"
+require "../src/krikri/plugin_helpers/python_lib_gate"
 
 module Krikri
   # Htpasswd plugin - manages entries in an Apache-style htpasswd file
@@ -87,6 +89,14 @@ module Krikri
 
       crypt_scheme = (@params["crypt_scheme"]? || @params["hash_scheme"]? || "apr_md5_crypt").downcase
 
+      # htpasswd.py imports passlib at module level and fails right after
+      # argspec validation - before the state/path logic, so state=absent
+      # fails too - when the target's Python lacks it, even though this
+      # native plugin never needs it. Observed on a target without passlib.
+      if gate = Krikri.missing_python_library("passlib", "passlib.apache")
+        return PluginResult.new(changed: false, failed: true, msg: gate[:msg])
+      end
+
       state = @params["state"]? || "present"
       check_mode = true?(@params["_ansible_check_mode"]?)
       create = @params["create"]?.nil? ? true : true?(@params["create"]?)
@@ -112,19 +122,9 @@ module Krikri
       if state == "absent"
         msg, content_changed = remove_user(path, name, entries, check_mode)
       else
-        password = @params["password"]?
-        # passlib's HtpasswdFile.verify is reached with None and raises
-        # this - real htpasswd.py's `password` is NOT a required arg, so
-        # there is no argspec-level "missing required arguments" error to
-        # reach instead. New-file and existing-file paths both land here.
-        return nil_secret_result unless password
-
-        existing_hash = entries[name]?
-        new_hash = target_hash(password, existing_hash, crypt_scheme)
-        return new_hash if new_hash.is_a?(PluginResult)
-
-        content_changed = write_updated(path, name, entries, new_hash, existing_hash, check_mode)
-        msg = upsert_msg(path, name, content_changed, file_existed, check_mode)
+        upsert = upsert_user(path, name, entries, crypt_scheme, file_existed, check_mode)
+        return upsert if upsert.is_a?(PluginResult)
+        msg, content_changed = upsert
       end
 
       # check_file_attrs() -> set_fs_attributes_if_different, which runs
@@ -146,6 +146,29 @@ module Krikri
 
     private def known_scheme?(scheme : String) : Bool
       KNOWN_SCHEMES.includes?(scheme)
+    end
+
+    # The state=present body: verify/hash the password, then upsert the
+    # entry. Returns {msg, content_changed} on success, PluginResult when
+    # real present() would have failed the task before any attrs work.
+    private def upsert_user(path : String, name : String, entries : Hash(String, String),
+                            crypt_scheme : String, file_existed : Bool, check_mode : Bool) : {String, Bool} | PluginResult
+      password = @params["password"]?
+      # passlib's HtpasswdFile.verify is reached with None and raises
+      # this - real htpasswd.py's `password` is NOT a required arg, so
+      # there is no argspec-level "missing required arguments" error to
+      # reach instead. New-file and existing-file paths both land here.
+      return nil_secret_result unless password
+
+      existing_hash = entries[name]?
+      new_hash = target_hash(password, existing_hash, crypt_scheme)
+      return new_hash if new_hash.is_a?(PluginResult)
+
+      write_res = write_updated(path, name, entries, new_hash, existing_hash, check_mode)
+      return write_res if write_res.is_a?(PluginResult)
+      content_changed = write_res
+      msg = upsert_msg(path, name, content_changed, file_existed, check_mode)
+      {msg, content_changed}
     end
 
     # passlib's CryptContext(schemes=[scheme] + apache_hashes) raises
@@ -248,11 +271,87 @@ module Krikri
     end
 
     private def write_updated(path : String, name : String, entries : Hash(String, String),
-                              new_hash : String, existing_hash : String?, check_mode : Bool) : Bool
+                              new_hash : String, existing_hash : String?, check_mode : Bool) : Bool | PluginResult
       content_changed = new_hash != existing_hash
       entries[name] = new_hash
-      write_entries(path, entries) if content_changed && !check_mode
+      if content_changed && !check_mode
+        # Real present() makedirs's dirname(dest) exactly in the
+        # destination-does-not-exist branch, right before HtpasswdFile(new=True)
+        # opens the file - so a missing parent directory is created and the
+        # task succeeds. The sibling branches can't reach this: state=absent
+        # and create=false exited in preflight, and check_mode returned
+        # "Create <path>" before ever touching the tree.
+        unless File.exists?(path)
+          if failure = create_missing_directories(path)
+            return failure
+          end
+        end
+        write_entries(path, entries)
+      end
       content_changed
+    end
+
+    # htpasswd.py's create_missing_directories(dest): os.makedirs of
+    # dirname(dest) (recursive, only when missing), with its OSError
+    # caught by main()'s outer `except Exception: fail_json(msg=to_native(e))`
+    # - i.e. the bare Python errno text IS the failure msg (live-verified
+    # against 2.19.11: a missing parent dir is created silently, and a
+    # bare-relative `path: passwdfile` still fails with "[Errno 2] No such
+    # file or directory: ''" because os.path.dirname gives "" there).
+    private def create_missing_directories(path : String) : PluginResult?
+      dir = python_dirname(path)
+      return PluginResult.new(changed: false, failed: true,
+        msg: "[Errno 2] No such file or directory: ''") if dir.empty?
+      return nil if Dir.exists?(dir)
+      begin
+        FileUtils.mkdir_p(dir)
+      rescue e : File::Error
+        PluginResult.new(changed: false, failed: true,
+          msg: os_error_text(e, first_missing_component(dir) || dir))
+      end
+    end
+
+    # The first path down the tree that does not exist at all. Python's
+    # os.makedirs recursion creates parents shallow-first, so its mkdir
+    # raises (and the errno text names) the shallowest uncreatable
+    # component, not the destination; a failure on an intermediate that
+    # only exists as a FILE surfaces the deeper child instead, exactly
+    # how a manual level-by-level walk reports it.
+    private def first_missing_component(dir : String) : String?
+      parts = dir.split('/').reject(&.empty?)
+      return nil if parts.empty?
+      cursor = dir.starts_with?('/') ? "/" : ""
+      parts.each do |part|
+        cursor = cursor.empty? || cursor.ends_with?('/') ? cursor + part : "#{cursor}/#{part}"
+        return cursor unless File.exists?(cursor) || Dir.exists?(cursor)
+      end
+      nil
+    end
+
+    # Python's os.path.dirname: the head of the last-"/" split - "" when
+    # there is no separator at all (Crystal's File.dirname returns "."
+    # there, which would make the bare-relative path silently succeed
+    # with a mkdir_p(".") that the real module crashes on). Same helper
+    # reasoning as authorized_key's copy.
+    private def python_dirname(path : String) : String
+      idx = path.rindex('/')
+      return "" unless idx
+      return "/" if idx == 0
+      path[0...idx]
+    end
+
+    # Formats the Errno the way Python's str(OSError) does - that text
+    # is exactly what the Ansible module's fail_json message embeds.
+    private def os_error_text(e : File::Error, dir : String) : String
+      errno = e.os_error.try(&.value)
+      case errno
+      when  1 then "[Errno 1] Operation not permitted: '#{dir}'"
+      when  2 then "[Errno 2] No such file or directory: '#{dir}'"
+      when 13 then "[Errno 13] Permission denied: '#{dir}'"
+      when 17 then "[Errno 17] File exists: '#{dir}'"
+      when 20 then "[Errno 20] Not a directory: '#{dir}'"
+      else         "[Errno #{errno}] #{e.message}"
+      end
     end
 
     private def read_entries(path : String) : Hash(String, String)

@@ -2707,15 +2707,19 @@ module Krikri
       STDERR.puts text
     end
 
-    # Best-effort Origin for the argsplat warning: the module KEY's line,
-    # column pointing at the first character OF the scalar (Ansible's YAML
-    # node start_mark sits inside the quotes for a quoted scalar, so
-    # `      ansible.builtin.copy: "{{ d }}"` gives column 29 - one past
-    # the quote at 28 - for both double and single quotes). A value on a
-    # following line (`module: >` folded) has no same-line token to point
-    # at, so nothing is emitted; Ansible doesn't warn there anyway (the
-    # folded value keeps its trailing newline and so does not start AND
-    # end with the delimiters).
+    # Best-effort Origin for the argsplat warning: the position ansible
+    # gives the whole-string args scalar itself - its first character, so
+    # the opening quote for a quoted value (`      ansible.builtin.copy:
+    # "{{ d }}"`, 6 spaces, reports column 29, the quote's column, for
+    # both double and single quotes). When the scalar sits on a line of
+    # its own after the module key (nothing follows the colon), ansible's
+    # caret moves to that value line instead - live-verified against
+    # 2.19.11 with `  htpasswd:` + `    "{{ item }}"` reporting Origin
+    # 5:5 (issue #292's real calvinbui.ansible_htpasswd role task). A
+    # folded value (`module: >`) never triggers the warning at all (its
+    # trailing newline keeps the string from both starting AND ending
+    # with the delimiters; the stripped `>-` variant errors upstream as
+    # "does not support raw params" before finalization runs).
     private def argsplat_warning_text(task : Task) : String
       path = task.source_file
       return "" unless path && task.source_line > 0 && File.file?(path)
@@ -2723,15 +2727,31 @@ module Krikri
       mod_idx, _col = module_key_position(lines, task)
       return "" unless mod_idx.is_a?(Int32)
       _, column = free_form_value_position(lines, mod_idx, task.module_name)
+      line_num = mod_idx
       line = lines[mod_idx]
       rest = line[(line.index(':') || 0)..].to_s.lstrip
       column += 1 if rest.starts_with?("'") || rest.starts_with?("\"")
+      if block_value_only_after_colon?(rest)
+        next_idx = (mod_idx + 1...lines.size).find { |idx| !lines[idx].strip.empty? }
+        if next_idx
+          line_num = next_idx
+          next_line = lines[next_idx]
+          column = next_line.size - next_line.lstrip.size + 1
+        end
+      end
 
       String.build do |io|
         io << "[WARNING]: Using a template for task args is unsafe in some situations (see https://docs.ansible.com/ansible/devel/reference_appendices/faq.html#argsplat-unsafe).\n"
-        io << origin_context_block(path, lines, mod_idx + 1, column)
+        io << origin_context_block(path, lines, line_num + 1, column)
         io << "\n"
       end
+    end
+
+    # A block-style scalar value: the module key's line ends at the colon
+    # (apart from a YAML comment), so the string args start on the next
+    # content line instead of inline after `<module>:`.
+    private def block_value_only_after_colon?(after_colon : String) : Bool
+      after_colon.size <= 1 || after_colon[1, 1] == "#"
     end
 
     # ansible-core 2.19's task-arg undefined-variable failure
