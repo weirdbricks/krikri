@@ -211,6 +211,13 @@ module Krikri
 
       # Applies a `|`-joined chain of filters to *value* in order.
       def apply_chain(value : JSON::Any, chain : String) : JSON::Any
+        # The hand-rolled evaluator's filter-dispatch entry is the same
+        # trigger the bridge's parse-level scan_for_filter_use gates are:
+        # real Ansible loads every filter_plugins file of the loaded
+        # roles (+ the playbook-adjacent dir) the first time a template
+        # using a filter is compiled, so the first `|` application warns
+        # about an unloadable file exactly there (issue #307).
+        Krikri::PythonFilterRunner.scan_unloadable_plugins(@vars.try { |vars| vars["playbook_dir"]?.try(&.as_s?) })
         @chain_root = VarSubstitutor.expression_root(chain)
         self.class.split_chain(chain).reduce(value) { |acc, filter_expr| apply(acc, filter_expr) }
       end

@@ -82,6 +82,18 @@ module Krikri
       # behavior, which would be actively wrong for a caller expecting a
       # real evaluated value.
       def render!(text : String) : String
+        # The render-side trigger for the deferred filter_plugins scan:
+        # real Ansible loads every filter_plugins file of the loaded
+        # roles (+ the playbook-adjacent dir) when the Templar first
+        # compiles a template that USES a filter, printing each
+        # unloadable file's "Skipping plugin" warning inline at that
+        # point - never at role load, and never for a marker-bearing
+        # string without a filter (issue #307, verified vs 2.19.11).
+        # Playbook dir for the playbook-adjacent plugin directory comes
+        # from the render scope's own vars; role-local directories are
+        # already registered by RoleLoader, so vars without the magic
+        # var still scan those.
+        Krikri::PythonFilterRunner.scan_for_filter_use(cached_template(text), @vars["playbook_dir"]?.try(&.as_s?))
         TimingProfile.measure("controller.jinja", "controller.jinja") do
           render_measured!(text)
         end
@@ -365,6 +377,12 @@ module Krikri
         node = cache[expr] ||= KrikriJinja.parse_expression(
           expr, KrikriJinja::LexerOptions.new(verbatim_expression_strings: !@decode)
         )
+        # Same deferred filter_plugins trigger as #render! (a structured
+        # expression's own AST decides, so `{{ 1 + 1 }}` stays silent
+        # where `{{ x | first }}` triggers, exactly like real ansible);
+        # every structured-eval path (whole-span native typing, msg
+        # leaves, conditional structured probes) funnels through here.
+        Krikri::PythonFilterRunner.scan_for_filter_use(node, @vars["playbook_dir"]?.try(&.as_s?))
         value = KrikriJinja.default_engine.evaluate_parsed(
           node, resolver: jinja_resolver,
           undefined: KrikriJinja::Undefined.new(nil, chainable: true), host_context: jinja_host_context
@@ -571,8 +589,14 @@ module Krikri
       # rendering it first (linux-system-roles.postgresql, round
       # 981063). Returns nil for an undefined result.
       def self.evaluate_structured(source : String, vars : Hash(String, JSON::Any), strict : Bool = false) : JSON::Any?
+        node = KrikriJinja.parse_expression(source)
+        # Same deferred filter_plugins trigger as #render!/#evaluate_value!
+        # (see PythonFilterRunner#scan_for_filter_use): callers of this
+        # class-level entry (conditional probes, handler/loop structured
+        # sources) never touch the instance methods.
+        PythonFilterRunner.scan_for_filter_use(node, vars["playbook_dir"]?.try(&.as_s?))
         value = KrikriJinja.default_engine.evaluate_parsed(
-          KrikriJinja.parse_expression(source),
+          node,
           resolver: JinjaVarResolver.new(vars, VarSubstitutor.new(vars: vars), strict),
           # ansible_strict_undefined (CHAINABLE, like ansible-core's own
           # StrictUndefined): a missing attribute on an undefined value

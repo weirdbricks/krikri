@@ -417,19 +417,18 @@ describe "role-local filter_plugins file that fails to import" do
     )
   end
 
-  it "warns at role load even when the failing file's filter is never used" do
-    # Ansible imports every file of a loaded role's filter_plugins/
-    # whether or not any task reaches a use of the broken file's own
-    # filter, so the "Skipping plugin" warning fires even on a play
-    # that dies before ever touching it - observed with
-    # notmycloud.podman_systemd, whose to_toml.py does `import toml` and
-    # whose to_toml filter only appears in tasks a failing play never
-    # reaches (issue #307). krikri's only scan point was the lazy
-    # unknown-filter query - a query the dying play never makes - so it
-    # printed nothing. Here the role is loaded and the filter ignored;
-    # the eager scan must still produce the one warning line, and the
-    # later lazy query that a task could still make adds no second one.
-    root = PluginSpecHelper.tmp_path("filter-eager-warning")
+  it "prints nothing while a role's broken filter_plugins is only registered and never rendered" do
+    # Following ansible-playbook's observed behaviour (issue #307's fix
+    # verification): a play whose strings never carry Jinja markers
+    # prints no "Skipping plugin" warning at all even after its role was
+    # fully loaded, so registering the realistic broken import into the
+    # loaded-role registry must print nothing - the old eager scan at
+    # Role.load printed the line before PLAY even started, which real
+    # Ansible does not. The substitute below is the cleanup needed now
+    # that the trigger consults the registry at ANY later marker-bearing
+    # render: without it the test would spam the file's warning into the
+    # suite's later tests' captured sinks.
+    root = PluginSpecHelper.tmp_path("filter-register-silent")
     Dir.mkdir_p(File.join(root, "filter_plugins"))
     broken = File.join(root, "filter_plugins", "to_toml.py")
     File.write(broken, <<-PYTHON)
@@ -449,15 +448,166 @@ describe "role-local filter_plugins file that fails to import" do
     begin
       Krikri::PythonFilterRunner.warning_sink = captured
       Krikri::PythonFilterRunner.register_role_plugin_roots(root)
+    ensure
+      Krikri::PythonFilterRunner.warning_sink = previous
+      Krikri::PythonFilterRunner.unregister_role_plugin_roots_under(root)
+    end
+
+    captured.to_s.must_equal("")
+  end
+
+  it "fires its warning exactly once at the first filter-using templating and adds nothing later" do
+    # Ansible's exact placement (verified against ansible-playbook
+    # 2.19.11 for issue #307): the warning lands INLINE at the first
+    # templating whose template USES a filter - where the Templar builds
+    # its filter set by importing every loadable-role + playbook-adjacent
+    # filter_plugins/ file - and never again after. The gate below is the
+    # very call the render entries make (the bridge's
+    # JinjaRenderer#render!/#evaluate_value! and the hand-rolled
+    # FilterEngine dispatch).
+    root = PluginSpecHelper.tmp_path("filter-first-render-warning")
+    Dir.mkdir_p(File.join(root, "filter_plugins"))
+    broken = File.join(root, "filter_plugins", "to_toml.py")
+    File.write(broken, <<-PYTHON)
+      import toml
+
+
+      class FilterModule(object):
+          def filters(self):
+              return {"to_toml": self.to_toml}
+
+          def to_toml(self, value):
+              return toml.dumps(value)
+      PYTHON
+
+    first_captured = IO::Memory.new
+    later_captured = IO::Memory.new
+    previous = Krikri::PythonFilterRunner.warning_sink
+    begin
+      Krikri::PythonFilterRunner.warning_sink = first_captured
+      Krikri::PythonFilterRunner.register_role_plugin_roots(root)
+      Krikri::PythonFilterRunner.scan_for_filter_expression("1 | int", nil)
+      Krikri::PythonFilterRunner.warning_sink = later_captured
+      Krikri::PythonFilterRunner.scan_for_filter_expression("1 | int", nil)
+      # the lazy unknown-filter query a task could still make (defines_
+      # filter?/filter_names) must not repeat the warning either
       Krikri::PythonFilterRunner.filter_names([broken])
     ensure
       Krikri::PythonFilterRunner.warning_sink = previous
+      Krikri::PythonFilterRunner.unregister_role_plugin_roots_under(root)
     end
 
-    lines = captured.to_s.lines
-    lines.size.must_equal(1, captured.to_s)
-    lines.first.must_equal(
+    first_lines = first_captured.to_s.lines
+    first_lines.size.must_equal(1, first_captured.to_s)
+    first_lines.first.must_equal(
       "[WARNING]: Skipping plugin (#{File.expand_path(broken)}), cannot load: No module named 'toml'"
     )
+    later_captured.to_s.must_equal("")
+  end
+
+  it "stays silent for a marker-bearing templating that uses no filter ({{ 1 + 1 }} shape)" do
+    # ansible-playbook 2.19.11 prints NOTHING for a play whose only
+    # templated string is `{{ 1 + 1 }}` even with a broken filter_plugins
+    # file in scope (issue #307's fix verification): the Templar builds
+    # its filter set only when a template USES a filter - a bare
+    # expression, a test-only `x is defined` or block tags never do. The
+    # gate must therefore key on filter use, not on marker presence.
+    root = PluginSpecHelper.tmp_path("filter-silent-no-filter-use")
+    Dir.mkdir_p(File.join(root, "filter_plugins"))
+    broken = File.join(root, "filter_plugins", "to_toml.py")
+    File.write(broken, "import toml\n")
+
+    captured = IO::Memory.new
+    previous = Krikri::PythonFilterRunner.warning_sink
+    begin
+      Krikri::PythonFilterRunner.warning_sink = captured
+      Krikri::PythonFilterRunner.register_role_plugin_roots(root)
+      Krikri::PythonFilterRunner.scan_for_filter_expression("1 + 1", nil)
+      Krikri::PythonFilterRunner.scan_for_filter_expression("nope is defined", nil)
+    ensure
+      Krikri::PythonFilterRunner.warning_sink = previous
+      Krikri::PythonFilterRunner.unregister_role_plugin_roots_under(root)
+    end
+
+    captured.to_s.must_equal("")
+  end
+
+  it "keeps template-less and filter-less plays silent and the first filter-using one loud (binary, issue #307 shape)" do
+    # End-to-end against the compiled binary, following the live-verified
+    # ansible matrix (issue #307): the broken file's own filter appears
+    # in NO task of any play, yet the play whose first templated task
+    # uses a filter still gets the warning (and only once), while the
+    # template-less play AND the filter-less `{{ 1 + 1 }}` play stay
+    # silent - the previously eager-scan behaviour announced the broken
+    # file (notmycloud.podman_systemd's `import toml`) before PLAY even
+    # ran.
+    silent_root = File.tempname("filter-e2e-silent")
+    filterless_root = File.tempname("filter-e2e-filterless")
+    filter_root = File.tempname("filter-e2e-first-render")
+    begin
+      {silent_root, filterless_root, filter_root}.each do |root|
+        Dir.mkdir_p(File.join(root, "roles", "myrole", "filter_plugins"))
+        Dir.mkdir_p(File.join(root, "roles", "myrole", "tasks"))
+        File.write(File.join(root, "roles", "myrole", "filter_plugins", "to_toml.py"), <<-PYTHON)
+          import toml
+
+
+          class FilterModule(object):
+              def filters(self):
+                  return {"to_toml": self.to_toml}
+
+              def to_toml(self, value):
+                  return toml.dumps(value)
+          PYTHON
+      end
+      File.write(File.join(filter_root, "roles", "myrole", "filter_plugins", "good.py"), <<-PYTHON)
+        class FilterModule(object):
+            def filters(self):
+                return {"double": lambda x: x * 2}
+        PYTHON
+      File.write(File.join(silent_root, "roles", "myrole", "tasks", "main.yml"), <<-YAML)
+        - name: no Jinja markers anywhere
+          ansible.builtin.command: echo hi
+        YAML
+      File.write(File.join(filterless_root, "roles", "myrole", "tasks", "main.yml"), <<-YAML)
+        - name: marker-bearing but filter-free templating
+          ansible.builtin.debug:
+            msg: "{{ 1 + 1 }}"
+        YAML
+      File.write(File.join(filter_root, "roles", "myrole", "tasks", "main.yml"), <<-YAML)
+        - name: the play's first filter-using templating
+          ansible.builtin.debug:
+            msg: "{{ 21 | double }}"
+        YAML
+
+      play = <<-YAML
+        - hosts: localhost
+          connection: local
+          gather_facts: false
+          roles:
+            - myrole
+        YAML
+
+      silent_status, silent_output = run_playbook(silent_root, play)
+      filterless_status, filterless_output = run_playbook(filterless_root, play)
+      filter_status, filter_output = run_playbook(filter_root, play)
+
+      silent_status.success?.must_equal(true, silent_output)
+      silent_output.wont_include("Skipping plugin", silent_output)
+
+      filterless_status.success?.must_equal(true, filterless_output)
+      filterless_output.must_include("\"msg\": 2", filterless_output)
+      filterless_output.wont_include("Skipping plugin", filterless_output)
+
+      filter_status.success?.must_equal(true, filter_output)
+      filter_output.must_include("42", filter_output)
+      filter_output.scan("Skipping plugin").size.must_equal(
+        1, filter_output
+      )
+    ensure
+      FileUtils.rm_rf(silent_root) if silent_root
+      FileUtils.rm_rf(filterless_root) if filterless_root
+      FileUtils.rm_rf(filter_root) if filter_root
+    end
   end
 end

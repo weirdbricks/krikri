@@ -1,4 +1,5 @@
 require "json"
+require "krikri-jinja/krikri_jinja"
 
 # Runner for role-local custom FILTER plugins - a role's own
 # `filter_plugins/*.py` (and the playbook-adjacent `filter_plugins/`),
@@ -85,28 +86,241 @@ module Krikri
           roots << dir unless roots.includes?(dir)
         end
       end
+    end
 
-      # Ansible's "Skipping plugin" warning is not gated on the broken
-      # file's filter ever being used: registering a role's
-      # filter_plugins/ at Role.load and the plugin loading that powers
-      # even the play's first template render import every file in the
-      # directory together, so one unloadable file warns once even when
-      # its own filter only appears in tasks the play never reaches -
-      # notmycloud.podman_systemd's to_toml.py (`import toml`, issue
-      # #307) warned exactly like that, while its to_toml filter lived
-      # in tasks the play failed before reaching. What used to trigger
-      # the scan here was only the lazy unknown-filter query in
-      # defines_filter? - a query the dying play never got to make - so
-      # nothing was printed where ansible had already warned. Scanning
-      # this role's own filter_plugins/ files restores that load-time
-      # warning; a missing directory or no controller python3 stays
-      # silent below, and the mtime cache in filter_names keeps it to
-      # one warning per file per process. The scan runs outside the
-      # synchronize block above so it never runs back into
-      # loaded_role_roots/find_sources, which take that same mutex.
-      filter_dir = File.join(role_path, "filter_plugins")
-      return unless Dir.exists?(filter_dir)
-      filter_names(py_sources_in(filter_dir))
+    # Directories whose filter_plugins/ files scan_unloadable_plugins has
+    # already handed to filter_names. Roles load all run long (play roles,
+    # meta dependencies, include_role:), so the render-entry trigger calls
+    # back whenever ANY marker-bearing string is rendered, and only still-
+    # unseen directories cost a scan. The trigger's own mutex also keeps
+    # concurrent render fibers from scanning the same not-yet-cached file
+    # in parallel, which would print its warning twice - the once-per-file
+    # behaviour filter_names relies on is not itself mutex-protected.
+    @@scanned_filter_dirs = Set(String).new
+    @@scan_mutex = Mutex.new
+
+    # The "Skipping plugin" warning for an unloadable filter_plugins/*.py
+    # file fires when the Templar first compiles a template that USES A
+    # FILTER (live-verified against ansible-playbook 2.19.11 for issue
+    # #307): `{{ 1 + 1 }}`, a block-tag-only string, a test-only `x is
+    # defined` and a static template: file all print NOTHING, while the
+    # first `|`-filter-bearing templating (builtin or custom, task param
+    # or template-module .j2) imports every file of every loaded role's
+    # (and the playbook-adjacent) filter_plugins/ and warns inline at
+    # that point. Merely containing Jinja markers is NOT the trigger,
+    # and the eager scan-at-Role.load this replaces was even further
+    # off: it printed the warning before PLAY even started.
+    def scan_unloadable_plugins(playbook_dir : String? = nil) : Nil
+      @@scan_mutex.synchronize do
+        # The playbook-adjacent directory warns FIRST, before the loaded
+        # roles' directories, matching the observed ansible-playbook
+        # warning order (live-verified vs 2.19.11) - find_sources' own
+        # resolution precedence (roles first) is untouched by this.
+        roots = [] of String
+        roots << File.join(playbook_dir, "filter_plugins") if playbook_dir && !playbook_dir.empty?
+        roots.concat(loaded_role_roots("filter_plugins"))
+        roots.each do |dir|
+          next if @@scanned_filter_dirs.includes?(dir)
+          @@scanned_filter_dirs << dir
+          next unless Dir.exists?(dir)
+          files = py_sources_in(dir)
+          filter_names(files) unless files.empty?
+        end
+      end
+    end
+
+    # The render-side triggers: a parsed template/expression whose AST
+    # contains a filter call runs the scan once (already-scanned dirs
+    # are skipped inside). The AST walk is the exact gate - a naive
+    # "text contains |" would also fire on a pipe inside a string
+    # literal, printing a warning where ansible stays silent.
+    def self.scan_for_filter_use(template : KrikriJinja::Nodes::TemplateNode, playbook_dir : String?) : Nil
+      scan_unloadable_plugins(playbook_dir) if template_uses_filter?(template)
+    end
+
+    def self.scan_for_filter_use(expr : KrikriJinja::Nodes::ExprNode, playbook_dir : String?) : Nil
+      scan_unloadable_plugins(playbook_dir) if expr_uses_filter?(expr)
+    end
+
+    # Same gate for callers that hold only the expression SOURCE text
+    # (executor paths that hand the bare expression straight to the
+    # engine). A parse failure can never be filter-related, so it skips
+    # the scan - the render itself reports the syntax problem later.
+    def self.scan_for_filter_expression(source : String, playbook_dir : String?) : Nil
+      scan_for_filter_use(KrikriJinja.parse_expression(source), playbook_dir)
+    rescue KrikriJinja::TemplateError
+      nil
+    end
+
+    private def self.template_uses_filter?(node : KrikriJinja::Nodes::Node) : Bool
+      case node
+      when KrikriJinja::Nodes::FilterNode, KrikriJinja::Nodes::FilterBlockNode
+        true
+      when KrikriJinja::Nodes::TemplateNode
+        node.body.any? { |child| template_uses_filter?(child) }
+      when KrikriJinja::Nodes::OutputNode
+        expr_uses_filter?(node.expr)
+      when KrikriJinja::Nodes::IfNode
+        if_uses_filter?(node)
+      when KrikriJinja::Nodes::ForNode
+        for_uses_filter?(node)
+      else
+        template_rest_uses_filter?(node)
+      end
+    end
+
+    private def self.if_uses_filter?(node : KrikriJinja::Nodes::IfNode) : Bool
+      node.branches.any? do |(cond, body)|
+        expr_uses_filter?(cond) || body.any? { |child| template_uses_filter?(child) }
+      end || body_uses_filter?(node.orelse)
+    end
+
+    private def self.for_uses_filter?(node : KrikriJinja::Nodes::ForNode) : Bool
+      expr_uses_filter?(node.iter) || opt_expr_uses_filter?(node.test) ||
+        node.body.any? { |child| template_uses_filter?(child) } ||
+        body_uses_filter?(node.orelse)
+    end
+
+    # The less common template-level node kinds (named blocks, macros,
+    # with/import/include/...) - split out only to keep each walker's
+    # cyclomatic complexity at the ameba gate.
+    private def self.template_rest_uses_filter?(node : KrikriJinja::Nodes::Node) : Bool
+      case node
+      when KrikriJinja::Nodes::SetNode
+        set_uses_filter?(node)
+      when KrikriJinja::Nodes::BlockNode
+        node.body.any? { |child| template_uses_filter?(child) }
+      when KrikriJinja::Nodes::MacroNode
+        macro_uses_filter?(node)
+      when KrikriJinja::Nodes::CallNode
+        call_uses_filter?(node)
+      when KrikriJinja::Nodes::WithNode
+        with_uses_filter?(node)
+      when KrikriJinja::Nodes::IncludeNode, KrikriJinja::Nodes::ExtendsNode, KrikriJinja::Nodes::ImportNode
+        expr_uses_filter?(node.template)
+      when KrikriJinja::Nodes::DoNode
+        expr_uses_filter?(node.expr)
+      when KrikriJinja::Nodes::AutoescapeNode
+        node.body.any? { |child| template_uses_filter?(child) }
+      else
+        false
+      end
+    end
+
+    private def self.set_uses_filter?(node : KrikriJinja::Nodes::SetNode) : Bool
+      !node.filter_name.nil? || expr_uses_filter?(node.expr) ||
+        opt_expr_uses_filter?(node.attr_target) || body_uses_filter?(node.body)
+    end
+
+    private def self.macro_uses_filter?(node : KrikriJinja::Nodes::MacroNode) : Bool
+      node.body.any? { |child| template_uses_filter?(child) } ||
+        node.params.any? { |(_, default)| opt_expr_uses_filter?(default) }
+    end
+
+    private def self.call_uses_filter?(node : KrikriJinja::Nodes::CallNode) : Bool
+      expr_uses_filter?(node.macro_expr) || args_uses_filter?(node.args, node.kwargs) ||
+        body_uses_filter?(node.body)
+    end
+
+    private def self.with_uses_filter?(node : KrikriJinja::Nodes::WithNode) : Bool
+      node.bindings.any? { |(_, value)| expr_uses_filter?(value) } ||
+        node.body.any? { |child| template_uses_filter?(child) }
+    end
+
+    private def self.expr_uses_filter?(expr : KrikriJinja::Nodes::ExprNode) : Bool
+      case expr
+      when KrikriJinja::Nodes::FilterNode
+        true
+      when KrikriJinja::Nodes::ConstNode, KrikriJinja::Nodes::NameNode, KrikriJinja::Nodes::InTestNode
+        false
+      when KrikriJinja::Nodes::ListExprNode
+        expr.items.any? { |item| expr_uses_filter?(item) }
+      when KrikriJinja::Nodes::TupleExprNode
+        expr.items.any? { |item| expr_uses_filter?(item) }
+      when KrikriJinja::Nodes::DictExprNode
+        expr.keys.any? { |key| expr_uses_filter?(key) } ||
+          expr.values.any? { |value| expr_uses_filter?(value) }
+      when KrikriJinja::Nodes::BinOpNode
+        expr_uses_filter?(expr.left) || expr_uses_filter?(expr.right)
+      when KrikriJinja::Nodes::UnaryOpNode
+        expr_uses_filter?(expr.operand)
+      when KrikriJinja::Nodes::CompareNode
+        expr_uses_filter?(expr.left) || expr.comparators.any? { |comparator| expr_uses_filter?(comparator) }
+      else
+        expr_rest_uses_filter?(expr)
+      end
+    end
+
+    private def self.expr_rest_uses_filter?(expr : KrikriJinja::Nodes::ExprNode) : Bool
+      case expr
+      when KrikriJinja::Nodes::TestNode
+        # A test itself (`x is defined`) does NOT build the filter set in
+        # real ansible - live-verified: `{{ 1 is defined }}` prints no
+        # warning while `{{ [1, 2] | first }}` does - but a filter nested
+        # inside the test's target/arguments does.
+        expr_uses_filter?(expr.target) || args_uses_filter?(expr.args, expr.kwargs)
+      when KrikriJinja::Nodes::GetattrNode
+        expr_uses_filter?(expr.obj)
+      when KrikriJinja::Nodes::GetitemNode
+        expr_uses_filter?(expr.obj) || expr_uses_filter?(expr.key)
+      when KrikriJinja::Nodes::SliceNode
+        slice_uses_filter?(expr)
+      when KrikriJinja::Nodes::CallExprNode
+        expr_uses_filter?(expr.func) || args_uses_filter?(expr.args, expr.kwargs)
+      when KrikriJinja::Nodes::CondExprNode
+        cond_uses_filter?(expr)
+      when KrikriJinja::Nodes::ConcatNode
+        expr.parts.any? { |part| expr_uses_filter?(part) }
+      else
+        false
+      end
+    end
+
+    private def self.slice_uses_filter?(expr : KrikriJinja::Nodes::SliceNode) : Bool
+      expr_uses_filter?(expr.obj) || opt_expr_uses_filter?(expr.start) ||
+        opt_expr_uses_filter?(expr.stop) || opt_expr_uses_filter?(expr.step)
+    end
+
+    private def self.cond_uses_filter?(expr : KrikriJinja::Nodes::CondExprNode) : Bool
+      expr_uses_filter?(expr.test) || expr_uses_filter?(expr.truthy) ||
+        opt_expr_uses_filter?(expr.falsy)
+    end
+
+    # Optional slots count for the gate exactly when they carry a filter:
+    # nilable template bodies (an `{% if %}`/`{% for %}` `{% else %}` body,
+    # a `{% set %}`/`{% call %}` body), the nilable `{% for %}` inline
+    # test / slice bound / macro default / condexpr falsy arm, and
+    # call/callblock argument lists. Folding the `.try ... || false` idiom
+    # into this trio keeps every walker's `||` chain at the ameba gate.
+    private def self.body_uses_filter?(body : Array(KrikriJinja::Nodes::Node)?) : Bool
+      (body.try { |list| list.any? { |child| template_uses_filter?(child) } } || false)
+    end
+
+    private def self.opt_expr_uses_filter?(expr : KrikriJinja::Nodes::ExprNode?) : Bool
+      (expr.try { |sub| expr_uses_filter?(sub) } || false)
+    end
+
+    private def self.args_uses_filter?(args : Array(KrikriJinja::Nodes::ExprNode),
+                                       kwargs : Array(Tuple(String, KrikriJinja::Nodes::ExprNode))) : Bool
+      args.any? { |arg| expr_uses_filter?(arg) } ||
+        kwargs.any? { |(_, value)| expr_uses_filter?(value) }
+    end
+
+    # Test teardown support for the registry scan trigger touches: a spec
+    # that registers a fixture role would otherwise keep it reachable from
+    # EVERY later marker-bearing render in the suite process (the trigger
+    # consults the loaded-role registry), so specs must deregister their
+    # fixtures and their scanned-dir coverage before finishing.
+    def unregister_role_plugin_roots_under(base_path : String) : Nil
+      @@plugin_roots_mutex.synchronize do
+        @@loaded_role_plugin_roots.each_value do |roots|
+          roots.reject! { |dir| dir.starts_with?(base_path) }
+        end
+        @@loaded_role_plugin_roots.reject! { |_, roots| roots.empty? }
+      end
+      @@scan_mutex.synchronize do
+        @@scanned_filter_dirs.reject! { |dir| dir.starts_with?(base_path) }
+      end
     end
 
     # Every direct `.py` child under a plugin directory. Ansible loads
