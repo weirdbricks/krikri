@@ -190,6 +190,13 @@ module Krikri
           # file itself, unlike an undefined var's layered definition.
           return ActionResult.crash_failure(wording, src)
         end
+        if (msg = @render_error) && msg.starts_with?("Syntax error in template: Encountered unknown tag 'do'")
+          # A `{% do %}` inside a variable's value is compiled by ansible
+          # when the template reads it: an uncaught TemplateSyntaxError
+          # with the crash shape, whose inner Origin is the variable's
+          # definition (live-verified, issue #322).
+          return ActionResult.crash_failure(msg, src, undef_chain: true)
+        end
         detail = @render_error ? ": #{@render_error}" : ""
         return ActionResult.failure("Failed to render template#{detail}")
       end

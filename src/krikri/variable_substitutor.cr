@@ -1,6 +1,7 @@
 require "json"
 require "./unsafe_values"
 require "./param_sentinels"
+require "./template_do_scanner"
 require "./variable_substitutor/expression_evaluator"
 require "./variable_substitutor/comparison_evaluator"
 require "./variable_substitutor/filter_engine"
@@ -1970,7 +1971,7 @@ module Krikri
       # why this isn't solved by passing a strict undefined class
       # to Crinja instead.
       scan_strict_block_tags_for_undefined(text) if strict
-      if strict && (stray = renderer.stray_end_tag_message(text))
+      if strict && (stray = renderer.stray_end_tag_message(text) || Krikri::TemplateDoTagScanner.do_tag_error(text))
         raise VariableSubstitutor::TemplateSyntaxError.new("Syntax error in template: #{stray}")
       end
       # The bare-identifier scan above deliberately skips missing-attribute/

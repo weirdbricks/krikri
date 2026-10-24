@@ -959,6 +959,8 @@ module Krikri
       # LoopLookupError(origin_known: true) shape the FirstFoundLookupError
       # rescue below uses, not a when:-evaluation failure (issue #119).
       raise LoopLookupError.new("Syntax error in template: #{ex.message}", origin_known: true)
+    rescue ex : VariableSubstitutor::TemplateSyntaxError
+      raise LoopLookupError.new(ex.message || "Syntax error in template", origin_known: true)
     rescue ex : FirstFoundLookupError
       # Same channel again: a templated `loop: "{{ query('first_found',
       # params) }}"` whose lookup finds nothing (and has no skip: true)

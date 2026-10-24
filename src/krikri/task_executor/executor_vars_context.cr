@@ -1635,6 +1635,11 @@ module Krikri
       # resolves the ternary to the actual list and iterates it fine.
       if current && (raw = current.raw).is_a?(String) && (raw.includes?("{{") || raw.includes?("{%") || raw.includes?("{#")) &&
          !VarSubstitutor.unsafe_root?(vars_context, template) && !UnsafeValues.unsafe_text?(raw)
+        # ansible compiles the variable's value when the loop source reads
+        # it, and a `{% do %}` tag there is a hard syntax error (issue #322).
+        if (do_error = Krikri::TemplateDoTagScanner.do_tag_error(raw))
+          raise VariableSubstitutor::TemplateSyntaxError.new("Syntax error in template: #{do_error}")
+        end
         # A raw value that's a PURE block-tag expression (`{%- if ... -%}
         # ruby {%- else -%} ruby2.0 {%- endif -%}`, no `{{` at all) needs
         # the full Crinja renderer, same as every other "{{ OR {% OR {#"
@@ -3625,12 +3630,54 @@ module Krikri
     # }}"`) rather than the template file, exactly matching real
     # 2.19.11's chain for the same playbook. nil = leave the crash shape's
     # template-file default in place (no unique origin to show).
-    private def undef_chain_origin_block(task : Task, bare_msg : String) : String?
+    private def undef_chain_origin_block(task : Task, bare_msg : String, template_path : String? = nil) : String?
+      if bare_msg.starts_with?(DO_TAG_SYNTAX_PREFIX)
+        origin = do_tag_var_origin(task, bare_msg, template_path)
+        return nil unless origin
+        return ErrorBlock.origin_context(origin.path, origin.line, origin.column)
+      end
       m = bare_msg.match(/\A'([A-Za-z_][A-Za-z0-9_]*)' is undefined\z/)
       return nil unless m
       origin = undef_chain_var_origin(task, m[1])
       return nil unless origin
       ErrorBlock.origin_context(origin.path, origin.line, origin.column)
+    end
+
+    DO_TAG_SYNTAX_PREFIX = "Syntax error in template: Encountered unknown tag 'do'"
+
+    # The unique var-layer definition whose own text holds a `{% do %}` tag
+    # failing with EXACTLY *message* - ansible-core compiles the value when
+    # the template reads it and points the chain's inner Origin at that
+    # definition (live-verified, issue #322: defaults/main.yml's
+    # `chainsmith_cert_files: |`). Same exactly-one-match rule as the other
+    # origin scans, so an ambiguous definition yields nil.
+    # Many role vars can carry the same `{% do %}` failure; ansible names the
+    # one the template actually reads, so definitions whose key the template
+    # *source* mentions win when exactly one does.
+    private def do_tag_var_origin(task : Task, message : String, template_path : String? = nil) : FileVarOrigin?
+      merged = {} of String => JSON::Any
+      origins = {} of String => VarOrigin
+      merge_var_layer(merged, origins, @play_vars, @play_var_origins)
+      merge_var_layer(merged, origins, task.role_defaults, task.role_default_origins)
+      merge_var_layer(merged, origins, @all_role_defaults, @all_role_default_origins)
+      merge_var_layer(merged, origins, task.role_vars, task.role_var_origins)
+      merge_var_layer(merged, origins, @all_role_vars, @all_role_var_origins)
+      merge_var_layer(merged, origins, task.vars, task.vars_origins)
+      merge_var_layer(merged, origins, @extra_vars, @extra_var_origins)
+      bare = message.lchop("Syntax error in template: ")
+      source = template_path && File.file?(template_path) ? File.read(template_path) : nil
+      matches = [] of FileVarOrigin
+      named = [] of FileVarOrigin
+      merged.each do |key, value|
+        raw = value.raw
+        next unless raw.is_a?(String) && Krikri::TemplateDoTagScanner.do_tag_error(raw) == bare
+        origin = origins[key]?
+        next unless origin.is_a?(FileVarOrigin) && origin.column > 0 && File.file?(origin.path)
+        matches << origin
+        named << origin if source && source.matches?(/(?<![A-Za-z0-9_])#{Regex.escape(key)}(?![A-Za-z0-9_])/)
+      end
+      return named[0] if named.size == 1
+      matches.size == 1 ? matches[0] : nil
     end
 
     # The executor-side hook the three action-failure result builder sites
@@ -3641,7 +3688,7 @@ module Krikri
       return nil unless action_result.undef_chain?
       detail = action_result.error_detail?
       return nil unless detail
-      undef_chain_origin_block(task, detail)
+      undef_chain_origin_block(task, detail, action_result.error_origin?)
     end
 
     private def merge_var_layer(merged : Hash(String, JSON::Any), origins : Hash(String, VarOrigin), values : Hash(String, JSON::Any)?, layer_origins : Hash(String, VarOrigin)?) : Nil
