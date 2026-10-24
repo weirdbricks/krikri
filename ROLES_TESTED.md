@@ -14494,3 +14494,13 @@ Local probe roles, not Galaxy roles: each probed task registers its result and d
 | `socketwench.pantheon_terminus` | ubuntu | ❌ Divergent - issue #287 (round29880057, 0.9.1886 debug). |
 | `softasap.sa-secure-audit-rkhunter` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29880063, 0.9.1886 debug). |
 | `zorlin.etcd_cluster` | ubuntu | ✅ Clean (round29880065, 0.9.1886 debug). |
+| `GR360RY.htpc-common` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29880066, 0.9.1886 debug). |
+| `cavemandaveman.nifi` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29880062, 0.9.1886 debug). |
+| `daixijun.php` | ubuntu | ❌ Divergent - issue #288 (round29880067, 0.9.1886 debug). |
+| `ellotheth.oracle` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29880063, 0.9.1886 debug). |
+| `hudecof.box_info` | ubuntu | ✅ Clean (round29880065, 0.9.1886 debug). |
+| `joenyland.abcde` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29880064, 0.9.1886 debug). |
+| `lpi-code.metatrader` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29880068, 0.9.1886 debug). |
+| `metno.rsyslog` | rocky | ✅ Clean (round29880070, 0.9.1886 debug). |
+| `morgangraphics.nvm` | ubuntu | ❌ Divergent - issue #289 (round29880069, 0.9.1886 debug). |
+| `sematext.spm-monitor-install` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29880061, 0.9.1886 debug). |
