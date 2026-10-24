@@ -59,6 +59,21 @@ module Krikri
 
         flush.call if references_register?(task, seen_registers)
 
+        # A dedup-tagged task (a meta/main.yml dependency occurrence's
+        # stream, issue #320) may only share a batch run with tasks of the
+        # SAME occurrence: the executor's per-host tally decides an
+        # occurrence's tasks AFTER the earlier occurrence has completed -
+        # and a batch script pre-executes every member of its run in one
+        # SSH round trip, so a group spanning occurrence boundaries would
+        # run a silently-skipped re-occurrence's module against the real
+        # target (real side effects) before the tally could veto it.
+        # Occurrence boundaries are also identity boundaries between
+        # otherwise-adjacent task streams, so splitting here costs nothing
+        # that a register-reference split wouldn't already cost.
+        if !current.empty? && occurrence_identity(current.first) != occurrence_identity(task)
+          flush.call
+        end
+
         current << task
 
         if aborts_on_notify && aborts_on_notify.call(task)
@@ -73,6 +88,13 @@ module Krikri
 
       flush.call
       groups
+    end
+
+    # The (dedup key, occurrence id) pair identifying which dependency
+    # invocation's task stream a task belongs to (nil/nil for everything
+    # untagged) - see the occurrence-boundary split in #plan.
+    private def self.occurrence_identity(task : Task) : {String?, Int64?}
+      {task.role_dedup_key, task.role_occurrence_id}
     end
 
     # A task in any of these categories can never extend (or be extended

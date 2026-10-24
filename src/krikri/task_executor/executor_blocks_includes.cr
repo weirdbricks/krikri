@@ -189,6 +189,9 @@ module Krikri
             # below for why the credit lives there and not up at group
             # assembly time).
             group_hosts.each { |host| @results[host.name]["ok"] += 1 }
+            # A zero-task include still completed its own non-skipped result
+            # per host, so it marks the dependency tally (issue #320).
+            group_hosts.each { |host| mark_role_dep_ran(task, host) }
             # Ansible's v2_playbook_on_include still fires for a zero-task
             # file (pgvillage.linux's shipped-empty hook targets, #308):
             # the include registered, it just has nothing further to run,
@@ -240,6 +243,10 @@ module Krikri
           # counts the include task as failed only - recaps ok=45 failed=1
           # (verified live against ansible-core 2.19.11).
           group_hosts.each { |host| @results[host.name]["ok"] += 1 }
+          # Same tally credit as the zero-task branch above: this host
+          # completed the include statement's own non-skipped result
+          # (issue #320).
+          group_hosts.each { |host| mark_role_dep_ran(task, host) }
 
           connection_names = group_hosts.map { |host| host.name }
           puts "included: #{resolved_path} for #{connection_names.join(", ")}".colorize(:cyan)
@@ -1762,6 +1769,14 @@ module Krikri
         # file must end that same invocation, not fall back to the
         # role-path key (which a second include of the same role shares).
         nested_task.role_invocation_id = enclosing.role_invocation_id
+        # Same shared-invocation reasoning for the run-time dependency
+        # dedup tag (issue #320): the included file's tasks belong to the
+        # SAME dependency occurrence as the include statement, so they
+        # read the same tally entry (owner => run) and their own
+        # results are what keeps that tally entry current - like
+        # role_invocation_id, nil travels as nil for untagged roles.
+        nested_task.role_dedup_key = enclosing.role_dedup_key
+        nested_task.role_occurrence_id = enclosing.role_occurrence_id
         # RECURSE into nested block/rescue/always children: a when:-false
         # BLOCK is skipped in execute_task before execute_block's own
         # propagation ever runs, and its children's banners print via
@@ -2892,6 +2907,21 @@ module Krikri
         end
       end
 
+      # The detached statement's identity anchors the run-time dependency
+      # dedup (issue #320): a STATIC import_role: inside a tagged
+      # dependency's task stream owns that invocation's results - real
+      # splices the imported role's tasks INTO it (the import produces no
+      # result of its own), so the imported body's own tasks are what
+      # mark the tally, and without carrying the tag they would leave a
+      # later identical occurrence with an untallied identity (running
+      # again, where real silently skips).
+      if task.is_static_import? && (import_key = task.role_dedup_key) && (import_occurrence = task.role_occurrence_id)
+        included_tasks.each do |included_task|
+          included_task.role_dedup_key = import_key
+          included_task.role_occurrence_id = import_occurrence
+        end
+      end
+
       @results[host.name]["ok"] += 1 unless task.is_static_import?
 
       # Real v2_playbook_on_include line for a dynamic include_role.
@@ -2900,6 +2930,12 @@ module Krikri
         suffix = item_label ? " => (item=#{item_label})" : ""
         puts "included: #{role_name} for #{connection_name}#{suffix}".colorize(:cyan)
       end
+      # A successful dynamic include statement itself books an `ok` (line
+      # above) - real's include task result is a real non-skipped result,
+      # so it counts as "ran" for the tally. The static import produces no
+      # result of its own, so only its loaded tasks (tagged above) decide
+      # the tally, per task like real.
+      mark_role_dep_ran(task, host) unless task.is_static_import?
 
       # Round 26 originally had an eager re-render of each loaded task's
       # `name:` here (against just the include_role: `vars:` passed in) to

@@ -240,6 +240,24 @@ module Krikri
     # NOT touch the parent role, depended-on roles or later
     # include_role: calls of the same role.
     @role_ended_hosts : Hash(String, Set(String))
+    # Run-time, per-host dependency dedup tally (issue #320). krikri used
+    # to collapse a reached-again meta/main.yml dependency entirely at
+    # load time, but real ansible defers the decision to EXECUTION, per
+    # host: the role identity is skipped only once an EARLIER identical
+    # occurrence actually completed a non-skipped task for that host -
+    # real's strategy sets role._had_task_run on ok/changed/failed results
+    # only, never on a skip, so a shared dependency whose every task was
+    # skipped (e.g. `{ role: c, when: ansible_distribution == 'MacOSX' }`
+    # on a Linux host) still prints its own full `skipping:` block on
+    # every later reach. Holds, per host name, {role_dedup_key =>
+    # occurrence id that first ran it}: the owner occurrence's tasks keep
+    # running, and a task tagged with the same key but a different
+    # occurrence id is silently skipped - no banner, no `skipping:` line
+    # and no recap entry, exactly like real's silent iterator consume.
+    # Hosts run in concurrent fibers (--forks worker pool), so reads and
+    # writes go through a mutex.
+    @ran_dep_role_occurrences : Hash(String, Hash(String, Int64)) = Hash(String, Hash(String, Int64)).new
+    @ran_dep_role_occurrences_mutex = Mutex.new
     # Full inventory, used to resolve delegate_to: targets that aren't
     # necessarily in this play's own host list (e.g. "localhost" when the
     # play targets a remote group). Optional - a caller that doesn't pass

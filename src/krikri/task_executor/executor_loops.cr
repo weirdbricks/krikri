@@ -2395,6 +2395,12 @@ module Krikri
         end
       end
 
+      # Same run-time-dedup credit finish_single_task applies: at least
+      # one item completed non-skipped, so the identity "ran" for this
+      # host (issue #320). The all-items-skipped shape above never gets
+      # here - real's role._had_task_run likewise never turns on when a
+      # loop skipped every item.
+      mark_role_dep_ran(task, host) if executed_count > 0
       if any_changed && (notify_list = task.notify)
         if notify_list.any?(&.includes?("{{"))
           notify_looped_items(task, host, loop_items, item_results, skipped_items, notify_list, base_vars_context)
@@ -2724,6 +2730,9 @@ module Krikri
         ResultDisplay.display_result(host, result, @diff_mode, ignore_errors: resolve_task_ignore_errors(task, vars_context), no_log: resolve_task_no_log(task, vars_context), source_task: task, module_name: task.module_name, delegate_target: exec_host && exec_host != host ? exec_host.name : nil)
       end
       ResultDisplay.update_stats(@results[host.name], result, resolve_task_ignore_errors(task, vars_context))
+      # Same run-time-dedup credit as the plain path (issue #320): an
+      # until:-retrying task that completed produced a non-skipped result.
+      mark_role_dep_ran(task, host)
       halt_if_failed(task, host, failed, result)
     end
 

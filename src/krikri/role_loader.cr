@@ -92,6 +92,24 @@ module Krikri
 
     @@source_map_cache = Hash(String, YamlSourceMap).new
 
+    # Counter that mints each meta/main.yml dependency load's occurrence
+    # id (issue #320): real ansible's role dedup is a RUN-time decision -
+    # a reached-again identical dependency is silently skipped per host
+    # only when an earlier occurrence actually completed a non-skipped
+    # task for that host - so duplicate dependency occurrences are loaded
+    # (their tasks tagged) instead of dropped at load time, and the
+    # executor needs a token that distinguishes "the owner occurrence"
+    # from "a later identical one". Run-counter semantics (monotone across
+    # every load from every dependency chain, include_role: chains
+    # included) are all that matters - hosts run tasks concurrently, so
+    # the increment itself is Atomic, and the earliest effective
+    # occurrence id just needs to be unique, not interesting.
+    @@role_occurrence_seq = Atomic(Int64).new(0)
+
+    private def self.next_role_occurrence_id : Int64
+      @@role_occurrence_seq.add(1)
+    end
+
     def self.role_exists?(name : String, playbook_dir : String) : Bool
       !resolve_role_dir(name, playbook_dir).nil?
     end
@@ -380,19 +398,21 @@ module Krikri
       # with an empty play where ansible exits 1).
       raise_if_dependency_cycle(in_flight, role_dir)
 
-      # An already-loaded role contributes no defaults a second time -
-      # its tasks (and their defaults) are already in the play. The key
-      # is the full invocation identity, NOT just the bare role name (see
-      # #role_dedup_key) - found via andrewrothstein.kafka-consumer's
-      # dependency graph, which reaches andrewrothstein.unarchive-deps
-      # twice (via andrewrothstein.kafka AND via andrewrothstein.openjdk)
-      # with two different `version:` pins; Ansible (verified live
-      # against ansible-core 2.19.11, both with this exact role graph and
-      # with synthetic same-name/different-params graphs) runs it twice,
-      # while deduping by name alone silently dropped the second run.
-      dedup_key = role_dedup_key(name, role_version, invocation_vars, invocation_tags, role_when)
-      return Hash(String, JSON::Any).new if !meta_allows_duplicates?(role_dir) && seen.includes?(dedup_key)
-      seen.add(dedup_key)
+      # Ansible deduplicates a role invocation by its full identity and
+      # holds the collapse of a reached-again one to its run-time, per-host
+      # decision (issue #320) - the seen-set bookkeeping and the
+      # per-occurrence tagging that decision needs live in
+      # #role_dedup_tags.
+      statically_deduped, run_dedup_key, run_occurrence = role_dedup_tags(name, role_version, invocation_vars, invocation_tags, role_when, role_dir, seen, play_scope, dependency_declaring_dir)
+      # A play-level `roles:` entry that is a straight duplicate of an
+      # earlier identical load is the ONE place real still collapses at
+      # load time: nothing in such a play would ever re-enter the role's
+      # task stream at strategy time, so there is no later reach whose
+      # skipping blocks could re-appear, and the dedup is silent either
+      # way. A meta/main.yml dependency load reports statically_deduped
+      # exactly like this but keeps loading (tagged), because real is
+      # free to re-reach it and print its full skipping: block per host.
+      return Hash(String, JSON::Any).new if statically_deduped && dependency_declaring_dir.nil?
       # Ansible's `role_path` magic var is always an ABSOLUTE path -
       # resolve_role_dir's own search dirs can be relative (a bare "roles"
       # search root, or a relative ANSIBLE_ROLES_PATH entry), and that
@@ -498,19 +518,7 @@ module Krikri
       # Task#role_default_origins).
       defaults_origins = parent_default_origins.merge(dependency_default_origins).merge(load_vars_file_origins_main(File.join(role_dir, "defaults")))
       own_vars, own_var_origins = load_role_own_vars(role_dir, vars_from)
-      role_vars = own_vars.dup
-      role_var_origins = own_var_origins.dup
-      invocation_vars.each do |key, value|
-        role_vars[key] = value
-        # The winning value's origin travels with it; an invocation var
-        # with no known origin (no source map) erases the vars/main.yml
-        # origin it overrides, matching the value it replaces.
-        if (origin = invocation_var_origins[key]?)
-          role_var_origins[key] = origin
-        else
-          role_var_origins.delete(key)
-        end
-      end
+      role_vars, role_var_origins = overlay_invocation_vars(own_vars, own_var_origins, invocation_vars, invocation_var_origins)
 
       # Contribute to the play-wide layers every role can see - see
       # Play#all_role_defaults for why Ansible makes these visible
@@ -519,7 +527,7 @@ module Krikri
       # answers outside any role (verified: post_tasks: sees the LAST
       # role's value for a name two roles both define).
       #
-      # Uses `own_vars`/a freshly-reloaded `own_defaults` here, NOT
+      # The layers get `own_vars`/a freshly-reloaded `own_defaults`, NOT
       # `role_vars`/`defaults` (which have `invocation_vars`/ancestor
       # defaults already merged in) - a role's own vars/main.yml and
       # defaults/main.yml genuinely stay visible play-wide, but a
@@ -534,13 +542,8 @@ module Krikri
       # relying on ITS OWN `certbot_auto_renew: true` default) saw the
       # dependency's overridden `false` instead, running when
       # Ansible correctly skipped it.
-      if play_scope
-        own_defaults = load_vars_file_main(File.join(role_dir, "defaults"))
-        own_defaults.each { |key, value| play.all_role_defaults[key] = value }
-        load_vars_file_origins_main(File.join(role_dir, "defaults")).each { |key, origin| play.all_role_default_origins[key] = origin }
-        own_vars.each { |key, value| play.all_role_vars[key] = value }
-        own_var_origins.each { |key, origin| play.all_role_var_origins[key] = origin }
-      end
+      first_contribution = !statically_deduped
+      contribute_play_scope_layers(play, role_dir, own_vars, own_var_origins, play_scope, first_contribution)
 
       files_dir = existing_dir(File.join(role_dir, "files"))
       templates_dir = existing_dir(File.join(role_dir, "templates"))
@@ -644,16 +647,24 @@ module Krikri
         task.inherited_tags = (task.inherited_tags + invocation_tags).uniq
       end
 
+      tag_role_tasks_with_dedup(role_tasks, run_dedup_key, run_occurrence)
+
       # A task inside a role's block:/rescue:/always: belongs to that role
       # just as much as a top-level one - real's get_name() shows
       # "role : name" for a NAMED block child in --list-tasks (and the
       # runtime executor's propagate_role_context stamps the same fields
       # on its way through blocks, so this parse-time stamping only makes
       # the listing-time view agree with what run time already produced).
-      (role_tasks + role_handlers).each { |task| stamp_role_into_blocks(task, name, role_dir, parent_names, parent_paths, collection_name) }
+      (role_tasks + role_handlers).each { |task| stamp_role_into_blocks(task, name, role_dir, parent_names, parent_paths, collection_name, run_dedup_key, run_occurrence) }
 
       tasks.concat(role_tasks)
-      handlers.concat(role_handlers)
+      # Real callbacks keep a duplicate dependency from registering the same
+      # handler twice (metrics arc: only the first occurrence in the seen
+      # scope contributes its handlers); a duplicate's tasks were
+      # unreachable here before their dedup moved to run time, so this
+      # guard is what keeps the play's handler list free of the identical
+      # second definition a re-occurrence would otherwise append.
+      handlers.concat(role_handlers) if first_contribution
 
       # Returned so a DECLARING role can pick these up as its own
       # dependency defaults (see the `dependency_defaults` merge above).
@@ -661,6 +672,44 @@ module Krikri
         defaults_origins.each { |key, origin| out[key] = origin }
       end
       defaults
+    end
+
+    # Publishes a first load's own vars/defaults into the play-wide layers
+    # every role can see. The layers take their values from an
+    # invocation's FIRST occurrence in the seen scope only - a re-occurrence (run-time-dedup candidate, issue #320) writes
+    # the identical values, but load-order is "later role wins" per name,
+    # so blindly re-assigning when a DIFFERENT role already loaded in
+    # between would hand it a key-collision win it never had before the
+    # run-time dedup existed; each occurrence's OWN tasks still carry this
+    # role's full defaults/vars stack (stamped by the caller), so the
+    # duplicate keeps evaluating exactly as the first one does.
+    private def self.contribute_play_scope_layers(play : Play, role_dir : String, own_vars : Hash(String, JSON::Any), own_var_origins : Hash(String, VarOrigin), play_scope : Bool, first_contribution : Bool) : Nil
+      return unless play_scope && first_contribution
+      own_defaults = load_vars_file_main(File.join(role_dir, "defaults"))
+      own_defaults.each { |key, value| play.all_role_defaults[key] = value }
+      load_vars_file_origins_main(File.join(role_dir, "defaults")).each { |key, origin| play.all_role_default_origins[key] = origin }
+      own_vars.each { |key, value| play.all_role_vars[key] = value }
+      own_var_origins.each { |key, origin| play.all_role_var_origins[key] = origin }
+    end
+
+    # The role's vars context for THIS invocation: own vars grounded
+    # first, the invocation's vars (a `vars:` on the roles: entry, or a
+    # meta dependency's inline params) stacked on top - Ansible lets the
+    # invocation win. The winning value's origin travels with it; an
+    # invocation var with no known origin (no source map) erases the
+    # vars/main.yml origin it overrides, matching the value it replaces.
+    private def self.overlay_invocation_vars(own_vars : Hash(String, JSON::Any), own_var_origins : Hash(String, VarOrigin), invocation_vars : Hash(String, JSON::Any), invocation_var_origins : Hash(String, VarOrigin)) : {Hash(String, JSON::Any), Hash(String, VarOrigin)}
+      role_vars = own_vars.dup
+      role_var_origins = own_var_origins.dup
+      invocation_vars.each do |key, value|
+        role_vars[key] = value
+        if (origin = invocation_var_origins[key]?)
+          role_var_origins[key] = origin
+        else
+          role_var_origins.delete(key)
+        end
+      end
+      {role_vars, role_var_origins}
     end
 
     # The collection name stamped into tasks for a role invocation - the
@@ -680,27 +729,37 @@ module Krikri
     # each role file's TOP-LEVEL tasks, so a named task inside a role's
     # block listed without its "role : " prefix in --list-tasks (real
     # flattens blocks in the listing and prefixes the children).
-    private def self.stamp_role_into_blocks(task : Task, name : String, role_dir : String, parent_names : Array(String), parent_paths : Array(String), collection_name : String?) : Nil
+    # *run_dedup_key*/*run_occurrence* travel along because the executor's
+    # per-host dependency dedup (issue #320) keys the tally per task: a
+    # block: inside a dependency's task stream belongs to the SAME
+    # occurrence as the block wrapper (real's had_task_run fires on the
+    # CHILD's result, so the block children are what marks/reads the
+    # tally), while nil when the load tagged nothing.
+    private def self.stamp_role_into_blocks(task : Task, name : String, role_dir : String, parent_names : Array(String), parent_paths : Array(String), collection_name : String?, run_dedup_key : String? = nil, run_occurrence : Int64? = nil) : Nil
       task.block_tasks.try &.each do |nested|
-        stamp_role_task(nested, name, role_dir, parent_names, parent_paths, collection_name)
-        stamp_role_into_blocks(nested, name, role_dir, parent_names, parent_paths, collection_name)
+        stamp_role_task(nested, name, role_dir, parent_names, parent_paths, collection_name, run_dedup_key, run_occurrence)
+        stamp_role_into_blocks(nested, name, role_dir, parent_names, parent_paths, collection_name, run_dedup_key, run_occurrence)
       end
       task.rescue_tasks.try &.each do |nested|
-        stamp_role_task(nested, name, role_dir, parent_names, parent_paths, collection_name)
-        stamp_role_into_blocks(nested, name, role_dir, parent_names, parent_paths, collection_name)
+        stamp_role_task(nested, name, role_dir, parent_names, parent_paths, collection_name, run_dedup_key, run_occurrence)
+        stamp_role_into_blocks(nested, name, role_dir, parent_names, parent_paths, collection_name, run_dedup_key, run_occurrence)
       end
       task.always_tasks.try &.each do |nested|
-        stamp_role_task(nested, name, role_dir, parent_names, parent_paths, collection_name)
-        stamp_role_into_blocks(nested, name, role_dir, parent_names, parent_paths, collection_name)
+        stamp_role_task(nested, name, role_dir, parent_names, parent_paths, collection_name, run_dedup_key, run_occurrence)
+        stamp_role_into_blocks(nested, name, role_dir, parent_names, parent_paths, collection_name, run_dedup_key, run_occurrence)
       end
     end
 
-    private def self.stamp_role_task(task : Task, name : String, role_dir : String, parent_names : Array(String), parent_paths : Array(String), collection_name : String?) : Nil
+    private def self.stamp_role_task(task : Task, name : String, role_dir : String, parent_names : Array(String), parent_paths : Array(String), collection_name : String?, run_dedup_key : String? = nil, run_occurrence : Int64? = nil) : Nil
       task.role_name = name
       task.role_path = role_dir
       task.role_parent_names = parent_names
       task.role_parent_paths = parent_paths
       task.ansible_collection_name = collection_name
+      if run_dedup_key && run_occurrence
+        task.role_dedup_key = run_dedup_key
+        task.role_occurrence_id = run_occurrence
+      end
     end
 
     # tasks_from: loads tasks/<name>.yml instead of tasks/main.yml -
@@ -938,6 +997,79 @@ module Krikri
         io << "|vars=" << vars.keys.sort!.map { |k| "#{k}=#{vars[k]}" }.join(",")
         io << "|tags=" << tags.sort.join(",")
         io << "|when=" << (role_when || "")
+      end
+    end
+
+    # The dedup state of one role load (issue #320): Ansible's own
+    # decision process for a reached-again invocation, split into the
+    # answers the executor needs. The identity Ansible deduplicates on is
+    # the FULL invocation - name + `version:` pin + inline vars + tags +
+    # when, NOT the bare role name (found via
+    # andrewrothstein.kafka-consumer's dependency graph, which reaches
+    # andrewrothstein.unarchive-deps twice - via andrewrothstein.kafka AND
+    # via andrewrothstein.openjdk - with two different `version:` pins;
+    # ansible-core 2.19.11, verified live with this exact graph and with
+    # synthetic same-name/different-params graphs, runs it twice while
+    # deduping by name alone silently dropped the second run).
+    #
+    # But real's collapse is per host and run-time: a reached-again
+    # identical invocation is silently skipped only when an EARLIER
+    # identical invocation actually completed a non-skipped task for that
+    # host (a run whose every task was skipped does NOT set
+    # role._had_task_run, so the next reach still runs, printing its own
+    # full skipping: block). So every load that real could later re-reach
+    # loads again and tags its tasks with the identity (the dedup key + a
+    # fresh occurrence id) instead of being dropped at load time, leaving
+    # the actual skip to the executor's per-host tally - dependency loads
+    # and play-level entry streams tag, and EVERY occurrence tags, the
+    # first one so the tally learns who the owner is, every later one so
+    # the executor can silently skip it (or, when every earlier task was
+    # skipped, let it run through). An include_role:'s own resolved load
+    # tags nothing: include_role: runs every time it is reached (its
+    # default allow_duplicates semantics), whatever else got deduped
+    # elsewhere - and `allow_duplicates: true` short-circuits anything
+    # that could dedupe at all, so such an invocation gets no tag and can
+    # never be silently skipped, whatever identity it shares with an
+    # earlier occurrence.
+    private def self.role_dedup_tags(
+      name : String,
+      role_version : String?,
+      invocation_vars : Hash(String, JSON::Any),
+      invocation_tags : Array(String),
+      role_when : String?,
+      role_dir : String,
+      seen : Set(String),
+      play_scope : Bool,
+      dependency_declaring_dir : String?,
+    ) : {Bool, String?, Int64?}
+      dedup_key = role_dedup_key(name, role_version, invocation_vars, invocation_tags, role_when)
+      allow_duplicates = meta_allows_duplicates?(role_dir)
+      statically_deduped = !allow_duplicates && seen.includes?(dedup_key)
+      seen.add(dedup_key)
+      run_dedup_key : String? = nil
+      run_occurrence : Int64? = nil
+      if (dependency_declaring_dir || play_scope) && !allow_duplicates
+        run_dedup_key = dedup_key
+        run_occurrence = next_role_occurrence_id
+      end
+      {statically_deduped, run_dedup_key, run_occurrence}
+    end
+
+    # Marks a load's own task stream with the run-time dedup identity -
+    # the executor's per-host tally is keyed per task and real's
+    # role._had_task_run fires on an individual task's result, so every
+    # task belonging to the occurrence must carry the tag (a reported
+    # block-child does, via stamp_role_task alongside). The load's
+    # HANDLERS stay untagged: the tally only ever gates task streams, and
+    # a handler is only ever notified by the tasks of the run that
+    # changed, long after every occurrence's task phase is over (the
+    # duplicate handler registration is kept out separately, by the
+    # first_contribution guard around the caller's concat).
+    private def self.tag_role_tasks_with_dedup(role_tasks : Array(Task), run_dedup_key : String?, run_occurrence : Int64?) : Nil
+      return unless run_dedup_key && run_occurrence
+      role_tasks.each do |task|
+        task.role_dedup_key = run_dedup_key
+        task.role_occurrence_id = run_occurrence
       end
     end
 

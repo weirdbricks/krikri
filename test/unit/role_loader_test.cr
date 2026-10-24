@@ -370,7 +370,15 @@ describe Krikri::RoleLoader do
     (user_task.role_defaults || raise "unexpected nil")["shared_name"].as_s.must_equal("from_self")
   end
 
-  it "loads each role only once, even if listed directly and pulled in as a dependency" do
+  # Real's dedup decision for a reached-again identical dependency is
+  # RUN-time and per host (issue #320) - the loader now loads every
+  # occurrence and tags it, leaving the skip to the executor's tally. So
+  # a role listed at play level AND pulled in as a dependency contributes
+  # its task stream twice at LOAD level (two distinct occurrences), each
+  # carrying the same dedup identity under a different occurrence id;
+  # the executor then silently skips whichever reach is a re-run after a
+  # non-skipped earlier one for that host.
+  it "loads a role listed directly and pulled in as a dependency as two tagged occurrences" do
     build_role("shared") { |role| role.tasks(<<-YAML) }
       - name: shared task
         ansible.builtin.debug:
@@ -388,7 +396,14 @@ describe Krikri::RoleLoader do
 
     tasks, _ = Krikri::RoleLoader.load_roles(roles_yaml("- shared\n- depends_on_shared\n"), fresh_play, roles_root)
 
-    tasks.map(&.name).must_equal(["shared task", "dependent task"])
+    tasks.map(&.name).must_equal(["shared task", "shared task", "dependent task"])
+    # Both occurrences carry the same identity; only the occurrence id
+    # distinguishes owner from re-run for the executor.
+    tasks[0].role_dedup_key.must_equal(tasks[1].role_dedup_key)
+    tasks[0].role_dedup_key.wont_be_nil
+    tasks[0].role_occurrence_id.wont_be_nil
+    tasks[1].role_occurrence_id.wont_be_nil
+    tasks[0].role_occurrence_id.wont_equal(tasks[1].role_occurrence_id)
   end
 
   # Real divergence found via andrewrothstein.kafka-consumer's dependency
@@ -454,7 +469,13 @@ describe Krikri::RoleLoader do
     tasks.map(&.name).count("shared task").must_equal(2)
   end
 
-  it "still runs a shared dependency only once when both declarations are identical" do
+  # Issue #320: the loader no longer collapses an identical re-declared
+  # dependency - both occurrences load (tagged with the same dedup
+  # identity, distinct occurrence ids) and the "runs once" outcome is
+  # the EXECUTOR's per-host decision (a non-skipped earlier occurrence
+  # makes later ones silently skipped). See the integration spec in
+  # role_dependency_runtime_dedup_test.cr for the end-to-end behaviour.
+  it "loads two identical declarations as two tagged occurrences; dedup is the executor's call" do
     build_role("shared_same") { |role| role.tasks(<<-YAML) }
       - name: shared task
         ansible.builtin.debug:
@@ -478,7 +499,10 @@ describe Krikri::RoleLoader do
 
     tasks, _ = Krikri::RoleLoader.load_roles(roles_yaml("- top_same"), fresh_play, roles_root)
 
-    tasks.map(&.name).count("shared task").must_equal(1)
+    tasks.map(&.name).count("shared task").must_equal(2)
+    shared_streams = tasks.select(&.name.==("shared task"))
+    shared_streams[0].role_dedup_key.must_equal(shared_streams[1].role_dedup_key)
+    shared_streams[0].role_occurrence_id.wont_equal(shared_streams[1].role_occurrence_id)
   end
 
   # Ansible's escape hatch (probe-verified): allow_duplicates: true

@@ -216,7 +216,15 @@ module Krikri
         # "TASK [Gathering Facts]" + the fatal, not a bare fatal.
         break if halt_rejected.empty? && pending_unreachable.empty?
 
-        active_hosts = halt_rejected.reject { |host| role_ended_for_host?(task, host) }
+        # Same treatment role_ended's filter gets: a host whose per-host
+        # dependency dedup already credits this identity to an earlier
+        # occurrence produces NOTHING for this task (issue #320) - not a
+        # `skipping:` line, not a failing/included line, and not a banner
+        # when it's the only kind of host left, matching real's silent
+        # batch drop for a role that ran before.
+        active_hosts = halt_rejected.reject do |host|
+          role_ended_for_host?(task, host) || role_dep_dedup_skipped_for_host?(task, host)
+        end
         # Every active host had this role ended for it - a fully consumed
         # task prints nothing at all (Ansible's silent iterator
         # consume), but later tasks outside the role still run - unless
@@ -462,6 +470,7 @@ module Krikri
       # through, so the run loop's own active_hosts rejection above only
       # exists to keep the banner from printing for fully-consumed tasks.
       return if role_ended_for_host?(task, host)
+      return if role_dep_dedup_skipped_for_host?(task, host)
 
       return execute_block(task, host) if task.block?
       return execute_include_tasks(task, host) if task.include_tasks?
@@ -1297,6 +1306,9 @@ module Krikri
             }.to_json))
           end
         end
+        # Same "ran" credit as the below pipeline: a loop-source failure
+        # booked a failed result for this host.
+        mark_role_dep_ran(task, host)
         return false
       end
       unless defer_display
@@ -1362,6 +1374,11 @@ module Krikri
           "msg"     => msg,
         }.to_json))
       end
+      # A conditional-evaluation failure booked a real result (failed, or
+      # ok+ignored behind ignore_errors:) - it counts as "ran" for the
+      # per-host dependency dedup the same way any non-skipped result
+      # does (issue #320).
+      mark_role_dep_ran(task, host)
       false
     end
 
@@ -3501,6 +3518,12 @@ module Krikri
         # banner - execute_task's own check would skip the body but the
         # banner below would still print).
         next if role_ended_for_host?(nested_task, host)
+        # Same silent-pre-banner treatment for the per-host dependency
+        # dedup (issue #320): a re-occurrence whose identity the host
+        # already ran produces nothing at all, banner included - and a
+        # fully-skipped task's empty banner is exactly the shape this
+        # next line exists to avoid.
+        next if role_dep_dedup_skipped_for_host?(nested_task, host)
 
         # A nested block: is transparent - like Ansible, a named
         # block gets no "TASK [...]" banner of its own, only its members

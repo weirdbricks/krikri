@@ -1074,6 +1074,46 @@ module Krikri
       ended ? ended.includes?(host.name) : false
     end
 
+    # Whether *host*'s per-host dependency-dedup tally already credits a
+    # non-skipped completion of the identity *task* carries (role_dedup_
+    # key from its meta/main.yml dependency load, issue #320) to a
+    # DIFFERENT occurrence. Real's read-back before every role-task run:
+    # the owner occurrence keeps running all its own tasks, and a later
+    # identical occurrence is silently skipped - no banner, no
+    # `skipping:` line, no recap entry (real's strategy drops the whole
+    # already-run role batch from the queue). An untallied key (nothing
+    # ran yet, e.g. every earlier task skipped) returns false so the
+    # occurrence runs, exactly like real only skipping when the role
+    # actually ran before.
+    private def role_dep_dedup_skipped_for_host?(task : Task, host : Host) : Bool
+      key = task.role_dedup_key
+      occurrence = task.role_occurrence_id
+      return false unless key && occurrence
+
+      owner = @ran_dep_role_occurrences_mutex.synchronize do
+        @ran_dep_role_occurrences[host.name]?.try(&.[key]?)
+      end
+      !!owner && owner != occurrence
+    end
+
+    # Credits a completed non-skipped task result to *task*'s dependency
+    # identity in *host*'s tally. Callers pass only through the paths that
+    # actually booked a result (finish_single_task, finish_looped_task,
+    # swallow_when_error, the include statement's own ok credits), so this
+    # mirrors real's role._had_task_run being set from the RESULT callback
+    # - a result that is ok/changed/failed/rescued/ignored marks the run,
+    # while a `when:`-false skip (or a loop whose every item skipped)
+    # never does. First writer wins: the earliest occurrence to complete
+    # a non-skipped task for this host becomes the tally's owner, and no
+    # later occurrence can displace it.
+    private def mark_role_dep_ran(task : Task, host : Host) : Nil
+      return unless (key = task.role_dedup_key) && (occurrence = task.role_occurrence_id)
+
+      @ran_dep_role_occurrences_mutex.synchronize do
+        (@ran_dep_role_occurrences[host.name] ||= Hash(String, Int64).new)[key] ||= occurrence
+      end
+    end
+
     # Run a task repeatedly (up to task.retries times, sleeping task.delay
     # seconds between attempts) until task.until_condition evaluates true
     # against the registered result, matching Ansible's until:/retries:/delay:.
