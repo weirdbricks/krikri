@@ -532,3 +532,76 @@ describe "dnf plugin - same-name repo package vs a Provides: match (issue 280)" 
     end
   end
 end
+
+# Issue #299 (Rocky 9, sthdev.update_packages, round round29880181):
+# `name: '*'+state: latest` is ansible's base.upgrade_all() branch
+# (dnf.py), which resolves with the dnf Python API's conf.best=False
+# no matter what the nobest param says - the API's Base() never reads
+# /etc/dnf/dnf.conf. This shim is instead a dnf CLI process that does
+# read dnf.conf, and Rocky's best=True in there is what made the same
+# task hard-fail with dnf's "Depsolve Error occurred: ... conflicting
+# requests" rc=2 - first with the unconditional `--best`, then again
+# with the flag merely unforced. The upgrade verb's argv therefore
+# pins --nobest unconditionally here, the same way the per-package
+# specs above pin theirs; the dnf.py citations behind each
+# expectation live in handle_upgrade_all's comment.
+describe "dnf plugin - '*' upgrade-all best handling (issue 299)" do
+  # dnf.py has nothing that turns best on for the bare upgrade_all
+  # goal, and this CLI would otherwise pick dnf.conf's best=True up -
+  # so the bare form carries --nobest outright, right where the
+  # per-package baseline keeps --best.
+  it "pins --nobest on the upgrade verb for name: '*'" do
+    with_recording_pkg_managers do |log|
+      result = PluginSpecHelper.run("dnf", {"name" => "*", "state" => "latest"})
+      falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+      recorded_install_command(log).must_equal("upgrade -y --setopt=localpkg_gpgcheck=1 --nobest")
+    end
+  end
+
+  # nobest: true is the only direction dnf.py itself forces for every
+  # operation (`if self.nobest: conf.best = 0`), which is already the
+  # direction this path pins - so the expected argv stays the same
+  # single --nobest, never two.
+  it "still passes --nobest for nobest: true on the upgrade-all path" do
+    with_recording_pkg_managers do |log|
+      result = PluginSpecHelper.run("dnf", {
+        "name"   => "*",
+        "state"  => "latest",
+        "nobest" => "true",
+      })
+      falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+      recorded_install_command(log).must_equal("upgrade -y --setopt=localpkg_gpgcheck=1 --nobest")
+    end
+  end
+
+  # nobest: false maps to --best only on the per-package-spec branch,
+  # where dnf.py forces `conf.best = not self.nobest`; on the bare
+  # upgrade_all goal it has nothing to set, so the goal still resolves
+  # with the API's best=False and this shim must pin that with
+  # --nobest too - a literal --best here would resurrect the
+  # dnf.conf-driven Depsolve Error ansible's own run avoids.
+  it "passes --nobest, not --best, for explicit nobest: false on the upgrade-all path" do
+    with_recording_pkg_managers do |log|
+      result = PluginSpecHelper.run("dnf", {
+        "name"   => "*",
+        "state"  => "latest",
+        "nobest" => "false",
+      })
+      falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+      recorded_install_command(log).must_equal("upgrade -y --setopt=localpkg_gpgcheck=1 --nobest")
+    end
+  end
+
+  # The per-package-spec branch is the one place dnf.py forces best
+  # upward for a task that never said nobest (`conf.best =
+  # not self.nobest`, in-file comment: "Thus, we still need to
+  # explicitly set it here"), so a named package at state: latest
+  # keeps the --best baseline rather than this path's --nobest pin.
+  it "keeps --best on the per-package path for a specific package at state: latest" do
+    with_recording_pkg_managers do |log|
+      result = PluginSpecHelper.run("dnf", {"name" => "fake-pkg", "state" => "latest"})
+      falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+      recorded_install_command(log).must_equal("install #{BASELINE_OPTIONS} fake-pkg")
+    end
+  end
+end

@@ -809,6 +809,11 @@ module Krikri
           end
         end
       when "latest"
+        wildcard_latest = names == ["*"]
+        # Ansible's check-mode twin of the bare upgrade-all goal reads the
+        # WHOLE upgrade set, so check-update runs without a name spec; a
+        # named spec keeps its own.
+        check_arg = wildcard_latest ? "" : " #{shell_pkg}"
         if @check_mode
           # check-update returns 100 if updates are available. The old
           # `dnf check-update X || yum check-update X` swallowed dnf's
@@ -818,9 +823,9 @@ module Krikri
           # fall through to yum when dnf itself failed (e.g. not
           # installed); yum's own 100 then propagates as the exit code.
           check_update = remote_exec(
-            "dnf check-update #{shell_pkg}; rc=$?; " \
+            "dnf check-update#{check_arg}; rc=$?; " \
             "if [ $rc -eq 100 ]; then exit 100; fi; " \
-            "if [ $rc -ne 0 ]; then yum check-update #{shell_pkg} || exit $?; fi"
+            "if [ $rc -ne 0 ]; then yum check-update#{check_arg} || exit $?; fi"
           )
           if check_update[:exit_code] == 100
             return PluginResult.new(
@@ -837,7 +842,26 @@ module Krikri
           end
         end
 
-        update_result = remote_exec("dnf install -y #{shell_pkg} || yum install -y #{shell_pkg}")
+        # Ansible's `package:` module delegates straight to
+        # ansible.builtin.dnf, and dnf.py routes this exact form through a
+        # bare base.upgrade_all() on the Python API - an upgrade, never an
+        # install of the glob. That API's Base() never reads
+        # /etc/dnf/dnf.conf, so conf.best stays False there and conflicting
+        # updates are silently dropped (task ends changed, rc 0); the CLI
+        # this compound runs does read dnf.conf, Rocky ships best=True in
+        # it, and the bare CLI upgrade then dies with a Depsolve Error the
+        # Python path never sees - --nobest reproduces the API's own
+        # resolution. Same root cause plugins/dnf.cr's handle_upgrade_all
+        # already fixed (issue #299). The gpg_opt carries the same forcing
+        # dnf.py makes for this module (`conf.localpkg_gpgcheck = not
+        # disable_gpg_check` - the "present" branch above has the
+        # URL-package rationale).
+        update_result = if wildcard_latest
+                          gpg_opt = true?(@params["disable_gpg_check"]?) ? "--nogpgcheck" : "--setopt=localpkg_gpgcheck=1"
+                          remote_exec("dnf upgrade -y #{gpg_opt} --nobest || yum upgrade -y #{gpg_opt} --nobest")
+                        else
+                          remote_exec("dnf install -y #{shell_pkg} || yum install -y #{shell_pkg}")
+                        end
         # Real ansible fails `state: latest` for unresolvable specs exactly
         # like `state: present` (msg "Failed to install some of the
         # specified packages", failures ["No package libpng12 available."],

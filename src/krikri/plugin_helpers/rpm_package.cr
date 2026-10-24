@@ -1183,7 +1183,14 @@ module Krikri
       end
 
       private def handle_upgrade_all : PluginResult
-        options = build_dnf_options
+        # ansible's dnf.py resolves `name: '*'` + `state: latest` via a bare
+        # base.upgrade_all() on the Python API, whose Base() never reads
+        # /etc/dnf/dnf.conf, so conf.best is False whatever `nobest` says
+        # (the `conf.best = not self.nobest` forcing is per-package-spec
+        # only). With best unset, conflicting updates are silently dropped
+        # and the task succeeds; the CLI would pick up Rocky's dnf.conf
+        # best=True and die with a Depsolve Error (issue #299).
+        options = build_dnf_options(force_nobest: true)
         cmd = "#{pkg_manager_binary} upgrade #{options}"
 
         result = remote_exec_tolerating_unknown_repo(cmd)
@@ -1207,7 +1214,7 @@ module Krikri
         output.each_line.map(&.strip).select { |line| line.starts_with?("Upgraded:") || line.starts_with?("Installed:") }.reject(&.empty?).to_a
       end
 
-      private def build_dnf_options : String
+      private def build_dnf_options(force_nobest : Bool = false) : String
         options = [] of String
 
         # Always use -y for non-interactive
@@ -1277,16 +1284,24 @@ module Krikri
           options << "--allowerasing"
         end
 
-        # Best (default in dnf, but explicit is good). ansible-core's
-        # dnf module has only `nobest` in its shared yumdnf argument spec
-        # (`conf.best = not self.nobest`, verified in ansible-core's own
-        # dnf.py _configure_base) - there is no `best:` parameter (one was
-        # invented here briefly and had to go, Ansible rejects it as
-        # an unsupported parameter), and the documented default is "set by
-        # the operating system distribution", so nothing is emitted when
-        # it is not given - the historical unconditional `--best` (dnf's
-        # own built-in default) is kept for that case.
-        if nobest = @params["nobest"]?
+        # Best/nobest. ansible-core's dnf module exposes only `nobest` in
+        # the shared yumdnf argument spec - there is no `best:` parameter
+        # (one was invented here briefly and had to go, Ansible rejects
+        # it as an unsupported parameter) - and its best handling is
+        # asymmetric: _configure_base only drives conf.best down (an
+        # explicit nobest: true gives `conf.best = 0`), while the
+        # per-package-spec branch forces `conf.best = not self.nobest`
+        # explicitly so a named install/upgrade never runs best-less. So
+        # on these paths an explicit nobest: false means "resolve with
+        # best", which the CLI already spells --best (dnf's own built-in
+        # default when dnf.conf leaves it alone) - kept for the not-given
+        # case too - and nobest: true maps to --nobest. The one dnf.py
+        # goal with no forcing at all, the bare upgrade_all, is pinned
+        # --nobest through force_nobest instead (see handle_upgrade_all
+        # for why no nobest value ever turns that path back to --best).
+        if force_nobest
+          options << "--nobest"
+        elsif nobest = @params["nobest"]?
           options << (true?(nobest) ? "--nobest" : "--best")
         elsif !true?(@params["skip_broken"]?)
           options << "--best"
