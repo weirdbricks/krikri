@@ -99,6 +99,29 @@ describe "undefined loop item cause stanza origin" do
     FileUtils.rm_rf(src_dir) if src_dir
   end
 
+  it "pins a block-list flow-mapping element at the failing scalar's opening quote" do
+    src_dir = File.tempname("loop-undef-origin-flowmap")
+    Dir.mkdir_p(src_dir)
+    text = run_playbook(src_dir, <<-YAML)
+      ---
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: Flow mapping element
+            ansible.builtin.debug:
+              msg: "{{ item.line_value }}"
+            with_items:
+              - { pattern: '^Port.*', line_value: 'Port {{ sshd_port }}', insertafter: '^#Port.*' }
+      YAML
+
+    playbook = File.expand_path(File.join(src_dir, "pb.yml"))
+    text.must_include("[ERROR]: Task failed: 'sshd_port' is undefined")
+    text.must_include("Origin: #{playbook}:10:45")
+  ensure
+    FileUtils.rm_rf(src_dir) if src_dir
+  end
+
   it "matches element names on word boundaries" do
     # The issue's defining repro: with an element already referencing the
     # LONGER name, the failing `group_git_cloning` element must win - and
