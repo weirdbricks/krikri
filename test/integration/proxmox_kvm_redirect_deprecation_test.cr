@@ -116,6 +116,13 @@ describe "community.general.proxmox_kvm deprecation" do
     output.includes?("[DEPRECATION WARNING]").must_equal(false)
   end
 
+  it "warns for community.general.proxmox too (engonzal.proxmoxct round)" do
+    Krikri::PlaybookParser.redirect_deprecation_text("community.general.proxmox").must_equal(
+      "community.general.proxmox has been deprecated. " \
+      "The proxmox content has been moved to community.proxmox. " \
+      "This feature will be removed from collection 'community.general' version 15.0.0.")
+  end
+
   it "carries the moved-content msg, collection and removal version in the result entry" do
     text = Krikri::PlaybookParser.redirect_deprecation_text("community.general.proxmox_kvm")
     text.must_equal(
