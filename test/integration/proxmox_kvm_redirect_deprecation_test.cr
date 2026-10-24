@@ -123,6 +123,14 @@ describe "community.general.proxmox_kvm deprecation" do
       "This feature will be removed from collection 'community.general' version 15.0.0.")
   end
 
+  it "warns for community.windows.win_audit_policy_system" do
+    Krikri::PlaybookParser.redirect_deprecation_text("community.windows.win_audit_policy_system").must_equal(
+      "community.windows.win_audit_policy_system has been deprecated. " \
+      "win_audit_policy_system will be removed in a future release of this collection. " \
+      "Use ansible.windows.win_audit_policy_system instead. " \
+      "This feature will be removed from collection 'community.windows' version 4.0.0.")
+  end
+
   it "carries the moved-content msg, collection and removal version in the result entry" do
     text = Krikri::PlaybookParser.redirect_deprecation_text("community.general.proxmox_kvm")
     text.must_equal(
