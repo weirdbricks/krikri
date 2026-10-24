@@ -51,4 +51,17 @@ describe "openssh_keypair backend selection" do
       "256, 384 or 521 bits. Attempting to use bit lengths other than these three values for ECDSA keys " \
       "will cause the module to fail.")
   end
+
+  it "reports public_key without the comment" do
+    work = PluginSpecHelper.tmp_path("keypair-pubkey-comment")
+    Dir.mkdir_p(work)
+
+    result = PluginSpecHelper.run("openssh_keypair", {
+      "path"    => File.join(work, "id_test"),
+      "type"    => "ed25519",
+      "comment" => "Created by ansible",
+    })
+    result["comment"].as_s.must_equal("Created by ansible")
+    result["public_key"].as_s.split(' ').size.must_equal(2)
+  end
 end
