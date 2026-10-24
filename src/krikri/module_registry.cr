@@ -652,6 +652,7 @@ module Krikri
       "community.mysql.mysql_role"        => {warning_text: "Use ansible.mysql.mysql_role instead.", collection: "community.mysql", version: "6.0.0"},
       "community.mysql.mysql_user"        => {warning_text: "Use ansible.mysql.mysql_user instead.", collection: "community.mysql", version: "6.0.0"},
       "community.mysql.mysql_variables"   => {warning_text: "Use ansible.mysql.mysql_variables instead.", collection: "community.mysql", version: "6.0.0"},
+      "community.general.proxmox"         => {warning_text: "The proxmox content has been moved to community.proxmox.", collection: "community.general", version: "15.0.0"},
       "community.general.proxmox_kvm"     => {warning_text: "The proxmox content has been moved to community.proxmox.", collection: "community.general", version: "15.0.0"},
     }
 
