@@ -7,6 +7,11 @@ private def sc_path(name : String) : String
 end
 
 describe "script plugin" do
+  # Real's script ACTION captures stdout/stderr and returns them
+  # UNSTRIPPED (ansible-core 2.19.11, live-verified): unlike the command
+  # module (strip_empty_ends: true), the trailing "\n" survives. Every
+  # exact stdout/stderr assertion below pins the untouched trailing
+  # newline to lock that against regression.
   it "executes a script and captures its stdout" do
     path = sc_path("script_echo.sh")
     File.write(path, "#!/bin/sh\necho hello-from-script\n")
@@ -16,7 +21,7 @@ describe "script plugin" do
 
     falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
     result["changed"].as_bool.must_equal(true)
-    result["stdout"].as_s.must_equal("hello-from-script")
+    result["stdout"].as_s.must_equal("hello-from-script\n")
     result["rc"].as_i.must_equal(0)
   end
 
@@ -27,7 +32,7 @@ describe "script plugin" do
 
     result = PluginSpecHelper.run("script", {"cmd" => "#{path} one two"})
 
-    result["stdout"].as_s.must_equal("got: one two")
+    result["stdout"].as_s.must_equal("got: one two\n")
   end
 
   it "reports failed: true for a non-zero exit code" do
@@ -60,7 +65,7 @@ describe "script plugin" do
 
     result = PluginSpecHelper.run("script", {"cmd" => path, "executable" => "/usr/bin/env python3"})
 
-    result["stdout"].as_s.must_equal("via-interpreter")
+    result["stdout"].as_s.must_equal("via-interpreter\n")
   end
 
   it "skips without running the script under _ansible_check_mode" do
@@ -166,7 +171,7 @@ describe "script plugin" do
     result = PluginSpecHelper.run("script", {"_raw_params" => path})
 
     falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
-    result["stdout"].as_s.must_equal("from-raw-params")
+    result["stdout"].as_s.must_equal("from-raw-params\n")
   end
 
   it "fails with the required_one_of message when neither cmd: nor _raw_params: is given" do

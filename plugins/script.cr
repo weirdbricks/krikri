@@ -28,6 +28,8 @@
 
 require "json"
 require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/ansible_splitlines"
+require "../src/krikri/plugin_helpers/script_pty_capture"
 
 module Krikri
   class ScriptPlugin < BasePlugin
@@ -58,6 +60,7 @@ module Krikri
       # any remote chmod/exec side effect.
       if true?(@params["_ansible_check_mode"]?)
         if skip = skip_reason
+          cleanup
           return skip
         end
 
@@ -71,6 +74,7 @@ module Krikri
       end
 
       if skip = skip_reason
+        cleanup
         return skip
       end
 
@@ -88,18 +92,59 @@ module Krikri
       invocation += " #{args}" if args
       invocation = "cd #{shell_quote(chdir)} && #{invocation}" if chdir
 
+      # Remote staging (executor-side) opts this run into a simulated
+      # ssh -tt session: real's script action runs the staged file via
+      # _low_level_execute_command with in_data=nil, so its ssh plugin
+      # requests `-tt` (ssh.py: `if not in_data and sudoable and
+      # use_tty: args = ('-tt', ...)`) and the remote shell gets ONE pty
+      # on stdout AND stderr. Wrapping the invocation so one pipe carries
+      # both streams reproduces that merge in true execution order; the
+      # \n->\r\n translation and the client's own close notice are
+      # applied to the capture below (ScriptPtyCapture's header carries
+      # the live-verified evidence). A locally-run script takes neither:
+      # real's LOCAL connection never forces a tty, capturing the two
+      # streams separately - which the markerless path already does.
+      # .presence (not truthiness): a blank marker must behave as "no
+      # marker exists" rather than a pty merge against an empty address.
+      remote_addr = @params["__script_ssh_addr"]?.presence
+      if remote_addr
+        invocation = "{ #{invocation}; } 2>&1"
+      end
+
       result = remote_exec(invocation)
       cleanup
 
-      stdout = result[:stdout].rstrip("\r\n")
-      stderr = result[:stderr].rstrip("\r\n")
-      # Ansible 2.19.11 registered order (live-verified, `{{ r | to_json }}`):
-      # rc, stdout, stdout_lines, stderr, stderr_lines, changed - the
-      # executor's failed: false backfill lands after changed. The script
-      # action plugin builds stdout_lines/stderr_lines itself (module-side
-      # here), which both places them between stdout/stderr and changed
-      # and stops the register-time lines augmentation from appending
-      # them after `failed`.
+      # Real's script ACTION returns the module capture untouched - no
+      # trailing-strip of its own (unlike the command MODULE's
+      # strip_empty_ends: true default): live-verified 2.19.11 shows
+      # local stdout/stderr keeping their final "\n" and the remote pty
+      # keeping the trailing "\r\n". When the marker is present,
+      # result[:stdout] is the 2>&1 ONE-stream capture: its \n->\r\n
+      # rendered form ships as stdout, while the stdout lines come off
+      # the raw capture - Python's str.splitlines on the CRLF text
+      # (dropping both halves of each "\r\n") is byte-equal to
+      # splitting the raw "\n" capture. The remote stderr is openssh's
+      # own close notice alone (everything remote-side rode the pty into
+      # stdout); its only lines entry drops the attached "\r\n" the way
+      # str.splitlines would.
+      if remote_addr
+        stdout = PluginHelpers::ScriptPtyCapture.pty_stdout(result[:stdout])
+        stderr = PluginHelpers::ScriptPtyCapture.connection_closed_stderr(remote_addr)
+        stdout_lines = PluginHelpers::AnsibleSplitlines.split(result[:stdout])
+        stderr_lines = [stderr.rstrip("\r\n")]
+      else
+        stdout = result[:stdout]
+        stderr = result[:stderr]
+        # Ansible 2.19.11 registered order (live-verified, `{{ r | to_json }}`):
+        # rc, stdout, stdout_lines, stderr, stderr_lines, changed - the
+        # executor's failed: false backfill lands after changed. The script
+        # action plugin builds stdout_lines/stderr_lines itself (module-side
+        # here), which both places them between stdout/stderr and changed
+        # and stops the register-time lines augmentation from appending
+        # them after `failed`.
+        stdout_lines = PluginHelpers::AnsibleSplitlines.split(stdout)
+        stderr_lines = PluginHelpers::AnsibleSplitlines.split(stderr)
+      end
       PluginResult.new(
         changed: true,
         failed: result[:exit_code] != 0,
@@ -107,18 +152,30 @@ module Krikri
         stdout: stdout,
         stderr: stderr,
         rc: result[:exit_code],
-        stdout_lines: PluginHelpers::AnsibleSplitlines.split(stdout),
-        stderr_lines: PluginHelpers::AnsibleSplitlines.split(stderr),
+        stdout_lines: stdout_lines,
+        stderr_lines: stderr_lines,
         key_order: %w[rc stdout stdout_lines stderr stderr_lines changed]
       )
     end
 
-    # Removes the SCP-staged copy left behind by TaskExecutor#
+    # Removes the staged copy left behind by TaskExecutor#
     # stage_script_src (marker only set for a real remote connection - a
     # local-connection run points `cmd` straight at the real controller-
-    # side script, never staged, and must not be deleted).
+    # side script, never staged, and must not be deleted). New-style
+    # staging notes the whole per-task tmp dir (ansible's own action
+    # removes the WRAPPED dir, not just the file), so the removed tree
+    # is that dir. Old-style runs (only the file was noted) strip just
+    # the file.
     private def cleanup : Nil
       return unless true?(@params["__cleanup_after_script"]?)
+      # The whole per-task dir - ansible's script.py cleans self._shell
+      # .tmpdir in its run()'s finally clause, not the file alone, so the
+      # dir and its tree leave no trace either.
+      tmp_dir = @params["__script_tmp_dir"]?
+      if tmp_dir && !tmp_dir.empty?
+        remote_exec("rm -rf #{shell_quote(tmp_dir)}")
+        return
+      end
       script_path = (@params["cmd"]? || @params["_raw_params"]? || "").strip.split(/\s+/, 2).first?
       remote_exec("rm -f #{shell_quote(script_path)}") if script_path
     end
