@@ -14754,3 +14754,13 @@ Local probe roles, not Galaxy roles: each probed task registers its result and d
 | `indigo-dc.spark-mesos` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29881034, 0.9.1916 debug). |
 | `tomi77.grunt` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29881039, 0.9.1916 debug). |
 | `wesmarcum.sudo` | rocky | ✅ Clean (round29881037, 0.9.1916 debug). |
+| `danvaida.letsencrypt` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29881042, 0.9.1916 debug). |
+| `davidalger.rabbitmq` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29881043, 0.9.1916 debug). |
+| `derbunman.debuild` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29881048, 0.9.1916 debug). |
+| `jumperfly.kubelet` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29881041, 0.9.1916 debug). |
+| `jumperfly.root_ca` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29881040, 0.9.1916 debug). |
+| `mablanco.lynis` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29881047, 0.9.1916 debug). |
+| `mrlesmithjr.maas` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29881044, 0.9.1916 debug). |
+| `pgvillage.chainsmith` | ubuntu | ❌ Divergent - issue #322 (round29881045, 0.9.1916 debug). |
+| `s2ansible.zabbix_host` | rocky | ❌ Divergent - issue #323 (round29881046, 0.9.1916 debug). |
+| `souenzzo.pathogit` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29881039, 0.9.1916 debug). |
