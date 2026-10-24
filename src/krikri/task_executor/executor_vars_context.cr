@@ -3173,20 +3173,22 @@ module Krikri
         l3 = cm[1] + "."
       end
 
-      # A block-style MAPPING param chains one level DEEPER still
+      # A block-style MAPPING or LIST param chains one level DEEPER still
       # (ansible-core 2.19.11 live-captured on issue #265,
-      # opichon.mysql-backup's docker_container env): the params stanza
-      # shortens to "Error while resolving value for 'K'." with Origin at
-      # the mapping's FIRST key, and a fourth stanza holds the plain
-      # "'V' is undefined" with Origin at the failing value token's first
-      # character (quote included). Only the plain-undefined message on a
-      # genuinely block-style param takes this turn: a flow value (text
-      # after `K:`), a `- ` entry under the key and a mapping without a
-      # `{{ }}` value naming V keep the param's own origin and the
-      # three-stanza block. The var-definition chain above stays ahead: a
-      # var whose own definition bottoms out at the same message is
-      # ansible's OTHER fourth-stanza shape (issue #36) - when that
-      # stanza applies, this one does not.
+      # opichon.mysql-backup's docker_container env, and issue #323,
+      # s2ansible.zabbix_host's local_action zabbix_host host_groups):
+      # the params stanza shortens to "Error while resolving value for
+      # 'K'." with Origin at the block's FIRST entry line (a mapping key
+      # or a list's dash, column = indent+1), and a fourth stanza holds
+      # the plain "'V' is undefined" with Origin at the failing value
+      # token's first character (quote included). Only the
+      # plain-undefined message on a genuinely block-style param takes
+      # this turn: a flow value (text after `K:`) and a block whose
+      # entries never name V inside a `{{ }}` span keep the param's own
+      # origin and the three-stanza block. The var-definition chain above
+      # stays ahead: a var whose own definition bottoms out at the same
+      # message is ansible's OTHER fourth-stanza shape (issue #36) - when
+      # that stanza applies, this one does not.
       mapping_key_pos : {Int32, Int32}? = nil
       mapping_val_stanza : String? = nil
       if chain_stanza.nil? &&
@@ -3292,22 +3294,28 @@ module Krikri
     end
 
     # Stanza 3 and 4's Origins for an undefined failure under a
-    # block-style MAPPING param: the mapping's FIRST entry line (column =
-    # indent+1 - ansible-core 2.19.11 points stanza 3 there, not at the
-    # `K:` key itself, live-captured on issue #265's failing
-    # docker_container env block) and the failing value token's first
-    # character (stanza 4, quote included - the column formula
-    # locate_param_key_position applies, so aligning whitespace before
-    # the value is skipped like issue #241's). Returns nil - and the
-    # previous three-stanza block - unless every gate the behaviour
-    # depends on matches: the `K:` line carries nothing after its colon
-    # (whitespace or a comment only - a flow value keeps the param's own
-    # value position), the next non-blank line is deeper than the key and
-    # a mapping entry (not a `- ` list item - the list is ansible's param
-    # level, never a mapping key nested under it), and inside the block
-    # (entries until indentation returns to the key's level) the first
-    # (or only) entry referencing V inside a `{{ }}` span locates the
-    # value token; no such entry keeps the param's own position.
+    # block-style MAPPING or LIST param: stanza 3's Origin is the block's
+    # FIRST entry line, column = indent+1 (a mapping's first key -
+    # ansible-core 2.19.11 live-captured on issue #265's failing
+    # docker_container env - or a list's dash itself, live-captured on
+    # issue #323's host_groups at main.yml:11:9), and stanza 4's is the
+    # failing value token's first character (quote included - the column
+    # formula locate_param_key_position applies, so aligning whitespace
+    # before the value is skipped like issue #241's). For a mapping
+    # entry the token follows the entry's key+colon; for a list item it
+    # follows the "- " marker itself (issue #323: `- "{{ var }}"` ->
+    # column 11, the quote). Returns nil - and the previous three-stanza
+    # block - unless every gate the behaviour depends on matches: the
+    # `K:` line carries nothing after its colon (whitespace or a comment
+    # only - a flow value keeps the param's own value position), the
+    # next non-blank line is deeper than the key (a `- ` first entry
+    # makes it a LIST param - the list is ansible's param level, never
+    # mapping keys nested under it), and inside the block (entries until
+    # indentation returns to the key's level) the first line whose
+    # `{{ }}` span references V locates its token (a list item's own
+    # dash line only - deeper structure under an item has no live-captured
+    # token position yet, so it keeps scanning); no such line keeps the
+    # param's own position.
     private def mapping_value_failure_origin(lines : Array(String), from_idx : Int32, key : String, var : String) : ({ {Int32, Int32}, {Int32, Int32} } | Nil)
       key_needle = /#{Regex.escape(key)}[ \t]*:/
       key_indent = 0
@@ -3328,6 +3336,7 @@ module Krikri
       end
 
       first_entry_idx = nil
+      list_param = false
       if kl = key_line_idx
         eidx = kl + 1
         while eidx < lines.size
@@ -3336,7 +3345,8 @@ module Krikri
             eidx += 1
             next
           end
-          break unless (line.size - line.lstrip.size) > key_indent && !line.lstrip.starts_with?("- ")
+          break unless (line.size - line.lstrip.size) > key_indent
+          list_param = line.lstrip.starts_with?("- ")
           first_entry_idx = eidx
           break
         end
@@ -3353,16 +3363,28 @@ module Krikri
           eidx += 1
           next
         end
-        # The mapping's own entries end where indentation returns to the
+        # The param's own entries end where indentation returns to the
         # `K:` key's level - anything at or above it belongs to the task
         # (the module's next param, ignore_errors, the next task).
         return nil unless (line.size - line.lstrip.size) > key_indent
-        if template_span_refs_var?(line, var) && (colon = line.index(':'))
-          # The value token's first character after the entry's key+colon
-          # (quote included); deeper list-item entries carry no key and
-          # no token position to report, so they keep scanning.
-          value = line[(colon + 1)..]
-          return {key_origin, {eidx, colon + 1 + ((value.size - value.lstrip.size) + 1)}}
+        if template_span_refs_var?(line, var)
+          if list_param && line.lstrip.starts_with?("- ")
+            # The list item's own value token follows the "- " marker
+            # itself (issue #323: the quote at main.yml:11:11); aligning
+            # whitespace after the dash is skipped like a mapping
+            # entry's alignment before its value.
+            item_indent = line.size - line.lstrip.size
+            content = line.lstrip[2..]
+            value_col = item_indent + 2 + (content.size - content.lstrip.size) + 1
+            return {key_origin, {eidx, value_col}}
+          elsif !list_param && (colon = line.index(':'))
+            # The mapping-entry value token's first character after the
+            # entry's key+colon (quote included); deeper list-item
+            # entries carry no key and no token position to report, so
+            # they keep scanning.
+            value = line[(colon + 1)..]
+            return {key_origin, {eidx, colon + 1 + ((value.size - value.lstrip.size) + 1)}}
+          end
         end
         eidx += 1
       end
