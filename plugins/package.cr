@@ -927,6 +927,17 @@ module Krikri
       names.each do |requested|
         base_name = requested.split('=').first
         return base_name if missing.includes?(base_name)
+        # apt-get consumes a trailing '+' as its install modifier
+        # (`apt-get install foo+` forces installing foo), so a name ending
+        # in '+' fails as the name WITHOUT its last character: for
+        # `gcc-c++` the stderr holds "E: Unable to locate package gcc-c+",
+        # one '+' gone. Accepting that stripped token keeps the walk on
+        # ansible's list order - issue #288's [gcc, re2c, gcc-c++, ...,
+        # bison-devel] list used to fall past gcc-c++ (whose stripped
+        # token was the only name in the stderr) and report the later
+        # bison-devel, while apt.py resolves names in list order and
+        # fails the compile first on gcc-c++.
+        return base_name if base_name.ends_with?("+") && missing.includes?(base_name[0..-2])
       end
       nil
     end

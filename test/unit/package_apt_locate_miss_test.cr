@@ -145,3 +145,47 @@ describe "package:/apt locate-miss failure shape (issues 194 and 195)" do
     end
   end
 end
+
+# Issue #288: apt-get consumes a trailing '+' as its install modifier
+# (`apt-get install foo+` forces installing foo), so a '+'-suffixed
+# requested name fails on stderr as the name with exactly one '+'
+# stripped - `gcc-c++` fails as "E: Unable to locate package gcc-c+" -
+# while ansible's apt.py resolves the literal `gcc-c++` against the
+# cache in list order and fails that name. Missing-list matching must
+# therefore accept the one-'+'-shorter token AND still return the FULL
+# requested name, or the first-unresolvable walk skips gcc-c++ and
+# reports a later list member (bison-devel) instead.
+APT_PLUS_MODIFIER_STDERR = "E: Unable to locate package gcc-c+\n" \
+                           "E: Couldn't find any package by glob 'gcc-c+'\n" \
+                           "E: Couldn't find any package by regex 'gcc-c+'\n" \
+                           "E: Unable to locate package bison-devel\n"
+
+describe "package:/apt plus-modifier name mapping (issue 288)" do
+  serial!
+
+  it "reports the full plus-suffixed name instead of the stripped token or a later list name" do
+    with_failing_apt_get_shim(APT_PLUS_MODIFIER_STDERR) do
+      # A literal YAML list (`name: [gcc-c++, bison-devel]`) reaches the
+      # plugin comma-joined (see package.cr's comma-split branch), so the
+      # walk sees the same two-name list ansibleparsers hand apt.py.
+      result = PluginSpecHelper.run("package",
+        {"name" => "gcc-c++,bison-devel", "state" => "present", "use" => "apt"})
+
+      result["failed"].as_bool.must_equal(true)
+      result["changed"].as_bool.must_equal(false)
+      result["msg"].as_s.must_equal("No package matching 'gcc-c++' is available")
+      result.as_h.has_key?("stderr").must_equal(false)
+    end
+  end
+
+  it "reports the full plus-suffixed name for state: latest" do
+    with_failing_apt_get_shim(APT_PLUS_MODIFIER_STDERR) do
+      result = PluginSpecHelper.run("package",
+        {"name" => "gcc-c++", "state" => "latest", "use" => "apt"})
+
+      result["failed"].as_bool.must_equal(true)
+      result["msg"].as_s.must_equal("No package matching 'gcc-c++' is available")
+      result.as_h.has_key?("stderr").must_equal(false)
+    end
+  end
+end
