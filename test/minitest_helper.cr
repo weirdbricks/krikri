@@ -1,3 +1,4 @@
+require "./temp_cleanup"
 require "minitest/autorun"
 require "file_utils"
 require "json"
