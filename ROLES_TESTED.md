@@ -14714,3 +14714,13 @@ Local probe roles, not Galaxy roles: each probed task registers its result and d
 | `macstadium.osx_ci` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29880722, 0.9.1908 release). Times: cold py 2.52s vs cr 1.09s; warm py 2.13s vs cr 0.15s. |
 | `pinkeen.user-cronjobs` | rocky | ✅ Clean (round29880723, 0.9.1908 release). Times: cold py 2.12s vs cr 0.84s; warm py 1.81s vs cr 0.15s. |
 | `vbotka.freebsd_mailserver` | rocky | ⚠ only a community module krikri does not track differs (round29880725, 0.9.1908 release). Times: cold py 56.59s vs cr 0.88s; warm py 56.21s vs cr 0.18s. |
+| `Open-Future-Belgium.Zabbix-Agent` | ubuntu | ❌ Divergent - issue #315 (round29880728, 0.9.1908 release). Times: cold py 0.44s vs cr 0.02s; warm py 0.45s vs cr 0.01s. |
+| `andrewrothstein.flask` | ubuntu | ✅ Clean (round29880734, 0.9.1908 release). Times: cold py 2.77s vs cr 0.69s; warm py 2.38s vs cr 0.11s. |
+| `bodsch.dhcpd` | rocky | ❌ Divergent - issue #316 (round29880731, 0.9.1908 release). Times: cold py 18.71s vs cr 17.84s; warm py 18.53s vs cr 9.45s. |
+| `evogalaxy.java8` | ubuntu | ✅ Clean (round29880732, 0.9.1908 release). Times: cold py 103.85s vs cr 99.13s; warm py 5.18s vs cr 1.27s. |
+| `grycap.influxdb` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29880727, 0.9.1908 release). Times: cold py 21.80s vs cr 20.46s; warm py 3.04s vs cr 0.30s. |
+| `lukaspustina.unix_users` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29880733, 0.9.1908 release). Times: cold py 0.46s vs cr 0.01s; warm py 0.49s vs cr 0.01s. |
+| `notmycloud.yaml2ini` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29880726, 0.9.1908 release). Times: cold py 2.68s vs cr 0.72s; warm py 3.40s vs cr 0.11s. |
+| `rnodec.keepalived` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29880730, 0.9.1908 release). Times: cold py 6.09s vs cr 5.68s; warm py 3.05s vs cr 0.36s. |
+| `tychobrouwer.nordvpn` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29880735, 0.9.1908 release). Times: cold py 6.37s vs cr 243.16s; warm py 11.73s vs cr 5.01s. |
+| `udelarinterior.nfs_server` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29880729, 0.9.1908 release). Times: cold py 2.82s vs cr 1.02s; warm py 2.19s vs cr 0.27s. |
