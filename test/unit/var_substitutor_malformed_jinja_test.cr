@@ -43,6 +43,18 @@ describe "Krikri::VarSubstitutor (var_substitutor_malformed_jinja_test.cr)" do
       sub.substitute("{% if true %}a{% endif %}", strict: true).must_equal("a")
     end
 
+    it "raises on a {% do %} tag in strict mode like ansible's env without jinja2.ext.do (#322)" do
+      sub = Krikri::VarSubstitutor.new(vars: jvars({"o" => "root"}))
+      assert_raises_message(Krikri::VariableSubstitutor::TemplateSyntaxError,
+        "Syntax error in template: Encountered unknown tag 'do'. Jinja was looking for the following tags: 'endfor' or 'else'. The innermost block that needs to be closed is 'for'.") do
+        sub.substitute("{% set l = [] %}{% for i in [1] %}{% do l.append(i) %}{% endfor %}{{ l }}", strict: true)
+      end
+      assert_raises_message(Krikri::VariableSubstitutor::TemplateSyntaxError, "Syntax error in template: Encountered unknown tag 'do'.") do
+        sub.substitute("{% do o %}", strict: true)
+      end
+      sub.substitute("{% raw %}{% do x %}{% endraw %}{{ '{% do x %}' }}", strict: true).must_equal("{% do x %}{% do x %}")
+    end
+
     it "still renders a valid dict-literal span whose body contains braces" do
       sub = Krikri::VarSubstitutor.new(vars: jvars({"v" => "x"}))
       sub.substitute("{{ {\"a\": 1} }} {{ v }}").must_equal("{\"a\":1} x")

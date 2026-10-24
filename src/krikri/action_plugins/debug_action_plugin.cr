@@ -140,6 +140,10 @@ module Krikri
 
       begin
         rendered = unsafe ? var_value : render_lazy_templates(var_value)
+      rescue ex : VariableSubstitutor::TemplateSyntaxError
+        # Ansible wraps a compile failure of the looked-up value in its
+        # `var` expression framing (live-verified, issue #322).
+        return ActionResult.failure("Error while resolving `var` expression: #{ex.message}")
       rescue ex
         return ActionResult.failure(ex.message || "templating var '#{var_name}' failed")
       end
@@ -166,6 +170,12 @@ module Krikri
       when String
         raw = value.as_s
         return value if UnsafeValues.unsafe_text?(raw)
+        # A `{% do %}` tag fails ansible's compile of the value even when
+        # the text has no `{{ }}` span, so the lazy-render gate below must
+        # not let it through.
+        if (do_error = Krikri::TemplateDoTagScanner.do_tag_error(raw))
+          raise VariableSubstitutor::TemplateSyntaxError.new("Syntax error in template: #{do_error}")
+        end
         return value unless raw.includes?("{{")
         # A string leaf that is WHOLLY one `{{ expr }}` span keeps the
         # expression's structured value: ansible-core's Templar templates

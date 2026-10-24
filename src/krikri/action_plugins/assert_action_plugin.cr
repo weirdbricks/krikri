@@ -144,7 +144,10 @@ module Krikri
         # the plugin uncaught and killed the whole process (found via
         # adarnimrod.apache's ca-store Assertions preflight).
         return that_index_error("Task failed: Syntax error in expression: #{ex.message}", current_index)
-      rescue ex : RenderExpressionError
+      rescue ex : RenderExpressionError | VariableSubstitutor::TemplateSyntaxError
+        # A `{% do %}` tag inside a variable the `that:` item reads is a
+        # compile-time syntax error in ansible: the task fails cleanly
+        # with that message instead of the process dying (issue #322).
         return that_index_error("Task failed: #{ex.message}", current_index)
       rescue ex : FilterPluginError | TestPluginError
         # A test/filter plugin's RUNTIME failure inside a `that:` item
