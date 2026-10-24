@@ -14586,7 +14586,7 @@ Local probe roles, not Galaxy roles: each probed task registers its result and d
 | `pogosoftware.etcd` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29880176, 0.9.1889 release). Times: cold py 1.01s vs cr 0.48s; warm py 0.57s vs cr 0.01s. |
 | `ppouliot.ansible_bootstrap` | ubuntu | ❌ Divergent - issue #298 (round29880204, 0.9.1889 release). Times: cold py 43.33s vs cr 20.22s; warm py 25.27s vs cr 15.63s. |
 | `queeno.uchiwa` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29880172, 0.9.1889 release). Times: cold py 6.80s vs cr 4.45s; warm py 4.82s vs cr 1.04s. |
-| `robertdebock_cve_2018_19788` | ubuntu | ❌ BLOCKED: (round29880173, 0.9.1889 release). |
+| `robertdebock_cve_2018_19788` | ubuntu | ❌ BLOCKED: (round29881338, 0.9.1921 debug). |
 | `robertdebock.f5_ltm` | ubuntu | ✅ Clean (round29880158, 0.9.1889 release). Times: cold py 2.19s vs cr 0.80s; warm py 1.85s vs cr 0.14s. |
 | `robertdebock.libvirt` | ubuntu | ✅ Clean (round29880186, 0.9.1889 release). Times: cold py 72.78s vs cr 57.03s; warm py 10.17s vs cr 1.54s. |
 | `robertdebock.revealmd` | rocky | ✅ Clean (round29880199, 0.9.1889 release). Times: cold py 25.52s vs cr 24.89s; warm py 4.24s vs cr 0.32s. |
@@ -14794,3 +14794,12 @@ Local probe roles, not Galaxy roles: each probed task registers its result and d
 | `weareinteractive.postfix` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29881223, 0.9.1919 release). Times: cold py 0.47s vs cr 0.01s; warm py 0.48s vs cr 0.01s. |
 | `wtanaka.docker` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29881224, 0.9.1919 release). Times: cold py 0.44s vs cr 0.02s; warm py 0.43s vs cr 0.01s. |
 | `xcezx.httpd` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29881225, 0.9.1919 release). Times: cold py 0.48s vs cr 0.01s; warm py 0.56s vs cr 0.01s. |
+| `f500.php8` | ubuntu | ✅ Clean (round29881346, 0.9.1921 debug). |
+| `freehck.sleep` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29881344, 0.9.1921 debug). |
+| `hax0rbana_adam.git_website` | rocky | ❌ Divergent - issue #326 (round29881347, 0.9.1921 debug). |
+| `hudecof.users` | rocky | ✅ Clean (round29881341, 0.9.1921 debug). |
+| `jebovic.ohmyzsh` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29881345, 0.9.1921 debug). |
+| `joenyland.sudo` | ubuntu | ✅ Clean (round29881340, 0.9.1921 debug). |
+| `lotusnoir.apps_wazuh_agent` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29881339, 0.9.1921 debug). |
+| `nicolai86.rails-deployment` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29881342, 0.9.1921 debug). |
+| `xiaopal.npc_setup` | rocky | ❌ Divergent - issue #327 (round29881343, 0.9.1921 debug). |
