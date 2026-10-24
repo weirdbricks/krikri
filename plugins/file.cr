@@ -710,7 +710,7 @@ module Krikri
       PluginResult.new(
         changed: false,
         failed: true,
-        msg: "src file does not exist, use \"force=yes\" if you really want to create the link: #{absrc}",
+        msg: "src file does not exist, use 'force=yes' if you really want to create the link: #{absrc}",
         path: path,
         src: src
       )

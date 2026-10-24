@@ -403,7 +403,7 @@ describe "file plugin" do
       result = PluginSpecHelper.run("file", {"path" => link, "src" => target, "state" => "link"})
 
       result["failed"].as_bool.must_equal(true)
-      result["msg"].as_s.must_equal("src file does not exist, use \"force=yes\" if you really want to create the link: #{target}")
+      result["msg"].as_s.must_equal("src file does not exist, use 'force=yes' if you really want to create the link: #{target}")
       File.symlink?(link).must_equal(false)
     end
 
