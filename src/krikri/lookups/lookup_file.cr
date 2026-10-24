@@ -339,7 +339,9 @@ module Krikri
       end
 
       private def lookup_fileglob_glob(pattern : String) : String
-        Dir.glob(pattern).select { |path| File.file?(path) }.sort!.to_json
+        # No sort: Ansible's fileglob lookup returns glob.glob() results in
+        # raw readdir order, so sorting here would diverge from real output.
+        Dir.glob(pattern).select { |path| File.file?(path) }.to_json
       end
 
       private def evaluate_lookup_file_parsers(lookup_type : String?, parts : Array(String), kwargs : Array(String)) : String?
