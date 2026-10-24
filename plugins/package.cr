@@ -184,6 +184,21 @@ module Krikri
       # fine. Found via robertdebock.gnome on Rocky 9.6 (`gnome_
       # packages: ["@Server with GUI"]`, RedHat's own default).
       trimmed = name.strip
+      # A whole-span `{{ item }}`/`{{ var }}` name whose template's native
+      # result is the STRING "[]" arrives marked (NON_STRING_PARAM_PREFIX;
+      # see substitute_task_params) because its demoted wire text is the
+      # same plain "[]" a real empty-LIST name renders as, and the JSON
+      # bracket decode below would read both as an empty list and no-op
+      # ("Nothing to do"). ansible keeps the str a str: dnf receives name
+      # "[]" whole and fails the task with its own shape (live-verified:
+      # wangsha.ansible_role_lynis on rocky, round 29880205 - item "[]",
+      # msg "Failed to install some of the specified packages", failures
+      # ["No package [] available."], rc 1). Every other param and plugin
+      # demotes the marker back to the identical plain text, so this is
+      # the one consult; a marked value rides `name:` or its `pkg:` alias,
+      # whichever provided the name above.
+      native_name = @params.has_key?("name") ? non_string_param("name") : non_string_param("pkg")
+      marked_bracket_string = (native = native_name) && native.as_s? == "[]"
       # `names` is built directly per-branch (never re-derived by
       # re-splitting the space-joined `name` display string below) - a
       # group spec element containing a literal space (dnf's own
@@ -197,7 +212,9 @@ module Krikri
       # against this exact fix: still produced the original "Unable to
       # find a match: tools" bug the fix otherwise closes.
       names = [trimmed]
-      if trimmed.starts_with?('[') && trimmed.ends_with?(']')
+      # The marked STRING "[]" skips the bracket decode and keeps the
+      # one-element literal, via the final else below (no space in "[]").
+      if trimmed.starts_with?('[') && trimmed.ends_with?(']') && !marked_bracket_string
         parsed = begin
           Array(String).from_json(trimmed)
         rescue
