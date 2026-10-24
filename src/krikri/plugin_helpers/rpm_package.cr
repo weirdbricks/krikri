@@ -255,10 +255,24 @@ module Krikri
           # identical branch (see its own comment): ansible-core's
           # dnf/yum module never reports changed for a cache-only
           # refresh. Found via round172's buluma.rpmfusion.
+          # A failed refresh is ansible's fail_json from the libdnf
+          # metadata error: rc 1 and the changed/msg/rc/results shape,
+          # not the success shape's rc 0 (issue #301).
+          if result[:exit_code] != 0
+            return PluginResult.new(
+              changed: false,
+              failed: true,
+              msg: cache_failure_msg(result[:stderr]),
+              include_empty_msg: true,
+              results: [] of String,
+              rc: 1,
+              key_order: PluginHelpers::DnfInstallFailures::DNF_METADATA_FAILURE_ORDER
+            )
+          end
           return PluginResult.new(
             changed: false,
-            failed: result[:exit_code] != 0,
-            msg: result[:exit_code] == 0 ? cache_updated_msg : cache_failure_msg(result[:stderr]),
+            failed: false,
+            msg: cache_updated_msg,
             include_empty_msg: true,
             results: [] of String,
             rc: 0,
