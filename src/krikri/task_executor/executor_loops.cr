@@ -1226,6 +1226,22 @@ module Krikri
               end
               if missing
                 first_element_pos ||= pos
+                # A BLOCK-mapping element (`- key: "M2_HOME"` with the
+                # failing value on a deeper `value:` line) does not end at
+                # the dash line the way a scalar element does: ansible
+                # pins the caused-by Origin at the failing INNER scalar's
+                # value token, the opening quote of a quoted value or the
+                # first character of a plain one (live-verified vs
+                # 2.19.11, issue #314: `value: "{{ install_dir }}"` reports
+                # the `value:` line at the quote's column, and even an
+                # inline `- key: "{{ install_dir }}"` is pinned at that
+                # quote, not at the element start). Scan the element's own
+                # lines in order and keep the element start only when
+                # nothing in it references the missing name.
+                if block_mapping_element?(after_dash) &&
+                   (block_pos = first_block_mapping_missing_value(lines, val_idx, dash_idx, after_dash, missing))
+                  return block_pos
+                end
                 return pos if loop_element_references_missing?(after_dash, missing)
               else
                 return pos
@@ -1275,6 +1291,91 @@ module Krikri
         end
       end
       first_pos
+    end
+
+    # Is a block-sequence element's text a block mapping (`- key: value`,
+    # or `- key:` with the value nested deeper)? YAML makes any plain
+    # text carrying a `key:`-shaped colon a mapping entry, so the failing
+    # token can sit on a line other than the dash's - unlike a quoted or
+    # flow scalar (`- "x"`, `- { ... }`), which is all on one line.
+    private def block_mapping_element?(after_dash : String) : Bool
+      plain = after_dash.lstrip
+      return false if plain.empty? || plain[0].in?('"', '\'', '{', '[')
+      plain.includes?(": ") || plain.ends_with?(":")
+    end
+
+    # The failing value token inside a BLOCK-mapping loop element
+    # (`- key: "M2_HOME"` / `value: "{{ install_dir }}"`, issue #314):
+    # walks the element's own lines in order - the dash line's inline
+    # value plus every line indented deeper than the dash, until the next
+    # `- ` at dash indent or a dedent - because ansible templates the
+    # element's scalars in order and pins the caused-by Origin at the
+    # first one referencing the missing name (a quoted value at its
+    # opening quote, a plain one at its start, same token rules as the
+    # flow-map case, issue #312). nil when nothing in the element
+    # references the name, leaving the caller's element-start fallback in
+    # place.
+    private def first_block_mapping_missing_value(
+      lines : Array(String), val_idx : Int32, dash_idx : Int32, after_dash : String, missing : String,
+    ) : {Int32, Int32}?
+      ((val_idx)..(lines.size - 1)).each do |idx|
+        if idx == val_idx
+          text = after_dash.lstrip
+          next if text.empty?
+          col0 = dash_idx + 1 + (after_dash.size - after_dash.lstrip.size)
+        else
+          raw = lines[idx]
+          stripped = raw.strip
+          next if stripped.empty? || stripped.starts_with?("#")
+          break unless (raw.size - raw.lstrip.size) > dash_idx
+          text, col0 = block_mapping_element_line_value(stripped, raw.size - raw.lstrip.size)
+        end
+        if (offset = block_mapping_value_missing_offset(text, missing))
+          return {idx, col0 + offset + 1}
+        end
+      end
+      nil
+    end
+
+    # The value-token region of one element line, as (text, 0-based
+    # column of the text's first character): the payload after a nested
+    # `- ` entry dash, or the value side of a `key: value` line. A lone
+    # `-`, or a `key:` whose value is nested deeper, contributes no token
+    # on its own line, returned as an empty text.
+    private def block_mapping_element_line_value(stripped : String, indent : Int32) : {String, Int32}
+      text = stripped
+      col0 = indent
+      return {"", col0} if text == "-"
+      if text.starts_with?("- ")
+        dash_tail = text[2..]
+        lead = dash_tail.size - dash_tail.lstrip.size
+        col0 += 2 + lead
+        text = dash_tail.lstrip
+      end
+      # A plain `key:` (colon-space, or a colon at end of line) is a
+      # mapping entry and the pinned token lives in its value; anything
+      # else is the scalar itself.
+      colon_idx = text.index(": ")
+      colon_idx = text.size - 1 if colon_idx.nil? && text.ends_with?(":")
+      if colon_idx
+        tail = text[(colon_idx + 1)..]
+        lead = tail.size - tail.lstrip.size
+        return {tail.lstrip, col0 + colon_idx + 1 + lead}
+      end
+      {text, col0}
+    end
+
+    # 0-based offset within a block-mapping element line's value text of
+    # the token ansible pins the caused-by Origin at: the opening quote
+    # of the first quoted scalar whose own {{ }} template references the
+    # missing name, else the plain value's first character (live-verified
+    # vs 2.19.11, issue #314). nil when the value does not reference it.
+    private def block_mapping_value_missing_offset(value : String, missing : String) : Int32?
+      if (quote_pos = first_missing_quoted_element(value, missing))
+        return quote_pos
+      end
+      return nil unless loop_element_references_missing?(value, missing)
+      value.size - value.lstrip.size
     end
 
     # Ansible resolves a task's module/action plugin before it ever
