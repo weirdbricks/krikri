@@ -14724,3 +14724,13 @@ Local probe roles, not Galaxy roles: each probed task registers its result and d
 | `rnodec.keepalived` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29880730, 0.9.1908 release). Times: cold py 6.09s vs cr 5.68s; warm py 3.05s vs cr 0.36s. |
 | `tychobrouwer.nordvpn` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29880735, 0.9.1908 release). Times: cold py 6.37s vs cr 243.16s; warm py 11.73s vs cr 5.01s. |
 | `udelarinterior.nfs_server` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29880729, 0.9.1908 release). Times: cold py 2.82s vs cr 1.02s; warm py 2.19s vs cr 0.27s. |
+| `GoContainer.docker-local-persist` | ubuntu | ✅ Clean (round29880901, 0.9.1913 debug). |
+| `cevich.subscribed` | ubuntu | ❌ Divergent - issue #318 (round29880897, 0.9.1913 debug). |
+| `freehck.k8s_app` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29880904, 0.9.1913 debug). |
+| `kso512.mpd` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29880900, 0.9.1913 debug). |
+| `lean_delivery.solr_cloud` | ubuntu | ❌ Divergent - issue #319 (round29880899, 0.9.1913 debug). |
+| `mhalano.skypeforlinux` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29880906, 0.9.1913 debug). |
+| `micalexander.neovim` | ubuntu | ❌ Divergent - issue #320 (round29880905, 0.9.1913 debug). |
+| `pgvillage.avchecker` | rocky | ✅ Clean (round29880902, 0.9.1913 debug). |
+| `philnewm.vbox_guest` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29880898, 0.9.1913 debug). |
+| `robertdebock.node_red` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29880903, 0.9.1913 debug). |
