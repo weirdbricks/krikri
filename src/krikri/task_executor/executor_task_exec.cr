@@ -1236,6 +1236,19 @@ module Krikri
         puts Krikri::Oneline.skip_line(connection_host, skipped_line_suffix_for(task, host, inherited_when)).colorize(:cyan)
         return false
       end
+      # Same one-level flatten the executed loop applies (executor_loops).
+      # Real never shows an unflattened element as an (item=...) label on
+      # this skip path, and a source list that flattens to nothing
+      # collapses to the bare "No items in the list" skip line (issue
+      # #306, live-verified: with_items: ["{{ a | default([]) }}"] under a
+      # when:-false block prints ONE bare skipping: line).
+      if task.loop_items_needs_flatten?
+        rendered_items = flatten_with_items_one_level(rendered_items)
+        if rendered_items.empty?
+          puts Krikri::Oneline.skip_line(connection_host, Krikri::ResultDisplay.skip_line_suffix_empty_loop).colorize(:cyan)
+          return false
+        end
+      end
 
       # Only a loop_control.label needs the (expensive) per-item context;
       # without one the label is just the item's own Python repr.
