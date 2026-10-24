@@ -1003,9 +1003,25 @@ module Krikri
     # order with early exit on the first false, restores it.
     private def evaluate_when_items(task : Task, vars_context : Hash(String, JSON::Any), host : Host, substitutor : VarSubstitutor? = nil) : Bool
       @last_false_condition = nil
+      @last_failed_when_clause = nil
       if items = task.when_condition_list
         items.each do |item|
-          unless evaluate_when(item, vars_context, host, substitutor, task)
+          begin
+            passed = evaluate_when(item, vars_context, host, substitutor, task)
+          rescue ex : WhenEvaluationError
+            # Real type-checks each clause of a when: LIST (and of a merged
+            # import_tasks: when:) for a boolean result INDEPENDENTLY, so the
+            # strict failure belongs to ONE clause and the following
+            # decorate_conditional_value_origin call must label THAT clause's
+            # tested value - the joined task.when_condition string here would
+            # point at the when: token instead of the value's defining site
+            # (issue #325: an import when-gated on the package manager wrapping
+            # a child `when: packages_accept` empty role default labels
+            # defaults/main.yml:3:18 in real, not the child task's when:).
+            @last_failed_when_clause = item
+            raise ex
+          end
+          unless passed
             @last_false_condition = item
             return false
           end
@@ -1013,7 +1029,12 @@ module Krikri
         true
       else
         condition = task.when_condition.as(String)
-        passed = evaluate_when(condition, vars_context, host, substitutor, task)
+        begin
+          passed = evaluate_when(condition, vars_context, host, substitutor, task)
+        rescue ex : WhenEvaluationError
+          @last_failed_when_clause = condition
+          raise ex
+        end
         @last_false_condition = condition unless passed
         passed
       end

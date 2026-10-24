@@ -530,4 +530,64 @@ describe "ignore_errors: on an ordinary (non-when-related) task failure" do
   ensure
     File.delete(playbook) if playbook && File.exists?(playbook)
   end
+
+  # Issue #325: an import_tasks:'s when: is merged ahead of each imported
+  # task's own when: as TWO SEPARATE strict conditionals (playbook_parser
+  # keeps them in when_condition_list), so a non-boolean failure belongs to
+  # ONE clause and real's lineage points at THAT clause's tested value's
+  # defining site - with the import when-gated on a truthy comparison and
+  # the child task failing on a bare `when: packages_accept` (an empty
+  # role-default list), real 2.19 labels
+  # "<role>/defaults/main.yml:3:18" (the variable's defining site), while
+  # the joined "(import) and (own)" raw string fell into the compound
+  # branch and mislabeled the child task's own when: token.
+  it "labels an import-gated child when: failure with the child's variable's role-default position" do
+    dir = File.tempname("when-import-clause-origin", ".d")
+    Dir.mkdir(dir)
+    Dir.mkdir_p(File.join(dir, "roles", "testrole", "defaults"))
+    Dir.mkdir_p(File.join(dir, "roles", "testrole", "tasks"))
+    File.write(File.join(dir, "roles", "testrole", "defaults", "main.yml"), <<-YAML)
+      packages_main: []
+      packages_accept: []
+      YAML
+    File.write(File.join(dir, "roles", "testrole", "tasks", "apt.yml"), <<-YAML)
+      - name: apt install
+        ansible.builtin.debug:
+          msg: never runs
+        when: packages_accept
+      YAML
+    File.write(File.join(dir, "roles", "testrole", "tasks", "main.yml"), <<-YAML)
+      - name: import apt
+        ansible.builtin.import_tasks: apt.yml
+        when: true_var == "x"
+      YAML
+    playbook = File.join(dir, "site.yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          true_var: x
+        roles:
+          - testrole
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+
+    status.success?.must_equal(false)
+    status.exit_code.must_equal(2)
+    # The `[]` value token of line 2's `packages_accept:` starts at
+    # column 18 - the variable's defining site in real's lineage (issue
+    # #325's defaults/main.yml:3:18 shape).
+    expected = "was derived from value of type 'list' at '#{File.join(dir, "roles", "testrole", "defaults", "main.yml")}:2:18'"
+    output.to_s.must_include(expected, output.to_s)
+    output.to_s.must_include(%({"msg": "Task failed: Conditional result (False) was derived from value of type 'list' at '#{File.join(dir, "roles", "testrole", "defaults", "main.yml")}:2:18'. Conditionals must have a boolean result."}), output.to_s)
+    # The child task's own when: value token (line 4, column 9) is the
+    # pre-fix mislabel - it must not come back under a different clause
+    # ordering.
+    output.to_s.wont_include("was derived from value of type 'list' at '#{File.join(dir, "roles", "testrole", "tasks", "apt.yml")}:4:9'", output.to_s)
+  ensure
+    FileUtils.rm_rf(dir) if dir && Dir.exists?(dir)
+  end
 end

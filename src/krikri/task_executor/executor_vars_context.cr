@@ -4243,7 +4243,23 @@ module Krikri
     private def decorate_conditional_value_origin(task : Task, msg : String, host : Host? = nil, operand : String? = nil, clause_key : String = "when", clause_raw : String? = nil) : String
       return msg unless msg.includes?("Conditionals must have a boolean result")
       return msg if msg.includes?(" at '") || msg.includes?(" at \"")
-      raw = operand || task.when_condition.to_s.strip
+      # A when: LIST (and a merged import_tasks: when:, issue #325) is
+      # strict-checked per CLAUSE in evaluate_when_items, so the raised
+      # failure belongs to the remembered failing clause and real's
+      # lineage labels that clause's tested value's defining site -
+      # a bare child `when: packages_accept` behind a truthy import
+      # when: is labeled defaults/main.yml:3:18, not the child task's
+      # when: token the joined string produced. A compound failing
+      # clause has no single defining var and keeps the when-token
+      # labeling the compound branch below already gives the joined
+      # condition.
+      raw = if operand
+              operand
+            elsif task.when_condition_list
+              @last_failed_when_clause || task.when_condition.to_s.strip
+            else
+              task.when_condition.to_s.strip
+            end
       unless raw.matches?(/\A[A-Za-z_][A-Za-z0-9_]*\z/)
         # ansible's `default` filter is a pass-through for a defined
         # variable, so the conditional's tested value keeps that
