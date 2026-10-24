@@ -377,7 +377,15 @@ module Krikri
     private def missing_name_result(raw_name : String?, name : String?, requirements : String?) : PluginResult?
       return nil unless name.nil? && requirements.nil?
 
-      PluginResult.new(changed: false, failed: false, msg: "No valid name or requirements file found.")
+      # Ansible's pip.py main() calls module.warn with this text and then
+      # exit_json(changed=False): the text rides the result's `warnings`
+      # list (a [WARNING] line before the ok: status) and the wire result
+      # carries NO msg at all - a msg: here printed `ok:` with a message
+      # body where real Ansible prints a bare ok line under the warning.
+      # unarchive.cr#attach_warning is the established single-warning way.
+      res = PluginResult.new(changed: false, failed: false)
+      res.extra["warnings"] = JSON.parse(["No valid name or requirements file found."].to_json)
+      res
     end
 
     # Validate the umask: parameter, if given. Returns the failure
