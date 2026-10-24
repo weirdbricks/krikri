@@ -351,3 +351,136 @@ describe "DnfInstallFailures repo_metadata_failure_msg (issue 267)" do
     DnfFailuresParseHarness.new.repo_metadata_failure_msg("").must_be_nil
   end
 end
+
+# Issue #321 (Rocky 9, `package: name: [libunwind, lttng-ust, libcurl]`
+# where libunwind doesn't exist and libcurl conflicts with the installed
+# libcurl-minimal): real's dnf module marks the missing spec into its
+# failures list FIRST and then STILL depsolves the survivors, so the
+# task fails with the depsolve msg AND the missing-spec failures (key
+# order changed failures msg rc results failed) - while the CLI aborts
+# at the missing spec and only ever says "Error: Unable to find a
+# match". krikri hunts the Problem block out by re-running the stricken
+# specs with --assumeno (no package can land, the re-resolution still
+# prints the block); --setopt=strict=0 / --skip-broken would suppress
+# it, which is exactly what ansible's depsolve catch reports as msg.
+MISSING_MULTI_STDOUT_321 = "No match for argument: libunwind\n"
+MISSING_MULTI_STDERR_321 = "Error: Unable to find a match: libunwind\n"
+# The retry stage's first-Problem - the (try to add ...) hint outside
+# what depsolve_failure_msg lifts into the msg, like the live output.
+DEPSOLVE_PROBLEM_LINE_321 = " Problem: package libcurl-8.0.1-51.el9.x86_64 from appstream conflicts with libcurl-minimal-8.0.1-51.el9.x86_64 provided by libcurl-minimal-8.0.1-51.el9.x86_64"
+DEPSOLVE_RETRY_STDERR_321 = "Error: \n" + DEPSOLVE_PROBLEM_LINE_321 +
+                            "\n" +
+                            "(try to add '--allowerasing' to replace conflicting packages or '--skip-broken' to skip uninstallable packages or '--nobest' to use not only best candidate packages)\n"
+DEPSOLVE_MSG_321 = "Depsolve Error occurred: \n" + DEPSOLVE_PROBLEM_LINE_321
+
+# The shim's stage switch keys on the real command shape, so a retry
+# that forgets either half of the change (the stripped spec list OR the
+# --assumeno flag) falls to the default branch and cannot reach the
+# Problem block. Anything matching neither pattern runs like the first
+# attempt (the probes and the -y retries of the first compound).
+private def dnf_shim_stage_lines(stdout : String, stderr : String) : String
+  lines = "cat <<'KRIKRI_FAKE_DNF_EOF'\n#{stdout}KRIKRI_FAKE_DNF_EOF\n"
+  lines += stderr.lines.map { |line| "echo '#{line.gsub("'", "'\\''")}' >&2" }.join("\n") + "\n" unless stderr.empty?
+  lines
+end
+
+private def with_two_stage_dnf_shim(match : String, first_stdout : String, first_stderr : String, retry_stdout : String, retry_stderr : String, &)
+  shim_dir = PluginSpecHelper.tmp_path("fake-dnf-two-stage")
+  Dir.mkdir_p(shim_dir)
+  script = "#!/bin/sh\ncase \"$*\" in\n" +
+           "*#{match}*)\n#{dnf_shim_stage_lines(first_stdout, first_stderr)};;\n" +
+           "*--assumeno*)\n#{dnf_shim_stage_lines(retry_stdout, retry_stderr)};;\n" +
+           "*)\n#{dnf_shim_stage_lines(first_stdout, first_stderr)};;\n" +
+           "esac\nexit 1\n"
+  File.write("#{shim_dir}/dnf", script)
+  File.chmod("#{shim_dir}/dnf", 0o755)
+  File.write("#{shim_dir}/yum", script)
+  File.chmod("#{shim_dir}/yum", 0o755)
+  PluginSpecHelper::ENV_MUTEX.synchronize do
+    old_path = ENV["PATH"]?
+    ENV["PATH"] = "#{shim_dir}:#{old_path}"
+    begin
+      yield
+    ensure
+      old_path ? (ENV["PATH"] = old_path) : (ENV.delete("PATH"))
+    end
+  end
+ensure
+  FileUtils.rm_r(shim_dir) if shim_dir
+end
+
+describe "dnf missing-spec + depsolve - ansible's combined depsolve shape (issue 321)" do
+  serial!
+
+  it "reports the depsolve msg with the missing-spec failures from package:" do
+    with_two_stage_dnf_shim("libunwind", MISSING_MULTI_STDOUT_321, MISSING_MULTI_STDERR_321, "", DEPSOLVE_RETRY_STDERR_321) do
+      result = PluginSpecHelper.run("package",
+        {"name" => "libunwind, lttng-ust, libcurl", "state" => "present", "use" => "dnf"})
+
+      result["failed"].as_bool.must_equal(true)
+      result["changed"].as_bool.must_equal(false)
+      result["msg"].as_s.must_equal(DEPSOLVE_MSG_321)
+      result["failures"].as_a.map(&.as_s).must_equal(["No package libunwind available."])
+      result["results"].as_a.must_equal([] of JSON::Any)
+      result["rc"].as_i.must_equal(1)
+      result.as_h.has_key?("stderr").must_equal(false)
+      result.as_h.keys.first(6).must_equal(["changed", "failures", "msg", "rc", "results", "failed"])
+    end
+  end
+
+  it "reports the same combined shape from the dnf plugin's install batch" do
+    with_two_stage_dnf_shim("libunwind", MISSING_MULTI_STDOUT_321, MISSING_MULTI_STDERR_321, "", DEPSOLVE_RETRY_STDERR_321) do
+      result = PluginSpecHelper.run("dnf",
+        {"name" => "libunwind, lttng-ust, libcurl", "state" => "present"},
+        vars: {"ansible_pkg_mgr" => "dnf"})
+
+      result["failed"].as_bool.must_equal(true)
+      result["changed"].as_bool.must_equal(false)
+      result["msg"].as_s.must_equal(DEPSOLVE_MSG_321)
+      result["failures"].as_a.map(&.as_s).must_equal(["No package libunwind available."])
+      result["results"].as_a.must_equal([] of JSON::Any)
+      result["rc"].as_i.must_equal(1)
+      result.as_h.has_key?("stderr").must_equal(false)
+      result.as_h.keys.first(6).must_equal(["changed", "failures", "msg", "rc", "results", "failed"])
+    end
+  end
+
+  it "keeps the canned install-failure shape when the survivors re-resolve clean" do
+    with_two_stage_dnf_shim("libunwind", MISSING_MULTI_STDOUT_321, MISSING_MULTI_STDERR_321,
+      "Last metadata expiration check: 0:00:01 ago on Fri Oct 24 00:00:00 2026.\n", "Operation aborted.\n") do
+      result = PluginSpecHelper.run("package",
+        {"name" => "libunwind, lttng-ust, libcurl", "state" => "present", "use" => "dnf"})
+
+      result["failed"].as_bool.must_equal(true)
+      result["msg"].as_s.must_equal("Failed to install some of the specified packages")
+      result["failures"].as_a.map(&.as_s).must_equal(["No package libunwind available."])
+      result["rc"].as_i.must_equal(1)
+      result.as_h.keys.first(5).must_equal(["msg", "failures", "results", "rc", "failed"])
+    end
+  end
+end
+
+describe "DnfInstallFailures missing-spec stripping (issue 321)" do
+  it "collects specs only from the missing-package wording, deduped" do
+    DnfFailuresParseHarness.new.missing_specs_from_failures([
+      "No package libunwind available.",
+      "mysql-devel All matches were filtered out by modular filtering for argument: mysql-devel",
+      "No package lttng-ust available.",
+      "No package libunwind available.",
+    ]).must_equal(["libunwind", "lttng-ust"])
+  end
+
+  it "strips missing specs from a batch, keeping modular-filtering specs" do
+    DnfFailuresParseHarness.new.specs_without_missing(
+      ["libunwind", "mysql-devel", "lttng-ust", "libcurl"],
+      ["No package libunwind available."]).must_equal(["mysql-devel", "lttng-ust", "libcurl"])
+  end
+
+  it "returns the batch untouched when no missing-spec entry matched" do
+    harness = DnfFailuresParseHarness.new
+    harness.specs_without_missing(
+      ["libcurl"],
+      ["mysql-devel All matches were filtered out by modular filtering for argument: mysql-devel"]).must_equal(["libcurl"])
+    harness.specs_without_missing(["libcurl"], [] of String).must_equal(["libcurl"])
+  end
+end
