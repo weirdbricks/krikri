@@ -4325,22 +4325,38 @@ module Krikri
       nil
     end
 
-    # Same ansible-core 2.19 SourceContext format the task-failure Origin
-    # blocks use (see executor_vars_context.cr's origin_context_block).
+    # Same ansible-core 2.19 SourceContext format as
+    # _internal/_errors/_error_utils.py's from_origin (the task-failure
+    # Origin blocks in error_block.cr are this same algorithm): the caret
+    # is drawn against the ORIGINAL column of a line ansible may itself
+    # have cut down, so it is omitted whenever the column falls past what
+    # is actually printed, and when the caret's own label would overrun
+    # the 120-column budget the text leads and the caret trails the end.
     private def self.reserved_origin_block(path : String, lines : Array(String), line_num : Int, column : Int) : String
       String.build do |io|
         io << "Origin: " << File.expand_path(path) << ":" << line_num + 1 << ":" << column << "\n"
         io << "\n"
         label_width = (line_num + 1).to_s.size
         max_src_line_len = 120 - label_width - 1
+        usable_line_len = max_src_line_len
         start_idx = Math.max(0, (line_num + 1 - 1) - 2)
         ((start_idx + 1)..(line_num + 1)).each do |print_idx|
-          src = lines[print_idx - 1]
-          src = src.size > max_src_line_len ? src[0...max_src_line_len] + " ..." : src
+          src = lines[print_idx - 1].chomp('\n').chomp('\r').gsub('\t', ' ')
+          if src.size > max_src_line_len
+            src = src[0...max_src_line_len - 3] + "..."
+            usable_line_len = max_src_line_len - 3
+          end
           gutter = print_idx.to_s.rjust(label_width)
-          io << gutter << " " << src << "\n"
-          if print_idx == line_num + 1
-            io << " " * gutter.size << " " << " " * (column - 1) << "^ column " << column << "\n"
+          io << gutter << (src.empty? ? "" : " ") << src << "\n"
+          if print_idx == line_num + 1 && column >= 1 && usable_line_len >= column
+            column_marker = "column #{column}"
+            target_col_idx = column - 1
+            if target_col_idx + 2 + column_marker.size > max_src_line_len
+              column_marker = "#{" " * (target_col_idx - column_marker.size - 1)}#{column_marker} ^"
+            else
+              column_marker = "#{" " * target_col_idx}^ #{column_marker}"
+            end
+            io << " " * label_width << " " << column_marker << "\n"
           end
         end
       end
