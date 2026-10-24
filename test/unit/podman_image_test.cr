@@ -66,6 +66,11 @@ describe "podman_image result shape" do
     })["failed"]?.try(&.as_bool) == false
   end
 
+  def tag_alpine(target : String) : Bool
+    Process.run("podman", ["tag", "docker.io/library/alpine:latest", target],
+      output: Process::Redirect::Close, error: Process::Redirect::Close).success?
+  end
+
   it "matches Ansible's absent-and-missing key set and order" do
     skip "podman not available" unless podman_available?
     result = PluginSpecHelper.run("podman_image", {
@@ -80,8 +85,7 @@ describe "podman_image result shape" do
 
   it "matches Ansible's present key set and order" do
     skip "podman not available" unless podman_available?
-    Process.run("podman", ["tag", "docker.io/library/alpine:latest", "docker.io/library/krikri-pi-shape:1"],
-      output: Process::Redirect::Close, error: Process::Redirect::Close)
+    skip "alpine image not present locally" unless tag_alpine("docker.io/library/krikri-pi-shape:1")
     begin
       result = PluginSpecHelper.run("podman_image", {
         "name" => "docker.io/library/krikri-pi-shape", "tag" => "1",
@@ -99,8 +103,7 @@ describe "podman_image result shape" do
 
   it "matches Ansible's removed key set and order" do
     skip "podman not available" unless podman_available?
-    Process.run("podman", ["tag", "docker.io/library/alpine:latest", "docker.io/library/krikri-pi-shape2:1"],
-      output: Process::Redirect::Close, error: Process::Redirect::Close)
+    skip "alpine image not present locally" unless tag_alpine("docker.io/library/krikri-pi-shape2:1")
     begin
       result = PluginSpecHelper.run("podman_image", {
         "name" => "docker.io/library/krikri-pi-shape2", "tag" => "1", "state" => "absent",

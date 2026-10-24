@@ -120,6 +120,71 @@ describe "htpasswd plugin" do
     result["msg"].as_s.must_equal("Created #{path} and added johndoe")
   end
 
+  # Real htpasswd.py calls create_missing_directories(dest) (os.makedirs of
+  # dirname) right before opening the new file, so a missing parent
+  # directory is created and the task succeeds (changed) - krikri used to
+  # fail with "Error opening file with mode 'w' ... No such file or
+  # directory" on the round's real calvinbui.ansible_htpasswd role task
+  # (issue #292). The sibling branches stay out of this: state=absent and
+  # create=false exit in preflight, and check mode returns "Create <path>"
+  # before touching the tree.
+  it "creates a missing parent directory like Ansible's create_missing_directories" do
+    path = PluginSpecHelper.tmp_path("htpasswd-mkdir", "passwdfile")
+
+    result = PluginSpecHelper.run("htpasswd", {"path" => path, "name" => "johndoe", "password" => "supersecure"})
+
+    result["failed"]?.try(&.as_bool).must_be_nil
+    result["changed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("Created #{path} and added johndoe")
+    File.read(path).starts_with?("johndoe:").must_equal(true)
+  end
+
+  # create_missing_directories uses os.makedirs - recursive - so every
+  # missing intermediate level comes up with the file.
+  it "creates nested missing directories, like os.makedirs" do
+    path = PluginSpecHelper.tmp_path("htpasswd-mkdir-nested", "sub", "deeper", "passwdfile")
+
+    result = PluginSpecHelper.run("htpasswd", {"path" => path, "name" => "johndoe", "password" => "supersecure"})
+
+    result["failed"]?.try(&.as_bool).must_be_nil
+    result["changed"].as_bool.must_equal(true)
+    File.read(path).starts_with?("johndoe:").must_equal(true)
+  end
+
+  it "does not create the parent directory in check mode" do
+    parent = PluginSpecHelper.tmp_path("htpasswd-mkdir-check-mode")
+    path = File.join(parent, "passwdfile")
+
+    result = PluginSpecHelper.run("htpasswd", {"path" => path, "name" => "johndoe", "password" => "supersecure", "_ansible_check_mode" => "true"})
+
+    result["changed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("Create #{path}")
+    File.exists?(path).must_equal(false)
+    Dir.exists?(parent).must_equal(false)
+  end
+
+  it "does not create anything for a missing path with state=absent" do
+    parent = PluginSpecHelper.tmp_path("htpasswd-mkdir-absent")
+    path = File.join(parent, "passwdfile")
+
+    result = PluginSpecHelper.run("htpasswd", {"path" => path, "name" => "johndoe", "state" => "absent"})
+
+    result["failed"]?.try(&.as_bool).must_be_nil
+    result["changed"].as_bool.must_equal(false)
+    Dir.exists?(parent).must_equal(false)
+  end
+
+  # authorized_key documents the same crash twin: Python's dirname of a
+  # bare relative filename is "" and os.makedirs("") raises - the module's
+  # outer fail_json turns that into the bare errno text (live-verified
+  # against 2.19.11).
+  it "fails a bare-relative destination like os.makedirs(\"\") does" do
+    result = PluginSpecHelper.run("htpasswd", {"path" => "passwdfile", "name" => "johndoe", "password" => "supersecure"})
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("[Errno 2] No such file or directory: ''")
+  end
+
   it "says \"Add/update <user>\" when changing an existing file's user" do
     path = PluginSpecHelper.tmp_path("htpasswd-update-msg")
     File.delete(path) if File.exists?(path)

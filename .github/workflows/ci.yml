@@ -41,8 +41,8 @@ jobs:
         # tests' own apt-get call logs), python3-debian (deb822_repository
         # imports debian.deb822 exactly like the Ansible module and fails the
         # task without it; its tests pin a host where the module works),
-        # python3-pexpect / python3-lxml (the real expect and
-        # community.general.xml modules import exactly those libraries on
+        # python3-pexpect / python3-lxml / python3-passlib (the real expect,
+        # community.general.xml and htpasswd modules import exactly those libraries on
         # the target host - without them every one of those specs gets
         # Ansible's "Failed to import the required Python library" task
         # failure instead of the behavior it pins). NOTE: do NOT add
@@ -65,7 +65,7 @@ jobs:
             libevent-dev libgmp-dev libyaml-dev libxml2-dev zlib1g-dev \
             rsync iproute2 libcap2-bin kmod \
             python3 python3-pip python3-venv python3-apt python3-debian \
-            python3-pexpect python3-lxml \
+            python3-pexpect python3-lxml python3-passlib \
             acl parted lvm2 npm \
             curl zip unzip sudo \
             docker.io docker-compose-v2

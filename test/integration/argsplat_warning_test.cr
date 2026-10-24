@@ -18,9 +18,14 @@ require "../minitest_helper"
 #     either
 #   - ONE warning per task occurrence: 2 hosts and a 2-item loop still
 #     print it once
-# The Origin points at the first character OF the scalar - inside the
-# quotes for a quoted value (column 29 for a 6-space-indented
+# The Origin points at the first character of the scalar itself: the
+# opening quote for a quoted value (column 29 for a 6-space-indented
 # `ansible.builtin.copy: "{{ d }}"`, single or double quotes alike).
+# When nothing follows the module key's colon, the value starts on a
+# line of its own and the Origin reports THAT line, again at the
+# value's first non-space character - a role task like
+# `  htpasswd:` + 4-space-indented `    "{{ item }}"` reports Origin
+# 5:5 (live-verified against 2.19.11, issue #292).
 
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
@@ -119,6 +124,39 @@ describe "argsplat warning" do
     origin.not_nil!.must_equal({"10", "29"})
     output.includes?("^ column 29").must_equal(true)
     output.includes?("changed: [localhost]").must_equal(true)
+  end
+
+  it "warns with an Origin on the block-style value line when nothing follows the module key" do
+    success, output = run_play([
+      "    - name: block style",
+      "      ansible.builtin.copy:",
+      "        \"{{ some_dict }}\"",
+    ], dict_vars_for("blockline"))
+    success.must_equal(true, output)
+    warning_count(output).must_equal(1)
+
+    # The value line is line 11 here (task name 9, module key 10) and
+    # the quote is its first non-space character: ansible's caret is
+    # under the quote, not the `"`-after-colon column of the key line.
+    origin = warning_origin(output)
+    origin.not_nil!.must_equal({"11", "9"})
+    output.includes?("^ column 9").must_equal(true)
+    output.includes?("changed: [localhost]").must_equal(true)
+  end
+
+  it "skips a blank line when locating the block-style value line for an Origin" do
+    success, output = run_play([
+      "    - name: blank between",
+      "      ansible.builtin.copy:",
+      "",
+      "        \"{{ some_dict }}\"",
+    ], dict_vars_for("blockblank"))
+    success.must_equal(true, output)
+    warning_count(output).must_equal(1)
+
+    origin = warning_origin(output)
+    origin.not_nil!.must_equal({"12", "9"})
+    output.includes?("^ column 9").must_equal(true)
   end
 
   it "does not warn for templated dict VALUES" do
