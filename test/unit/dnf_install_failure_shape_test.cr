@@ -320,6 +320,20 @@ describe "dnf/yum repo-metadata download failure - ansible's bare msg shape (iss
     end
   end
 
+  it "reports rc 1 from a failing update_cache-only refresh (issue 301)" do
+    with_failing_dnf_shim("", METADATA_404_STDERR) do
+      result = PluginSpecHelper.run("yum",
+        {"name" => "[]", "update_cache" => "true", "state" => "present"},
+        vars: {"ansible_pkg_mgr" => "dnf"})
+
+      result["failed"].as_bool.must_equal(true)
+      result["msg"].as_s.must_equal(METADATA_404_MSG)
+      result["results"].as_a.must_equal([] of JSON::Any)
+      result["rc"].as_i.must_equal(1)
+      result.as_h.keys.first(5).must_equal(["changed", "msg", "rc", "results", "failed"])
+    end
+  end
+
   it "reports one bare msg when the dnf||yum compound prints the line twice" do
     # The compound prints its own copy per package-manager binary; the
     # reported msg keeps only the first (the task's own dnf attempt).
