@@ -1153,7 +1153,26 @@ module Krikri
     # references it - ansible templates the items in order and stops at
     # the first failing one (issue #228).
     private def locate_loop_source_line(lines : Array(String), task : Task, missing : String? = nil) : {Int32, Int32}?
-      kind = task.loop_template_kind || task.loop_literal_kind || "loop"
+      # The dedicated with_* parser branches (with_subelements:, the
+      # templated-entry array forms of with_nested:/with_together:, and
+      # with_community.general.filetree:) record their sources in their own
+      # task fields and never touch loop_template_kind/loop_literal_kind, so
+      # the kind silently fell back to "loop" and the scan below never found
+      # the keyword line the failure was actually written under - ansible
+      # still pins the caused-by Origin at that keyword's VALUE token
+      # whatever with_* spelling carries it (live-verified vs 2.19.11 for
+      # with_subelements, with_nested and with_together, issue #291).
+      # with_flattened can't ride along: the
+      # parser accepts BOTH spellings (`with_flattened:` and
+      # `with_community.general.flattened:`) into the same field, so the
+      # written key line can't be derived from the task alone.
+      kind =
+        task.loop_template_kind || task.loop_literal_kind ||
+          (task.loop_subelements_list ? "with_subelements" : nil) ||
+          (task.loop_nested_sources ? "with_nested" : nil) ||
+          (task.loop_together_sources ? "with_together" : nil) ||
+          (task.loop_filetree ? "with_community.general.filetree" : nil) ||
+          "loop"
       from_idx =
         if base = locate_name_line(lines, task)
           base[0]
