@@ -36,6 +36,24 @@ describe "strict conditional origin for compound expressions" do
     output.must_include("Conditional result (False) was derived from value of type 'str' at '#{playbook}:5:14'. Conditionals must have a boolean result.")
   end
 
+  it "labels an and-chain with quoted comparison operands after the deciding variable" do
+    status, output, playbook = run_playbook(<<-YAML)
+    - hosts: localhost
+      connection: local
+      gather_facts: false
+      vars:
+        nvm_dir: ""
+        nvm_profile: ".bashrc"
+        nvm_install: "wget"
+      tasks:
+        - fail:
+          when: nvm_dir and nvm_profile == '.bashrc' and nvm_install != 'git'
+    YAML
+
+    status.exit_code.must_equal(2)
+    output.must_include("Conditional result (False) was derived from value of type 'str' at '#{playbook}:5:14'. Conditionals must have a boolean result.")
+  end
+
   it "labels a filter result with the when: token position" do
     status, output, playbook = run_playbook(<<-YAML)
     - hosts: localhost
