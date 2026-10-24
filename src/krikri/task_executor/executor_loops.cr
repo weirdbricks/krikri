@@ -1217,6 +1217,13 @@ module Krikri
               dash_idx = val_line.size - val_line.lstrip.size
               after_dash = val_line[(dash_idx + 1)..]
               pos = {val_idx, dash_idx + 2 + (after_dash.size - after_dash.lstrip.size)}
+              # A flow-mapping/flow-list element (`- { line: 'Port {{ x }}' }`)
+              # is pinned by ansible at the failing scalar's opening quote,
+              # not at the `{` (live-verified vs 2.19, issue #312).
+              if missing && (after_dash.lstrip.starts_with?('{') || after_dash.lstrip.starts_with?('[')) &&
+                 (quote_pos = first_missing_quoted_element(after_dash, missing))
+                return {val_idx, dash_idx + 2 + quote_pos}
+              end
               if missing
                 first_element_pos ||= pos
                 return pos if loop_element_references_missing?(after_dash, missing)
