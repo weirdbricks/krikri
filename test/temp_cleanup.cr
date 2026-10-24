@@ -1,32 +1,17 @@
 require "file_utils"
 
-# Every spec makes scratch paths with File.tempname / File.tempfile and the stdlib never removes them,
-# so each run left hundreds of entries in /tmp (a tmpfs). Record them here and remove them when the
-# process ends. This file must be required before minitest/autorun: at_exit handlers run in reverse
-# order, so ours then runs after minitest has run the tests.
+# Specs build scratch paths under Dir.tempdir (File.tempname, File.tempfile and hand-written
+# File.join(Dir.tempdir, "name-#{random}")) and rarely remove them, so each run left hundreds of
+# entries in /tmp (a tmpfs). Point TMPDIR at a private directory for the whole run and remove it
+# at exit; this also covers the child processes the specs spawn. This file must be required before
+# minitest/autorun: at_exit handlers run in reverse order, so ours then runs after the tests.
 module TempCleanup
-  PATHS = [] of String
-
-  def self.track(path : String) : String
-    PATHS << path
-    path
-  end
-
-  def self.sweep : Nil
-    PATHS.each { |path| FileUtils.rm_rf(path) }
+  ROOT = begin
+    dir = File.tempname("krikri-spec-tmp")
+    Dir.mkdir_p(dir)
+    ENV["TMPDIR"] = dir
+    dir
   end
 end
 
-at_exit { TempCleanup.sweep }
-
-class File
-  def self.tempname(prefix : String?, suffix : String?, *, dir : String = Dir.tempdir)
-    TempCleanup.track(previous_def)
-  end
-
-  def self.tempfile(prefix : String?, suffix : String?, *, dir : String = Dir.tempdir, encoding = nil, invalid = nil)
-    file = previous_def
-    TempCleanup.track(file.path)
-    file
-  end
-end
+at_exit { FileUtils.rm_rf(TempCleanup::ROOT) }

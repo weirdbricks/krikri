@@ -124,6 +124,6 @@ describe "java_cert plugin" do
     result["msg"].as_s.must_include("cannot extract certificate")
     cmd = result["cmd"].as_a.map(&.as_s)
     (cmd.size > 5).must_equal(true)
-    cmd[5].must_match(/\A\/tmp\/tmp[a-z0-9_]{8}\z/)
+    cmd[5].must_match(/\A#{Regex.escape(Dir.tempdir)}\/tmp[a-z0-9_]{8}\z/)
   end
 end

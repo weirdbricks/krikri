@@ -19,7 +19,7 @@ require "file_utils"
 # capture their argv and whatever the staged defaults file contained,
 # which is exactly what the server would have authenticated against.
 private def with_shims(&)
-  dir = File.tempname(Dir.tempdir, "krikri-mysql-db-spec")
+  dir = File.tempname("krikri-mysql-db-spec")
   Dir.mkdir(dir)
   shim_dir = File.join(dir, "shims")
   Dir.mkdir(shim_dir)
@@ -62,7 +62,7 @@ end
 describe "mysql_db dump/import credential staging" do
   it "dump passes login_password via the staged --defaults-extra-file, never argv" do
     with_shims do |capture_dir|
-      target = File.tempname(Dir.tempdir, "krikri-dump.sql")
+      target = File.tempname("krikri-dump.sql")
       begin
         result = PluginSpecHelper.run("mysql_db", {
           "name"           => "mydb",
@@ -91,7 +91,7 @@ describe "mysql_db dump/import credential staging" do
 
   it "import passes login_password via the staged --defaults-extra-file, never argv" do
     with_shims do |capture_dir|
-      target = File.tempname(Dir.tempdir, "krikri-import.sql")
+      target = File.tempname("krikri-import.sql")
       File.write(target, "CREATE TABLE t (id int);")
       begin
         result = PluginSpecHelper.run("mysql_db", {
@@ -117,7 +117,7 @@ describe "mysql_db dump/import credential staging" do
 
   it "dump with config_file + login_password stages the password, never --password= on argv" do
     with_shims do |capture_dir|
-      target = File.tempname(Dir.tempdir, "krikri-dump.sql")
+      target = File.tempname("krikri-dump.sql")
       begin
         result = PluginSpecHelper.run("mysql_db", {
           "name"           => "mydb",
@@ -148,7 +148,7 @@ describe "mysql_db dump/import credential staging" do
 
   it "import with config_file + login_password stages the password, never --password= on argv" do
     with_shims do |capture_dir|
-      target = File.tempname(Dir.tempdir, "krikri-import.sql")
+      target = File.tempname("krikri-import.sql")
       File.write(target, "CREATE TABLE t (id int);")
       begin
         result = PluginSpecHelper.run("mysql_db", {
@@ -175,7 +175,7 @@ describe "mysql_db dump/import credential staging" do
 
   it "restrict_config_file with config_file + login_password stages the merged file as --defaults-file=" do
     with_shims do |capture_dir|
-      target = File.tempname(Dir.tempdir, "krikri-dump.sql")
+      target = File.tempname("krikri-dump.sql")
       begin
         result = PluginSpecHelper.run("mysql_db", {
           "name"                 => "mydb",
@@ -208,7 +208,7 @@ describe "mysql_db dump/import credential staging" do
 
   it "config_file without login_password is still passed straight through as --defaults-extra-file=" do
     with_shims do |capture_dir|
-      target = File.tempname(Dir.tempdir, "krikri-dump.sql")
+      target = File.tempname("krikri-dump.sql")
       begin
         result = PluginSpecHelper.run("mysql_db", {
           "name"        => "mydb",
