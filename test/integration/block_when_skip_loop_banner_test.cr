@@ -161,6 +161,44 @@ describe "skipped-block banner shapes (block: when: false)" do
     output.must_match(/skipped=2 /)
   end
 
+  it "flattens with_items one level on the skipped per-item lines (issue #306)" do
+    output = run_playbook(<<-YAML)
+      - name: repro
+        hosts: localhost
+        gather_facts: false
+        connection: local
+        tasks:
+          - when: false
+            block:
+              - name: flatten to empty
+                ansible.builtin.debug:
+                  msg: "{{ item }}"
+                with_items:
+                  - "{{ a | default([]) }}"
+                  - "{{ b | default([]) }}"
+              - name: flatten one level
+                ansible.builtin.debug:
+                  msg: "{{ item }}"
+                with_items:
+                  - [1, 2]
+                  - "{{ c | default([3]) }}"
+      YAML
+
+    lines = output.lines
+    idx = lines.index! { |line| line.starts_with?("TASK [flatten to empty]") }
+    # live-verified vs 2.19.11: with_items flattens one level, so a
+    # source list whose elements are all empty collapses to the bare
+    # "No items in the list" skip line - real never prints a
+    # `skipping: ... (item=[])` line for an unflattened list element.
+    lines[idx + 1].must_equal("skipping: [localhost]")
+    idx = lines.index! { |line| line.starts_with?("TASK [flatten one level]") }
+    lines[idx + 1].must_equal("skipping: [localhost] => (item=1) ")
+    lines[idx + 2].must_equal("skipping: [localhost] => (item=2) ")
+    lines[idx + 3].must_equal("skipping: [localhost] => (item=3) ")
+    lines[idx + 4].must_equal("skipping: [localhost]")
+    output.must_match(/skipped=2 /)
+  end
+
   it "prints the role-prefixed per-item banners for a skipped role (roles: with when:)" do
     role_dir = File.tempname("block-skip-banner-role")
     Dir.mkdir(role_dir)
