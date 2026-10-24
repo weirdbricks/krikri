@@ -99,11 +99,30 @@ module Krikri
         # reflects the live ENV (GROG.debug-variable's `{{ environment |
         # to_nice_json }}` debug idiom).
         environment = ENV.to_h.transform_values { |value| KrikriJinja::AnyValue.new(value) }
-        KrikriJinja.default_engine.render_parsed(
+        rendered = KrikriJinja.default_engine.render_parsed(
           cached_template(text), {"environment" => KrikriJinja::AnyValue.new(environment)},
           resolver: jinja_resolver, undefined: KrikriJinja::Undefined.new(nil, chainable: true),
           host_context: jinja_host_context
         )
+        # trim_blocks eats the newline after a block tag that ENDS its
+        # line, so a folded `>` scalar whose source ends in a bare
+        # `{% endif %}\n` renders one newline short of what Ansible
+        # reports: it counts the trailing newlines of the template
+        # source against those of the rendered result and appends the
+        # deficit (live-verified vs 2.19.11, issue 287 - folded
+        # `shell: >` + `{% if %}` keeps its final newline). Exactly the
+        # count-vs-count convention TemplateActionPlugin#render_once
+        # already applies to real .j2 template files; a fully-empty
+        # render still stays empty, and a result already ENDING in more
+        # newlines than the source had is left alone.
+        if !rendered.empty? && (missing = trailing_newline_count(text) - trailing_newline_count(rendered)) > 0
+          rendered += "\n" * missing
+        end
+        rendered
+      end
+
+      private def trailing_newline_count(string : String) : Int32
+        string.size - string.rstrip('\n').size
       end
 
       # The strict-undefined TEMPLATE probe: renders *text* once on the
