@@ -1200,6 +1200,25 @@ module Krikri
         end
       end
 
+      # real's atomic_move "failed final rename" crash (raise
+      # AnsibleModuleError whose detail was the "Unable to make %s into to
+      # %s, failed final rename from %s" message pre-joined to the rename's
+      # own OSError with _text_utils.concat_message's ": " join - observed
+      # on the EBUSY replacing a bind-mounted /etc/hosts, issue #304): the
+      # OSError rides the module's crash as its underlying exception, so
+      # the block splits it out under "<<< caused by >>>" while the
+      # collapsed brief keeps the whole pre-joined text. Keyed on the
+      # detail's own shape, not a module: every module riding atomic_move
+      # (copy:, template: - the copy module - etc.) can produce it, and the
+      # task's module name is "template" while the crash belongs to copy.
+      if split = failed_final_rename_split(msg)
+        inner, errno_text = split
+        errno_node = ErrorBlock::Node.new(errno_text, events: [] of ErrorBlock::Node)
+        detail_node = ErrorBlock::Node.new(inner + ".").with_chain(ErrorBlock::DIRECT_CAUSE, true, errno_node)
+        return root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new("Module failed.")
+          .with_chain(ErrorBlock::DIRECT_CAUSE, true, detail_node))
+      end
+
       short = module_name.try { |name| name.split(".").last }
       case short
       when "template"
@@ -1280,6 +1299,22 @@ module Krikri
           root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new("Module failed.").with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(msg)))
         end
       end
+    end
+
+    # The failed-final-rename detail's one safe split: the atoms neither the
+    # src nor the stage path can carry ("Errno" inside a bracketed errno
+    # segment text) decide where ": [Errno N] ..." begins - rindex because
+    # the errno text itself can contain further ": b'...'" colons.
+    # Returns {segment sans errno, errno text}; nil when msg is not this
+    # shape (including a detail whose errno could not be derived, which
+    # renders plain - the same split would be a no-op anyway).
+    # Public only so the unit suite can pin the split directly, the same
+    # reason task_error_chain is.
+    def self.failed_final_rename_split(msg : String) : {String, String}?
+      return nil unless msg.starts_with?("Unable to make b'") && msg.includes?("failed final rename from '")
+      idx = msg.rindex(": [Errno ")
+      return nil unless idx
+      {msg[0...idx].rstrip(". "), msg[(idx + 2)..]}
     end
 
     # The [ERROR] block that precedes a LOOPED task's per-item
