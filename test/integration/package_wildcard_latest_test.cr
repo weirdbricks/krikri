@@ -115,3 +115,147 @@ describe "package plugin name:* state: latest" do
     end
   end
 end
+
+# `package: {name: "*", state: latest}` on a dnf host. Ansible's
+# `package:` module delegates straight to ansible.builtin.dnf, and dnf.py
+# routes this exact form through a bare base.upgrade_all() on the Python
+# API - an upgrade, never an install of the glob - while that API's
+# Base() never reads /etc/dnf/dnf.conf, so conf.best stays False:
+# conflicting updates are silently dropped and the task ends changed, rc
+# 0. The dnf CLI this module's compound runs DOES read dnf.conf (Rocky
+# ships best=True in it), and the bare CLI upgrade then hard-fails with a
+# Depsolve Error the Python path never sees (issue 299) - the compound
+# must pin --nobest, the way plugins/dnf.cr's handle_upgrade_all already
+# does for the native `dnf:` module. Same shim idea as the apt block
+# above, with dnf and yum both shimmed by the same script: each records
+# its argv ($* per line) and echoes the canned outputs, and dnf exiting 0
+# never even reaches the `|| yum` fallback.
+private def with_dnf_wildcard_shim(out_content : String, err_content : String = "", exit_code : Int32 = 0, &)
+  bin_dir = File.join(Dir.tempdir, "krikri-pkg-wildcard-dnf-#{Random.rand(1_000_000)}")
+  log = File.join(bin_dir, "calls.log")
+  FileUtils.mkdir_p(bin_dir)
+  shim = <<-'SHIM'
+    #!/bin/sh
+    printf '%s\n' "$*" >> "${KRIKRI_DNF_CALLS:-/dev/null}"
+    [ -n "${KRIKRI_DNF_OUT:-}" ] && printf '%b' "${KRIKRI_DNF_OUT}"
+    [ -n "${KRIKRI_DNF_ERR:-}" ] && printf '%b' "${KRIKRI_DNF_ERR}" >&2
+    exit "${KRIKRI_DNF_EXIT:-0}"
+    SHIM
+  File.write(File.join(bin_dir, "dnf"), shim)
+  File.write(File.join(bin_dir, "yum"), shim)
+  File.chmod(File.join(bin_dir, "dnf"), 0o755)
+  File.chmod(File.join(bin_dir, "yum"), 0o755)
+  # `rpm` is shimmed to plain failure (any real one is absent on the spec
+  # host anyway): dnf.py's upgrade_all() never consults the rpm db for a
+  # whole-inventory upgrade, so the "installed?" pre-check toggling can't
+  # change what the branch is expected to run.
+  rpm = File.join(bin_dir, "rpm")
+  File.write(rpm, "#!/bin/sh\nexit 1\n")
+  File.chmod(rpm, 0o755)
+  env = {
+    "PATH"             => "#{bin_dir}:/usr/bin:/bin",
+    "KRIKRI_DNF_CALLS" => log,
+    "KRIKRI_DNF_OUT"   => out_content,
+    "KRIKRI_DNF_ERR"   => err_content,
+    "KRIKRI_DNF_EXIT"  => exit_code.to_s,
+  }.to_json
+  yield env, log
+ensure
+  FileUtils.rm_rf(bin_dir) if bin_dir
+end
+
+private def dnf_wildcard_noop_output : String
+  "Dependencies resolved.\nNothing to do.\nComplete!\n"
+end
+
+private def dnf_wildcard_upgrade_output : String
+  "Dependencies resolved.\nUpgraded:\n  glibc-2.34-125.el9_5.13.x86_64\n\nComplete!\n"
+end
+
+describe "package plugin name:* state: latest (dnf host, issue 299)" do
+  it "runs dnf upgrade --nobest, never dnf install '*'" do
+    with_dnf_wildcard_shim(dnf_wildcard_noop_output) do |env, log|
+      result = PluginSpecHelper.run("package", {
+        "name"         => "*",
+        "state"        => "latest",
+        "use"          => "dnf",
+        "_environment" => env,
+      })
+
+      result["failed"]?.try(&.as_bool).must_be_nil
+      # Exactly one invocation, and it is the upgrade-the-inventory
+      # compound with the API path's best=False pinned onto the CLI
+      # (--nobest); dnf exiting 0 also means yum's line never lands.
+      File.read_lines(log).must_equal(["upgrade -y --setopt=localpkg_gpgcheck=1 --nobest"])
+      # A genuine no-op upgrade-all reports changed: false - ansible's
+      # base.upgrade_all() prints "Nothing to do" and ends rc 0.
+      result["changed"].as_bool.must_equal(false)
+    end
+  end
+
+  it "reports changed: true when the upgrade output shows upgraded packages" do
+    with_dnf_wildcard_shim(dnf_wildcard_upgrade_output) do |env, _log|
+      result = PluginSpecHelper.run("package", {
+        "name"         => "*",
+        "state"        => "latest",
+        "use"          => "dnf",
+        "_environment" => env,
+      })
+
+      result["failed"]?.try(&.as_bool).must_be_nil
+      result["changed"].as_bool.must_equal(true)
+    end
+  end
+
+  it "keeps state: present's gpg choice in the upgrade compound (disable_gpg_check)" do
+    with_dnf_wildcard_shim(dnf_wildcard_noop_output) do |env, log|
+      result = PluginSpecHelper.run("package", {
+        "name"              => "*",
+        "state"             => "latest",
+        "use"               => "dnf",
+        "disable_gpg_check" => "true",
+        "_environment"      => env,
+      })
+
+      result["failed"]?.try(&.as_bool).must_be_nil
+      File.read_lines(log).must_equal(["upgrade -y --nogpgcheck --nobest"])
+      result["changed"].as_bool.must_equal(false)
+    end
+  end
+
+  it "fails through the per-spec failure shape on a nonzero dnf rc" do
+    with_dnf_wildcard_shim(
+      "No match for argument: redhat-lsb-core\n",
+      "Error: Unable to find a match: redhat-lsb-core\n", 1) do |env, _log|
+      result = PluginSpecHelper.run("package", {
+        "name"         => "*",
+        "state"        => "latest",
+        "use"          => "dnf",
+        "_environment" => env,
+      })
+
+      result["failed"].as_bool.must_equal(true)
+      result["changed"].as_bool.must_equal(false)
+      result["msg"].as_s.must_equal("Failed to install some of the specified packages")
+      result["failures"].as_a.map(&.as_s).must_equal(["No package redhat-lsb-core available."])
+      result["rc"].as_i.must_equal(1)
+    end
+  end
+
+  it "check mode runs the whole-inventory check-update without the '*' arg" do
+    with_dnf_wildcard_shim(dnf_wildcard_noop_output, "", 100) do |env, log|
+      result = PluginSpecHelper.run("package", {
+        "name"                => "*",
+        "state"               => "latest",
+        "use"                 => "dnf",
+        "_ansible_check_mode" => "true",
+        "_environment"        => env,
+      })
+
+      result["changed"].as_bool.must_equal(true)
+      result["msg"].as_s.must_equal("Would update * to latest (check mode)")
+      # One invocation, and no literal '*' name spec reaches check-update.
+      File.read_lines(log).must_equal(["check-update"])
+    end
+  end
+end
