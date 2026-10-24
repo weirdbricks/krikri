@@ -654,6 +654,9 @@ module Krikri
       "community.mysql.mysql_variables"   => {warning_text: "Use ansible.mysql.mysql_variables instead.", collection: "community.mysql", version: "6.0.0"},
       "community.general.proxmox"         => {warning_text: "The proxmox content has been moved to community.proxmox.", collection: "community.general", version: "15.0.0"},
       "community.general.proxmox_kvm"     => {warning_text: "The proxmox content has been moved to community.proxmox.", collection: "community.general", version: "15.0.0"},
+      # Windows-only module, never executed on a Linux target; the
+      # load-time warning still prints (MindPointGroup.windows22_stig round).
+      "community.windows.win_audit_policy_system" => {warning_text: "win_audit_policy_system will be removed in a future release of this collection. Use ansible.windows.win_audit_policy_system instead.", collection: "community.windows", version: "4.0.0"},
     }
 
     # The table entry for a module name, together with the FQCN the
