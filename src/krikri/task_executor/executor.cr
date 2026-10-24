@@ -88,6 +88,10 @@ module Krikri
     # Track registered variables per host
     # the when: expression that last evaluated False (for register's false_condition)
     @last_false_condition : String? = nil
+    # the when: LIST / merged-import clause that last raised during
+    # evaluate_when_items (for decorate_conditional_value_origin's strict
+    # boolean-result lineage)
+    @last_failed_when_clause : String? = nil
     @registered_vars : Hash(String, Hash(String, JSON::Any))
     # Handler runner
     @handler_runner : HandlerRunner
