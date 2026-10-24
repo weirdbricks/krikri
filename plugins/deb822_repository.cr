@@ -174,31 +174,19 @@ module Krikri
     # auto-install path does not exist in any released core): a target
     # without python3-debian fails with missing_required_lib wording
     # before the module does anything. Probed through the same
-    # interpreter resolution the boto3 gate in AwsModuleArgs uses -
-    # `python3` first, then `python`, reporting sys.executable.
+    # Ansible's interpreter discovery order, reporting sys.executable; the
+    # module passes the caught ImportError as `exception`, which real shows
+    # in the [ERROR] block only ("...: No module named 'debian'").
     private def python3_debian_gate : PluginResult?
-      python = python_interpreter
-      return nil unless python
-
-      probe = Process.run(python, {"-c", "from debian.deb822 import Deb822"}, error: Process::Redirect::Close)
-      return nil if probe.success?
+      gate = Krikri.missing_python_library("python3-debian", "debian.deb822")
+      return nil unless gate
 
       PluginResult.new(
         changed: false,
         failed: true,
-        msg: Krikri.missing_required_lib_message("python3-debian", python),
+        msg: gate[:msg],
+        _ansible_error_detail: gate[:detail],
       )
-    end
-
-    private def python_interpreter : String?
-      ["python3", "python"].each do |name|
-        next unless Process.find_executable(name)
-        io = IO::Memory.new
-        status = Process.run(name, {"-c", "import sys; print(sys.executable)"}, output: io, error: Process::Redirect::Close)
-        path = io.to_s.strip
-        return path if status.success? && !path.empty?
-      end
-      nil
     end
 
     # Ansible's own filename slug: reuses a legacy-normalized
