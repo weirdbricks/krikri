@@ -41,16 +41,23 @@ describe "pip plugin" do
     File.directory?("/tmp/never-created-venv").must_equal(false)
   end
 
-  it "no-ops cleanly when name: is present but resolves to an empty list" do
+  it "no-ops with pip's module warning when name: is present but resolves to an empty list" do
     # Round 131 (robertdebock.vagrant): name: "{{ vagrant_pip_packages }}"
     # resolving to an empty list rendered as the literal text "[]" -
     # Ansible's pip.py treats `if name:` as Python truthiness, so
-    # an empty list is not an error, it falls through to the same
+    # an empty list is not an error, it falls through to the
     # "nothing to do" branch as name: omitted, exiting changed: false.
+    # That exit is a module.warn(...) + exit_json(changed=False) - the
+    # text rides the result's `warnings` list and the wire carries NO
+    # msg at all (the display shows the
+    # [WARNING] line above a bare `ok:`), so msg: text here printed an
+    # ok line with a message body where real Ansible doesn't.
     result = PluginSpecHelper.run("pip", {"name" => "[]"})
 
-    result["failed"]?.try(&.as_bool).wont_equal(true)
+    falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
     result["changed"].as_bool.must_equal(false)
+    result["msg"]?.must_be_nil
+    result["warnings"].as_a.map(&.as_s).must_equal(["No valid name or requirements file found."])
   end
 
   it "unwraps a single-element name: list to the bare package name" do
