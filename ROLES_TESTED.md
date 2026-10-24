@@ -14774,3 +14774,13 @@ Local probe roles, not Galaxy roles: each probed task registers its result and d
 | `net2grid_openldap_config` | ubuntu | ❌ BLOCKED: (round29881199, 0.9.1919 release). |
 | `pinkeen.deploy` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29881198, 0.9.1919 release). Times: cold py 0.48s vs cr 0.01s; warm py 0.53s vs cr 0.01s. |
 | `sansible.jenkins_server` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29881196, 0.9.1919 release). Times: cold py 0.51s vs cr 0.01s; warm py 0.47s vs cr 0.01s. |
+| `EGI-Foundation.voms-client` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29881224, 0.9.1919 release). Times: cold py 5.55s vs cr 4.30s; warm py 4.47s vs cr 2.74s. |
+| `Jooho.openshift-custom-login-page` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29881226, 0.9.1919 release). Times: cold py 1.82s vs cr 0.82s; warm py 1.51s vs cr 0.19s. |
+| `badsectorlabs.ludus_xz_backdoor` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29881218, 0.9.1919 release). Times: cold py 4.50s vs cr 7.68s; warm py 2.68s vs cr 0.34s. |
+| `cesnet.sendmail` | ubuntu | ✅ Clean (round29881219, 0.9.1919 release). Times: cold py 79.49s vs cr 68.11s; warm py 4.33s vs cr 0.19s. |
+| `dilerous.vxflex_mdminstall_all` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29881217, 0.9.1919 release). Times: cold py 20.62s vs cr 4.68s; warm py 18.81s vs cr 0.71s. |
+| `ebesson.k3s` | rocky | ✅ Clean (round29881222, 0.9.1919 release). Times: cold py 61.43s vs cr 48.79s; warm py 35.95s vs cr 3.83s. |
+| `elan.opencast_postgresql` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29881221, 0.9.1919 release). Times: cold py 71.77s vs cr 68.38s; warm py 16.75s vs cr 5.23s. |
+| `iknite.spotify` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29881220, 0.9.1919 release). Times: cold py 2.83s vs cr 0.84s; warm py 2.07s vs cr 0.18s. |
+| `pgvillage.firewall` | ubuntu | ✅ Clean (round29881225, 0.9.1919 release). Times: cold py 4.92s vs cr 4.22s; warm py 3.52s vs cr 0.36s. |
+| `stancel.create-digitalocean-droplet` | ubuntu | ⚠ only a community module krikri does not track differs (round29881223, 0.9.1919 release). Times: cold py 3.21s vs cr 1.17s; warm py 2.58s vs cr 0.15s. |
