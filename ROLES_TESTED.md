@@ -14764,3 +14764,13 @@ Local probe roles, not Galaxy roles: each probed task registers its result and d
 | `pgvillage.chainsmith` | ubuntu | ❌ Divergent - issue #322 (round29881045, 0.9.1916 debug). |
 | `s2ansible.zabbix_host` | rocky | ❌ Divergent - issue #323 (round29881046, 0.9.1916 debug). |
 | `souenzzo.pathogit` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29881039, 0.9.1916 debug). |
+| `MindPointGroup.windows22_stig` | rocky | ❌ Divergent - issue #324 (round29881203, 0.9.1919 release). Times: cold py 5.40s vs cr 6.79s; warm py 3.54s vs cr 0.37s. |
+| `amritanshu_pandey.pihole_dns_ansible` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29881204, 0.9.1919 release). Times: cold py 2.84s vs cr 0.68s; warm py 2.35s vs cr 0.12s. |
+| `antonchernik.atlassian-jira` | ubuntu | ✅ Clean (round29881202, 0.9.1919 release). Times: cold py 38.10s vs cr 54.20s; warm py 7.05s vs cr 0.70s. |
+| `chauanhtuandl.java` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29881201, 0.9.1919 release). Times: cold py 4.43s vs cr 6.00s; warm py 2.60s vs cr 0.36s. |
+| `cloudweeb.librenms` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29881205, 0.9.1919 release). Times: cold py 9.30s vs cr 16.98s; warm py 7.86s vs cr 9.86s. |
+| `dgibbs64.mdatp` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29881200, 0.9.1919 release). Times: cold py 3.61s vs cr 0.79s; warm py 2.34s vs cr 0.15s. |
+| `mcgrof.install_terraform` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29881197, 0.9.1919 release). Times: cold py 11.02s vs cr 9.06s; warm py 11.18s vs cr 1.06s. |
+| `net2grid_openldap_config` | ubuntu | ❌ BLOCKED: (round29881199, 0.9.1919 release). |
+| `pinkeen.deploy` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29881198, 0.9.1919 release). Times: cold py 0.48s vs cr 0.01s; warm py 0.53s vs cr 0.01s. |
+| `sansible.jenkins_server` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29881196, 0.9.1919 release). Times: cold py 0.51s vs cr 0.01s; warm py 0.47s vs cr 0.01s. |
