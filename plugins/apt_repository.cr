@@ -8,6 +8,7 @@ require "../src/krikri/plugin_helpers/apt_repository_line"
 require "../src/krikri/plugin_helpers/apt_repository_cache_retry"
 require "../src/krikri/plugin_helpers/apt_lock_retry"
 require "../src/krikri/plugin_helpers/apt_ppa"
+require "../src/krikri/plugin_helpers/python_lib_gate"
 
 module Krikri
   # Apt_repository plugin - adds/removes a Debian/Ubuntu APT source line.
@@ -36,8 +37,12 @@ module Krikri
   #   backoff cap in seconds (default 12) when that update fails -
   #   Ansible's own retry semantics, see
   #   PluginHelpers::AptRepositoryCacheRetry
-  # - install_python_apt / validate_certs: accepted, documented no-ops
-  #   (see the class doc below for why)
+  # - install_python_apt: a no-op on hosts WITH apt-get (krikri is native,
+  #   python-apt is never needed there); on an apt-less target it selects
+  #   which message the no-apt-get gate fails with, the way ansible-core
+  #   2.19.11's main() ladder does (see that gate's comment in #execute)
+  # - validate_certs: accepted, documented no-op (see the class doc below
+  #   for why)
   # - mode: applied to the resulting file
   # - check_mode: report what would change without writing anything
   #
@@ -79,11 +84,14 @@ module Krikri
   # traffic on an already-added PPA for meaningfully less code, and
   # Ansible's own PPA idempotency check (a source-line match,
   # implemented below) already means the whole key-fetch path is never
-  # even reached on a rerun. `install_python_apt` and `validate_certs`
-  # are accepted as documented no-ops: krikri never imports python-apt
-  # (so there's nothing for `install_python_apt` to install - the param
-  # exists in Ansible purely to gate that auto-install), and the
-  # plugin's one HTTPS fetch (the Launchpad API call above) always
+  # even reached on a rerun. `install_python_apt` stays a no-op on any
+  # host WITH apt-get: krikri never imports python-apt, and - exactly
+  # like Ansible's install_python_apt() once get_bin_path('apt-get')
+  # comes up empty - installs nothing either (the param exists in Ansible
+  # purely to gate that auto-install); on an apt-less host it instead
+  # selects the no-apt-get gate's message, see #execute's ladder comment.
+  # `validate_certs` is an accepted-as-documented
+  # no-op: the plugin's one HTTPS fetch (the Launchpad API call above) always
   # verifies certificates via native `HTTP::Client`, which has no
   # disable-TLS-verification switch wired here - Ansible's
   # `validate_certs: false` only relaxes its own fetches, which there's
@@ -127,27 +135,65 @@ module Krikri
     SOURCES_LIST_D     = "/etc/apt/sources.list.d"
     KEYSERVER          = "hkps://keyserver.ubuntu.com:443"
     KEYSERVER_FALLBACK = "hkp://keyserver.ubuntu.com:80"
+    APT_GET_PATHS      = ["/usr/bin/apt-get", "/usr/local/bin/apt-get"]
 
     @warnings = [] of String
 
     def execute : PluginResult
       validate_bool_params!
-      # Ansible's apt_repository runs `apt-get update` (and its own
-      # add/remove paths shell out to apt-key/apt-get); on a host without
-      # apt-get (any non-Debian family host) it fails with exactly
-      # {"changed": false, "cmd": "update", "msg": "Error executing
-      # command.", "rc": 2} - found live on Rocky 9.6 with Oefenweb.dns
-      # (round 196), where this engine silently "succeeded" its way
-      # through the role (rc=0) while Ansible failed the
-      # repository task rc=2. The paths below were written for real
-      # Debian-family hosts; on anything else they'd fabricate success.
-      unless File.exists?("/usr/bin/apt-get") || File.exists?("/usr/local/bin/apt-get")
+      check_mode = true?(@params["_ansible_check_mode"]?)
+      install_python_apt = true?(@params["install_python_apt"]?, default: true)
+      # Real apt_repository runs THROUGH python-apt: the module-level
+      # `import apt` fails on any target that never had python3-apt
+      # installed (any non-Debian-family host), and ansible-core 2.19.11's
+      # main() !HAVE_PYTHON_APT ladder then decides the whole outcome
+      # without a single source file being touched. krikri has no
+      # python-apt dependency at all (its own implementation is native
+      # source-file editing), so nothing would stop it there naturally:
+      # the same round's krikri output did fail, but with apt.py's own
+      # exec-failure shape ({"cmd": "update", "msg": "Error executing
+      # command.", "rc": 2} - that module's run_command ENOENT, see
+      # apt.cr's guard) where real reported the bare python3-apt message
+      # it reports here (live: Rocky 9.6, mats116.java8, issue #296).
+      # The ladder, in real's order:
+      # - check mode: "python3-apt must be installed to use check mode.
+      #   If run normally this module can auto-install it." - real fails
+      #   BEFORE reaching install_python_apt(), since an auto-install
+      #   would itself be a change.
+      # - install_python_apt=False: "python3-apt is not installed, and
+      #   install_python_apt is False".
+      # - otherwise install_python_apt() skips its auto-install because
+      #   get_bin_path('apt-get') is nil (2.19 guards the install shellout,
+      #   unlike apt.py's blind prefetch), the second
+      #   probe_interpreters_for_module pass finds no apt bindings either,
+      #   and the final fail_json reports sys.executable - the interpreter
+      #   ansible itself discovered on that target (e.g. /usr/bin/python3.9
+      #   on a Rocky with nothing newer): Krikri.target_python_executable.
+      # All three are bare fail_json results ({"changed": false,
+      # "msg": ...}, no cmd/rc). Where apt-get DOES exist real's ladder
+      # instead auto-installs python-apt and respawns - nothing krikri
+      # needs to mirror, since its own implementation runs with no
+      # python-apt at all.
+      unless apt_get_paths.any? { |path| File.exists?(path) }
+        if check_mode
+          return PluginResult.new(
+            changed: false,
+            failed: true,
+            msg: "python3-apt must be installed to use check mode. If run normally this module can auto-install it."
+          )
+        end
+        unless install_python_apt
+          return PluginResult.new(
+            changed: false,
+            failed: true,
+            msg: "python3-apt is not installed, and install_python_apt is False"
+          )
+        end
+        python = Krikri.target_python_executable || "/usr/bin/python3"
         return PluginResult.new(
           changed: false,
           failed: true,
-          msg: "Error executing command.",
-          cmd: "update",
-          rc: 2
+          msg: "python3-apt must be installed and visible from #{python}."
         )
       end
       repo = @params["repo"]?
@@ -157,7 +203,6 @@ module Krikri
 
       state = @params["state"]? || "present"
       update_cache = true?(@params["update_cache"]?, default: true)
-      check_mode = true?(@params["_ansible_check_mode"]?)
 
       if ppa = PluginHelpers::AptPpa.parse(repo)
         return handle_ppa(ppa, state, update_cache, check_mode)
@@ -206,6 +251,19 @@ module Krikri
 
     private def sources_list_d : String
       @params["_sources_list_d"]? || SOURCES_LIST_D
+    end
+
+    # `_apt_get_paths` is the no-apt-get gate's own seam - the
+    # comma-separated paths its File.exists? probe checks - so a spec can
+    # force the gate to fire even on a dev box that actually has apt-get
+    # (the same host-package-state independence the retry specs get from
+    # _sources_list/_sources_list_d).
+    private def apt_get_paths : Array(String)
+      if override = @params["_apt_get_paths"]?
+        override.split(',').map(&.strip).reject(&.empty?)
+      else
+        APT_GET_PATHS
+      end
     end
 
     private def file_contains_line?(file : String, line : String) : Bool

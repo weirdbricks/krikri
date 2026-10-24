@@ -5,10 +5,13 @@ require "file_utils"
 # options: update_cache_retries / update_cache_retry_max_delay (wired
 # for real - see PluginHelpers::AptRepositoryCacheRetry, whose unit
 # spec pins the backoff formula against ansible-core's own
-# apt_repository.py) and the two documented no-ops install_python_apt /
-# validate_certs (krikri never imports python-apt and always verifies
+# apt_repository.py) and the two no-op params install_python_apt /
+# validate_certs (on a host WITH apt-get - the only host class these
+# specs run on - krikri never imports python-apt and always verifies
 # TLS on its one HTTPS fetch, so both are accepted-and-ignored - but
-# they MUST be accepted, since real playbooks pass them).
+# they MUST be accepted, since real playbooks pass them; on an
+# apt-less host install_python_apt instead picks the no-apt-get gate's
+# message, whose spec is test/unit/apt_repository_no_apt_get_gate_test.cr).
 #
 # The retry end-to-end runs against a scratch directory via the plugin's
 # `_sources_list`/`_sources_list_d` internal overrides (same
