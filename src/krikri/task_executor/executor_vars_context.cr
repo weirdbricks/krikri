@@ -4113,7 +4113,10 @@ module Krikri
     # (`not x` and comparisons yield bools, filters/calls create fresh
     # values) or the variable is unresolvable.
     private def deciding_bare_operand(task : Task, host : Host, expr : String) : String?
-      return nil if expr.includes?('(') || expr.includes?('"') || expr.includes?('\'') || expr.includes?('|')
+      # Operands after the deciding one are never evaluated (short-circuit),
+      # so they may be comparisons (`nvm_dir and nvm_profile == '.bashrc'`
+      # with nvm_dir "" is labeled by nvm_dir); any non-bare operand BEFORE
+      # the deciding one bails out below.
       is_or = expr.matches?(/\sor\s/)
       return nil if is_or && expr.matches?(/\sand\s/)
       operands = expr.split(is_or ? /\s+or\s+/ : /\s+and\s+/)
