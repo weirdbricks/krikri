@@ -542,7 +542,7 @@ module Krikri
     # line info, unlike a template syntax error which keeps it).
     private def ansible_wording(ex : KrikriJinja::TemplateError, line_prefix : Bool) : String
       base = line_prefix ? (ex.message || "template render failed") : (ex.raw_message || ex.message || "template render failed")
-      base.gsub(/'(\w+) object' has no attribute/, "object of type '\\1' has no attribute")
+      Krikri.jinja_attribute_miss_wording(base)
     end
 
     # JSON-shaped counterpart of #prepare_template_vars, for the krikri-jinja

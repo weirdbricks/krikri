@@ -183,7 +183,10 @@ module Krikri
         msg = e.raw_message
         return {nil, false} if msg.includes?("has no element")
         return {nil, false} if msg.matches?(/has no attribute '\d+'\z/)
-        {msg.gsub(/'(\w+) object' has no attribute/, "object of type '\\1' has no attribute"), false}
+        # The engine's attribute-miss wording -> ansible-core's, empty
+        # string key included (the lazy-dict shape, see
+        # Krikri.dict_attribute_miss_message).
+        {Krikri.jinja_attribute_miss_wording(msg), false}
       rescue
         {nil, false}
       end

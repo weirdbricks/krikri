@@ -3268,7 +3268,18 @@ module Krikri
     # a mislabeled Origin.
     private def chain_value_failure_stanza(task : Task, msg : String) : String?
       m = msg.match(/\A(Error while resolving value for '([^']+)': )'([A-Za-z_][A-Za-z0-9_]*)' is undefined\z/)
-      return nil unless m
+      unless m
+        # Same fourth stanza for an empty-key `groups[...]` miss inside the
+        # arg's variable (live-verified 2.19.11, issue #319): the bare
+        # lazy-dict message with Origin at the variable's definition.
+        lazy = msg.match(/\AError while resolving value for '([^']+)': ('#{Regex.escape(Krikri::LAZY_TEMPLATE_DICT_TYPE)} object' has no attribute '')\z/)
+        return nil unless lazy
+        seed = task.params[lazy[1]]?
+        origin = value_failure_var_origin(task, lazy[2], reachable_from: seed.is_a?(String) ? seed : nil)
+        return nil unless origin
+        return "#{lazy[2]}\n" +
+          origin_context_block(origin.path, File.read_lines(origin.path), origin.line, origin.column)
+      end
       # Real 2.19.11 only follows the vars actually reachable from the
       # failing arg (issue #36: other layers failing with the same
       # message but unreachable from this param don't suppress the
@@ -3414,6 +3425,11 @@ module Krikri
       merge_var_layer(merged, origins, @all_role_vars, @all_role_var_origins)
       merge_var_layer(merged, origins, task.vars, task.vars_origins)
       merge_var_layer(merged, origins, @extra_vars, @extra_var_origins)
+
+      # The lazy-dict miss comes from subscripting the `groups` magic var,
+      # which no var layer carries - without it the re-render fails on
+      # `'groups' is undefined` instead and never reproduces the message.
+      merged["groups"] ||= JSON::Any.new(build_groups) if message.starts_with?("'#{Krikri::LAZY_TEMPLATE_DICT_TYPE} object'")
 
       reachable = candidate_reachable_keys(merged, reachable_from)
 
@@ -4452,6 +4468,14 @@ module Krikri
         mid = "Error while evaluating conditional."
         cause_stanza = "'#{m[1]}' is undefined\n" +
                        origin_context_block(origin.path, File.read_lines(origin.path), origin.line, origin.column)
+      elsif (m = inner.match(/\AError while evaluating conditional: ('#{Regex.escape(Krikri::LAZY_TEMPLATE_DICT_TYPE)} object' has no attribute '')\z/)) &&
+            (origin = value_failure_var_origin(task, m[1], reachable_from: raw))
+        # Empty-key `groups[...]` miss inside a var the when: reads: the
+        # same shortened middle link and var-definition cause (live-verified
+        # 2.19.11, issue #319).
+        mid = "Error while evaluating conditional."
+        cause_stanza = "#{m[1]}\n" +
+                       origin_context_block(origin.path, File.read_lines(origin.path), origin.line, origin.column)
       end
 
       text = String.build do |io|
@@ -4537,6 +4561,15 @@ module Krikri
           # the failing ELEMENT rather than the first one (issue #228).
           cause_context = origin_context_block(path, lines, pos[0] + 1, pos[1])
         end
+      elsif inner.to_s.starts_with?("'#{Krikri::LAZY_TEMPLATE_DICT_TYPE} object'") &&
+            task_has_loop_source?(task) &&
+            (origin = value_failure_var_origin(task, inner.to_s))
+        # An empty-string subscript key fails inside the loop source's
+        # variable (`zk_hosts_list: '{{ groups[zk_inventory_group] ... }}'`
+        # consumed by `loop: '{{ zk_hosts_list }}'`); real 2.19.11 points
+        # the cause stanza at that variable's defining value, not at the
+        # loop keyword (live-verified, issue #319).
+        cause_context = origin_context_block(origin.path, File.read_lines(origin.path), origin.line, origin.column)
       elsif inner.to_s.match(/\Aobject of type '[^']+' has no attribute '[^']+'\z/) &&
             task_has_loop_source?(task) &&
             (pos = locate_loop_source_line(lines, task))
