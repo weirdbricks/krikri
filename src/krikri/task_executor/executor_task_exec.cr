@@ -4,6 +4,7 @@ require "../unsafe_values"
 require "krikri-jinja/krikri_jinja"
 require "../jinja_host_context"
 require "../plugin_helpers/ansible_splitlines"
+require "../plugin_helpers/script_remote_staging"
 
 module Krikri
   class TaskExecutor
@@ -2259,18 +2260,61 @@ module Krikri
       end
 
       conn = ConnectionSettings.resolve(host, vars_context)
+
+      # Real grounds the transfer in its own per-task tmp dir
+      # (`<remote_tmp>/ansible-tmp-<ts>-<pid>-<rand>/<basename>`,
+      # remote_tmp defaulting to ~/.ansible/tmp and expanded REMOTE side;
+      # live-verified vs 2.19.11 on the issue-#298 role). Staging in the
+      # same shape matters threefold over the old /tmp/.krikri-playbook-
+      # script-* path: the script's bash error lines quote the script's
+      # OWN $0, so the tmp dir appeared verbatim inside stdout/stderr
+      # (real's is the role-tester's ANSIBLE_REMOTE_TMP mask -
+      # /.ansible/tmp/ansible-tmp-[\d.\-]+...); ansible removes the WHOLE
+      # dir afterward (cleanup hands the plugin the dir to rm -rf;
+      # a rm -f-the-file cleanup could not); and the successful staging
+      # is what marks this as the remote-pty case for plugins/script.cr's
+      # result shaping (__script_ssh_addr). The one-shot mkdir script
+      # mirrors ansible shell.mkdtemp (umask 077 subshell, mkdir -p the
+      # base then mkdir the per-task dir, echo the expanded path back). Any failure in
+      # the mkdir/upload machinery keeps the old /tmp staging below, so
+      # an unusable ~/.ansible inserts no transfer failure of its own.
+      base = script_remote_tmp_base(vars_context)
+      dir_name = PluginHelpers::ScriptRemoteStaging.tmp_dir_name
+      if made = ssh_script_tmpdir(conn, PluginHelpers::ScriptRemoteStaging.mkdir_script(base, dir_name))
+        begin
+          staged_file = "#{made}/#{File.basename(resolved_local)}"
+          upload(
+            conn,
+            resolved_local,
+            staged_file
+          )
+
+          resolved = params.dup
+          resolved["cmd"] = rest ? "#{staged_file} #{rest}" : staged_file
+          resolved["__cleanup_after_script"] = "true"
+          resolved["__script_tmp_dir"] = made
+          resolved["__script_ssh_addr"] = conn.conn_host
+          return resolved
+        rescue
+          # An upload through a freshly created per-task dir that never
+          # completed: rm the dir best-effort (SSHManager never raises)
+          # so the same half-uploaded footprint isn't left in ~/.ansible,
+          # then stage like the mkdir failed.
+          SSHManager.exec_script(
+            conn.conn_host,
+            conn.user,
+            "rm -rf #{shell_single_quote(made)}",
+            conn.port,
+            identity_file: conn.identity_file,
+            extra_args: conn.ssh_extra_options
+          )
+        end
+      end
+
       remote_tmp = "/tmp/.krikri-playbook-script-#{Random::Secure.hex(8)}-#{File.basename(resolved_local)}"
 
       begin
-        SSHManager.upload(
-          conn.conn_host,
-          conn.user,
-          resolved_local,
-          remote_tmp,
-          conn.port,
-          identity_file: conn.identity_file,
-          extra_args: conn.ssh_extra_options
-        )
+        upload(conn, resolved_local, remote_tmp)
       rescue
         return params
       end
@@ -2279,6 +2323,51 @@ module Krikri
       resolved["cmd"] = rest ? "#{remote_tmp} #{rest}" : remote_tmp
       resolved["__cleanup_after_script"] = "true"
       resolved
+    end
+
+    # script:'s remote-staging tmp base: ansible_remote_tmp when the vars
+    # carry one (the same override real's shell.get_option('remote_tmp')
+    # picks up), otherwise real's DEFAULT_REMOTE_TMP ~/.ansible/tmp -
+    # left UNEXPANDED either way: the per-task mkdir script expands a
+    # leading ~ remotely and echoes the resolved path back (the same
+    # remote-side resolution ansible's $(echo <remote_tmp>) does).
+    private def script_remote_tmp_base(vars_context : Hash(String, JSON::Any)) : String
+      configured = vars_context["ansible_remote_tmp"]?.try(&.as_s?)
+      configured && !configured.empty? && configured != Krikri::NONE_SENTINEL ? configured : "~/.ansible/tmp"
+    end
+
+    # Runs PluginHelpers::ScriptRemoteStaging.mkdir_script over ssh
+    # (SSHManager.exec_script, stdin-fed like every direct staging round
+    # trip) and returns the per-task dir path from its own echo line.
+    # nil when the script didn't cleanly confirm (the &&-chained subshell
+    # makes any mkdir failure a nonzero exit and the echo never fires) -
+    # callers treat that as the /tmp-fallback trigger.
+    private def ssh_script_tmpdir(conn : ConnectionSettings, mk_script : String) : String?
+      result = SSHManager.exec_script(
+        conn.conn_host,
+        conn.user,
+        mk_script,
+        conn.port,
+        identity_file: conn.identity_file,
+        extra_args: conn.ssh_extra_options
+      )
+      return nil unless result[:exit_code] == 0
+      PluginHelpers::ScriptRemoteStaging.parsed_tmpdir(result[:stdout])
+    end
+
+    # The staging scp call both new-dir and /tmp-fallback branches make,
+    # extracted so each branch reads one line instead of re-spelling the
+    # connection getters.
+    private def upload(conn : ConnectionSettings, local_path : String, remote_path : String) : Nil
+      SSHManager.upload(
+        conn.conn_host,
+        conn.user,
+        local_path,
+        remote_path,
+        conn.port,
+        identity_file: conn.identity_file,
+        extra_args: conn.ssh_extra_options
+      )
     end
 
     # Resolves script:'s leading path token against (in order) the

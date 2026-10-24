@@ -1800,6 +1800,7 @@ module Krikri
         # ssh_server's own `{{ ... | union([item.invocation.module_args.
         # creates]) }}` set_fact over the registered results).
         interpreted = attach_batch_step_invocation(task, steps[i], interpreted)
+        interpreted = shape_script_result(task, interpreted)
         item_results[idx] = apply_changed_failed_when(task, interpreted, vars_context, host)
       end
 
@@ -2477,9 +2478,17 @@ module Krikri
         # retried, never evaluated against until:, and never gets the loop's
         # attempts key. The first result is the final one, exactly as the
         # plugin produced it (issue #131, live-verified vs 2.19.11).
+        # script: is the exception to the escape: its non-zero-exit failure
+        # is a RETURNED dict, not a raise - real's attempt loop calls
+        # handler.run() directly, and the action-context error raise for a
+        # returned dict happens in _execute(), OUTSIDE this loop - so it
+        # retries normally (live-verified vs 2.19.11: "FAILED - RETRYING"
+        # still prints and the final result keeps the attempts key, while
+        # the [ERROR] block still reads "Action failed:").
         if result_hash = result.as_h?
           if Krikri.result_failed_flag(result) &&
-             result_hash["_ansible_action_level"]?.try(&.as_bool?) == true
+             result_hash["_ansible_action_level"]?.try(&.as_bool?) == true &&
+             !SCRIPT_MODULES.includes?(task.action_name || task.module_name)
             if register_name && !register_name.empty?
               register_result(host, register_name, result)
               vars_context[register_name] = @registered_vars[host.name][register_name]
