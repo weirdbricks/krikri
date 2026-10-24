@@ -1,5 +1,6 @@
 require "../minitest_helper"
 require "file_utils"
+require "../../src/krikri/python_filter_runner"
 
 # Ansible loads a role's own `filter_plugins/*.py` (Python files
 # exposing a FilterModule class whose filters() method returns a
@@ -360,5 +361,103 @@ describe "role-local filter_plugins/*.py custom filters" do
     output.must_include("42", output)
   ensure
     FileUtils.rm_rf(root) if root
+  end
+end
+
+describe "role-local filter_plugins file that fails to import" do
+  serial! # replaces PythonFilterRunner's process-wide warning sink
+
+  it "warns once with Ansible's wording and still serves the good file's filters" do
+    root = PluginSpecHelper.tmp_path("filter-broken-import")
+    Dir.mkdir_p(File.join(root, "filter_plugins"))
+    broken = File.join(root, "filter_plugins", "to_toml.py")
+    good = File.join(root, "filter_plugins", "good.py")
+    # issue #307's real shape (notmycloud.podman_systemd): its
+    # filter_plugins/to_toml.py does `import toml`, which the
+    # controller rarely has - ansible prints one "Skipping plugin"
+    # warning on stderr and keeps the rest of the directory loaded,
+    # while krikri swallowed the import failure silently.
+    File.write(broken, <<-PYTHON)
+      import toml
+
+
+      class FilterModule(object):
+          def filters(self):
+              return {"to_toml": self.to_toml}
+
+          def to_toml(self, value):
+              return toml.dumps(value)
+      PYTHON
+    File.write(good, <<-PYTHON)
+      class FilterModule(object):
+          def filters(self):
+              return {"double": lambda x: x * 2}
+      PYTHON
+
+    captured = IO::Memory.new
+    previous = Krikri::PythonFilterRunner.warning_sink
+    begin
+      Krikri::PythonFilterRunner.warning_sink = captured
+      names = Krikri::PythonFilterRunner.filter_names([broken, good])
+    ensure
+      Krikri::PythonFilterRunner.warning_sink = previous
+    end
+
+    names.includes?("double").must_equal(true)
+    names.includes?("to_toml").must_equal(false)
+    lines = captured.to_s.lines
+    lines.size.must_equal(1, captured.to_s)
+    # str(ModuleNotFoundError) is the bare "No module named 'toml'" -
+    # the tail ansible prints, with no exception-class prefix. toml is
+    # absent on every controller this suite runs on: ansible-core
+    # dropped it as a dependency long ago and nothing else here
+    # installs it, so the expected text is stable.
+    lines.first.must_equal(
+      "[WARNING]: Skipping plugin (#{File.expand_path(broken)}), cannot load: No module named 'toml'"
+    )
+  end
+
+  it "warns at role load even when the failing file's filter is never used" do
+    # Ansible imports every file of a loaded role's filter_plugins/
+    # whether or not any task reaches a use of the broken file's own
+    # filter, so the "Skipping plugin" warning fires even on a play
+    # that dies before ever touching it - observed with
+    # notmycloud.podman_systemd, whose to_toml.py does `import toml` and
+    # whose to_toml filter only appears in tasks a failing play never
+    # reaches (issue #307). krikri's only scan point was the lazy
+    # unknown-filter query - a query the dying play never makes - so it
+    # printed nothing. Here the role is loaded and the filter ignored;
+    # the eager scan must still produce the one warning line, and the
+    # later lazy query that a task could still make adds no second one.
+    root = PluginSpecHelper.tmp_path("filter-eager-warning")
+    Dir.mkdir_p(File.join(root, "filter_plugins"))
+    broken = File.join(root, "filter_plugins", "to_toml.py")
+    File.write(broken, <<-PYTHON)
+      import toml
+
+
+      class FilterModule(object):
+          def filters(self):
+              return {"to_toml": self.to_toml}
+
+          def to_toml(self, value):
+              return toml.dumps(value)
+      PYTHON
+
+    captured = IO::Memory.new
+    previous = Krikri::PythonFilterRunner.warning_sink
+    begin
+      Krikri::PythonFilterRunner.warning_sink = captured
+      Krikri::PythonFilterRunner.register_role_plugin_roots(root)
+      Krikri::PythonFilterRunner.filter_names([broken])
+    ensure
+      Krikri::PythonFilterRunner.warning_sink = previous
+    end
+
+    lines = captured.to_s.lines
+    lines.size.must_equal(1, captured.to_s)
+    lines.first.must_equal(
+      "[WARNING]: Skipping plugin (#{File.expand_path(broken)}), cannot load: No module named 'toml'"
+    )
   end
 end

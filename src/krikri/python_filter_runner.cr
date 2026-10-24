@@ -85,6 +85,42 @@ module Krikri
           roots << dir unless roots.includes?(dir)
         end
       end
+
+      # Ansible's "Skipping plugin" warning is not gated on the broken
+      # file's filter ever being used: registering a role's
+      # filter_plugins/ at Role.load and the plugin loading that powers
+      # even the play's first template render import every file in the
+      # directory together, so one unloadable file warns once even when
+      # its own filter only appears in tasks the play never reaches -
+      # notmycloud.podman_systemd's to_toml.py (`import toml`, issue
+      # #307) warned exactly like that, while its to_toml filter lived
+      # in tasks the play failed before reaching. What used to trigger
+      # the scan here was only the lazy unknown-filter query in
+      # defines_filter? - a query the dying play never got to make - so
+      # nothing was printed where ansible had already warned. Scanning
+      # this role's own filter_plugins/ files restores that load-time
+      # warning; a missing directory or no controller python3 stays
+      # silent below, and the mtime cache in filter_names keeps it to
+      # one warning per file per process. The scan runs outside the
+      # synchronize block above so it never runs back into
+      # loaded_role_roots/find_sources, which take that same mutex.
+      filter_dir = File.join(role_path, "filter_plugins")
+      return unless Dir.exists?(filter_dir)
+      filter_names(py_sources_in(filter_dir))
+    end
+
+    # Every direct `.py` child under a plugin directory. Ansible loads
+    # ALL files in a plugin directory, not name-matched ones, so there
+    # is no per-filter filename check here the way a module's
+    # `library/<name>.py` lookup has.
+    private def py_sources_in(root : String) : Array(String)
+      sources = [] of String
+      Dir.each_child(root) do |entry|
+        next unless entry.ends_with?(".py")
+        path = File.join(root, entry)
+        sources << path if File.file?(path)
+      end
+      sources
     end
 
     def loaded_role_roots(subdir : String) : Array(String)
@@ -111,12 +147,7 @@ module Krikri
 
       sources = [] of String
       roots.each do |root|
-        next unless Dir.exists?(root)
-        Dir.each_child(root) do |entry|
-          next unless entry.ends_with?(".py")
-          path = File.join(root, entry)
-          sources << path if File.file?(path)
-        end
+        sources.concat(py_sources_in(root)) if Dir.exists?(root)
       end
       sources.uniq
     end
@@ -138,7 +169,12 @@ module Krikri
 
     # The set of filter names exposed across *sources*. A source file
     # that fails to introspect (syntax error, no python3, a
-    # `filters()` that raises) contributes no names - never raises.
+    # `filters()` that raises) contributes no names - never raises. A
+    # file whose import raises additionally gets Ansible's "Skipping
+    # plugin" warning (Ansible prints one stderr line per unloadable
+    # file and keeps loading the rest); it is emitted only on a cache
+    # miss, i.e. once per file per process, matching Ansible's
+    # once-per-load behaviour.
     def filter_names(sources : Array(String)) : Set(String)
       names = Set(String).new
       sources.each do |path|
@@ -160,6 +196,12 @@ module Krikri
         if result && result["ok"]?.try(&.as_bool?)
           result["names"]?.try(&.as_a?).try do |exposed|
             exposed.each { |exposed_name| set << exposed_name.to_s }
+          end
+          if skipped = result["skipped"]?.try(&.as_a?)
+            skipped.each do |entry|
+              error = entry["error"]?.try(&.as_s?) || "unknown error"
+              emit_skip_warning(path, error)
+            end
           end
         end
         @@names_cache[path] = {mtime, set}
@@ -195,6 +237,18 @@ module Krikri
 
     @@names_cache = Hash(String, {Int64, Set(String)}).new
 
+    # Where "Skipping plugin" warnings go - STDERR in production,
+    # replaceable so a spec can capture the text without touching the
+    # process's STDERR.
+    class_property warning_sink : IO = STDERR
+
+    # Same plain, uncolored style as the other `[WARNING]:` lines
+    # (playbook_parser.cr); Ansible's wording has no trailing period and
+    # the path is absolute.
+    private def emit_skip_warning(path : String, error : String) : Nil
+      warning_sink.puts "[WARNING]: Skipping plugin (#{File.expand_path(path)}), cannot load: #{error}"
+    end
+
     # Runs the wrapper script below against one request. Returns the
     # parsed response JSON, or nil on ANY failure (no python3, nonzero
     # exit, unparseable output) - callers treat nil as "not available".
@@ -220,10 +274,15 @@ module Krikri
     # every FilterModule class's `filters()` dict, then either reports
     # the merged names ("list") or invokes the requested filter with
     # the JSON-encoded operand and arguments ("call") and prints the
-    # JSON-encoded result. Always responds with a single-line JSON
-    # object ({"ok": true, ...} / {"ok": false, kind, error}), so a
-    # plugin that prints its own noise cannot corrupt the protocol -
-    # only the LAST line of stdout is parsed.
+    # JSON-encoded result. A file that fails to import is reported in
+    # the "skipped" list instead of failing the whole response - Ansible
+    # keeps loading a directory's remaining plugin files and warns on
+    # stderr for the one that failed, so the skip arrives as data on
+    # stdout and the Crystal side turns it into that stderr line.
+    # Always responds with a single-line JSON object
+    # ({"ok": true, ...} / {"ok": false, kind, error}), so a plugin
+    # that prints its own noise cannot corrupt the protocol - only the
+    # LAST line of stdout is parsed.
     WRAPPER = <<-PYTHON
       import importlib.util
       import json
@@ -317,13 +376,26 @@ module Krikri
           return str(value)
 
 
+      def _load_all(paths):
+          # Ansible's PluginLoader warns about a plugin file that fails
+          # to import and keeps loading the rest, so one broken file
+          # must not take down its siblings' filters.
+          names = {}
+          skipped = []
+          for path in paths:
+              try:
+                  names.update(_plugin_filters(path))
+              except Exception as exc:
+                  skipped.append({"path": path, "error": str(exc)})
+          return names, skipped
+
+
       def main():
           payload = json.loads(sys.stdin.read())
-          names = {}
-          for path in payload.get("paths", []):
-              names.update(_plugin_filters(path))
+          names, skipped = _load_all(payload.get("paths", []))
           if payload.get("action") == "list":
-              sys.stdout.write(json.dumps({"ok": True, "names": sorted(names)}))
+              sys.stdout.write(json.dumps(
+                  {"ok": True, "names": sorted(names), "skipped": skipped}))
               return
           name = payload.get("name")
           func = names.get(name)
