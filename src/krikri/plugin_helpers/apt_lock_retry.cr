@@ -218,7 +218,8 @@ module Krikri
         delay = 2.0 ** attempt + (rand(1000) / 1000.0)
         delay = retry_max_delay + (rand(1000) / 1000.0) if delay > retry_max_delay
         ::sleep(delay.seconds)
-        warnings << "Sleeping for #{delay.round.to_i} seconds, before attempting to refresh the cache again"
+        # ansible formats the delay with %i, which truncates (1.7s -> "1")
+        warnings << "Sleeping for #{delay.to_i} seconds, before attempting to refresh the cache again"
         result = exec_remote.call("apt-get update")
         if result[:exit_code] == 0 && !apt_fetch_failed?(result)
           recovered = true

@@ -509,7 +509,8 @@ module Krikri
         @warnings << "Failed to update cache after #{attempt + 1} due to #{last_reason} retry, retrying"
         delay = apt_repository_retry_delay(attempt, max_delay, randomize)
         ::sleep(delay.seconds)
-        @warnings << "Sleeping for #{delay.round.to_i} seconds, before attempting to update the cache again"
+        # ansible formats the delay with %i, which truncates (1.7s -> "1")
+        @warnings << "Sleeping for #{delay.to_i} seconds, before attempting to update the cache again"
         attempt += 1
       end
       {failed: true, last_reason: last_reason}
