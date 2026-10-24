@@ -1508,7 +1508,10 @@ module Krikri
         JSON::Any.new(raw.map { |value| deep_render_item(value, vars_context, host_name, strict: strict) })
       when String
         return item if UnsafeValues.unsafe_text?(raw)
-        return item unless raw.includes?("{{")
+        # A block-tag-only item (`"{% if x %}a{% else %}[]{% endif %}"`,
+        # wangsha.ansible_role_lynis) is templated by Ansible like any
+        # other loop-source string, so it must reach the renderer too.
+        return item unless raw.includes?("{{") || raw.includes?("{%")
 
         # A raw value that's *exactly* one bare `{{ variable }}` span (no
         # surrounding text, no filter chain) resolves to the variable's

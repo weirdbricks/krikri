@@ -2431,6 +2431,34 @@ module Krikri
           substituted_value = Krikri::NONE_SENTINEL if structured && structured.raw.nil?
         end
 
+        # The same strings-only-wire collapse one shape over: a whole-span
+        # `{{ }}` that renders to the TEXT "[]" is either a real empty LIST
+        # (`{{ empty_list_var }}` with the var `[]` - which the package
+        # family no-ops, round 83246) or a STRING whose own content is
+        # literally "[]" (`name: "{{ item }}"` over a with_items entry like
+        # "{% if x %}apt-transport-https{% else %}[]{% endif %}",
+        # wangsha.ansible_role_lynis round 29880205) - both arrive here as
+        # the same wire text, and the JSON-bracket decode any list arg does
+        # would read BOTH as an empty list. ansible-core keeps the two
+        # apart natively: the str "[]" reaches the dnf backend whole and
+        # fails the install with its own per-spec shape (msg "Failed to
+        # install some of the specified packages", failures ["No package
+        # [] available."], rc 1). Re-derive the span's STRUCTURED type
+        # exactly like the None case above and mark a String result with
+        # NON_STRING_PARAM_PREFIX, so BasePlugin hands it back to the
+        # plugins that consult #non_string_param while every other consumer
+        # (argspec validation, all plugins that never ask) sees the same
+        # demoted plain "[]" text it always did.
+        if whole_single_span && substituted_value == "[]"
+          structured = begin
+            VariableSubstitutor::ExpressionEvaluator.new(substitutor.vars)
+              .evaluate_structured(stripped_value[2..-3].strip)
+          rescue
+            nil
+          end
+          substituted_value = Krikri::NON_STRING_PARAM_PREFIX + "[]".to_json if structured && structured.raw.is_a?(String)
+        end
+
         # `mode:` piped through a variable (`mode: "{{ redis_conf_mode
         # }}"`, geerlingguy.redis's own style) loses its octal-ness the
         # same way a *direct* unquoted `mode: 0770` literal does (see
