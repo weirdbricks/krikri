@@ -86,13 +86,47 @@ module Krikri
         ExpressionEvaluator.emit_jinja_const_template_warning
       end
 
-      private def rerender_double_templated_literal(part : String) : String
+      # The null-file-term marker for the strings-only lookup-args wire (the
+      # rerender below and lookup_file in lookup_file.cr are the only hands
+      # it passes through): a private-use control character like
+      # param_sentinels.cr's own sentinels, so no real role's lookup term -
+      # a path, a glob, anything a playbook can write - can ever collide
+      # with the equality check in lookup_file.
+      LOOKUP_NONE_TERM = "\u{E000}lookup-none"
+
+      # Whether *literal* (a quoted lookup term already proven to carry
+      # `{{ }}`) is one top-level `{{ expr }}` span whose native value is
+      # None. ansible-core keeps a whole-single-span constant's type through
+      # the re-render (`{{ 42 }}` int, `{{ none }}` None - the same typing
+      # rule variable values already ride), so a null variable's constant
+      # reaches the lookup as REAL None - the structured whole-span probe
+      # returns that as a JSON null, which #render!'s always-a-String output
+      # would have flattened to "" where None and empty are
+      # indistinguishable (live-verified vs 2.19.11). A probe that fails
+      # (a genuinely undefined or otherwise unevaluable term) keeps
+      # today's behavior: the caller falls through to #render!.
+      private def sole_span_none_value?(literal : String) : Bool
+        stripped = literal.strip
+        return false unless VarSubstitutor.single_top_level_span?(stripped)
+        return false if stripped.includes?(".update(")
+        value = Rerender.whole_span_structured(@vars, stripped) rescue return false
+        value.try { |structured| structured.raw.nil? } || false
+      end
+
+      private def rerender_double_templated_literal(part : String, null_carry_file_lookup : Bool = false) : String
         stripped = part.strip
         return part unless literal = sole_quoted_literal?(stripped)
         return part unless literal.includes?("{{") && literal.includes?("}}")
 
         quote = stripped[0]
         warn_jinja_const_embedded_template
+        # Only the file lookup type carries the None through (see the
+        # caller for the spelling list): every other lookup type keeps
+        # exactly its pre-fix ""-rendered term, since the None term's
+        # warning/error shape is the file plugin's own.
+        if null_carry_file_lookup && sole_span_none_value?(literal)
+          return LOOKUP_NONE_TERM
+        end
         rendered = jinja_renderer.render!(literal)
         # A render that comes back CONTAINER-shaped (the term named a list
         # or dict variable, so the render emits its Python repr or JSON
@@ -140,8 +174,17 @@ module Krikri
       end
 
       private def evaluate_lookup(args : String, query_mode : Bool = false) : String
+        raw_parts = split_top_level_commas(args)
+        # The type as the raw split sees it, before the term rerender below
+        # touches anything: the None-carry's file gate must know the dispatch
+        # type spelled bare or fully-qualified (the same spellings the
+        # subs below strip) while the lookup_type re-read right after stays
+        # exactly where it already was - byte-identical for every non-null
+        # term.
+        raw_lookup_type = raw_parts[0]?.try { |part| quoted_string_literal(part.strip) }.try(&.as_s?)
+        null_carry_file_lookup = raw_lookup_type.try(&.in?("file", "ansible.builtin.file", "ansible.legacy.file")) || false
         parts, kwargs = split_lookup_keyword_args(
-          split_top_level_commas(args).map { |part| rerender_double_templated_literal(part) },
+          raw_parts.map { |part| rerender_double_templated_literal(part, null_carry_file_lookup) },
         )
         lookup_type = parts[0]?.try { |part| quoted_string_literal(part.strip) }.try(&.as_s?)
 
