@@ -439,7 +439,13 @@ module Krikri
       # get the SAME parent_names as the declaring role itself (not
       # extended further), matching Ansible: a dependency isn't
       # "nested inside" the declaring role's own tasks the way an
-      # include_role: call is.
+      # include_role: call is. Parent PATHS do grow by the declaring
+      # role's dir (threaded below, in #load_meta_dependencies): Ansible's
+      # Role.get_dep_chain() climbs `_parent_role` and ends in the
+      # declaring role, so Task.get_search_path() keeps it in the file
+      # search chain (live-verified vs 2.19: a task inside a dependency
+      # include_vars:'ing a missing file lists the declaring role's dirs
+      # right after the dependency's own - issue #297).
       dependency_default_origins = Hash(String, VarOrigin).new
       # The ensure pop matters for diamond-shaped graphs, where the SAME
       # in_flight set is shared by sibling chains: without it, a role
@@ -810,8 +816,11 @@ module Krikri
         dep_name, dep_version, dep_vars, dep_tags, dep_when, dep_origins = parse_role_entry(dep, meta_path, cached_source_map(meta_path), "dependencies/#{dep_index}")
         before_count = tasks.size
         dep_default_origins = Hash(String, VarOrigin).new
+        # The declaring role joins the path chain (root-first, like the
+        # parent_paths handed in - see load_role's dependency comment for
+        # the Names-by-chain distinction and the ansible behaviour above).
         dep_defaults = begin
-          load_role(dep_name, dep_vars, dep_tags, play, playbook_dir, seen, tasks, handlers, nil, parent_names, parent_paths, parent_defaults, parent_default_origins, dep_origins, play_scope: play_scope, role_version: dep_version, role_when: dep_when, default_origins_out: dep_default_origins, dependency_declaring_dir: role_dir, in_flight: in_flight)
+          load_role(dep_name, dep_vars, dep_tags, play, playbook_dir, seen, tasks, handlers, nil, parent_names, parent_paths + [role_dir], parent_defaults, parent_default_origins, dep_origins, play_scope: play_scope, role_version: dep_version, role_when: dep_when, default_origins_out: dep_default_origins, dependency_declaring_dir: role_dir, in_flight: in_flight)
         rescue ex : RoleNotFoundError
           # A missing DEPENDENCY reports its Origin at the dependency
           # entry inside the declaring role's own meta/main.yml (issue #12,

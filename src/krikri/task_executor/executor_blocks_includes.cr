@@ -458,6 +458,16 @@ module Krikri
       # not found: vars/debian.yml" where ansible-playbook
       # succeeded.
       task.role_path.try { |role_dir| roots << role_dir }
+      # The whole dependency chain, nearest first - Ansible's include_vars
+      # search stack is Task.get_search_path() (Role.get_dep_chain), so a
+      # role loaded as a meta dependency must also reach a vars file
+      # shipped by the DECLARING role (live-verified vs 2.19.11: a file
+      # present only in the declaring role's vars/ loads from inside the
+      # dependency - issue #297).
+      task.role_parent_paths.try(&.reverse.each do |path|
+        roots << File.join(path, "vars")
+        roots << path
+      end)
       # A relative include_vars: path in a role's own top-level tasks/
       # main.yml (not reached via include_tasks:, so include_file_dir
       # above is nil) resolves against that file's own directory,
@@ -1561,15 +1571,21 @@ module Krikri
     # never searches for it); a relative one lists every candidate the
     # search walked, in order, as "<base>/vars/<file>" then
     # "<base>/<file>" per base - the task's basedir (its role's own
-    # root, or the play dir), the directory of the file the task was
-    # included from or the role's own tasks/ dir (whichever applies),
-    # A play-level task in a play dir therefore repeats the play-dir
-    # pair twice, exactly as Ansible does (live-verified vs 2.19.11).
+    # root, or the play dir), every DECLARING role's dirs (nearest
+    # first - Task.get_search_path()'s dep chain ends in the declaring
+    # role; live-verified vs 2.19: a dependency whose tasks include_vars:
+    # a missing file reports the dependency's own pairs, then the outer
+    # role's, then its tasks/ pairs - issue #297), the directory of the
+    # file the task was included from or the role's own tasks/ dir
+    # (whichever applies), and finally the loader basedir. A play-level
+    # task in a play dir therefore repeats the play-dir pair twice,
+    # exactly as Ansible does (live-verified vs 2.19.11).
     private def include_vars_file_not_found_message(task : Task, file : String) : String
       tail = " on the Ansible Controller.\nIf you are using a module and expect the file to exist on the remote, see the remote_src option"
       return "Could not find or access '#{file}'#{tail}" if file.starts_with?("/")
       bases = [] of String
       bases << (task.role_path || Dir.current)
+      task.role_parent_paths.try(&.reverse.each { |path| bases << path })
       (task.include_file_dir || (task.role_path.try { |role| File.join(role, "tasks") })).try { |dir| bases << dir }
       bases << Dir.current
       searched = bases.flat_map do |base|
