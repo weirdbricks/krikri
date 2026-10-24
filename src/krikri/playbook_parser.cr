@@ -504,6 +504,25 @@ module Krikri
     # executes exactly once per play, so the path is already a unique
     # invocation identity there.
     property role_invocation_id : String?
+    # Run-time dedup identity of the meta/main.yml DEPENDENCY invocation
+    # whose load produced this task (issue #320): krikri used to collapse
+    # a duplicate dependency at LOAD time, but real ansible's decision is
+    # per-host and run-time - an identical re-invocation is silently
+    # skipped only when an EARLIER identical invocation actually completed
+    # a non-skipped task for that host, so a shared dependency whose every
+    # task was skipped (`{ role: c, when: ansible_distribution == 'MacOSX' }`
+    # on a Linux host) still prints its full skipping: block on every later
+    # reach. role_dedup_key is the shared identity string (RoleLoader's own
+    # dedup key), role_occurrence_id a fresh token per load_role invocation,
+    # so the executor's per-host tracker can tell "the owner occurrence"
+    # (keeps running) from "a later identical occurrence" (gets silently
+    # skipped). Nil for play-level roles:/import_role:/include_role: task
+    # streams - those keep their own load-level dedup-per-call behaviour;
+    # only meta/main.yml dependency loads participate (and
+    # `allow_duplicates: true` loads are never tagged at all, so they keep
+    # running every time).
+    property role_dedup_key : String? = nil
+    property role_occurrence_id : Int64? = nil
     # The chain of ancestor role names (root-first, NOT including this
     # role's own name) that led to this role being invoked via
     # include_role: from within another role's own tasks - exposed as

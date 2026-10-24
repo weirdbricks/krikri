@@ -1071,6 +1071,13 @@ module Krikri
         return
       end
 
+      # A completed non-skipped result (ok/changed/failed/ignored - the
+      # skip cases all returned above) marks the dependency identity "ran"
+      # for this host in the run-time dedup tally (issue #320): real's
+      # strategy only sets role._had_task_run on such results, so a later
+      # identical occurrence gets silently skipped once any of these
+      # flowed through.
+      mark_role_dep_ran(task, host)
       changed = result["changed"]?.try(&.as_bool) || false
       failed = Krikri.result_failed_flag(result)
       if changed && (notify_list = task.notify)
