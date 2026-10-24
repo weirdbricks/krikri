@@ -7,8 +7,9 @@ require "../minitest_helper"
 # marks those) used to print no Origin at all, and the block form pinned
 # the first element regardless of which one failed (issue #88's
 # single-element shape was only right then); a literal inline flow list
-# pins the failing element's OPENING QUOTE. All live-verified against
-# ansible-core 2.19.11.
+# pins the failing element's OPENING QUOTE. Block-mapping elements
+# (`- key: value` spanning lines) pin the failing inner value token
+# itself (issue #314). All live-verified against ansible-core 2.19.11.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
@@ -151,6 +152,114 @@ describe "undefined loop item cause stanza origin" do
     text.must_include("[ERROR]: Task failed: 'group_git_cloning' is undefined")
     # The second element (line 11), not `all_group_git_cloning` (line 12).
     text.must_include("Origin: #{playbook}:11:11")
+  ensure
+    FileUtils.rm_rf(src_dir) if src_dir
+  end
+
+  it "pins a block-mapping element at the deeper failing value's opening quote" do
+    # Issue #314's defining repro shape: the failing scalar is NOT on the
+    # element's dash line but on its own `key: value` line - real ansible
+    # points at that line's quote (col 18 here), krikri used to point at
+    # the element start (line 10, the `key` word).
+    src_dir = File.tempname("loop-undef-origin-blockmap")
+    Dir.mkdir_p(src_dir)
+    text = run_playbook(src_dir, <<-YAML)
+      ---
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: Block mapping element
+            ansible.builtin.debug:
+              msg: "{{ item.key }}={{ item.value }}"
+            loop:
+              - key: "M2_HOME"
+                value: "{{ install_dir }}"
+      YAML
+
+    playbook = File.expand_path(File.join(src_dir, "pb.yml"))
+    text.must_include("[ERROR]: Task failed: 'install_dir' is undefined")
+    text.must_include("Origin: #{playbook}:11:18")
+    text.must_include("11           value: \"{{ install_dir }}\"\n                    ^ column 18")
+  ensure
+    FileUtils.rm_rf(src_dir) if src_dir
+  end
+
+  it "pins a block-mapping element's plain value at its first character" do
+    src_dir = File.tempname("loop-undef-origin-blockmap-plain")
+    Dir.mkdir_p(src_dir)
+    text = run_playbook(src_dir, <<-YAML)
+      ---
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: Plain element value
+            ansible.builtin.debug:
+              msg: "{{ item.key }}={{ item.value }}"
+            loop:
+              - key: "M2_HOME"
+                value: m2-{{ install_dir }}-prop
+      YAML
+
+    playbook = File.expand_path(File.join(src_dir, "pb.yml"))
+    text.must_include("[ERROR]: Task failed: 'install_dir' is undefined")
+    # No quote to pin for a plain scalar: the value's own start.
+    text.must_include("Origin: #{playbook}:11:18")
+  ensure
+    FileUtils.rm_rf(src_dir) if src_dir
+  end
+
+  it "pins a block-mapping element's inline dash-line value at its quote" do
+    src_dir = File.tempname("loop-undef-origin-blockmap-inline")
+    Dir.mkdir_p(src_dir)
+    text = run_playbook(src_dir, <<-YAML)
+      ---
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: Inline mapping value
+            ansible.builtin.debug:
+              msg: "{{ item.key }}={{ item.value }}"
+            loop:
+              - key: "{{ install_dir }}"
+                value: "M2_HOME"
+      YAML
+
+    playbook = File.expand_path(File.join(src_dir, "pb.yml"))
+    text.must_include("[ERROR]: Task failed: 'install_dir' is undefined")
+    # The failing scalar is the element's INLINE value, quoted: its
+    # opening quote (col 16), not the element start (col 11).
+    text.must_include("Origin: #{playbook}:10:16")
+  ensure
+    FileUtils.rm_rf(src_dir) if src_dir
+  end
+
+  it "scans a block-mapping element past an earlier valueless element" do
+    src_dir = File.tempname("loop-undef-origin-blockmap-later")
+    Dir.mkdir_p(src_dir)
+    text = run_playbook(src_dir, <<-YAML)
+      ---
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: Later mapping element
+            ansible.builtin.debug:
+              msg: "{{ item.key }}={{ item.value }}"
+            loop:
+              - key: "M2_HOME"
+              - key: "OTHER"
+                value: "{{ install_dir }}"
+      YAML
+
+    playbook = File.expand_path(File.join(src_dir, "pb.yml"))
+    text.must_include("[ERROR]: Task failed: 'install_dir' is undefined")
+    # The first element carries no failing value; the scan must reach the
+    # second element's `value:` line (12), not stop or fall back to the
+    # first element's start (10).
+    text.must_include("Origin: #{playbook}:12:18")
   ensure
     FileUtils.rm_rf(src_dir) if src_dir
   end
