@@ -2622,10 +2622,34 @@ module Krikri
         if total_runs > 1
           substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
           maybe_conditional_delimiters_deprecation(task, until_condition, "until", vars_context)
-          substituted_condition = substitutor.substitute(until_condition)
-          if ConditionalEvaluator.evaluate(substituted_condition, vars_context)
-            condition_met = true
-            break
+          begin
+            substituted_condition = substitutor.substitute(until_condition)
+            if ConditionalEvaluator.evaluate(substituted_condition, vars_context)
+              condition_met = true
+              break
+            end
+          rescue ex : VariableSubstitutor::FilterEngine::UnknownFilterError | VariableSubstitutor::UnknownTestError
+            # Ansible compiles a whole until: condition as an expression the
+            # first time it is evaluated, so a name it only knows as a test
+            # (`search` is a test) - or not at all - fails the WHOLE task
+            # then and there: one fatal "Task failed: Syntax error in
+            # expression: No filter named '...'." after the first attempt's
+            # run, recap failed=1, host halts (unless ignore_errors:). The
+            # raise must be caught HERE too: at top level it used to crash
+            # the whole process with an unhandled-exception stack trace, and from an
+            # include_tasks: file the include's generic rescue mislabeled it
+            # "Failed to load included tasks: ...". Same wording shape and
+            # [ERROR] chain as the when: evaluator's own unknown-filter
+            # branch, with the chain's caused-by Origin pinned at the until:
+            # value token, the position real reports for it (issue #318).
+            until_error = "Task failed: Syntax error in expression: #{ex.message}"
+            emit_when_error_chain(task, until_error, host, clause_key: "until", clause_raw: until_condition)
+            failed_result = when_error_result(WhenEvaluationError.new(until_error), task, host)
+            if register_name && !register_name.empty?
+              register_result(host, register_name, failed_result)
+              vars_context[register_name] = @registered_vars[host.name][register_name]
+            end
+            return failed_result
           end
         end
 
