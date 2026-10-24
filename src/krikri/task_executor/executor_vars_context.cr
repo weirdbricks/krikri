@@ -1524,7 +1524,10 @@ module Krikri
         matches.concat(fileglob_matches(task, substituted))
       end
 
-      matches.sort!
+      # Ansible does not sort fileglob results - glob.glob() hands back
+      # readdir order, which differs per filesystem (reverse-alphabetical
+      # on tmpfs, hash order on ext4), so krikri must not sort either or
+      # item order diverges from real ansible-playbook output.
       matches.map { |path| JSON::Any.new(path) }
     end
 

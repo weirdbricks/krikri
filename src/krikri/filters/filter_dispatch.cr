@@ -72,7 +72,10 @@ module Krikri
           # an error) - without this, an unrecognized filter name fell
           # to the passthrough below, leaving the RAW glob pattern
           # string as if it were already a real, matched file path.
-          JSON::Any.new(Dir.glob(as_string(value)).sort!.map { |pth| JSON::Any.new(pth) })
+          # No sort: Ansible's fileglob lookup (this is the lookup-as-filter
+          # form) returns glob.glob() results in raw readdir order, not
+          # sorted - sorting would diverge from real ansible output.
+          JSON::Any.new(Dir.glob(as_string(value)).map { |pth| JSON::Any.new(pth) })
         when "realpath"
           JSON::Any.new(File.realpath(as_string(value)))
         when "default", "d"
