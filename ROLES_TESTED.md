@@ -14784,3 +14784,13 @@ Local probe roles, not Galaxy roles: each probed task registers its result and d
 | `iknite.spotify` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29881220, 0.9.1919 release). Times: cold py 2.83s vs cr 0.84s; warm py 2.07s vs cr 0.18s. |
 | `pgvillage.firewall` | ubuntu | ✅ Clean (round29881225, 0.9.1919 release). Times: cold py 4.92s vs cr 4.22s; warm py 3.52s vs cr 0.36s. |
 | `stancel.create-digitalocean-droplet` | ubuntu | ⚠ only a community module krikri does not track differs (round29881223, 0.9.1919 release). Times: cold py 3.21s vs cr 1.17s; warm py 2.58s vs cr 0.15s. |
+| `gpe_mw_ansible.3scale_multitenant` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29881222, 0.9.1919 release). Times: cold py 0.47s vs cr 0.04s; warm py 0.46s vs cr 0.02s. |
+| `grycap.monasca` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29881228, 0.9.1919 release). Times: cold py 61.31s vs cr 48.76s; warm py 16.59s vs cr 0.98s. |
+| `laggyluke.nginx` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29881227, 0.9.1919 release). Times: cold py 0.52s vs cr 0.01s; warm py 0.51s vs cr 0.01s. |
+| `lifeofguenter.unbound` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29881229, 0.9.1919 release). Times: cold py 2.68s vs cr 0.78s; warm py 2.03s vs cr 0.17s. |
+| `net2grid.packages` | ubuntu | ❌ Divergent - issue #325 (round29881230, 0.9.1919 release). Times: cold py 5.35s vs cr 4.82s; warm py 3.00s vs cr 1.25s. |
+| `tschifftner.munin_node` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29881226, 0.9.1919 release). Times: cold py 0.49s vs cr 0.01s; warm py 0.47s vs cr 0.01s. |
+| `votum.magento2` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29881231, 0.9.1919 release). Times: cold py 0.45s vs cr 0.01s; warm py 0.45s vs cr 0.01s. |
+| `weareinteractive.postfix` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29881223, 0.9.1919 release). Times: cold py 0.47s vs cr 0.01s; warm py 0.48s vs cr 0.01s. |
+| `wtanaka.docker` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29881224, 0.9.1919 release). Times: cold py 0.44s vs cr 0.02s; warm py 0.43s vs cr 0.01s. |
+| `xcezx.httpd` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29881225, 0.9.1919 release). Times: cold py 0.48s vs cr 0.01s; warm py 0.56s vs cr 0.01s. |
