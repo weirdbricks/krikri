@@ -1768,6 +1768,14 @@ module Krikri
           # a real failed result here (not a silent skip) lets
           # finish_looped_task's aggregation correctly count this as
           # failed=1, not skipped=1.
+          #
+          # The chain block result_display suppresses (via
+          # _ansible_when_error_emitted) must still be printed HERE,
+          # before the per-item failed lines - otherwise the batched path
+          # never shows it on remote hosts. The chain dedups per distinct
+          # text, so a loop prints it once, and non-conditional
+          # failures (var-render) no-op.
+          emit_when_error_chain(task, ex.message || "", host)
           item_results[idx] = when_error_result(ex, task, host)
           next
         end
