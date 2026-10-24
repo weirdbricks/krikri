@@ -371,6 +371,9 @@ module Krikri
         fingerprint = parts[1]? || ""
       end
       comment = pub_content.split(' ', 3)[2]? || ""
+      # Ansible reports public_key as "<type> <base64>" only; the comment
+      # is returned separately in `comment`.
+      pub_content = pub_content.split(' ', 3)[0, 2].join(' ')
 
       PluginResult.new(
         changed: changed,
