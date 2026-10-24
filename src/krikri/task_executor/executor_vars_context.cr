@@ -1991,6 +1991,69 @@ module Krikri
       ConditionalEvaluator.evaluate(rendered, vars) rescue task.no_log?
     end
 
+    # ── issue #317: a templated no_log: whose variable is UNDEFINED ──
+    #
+    # ansible-core 2.19 strictly templates every task keyword before the
+    # task itself runs; a `no_log: "{{ debug_hide }}"` whose variable is
+    # undefined FAILS the task at that point ("Task failed: Error
+    # processing keyword 'no_log': 'debug_hide' is undefined", rc 2)
+    # after printing the "Invalid no_log value for task, output will be
+    # masked" warning, with the result still shown censored. This probe
+    # runs ONLY at the pre-execution keyword sites (execute_task_once,
+    # prepare_batch_step, the handler funnel) where the task's real vars
+    # context exists; resolve_task_no_log above deliberately keeps the
+    # lenient safe-hide fallback everywhere else - its callers run after
+    # a result already exists (too late to mirror Ansible's pre-module
+    # failure), its minimal-fallback contexts cannot distinguish a
+    # genuinely undefined name from a mere unresolved one, and every
+    # other unresolvable shape must keep silently hiding rather than
+    # inventing task failures.
+    private def no_log_keyword_undefined_error(task : Task, vars_context : Hash(String, JSON::Any)) : String?
+      expr = task.no_log_expr
+      return nil unless expr
+      substitutor = VarSubstitutor.new(vars: vars_context)
+      begin
+        # strict: is the become: keyword probe's own strictness boundary -
+        # only a whole-value bare/chain reference raises, so a `| default()`
+        # guard (and every operator/filter spelling) stays lenient and the
+        # define-then-render behaviors above are untouched. The explicit nil
+        # return keeps the successful render's VALUE from leaking out of the
+        # probe as if it were an error message.
+        substitutor.substitute(expr, strict: true)
+        nil
+        # Rescuers beyond the undefined class (a mandatory filter's
+        # FilterPluginError, an expression-runtime RenderExpressionError, a
+        # block-tag TemplateSyntaxError) keep the pre-existing lenient
+        # continuation - real's keyword handling for those shapes was never
+        # replicated here, and this fix only claims the plainly-undefined
+        # wording Ansible 2.19 fails on.
+      rescue e : UndefinedVariableError
+        e.message
+      rescue
+        nil
+      end
+    end
+
+    # The failed result for a templated no_log: whose variable is
+    # undefined: the same collapsed brief as become's undefined keyword
+    # (issue #159), plus the marker its display side needs for the
+    # warning/keyword-error blocks and the changed-LESS censored fatal -
+    # the keyword failure stops the task before any module ran, so unlike
+    # a masked module failure there is no "changed" key to keep (seen
+    # live, issue #317).
+    private def no_log_keyword_failure_json(task : Task, undefined_msg : String) : JSON::Any
+      result = JSON.parse({
+        "changed" => false,
+        "failed"  => true,
+        "msg"     => "Task failed: Error processing keyword 'no_log': #{undefined_msg}",
+      }.to_json)
+      result.as_h["_ansible_no_log_keyword_failure"] = JSON.parse({
+        "undefined" => undefined_msg,
+        "origin"    => keyword_value_origin(task, "no_log"),
+      }.to_json)
+      result
+    end
+
     # Whole-single-span set_fact values carry their NATIVE type
     # across the strings-only param wire: ansible-core 2.19's
     # templar keeps the expression's own type for a template whose

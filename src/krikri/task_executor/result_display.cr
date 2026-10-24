@@ -399,6 +399,21 @@ module Krikri
         # when ignore_errors: caught it; ok/changed and looped results
         # stay bare status lines (live-verified against 2.19.11).
         if failed && item_label.nil?
+          # Issue #317: the failure comes from the no_log KEYWORD's own
+          # undefined template (the task failed before any module ran -
+          # ansible-core 2.19's pre-module keyword failure), which ansible
+          # displays with the raw message safe here: it renames only the
+          # unresolvable variable, text ansible composed itself (and the
+          # playbook source the Origin excerpts show anyway). The fatal
+          # dump carries ONLY the censored payload - the pre-mask result
+          # never had a "changed" key to keep, unlike the masked module
+          # failure below.
+          if result["_ansible_no_log_keyword_failure"]?.try(&.as_h?)
+            emit_no_log_keyword_failure(source_task, result)
+            puts "fatal: [#{host_label}]: FAILED! => {\"censored\": \"the output has been hidden due to the fact that 'no_log: true' was specified for this result\"}".colorize(:red)
+            puts "...ignoring".colorize(:red) if ignore_errors
+            return
+          end
           emit_task_error_block(source_task, result, msg) if no_log_error_block_allowed?(module_name, msg)
           puts "fatal: [#{host_label}]: FAILED! => {\"censored\": \"the output has been hidden due to the fact that 'no_log: true' was specified for this result\", \"changed\": #{changed}}".colorize(:red)
           puts "...ignoring".colorize(:red) if ignore_errors
@@ -976,6 +991,40 @@ module Krikri
         warning = "[WARNING]: Encountered #{m[1]} template error.\nerror #{m[1]} - #{m[2]}\n#{origin}\n\n"
         STDERR.puts warning if @@warned_texts.add?(warning)
       end
+    end
+
+    # A templated no_log: whose variable is undefined (issue #317):
+    # ansible-core 2.19 prints the keyword failure through BOTH channels -
+    # the "[WARNING]: Invalid no_log value for task, output will be
+    # masked: <brief>" block on stderr (a Display.warning over the same
+    # event tree, top record carrying no Origin - the warning is raised at
+    # keyword-templating time, not by a task-failure event) and the
+    # task-failure chain on stdout: "Task failed." at the task's own
+    # Origin, "<<< caused by >>>" and the collapsed keyword message at the
+    # no_log value token. Safe because the message names only the
+    # unresolvable variable, text ansible composed itself - values never
+    # render into a strict-undefined error.
+    private def self.emit_no_log_keyword_failure(task : Task?, result : JSON::Any) : Nil
+      marker = result["_ansible_no_log_keyword_failure"].as_h
+      cause_msg = "Error processing keyword 'no_log': " + (marker["undefined"]?.try(&.as_s?) || "")
+      collapsed = "Invalid no_log value for task, output will be masked."
+      value_origin = marker["origin"]?.try(&.as_s?)
+      warning = String.build do |io|
+        io << "[WARNING]: " << ErrorBlock.concat_message(collapsed, cause_msg) << "\n\n"
+        io << collapsed << "\n"
+        io << "\n<<< caused by >>>\n\n"
+        io << cause_msg << "\n"
+        io << value_origin << "\n" if value_origin
+      end
+      if @@warned_texts.add?(warning)
+        STDERR.puts warning.colorize(:light_magenta)
+      end
+
+      return unless task
+      return unless task_origin = error_origin_context(task)
+      cause = ErrorBlock::Node.new(cause_msg, source_context: value_origin)
+      ErrorBlock.emit(ErrorBlock::Node.new("Task failed.", source_context: task_origin)
+        .with_chain(ErrorBlock::DIRECT_CAUSE, true, cause))
     end
 
     private def self.emit_assert_that_chain(task : Task, inner : String, index : Int32) : Nil
@@ -1884,6 +1933,16 @@ module Krikri
       # result still carries the secrets, the censored shape is what
       # prints (same shape the default callback's no_log branch builds).
       if no_log
+        # Issue #317: the no_log-keyword failure never produced a module
+        # result, so like the default callback its oneline dump carries
+        # only the censored payload - no "changed" key behind it.
+        if Krikri.result_failed_flag(result) && result["_ansible_no_log_keyword_failure"]?.try(&.as_h?)
+          censored = JSON.parse({
+            "censored" => "the output has been hidden due to the fact that 'no_log: true' was specified for this result",
+          }.to_json)
+          puts "#{host.name} | FAILED! => #{ResultDisplay.dump_oneline_json(censored)}".colorize(:red)
+          return
+        end
         censored = JSON.parse({
           "censored" => "the output has been hidden due to the fact that 'no_log: true' was specified for this result",
           "changed"  => result["changed"]?.try(&.as_bool) || false,

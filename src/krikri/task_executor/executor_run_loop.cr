@@ -1844,6 +1844,13 @@ module Krikri
         return keyword_failure_json(ex, task)
       end
 
+      # Same no_log keyword-templating probe as execute_task_once (issue
+      # #317): the batched remote path must fail the task identically
+      # instead of sending it to the remote code while masked.
+      if undefined = no_log_keyword_undefined_error(task, vars_context)
+        return no_log_keyword_failure_json(task, undefined)
+      end
+
       begin
         substitute_block_name_chain(task, substitutor)
         substituted_params = expand_templated_args(substitute_task_params(task.params, substitutor, native_containers: task.module_name.ends_with?("set_fact"), module_name: task.module_name, task: task), substitutor, task)
@@ -2199,6 +2206,15 @@ module Krikri
         resolve_task_become_user(task, vars_context, substitutor)
       rescue ex : UndefinedVariableError
         return keyword_failure_json(ex, task)
+      end
+
+      # The no_log keyword is strictly templated alongside become_user
+      # before any task body runs (issue #317): an undefined reference in
+      # a templated no_log: fails the task here, where the lenient
+      # resolution used to keep it running (and masking) the whole way
+      # through.
+      if undefined = no_log_keyword_undefined_error(task, vars_context)
+        return no_log_keyword_failure_json(task, undefined)
       end
 
       begin

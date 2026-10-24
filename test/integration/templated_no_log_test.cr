@@ -73,21 +73,26 @@ describe "templated no_log: re-resolved at runtime, not parse time" do
 
   it "falls back to the safe (hide-it) guess when the expression can't resolve at all" do
     # A reference to a variable that's genuinely undefined anywhere
-    # (not a role default, not a task-local vars: block, not a play
-    # var) renders as the lenient-substitution sentinel "undefined" -
-    # must degrade to the SAFE direction (hide), never accidentally
-    # show a secret because resolution silently produced a falsy
-    # non-boolean instead of raising.
+    # fails the task at keyword-templating time (issue #317, ansible-core
+    # 2.19) with the result censored; the secret must never reach the
+    # output. The secret lives in a play var, not literal task source,
+    # because ansible's Origin excerpt legitimately prints the playbook's
+    # own source lines around the no_log value.
     root = File.tempname("templated-no-log-unresolvable")
     Dir.mkdir_p(root)
     File.write(File.join(root, "pb.yml"), <<-YAML)
       - hosts: localhost
         connection: local
         gather_facts: false
+        vars:
+          the_secret: SECRET_SENTINEL_VALUE
+          pad_a: 1
+          pad_b: 2
+          pad_c: 3
         tasks:
           - name: unresolvable no_log expression (nothing defines hide_it_nowhere)
             ansible.builtin.fail:
-              msg: SECRET_SENTINEL_VALUE
+              msg: "{{ the_secret }}"
             no_log: "{{ hide_it_nowhere }}"
             ignore_errors: true
       YAML
