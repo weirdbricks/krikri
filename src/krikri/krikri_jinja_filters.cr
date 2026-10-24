@@ -13,6 +13,24 @@ require "./task_executor/result_display"
 require "./krikri_jinja_lookups"
 require "./jinja_datetime"
 
+module KrikriJinja
+  class MacroCallable
+    # ansible-core 2.19's AnsibleEnvironment.concat returns None for a body
+    # that emitted no nodes, so a macro whose output is entirely trimmed away
+    # yields None rather than '' (`{{ m() | indent(2) }}` then fails with
+    # "unsupported operand type(s) for +=: 'NoneType' and 'str'").
+    def call(args : Array(AnyValue), kwargs : Hash(String, AnyValue), ctx : Context) : AnyValue
+      result = previous_def
+      raw = result.raw
+      if (raw.is_a?(String) && raw.empty?) || (raw.is_a?(Markup) && raw.value.empty?)
+        AnyValue.new(nil)
+      else
+        result
+      end
+    end
+  end
+end
+
 module Krikri
   # Ansible's own filters, registered directly on the krikri-jinja engine
   # shared by the module-level `render` / `evaluate_expression` helpers, so
