@@ -14704,3 +14704,13 @@ Local probe roles, not Galaxy roles: each probed task registers its result and d
 | `wtanaka.protobuf-compiler` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29880426, 0.9.1898 debug). |
 | `yauh.lamp` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29880425, 0.9.1898 debug). |
 | `zaxos.glusterfs-ansible-role` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29880474, 0.9.1898 debug). |
+| `cvicens.ansible_openshift_sonarqube` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29880728, 0.9.1908 release). Times: cold py 10.16s vs cr 5.36s; warm py 9.91s vs cr 0.63s. |
+| `dockpack.base_tailscale` | ubuntu | ✅ Clean (round29880726, 0.9.1908 release). Times: cold py 48.65s vs cr 35.10s; warm py 21.04s vs cr 2.19s. |
+| `erozario.zabbix-agent` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29880720, 0.9.1908 release). Times: cold py 0.50s vs cr 0.01s; warm py 0.52s vs cr 0.01s. |
+| `infothrill.cherrymusic` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29880729, 0.9.1908 release). Times: cold py 8.61s vs cr 6.03s; warm py 1.87s vs cr 0.23s. |
+| `jetune.maven` | rocky | ❌ Divergent - issue #314 (round29880727, 0.9.1908 release). Times: cold py 10.00s vs cr 4.37s; warm py 8.25s vs cr 1.22s. |
+| `jtprogru.systemd_mounts` | ubuntu | ✅ Clean (round29880724, 0.9.1908 release). Times: cold py 2.87s vs cr 0.94s; warm py 1.57s vs cr 0.12s. |
+| `jumperfly.ssl_cert` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29880721, 0.9.1908 release). Times: cold py 10.66s vs cr 8.60s; warm py 13.97s vs cr 0.51s. |
+| `macstadium.osx_ci` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29880722, 0.9.1908 release). Times: cold py 2.52s vs cr 1.09s; warm py 2.13s vs cr 0.15s. |
+| `pinkeen.user-cronjobs` | rocky | ✅ Clean (round29880723, 0.9.1908 release). Times: cold py 2.12s vs cr 0.84s; warm py 1.81s vs cr 0.15s. |
+| `vbotka.freebsd_mailserver` | rocky | ⚠ only a community module krikri does not track differs (round29880725, 0.9.1908 release). Times: cold py 56.59s vs cr 0.88s; warm py 56.21s vs cr 0.18s. |
