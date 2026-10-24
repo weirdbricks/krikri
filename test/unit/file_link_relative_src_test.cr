@@ -43,7 +43,7 @@ describe "file state=link relative src (file_link_relative_src_test.cr)" do
 
     result["failed"].as_bool.must_equal(true)
     result["msg"].as_s.must_equal(
-      "src file does not exist, use \"force=yes\" if you really want to create the link: #{File.join(dir, "missing-target.bin")}"
+      "src file does not exist, use 'force=yes' if you really want to create the link: #{File.join(dir, "missing-target.bin")}"
     )
   ensure
     FileUtils.rm_rf(dir) if dir
