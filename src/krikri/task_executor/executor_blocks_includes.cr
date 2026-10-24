@@ -189,6 +189,13 @@ module Krikri
             # below for why the credit lives there and not up at group
             # assembly time).
             group_hosts.each { |host| @results[host.name]["ok"] += 1 }
+            # Ansible's v2_playbook_on_include still fires for a zero-task
+            # file (pgvillage.linux's shipped-empty hook targets, #308):
+            # the include registered, it just has nothing further to run,
+            # so the `included:` line prints here exactly like it does
+            # after a successful parse below.
+            connection_names = group_hosts.map { |host| host.name }
+            puts "included: #{resolved_path} for #{connection_names.join(", ")}".colorize(:cyan)
             next
           end
           unless yaml.as_a?
@@ -2185,6 +2192,13 @@ module Krikri
       # counts `ok`.
       if yaml.raw.nil?
         @results[host.name]["ok"] += 1
+        # A zero-task file still registered the include, so v2_playbook_on
+        # _include fires (pgvillage.linux, #308) - with the looped include
+        # per-iteration suffix when one applies, matching the successful
+        # parse below. A looped caller has nothing to defer here, so it
+        # just gets :ok back.
+        suffix = item_label ? " => (item=#{item_label})" : ""
+        puts "included: #{resolved_path} for #{host.name}#{suffix}".colorize(:cyan)
         return :ok
       end
       unless yaml.as_a?

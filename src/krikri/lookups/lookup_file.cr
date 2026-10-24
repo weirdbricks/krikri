@@ -392,19 +392,25 @@ module Krikri
 
       # lookup('file'|'template'|'password', path) all name a CONTROLLER-side
       # path that - inside a role - Ansible resolves through
-      # find_file_in_search_path's own two-probe search order: for each
-      # search-path directory it probes `<dir>/files/<term>` first, then
-      # `<dir>/<term>` directly. The `files/` prefix is a SEARCH HINT, not
+      # find_file_in_search_path's probe order over the task's own search
+      # stack: the role root probes `<role>/files/<term>` first, then
+      # `<role>/<term>` directly, and the stack also carries the directory
+      # of the task file doing the lookup (roles/<r>/tasks/ for an
+      # ordinary role task). The `files/` prefix is a SEARCH HINT, not
       # something forcibly prepended to every relative term - a caller's own
       # relative path that already contains enough subdirectory components
       # (e.g. ansible-lockdown.windows_11_cis's vars/main.yml doing
       # `lookup('file', './templates/banner.txt')` against a file that lives
       # at the role root's templates/, round 900733) resolves under the role
-      # root itself in ansible-playbook. Probing files/-prefixed first
+      # root itself in ansible-playbook, and a bare filename that only
+      # exists in the role's tasks/ dir resolves there (pgvillage.linux,
+      # issue #308: `query('file', 'os-specifics-Debian.yml')` found the
+      # role's own tasks file in real, where files/-forced resolution
+      # returned None). Probing files/-prefixed first
       # keeps the conventional bare-filename case (`lookup('file', 'foo.txt')`
       # -> `<role>/files/foo.txt`) identical to its previous behavior; the
-      # role-root fallback only kicks in where the files/-prefixed candidate
-      # doesn't exist, i.e. where the old code 404'd. An absolute path, or a
+      # root/tasks probes only fire where their candidate exists and the
+      # files/ one missed. An absolute path, or a
       # relative one outside any role context, passes through unchanged.
       private def resolve_lookup_path(path : String) : String
         # expanduser-before-search is Ansible's own order (see
@@ -414,14 +420,18 @@ module Krikri
         return path if path.starts_with?('/')
         role_path = @vars["role_path"]?.try(&.as_s?)
         return path unless role_path
-        files_prefixed = File.join(role_path, "files", path)
-        File.exists?(files_prefixed) ? files_prefixed : File.join(role_path, path)
+        candidates = [
+          File.join(role_path, "files", path),
+          File.join(role_path, path),
+          File.join(role_path, "tasks", path),
+        ]
+        candidates.find { |candidate| File.exists?(candidate) } || File.join(role_path, path)
       end
 
       # The template lookup's own search, mirroring real
       # find_file_in_search_path(variables, 'templates', term): the
       # role's templates/ dir FIRST, then files/, then the role root.
-      # resolve_lookup_path above (files/-only) is correct for the file
+      # resolve_lookup_path above (files/-first) is correct for the file
       # lookup but left lookup('template', 'redis.conf.j2') unable to
       # see the role's own template - its missing-file rescue then
       # yielded the literal "undefined" that blockinfile wrote into

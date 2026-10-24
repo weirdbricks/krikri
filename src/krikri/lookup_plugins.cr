@@ -51,10 +51,27 @@ module Krikri
       path == "~" ? home : File.join(home, path[2..])
     end
 
+    # Real `file` lookup's find_file_in_search_path probe order, observed
+    # against ansible-playbook (pgvillage.linux, issue #308): the role's
+    # files/ dir, then the role ROOT, then the directory of the task file
+    # doing the lookup (roles/<r>/tasks/ for an ordinary role task). A
+    # role's `query('file', 'os-specifics-Debian.yml')` naming a file that
+    # lives in its own tasks/ dir returns the content in real, where
+    # files/-forced resolution missed it and handed the caller None (and
+    # `| length` then died: "object of type 'NoneType' has no len()"). files/ stays the
+    # no-candidate default so missing-file outcomes - and the password
+    # lookup's persist target - keep landing where they did before the
+    # search widened.
     def self.resolve_lookup_path(path : String, role_path : String?) : String
       path = expand_home(path)
       return path if path.starts_with?('/')
-      role_path ? File.join(role_path, "files", path) : path
+      return path unless role_path
+      candidates = [
+        File.join(role_path, "files", path),
+        File.join(role_path, path),
+        File.join(role_path, "tasks", path),
+      ]
+      candidates.find { |candidate| File.exists?(candidate) } || File.join(role_path, "files", path)
     end
 
     # Real template lookup's file search: find_file_in_search_path(
