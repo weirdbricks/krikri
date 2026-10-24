@@ -14734,3 +14734,13 @@ Local probe roles, not Galaxy roles: each probed task registers its result and d
 | `pgvillage.avchecker` | rocky | ✅ Clean (round29880902, 0.9.1913 debug). |
 | `philnewm.vbox_guest` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29880898, 0.9.1913 debug). |
 | `robertdebock.node_red` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29880903, 0.9.1913 debug). |
+| `HanXHX.logstash` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29881038, 0.9.1916 debug). |
+| `andrewrothstein.grafana` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29881039, 0.9.1916 debug). |
+| `idealista.wildfly-role` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29881032, 0.9.1916 debug). |
+| `infOpen.php-apcu` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29881030, 0.9.1916 debug). |
+| `pinkeen.firewalld` | rocky | ✅ Clean (round29881031, 0.9.1916 debug). |
+| `ppouliot.network_appliance_bootstrap` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29881033, 0.9.1916 debug). |
+| `softasap.sa-tarsnap` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29881036, 0.9.1916 debug). |
+| `sorrowless.prometheus_blackbox_exporter` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29881037, 0.9.1916 debug). |
+| `thulium_drake.journald` | rocky | ✅ Clean (round29881035, 0.9.1916 debug). |
+| `wtanaka.tor` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29881034, 0.9.1916 debug). |
