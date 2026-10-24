@@ -1624,6 +1624,13 @@ module Krikri
           # where Ansible's actually-flattened, actually-scalar
           # `item` reported `ok`.
           begin
+            # Same deferred filter_plugins trigger as the bridge entries -
+            # this filter-chain eval hands the bare expression straight to
+            # the engine and bypasses JinjaRenderer's parse-level gate, so
+            # the span text decides here (issue #307).
+            Krikri::PythonFilterRunner.scan_for_filter_expression(
+              stripped[2..-3].strip, vars_context["playbook_dir"]?.try(&.as_s?)
+            )
             evaluated = KrikriJinja.evaluate_expression(
               stripped[2..-3].strip, vars_context, strict: strict,
               host_context: JinjaHostContext.new(vars_context)

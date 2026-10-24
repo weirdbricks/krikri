@@ -331,6 +331,22 @@ module Krikri
         lstrip_blocks: directive_overrides.fetch("lstrip_blocks", true?(@params["lstrip_blocks"]?, default: false))
       )
 
+      # Same deferred filter_plugins trigger as the bridge entries (see
+      # PythonFilterRunner#scan_for_filter_use): a template-module .j2
+      # whose content uses a filter is exactly where real Ansible loads
+      # every filter_plugins file of the loaded roles + the
+      # playbook-adjacent dir and warns about an unloadable one - a
+      # static or filter-free template stays silent (issue #307,
+      # live-verified vs 2.19.11). This engine derives its own
+      # environment, so the parse-level gate has to run here.
+      begin
+        Krikri::PythonFilterRunner.scan_for_filter_use(
+          KrikriJinja::Parser.parse(content, options), @vars["playbook_dir"]?.try(&.as_s?)
+        )
+      rescue KrikriJinja::TemplateError
+        nil
+      end
+
       template_vars = prepare_template_vars_json(template_path)
       engine = KrikriJinja.derive_engine(
         build_template_loader(template_path), options,
