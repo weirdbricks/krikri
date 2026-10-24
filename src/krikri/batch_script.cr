@@ -153,6 +153,12 @@ module Krikri
       s = String.build do |io|
         io << "#!/bin/bash\n"
         io << "set -u\n"
+        # Real Ansible runs every module under the connecting user's login
+        # umask (typically 022), so a `file:` task creating a missing
+        # ancestor dir (e.g. /var/www) gets 0755 and reports "mode": "0755".
+        # Letting the steps inherit this script's 077 made it 0700 (#326).
+        # 077 is only for the batch-dir setup below.
+        io << "U=$(umask)\n"
         io << "umask 077\n"
         io << "B=" << Shell.single_quote(base) << "\n"
         io << "P=" << Shell.single_quote(prefix) << "\n"
@@ -188,6 +194,9 @@ module Krikri
         # finding - same check, same style.
         io << "if [ -L \"$D\" ] || [ \"$(stat -c %u \"$D\" 2>/dev/null)\" != \"$(id -u)\" ]; then echo 'krikri batch dir unsafe (symlink or foreign owner)' >&2; exit 75; fi\n"
         io << dump_function << "\n"
+        # $D is chmod 700 explicitly, so step .out/.err stay owner-private
+        # under the restored umask.
+        io << "umask \"$U\"\n"
 
         steps.each_with_index do |step, idx|
           encoded = Base64.strict_encode(step.config_json)
