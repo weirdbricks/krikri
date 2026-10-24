@@ -100,6 +100,21 @@ describe "Krikri::PlaybookParser.check_template_quoting (template_quoting_error_
     )
   end
 
+  it "renders a lone colon in a multi-line scalar without the hint" do
+    ex = Krikri::YamlSyntaxError.new("pb.yml", "- name: x\n\n- name: Create\n    name: y\n",
+      YAML::ParseException.new("mapping values are not allowed in this context", 4, 9, nil))
+    ex.render.must_equal(
+      "[ERROR]: YAML parsing failed: Mapping values are not allowed in this context.\n" \
+      "Origin: #{File.expand_path("pb.yml")}:4:9\n" \
+      "\n" \
+      "2\n" \
+      "3 - name: Create\n" \
+      "4     name: y\n" \
+      "          ^ column 9\n" \
+      "\n"
+    )
+  end
+
   it "keeps the colon error's worked example byte-identical" do
     ex = Krikri::YamlSyntaxError.new("pb.yml", "this: is: bad: [\n",
       YAML::ParseException.new("mapping values are not allowed in this context", 1, 9, nil))

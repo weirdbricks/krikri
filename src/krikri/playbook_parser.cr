@@ -1071,8 +1071,20 @@ module Krikri
       line.chomp.gsub('\t', ' ')
     end
 
+    # Ansible only rewrites libyaml's colon error (and appends the
+    # worked example) when the offending line already holds an earlier
+    # colon, i.e. `raw: echo 'name: ansible'`. A lone `key:` landing in a
+    # multi-line plain scalar (over-indented mapping under `- name: x`)
+    # keeps libyaml's wording, capitalized, with no hint.
     def colon_error? : Bool
-      detail.downcase.includes?(COLON_DETAIL)
+      return false unless detail.downcase.includes?(COLON_DETAIL)
+      src = @content.lines[@line - 1]?
+      return true unless src
+      src.byte_slice(0, Math.max(@column - 1, 0)).includes?(':')
+    end
+
+    private def bare_colon_error? : Bool
+      detail.downcase.includes?(COLON_DETAIL) && !colon_error?
     end
 
     def tab_error? : Bool
@@ -1099,6 +1111,8 @@ module Krikri
                   TAB_MESSAGE
                 elsif quoting_error?
                   QUOTING_MESSAGE
+                elsif bare_colon_error?
+                  "#{detail[0].upcase}#{detail[1..]}"
                 else
                   detail
                 end
@@ -1123,7 +1137,10 @@ module Krikri
           # SourceContext shows the two lines before the offending one).
           if @line > 2
             ((Math.max(1, @line - 2))..(@line - 1)).each do |ctx|
-              io << ctx.to_s.rjust(gutter) << " " << echo(lines[ctx - 1]) << "\n"
+              ctx_line = echo(lines[ctx - 1])
+              io << ctx.to_s.rjust(gutter)
+              io << " " << ctx_line unless ctx_line.empty?
+              io << "\n"
             end
           elsif @line > 1 && (previous = lines[@line - 2]?)
             io << (@line - 1).to_s.rjust(gutter) << " " << echo(previous) << "\n"
