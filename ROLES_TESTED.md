@@ -14484,3 +14484,13 @@ Local probe roles, not Galaxy roles: each probed task registers its result and d
 | `noobient.desktopcheck` | ubuntu | ✅ Clean (round29879964, 0.9.1884 release). Times: cold py 4.21s vs cr 1.93s; warm py 2.91s vs cr 1.32s. |
 | `supertarto.openjdk` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29879967, 0.9.1884 release). Times: cold py 2.30s vs cr 0.79s; warm py 3.09s vs cr 0.16s. |
 | `wtanaka.wireshark` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29879971, 0.9.1884 release). Times: cold py 0.44s vs cr 0.01s; warm py 0.44s vs cr 0.01s. |
+| `Temelio.collectd` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29880060, 0.9.1886 debug). |
+| `andrewrothstein.duckdb` | ubuntu | ✅ Clean (round29880059, 0.9.1886 debug). |
+| `anon8675309.ansible_grafana` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29880066, 0.9.1886 debug). |
+| `danbohea.skype` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29880061, 0.9.1886 debug). |
+| `githubixx.longhorn_kubernetes` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29880058, 0.9.1886 debug). |
+| `leucos.blue-green` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29880062, 0.9.1886 debug). |
+| `mrlesmithjr.ansible_letsencrypt` | rocky | ✅ Clean (round29880064, 0.9.1886 debug). |
+| `socketwench.pantheon_terminus` | ubuntu | ❌ Divergent - issue #287 (round29880057, 0.9.1886 debug). |
+| `softasap.sa-secure-audit-rkhunter` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29880063, 0.9.1886 debug). |
+| `zorlin.etcd_cluster` | ubuntu | ✅ Clean (round29880065, 0.9.1886 debug). |
