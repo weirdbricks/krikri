@@ -4386,7 +4386,12 @@ module Krikri
     # located by its `- name:` line (same approach as
     # emit_finalization_error_block); when either origin can't be located
     # (role/include-sourced task, folded when: list), no block is printed.
-    private def emit_when_error_chain(task : Task, msg : String, host : Host? = nil) : Nil
+    # clause_key/clause_raw name the conditional clause the chain's
+    # caused-by Origin pins: the when: shape by default, and the until:
+    # unknown-filter failure (issue #318) passes its own key/raw so the
+    # Origin lands on the until: value token, the position real reports
+    # for it there too.
+    private def emit_when_error_chain(task : Task, msg : String, host : Host? = nil, clause_key : String = "when", clause_raw : String? = nil) : Nil
       msg = decorate_conditional_value_origin(task, msg, host)
       inner = msg.starts_with?("Task failed: ") ? msg["Task failed: ".size..] : msg
       return unless conditional_evaluation_failure?(msg)
@@ -4406,8 +4411,8 @@ module Krikri
         name_col = task.source_col > 0 ? task.source_col : (lines[name_idx].size - lines[name_idx].lstrip.size + 1)
       end
 
-      raw = task.when_condition.to_s
-      key_line = locate_conditional_origin(lines, name_idx, "when", raw)
+      raw = clause_raw || task.when_condition.to_s
+      key_line = locate_conditional_origin(lines, name_idx, clause_key, raw)
       # A statically-imported task's failing `when:` lives on the IMPORTING
       # file's import_tasks: line, not in the task's own file (the parser
       # ANDed it in), so the own-file scan finds nothing - real 2.19 still
