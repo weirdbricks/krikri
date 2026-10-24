@@ -3768,24 +3768,35 @@ module Krikri
         stripped = line.strip
         next unless stripped.starts_with?("- ")
         next unless (name_match = stripped.match(/\A-\s*name:\s*(.+)\z/))
-        raw_name = name_match[1].strip
-        # Only a scalar wrapped by the SAME quote char at both ends was
-        # actually a quoted string: quotes are only special at a scalar's
-        # START, so an unquoted plain-scalar name may legitimately end
-        # with a quote char (issue #244's name ends in 'image_commit'),
-        # and shaving that trailing quote off made this lookup stop
-        # matching the parsed name - silently demoting the task's
-        # finalization-error chain from three levels to two.
-        quoted_name = raw_name.size >= 2 &&
-                      ((raw_name[0] == '"' && raw_name[-1] == '"') ||
-                       (raw_name[0] == '\'' && raw_name[-1] == '\''))
-        name_value = quoted_name ? raw_name[1..-2] : raw_name
+        name_value = unquote_yaml_scalar_name(name_match[1].strip)
         if name_value == task.name
           col = line.index("name")
           return {idx, (col || 0) + 1} if col
         end
       end
       nil
+    end
+
+    # The parsed scalar value hiding in a `- name:` line's raw text: quote
+    # unwrapping plus trailing-comment removal. YAML ends the scalar
+    # before a ` # ...` comment, so the parsed task.name never carries the
+    # comment the source line still shows: pgvillage.linux's
+    # `- name: Add repository # noqa: args[module]` (issue #308) stopped
+    # matching its own `- name:` line here and silently demoted its
+    # argsplat-warning Origin from the module args line to the task-start
+    # fallback, where real ansible reports the module line.
+    # Only a `#` preceded by whitespace opens a comment on the raw text
+    # (`foo#bar` stays one name), and one inside a quoted scalar is name
+    # content too. A scalar only STARTS being quoted from a leading quote
+    # char (quotes are otherwise ordinary, hence issue #244's plain name
+    # ending in 'image_commit' keeps its quote); for a quoted scalar
+    # everything after the closing quote is a comment.
+    private def unquote_yaml_scalar_name(raw_name : String) : String
+      first = raw_name[0]?
+      if first && (first == '"' || first == '\'') && (close = raw_name.index(first, 1))
+        return raw_name[1...close]
+      end
+      raw_name.sub(/\s+#.*\z/, "")
     end
 
     # Whether *line* opens the NEXT task. A `- ` line nested deeper than the

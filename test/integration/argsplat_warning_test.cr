@@ -336,4 +336,49 @@ describe "argsplat warning" do
     warning_count(stdout).must_equal(0)
     stdout.includes?("RUNNING HANDLER").must_equal(true)
   end
+
+  # pgvillage.linux's own task (issue #308): the name's source line ends
+  # in a YAML comment (` # noqa: args[module]`), which YAML already
+  # stripped from the parsed name. The Origin search compared the raw
+  # line text (comment included) against the parsed name, never matched,
+  # and its task-start fallback reported the name's line where real
+  # ansible reports the module args line, at the opening quote.
+  it "points the Origin at the module line when the name line carries a trailing comment" do
+    success, output = run_play([
+      "    - name: Add repository # noqa: args[module]",
+      "      ansible.builtin.copy: \"{{ some_dict }}\"",
+    ], dict_vars_for("namecomment"))
+    success.must_equal(true, output)
+    warning_count(output).must_equal(1)
+    # Line 10 is the module key line (the commented name is line 9); the
+    # column is the opening quote, identical to the un-commented
+    # `templated args` shape above.
+    warning_origin(output).not_nil!.must_equal({"10", "29"})
+    output.includes?("^ column 29").must_equal(true)
+    output.includes?("10       ansible.builtin.copy: \"{{ some_dict }}\"").must_equal(true)
+  end
+
+  it "points the Origin at the module line for a quoted name followed by a comment" do
+    success, output = run_play([
+      "    - name: \"Add repository\" # noqa: args[module]",
+      "      ansible.builtin.copy: \"{{ some_dict }}\"",
+    ], dict_vars_for("quotedcomment"))
+    success.must_equal(true, output)
+    warning_count(output).must_equal(1)
+    warning_origin(output).not_nil!.must_equal({"10", "29"})
+    output.includes?("^ column 29").must_equal(true)
+  end
+
+  # `#` only opens a comment when whitespace precedes it - `foo#bar` is
+  # name content and keeps matching; a less careful strip would cut it
+  # and the Origin would fall back to the task-start position again.
+  it "keeps matching a name whose only # has no preceding whitespace" do
+    success, output = run_play([
+      "    - name: reach foo#bar",
+      "      ansible.builtin.copy: \"{{ some_dict }}\"",
+    ], dict_vars_for("hashmidname"))
+    success.must_equal(true, output)
+    warning_count(output).must_equal(1)
+    warning_origin(output).not_nil!.must_equal({"10", "29"})
+  end
 end
