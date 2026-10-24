@@ -105,6 +105,35 @@ module Krikri
         "Depsolve Error occurred: \n" + block.join("\n")
       end
 
+      # Issue #321 (Rocky 9): ansible's dnf module marks every requested
+      # spec the repos can't name into `failures` FIRST, then STILL
+      # depsolves the survivors - a DepsolveError there (libcurl against
+      # the installed libcurl-minimal) fails the task with the depsolve
+      # msg AND that per-spec failures list, while the CLI aborts at the
+      # missing spec before ever reaching that depsolve. Only THIS exact
+      # canned wording names a spec worth re-trying without: the
+      # modular-filtering form carries its own different verdict, so
+      # those specs stay in the batch.
+      def missing_specs_from_failures(failures : Array(String)) : Array(String)
+        specs = [] of String
+        failures.each do |entry|
+          if m = entry.match(/^No package (.+) available\.$/)
+            specs << m[1] unless specs.includes?(m[1])
+          end
+        end
+        specs
+      end
+
+      # The batch that still depsolves what ansible depsolved: the
+      # requested specs minus the ones the repos can't name, so a
+      # --assumeno re-run can surface the Problem block the first
+      # missing-spec abort hid.
+      def specs_without_missing(specs : Array(String), failures : Array(String)) : Array(String)
+        missing = missing_specs_from_failures(failures)
+        return specs if missing.empty?
+        specs.reject { |spec| spec.in?(missing) }
+      end
+
       # Ansible's dnf module reports a repo-metadata download failure
       # (the repo's repodata/repomd.xml 404s) as JUST libdnf's own error
       # text - its "Failed to download metadata for repo 'x': ..."

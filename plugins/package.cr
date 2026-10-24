@@ -672,6 +672,39 @@ module Krikri
       end
     end
 
+    # Issue #321 (Rocky 9): real's dnf module checks off every spec no
+    # repo can name into its failures list FIRST and then STILL
+    # depsolves the survivors - a DepsolveError there (libcurl against
+    # the installed libcurl-minimal) fails the task with the depsolve
+    # msg "Depsolve Error occurred: \n Problem: ..." AND the per-spec
+    # failures list, not the canned install-failure msg. This
+    # compound's CLI aborts at the missing spec instead, so the Problem
+    # block is hunted out by stripping the missing specs and re-running
+    # with --assumeno (no package can land, the re-resolution still
+    # prints the block); --setopt=strict=0 / --skip-broken would
+    # suppress exactly what ansible's depsolve catch reports as the
+    # msg. nil when nothing was stripped / nothing remains / the
+    # survivors re-resolve clean - the caller keeps its canned shape.
+    private def dnf_depsolve_retry_failure(install_result : NamedTuple(exit_code: Int32, stdout: String, stderr: String), names : Array(String), gpg_opt : String) : PluginResult?
+      failures = parse_dnf_install_failures(install_result[:stdout], install_result[:stderr]) || return nil
+      remaining = specs_without_missing(names, failures)
+      return nil if remaining.empty? || remaining.size == names.size
+      retry_pkg = remaining.map { |pkg| shell_single_quote(pkg) }.join(" ")
+      retry_result = remote_exec(
+        "dnf install -y #{gpg_opt} --assumeno #{retry_pkg} || yum install -y #{gpg_opt} --assumeno #{retry_pkg}"
+      )
+      depsolve_msg = depsolve_failure_msg(retry_result[:stdout] + "\n" + retry_result[:stderr]) || return nil
+      PluginResult.new(
+        changed: false,
+        failed: true,
+        msg: depsolve_msg,
+        failures: failures,
+        results: [] of String,
+        rc: install_result[:exit_code],
+        key_order: PluginHelpers::DnfInstallFailures::DNF_DEPSOLVE_FAILURE_ORDER
+      )
+    end
+
     # Handle DNF/YUM package management
     # See #execute's `names`/`pkg_tokens` comment: commands are built
     # from the parsed elements (each atomically quoted), messages keep
@@ -774,7 +807,13 @@ module Krikri
           else
             # Same Ansible-shaped failure the "latest" branch reports -
             # see dnf_install_failure_result for why.
-            dnf_install_failure_result(name, install_result)
+            #
+            # Before that canned shape, hunt out #321's combination: the
+            # module marks the missing specs then STILL depsolves the
+            # rest, so a depsolve failure WITH the missing-spec
+            # failures list beats this CLI's missing-spec abort.
+            dnf_depsolve_retry_failure(install_result, names, gpg_opt) ||
+              dnf_install_failure_result(name, install_result)
           end
         end
       when "absent"

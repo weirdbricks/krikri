@@ -946,6 +946,15 @@ module Krikri
             return {changed: false, message: nil, output: result[:stdout], failure: PluginResult.new(changed: false, failed: true, msg: metadata_msg, results: [] of String, rc: result[:exit_code], key_order: PluginHelpers::DnfInstallFailures::DNF_METADATA_FAILURE_ORDER)}
           end
           if failures = parse_dnf_install_failures(result[:stdout], result[:stderr], @requested_names)
+            # Ansible's module marks the missing specs into `failures`
+            # first and then STILL depsolves the survivors (issue #321)
+            # - a DepsolveError raised there beats the canned
+            # install-failure msg for that task. The CLI's own
+            # missing-spec abort hides that verdict, so the retry below
+            # goes and re-resolves without the specs it can't name.
+            if depsolve_failure = depsolve_retry_failure(failures, to_install, options, result)
+              return {changed: false, message: nil, output: result[:stdout], failure: depsolve_failure}
+            end
             return {changed: false, message: nil, output: result[:stdout], failure: failure_result("Failed to install some of the specified packages", failures, result[:exit_code])}
           end
           return {changed: false, message: nil, output: result[:stdout], failure: failure_result("Failed to install packages", error_lines(result), result[:exit_code])}
@@ -971,6 +980,40 @@ module Krikri
         else
           {changed: true, message: "Installed: #{to_install.join(", ")}", output: result[:stdout], failure: nil}
         end
+      end
+
+      # Issue #321 (Rocky 9): ansible's dnf module never stops at the
+      # missing-spec mark - every unresolvable spec is checked off into
+      # `failures` and the transaction STILL depsolves the survivors, so
+      # a DepsolveError in them (libcurl against the installed
+      # libcurl-minimal) fails the task with the depsolve msg
+      # "Depsolve Error occurred: \n Problem: ..." AND the per-spec
+      # failures list, not the canned install-failure msg. The CLI
+      # aborts at the missing spec before ever depsolving, so the
+      # Problem block is hunted out with one re-install of the
+      # remaining specs: --assumeno (no package can land, the
+      # re-resolution still prints the block) - --setopt=strict=0 /
+      # --skip-broken would suppress it, which is exactly what
+      # ansible's depsolve catch reports as the msg. nil keeps the
+      # caller's canned install-failure shape - nothing was stripped,
+      # nothing remains, or the survivors re-resolve clean.
+      private def depsolve_retry_failure(failures : Array(String), to_install : Array(String), options : String, result : NamedTuple(exit_code: Int32, stdout: String, stderr: String)) : PluginResult?
+        remaining = specs_without_missing(to_install, failures)
+        return nil if remaining.empty? || remaining.size == to_install.size
+        retry_list = remaining.map { |pth| quote_package(pth) }.join(" ")
+        retry_result = remote_exec_tolerating_unknown_repo(
+          "#{pkg_manager_binary} install #{options} --assumeno #{retry_list}"
+        )
+        depsolve_msg = depsolve_failure_msg(retry_result[:stdout] + "\n" + retry_result[:stderr]) || return nil
+        PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: depsolve_msg,
+          failures: failures,
+          results: [] of String,
+          rc: result[:exit_code],
+          key_order: PluginHelpers::DnfInstallFailures::DNF_DEPSOLVE_FAILURE_ORDER
+        )
       end
 
       # Ansible's dnf module checks the signature of a remote/local .rpm
