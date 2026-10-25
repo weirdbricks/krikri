@@ -155,6 +155,11 @@ module Krikri
         connector_version: "1.1.1",
         key_order: SUCCESS_KEY_ORDER)
 
+      # Upstream's mysql_connect warns about the MySQLdb connector before
+      # get_info emits its per-filter warnings, and both land in the same
+      # `warnings` list in that record order.
+      PluginHelpers::MysqlConnection.add_mysqldb_connector_warning(result)
+
       # Ansible's module.warn for every filter element that isn't a known
       # subset name (mysql_info.py's get_info): the element is ignored and
       # the warning rides on the result, after `failed`.
@@ -171,9 +176,13 @@ module Krikri
 
       result
     rescue ex : DB::ConnectionRefused
-      PluginResult.new(changed: false, failed: true, msg: "unable to connect to database, check login_user and login_password are correct or login_unix_socket password is empty: #{ex.message}")
+      # mysql_info.py builds its "unable to connect" fail_json after
+      # mysql_connect raised, so the connector warn (already recorded by
+      # module.warn inside mysql_connect) rides this failure result there.
+      PluginHelpers::MysqlConnection.add_mysqldb_connector_warning(
+        PluginResult.new(changed: false, failed: true, msg: "unable to connect to database, check login_user and login_password are correct or login_unix_socket password is empty: #{ex.message}"))
     rescue ex : MySql::Connection::PacketError
-      PluginHelpers::DbErrors.query_failed(ex, "MySQL")
+      PluginHelpers::MysqlConnection.add_mysqldb_connector_warning(PluginHelpers::DbErrors.query_failed(ex, "MySQL"))
     end
 
     # Ansible's get_server_implementation: a server that identifies itself

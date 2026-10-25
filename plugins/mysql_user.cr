@@ -145,13 +145,18 @@ module Krikri
         config_file: @params["config_file"]? || "~/.my.cnf",
       )
 
-      with_shape(
+      result = with_shape(
         run_with_db(uri, name, host, state, password, update_password, priv, append_privs, plugin,
           plugin_hash_string, plugin_auth_string, check_mode, host_all),
         name
       )
+      # mysql_user.py's account work happens after mysql_connect, so the
+      # connector warn inside it has been recorded even on a failed
+      # statement path: everything that leaves from here on carries it.
+      PluginHelpers::MysqlConnection.add_mysqldb_connector_warning(result)
     rescue ex : ModuleFailError
-      PluginResult.new(changed: false, failed: true, msg: ex.message || "")
+      PluginHelpers::MysqlConnection.add_mysqldb_connector_warning(
+        PluginResult.new(changed: false, failed: true, msg: ex.message || ""))
     rescue ex : DB::ConnectionRefused
       # community.mysql's own connection-failure wrapper (live-verified
       # against bookworm's community.mysql 3.x via the W9 harness case,
@@ -164,10 +169,11 @@ module Krikri
       # the deterministic wrapper is the parity that matters.
       # mysql_db/mysql_info/mysql_variables keep DbErrors's generic shape
       # until their own harness cases say otherwise.
-      PluginResult.new(changed: false, failed: true,
-        msg: "unable to connect to database, check login_user and login_password are correct or #{option_file_display} has the credentials. Exception message: #{ex.message}")
+      PluginHelpers::MysqlConnection.add_mysqldb_connector_warning(
+        PluginResult.new(changed: false, failed: true,
+          msg: "unable to connect to database, check login_user and login_password are correct or #{option_file_display} has the credentials. Exception message: #{ex.message}"))
     rescue ex : MySql::Connection::PacketError
-      PluginHelpers::DbErrors.query_failed(ex, "MySQL")
+      PluginHelpers::MysqlConnection.add_mysqldb_connector_warning(PluginHelpers::DbErrors.query_failed(ex, "MySQL"))
     end
 
     # The config_file path as real's module shows it in the
