@@ -934,7 +934,46 @@ module Krikri
       items.flat_map { |item| item.as_a? || [item] }
     end
 
+    # The YAML keyword that carried this task's loop source, for the
+    # embedded-template lookup-constant [WARNING]'s Origin (issue #339):
+    # ansible's templar inherits the templated value's own position, which
+    # for loop source values is the first character after the keyword AS
+    # WRITTEN (`loop: ` vs `with_items: ` pin different calls - issue #228
+    # established the same convention for error origins). Same derivation
+    # shape locate_loop_source_line uses above; with_flattened is left out
+    # for its same two-spellings reason. nil when only a `with_*` generic
+    # lookup source with a dotted plugin spelling is present - the written
+    # key can't be reconstructed from the plugin name then, and the
+    # best-effort Origin convention (see emit_jinja_const_template_warning)
+    # rather than a wrong needle line is the fallback.
+    private def loop_source_keyword(task : Task) : String?
+      task.loop_template_kind || task.loop_literal_kind ||
+        (task.loop_first_found ? "with_first_found" : nil) ||
+        (task.loop_fileglob ? "with_fileglob" : nil) ||
+        (task.loop_file ? "with_file" : nil) ||
+        (task.loop_subelements_list ? "with_subelements" : nil) ||
+        (task.loop_nested_sources ? "with_nested" : nil) ||
+        (task.loop_together_sources ? "with_together" : nil) ||
+        (task.loop_filetree ? "with_community.general.filetree" : nil) ||
+        task.loop_lookup_plugin.try { |plugin| plugin.includes?(".") ? nil : "with_#{plugin}" }
+    end
+
     private def resolve_loop_items_or_raise(task : Task, host : Host, vars_context : Hash(String, JSON::Any), & : -> Array(JSON::Any)?) : Array(JSON::Any)?
+      # While the loop's own value renders (scalar template, lookup terms,
+      # per-candidate first_found strings), register WHERE that value sits
+      # in the playbook file under its YAML keyword so the embedded-template
+      # constant warning (emit_jinja_const_template_warning) can originate
+      # there, the way module-arg finalization already does around every
+      # substitute (issue #339). Popping in the end's ensure keeps outer
+      # registrations intact through every rescue path below; the flag
+      # guards against popping an OUTER registration when this task never
+      # pushed one itself.
+      loop_key = loop_source_keyword(task)
+      loop_param_registered = false
+      if loop_key && task.source_file
+        VarSubstitutor.set_current_task_param(task.source_file, task.source_line, loop_key)
+        loop_param_registered = true
+      end
       yield
     rescue ex : VariableSubstitutor::FilterEngine::FilterFailureError
       # A filter that EXISTS but failed while running keeps the generic
@@ -1022,6 +1061,8 @@ module Krikri
       end
 
       raise WhenEvaluationError.new(ex.message)
+    ensure
+      VarSubstitutor.pop_current_task_param if loop_param_registered
     end
 
     # Whether the undefined reference that killed a when: evaluation is the

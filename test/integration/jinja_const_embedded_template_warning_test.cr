@@ -145,4 +145,84 @@ describe "jinja constant embedded-template warning blocks" do
   ensure
     FileUtils.rm_rf(src_dir) if src_dir
   end
+
+  it "warns for a loop: whose first_found term is an embedded-template constant (issue #339)" do
+    src_dir = File.tempname("jinja-const-warn-loop-ff")
+    Dir.mkdir_p(src_dir)
+    File.write(File.join(src_dir, "pb.yml"), <<-YAML)
+      ---
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          ansible_os_family: RedHat
+        tasks:
+          - ansible.builtin.debug:
+              msg: "{{ item }}"
+            loop: "{{ q('first_found', 'tasks/{{ ansible_os_family }}.yml', errors='ignore') }}"
+      YAML
+
+    stdout = IO::Memory.new
+    stderr = IO::Memory.new
+    Process.run(BINARY, ["-i", INVENTORY, "pb.yml", "--check"], output: stdout, error: stderr, chdir: src_dir)
+
+    lines = File.read_lines(File.join(src_dir, "pb.yml"))
+    pb_path = File.expand_path(File.join(src_dir, "pb.yml"))
+    # The loop keyword's VALUE position (first character after `loop: `,
+    # quote included): ansible inherits the templated loop VALUE's own
+    # position onto the warning Origin, the same rule module-param
+    # finalization already pins here (live-verified vs 2.19.11). Exactly
+    # one warning: the loop resolves empty (no such candidate file under
+    # errors='ignore') and the task stays a plain skip.
+    stderr.to_s.must_include("#{WARNING_LINE}\n" \
+                             "Origin: #{pb_path}:10:13\n\n" \
+                             " 8 #{lines[7]}\n" \
+                             " 9 #{lines[8]}\n" \
+                             "10 #{lines[9]}\n" \
+                             "#{" " * 15}^ column 13\n\n" \
+                             "#{HELP_LINE}\n\n")
+    stdout.to_s.wont_include("Jinja constant strings")
+  ensure
+    FileUtils.rm_rf(src_dir) if src_dir
+  end
+
+  it "warns the same when the loop source is a lookup('file', ...) expression" do
+    src_dir = File.tempname("jinja-const-warn-loop-file")
+    Dir.mkdir_p(File.join(src_dir, "keys"))
+    File.write(File.join(src_dir, "keys", "redelk_id_rsa.pub"), "KEY1")
+    File.write(File.join(src_dir, "pb.yml"), <<-YAML)
+      ---
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          redelk_user: redelk
+          ssh_keys_path: #{src_dir}/keys
+        tasks:
+          - ansible.builtin.debug:
+              msg: "{{ item }}"
+            loop: "{{ lookup('file', '{{ ssh_keys_path }}/{{ redelk_user }}_id_rsa.pub') }}"
+      YAML
+
+    stdout = IO::Memory.new
+    stderr = IO::Memory.new
+    Process.run(BINARY, ["-i", INVENTORY, "pb.yml", "--check"], output: stdout, error: stderr, chdir: src_dir)
+
+    lines = File.read_lines(File.join(src_dir, "pb.yml"))
+    pb_path = File.expand_path(File.join(src_dir, "pb.yml"))
+    # The non-first_found lookup route: the term's own quoted-literal
+    # rerender inside the hand-rolled dispatch is the emitter here, with
+    # the loop source's registration the only missing piece - so the same
+    # value-position block is expected.
+    stderr.to_s.must_include("#{WARNING_LINE}\n" \
+                             "Origin: #{pb_path}:11:13\n\n" \
+                             " 9 #{lines[8]}\n" \
+                             "10 #{lines[9]}\n" \
+                             "11 #{lines[10]}\n" \
+                             "#{" " * 15}^ column 13\n\n" \
+                             "#{HELP_LINE}\n\n")
+    stdout.to_s.wont_include("Jinja constant strings")
+  ensure
+    FileUtils.rm_rf(src_dir) if src_dir
+  end
 end

@@ -1,6 +1,7 @@
 #!/usr/bin/env crystal
 
 require "json"
+require "http/status"
 require "../src/krikri/base_plugin"
 
 module Krikri
@@ -168,8 +169,18 @@ module Krikri
 
     private def download_key(key : String, tmp_path : String) : String?
       insecure_flag = true?(@params["validate_certs"]?, default: true) ? "" : "--insecure "
-      result = remote_exec("curl --fail --silent --show-error --location #{insecure_flag}-o #{Shell.quote_arg(tmp_path)} #{shell_single_quote(key)}")
-      result[:exit_code] == 0 ? nil : "failed to fetch key at #{key} , error was: #{result[:stderr]}"
+      result = remote_exec("curl --fail --silent --show-error --location #{insecure_flag}-w '%{http_code}' -o #{Shell.quote_arg(tmp_path)} #{shell_single_quote(key)}")
+      return nil if result[:exit_code] == 0
+      # Real rpm_key fetches through fetch_url, whose HTTPError's str() is
+      # urllib's "HTTP Error <code>: <reason phrase>" - NOT curl's own stderr
+      # text, which is what a bare `curl: (22) The requested URL returned
+      # error: 404` gave this message. -w '%{http_code}' recovers codes curl
+      # exits 22 for (the same trick apt_key.cr's url branch uses); DNS/
+      # connect failures keep curl's stderr, still a worthwhile error there.
+      if result[:exit_code] == 22 && (code = result[:stdout].strip.to_i?) && code >= 400
+        return "failed to fetch key at #{key} , error was: HTTP Error #{code}: #{HTTP::Status.new(code).description}"
+      end
+      "failed to fetch key at #{key} , error was: #{result[:stderr]}"
     end
 
     # fingerprint: is a documented LIST param (Ansible's own
