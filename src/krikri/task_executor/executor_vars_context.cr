@@ -3913,19 +3913,25 @@ module Krikri
 
     # The `- name:` line whose raw name (quotes stripped) equals the
     # task's own; column is the `name` KEY's start (Ansible's task-level
-    # origin points there, e.g. column 7 for `    - name:`).
+    # origin points there, e.g. column 7 for `    - name:`). When a file
+    # repeats a task name, ansible still Origins each failure at the
+    # failing task's OWN mapping (stamped at parse), so prefer the match
+    # on task.source_line - a same-named second task's error chain must
+    # not pin the first copy's position (ecaepp.ansible_role_nginx
+    # installation.yml, issue #338).
     private def locate_name_line(lines : Array(String), task : Task) : {Int32, Int32}?
+      first : {Int32, Int32}? = nil
       lines.each_with_index do |line, idx|
         stripped = line.strip
         next unless stripped.starts_with?("- ")
         next unless (name_match = stripped.match(/\A-\s*name:\s*(.+)\z/))
         name_value = unquote_yaml_scalar_name(name_match[1].strip)
-        if name_value == task.name
-          col = line.index("name")
-          return {idx, (col || 0) + 1} if col
-        end
+        next unless name_value == task.name
+        col = line.index("name")
+        return {idx, (col || 0) + 1} if col && idx == task.source_line - 1 && task.source_line > 0
+        first = {idx, col + 1} if col && !first
       end
-      nil
+      first
     end
 
     # The parsed scalar value hiding in a `- name:` line's raw text: quote

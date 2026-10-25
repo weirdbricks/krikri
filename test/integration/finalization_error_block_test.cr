@@ -77,6 +77,45 @@ describe "task-arg finalization error block (flow-style k=v string args, issue #
   end
 end
 
+describe "task-arg finalization error block (two same-named tasks, issue #338)" do
+  it "points a repeated-name failure at the SECOND task's own lines, not the first copy's" do
+    # ansible Origins each task error at that task's OWN YAML mapping, so a
+    # tasks file may repeat a name (ecaepp.ansible_role_nginx repeats the
+    # Python-OpenSSL install task): the failing second task must not inherit
+    # the first (when:-skipped) copy's position - the pre-fix first-match
+    # scan pinned every Origin to line 5/6/7 of the first copy.
+    playbook = File.tempname("finalization-block-dupname", ".yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        gather_facts: false
+        connection: local
+        tasks:
+          - name: Same name
+            ansible.builtin.debug:
+              msg: "{{ python2_pkgs }}"
+            when: false
+
+          - name: Same name
+            ansible.builtin.debug:
+              msg: "{{ python3-pkgs }}"
+      YAML
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+    text = output.to_s
+
+    status.exit_code.must_equal(2)
+    text.must_include("[ERROR]: Task failed: Finalization of task args for 'ansible.builtin.debug' failed: Error while resolving value for 'msg': 'python3' is undefined")
+    text.must_include("\nTask failed.\nOrigin: #{playbook}:10:7")
+    text.must_include("\nFinalization of task args for 'ansible.builtin.debug' failed.\nOrigin: #{playbook}:11:7")
+    text.must_include("Error while resolving value for 'msg': 'python3' is undefined\nOrigin: #{playbook}:12:14\n")
+    text.must_include("12         msg: \"{{ python3-pkgs }}\"\n                ^ column 14\n")
+    text.must_match(/skipping: \[localhost\]/)
+    text.wont_include("python2_pkgs")
+  ensure
+    File.delete(playbook) if playbook && File.exists?(playbook)
+  end
+end
+
 describe "task-arg finalization error block (free-form k=v folded past the module line, issue #336)" do
   it "points a k=v key's undefined failure at the string start on the module line" do
     # the module-line k=v fragment and the deeper lines under it are ONE

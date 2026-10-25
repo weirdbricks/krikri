@@ -946,12 +946,17 @@ module Krikri
         # Check for top-level `-` subtraction - specifically datetime
         # subtraction (dev-sec os_hardening's own `to_datetime(...) -
         # to_datetime(...)`, producing a timedelta `.days` can then read)
-        # and plain numeric subtraction. Requires spaces around the `-`
-        # (unlike `+`, a bare hyphen is common inside ordinary
-        # identifiers/text, so only the unambiguous "a - b" spacing is
-        # treated as the operator) and, like `+`, must come before the
-        # filter check: `|` binds tighter than `-`, so each side may
-        # still carry its own filter chain evaluated independently.
+        # and plain numeric subtraction. Which literal `-`s actually
+        # count as the operator is #binary_minus_at?'s question: real
+        # ansible (issue #338) showed Jinja's lexer never required
+        # spacing for it - `{{ python3-pkgs }}` arrives as the
+        # subtraction `python3 - pkgs` and its strict templar fails the
+        # task with "'python3' is undefined", so this evaluator keeping
+        # the old spaces-only rule let the unknown-variable sentinel
+        # through as, in that role's case, an apt package name. Like
+        # `+`, must come before the filter check: `|` binds tighter than
+        # `-`, so each side may still carry its own filter chain
+        # evaluated independently.
         #
         # Crinja-first delegation, arithmetic `-` construct: same
         # try-Crinja-first, fall-back-to-the-exact-previous-code pattern
@@ -2612,9 +2617,9 @@ module Krikri
         end
       end
 
-      # Finds the first top-level " - " (spaces required - see the
-      # `evaluate` call site for why), outside quotes/brackets/parens,
-      # and splits *expr* around it. nil if there's no such split point at
+      # Finds the first top-level binary `-` (see #binary_minus_at? for
+      # when a raw `-` is one), outside quotes/brackets/parens, and
+      # splits *expr* around it. nil if there's no such split point at
       # all (not a subtraction expression).
       private class QuoteDepthTracker
         property depth = 0
@@ -2645,14 +2650,57 @@ module Krikri
         tracker = QuoteDepthTracker.new
         expr.each_char.with_index do |char, i|
           tracker.advance(char)
-          return {expr[0...i].strip, expr[(i + 1)..].strip} if tracker.top_level? && spaced_minus_at?(expr, i)
+          return {expr[0...i].strip, expr[(i + 1)..].strip} if tracker.top_level? && binary_minus_at?(expr, i)
         end
         nil
       end
 
-      private def spaced_minus_at?(expr : String, i : Int32) : Bool
+      # Real ansible (issue #338) settles this the way Jinja's own lexer
+      # does: spacing never decides operand-hood, because "-" simply
+      # is not part of any identifier - `python3-pkgs` tokenises as the
+      # subtraction `python3 - pkgs` and ansible's strict templar fails
+      # the task with "'python3' is undefined", while this evaluator's
+      # old spaces-only rule left the unknown-variable sentinel flowing
+      # onward as a real value (literally, as an apt package name). The
+      # unspaced extension is deliberately token-shape evidence only -
+      # what sits immediately beside the dash - so the split stays a
+      # pure string question: the strictness verdict itself stays inside
+      # #evaluate_minus, which re-raises ansible's strict-undefined
+      # message for an operand it cannot resolve. The one shape
+      # Jinja's lexer consumes as a single token but this split would
+      # otherwise still see as subtraction is the float exponent `1e-5`:
+      # python lexes the whole digit run plus sign as one number before
+      # any operator exists, and there is no partition of it into a
+      # working subtraction, so a digit run ending in e is carved out
+      # (an identifier run genuinely subtracting a number can't collide:
+      # python identifiers never start with a digit, so `a5e-2` reads
+      # apart from `1e-5` just the way the lexer meant them to).
+      private def binary_minus_at?(expr : String, i : Int32) : Bool
         return false unless expr[i] == '-'
-        i > 0 && expr[i - 1] == ' ' && i + 1 < expr.size && expr[i + 1] == ' '
+        return false unless i > 0 && i + 1 < expr.size
+        return true if expr[i - 1] == ' ' && expr[i + 1] == ' '
+
+        return false unless ident_char?(expr[i - 1]) || expr[i - 1].in?(')', ']')
+        return false unless ident_char?(expr[i + 1]) || expr[i + 1] == '('
+        !float_exponent_sign?(expr, i)
+      end
+
+      private def ident_char?(char : Char) : Bool
+        char.ascii_alphanumeric? || char == '_'
+      end
+
+      # The maximal identifier run ending immediately before the dash,
+      # read backwards - matching python's lexer, which would never cut
+      # this run open, not even at the digit/letter boundary inside one
+      # token like `1e-5`.
+      private def float_exponent_sign?(expr : String, minus_index : Int32) : Bool
+        start = minus_index
+        while start > 0 && ident_char?(expr[start - 1])
+          start -= 1
+        end
+        token = expr[start...minus_index]
+        token.size > 1 && token[-1].in?('e', 'E') &&
+          token[...-1].each_char.all?(&.ascii_number?)
       end
 
       # The Crinja-first attempt for a leading-paren expression, split out
