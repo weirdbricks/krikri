@@ -145,6 +145,24 @@ module Krikri
     # when:, or when its own when: also contributed to the merged
     # condition.
     property inherited_when_origin : {String, Int32, Int32}? = nil
+    # The import_tasks: line's own when: clauses WITH each clause's exact
+    # source position (path, 1-based line/col of the clause's YAML token),
+    # recorded on EVERY task the import statically inlines - unlike
+    # inherited_when_origin above, also when the child carries its own
+    # when:. Ansible evaluates a merged import when: clause-by-clause with
+    # the IMPORT's items first (they prefix the merged list), so a failing
+    # import clause's conditional-failure chain "caused by" Origin belongs
+    # at that clause's position in the IMPORTING file - even when the
+    # child's own file word-for-word contains the same clause and would
+    # otherwise be mislabeled (daixijun.mysql issue #328, where both
+    # levels write the identical `inventory_hostname in groups[...]`). If
+    # the import line's when: is a list, each item maps to its own item
+    # line; a scalar maps to the `when:` value token (the shape
+    # inherited_when_origin already covers for childless tasks). Keys are
+    # the exact clause strings placed into Task#when_condition_list, so
+    # the executor can look up the failing clause directly. nil when no
+    # import when: contributed clauses with a locatable position.
+    property imported_when_origins : Hash(String, {String, Int32, Int32})? = nil
     property when_condition : String?
     # The when: LIST's own per-item condition strings, kept alongside the
     # " and "-joined `when_condition` so the STRICT when: evaluation path
@@ -2794,6 +2812,30 @@ module Krikri
 
       import_when = hash["when"]?.try { |v| condition_to_string(v) }
       import_when_list = hash["when"]?.try { |v| condition_to_list(v) }
+      # Per-clause import when: positions (issue #328): real evaluates the
+      # import's clauses FIRST against each inlined task, so its
+      # conditional-failure chain's "caused by" Origin names the failing
+      # clause's own token in the IMPORTING file - a list item's own line
+      # for the list form, the when: value token for a scalar. The merged
+      # condition can no longer be re-located by scanning the child's file
+      # (no such text there), conditioned exactly as below.
+      import_when_origins = nil
+      if import_when && source_file && source_map
+        import_origin_prefix = task_source_prefix(source_prefix, source_index)
+        import_origin_path = File.expand_path(source_file)
+        if (import_when_yaml = hash["when"]?) && (import_when_items = import_when_yaml.as_a?)
+          parsed_origins = Hash(String, {String, Int32, Int32}).new
+          import_when_items.each_with_index do |item, item_idx|
+            clause = safe_yaml_to_string(item).strip
+            next if clause.empty?
+            next unless (pos = source_map.at?("#{import_origin_prefix}/when/#{item_idx}"))
+            parsed_origins[clause] = {import_origin_path, pos[0], pos[1]}
+          end
+          import_when_origins = parsed_origins unless parsed_origins.empty?
+        elsif (when_pos_scalar = source_map.at?("#{import_origin_prefix}/when"))
+          import_when_origins = {import_when => {import_origin_path, when_pos_scalar[0], when_pos_scalar[1]}}
+        end
+      end
       import_tags = hash["tags"]?.try(&.as_a?).try(&.map(&.as_s)) || [] of String
       # A `notify:` on the import_tasks: line itself - like when:/tags:
       # just below, Ansible propagates it onto every task the
@@ -2857,6 +2899,22 @@ module Krikri
              hash["when"]?.try(&.as_a?).nil? && (import_source = source_file) &&
              (when_pos = source_map.try(&.at?(task_source_prefix(source_prefix, source_index) + "/when")))
             task.inherited_when_origin = {File.expand_path(import_source), when_pos[0], when_pos[1]}
+          end
+          # Every inlined child gets the import's clause positions (issue
+          # #328), not just the childless case inherited_when_origin
+          # above covers: the failing merged clause can BE an import item
+          # (they evaluate first, prepended below), and with the child's
+          # own matching when: also in the merged list the executor must
+          # not have to scan the child's file - there the identically
+          # worded own clause would win and pin the chain's Origin at the
+          # WRONG file, where real still labels the import line's item.
+          # A doubly-inlined child's merged list evaluates the OUTERMOST
+          # import's items first, so for a clause text both import levels
+          # declare, the outer import's write (which lands last, after
+          # the inner file was parsed with its own stamping) must win.
+          if import_when_origins
+            child_origins = task.imported_when_origins ||= Hash(String, {String, Int32, Int32}).new
+            import_when_origins.each { |text, origin| child_origins[text] = origin }
           end
           task.when_condition = task.when_condition ? "(#{import_when}) and (#{task.when_condition})" : import_when
           # Same prepend in list form - the parent's per-item conditions

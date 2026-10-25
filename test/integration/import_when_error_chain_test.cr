@@ -57,4 +57,53 @@ describe "when: statically-imported conditional failure chain" do
   ensure
     FileUtils.rm_rf(root) if root
   end
+
+  # A LIST-form import when: whose clause the child repeats word for word
+  # in its own when: - the import clause evaluates first, so real pins the
+  # chain's "caused by" Origin at the import line's list item in the
+  # importing file, not at the child's identical own clause (issue #328,
+  # daixijun.mysql).
+  it "pins the Origin at the import's list item when the child repeats the clause" do
+    root = PluginSpecHelper.tmp_path("import-when-chain-list")
+    role_dir = File.join(root, "j328")
+    FileUtils.mkdir_p(File.join(role_dir, "tasks"))
+    main_file = File.join(role_dir, "tasks", "main.yml")
+    child_file = File.join(role_dir, "tasks", "check.yml")
+    File.write(main_file, <<-YAML)
+      ---
+      - name: Import check
+        import_tasks: check.yml
+        when:
+          - inventory_hostname in groups[nogroup_var]
+      YAML
+    File.write(child_file, <<-YAML)
+      ---
+      - name: Child task
+        debug:
+          msg: ran
+        when:
+          - inventory_hostname in groups[nogroup_var]
+      YAML
+    playbook = File.join(root, "pb.yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        gather_facts: false
+        connection: local
+        vars:
+          nogroup_var: nosuchgroup
+        roles:
+          - j328
+      YAML
+
+    output = IO::Memory.new
+    Process.run(BINARY, ["-i", "localhost,", playbook],
+      output: output, error: output, input: IO::Memory.new,
+      env: {"ANSIBLE_ROLES_PATH" => root})
+
+    text = output.to_s
+    text.must_include("Task failed.\nOrigin: #{child_file}:2:3")
+    text.must_include("<<< caused by >>>\n\nError while evaluating conditional: object of type 'dict' has no attribute 'nosuchgroup'\nOrigin: #{main_file}:5:7")
+  ensure
+    FileUtils.rm_rf(root) if root
+  end
 end
