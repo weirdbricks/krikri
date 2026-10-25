@@ -336,6 +336,39 @@ describe "pip plugin" do
       end
     end
 
+    # Issue #343: a failing venv command fails through Ansible's _fail
+    # shape - the command's own argv plus both output streams ("stdout: "
+    # only when present, then "\n:stderr: ..."), not the stderr-only
+    # "Failed to create virtualenv: ..." text. Real `python3 -m venv`'s
+    # ensurepip error lands entirely on stdout, so the old shape produced
+    # an empty message for it. The shim is venv-style (`pyvenv`, so
+    # neither -p nor --no-site-packages can be appended) and fails after
+    # printing, like ensurepip's message does.
+    it "reports Ansible's _fail shape when the virtualenv_command itself fails" do
+      shim_dir = File.tempname("/tmp", ".krikri-spec-pip-bin")
+      Dir.mkdir(shim_dir)
+      File.symlink("/bin/sh", File.join(shim_dir, "sh"))
+      write_failing_venv_shim(shim_dir, "pyvenv")
+      venv = File.join(Dir.tempdir, "krikri-pip-spec-venv-#{Random::Secure.hex(8)}")
+      begin
+        result = PluginSpecHelper.run("pip", {
+          "name"               => "pip",
+          "virtualenv"         => venv,
+          "virtualenv_command" => "pyvenv",
+          "_environment"       => {"PATH" => shim_dir}.to_json,
+        })
+
+        result["failed"].as_bool.must_equal(true)
+        result["changed"].as_bool.must_equal(false)
+        result["msg"].as_s.must_equal("stdout: pyvenv stdout simulated ensurepip failure\n")
+        result["cmd"].as_a.map(&.as_s).must_equal([File.join(shim_dir, "pyvenv"), venv])
+        File.directory?(venv).must_equal(false)
+      ensure
+        FileUtils.rm_rf(shim_dir)
+        FileUtils.rm_rf(venv)
+      end
+    end
+
     it "reports changed: false for an already-satisfied package in a pre-existing virtualenv" do
       venv = File.join(Dir.tempdir, "krikri-pip-spec-venv-#{Random::Secure.hex(8)}")
       begin
@@ -922,6 +955,23 @@ private def with_absent_pip_shim(&)
   ensure
     FileUtils.rm_rf(shim_dir)
   end
+end
+
+private def write_failing_venv_shim(shim_dir : String, name : String) : String
+  shim = File.join(shim_dir, name)
+  File.write(shim, <<-SH
+    #!/bin/sh
+    export PATH=/usr/local/bin:/usr/bin:/bin
+    if [ "$1" = "--help" ]; then
+      printf 'usage: #{name} ENV_DIR\\n'
+      exit 0
+    fi
+    echo "#{name} stdout simulated ensurepip failure"
+    exit 1
+    SH
+  )
+  File.chmod(shim, 0o755)
+  shim
 end
 
 private def write_pip_shim(shim_dir : String) : String

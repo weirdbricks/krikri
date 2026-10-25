@@ -540,7 +540,11 @@ module Krikri
       parts << venv
       result = remote_exec(parts.map { |part| Shell.single_quote(part) }.join(" "))
       unless result[:exit_code] == 0
-        return PluginResult.new(changed: false, failed: true, msg: "Failed to create virtualenv: #{result[:stderr]}")
+        # Ansible's setup_virtualenv fails via _fail, which reports the
+        # venv command's own argv and joins BOTH output streams ("stdout:
+        # ..." when present, then "\n:stderr: ..."), not just stderr -
+        # `python3 -m venv`'s ensurepip error lands entirely on stdout.
+        return PluginResult.new(changed: false, failed: true, msg: pip_failure_msg(result[:stdout], result[:stderr]), include_empty_msg: true, cmd: parts)
       end
 
       nil
