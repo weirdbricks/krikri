@@ -14833,3 +14833,13 @@ Local probe roles, not Galaxy roles: each probed task registers its result and d
 | `net2grid.composer` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29881604, 0.9.1928 release). Times: cold py 6.85s vs cr 1.81s; warm py 4.27s vs cr 0.28s. |
 | `philnewm.ulauncher` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29881607, 0.9.1928 release). Times: cold py 2.55s vs cr 0.75s; warm py 4.96s vs cr 0.15s. |
 | `tjtoml.mattermost` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29881605, 0.9.1928 release). Times: cold py 6.01s vs cr 5.86s; warm py 4.49s vs cr 0.50s. |
+| `Temelio.pip` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29881638, 0.9.1929 release). Times: cold py 0.49s vs cr 0.01s; warm py 0.50s vs cr 0.01s. |
+| `kbrebanov.apparmor` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29881635, 0.9.1929 release). Times: cold py 0.43s vs cr 0.01s; warm py 0.43s vs cr 0.01s. |
+| `kreinhub.docker_compose_install` | ubuntu | ❌ Divergent - issue #332 (round29881643, 0.9.1929 release). Times: cold py 110.00s vs cr 41.90s; warm py 75.36s vs cr 21.70s. |
+| `madnessy.ansible_mikrotik` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29881644, 0.9.1929 release). Times: cold py 0.47s vs cr 0.01s; warm py 0.46s vs cr 0.01s. |
+| `mariancraciun1983.corosync_pacemaker` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29881642, 0.9.1929 release). Times: cold py 3.79s vs cr 0.82s; warm py 2.14s vs cr 0.17s. |
+| `oasis_roles.disk_wipe` | ubuntu | ✅ Clean (round29881639, 0.9.1929 release). Times: cold py 2.71s vs cr 0.78s; warm py 2.41s vs cr 0.16s. |
+| `pgvillage.keepalived` | rocky | ✅ Clean (round29881636, 0.9.1929 release). Times: cold py 50.73s vs cr 170.52s; warm py 67.47s vs cr 1.95s. |
+| `ppouliot.container_linux_azure` | rocky | ✅ Clean (round29881640, 0.9.1929 release). Times: cold py 2.35s vs cr 0.95s; warm py 2.58s vs cr 0.16s. |
+| `smartgic.prepi` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29881641, 0.9.1929 release). Times: cold py 58.04s vs cr 50.74s; warm py 51.40s vs cr 44.40s. |
+| `vaulttec.sublimetext` | ubuntu | ✅ Clean (round29881637, 0.9.1929 release). Times: cold py 26.51s vs cr 11.12s; warm py 14.12s vs cr 2.63s. |
