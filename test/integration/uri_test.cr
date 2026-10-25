@@ -158,6 +158,22 @@ describe "uri plugin" do
     result.as_h.has_key?("content").must_equal(false)
   end
 
+  it "connects through unix_socket: without resolving the URL's host (kreinhub.docker_compose_install)" do
+    sock_path = PluginSpecHelper.tmp_path("uri.sock")
+    server = HTTP::Server.new { |ctx| ctx.response.print("via-socket") }
+    server.bind_unix(sock_path)
+    spawn { server.listen }
+    Fiber.yield
+    begin
+      result = PluginSpecHelper.run("uri", {"url" => "http://docker.invalid/version", "unix_socket" => sock_path, "return_content" => "true"})
+      falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+      result["status"].as_i.must_equal(200)
+      result["content"].as_s.must_equal("via-socket")
+    ensure
+      server.close
+    end
+  end
+
   it "includes content when return_content is set" do
     result = PluginSpecHelper.run("uri", {"url" => "#{URI_BASE}/text", "return_content" => "true"})
     result["content"].as_s.must_equal("plain text body")
