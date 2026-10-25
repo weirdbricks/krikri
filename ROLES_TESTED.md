@@ -14952,3 +14952,13 @@ Local probe roles, not Galaxy roles: each probed task registers its result and d
 | `hax0rbana_adam.djbdns` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29882020, 0.9.1943 release). Times: cold py 3.69s vs cr 2.14s; warm py 2.41s vs cr 1.07s. |
 | `kurron.rabbitmq` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29882011, 0.9.1943 release). Times: cold py 46.49s vs cr 21.41s; warm py 23.59s vs cr 0.93s. |
 | `l3d.mysql` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29882016, 0.9.1943 release). Times: cold py 48.51s vs cr 23.48s; warm py 4.95s vs cr 0.23s. |
+| `ANXS.vim` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29882025, 0.9.1943 release). Times: cold py 2.59s vs cr 0.78s; warm py 3.17s vs cr 0.15s. |
+| `Stouts.users` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29882024, 0.9.1943 release). Times: cold py 0.47s vs cr 0.01s; warm py 0.49s vs cr 0.01s. |
+| `William-Yeh.mongodb` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29882031, 0.9.1943 release). Times: cold py 0.45s vs cr 0.01s; warm py 0.44s vs cr 0.01s. |
+| `egeneralov.gitlab_runner` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29882028, 0.9.1943 release). Times: cold py 4.23s vs cr 3.21s; warm py 3.04s vs cr 1.19s. |
+| `guidugli.audit` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29882027, 0.9.1943 release). Times: cold py 15.16s vs cr 8.56s; warm py 19.69s vs cr 0.93s. |
+| `infOpen.apache` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29882023, 0.9.1943 release). Times: cold py 0.44s vs cr 0.01s; warm py 0.44s vs cr 0.01s. |
+| `noobient.update` | ubuntu | ✅ Clean (round29882022, 0.9.1943 release). Times: cold py 3.83s vs cr 4.51s; warm py 2.98s vs cr 0.38s. |
+| `pgporada.repo-epel` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29882029, 0.9.1943 release). Times: cold py 0.45s vs cr 0.01s; warm py 0.49s vs cr 0.01s. |
+| `robrowan.docker` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29882030, 0.9.1943 release). Times: cold py 43.51s vs cr 50.27s; warm py 23.95s vs cr 1.67s. |
+| `wtanaka.youtube_dl` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29882026, 0.9.1943 release). Times: cold py 0.49s vs cr 0.01s; warm py 0.47s vs cr 0.01s. |
