@@ -4291,6 +4291,24 @@ module Krikri
         if (h = host) && (deciding = deciding_bare_operand(task, h, raw))
           return decorate_conditional_value_origin(task, msg, h, deciding, clause_key, clause_raw)
         end
+        # A block: child a static import inlined needs no own-file scan:
+        # the failing compound clause's token lives in the IMPORTING file
+        # (the parser stamps every block descendant with the import's
+        # clause positions, issue #333, ivansible.lin_rclone's install.yml
+        # block child behind main.yml's
+        # `when: lin_rclone_mounts |d([],true)` - real prints
+        # ` at '<main.yml>:5:9'`). The failing clause text is exactly a
+        # recorded import clause's key, so the lookup pins real's
+        # importing-file position where the own-file scan below finds
+        # nothing (no such text exists in the child's file at all). Only
+        # when: callers consult it: the map holds import when: clauses
+        # only, and an until:/changed_when:/failed_when: query must not
+        # borrow a coincident when: text's position.
+        if clause_key == "when" &&
+           (clause_origin = task.imported_when_origins.try { |origins| origins[raw]? }) &&
+           File.file?(clause_origin[0])
+          return with_origin_clause(msg, "'#{clause_origin[0]}:#{clause_origin[1]}:#{clause_origin[2]}'")
+        end
         # Any other compound when: (`x is defined and x|length`,
         # `lst | d([], true)`): the tested value is created by the
         # expression itself, and real reports the when: value token's

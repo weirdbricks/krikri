@@ -2864,6 +2864,18 @@ module Krikri
       if vars_yaml = hash["vars"]?.try(&.as_h?)
         vars_yaml.each { |key, value| import_vars[key.to_s] = Vault.maybe_decrypt_json(Vault.yaml_value_to_json(value)) }
       end
+      # The when: value token's position real decorates a failing imported
+      # task's conditional with, held out for the block-descendant
+      # propagation below: real labels a child reached through an imported
+      # `block:` with the IMPORTING file's token exactly like its parent
+      # (fatal line's ` at '<main.yml>:5:9'` and the chain's "caused by"
+      # Origin, issue #333, ivansible.lin_rclone), so the same record the
+      # parent stamp itself uses must travel onto the block's children.
+      import_inherited_origin = nil
+      if import_when && hash["when"]?.try(&.as_a?).nil? && source_file &&
+         (when_pos = source_map.try(&.at?(task_source_prefix(source_prefix, source_index) + "/when")))
+        import_inherited_origin = {File.expand_path(source_file), when_pos[0], when_pos[1]}
+      end
 
       imported_tasks.each do |task|
         if import_when
@@ -2958,6 +2970,19 @@ module Krikri
           parent_items = import_when_list || [import_when]
           own_items = own_when_condition_list || (own_when_condition ? [own_when_condition.as(String)] : [] of String)
           task.when_condition_list = parent_items + own_items
+          # A block: task's children never got the stamps above - their
+          # when: only arrives at RUN time (execute_block's
+          # inherit_when_condition), and by then a strict-conditional
+          # failure inside a plain child needs real's importing-file
+          # labeling the parent's stamps provided before moving on
+          # (issue #333: ivansible.lin_rclone's install.yml first task is
+          # a `block:` whose child fails tasks/main.yml's
+          # `when: lin_rclone_mounts |d([],true)` - krikri printed the
+          # fatal line without the ` at ...` clause and no chain block at
+          # all, where real prints the two-level chain).
+          propagate_import_when_origins(task.block_tasks || [] of Task, import_when_origins, import_inherited_origin)
+          propagate_import_when_origins(task.rescue_tasks || [] of Task, import_when_origins, import_inherited_origin)
+          propagate_import_when_origins(task.always_tasks || [] of Task, import_when_origins, import_inherited_origin)
         end
         task.tags = (task.tags + import_tags).uniq
         # The import's tags are a STATIC context push (Ansible gives them
@@ -2982,6 +3007,38 @@ module Krikri
       end
 
       imported_tasks
+    end
+
+    # try_parse_import_tasks's helper - real decorates a strict-conditional
+    # failure inside an imported block: like its parent task, the plain
+    # child still gets the fatal line's ` at '<importing file>:L:C'`
+    # clause and the chain's "caused by" Origin pointing at the importing
+    # file's when: token (issue #333, ivansible.lin_rclone: install.yml's
+    # first task is a `block:` whose child fails
+    # `when: lin_rclone_mounts |d([],true)` from tasks/main.yml:5:9 -
+    # the parent's own stamps can't reach it there, since the child's
+    # when: only appears at RUN time via the executor's
+    # inherit_when_condition). The clause->position map follows the
+    # parent's own merge: the OUTERMOST import's record wins for a clause
+    # text several import levels declare, mirroring the outermost-first
+    # evaluation order above.
+    private def self.propagate_import_when_origins(tasks : Array(Task), when_map : Hash(String, {String, Int32, Int32})?, inherited_origin : {String, Int32, Int32}?) : Nil
+      tasks.each do |child|
+        if when_map
+          origins = child.imported_when_origins ||= Hash(String, {String, Int32, Int32}).new
+          when_map.each { |text, origin| origins[text] = origin }
+        end
+        # Same qualification as the parent's own inherited_when_origin
+        # stamp above: only a child with no own when: - with one, the
+        # merged condition spans both files and the child's own site is
+        # still locatable in its file.
+        child.inherited_when_origin = inherited_origin if inherited_origin &&
+                                                          child.inherited_when_origin.nil? &&
+                                                          child.when_condition.nil? && child.when_condition_list.nil?
+        propagate_import_when_origins(child.block_tasks || [] of Task, when_map, inherited_origin)
+        propagate_import_when_origins(child.rescue_tasks || [] of Task, when_map, inherited_origin)
+        propagate_import_when_origins(child.always_tasks || [] of Task, when_map, inherited_origin)
+      end
     end
 
     # Loop source keywords that support a plain literal (array or hash) at

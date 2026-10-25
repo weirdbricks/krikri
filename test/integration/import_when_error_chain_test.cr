@@ -106,4 +106,73 @@ describe "when: statically-imported conditional failure chain" do
   ensure
     FileUtils.rm_rf(root) if root
   end
+
+  # Issue #333 (ivansible.lin_rclone): the failing strict conditional lies
+  # TWO import levels down - tasks/main.yml's scalar `when:
+  # lin_rclone_mounts |d([],true)` statically ANDed onto root.yml's own
+  # import_tasks: install.yml, whose first task is a `block:` - and takes
+  # its RUN-time inherit down to a plain child of that block. Real still
+  # labels the fatal line with the importing file's when: value token and
+  # prints the full two-level chain (Origin at the child's name line in
+  # install.yml, "caused by" Origin at main.yml:5:9 with the
+  # ALLOW_BROKEN_CONDITIONALS hint); the child's own file holds no
+  # `when:` for either decoration to scan.
+  it "prints real's chain for an imported block child two import levels deep" do
+    root = PluginSpecHelper.tmp_path("import-when-chain-block")
+    role_dir = File.join(root, "j333")
+    FileUtils.mkdir_p(File.join(role_dir, "tasks"))
+    main_file = File.join(role_dir, "tasks", "main.yml")
+    root_file = File.join(role_dir, "tasks", "root.yml")
+    install_file = File.join(role_dir, "tasks", "install.yml")
+    File.write(main_file, <<-YAML)
+      ---
+      - name: Rclone setup
+        import_tasks: root.yml
+        become: true
+        when: lin_rclone_mounts |d([],true)
+      YAML
+    File.write(root_file, <<-YAML)
+      ---
+      - name: Install rclone
+        import_tasks: install.yml
+      YAML
+    File.write(install_file, <<-YAML)
+      ---
+      - name: install rclone from package
+        block:
+          - name: detect latest rclone package release
+            ansible.builtin.file:
+              state: touch
+              path: /tmp/krikri-never-runs
+      YAML
+    playbook = File.join(root, "pb.yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        gather_facts: false
+        connection: local
+        vars:
+          lin_rclone_mounts: [/mnt/data]
+        roles:
+          - j333
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", "localhost,", playbook],
+      output: output, error: output, input: IO::Memory.new,
+      env: {"ANSIBLE_ROLES_PATH" => root})
+
+    text = output.to_s
+    status.success?.must_equal(false)
+    # first link: the failing child's own mapping, inside the block's
+    # file (real's install.yml:4:7 shape)
+    text.must_include("Task failed.\nOrigin: #{install_file}:4:7\n\n2 - name: install rclone from package\n3   block:\n4     - name: detect latest rclone package release\n        ^ column 7")
+    # second link: the importing file's when: VALUE token (column 9 =
+    # right after `  when: `)
+    text.must_include("<<< caused by >>>\n\nConditional result (True) was derived from value of type 'list' at '#{main_file}:5:9'. Conditionals must have a boolean result.\nOrigin: #{main_file}:5:9\n\n3   import_tasks: root.yml\n4   become: true\n5   when: lin_rclone_mounts |d([],true)\n          ^ column 9")
+    text.must_include("Broken conditionals can be temporarily allowed with the `ALLOW_BROKEN_CONDITIONALS` configuration option.")
+    text.must_include("fatal: [localhost]: FAILED! => {\"changed\": false, \"msg\": \"Task failed: Conditional result (True) was derived from value of type 'list' at '#{main_file}:5:9'. Conditionals must have a boolean result.\"}")
+    text.wont_include("Unhandled exception")
+  ensure
+    FileUtils.rm_rf(root) if root
+  end
 end
