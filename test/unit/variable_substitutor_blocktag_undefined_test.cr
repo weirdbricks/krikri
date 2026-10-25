@@ -101,6 +101,34 @@ describe "Krikri::VarSubstitutor (variable_substitutor_blocktag_undefined_test.c
       ).must_equal("python-mysqldb")
     end
 
+    it "does not raise when an undefined ref inside {% if %} is piped through | d(...) (issue #358)" do
+      # `d` is Jinja2's exact alias of the `default` filter (same
+      # registered filter, same never-raises-under-strict-undefined
+      # behavior), so the {% if %} carve-out above must recognize it
+      # too - `{% if nosuch|d(false) %}...{% endif %}` renders "present"
+      # under ansible-playbook, and this scan used to raise "'nosuch'
+      # is undefined" for the alias spelling only (the `default(`
+      # spelling already passed).
+      v = {} of String => JSON::Any
+      sub = Krikri::VarSubstitutor.new(vars: v)
+      sub.substitute(
+        "{% if nosuch|d(false) %}latest{% else %}present{% endif %}",
+        strict: true
+      ).must_equal("present")
+    end
+
+    it "still raises for a filter name that merely starts with 'd' (not the d alias)" do
+      # Guards against a prefix-based carve-out: only the exact names
+      # `default` and `d` suppress Undefined - `dict_thing` is just an
+      # ordinary filter name, and an undefined operand piped through it
+      # must still raise.
+      v = {} of String => JSON::Any
+      sub = Krikri::VarSubstitutor.new(vars: v)
+      assert_raises_message(Krikri::UndefinedVariableError, /'nosuch' is undefined/) do
+        sub.substitute("{% if nosuch|dict_thing(false) %}latest{% else %}present{% endif %}", strict: true)
+      end
+    end
+
     it "still raises for an undefined ref inside {% if %} with NO default() filter" do
       # Same shape as the openjdk case above, phrased as a direct
       # regression check that the new default()-carve-out doesn't
