@@ -4516,28 +4516,55 @@ module Krikri
       end
 
       raw = clause_raw || task.when_condition.to_s
-      key_line = locate_conditional_origin(lines, name_idx, clause_key, raw)
-      # A statically-imported task's failing `when:` lives on the IMPORTING
-      # file's import_tasks: line, not in the task's own file (the parser
-      # ANDed it in), so the own-file scan finds nothing - real 2.19 still
-      # prints the chain, with the "caused by" Origin pinned at the import
-      # line's when: VALUE token in the importing file (issue #252,
-      # Jooho.okd_prerequisites: okd-host.yml's first task reports
-      # tasks/main.yml's `when: node_type == 'okd-host'`).
-      if key_line
-        key_idx, key_col = key_line
-        cause_path = path
-        cause_lines = lines
-      elsif (inherited = task.inherited_when_origin) &&
-            (cause_path = inherited[0]) && File.file?(cause_path)
+      # A merged import_tasks: when:'s failing clause can be one of the
+      # IMPORT line's own items - ansible evaluates the import's clauses
+      # first (they prefix the merged list), so its chain's "caused by"
+      # Origin belongs at that clause's recorded position in the
+      # IMPORTING file (issue #328, daixijun.mysql). The own-file locate
+      # below MUST be skipped then: the inlined child commonly carries an
+      # identically-worded own when:, whose line the scan would find and
+      # pin the Origin at the child's file instead - different file from
+      # real's output. The remembered failing clause is the strict list
+      # item evaluate_when_items raised on (import-inlined tasks always
+      # evaluate per-clause); a lookup miss means the failing clause is
+      # the child's own, and the existing branches behave as before.
+      imported_clause_origin = nil
+      if clause_key == "when" && (clause = @last_failed_when_clause) &&
+         (imported_map = task.imported_when_origins)
+        imported_clause_origin = imported_map[clause]?
+      end
+      if imported_clause_origin && File.file?(imported_clause_origin[0])
+        cause_path = imported_clause_origin[0]
         cause_lines = File.read_lines(cause_path)
-        # The stored source-map position is already 1-based (unlike
-        # locate_conditional_origin's 0-based line index); the block below
-        # re-adds the 1.
-        key_idx = inherited[1] - 1
-        key_col = inherited[2]
+        # The stored position is already 1-based (like
+        # inherited_when_origin's); the block below re-adds the 1 by
+        # rendering key_idx + 1.
+        key_idx = imported_clause_origin[1] - 1
+        key_col = imported_clause_origin[2]
       else
-        return
+        key_line = locate_conditional_origin(lines, name_idx, clause_key, raw)
+        # A statically-imported task's failing `when:` lives on the IMPORTING
+        # file's import_tasks: line, not in the task's own file (the parser
+        # ANDed it in), so the own-file scan finds nothing - real 2.19 still
+        # prints the chain, with the "caused by" Origin pinned at the import
+        # line's when: VALUE token in the importing file (issue #252,
+        # Jooho.okd_prerequisites: okd-host.yml's first task reports
+        # tasks/main.yml's `when: node_type == 'okd-host'`).
+        if key_line
+          key_idx, key_col = key_line
+          cause_path = path
+          cause_lines = lines
+        elsif (inherited = task.inherited_when_origin) &&
+              (cause_path = inherited[0]) && File.file?(cause_path)
+          cause_lines = File.read_lines(cause_path)
+          # The stored source-map position is already 1-based (unlike
+          # locate_conditional_origin's 0-based line index); the block below
+          # re-adds the 1.
+          key_idx = inherited[1] - 1
+          key_col = inherited[2]
+        else
+          return
+        end
       end
 
       # The THIRD chain record real 2.19.11 adds when the conditional's
