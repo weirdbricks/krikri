@@ -12,7 +12,9 @@ module Krikri
     # mutually and str mutually, so ansible-playbook fails the task on
     # `'10' >= 1` with "'>=' not supported between instances of
     # '_AnsibleTaggedStr' and 'int'" (live-verified, issue #219; a yaml
-    # string carries a datatag, hence the name). This evaluator
+    # string carries a datatag, hence the name). A string coming from a
+    # gathered fact (`ansible_*`, `ansible_facts`) is untagged and named
+    # plain 'str' there instead (issue #344). This evaluator
     # historically stringified both operands and compared the texts,
     # silently answering where Ansible fails (found by
     # bin/differential_fuzz against the krikri-jinja engine, which already
@@ -90,13 +92,13 @@ module Krikri
                      when "!="
                        !values_equal?(left, right)
                      when "<"
-                       compare_values(left, right, op) < 0
+                       compare_values(left, right, op, left_text, right_text) < 0
                      when ">"
-                       compare_values(left, right, op) > 0
+                       compare_values(left, right, op, left_text, right_text) > 0
                      when "<="
-                       compare_values(left, right, op) <= 0
+                       compare_values(left, right, op, left_text, right_text) <= 0
                      when ">="
-                       compare_values(left, right, op) >= 0
+                       compare_values(left, right, op, left_text, right_text) >= 0
                      else
                        false
                      end
@@ -406,9 +408,13 @@ module Krikri
       # never parsed as a number: ansible fails `'10' >= 1` (a role
       # default compared to a numeric literal, issue #219) with "'>=' not
       # supported between instances of '_AnsibleTaggedStr' and 'int'".
-      # A Bool orders numerically as its int-subclass value (True == 1 in
-      # Python: `True > False` and `bool_var < 2` are valid Python).
-      private def compare_values(left : JSON::Any, right : JSON::Any, op : String) : Int32
+      # The operand expressions ride along because ansible names each
+      # operand in that error by where the value came from, not just
+      # what class it is. A Bool orders numerically as its int-subclass
+      # value (True == 1 in Python: `True > False` and `bool_var < 2`
+      # are valid Python).
+      private def compare_values(left : JSON::Any, right : JSON::Any, op : String,
+                                 left_expr : String, right_expr : String) : Int32
         # Two raw strings: keep the historical numeric-first cascade for
         # numeric-string pairs, lexicographic for anything else (Python's
         # own str-vs-str semantics).
@@ -433,26 +439,41 @@ module Krikri
         end
 
         raise ComparisonTypeError.new(
-          "'#{op}' not supported between instances of '#{python_type_name(left)}' and '#{python_type_name(right)}'")
+          "'#{op}' not supported between instances of '#{python_type_name(left, left_expr)}' and '#{python_type_name(right, right_expr)}'")
       end
 
       # Python's own class name for a JSON::Any operand, for the
       # TypeError-style message above (real message: "'<=' not supported
-      # between instances of 'dict' and 'float'"). Strings are named the
-      # way ansible names them in that message, '_AnsibleTaggedStr' - its
-      # yaml loader tags strings, so they are not plain 'str' (issue
-      # #219).
-      private def python_type_name(value : JSON::Any) : String
-        case value.raw
-        when String  then "_AnsibleTaggedStr"
-        when Int64   then "int"
-        when Float64 then "float"
-        when Bool    then "bool"
-        when Nil     then "NoneType"
-        when Array   then "list"
-        when Hash    then "dict"
-        else              "object"
+      # between instances of 'dict' and 'float'"). Strings are named by
+      # where ansible got them: '_AnsibleTaggedStr' - its yaml loader
+      # tags every string it reads from a playbook/default/vars file, so
+      # those are not plain 'str' (issue #219) - but plain 'str' when the
+      # operand's root variable is a gathered fact, which did not exist
+      # when ansible loaded anything and so arrives untagged (issue
+      # #344).
+      private def python_type_name(value : JSON::Any, operand_expr : String) : String
+        if value.raw.is_a?(String) && fact_string_operand?(operand_expr)
+          "str"
+        else
+          case value.raw
+          when String  then "_AnsibleTaggedStr"
+          when Int64   then "int"
+          when Float64 then "float"
+          when Bool    then "bool"
+          when Nil     then "NoneType"
+          when Array   then "list"
+          when Hash    then "dict"
+          else              "object"
+          end
         end
+      end
+
+      # Whether the operand's root variable is a gathered fact variable:
+      # such a string was never part of any yaml document in the play, so
+      # ansible never tagged it and it must not claim '_AnsibleTaggedStr'.
+      private def fact_string_operand?(operand : String) : Bool
+        root = operand.strip.match(/\A[A-Za-z_][A-Za-z0-9_]*/)
+        !root.nil? && root[0].starts_with?("ansible_")
       end
 
       # Resolves a simple or dotted expression to its raw JSON::Any value

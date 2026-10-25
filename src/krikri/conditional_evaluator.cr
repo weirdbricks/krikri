@@ -1651,7 +1651,7 @@ module Krikri
       left = evaluate_value(left_expr, vars, raise_undefined)
       right = evaluate_value(right_expr, vars, raise_undefined)
 
-      ordering_type_check!(left, right, operator) if ["<", ">", "<=", ">="].includes?(operator)
+      ordering_type_check!(left, right, operator, left_expr, right_expr) if ["<", ">", "<=", ">="].includes?(operator)
 
       case operator
       when "=="
@@ -3855,15 +3855,19 @@ module Krikri
     # Python never orders a str against a number, so ansible fails the task
     # on `'10' >= 1` where the numeric-string cascade below would answer
     # it (issue #219). Two strings, two numbers and the Nil/Array cases
-    # keep their existing behaviour.
+    # keep their existing behaviour. The operand expressions ride along
+    # because ansible names each operand in that error by where the value
+    # came from, not just what class it is.
     private def self.ordering_type_check!(left : String | Int64 | Float64 | Bool | Nil | Array(String),
                                           right : String | Int64 | Float64 | Bool | Nil | Array(String),
-                                          operator : String) : Nil
+                                          operator : String,
+                                          left_expr : String,
+                                          right_expr : String) : Nil
       mixed = (left.is_a?(String) && ordering_number?(right)) || (ordering_number?(left) && right.is_a?(String))
       return unless mixed
 
       raise OrderingTypeError.new(
-        "'#{operator}' not supported between instances of '#{ordering_type_name(left)}' and '#{ordering_type_name(right)}'")
+        "'#{operator}' not supported between instances of '#{ordering_type_name(left, left_expr)}' and '#{ordering_type_name(right, right_expr)}'")
     end
 
     private def self.ordering_number?(value : String | Int64 | Float64 | Bool | Nil | Array(String)) : Bool
@@ -3871,15 +3875,29 @@ module Krikri
     end
 
     # Ansible names a YAML-sourced string '_AnsibleTaggedStr' in these
-    # messages (its loader tags every string), not Python's plain 'str'.
-    private def self.ordering_type_name(value : String | Int64 | Float64 | Bool | Nil | Array(String)) : String
+    # messages (its loader tags every string it read from a yaml file),
+    # not Python's plain 'str'. Tags only carry the provenance ansible
+    # knows from load time, where a gathered fact does not exist yet -
+    # so a fact string (`ansible_*`, `ansible_facts`) arrives untagged
+    # and reports as plain 'str' (issue #344).
+    private def self.ordering_type_name(value : String | Int64 | Float64 | Bool | Nil | Array(String),
+                                        operand_expr : String) : String
       case value
-      when String  then "_AnsibleTaggedStr"
+      when String
+        fact_string_operand?(operand_expr) ? "str" : "_AnsibleTaggedStr"
       when Int64   then "int"
       when Float64 then "float"
       when Bool    then "bool"
       else              "object"
       end
+    end
+
+    # Whether the operand's root variable is a gathered fact variable:
+    # such a string was never part of any yaml document in the play, so
+    # ansible never tagged it and it must not claim '_AnsibleTaggedStr'.
+    private def self.fact_string_operand?(operand : String) : Bool
+      root = operand.strip.match(/\A[A-Za-z_][A-Za-z0-9_]*/)
+      !root.nil? && root[0].starts_with?("ansible_")
     end
 
     private def self.compare_values(left : String | Int64 | Float64 | Bool | Nil | Array(String),
