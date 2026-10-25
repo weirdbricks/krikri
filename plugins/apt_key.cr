@@ -151,9 +151,12 @@ module Krikri
       # keyserver: needs no key material at all (Ansible's add path
       # is `apt-key adv --keyserver ... --recv <id>`), so the url/data/
       # file requirement below only applies to the material-based paths.
-      unless url || data || file_path || keyserver
-        return PluginResult.new(changed: false, failed: true, msg: "Missing required parameter: url or data")
-      end
+      # With an explicit id: and no material Ansible still succeeds when
+      # the key is already installed (the docker "verify fingerprint"
+      # idiom), so the failure is deferred to the point an add is needed.
+      has_material = !!(url || data || file_path || keyserver)
+      missing_material = PluginResult.new(changed: false, failed: true, msg: "Missing required parameter: url or data")
+      return missing_material if !has_material && key_id.nil?
 
       # File.tempfile, not Random.rand(100000..999999): the old name was
       # guessable and every consumer of tmp_path (curl -o, cp,
@@ -195,6 +198,7 @@ module Krikri
               return PluginResult.new(changed: false, failed: true, msg: "Error fetching key #{key_id} from keyserver: #{result[:stderr]}")
             end
           else
+            return missing_material unless has_material
             unless staged
               staged_result = stage_key_material(url, data, file_path, tmp_path)
               return staged_result if staged_result

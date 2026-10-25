@@ -199,6 +199,19 @@ describe "apt_key plugin" do
     File.delete(state) rescue nil
   end
 
+  it "succeeds unchanged for id: alone when the key is already installed (kreinhub.docker_compose_install)" do
+    state = apt_key_spec_state_file
+    File.write(state, "pub  2048R/#{FAKE_KEY_ID} 2020-01-01\n")
+    with_apt_key_shim(state) do
+      result = PluginSpecHelper.run("apt_key", {"state" => "present", "id" => FAKE_KEY_ID})
+
+      result["changed"].as_bool.must_equal(false)
+      falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+    end
+  ensure
+    File.delete(state.not_nil!) rescue nil
+  end
+
   it "reports already-absent as unchanged for a key id that was never added" do
     state = apt_key_spec_state_file
     with_apt_key_shim(state) do

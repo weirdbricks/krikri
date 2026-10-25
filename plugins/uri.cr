@@ -677,7 +677,15 @@ module Krikri
     end
 
     private def build_client(uri : URI) : HTTP::Client
-      client = HTTP::Client.new(uri)
+      # unix_socket: Ansible connects to that socket and ignores the URL's
+      # host for resolution (it is only the Host header), so a URL like
+      # http://docker/version never hits DNS.
+      socket_path = @params["unix_socket"]?
+      client = if socket_path && !socket_path.empty?
+                 HTTP::Client.new(UNIXSocket.new(socket_path), uri.host || "localhost")
+               else
+                 HTTP::Client.new(uri)
+               end
 
       timeout = decimal_int((@params["timeout"]? || "30")).seconds
       client.connect_timeout = timeout
