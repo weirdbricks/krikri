@@ -14972,3 +14972,13 @@ Local probe roles, not Galaxy roles: each probed task registers its result and d
 | `markwilde.gcc` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29882029, 0.9.1943 release). Times: cold py 0.50s vs cr 0.01s; warm py 0.49s vs cr 0.01s. |
 | `mubbyrex.java_installer` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29882033, 0.9.1943 release). Times: cold py 20.55s vs cr 17.90s; warm py 23.06s vs cr 17.98s. |
 | `vbotka.ansible` | ubuntu | ❌ Divergent - issue #348 (round29882030, 0.9.1943 release). Times: cold py 2.74s vs cr 0.80s; warm py 2.36s vs cr 0.17s. |
+| `MagneDavidsen.gradle` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29882079, 0.9.1946 release). Times: cold py 2.88s vs cr 0.75s; warm py 2.35s vs cr 0.16s. |
+| `baztian.calibre` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29882077, 0.9.1946 release). Times: cold py 23.28s vs cr 19.75s; warm py 5.47s vs cr 0.38s. |
+| `marcusianlevine.extra-container-tasks` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29882078, 0.9.1946 release). Times: cold py 3.73s vs cr 0.88s; warm py 3.38s vs cr 0.11s. |
+| `riponbanik.foreman` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29882071, 0.9.1946 release). Times: cold py 49.95s vs cr 63.91s; warm py 25.12s vs cr 6.33s. |
+| `robertdebock.moodle` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29882075, 0.9.1946 release). Times: cold py 3.38s vs cr 2.49s; warm py 2.80s vs cr 1.83s. |
+| `shomatan.zabbix-agent` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29882074, 0.9.1946 release). Times: cold py 0.43s vs cr 0.01s; warm py 0.44s vs cr 0.01s. |
+| `stancel.add-config-to-nagios-server` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29882070, 0.9.1946 release). Times: cold py 3.53s vs cr 0.75s; warm py 3.08s vs cr 0.13s. |
+| `t_systems_mms.grafana` | ubuntu | ✅ Clean (round29882072, 0.9.1946 release). Times: cold py 2.95s vs cr 0.73s; warm py 1.65s vs cr 0.12s. |
+| `triplepoint.dnsmasq` | rocky | ✅ Clean (round29882073, 0.9.1946 release). Times: cold py 6.73s vs cr 3.64s; warm py 3.00s vs cr 0.18s. |
+| `wtanaka.sshd` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29882076, 0.9.1946 release). Times: cold py 0.49s vs cr 0.01s; warm py 0.47s vs cr 0.01s. |
