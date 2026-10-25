@@ -987,25 +987,34 @@ module Krikri
         #      treated any undefined-var failure inside the when: as
         #      skippable);
         #   C) when: references the yet-unbound loop variable itself
-        #      (`item` / item.* / item[..], e.g. `item.backup is defined`)
-        #      -> reads as false and the task skips (Ansible's own
-        #      documented item-unbound-before-loop-known leniency).
-        # So the lenient path is scoped to exactly one thing: whether the
-        # when:'s OWN strictly-raised undefined reference is item-rooted
+        #      (`item` / item.* / item[..]) - but only when the
+        #      conditional itself reads sensibly with `item` absent: it
+        #      asks about definedness (`item.backup is defined`,
+        #      `is not defined` / `is undefined`) or guards the access
+        #      with `default(...)` (Ansible's own documented item-unbound-
+        #      before-loop-known leniency). A plain access is NOT that
+        #      lenient - `not item.enabled` under
+        #      `with_items: ["{{ sites }}"]` (sites undefined) FAILS in
+        #      real 2.19 with the loop source's own 'sites' is undefined,
+        #      never a skip (issue #337).
+        # So the lenient path is scoped to TWO things: the when:'s OWN
+        # strictly-raised undefined reference must be item-rooted
         # (raise_undefined: true makes the evaluator name it instead of
-        # silently reading the unrelated variable as falsy). A clean False
-        # still skips (A); a non-item undefined name in the when: falls
-        # through to the loop error below (B). The name comes from the
-        # raised error's message ('x' is undefined - the strict_
-        # undefined_message/undefined_reference_message shape), never from
-        # a substring probe of the condition for "item" - a variable
-        # literally named `item_count` is a different variable, not the
-        # loop item.
+        # silently reading the unrelated variable as falsy), and the
+        # conditional itself must tolerate an unbound item the way
+        # Ansible's deferral does. A clean False still skips (A);
+        # everything else - a non-item undefined name (B) or a bare item
+        # access over an undefined loop source - falls through to the
+        # loop error below. The name comes from the raised error's
+        # message ('x' is undefined - the strict_undefined_message/
+        # undefined_reference_message shape), never from a substring
+        # probe of the condition for "item" - a variable literally named
+        # `item_count` is a different variable, not the loop item.
         substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
         skippable = begin
           !ConditionalEvaluator.evaluate(substitutor.substitute(when_condition), vars_context, raise_undefined: true)
         rescue err : ConditionalEvaluator::UndefinedVariableError | UndefinedVariableError
-          when_undefined_name_is_loop_var?(err.message)
+          when_undefined_name_is_loop_var?(err.message) && when_tolerates_undefined?(when_condition)
         rescue
           false
         end
@@ -1033,6 +1042,19 @@ module Krikri
 
       name = match[1]
       name == "item" || name.starts_with?("item.") || name.starts_with?("item[")
+    end
+
+    # Tolerance gate for the item-unbound skip above (issue #337): real
+    # 2.19 only defers a when: whose `item` is not yet bound when the
+    # conditional ASKS about definedness (`item.backup is defined`,
+    # `is not defined` / `is undefined`) or guards every access with
+    # `default(...)` - those are the shapes that read sensibly with
+    # `item` absent. A plain access (`not item.enabled`, `item.enabled`)
+    # does not, so real fails the task with the loop source's own error
+    # instead of skipping; this gate keeps the skip heuristic exactly as
+    # narrow as ansible's own tolerance.
+    private def when_tolerates_undefined?(condition : String) : Bool
+      !!(condition.match(/\bis\s+(?:not\s+)?(?:defined|undefined)\b/) || condition.match(/\bdefault\s*\(/))
     end
 
     # The registered task result for a loop-source typing/lookup failure
