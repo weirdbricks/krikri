@@ -29,6 +29,20 @@ module Krikri
       REGEX_METHOD_RSTRIP = /^rstrip\(\s*(?:(['"])(.*)\1\s*)?\)$/
       REGEX_METHOD_STRIP  = /^strip\(\s*(?:(['"])(.*)\1\s*)?\)$/
 
+      # Chars whose presence in a bracket index means the index is a Jinja
+      # EXPRESSION ansible evaluates to the real key before subscripting
+      # (string concat `item ~ '.service'`, arithmetic `a + b`, call
+      # parens `f(x)`), not a literal/identifier key. A subscript like
+      # "services[item ~ '.service']" previously fell through this
+      # lookup's literal-key branch with the whole unevaluated text as the
+      # dict key and answered undefined even for an existing service
+      # (guidugli.firewall's "Disable conflicting firewall services when
+      # present" loop skipped its nftables item while real ansible ran
+      # it). A fully-quoted literal can never reach this check (returned
+      # earlier), and any engine failure or non-key-shaped result keeps
+      # the long-standing literal-key fall-through unchanged.
+      COMPUTED_INDEX_CHARS = {'~', '+', '*', '/', '%', '(', ')'}
+
       @vars : Hash(String, JSON::Any)
 
       # The host whose hostvars entry the CURRENT resolve is walking
@@ -1016,6 +1030,10 @@ module Krikri
         end
         return index_expr.to_i if index_expr.to_i?
 
+        if key = evaluate_computed_index(index_expr)
+          return key
+        end
+
         if index_expr.includes?('|')
           rendered = ExpressionEvaluator.new(@vars).evaluate(index_expr)
           return rendered.to_i? || rendered
@@ -1078,10 +1096,64 @@ module Krikri
         end
       end
 
+      # A computed index expression resolves to the key ansible itself
+      # would subscript with - the same engine (krikri-jinja) the
+      # surrounding expression already evaluates through, so {{ }}
+      # values, filters and calls inside the index render exactly where
+      # ansible renders them. A non-string/int/float result (or an
+      # engine failure, or an undefined member) returns nil from here:
+      # the literal-key branches in resolve_index_key are what these
+      # shapes have always answered with, so no currently-working lookup
+      # changes behavior.
+      private def evaluate_computed_index(index_expr : String) : (String | Int32 | Float64)?
+        return nil unless computed_index_expression?(index_expr)
+
+        evaluated = begin
+          VariableSubstitutor::JinjaRenderer.new(@vars).evaluate_value!(index_expr)
+        rescue
+          nil
+        end
+        case raw = evaluated.try(&.raw)
+        when String       then return raw
+        when Int64, Int32 then return raw.to_i
+        when Float64      then return raw
+          # A Bool/Nil/Array/Hash result is not a dict key ansible could
+          # subscript with either - the literal-key branches in
+          # resolve_index_key keep answering those, as before.
+        end
+      end
+
       private def quoted_index_literal(index_expr : String) : String?
-        return nil unless index_expr.size >= 2
-        return nil unless index_expr[0] == index_expr[-1] && (index_expr[0] == '\'' || index_expr[0] == '"')
-        index_expr[1..-2]
+        # First/last-char equality alone is not "one quoted literal":
+        # `'nftables' ~ '.service'` matches it too, and returning its
+        # interior ("nftables' ~ '.service") as a literal key made even
+        # the computed-expression branch below unreachable for the exact
+        # shape that needs it (guidugli.firewall's service-disable loop).
+        # The recognized literal must SPAN the whole index, its first
+        # unescaped matching quote closing at the last character - the
+        # same discipline ExpressionEvaluator's sole_quoted_literal?
+        # applies to `'a' + var + 'b'` chains.
+        return nil if index_expr.size < 2
+        quote = index_expr[0]
+        return nil unless quote == '\'' || quote == '"'
+
+        i = 1
+        while i < index_expr.size
+          char = index_expr[i]
+          if char == '\\' && i + 1 < index_expr.size
+            i += 2
+            next
+          end
+          if char == quote
+            return i == index_expr.size - 1 ? index_expr[1...i] : nil
+          end
+          i += 1
+        end
+        nil
+      end
+
+      private def computed_index_expression?(index_expr : String) : Bool
+        index_expr.each_char.any? { |char| COMPUTED_INDEX_CHARS.includes?(char) }
       end
 
       private def index_into(current : JSON::Any, key : String | Int32 | Float64) : JSON::Any?
