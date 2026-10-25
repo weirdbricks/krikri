@@ -69,4 +69,40 @@ describe "strict conditional origin for compound expressions" do
     status.exit_code.must_equal(2)
     output.must_include("Conditional result (False) was derived from value of type 'list' at '#{playbook}:8:13'. Conditionals must have a boolean result.")
   end
+
+  # Issue #342: a YAML null has no origin tag in real 2.19 - its strict
+  # check reports `at '<unknown>'`, no file position, while the chain's
+  # own tracing Origin: block keeps the when: token position.
+  it "labels a bare null variable's error with '<unknown>'" do
+    status, output, _playbook = run_playbook(<<-YAML)
+    - hosts: localhost
+      connection: local
+      gather_facts: false
+      vars:
+        nullvar:
+      tasks:
+        - fail:
+          when: nullvar
+    YAML
+
+    status.exit_code.must_equal(2)
+    output.must_include("Conditional result (False) was derived from value of type 'NoneType' at '<unknown>'. Conditionals must have a boolean result.")
+    output.must_include("\"msg\": \"Task failed: Conditional result (False) was derived from value of type 'NoneType' at '<unknown>'. Conditionals must have a boolean result.\"")
+  end
+
+  it "labels a null variable in a compound clause with '<unknown>'" do
+    status, output, _playbook = run_playbook(<<-YAML)
+    - hosts: localhost
+      connection: local
+      gather_facts: false
+      vars:
+        users_group:
+      tasks:
+        - fail:
+          when: users_group is defined and users_group
+    YAML
+
+    status.exit_code.must_equal(2)
+    output.must_include("Conditional result (False) was derived from value of type 'NoneType' at '<unknown>'. Conditionals must have a boolean result.")
+  end
 end
