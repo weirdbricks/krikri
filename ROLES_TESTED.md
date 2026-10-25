@@ -14942,3 +14942,13 @@ Local probe roles, not Galaxy roles: each probed task registers its result and d
 | `net2grid.php-pear` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29882011, 0.9.1943 release). Times: cold py 11.76s vs cr 9.76s; warm py 5.32s vs cr 2.09s. |
 | `net2grid.php-pecl` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29882008, 0.9.1943 release). Times: cold py 3.93s vs cr 2.44s; warm py 2.52s vs cr 1.78s. |
 | `pgvillage.pgquartz` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29882013, 0.9.1943 release). Times: cold py 23.53s vs cr 7.81s; warm py 9.59s vs cr 1.36s. |
+| `ANXS.erlang` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29882013, 0.9.1943 release). Times: cold py 0.48s vs cr 0.03s; warm py 0.48s vs cr 0.03s. |
+| `CyVerse-Ansible.ansible_vnc_setup` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29882015, 0.9.1943 release). Times: cold py 1.67s vs cr 0.74s; warm py 3.37s vs cr 0.12s. |
+| `claranet.satisfactory` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29882017, 0.9.1943 release). Times: cold py 61.54s vs cr 61.67s; warm py 13.95s vs cr 1.89s. |
+| `codeyourinfra.java8` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29882019, 0.9.1943 release). Times: cold py 0.54s vs cr 0.01s; warm py 0.58s vs cr 0.01s. |
+| `diffy0712.sysadmin_user_manager` | rocky | ❌ Divergent - issue #346 (round29882018, 0.9.1943 release). Times: cold py 3.17s vs cr 0.95s; warm py 2.56s vs cr 0.16s. |
+| `dimmaryanto93.docker` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29882014, 0.9.1943 release). Times: cold py 8.88s vs cr 6.88s; warm py 7.03s vs cr 0.97s. |
+| `ezamriy.mock` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29882012, 0.9.1943 release). Times: cold py 2.57s vs cr 401.79s; warm py 2.94s vs cr 1.04s. |
+| `hax0rbana_adam.djbdns` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29882020, 0.9.1943 release). Times: cold py 3.69s vs cr 2.14s; warm py 2.41s vs cr 1.07s. |
+| `kurron.rabbitmq` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29882011, 0.9.1943 release). Times: cold py 46.49s vs cr 21.41s; warm py 23.59s vs cr 0.93s. |
+| `l3d.mysql` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29882016, 0.9.1943 release). Times: cold py 48.51s vs cr 23.48s; warm py 4.95s vs cr 0.23s. |
