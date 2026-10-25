@@ -615,6 +615,18 @@ module Krikri
     # for a nonexistent package is a failed task with rc 1, not a
     # changed: true success.
     private def dnf_install_failure_result(name : String, install_result : NamedTuple(exit_code: Int32, stdout: String, stderr: String)) : PluginResult
+      # Issue #329 (Rocky 9, `package: name: <https .rpm URL>` whose GPG
+      # key isn't installed): ansible's dnf module validates the signature
+      # of a downloaded rpm itself BEFORE the transaction and fails through
+      # a bare fail_json - just msg "Failed to validate GPG signature for
+      # <nevra>: <key error>", with none of the stderr/rc/failures/results
+      # keys this function's other branches carry (nor the generic raw
+      # dump's own), so the check runs before they do. The EL9 CLI never
+      # names the failing nevra outright, only via the transaction table's
+      # @commandline row.
+      if gpg_msg = gpg_validation_failure_msg(install_result[:stdout] + "\n" + install_result[:stderr])
+        return PluginResult.new(changed: false, failed: true, msg: gpg_msg)
+      end
       # A depsolve failure ("Problem: ..." block) matches none of the
       # parse_dnf_install_failures lines, so it used to fall through to
       # the raw stderr dump below - with the Problem block duplicated,
