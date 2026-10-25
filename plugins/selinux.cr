@@ -20,10 +20,16 @@ module Krikri
   # argument rules (state required, policy required unless
   # state=disabled, nonexistent policy rejected) live in
   # PluginHelpers::SelinuxConfig, which documents the ported order.
+  # Runtime-state handling (issue #340): selinux.py:302-324's
+  # runtime-disabled branch - a requested state with the runtime off can
+  # only reach the kernel on the next boot, so it warns and exits
+  # reboot_required=true, and `reboot_required` (boolean, false when no
+  # reboot is pending) rides every exit_json.
   class SelinuxPlugin < BasePlugin
     property? check_mode : Bool
 
-    CONFIG_PATH = "/etc/selinux/config"
+    CONFIG_PATH  = "/etc/selinux/config"
+    ENFORCE_PATH = "/sys/fs/selinux/enforce"
 
     def initialize(config : JSON::Any)
       super(config)
@@ -33,6 +39,30 @@ module Krikri
     def execute : PluginResult
       state = @params["state"]?
       policy = @params["policy"]?
+
+      # Probe paths overridable solely so the regression test can point
+      # them at spec scratch files - sandboxes without /etc/selinux/config
+      # or /sys/fs/selinux can exercise the runtime-state branch they
+      # otherwise never reach. Unset env = the real module's own paths.
+      config_path = ENV["KRIKRI_SELINUX_CONFIG_PATH"]? || CONFIG_PATH
+      enforce_path = ENV["KRIKRI_SELINUX_ENFORCE_PATH"]? || ENFORCE_PATH
+
+      # Runtime probe (selinux.py:252-263): is_selinux_enabled() == 0
+      # makes runtime_state 'disabled', else security_getenforce() picks
+      # 'enforcing'/'permissive' - the kernel flag file's content stands
+      # in for the C call, where anything but "1" (including an
+      # unreadable file, i.e. the error return) is the falsy case.
+      runtime_enabled = File.exists?(enforce_path)
+      runtime_state = if runtime_enabled
+                        enforce = begin
+                          File.read(enforce_path).strip
+                        rescue
+                          ""
+                        end
+                        enforce == "1" ? "enforcing" : "permissive"
+                      else
+                        "disabled"
+                      end
 
       if err = PluginHelpers::SelinuxConfig.state_validation_error(state)
         return PluginResult.new(changed: false, failed: true, msg: err)
@@ -64,11 +94,11 @@ module Krikri
       # buluma.selinux on a Rocky 9.6 host missing the SELinux-policy
       # package, where Ansible failed with this exact message and
       # this plugin silently reported success instead.
-      unless File.exists?(CONFIG_PATH)
+      unless File.exists?(config_path)
         return PluginResult.new(
           changed: false,
           failed: true,
-          msg: "Unable to find file #{CONFIG_PATH}",
+          msg: "Unable to find file #{config_path}",
           details: "Please install SELinux-policy package, if this package is not installed previously."
         )
       end
@@ -81,7 +111,7 @@ module Krikri
       end
 
       # Read current config: extract SELINUX= and SELINUXTYPE= lines.
-      original = File.read(CONFIG_PATH)
+      original = File.read(config_path)
       lines = original.lines
 
       current_state = extract(original, "SELINUX")
@@ -117,17 +147,31 @@ module Krikri
       end
 
       if changed && !@check_mode
-        File.write(CONFIG_PATH, lines.join("\n"))
+        File.write(config_path, lines.join("\n"))
       end
 
       msg = messages.empty? ? "Nothing to do" : messages.join(", ")
       msg += " (check mode)" if @check_mode && changed
 
-      PluginResult.new(
-        changed: changed,
-        failed: false,
-        msg: msg
-      )
+      result = PluginResult.new(changed: changed, failed: false, msg: msg)
+      if state != runtime_state && !runtime_enabled
+        # selinux.py:322-324's runtime-disabled branch: krikri applies the
+        # config write the module also applies, but with the runtime off
+        # the state reaches the kernel only on the next boot, which the
+        # module surfaces as module.warn(...) + reboot_required=true -
+        # check mode included (that branch has no check_mode guard), and
+        # without flipping `changed` on its own. The runtime-ENABLED
+        # branches around it (setenforce / temporary-permissive-then-
+        # reboot) are deliberately left un-implemented.
+        existing = result.extra["warnings"]?.try(&.as_a?) || [] of JSON::Any
+        result.extra["warnings"] = JSON::Any.new(existing + [JSON::Any.new("Reboot is required to set SELinux state to '#{state}'")])
+        result.extra["reboot_required"] = JSON::Any.new(true)
+      else
+        # Every exit_json carries reboot_required, false whenever the
+        # disabled branches didn't fire.
+        result.extra["reboot_required"] = JSON::Any.new(false)
+      end
+      result
     end
 
     private def extract(content : String, key : String) : String
