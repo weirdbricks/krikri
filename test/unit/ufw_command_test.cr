@@ -61,6 +61,11 @@ describe Krikri::PluginHelpers::UfwCommand do
       Krikri::PluginHelpers::UfwCommand.rule_command(params).must_equal("ufw allow from any port 1000 to 10.0.0.1")
     end
 
+    it "raw mode leaves a templated list in port: unquoted, as ufw.py records it before shlex.split" do
+      params = {"rule" => "allow", "to_port" => "[{'a': 1}] + []"}
+      Krikri::PluginHelpers::UfwCommand.rule_command(params, raw: true).must_equal("ufw allow from any to any port [{'a': 1}] + []")
+    end
+
     it "includes an app profile and a comment" do
       params = {"rule" => "allow", "name" => "OpenSSH", "comment" => "allow ssh"}
       Krikri::PluginHelpers::UfwCommand.rule_command(params).must_equal("ufw allow from any to any app 'OpenSSH' comment 'allow ssh'")
