@@ -14982,3 +14982,13 @@ Local probe roles, not Galaxy roles: each probed task registers its result and d
 | `t_systems_mms.grafana` | ubuntu | ✅ Clean (round29882072, 0.9.1946 release). Times: cold py 2.95s vs cr 0.73s; warm py 1.65s vs cr 0.12s. |
 | `triplepoint.dnsmasq` | rocky | ✅ Clean (round29882073, 0.9.1946 release). Times: cold py 6.73s vs cr 3.64s; warm py 3.00s vs cr 0.18s. |
 | `wtanaka.sshd` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29882076, 0.9.1946 release). Times: cold py 0.49s vs cr 0.01s; warm py 0.47s vs cr 0.01s. |
+| `chadek.nodejs` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29882085, 0.9.1946 release). Times: cold py 5.12s vs cr 2.07s; warm py 2.99s vs cr 0.89s. |
+| `criecm.openldap` | ubuntu | ❌ Divergent - issue #349 (round29882076, 0.9.1946 release). Times: cold py 18.43s vs cr 14.19s; warm py 4.35s vs cr 0.21s. |
+| `govcloud.chrome` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29882080, 0.9.1946 release). Times: cold py 0.47s vs cr 0.01s; warm py 0.47s vs cr 0.01s. |
+| `grlee.install_ansible_node` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29882084, 0.9.1946 release). Times: cold py 0.44s vs cr 0.01s; warm py 0.44s vs cr 0.01s. |
+| `grycap.monasca-agent` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29882081, 0.9.1946 release). Times: cold py 0.46s vs cr 0.03s; warm py 0.47s vs cr 0.02s. |
+| `joelnb.ansible_ssmtp` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29882079, 0.9.1946 release). Times: cold py 11.05s vs cr 10.25s; warm py 10.50s vs cr 9.45s. |
+| `nuclon.nginx_vts_exporter` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29882083, 0.9.1946 release). Times: cold py 10.45s vs cr 3.06s; warm py 2.77s vs cr 0.18s. |
+| `ramsailopal_cac_lynis` | ubuntu | ❌ BLOCKED: (round29882078, 0.9.1946 release). |
+| `robertdebock.forensics` | rocky | ❌ Divergent - issue #350 (round29882077, 0.9.1946 release). Times: cold py 20.82s vs cr 1.33s; warm py 20.09s vs cr 0.31s. |
+| `sfromm.elasticsearch` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29882082, 0.9.1946 release). Times: cold py 0.47s vs cr 0.01s; warm py 0.48s vs cr 0.01s. |
