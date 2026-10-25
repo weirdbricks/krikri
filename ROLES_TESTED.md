@@ -15002,3 +15002,13 @@ Local probe roles, not Galaxy roles: each probed task registers its result and d
 | `triplepoint.physical_device` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29882142, 0.9.1948 release). Times: cold py 14.49s vs cr 4.98s; warm py 6.22s vs cr 0.13s. |
 | `tychobrouwer.git` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29882151, 0.9.1948 release). Times: cold py 13.17s vs cr 16.95s; warm py 2.83s vs cr 0.17s. |
 | `wangsha.ansible_role_clamav` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29882143, 0.9.1948 release). Times: cold py 0.59s vs cr 0.01s; warm py 0.56s vs cr 0.01s. |
+| `GeoNode.geonode` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29882157, 0.9.1948 release). Times: cold py 0.44s vs cr 0.01s; warm py 0.44s vs cr 0.01s. |
+| `SuperNami.nginx` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29882149, 0.9.1948 release). Times: cold py 0.45s vs cr 0.01s; warm py 0.44s vs cr 0.01s. |
+| `Temelio.clamav` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29882148, 0.9.1948 release). Times: cold py 0.50s vs cr 0.01s; warm py 1.26s vs cr 0.01s. |
+| `avinash6784.git` | rocky | ✅ Clean (round29882153, 0.9.1948 release). Times: cold py 28.65s vs cr 20.02s; warm py 2.14s vs cr 0.18s. |
+| `carlosacp.meteor` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29882155, 0.9.1948 release). Times: cold py 0.44s vs cr 0.01s; warm py 0.43s vs cr 0.01s. |
+| `fourforbusiness.shopware` | ubuntu | ❌ Divergent - issue #351 (round29882156, 0.9.1948 release). Times: cold py 132.08s vs cr 55.47s; warm py 57.18s vs cr 2.18s. |
+| `grlee.install_ansible` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29882154, 0.9.1948 release). Times: cold py 0.47s vs cr 0.01s; warm py 0.47s vs cr 0.01s. |
+| `guidugli.crypto_policy` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29882151, 0.9.1948 release). Times: cold py 5.46s vs cr 8.15s; warm py 3.24s vs cr 0.47s. |
+| `guidugli.firewall` | ubuntu | ❌ Divergent - issue #352 (round29882152, 0.9.1948 release). Times: cold py 79.07s vs cr 21.52s; warm py 10.55s vs cr 20.60s. |
+| `xanmanning.terraform_project` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29882150, 0.9.1948 release). Times: cold py 4.29s vs cr 0.67s; warm py 4.02s vs cr 0.12s. |
