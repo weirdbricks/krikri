@@ -180,7 +180,7 @@ module Krikri
 
       # Ansible's exit_json passes no `msg` at all on success, and leads
       # with `changed` - live-verified 2.19.11 + community.mysql 5.0.2.
-      PluginResult.new(
+      result = PluginResult.new(
         changed: changed,
         failed: false,
         executed_queries: executed_queries,
@@ -190,10 +190,15 @@ module Krikri
         failed_flag: true,
         key_order: SUCCESS_KEY_ORDER
       )
+      # mysql_query.py's connect failure wrapper (mysql_connect raises =>
+      # fail_json) sits downstream of the connector warn inside
+      # mysql_connect, so even a refused connection's result carries it.
+      PluginHelpers::MysqlConnection.add_mysqldb_connector_warning(result)
     rescue ex : DB::ConnectionRefused
-      PluginResult.new(changed: false, failed: true, msg: "unable to connect to database, check login_user and login_password are correct or login_unix_socket password is empty: #{ex.message}")
+      PluginHelpers::MysqlConnection.add_mysqldb_connector_warning(
+        PluginResult.new(changed: false, failed: true, msg: "unable to connect to database, check login_user and login_password are correct or login_unix_socket password is empty: #{ex.message}"))
     rescue ex : MySql::Connection::PacketError
-      PluginHelpers::DbErrors.query_failed(ex, "MySQL")
+      PluginHelpers::MysqlConnection.add_mysqldb_connector_warning(PluginHelpers::DbErrors.query_failed(ex, "MySQL"))
     end
 
     private def parse_statements(raw : String) : Array(String)

@@ -19,6 +19,106 @@ describe Krikri::PluginHelpers::MysqlConnection do
     end
   end
 
+  describe ".connector_package_dirs" do
+    it "expands every PACKAGE_ROOT_GLOBS pattern with the given glob" do
+      seen = [] of String
+      resolved = Krikri::PluginHelpers::MysqlConnection.connector_package_dirs(glob: ->(pattern : String) {
+        seen << pattern
+        ["/fake/#{pattern.delete("*")}"]
+      })
+      seen.must_equal(Krikri::PluginHelpers::MysqlConnection::PACKAGE_ROOT_GLOBS)
+      resolved.size.must_equal(Krikri::PluginHelpers::MysqlConnection::PACKAGE_ROOT_GLOBS.size)
+    end
+  end
+
+  describe ".mysqldb_connector_on_host?" do
+    # Upstream's connector gate (module_utils/mysql.py): `import pymysql`
+    # first, MySQLdb only when PyMySQL is absent - so the warning fires only
+    # in the python3-mysqldb-without-pymysql shape this suite cannot count
+    # on any dev host to have; the scratch directories make the layout's
+    # contents tangible instead.
+    it "detects MySQLdb from MySQLdb alone (the python3-mysqldb shape)" do
+      pkg = PluginSpecHelper.tmp_path("mysqldb_only")
+      Dir.mkdir_p(File.join(pkg, "MySQLdb"))
+      Krikri::PluginHelpers::MysqlConnection.mysqldb_connector_on_host?(package_dirs: [pkg]).must_equal(true)
+    end
+
+    it "does not detect MySQLdb with pymysql present (imports pymysql first)" do
+      pkg = PluginSpecHelper.tmp_path("mysqldb_pymysql")
+      Dir.mkdir_p(File.join(pkg, "MySQLdb"))
+      Dir.mkdir_p(File.join(pkg, "pymysql"))
+      Krikri::PluginHelpers::MysqlConnection.mysqldb_connector_on_host?(package_dirs: [pkg]).must_equal(false)
+    end
+
+    it "does not detect MySQLdb with pymysql alone" do
+      pkg = PluginSpecHelper.tmp_path("pymysql_only")
+      Dir.mkdir_p(File.join(pkg, "pymysql"))
+      Krikri::PluginHelpers::MysqlConnection.mysqldb_connector_on_host?(package_dirs: [pkg]).must_equal(false)
+    end
+
+    it "does not detect anything with neither package installed" do
+      pkg = PluginSpecHelper.tmp_path("no_connector")
+      Dir.mkdir_p(pkg)
+      Krikri::PluginHelpers::MysqlConnection.mysqldb_connector_on_host?(package_dirs: [pkg]).must_equal(false)
+    end
+
+    it "treats the import as global over every package root" do
+      # MySQLdb in one root, pymysql in another: pymysql wins (it would be
+      # importable from its sys.path entry).
+      mysqldb_pkg = PluginSpecHelper.tmp_path("mysqldb_root")
+      pymysql_pkg = PluginSpecHelper.tmp_path("pymysql_root")
+      Dir.mkdir_p(File.join(mysqldb_pkg, "MySQLdb"))
+      Dir.mkdir_p(File.join(pymysql_pkg, "pymysql"))
+      Krikri::PluginHelpers::MysqlConnection.mysqldb_connector_on_host?(package_dirs: [mysqldb_pkg, pymysql_pkg]).must_equal(false)
+    end
+
+    it "honors an injected existence check instead of the filesystem" do
+      Krikri::PluginHelpers::MysqlConnection
+        .mysqldb_connector_on_host?(package_dirs: ["/anywhere"], exists: ->(p : String) { p.ends_with?("MySQLdb") }).must_equal(true)
+      Krikri::PluginHelpers::MysqlConnection
+        .mysqldb_connector_on_host?(package_dirs: ["/anywhere"], exists: ->(p : String) { p.ends_with?("pymysql") }).must_equal(false)
+    end
+  end
+
+  describe ".add_mysqldb_connector_warning" do
+    it "appends the connector warning when MySQLdb resolves (MySQLdb-only dirs)" do
+      pkg = PluginSpecHelper.tmp_path("mysqldb_warn")
+      Dir.mkdir_p(File.join(pkg, "MySQLdb"))
+      result = Krikri::PluginResult.new(changed: false, failed: false)
+      Krikri::PluginHelpers::MysqlConnection.add_mysqldb_connector_warning(result, package_dirs: [pkg]).must_equal(result)
+      result.extra["warnings"].as_a.map(&.as_s).must_equal(
+        [Krikri::PluginHelpers::MysqlConnection::MYSQLDB_CONNECTOR_WARNING])
+    end
+
+    it "adds nothing when pymysql is installed or no connector exists" do
+      pymysql_pkg = PluginSpecHelper.tmp_path("pymysql_warn")
+      Dir.mkdir_p(File.join(pymysql_pkg, "pymysql"))
+      empty_pkg = PluginSpecHelper.tmp_path("empty_warn")
+      Dir.mkdir_p(empty_pkg)
+      {pymysql_pkg, empty_pkg}.each do |pkg|
+        result = Krikri::PluginResult.new(changed: false, failed: false)
+        Krikri::PluginHelpers::MysqlConnection.add_mysqldb_connector_warning(result, package_dirs: [pkg])
+        result.extra.has_key?("warnings").must_equal(false)
+      end
+    end
+
+    it "records the connector warning before the MariaDB one and dedupes repeat appends" do
+      # Upstream records module.warn() texts in call order, connector warn
+      # (inside mysql_connect) first, the MariaDB one (right after the
+      # connect) second - and the list dedupes a second identical warn.
+      pkg = PluginSpecHelper.tmp_path("mysqldb_both_warn")
+      Dir.mkdir_p(File.join(pkg, "MySQLdb"))
+      result = Krikri::PluginResult.new(changed: false, failed: false)
+      Krikri::PluginHelpers::MysqlConnection.add_mysqldb_connector_warning(result, package_dirs: [pkg])
+      Krikri::PluginHelpers::MysqlConnection.add_mysqldb_connector_warning(result, package_dirs: [pkg])
+      Krikri::PluginHelpers::MysqlConnection.add_mariadb_warning(result, "10.11.6-MariaDB-0ubuntu0.24.04.1")
+      result.extra["warnings"].as_a.map(&.as_s).must_equal([
+        Krikri::PluginHelpers::MysqlConnection::MYSQLDB_CONNECTOR_WARNING,
+        Krikri::PluginHelpers::MysqlConnection::MARIADB_WARNING,
+      ])
+    end
+  end
+
   describe ".build_uri" do
     it "defaults to localhost:3306, with the current OS user as the connection username" do
       PluginSpecHelper::ENV_MUTEX.synchronize do

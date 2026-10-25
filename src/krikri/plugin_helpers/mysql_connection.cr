@@ -36,6 +36,92 @@ module Krikri
         result
       end
 
+      # The [WARNING] real prints whenever one of the mysql_* modules connects
+      # through the MySQLdb (mysqlclient) Python driver (issue #351,
+      # fourforbusiness.shopware, community.mysql 4.x+ / ansible.mysql 5.x via
+      # its plugin_routing redirect). Upstream bootstrap-imports PyMySQL
+      # first and only falls back to `import MySQLdb` when PyMySQL is absent
+      # anywhere, so MySQLdb alongside PyMySQL never warns. The warn call
+      # sits inside mysql_connect(), BEFORE the driver's own connect raises,
+      # so it rides every result a connection attempt produced (success,
+      # the connection-refused fail_json, a later query failure) and reaches
+      # the stderr console (deduplicated once per run, like every display
+      # warning) and the result's `warnings` list. The text is upstream's
+      # own byte-for-byte, including its "mysqlcline" typo (the warn string
+      # in module_utils/mysql.py) and the stale "4.0.0"/"5.0.0" versions,
+      # which that collection never actually shipped.
+      MYSQLDB_CONNECTOR_WARNING = "Support of mysqlcline/MySQLdb connector is deprecated. " \
+                                  "We'll stop testing against it in collection version 4.0.0 and remove the related code in 5.0.0. " \
+                                  "Use PyMySQL connector instead."
+
+      # The Python package roots a connector module can be importable from
+      # on the distro layouts these role stacks run on: Debian/Ubuntu's
+      # system interpreter (python3-mysqldb installs MySQLdb under
+      # /usr/lib/python3/dist-packages), pip-installed site-packages for
+      # both system prefixes and versions, and RHEL's lib64 layout.
+      #
+      # This approximates the target's python without shelling out to it.
+      # Known limit: an interpreter outside these roots (a venv) is not
+      # scanned at all, in both directions - a venv-hosted PyMySQL does not
+      # silence the warn for a lingering system MySQLdb, and a venv-hosted
+      # MySQLdb with nothing below the system roots does not warn. The
+      # apt-based connector installs these role stacks generate all land in
+      # these roots.
+      PACKAGE_ROOT_GLOBS = [
+        "/usr/lib/python3/dist-packages",
+        "/usr/lib/python3*/site-packages",
+        "/usr/local/lib/python3*/dist-packages",
+        "/usr/local/lib/python3*/site-packages",
+        "/usr/lib64/python3*/site-packages",
+      ]
+
+      # The roots that exist on this host, expanded from the patterns. `glob`
+      # is injectable so tests can exercise the expansion without needing a
+      # real dist-packages layout.
+      def self.connector_package_dirs(glob : String -> Array(String) = ->(pattern : String) { Dir.glob(pattern) }) : Array(String)
+        PACKAGE_ROOT_GLOBS.flat_map { |pattern| glob.call(pattern) }
+      end
+
+      # True when the connector upstream's module bootstrap would resolve to
+      # is MySQLdb: a MySQLdb package directory exists under at least one
+      # package root and pymysql exists under none (PyMySQL is imported
+      # first, so its presence silences this warning no matter where it
+      # sits). `package_dirs` overrides the root set for scratch
+      # directories; `exists` checks a package directory inside one.
+      def self.mysqldb_connector_on_host?(
+        package_dirs : Array(String) = connector_package_dirs,
+        exists : String -> Bool = ->(path : String) { File.exists?(path) },
+      ) : Bool
+        has_mysqldb = false
+        has_pymysql = false
+        package_dirs.each do |dir|
+          has_pymysql = true if exists.call(File.join(dir, "pymysql"))
+          has_mysqldb = true if exists.call(File.join(dir, "MySQLdb"))
+        end
+        has_mysqldb && !has_pymysql
+      end
+
+      # Appends MYSQLDB_CONNECTOR_WARNING to result.extra["warnings"] when
+      # the host's connector resolves to MySQLdb. Call BEFORE
+      # add_mariadb_warning: upstream's warns are recorded in call order,
+      # mysql_connect's connector warn first and get_server_implementation's
+      # MariaDB one second, and the registered result keeps it (the same
+      # placement rule PostgresqlDeprecations.add_default_db_warning
+      # documents for AnsibleModule's warnings-then-deprecations list).
+      def self.add_mysqldb_connector_warning(
+        result : PluginResult,
+        package_dirs : Array(String) = connector_package_dirs,
+        exists : String -> Bool = ->(path : String) { File.exists?(path) },
+      ) : PluginResult
+        return result unless mysqldb_connector_on_host?(package_dirs, exists)
+
+        existing = result.extra["warnings"]?.try(&.as_a?)
+        texts = existing ? existing.map(&.as_s) : [] of String
+        texts << MYSQLDB_CONNECTOR_WARNING unless texts.includes?(MYSQLDB_CONNECTOR_WARNING)
+        result.extra["warnings"] = JSON::Any.new(texts.map { |text| JSON::Any.new(text) })
+        result
+      end
+
       # unix_socket, given, takes precedence over host/port (matches
       # Ansible's mysql_db/mysql_user own login_unix_socket precedence).
       #

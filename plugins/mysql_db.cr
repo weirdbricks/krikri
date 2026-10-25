@@ -151,12 +151,20 @@ module Krikri
                  else
                    PluginResult.new(changed: false, failed: true, msg: "state must be 'present' or 'absent', got '#{state}'")
                  end
+        # Upstream warn order matters when both apply (a MariaDB server on
+        # a MySQLdb host): the connector warn fires inside mysql_connect and
+        # the MariaDB one right after it, so this result's warnings list
+        # keeps that order.
+        PluginHelpers::MysqlConnection.add_mysqldb_connector_warning(result)
         PluginHelpers::MysqlConnection.add_mariadb_warning(result, server_version)
       end
     rescue ex : DB::ConnectionRefused
-      PluginHelpers::DbErrors.connection_failed(ex, "MySQL")
+      # The connector warn fires inside mysql_connect, before the driver's
+      # own connect raises, so a refused connection's fail_json carries it
+      # in real too.
+      PluginHelpers::MysqlConnection.add_mysqldb_connector_warning(PluginHelpers::DbErrors.connection_failed(ex, "MySQL"))
     rescue ex : MySql::Connection::PacketError
-      PluginHelpers::DbErrors.query_failed(ex, "MySQL")
+      PluginHelpers::MysqlConnection.add_mysqldb_connector_warning(PluginHelpers::DbErrors.query_failed(ex, "MySQL"))
     end
 
     private def ensure_present(
@@ -247,10 +255,19 @@ module Krikri
 
       check_mode = true?(@params["_ansible_check_mode"]?)
       if check_mode
-        return PluginResult.new(changed: true, failed: false, msg: "Would #{state} database #{name} #{state == "dump" ? "to" : "from"} #{target} (check mode)")
+        # Real connects before the check-mode exit (mysql_db.py's
+        # mysql_connect precedes the state branches), so the check-mode
+        # result carries the connector warning there.
+        return PluginHelpers::MysqlConnection.add_mysqldb_connector_warning(
+          PluginResult.new(changed: true, failed: false, msg: "Would #{state} database #{name} #{state == "dump" ? "to" : "from"} #{target} (check mode)"))
       end
 
-      state == "dump" ? run_dump(name, target) : run_import(name, target)
+      result = state == "dump" ? run_dump(name, target) : run_import(name, target)
+      # dump/import shell out to the mysql/mysqldump CLI instead of a
+      # plugin-side DB connect; real's mysql_connect still precedes
+      # db_dump/db_import, so the warning rides those results too (the
+      # rc!=0 fail_json's and "target does not exist" failure included).
+      PluginHelpers::MysqlConnection.add_mysqldb_connector_warning(result)
     end
 
     private def run_dump(name : String, target : String) : PluginResult

@@ -115,12 +115,15 @@ module Krikri
         config_file: @params["config_file"]? || "~/.my.cnf",
       )
 
-      DB.open(uri) do |connection|
+      result = DB.open(uri) do |connection|
+        # `next` (not return): none of the four post-connect outcomes may
+        # skip the connector-warning attach below - upstream fails "Variable
+        # not available" AFTER mysql_connect too, with the warn riding it.
         current = read_variable(connection, variable)
-        return PluginResult.new(changed: false, failed: true,
+        next PluginResult.new(changed: false, failed: true,
           msg: "Variable not available \"#{variable}\"", key_order: UNKNOWN_VARIABLE_KEY_ORDER) unless current
 
-        return PluginResult.new(changed: false, failed: false, msg: current, failed_flag: true, key_order: READ_KEY_ORDER) unless value
+        next PluginResult.new(changed: false, failed: false, msg: current, failed_flag: true, key_order: READ_KEY_ORDER) unless value
 
         typed_wanted = PluginHelpers::MysqlVariables.typed_value(value)
         typed_current = PluginHelpers::MysqlVariables.typed_value(current)
@@ -129,7 +132,7 @@ module Krikri
         end
 
         if PluginHelpers::MysqlVariables.values_equal?(typed_wanted, typed_current)
-          return PluginResult.new(changed: false, failed: false,
+          next PluginResult.new(changed: false, failed: false,
             msg: "Variable is already set to requested value.", key_order: SUCCESS_KEY_ORDER)
         end
 
@@ -139,10 +142,15 @@ module Krikri
           msg: "Variable change succeeded prev_value=#{typed_current}",
           queries: [statement], key_order: SUCCESS_KEY_ORDER)
       end
+      # mysql_variables.py's "Variable not available" fail_json comes after
+      # mysql_connect (whose connector warn is what issue #351 tracks), so
+      # every post-connect outcome here carries it, failures included.
+      PluginHelpers::MysqlConnection.add_mysqldb_connector_warning(result)
     rescue ex : DB::ConnectionRefused
-      PluginResult.new(changed: false, failed: true, msg: "unable to connect to database, check login_user and login_password are correct or login_unix_socket password is empty: #{ex.message}")
+      PluginHelpers::MysqlConnection.add_mysqldb_connector_warning(
+        PluginResult.new(changed: false, failed: true, msg: "unable to connect to database, check login_user and login_password are correct or login_unix_socket password is empty: #{ex.message}"))
     rescue ex : MySql::Connection::PacketError
-      PluginHelpers::DbErrors.query_failed(ex, "MySQL")
+      PluginHelpers::MysqlConnection.add_mysqldb_connector_warning(PluginHelpers::DbErrors.query_failed(ex, "MySQL"))
     end
 
     # AnsibleModule setup order for this spec (no mutually-exclusive
