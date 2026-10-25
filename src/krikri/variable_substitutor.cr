@@ -2420,6 +2420,8 @@ module Krikri
     # filter exists specifically to suppress Undefined (`x | default(y)`
     # never raises even under a strict environment, only a genuinely
     # missing filter/attribute lookup elsewhere in the chain would).
+    # `d` is the same filter under its alias, so ansible never raises
+    # for `x|d(y)` either - it carves out identically.
     # This scan previously only recognized the identifier BEING a
     # filter's own name (`block_tag_ref_is_filter_call`, preceded by
     # `|`) - not an identifier FOLLOWED by `| default(...)`, which is
@@ -2435,7 +2437,7 @@ module Krikri
     private def block_tag_ref_is_defaulted(cond_no_strings : String, match_end : Int32) : Bool
       rest = cond_no_strings[match_end..].lstrip
       return false unless rest.starts_with?('|')
-      rest[1..].lstrip.starts_with?("default(")
+      /\A(?:default|d)\s*\(/.matches?(rest[1..].lstrip)
     end
 
     # An identifier immediately followed by `(` is being CALLED, not
