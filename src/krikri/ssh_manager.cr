@@ -1036,11 +1036,8 @@ module Krikri
     # Graceful shutdown for every still-open daemon connection, called
     # once at the end of a run. Closes every daemon's stdin first (each
     # one sees EOF and exits cleanly via `plugin_daemon.cr`'s own
-    # `rescue IO::EOFError` - no explicit "goodbye" message needed),
-    # THEN waits once for the whole batch rather than once per
-    # connection, force-killing stragglers only after that single grace
-    # period - materially faster than `#kill_daemon`'s per-connection
-    # path would be for a multi-host run.
+    # `rescue IO::EOFError` - no explicit "goodbye" message needed) and
+    # returns without waiting for the ssh clients to exit.
     def self.close_all_daemons : Nil
       processes = @@daemon_processes.values
       @@daemon_processes.clear
@@ -1053,40 +1050,16 @@ module Krikri
         end
       end
 
-      # Poll for the batch to exit rather than sleeping a flat second.
-      # This used to be `sleep 1.second` unconditionally, which was a
-      # rounding error while `become:` tasks were daemon-ineligible (a
-      # typical all-`become:` role held no daemons at all, so this
-      # returned early at the `processes.empty?` guard above and cost
-      # nothing). Perf item 1 changed that:
-      # now essentially every real run holds at least one daemon, and a
-      # flat second on the way out was eating a third of item 1's own
-      # measured warm-run saving on devsec.hardening.os_hardening -
-      # visible as an exactly-1.001s "unaccounted" row in the item-0
-      # timing profile, which is what made it obvious.
-      #
-      # The backoff starts at 1ms rather than a fixed 20ms interval
-      # because a daemon sees EOF and exits in about a millisecond: at a
-      # flat 20ms this loop reliably burned two whole ticks (a 0.041s
-      # "unaccounted" row - measured, on every single run), which is
-      # material on a short play. Item 2 made that worse by giving even
-      # a facts-only play a daemon to shut down. Doubling to a 20ms
-      # ceiling keeps a long-tail straggler cheap to wait on, and the 1s
-      # hard deadline is unchanged.
-      deadline = Time.instant + 1.second
-      interval = 1.millisecond
-      while Time.instant < deadline
-        break if processes.all?(&.terminated?)
-        sleep interval
-        interval = {interval * 2, 20.milliseconds}.min
-      end
-
-      processes.each do |process|
-        begin
-          process.terminate(graceful: false) unless process.terminated?
-        rescue
-        end
-      end
+      # Do NOT wait for the ssh clients to exit. Each daemon saw EOF on
+      # stdin and shuts itself down; the ssh client then exits once the
+      # remote side closes the channel, which takes a network round trip
+      # or two - and there is nothing left to read back. Waiting for it
+      # (this used to poll up to a second, then SIGKILL) was a measured
+      # ~0.15s of pure latency at the end of every run against a remote
+      # host (the "unaccounted" row of --timing-profile). The clients do not
+      # inherit our stdout (theirs is a pipe to us, stderr is closed), so
+      # they cannot hold up a caller capturing our output, and
+      # ServerAliveInterval bounds a wedged one.
     end
 
     # Upload file to remote host via SCP
