@@ -415,90 +415,127 @@ module Krikri
 
       facts = FactSet.new
 
+      # Every family below is an independent writer (none reads another's
+      # keys), and most of the wall time is serial fork+exec of probe
+      # binaries (lvs, vgs, python3, ip, ...). Each family therefore runs
+      # in its own fiber into a private scratch hash while the others'
+      # child processes are in flight, and the scratches merge into
+      # *facts* afterwards in the original family order, so key order,
+      # error precedence and the "(while gathering X)" wording are all
+      # exactly what the sequential walk produced.
+      jobs = [] of FactJob
+
       # The minimal set, always gathered unless "min" itself was excluded
       # (!min / !all,!min) - hostname, OS/distribution, the interpreter,
       # the user, the clock and the environment. This is what
       # Ansible's "min" subset covers.
       if families.includes?("min")
-        gather_section(facts, "hostname") { gather_hostname(facts) }
-        gather_section(facts, "os_facts") { gather_os_facts(facts) }
-        gather_section(facts, "python_facts") { gather_python_facts(facts, remote_connection) }
-        gather_section(facts, "user_facts") { gather_user_facts(facts) }
-        gather_section(facts, "date_time_facts") { gather_date_time_facts(facts) }
-        gather_section(facts, "environment_facts") { gather_environment_facts(facts) }
-        gather_section(facts, "cmdline_facts") { gather_cmdline_facts(facts) }
-        gather_section(facts, "dns_facts") { gather_dns_facts(facts) }
-        gather_section(facts, "system_capabilities_facts") { gather_system_capabilities_facts(facts) }
+        jobs << FactJob.new("hostname", ->(f : FactSet) { gather_hostname(f) })
+        jobs << FactJob.new("os_facts", ->(f : FactSet) { gather_os_facts(f) })
+        jobs << FactJob.new("python_facts", ->(f : FactSet) { gather_python_facts(f, remote_connection) })
+        jobs << FactJob.new("user_facts", ->(f : FactSet) { gather_user_facts(f) })
+        jobs << FactJob.new("date_time_facts", ->(f : FactSet) { gather_date_time_facts(f) })
+        jobs << FactJob.new("environment_facts", ->(f : FactSet) { gather_environment_facts(f) })
+        jobs << FactJob.new("cmdline_facts", ->(f : FactSet) { gather_cmdline_facts(f) })
+        jobs << FactJob.new("dns_facts", ->(f : FactSet) { gather_dns_facts(f) })
+        jobs << FactJob.new("system_capabilities_facts", ->(f : FactSet) { gather_system_capabilities_facts(f) })
       end
 
       # ansible_local - custom *.fact files under fact_path. Part of
       # Ansible's minimal subset ('local'); dropped only by !local or
       # !min.
       if families.includes?("local")
-        facts["ansible_local"] = gather_local_facts(fact_path)
+        jobs << FactJob.new(nil, ->(f : FactSet) { f["ansible_local"] = gather_local_facts(fact_path); nil })
       end
 
       # network is NOT timeout-guarded in Ansible either - its
       # collector takes no gather_timeout (only hardware/mounts do, via
       # the Ansible module's GATHER_TIMEOUT reads and
       # timeout decorator), so neither does this.
-      gather_section(facts, "network") { gather_network_facts(facts) } if families.includes?("network")
-      gather_family_timed(facts, "hardware", gather_timeout) { |scratch| gather_hardware_facts(scratch) } if families.includes?("hardware")
+      jobs << FactJob.new("network", ->(f : FactSet) { gather_network_facts(f) }) if families.includes?("network")
+      jobs << FactJob.new(nil, ->(f : FactSet) { gather_hardware_facts(f) }, timed_family: "hardware") if families.includes?("hardware")
       # mounts rides along with hardware: Ansible's LinuxHardware
       # collector gathers mount facts itself, so `gather_subset:
       # hardware,!mount` on a real host STILL reports ansible_mounts
       # (podman-diff setup case W3) - only dropping hardware (or min-only
       # gathers) drops the mounts.
       if families.includes?("mounts") || families.includes?("hardware")
-        gather_family_timed(facts, "mounts", gather_timeout) { |scratch| gather_mount_facts(scratch) }
+        jobs << FactJob.new(nil, ->(f : FactSet) { gather_mount_facts(f) }, timed_family: "mounts")
       end
-      gather_virtualization_facts(facts) if families.includes?("virtual")
-      gather_is_chroot_fact(facts) if families.includes?("is_chroot")
-      gather_loadavg_facts(facts) if families.includes?("loadavg")
-      gather_fibre_channel_wwn_facts(facts) if families.includes?("fibre_channel_wwn")
-      gather_iscsi_fact(facts) if families.includes?("iscsi")
-      gather_hostnqn_fact(facts) if families.includes?("hostnqn")
-      gather_section(facts, "ssh_pub_keys") { gather_ssh_pub_keys_facts(facts) } if families.includes?("ssh_pub_keys")
+      jobs << FactJob.new(nil, ->(f : FactSet) { gather_virtualization_facts(f) }) if families.includes?("virtual")
+      jobs << FactJob.new(nil, ->(f : FactSet) { gather_is_chroot_fact(f) }) if families.includes?("is_chroot")
+      jobs << FactJob.new(nil, ->(f : FactSet) { gather_loadavg_facts(f) }) if families.includes?("loadavg")
+      jobs << FactJob.new(nil, ->(f : FactSet) { gather_fibre_channel_wwn_facts(f) }) if families.includes?("fibre_channel_wwn")
+      jobs << FactJob.new(nil, ->(f : FactSet) { gather_iscsi_fact(f) }) if families.includes?("iscsi")
+      jobs << FactJob.new(nil, ->(f : FactSet) { gather_hostnqn_fact(f) }) if families.includes?("hostnqn")
+      jobs << FactJob.new("ssh_pub_keys", ->(f : FactSet) { gather_ssh_pub_keys_facts(f) }) if families.includes?("ssh_pub_keys")
+
+      jobs.each(&.start)
+      jobs.each { |job| collect_fact_job(facts, job, gather_timeout) }
 
       facts
     end
 
-    # gather_timeout for the families Ansible guards: the family
-    # collects into a scratch hash inside its own fiber, and a result
-    # that doesn't land within *gather_timeout* seconds (real default:
-    # 10, the Ansible module's DEFAULT_GATHER_TIMEOUT) is
-    # dropped with a warning instead of failing the module - exactly
-    # real LinuxHardware's "No mount facts were gathered due to
-    # timeout." warning path. An overrun fiber cannot be killed in
-    # Crystal, so it keeps filling the scratch hash nobody reads.
-    private def gather_family_timed(facts : FactSet, family : String, gather_timeout : Int64?, &block : FactSet -> Nil) : Nil
-      scratch = FactSet.new
-      done = Channel(Bool).new
-      error = nil
+    # One family's gather: runs *block* in a fiber into a private scratch
+    # set, reporting completion (nil) or the exception through *done*.
+    private class FactJob
+      getter scratch = FactSet.new
+      getter done = Channel(Exception?).new(1)
+      getter section : String?
+      getter timed_family : String?
+      getter started_at = Time.instant
 
-      spawn do
-        begin
-          block.call(scratch)
-          done.send(true)
-        rescue ex
-          error = ex
-          done.send(false)
+      def initialize(@section : String?, @block : Proc(FactSet, Nil), @timed_family : String? = nil)
+      end
+
+      def start : Nil
+        @started_at = Time.instant
+        spawn do
+          begin
+            @block.call(@scratch)
+            @done.send(nil)
+          rescue ex
+            @done.send(ex)
+          end
         end
       end
 
-      timed_out = select
-      when done.receive
-        false
-      when timeout((gather_timeout || DEFAULT_GATHER_TIMEOUT).seconds)
-        true
+      def elapsed : Time::Span
+        Time.instant - @started_at
+      end
+    end
+
+    # Waits for *job* (bounded by gather_timeout for the families Ansible
+    # guards, measured from when the family STARTED, as before) and merges
+    # its scratch into *facts*.
+    private def collect_fact_job(facts : FactSet, job : FactJob, gather_timeout : Int64?) : Nil
+      error : Exception? = nil
+      if family = job.timed_family
+        budget = (gather_timeout || DEFAULT_GATHER_TIMEOUT).seconds
+        remaining = budget - job.elapsed
+        remaining = Time::Span.zero if remaining < Time::Span.zero
+        timed_out = false
+        select
+        when result = job.done.receive
+          error = result
+        when timeout(remaining)
+          timed_out = true
+        end
+        if timed_out
+          STDERR.puts " [WARNING]: No #{family} facts were gathered due to timeout."
+          return
+        end
+      else
+        error = job.done.receive
       end
 
-      if timed_out
-        STDERR.puts " [WARNING]: No #{family} facts were gathered due to timeout."
-      else
-        raise error.as(Exception) unless error.nil?
-        facts.merge!(scratch)
+      if ex = error
+        if section = job.section
+          raise Exception.new("#{ex.message} (while gathering #{section})", ex)
+        end
+        raise ex
       end
+      facts.merge!(job.scratch)
     end
 
     # Gather hostname facts
@@ -1159,12 +1196,6 @@ module Krikri
     # surfaces as "Facts gathering failed: <msg>" with no hint which
     # section died. Annotate the message with the section name so the
     # next occurrence pinpoints itself.
-    private def gather_section(facts, section : String, &) : Nil
-      yield
-    rescue ex
-      raise Exception.new("#{ex.message} (while gathering #{section})", ex)
-    end
-
     def gather_network_facts(facts)
       # Ansible's LinuxNetwork.populate bails out to an empty dict
       # BEFORE any gathering when `get_bin_path('ip')` is None - no
@@ -1676,21 +1707,25 @@ module Krikri
       # lvs/vgs dicts (empty when the binaries are absent or find nothing
       # - real W3 carries the key even inside a container with no LVM
       # installed). Missing entirely before - podman-diff setup case.
+      # lvs and vgs are independent and each costs a full process
+      # start (tens of ms on a small VM), so both run at once.
+      lvs_out = Channel(String).new(1)
+      vgs_out = Channel(String).new(1)
+      lvs_bin = find_fact_binary("lvs")
+      vgs_bin = find_fact_binary("vgs")
+      spawn { lvs_out.send(lvs_bin ? capture(lvs_bin, ["--noheadings", "--nosuffix", "--units", "b", "--separator", "|", "-o", "lv_name,vg_name,lv_size"]) : "") }
+      spawn { vgs_out.send(vgs_bin ? capture(vgs_bin, ["--noheadings", "--nosuffix", "--units", "b", "--separator", "|", "-o", "vg_name,vg_free,vg_size"]) : "") }
       lvs = {} of String => JSON::Any
-      if lvs_bin = find_fact_binary("lvs")
-        capture(lvs_bin, ["--noheadings", "--nosuffix", "--units", "b", "--separator", "|", "-o", "lv_name,vg_name,lv_size"]).each_line do |line|
-          fields = line.strip.split("|").map(&.strip)
-          next if fields.size < 3
-          lvs[fields[0]] = JSON::Any.new({"size" => JSON::Any.new(fields[2]), "vg" => JSON::Any.new(fields[1])} of String => JSON::Any)
-        end
+      lvs_out.receive.each_line do |line|
+        fields = line.strip.split("|").map(&.strip)
+        next if fields.size < 3
+        lvs[fields[0]] = JSON::Any.new({"size" => JSON::Any.new(fields[2]), "vg" => JSON::Any.new(fields[1])} of String => JSON::Any)
       end
       vgs = {} of String => JSON::Any
-      if vgs_bin = find_fact_binary("vgs")
-        capture(vgs_bin, ["--noheadings", "--nosuffix", "--units", "b", "--separator", "|", "-o", "vg_name,vg_free,vg_size"]).each_line do |line|
-          fields = line.strip.split("|").map(&.strip)
-          next if fields.size < 3
-          vgs[fields[0]] = JSON::Any.new({"free" => JSON::Any.new(fields[1]), "size" => JSON::Any.new(fields[2])} of String => JSON::Any)
-        end
+      vgs_out.receive.each_line do |line|
+        fields = line.strip.split("|").map(&.strip)
+        next if fields.size < 3
+        vgs[fields[0]] = JSON::Any.new({"free" => JSON::Any.new(fields[1]), "size" => JSON::Any.new(fields[2])} of String => JSON::Any)
       end
       facts["ansible_lvm"] = {
         "lvs" => JSON::Any.new(lvs),

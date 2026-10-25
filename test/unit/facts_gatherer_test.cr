@@ -482,6 +482,19 @@ describe Krikri::FactsGatherer do
       facts["ansible_lvm"].as_h["vgs"].as_h?.wont_be_nil
     end
 
+    # The families gather concurrently (each into a private scratch set);
+    # the merge must still land them in the sequential family order, since
+    # the result's key order is visible in `-vvv`/debug dumps.
+    it "keeps the sequential family order in the merged result despite concurrent gathering" do
+      keys = JSON.parse(Krikri::FactsGatherer.run(nil))["ansible_facts"].as_h.keys
+      order = %w[ansible_hostname ansible_distribution ansible_python ansible_user_id
+        ansible_date_time ansible_env ansible_cmdline ansible_local ansible_interfaces
+        ansible_memtotal_mb ansible_mounts].map { |key| keys.index(key) }
+      order.each(&.wont_be_nil)
+      positions = order.compact
+      positions.dup.sort!.must_equal(positions)
+    end
+
     it "resolves the new family subsets like Ansible's alias map" do
       Krikri::FactsGatherer.resolve_enabled_families(["virtualization_type"]).must_include("virtual")
       Krikri::FactsGatherer.resolve_enabled_families(["is_chroot"]).must_include("is_chroot")
