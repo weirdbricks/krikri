@@ -14823,3 +14823,13 @@ Local probe roles, not Galaxy roles: each probed task registers its result and d
 | `kurron.hashicorp` | ubuntu | ✅ Clean (round29881593, 0.9.1928 release). Times: cold py 30.75s vs cr 12.15s; warm py 21.38s vs cr 1.16s. |
 | `pgvillage.haproxy` | rocky | ✅ Clean (round29881592, 0.9.1928 release). Times: cold py 63.86s vs cr 17.68s; warm py 20.50s vs cr 1.35s. |
 | `triplepoint.gateway_routing_and_nat` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29881588, 0.9.1928 release). Times: cold py 8.04s vs cr 116.09s; warm py 9.48s vs cr 3.41s. |
+| `arillso.fqdn` | ubuntu | ✅ Clean (round29881601, 0.9.1928 release). Times: cold py 53.74s vs cr 35.31s; warm py 6.40s vs cr 0.85s. |
+| `capitanh.keelk8s_ansible_role` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29881600, 0.9.1928 release). Times: cold py 6.41s vs cr 7.70s; warm py 7.30s vs cr 0.48s. |
+| `grycap.tomcat` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29881602, 0.9.1928 release). Times: cold py 0.50s vs cr 0.01s; warm py 0.50s vs cr 0.01s. |
+| `l3d.rtl_nic_firmware` | rocky | ✅ Clean (round29881608, 0.9.1928 release). Times: cold py 3.04s vs cr 1.03s; warm py 2.42s vs cr 0.14s. |
+| `lean_delivery.solr_cluster` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29881606, 0.9.1928 release). Times: cold py 3.85s vs cr 1.08s; warm py 2.66s vs cr 0.35s. |
+| `lobsterdore.ansible-pdm-mailserver` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29881603, 0.9.1928 release). Times: cold py 0.45s vs cr 0.02s; warm py 0.45s vs cr 0.01s. |
+| `natman.ovirt_renew_certs` | ubuntu | ❌ Divergent - issue #331 (round29881599, 0.9.1928 release). Times: cold py 6.60s vs cr 8.79s; warm py 5.21s vs cr 0.48s. |
+| `net2grid.composer` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29881604, 0.9.1928 release). Times: cold py 6.85s vs cr 1.81s; warm py 4.27s vs cr 0.28s. |
+| `philnewm.ulauncher` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29881607, 0.9.1928 release). Times: cold py 2.55s vs cr 0.75s; warm py 4.96s vs cr 0.15s. |
+| `tjtoml.mattermost` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29881605, 0.9.1928 release). Times: cold py 6.01s vs cr 5.86s; warm py 4.49s vs cr 0.50s. |
