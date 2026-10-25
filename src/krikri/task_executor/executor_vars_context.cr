@@ -4071,6 +4071,34 @@ module Krikri
           break
         end
       end
+      # k=v args that START on the module line and fold onto deeper lines
+      # beneath it (`get_url: url=http://h/x.tgz` / `               dest=` /
+      # `               sha256sum={{ ruby_checksum }}`): YAML folds those
+      # lines into the same ONE plain scalar, so the string-args layer sees
+      # a single string anchored on the module line and, exactly like the
+      # same-line k=v case above (issue #237) and the empty-module-value
+      # fold above (issue #311), the string carries the Origin: real 2.19
+      # names the innermost Origin at the string's start ON the module line
+      # even for a key that lives two lines lower (issue #336,
+      # live-captured: sha256sum undefined reports the column just after
+      # `get_url: `, not the module key's column, not the `sha256sum=` line).
+      # The scan ends where the fold can end: a task marker, a blank line,
+      # or a line at or above the module key's own column (dash list
+      # markers included, which is YAML's own plain-scalar fold boundary).
+      # A value opening a flow map (`{`) is a dict shape the `key=` string
+      # never folds onto, so those stay with the block-style scans below.
+      if (fold_colon = module_line.index(':')) && (rest = module_line[(fold_colon + 1)..]) && !rest.strip.empty? && !rest.lstrip.starts_with?('{')
+        module_key_indent = module_line.index(/[^- \t]/) || 0
+        ((from_idx + 1)...lines.size).each do |idx|
+          line = lines[idx]
+          break if next_task_marker?(lines, from_idx, line)
+          break if line.strip.empty?
+          break if (line.size - line.lstrip.size) <= module_key_indent
+          if (kv = line.index("#{key}=")) && (kv == 0 || line[kv - 1].whitespace?)
+            return {from_idx, fold_colon + 1 + (rest.size - rest.lstrip.size) + 1}
+          end
+        end
+      end
       ((from_idx + 1)...lines.size).each do |idx|
         line = lines[idx]
         break if next_task_marker?(lines, from_idx, line)
