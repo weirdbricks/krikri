@@ -14843,3 +14843,13 @@ Local probe roles, not Galaxy roles: each probed task registers its result and d
 | `ppouliot.container_linux_azure` | rocky | ✅ Clean (round29881640, 0.9.1929 release). Times: cold py 2.35s vs cr 0.95s; warm py 2.58s vs cr 0.16s. |
 | `smartgic.prepi` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29881641, 0.9.1929 release). Times: cold py 58.04s vs cr 50.74s; warm py 51.40s vs cr 44.40s. |
 | `vaulttec.sublimetext` | ubuntu | ✅ Clean (round29881637, 0.9.1929 release). Times: cold py 26.51s vs cr 11.12s; warm py 14.12s vs cr 2.63s. |
+| `ISU-Ansible.kerberos` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29881654, 0.9.1929 release). Times: cold py 4.01s vs cr 0.73s; warm py 2.49s vs cr 0.12s. |
+| `danmilon.watchdog` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29881647, 0.9.1929 release). Times: cold py 3.84s vs cr 1.14s; warm py 2.98s vs cr 0.27s. |
+| `drkhsh.journald_upload` | ubuntu | ✅ Clean (round29881650, 0.9.1929 release). Times: cold py 55.08s vs cr 18.68s; warm py 47.60s vs cr 2.10s. |
+| `elnebuloso.docker` | rocky | ✅ Clean (round29881649, 0.9.1929 release). Times: cold py 5.56s vs cr 8.38s; warm py 3.46s vs cr 0.40s. |
+| `ivansible.lin_rclone` | ubuntu | ❌ Divergent - issue #333 (round29881646, 0.9.1929 release). Times: cold py 6.37s vs cr 6.98s; warm py 3.36s vs cr 0.59s. |
+| `kbrebanov.kernel_headers` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29881648, 0.9.1929 release). Times: cold py 0.49s vs cr 0.01s; warm py 0.49s vs cr 0.01s. |
+| `naftulikay.go-dev` | rocky | ✅ Clean (round29881655, 0.9.1929 release). Times: cold py 2.15s vs cr 1.02s; warm py 1.40s vs cr 0.15s. |
+| `stackhpc.os-manila-mount` | rocky | ❌ Divergent - issue #334 (round29881651, 0.9.1929 release). Times: cold py 4.11s vs cr 5.96s; warm py 3.59s vs cr 0.47s. |
+| `tschifftner.firefox` | ubuntu | ✅ Clean (round29881652, 0.9.1929 release). Times: cold py 47.59s vs cr 24.15s; warm py 3.00s vs cr 0.16s. |
+| `wesmarcum.docker` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29881653, 0.9.1929 release). Times: cold py 10.76s vs cr 12.44s; warm py 12.36s vs cr 5.98s. |
