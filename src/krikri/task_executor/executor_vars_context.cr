@@ -4280,6 +4280,15 @@ module Krikri
     private def decorate_conditional_value_origin(task : Task, msg : String, host : Host? = nil, operand : String? = nil, clause_key : String = "when", clause_raw : String? = nil) : String
       return msg unless msg.includes?("Conditionals must have a boolean result")
       return msg if msg.includes?(" at '") || msg.includes?(" at \"")
+      # A YAML null's strict check reports no origin: real 2.19 has no
+      # datatag on a NoneType value, so `vars: {nullvar: }` behind
+      # `when: nullvar` (or a compound `users_group is defined and
+      # users_group` with a null `users_group:`) is labeled
+      # `at '<unknown>'` - no file position, unlike every other tested
+      # type (issue #342, live-verified 2.19).
+      if msg.includes?("was derived from value of type 'NoneType'")
+        return with_origin_clause(msg, "'<unknown>'")
+      end
       # A when: LIST (and a merged import_tasks: when:, issue #325) is
       # strict-checked per CLAUSE in evaluate_when_items, so the raised
       # failure belongs to the remembered failing clause and real's
