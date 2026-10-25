@@ -15031,3 +15031,13 @@ Local probe roles, not Galaxy roles: each probed task registers its result and d
 | `netzwirt.bind` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29882290, 0.9.1949 debug). |
 | `triplepoint.autodns` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29882298, 0.9.1949 debug). |
 | `wahidsadik.apache-virtual-host` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29882293, 0.9.1949 debug). |
+| `Oefenweb.ansible` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29882296, 0.9.1949 debug). |
+| `PeterMosmans.bootstrap` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29882301, 0.9.1949 debug). |
+| `ansible-city_composer` | ubuntu | ❌ BLOCKED: (round29882298, 0.9.1949 debug). |
+| `guidugli.chrony` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29882300, 0.9.1949 debug). |
+| `kadaan.mac-dev` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29882297, 0.9.1949 debug). |
+| `moismailzai.protonmail_bridge_headless` | ubuntu | ❌ Divergent - issue #354 (round29882302, 0.9.1949 debug). |
+| `nickjj.security` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29882299, 0.9.1949 debug). |
+| `pylabs.php` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29882303, 0.9.1949 debug). |
+| `robertdebock.unowned_files` | rocky | ✅ Clean (round29882295, 0.9.1949 debug). |
+| `stackhpc.ofed` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29882294, 0.9.1949 debug). |
