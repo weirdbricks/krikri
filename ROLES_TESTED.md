@@ -14883,3 +14883,13 @@ Local probe roles, not Galaxy roles: each probed task registers its result and d
 | `tumf.newrelic` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29881802, 0.9.1935 release). Times: cold py 0.45s vs cr 0.01s; warm py 0.45s vs cr 0.01s. |
 | `wangsha.ansible_haproxy` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29881807, 0.9.1935 release). Times: cold py 0.50s vs cr 0.01s; warm py 0.51s vs cr 0.01s. |
 | `wtanaka.inkscape` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29881808, 0.9.1935 release). Times: cold py 0.53s vs cr 0.01s; warm py 0.50s vs cr 0.01s. |
+| `FloeDesignTechnologies.nginx-drupal` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29881803, 0.9.1935 release). Times: cold py 0.47s vs cr 0.01s; warm py 0.48s vs cr 0.01s. |
+| `RedHatOfficial.rhel8_cjis` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29881812, 0.9.1935 release). Times: cold py 203.62s vs cr 37.65s; warm py 276.81s vs cr 28.85s. |
+| `ScorpionResponse.gunicorn` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29881806, 0.9.1935 release). Times: cold py 0.45s vs cr 0.01s; warm py 0.44s vs cr 0.01s. |
+| `SoInteractive.elasticsearch` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29881808, 0.9.1935 release). Times: cold py 0.44s vs cr 0.01s; warm py 0.44s vs cr 0.01s. |
+| `ezamriy.nginx_org_repo` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29881811, 0.9.1935 release). Times: cold py 2.50s vs cr 0.85s; warm py 2.06s vs cr 0.41s. |
+| `monsieurbiz.webserver` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29881810, 0.9.1935 release). Times: cold py 3.70s vs cr 0.84s; warm py 2.89s vs cr 0.16s. |
+| `pulse-mind.ansible-role-apache-vhosts` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29881807, 0.9.1935 release). Times: cold py 3.07s vs cr 0.72s; warm py 2.78s vs cr 0.13s. |
+| `stancel.install-nagios-client` | ubuntu | ✅ Clean (round29881805, 0.9.1935 release). Times: cold py 66.16s vs cr 29.57s; warm py 25.19s vs cr 4.13s. |
+| `vnode.ypserver` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29881804, 0.9.1935 release). Times: cold py 3.11s vs cr 0.79s; warm py 2.52s vs cr 0.15s. |
+| `wtanaka.bundler` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29881809, 0.9.1935 release). Times: cold py 0.48s vs cr 0.01s; warm py 0.53s vs cr 0.01s. |
