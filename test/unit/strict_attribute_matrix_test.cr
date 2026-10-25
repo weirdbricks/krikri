@@ -107,6 +107,33 @@ describe "strict missing-attribute matrix (ansible-core 2.19 semantics)" do
     error.message.must_equal("object of type 'dict' has no attribute 'missing'")
   end
 
+  # Issue 353 (pinkeen.intnet, live-verified vs 2.19.11): a bracket
+  # subscript KEY is its own sub-expression - the chain inside the key
+  # evaluates first and ITS miss is what gets reported (the HostVarsVars
+  # wrapper's), not the outer chain's root and not the trailing attribute
+  # steps after the key. The bare `h` var keeps the outer `hostvars[h]`
+  # base defined the way the role's own host key is; with it undefined,
+  # ansible instead blames that bare key ("'h' is undefined", verified
+  # against the same core).
+  it "blames a miss inside a bracket-subscript key as the HostVarsVars attribute error of the key's own chain" do
+    vars = matrix_vars_hash
+    vars["hostvars"] = JSON.parse(%({"h": {}}))
+    vars["inventory_hostname"] = JSON::Any.new("h")
+    vars["h"] = JSON::Any.new("h")
+
+    [
+      "{{ hostvars[inventory_hostname]['x' ~ hostvars[inventory_hostname].nope] }}",
+      "{{ hostvars[h]['x' ~ hostvars[h].nope].y.z }}",
+    ].each do |template|
+      error = assert_raises(Krikri::UndefinedVariableError) do
+        Krikri::VarSubstitutor.new(vars: vars).substitute(template, strict: true)
+      end
+      error.message.must_equal(
+        "object of type 'HostVarsVars' has no attribute 'nope'",
+        "expected #{template} to blame the subscript key's inner miss")
+    end
+  end
+
   it "raises/tolerates the same shapes in when:/changed_when: conditions" do
     vars = matrix_vars_hash
     dict_miss = "object of type 'dict' has no attribute 'missing'"

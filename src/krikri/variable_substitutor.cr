@@ -601,9 +601,14 @@ module Krikri
       .gsub(/'(\w+) object' has no attribute/, "object of type '\\1' has no attribute")
   end
 
+  # The one grammar dict_attribute_miss_name can walk: a root identifier
+  # followed by `.attr` / bracket-free `[...]` steps - the same permit the
+  # probe hands to its operand pieces (see strict_undefined_message).
+  PLAIN_CHAIN_SHAPE = /\A[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*|\[[^\[\]]+\])*\z/
+
   def self.dict_attribute_miss_name(expr : String, vars : Hash(String, JSON::Any)) : String?
     @@miss_type = "dict"
-    return nil unless expr.matches?(/\A[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*|\[[^\[\]]+\])*\z/)
+    return nil unless expr.matches?(PLAIN_CHAIN_SHAPE)
 
     base_end = expr.index(/\.|\[/) || expr.size
     current = VariableSubstitutor::VariableLookup.new(vars).resolve(expr[0...base_end])
@@ -691,13 +696,118 @@ module Krikri
   # attribute-error wording, everything else the classic "'x' is undefined".
   def self.strict_undefined_message(expr : String, vars : Hash(String, JSON::Any)) : String
     if missing_key = dict_attribute_miss_name(expr, vars)
-      dict_attribute_miss_message(missing_key, @@miss_type)
-    else
-      # Real names the chain's ROOT variable, never the whole expression
-      # ("'missing' is undefined", not "'missing['key']' is undefined" -
-      # live-verified vs 2.19.11 for both dotted and bracket chains).
-      "'#{expr.split(/[\.\[]/, 2)[0]}' is undefined"
+      return dict_attribute_miss_message(missing_key, @@miss_type)
     end
+    # Ansible evaluates each bracket subscript's KEY as its own
+    # sub-expression first - the chain inside the key renders before the
+    # subscript completes - so for pinkeen.intnet's
+    # `hostvars[inventory_hostname]['ansible_' ~
+    # hostvars[inventory_hostname].intnet_iface]` (issue 353,
+    # live-verified vs 2.19.11) the miss on the key's own inner
+    # `hostvars[...].intnet_iface` is what surfaces: the HostVarsVars
+    # wrapper's attribute message, not "'hostvars' is undefined".
+    # dict_attribute_miss_name can't see those keys at all - its shape
+    # grammar stops at any bracket whose contents are themselves
+    # bracketed - and reaching this scan means the probe above found no
+    # plain miss of its own (the outer base chain resolves first), so the
+    # keys are the only suspects left. Probe each top-level key as
+    # operator-split operand pieces: only a whole identifier chain can
+    # name a miss, and dict_attribute_miss_name evaluates nothing beyond
+    # a plain chain, so the probe stays inert on string/int operands.
+    # Anything still unnameable keeps the generic wording.
+    top_level_bracket_contents(expr).each do |content|
+      top_level_operand_pieces(content).each do |piece|
+        piece = piece.strip
+        next unless piece.matches?(PLAIN_CHAIN_SHAPE)
+        if missing_key = dict_attribute_miss_name(piece, vars)
+          return dict_attribute_miss_message(missing_key, @@miss_type)
+        end
+      end
+    end
+    # Real names the chain's ROOT variable, never the whole expression
+    # ("'missing' is undefined", not "'missing['key']' is undefined" -
+    # live-verified vs 2.19.11 for both dotted and bracket chains).
+    "'#{expr.split(/[\.\[]/, 2)[0]}' is undefined"
+  end
+
+  # Bracket contents of every top-level `[...]` in *expr*, depth-tracked
+  # over both bracket flavors so subscripts nested inside another
+  # subscript or a call don't split the outer one in half, and
+  # quote-aware so brackets sitting inside a string literal are never
+  # counted. Malformed (unbalanced) text just contributes nothing.
+  private def self.top_level_bracket_contents(expr : String) : Array(String)
+    contents = [] of String
+    depth = 0
+    open = -1
+    quote = nil
+    i = 0
+    while i < expr.size
+      char = expr[i]
+      if quote
+        if char == '\\' && i + 1 < expr.size
+          i += 2
+          next
+        end
+        quote = nil if char == quote
+      else
+        case char
+        when '\'', '"'
+          quote = char
+        when '(', '['
+          depth += 1
+          open = i if depth == 1 && char == '['
+        when ')', ']'
+          if char == ']' && open >= 0 && depth == 1
+            contents << expr[open + 1...i]
+            open = -1
+          end
+          depth -= 1 if depth > 0
+        else
+        end
+      end
+      i += 1
+    end
+    contents
+  end
+
+  # Operand pieces of one bracket key, split at top-level
+  # concatenation/arithmetic operators (`~ + - * / %`); the same
+  # depth/quote tracking keeps pieces inside nested brackets, parens or
+  # string literals whole.
+  private def self.top_level_operand_pieces(content : String) : Array(String)
+    pieces = [] of String
+    depth = 0
+    start = 0
+    quote = nil
+    i = 0
+    while i < content.size
+      char = content[i]
+      if quote
+        if char == '\\' && i + 1 < content.size
+          i += 2
+          next
+        end
+        quote = nil if char == quote
+      else
+        case char
+        when '\'', '"'
+          quote = char
+        when '(', '['
+          depth += 1
+        when ')', ']'
+          depth -= 1 if depth > 0
+        when '~', '+', '-', '*', '/', '%'
+          if depth == 0
+            pieces << content[start...i]
+            start = i + 1
+          end
+        else
+        end
+      end
+      i += 1
+    end
+    pieces << content[start..]
+    pieces
   end
 
   # Round 812045 (pluggero.bibata_cursor): a bracket index applied to a
