@@ -11,10 +11,9 @@ module Krikri
       # reports its full dotted name in the unknown-filter error, exactly
       # as Ansible names it - `\w+` alone stopped at the first dot,
       # so the whole `name(args)` text became the "filter name" in the
-      # message. No implemented filter name contains a dot (the FQCN
-      # spellings are stripped down to bare names before this regex
-      # runs), so this only ever changes the ERROR message, never the
-      # dispatch.
+      # message. Implemented dotted names DO exist (the ansible.utils
+      # family dispatches under its FQCN spelling), and this regex
+      # matches them whole, so the dotted name reaches the dispatch.
       REGEX_FILTER_CALL = /^([\w.]+)\s*\((.*)\)$/m
 
       # Apply a single filter to a value.
@@ -31,21 +30,18 @@ module Krikri
         # (round 30). Stripped once here so every filter branch below
         # matches either spelling.
         filter_expr = filter_expr.lchop("ansible.builtin.") if filter_expr.starts_with?("ansible.builtin.")
-        # same carve-out for the ansible.utils ipaddr family's FQCN
-        # spelling (`| ansible.utils.ipaddr`) - but only for a name the
-        # family actually implements, so a genuinely-unknown
-        # `ansible.utils.foo` still errors with the full FQCN in the
-        # message, as Ansible names it.
-        if filter_expr.starts_with?("ansible.utils.")
-          rest = filter_expr.lchop("ansible.utils.")
-          bare = rest.match(/^(\w+)/).try(&.[1])
-          filter_expr = rest if bare && IpAddrCore::FAMILY_FILTERS.includes?(bare)
-        end
+        # The ansible.utils ipaddr family's FQCN spelling (`| ansible.utils.
+        # ipaddr`) dispatches under the dotted name itself (see the family
+        # branch below); the BARE spelling (`| ipaddr`) must never resolve:
+        # it is not a core filter and real ansible-core fails it ("Syntax
+        # error in template: No filter named 'ipaddr'.") even with the
+        # collection installed - bersace.dockerdns round, issue #335, the
+        # same treatment ipwrap gets (#134). Deliberately NO "strip to the
+        # bare name, like ansible.builtin." carve-out here.
         # Same treatment for community.general's collection-qualified
         # spellings (`| community.general.lists_mergeby`) - a community.
         # general filter is commonly reachable both ways, so gate the
-        # strip on a bare name this dispatch actually implements (the
-        # same carve-out the ansible.utils family gets) and let a
+        # strip on a bare name this dispatch actually implements and let a
         # genuinely-unknown `community.general.foo` still error with the
         # full FQCN in the message, as Ansible names it.
         if filter_expr.starts_with?("community.general.")
@@ -1543,19 +1539,28 @@ module Krikri
           # "skipped") that would recur in any role using this common
           # required-facts guard pattern.
           JSON::Any.new(FilterCore.difference(as_array(value), as_array(resolve_expression(filter_args))))
-          # ipwrap is not in this when-list: it is an ansible.utils
-          # collection filter, not core, so it falls through to krikri's
-          # unknown-filter failure like ansible-core does (issue #134).
-        when "ipaddr", "ipv4", "ipv6", "ipsubnet", "ipmath",
-             "next_nth_usable", "previous_nth_usable",
-             "network_in_network", "network_in_usable", "ip4_hex"
+          # ipwrap is not in this when-list, and neither is any BARE
+          # ansible.utils name: both are ansible.utils collection filters,
+          # not core, so they fall through to krikri's unknown-filter
+          # failure like ansible-core does (issues #134 and #335 -
+          # bersace.dockerdns rounds run bare `ipaddr`/`ipaddr(1)`, the
+          # exact shapes real fails at template compile or finalization).
+          # Only the FQCN spellings dispatch here: real resolves
+          # `| ansible.utils.ipaddr` against the installed collection
+          # (live-verified), including integer queries (`ipaddr(1)`).
+        when "ansible.utils.ipaddr", "ansible.utils.ipv4", "ansible.utils.ipv6",
+             "ansible.utils.ipsubnet", "ansible.utils.ipmath",
+             "ansible.utils.next_nth_usable", "ansible.utils.previous_nth_usable",
+             "ansible.utils.network_in_network", "ansible.utils.network_in_usable",
+             "ansible.utils.ip4_hex"
           # ansible.utils ipaddr family - shared core in ipaddr_core.cr,
           # mirrored against ansible-core 2.19.4 + ansible.utils +
           # netaddr 1.3.0 (every query probed live). Also registered on
-          # the Crinja side (jinja_filters.cr) so `.j2` template files
-          # and `{% %}` blocks resolve the same names.
+          # the krikri-jinja side (krikri_jinja_filters.cr) under the
+          # same FQCN spelling so .j2 template files and {% %} blocks
+          # resolve the same names.
           args = split_top_level_args(filter_args)
-          case filter_name
+          case filter_name.lchop("ansible.utils.")
           when "ipaddr"
             IpAddrCore.ipaddr(value, resolved_query_arg(args[0]?))
           when "ipv4"
