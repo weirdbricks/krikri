@@ -1125,11 +1125,23 @@ module Krikri
           # loop_lenient_vars comment - the per-iteration re-render (with
           # `item` bound) or the zero-iteration skip owns the real verdict.
           vars_context.delete(key)
-        rescue
-          # Same raise-to-absent convention as before: a vars: expression
-          # that legitimately raises is dropped rather than crashing the
-          # whole task when when: would have skipped it.
-          vars_context.delete(key)
+        rescue e
+          if e.message.try(&.starts_with?("The lookup plugin '"))
+            # ansible-core keeps even a failing lookup's vars: value LAZY
+            # (iss #354): the include itself succeeds, and the failure only
+            # surfaces when some task actually consumes the value, as
+            # "Error while resolving value for 'pname': The lookup plugin
+            # 'file' failed: ..." on that use site. Deleting the key here
+            # instead erased the real failure: the consuming task then saw
+            # a plain undefined name ("'cur_version' is undefined") and
+            # reported a bug that was never the one that happened.
+            vars_context[key] = raw
+          else
+            # Same raise-to-absent convention as before: a vars: expression
+            # that legitimately raises is dropped rather than crashing the
+            # whole task when when: would have skipped it.
+            vars_context.delete(key)
+          end
         end
         if KrikriJinja.miss_count > signal_before && strict_var_value_miss(raw, vars_context)
           vars_context[key] = raw
