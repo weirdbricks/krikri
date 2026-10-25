@@ -412,12 +412,16 @@ module Krikri
       # - probe impossible (no fd, resolution failing now): falls back
       #   to the wording the old code printed for every TCP failure.
       #
-      # For a Unix socket the connect-phase errno is decided by the
-      # socket directory's existence, as before (ENOENT for a missing
-      # directory, ECONNREFUSED for a present one with no listener).
+      # For a Unix socket the connect-phase errno is decided the way
+      # connect(2) itself decides: on the socket FILE
+      # <dir>/.s.PGSQL.<port>, never the directory - it is ENOENT while
+      # that file is absent even when the directory exists (a
+      # package-installed cluster that is stopped keeps its socket
+      # directory), and ECONNREFUSED only once the file exists with no
+      # listener on it (see #unix_connect_strerror).
       private def self.io_error_detail(cause : IO::Error?, target : {host: String?, port: String, unix_socket: String?}, timeout_set : Bool = false) : String
         if unix_socket = target[:unix_socket]
-          "#{target_prefix(target)} failed: #{unix_connect_strerror(unix_socket)}\n\t#{hint(target)}\n"
+          "#{target_prefix(target)} failed: #{unix_connect_strerror(unix_socket, target[:port])}\n\t#{hint(target)}\n"
         else
           probe_wording(probe_tcp_connect_errno(target[:host] || "", target[:port]), target, timeout_set)
         end
@@ -508,11 +512,15 @@ module Krikri
         result
       end
 
-      # The Unix-socket variant of the old connect() failure text: a
-      # missing socket directory is ENOENT; a present one with no
-      # listening socket is ECONNREFUSED.
-      private def self.unix_connect_strerror(unix_socket : String) : String
-        if Dir.exists?(unix_socket)
+      # The Unix-socket variant of the old connect() failure text,
+      # keyed on what real libpq actually reports (issue #347):
+      # connect(2) resolves the socket FILE <dir>/.s.PGSQL.<port>, so
+      # an absent socket file is ENOENT - the socket DIRECTORY
+      # (/var/run/postgresql on Debian/Ubuntu) exists even when the
+      # cluster is stopped - and ECONNREFUSED is a socket file present
+      # with nothing listening on it.
+      private def self.unix_connect_strerror(unix_socket : String, port : String) : String
+        if File.exists?(File.join(unix_socket, ".s.PGSQL.#{port}"))
           "Connection refused"
         else
           "No such file or directory"
