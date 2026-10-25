@@ -14853,3 +14853,13 @@ Local probe roles, not Galaxy roles: each probed task registers its result and d
 | `stackhpc.os-manila-mount` | rocky | ❌ Divergent - issue #334 (round29881651, 0.9.1929 release). Times: cold py 4.11s vs cr 5.96s; warm py 3.59s vs cr 0.47s. |
 | `tschifftner.firefox` | ubuntu | ✅ Clean (round29881652, 0.9.1929 release). Times: cold py 47.59s vs cr 24.15s; warm py 3.00s vs cr 0.16s. |
 | `wesmarcum.docker` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29881653, 0.9.1929 release). Times: cold py 10.76s vs cr 12.44s; warm py 12.36s vs cr 5.98s. |
+| `bersace.dockerdns` | rocky | ❌ Divergent - issue #335 (round29881744, 0.9.1932 release). Times: cold py 11.49s vs cr 12.21s; warm py 9.04s vs cr 1.66s. |
+| `f500.php_fpm` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29881738, 0.9.1932 release). Times: cold py 3.00s vs cr 0.81s; warm py 3.17s vs cr 0.17s. |
+| `fiaasco.postfix` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29881736, 0.9.1932 release). Times: cold py 4.08s vs cr 3.53s; warm py 5.63s vs cr 2.35s. |
+| `infrastructr.vlan` | ubuntu | ✅ Clean (round29881743, 0.9.1932 release). Times: cold py 73.08s vs cr 20.10s; warm py 40.49s vs cr 0.80s. |
+| `jesperberth.az_resourcegroup` | ubuntu | ⚠ only a community module krikri does not track differs (round29881735, 0.9.1932 release). Times: cold py 2.94s vs cr 0.89s; warm py 2.06s vs cr 0.14s. |
+| `jlund.ruby-common` | rocky | ❌ Divergent - issue #336 (round29881742, 0.9.1932 release). Times: cold py 2.44s vs cr 1.00s; warm py 1.83s vs cr 0.17s. |
+| `mikroways.restic` | ubuntu | ✅ Clean (round29881739, 0.9.1932 release). Times: cold py 11.76s vs cr 5.21s; warm py 4.83s vs cr 0.18s. |
+| `robertdebock.tlp` | ubuntu | ✅ Clean (round29881741, 0.9.1932 release). Times: cold py 44.83s vs cr 32.99s; warm py 6.85s vs cr 0.21s. |
+| `sbaerlocher.nginx` | ubuntu | ❌ Divergent - issue #337 (round29881737, 0.9.1932 release). Times: cold py 29.16s vs cr 9.95s; warm py 11.56s vs cr 0.53s. |
+| `wangsha.ansible_role_volumes` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29881740, 0.9.1932 release). Times: cold py 0.46s vs cr 0.01s; warm py 0.45s vs cr 0.01s. |
