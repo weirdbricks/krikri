@@ -18,8 +18,10 @@ module Krikri
   #   with a version specifier (`requests==2.31.0`, `flask>=3.0`) -
   #   passed straight through to pip, which already understands this
   #   syntax natively
-  # - version: install exactly this version (equivalent to appending
-  #   `==version` to name: - Ansible's own module does the same)
+  # - version: install exactly this version - appended to name with
+  #   `==` when the version starts with a digit, or with NO separator
+  #   when it starts with a comparison operator (`>=22` -> `pip>=22`),
+  #   matching Ansible's own pip module
   # - state: present (default) | absent | latest
   # - virtualenv: path to a venv - created via `python3 -m venv` if it
   #   doesn't already exist, and used instead of the system pip
@@ -466,10 +468,23 @@ module Krikri
     # `target_spec` built the literal spec `elasticsearch-curator==`
     # (trailing `==` with no version), which pip correctly rejects as
     # unsatisfiable - Ansible's pip install succeeds (unpinned).
+    # Ansible's pip.py (Package.__init__) does version_string.lstrip()
+    # and then joins name and version with `==` only when the stripped
+    # version starts with a digit - a version starting with a comparison
+    # operator keeps the operator as the separator itself (`pip>=22`,
+    # `pip~=1.2`). Building the unconditional `pip==>=22` made pip reject
+    # the requirement outright ("Invalid requirement") where
+    # ansible-playbook installs fine (issue #357). A version that is
+    # only whitespace strips to nothing, so it installs the package
+    # unpinned - Ansible would crash here; any unpinned outcome matches
+    # the falsy-empty handling above.
     private def target_spec(name : String?, version : String?) : String?
       return nil unless name
       return name if version.nil? || version.empty?
-      "#{name}==#{version}"
+      stripped = version.lstrip
+      return name if stripped.empty?
+      separator = stripped[0].in?('<', '>', '=', '!', '~') ? "" : "=="
+      "#{name}#{separator}#{stripped}"
     end
 
     # Resolves the venv (creating it if needed) or the system pip
