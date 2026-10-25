@@ -4515,7 +4515,23 @@ module Krikri
         name_col = task.source_col > 0 ? task.source_col : (lines[name_idx].size - lines[name_idx].lstrip.size + 1)
       end
 
-      raw = clause_raw || task.when_condition.to_s
+      # A when: LIST fails strict per CLAUSE, and real pins the chain's
+      # "caused by" Origin on that failing clause's ITEM line: the
+      # " and "-joined when_condition string matches no item in the
+      # folded-list scan below, locate returned nil, and the whole chain
+      # never printed (issue #330, constrict0r.desktop) - only the
+      # failing clause text can match a list item. Same failing-clause
+      # labeling decorate_conditional_value_origin already uses (#325);
+      # the until: caller's clause_raw and every other shape stay as they
+      # were.
+      raw = if clause_raw
+              clause_raw
+            elsif clause_key == "when" && task.when_condition_list &&
+                  (failing = @last_failed_when_clause)
+              failing
+            else
+              task.when_condition.to_s
+            end
       # A merged import_tasks: when:'s failing clause can be one of the
       # IMPORT line's own items - ansible evaluates the import's clauses
       # first (they prefix the merged list), so its chain's "caused by"

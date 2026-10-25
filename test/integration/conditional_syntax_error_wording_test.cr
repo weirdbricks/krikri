@@ -63,6 +63,32 @@ describe "unknown filter/test in conditionals: Syntax error in expression" do
     output.wont_include("Unhandled exception")
   end
 
+  # A when: LIST fails strict per CLAUSE, and real pins the chain's
+  # "caused by" Origin on the failing item's LINE: the " and "-joined
+  # string matches no item in the folded-list scan, so the whole chain
+  # never printed (issue #330, constrict0r.desktop).
+  it "pins a when: list's unknown-test chain at the failing item line" do
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: Two checks
+            debug: msg="x"
+            when:
+              - x is not variable_empty
+              - x is variable_boolean_true
+      YAML
+    status.exit_code.must_equal(2)
+    output.must_include("[ERROR]: Task failed: Syntax error in expression: No test named 'variable_empty'.")
+    output.must_include("fatal: [localhost]: FAILED! => {\"msg\": \"Task failed: Syntax error in expression: No test named 'variable_empty'.\"}")
+    output.must_include("<<< caused by >>>")
+    # The cause stanza's Origin sits at the list ITEM line (playbook
+    # lines 7-8, column of the clause text after "- "), not the when:
+    # key: excerpt "7 when: / 8 - x is..." + caret under the item text.
+    output.must_include("7 " + " " * 6 + "when:\n8 " + " " * 8 + "- x is not variable_empty\n" + " " * 12 + "^ column 11")
+  end
+
   it "fails an assert: with an unknown filter instead of crashing" do
     status, output = run_playbook(<<-YAML)
       - hosts: localhost
