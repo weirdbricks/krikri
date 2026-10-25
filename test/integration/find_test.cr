@@ -87,6 +87,43 @@ describe "find plugin" do
     paths_of(result).must_include(File.join(tmp_dir, "a.txt"))
   end
 
+  it "accepts the singular pattern= alias for patterns=" do
+    # Ansible's find declares `pattern` as an alias of `patterns` in
+    # its argument_spec (like paths' `path`/`name` above); a hardcoded
+    # single-pattern search almost always uses the singular spelling.
+    # Found via robertdebock.forensics (`pattern: ".authorized_keys"`),
+    # which this plugin silently ignored - matching every file - while
+    # real Ansible matched nothing.
+    dir = PluginSpecHelper.tmp_path("find-pattern-alias")
+    Dir.mkdir_p(dir)
+    File.write(File.join(dir, "a.cfg"), "a")
+    File.write(File.join(dir, ".history"), "h")
+    result = PluginSpecHelper.run("find", {"paths" => dir, "pattern" => ".history", "hidden" => "true"})
+
+    paths_of(result).must_equal([File.join(dir, ".history")])
+  end
+
+  it "pattern= restricts matching like patterns= (zero files when nothing matches)" do
+    dir = PluginSpecHelper.tmp_path("find-pattern-alias-empty")
+    Dir.mkdir_p(dir)
+    File.write(File.join(dir, "a.cfg"), "a")
+    File.write(File.join(dir, ".history"), "h")
+    result = PluginSpecHelper.run("find", {"paths" => dir, "pattern" => ".authorized_keys"})
+
+    result["matched"].as_i64.must_equal(0)
+    paths_of(result).must_equal([] of String)
+  end
+
+  it "accepts the singular exclude= alias for excludes=" do
+    dir = PluginSpecHelper.tmp_path("find-exclude-alias")
+    Dir.mkdir_p(dir)
+    File.write(File.join(dir, "a.cfg"), "a")
+    File.write(File.join(dir, ".history"), "h")
+    result = PluginSpecHelper.run("find", {"paths" => dir, "pattern" => "*", "exclude" => "a.cfg", "hidden" => "true"})
+
+    paths_of(result).must_equal([File.join(dir, ".history")])
+  end
+
   it "matches directories when file_type: directory" do
     result = PluginSpecHelper.run("find", {"paths" => tmp_dir, "file_type" => "directory", "recurse" => "true"})
 

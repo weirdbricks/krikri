@@ -141,9 +141,15 @@ module Krikri
       end
 
       paths = parse_list_param(paths_param)
+      # Same argument_spec alias family as paths' `path`/`name` above:
+      # Ansible's find declares the singular `pattern` for `patterns`
+      # and `exclude` for `excludes` - a hardcoded single-pattern task
+      # (`pattern: ".authorized_keys"`, robertdebock.forensics) was
+      # silently ignored here, matching every file in the walk instead
+      # of just the named one.
       options = Options.new(
-        patterns: parse_list_param(@params["patterns"]? || ""),
-        excludes: parse_list_param(@params["excludes"]? || ""),
+        patterns: parse_list_param(@params["patterns"]? || @params["pattern"]? || ""),
+        excludes: parse_list_param(@params["excludes"]? || @params["exclude"]? || ""),
         use_regex: true?(@params["use_regex"]?, default: false),
         file_type: @params["file_type"]? || "file",
         recurse: true?(@params["recurse"]?, default: false),

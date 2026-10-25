@@ -1564,8 +1564,30 @@ module Krikri
         else
           # Write config to stdin (password line first when sudo -S will
           # read it - see #local_plugin_stdin)
-          process.input.print(stdin_data)
-          process.input.close
+          #
+          # sudo can be gone before the write lands: a local become with no
+          # password available ("sudo: a password is required") prints its
+          # error and exits immediately, closing its stdin, and whether the
+          # write has landed or hits EPIPE at that moment is pure
+          # scheduling. Ansible books the outcome as the become failure
+          # ("Task failed: Premature end of stream waiting for become
+          # success." with sudo's stderr appended), never as a write error,
+          # so the exception is swallowed here and #wait plus the parse
+          # below produce that via #become_premature_end_result; a non-sudo
+          # plugin that died before reading its config flows into the same
+          # parse and its pre-existing "Failed to parse plugin output"
+          # result. The close still runs after a failed write (leaving the
+          # fd open would leak it) and its own error is ignored: the read
+          # end is already gone, there is nothing left to signal.
+          begin
+            process.input.print(stdin_data)
+          rescue IO::Error
+          ensure
+            begin
+              process.input.close
+            rescue
+            end
+          end
 
           process.wait
           output = stdout.to_s
