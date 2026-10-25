@@ -150,6 +150,11 @@ krikri aims for byte-for-byte identical stdout/stderr/exit code to `ansible-play
 - Random per real run: temp file/dir names, string-set order (`union`/`intersect`/... on lists of
   strings), and the order of several invalid options in one error message. Integer set order *is*
   reproduced.
+- Loops over `difference` / `symmetric_difference` of lists of strings (e.g.
+  `loop: "{{ a | difference(b) }}"`, seen in l3d.sshd tasks/keys.yml): ansible-core builds these
+  with `list(set(a) - set(b))`, so the item order comes from Python set iteration under
+  per-process string-hash randomization and differs between real runs; krikri emits a fixed order,
+  which cannot match every run. Integer lists are reproduced (src/krikri/py_set.cr). Issue #355.
 - `community.general.filesystem`'s `value of fstype must be one of: ...` is built by real from a
   Python set of strings, so **Python string-hash randomization** reorders it per process -
   unmatchable by design; the generator masks it (`FSTYPE-SET-ORDER` in masks.cr).
