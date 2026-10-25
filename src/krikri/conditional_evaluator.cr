@@ -2180,9 +2180,10 @@ module Krikri
     #
     # The name is normalized through the SAME FQCN-prefix rules
     # FilterEngine#apply dispatches under (`ansible.builtin.` always
-    # stripped; `ansible.utils.`/`community.general.` stripped only when
-    # the bare name beneath is one that engine implements) so the
-    # pre-pass and the dispatch can never disagree about a collection-
+    # stripped; `community.general.` stripped only when the bare name
+    # beneath is one that engine implements; the ansible.utils family is
+    # checked under its FQCN spelling, no strip) so the pre-pass and the
+    # dispatch can never disagree about a collection-
     # qualified spelling the dispatch accepts - previously the scanner
     # read only up to the first dot, so an implemented
     # `community.general.lists_mergeby` in a `when:` hard-failed as the
@@ -2225,20 +2226,20 @@ module Krikri
       normalize_filter_fqcn(String.new(bytes[i, name_end - i]), j)
     end
 
-    # Mirrors FilterEngine#apply's own FQCN-prefix strip rules for the
-    # pre-pass: returns the bare name when the dotted spelling is one the
-    # dispatch accepts, the full dotted name otherwise (so an unknown
-    # collection filter errors under its complete FQCN, as Ansible
+    # Mirrors FilterEngine#apply's own FQCN-prefix rules for the pre-pass:
+    # returns the bare name when the dotted spelling is one the dispatch
+    # accepts under its bare name, the full dotted name otherwise (so an
+    # unknown collection filter errors under its complete FQCN, as Ansible
     # names it). *after* is the index just past the name, unchanged for a
-    # bare name.
+    # bare name. The ansible.utils ipaddr family has NO entry here since
+    # issue #335: the dispatch accepts only its FQCN spellings (bare
+    # `ipaddr` etc. are not core filters), so the FQCN is checked whole
+    # against KNOWN_FILTER_NAMES and the bare spelling stays unknown.
     private def self.normalize_filter_fqcn(name : String, after : Int32) : {String, Int32}?
       return {name, after} unless name.includes?(".")
 
       if bare = name.lchop?("ansible.builtin.")
         return {bare, after}
-      end
-      if bare = name.lchop?("ansible.utils.")
-        return {bare, after} if IpAddrCore::FAMILY_FILTERS.includes?(bare)
       end
       if bare = name.lchop?("community.general.")
         return {bare, after} if VariableSubstitutor::FilterEngine::KNOWN_FILTER_NAMES.includes?(bare)

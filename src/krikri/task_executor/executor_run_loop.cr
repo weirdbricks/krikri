@@ -926,7 +926,19 @@ module Krikri
       # whole-template result.
       maybe_conditional_delimiters_deprecation(task, when_condition, "when", vars_context) if task
       sub = substitutor || VarSubstitutor.new(vars: vars_context, host_name: host.name)
-      substituted_condition = sub.substitute(when_condition)
+      begin
+        substituted_condition = sub.substitute(when_condition)
+      rescue ex : VariableSubstitutor::FilterEngine::UnknownFilterError | VariableSubstitutor::UnknownTestError
+        # The `{{ }}`-wrapped `when:` form compiles its filter/test names
+        # during the RENDER (substitute), before the unbraced form's own
+        # compile gate below ever runs. Real fails the task there with
+        # the rendered-template wording, "Syntax error in template: No
+        # filter named 'x'." (live-verified vs 2.19.11, issue #335) -
+        # NOT the "Syntax error in expression" wording the unbraced
+        # form's gate produces. Unrescued, the raise escaped substitute
+        # itself and crashed the whole run instead of failing one task.
+        raise WhenEvaluationError.new("Task failed: Syntax error in template: #{ex.message}")
+      end
 
       begin
         # strict: true - a task `when:` must end in a real boolean on

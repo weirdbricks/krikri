@@ -39,6 +39,17 @@ module Krikri
     # #not_iterable_ansible_wording).
     @render_error_not_iterable : String? = nil
 
+    # Set alongside @render_error when the render died with the engine's
+    # unknown-FILTER error ("unknown filter \"x\""): real 2.19.11 fails
+    # an unknown filter name inside a template FILE at template COMPILE
+    # time, as an uncaught TemplateAssertionError - "Task failed: Syntax
+    # error in template: No filter named 'x'." with the [ERROR] block's
+    # cause pointed at the template file itself (live-verified vs
+    # 2.19.11 on the bersace.dockerdns shape, issue #335) - NOT the
+    # generic "Failed to render template" wording the other render
+    # failures take. Holds the full cause wording.
+    @render_error_unknown_filter : String? = nil
+
     # Set when the template's own leading `#jinja2:` directive line
     # failed Ansible's literal_eval/type validation (see
     # #extract_jinja2_directive): the crash's Origin is the TEMPLATE
@@ -196,6 +207,15 @@ module Krikri
           # with the crash shape, whose inner Origin is the variable's
           # definition (live-verified, issue #322).
           return ActionResult.crash_failure(msg, src, undef_chain: true)
+        end
+        if wording = @render_error_unknown_filter
+          # Same uncaught-compile-error shape for an unknown FILTER name
+          # inside the template file itself: "Task failed: Syntax error
+          # in template: No filter named 'x'.", the cause's Origin the
+          # template file (live-verified vs 2.19.11, issue #335). No
+          # undef chain: the failing name is in the TEMPLATE text, not a
+          # variable value.
+          return ActionResult.crash_failure(wording, src)
         end
         detail = @render_error ? ": #{@render_error}" : ""
         return ActionResult.failure("Failed to render template#{detail}")
@@ -372,6 +392,12 @@ module Krikri
         filter_name = KrikriJinjaFilters.unknown_filter_name(ex)
         if filter_name && KrikriJinjaFilters.ensure_python_filter(filter_name, template_vars, engine)
           render_once(engine, content, template_vars)
+        elsif filter_name
+          # Still unknown after the role-local plugin chance: real fails
+          # at compile time with the uncaught TemplateAssertionError
+          # shape (see @render_error_unknown_filter).
+          @render_error_unknown_filter = "Syntax error in template: No filter named '#{filter_name}'."
+          raise ex
         elsif test_name = KrikriJinjaFilters.unknown_test_name(ex)
           if KrikriJinjaFilters.ensure_python_test(test_name, template_vars, engine)
             render_once(engine, content, template_vars)

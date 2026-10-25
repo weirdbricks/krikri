@@ -221,10 +221,27 @@ describe Krikri::IpAddrCore do
 
   # ---- FilterEngine integration (the `{{ }}` evaluator path) ----
 
-  it "resolves through FilterEngine with the ansible.utils FQCN spelling" do
+  it "resolves through FilterEngine under the ansible.utils FQCN only" do
     engine = Krikri::VariableSubstitutor::FilterEngine.new
-    engine.apply(j("192.168.0.1/24"), "ipaddr('network')").must_equal(j("192.168.0.0"))
     engine.apply(j("192.168.0.1/24"), "ansible.utils.ipaddr('network')").must_equal(j("192.168.0.0"))
+    # The BARE spelling is not a core filter: real ansible-core fails it
+    # ("Syntax error in template: No filter named 'ipaddr'.") even with
+    # ansible.utils installed (bersace.dockerdns, issue #335) - same
+    # treatment ipwrap gets (#134).
+    assert_raises_message(
+      Krikri::VariableSubstitutor::FilterEngine::UnknownFilterError, "No filter named 'ipaddr'."
+    ) do
+      engine.apply(j("192.168.0.1/24"), "ipaddr('network')")
+    end
+  end
+
+  it "accepts an integer query under the FQCN spelling" do
+    engine = Krikri::VariableSubstitutor::FilterEngine.new
+    # Real 2.19.11: '192.168.7.0/24' | ansible.utils.ipaddr(1) -> the
+    # first host as '192.168.7.1/24', whose 'address' query is the
+    # 192.168.7.1 the dddns role chains it into.
+    engine.apply(j("192.168.7.0/24"), "ansible.utils.ipaddr(1)").must_equal(j("192.168.7.1/24"))
+    engine.apply(j("192.168.7.1/24"), "ansible.utils.ipaddr('address')").must_equal(j("192.168.7.1"))
   end
 
   it "still errors with the full FQCN for an unknown ansible.utils filter" do
@@ -236,9 +253,9 @@ describe Krikri::IpAddrCore do
     end
   end
 
-  it "list inputs flatten through the FilterEngine path" do
+  it "list inputs flatten through the FilterEngine path (FQCN spelling)" do
     engine = Krikri::VariableSubstitutor::FilterEngine.new
     list = JSON.parse(%q(["2001:db8::1", "192.168.0.1", "nope"]))
-    engine.apply(list, "ipaddr").as_a.map(&.raw).must_equal(["2001:db8::1", "192.168.0.1"])
+    engine.apply(list, "ansible.utils.ipaddr").as_a.map(&.raw).must_equal(["2001:db8::1", "192.168.0.1"])
   end
 end

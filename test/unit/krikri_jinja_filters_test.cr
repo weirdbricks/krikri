@@ -88,10 +88,17 @@ describe Krikri::KrikriJinjaFilters do
     render("{{ 'a,b' | split(',') | join('|') }}").must_equal("a|b")
   end
 
-  it "registers the ipaddr family, jmespath, and conversion filters" do
-    render("{{ '192.168.1.0/24' | ipaddr('net') }}").must_equal("192.168.1.0/24")
-    render("{{ '192.168.1.10' | ipaddr('address') }}").must_equal("192.168.1.10")
-    render("{{ '10.0.0.0/8' | ipmath(1) }}").must_equal("10.0.0.1")
+  it "registers the ipaddr family (FQCN only), jmespath, and conversion filters" do
+    # The family is ansible.utils collection filters: only the FQCN
+    # spelling resolves, bare names fail like real ansible-core
+    # ("No filter named 'ipaddr'." - issue #335, bersace.dockerdns).
+    render("{{ '192.168.1.0/24' | ansible.utils.ipaddr('net') }}").must_equal("192.168.1.0/24")
+    render("{{ '192.168.1.10' | ansible.utils.ipaddr('address') }}").must_equal("192.168.1.10")
+    render("{{ '10.0.0.0/8' | ansible.utils.ipmath(1) }}").must_equal("10.0.0.1")
+    render("{{ '192.168.7.0/24' | ansible.utils.ipaddr(1) }}").must_equal("192.168.7.1/24")
+    assert_raises(KrikriJinja::TemplateError) do
+      render("{{ '192.168.1.0/24' | ipaddr('net') }}")
+    end
     render("{{ data | json_query('a.b') }}", {"data" => JSON.parse(%({"a": {"b": 7}}))}).must_equal("7")
     render("{{ '{\"a\": 1}' | from_json | tojson }}").must_equal(%({"a": 1}))
     render("{{ 'a: 1' | from_yaml | tojson }}").must_equal(%({"a": 1}))

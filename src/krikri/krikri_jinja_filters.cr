@@ -657,6 +657,29 @@ module Krikri
       lines
     end
 
+    # The ipaddr family's query/count argument in the core's text form:
+    # real netaddr accepts an int query (`| ansible.utils.ipaddr(1)` =
+    # "the first usable address of the network", live-verified), so the
+    # integer must reach IpAddrCore as "1" text - `&.as_s` on it was the
+    # "Cast from Int64 to String failed" crash of the bersace.dockerdns
+    # round (issue #335).
+    private def self.ipaddr_query_text(arg : JSON::Any?) : String
+      case raw = arg.try(&.raw)
+      when String  then raw
+      when Int64   then raw.to_s
+      when Float64 then raw.to_s
+      else              ""
+      end
+    end
+
+    private def self.ipaddr_query_text?(arg : JSON::Any?) : String?
+      case raw = arg.try(&.raw)
+      when String  then raw
+      when Int64   then raw.to_s
+      when Float64 then raw.to_s
+      end
+    end
+
     def self.register : Nil
       KrikriJinja.default_engine.finalize = ->(value : KrikriJinja::AnyValue) { ansible_finalize(value) }
       # ansible-core exposes `omit` as a Jinja GLOBAL in every templating
@@ -1294,53 +1317,62 @@ module Krikri
         end
       end
 
-      KrikriJinja.register_default_json_filter("ipaddr") do |value, args, _kwargs|
-        IpAddrCore.ipaddr(value, args[0]?.try(&.as_s) || "")
+      # The ansible.utils ipaddr family is registered under its FQCN
+      # spelling only. The engine resolves a dotted filter name both by
+      # exact key and (2+ dots) by its trailing segment, but the BARE
+      # spelling must NOT resolve: bare `ipaddr` is not a core filter,
+      # and real ansible-core fails it ("Syntax error in template: No
+      # filter named 'ipaddr'.") even with ansible.utils installed -
+      # bersace.dockerdns round, issue #335. Same treatment ipwrap gets
+      # (issue #134). The engine's own unknown-filter error flows into
+      # JinjaRenderer/template_action_plugin's "No filter named" wording,
+      # so no krikri-side gate is needed here.
+      KrikriJinja.register_default_json_filter("ansible.utils.ipaddr") do |value, args, _kwargs|
+        IpAddrCore.ipaddr(value, ipaddr_query_text(args[0]?))
       end
 
-      # No ipwrap here: it is an ansible.utils collection filter, not a
-      # core one, so krikri fails it like ansible-core does ("No filter
-      # named 'ipwrap'") - issue #134.
-      KrikriJinja.register_default_json_filter("ipv4") do |value, args, _kwargs|
-        IpAddrCore.ipaddr(value, args[0]?.try(&.as_s) || "", 4, "ipv4")
+      # No bare spellings, no ipwrap: ansible.utils collection filters,
+      # rejected as unknown like ansible-core does - issue #134/#335.
+      KrikriJinja.register_default_json_filter("ansible.utils.ipv4") do |value, args, _kwargs|
+        IpAddrCore.ipaddr(value, ipaddr_query_text(args[0]?), 4, "ipv4")
       end
 
-      KrikriJinja.register_default_json_filter("ipv6") do |value, args, _kwargs|
-        IpAddrCore.ipaddr(value, args[0]?.try(&.as_s) || "", 6, "ipv6")
+      KrikriJinja.register_default_json_filter("ansible.utils.ipv6") do |value, args, _kwargs|
+        IpAddrCore.ipaddr(value, ipaddr_query_text(args[0]?), 6, "ipv6")
       end
 
-      KrikriJinja.register_default_json_filter("ipsubnet") do |value, args, _kwargs|
-        IpAddrCore.ipsubnet(value, args[0]?.try(&.as_s) || "", args[1]?.try(&.as_s))
+      KrikriJinja.register_default_json_filter("ansible.utils.ipsubnet") do |value, args, _kwargs|
+        IpAddrCore.ipsubnet(value, ipaddr_query_text(args[0]?), ipaddr_query_text?(args[1]?))
       end
 
-      KrikriJinja.register_default_json_filter("ipmath") do |value, args, _kwargs|
+      KrikriJinja.register_default_json_filter("ansible.utils.ipmath") do |value, args, _kwargs|
         amount = args[0]?.try(&.as_i?)
         raise KrikriJinja::TemplateError.new("You must pass an integer for arithmetic", 0) unless amount
         IpAddrCore.ipmath(value, amount)
       end
 
-      KrikriJinja.register_default_json_filter("next_nth_usable") do |value, args, _kwargs|
+      KrikriJinja.register_default_json_filter("ansible.utils.next_nth_usable") do |value, args, _kwargs|
         offset = args[0]?.try(&.as_i?)
         raise KrikriJinja::TemplateError.new("Must pass in an integer", 0) unless offset
         IpAddrCore.next_nth_usable(value, offset)
       end
 
-      KrikriJinja.register_default_json_filter("previous_nth_usable") do |value, args, _kwargs|
+      KrikriJinja.register_default_json_filter("ansible.utils.previous_nth_usable") do |value, args, _kwargs|
         offset = args[0]?.try(&.as_i?)
         raise KrikriJinja::TemplateError.new("Must pass in an integer", 0) unless offset
         IpAddrCore.previous_nth_usable(value, offset)
       end
 
-      KrikriJinja.register_default_json_filter("network_in_network") do |value, args, _kwargs|
+      KrikriJinja.register_default_json_filter("ansible.utils.network_in_network") do |value, args, _kwargs|
         IpAddrCore.network_in_network(value, args[0]? || JSON::Any.new(nil))
       end
 
-      KrikriJinja.register_default_json_filter("network_in_usable") do |value, args, _kwargs|
+      KrikriJinja.register_default_json_filter("ansible.utils.network_in_usable") do |value, args, _kwargs|
         IpAddrCore.network_in_usable(value, args[0]? || JSON::Any.new(nil))
       end
 
-      KrikriJinja.register_default_json_filter("ip4_hex") do |value, args, _kwargs|
-        IpAddrCore.ip4_hex(value, args[0]?.try(&.as_s) || "")
+      KrikriJinja.register_default_json_filter("ansible.utils.ip4_hex") do |value, args, _kwargs|
+        IpAddrCore.ip4_hex(value, ipaddr_query_text(args[0]?))
       end
 
       KrikriJinja.register_default_json_filter("json_query") do |value, args, _kwargs|
