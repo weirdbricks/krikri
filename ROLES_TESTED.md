@@ -14873,3 +14873,13 @@ Local probe roles, not Galaxy roles: each probed task registers its result and d
 | `philnewm.firefox` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29881794, 0.9.1935 release). Times: cold py 5.54s vs cr 8.52s; warm py 4.44s vs cr 0.52s. |
 | `stylers.ansible_gitlab_runner` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29881796, 0.9.1935 release). Times: cold py 266.13s vs cr 104.77s; warm py 40.16s vs cr 1.97s. |
 | `waco_org.waco_master` | ubuntu | ✅ Clean (round29881797, 0.9.1935 release). Times: cold py 14.72s vs cr 4.77s; warm py 14.96s vs cr 1.63s. |
+| `budibase.budibase` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29881804, 0.9.1935 release). Times: cold py 8.02s vs cr 6.86s; warm py 10.85s vs cr 0.55s. |
+| `darexsu.lamp` | ubuntu | ✅ Clean (round29881799, 0.9.1935 release). Times: cold py 7.15s vs cr 6.75s; warm py 7.51s vs cr 0.52s. |
+| `lean_delivery.solr_master` | ubuntu | ✅ Clean (round29881803, 0.9.1935 release). Times: cold py 3.16s vs cr 0.76s; warm py 2.79s vs cr 0.13s. |
+| `naftulikay.terraform` | ubuntu | ✅ Clean (round29881801, 0.9.1935 release). Times: cold py 25.14s vs cr 8.54s; warm py 6.63s vs cr 0.13s. |
+| `net2grid.php-mysql` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29881805, 0.9.1935 release). Times: cold py 11.52s vs cr 8.46s; warm py 4.50s vs cr 2.03s. |
+| `triplepoint.heimdall` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29881806, 0.9.1935 release). Times: cold py 0.44s vs cr 0.01s; warm py 0.44s vs cr 0.01s. |
+| `trombik.postfix` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29881800, 0.9.1935 release). Times: cold py 0.50s vs cr 0.01s; warm py 0.51s vs cr 0.01s. |
+| `tumf.newrelic` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29881802, 0.9.1935 release). Times: cold py 0.45s vs cr 0.01s; warm py 0.45s vs cr 0.01s. |
+| `wangsha.ansible_haproxy` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29881807, 0.9.1935 release). Times: cold py 0.50s vs cr 0.01s; warm py 0.51s vs cr 0.01s. |
+| `wtanaka.inkscape` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29881808, 0.9.1935 release). Times: cold py 0.53s vs cr 0.01s; warm py 0.50s vs cr 0.01s. |
