@@ -14586,7 +14586,7 @@ Local probe roles, not Galaxy roles: each probed task registers its result and d
 | `pogosoftware.etcd` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29880176, 0.9.1889 release). Times: cold py 1.01s vs cr 0.48s; warm py 0.57s vs cr 0.01s. |
 | `ppouliot.ansible_bootstrap` | ubuntu | ❌ Divergent - issue #298 (round29880204, 0.9.1889 release). Times: cold py 43.33s vs cr 20.22s; warm py 25.27s vs cr 15.63s. |
 | `queeno.uchiwa` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29880172, 0.9.1889 release). Times: cold py 6.80s vs cr 4.45s; warm py 4.82s vs cr 1.04s. |
-| `robertdebock_cve_2018_19788` | ubuntu | ❌ BLOCKED: (round29881338, 0.9.1921 debug). |
+| `robertdebock_cve_2018_19788` | ubuntu | ❌ BLOCKED: (round29881889, 0.9.1938 debug). |
 | `robertdebock.f5_ltm` | ubuntu | ✅ Clean (round29880158, 0.9.1889 release). Times: cold py 2.19s vs cr 0.80s; warm py 1.85s vs cr 0.14s. |
 | `robertdebock.libvirt` | ubuntu | ✅ Clean (round29880186, 0.9.1889 release). Times: cold py 72.78s vs cr 57.03s; warm py 10.17s vs cr 1.54s. |
 | `robertdebock.revealmd` | rocky | ✅ Clean (round29880199, 0.9.1889 release). Times: cold py 25.52s vs cr 24.89s; warm py 4.24s vs cr 0.32s. |
@@ -14903,3 +14903,12 @@ Local probe roles, not Galaxy roles: each probed task registers its result and d
 | `pcextreme.nginx` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29881822, 0.9.1935 release). Times: cold py 0.46s vs cr 0.01s; warm py 0.46s vs cr 0.01s. |
 | `pgvillage.nagios` | ubuntu | ✅ Clean (round29881820, 0.9.1935 release). Times: cold py 5.75s vs cr 4.52s; warm py 3.30s vs cr 0.56s. |
 | `triplepoint.secure_emailer` | ubuntu | ❌ Divergent - issue #341 (round29881814, 0.9.1935 release). Times: cold py 34.32s vs cr 18.05s; warm py 9.68s vs cr 0.19s. |
+| `Open-Future-Belgium.Zabbix_Server` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29881893, 0.9.1938 debug). |
+| `SoInteractive.letsencrypt` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29881894, 0.9.1938 debug). |
+| `calvinbui.ansible_onlyoffice_docker` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29881896, 0.9.1938 debug). |
+| `pgvillage.minio` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29881898, 0.9.1938 debug). |
+| `pylabs.mariadb` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29881892, 0.9.1938 debug). |
+| `roquie.ansible-laravel-env` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29881891, 0.9.1938 debug). |
+| `tehtbl.dotfiles` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29881890, 0.9.1938 debug). |
+| `trombik.mysql` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29881895, 0.9.1938 debug). |
+| `weareinteractive.ansible-users` | ubuntu | ❌ Divergent - issue #342 (round29881897, 0.9.1938 debug). |
