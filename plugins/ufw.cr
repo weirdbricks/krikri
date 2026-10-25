@@ -489,7 +489,7 @@ module Krikri
     # snapshot.
     private def apply_rule(pre_rules : String) : PluginResult?
       check_mode = true?(@params["_ansible_check_mode"]?)
-      cmd = PluginHelpers::UfwCommand.rule_command(resolved_insert_params, dry_run: check_mode)
+      cmd = PluginHelpers::UfwCommand.rule_command(resolved_insert_params, dry_run: check_mode, raw: true)
 
       version_out = ufw_exec("#{@bins["ufw"]} --version")
       unless PluginHelpers::UfwCommand.version_parses?(version_out)
@@ -506,7 +506,10 @@ module Krikri
       # command loop unconditionally - the container oracle caught this
       # engine reporting a dry-run success where real failed the task on
       # the failing pre-status probe).
-      result = remote_exec(ufw_bin_cmd(cmd))
+      # Ansible shlex.splits the recorded string into argv, so the shell
+      # must see each shlex token quoted, never the raw text.
+      argv = Shell.shlex_split(ufw_bin_cmd(cmd)).map { |token| Shell.quote_arg(token) }.join(' ')
+      result = remote_exec(argv)
       @commands << ufw_bin_cmd(cmd)
       if result[:exit_code] != 0
         raise UfwCommandFailure.new(PluginHelpers::UfwCommand.exec_failure_msg(result[:stdout].to_s, result[:stderr].to_s))

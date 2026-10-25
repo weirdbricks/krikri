@@ -37,14 +37,19 @@ module Krikri
       # to_ip, to_port, proto, name, comment. `dry_run` inserts ufw's own
       # `--dry-run` flag right after the binary name, matching its real
       # position in the "long format" (`ufw [--dry-run] [route] ...`).
-      def self.rule_command(params : Hash(String, String), dry_run : Bool = false) : String
+      #
+      # `raw: true` leaves ip/port/interface/insert values unquoted - the
+      # string real ufw.py records in `commands:` and then shlex.splits
+      # before running it, so a value with spaces or quotes (a whole list
+      # templated into `port:`) becomes several arguments there, not one.
+      def self.rule_command(params : Hash(String, String), dry_run : Bool = false, raw : Bool = false) : String
         parts = ["ufw"]
         parts << "--dry-run" if dry_run
         parts << "route" if truthy?(params["route"]?)
         parts << "delete" if truthy?(params["delete"]?)
 
         if insert = params["insert"]?
-          parts << "insert #{Shell.quote_if_needed(insert)}" unless truthy?(params["delete"]?)
+          parts << "insert #{q(insert, raw)}" unless truthy?(params["delete"]?)
         end
 
         parts << params["rule"].to_s
@@ -52,9 +57,9 @@ module Krikri
         if (direction = params["direction"]?) && !direction.empty?
           parts << direction
         end
-        append_interface(parts, params)
+        append_interface(parts, params, raw)
         parts << "log" if truthy?(params["log"]?)
-        append_endpoints(parts, params)
+        append_endpoints(parts, params, raw)
         # Ansible checks these with `if p['proto']:`-style TRUTHINESS,
         # not presence: Oefenweb.ufw (round 196) maps missing item keys
         # via `default('')`, so the params carry empty STRINGS - appending
@@ -84,7 +89,11 @@ module Krikri
       # port 22 ...` that real `ufw` itself rejects with "ERROR: Need
       # 'to' or 'from' clause" - found running konstruktoid-hardening's
       # "Allow outgoing specified ports" task, which does exactly this.
-      private def self.append_endpoints(parts : Array(String), params : Hash(String, String)) : Nil
+      private def self.q(value : String, raw : Bool) : String
+        raw ? value : Shell.quote_if_needed(value)
+      end
+
+      private def self.append_endpoints(parts : Array(String), params : Hash(String, String), raw : Bool) : Nil
         # from_ip/to_ip are ALWAYS emitted (Ansible's own argument
         # defaults are 'any', so "from any"/"to any" appear even for a
         # bare port rule - omitting them makes real ufw reject the
@@ -100,10 +109,10 @@ module Krikri
         # like every other one: Ansible gates on the value's
         # truthiness, and a role's own `default('')` mapping produces
         # exactly that.
-        parts << "from #{Shell.quote_if_needed(params.has_key?("from_ip") ? params["from_ip"] : "any")}" if !params.has_key?("from_ip") || present?(params, "from_ip")
-        parts << "port #{Shell.quote_if_needed(params["from_port"])}" if present?(params, "from_port")
-        parts << "to #{Shell.quote_if_needed(params.has_key?("to_ip") ? params["to_ip"] : "any")}" if !params.has_key?("to_ip") || present?(params, "to_ip")
-        parts << "port #{Shell.quote_if_needed(params["to_port"])}" if present?(params, "to_port")
+        parts << "from #{q(params.has_key?("from_ip") ? params["from_ip"] : "any", raw)}" if !params.has_key?("from_ip") || present?(params, "from_ip")
+        parts << "port #{q(params["from_port"], raw)}" if present?(params, "from_port")
+        parts << "to #{q(params.has_key?("to_ip") ? params["to_ip"] : "any", raw)}" if !params.has_key?("to_ip") || present?(params, "to_ip")
+        parts << "port #{q(params["to_port"], raw)}" if present?(params, "to_port")
       end
 
       # Ansible builds its command as a list of [value, template]
@@ -121,10 +130,10 @@ module Krikri
       #     Ansible, not an if/elsif chain: a task setting both
       #     interface_in and interface_out emits both clauses there and
       #     only the first here.
-      private def self.append_interface(parts : Array(String), params : Hash(String, String)) : Nil
-        parts << "on #{Shell.quote_if_needed(params["interface"])}" if present?(params, "interface")
-        parts << "in on #{Shell.quote_if_needed(params["interface_in"])}" if present?(params, "interface_in")
-        parts << "out on #{Shell.quote_if_needed(params["interface_out"])}" if present?(params, "interface_out")
+      private def self.append_interface(parts : Array(String), params : Hash(String, String), raw : Bool) : Nil
+        parts << "on #{q(params["interface"], raw)}" if present?(params, "interface")
+        parts << "in on #{q(params["interface_in"], raw)}" if present?(params, "interface_in")
+        parts << "out on #{q(params["interface_out"], raw)}" if present?(params, "interface_out")
       end
 
       private def self.present?(params : Hash(String, String), key : String) : Bool
