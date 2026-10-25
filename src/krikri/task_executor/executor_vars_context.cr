@@ -408,9 +408,22 @@ module Krikri
       # base_context_b_for above) or a prior magic-var write is never
       # clobbered; task.connection below still overrides unconditionally
       # since that's this ONE task's own explicit override.
-      vars_context["ansible_connection"] ||= JSON::Any.new(
-        PluginManager.local_connection?(host, vars_context) ? "local" : "ssh"
-      )
+      #
+      # DELEGATED: a delegated task's TaskExecutor seeds these same
+      # connection magic vars from the DELEGATE's connection instead
+      # (PlayContext.update_vars, still only-if-absent), so `when:
+      # ansible_connection ...` on a delegate_to: localhost task sees
+      # "local" where the origin host itself would ssh - guidugli.
+      # firewall's import guard `when: ansible_connection | default(
+      # 'ssh') in ['ssh','paramiko']` (issue #352) hence SKIPS its
+      # wait_for/delegate_to: localhost prologue on every plain SSH
+      # host, yet keeps running where the origin's inventory entry
+      # explicitly carries ansible_connection=ssh (the explicit value
+      # is already in the task vars, so update_vars fills nothing).
+      # A templated delegate_to: is left alone here - this context is
+      # consumed before any delegate name resolution, so only a literal
+      # name is knowable at build time.
+      vars_context["ansible_connection"] ||= JSON::Any.new(default_connection_for(task, host, vars_context))
 
       # loop_lenient_vars: a LOOPED task's vars: must not hard-fail on the
       # pre-loop render. Ansible only ever evaluates a looped task's
@@ -544,6 +557,41 @@ module Krikri
       vars_context["vars"] = JSON::Any.new(self_view)
 
       vars_context
+    end
+
+    # The value the ansible_connection magic var defaults to for THIS
+    # (task, host): a literally-delegated task takes the DELEGATE host's
+    # connection (Ansible's PlayContext.update_vars seeds it into the
+    # task vars - see the injection site in #build_vars_context), with
+    # the same never-inherit-the-origin rule every delegate dispatch
+    # site applies: the delegate's own inventory ansible_connection
+    # when it has one, the localhost spellings mean local, everything
+    # else means ssh. A delegate name that resolves to no inventory
+    # entry takes the same ssh fallback resolve_delegate_host uses for
+    # its unresolvable delegate Host, so a `when:` on a delegated task
+    # and the actual dispatch can never disagree about the connection.
+    # Everything else keeps the origin default local_connection? has
+    # always answered with.
+    private def default_connection_for(task : Task, host : Host, vars_context : Hash(String, JSON::Any)) : String
+      delegate_to = task.delegate_to
+      return delegate_connection_from(delegate_to) if delegate_to && !delegate_to_templated?(delegate_to)
+      PluginManager.local_connection?(host, vars_context) ? "local" : "ssh"
+    end
+
+    # A delegate_to: whose value still carries template tags cannot name
+    # a known host here - the name is only known after templating, on
+    # the delegate-resolution sites that run per task/item afterwards.
+    private def delegate_to_templated?(delegate_to : String) : Bool
+      delegate_to.includes?("{{") || delegate_to.includes?("{%")
+    end
+
+    private def delegate_connection_from(delegate_name : String) : String
+      if (inventory = @inventory) && !(delegate = inventory.get_hosts(delegate_name)).empty?
+        if conn = delegate.first.vars["ansible_connection"]?.try(&.as_s?)
+          return conn
+        end
+      end
+      delegate_name == "localhost" || delegate_name == "127.0.0.1" ? "local" : "ssh"
     end
 
     # Names whose current value came from EXECUTION (register:, set_fact:,

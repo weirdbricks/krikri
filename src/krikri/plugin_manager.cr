@@ -776,6 +776,25 @@ module Krikri
         # have waited for it patiently ever got a chance to run.
         next if controller_only?(task.module_name)
 
+        # delegate_to: - a delegated task's module never dispatches through
+        # the ORIGIN host's connection (Ansible transfers a module to
+        # wherever it actually executes, lazily, and a delegate never
+        # borrows the origin's connection plugin), so pre-uploading its
+        # binary to the origin was not just waste: an origin that is
+        # unreachable got marked UNREACHABLE here before any task ran,
+        # and every task then reported unreachable WITHOUT its own
+        # `when:` ever being evaluated - where Ansible happily skips the
+        # when:-false delegated tasks and runs the when:-true ones on the
+        # delegate (guidugli.firewall's detect_sshd_port prologue, issue
+        # #352: `wait_for ... delegate_to: localhost` guarded by
+        # `when: ansible_connection | default('ssh') in [...]` on a play
+        # whose origin host is down, which is exactly the situation that
+        # prologue exists to detect). A remote delegate's own upload
+        # happens lazily at its first dispatch (ensure_uploaded), where a
+        # transport failure fails that one task the way Ansible does
+        # instead of poisoning the whole host up front.
+        next if task.delegate_to
+
         required.add(simple_plugin_name(task.module_name))
       end
     end
