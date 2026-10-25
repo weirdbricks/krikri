@@ -1555,6 +1555,9 @@ module Krikri
     # results are filtered (the plugin's os.path.isfile check).
     private def fileglob_matches(task : Task, pattern : String) : Array(String)
       if pattern.starts_with?('/')
+        # find_file_in_search_path warns for a missing dirname even
+        # when the term is absolute (criecm.openldap, #349).
+        warn_fileglob_dir_missing(File.dirname(pattern)) unless Dir.exists?(File.dirname(pattern))
         return Dir.glob(pattern).select { |path| File.file?(path) }
       end
 
@@ -1575,6 +1578,8 @@ module Krikri
         # guard.
         if found = candidates.find { |candidate| Dir.exists?(candidate) }
           found_paths << found
+        else
+          warn_fileglob_dir_missing(dirname)
         end
       else
         Krikri::NeedleLookup.search_stack(task.role_path, task.role_parent_paths, needle_task_file_dir(task)).each do |path|
@@ -1588,6 +1593,12 @@ module Krikri
         return matches unless matches.empty?
       end
       [] of String
+    end
+
+    private def warn_fileglob_dir_missing(dirname : String) : Nil
+      ResultDisplay.emit_display_warning(
+        "Unable to find '#{dirname}' in expected paths (use -vvvvv to see paths)"
+      )
     end
 
     # Resolve with_file: entries (if any) - Ansible's `file` lookup
