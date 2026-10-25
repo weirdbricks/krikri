@@ -604,18 +604,28 @@ module Krikri
 
       if verbose_always
         cleaned = module_name.try(&.ends_with?("debug")) ? debug_clean_result(result) : clean_for_display(result)
-        # Ansible's strategy merges the loop item under its loop var name
-        # into the result before the callback runs, and for debug msg
-        # results _clean_results drops only keys that are neither among
-        # its kept set nor underscore-prefixed - so a loop var whose own
-        # name starts with `_` (e.g. __out) survives into the dump, while
-        # the default `item` and ansible_loop_var are cleaned away
+        # Ansible's strategy merges the loop item into EVERY per-item result
+        # before the callback dumps it, so a non-debug module's dump carries
+        # "ansible_loop_var" plus the item under the loop var's name
+        # (live-verified vs 2.19.11: a looped assert task's ok line shows
+        # {"ansible_loop_var": "v", "changed": false, "msg": ..., "v": "a"}).
+        # Only debug's own _clean_results strips them - it drops everything
+        # neither in its kept set nor underscore-prefixed, so there a loop
+        # var survives only when its own name starts with `_` (e.g. __out),
+        # while the default `item` and ansible_loop_var are cleaned away
         # (live-verified vs 2.19.11). Module results reach display without
-        # the loop bindings, so re-merge only the key Ansible keeps.
-        if result["msg"]? && (item = loop_item)
+        # the loop bindings, so restore the keys Ansible's strategy added.
+        if item = loop_item
           var_name = loop_var_name.try { |name| !name.empty? ? name : nil } || "item"
-          if var_name.starts_with?('_')
+          if module_name.try(&.ends_with?("debug"))
+            if result["msg"]? && var_name.starts_with?('_')
+              h = cleaned.as_h.try(&.dup) || Hash(String, JSON::Any).new
+              h[var_name] = item
+              cleaned = JSON::Any.new(h)
+            end
+          else
             h = cleaned.as_h.try(&.dup) || Hash(String, JSON::Any).new
+            h["ansible_loop_var"] = JSON::Any.new(var_name)
             h[var_name] = item
             cleaned = JSON::Any.new(h)
           end

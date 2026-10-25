@@ -118,6 +118,21 @@ describe Krikri::ResultDisplay do
       out.must_equal("ok: [localhost] => {\n    \"changed\": false,\n    \"msg\": \"All assertions passed\"\n}\n")
     end
 
+    # Ansible's strategy merges the loop item into every non-debug module's
+    # per-item result before the callback dumps it; only debug's
+    # _clean_results strips the loop keys (live-verified vs 2.19.11).
+    it "merges ansible_loop_var and the default loop var into a looped assert dump" do
+      result = JSON.parse(%({"changed": false, "msg": "ok a", "_ansible_verbose_always": true}))
+      out = capture_output { Krikri::ResultDisplay.display_result(host, result, false, item_label: "a", module_name: "ansible.builtin.assert", loop_item: JSON::Any.new("a")) }
+      out.must_equal("ok: [localhost] => (item=a) => {\n    \"ansible_loop_var\": \"item\",\n    \"changed\": false,\n    \"item\": \"a\",\n    \"msg\": \"ok a\"\n}\n")
+    end
+
+    it "merges ansible_loop_var and the item under a custom loop var name into a looped assert dump" do
+      result = JSON.parse(%({"changed": false, "msg": "ok a", "_ansible_verbose_always": true}))
+      out = capture_output { Krikri::ResultDisplay.display_result(host, result, false, item_label: "a", module_name: "ansible.builtin.assert", loop_item: JSON::Any.new("a"), loop_var_name: "v") }
+      out.must_equal("ok: [localhost] => (item=a) => {\n    \"ansible_loop_var\": \"v\",\n    \"changed\": false,\n    \"msg\": \"ok a\",\n    \"v\": \"a\"\n}\n")
+    end
+
     it "prints only the status line for a non-verbose successful result" do
       result = JSON.parse(%({"changed": false, "msg": "Command executed successfully"}))
       out = capture_output { Krikri::ResultDisplay.display_result(host, result, false, module_name: "ansible.builtin.command") }
