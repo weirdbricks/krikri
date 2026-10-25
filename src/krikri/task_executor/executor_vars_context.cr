@@ -3496,8 +3496,8 @@ module Krikri
     # fourth stanza): same layer merge, same exactly-one-match
     # protection - ambiguous or lineage-less definitions (extra vars,
     # inventory) yield nil so no origin ever gets mislabeled.
-    private def undef_chain_var_origin(task : Task, missing : String, reachable_from : String? = nil) : FileVarOrigin?
-      value_failure_var_origin(task, "'#{missing}' is undefined", skip_key: missing, required_text: missing, reachable_from: reachable_from)
+    private def undef_chain_var_origin(task : Task, missing : String, reachable_from : String? = nil, first_leaf : Bool = false) : FileVarOrigin?
+      value_failure_var_origin(task, "'#{missing}' is undefined", skip_key: missing, required_text: missing, reachable_from: reachable_from, first_leaf: first_leaf)
     end
 
     # The unique var-layer DEFINITION whose plain-`{{ }}` own value
@@ -3516,7 +3516,7 @@ module Krikri
     # `jail_name: '{{ jail_net_ip }}'` plus an unrelated role var also
     # mentioning `jail_net_ip` kept the stanza hidden). nil (callers
     # without the param text) keeps the previous all-layers behaviour.
-    private def value_failure_var_origin(task : Task, message : String, skip_key : String? = nil, required_text : String? = nil, reachable_from : String? = nil) : FileVarOrigin?
+    private def value_failure_var_origin(task : Task, message : String, skip_key : String? = nil, required_text : String? = nil, reachable_from : String? = nil, first_leaf : Bool = false) : FileVarOrigin?
       merged = {} of String => JSON::Any
       origins = {} of String => VarOrigin
       merge_var_layer(merged, origins, @play_vars, @play_var_origins)
@@ -3565,7 +3565,7 @@ module Krikri
           # ambiguity the same way.
           origin = origins[key]?
           next unless origin.is_a?(FileVarOrigin) && origin.column > 0 && File.file?(origin.path)
-          next unless leaf_pos = failing_container_leaf_pos(key, value, message, required_text, merged, origin.path)
+          next unless leaf_pos = failing_container_leaf_pos(key, value, message, required_text, merged, origin.path, first_leaf: first_leaf)
           matches << FileVarOrigin.new(origin.path, leaf_pos[0], leaf_pos[1])
         end
       end
@@ -3577,14 +3577,23 @@ module Krikri
     # leaf's own mark in the defining file's YAML source map (an item of
     # a list, a dict value), the position real 2.19.11's lineage points
     # the innermost chain stanza at for a failure reached through the
-    # container. nil on zero or multiple failing leaves, or when the
-    # file's source map has no unambiguous node for the leaf's path -
-    # the exactly-one-match rule every origin scan here follows, so no
-    # origin is ever mislabeled.
-    private def failing_container_leaf_pos(key : String, value : JSON::Any, message : String, required_text : String?, vars : Hash(String, JSON::Any), file_path : String) : {Int32, Int32}?
+    # container. nil on zero failing leaves - or, without FIRST_LEAF, on
+    # multiple ones - or when the file's source map has no unambiguous
+    # node for the leaf's path: the exactly-one-match rule every origin
+    # scan here follows, so no origin is ever mislabeled. With FIRST_LEAF
+    # set, the FIRST failing leaf in document order wins instead: real
+    # templates the container's leaves in document order and stops at the
+    # first failure, so for a loop source reaching a container with
+    # several failing leaves that first one is the Origin it reports
+    # (issue #359) - a scan that stopped on ambiguity would mislabel the
+    # stanza at an unrelated var instead.
+    private def failing_container_leaf_pos(key : String, value : JSON::Any, message : String, required_text : String?, vars : Hash(String, JSON::Any), file_path : String, first_leaf : Bool = false) : {Int32, Int32}?
       suffixes = [] of String
       collect_failing_leaf_paths(value, message, required_text, vars, [] of String, suffixes)
-      return nil unless suffixes.size == 1
+      # FIRST_LEAF skips the exactly-one requirement: collect walks in
+      # document order, so suffixes[0] is real's first failing leaf.
+      return nil if suffixes.empty?
+      return nil if suffixes.size > 1 && !first_leaf
       map = Krikri::YamlSourceMap.scan(File.read(file_path))
       positions = map.all_suffix_at?("#{key}/#{suffixes[0]}")
       return nil unless positions.size == 1
@@ -4809,7 +4818,17 @@ module Krikri
 
       cause_context = nil
       if m = inner.to_s.match(/\A'([A-Za-z_][A-Za-z0-9_]*)' is undefined\z/)
-        if origin = undef_chain_var_origin(task, m[1])
+        # The loop source's raw text seeds the reachability scan and
+        # first_leaf picks the first failing leaf: real templates the loop
+        # source itself in document order and stops at its first failing
+        # leaf, so when that source reaches a dict-of-lists var while an
+        # unrelated var also references the same undefined name, the
+        # caused-by Origin is that first leaf's position - not the first
+        # textually-matching var elsewhere in the file (issue #359,
+        # Rheinwerk.update_sshd_config). A literal loop list has no source
+        # template to seed from, so both stay off and the previous
+        # all-layers, exactly-one-leaf scan keeps running.
+        if origin = undef_chain_var_origin(task, m[1], reachable_from: task.loop_template, first_leaf: !task.loop_template.nil?)
           cause_context = origin_context_block(origin.path, File.read_lines(origin.path), origin.line, origin.column)
         elsif task_has_loop_source?(task) && (pos = locate_loop_source_line(lines, task, missing: m[1]))
           # An UNDEFINED loop source (`loop: "{{ wordpress_sites }}"`) has
