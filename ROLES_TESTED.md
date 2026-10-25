@@ -14922,3 +14922,13 @@ Local probe roles, not Galaxy roles: each probed task registers its result and d
 | `pinkeen_intnet` | ubuntu | ❌ BLOCKED: (round29881912, 0.9.1938 debug). |
 | `rahul0705.rtorrent` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29881914, 0.9.1938 debug). |
 | `xanmanning.azurecli` | ubuntu | ❌ Divergent - issue #343 (round29881909, 0.9.1938 debug). |
+| `bendews.unifi-video` | ubuntu | ❌ Divergent - issue #344 (round29881961, 0.9.1941 release). Times: cold py 2.81s vs cr 0.72s; warm py 2.56s vs cr 0.14s. |
+| `danielkoster.transmission-daemon` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29881968, 0.9.1941 release). Times: cold py 2.78s vs cr 242.24s; warm py 4.23s vs cr 0.86s. |
+| `gantsign.dockbarx-launcher` | ubuntu | ✅ Clean (round29881965, 0.9.1941 release). Times: cold py 15.88s vs cr 11.14s; warm py 4.83s vs cr 0.19s. |
+| `geonmo.grid` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29881963, 0.9.1941 release). Times: cold py 3.12s vs cr 0.70s; warm py 1.78s vs cr 0.13s. |
+| `mireiawen.hosts` | rocky | ✅ Clean (round29881964, 0.9.1941 release). Times: cold py 2.97s vs cr 0.75s; warm py 1.42s vs cr 0.15s. |
+| `ontic.mysql` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29881970, 0.9.1941 release). Times: cold py 4.52s vs cr 2.74s; warm py 4.18s vs cr 2.14s. |
+| `radamanth.node-nvm-ansible` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29881962, 0.9.1941 release). Times: cold py 0.47s vs cr 0.02s; warm py 0.47s vs cr 0.02s. |
+| `sgwilbur.ibm-installation-manager` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29881966, 0.9.1941 release). Times: cold py 2.52s vs cr 0.75s; warm py 1.90s vs cr 0.16s. |
+| `spk.docker-debian` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29881969, 0.9.1941 release). Times: cold py 58.15s vs cr 26.55s; warm py 36.62s vs cr 18.21s. |
+| `triplepoint.secure_device` | ubuntu | ❌ Divergent - issue #345 (round29881967, 0.9.1941 release). Times: cold py 53.35s vs cr 15.68s; warm py 50.12s vs cr 1.12s. |
