@@ -59,6 +59,45 @@ describe "removed module reached at run time through a dynamic include" do
     output.wont_include("Failed to load", output)
   end
 
+  it "fails the include_tasks task itself when the loaded file uses the removed bare include:" do
+    status, output = run_removed_include_playbook({
+      "pb.yml" => <<-YAML,
+        - hosts: localhost
+          connection: local
+          gather_facts: false
+          tasks:
+            - name: include mount tasks
+              include_tasks: mount.yml
+        YAML
+      "mount.yml" => "---\n- include: \"lookup.yml\"\n",
+    })
+    status.exit_code.must_equal(2, output)
+    output.must_include("fatal: [localhost]: FAILED! => {\"changed\": false, \"include\": \"mount.yml\"", output)
+    output.must_include("<<< caused by >>>", output)
+    output.must_include("mount.yml:2:3", output)
+    output.must_include("failed=1", output)
+    output.wont_include("Failed to load", output)
+  end
+
+  it "dumps the rendered include path, not the template, in the fatal line" do
+    status, output = run_removed_include_playbook({
+      "pb.yml" => <<-YAML,
+        - hosts: localhost
+          connection: local
+          gather_facts: false
+          vars:
+            action: mount
+          tasks:
+            - name: include mount tasks
+              include_tasks: "{{ action }}.yml"
+        YAML
+      "mount.yml" => "---\n- include: \"lookup.yml\"\n",
+    })
+    status.exit_code.must_equal(2, output)
+    output.must_include("\"include\": \"mount.yml\"", output)
+    output.wont_include("{{ action }}.yml\", \"reason\"", output)
+  end
+
   it "fails the include_role task itself with only changed+reason in the dump" do
     status, output = run_removed_include_playbook({
       "pb.yml" => <<-YAML,

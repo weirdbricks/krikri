@@ -130,6 +130,7 @@ module Krikri
       end
 
       run_groups = Hash(String, Array(Host)).new { |hash, key| hash[key] = [] of Host }
+      include_names = {} of String => String
       run_hosts.each do |host|
         begin
           vars_context = build_vars_context(task, host)
@@ -166,6 +167,7 @@ module Krikri
         end
 
         run_groups[resolved_path] << host
+        include_names[resolved_path] = file_rel
       end
 
       run_groups.each do |resolved_path, group_hosts|
@@ -267,7 +269,14 @@ module Krikri
           # that host, rc=2) - not the whole-run load refusal a top-level
           # occurrence is, so this must not ride the UnresolvedModuleError
           # bypass below.
-          fail_include_removed_module(task, group_hosts, ex)
+          fail_include_removed_module(task, group_hosts, ex, include_names[resolved_path]?)
+        rescue ex : RemovedActionError
+          # A bare `include:` inside the loaded file is the include task's
+          # own fatal failure in Ansible (wrapped three-message STDERR block
+          # + two-key fatal dump, live-verified vs 2.19.x), not the
+          # whole-run refusal a top-level occurrence is. The fatal dump
+          # shows the RENDERED include path, not the `{{ }}` as written.
+          fail_include_removed_module(task, group_hosts, ex, include_names[resolved_path]?)
         rescue ex : RoleNotFoundError
           # A static import_role: inside the included file whose role
           # resolves nowhere is the include task's own fatal failure in
@@ -2347,6 +2356,10 @@ module Krikri
     rescue ex : HandlerNotFoundError
       # Same as the batched include path above - see there.
       raise ex
+    rescue ex : RemovedActionError
+      # Same as the batched include path's removed-`include:` rescue.
+      fail_include_removed_module(task, [host], ex, file_rel)
+      :ok
     rescue ex : RoleNotFoundError
       # Same include-task-fatal shape as the batched include path's
       # role-not-found rescue above (the single-host path handles the
@@ -2475,9 +2488,9 @@ module Krikri
     # "reason": <custom message>}, include_role dumps only
     # {"changed": false, "reason": ...} - failed=1 in the recap, the play
     # halts for that host, ignore_errors does NOT apply (rc=2).
-    private def fail_include_removed_module(task : Task, hosts : Array(Host), ex : RemovedModuleError) : Nil
+    private def fail_include_removed_module(task : Task, hosts : Array(Host), ex : RemovedModuleError | RemovedActionError, include_name : String? = nil) : Nil
       emit_include_removed_module_block(ex)
-      emit_include_fatal_lines(task, hosts, ex.message || "")
+      emit_include_fatal_lines(task, hosts, ex.message || "", include_name)
     end
 
     # The per-host half of an include task's own fatal failure: one
@@ -2485,11 +2498,12 @@ module Krikri
     # in the recap, and the play halts for that host UNCONDITIONALLY -
     # ignore_errors: does not apply (rc=2). Shared by the removed-module
     # and role-not-found flavors, which differ only in their STDERR block.
-    private def emit_include_fatal_lines(task : Task, hosts : Array(Host), message : String) : Nil
-      include_json = task.include_file_native.try(&.to_json) || task.include_file.to_s.to_json
+    private def emit_include_fatal_lines(task : Task, hosts : Array(Host), message : String, include_name : String? = nil) : Nil
+      include_native = include_name ? JSON.parse(include_name.to_json) : task.include_file_native
+      include_json = include_native.try(&.to_json) || task.include_file.to_s.to_json
       hosts.each do |host|
         if Krikri::Oneline.enabled?
-          puts "#{host.name} | FAILED! => #{ResultDisplay.dump_oneline_json(JSON.parse({"changed" => false, "include" => task.include_file_native || JSON.parse(task.include_file.to_s.to_json), "reason" => message}.to_json))}".colorize(:red)
+          puts "#{host.name} | FAILED! => #{ResultDisplay.dump_oneline_json(JSON.parse({"changed" => false, "include" => include_native || JSON.parse(task.include_file.to_s.to_json), "reason" => message}.to_json))}".colorize(:red)
         else
           delegate_target = delegate_display_target(task, host)
           fatal_host_label = delegate_target ? "#{host.name} -> #{delegate_target}" : host.name
@@ -2505,7 +2519,7 @@ module Krikri
     # message three times: headline, blank, the message, blank,
     # "<<< caused by >>>", blank, the message, then the Origin block
     # (live-verified vs 2.19.x with a pty).
-    private def emit_include_removed_module_block(ex : RemovedModuleError) : Nil
+    private def emit_include_removed_module_block(ex : RemovedModuleError | RemovedActionError) : Nil
       emit_include_wrapped_error_block(ex.message || "module has been removed", ex.render)
     end
 
