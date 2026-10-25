@@ -14992,3 +14992,13 @@ Local probe roles, not Galaxy roles: each probed task registers its result and d
 | `ramsailopal_cac_lynis` | ubuntu | ❌ BLOCKED: (round29882078, 0.9.1946 release). |
 | `robertdebock.forensics` | rocky | ❌ Divergent - issue #350 (round29882077, 0.9.1946 release). Times: cold py 20.82s vs cr 1.33s; warm py 20.09s vs cr 0.31s. |
 | `sfromm.elasticsearch` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29882082, 0.9.1946 release). Times: cold py 0.47s vs cr 0.01s; warm py 0.48s vs cr 0.01s. |
+| `Oefenweb.nvm` | ubuntu | ✅ Clean (round29882148, 0.9.1948 release). Times: cold py 21.87s vs cr 17.12s; warm py 6.90s vs cr 3.48s. |
+| `andrewrothstein.kafka-producer` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29882147, 0.9.1948 release). Times: cold py 26.97s vs cr 18.01s; warm py 12.73s vs cr 0.66s. |
+| `frack113.ludus_caldera_server` | ubuntu | ✅ Clean (round29882150, 0.9.1948 release). Times: cold py 84.88s vs cr 49.06s; warm py 42.85s vs cr 1.44s. |
+| `gremid.tustep` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29882145, 0.9.1948 release). Times: cold py 11.48s vs cr 5.37s; warm py 5.40s vs cr 1.22s. |
+| `hitotito.custom-facts` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29882144, 0.9.1948 release). Times: cold py 2.68s vs cr 0.81s; warm py 3.07s vs cr 0.13s. |
+| `k48269.ansible_role_example` | ubuntu | ✅ Clean (round29882146, 0.9.1948 release). Times: cold py 8.72s vs cr 5.51s; warm py 11.22s vs cr 0.57s. |
+| `lordoftheflies.ansible_role_python` | rocky | ✅ Clean (round29882149, 0.9.1948 release). Times: cold py 3.43s vs cr 0.98s; warm py 2.76s vs cr 0.19s. |
+| `triplepoint.physical_device` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29882142, 0.9.1948 release). Times: cold py 14.49s vs cr 4.98s; warm py 6.22s vs cr 0.13s. |
+| `tychobrouwer.git` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29882151, 0.9.1948 release). Times: cold py 13.17s vs cr 16.95s; warm py 2.83s vs cr 0.17s. |
+| `wangsha.ansible_role_clamav` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29882143, 0.9.1948 release). Times: cold py 0.59s vs cr 0.01s; warm py 0.56s vs cr 0.01s. |
