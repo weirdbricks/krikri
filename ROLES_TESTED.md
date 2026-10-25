@@ -14962,3 +14962,13 @@ Local probe roles, not Galaxy roles: each probed task registers its result and d
 | `pgporada.repo-epel` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29882029, 0.9.1943 release). Times: cold py 0.45s vs cr 0.01s; warm py 0.49s vs cr 0.01s. |
 | `robrowan.docker` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29882030, 0.9.1943 release). Times: cold py 43.51s vs cr 50.27s; warm py 23.95s vs cr 1.67s. |
 | `wtanaka.youtube_dl` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29882026, 0.9.1943 release). Times: cold py 0.49s vs cr 0.01s; warm py 0.47s vs cr 0.01s. |
+| `AdopteUnOps.configure-hostname` | rocky | ✅ Clean (round29882037, 0.9.1943 release). Times: cold py 8.34s vs cr 8.16s; warm py 5.12s vs cr 0.46s. |
+| `ISU-Ansible.openldap` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29882028, 0.9.1943 release). Times: cold py 2.74s vs cr 0.73s; warm py 1.45s vs cr 0.12s. |
+| `davidgl17.gickup` | ubuntu | ✅ Clean (round29882036, 0.9.1943 release). Times: cold py 54.33s vs cr 45.60s; warm py 19.99s vs cr 1.22s. |
+| `hax0rbana_adam.nbxplorer` | ubuntu | ❌ Divergent - issue #347 (round29882032, 0.9.1943 release). Times: cold py 47.38s vs cr 40.38s; warm py 5.74s vs cr 0.21s. |
+| `ibm.infosvr-metadata-asset-manager` | rocky | ✅ Clean (round29882035, 0.9.1943 release). Times: cold py 2.35s vs cr 1.04s; warm py 2.97s vs cr 0.25s. |
+| `inoxio.ispconfig3` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29882031, 0.9.1943 release). Times: cold py 9.40s vs cr 7.06s; warm py 9.47s vs cr 0.54s. |
+| `kurron.mysql` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29882034, 0.9.1943 release). Times: cold py 22.96s vs cr 3.62s; warm py 10.91s vs cr 0.24s. |
+| `markwilde.gcc` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29882029, 0.9.1943 release). Times: cold py 0.50s vs cr 0.01s; warm py 0.49s vs cr 0.01s. |
+| `mubbyrex.java_installer` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29882033, 0.9.1943 release). Times: cold py 20.55s vs cr 17.90s; warm py 23.06s vs cr 17.98s. |
+| `vbotka.ansible` | ubuntu | ❌ Divergent - issue #348 (round29882030, 0.9.1943 release). Times: cold py 2.74s vs cr 0.80s; warm py 2.36s vs cr 0.17s. |
