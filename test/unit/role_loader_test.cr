@@ -916,6 +916,20 @@ describe Krikri::RoleLoader do
     (error.message || "").includes?("community.general:ansible.posix:ansible.legacy:").must_equal(true)
   end
 
+  it "records the role's meta collections on its include_role tasks" do
+    # Live-verified vs 2.19.11 (vbotka.ansible): an include_role: inside a
+    # role whose meta/main.yml sets `collections:` reports those names, not
+    # the play's, as the not-found search-list prefix.
+    build_role("metacoll") do |role|
+      role.meta("collections:\n  - community.general\n")
+      role.tasks("- ansible.builtin.include_role:\n    name: nonexistent_role_xyz\n")
+    end
+
+    tasks, _ = Krikri::RoleLoader.load_roles(roles_yaml("- metacoll"), fresh_play, roles_root)
+    include_task = tasks.find! { |task| task.include_role_name == "nonexistent_role_xyz" }
+    include_task.include_role_collections.must_equal(["community.general"])
+  end
+
   it "keeps the not-found search list without a prefix when the play has no collections" do
     error = assert_raises(Krikri::RoleNotFoundError) do
       Krikri::RoleLoader.load_roles(roles_yaml("- nonexistent_role_xyz"), fresh_play, roles_root)

@@ -1496,7 +1496,21 @@ module Krikri
       # source exactly where the executor later will.
       # playbook_dir makes a static import_role: inside the role report
       # ansible's playbook-basedir search list, not the tasks/ dir's.
-      PlaybookParser.parse_tasks(yaml.as_a, play, "task in #{path}", File.dirname(path), known_vars, role_dir, playbook_dir, path, cached_source_map(path))
+      saved = play.role_meta_collections
+      play.role_meta_collections = role_meta_collections(role_dir) if role_dir
+      begin
+        PlaybookParser.parse_tasks(yaml.as_a, play, "task in #{path}", File.dirname(path), known_vars, role_dir, playbook_dir, path, cached_source_map(path))
+      ensure
+        play.role_meta_collections = saved
+      end
+    end
+
+    private def self.role_meta_collections(role_dir : String) : Array(String)?
+      meta_path = find_main_file(File.join(role_dir, "meta")) || File.join(role_dir, "meta", "main.yml")
+      return nil unless File.exists?(meta_path)
+      list = cached_yaml(meta_path)["collections"]?.try(&.as_a?)
+      return nil unless list && !list.empty?
+      list.compact_map(&.as_s?)
     end
   end
 end

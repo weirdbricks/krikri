@@ -942,6 +942,11 @@ module Krikri
     # check when deciding whether real could resolve a task's module at
     # all; empty when the play writes none (real's default search).
     property collections : Array(String) = [] of String
+    # The `collections:` of the role whose tasks are being parsed (its
+    # meta/main.yml); set only for the duration of that parse. Ansible gives a
+    # role's tasks the role's own list instead of the play's, which shows in
+    # an include_role not-found search-path prefix.
+    property role_meta_collections : Array(String)? = nil
 
     # Every `roles:` entry's own defaults/main.yml and vars/main.yml,
     # merged in role order (a later role wins a name collision), kept as
@@ -5968,7 +5973,7 @@ module Krikri
       task.include_role_dir = file_dir
       task.include_role_tasks_from = role_args["tasks_from"]?.try(&.as_s)
       task.include_role_vars_from = role_args["vars_from"]?.try(&.as_s)
-      task.include_role_collections = play.collections
+      task.include_role_collections = play.role_meta_collections || play.collections
       # The role-name value's own source position - the runtime
       # role-not-found failure's Origin points there (not at the task's
       # first key), live-verified vs 2.19.11.
