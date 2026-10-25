@@ -14893,3 +14893,13 @@ Local probe roles, not Galaxy roles: each probed task registers its result and d
 | `stancel.install-nagios-client` | ubuntu | ✅ Clean (round29881805, 0.9.1935 release). Times: cold py 66.16s vs cr 29.57s; warm py 25.19s vs cr 4.13s. |
 | `vnode.ypserver` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29881804, 0.9.1935 release). Times: cold py 3.11s vs cr 0.79s; warm py 2.52s vs cr 0.15s. |
 | `wtanaka.bundler` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29881809, 0.9.1935 release). Times: cold py 0.48s vs cr 0.01s; warm py 0.53s vs cr 0.01s. |
+| `andrewrothstein.wildfly` | ubuntu | ✅ Clean (round29881816, 0.9.1935 release). Times: cold py 38.27s vs cr 16.23s; warm py 5.99s vs cr 0.21s. |
+| `danbohea.atom` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29881818, 0.9.1935 release). Times: cold py 3.40s vs cr 1.22s; warm py 3.03s vs cr 0.28s. |
+| `derjd.podman` | rocky | ❌ Divergent - issue #339 (round29881815, 0.9.1935 release). Times: cold py 7.32s vs cr 10.99s; warm py 9.44s vs cr 0.77s. |
+| `guidugli.grub` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29881821, 0.9.1935 release). Times: cold py 26.30s vs cr 19.49s; warm py 16.58s vs cr 1.69s. |
+| `guidugli.samba` | rocky | ✅ Clean (round29881819, 0.9.1935 release). Times: cold py 23.35s vs cr 17.35s; warm py 12.36s vs cr 1.03s. |
+| `jonathandalves.vault_ssh_helper` | rocky | ❌ Divergent - issue #340 (round29881823, 0.9.1935 release). Times: cold py 51.41s vs cr 9.50s; warm py 42.09s vs cr 1.45s. |
+| `kefniark.haproxy-role` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29881817, 0.9.1935 release). Times: cold py 0.51s vs cr 0.01s; warm py 0.49s vs cr 0.01s. |
+| `pcextreme.nginx` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29881822, 0.9.1935 release). Times: cold py 0.46s vs cr 0.01s; warm py 0.46s vs cr 0.01s. |
+| `pgvillage.nagios` | ubuntu | ✅ Clean (round29881820, 0.9.1935 release). Times: cold py 5.75s vs cr 4.52s; warm py 3.30s vs cr 0.56s. |
+| `triplepoint.secure_emailer` | ubuntu | ❌ Divergent - issue #341 (round29881814, 0.9.1935 release). Times: cold py 34.32s vs cr 18.05s; warm py 9.68s vs cr 0.19s. |
