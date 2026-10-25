@@ -198,7 +198,13 @@ module Krikri
       return nil if wanted.empty?
       have = pairs.map { |(_, fp)| fp }
       return nil if wanted.any? { |wval| have.includes?(wval) }
-      "The specified fingerprint, '#{wanted.join(", ")}', does not match any key fingerprints in '#{have.join(", ")}'"
+      "The specified fingerprint, '#{python_set_repr(wanted)}', does not match any key fingerprints in '#{python_set_repr(have)}'"
+    end
+
+    # ansible interpolates Python sets with %s, so the message carries the set
+    # repr `{'A', 'B'}` (its element order is hash-randomized upstream).
+    private def python_set_repr(items : Array(String)) : String
+      "{" + items.uniq.map { |item| "'#{item}'" }.join(", ") + "}"
     end
 
     private def remove_key(key : String) : PluginResult

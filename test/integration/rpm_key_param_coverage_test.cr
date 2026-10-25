@@ -168,6 +168,7 @@ describe "rpm_key plugin fingerprint param" do
         })
         result["failed"].as_bool.must_equal(true)
         result["msg"].as_s.must_include("does not match any key fingerprints")
+        result["msg"].as_s.must_include("fingerprint, '{'0000000000000000000000000000000000000000'}', does not match any key fingerprints in '{'")
         (!File.exists?(log) || File.read(log).empty?).must_equal(true)
       end
     end
