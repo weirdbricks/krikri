@@ -15021,3 +15021,13 @@ Local probe roles, not Galaxy roles: each probed task registers its result and d
 | `pgvillage.pgfga` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29882275, 0.9.1949 debug). |
 | `pinkeen.intnet` | rocky | ❌ Divergent - issue #353 (round29882276, 0.9.1949 debug). |
 | `route1337.ubuntu_base` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29882278, 0.9.1949 debug). |
+| `andrewrothstein_galaxify` | ubuntu | ❌ BLOCKED: (round29882296, 0.9.1949 debug). |
+| `ayltai_macos_appstore` | ubuntu | ❌ BLOCKED: (round29882299, 0.9.1949 debug). |
+| `geonmo_htcondor_ce` | ubuntu | ❌ BLOCKED: (round29882292, 0.9.1949 debug). |
+| `hax0rbana_adam_apt_repo` | ubuntu | ❌ BLOCKED: (round29882297, 0.9.1949 debug). |
+| `jgoodall_maven3` | ubuntu | ❌ BLOCKED: (round29882295, 0.9.1949 debug). |
+| `krzysztof-magosa.epel` | ubuntu | ✅ Clean (round29882294, 0.9.1949 debug). |
+| `mullholland.traefik_docker` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29882291, 0.9.1949 debug). |
+| `netzwirt.bind` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29882290, 0.9.1949 debug). |
+| `triplepoint.autodns` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29882298, 0.9.1949 debug). |
+| `wahidsadik.apache-virtual-host` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29882293, 0.9.1949 debug). |
