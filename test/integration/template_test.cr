@@ -815,4 +815,14 @@ describe "Python %-formatting in the Crinja engine (the `str % args` operator)" 
     render_pct("pct_lit", %(percent: {{ "100%% done" }}\nmod: {{ 10 % 3 }}\n))
       .must_equal("percent: 100%% done\nmod: 1\n")
   end
+
+  it "crashes like atomic_move when the final rename onto dest fails" do
+    dest = tmp_path("rename_busy_dir")
+    Dir.mkdir_p(File.join(dest, "child"))
+    result = PluginSpecHelper.run("template", {"content" => "x\n", "dest" => dest})
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_match(/\ATask failed: Module failed: Unable to make b'[^']*\/source' into to '#{Regex.escape(dest)}', failed final rename from '.*\/\.ansible_tmp\w{8}rename_busy_dir': \[Errno 21\] Is a directory: /)
+    result["checksum"]?.wont_be_nil
+  end
 end

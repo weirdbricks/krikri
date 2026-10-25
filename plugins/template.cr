@@ -77,6 +77,12 @@ module Krikri
     private UNCHANGED_KEY_ORDER = %w[diff path changed uid gid owner group mode state size checksum dest failed]
     private NOOP_KEY_ORDER      = %w[dest src changed failed]
     private CHECK_KEY_ORDER     = %w[diff changed failed]
+    # - atomic_move's failed final rename: the copy-module crash result
+    #   carries the rendered content's sha1 the way its own write result
+    #   already did, then the msg the raise composed (live-verified fatal
+    #   dump on the EBUSY: {"changed": false, "checksum": "...", "msg":
+    #   "Task failed: Module failed: Unable to make ..."}).
+    private RENAME_CRASH_KEY_ORDER = %w[changed checksum msg]
 
     property? check_mode : Bool
     property? diff_mode : Bool
@@ -527,6 +533,11 @@ module Krikri
       # Ansible's atomic_move chowns the staged file to an existing
       # dest's uid/gid before the rename, so e.g. Debian's redis:redis
       # /etc/redis/redis.conf stays readable by its service.
+      # When even the dest-directory stage's rename cannot land (EBUSY
+      # replacing /etc/hosts - a container bind mount - being the
+      # observed real case), real crashes the whole MODULE rather than
+      # reporting the failure locally; final_rename_crash_result below
+      # mirrors that.
       begin
         if !File.symlink?(dest) && (info = File.info?(dest, follow_symlinks: false))
           File.chown(temp_file, uid: info.owner_id.to_i, gid: info.group_id.to_i)
@@ -538,35 +549,25 @@ module Krikri
       begin
         File.rename(temp_file, dest)
       rescue
+        # Real's stage file is mkstemp'd next to dest: .ansible_tmp + an 8-char
+        # random run (Python's tempfile alphabet: lowercase/digits/underscore,
+        # live sample "rhd5b4_i" in the EBUSY crash below) + dest's own
+        # basename. The name matters for output parity - the crash detail
+        # names the stage path it renamed from - while the /tmp-side temp
+        # above keeps this plugin's own name (only a failed validate: leaves
+        # it behind, named after krikri, and no fatal message ever echoes it).
+        stage_path = File.join(dest_dir, ".ansible_tmp#{ansible_tmp_random(8)}#{File.basename(dest)}")
+        stage_failed = false
         begin
-          dest_dir_stage = File.join(dest_dir, ".krikri-playbook-template-#{Random::Secure.hex(8)}.tmp")
-          File.write(dest_dir_stage, "")
-          FileUtils.mv(temp_file, dest_dir_stage)
-          File.rename(dest_dir_stage, dest)
+          File.write(stage_path, "")
+          FileUtils.mv(temp_file, stage_path)
         rescue ex
-          File.delete(dest_dir_stage) if dest_dir_stage && File.exists?(dest_dir_stage)
+          stage_failed = true
+          File.delete(stage_path) if File.exists?(stage_path)
           File.delete(temp_file) if File.exists?(temp_file)
           if true?(@params["unsafe_writes"]?)
-            # Ansible's _unsafe_writes: a direct, non-atomic
-            # in-place write of dest - the only path that works when
-            # the DEST DIRECTORY isn't writable (the writability
-            # pre-check above normally fails this first without
-            # unsafe_writes:). Preserves dest's inode, so hardlinks to
-            # it see the new content.
-            begin
-              # Same narrow-then-settle staging discipline as the temp
-              # above for a not-yet-existing dest; an existing dest's
-              # mode is untouched by opening it for writing.
-              unless File.exists?(dest)
-                create_staging_temp(dest, staging_temp_mode(dest, 0o666, preserve_dest_mode: false))
-              end
-              File.write(dest, content_bytes, perm: 0o600)
-            rescue ex
-              return PluginResult.new(
-                changed: false,
-                failed: true,
-                msg: "Failed to write destination file (unsafe_writes): #{ex.message}"
-              )
+            if failure = unsafe_write_dest(dest, content_bytes)
+              return failure
             end
           else
             return PluginResult.new(
@@ -574,6 +575,24 @@ module Krikri
               failed: true,
               msg: "Failed to replace #{dest} with the rendered template: #{ex.message}"
             )
+          end
+        end
+        unless stage_failed
+          begin
+            File.rename(stage_path, dest)
+          rescue ex
+            File.delete(stage_path) if File.exists?(stage_path)
+            File.delete(temp_file) if File.exists?(temp_file)
+            if true?(@params["unsafe_writes"]?)
+              if failure = unsafe_write_dest(dest, content_bytes)
+                return failure
+              end
+            else
+              # Real's atomic_move crashes the whole module here rather
+              # than reporting a softer failure (issue #304: EBUSY onto
+              # /etc/hosts, a container bind mount).
+              return final_rename_crash_result(ex, stage_path, dest, content_sha1)
+            end
           end
         end
       end
@@ -607,6 +626,87 @@ module Krikri
       result.extra["backup_file"] = JSON::Any.new(backup_file) unless backup_file.empty?
       add_path_info(result, dest)
       result
+    end
+
+    # The fatal shape for the final rename real's atomic_move cannot land
+    # (raise AnsibleModuleError inside module_utils/basic.py's ladder):
+    # 2.19 renders the crash as "Task failed: Module failed: <detail>" in
+    # the [ERROR] headline, the fatal msg AND the block, where the block
+    # then splits at the errno text it pre-joined with
+    # _text_utils.concat_message's own ": " join - the same shape
+    # assemble.cr/mount.cr emit for their own uncaught module crashes.
+    # checksum rides right after `changed` too (live-verified fatal dump
+    # on the EBUSY: {"changed": false, "checksum": "<sha1>", "msg": "Task
+    # failed: Module failed: Unable to make ..."}), because this is the
+    # copy module writing dest and its own result dict already carried
+    # both when the ladder died.
+    private def final_rename_crash_result(ex : Exception, stage : String, dest : String, content_sha1 : String) : PluginResult
+      detail = "Unable to make b'#{module_tmp_source_path}' into to '#{dest}', " \
+               "failed final rename from '#{stage}': #{rename_errno_text(ex, stage, dest)}"
+      PluginResult.new(changed: false, failed: true,
+        msg: "Task failed: Module failed: #{detail}",
+        checksum: content_sha1,
+        key_order: RENAME_CRASH_KEY_ORDER,
+        _ansible_error_detail: detail)
+    end
+
+    # The [Errno N] text the way Python str(OSError) renders it, from the
+    # rename's own errno - never spelled out: the wording the kernel hands
+    # back (EBUSY's "Device or resource busy" onto a bind mount, EISDIR's
+    # "Is a directory" onto a directory dest, ...) is what real echoed.
+    private def rename_errno_text(ex : Exception, stage : String, dest : String) : String
+      errno = ex.is_a?(File::Error) ? ex.os_error : nil
+      reason = if errno.is_a?(Errno)
+                 "[Errno #{errno.value}] #{errno.message}"
+               else
+                 ex.message.to_s
+               end
+      "#{reason}: b'#{stage}' -> b'#{dest}'"
+    end
+
+    # The b_src the crash detail echoes: real's module staged the rendered
+    # content as <remote_tmp>/ansible-tmp-<epoch>-<pid>-<random>/source.
+    # Only the head must match real - the run-unique tail is masked in
+    # comparisons (see copy.cr's own staged_src_echo for the same
+    # convention on its success-path echo).
+    private def module_tmp_source_path : String
+      random = Random.rand(100_000_000_000_000..999_999_999_999_999)
+      expand_tilde("~/.ansible/tmp/ansible-tmp-#{sprintf("%.7f", Time.local.to_unix_f)}-#{Process.pid}-#{random}/source")
+    end
+
+    # A random run of `count` characters out of Python's tempfile candidate
+    # alphabet (lowercase/digits/underscore - the live crashes' "rhd5b4_i", "x_7y_jt2").
+    private ANSI_TMP_RANDOM_CHARS = "abcdefghijklmnopqrstuvwxyz0123456789_"
+
+    private def ansible_tmp_random(count : Int) : String
+      String.build(count) do |io|
+        count.times { io << ANSI_TMP_RANDOM_CHARS[Random::Secure.rand(ANSI_TMP_RANDOM_CHARS.size)] }
+      end
+    end
+
+    # Real's _unsafe_writes fallback at the ladder's exit (both renames'
+    # rescues reach it): a direct, non-atomic in-place write of dest - the
+    # only path that works when the DEST DIRECTORY isn't writable (the
+    # writability pre-check normally fails this first without
+    # unsafe_writes:). Preserves dest's inode, so hardlinks to it see the
+    # new content. nil on success.
+    private def unsafe_write_dest(dest : String, content_bytes : Bytes) : PluginResult?
+      begin
+        # Same narrow-then-settle staging discipline as the temp above for
+        # a not-yet-existing dest; an existing dest's mode is untouched by
+        # opening it for writing.
+        unless File.exists?(dest)
+          create_staging_temp(dest, staging_temp_mode(dest, 0o666, preserve_dest_mode: false))
+        end
+        File.write(dest, content_bytes, perm: 0o600)
+        nil
+      rescue ex
+        PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: "Failed to write destination file (unsafe_writes): #{ex.message}"
+        )
+      end
     end
 
     # Create backup of existing file
