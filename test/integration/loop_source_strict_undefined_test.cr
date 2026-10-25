@@ -383,7 +383,11 @@ describe "undefined loop: source is strict" do
   #   C) when: references the yet-unbound loop variable itself (`item` /
   #      item.* / item[..], e.g. `item.backup is defined`) -> reads as
   #      false and the task skips (Ansible's own documented
-  #      item-unbound-before-loop-known leniency).
+  #      item-unbound-before-loop-known leniency) - but only for
+  #      undefined-tolerant conditionals; issue #337 (test below) showed
+  #      a bare access (`not item.enabled`) over an undefined TEMPLATED
+  #      `with_items` source fails with the loop source's error in real
+  #      2.19 instead, naming neither `item` nor the when:
   #
   # The distinguishing factor is whether the when:'s undefined reference
   # is the loop variable or an independently-undefined one - not "is
@@ -459,6 +463,36 @@ describe "undefined loop: source is strict" do
     output.wont_include("is undefined")
     output.must_include("skipped=1")
     output.must_include("failed=0")
+  end
+
+  # Issue #337 - the item-unbound skip above is NOT purely name-shaped:
+  # real 2.19 only gives the unbound-`item` leniency to conditionals
+  # that tolerate an undefined reference (`is defined` / `is undefined`
+  # / `default(...)`). A bare access over an undefined TEMPLATED loop
+  # source (`with_items: ["{{ sites }}"]`) fails with the loop source's
+  # own 'sites' is undefined - the unbound `item` in the when: must
+  # neither mask it as a skip nor be blamed for the failure.
+  it "fails with the loop source's undefined error when a bare item access sits in the when:" do
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        gather_facts: false
+        tasks:
+          - name: t
+            ansible.builtin.debug:
+              msg: "ran {{ item }}"
+            with_items: ["{{ sites }}"]
+            when: not item.enabled
+          - name: sentinel
+            ansible.builtin.debug:
+              msg: "SENTINEL-D"
+      YAML
+
+    status.exit_code.must_equal(2)
+    output.must_include("'sites' is undefined")
+    output.wont_include("'item' is undefined")
+    output.wont_include("skipping:")
+    output.wont_include("SENTINEL-D")
+    output.must_include("failed=1")
   end
 
   # Scenario 11b - a DEFINED empty list still skips, it is not an error.
