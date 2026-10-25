@@ -14813,3 +14813,13 @@ Local probe roles, not Galaxy roles: each probed task registers its result and d
 | `monolithprojects.tfvars2facts` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29881554, 0.9.1926 release). Times: cold py 1.84s vs cr 0.90s; warm py 1.44s vs cr 0.31s. |
 | `wilmardo.plexupdate` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29881552, 0.9.1926 release). Times: cold py 0.47s vs cr 0.01s; warm py 0.48s vs cr 0.01s. |
 | `zorlin.patroni` | rocky | ❌ Divergent - issue #329 (round29881547, 0.9.1926 release). Times: cold py 6.59s vs cr 3.55s; warm py 4.56s vs cr 2.04s. |
+| `Stouts.ntp` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29881589, 0.9.1928 release). Times: cold py 0.44s vs cr 0.01s; warm py 0.45s vs cr 0.01s. |
+| `arikkert.nrpe` | rocky | ✅ Clean (round29881586, 0.9.1928 release). Times: cold py 186.11s vs cr 361.51s; warm py 106.79s vs cr 2.63s. |
+| `bellackn.proxmox_lxc` | ubuntu | ✅ Clean (round29881591, 0.9.1928 release). Times: cold py 11.75s vs cr 5.67s; warm py 9.65s vs cr 1.74s. |
+| `constrict0r.desktop` | ubuntu | ❌ Divergent - issue #330 (round29881585, 0.9.1928 release). Times: cold py 15.11s vs cr 11.31s; warm py 5.65s vs cr 0.78s. |
+| `constrict0r.iso` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29881590, 0.9.1928 release). Times: cold py 7.18s vs cr 8.55s; warm py 6.77s vs cr 0.53s. |
+| `ihrwein.syslog-ng` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29881594, 0.9.1928 release). Times: cold py 3.46s vs cr 0.75s; warm py 2.98s vs cr 0.16s. |
+| `infamousjoeg.provisioning` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29881587, 0.9.1928 release). Times: cold py 0.48s vs cr 0.01s; warm py 0.50s vs cr 0.01s. |
+| `kurron.hashicorp` | ubuntu | ✅ Clean (round29881593, 0.9.1928 release). Times: cold py 30.75s vs cr 12.15s; warm py 21.38s vs cr 1.16s. |
+| `pgvillage.haproxy` | rocky | ✅ Clean (round29881592, 0.9.1928 release). Times: cold py 63.86s vs cr 17.68s; warm py 20.50s vs cr 1.35s. |
+| `triplepoint.gateway_routing_and_nat` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29881588, 0.9.1928 release). Times: cold py 8.04s vs cr 116.09s; warm py 9.48s vs cr 3.41s. |
