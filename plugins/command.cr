@@ -434,15 +434,21 @@ module Krikri
         # ssh-level channel is merged by -tt).
         ControllingTty.ensure
 
-        process = Process.new(
-          command_name,
-          args,
-          env: task_environment,
-          chdir: chdir,
-          output: stdout,
-          error: stderr,
-          input: stdin_data ? Process::Redirect::Pipe : Process::Redirect::Close
-        )
+        # Without stdin: Ansible's child always has a valid fd 0 (inherited
+        # from the module). A CLOSED fd 0 makes the child's first open()
+        # (postfix's main.cf) land on fd 0, which changed how often postmap
+        # re-read main.cf and so how many "overriding earlier entry"
+        # warnings it printed (triplepoint.secure_emailer). /dev/null keeps
+        # fd 0 occupied and reads as immediate EOF.
+        if stdin_data
+          process = Process.new(command_name, args, env: task_environment, chdir: chdir,
+            output: stdout, error: stderr, input: Process::Redirect::Pipe)
+        else
+          process = File.open("/dev/null", "r") do |null_stdin|
+            Process.new(command_name, args, env: task_environment, chdir: chdir,
+              output: stdout, error: stderr, input: null_stdin)
+          end
+        end
 
         # Send stdin if provided. Ansible appends a newline to the
         # data unless stdin_add_newline is explicitly false (its
