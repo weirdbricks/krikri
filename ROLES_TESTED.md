@@ -14912,3 +14912,13 @@ Local probe roles, not Galaxy roles: each probed task registers its result and d
 | `tehtbl.dotfiles` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29881890, 0.9.1938 debug). |
 | `trombik.mysql` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29881895, 0.9.1938 debug). |
 | `weareinteractive.ansible-users` | ubuntu | ❌ Divergent - issue #342 (round29881897, 0.9.1938 debug). |
+| `OT-OSM.openvpn` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29881911, 0.9.1938 debug). |
+| `devgateway.pacemaker` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29881905, 0.9.1938 debug). |
+| `gotansible.golang` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29881910, 0.9.1938 debug). |
+| `hudecof.chrony` | ubuntu | ✅ Clean (round29881907, 0.9.1938 debug). |
+| `leadlineit_postgresql` | ubuntu | ❌ BLOCKED: (round29881906, 0.9.1938 debug). |
+| `pgkehle_oracle-client` | ubuntu | ❌ BLOCKED: (round29881913, 0.9.1938 debug). |
+| `pgvillage_pgfga` | ubuntu | ❌ BLOCKED: (round29881908, 0.9.1938 debug). |
+| `pinkeen_intnet` | ubuntu | ❌ BLOCKED: (round29881912, 0.9.1938 debug). |
+| `rahul0705.rtorrent` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29881914, 0.9.1938 debug). |
+| `xanmanning.azurecli` | ubuntu | ❌ Divergent - issue #343 (round29881909, 0.9.1938 debug). |
