@@ -1227,11 +1227,33 @@ module Krikri
       # default gateway), crystal's was always false since the key never
       # existed, so the gated debug task was silently skipped instead of
       # run.
-      default_route = `ip -4 route get 1 2>/dev/null | head -1`.strip
+      default_route = capture("ip", ["-4", "route", "get", "1"]).split("\n").first?.to_s.strip
       route_fields = default_route.split(/\s+/)
       ipv4 = route_fields[6]?.to_s
       interface = route_fields[4]?.to_s
       gateway = route_fields[1]? == "via" ? route_fields[2]?.to_s : ""
+      # One `ip -o addr show` (both families, one line per address)
+      # replaces the per-interface `ip -o -4/-6 addr show dev X` execs and
+      # the grep/awk/cut shell pipelines, each a /bin/sh plus 2-4 children.
+      dev_v4_lines = Hash(String, Array(String)).new
+      dev_v6_lines = Hash(String, Array(String)).new
+      all_ipv4_addrs = [] of String
+      all_ipv6_addrs = [] of String
+      capture("ip", ["-o", "addr", "show"]).each_line do |line|
+        fields = line.split(/\s+/)
+        dev = fields[1]?
+        family = fields[2]?
+        addr_prefix = fields[3]?
+        next unless dev && (family == "inet" || family == "inet6") && addr_prefix
+
+        if family == "inet"
+          (dev_v4_lines[dev] ||= [] of String) << line
+          all_ipv4_addrs << addr_prefix.partition("/").first
+        else
+          (dev_v6_lines[dev] ||= [] of String) << line
+          all_ipv6_addrs << addr_prefix.partition("/").first
+        end
+      end
       if !ipv4.empty?
         default_ipv4 = {"address" => ipv4} of String => Int64 | String
         default_ipv4["interface"] = interface unless interface.empty?
@@ -1259,7 +1281,7 @@ module Krikri
           # the first line can belong to a different subnet, so match on
           # the address like Ansible does, falling back to the first line
           # to keep the pre-existing behavior when it's absent.
-          inet_lines = `ip -4 addr show dev #{interface} 2>/dev/null | grep 'inet '`.split("\n").map(&.strip).reject(&.empty?)
+          inet_lines = (dev_v4_lines[interface]? || [] of String).map(&.strip)
           inet_line = inet_lines.find { |line| line.includes?("inet #{ipv4}/") } || inet_lines.first?
           if inet_line && (inet_match = inet_line.match(/inet\s+(\d+\.\d+\.\d+\.\d+)\/(\d+)/))
             prefix = inet_match[2].to_i
@@ -1298,10 +1320,8 @@ module Krikri
         facts["ansible_default_ipv4"] = default_ipv4
       end
 
-      all_ipv4 = `ip -4 addr show 2>/dev/null | grep 'inet ' | awk '{print $2}' | cut -d/ -f1`.strip
-      unless all_ipv4.empty?
-        addresses = all_ipv4.split("\n").map(&.strip).reject(&.empty?)
-        facts["ansible_all_ipv4_addresses"] = addresses
+      unless all_ipv4_addrs.empty?
+        facts["ansible_all_ipv4_addresses"] = all_ipv4_addrs
       end
 
       # ansible_all_ipv6_addresses - Ansible's LinuxNetwork collector
@@ -1316,7 +1336,7 @@ module Krikri
       # all_ipv6_addresses among the required facts, so the key's permanent
       # absence made that difference non-empty on every run and re-ran a
       # setup task Ansible skips.
-      addresses6 = `ip -6 addr show 2>/dev/null | grep 'inet6 ' | awk '{print $2}' | cut -d/ -f1`.split("\n").map(&.strip).reject(&.empty?)
+      addresses6 = all_ipv6_addrs
       addresses6.reject! { |address| address == "::1" }
       facts["ansible_all_ipv6_addresses"] = addresses6
 
@@ -1348,7 +1368,7 @@ module Krikri
         # "object of type 'dict' has no attribute 'ansible_eth0'" because
         # no such key was ever gathered, round 214.
         interfaces.each do |iface|
-          interface_facts = gather_interface_facts(iface, interface, gateway)
+          interface_facts = gather_interface_facts(iface, interface, gateway, dev_v4_lines[iface]?, dev_v6_lines[iface]?)
           facts["ansible_#{iface}"] = interface_facts
         end
       end
@@ -1359,7 +1379,7 @@ module Krikri
     # ipv4_secondaries/ipv6), built from sysfs plus `ip -o addr show`.
     # ipv4 carries gateway only on the interface holding the default
     # route, matching Ansible's output there.
-    private def gather_interface_facts(iface : String, default_interface : String, default_gateway : String) : Hash(String, JSON::Any)
+    private def gather_interface_facts(iface : String, default_interface : String, default_gateway : String, v4_lines : Array(String)? = nil, v6_lines : Array(String)? = nil) : Hash(String, JSON::Any)
       iface_facts = {} of String => JSON::Any
       iface_facts["device"] = JSON::Any.new(iface)
       iface_facts["type"] = JSON::Any.new(iface == "lo" ? "loopback" : "ether")
@@ -1382,7 +1402,7 @@ module Krikri
       # "inet" line of an unexpected shape took down all of gathering.
       # Real Ansible skips such lines; that is what this extracted
       # parser now guarantees.
-      parse_ipv4_addr_output(capture("ip", ["-o", "-4", "addr", "show", "dev", iface])).each do |entry|
+      parse_ipv4_addr_output(v4_lines ? v4_lines.join("\n") : capture("ip", ["-o", "-4", "addr", "show", "dev", iface])).each do |entry|
         if ipv4.nil?
           ipv4 = entry
         else
@@ -1398,7 +1418,7 @@ module Krikri
         iface_facts["ipv4_secondaries"] = JSON::Any.new(secondaries) unless secondaries.empty?
       end
 
-      entries6 = parse_ipv6_addr_output(capture("ip", ["-o", "-6", "addr", "show", "dev", iface]))
+      entries6 = parse_ipv6_addr_output(v6_lines ? v6_lines.join("\n") : capture("ip", ["-o", "-6", "addr", "show", "dev", iface]))
       iface_facts["ipv6"] = JSON::Any.new(entries6) unless entries6.empty?
 
       iface_facts
@@ -1713,16 +1733,23 @@ module Krikri
       vgs_out = Channel(String).new(1)
       lvs_bin = find_fact_binary("lvs")
       vgs_bin = find_fact_binary("vgs")
-      spawn { lvs_out.send(lvs_bin ? capture(lvs_bin, ["--noheadings", "--nosuffix", "--units", "b", "--separator", "|", "-o", "lv_name,vg_name,lv_size"]) : "") }
       spawn { vgs_out.send(vgs_bin ? capture(vgs_bin, ["--noheadings", "--nosuffix", "--units", "b", "--separator", "|", "-o", "vg_name,vg_free,vg_size"]) : "") }
+      vgs_text = vgs_out.receive
+      # An LV only exists inside a VG, so an empty vgs listing means lvs
+      # would list nothing either: skip its process start.
+      lvs_text = ""
+      unless vgs_bin && vgs_text.strip.empty?
+        spawn { lvs_out.send(lvs_bin ? capture(lvs_bin, ["--noheadings", "--nosuffix", "--units", "b", "--separator", "|", "-o", "lv_name,vg_name,lv_size"]) : "") }
+        lvs_text = lvs_out.receive
+      end
       lvs = {} of String => JSON::Any
-      lvs_out.receive.each_line do |line|
+      lvs_text.each_line do |line|
         fields = line.strip.split("|").map(&.strip)
         next if fields.size < 3
         lvs[fields[0]] = JSON::Any.new({"size" => JSON::Any.new(fields[2]), "vg" => JSON::Any.new(fields[1])} of String => JSON::Any)
       end
       vgs = {} of String => JSON::Any
-      vgs_out.receive.each_line do |line|
+      vgs_text.each_line do |line|
         fields = line.strip.split("|").map(&.strip)
         next if fields.size < 3
         vgs[fields[0]] = JSON::Any.new({"free" => JSON::Any.new(fields[1]), "size" => JSON::Any.new(fields[2])} of String => JSON::Any)
@@ -2041,7 +2068,7 @@ module Krikri
         }))
         PY
 
-      raw = capture_merged(python_bin, ["-c", script])
+      raw = capture_merged(python_bin, ["-S", "-c", script])
       parsed = (JSON.parse(raw).as_h? rescue nil)
       return unless parsed
 
