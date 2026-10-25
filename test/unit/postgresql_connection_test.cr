@@ -236,6 +236,12 @@ describe Krikri::PluginHelpers::PostgresqlConnection do
     end
 
     it "keeps the unix-socket ENOENT vs refused distinction" do
+      # connect(2) decides on the socket FILE <dir>/.s.PGSQL.<port>,
+      # never the directory: an existing dir with no socket file is
+      # ENOENT too - a stopped cluster keeps its packaging socket
+      # directory - and ECONNREFUSED only when the file exists but
+      # nothing listens on it (issue #347: this used to key off the
+      # directory, miswording the stopped-cluster case as refused).
       ex = self.class.refused_chain("Cannot establish connection")
       missing = PluginSpecHelper.tmp_path("nosuch-sockdir")
       Krikri::PluginHelpers::PostgresqlConnection.libpq_connect_error(
@@ -249,7 +255,16 @@ describe Krikri::PluginHelpers::PostgresqlConnection do
       Krikri::PluginHelpers::PostgresqlConnection.libpq_connect_error(
         ex, {host: nil, port: "5432", unix_socket: present}
       ).must_equal(
-        "connection to server on socket \"#{present}/.s.PGSQL.5432\" failed: Connection refused\n" \
+        "connection to server on socket \"#{present}/.s.PGSQL.5432\" failed: No such file or directory\n" \
+        "\tIs the server running locally and accepting connections on that socket?\n"
+      )
+      quiet = PluginSpecHelper.tmp_path("sockdir-with-quiet-socket-file")
+      FileUtils.mkdir_p(quiet)
+      File.write(File.join(quiet, ".s.PGSQL.5432"), "")
+      Krikri::PluginHelpers::PostgresqlConnection.libpq_connect_error(
+        ex, {host: nil, port: "5432", unix_socket: quiet}
+      ).must_equal(
+        "connection to server on socket \"#{quiet}/.s.PGSQL.5432\" failed: Connection refused\n" \
         "\tIs the server running locally and accepting connections on that socket?\n"
       )
     end
