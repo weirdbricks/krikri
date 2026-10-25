@@ -108,6 +108,30 @@ describe "with_fileglob: templating a list variable" do
     FileUtils.rm_rf(dir) if dir
   end
 
+  it "warns when the pattern's directory part does not exist" do
+    dir = File.tempname("fileglob-warn-spec")
+    Dir.mkdir_p(dir)
+    playbook = File.join(dir, "site.yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - ansible.builtin.debug:
+              msg: "{{ item }}"
+            with_fileglob:
+              - "#{dir}/nope/schema/*.schema"
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output, chdir: dir)
+
+    status.success?.must_equal(true)
+    output.to_s.must_include("Unable to find '#{dir}/nope/schema' in expected paths", output.to_s)
+  ensure
+    FileUtils.rm_rf(dir) if dir
+  end
+
   it "falls a bare pattern back to the role root when files/ has no match" do
     dir = File.tempname("fileglob-bare-spec")
     FileUtils.mkdir_p(File.join(dir, "roles", "r", "tasks"))
