@@ -213,7 +213,10 @@ describe "strict boolean conditionals" do
     status.exit_code.must_equal(2)
     output.must_include("Conditional result (True) was derived from value of type 'str'")
     output.must_include("Conditionals must have a boolean result")
-    output.wont_include("TASK-RAN")
+    # The error chain's source excerpt echoes the task's `msg: "TASK-RAN"`
+    # line, so the ran-marker is the debug result, not the bare word.
+    output.wont_include("\"msg\": \"TASK-RAN\"")
+    output.wont_include("ok: [localhost]")
   end
 
   it "still accepts an all-boolean list-form when:" do
