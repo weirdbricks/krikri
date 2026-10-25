@@ -15,6 +15,19 @@ module Krikri
       # params (itself a template) keeps the generic path.
       private def first_found_params(part : String) : JSON::Any
         expr = part.strip
+        # A params argument written as a quoted literal carrying its own
+        # `{{ }}` span (`q('first_found', 'tasks/{{ ansible_os_family
+        # }}.yml', errors='ignore')`, issue #339) renders through the
+        # per-entry substitution below WITHOUT passing evaluate_lookup's
+        # own double-templated-literal rerender - query()/'q()' split the
+        # parts themselves, and the scalar `lookup()` form's rerender
+        # already rendered this exact literal before this method was
+        # reached (deduped there by Origin). ansible-core 2.19 warns once
+        # for the re-rendered constant either way: the same warning this
+        # route must not stay silent on.
+        if literal = sole_quoted_literal?(expr)
+          warn_jinja_const_embedded_template if literal.includes?("{{") && literal.includes?("}}")
+        end
         raw_resolved = @lookup.resolve(expr)
         if raw_resolved && (raw_resolved.raw.is_a?(Array) || raw_resolved.raw.is_a?(Hash))
           return raw_resolved
