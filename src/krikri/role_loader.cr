@@ -127,6 +127,36 @@ module Krikri
       !File.file?(resolve_role_tasks_path(role_dir, tasks_from))
     end
 
+    # A STATIC import_role:'s target role is compiled by real ansible at
+    # PLAYBOOK LOAD time: the whole static import tree is expanded before
+    # any play runs, ignoring `when:`, so a removed bare `include:`
+    # anywhere in that tree refuses the whole run (rc=1) instead of
+    # surfacing as a per-task "Failed to load role" at runtime - or never
+    # surfacing at all when a false `when:` skips the branch (issue #598,
+    # ovirt.infra). This pre-loads the role's entry tasks (and handlers,
+    # which real loads with the role's data) purely to surface that
+    # refusal: only RemovedActionError propagates, every other parse
+    # failure keeps today's behaviour (the runtime load still owns it),
+    # and the parsed tasks are discarded, so runtime behaviour is
+    # unchanged. A role not found on disk pre-loads nothing - the runtime
+    # load reports that failure exactly as before.
+    def self.preload_static_import_role(name : String, play : Play, playbook_dir : String, tasks_from : String?) : Nil
+      role_dir = resolve_role_dir(name, playbook_dir)
+      return unless role_dir
+      chain = play.static_preload_chain
+      return if chain.includes?(role_dir)
+      chain.add(role_dir)
+      begin
+        load_tasks_file(resolve_role_tasks_path(role_dir, tasks_from), play, nil, role_dir, playbook_dir)
+        load_tasks_file(find_main_file(File.join(role_dir, "handlers")) || File.join(role_dir, "handlers", "main.yml"), play, nil, role_dir, playbook_dir)
+      rescue e : RemovedActionError
+        raise e
+      rescue
+      ensure
+        chain.delete(role_dir)
+      end
+    end
+
     # The role search path list exactly as ansible-core's
     # RoleDefinition._load_role_path builds and REPORTS it
     # (definition.py: "the role '<name>' was not found in <paths>"):

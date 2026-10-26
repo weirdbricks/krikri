@@ -948,6 +948,15 @@ module Krikri
     # an include_role not-found search-path prefix.
     property role_meta_collections : Array(String)? = nil
 
+    # The role dirs whose entry task files are currently being pre-loaded
+    # for STATIC import_role: removed-action refusal
+    # (RoleLoader.preload_static_import_role) - the chain in flight, so a
+    # role that statically imports itself cannot recurse forever. Kept on
+    # the Play rather than a class-level set: two parses (including the
+    # minitest suite's concurrent test fibers) never share a Play object,
+    # while every nested static import in one parse does.
+    property static_preload_chain : Set(String) = Set(String).new
+
     # Every `roles:` entry's own defaults/main.yml and vars/main.yml,
     # merged in role order (a later role wins a name collision), kept as
     # two separate layers because Ansible ranks them either side of
@@ -5944,9 +5953,19 @@ module Krikri
       # here and in real. A templated tasks_from: is left for the
       # runtime load (real resolves it against the import's static vars;
       # a value that templates to nothing fails there, not here).
-      if is_static && (static_tasks_from = role_args["tasks_from"]?.try(&.as_s)) && !static_tasks_from.includes?("{{")
-        if RoleLoader.role_tasks_file_missing?(role_name, file_dir, static_tasks_from)
-          raise RoleTasksFromFileError.new("Could not find specified file in role: tasks/#{static_tasks_from}")
+      if is_static
+        static_tasks_from = role_args["tasks_from"]?.try(&.as_s)
+        if static_tasks_from && !static_tasks_from.includes?("{{")
+          if RoleLoader.role_tasks_file_missing?(role_name, file_dir, static_tasks_from)
+            raise RoleTasksFromFileError.new("Could not find specified file in role: tasks/#{static_tasks_from}")
+          end
+          # Real compiles the whole static import tree at playbook-load
+          # time, ignoring when:, so a removed `include:` in the role (or
+          # in anything it statically imports) refuses the run here, not
+          # at runtime - see preload_static_import_role.
+          RoleLoader.preload_static_import_role(role_name, play, file_dir, static_tasks_from)
+        elsif static_tasks_from.nil?
+          RoleLoader.preload_static_import_role(role_name, play, file_dir, nil)
         end
       end
 
