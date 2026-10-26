@@ -1,4 +1,5 @@
 require "../minitest_helper"
+require "../../src/krikri/plugin_daemon"
 
 # Perf items 1-3 - drives the REAL
 # compiled `.fat-plugin --daemon` binary as a local subprocess (no SSH
@@ -54,6 +55,16 @@ describe "fat plugin binary --daemon mode" do
     File.join(PluginSpecHelper::PLUGINS_DIR, ".fat-plugin")
   end
 
+  # Spawns the real --daemon binary and consumes its greeting, the first
+  # frame every fresh daemon sends (PluginDaemon.serve). The request helpers
+  # below read responses only, so they must start after the greeting.
+  private def spawn_fat_daemon : Process
+    process = Process.new(daemon_binary, ["--daemon"],
+      input: Process::Redirect::Pipe, output: Process::Redirect::Pipe, error: Process::Redirect::Close)
+    Krikri::PluginDaemon.await_ready(process.output)
+    process
+  end
+
   # Perf item 2. `facts` was the one real
   # remote module missing from this binary's dispatch table, so it was
   # explicitly held off the daemon path (DAEMON_INELIGIBLE_PLUGINS) -
@@ -75,8 +86,7 @@ describe "fat plugin binary --daemon mode" do
   it "runs a batch of steps in one request, in order" do
     skip "fat plugin binary not built (run ./build.sh first)" unless File.exists?(daemon_binary)
 
-    process = Process.new(daemon_binary, ["--daemon"],
-      input: Process::Redirect::Pipe, output: Process::Redirect::Pipe, error: Process::Redirect::Close)
+    process = spawn_fat_daemon
 
     begin
       results = daemon_batch(process, [
@@ -112,8 +122,7 @@ describe "fat plugin binary --daemon mode" do
     # (local pipe, not SSH) differs.
     skip "fat plugin binary not built (run ./build.sh first)" unless File.exists?(daemon_binary)
 
-    process = Process.new(daemon_binary, ["--daemon"],
-      input: Process::Redirect::Pipe, output: Process::Redirect::Pipe, error: Process::Redirect::Close)
+    process = spawn_fat_daemon
 
     begin
       slurp_config = {
@@ -138,8 +147,7 @@ describe "fat plugin binary --daemon mode" do
   it "stops a batch at the first failing step, exactly as the script transport does" do
     skip "fat plugin binary not built (run ./build.sh first)" unless File.exists?(daemon_binary)
 
-    process = Process.new(daemon_binary, ["--daemon"],
-      input: Process::Redirect::Pipe, output: Process::Redirect::Pipe, error: Process::Redirect::Close)
+    process = spawn_fat_daemon
 
     begin
       results = daemon_batch(process, [
@@ -162,8 +170,7 @@ describe "fat plugin binary --daemon mode" do
   it "lets an ignore_errors step fail without stopping the batch" do
     skip "fat plugin binary not built (run ./build.sh first)" unless File.exists?(daemon_binary)
 
-    process = Process.new(daemon_binary, ["--daemon"],
-      input: Process::Redirect::Pipe, output: Process::Redirect::Pipe, error: Process::Redirect::Close)
+    process = spawn_fat_daemon
 
     begin
       results = daemon_batch(process, [
@@ -184,8 +191,7 @@ describe "fat plugin binary --daemon mode" do
   it "keeps serving solo requests on the same process after a batch" do
     skip "fat plugin binary not built (run ./build.sh first)" unless File.exists?(daemon_binary)
 
-    process = Process.new(daemon_binary, ["--daemon"],
-      input: Process::Redirect::Pipe, output: Process::Redirect::Pipe, error: Process::Redirect::Close)
+    process = spawn_fat_daemon
 
     begin
       daemon_batch(process, [batch_step("echo batched")])
@@ -202,8 +208,7 @@ describe "fat plugin binary --daemon mode" do
   it "serves facts over the daemon, on the same process as any other module" do
     skip "fat plugin binary not built (run ./build.sh first)" unless File.exists?(daemon_binary)
 
-    process = Process.new(daemon_binary, ["--daemon"],
-      input: Process::Redirect::Pipe, output: Process::Redirect::Pipe, error: Process::Redirect::Close)
+    process = spawn_fat_daemon
 
     begin
       base_config = {"host" => {"name" => "localhost", "user" => ENV["USER"]? || "root", "port" => 22}, "vars" => {} of String => String}
@@ -233,8 +238,7 @@ describe "fat plugin binary --daemon mode" do
   it "serves multiple requests over the SAME long-lived process, matching one-shot output" do
     skip "fat plugin binary not built (run ./build.sh first)" unless File.exists?(daemon_binary)
 
-    process = Process.new(daemon_binary, ["--daemon"],
-      input: Process::Redirect::Pipe, output: Process::Redirect::Pipe, error: Process::Redirect::Close)
+    process = spawn_fat_daemon
 
     begin
       base_config = {"host" => {"name" => "localhost", "user" => ENV["USER"]? || "root", "port" => 22}, "vars" => {} of String => String}
@@ -268,8 +272,7 @@ describe "fat plugin binary --daemon mode" do
   it "returns a graceful JSON failure (not a crash) for an unrecognized module name, and keeps serving after it" do
     skip "fat plugin binary not built (run ./build.sh first)" unless File.exists?(daemon_binary)
 
-    process = Process.new(daemon_binary, ["--daemon"],
-      input: Process::Redirect::Pipe, output: Process::Redirect::Pipe, error: Process::Redirect::Close)
+    process = spawn_fat_daemon
 
     begin
       bad = daemon_send(process, "no_such_module", {"host" => {"name" => "localhost"}, "params" => {} of String => String})
@@ -289,8 +292,7 @@ describe "fat plugin binary --daemon mode" do
   it "returns a structured error frame when a request raises at dispatch time, and keeps serving after it" do
     skip "fat plugin binary not built (run ./build.sh first)" unless File.exists?(daemon_binary)
 
-    process = Process.new(daemon_binary, ["--daemon"],
-      input: Process::Redirect::Pipe, output: Process::Redirect::Pipe, error: Process::Redirect::Close)
+    process = spawn_fat_daemon
 
     begin
       # Malformed JSON in the frame - JSON.parse raises at dispatch time.
@@ -333,8 +335,7 @@ describe "fat plugin binary --daemon mode" do
   it "exits cleanly when stdin is closed" do
     skip "fat plugin binary not built (run ./build.sh first)" unless File.exists?(daemon_binary)
 
-    process = Process.new(daemon_binary, ["--daemon"],
-      input: Process::Redirect::Pipe, output: Process::Redirect::Pipe, error: Process::Redirect::Close)
+    process = spawn_fat_daemon
 
     process.input.close
     status = process.wait

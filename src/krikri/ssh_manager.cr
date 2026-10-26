@@ -8,6 +8,7 @@ require "openssl"
 require "./cli_options"
 require "./shell"
 require "./timing_profile"
+require "./plugin_daemon"
 
 module Krikri
   class SSHManager
@@ -905,6 +906,19 @@ module Krikri
         process.input.print('\n')
         process.input.flush
       end
+      # Ansible never waits on a resident process, so there is no equivalent
+      # of this check there. Without it a plugin binary that lacks the
+      # --daemon entry point would be cached and then block the first request
+      # on stdin until the full request timeout. A failure here is recorded
+      # as MAX_DAEMON_FAILURES so the next calls skip the daemon for this key
+      # and pay for at most one handshake per run.
+      begin
+        PluginDaemon.await_ready(process.output)
+      rescue ex
+        terminate_daemon_process(process)
+        @@daemon_failures[{host, user, port, become_user, sig}] = MAX_DAEMON_FAILURES
+        raise ex
+      end
       @@daemon_processes[{host, user, port, become_user, sig}] = process
       process
     end
@@ -995,6 +1009,12 @@ module Krikri
       process = @@daemon_processes.delete({host, user, port, become_user, sig})
       return unless process
 
+      terminate_daemon_process(process)
+    end
+
+    # Shared by #kill_daemon and the handshake failure in #spawn_daemon, the
+    # latter of which runs before the process is registered anywhere.
+    private def self.terminate_daemon_process(process : Process) : Nil
       begin
         process.input.close
       rescue

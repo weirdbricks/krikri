@@ -1,4 +1,5 @@
 require "json"
+require "./plugin_daemon"
 
 module Krikri
   # The LOCAL half of the persistent plugin daemon - the exact analogue of
@@ -201,6 +202,25 @@ module Krikri
         process.input.print(become_password)
         process.input.print('\n')
         process.input.flush
+      end
+
+      # Same handshake as SSHManager's spawn: a binary without the --daemon
+      # entry point must fail here, not block the first request on stdin.
+      # Recorded as MAX_DAEMON_FAILURES so the circuit breaker skips the
+      # daemon for this key for the rest of the run.
+      begin
+        PluginDaemon.await_ready(process.output)
+      rescue ex
+        begin
+          process.input.close
+        rescue
+        end
+        begin
+          process.terminate(graceful: false) unless process.terminated?
+        rescue
+        end
+        @@daemon_failures[{host_name, become_user}] = SSHManager::MAX_DAEMON_FAILURES
+        raise ex
       end
 
       # Cached under the SAME key #send looked up with, so the next request
