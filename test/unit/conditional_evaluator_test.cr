@@ -487,6 +487,22 @@ describe Krikri::ConditionalEvaluator do
       Krikri::ConditionalEvaluator.evaluate("result.rc not in [0, 3, 4]", v).must_equal(true)
     end
 
+    it "matches a float item against an int-valued list element by numeric value" do
+      # Real divergence found benchmarking oatakan.windows_powershell_upgrade
+      # (pre_flight.yml: `when: powershell_target_version|float not in
+      # powershell_target_versions_supported`). Python's `5.0 in [5]` is
+      # True (== compares by value); the stringified list held "5", not
+      # "5.0", so the bare `when:` path ran the task that Ansible skips.
+      # The `{{ }}` path already got this right.
+      v = Hash(String, JSON::Any).new
+      v["target"] = JSON.parse(%(5))
+      Krikri::ConditionalEvaluator.evaluate("target|float in [3, 3.0, 4, 4.0, 5, 5.1]", v).must_equal(true)
+      Krikri::ConditionalEvaluator.evaluate("target|float not in [3, 3.0, 4, 4.0, 5, 5.1]", v).must_equal(false)
+
+      v["target"] = JSON.parse(%(6))
+      Krikri::ConditionalEvaluator.evaluate("target|float not in [3, 3.0, 4, 4.0, 5, 5.1]", v).must_equal(true)
+    end
+
     it "checks membership against a METHOD CALL (not just a bare variable or filter)" do
       # Real bug found benchmarking robertdebock.squid (round 48,
       # krikri-playbook 0.9.389): its own assert.yml has

@@ -3011,7 +3011,17 @@ module Krikri
       if container.is_a?(String)
         container.includes?(item.to_s)
       elsif container.is_a?(Array)
-        container.includes?(item.to_s)
+        # Python's list membership compares with ==, so a numeric item
+        # matches its element by VALUE: `5|float in [3, 3.0, 4, 4.0, 5, 5.1]`
+        # is true because 5.0 == 5. The elements are stringified ("5"),
+        # so the plain string compare misses "5.0" - a bare `when:` with
+        # that expression ran a task Ansible skips.
+        numeric = item.as?(Int64).try(&.to_f64) || item.as?(Float64)
+        container.any? do |element|
+          next true if element == item.to_s
+          next false unless numeric
+          element.to_f? == numeric
+        end
       else
         false
       end
