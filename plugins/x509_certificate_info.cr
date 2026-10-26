@@ -24,9 +24,10 @@ module Krikri
 
     # Live-verified against ansible-core 2.19.11 (community.crypto
     # 3.1.1) via `{{ r | to_json }}` dump on a self-signed cert: absent
-    # extension/detail keys are simply skipped by the reorder. The
-    # executor backfills failed/changed after the plugin JSON; real puts
-    # failed before changed, warnings last.
+    # extension/detail keys are simply skipped by the reorder, and real
+    # registers failed before changed. failed_flag puts failed=false on
+    # the wire in its own slot; without it the executor's backfill would
+    # append it after changed.
     SUCCESS_KEY_ORDER = %w[
       signature_algorithm subject subject_ordered issuer issuer_ordered
       version key_usage key_usage_critical extended_key_usage
@@ -77,7 +78,7 @@ module Krikri
       info = X509CertInfo.parse(cert_pem)
       return failure("Unable to parse the certificate") unless info
 
-      res = PluginResult.new(changed: false, failed: false, msg: "", key_order: SUCCESS_KEY_ORDER)
+      res = PluginResult.new(changed: false, failed: false, msg: "", failed_flag: true, key_order: SUCCESS_KEY_ORDER)
       info.each do |key, value|
         res.extra[key] = value
       end

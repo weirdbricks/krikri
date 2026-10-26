@@ -313,15 +313,20 @@ describe "x509_certificate_info plugin result key order" do
 
     # The cert krikri's selfsigned provider issues from this CSR carries
     # subjectAltName (the CSR's CN-derived SAN) and no basicConstraints,
-    # so those two appear in place of the basic_constraints pair the
-    # live-verified dump had - same list, absent keys skipped.
+    # keyUsage or extendedKeyUsage - those three come out as None/false
+    # pairs at their SUCCESS_KEY_ORDER slots (the real module's
+    # always-present extension keys), in place of the live-verified
+    # dump's basicConstraints pair.
     result.as_h.keys.must_equal([
       "signature_algorithm", "subject", "subject_ordered", "issuer",
-      "issuer_ordered", "version", "subject_alt_name",
-      "subject_alt_name_critical", "not_before", "not_after", "expired",
-      "public_key", "public_key_type", "public_key_data",
-      "public_key_fingerprints", "fingerprints", "subject_key_identifier",
-      "serial_number", "valid_at", "changed",
+      "issuer_ordered", "version", "key_usage", "key_usage_critical",
+      "extended_key_usage", "extended_key_usage_critical",
+      "basic_constraints", "basic_constraints_critical",
+      "subject_alt_name", "subject_alt_name_critical", "not_before",
+      "not_after", "expired", "public_key", "public_key_type",
+      "public_key_data", "public_key_fingerprints", "fingerprints",
+      "subject_key_identifier", "serial_number", "valid_at", "failed",
+      "changed",
     ])
   end
 end

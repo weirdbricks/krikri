@@ -37,6 +37,17 @@ describe "x509_certificate_info plugin" do
     result["public_key_type"].as_s.must_equal("RSA")
     result["public_key_data"].as_h["exponent"].as_i.must_equal(65537)
     result["public_key_data"].as_h["size"].as_i.must_equal(2048)
+    # openssl's default -x509 profile adds basicConstraints CA:TRUE; keyUsage,
+    # extendedKeyUsage and SAN are not requested, so they come out as None.
+    result["basic_constraints"].as_a.must_equal(["CA:TRUE"])
+    # The extension keys are always present even when the certificate
+    # carries none of them - None value, False critical flag.
+    result["key_usage"].raw.must_be_nil
+    result["key_usage_critical"].as_bool.must_equal(false)
+    result["extended_key_usage"].raw.must_be_nil
+    result["extended_key_usage_critical"].as_bool.must_equal(false)
+    result["subject_alt_name"].raw.must_be_nil
+    result["subject_alt_name_critical"].as_bool.must_equal(false)
   end
 
   it "parses the extension set: basic constraints, key usage, extended key usage, SAN" do
@@ -52,9 +63,9 @@ describe "x509_certificate_info plugin" do
 
     result["basic_constraints"].as_a.must_equal(["CA:TRUE"])
     result["basic_constraints_critical"].as_bool.must_equal(true)
-    # The Ansible module sorts the key usage entries and joins them into one
-    # string; "Key Encipherment" sorts before "Digital Signature".
-    result["key_usage"].as_s.must_equal("Digital Signature, Key Encipherment")
+    # The Ansible module returns key_usage as a sorted list of the OpenSSL
+    # long names; "Key Encipherment" sorts before "Digital Signature".
+    result["key_usage"].as_a.map(&.as_s).must_equal(["Digital Signature", "Key Encipherment"])
     result["key_usage_critical"].as_bool.must_equal(false)
     result["extended_key_usage"].as_a.must_equal(["TLS Web Server Authentication"])
     # The Ansible module renders SAN IP entries as "IP:...", not openssl's
