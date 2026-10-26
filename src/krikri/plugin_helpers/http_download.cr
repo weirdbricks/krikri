@@ -261,7 +261,11 @@ module Krikri
           return download_with_info(url, dest, options, redirects_left, auth_attempted: true)
         end
 
-        if response.status.redirection? && (location = response.headers["Location"]?)
+        # ansible's fetch_url follows any 3xx whose Location header is
+        # present and non-empty; a 3xx with an empty or missing Location
+        # is NOT followed and fails as "Request failed" (issue #656).
+        if response.status.redirection? &&
+           (location = response.headers["Location"]?) && !location.empty?
           client.close
           return download_with_info(resolve_redirect(uri, location), dest, redirect_options(options), redirects_left - 1)
         end

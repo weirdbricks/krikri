@@ -62,6 +62,13 @@ private GET_URL_TEST_SERVER = HTTP::Server.new do |context|
   when "/redirect.txt"
     context.response.status_code = 302
     context.response.headers["Location"] = "/file.txt"
+  when "/redirect-308.txt"
+    context.response.status_code = 308
+    context.response.headers["Location"] = "/file.txt"
+  when "/redirect-308-noloc.txt"
+    # fetch_url only follows a redirect whose Location header is present
+    # and non-empty; a bare 308 is reported as the failure itself.
+    context.response.status_code = 308
   when "/sha256sums.txt"
     context.response.status_code = 200
     context.response.print("#{FILE_CHECKSUM}  file.txt\n0000000000000000000000000000000000000000000000000000000000000000  other.txt\n")
@@ -917,6 +924,39 @@ describe "get_url plugin" do
 
     result["changed"].as_bool.must_equal(true)
     File.read(dest).must_equal(FILE_CONTENT)
+  ensure
+    File.delete(dest) if dest && File.exists?(dest)
+  end
+
+  it "follows a 308 redirect that carries a Location" do
+    # ansible's fetch_url follows any 3xx with a non-empty Location,
+    # 308 included - verified against ansible-core 2.19.11 (issue #656).
+    dest = File.tempname("get-url-spec")
+
+    result = PluginSpecHelper.run("get_url", {"url" => "#{GET_URL_TEST_BASE}/redirect-308.txt", "dest" => dest})
+
+    result["changed"].as_bool.must_equal(true)
+    File.read(dest).must_equal(FILE_CONTENT)
+  ensure
+    File.delete(dest) if dest && File.exists?(dest)
+  end
+
+  it "fails on a 308 redirect with no Location" do
+    # Without a Location header there is no hop to follow, so the 308 itself
+    # is the failure - ansible reports "HTTP Error 308" here (issue #656).
+    dest = File.tempname("get-url-spec")
+
+    result = PluginSpecHelper.run("get_url", {"url" => "#{GET_URL_TEST_BASE}/redirect-308-noloc.txt", "dest" => dest})
+
+    result["failed"].as_bool.must_equal(true)
+    result["changed"].as_bool.must_equal(false)
+    result["msg"].as_s.must_equal("Request failed")
+    result["status_code"].as_i.must_equal(308)
+    result["response"].as_s.must_equal("HTTP Error 308: Permanent Redirect")
+    result["url"].as_s.must_equal("#{GET_URL_TEST_BASE}/redirect-308-noloc.txt")
+    result["dest"].as_s.must_equal(dest)
+    result["elapsed"].as_i.must_equal(0)
+    File.exists?(dest).must_equal(false)
   ensure
     File.delete(dest) if dest && File.exists?(dest)
   end
