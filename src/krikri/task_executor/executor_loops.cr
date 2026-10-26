@@ -1547,6 +1547,22 @@ module Krikri
       end
     end
 
+    # task_executor.py (_execute, 2.19.11): a looped task whose loop_var
+    # (default "item") is already in the task's variables - the outer
+    # include_tasks: loop's item threaded into the included task's vars -
+    # warns once per run before the loop binds it, the loop_var itself as
+    # the obj dump under Origin: <unknown>.
+    private def warn_loop_var_collision(task : Task, vars_context : Hash(String, JSON::Any)) : Nil
+      loop_var = task.loop_var || "item"
+      return unless vars_context.has_key?(loop_var)
+      Krikri::ResultDisplay.emit_display_warning(
+        "The loop variable '#{loop_var}' is already in use.\n" \
+        "Origin: <unknown>\n\n" \
+        "#{loop_var}\n\n" \
+        "You should set the `loop_var` value in the `loop_control` option for the task to something else to avoid variable collisions and unexpected behavior."
+      )
+    end
+
     private def execute_looped_task(
       task : Task,
       host : Host,
@@ -1564,6 +1580,8 @@ module Krikri
       # bogus rc=4 "unavailable modules" exit on an otherwise-green run).
       # A NON-empty loop's registration still happens per-item inside
       # when_passes?.
+
+      warn_loop_var_collision(task, base_vars_context)
 
       # Render each item *before* it's ever bound to "item" or checked
       # against when: - a literal loop: entry can itself be a template

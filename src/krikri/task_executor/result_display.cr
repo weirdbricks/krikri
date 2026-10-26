@@ -154,10 +154,15 @@ module Krikri
     # sources still collide exactly when real's would.
     @@warned_texts = Set(String).new
 
+    # Ansible's format_event ends a multi-line warning with a blank line
+    # (it appends "\n\n" when the message contains a newline, "\n" otherwise),
+    # so a multi-line [WARNING] block is followed by one blank stderr line -
+    # byte-verified against 2.19.11.
     def self.emit_display_warning(text : String) : Nil
       line = "[WARNING]: #{text.strip}"
       return unless @@warned_texts.add?(line)
       STDERR.puts line.colorize(:light_magenta)
+      STDERR.puts "" if text.strip.includes?('\n')
     end
 
     # Core-emitted deprecation lines already printed this run (real

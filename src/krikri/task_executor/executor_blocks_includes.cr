@@ -690,6 +690,7 @@ module Krikri
         # looped-module path.
         item_results = [] of JSON::Any
         unsafe_items = loop_items_derive_from_unsafe_data?(task, host.name)
+        warn_loop_var_collision(task, vars_context)
         # Unsafe-derived items are already rendered data - the pass below
         # would be their second render, so it is skipped and the values are
         # marked instead (see loop_items_derive_from_unsafe_data?).
@@ -2007,6 +2008,7 @@ module Krikri
         # actually binds it - an undefined loop source never binds and
         # stays silent (live-verified vs 2.19.11, issue #239).
         warn_reserved_loop_var(task)
+        warn_loop_var_collision(task, base_vars_context)
         loop_var = task.loop_var
         index_var = task.index_var
         unsafe_items = loop_items_derive_from_unsafe_data?(task, host.name)
