@@ -104,15 +104,15 @@ module Krikri
             value
           end
         when "upper"
-          transform_string(value, &.upcase)
+          undefined_passthrough?(value) ? value : transform_string(value, &.upcase)
         when "lower"
-          transform_string(value, &.downcase)
+          undefined_passthrough?(value) ? value : transform_string(value, &.downcase)
         when "capitalize"
           transform_string(value, &.capitalize)
         when "title"
           transform_string(value) { |text| text.split.map(&.capitalize).join(" ") }
         when "trim", "strip"
-          transform_string(value, &.strip)
+          undefined_passthrough?(value) ? value : transform_string(value, &.strip)
         when "dirname"
           # Ansible/Jinja2 filter (Python's os.path.dirname) -
           # entirely unimplemented, so it fell through to the unknown-
@@ -124,9 +124,9 @@ module Krikri
           # mysql.err") rather than its parent ("/var/log/mysql"), so
           # mysqld's own attempt to open its error log at that same path
           # found a directory instead of a file and failed to start.
-          JSON::Any.new(FilterCore.dirname(as_string(value)))
+          undefined_passthrough?(value) ? value : JSON::Any.new(FilterCore.dirname(as_string(value)))
         when "basename"
-          JSON::Any.new(FilterCore.basename(as_string(value)))
+          undefined_passthrough?(value) ? value : JSON::Any.new(FilterCore.basename(as_string(value)))
         when "length", "count"
           # Python's len() on a None/float/int/bool input raises
           # TypeError, which Ansible wraps as "The filter plugin
@@ -146,7 +146,7 @@ module Krikri
           end
         when "replace"
           args = parse_filter_args(filter_args)
-          transform_string(value) { |text| args.size >= 2 ? text.gsub(args[0], args[1]) : text }
+          undefined_passthrough?(value) ? value : transform_string(value) { |text| args.size >= 2 ? text.gsub(args[0], args[1]) : text }
         when "split"
           # Real bug found benchmarking geerlingguy.nfs (via `nfs_exports
           # | map('split') | map('first')`, applying `split` with NO
@@ -985,7 +985,7 @@ module Krikri
           # separately in jinja_filters.cr) fell through to the
           # unknown-filter passthrough, silently returning the plaintext
           # value unencoded.
-          JSON::Any.new(FilterCore.b64encode(as_string(value)))
+          undefined_passthrough?(value) ? value : JSON::Any.new(FilterCore.b64encode(as_string(value)))
         when "b64decode"
           # b64decode() - inverse of the above. Ansible raises on
           # invalid input rather than silently passing it through;
@@ -1203,7 +1203,7 @@ module Krikri
           # via kyl191.openvpn's own openvpn_server_netmask_cidr default.
           JSON::Any.new(FilterCore.netmask_to_cidr(as_string(value)).to_i64)
         when "md5"
-          JSON::Any.new(FilterCore.md5(as_string(value)))
+          undefined_passthrough?(value) ? value : JSON::Any.new(FilterCore.md5(as_string(value)))
         when "sha1"
           JSON::Any.new(FilterCore.sha1(as_string(value)))
         when "expanduser"
@@ -1222,7 +1222,7 @@ module Krikri
           # normpath() - Ansible filter, mirrors Python's
           # os.path.normpath: collapses `.`/`..`/redundant `/` without
           # making the path absolute (relative stays relative).
-          JSON::Any.new(FilterCore.normpath(as_string(value)))
+          undefined_passthrough?(value) ? value : JSON::Any.new(FilterCore.normpath(as_string(value)))
         when "relpath"
           # relpath(start='.') - Ansible filter, mirrors Python's
           # os.path.relpath: value expressed relative to *start*.
