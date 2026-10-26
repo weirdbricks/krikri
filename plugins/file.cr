@@ -115,6 +115,21 @@ module Krikri
 
     class InvalidModeError < Exception; end
 
+    # A chown/chmod syscall that failed for a reason no argument validation
+    # catches (EPERM on an unprivileged user, EACCES, ...). Ansible's file
+    # module fails with the bare "chown failed" / "chmod failed" msg and
+    # hands the OSError to fail_json(exception=...) - the errno text rides
+    # a display-only key, so krikri carries the original File::Error along
+    # for dispatch_state_rescued to compose that shape (issue #603).
+    class AttributeSyscallError < Exception
+      getter label : String
+      getter original : File::Error
+
+      def initialize(@label : String, @original : File::Error)
+        super(original.message || "file syscall failed")
+      end
+    end
+
     property? check_mode : Bool
     property? diff_mode : Bool
 
@@ -338,7 +353,10 @@ module Krikri
     # its own "Plugin execution failed: " wrapper Ansible never produces
     # (found via the podman-diff file_edge_cases F2 case). Every
     # deliberate raise inside this plugin's call chain is already a
-    # user-facing failure message, so surface it verbatim.
+    # user-facing failure message, so surface it verbatim - the
+    # AttributeSyscallError branch is the one exception, because Ansible
+    # splits a failed chown/chmod syscall into a bare msg plus an
+    # OSError `exception` key rather than one combined string.
     private def dispatch_state_rescued(state : String, path : String) : PluginResult
       dispatch_state(state, path)
     rescue InvalidModeError
@@ -347,6 +365,20 @@ module Krikri
         failed: true,
         msg: "mode must be in octal or symbolic form"
       )
+    rescue ex : AttributeSyscallError
+      # Ansible follows the dest before chown/chmod, so the failure's path
+      # (and the stat block add_path_info merges onto it) names the
+      # TARGET - the bare msg plus the errno text in the display-only
+      # `exception` key is exactly the shape real emits (issue #603).
+      target = attribute_failure_target(path)
+      result = PluginResult.new(
+        changed: false,
+        failed: true,
+        msg: "#{ex.label} failed",
+        path: target
+      )
+      result.extra["exception"] = JSON::Any.new(oserror_repr(target, ex.original))
+      result
     rescue ex
       PluginResult.new(
         changed: false,
@@ -354,6 +386,18 @@ module Krikri
         msg: ex.message || "Unknown error",
         path: path
       )
+    end
+
+    # The path the failure result and its exception text name: only when
+    # follow: true (the default) AND the dest itself is a symlink does it
+    # resolve to the link's target (a broken link keeps the dest itself,
+    # like Ansible failing on the link). A regular dest under a symlinked
+    # parent directory keeps its own path, matching Ansible's file module.
+    private def attribute_failure_target(path : String) : String
+      return path unless follow_symlinks? && File.symlink?(path)
+      File.realpath(path)
+    rescue File::Error
+      path
     end
 
     # Handle state=directory
@@ -447,6 +491,7 @@ module Krikri
       # (collection1), and a root-owned 0755 ancestor denies that to a
       # non-root user ("Unable to delete file").
       create_failure_msg = nil
+      create_failure_exception = nil
       failing_component = path
       created = begin
         missing_components = [] of String
@@ -461,6 +506,15 @@ module Krikri
           apply_file_attributes(component, recursive: false)
         end
         true
+      rescue ex : AttributeSyscallError
+        # A failed chown/chmod on a just-created ancestor keeps the same
+        # split shape as every other syscall failure: bare "<label> failed"
+        # msg plus the OSError under `exception` (issue #603). The lookup
+        # failures below stay on the combined-string form because Ansible
+        # raises those as plain strings in basic.py.
+        create_failure_msg = "#{ex.label} failed"
+        create_failure_exception = oserror_repr(failing_component, ex.original)
+        false
       rescue ex
         # apply_file_attributes -> apply_single_file_attributes can raise
         # a real, specific failure (owner:/group: naming a system user/
@@ -483,7 +537,11 @@ module Krikri
           failed: true,
           msg: create_failure_msg || "Failed to create directory",
           path: failing_component
-        )
+        ).tap do |result|
+          if create_failure_exception
+            result.extra["exception"] = JSON::Any.new(create_failure_exception)
+          end
+        end
       end
 
       # Apply attributes
@@ -662,7 +720,11 @@ module Krikri
         )
       end
 
-      # Apply attributes (note: for links, this affects the link itself, not target)
+      # Apply attributes - Ansible's file module defaults follow: to
+      # true for every state (including state: link), so it follows the
+      # dest symlink and chowns the TARGET, not the link itself; a chown
+      # the running user isn't allowed to do on the target therefore
+      # fails the task exactly as it would on a plain file.
       apply_file_attributes(path)
 
       # Ansible's link results carry NO msg on any success path - created,
@@ -1061,9 +1123,10 @@ module Krikri
     # correctly - matches what `stat -c '%U'`/`'%G'`/`'%a'` (no `-L`,
     # i.e. not following symlinks) did before.
     #
-    # The follow: parameter (default false, matching Ansible's
-    # file module) flips the read path between lstat and stat
-    # (see the stat_follow helper). When true, a `state: file` task
+    # The follow: parameter (Ansible's file module defaults it to TRUE
+    # for every state, so reads follow dest symlinks unless follow:
+    # false is given explicitly) flips the read path between lstat and
+    # stat (see the stat_follow helper). When true, a `state: file` task
     # with a symlink path compares the TARGET's metadata (owner,
     # group, mode) against the requested values, not the symlink's
     # own. Real bug found benchmarking devsec.hardening.mysql_hardening
@@ -1099,7 +1162,7 @@ module Krikri
     end
 
     private def update_attributes_if_needed(path : String, is_directory : Bool, skip_mode : Bool = false) : Bool
-      follow = true?(@params["follow"]?)
+      follow = follow_symlinks?
       changed = false
       info = follow ? stat_follow(path) : lstat(path)
       return false unless info
@@ -1260,6 +1323,14 @@ module Krikri
       mode
     end
 
+    # Ansible's file module defaults follow: to true for every state
+    # (including state: link), so it follows dest symlinks and applies
+    # owner:/group:/mode: to the TARGET unless follow: false is given
+    # explicitly - see apply_single_file_attributes for the apply side.
+    private def follow_symlinks? : Bool
+      true?(@params["follow"]?, true)
+    end
+
     # Apply file attributes
     private def apply_file_attributes(path : String, recursive : Bool = false) : Nil
       apply_single_file_attributes(path)
@@ -1286,7 +1357,7 @@ module Krikri
       # owner -> group -> mode -> attributes).
       apply_secontext(path)
 
-      follow = true?(@params["follow"]?)
+      follow = follow_symlinks?
       uid = -1
       gid = -1
       if owner = @params["owner"]?
@@ -1329,11 +1400,12 @@ module Krikri
 
       # Crystal's File.chown defaults `follow_symlinks: false`, which is
       # lchown(2) - changes the symlink's own owner/group, not the
-      # target's. For a task with `follow: true` (the file module's
-      # default for state: file), the chown must follow the symlink
-      # to change the target. File.chmod is unaffected - the Crystal
-      # stdlib's File.chmod always follows (matches the Linux chmod(2)
-      # default), so the mode apply was already correct on the target.
+      # target's. Ansible's follow: default is true for every state, so
+      # unless follow: false is given explicitly the chown must follow
+      # the symlink to change the target. File.chmod is unaffected - the
+      # Crystal stdlib's File.chmod always follows (matches the Linux
+      # chmod(2) default), so the mode apply was already correct on the
+      # target.
       # Real bug found benchmarking devsec.hardening.mysql_hardening
       # in round 24 role 2: the `Protect my.cnf` task (owner: root,
       # group: mysql, follow: true, path: /etc/mysql/my.cnf symlink to
@@ -1342,22 +1414,30 @@ module Krikri
       # downstream comparisons via the unfixed lstat read path then
       # always reported changed on warm rerun. With follow_symlinks
       # passed through here, the chown now reaches the target.
-      # Only the actual syscalls are swallowed below (e.g. a chown/chmod
-      # failing because this process isn't running as root/owner) - the
-      # owner:/group: LOOKUP failures above are Ansible-equivalent
-      # task failures and must propagate past this method, not be
-      # silently absorbed by the same blanket rescue.
+      # A chown/chmod SYSCALL failure (e.g. not running as root/owner) is
+      # re-raised as AttributeSyscallError: Ansible's file module fails
+      # the task with the bare "chown failed" / "chmod failed" msg plus
+      # the OSError in the display-only `exception` key (basic.py's
+      # set_owner_if_different/set_group_if_different), with the result's
+      # path/stat fields naming the RESOLVED TARGET when the dest is a
+      # symlink and follow: is true - Ansible follows the dest before the
+      # chown, so the error and the stat block both come from the target
+      # (issue #603). The owner:/group: LOOKUP failures above are
+      # Ansible-equivalent task failures too and must also propagate
+      # past this method; the swallowing rescues belong only to
+      # walk_apply_attributes and the recursive changed-check.
       begin
         File.chown(path, uid: uid, gid: gid, follow_symlinks: follow) if uid != -1 || gid != -1
+      rescue ex : File::Error
+        raise AttributeSyscallError.new("chown", ex)
+      end
 
-        if mode = @params["mode"]?
+      if mode = @params["mode"]?
+        begin
           apply_mode(path, mode)
+        rescue ex : File::Error
+          raise AttributeSyscallError.new("chmod", ex)
         end
-      rescue File::Error
-        # A chmod/chown SYSCALL failure (e.g. not running as root/owner)
-        # shouldn't fail the whole task - matches the previous shell
-        # implementation's behavior of not checking these commands' exit
-        # codes either.
       end
 
       apply_attr(path)
@@ -1552,7 +1632,8 @@ module Krikri
     # "[Errno 2] No such file or directory: b'<path>'" - errno text from
     # strerror(3), path in Python bytes repr (Ansible hands the file
     # module's paths around as bytes, so every OSError it surfaces carries
-    # the b'' prefix). Used by the touch failure path.
+    # the b'' prefix). Used by the touch failure path and the
+    # chown/chmod syscall-failure shape in dispatch_state_rescued.
     private def oserror_repr(path : String, ex : File::Error) : String
       errno = ex.os_error.try(&.value)
       return ex.message || "OSError" unless errno

@@ -205,7 +205,13 @@ module Krikri
       # templated twice.
       resolved_defaults : Hash(String, JSON::Any)? = nil
       unless task.validate_argument_spec_inline?
-        spec_file = task.role_path.try { |dir| File.join(dir, "meta", "argument_specs.yml") }
+        # Same lookup order as the role loader (issue #603): the spec may
+        # live in meta/argument_specs.yml or the main meta file's
+        # `argument_specs:` key - the origin lines must name the real file.
+        spec_file = task.role_path.try do |dir|
+          candidate = File.join(dir, "meta", "argument_specs.yml")
+          File.exists?(candidate) ? candidate : RoleLoader.find_main_file(File.join(dir, "meta")) || File.join(dir, "meta", "main.yml")
+        end
         if spec_file.is_a?(String) && File.file?(spec_file)
           spec_lines = File.read_lines(spec_file)
           failed_spec_default : {String, String}? = nil

@@ -1517,6 +1517,10 @@ module Krikri
       name = short_description ? "Validating arguments against arg spec 'main' - #{short_description}" : "Validating arguments against arg spec 'main'"
 
       task = Task.new(name, "_validate_argument_spec")
+      # Ansible's auto-inserted validator is a named task, so its listing
+      # entry carries the "role : " prefix like every sibling task - mark
+      # it explicit or --list-tasks prints the bare name unprefixed.
+      task.has_explicit_name = true
       task.validate_argument_spec_options = options
       task
     end
