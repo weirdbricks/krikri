@@ -20,13 +20,14 @@ module Krikri
   # vtype, value" (the Ansible module's exact
   # wording).
   #
-  # Not implemented: `vtype: password`'s own idempotency read-back
-  # (`get_password_value`, parsing `debconf-get-selections`'s raw tab-
-  # separated dump for a password-typed question) - Ansible's own
-  # docs recommend `no_log: true` for password questions precisely
-  # because the value is sensitive, and this is a narrow, rarely-hit
-  # shape; a `vtype: password` task here always re-applies (`changed:
-  # true` every run) rather than silently under-reporting drift.
+  # `vtype: password` mirrors Ansible's get_password_value read-back
+  # (debconf.py): once the question is in debconf-show's output, the
+  # stored value comes from `debconf-get-selections`'s tab-separated
+  # dump, located through get_bin_path - so the read-back needs
+  # debconf-utils, which a stock image lacks, so a re-run of a seeded
+  # password question fails there exactly like Ansible does. The dumped
+  # value only feeds the comparison - it reaches no msg/stdout/stderr,
+  # which is why Ansible's docs recommend `no_log: true` for these tasks.
   class DebconfPlugin < BasePlugin
     # ansible.builtin.debconf's `type: bool` options, in the real argument-spec
     # declaration order (ansible-doc -j ansible.builtin.debconf). Validated at
@@ -67,7 +68,10 @@ module Krikri
     end
 
     # Ansible's own flow from here on: read the package's current
-    # selections, refuse a null value, compare, and only then - outside
+    # selections, refuse a null value, compare (reading the stored
+    # password back through debconf-get-selections for a seeded
+    # `vtype: password` question, like Ansible's get_password_value -
+    # a step even a --check run performs), and only then - outside
     # check mode - build and write the debconf-set-selections line, which
     # is where a non-string `value:` literal kills the module (see
     # #selection_type_failure), so an unchanged value and a --check run
@@ -82,7 +86,22 @@ module Krikri
       # None there, not an empty string.
       return missing_vtype_or_value if value_param_null?
 
-      changed = value_differs?(prev, question, vtype, value)
+      # Ansible's `if question not in prev: changed = True` (debconf.py:218)
+      # skips the read-back entirely for a question debconf-show doesn't
+      # know; for a seeded one the `elif vtype == 'password'` branch
+      # (debconf.py:225) replaces prev[question] with get_password_value's
+      # read-back before the comparison - the step a stock image's missing
+      # debconf-utils turns into the task's failure, check mode included.
+      changed =
+        if vtype == "password" && prev.has_key?(question)
+          readback = get_password_value(pkg, question, vtype)
+          if readback.is_a?(PluginResult)
+            return readback
+          end
+          readback != value
+        else
+          value_differs?(prev, question, vtype, value)
+        end
 
       if changed && !true?(@params["_ansible_check_mode"]?)
         if error = selection_type_failure(vtype)
@@ -240,6 +259,80 @@ module Krikri
       existing = existing.try { |e| vtype == "boolean" ? e.downcase : e }
 
       existing != compare_value
+    end
+
+    # Ansible's get_password_value (debconf.py:132): locate
+    # debconf-get-selections with get_bin_path(required=True), then
+    # parse its tab-separated dump - the first pkg-prefixed line whose
+    # question and vtype fields both match wins, <= 3 fields means an
+    # empty stored value, and no matching line at all means nil (which
+    # counts as a difference, like Ansible's None != value). Returns the
+    # failure PluginResult when the read-back itself dies (binary
+    # missing, non-zero rc), else the stored value or nil. The value
+    # never leaves this comparison: it reaches no msg, stdout or stderr.
+    private def get_password_value(pkg : String, question : String, vtype : String) : PluginResult | String | Nil
+      probe = remote_exec(password_bin_probe)
+      searched = ""
+      found = ""
+      probe[:stdout].each_line do |line|
+        key, _, val = line.strip.partition('=')
+        searched = val if key == "searched"
+        found = val if key == "found"
+      end
+
+      if found.empty?
+        # get_bin_path(required=True) raises inside the module, so real's
+        # executor renders it as an uncaught-module-exception failure:
+        # the fatal msg carries the "Task failed: Module failed: " brief
+        # and the [ERROR] block shows the bare exception text - the same
+        # shape as #join_crash above.
+        detail = %(Failed to find required executable "debconf-get-selections" in paths: #{searched})
+        return PluginResult.new(changed: false, failed: true,
+          msg: "Task failed: Module failed: #{detail}", _ansible_error_detail: detail)
+      end
+
+      dump = remote_exec(shell_single_quote(found))
+      if dump[:exit_code] != 0
+        return PluginResult.new(changed: false, failed: true,
+          msg: "Failed to get the value '#{question}' from '#{pkg}': #{dump[:stderr]}")
+      end
+
+      dump[:stdout].each_line do |line|
+        next unless line.starts_with?(pkg)
+        fields = line.split('\t')
+        return "" if fields.size <= 3
+        return fields[3] if fields[1] == question && fields[2] == vtype
+      end
+      nil
+    end
+
+    # get_bin_path(required=True)'s search, run in the target's shell so
+    # the list reflects the target's own $PATH: PATH entries as-is
+    # (empties included - they show up in the failure message like
+    # process.py's), then /sbin, /usr/sbin and /usr/local/sbin each only
+    # when the directory exists there and isn't listed already. Prints
+    # the searched list and the resolved path (empty when nothing
+    # executable was found) for #get_password_value to build Ansible's
+    # exact failure message from.
+    private def password_bin_probe : String
+      <<-SH
+        searched="$PATH"
+        for d in /sbin /usr/sbin /usr/local/sbin; do
+          case ":$searched:" in *":$d:"*) ;; *) [ -e "$d" ] && searched="$searched:$d" ;; esac
+        done
+        found=""
+        oldIFS=$IFS
+        IFS=:
+        for d in $searched; do
+          [ -n "$d" ] || continue
+          if [ -z "$found" ] && [ -f "$d/debconf-get-selections" ] && [ -x "$d/debconf-get-selections" ]; then
+            found="$d/debconf-get-selections"
+          fi
+        done
+        IFS=$oldIFS
+        printf 'searched=%s\n' "$searched"
+        printf 'found=%s\n' "$found"
+        SH
     end
 
     private def missing_param(name : String) : PluginResult

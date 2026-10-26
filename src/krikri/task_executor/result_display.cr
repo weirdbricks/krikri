@@ -391,13 +391,17 @@ module Krikri
         # krikri replicates it ONLY where the message is one of copy's
         # fixed controller-side required-argument texts: ansible
         # generates those itself, so they can carry no secret (issue
-        # #271) and the block owes Ansible's output nothing less. Every
-        # other failure's block would echo the very thing this control
-        # exists to hide, so those stay suppressed. Everything else
-        # matches Ansible 2.19.11: a solo failed no_log task prints the
-        # censored fatal dump (which carries no secret) plus "...ignoring"
-        # when ignore_errors: caught it; ok/changed and looped results
-        # stay bare status lines (live-verified against 2.19.11).
+        # #271) - and debconf's get_bin_path miss (issue #578), whose
+        # text ansible also composes itself and names only the target's
+        # PATH entries. Every other failure's block would echo the very
+        # thing this control exists to hide, so those stay suppressed.
+        # Everything else matches Ansible 2.19.11: a solo failed no_log
+        # task prints the censored fatal dump (which carries no secret)
+        # plus "...ignoring" when ignore_errors: caught it; ok/changed
+        # stay bare status lines, and a failed loop item prints the
+        # block (for the allowed messages only) above its censored
+        # failed line, deduped across identical items by ErrorBlock
+        # (live-verified against 2.19.11).
         if failed && item_label.nil?
           # Issue #317: the failure comes from the no_log KEYWORD's own
           # undefined template (the task failed before any module ran -
@@ -432,6 +436,10 @@ module Krikri
         # print verbatim.
         if failed && item_label
           # A failed loop item is printed in Ansible's loop-failure shape: item before the `=>`, then the censored result dict.
+          # Real prints the error block BEFORE those per-item lines too (the
+          # same gate as the solo branch above); ErrorBlock dedups the
+          # identical repeats into the one block real shows.
+          emit_task_error_block(source_task, result, msg) if no_log_error_block_allowed?(module_name, msg)
           puts "failed: [#{host_label}] (item=(censored due to no_log)) => {\"censored\": \"the output has been hidden due to the fact that 'no_log: true' was specified for this result\", \"changed\": #{changed}}".colorize(:red)
           return
         end
@@ -705,7 +713,7 @@ module Krikri
 
     # The copy result messages safe to show in the `[ERROR]: Task
     # failed:` block even under no_log: real ansible prints the block
-    # for every failed no_log task with the raw msg, but these three are
+    # for every failed no_log task with the raw msg, but these are
     # copy's controller-side required-argument texts - fixed strings
     # ansible composes itself (copy.py's own required-arg checks), so
     # they carry none of the data a no_log task holds and the block can
@@ -725,6 +733,14 @@ module Krikri
       # line), so like the copy texts it names no part of the task's
       # data - only what kind of value refuses to iterate.
       return true if msg =~ /\ATask failed: Error rendering template: '[\w.]+' object is not iterable\z/
+      # debconf's get_bin_path miss (issue #578): ansible raises this
+      # from its own get_bin_path when the read-back binary is absent,
+      # and the message is ansible's fixed wording - it names only the
+      # target's PATH entries, none of the task's data, so the block
+      # prints like real's does (live-verified: before the censored
+      # per-item lines, once for identical loop items).
+      return true if module_name.try { |name| name == "debconf" || name.ends_with?(".debconf") } &&
+                     msg.starts_with?("Task failed: Module failed: Failed to find required executable \"debconf-get-selections\" in paths: ")
       !!(copy_task && NO_LOG_SAFE_MSGS.includes?(msg))
     end
 
@@ -734,17 +750,19 @@ module Krikri
     # failure is a conditional-evaluation failure (whose two-level chain
     # is emitted by TaskExecutor's own emit_when_error_chain, including
     # the `when:` value's own Origin), or no_log hides the result -
-    # except copy's fixed required-argument texts, the one class whose
-    # uncensored block carries no secret (see no_log_error_block_allowed?
-    # above).
+    # except the messages no_log_error_block_allowed? clears (copy's
+    # fixed required-argument texts, debconf's get_bin_path miss), the
+    # classes whose uncensored block carries no secret (see above).
     private def self.emit_task_error_block(source_task : Task?, result : JSON::Any, msg : String) : Nil
       return unless source_task
-      # no_log's block suppression is lifted only for copy's fixed
-      # controller-side required-argument texts (issue #271) - ansible's
-      # own block here carries the raw msg, which would otherwise echo
-      # the data no_log exists to hide. The no_log display branch calls
-      # this method only for those messages already; the same gate here
-      # keeps every other caller (loop items, helpers) equally blocked.
+      # no_log's block suppression is lifted only for the messages
+      # no_log_error_block_allowed? clears (copy's fixed controller-side
+      # required-argument texts, issue #271; debconf's get_bin_path miss,
+      # issue #578) - ansible's own block here carries the raw msg, which
+      # would otherwise echo the data no_log exists to hide. The no_log
+      # display branch calls this method only for those messages already;
+      # the same gate here keeps every other caller (helpers) equally
+      # blocked.
       if source_task.no_log?
         return unless no_log_error_block_allowed?(source_task.module_name, msg)
       end
