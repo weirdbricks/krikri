@@ -96,6 +96,9 @@ describe Krikri::KrikriJinjaFilters do
     render("{{ '192.168.1.10' | ansible.utils.ipaddr('address') }}").must_equal("192.168.1.10")
     render("{{ '10.0.0.0/8' | ansible.utils.ipmath(1) }}").must_equal("10.0.0.1")
     render("{{ '192.168.7.0/24' | ansible.utils.ipaddr(1) }}").must_equal("192.168.7.1/24")
+    # nthhost takes the index as a string in the plugin's argspec, but
+    # an int literal works too (live-verified, 2.19.11)
+    render("{{ '192.168.1.5/255.255.255.0' | ansible.utils.nthhost(200) }}").must_equal("192.168.1.200")
     assert_raises(KrikriJinja::TemplateError) do
       render("{{ '192.168.1.0/24' | ipaddr('net') }}")
     end

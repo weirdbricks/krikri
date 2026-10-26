@@ -1375,6 +1375,13 @@ module Krikri
         IpAddrCore.ip4_hex(value, ipaddr_query_text(args[0]?))
       end
 
+      # nthhost's query is a string in the plugin's argspec but real
+      # ansible accepts an int too; ipaddr_query_text turns both into
+      # the text the core parses (same treatment ip4_hex gets).
+      KrikriJinja.register_default_json_filter("ansible.utils.nthhost") do |value, args, _kwargs|
+        IpAddrCore.nthhost(value, ipaddr_query_text(args[0]?))
+      end
+
       KrikriJinja.register_default_json_filter("json_query") do |value, args, _kwargs|
         expression = args[0]?.try(&.as_s) || ""
         Krikri::JMESPath.evaluate_json_query(expression, value)

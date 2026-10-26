@@ -206,6 +206,46 @@ describe Krikri::IpAddrCore do
     Krikri::IpAddrCore.next_nth_usable(j("192.168.32.250/24"), 10).raw.must_equal(false)
   end
 
+  # Every nthhost expectation live-verified on ansible-core 2.19.11 +
+  # ansible.utils (issue #608).
+  it "indexes the full range with nthhost" do
+    # an address with a prefix is normalized to its NETWORK first
+    Krikri::IpAddrCore.nthhost(j("192.168.1.5/24"), "200").must_equal(j("192.168.1.200"))
+    Krikri::IpAddrCore.nthhost(j("10.0.0.0/8"), "305").must_equal(j("10.0.1.49"))
+    Krikri::IpAddrCore.nthhost(j("10.0.0.0/8"), "-1").must_equal(j("10.255.255.255"))
+    Krikri::IpAddrCore.nthhost(j("10.0.0.0/24"), "0").must_equal(j("10.0.0.0"))
+    # index is into the full range, so n >= size is FALSE, not an error
+    Krikri::IpAddrCore.nthhost(j("10.0.0.0/24"), "256").raw.must_equal(false)
+    Krikri::IpAddrCore.nthhost(j("not-an-ip"), "1").raw.must_equal(false)
+  end
+
+  it "takes the nthhost query as a string like the plugin's argspec" do
+    Krikri::IpAddrCore.nthhost(j("10.0.0.0/24"), "7").must_equal(j("10.0.0.7"))
+    Krikri::IpAddrCore.nthhost(j("10.0.0.0/24"), "").raw.must_equal(false)
+    Krikri::IpAddrCore.nthhost(j("10.0.0.0/24"), "abc").raw.must_equal(false)
+  end
+
+  it "accepts a dotted netmask in nthhost" do
+    Krikri::IpAddrCore.nthhost(j("192.168.1.5/255.255.255.0"), "200").must_equal(j("192.168.1.200"))
+    Krikri::IpAddrCore.nthhost(j("192.168.1.5/255.255.255.0"), "-5").must_equal(j("192.168.1.251"))
+  end
+
+  it "does nthhost on IPv6 networks" do
+    Krikri::IpAddrCore.nthhost(j("2001:db8::/64"), "3").must_equal(j("2001:db8::3"))
+  end
+
+  it "raises on a negative nthhost index beyond the range size" do
+    # real ansible raises ('The filter plugin 'ansible.utils.nthhost'
+    # failed: index out range for address range size!'), it is NOT
+    # caught - the task fails
+    assert_raises_message(
+      Krikri::IpAddrCore::IpError,
+      "The filter plugin 'ansible.utils.nthhost' failed: index out range for address range size!"
+    ) do
+      Krikri::IpAddrCore.nthhost(j("10.0.0.0/24"), "-257")
+    end
+  end
+
   it "checks containment including network/broadcast, or usable hosts only" do
     net = j("192.168.0.0/24")
     Krikri::IpAddrCore.network_in_network(net, j("192.168.0.255")).must_equal(JSON::Any.new(true))

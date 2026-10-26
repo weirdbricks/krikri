@@ -689,7 +689,15 @@ module Krikri
             current << char
           end
         elsif in_double
-          if char == '"'
+          # Inside double quotes Python shlex.split (posix mode), which
+          # ansible's command module uses, honors ONLY \" and \\ as
+          # escapes - any other backslash is kept literally (so `"x\y"`
+          # is one element `x\y`, not `xy`), and `$`/backtick are never
+          # escapes here ($ expansion is handled elsewhere in this file).
+          if char == '\\' && i + 1 < chars.size && (chars[i + 1] == '"' || chars[i + 1] == '\\')
+            current << chars[i + 1]
+            i += 1
+          elsif char == '"'
             in_double = false
             started = true
           else

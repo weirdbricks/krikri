@@ -81,7 +81,7 @@ module Krikri
       # fail-on-access guard - see the to_nice_yaml case below.)
       # ipwrap is absent from this set, and so is every BARE ansible.utils
       # ipaddr-family name (ipaddr/ipv4/ipv6/ipsubnet/ipmath/next_nth_usable/
-      # previous_nth_usable/network_in_network/network_in_usable/ip4_hex):
+      # previous_nth_usable/network_in_network/network_in_usable/ip4_hex/nthhost):
       # ansible.utils collection filters, not core, so a `when:` using the
       # bare spelling hard-fails "No filter named 'x'." like ansible-core
       # does (issues #134 and #335 - bersace.dockerdns). The FQCN spellings
@@ -106,7 +106,7 @@ module Krikri
         ansible.utils.ipsubnet ansible.utils.ipmath
         ansible.utils.next_nth_usable ansible.utils.previous_nth_usable
         ansible.utils.network_in_network ansible.utils.network_in_usable
-        ansible.utils.ip4_hex
+        ansible.utils.ip4_hex ansible.utils.nthhost
       ])
 
       # The pre-pass's name check: true for a name this engine's own
