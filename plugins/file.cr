@@ -1288,10 +1288,23 @@ module Krikri
         shift = scope == 'u' ? 6 : scope == 'g' ? 3 : 0
         mode = apply_symbolic_bits(mode, 0o7 << shift, rwx << shift, op)
       end
+      mode = clear_assigned_special_bits(mode, scopes) if op == '='
 
       mode = apply_symbolic_bits(mode, 0o4000, 0o4000, op) if perms.includes?('s') && scopes.includes?('u')
       mode = apply_symbolic_bits(mode, 0o2000, 0o2000, op) if perms.includes?('s') && scopes.includes?('g')
       mode = apply_symbolic_bits(mode, 0o1000, 0o1000, op) if perms.includes?('t')
+      mode
+    end
+
+    # Ansible's '=' assignment also clears the setuid/setgid/sticky bit of each
+    # class it names (u= drops setuid, g= drops setgid, o= drops sticky); '+' and
+    # '-' never touch those bits. The explicit s/t handling that follows re-sets
+    # any bit the clause asks for.
+    private def clear_assigned_special_bits(mode : Int32, scopes : String) : Int32
+      scopes.each_char do |scope|
+        special = scope == 'u' ? 0o4000 : scope == 'g' ? 0o2000 : 0o1000
+        mode &= ~special
+      end
       mode
     end
 
@@ -1679,7 +1692,30 @@ module Krikri
       else
         # Symbolic mode (e.g. "u+x", "go-w") - see the class doc comment.
         validate_symbolic_mode(mode)
-        remote_exec("chmod #{shell_single_quote(mode)} #{shell_single_quote(path)}")
+        if copy_syntax_mode?(mode)
+          remote_exec("chmod #{shell_single_quote(mode)} #{shell_single_quote(path)}")
+        else
+          # Ansible's '=' clears the named class's special bit, GNU chmod
+          # does not, so delegating to chmod(1) would leave the bit set
+          # and the task would never converge with what detection
+          # expects; compute and apply the target in-process exactly the
+          # way the numeric branch does.
+          current = stat_follow(path)
+          unless current
+            raise File::NotFoundError.new("chmod failed: file not found: #{path}", file: path)
+          end
+          File.chmod(path, resolve_symbolic_mode(current.st_mode.to_i32, mode) & 0o7777)
+        end
+      end
+    end
+
+    # Copy syntax (`g+u`) has no in-process equivalent, so it still goes
+    # through chmod(1), which implements it.
+    private def copy_syntax_mode?(mode : String) : Bool
+      mode.split(',').any? do |raw_clause|
+        clause = raw_clause.strip
+        perms = clause.split(/[+\-=]/, 2)[1]?
+        !!perms.try(&.matches?(/[ugo]/))
       end
     end
 
