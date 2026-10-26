@@ -366,10 +366,11 @@ module Krikri
       # static or filter-free template stays silent (issue #307,
       # live-verified vs 2.19.11). This engine derives its own
       # environment, so the parse-level gate has to run here.
+      parsed_template : KrikriJinja::Nodes::TemplateNode? = nil
       begin
-        Krikri::PythonFilterRunner.scan_for_filter_use(
-          KrikriJinja::Parser.parse(content, options), @vars["playbook_dir"]?.try(&.as_s?)
-        )
+        template = KrikriJinja::Parser.parse(content, options)
+        parsed_template = template
+        Krikri::PythonFilterRunner.scan_for_filter_use(template, @vars["playbook_dir"]?.try(&.as_s?))
       rescue KrikriJinja::TemplateError
         nil
       end
@@ -380,6 +381,18 @@ module Krikri
         KrikriJinja.ansible_strict_undefined, JinjaHostContext.new(template_vars)
       )
       begin
+        # Ansible/Jinja2 compile the WHOLE template before any of it runs:
+        # every filter name is resolved at compile time, so an unknown
+        # filter fails the task even from a branch that never executes (an
+        # `{% if %}` over an empty list, `{% if false %}`; issue #651,
+        # live-verified vs 2.19.11). The engine itself only raises when a
+        # filter node is evaluated, so the same "unknown filter" error is
+        # raised up front here and the rescue below handles it through its
+        # normal path - including the role-local filter_plugins retry,
+        # which registers the filter on this engine before re-rendering.
+        if template = parsed_template
+          validate_template_filters(engine, template)
+        end
         render_once(engine, content, template_vars)
       rescue ex : KrikriJinja::TemplateError
         # A role-local `filter_plugins/*.py` filter is resolved on demand
@@ -499,6 +512,30 @@ module Krikri
 
     private def trailing_newline_count(string : String) : Int32
       string.size - string.rstrip('\n').size
+    end
+
+    # Compile-time filter-name validation over the whole parsed template,
+    # raising the engine's own "unknown filter" wording (the same message
+    # shape its runtime evaluation raises) for the first name the render's
+    # engine could not resolve. The check MUST mirror the runtime lookup
+    # exactly or valid templates break: Context#filter resolves an exact
+    # name first, then - for a 2+-dot collection-qualified name - its
+    # trailing segment (`ansible.builtin.ternary` -> `ternary`); engine.
+    # known_filter? downcases the name and lacks the segment fallback, so
+    # neither side of the runtime lookup is available off the shelf and the
+    # check consults the render engine's own filter hash directly.
+    private def validate_template_filters(engine : KrikriJinja::Engine,
+                                          template : KrikriJinja::Nodes::TemplateNode) : Nil
+      Krikri::PythonFilterRunner.collect_filter_calls(template).each do |(name, line)|
+        next if resolvable_filter?(engine, name)
+        raise KrikriJinja::TemplateError.new("unknown filter #{name.inspect}", line)
+      end
+    end
+
+    private def resolvable_filter?(engine : KrikriJinja::Engine, name : String) : Bool
+      return true if engine.filters.has_key?(name)
+      short = name.count('.') >= 2 ? name.rpartition('.')[2] : nil
+      !!(short && engine.filters.has_key?(short))
     end
 
     # Engine-scope conversion for the template render's variable loading.
