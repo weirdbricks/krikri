@@ -38,9 +38,9 @@ end
 
 private def role_files(meta_file : String) : Hash(String, String)
   {
-    "roles/r1/#{meta_file}"    => META_MAIN_SPEC,
-    "roles/r1/tasks/main.yml"  => "---\n- name: role task\n  ansible.builtin.debug:\n    msg: hi\n",
-    "play.yml"                 => "- hosts: all\n  gather_facts: false\n  roles:\n    - r1\n",
+    "roles/r1/#{meta_file}"   => META_MAIN_SPEC,
+    "roles/r1/tasks/main.yml" => "---\n- name: role task\n  ansible.builtin.debug:\n    msg: hi\n",
+    "play.yml"                => "- hosts: all\n  gather_facts: false\n  roles:\n    - r1\n",
   }
 end
 
@@ -80,5 +80,111 @@ describe "role argument_specs from the meta main file" do
 
     output.must_include("missing required arguments: other")
     output.wont_include("missing required arguments: fqdn")
+  end
+
+  it "reports a dict option's own required keys as a sub-spec, found in the option" do
+    files = role_files("meta/main.yml")
+    files["roles/r1/meta/main.yml"] = <<-YAML
+      argument_specs:
+        main:
+          short_description: Nested
+          options:
+            userdata:
+              type: dict
+              required: true
+              options:
+                fqdn:
+                  type: str
+                  required: true
+                hostname:
+                  type: str
+                  required: true
+      YAML
+    files["play.yml"] = "- hosts: all\n  gather_facts: false\n  vars:\n    userdata:\n      fqdn: host.example.com\n  roles:\n    - r1\n"
+    status, output = run_playbook(files)
+
+    status.exit_code.must_equal(2)
+    output.must_include("missing required arguments: hostname found in userdata")
+    output.wont_include("msg\": \"hi")
+  end
+
+  it "gives an empty list for a dict option only the tagged-list type line" do
+    files = role_files("meta/main.yml")
+    files["roles/r1/meta/main.yml"] = <<-YAML
+      argument_specs:
+        main:
+          short_description: Nested
+          options:
+            userdata:
+              type: dict
+              required: true
+              options:
+                hostname:
+                  type: str
+                  required: true
+      YAML
+    files["play.yml"] = "- hosts: all\n  gather_facts: false\n  vars:\n    userdata: []\n  roles:\n    - r1\n"
+    _, output = run_playbook(files)
+
+    output.must_include("argument 'userdata' is of type list and we were unable to convert to dict: <class 'ansible.module_utils._internal._datatag._AnsibleTaggedList'> cannot be converted to a dict")
+    output.wont_include("dictionary requested")
+    output.wont_include("must be of type dict or list of dicts")
+  end
+
+  it "reports a string for a dict option as a converter failure and a sub-spec rejection" do
+    files = role_files("meta/main.yml")
+    files["roles/r1/meta/main.yml"] = <<-YAML
+      argument_specs:
+        main:
+          short_description: Nested
+          options:
+            userdata:
+              type: dict
+              required: true
+              options:
+                hostname:
+                  type: str
+                  required: true
+      YAML
+    files["play.yml"] = "- hosts: all\n  gather_facts: false\n  vars:\n    userdata: x\n  roles:\n    - r1\n"
+    _, output = run_playbook(files)
+
+    output.must_include("argument 'userdata' is of type str and we were unable to convert to dict: dictionary requested, could not parse JSON or key=value")
+    output.must_include("value of 'userdata' must be of type dict or list of dicts")
+  end
+
+  it "gives a dict option without a sub-spec only the tagged-list type line" do
+    files = role_files("meta/main.yml")
+    files["roles/r1/meta/main.yml"] = <<-YAML
+      argument_specs:
+        main:
+          short_description: Nested
+          options:
+            userdata:
+              type: dict
+              required: true
+      YAML
+    files["play.yml"] = "- hosts: all\n  gather_facts: false\n  vars:\n    userdata:\n      - 1.1.1.1\n  roles:\n    - r1\n"
+    _, output = run_playbook(files)
+
+    output.must_include("argument 'userdata' is of type list and we were unable to convert to dict: <class 'ansible.module_utils._internal._datatag._AnsibleTaggedList'> cannot be converted to a dict")
+    output.wont_include("dictionary requested")
+  end
+
+  it "quotes the value's Python repr in an int conversion failure" do
+    files = role_files("meta/main.yml")
+    files["roles/r1/meta/main.yml"] = <<-YAML
+      argument_specs:
+        main:
+          short_description: Count
+          options:
+            count:
+              type: int
+              required: true
+      YAML
+    files["play.yml"] = "- hosts: all\n  gather_facts: false\n  vars:\n    count: notanint\n  roles:\n    - r1\n"
+    _, output = run_playbook(files)
+
+    output.must_include("argument 'count' is of type str and we were unable to convert to int: \"'notanint'\" cannot be converted to an int")
   end
 end
