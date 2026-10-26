@@ -2460,9 +2460,26 @@ module Krikri
     # ignore_errors: does not apply to a role-resolution failure (real:
     # `failed=1 ignored=0`, the next task never runs, rc=2), unlike
     # every ordinary module failure.
-    private def fail_include_role_not_found(task : Task, host : Host, message : String) : Nil
+    # looped include_role: whose named role resolves nowhere - Ansible
+    # prints NO fatal: line per failing item on stdout, only the
+    # "[ERROR]: the role 'x' was not found" block per item on STDERR
+    # (live-verified vs 2.19.11), whose Origin points at that loop
+    # item's own YAML position when the name is exactly the loop
+    # variable - the failed count and the unconditional halt are the
+    # same as the single-role case below.
+    private def fail_include_role_not_found(task : Task, host : Host, message : String, loop_index : Int32? = nil) : Nil
       connection_host = host.name
-      node = if (origin_pos = task.include_role_name_origin) && (source_file = task.source_file)
+      # Real points the looped case's Origin at the failing ITEM's own
+      # position - but only when the role name is exactly the loop
+      # variable reference; any other name keeps the name-value Origin.
+      loop_item_origin = nil
+      if task_has_loop?(task) && (idx = loop_index) && (raw_name = task.include_role_name)
+        loop_var = task.loop_var || "item"
+        if raw_name =~ /\A\{\{\s*#{Regex.escape(loop_var)}\s*\}\}\z/
+          loop_item_origin = task.include_role_loop_item_origins.try(&.[idx]?)
+        end
+      end
+      node = if (origin_pos = loop_item_origin || task.include_role_name_origin) && (source_file = task.source_file)
                ErrorBlock::Node.new(message,
                  source_context: ErrorBlock.origin_context(source_file, origin_pos[0], origin_pos[1]))
              else
@@ -2471,7 +2488,7 @@ module Krikri
       ErrorBlock.emit_stderr(node)
       if Krikri::Oneline.enabled?
         puts "#{connection_host} | FAILED! => #{ResultDisplay.dump_oneline_json(JSON.parse({"changed" => false, "reason" => message}.to_json))}".colorize(:red)
-      else
+      elsif !task_has_loop?(task)
         delegate_target = delegate_display_target(task, host)
         fatal_host_label = delegate_target ? "#{host.name} -> #{delegate_target}" : connection_host
         puts "fatal: [#{fatal_host_label}]: FAILED! => {\"changed\": false, \"reason\": #{message.to_json}}".colorize(:red)
@@ -2717,14 +2734,14 @@ module Krikri
           vars_context["item"] = item unless loop_var
           vars_context[loop_var] = item if loop_var
           vars_context[index_var] = JSON::Any.new(idx.to_i64) if index_var
-          run_include_role_once(task, host, vars_context, include_item_display_label(task, item, vars_context, host))
+          run_include_role_once(task, host, vars_context, include_item_display_label(task, item, vars_context, host), idx)
         end
       else
         run_include_role_once(task, host, base_vars_context, nil)
       end
     end
 
-    private def run_include_role_once(task : Task, host : Host, vars_context : Hash(String, JSON::Any), item_label : String?) : Nil
+    private def run_include_role_once(task : Task, host : Host, vars_context : Hash(String, JSON::Any), item_label : String?, loop_index : Int32? = nil) : Nil
       # A static import_role: (Task#is_static_import) is resolved at
       # parse time in Ansible - the import line itself produces NO
       # task result at all, ever (see the "ok" comment below), and a
@@ -2898,7 +2915,7 @@ module Krikri
         # the play HALTS for that host unconditionally - ignore_errors:
         # does NOT apply (live-verified: `failed=1 ignored=0`, the next
         # task never runs, rc=2), unlike every ordinary module failure.
-        fail_include_role_not_found(task, host, ex.message || "role not found")
+        fail_include_role_not_found(task, host, ex.message || "role not found", loop_index)
         return
       rescue ex
         fail_include(task, host, "Failed to load role '#{role_name}': #{ex.message}")
