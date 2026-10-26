@@ -257,6 +257,12 @@ module Krikri
     # ordinary one that still needs displaying.
     private def record_handler_result(result : JSON::Any, stats : Hash(String, Int32),
                                       host : Host, handler : Task, diff_mode : Bool) : Nil
+      if result["handler_unreachable_counted"]?.try(&.as_bool)
+        # The unreachable was already booked (fatal report, unreachable
+        # stat, host halted) inside TaskExecutor#execute_handler_internal -
+        # this step must neither display a second line nor recount it.
+        return
+      end
       if result["handler_include_failure"]?.try(&.as_bool) || result["handler_include_counted"]?.try(&.as_bool)
         # A handler include_tasks: whose file is missing already printed
         # its own fatal shape AND counted the failure (and halted the

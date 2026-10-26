@@ -1048,9 +1048,10 @@ module Krikri
 
       deadline = Time.instant + reboot_timeout.seconds
       reconnected = false
+      last_result = nil
       until Time.instant >= deadline
-        result = SSHManager.exec(connection_host, user, test_command, conn.port, timeout: connect_timeout, identity_file: identity_file, extra_args: conn.ssh_extra_options) rescue nil
-        if result && result[:exit_code] == 0
+        last_result = SSHManager.exec(connection_host, user, test_command, conn.port, timeout: connect_timeout, identity_file: identity_file, extra_args: conn.ssh_extra_options) rescue nil
+        if last_result && last_result[:exit_code] == 0
           reconnected = true
           break
         end
@@ -1058,6 +1059,26 @@ module Krikri
       end
 
       unless reconnected
+        # Ansible's reboot action runs the task-end tmpdir cleanup (the
+        # `rm -f -r <tmpdir>` over ssh) AFTER the wait loop - so when the
+        # wait times out on a host that never came back, that cleanup is
+        # what fails at the transport level, and the raised
+        # AnsibleConnectionFailure out of the executor's finally is what
+        # ansible-playbook reports: UNREACHABLE (exit 4, unreachable=1
+        # failed=0) carrying the ssh error, never its own timeout
+        # message. A wait that timed out with the host still reachable
+        # over ssh (e.g. test_command keeps returning non-zero) keeps the
+        # cleanup working and reports FAILED with the timeout message -
+        # that path below stays as it always was.
+        if last_result.nil? || SSHManager.connection_level_failure?(last_result[:exit_code], last_result[:stderr], last_result[:stdout])
+          timed_out_unreachable = {
+            "changed"     => false,
+            "unreachable" => true,
+            "msg"         => "Failed to connect to the host via ssh: #{last_result ? last_result[:stderr] : ""}",
+          }
+          timed_out_unreachable["stderr"] = last_result[:stderr] if last_result
+          return JSON.parse(timed_out_unreachable.to_json)
+        end
         return JSON.parse({
           "changed" => false,
           "elapsed" => (Time.instant - reboot_started_at).total_seconds.to_i,
