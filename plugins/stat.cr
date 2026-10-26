@@ -124,7 +124,12 @@ module Krikri
         # message ("Not a directory" for a file-parent path, "Permission
         # denied" for an unreadable ancestor, ...).
         unless stat_or_errno == Errno::ENOENT
-          return PluginResult.new(changed: false, failed: true, msg: stat_or_errno.message)
+          # ansible's stat.py fails with strerror as msg, and its [ERROR]
+          # header appends the OSError text ([Errno N] strerror: b'path')
+          # composed from msg plus exception - carry that detail along.
+          res = PluginResult.new(changed: false, failed: true, msg: stat_or_errno.message)
+          res.extra["exception"] = JSON::Any.new("[Errno #{stat_or_errno.value}] #{stat_or_errno.message}: b'#{path}'")
+          return res
         end
         return PluginResult.new(changed: false, failed: false, msg: "", stat: {"exists" => false}, key_order: SUCCESS_KEY_ORDER)
       end

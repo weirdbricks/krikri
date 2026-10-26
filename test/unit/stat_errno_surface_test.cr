@@ -28,6 +28,7 @@ describe "stat errno surface" do
 
       result["failed"].as_bool.must_equal(true)
       result["msg"].as_s.must_equal("Not a directory")
+      result["exception"].as_s.must_equal("[Errno 20] Not a directory: b'#{File.join(parent, "child")}'")
     end
   end
 
