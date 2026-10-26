@@ -59,13 +59,19 @@
 # - Returns ansible_facts at the result top level, not nested under a
 #   separate key.
 # - ansible_hostname is the short name (first component before '.').
-# - ansible_fqdn falls back to the short name if hostname -f fails (returns
-#   only "hostname: Name or service not known" stderr exit code 1 on hosts
-#   with no FQDN configured), matching the facts module's own behavior.
+# - ansible_fqdn is socket.getfqdn() over the LIVE kernel hostname - a
+#   forward-then-REVERSE resolution through NSS, not a `hostname -f`
+#   forward lookup - falling back to the live kernel hostname itself when
+#   the reverse lookup fails, matching CPython's gethostbyaddr error
+#   branch (the facts module's own behavior). Reverse-resolving is what
+#   makes a role that colocates its hostname on the 127.0.0.1 /etc/hosts
+#   line see the same "localhost"-shaped fqdn ansible-playbook reports,
+#   instead of the falsely-idempotent short-name echo (issue #585).
 # - check_mode reports would-change without executing hostnamectl.
 
 require "json"
 require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/getfqdn"
 
 module Krikri
   class HostnamePlugin < BasePlugin
@@ -133,10 +139,14 @@ module Krikri
     # - ansible_hostname: short name (first label before the first '.');
     #   equals the full name when there is no dot.
     # - ansible_nodename:  the name passed in (the system's node name).
-    # - ansible_fqdn:      the live system FQDN from `hostname -f`, falling
-    #   back to ansible_hostname when hostname -f fails (hosts with no FQDN
-    #   configured return exit 1 + stderr "Name or service not known",
-    #   matching the facts module's own behavior).
+    # - ansible_fqdn:      socket.getfqdn() over the LIVE kernel hostname,
+    #   NOT the name passed in and NOT `hostname -f`: Ansible builds these
+    #   facts AFTER its update (and leaves them at the old live name in
+    #   check mode), and the forward-then-reverse resolution is what makes
+    #   the /etc/hosts-colocated hostname shape (issue #585) report
+    #   "localhost" like real ansible instead of echoing the short name.
+    #   Falls back to the live kernel hostname itself when the reverse
+    #   lookup yields nothing (CPython's gethostbyaddr error branch).
     # - ansible_domain:    the suffix after the first '.' of the FQDN, or "".
     # Ansible 2.19.11's registered hostname result key order (live-verified
     # via `{{ r.keys() | list | to_json }}` - an unchanged real-mode run
@@ -150,7 +160,14 @@ module Krikri
     # backfill.
     private HOSTNAME_SUCCESS_KEY_ORDER = ["changed", "name", "ansible_facts", "diff"]
 
-    private def hostname_success(changed : Bool, hostname_facts : Hash(String, String), old_facts : Hash(String, String)?) : PluginResult
+    private def hostname_success(changed : Bool, name : String, old_facts : Hash(String, String)?) : PluginResult
+      # The facts are built HERE, at call time, not precomputed: Ansible
+      # reads the live hostname after its update, so the value must be
+      # sampled after each strategy's set/write - a precomputed hash kept
+      # the stale pre-set name and masked real changes on a role's warm
+      # run (issue #585). Check mode returns before any set, so it still
+      # reads the old live name, as ansible's check mode does.
+      hostname_facts = build_facts(name)
       name_echo = @params["name"].to_s
       if ofacts = old_facts
         PluginResult.new(changed: changed, failed: false, msg: "",
@@ -170,12 +187,14 @@ module Krikri
       dot = hostname.index('.')
       short = dot ? hostname[0...dot] : hostname
 
-      fqdn = begin
-        output = capture("hostname", ["-f"]).strip
-        output.empty? ? short : output
-      rescue
-        short
-      end
+      # The fqdn comes from reverse-resolving the LIVE kernel hostname,
+      # not the name being set: the file strategies never touch the
+      # kernel name, so after their set the live name is still the old
+      # one - exactly what ansible's socket.getfqdn() sees there - while
+      # forward-resolving the new name would fabricate a value ansible
+      # never reports (issue #585).
+      fqdn = PluginHelpers::Getfqdn.lookup(System.hostname)
+      fqdn = System.hostname if fqdn.empty?
 
       dot_fqdn = fqdn.index('.')
       domain = dot_fqdn ? fqdn[(dot_fqdn + 1)..] : ""
@@ -279,16 +298,15 @@ module Krikri
     # is never read or written.
     private def file_strategy(name : String, file : String) : PluginResult
       permanent = File.file?(file) ? File.read(file).strip : ""
-      hostname_facts = build_facts(name)
 
       if permanent == name
-        return hostname_success(false, hostname_facts, nil)
+        return hostname_success(false, name, nil)
       end
 
       old_facts = build_facts(permanent)
 
       if @check_mode
-        return hostname_success(true, hostname_facts, old_facts)
+        return hostname_success(true, name, old_facts)
       end
 
       begin
@@ -298,7 +316,7 @@ module Krikri
           msg: "failed to update hostname: #{python_os_error_message(ex)}")
       end
 
-      hostname_success(true, hostname_facts, old_facts)
+      hostname_success(true, name, old_facts)
     end
 
     # SystemdStrategy (use: systemd / use: debian - Ansible's STRATS
@@ -330,22 +348,21 @@ module Krikri
       permanent_name = permanent.as(String)
 
       changed = transient_name != name || permanent_name != name
-      hostname_facts = build_facts(name)
 
       unless changed
-        return hostname_success(false, hostname_facts, nil)
+        return hostname_success(false, name, nil)
       end
 
       old_facts = build_facts(transient_name)
 
       if @check_mode
-        return hostname_success(true, hostname_facts, old_facts)
+        return hostname_success(true, name, old_facts)
       end
 
       set_failure = systemd_set_phase(name, transient_name, permanent_name)
       return set_failure if set_failure
 
-      hostname_success(true, hostname_facts, old_facts)
+      hostname_success(true, name, old_facts)
     end
 
     # The set-phase half of the systemd strategy: permanent first, then
@@ -396,16 +413,14 @@ module Krikri
         )
       end
 
-      hostname_facts = build_facts(name)
-
       if permanent == name
-        return hostname_success(false, hostname_facts, nil)
+        return hostname_success(false, name, nil)
       end
 
       old_facts = build_facts(permanent)
 
       if @check_mode
-        return hostname_success(true, hostname_facts, old_facts)
+        return hostname_success(true, name, old_facts)
       end
 
       # Ansible's set_permanent_hostname: rewrite the file line by
@@ -433,7 +448,7 @@ module Krikri
           msg: "failed to update hostname: #{python_os_error_message(ex)}")
       end
 
-      hostname_success(true, hostname_facts, old_facts)
+      hostname_success(true, name, old_facts)
     end
 
     # AlpineStrategy (use: alpine) - runs `hostname -F /etc/hostname` FIRST
@@ -455,16 +470,15 @@ module Krikri
       end
 
       permanent = File.exists?(hostname_file) ? File.read(hostname_file).strip : ""
-      hostname_facts = build_facts(name)
 
       if permanent == name
-        return hostname_success(false, hostname_facts, nil)
+        return hostname_success(false, name, nil)
       end
 
       old_facts = build_facts(permanent)
 
       if @check_mode
-        return hostname_success(true, hostname_facts, old_facts)
+        return hostname_success(true, name, old_facts)
       end
 
       result = remote_exec("hostname -F #{Shell.single_quote(hostname_file)}")
@@ -477,7 +491,7 @@ module Krikri
           msg: "failed to update hostname: #{python_os_error_message(ex)}")
       end
 
-      hostname_success(true, hostname_facts, old_facts)
+      hostname_success(true, name, old_facts)
     end
 
     # OpenRCStrategy (use: openrc) - edits /etc/conf.d/hostname's
@@ -513,16 +527,14 @@ module Krikri
         )
       end
 
-      hostname_facts = build_facts(name)
-
       if permanent == name
-        return hostname_success(false, hostname_facts, nil)
+        return hostname_success(false, name, nil)
       end
 
       old_facts = build_facts(permanent)
 
       if @check_mode
-        return hostname_success(true, hostname_facts, old_facts)
+        return hostname_success(true, name, old_facts)
       end
 
       lines = File.exists?(conf_file) ? File.read(conf_file).lines.map(&.strip) : [] of String
@@ -542,7 +554,7 @@ module Krikri
           msg: "failed to update hostname: #{python_os_error_message(ex)}")
       end
 
-      hostname_success(true, hostname_facts, old_facts)
+      hostname_success(true, name, old_facts)
     end
 
     # Run one of the strategy's hostnamectl reads; returns the stripped
@@ -584,20 +596,6 @@ module Krikri
         failed: true,
         msg: "Command failed rc=#{result[:exit_code]}, out=#{result[:stdout]}, err=#{result[:stderr]}",
       )
-    end
-
-    # Run *command* with *args* directly (no shell), capturing stdout only
-    # (stderr discarded). Returns "" if the binary can't be found or
-    # execution otherwise fails - matches facts.cr's/service_facts.cr's own
-    # `capture` helper (the plugin binary itself already executes on the
-    # target host, so a plain local Process.run is correct here, not
-    # remote_exec).
-    private def capture(command : String, args : Array(String) = [] of String) : String
-      output = IO::Memory.new
-      Process.run(command, args, output: output, error: Process::Redirect::Close)
-      output.to_s
-    rescue
-      ""
     end
   end
 end

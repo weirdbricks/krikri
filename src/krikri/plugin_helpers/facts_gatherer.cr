@@ -2,6 +2,7 @@ require "json"
 require "../param_sentinels"
 require "./distribution_facts"
 require "./service_mgr_fact"
+require "./getfqdn"
 
 # The two C bindings stay at TOP level, outside the module below, and
 # have to: nesting them makes `lib LibC` a brand-new lib rather than a
@@ -601,30 +602,12 @@ module Krikri
       facts["ansible_domain"] = domain
     end
 
-    # socket.getfqdn()'s final step over one `getent hosts <ip>` line
-    # ("<ip> <canonical> [alias ...]"): the canonical name is checked
-    # first (Python's `aliases.insert(0, hostname)`), then the aliases in
-    # order, and the first entry containing a dot wins.
-    #
-    # When every name on the line is dotless, CPython's `name = hostname`
-    # branch returns the reverse lookup's own canonical name - NOT the
-    # machine's current hostname: a role can add a line like
-    # `127.0.1.1 testhost <machine-name>` whose canonical name ("testhost")
-    # is unrelated to the machine name, and ansible-playbook then reports
-    # ansible_fqdn = "testhost". A System.hostname fallback instead would
-    # report the machine name and keep a later
-    # `hostname: name={{ ansible_fqdn }}` task ok where ansible reports
-    # changed every run. "" stays reserved for a line with no name field
-    # at all (gethostbyaddr failing), which the caller maps to the
-    # `hostname -f` chain.
+    # socket.getfqdn()'s final-step parse lives in
+    # PluginHelpers::Getfqdn now, shared with the hostname plugin, which
+    # must produce the same ansible_fqdn at its own returned-facts layer
+    # (issue #585: the two disagreed and the role's warm run diverged).
     def fqdn_from_getent_hosts(output : String) : String
-      fields = output.split
-      return "" if fields.size < 2
-
-      fields[1..].each do |name|
-        return name if name.includes?(".")
-      end
-      fields[1]
+      PluginHelpers::Getfqdn.from_getent_hosts(output)
     end
 
     # Parse an /etc/lsb-release payload into the ansible_lsb dict as a pure
