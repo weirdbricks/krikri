@@ -702,6 +702,11 @@ module Krikri
     # source - the runtime role-not-found failure's Origin block points
     # there, not at the task's first key (live-verified vs 2.19.11).
     property include_role_name_origin : {Int32, Int32}?
+    # For an include_role: whose `loop:` is a literal YAML sequence, each
+    # entry's own line/column. Real's looped role-not-found Origin points
+    # at the failing ITEM's position, not the name: value (live-verified
+    # vs 2.19.11). nil when the loop is not a literal sequence.
+    property include_role_loop_item_origins : Array({Int32, Int32})?
     # --list-tasks/--list-tags display (TaskLister): the include-family
     # directive key AS WRITTEN (`include_role:`,
     # `ansible.builtin.include_tasks:`, ...). Real's listtasks CLI prints
@@ -835,6 +840,7 @@ module Krikri
       @include_role_vars_from = nil
       @include_role_collections = nil
       @include_role_name_origin = nil
+      @include_role_loop_item_origins = nil
       @include_role_bool_failure = nil
       @validate_argument_spec_options = nil
       @validate_argument_spec_inline = false
@@ -6031,6 +6037,17 @@ module Krikri
         task.loop_template = loop_scalar
       elsif loop_yaml = task_hash["loop"]?.try(&.as_a?)
         task.loop_items = loop_yaml.map { |item| JSON.parse(item.to_json) }
+        # Real's looped role-not-found Origin points at the failing loop
+        # ITEM's own position (live-verified vs 2.19.11), not the name:
+        # value. Only a literal `loop:` sequence gets per-item origins:
+        # a templated/lookup/with_* source has no per-item source text.
+        if source_map
+          loop_prefix = "#{task_source_prefix(source_prefix, source_index)}/loop"
+          item_origins = loop_yaml.map_with_index { |_, i| source_map.at?("#{loop_prefix}/#{i}") }
+          # compact only after the all? check, so a missing position never
+          # shifts an origin onto the wrong item's index.
+          task.include_role_loop_item_origins = item_origins.compact if item_origins.all?
+        end
       elsif with_items = task_hash["with_items"]?.try(&.as_a?)
         task.loop_items = with_items.map { |item| JSON.parse(item.to_json) }
         task.loop_items_needs_flatten = true
