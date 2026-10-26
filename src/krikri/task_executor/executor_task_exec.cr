@@ -133,6 +133,42 @@ module Krikri
     # name (`os_vars`), which is how roles stage OS-specific values before
     # applying them selectively; without it the file's keys are merged
     # individually.
+    # Whether ansible's sub-spec pass rejects a dict option's value outright:
+    # a dict passes, a list passes when every element is a dict (an empty
+    # list included), and a string or a list with a non-dict element does not.
+    private def dict_sub_spec_rejects?(value : JSON::Any) : Bool
+      return false if value.as_h?
+      return false if (items = value.as_a?) && items.all? { |item| !item.as_h?.nil? }
+      !value.as_a?.nil? || !value.as_s?.nil?
+    end
+
+    # Mirrors Python's repr() for the shapes an argument-spec value can
+    # take: ansible interpolates the offending value into the conversion
+    # failure reason through repr(), so strings surface quoted the way
+    # Python would quote them (single quotes preferred, doubles only when
+    # the text itself contains a single quote and no double quote).
+    private def python_repr(value : JSON::Any) : String
+      raw = value.raw
+      case raw
+      when Nil
+        "None"
+      when Bool
+        raw ? "True" : "False"
+      when Int64, Float64
+        raw.to_s
+      when String
+        quote = raw.includes?('\'') && !raw.includes?('"') ? '"' : '\''
+        body = raw.gsub(/\\/) { "\\\\" }.gsub(Regex.escape(quote.to_s)) { "\\#{quote}" }
+        "#{quote}#{body}#{quote}"
+      when Array
+        "[" + value.as_a.map { |item| python_repr(item) }.join(", ") + "]"
+      when Hash
+        "{" + value.as_h.map { |key, item| "#{python_repr(JSON::Any.new(key))}: #{python_repr(item)}" }.join(", ") + "}"
+      else
+        raw.to_s
+      end
+    end
+
     private def execute_validate_argument_spec(task : Task, host : Host) : Nil
       vars_context = build_vars_context(task, host)
       options = task.validate_argument_spec_options || Hash(String, JSON::Any).new
@@ -234,6 +270,7 @@ module Krikri
       errors = [] of String
       missing_required = [] of String
       type_errors = [] of String
+      sub_errors = [] of String
       options.each do |option_name, spec|
         # Ansible templates the ENTIRE argument spec - `default:`
         # expressions included - when finalizing the
@@ -324,8 +361,45 @@ module Krikri
               # every type error the way Ansible's validator orders
               # them (check_required_arguments before
               # _validate_argument_types).
-              type_errors << "argument '#{option_name}' is of type #{json_type_name(value)} and we were unable to convert to #{declared_type}"
+              # The dict converter's own reason is appended to the type line
+              # (live-verified on real ansible): a list gets the tagged-list
+              # class, a string gets the key=value parse failure; an int
+              # gets the value's Python repr quoted into the reason.
+              converter_reason = nil
+              if declared_type == "dict"
+                converter_reason = if value.as_a?
+                                     "<class 'ansible.module_utils._internal._datatag._AnsibleTaggedList'> cannot be converted to a dict"
+                                   elsif value.as_s?
+                                     "dictionary requested, could not parse JSON or key=value"
+                                   end
+              elsif declared_type == "int" && (value.as_s? || value.as_a?)
+                converter_reason = "\"#{python_repr(value)}\" cannot be converted to an int"
+              end
+              # Ansible's sub-spec pass also reports the converter failure on
+              # its own line first, but only when the option declares its own
+              # `options:` sub-spec and the value is not a dict nor a list of
+              # dicts (an empty list counts as a list of dicts).
+              if declared_type == "dict" && dict_sub_spec_rejects?(value) && spec["options"]?.try(&.as_h?)
+                type_errors << "dictionary requested, could not parse JSON or key=value"
+              end
+              type_line = "argument '#{option_name}' is of type #{json_type_name(value)} and we were unable to convert to #{declared_type}"
+              type_line += ": #{converter_reason}" if converter_reason
+              type_errors << type_line
             end
+          end
+        end
+
+        # A dict option's own `options:` are validated as a sub-spec after the
+        # top-level type checks (live-verified on pimvh.cloud_init: a
+        # cloud_init_userdata dict missing required keys is reported with a
+        # "found in <option>" suffix, and a list of strings given for a dict
+        # option is rejected unless it is a list of dicts).
+        if spec["type"]?.try(&.as_s?) == "dict" && (sub_options = spec["options"]?.try(&.as_h?)) && !value.raw.nil?
+          if sub_hash = value.as_h?
+            sub_missing = sub_options.select { |name, sub_spec| !sub_hash.has_key?(name) && sub_spec["required"]?.try(&.as_bool?) == true }.keys
+            sub_errors << "missing required arguments: #{sub_missing.sort.join(", ")} found in #{option_name}" unless sub_missing.empty?
+          elsif !((items = value.as_a?) && items.all? { |item| !item.as_h?.nil? })
+            sub_errors << "value of '#{option_name}' must be of type dict or list of dicts"
           end
         end
       end
@@ -337,6 +411,7 @@ module Krikri
       # the singular form, one entry at a time).
       errors << "missing required arguments: #{missing_required.sort.join(", ")}" unless missing_required.empty?
       errors.concat(type_errors)
+      errors.concat(sub_errors)
 
       # ArgumentSpecValidator appends its UnsupportedError LAST (after the
       # required/type checks): provided_arguments keys the spec doesn't

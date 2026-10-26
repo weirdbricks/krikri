@@ -1484,7 +1484,7 @@ module Krikri
     end
 
     # Ansible auto-inserts a "Validating arguments against arg spec"
-    # task as the first task of any role that ships meta/argument_specs.yml
+    # task as the first task of any role that ships argument specs
     # (verified against ansible-playbook: exact banner text
     # "Validating arguments against arg spec 'main' - <short_description>"),
     # checking the role's effective vars against the "main" entry point's
@@ -1494,7 +1494,14 @@ module Krikri
     # supports for role invocation in the first place).
     private def self.load_argument_spec_validation_task(role_dir : String) : Task?
       spec_path = File.join(role_dir, "meta", "argument_specs.yml")
-      return nil unless File.exists?(spec_path)
+      unless File.exists?(spec_path)
+        # Specs can also live under the argument_specs: key of the role's
+        # meta main file (e.g. pimvh.cloud_init ships only meta/main.yaml);
+        # ansible reads both, argument_specs.yml first.
+        meta_path = find_main_file(File.join(role_dir, "meta")) || File.join(role_dir, "meta", "main.yml")
+        return nil unless File.exists?(meta_path)
+        spec_path = meta_path
+      end
 
       yaml = cached_yaml(spec_path)
       main_spec = yaml["argument_specs"]?.try(&.["main"]?)
