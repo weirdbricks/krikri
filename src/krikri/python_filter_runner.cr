@@ -129,17 +129,26 @@ module Krikri
       end
     end
 
+    # Every filter call in the AST as (name, line) pairs, in source order.
+    # The shared walk behind the filter_plugins scan gate AND the template
+    # action's compile-time filter-name validation: Ansible/Jinja2 compile
+    # the whole template, so a filter name is resolved even inside a branch
+    # that never executes (see TemplateActionPlugin#validate_template_filters).
+    def self.collect_filter_calls(node : KrikriJinja::Nodes::Node) : Array({String, Int32})
+      collect_node_filters(node)
+    end
+
     # The render-side triggers: a parsed template/expression whose AST
     # contains a filter call runs the scan once (already-scanned dirs
     # are skipped inside). The AST walk is the exact gate - a naive
     # "text contains |" would also fire on a pipe inside a string
     # literal, printing a warning where ansible stays silent.
     def self.scan_for_filter_use(template : KrikriJinja::Nodes::TemplateNode, playbook_dir : String?) : Nil
-      scan_unloadable_plugins(playbook_dir) if template_uses_filter?(template)
+      scan_unloadable_plugins(playbook_dir) unless collect_filter_calls(template).empty?
     end
 
     def self.scan_for_filter_use(expr : KrikriJinja::Nodes::ExprNode, playbook_dir : String?) : Nil
-      scan_unloadable_plugins(playbook_dir) if expr_uses_filter?(expr)
+      scan_unloadable_plugins(playbook_dir) unless collect_filter_calls(expr).empty?
     end
 
     # Same gate for callers that hold only the expression SOURCE text
@@ -152,158 +161,171 @@ module Krikri
       nil
     end
 
-    private def self.template_uses_filter?(node : KrikriJinja::Nodes::Node) : Bool
+    private def self.collect_node_filters(node : KrikriJinja::Nodes::Node) : Array({String, Int32})
       case node
-      when KrikriJinja::Nodes::FilterNode, KrikriJinja::Nodes::FilterBlockNode
-        true
+      when KrikriJinja::Nodes::FilterNode
+        collect_expr_filters(node)
+      when KrikriJinja::Nodes::FilterBlockNode
+        collect_expr_filters(node.filter) + collect_list_filters(node.body)
       when KrikriJinja::Nodes::TemplateNode
-        node.body.any? { |child| template_uses_filter?(child) }
+        collect_list_filters(node.body)
       when KrikriJinja::Nodes::OutputNode
-        expr_uses_filter?(node.expr)
+        collect_expr_filters(node.expr)
       when KrikriJinja::Nodes::IfNode
-        if_uses_filter?(node)
+        collect_if_filters(node)
       when KrikriJinja::Nodes::ForNode
-        for_uses_filter?(node)
+        collect_for_filters(node)
       else
-        template_rest_uses_filter?(node)
+        collect_template_rest_filters(node)
       end
     end
 
-    private def self.if_uses_filter?(node : KrikriJinja::Nodes::IfNode) : Bool
-      node.branches.any? do |(cond, body)|
-        expr_uses_filter?(cond) || body.any? { |child| template_uses_filter?(child) }
-      end || body_uses_filter?(node.orelse)
+    private def self.collect_if_filters(node : KrikriJinja::Nodes::IfNode) : Array({String, Int32})
+      branch_calls = node.branches.flat_map do |(cond, body)|
+        collect_expr_filters(cond) + collect_list_filters(body)
+      end
+      branch_calls + collect_body_filters(node.orelse)
     end
 
-    private def self.for_uses_filter?(node : KrikriJinja::Nodes::ForNode) : Bool
-      expr_uses_filter?(node.iter) || opt_expr_uses_filter?(node.test) ||
-        node.body.any? { |child| template_uses_filter?(child) } ||
-        body_uses_filter?(node.orelse)
+    private def self.collect_for_filters(node : KrikriJinja::Nodes::ForNode) : Array({String, Int32})
+      collect_expr_filters(node.iter) + collect_opt_expr_filters(node.test) +
+        collect_list_filters(node.body) + collect_body_filters(node.orelse)
     end
 
     # The less common template-level node kinds (named blocks, macros,
     # with/import/include/...) - split out only to keep each walker's
     # cyclomatic complexity at the ameba gate.
-    private def self.template_rest_uses_filter?(node : KrikriJinja::Nodes::Node) : Bool
+    private def self.collect_template_rest_filters(node : KrikriJinja::Nodes::Node) : Array({String, Int32})
       case node
       when KrikriJinja::Nodes::SetNode
-        set_uses_filter?(node)
+        collect_set_filters(node)
       when KrikriJinja::Nodes::BlockNode
-        node.body.any? { |child| template_uses_filter?(child) }
+        collect_list_filters(node.body)
       when KrikriJinja::Nodes::MacroNode
-        macro_uses_filter?(node)
+        collect_macro_filters(node)
       when KrikriJinja::Nodes::CallNode
-        call_uses_filter?(node)
+        collect_call_filters(node)
       when KrikriJinja::Nodes::WithNode
-        with_uses_filter?(node)
+        collect_with_filters(node)
       when KrikriJinja::Nodes::IncludeNode, KrikriJinja::Nodes::ExtendsNode, KrikriJinja::Nodes::ImportNode
-        expr_uses_filter?(node.template)
+        collect_expr_filters(node.template)
       when KrikriJinja::Nodes::DoNode
-        expr_uses_filter?(node.expr)
+        collect_expr_filters(node.expr)
       when KrikriJinja::Nodes::AutoescapeNode
-        node.body.any? { |child| template_uses_filter?(child) }
+        collect_list_filters(node.body)
       else
-        false
+        [] of {String, Int32}
       end
     end
 
-    private def self.set_uses_filter?(node : KrikriJinja::Nodes::SetNode) : Bool
-      !node.filter_name.nil? || expr_uses_filter?(node.expr) ||
-        opt_expr_uses_filter?(node.attr_target) || body_uses_filter?(node.body)
+    private def self.collect_set_filters(node : KrikriJinja::Nodes::SetNode) : Array({String, Int32})
+      block_filter = if name = node.filter_name
+                       [{name, node.line}]
+                     else
+                       [] of {String, Int32}
+                     end
+      block_filter + collect_args_filters(node.filter_args, node.filter_kwargs) +
+        collect_expr_filters(node.expr) + collect_opt_expr_filters(node.attr_target) +
+        collect_body_filters(node.body)
     end
 
-    private def self.macro_uses_filter?(node : KrikriJinja::Nodes::MacroNode) : Bool
-      node.body.any? { |child| template_uses_filter?(child) } ||
-        node.params.any? { |(_, default)| opt_expr_uses_filter?(default) }
+    private def self.collect_macro_filters(node : KrikriJinja::Nodes::MacroNode) : Array({String, Int32})
+      param_defaults = node.params.flat_map { |(_, default)| collect_opt_expr_filters(default) }
+      collect_list_filters(node.body) + param_defaults
     end
 
-    private def self.call_uses_filter?(node : KrikriJinja::Nodes::CallNode) : Bool
-      expr_uses_filter?(node.macro_expr) || args_uses_filter?(node.args, node.kwargs) ||
-        body_uses_filter?(node.body)
+    private def self.collect_call_filters(node : KrikriJinja::Nodes::CallNode) : Array({String, Int32})
+      collect_expr_filters(node.macro_expr) + collect_args_filters(node.args, node.kwargs) +
+        collect_body_filters(node.body)
     end
 
-    private def self.with_uses_filter?(node : KrikriJinja::Nodes::WithNode) : Bool
-      node.bindings.any? { |(_, value)| expr_uses_filter?(value) } ||
-        node.body.any? { |child| template_uses_filter?(child) }
+    private def self.collect_with_filters(node : KrikriJinja::Nodes::WithNode) : Array({String, Int32})
+      node.bindings.flat_map { |(_, value)| collect_expr_filters(value) } +
+        collect_list_filters(node.body)
     end
 
-    private def self.expr_uses_filter?(expr : KrikriJinja::Nodes::ExprNode) : Bool
+    private def self.collect_expr_filters(expr : KrikriJinja::Nodes::ExprNode) : Array({String, Int32})
       case expr
       when KrikriJinja::Nodes::FilterNode
-        true
+        [{expr.name, expr.line}] + collect_expr_filters(expr.target) +
+          collect_args_filters(expr.args, expr.kwargs)
       when KrikriJinja::Nodes::ConstNode, KrikriJinja::Nodes::NameNode, KrikriJinja::Nodes::InTestNode
-        false
+        [] of {String, Int32}
       when KrikriJinja::Nodes::ListExprNode
-        expr.items.any? { |item| expr_uses_filter?(item) }
+        expr.items.flat_map { |item| collect_expr_filters(item) }
       when KrikriJinja::Nodes::TupleExprNode
-        expr.items.any? { |item| expr_uses_filter?(item) }
+        expr.items.flat_map { |item| collect_expr_filters(item) }
       when KrikriJinja::Nodes::DictExprNode
-        expr.keys.any? { |key| expr_uses_filter?(key) } ||
-          expr.values.any? { |value| expr_uses_filter?(value) }
+        expr.keys.flat_map { |key| collect_expr_filters(key) } +
+          expr.values.flat_map { |value| collect_expr_filters(value) }
       when KrikriJinja::Nodes::BinOpNode
-        expr_uses_filter?(expr.left) || expr_uses_filter?(expr.right)
+        collect_expr_filters(expr.left) + collect_expr_filters(expr.right)
       when KrikriJinja::Nodes::UnaryOpNode
-        expr_uses_filter?(expr.operand)
+        collect_expr_filters(expr.operand)
       when KrikriJinja::Nodes::CompareNode
-        expr_uses_filter?(expr.left) || expr.comparators.any? { |comparator| expr_uses_filter?(comparator) }
+        collect_expr_filters(expr.left) +
+          expr.comparators.flat_map { |comparator| collect_expr_filters(comparator) }
       else
-        expr_rest_uses_filter?(expr)
+        collect_expr_rest_filters(expr)
       end
     end
 
-    private def self.expr_rest_uses_filter?(expr : KrikriJinja::Nodes::ExprNode) : Bool
+    private def self.collect_expr_rest_filters(expr : KrikriJinja::Nodes::ExprNode) : Array({String, Int32})
       case expr
       when KrikriJinja::Nodes::TestNode
         # A test itself (`x is defined`) does NOT build the filter set in
         # real ansible - live-verified: `{{ 1 is defined }}` prints no
         # warning while `{{ [1, 2] | first }}` does - but a filter nested
         # inside the test's target/arguments does.
-        expr_uses_filter?(expr.target) || args_uses_filter?(expr.args, expr.kwargs)
+        collect_expr_filters(expr.target) + collect_args_filters(expr.args, expr.kwargs)
       when KrikriJinja::Nodes::GetattrNode
-        expr_uses_filter?(expr.obj)
+        collect_expr_filters(expr.obj)
       when KrikriJinja::Nodes::GetitemNode
-        expr_uses_filter?(expr.obj) || expr_uses_filter?(expr.key)
+        collect_expr_filters(expr.obj) + collect_expr_filters(expr.key)
       when KrikriJinja::Nodes::SliceNode
-        slice_uses_filter?(expr)
+        collect_slice_filters(expr)
       when KrikriJinja::Nodes::CallExprNode
-        expr_uses_filter?(expr.func) || args_uses_filter?(expr.args, expr.kwargs)
+        collect_expr_filters(expr.func) + collect_args_filters(expr.args, expr.kwargs)
       when KrikriJinja::Nodes::CondExprNode
-        cond_uses_filter?(expr)
+        collect_cond_filters(expr)
       when KrikriJinja::Nodes::ConcatNode
-        expr.parts.any? { |part| expr_uses_filter?(part) }
+        expr.parts.flat_map { |part| collect_expr_filters(part) }
       else
-        false
+        [] of {String, Int32}
       end
     end
 
-    private def self.slice_uses_filter?(expr : KrikriJinja::Nodes::SliceNode) : Bool
-      expr_uses_filter?(expr.obj) || opt_expr_uses_filter?(expr.start) ||
-        opt_expr_uses_filter?(expr.stop) || opt_expr_uses_filter?(expr.step)
+    private def self.collect_slice_filters(expr : KrikriJinja::Nodes::SliceNode) : Array({String, Int32})
+      collect_expr_filters(expr.obj) + collect_opt_expr_filters(expr.start) +
+        collect_opt_expr_filters(expr.stop) + collect_opt_expr_filters(expr.step)
     end
 
-    private def self.cond_uses_filter?(expr : KrikriJinja::Nodes::CondExprNode) : Bool
-      expr_uses_filter?(expr.test) || expr_uses_filter?(expr.truthy) ||
-        opt_expr_uses_filter?(expr.falsy)
+    private def self.collect_cond_filters(expr : KrikriJinja::Nodes::CondExprNode) : Array({String, Int32})
+      collect_expr_filters(expr.test) + collect_expr_filters(expr.truthy) +
+        collect_opt_expr_filters(expr.falsy)
     end
 
-    # Optional slots count for the gate exactly when they carry a filter:
-    # nilable template bodies (an `{% if %}`/`{% for %}` `{% else %}` body,
-    # a `{% set %}`/`{% call %}` body), the nilable `{% for %}` inline
-    # test / slice bound / macro default / condexpr falsy arm, and
-    # call/callblock argument lists. Folding the `.try ... || false` idiom
-    # into this trio keeps every walker's `||` chain at the ameba gate.
-    private def self.body_uses_filter?(body : Array(KrikriJinja::Nodes::Node)?) : Bool
-      (body.try { |list| list.any? { |child| template_uses_filter?(child) } } || false)
+    # Nilable slots (an `{% if %}`/`{% for %}` `{% else %}` body, a
+    # `{% set %}`/`{% call %}` body, the nilable `{% for %}` inline
+    # test / slice bound / macro default / condexpr falsy arm) contribute
+    # exactly when they carry a filter call; the non-nilable trio siblings
+    # keep every collector's `+` chain at the ameba gate.
+    private def self.collect_body_filters(body : Array(KrikriJinja::Nodes::Node)?) : Array({String, Int32})
+      body.try { |list| collect_list_filters(list) } || [] of {String, Int32}
     end
 
-    private def self.opt_expr_uses_filter?(expr : KrikriJinja::Nodes::ExprNode?) : Bool
-      (expr.try { |sub| expr_uses_filter?(sub) } || false)
+    private def self.collect_list_filters(body : Array(KrikriJinja::Nodes::Node)) : Array({String, Int32})
+      body.flat_map { |child| collect_node_filters(child) }
     end
 
-    private def self.args_uses_filter?(args : Array(KrikriJinja::Nodes::ExprNode),
-                                       kwargs : Array(Tuple(String, KrikriJinja::Nodes::ExprNode))) : Bool
-      args.any? { |arg| expr_uses_filter?(arg) } ||
-        kwargs.any? { |(_, value)| expr_uses_filter?(value) }
+    private def self.collect_opt_expr_filters(expr : KrikriJinja::Nodes::ExprNode?) : Array({String, Int32})
+      expr.try { |sub| collect_expr_filters(sub) } || [] of {String, Int32}
+    end
+
+    private def self.collect_args_filters(args : Array(KrikriJinja::Nodes::ExprNode),
+                                          kwargs : Array(Tuple(String, KrikriJinja::Nodes::ExprNode))) : Array({String, Int32})
+      args.flat_map { |arg| collect_expr_filters(arg) } +
+        kwargs.flat_map { |(_, value)| collect_expr_filters(value) }
     end
 
     # Test teardown support for the registry scan trigger touches: a spec
