@@ -1493,12 +1493,21 @@ module Krikri
     # include_role: without tasks_from: - the only form this codebase
     # supports for role invocation in the first place).
     private def self.load_argument_spec_validation_task(role_dir : String) : Task?
-      spec_path = File.join(role_dir, "meta", "argument_specs.yml")
-      unless File.exists?(spec_path)
-        # Specs can also live under the argument_specs: key of the role's
-        # meta main file (e.g. pimvh.cloud_init ships only meta/main.yaml);
-        # ansible reads both, argument_specs.yml first.
-        meta_path = find_main_file(File.join(role_dir, "meta")) || File.join(role_dir, "meta", "main.yml")
+      # A dedicated meta/argument_specs.<ext> file wins over the
+      # argument_specs: key of the meta main file: ansible loops
+      # YAML_FILENAME_EXTENSIONS (.yml, .yaml, .json) over
+      # meta/argument_specs<ext> and uses the first existing file
+      # exclusively - no combining, and no fallback to the meta main file
+      # even when that file has no "main" entry (stephdewit.docker ships
+      # meta/argument_specs.yaml, which the old .yml-only check missed).
+      # The meta main file is consulted only when no argument_specs file
+      # exists at all (e.g. pimvh.cloud_init ships only meta/main.yaml).
+      meta_dir = File.join(role_dir, "meta")
+      spec_path = ["yml", "yaml", "json"]
+        .map { |ext| File.join(meta_dir, "argument_specs.#{ext}") }
+        .find { |path| File.exists?(path) }
+      unless spec_path
+        meta_path = find_main_file(meta_dir) || File.join(meta_dir, "main.yml")
         return nil unless File.exists?(meta_path)
         spec_path = meta_path
       end
