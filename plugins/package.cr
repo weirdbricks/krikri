@@ -1254,7 +1254,22 @@ module Krikri
           end
         end
       when "absent"
-        if !is_installed
+        # apt.py's remove() builds the `apt-get remove` list from ONLY the
+        # packages whose dpkg status shows installed - uninstalled names
+        # are silently skipped and never reach apt-get - and exits
+        # changed=False when that list is empty, changed=True otherwise.
+        # The all-installed question the present branch asks
+        # (`is_installed`) is therefore the wrong one here: a mixed
+        # `{name: [installed, missing], state: absent}` task reported ok
+        # and removed nothing where Ansible removes the installed half
+        # (live-verified against ansible-playbook: iptables installed,
+        # libiptc0 not, state=absent removes iptables).
+        to_remove = apt_names.select do |pkg|
+          base_name = pkg.split('=').first
+          installed_status[base_name]?.try { |pair| pair[0] } || false
+        end
+        remove_pkg = to_remove.map { |pkg| shell_single_quote(pkg) }.join(" ")
+        if to_remove.empty?
           # Ansible 2.19.11 (live-verified via package: state=absent on a
           # not-installed name): a bare exit_json(changed=False) - no msg,
           # no cache keys (the absent-nochange exit skips them entirely).
@@ -1269,7 +1284,7 @@ module Krikri
             # registers the same simulate shape as the install side
             # (live-verified); an apt-get refusal (e.g. essential-package
             # protection) surfaces as run_command's failure shape.
-            sim = remote_exec("apt-get remove --simulate #{shell_pkg} 2>&1")
+            sim = remote_exec("apt-get remove --simulate #{remove_pkg} 2>&1")
             if sim[:exit_code] == 0
               return simulate_result(sim[:stdout], sim[:stderr])
             end
@@ -1277,14 +1292,14 @@ module Krikri
             return PluginResult.new(
               changed: false,
               failed: true,
-              msg: "'apt-get remove #{shell_single_quote(shell_pkg)}' failed: #{stderr}",
+              msg: "'apt-get remove #{shell_single_quote(remove_pkg)}' failed: #{stderr}",
               rc: sim[:exit_code],
               stdout: sim[:stdout],
               stderr: stderr
             )
           end
 
-          remove_result = apt_with_lock_retry("DEBIAN_FRONTEND=noninteractive LANGUAGE=C LC_ALL=C apt-get remove -y #{dpkg_opts} #{shell_pkg}".squeeze(' '), lock_timeout, ->remote_exec(String))
+          remove_result = apt_with_lock_retry("DEBIAN_FRONTEND=noninteractive LANGUAGE=C LC_ALL=C apt-get remove -y #{dpkg_opts} #{remove_pkg}".squeeze(' '), lock_timeout, ->remote_exec(String))
           if remove_result[:exit_code] == 0
             PluginResult.new(
               changed: true,
