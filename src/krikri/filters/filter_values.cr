@@ -36,6 +36,21 @@ module Krikri
         JSON::Any.new(yield as_string(value))
       end
 
+      # Whether *value* is the hand-rolled engine's undefined marker at
+      # filter level: a genuinely missing reference resolves to JSON null
+      # before any filter runs (filter_chain_var_head's lenient fallback).
+      # The string filters hand such a value straight back instead of
+      # stringifying it - Ansible passes an undefined value through string
+      # filters unconsumed (verified live against 2.19: an unselected
+      # ternary branch never fails) - so a later `default()` in the same
+      # chain must still see an undefined input, not the "" as_string(nil)
+      # produces. Deliberately narrower than undefined?, whose ""/
+      # "undefined" matches also cover defined values a string filter must
+      # keep transforming.
+      private def undefined_passthrough?(value : JSON::Any) : Bool
+        value.raw.nil?
+      end
+
       private def length_of(value : JSON::Any) : Int32
         case value.raw
         when Array

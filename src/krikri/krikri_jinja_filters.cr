@@ -888,8 +888,40 @@ module Krikri
         JSON::Any.new(Krikri::PyDump.json(value, indent, sort_keys))
       end
 
+      # lower/upper/trim/replace are krikri-jinja builtins; re-register them
+      # with a strict-undefined pass-through (same interception shape as
+      # selectattr/rejectattr above): Ansible passes an undefined value
+      # through string filters unconsumed (verified live against 2.19 - a
+      # discarded ternary branch never fails, the error only surfaces if the
+      # value is actually rendered), while register_default_json_filter's
+      # own to_json_any conversion would raise on the spot. A `default`
+      # further down the same chain still consumes the passing undefined.
+      {
+        "lower"   => KrikriJinja::BUILTIN_FILTERS["lower"],
+        "upper"   => KrikriJinja::BUILTIN_FILTERS["upper"],
+        "trim"    => KrikriJinja::BUILTIN_FILTERS["trim"],
+        "replace" => KrikriJinja::BUILTIN_FILTERS["replace"],
+      }.each do |name, original|
+        KrikriJinja.default_engine.register_filter(name) do |value, args, kwargs, context|
+          raw = value.raw
+          next value if raw.is_a?(KrikriJinja::Undefined) && raw.strict?
+          original.call(value, args, kwargs, context)
+        end
+      end
+
       # Second batch: pure string/collection shaping filters whose JSON-level
       # implementations already live in FilterCore.
+      #
+      # Ansible passes an undefined value through these string filters
+      # unconsumed (verified live against 2.19 with an undefined input
+      # inside an unselected ternary branch), so the strict-undefined error
+      # only surfaces if the value is actually rendered or consumed by a
+      # later `default`. register_default_json_filter's own to_json_any
+      # conversion raises for a strict Undefined before the filter body
+      # runs, so the guard has to sit at the AnyValue level.
+      undefined_passthrough_string_filters = Set{
+        "b64encode", "basename", "dirname", "md5", "normpath", "quote",
+      }
       {
         "b64encode"       => ->(s : String) { VariableSubstitutor::FilterCore.b64encode(s) },
         "b64decode"       => ->(s : String) { VariableSubstitutor::FilterCore.b64decode(s) },
@@ -906,8 +938,18 @@ module Krikri
         "human_to_bytes"  => ->(s : String) { VariableSubstitutor::FilterCore.parse_human_to_bytes(s).to_s },
         "quote"           => ->(s : String) { Process.quote(s) },
       }.each do |name, handler|
-        KrikriJinja.register_default_json_filter(name) do |value, _args, _kwargs|
-          JSON::Any.new(handler.call(value.to_s))
+        if undefined_passthrough_string_filters.includes?(name)
+          KrikriJinja.default_engine.register_filter(name) do |value, _args, _kwargs, _ctx|
+            raw = value.raw
+            next value if raw.is_a?(KrikriJinja::Undefined) && raw.strict?
+            KrikriJinja.from_json_any(
+              JSON::Any.new(handler.call(KrikriJinja.to_json_any(value).to_s))
+            )
+          end
+        else
+          KrikriJinja.register_default_json_filter(name) do |value, _args, _kwargs|
+            JSON::Any.new(handler.call(value.to_s))
+          end
         end
       end
 
