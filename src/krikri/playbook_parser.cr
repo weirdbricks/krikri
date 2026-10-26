@@ -742,7 +742,9 @@ module Krikri
     # templated) value, and always nil for a static import_role:, where
     # the same failure is a playbook-load abort instead.
     property include_role_bool_failure : RoleBoolKeywords::Failure?
-    # Synthesized by RoleLoader when a role has meta/argument_specs.yml -
+    # Synthesized by RoleLoader when a role ships argument specs
+    # (meta/argument_specs.yml/.yaml/.json, or the meta main file's
+    # argument_specs: key) -
     # only set when module_name == "_validate_argument_spec". Ansible
     # auto-inserts this as the role's first task ("Validating arguments
     # against arg spec 'main' - <short_description>"); holds the entry

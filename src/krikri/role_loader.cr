@@ -1483,6 +1483,20 @@ module Krikri
       Hash(String, VarOrigin).new
     end
 
+    # Ansible accepts .yml/.yaml/.json for argument_specs (same extension
+    # list as find_main_file), in that order, and does NOT combine them
+    # or consult meta/main when one exists - only when none of the three
+    # exists do the specs come from the meta main file's argument_specs:
+    # key (stephdewit.sshca ships meta/argument_specs.yaml, issue #638).
+    def self.argument_spec_file(role_dir : String) : String?
+      meta_dir = File.join(role_dir, "meta")
+      %w[argument_specs.yml argument_specs.yaml argument_specs.json].each do |name|
+        candidate = File.join(meta_dir, name)
+        return candidate if File.exists?(candidate)
+      end
+      find_main_file(meta_dir) || File.join(meta_dir, "main.yml")
+    end
+
     # Ansible auto-inserts a "Validating arguments against arg spec"
     # task as the first task of any role that ships argument specs
     # (verified against ansible-playbook: exact banner text
@@ -1493,24 +1507,8 @@ module Krikri
     # include_role: without tasks_from: - the only form this codebase
     # supports for role invocation in the first place).
     private def self.load_argument_spec_validation_task(role_dir : String) : Task?
-      # A dedicated meta/argument_specs.<ext> file wins over the
-      # argument_specs: key of the meta main file: ansible loops
-      # YAML_FILENAME_EXTENSIONS (.yml, .yaml, .json) over
-      # meta/argument_specs<ext> and uses the first existing file
-      # exclusively - no combining, and no fallback to the meta main file
-      # even when that file has no "main" entry (stephdewit.docker ships
-      # meta/argument_specs.yaml, which the old .yml-only check missed).
-      # The meta main file is consulted only when no argument_specs file
-      # exists at all (e.g. pimvh.cloud_init ships only meta/main.yaml).
-      meta_dir = File.join(role_dir, "meta")
-      spec_path = ["yml", "yaml", "json"]
-        .map { |ext| File.join(meta_dir, "argument_specs.#{ext}") }
-        .find { |path| File.exists?(path) }
-      unless spec_path
-        meta_path = find_main_file(meta_dir) || File.join(meta_dir, "main.yml")
-        return nil unless File.exists?(meta_path)
-        spec_path = meta_path
-      end
+      spec_path = argument_spec_file(role_dir)
+      return nil unless spec_path && File.exists?(spec_path)
 
       yaml = cached_yaml(spec_path)
       main_spec = yaml["argument_specs"]?.try(&.["main"]?)
