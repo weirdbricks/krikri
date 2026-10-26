@@ -444,14 +444,20 @@ module Krikri
 
       begin
         # SECURITY: the temp is created EMPTY at 0600 and settled to its
-        # final mode (0644 & ~umask, narrowed by the task's numeric
-        # mode: - the rename carries this temp's mode onto dest, it does
-        # not inherit an existing dest's, matching the old default-perm
-        # File.write) BEFORE the rendered bytes land - see
-        # BasePlugin#create_staging_temp. The old write-first shape held
-        # a rendered secret (vault-decrypted values interpolated in) at
-        # 0644 & ~umask for the whole write + validate + move span.
-        create_staging_temp(temp_file, staging_temp_mode(dest, 0o666, preserve_dest_mode: false))
+        # final mode BEFORE the rendered bytes land - see
+        # BasePlugin#create_staging_temp. The final mode is an existing
+        # dest's own mode when there is one (the way Ansible's
+        # atomic_move preserves it), 0666 & ~umask narrowed by the
+        # task's numeric mode: for a fresh dest - the rename carries the
+        # temp's mode onto dest. Preserving the dest's mode matters for
+        # package-shipped 0600 configs: nickjj.monit templates
+        # /etc/monit/monitrc with no mode:, and monit refuses to start
+        # on 0644 ("control file ... permission 0644 is wrong"), which
+        # fails the role's service: state=started task. The old
+        # write-first shape held a rendered secret (vault-decrypted
+        # values interpolated in) at 0644 & ~umask for the whole write +
+        # validate + move span.
+        create_staging_temp(temp_file, staging_temp_mode(dest, 0o666))
         # Write the OUTPUT-ENCODED bytes (see output_encoding above) -
         # not the UTF-8 string. perm 0600 only matters if the temp
         # vanished between creation and here: recreate narrow, never
