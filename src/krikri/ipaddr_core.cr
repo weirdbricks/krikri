@@ -2,7 +2,8 @@ require "json"
 
 # Crystal reimplementation of the `ansible.utils` ipaddr filter family (ipaddr,
 # ipv4, ipv6, ipsubnet, ipmath, next_nth_usable,
-# previous_nth_usable, network_in_network, network_in_usable, ip4_hex),
+# previous_nth_usable, network_in_network, network_in_usable, ip4_hex,
+# nthhost),
 # mirrored against ansible-core 2.19.4 + ansible.utils + netaddr
 # 1.3.0 live (every query probed against ansible-playbook on this
 # host - see the specs in test/unit/ipaddr_test.cr). Operates on
@@ -35,7 +36,7 @@ module Krikri
       # no "ipwrap" - ansible.utils-only, rejected as unknown (#134)
       "ipaddr", "ipv4", "ipv6", "ipsubnet", "ipmath",
       "next_nth_usable", "previous_nth_usable", "network_in_network",
-      "network_in_usable", "ip4_hex",
+      "network_in_usable", "ip4_hex", "nthhost",
     }
 
     private struct Net
@@ -222,19 +223,37 @@ module Krikri
     end
 
     private def parse_qualified(addr : String, pref : String) : Net?
-      p = pref.to_i32?
-      return nil unless p && p >= 0
       if addr.includes?(':')
-        return nil if p > 128
+        p = pref.to_i32?
+        return nil unless p && p >= 0 && p <= 128
         ip = parse_v6(addr)
         return nil unless ip
         Net.new(6, ip, p, "network")
-      else
-        return nil if p > 32
+      elsif (p = pref.to_i32?) && p >= 0 && p <= 32
         ip = parse_v4(addr)
         return nil unless ip
         Net.new(4, ip, p, "network")
+      else
+        # netaddr also accepts a dotted netmask in place of the prefix
+        # ('192.168.1.5/255.255.255.0' == /24) - the nthhost live probes
+        # rely on it. Only contiguous masks (1s then 0s) are valid.
+        mask = parse_v4(pref)
+        return nil unless mask && addr.includes?('.')
+        ip = parse_v4(addr)
+        return nil unless ip
+        plen = netmask_prefixlen(mask)
+        return nil unless plen
+        Net.new(4, ip, plen, "network")
       end
+    end
+
+    private def netmask_prefixlen(mask : UInt128) : Int32?
+      return nil if mask > 0xFFFFFFFF_u128
+      return 0 if mask == 0
+      tz = mask.trailing_zeros_count
+      ones = 32 - tz
+      top = (1_u128 << ones) - 1
+      (mask >> tz) == top ? ones : nil
     end
 
     private def parse_bare(s : String) : Net?
@@ -821,6 +840,42 @@ module Krikri
       return FALSE unless net
       raise IpError.new("Must pass in an integer") unless offset.is_a?(Int64)
       nth_usable(net, -offset.to_i32)
+    end
+
+    # nthhost indexes the FULL range (network..broadcast), unlike
+    # next/previous_nth_usable which skip network/broadcast - nth 0 is
+    # the network address, -1 the broadcast address. The query is a
+    # string in the plugin's argspec: empty or non-integer returns
+    # FALSE, and a positive index past the range size returns FALSE
+    # too (all live-verified on 2.19.11 + ansible.utils). Only a
+    # negative index beyond -size is fatal; real ansible surfaces that
+    # as "The filter plugin 'ansible.utils.nthhost' failed: index out
+    # range for address range size!", so the full wrapped text is
+    # raised here - the engine adds no prefix of its own.
+    def nthhost(value : JSON::Any, query : String) : JSON::Any
+      net = normalize_for_range(value)
+      return FALSE unless net
+
+      nth = query.strip.to_i64?
+      return FALSE unless nth
+
+      sz = net.size
+      if nth >= 0
+        return FALSE if sz && nth >= sz
+        target = net.network + nth if net.network <= net.max_int - nth
+        return FALSE unless target
+      else
+        raise IpError.new(
+          "The filter plugin 'ansible.utils.nthhost' failed: index out range for address range size!"
+        ) if sz && nth.to_i128 < -sz.to_i128
+        # network + size + nth would overflow for an unbounded (::/0)
+        # network; broadcast + nth + 1 is the same address without it
+        # (nth + 1 <= 0 here).
+        back = (-(nth + 1)).to_u128
+        target = net.broadcast - back if net.broadcast >= back
+        return FALSE unless target
+      end
+      JSON::Any.new(format_ip(net.version, target))
     end
 
     private def normalize_for_range(value : JSON::Any) : Net?

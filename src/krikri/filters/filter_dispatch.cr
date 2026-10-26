@@ -1552,7 +1552,7 @@ module Krikri
              "ansible.utils.ipsubnet", "ansible.utils.ipmath",
              "ansible.utils.next_nth_usable", "ansible.utils.previous_nth_usable",
              "ansible.utils.network_in_network", "ansible.utils.network_in_usable",
-             "ansible.utils.ip4_hex"
+             "ansible.utils.ip4_hex", "ansible.utils.nthhost"
           # ansible.utils ipaddr family - shared core in ipaddr_core.cr,
           # mirrored against ansible-core 2.19.4 + ansible.utils +
           # netaddr 1.3.0 (every query probed live). Also registered on
@@ -1587,6 +1587,11 @@ module Krikri
             IpAddrCore.network_in_usable(value, resolve_expression(args[0]? || ""))
           when "ip4_hex"
             IpAddrCore.ip4_hex(value, resolved_query_arg(args[0]?))
+          when "nthhost"
+            # the query is a string in the plugin's argspec ('7' and 7
+            # both work live); the core parses it and returns FALSE for
+            # empty/non-integer instead of erroring
+            IpAddrCore.nthhost(value, resolved_query_arg(args[0]?))
           else
             raise UnknownFilterError.new("No filter named '#{filter_name}'.")
           end

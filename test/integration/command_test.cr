@@ -78,6 +78,32 @@ describe "command plugin" do
     result["stdout"].as_s.must_equal("[/tmp]")
   end
 
+  it "keeps a backslash inside double quotes literal unless it escapes \" or \\" do
+    # Real bug found benchmarking a sqlite3 gravity.db insert (issue #608):
+    # the shell's \" and \\ escapes inside a double-quoted argument were
+    # not decoded - the closing `\"` ended the argument early, so one SQL
+    # statement was split into several argv elements. Matches Python
+    # shlex.split in posix mode (what ansible's command module uses):
+    # ONLY \" and \\ are escapes inside double quotes, any other backslash
+    # (`"x\y"`) stays literal.
+    result = PluginSpecHelper.run("command", {
+      "cmd" => %q(/usr/bin/printf '[%s]' "a\"b \\c" "x\y" z),
+    })
+
+    result["stdout"].as_s.must_equal(%([a"b \\c][x\\y][z]))
+  end
+
+  it "keeps a double-quoted SQL statement containing \\\"-escapes as one argv element" do
+    # The sqlite-shaped string from issue #608: a quoted SQL insert whose
+    # string literals use \" - previously split at every `\"`, mangling
+    # the statement into pieces the real command would reject.
+    result = PluginSpecHelper.run("command", {
+      "cmd" => %q{/usr/bin/printf '[%s]' "insert or replace into \"adlist\" (id, address) values (1, \"https://x\")"},
+    })
+
+    result["stdout"].as_s.must_equal(%([insert or replace into "adlist" (id, address) values (1, "https://x")]))
+  end
+
   it "runs successfully via chdir: even when the process's OWN starting directory has been deleted out from under it" do
     # Real bug found benchmarking robertdebock.nextcloud's own
     # `Configure nextcloud` task (`chdir: /var/www/html/nextcloud,
