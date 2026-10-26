@@ -221,7 +221,10 @@ module Krikri
     end
 
     private def handle_ppa(ppa : PluginHelpers::AptPpa::Info, state : String, update_cache : Bool, check_mode : Bool) : PluginResult
-      codename = @params["codename"]? || detect_codename
+      # Ansible's UbuntuSourcesList does `codename or distro.codename`, so an
+      # empty string falls back to the host codename (e.g. the redis_cluster
+      # role defaults `apt_repository_codename: ''` and still gets jammy).
+      codename = @params["codename"]?.presence || detect_codename
       unless codename
         return PluginResult.new(changed: false, failed: true, msg: "codename: is required (could not detect the local distro codename from /etc/os-release)")
       end
