@@ -239,6 +239,39 @@ describe "file plugin" do
       result = PluginSpecHelper.run("file", {"path" => path, "state" => "file", "mode" => "4755"})
       result["changed"].as_bool.must_equal(false)
     end
+
+    it "a '=' symbolic assignment clears the setgid bit of its class, as Ansible does" do
+      path = tmp_path("eq-clears-setgid.txt")
+      File.write(path, "x")
+      File.chmod(path, 0o2750)
+
+      result = PluginSpecHelper.run("file", {"path" => path, "state" => "file", "mode" => "u=rwX,g=rX,o="})
+
+      result["changed"].as_bool.must_equal(true)
+      (File.info(path, follow_symlinks: false).permissions.value & 0o7777).must_equal(0o750)
+    end
+
+    it "a '=' symbolic mode converges on a setgid file (second run reports no change)" do
+      path = tmp_path("eq-setgid-converge.txt")
+      File.write(path, "x")
+      File.chmod(path, 0o2750)
+
+      result = PluginSpecHelper.run("file", {"path" => path, "state" => "file", "mode" => "u=rwX,g=rX,o="})
+      result["changed"].as_bool.must_equal(true)
+
+      result = PluginSpecHelper.run("file", {"path" => path, "state" => "file", "mode" => "u=rwX,g=rX,o="})
+      result["changed"].as_bool.must_equal(false)
+    end
+
+    it "a '+' symbolic clause keeps the setgid bit" do
+      path = tmp_path("plus-keeps-setgid.txt")
+      File.write(path, "x")
+      File.chmod(path, 0o2750)
+
+      result = PluginSpecHelper.run("file", {"path" => path, "state" => "file", "mode" => "g+rX"})
+
+      result["changed"].as_bool.must_equal(false)
+    end
   end
 
   describe "default state resolution (no state:)" do
