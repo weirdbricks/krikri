@@ -727,6 +727,59 @@ describe Krikri::RoleLoader do
     tasks.map(&.name).must_equal(["install entry"])
   end
 
+  it "refuses a removed include: behind a STATIC import_role: chain at parse time, when:-guarded or not" do
+    # Real ansible compiles the whole static import tree at playbook load
+    # time, ignoring when:, so a removed bare `include:` inside a role
+    # reached through a static import_role: chain aborts the run (rc=1)
+    # before any output. This used to defer the role load to runtime
+    # ("Failed to load role", rc=2) - or never surface it at all when a
+    # false `when:` skipped the import (issue #598, ovirt.infra).
+    build_role("outer") do |role|
+      role.tasks(<<-YAML)
+        - name: static import of inner
+          import_role:
+            name: inner
+        YAML
+    end
+    build_role("inner") do |role|
+      role.tasks(<<-YAML)
+        - name: legacy include
+          include: vm_pools.yml
+        YAML
+    end
+
+    # The nested import resolves from the IMPORTING role's own tasks dir,
+    # whose bare-name search falls back to a CWD-relative roles/ entry -
+    # pin the search path so the test holds wherever the suite runs.
+    saved_roles_path = ENV["ANSIBLE_ROLES_PATH"]?
+    ENV["ANSIBLE_ROLES_PATH"] = File.join(roles_root, "roles")
+    begin
+      [false, true].each do |guarded|
+        when_clause = guarded ? "\n      when: false" : ""
+        playbook_yaml = <<-YAML
+          - hosts: all
+            tasks:
+              - name: import outer
+                import_role:
+                  name: outer#{when_clause}
+          YAML
+
+        assert_raises_message(Krikri::RemovedActionError,
+          "The 'ansible.builtin.include' action plugin has been removed. " \
+          "Use include_tasks or import_tasks instead. This feature was " \
+          "removed from ansible-core in a release after 2023-05-16.") do
+          Krikri::PlaybookParser.parse_string(playbook_yaml, File.join(roles_root, "site.yml"))
+        end
+      end
+    ensure
+      if saved_roles_path
+        ENV["ANSIBLE_ROLES_PATH"] = saved_roles_path
+      else
+        ENV.delete("ANSIBLE_ROLES_PATH")
+      end
+    end
+  end
+
   it "tasks_from: accepts a bare name without the .yml extension too" do
     build_role("multi_entry2") do |role|
       role.tasks("- name: main\n  ansible.builtin.debug:\n    msg: hi\n")
