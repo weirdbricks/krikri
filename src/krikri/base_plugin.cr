@@ -811,7 +811,7 @@ module Krikri
     # absolute bits here and is left to the post-write chmod - which is
     # narrow-then-widen, never the reverse. *preserve_dest_mode* is
     # false for staging paths where the temp never inherits the dest's
-    # mode today (the /tmp validate: staging that is mv'd in as a new
+    # mode today (the validate: staging under ~/.ansible/tmp that is mv'd in as a new
     # inode, and temps that are deleted after use). *apply_task_mode*
     # is false for the module whose real counterpart does NOT pre-apply
     # the task's numeric mode: at creation time - Ansible's

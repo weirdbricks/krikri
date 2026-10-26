@@ -419,174 +419,165 @@ module Krikri
         end
       end
 
-      # Write to temporary file first (for atomic write + validation).
-      # Staged in a remote_tmp-style location (`/tmp`), matching
-      # Ansible's own `~/.the Ansible module` staging - NOT
-      # dest_dir, which this plugin used previously. That dest-adjacent
-      # staging was itself a fix for a real cross-device `File.rename`
-      # bug (`/tmp` is very commonly its own separate tmpfs mount, so
-      # renaming a /tmp staging file onto a destination elsewhere on
-      # disk hit "Invalid cross-device link" - found via
-      # konstruktoid-hardening's "Configure sshd using sshd_config.d"
-      # task writing to /usr/lib/tmpfiles.d/ssh.conf) but it diverges
-      # from Ansible in a way that's independently observable: a
-      # `validate:` command confined by AppArmor/SELinux to only the
-      # target program's OWN real config paths (e.g. dhcpd's profile
-      # permits /etc/dhcp/ but not a temp file dropped next to it) can
-      # see a different validation outcome than Ansible's own
-      # /root/.ansible/tmp-confined run (found via bertvv.dhcp round
-      # 312). Moving back to /tmp restores Ansible's location
-      # without reintroducing the cross-device bug: `FileUtils.mv`
-      # (stdlib) already falls back to copy-then-delete on
-      # `Errno::EXDEV`/`EPERM`, exactly the fallback needed - see its
-      # use below instead of a raw `File.rename`.
-      temp_file = File.join("/tmp", ".krikri-playbook-template-#{Random::Secure.hex(8)}.tmp")
+      # Stage the rendered candidate where Ansible stages its own: a
+      # per-run directory under the remote user's ~/.ansible/tmp
+      # (Ansible's remote_tmp default), named
+      # ansible-tmp-<epoch>-<pid>-<random> like Ansible's, holding the
+      # candidate as `.source` plus dest's extension so a validator that
+      # keys off the file extension sees the same name it does under
+      # Ansible (cupsd.conf -> .source.conf). The location is
+      # independently observable through validate: - issue #615
+      # (robertdebock.cups): real ansible-playbook's
+      # `validate: cupsd -t -c %s` fails with exit_status 1 and empty
+      # output because cupsd's AppArmor profile (via
+      # abstractions/user-tmp) denies cupsd opening the staged candidate
+      # under ~/.ansible/tmp, while krikri's /tmp staging - which that
+      # same profile does allow - validated and reported changed.
+      # Staging where Ansible stages means krikri hits the same denial
+      # instead of passing where Ansible fails. The earlier
+      # dest-adjacent staging (bertvv.dhcp round 312's dhcpd diverged
+      # the same way) had itself been a fix for a real cross-device
+      # `File.rename` failure (konstruktoid-hardening's "Configure sshd
+      # using sshd_config.d" task writing /usr/lib/tmpfiles.d/ssh.conf
+      # from a /tmp stage), and that hazard is still live with a home
+      # stage - home is just as free to sit on its own mount - so the
+      # move ladder below still falls back through `FileUtils.mv`
+      # (stdlib), which copies across devices instead of failing.
+      run_dir = ansible_tmp_run_dir
+      temp_file = File.join(run_dir, ".source#{File.extname(dest)}")
 
       begin
-        # SECURITY: the temp is created EMPTY at 0600 and settled to its
-        # final mode BEFORE the rendered bytes land - see
-        # BasePlugin#create_staging_temp. The final mode is an existing
-        # dest's own mode when there is one (the way Ansible's
-        # atomic_move preserves it), 0666 & ~umask narrowed by the
-        # task's numeric mode: for a fresh dest - the rename carries the
-        # temp's mode onto dest. Preserving the dest's mode matters for
-        # package-shipped 0600 configs: nickjj.monit templates
-        # /etc/monit/monitrc with no mode:, and monit refuses to start
-        # on 0644 ("control file ... permission 0644 is wrong"), which
-        # fails the role's service: state=started task. The old
-        # write-first shape held a rendered secret (vault-decrypted
-        # values interpolated in) at 0644 & ~umask for the whole write +
-        # validate + move span.
-        create_staging_temp(temp_file, staging_temp_mode(dest, 0o666))
-        # Write the OUTPUT-ENCODED bytes (see output_encoding above) -
-        # not the UTF-8 string. perm 0600 only matters if the temp
-        # vanished between creation and here: recreate narrow, never
-        # wide.
-        File.write(temp_file, content_bytes, perm: 0o600)
-      rescue ex
-        return PluginResult.new(
-          changed: false,
-          failed: true,
-          msg: "Failed to write temporary file: #{ex.message}"
-        )
-      end
-
-      # Validate if requested
-      if validate_cmd = @params["validate"]?
-        # copy.py's own gate before anything runs:
-        # fail_json(msg="validate must contain %s: <cmd>") when the
-        # command has no %s to substitute the temp path into (same
-        # wording this engine's assemble/blockinfile/lineinfile/replace
-        # plugins already carry).
-        unless validate_cmd.includes?("%s")
-          return PluginResult.new(
-            changed: false,
-            failed: true,
-            msg: "validate must contain %s: #{validate_cmd}"
-          )
-        end
-        validation = validate_file(temp_file, validate_cmd)
-        unless validation[:ok]
-          # Real copy.py's validate site (the template module runs
-          # through it): fail_json(msg="failed to validate",
-          # exit_status=rc, stdout=out, stderr=err) - the raw streams
-          # and the exit status ride in the result, checksum is the
-          # rendered content's sha1 the action plugin already computed,
-          # and stdout_lines/stderr_lines come from _return_formatted's
-          # own splitter (live-verified vs ansible-playbook 2.19.11 on
-          # `template: ... validate: /bin/false %s`: {"changed": false,
-          # "checksum": "<sha1>", "exit_status": 1, "msg": "failed to
-          # validate", "stderr": "", "stderr_lines": [], "stdout": "",
-          # "stdout_lines": []}). The previous "Validation failed:
-          # <merged output> (rendered content left at ...)" wording is
-          # this plugin's own borrow - found via robertdebock.cups's
-          # own "Configure cups" task (round 1500129). The staged temp
-          # is still left on disk (only the message differs from real;
-          # real's own tmpdir is cleaned up by do_cleanup_files, which
-          # has no observable result here).
-          stdout = validation[:stdout]
-          stderr = validation[:stderr]
-          return PluginResult.new(
-            changed: false,
-            failed: true,
-            msg: "failed to validate",
-            checksum: content_sha1,
-            exit_status: validation[:rc],
-            stdout: stdout,
-            stdout_lines: stdout.empty? ? [] of String : stdout.chomp.split("\n"),
-            stderr: stderr,
-            stderr_lines: stderr.empty? ? [] of String : stderr.chomp.split("\n")
-          )
-        end
-      end
-
-      # Move temp file to destination, mirroring Ansible's
-      # atomic_move fallback ladder. The optimistic step is a rename of
-      # the /tmp-staged file onto dest (atomic, replaces dest INODE -
-      # including replacing a symlink at dest, Ansible's default
-      # follow=false semantics). When rename can't work - /tmp being a
-      # separate tmpfs mount is very common, and the whole reason
-      # staging moved back to /tmp was a cross-device "Invalid
-      # cross-device link" (see temp_file's comment above) -
-      # Ansible falls back to staging NEXT TO dest (mkstemp in the dest
-      # directory, same filesystem) and renaming from there. Doing that
-      # explicitly matters: a naive copy-onto-dest fallback (e.g.
-      # FileUtils.mv's own cross-device path) OPENS dest for writing,
-      # which follows a symlink - a dest symlink would get its target
-      # overwritten instead of replaced, silently diverging from
-      # Ansible's follow=false (and silently "succeeding" where
-      # Ansible's follow default writes a real file).
-      # Ansible's atomic_move chowns the staged file to an existing
-      # dest's uid/gid before the rename, so e.g. Debian's redis:redis
-      # /etc/redis/redis.conf stays readable by its service.
-      # When even the dest-directory stage's rename cannot land (EBUSY
-      # replacing /etc/hosts - a container bind mount - being the
-      # observed real case), real crashes the whole MODULE rather than
-      # reporting the failure locally; final_rename_crash_result below
-      # mirrors that.
-      begin
-        if !File.symlink?(dest) && (info = File.info?(dest, follow_symlinks: false))
-          File.chown(temp_file, uid: info.owner_id.to_i, gid: info.group_id.to_i)
-        end
-      rescue File::Error
-        # Best-effort: non-root can't chown.
-      end
-
-      begin
-        File.rename(temp_file, dest)
-      rescue
-        # Real's stage file is mkstemp'd next to dest: .ansible_tmp + an 8-char
-        # random run (Python's tempfile alphabet: lowercase/digits/underscore,
-        # live sample "rhd5b4_i" in the EBUSY crash below) + dest's own
-        # basename. The name matters for output parity - the crash detail
-        # names the stage path it renamed from - while the /tmp-side temp
-        # above keeps this plugin's own name (only a failed validate: leaves
-        # it behind, named after krikri, and no fatal message ever echoes it).
-        stage_path = File.join(dest_dir, ".ansible_tmp#{ansible_tmp_random(8)}#{File.basename(dest)}")
-        stage_failed = false
         begin
-          File.write(stage_path, "")
-          FileUtils.mv(temp_file, stage_path)
+          # Ansible creates its own per-run tmp dir 0700 (the remote_tmp
+          # convention its cleanup and validators both assume).
+          FileUtils.mkdir_p(run_dir, mode: 0o700)
+          # SECURITY: the temp is created EMPTY at 0600 and settled to its
+          # final mode BEFORE the rendered bytes land - see
+          # BasePlugin#create_staging_temp. The final mode is an existing
+          # dest's own mode when there is one (the way Ansible's
+          # atomic_move preserves it), 0666 & ~umask narrowed by the
+          # task's numeric mode: for a fresh dest - the rename carries the
+          # temp's mode onto dest. Preserving the dest's mode matters for
+          # package-shipped 0600 configs: nickjj.monit templates
+          # /etc/monit/monitrc with no mode:, and monit refuses to start
+          # on 0644 ("control file ... permission 0644 is wrong"), which
+          # fails the role's service: state=started task. The old
+          # write-first shape held a rendered secret (vault-decrypted
+          # values interpolated in) at 0644 & ~umask for the whole write +
+          # validate + move span.
+          create_staging_temp(temp_file, staging_temp_mode(dest, 0o666))
+          # Write the OUTPUT-ENCODED bytes (see output_encoding above) -
+          # not the UTF-8 string. perm 0600 only matters if the temp
+          # vanished between creation and here: recreate narrow, never
+          # wide.
+          File.write(temp_file, content_bytes, perm: 0o600)
         rescue ex
-          stage_failed = true
-          File.delete(stage_path) if File.exists?(stage_path)
-          File.delete(temp_file) if File.exists?(temp_file)
-          if true?(@params["unsafe_writes"]?)
-            if failure = unsafe_write_dest(dest, content_bytes)
-              return failure
-            end
-          else
+          return PluginResult.new(
+            changed: false,
+            failed: true,
+            msg: "Failed to write temporary file: #{ex.message}"
+          )
+        end
+
+        # Validate if requested
+        if validate_cmd = @params["validate"]?
+          # copy.py's own gate before anything runs:
+          # fail_json(msg="validate must contain %s: <cmd>") when the
+          # command has no %s to substitute the temp path into (same
+          # wording this engine's assemble/blockinfile/lineinfile/replace
+          # plugins already carry).
+          unless validate_cmd.includes?("%s")
             return PluginResult.new(
               changed: false,
               failed: true,
-              msg: "Failed to replace #{dest} with the rendered template: #{ex.message}"
+              msg: "validate must contain %s: #{validate_cmd}"
+            )
+          end
+          validation = validate_file(temp_file, validate_cmd)
+          unless validation[:ok]
+            # Real copy.py's validate site (the template module runs
+            # through it): fail_json(msg="failed to validate",
+            # exit_status=rc, stdout=out, stderr=err) - the raw streams
+            # and the exit status ride in the result, checksum is the
+            # rendered content's sha1 the action plugin already computed,
+            # and stdout_lines/stderr_lines come from _return_formatted's
+            # own splitter (live-verified vs ansible-playbook 2.19.11 on
+            # `template: ... validate: /bin/false %s`: {"changed": false,
+            # "checksum": "<sha1>", "exit_status": 1, "msg": "failed to
+            # validate", "stderr": "", "stderr_lines": [], "stdout": "",
+            # "stdout_lines": []}). The previous "Validation failed:
+            # <merged output> (rendered content left at ...)" wording is
+            # this plugin's own borrow - found via robertdebock.cups's
+            # own "Configure cups" task (round 1500129). Nothing staged
+            # outlives the run either way: real's do_cleanup_files
+            # removes its own tmpdir even after a failed validate:, and
+            # the ensure below mirrors that.
+            stdout = validation[:stdout]
+            stderr = validation[:stderr]
+            return PluginResult.new(
+              changed: false,
+              failed: true,
+              msg: "failed to validate",
+              checksum: content_sha1,
+              exit_status: validation[:rc],
+              stdout: stdout,
+              stdout_lines: stdout.empty? ? [] of String : stdout.chomp.split("\n"),
+              stderr: stderr,
+              stderr_lines: stderr.empty? ? [] of String : stderr.chomp.split("\n")
             )
           end
         end
-        unless stage_failed
+
+        # Move temp file to destination, mirroring Ansible's
+        # atomic_move fallback ladder. The optimistic step is a rename of
+        # the home-staged file onto dest (atomic, replaces dest INODE -
+        # including replacing a symlink at dest, Ansible's default
+        # follow=false semantics). When rename can't work - the
+        # ~/.ansible/tmp stage sitting on a different mount from dest is
+        # exactly the cross-device case a /tmp stage always was (and the
+        # whole reason staging ever moved off dest_dir was a cross-device
+        # "Invalid cross-device link", see temp_file's comment above) -
+        # Ansible falls back to staging NEXT TO dest (mkstemp in the dest
+        # directory, same filesystem) and renaming from there. Doing that
+        # explicitly matters: a naive copy-onto-dest fallback (e.g.
+        # FileUtils.mv's own cross-device path) OPENS dest for writing,
+        # which follows a symlink - a dest symlink would get its target
+        # overwritten instead of replaced, silently diverging from
+        # Ansible's follow=false (and silently "succeeding" where
+        # Ansible's follow default writes a real file).
+        # Ansible's atomic_move chowns the staged file to an existing
+        # dest's uid/gid before the rename, so e.g. Debian's redis:redis
+        # /etc/redis/redis.conf stays readable by its service.
+        # When even the dest-directory stage's rename cannot land (EBUSY
+        # replacing /etc/hosts - a container bind mount - being the
+        # observed real case), real crashes the whole MODULE rather than
+        # reporting the failure locally; final_rename_crash_result below
+        # mirrors that.
+        begin
+          if !File.symlink?(dest) && (info = File.info?(dest, follow_symlinks: false))
+            File.chown(temp_file, uid: info.owner_id.to_i, gid: info.group_id.to_i)
+          end
+        rescue File::Error
+          # Best-effort: non-root can't chown.
+        end
+
+        begin
+          File.rename(temp_file, dest)
+        rescue
+          # Real's stage file is mkstemp'd next to dest: .ansible_tmp + an 8-char
+          # random run (Python's tempfile alphabet: lowercase/digits/underscore,
+          # live sample "rhd5b4_i" in the EBUSY crash below) + dest's own
+          # basename. The name matters for output parity - the crash detail
+          # names the stage path it renamed from - while the staged candidate
+          # above keeps Ansible's own `.source` name inside a per-run dir the
+          # ensure removes on every path, and no fatal message ever echoes it.
+          stage_path = File.join(dest_dir, ".ansible_tmp#{ansible_tmp_random(8)}#{File.basename(dest)}")
+          stage_failed = false
           begin
-            File.rename(stage_path, dest)
+            File.write(stage_path, "")
+            FileUtils.mv(temp_file, stage_path)
           rescue ex
+            stage_failed = true
             File.delete(stage_path) if File.exists?(stage_path)
             File.delete(temp_file) if File.exists?(temp_file)
             if true?(@params["unsafe_writes"]?)
@@ -594,13 +585,37 @@ module Krikri
                 return failure
               end
             else
-              # Real's atomic_move crashes the whole module here rather
-              # than reporting a softer failure (issue #304: EBUSY onto
-              # /etc/hosts, a container bind mount).
-              return final_rename_crash_result(ex, stage_path, dest, content_sha1)
+              return PluginResult.new(
+                changed: false,
+                failed: true,
+                msg: "Failed to replace #{dest} with the rendered template: #{ex.message}"
+              )
+            end
+          end
+          unless stage_failed
+            begin
+              File.rename(stage_path, dest)
+            rescue ex
+              File.delete(stage_path) if File.exists?(stage_path)
+              File.delete(temp_file) if File.exists?(temp_file)
+              if true?(@params["unsafe_writes"]?)
+                if failure = unsafe_write_dest(dest, content_bytes)
+                  return failure
+                end
+              else
+                # Real's atomic_move crashes the whole module here rather
+                # than reporting a softer failure (issue #304: EBUSY onto
+                # /etc/hosts, a container bind mount).
+                return final_rename_crash_result(ex, stage_path, dest, content_sha1)
+              end
             end
           end
         end
+      ensure
+        # Real removes its per-run tmp dir on every path - do_cleanup_files
+        # `rm -f -r`s it even after a failed validate: - so the staged
+        # candidate never outlives the run.
+        FileUtils.rm_rf(run_dir)
       end
 
       # Set ownership and permissions (may raise a real, specific
@@ -676,8 +691,18 @@ module Krikri
     # comparisons (see copy.cr's own staged_src_echo for the same
     # convention on its success-path echo).
     private def module_tmp_source_path : String
+      File.join(ansible_tmp_run_dir, "source")
+    end
+
+    # The per-run tmp directory real's action plugin creates on the
+    # target before the module runs:
+    # ~/.ansible/tmp/ansible-tmp-<epoch float>-<pid>-<random>, under the
+    # remote user's home (Ansible's remote_tmp default). Both the crash
+    # detail's echoed source path and template:'s own validate staging
+    # sit inside one, so both must name it the same way.
+    private def ansible_tmp_run_dir : String
       random = Random.rand(100_000_000_000_000..999_999_999_999_999)
-      expand_tilde("~/.ansible/tmp/ansible-tmp-#{sprintf("%.7f", Time.local.to_unix_f)}-#{Process.pid}-#{random}/source")
+      expand_tilde("~/.ansible/tmp/ansible-tmp-#{sprintf("%.7f", Time.local.to_unix_f)}-#{Process.pid}-#{random}")
     end
 
     # A random run of `count` characters out of Python's tempfile candidate
