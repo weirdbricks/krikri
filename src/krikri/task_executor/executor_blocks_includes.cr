@@ -2684,6 +2684,19 @@ module Krikri
       end
 
       if loop_items
+        # Ansible (live-verified vs 2.19.11, issue #604): a loop that
+        # resolves to zero items is reported as one bare `skipping: [host]`
+        # line - no item, no suffix - and counts skipped=1 in the recap,
+        # because the `when:` never gets a chance to say anything per-item.
+        # Running the each below instead would print nothing at all and
+        # undercount skipped, so bail out the same way execute_include_tasks
+        # does for its own empty-loop case.
+        if loop_items.empty?
+          puts Krikri::Oneline.skip_line(host.name).colorize(:cyan)
+          @results[host.name]["skipped"] += 1
+          return
+        end
+
         loop_var = task.loop_var
         index_var = task.index_var
         unsafe_items = loop_items_derive_from_unsafe_data?(task, host.name)
