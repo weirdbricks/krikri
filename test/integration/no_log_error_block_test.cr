@@ -83,4 +83,49 @@ describe "failed no_log copy's [ERROR] block" do
     output.wont_include("DANGER_SENTINEL")
     block_precedes_fatal?(output).must_equal(false)
   end
+
+  # debconf's vtype: password read-back fails on get_bin_path when
+  # debconf-get-selections is absent (issue #578): real prints the block
+  # before the censored per-item lines, once for the identical items
+  # (ErrorBlock dedups them like real's own display dedup does). The
+  # plugin shells to the real debconf tools, so a shim PATH holding
+  # debconf-show but not debconf-get-selections puts the task on that
+  # miss deterministically - the dev box may carry the real
+  # debconf-utils and would mask it.
+  it "prints the block above the censored loop-item lines for debconf's get_bin_path miss" do
+    shim = PluginSpecHelper.tmp_path("debconf-no-log-block-shim")
+    FileUtils.mkdir_p(shim)
+    File.write(File.join(shim, "debconf-show"), "#!/bin/sh\nprintf '%s\\n' \"spec.pkg/roothost: seeded\"\n")
+    File.chmod(File.join(shim, "debconf-show"), 0o755)
+
+    output = run_playbook(<<-YAML)
+          - name: seed password
+            debconf:
+              name: spec.pkg
+              question: spec.pkg/roothost
+              vtype: password
+              value: SECRET_SENTINEL
+            no_log: true
+            loop:
+              - item-a
+              - item-b
+            environment:
+              PATH: #{shim}
+    YAML
+
+    block = "[ERROR]: Task failed: Module failed: Failed to find required executable \"debconf-get-selections\" in paths: "
+    output.must_include(block)
+    output.scan(block).size.must_equal(1)
+    output.must_include("Origin: ")
+    block_at = output.index(block)
+    censored_at = output.index("(item=(censored due to no_log))")
+    if block_at && censored_at
+      (block_at < censored_at).must_equal(true, output)
+    else
+      flunk output
+    end
+    output.scan("(item=(censored due to no_log))").size.must_equal(2)
+    output.wont_include("SECRET_SENTINEL")
+    output.wont_include("item-a")
+  end
 end
