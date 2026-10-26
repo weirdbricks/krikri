@@ -1161,6 +1161,16 @@ module Krikri
       false
     end
 
+    # owner:/group: as the module sees them. A YAML null (bare `owner:`, or
+    # a whole-span `{{ var }}` that resolves to null) is "not requested" -
+    # Ansible's basic.py only skips the chown/chgrp when the param is None,
+    # so a null owner never reaches the lookup. Only an explicit "" fails
+    # the lookup ("chown failed: failed to look up user ").
+    private def requested_attr(key : String) : String?
+      return nil if explicit_null_param?(key)
+      @params[key]?
+    end
+
     private def update_attributes_if_needed(path : String, is_directory : Bool, skip_mode : Bool = false) : Bool
       follow = follow_symlinks?
       changed = false
@@ -1175,12 +1185,12 @@ module Krikri
       # group (e.g. already gid 0, requested "0") never matched
       # `owner_name(...)`'s own resolved NAME ("root" != "0"), reporting
       # changed: true forever on an already-idempotent directory.
-      if owner = @params["owner"]?
+      if owner = requested_attr("owner")
         changed = true if owner_changed?(info.st_uid, owner)
       end
 
       # Check group - same numeric-vs-name comparison as owner: above.
-      if group = @params["group"]?
+      if group = requested_attr("group")
         changed = true if group_changed?(info.st_gid, group)
       end
 
@@ -1373,10 +1383,10 @@ module Krikri
       follow = follow_symlinks?
       uid = -1
       gid = -1
-      if owner = @params["owner"]?
+      if owner = requested_attr("owner")
         uid = resolve_uid(owner)
       end
-      if group = @params["group"]?
+      if group = requested_attr("group")
         gid = resolve_gid(group)
       end
       # A requested owner:/group: that doesn't resolve to a real system
@@ -1403,11 +1413,11 @@ module Krikri
       # only tried a name lookup, so `group: "0"` (a real, common,
       # numeric-ID idiom) always raised "failed to look up group 0"
       # even though the id itself is perfectly valid.
-      if owner = @params["owner"]?
+      if owner = requested_attr("owner")
         uid = resolve_uid(owner)
       end
 
-      if group = @params["group"]?
+      if group = requested_attr("group")
         gid = resolve_gid(group)
       end
 
@@ -2039,15 +2049,15 @@ module Krikri
       end
 
       # Get current owner
-      if @params["owner"]?
+      if owner = requested_attr("owner")
         before["owner"] = owner_name(info.st_uid)
-        after["owner"] = @params["owner"].to_s
+        after["owner"] = owner
       end
 
       # Get current group
-      if @params["group"]?
+      if group = requested_attr("group")
         before["group"] = group_name(info.st_gid)
-        after["group"] = @params["group"].to_s
+        after["group"] = group
       end
 
       return nil if before.empty?
