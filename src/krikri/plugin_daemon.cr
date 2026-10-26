@@ -66,6 +66,13 @@ module Krikri
     # per task) - so there is never a second request racing this one on
     # the same daemon connection, no correlation ID needed.
     def self.serve(& : String, JSON::Any -> String) : Nil
+      # Greeting before the first read, so the controller can tell this
+      # daemon from a plugin binary that merely accepts `--daemon`. Ansible
+      # never needs this: it runs every task as a fresh one-shot process and
+      # never waits on a resident one. Krikri does - a binary without this
+      # entry point reads stdin to EOF and stays silent, and the only way to
+      # separate that from a slow first request is a frame it must send first.
+      write_frame(STDOUT, {"daemon" => "ready"}.to_json)
       loop do
         frame = read_frame(STDIN)
         result = dispatch_frame(frame) { |name, config| yield name, config }
@@ -73,6 +80,40 @@ module Krikri
       end
     rescue IO::EOFError
       # STDIN closed - clean shutdown.
+    end
+
+    # Controller side of the greeting above. Bounded on a fiber, like
+    # SSHManager's run_io_with_timeout, because a silent process would
+    # otherwise block the controller until the request timeout (an hour by
+    # default). The fiber may outlive a timeout; the channel is buffered so
+    # its send still completes once the caller has killed the process.
+    #
+    # 60 s covers ssh connect, auth and remote sudo, not just the daemon's
+    # own start-up, and a failure here only costs the one fallback to the
+    # per-task path - nothing has been dispatched yet.
+    HANDSHAKE_TIMEOUT_SECONDS = 60
+
+    def self.await_ready(io : IO, timeout_seconds : Int32 = HANDSHAKE_TIMEOUT_SECONDS) : Nil
+      frame_channel = Channel(Bytes).new(1)
+      error_channel = Channel(Exception).new(1)
+
+      spawn do
+        begin
+          frame_channel.send(read_frame(io))
+        rescue ex
+          error_channel.send(ex)
+        end
+      end
+
+      select
+      when frame = frame_channel.receive
+        greeting = JSON.parse(String.new(frame))
+        raise "daemon greeting was not 'ready' (got #{greeting.to_json})" unless greeting["daemon"]?.try(&.as_s?) == "ready"
+      when ex = error_channel.receive
+        raise ex
+      when timeout(timeout_seconds.seconds)
+        raise "daemon did not greet within #{timeout_seconds}s (not a --daemon plugin, or the host is unreachable)"
+      end
     end
 
     # One request's dispatch, isolated: a module handler that RAISES (a
