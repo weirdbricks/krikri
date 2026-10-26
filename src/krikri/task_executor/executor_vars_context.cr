@@ -32,11 +32,15 @@ module Krikri
       end
 
       # baseA, in its own merge order: play vars, inventory host vars,
-      # registered results, then facts fill-only.
+      # registered results, then facts fill-only. The ORIGIN follows
+      # ansible's precedence, where play vars outrank inventory host vars:
+      # with both defined, real labels the play var's line (live-verified
+      # 2.19.11). baseA's value merge lets the host var overwrite the play
+      # var's value, which is a separate divergence and not a precedence
+      # claim made here.
       if @play_vars.has_key?(name)
         set.call(@play_var_origins[name]?)
-      end
-      if host.vars.has_key?(name)
+      elsif host.vars.has_key?(name)
         set.call(host.var_origins[name]?)
       end
       registered = @registered_vars[host.name]
@@ -4464,7 +4468,11 @@ module Krikri
         end
         case origin
         when FileVarOrigin
-          return msg if origin.column <= 0
+          # Inventory host/group vars are stored line-only (no column), and
+          # real's lineage for an inventory-defined value also names just the
+          # file and line (` at '<inv.ini>:1'`), so a columnless origin is
+          # still a usable one - only the column is dropped, not the clause.
+          return with_origin_clause(msg, "'#{origin.path}:#{origin.line}'") if origin.column <= 0
           return with_origin_clause(msg, "'#{origin.path}:#{origin.line}:#{origin.column}'")
         when TextVarOrigin
           # Real's CLI-extra-var lineage: `at "<CLI option '-e'>"` -
@@ -4504,7 +4512,10 @@ module Krikri
     # chain returned (first falsy for `and`, first truthy for `or`), or nil
     # when the chain mixes operators, reaches a non-variable operand first
     # (`not x` and comparisons yield bools, filters/calls create fresh
-    # values) or the variable is unresolvable.
+    # values) or the variable is unresolvable. A `NAME is defined` operand
+    # is transparent to the chain's result value (it evaluates to a real
+    # boolean that `and`/`or` passes through), so real attributes the
+    # non-boolean result to the next deciding operand's own value.
     private def deciding_bare_operand(task : Task, host : Host, expr : String) : String?
       # Operands after the deciding one are never evaluated (short-circuit),
       # so they may be comparisons (`nvm_dir and nvm_profile == '.bashrc'`
@@ -4517,6 +4528,15 @@ module Krikri
       vars = build_vars_context(task, host)
       operands.each do |operand|
         operand = operand.strip
+        # `NAME is defined` is a real boolean, which Jinja's `and`/`or`
+        # passes through untouched: a passing test is skipped so the chain
+        # reaches the bare variable whose own value is returned (and labeled
+        # by ansible's lineage). Only a test that itself decides the chain
+        # (undefined under `and`, defined under `or`) leaves a bool result.
+        if (defined_test = operand.match(/\A([A-Za-z_][A-Za-z0-9_]*)\s+is\s+defined\z/))
+          return nil if vars.has_key?(defined_test[1]) == is_or
+          next
+        end
         return nil unless operand.matches?(/\A[A-Za-z_][A-Za-z0-9_]*\z/)
         value = vars[operand]? || (return nil)
         truthy = case raw = value.raw
@@ -4531,6 +4551,12 @@ module Krikri
                  end
         return operand if truthy == is_or
       end
+      # No operand decided the chain, so every operand's truthiness matched
+      # the operator: Jinja keeps evaluating and the chain returns the LAST
+      # operand's own value (`True and "x"` is "x"), which is exactly the
+      # non-boolean result the strict check rejected.
+      last = operands.last.strip
+      return last if last.matches?(/\A[A-Za-z_][A-Za-z0-9_]*\z/)
       nil
     end
 

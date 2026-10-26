@@ -15,11 +15,11 @@ private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 
-private def run_playbook(yaml : String, env : Hash(String, String)? = nil)
+private def run_playbook(yaml : String, env : Hash(String, String)? = nil, inventory : String = INVENTORY)
   playbook = File.tempname("strict-conditionals", ".yml")
   File.write(playbook, yaml)
   output = IO::Memory.new
-  status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output, env: env)
+  status = Process.run(BINARY, ["-i", inventory, playbook], output: output, error: output, env: env)
   {status, output.to_s}
 ensure
   File.delete(playbook) if playbook && File.exists?(playbook)
@@ -401,5 +401,37 @@ describe "strict boolean conditionals" do
     status.exit_code.must_equal(2)
     output.must_include("failed: [localhost] (item=1) => {\"msg\": \"Task failed: Error while evaluating conditional: 'CRYSTAL_ANSIBLE_SPEC_COND_STR_CALL_TEST_UNKNOWN' is undefined\"}")
     output.must_include("fatal: [localhost]: FAILED! => {\"msg\": \"One or more items failed\"}")
+  end
+
+  # Issue #371: the tested value's lineage follows the VARIABLE's defining
+  # site, not the conditional's own when: token - an inventory host var's
+  # origin is its inventory line (real 2.19 prints no column for it), even
+  # behind an `is defined and` chain whose first operand is only a gate.
+  it "labels an inventory var's defining line in the `X is defined and X` at-clause" do
+    inventory = File.tempname("strict-conditionals-inv", ".ini")
+    File.write(inventory, "localhost ansible_connection=local strict_cond_inv_var=hello-str\n")
+    yaml = <<-YAML
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: gated
+            ansible.builtin.debug:
+              msg: "TASK-RAN"
+            when: strict_cond_inv_var is defined and strict_cond_inv_var
+      YAML
+    begin
+      status, output = run_playbook(yaml, inventory: File.expand_path(inventory))
+    ensure
+      File.delete(inventory) if File.exists?(inventory)
+    end
+
+    status.exit_code.must_equal(2)
+    output.must_include("derived from value of type 'str' at '#{File.expand_path(inventory)}:1'")
+    # The lineage names the var's definition, never the when: token's own
+    # playbook position (the Origin: blocks still do, and are asserted
+    # nowhere here - only the at-clause is lineage).
+    output.wont_match(/at '[^']+\.yml:\d+:\d+'/)
+    output.wont_include("\"msg\": \"TASK-RAN\"")
   end
 end
