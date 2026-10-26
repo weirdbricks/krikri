@@ -602,6 +602,17 @@ module Krikri
                         register_skip_result(task, host)
                         return
                       end
+                      # Ansible prints this one as a bare [ERROR] block with the task
+                      # name's Origin and no "Task failed." / caused-by lines, then a
+                      # plain failed fatal line - not the generic failure display.
+                      if ex.is_a?(EmptyDelegateError)
+                        emit_empty_delegate_error_block(task)
+                        # Only the fatal line's `host -> target` label is read from
+                        # this host: ansible prints the raw delegate_to: text there.
+                        label_host = Host.new(task.delegate_to.to_s, ENV["USER"]? || "root", 22)
+                        finish_single_task(task, host, loop_error_result(ex, task), vars_context: vars_context, exec_host: label_host)
+                        return
+                      end
                       finish_single_task(task, host, when_error_result(ex, task, host), vars_context: vars_context)
                       return
                     end
@@ -761,7 +772,15 @@ module Krikri
         raise ex
       end
 
-      if (inventory = @inventory) && !(resolved = inventory.get_hosts(target_name)).empty?
+      # Ansible fails the task when delegate_to: templates to an empty
+      # hostname, instead of handing an empty name to the connection
+      # plugin. Only the strict (per-task / per-item) callers raise; the
+      # lenient pre-loop resolution keeps returning the host as before.
+      if strict && target_name.empty?
+        raise EmptyDelegateError.new("Task failed: Empty hostname produced from delegate_to: \"#{delegate_to}\"")
+      end
+
+      if (inventory = @inventory) && !target_name.empty? && !(resolved = inventory.get_hosts(target_name)).empty?
         return resolved.first
       end
 
@@ -841,6 +860,9 @@ module Krikri
       return nil unless task.delegate_to
       context = vars_context || (build_vars_context(task, host) rescue return nil)
       delegate = (resolve_delegate_host(task, host, context) rescue return nil)
+      # An empty rendered name is labelled with the raw delegate_to: text, as
+      # ansible's CallbackBase.host_label does (`fatal: [host -> {{ var }}]`).
+      return task.delegate_to if delegate.name.empty?
       delegate != host && delegate.name != "undefined" ? delegate.name : nil
     end
 

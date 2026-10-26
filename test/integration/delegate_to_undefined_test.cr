@@ -47,6 +47,36 @@ describe "undefined delegate_to: variable" do
     output.must_include("failed=1")
   end
 
+  # Issue #633 (stackhpc.os-ironic-state): a delegate_to: that renders to an
+  # empty string is a task failure in ansible ("Empty hostname produced from
+  # delegate_to"), not an ssh attempt to a host with no name.
+  it "fails the task when delegate_to: renders to an empty hostname" do
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          empty_delegate_target: ""
+        tasks:
+          - name: delegate to empty var
+            ansible.builtin.debug:
+              msg: "SHOULD-NOT-PRINT"
+            delegate_to: "{{ empty_delegate_target }}"
+          - name: sentinel
+            ansible.builtin.debug:
+              msg: "SENTINEL-SHOULD-NOT-RUN"
+      YAML
+
+    status.exit_code.must_equal(2)
+    output.must_include(%(Empty hostname produced from delegate_to: "{{ empty_delegate_target }}"))
+    output.must_include(%(fatal: [localhost -> {{ empty_delegate_target }}]: FAILED!))
+    output.wont_include("SHOULD-NOT-PRINT")
+    output.wont_include("SENTINEL-SHOULD-NOT-RUN")
+    output.wont_include("Could not resolve hostname")
+    output.must_include("failed=1")
+    output.must_include("unreachable=0")
+  end
+
   it "is also strict for a looped task, degrading to one clean failed task" do
     status, output = run_playbook(<<-YAML)
       - hosts: localhost

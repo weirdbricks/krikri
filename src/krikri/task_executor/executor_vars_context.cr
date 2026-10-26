@@ -1839,6 +1839,13 @@ module Krikri
     class LoopTypeError < WhenEvaluationError
     end
 
+    # A `delegate_to:` that renders to an empty string. Ansible raises this
+    # from the task executor before any connection is attempted ("Empty
+    # hostname produced from delegate_to"), so the task fails with
+    # failed=1 rather than being sent to ssh as an unresolvable host.
+    class EmptyDelegateError < WhenEvaluationError
+    end
+
     # A `with_<lookup>:` source whose resolved TERM is of the wrong type
     # for the lookup (a `with_dict:` over a null/scalar). Real fails the
     # task with the lookup plugin's own type refusal ("The lookup plugin
@@ -4806,6 +4813,33 @@ module Krikri
       # file:line makes the text task-unique, so a looped task's failing
       # items display the chain once.
       return unless @@when_error_chain_seen.add?(text)
+      puts text
+    end
+
+    # The [ERROR] block for an empty delegate_to: - the message, the task
+    # name's Origin excerpt, and nothing else. Ansible's own error for this
+    # has no "Task failed." line and no "<<< caused by >>>" section, unlike
+    # the templating chain above, and Display dedups identical blocks, so
+    # the same dedup set as the loop-error chain is used.
+    private def emit_empty_delegate_error_block(task : Task) : Nil
+      path = task.source_file || @playbook_file
+      return unless path && File.file?(path)
+
+      lines = File.read_lines(path)
+      if located = locate_name_line(lines, task)
+        name_idx, name_col = located
+      else
+        return unless task.source_line > 0 && task.source_line <= lines.size
+        name_idx = task.source_line - 1
+        name_col = task.source_col > 0 ? task.source_col : (lines[name_idx].size - lines[name_idx].lstrip.size + 1)
+      end
+
+      text = String.build do |io|
+        io << "[ERROR]: Task failed: Empty hostname produced from delegate_to: \"" << task.delegate_to << "\"\n"
+        io << origin_context_block(path, lines, name_idx + 1, name_col)
+        io << "\n"
+      end
+      return unless @@loop_error_chain_seen.add?(text)
       puts text
     end
 
