@@ -75,4 +75,20 @@ describe "feature-level output shapes" do
     text.must_include("[ERROR]: Task failed: Action failed.")
     text.must_include(%("failed_when_result": true))
   end
+
+  it "prints (item=None) for a when:-skipped with_items filter chain that resolves to None" do
+    text = run_playbook_text(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          prebuilt_is_list: {}
+        tasks:
+          - ansible.builtin.shell: echo x
+            with_items: "{{ prebuilt_is_list.stdout|default('[]')|from_json|json_query('items') }}"
+            when: false
+      YAML
+    skipped = text.lines.map(&.chomp).select(&.starts_with?("skipping:"))
+    skipped.join("\n").must_include("skipping: [localhost] => (item=None)")
+  end
 end
