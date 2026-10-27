@@ -458,7 +458,7 @@ module Krikri
             puts "...ignoring".colorize(:red) if ignore_errors
             return
           end
-          emit_task_error_block(source_task, result, msg) if no_log_error_block_allowed?(module_name, msg)
+          emit_task_error_block(source_task, result, msg) if no_log_error_block_allowed?(module_name, msg, source_task)
           puts "fatal: [#{host_label}]: FAILED! => {\"censored\": \"the output has been hidden due to the fact that 'no_log: true' was specified for this result\", \"changed\": #{changed}}".colorize(:red)
           puts "...ignoring".colorize(:red) if ignore_errors
           return
@@ -479,7 +479,7 @@ module Krikri
           # Real prints the error block BEFORE those per-item lines too (the
           # same gate as the solo branch above); ErrorBlock dedups the
           # identical repeats into the one block real shows.
-          emit_task_error_block(source_task, result, msg) if no_log_error_block_allowed?(module_name, msg)
+          emit_task_error_block(source_task, result, msg) if no_log_error_block_allowed?(module_name, msg, source_task)
           puts "failed: [#{host_label}] (item=(censored due to no_log)) => {\"censored\": \"the output has been hidden due to the fact that 'no_log: true' was specified for this result\", \"changed\": #{changed}}".colorize(:red)
           return
         end
@@ -764,7 +764,7 @@ module Krikri
       "dest is required",
     }
 
-    private def self.no_log_error_block_allowed?(module_name : String?, msg : String) : Bool
+    private def self.no_log_error_block_allowed?(module_name : String?, msg : String, source_task : Task? = nil) : Bool
       copy_task = module_name.try { |name| name == "copy" || name.ends_with?(".copy") }
       # The template action's non-iteration TypeError joins them, keyed
       # on the message shape rather than the module: ansible composes
@@ -808,6 +808,17 @@ module Krikri
       # failed: " brief is composed by the chain builder.
       return true if module_name.try { |name| name == "command" || name.ends_with?(".command") || name == "shell" || name.ends_with?(".shell") } &&
                      msg == "non-zero return code"
+      # copy's missing-parent check (issue #644): real prints the block
+      # for a no_log copy whose dest's parent is absent (live-verified
+      # against 2.19.11), and its wording echoes the destination directory.
+      # That directory is task data, so the block prints only when dest is
+      # a literal in the playbook source (no `{{ }}`/`{% %}`/`{# #}`) - the
+      # block's own Origin excerpt already shows that same text. A templated
+      # dest may carry a secret and stays suppressed.
+      if copy_task && source_task && (dest = source_task.params["dest"]?) &&
+         !dest.includes?("{{") && !dest.includes?("{%") && !dest.includes?("{#")
+        return true if msg == "Destination directory #{File.dirname(dest)} does not exist"
+      end
       !!(copy_task && NO_LOG_SAFE_MSGS.includes?(msg))
     end
 
@@ -833,7 +844,7 @@ module Krikri
       # the same gate here keeps every other caller (helpers) equally
       # blocked.
       if source_task.no_log?
-        return unless no_log_error_block_allowed?(source_task.module_name, msg)
+        return unless no_log_error_block_allowed?(source_task.module_name, msg, source_task)
       end
       # A loop-source typing/lookup failure ("The `loop` value must
       # resolve to a 'list', not 'X'." / a lookup plugin's type refusal)
