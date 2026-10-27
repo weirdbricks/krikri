@@ -4843,6 +4843,58 @@ module Krikri
       puts text
     end
 
+    # The [ERROR]: chain block real 2.19.11 prints for a non-looped
+    # delegate_to: templating failure (live-verified vs 2.19.11, issue
+    # #661, wittdennis.kubernetes_node_uncordon): "Task failed." plus the
+    # task name's Origin, then the raw inner message again with its
+    # caused-by Origin at the delegate_to: VALUE token - real templates
+    # delegate_to: before when:, so the block appears even behind
+    # `when: false`. The cause stanza pins the caret at the value's first
+    # '{' (the quoted template's own opening brace, not the quote). The
+    # caller marks the failed result (_ansible_loop_error_emitted) so
+    # ResultDisplay does not print a second, differently-shaped block,
+    # and the same dedup set as the loop chain applies.
+    private def emit_delegate_error_chain(task : Task, msg : String) : Nil
+      inner = msg.starts_with?("Task failed: ") ? msg["Task failed: ".size..] : msg
+      path = task.source_file || @playbook_file
+      return unless path && File.file?(path)
+
+      lines = File.read_lines(path)
+      if located = locate_name_line(lines, task)
+        name_idx, name_col = located
+      else
+        return unless task.source_line > 0 && task.source_line <= lines.size
+        name_idx = task.source_line - 1
+        name_col = task.source_col > 0 ? task.source_col : (lines[name_idx].size - lines[name_idx].lstrip.size + 1)
+      end
+
+      cause_context = nil
+      if task.delegate_to && (pos = locate_delegate_to_line(lines, name_idx, task.delegate_to.to_s))
+        cause_context = origin_context_block(path, lines, pos[0] + 1, pos[1])
+      end
+
+      text = String.build do |io|
+        io << "[ERROR]: Task failed: " << inner << "\n"
+        io << "\nTask failed.\n"
+        io << origin_context_block(path, lines, name_idx + 1, name_col)
+        io << "\n<<< caused by >>>\n\n"
+        io << inner << "\n"
+        io << cause_context if cause_context
+        io << "\n"
+      end
+      return unless @@loop_error_chain_seen.add?(text)
+      puts text
+    end
+
+    # The delegate_to: value's own YAML origin, reusing
+    # locate_conditional_origin's next-task-bounded scan for the keyword
+    # line. The caret stays on the value token itself - the opening quote
+    # of a quoted template - which is where real 2.19.11 points it
+    # (live-verified vs 2.19.11, issue #661, delegate_to: "{{ ... }}").
+    private def locate_delegate_to_line(lines : Array(String), name_idx : Int32, raw : String) : {Int32, Int32}?
+      locate_conditional_origin(lines, name_idx, "delegate_to", raw)
+    end
+
     # The `[ERROR]:` chain block real 2.19.11 prints on stdout for a
     # loop-source / loop-item templating failure (live-captured):
     #
