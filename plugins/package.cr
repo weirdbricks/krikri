@@ -1037,6 +1037,24 @@ module Krikri
       nil
     end
 
+    # ansible resolves each `NAME=VER` pin against the apt cache before
+    # apt-get runs, and a version with no candidate fails the task with
+    # its own "no available installation candidate for NAME=VER" -
+    # apt-get's "E: Version 'VER' for 'NAME' was not found" never
+    # reaches the registered result. The install-failure branch maps
+    # that stderr shape back onto ansible's message (exact text match -
+    # apt-get emits it verbatim for an unresolvable pin). Returns the
+    # first requested pinned name (list order, ansible's resolution
+    # order) whose version apt reported as not found; nil otherwise.
+    private def apt_unresolvable_version_name(stderr : String, names : Array(String)) : String?
+      names.each do |requested|
+        next unless requested.includes?('=')
+        base_name, version = requested.split('=', 2)
+        return requested if stderr.includes?("E: Version '#{version}' for '#{base_name}' was not found")
+      end
+      nil
+    end
+
     # apt-get has a second unresolvable-name shape: exit 100 with
     # "E: Package 'X' has no installation candidate" on stderr. ansible's
     # apt.py resolves the name itself before apt-get runs: for a missing
@@ -1119,6 +1137,11 @@ module Krikri
       # module.check_mode: cache.update()` guard skips it too.
       update_cache = true?(@params["update_cache"]?)
       cache_valid_time = @params["cache_valid_time"]?.try(&.to_i) || 0
+      # Whether this task's own refresh actually ran - ansible registers
+      # cache_updated=true only when apt.py's cache.update() did.
+      # Computed BEFORE the refresh call below: its nil return can't
+      # distinguish ran from skipped.
+      cache_refreshed = !@check_mode && (update_cache || cache_valid_time > 0) && apt_cache_stale?(cache_valid_time, ->remote_exec(String))
       if failure = apt_update_cache_before_operation(
            update_cache, cache_valid_time,
            @params["update_cache_retries"]?.try(&.to_i) || AptLockRetry::DEFAULT_UPDATE_CACHE_RETRIES,
@@ -1225,6 +1248,24 @@ module Krikri
               msg: had_no_effect ? "Package #{name} already satisfied" : "Package #{name} installed"
             )
           else
+            # An unresolvable version pin is ansible's own pre-apt-get
+            # resolution failing (see apt_unresolvable_version_name) -
+            # it fails the task with its own message before the raw
+            # name-miss and "Failed to install" shapes can apply.
+            # cache_updated mirrors whether THIS task's refresh ran
+            # (ansible sets it only when its own cache.update() did);
+            # cache_update_time reads the live mtime like the
+            # already-installed path above.
+            if bad_version = apt_unresolvable_version_name(install_result[:stderr], names)
+              return PluginResult.new(
+                changed: false,
+                failed: true,
+                msg: "no available installation candidate for #{bad_version}",
+                cache_updated: cache_refreshed,
+                cache_update_time: apt_cache_mtime(->remote_exec(String)),
+                key_order: %w[cache_updated cache_update_time failed msg]
+              )
+            end
             # A locate miss on a requested name is apt.py's own candidate
             # resolution failing (see apt_unlocatable_name and
             # apt_no_candidate_name) - the raw "Failed to install" result

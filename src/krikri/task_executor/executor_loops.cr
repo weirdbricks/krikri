@@ -99,6 +99,18 @@ module Krikri
       nil
     end
 
+    # Ansible templates the whole loop-source string, so a mixed
+    # literal-plus-{{ }} value ("{{ os | lower }}.yml") is real text
+    # around one expression, not a single whole-string expression - the
+    # bare-expression path below would evaluate the leftover fragments
+    # as one expression and wrongly report the template undefined.
+    private def mixed_template_text?(template : String) : Bool
+      template.includes?("{{") &&
+        !(template.strip.starts_with?("{{") &&
+          template.strip.ends_with?("}}") &&
+          template.strip.scan("{{").size == 1)
+    end
+
     private def resolve_loop_template(task : Task, vars_context : Hash(String, JSON::Any)) : Array(JSON::Any)?
       kind = task.loop_template_kind
       template = task.loop_template
@@ -147,6 +159,18 @@ module Krikri
       # loop resolved to nil, the task ran once, and `item` was the literal
       # `{{ ... }}` template string.
       unless value
+        # Ansible templates the loop source as a whole string, so mixed
+        # literal-plus-expression text ("{{ os | lower }}.yml") renders
+        # to a scalar and with_items scalar-wraps it; feeding the raw
+        # mixed text to the bare-expression evaluator below misreads the
+        # literal prefix as part of one expression and raises
+        # "'{{ os | lower }}' is undefined". strict: true keeps an
+        # undefined name inside the template fatal.
+        if kind == "with_items" && mixed_template_text?(template)
+          rendered = VarSubstitutor.new(vars: vars_context).substitute(template.strip, strict: true)
+          return [JSON::Any.new(rendered)]
+        end
+
         # Strip any {{ }} wrapper around the template expression, then
         # hand the bare expression to the filter-chain evaluator.
         bare = template.strip
