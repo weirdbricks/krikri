@@ -2147,6 +2147,38 @@ describe Krikri::PlaybookParser do
       end
     end
 
+    it "reports the playbook directory (not the role's tasks dir) as the missing import_tasks path, matching Ansible's DataLoader fallback" do
+      # Ansible's DataLoader.path_dwim_relative returns its LAST
+      # candidate - the playbook directory joined with the source - when
+      # nothing exists, so the error names <playbook_dir>/vars/... even
+      # though the import lives in the role's tasks dir.
+      root = PluginSpecHelper.tmp_path("playbook_parser_import_tasks_missing_file_playbook_dir_spec")
+      FileUtils.rm_rf(root) if Dir.exists?(root)
+      Dir.mkdir_p(File.join(root, "roles", "myrole", "tasks", "vars"))
+      Dir.mkdir_p(File.join(root, "roles", "myrole", "defaults"))
+      File.write(File.join(root, "roles", "myrole", "defaults", "main.yml"), "zimbra_version: 8.8.12\n")
+      File.write(File.join(root, "roles", "myrole", "tasks", "main.yml"), <<-YAML)
+        - import_tasks: "vars/{{ zimbra_version }}.yml"
+        YAML
+      File.write(File.join(root, "roles", "myrole", "tasks", "vars", "8.8.15.yml"), <<-YAML)
+        - name: the version that exists
+          ansible.builtin.debug:
+            msg: hi
+        YAML
+
+      playbook_yaml = <<-YAML
+        - name: play
+          hosts: all
+          roles:
+            - myrole
+        YAML
+
+      missing = File.join(root, "vars", "8.8.12.yml")
+      assert_raises_message(Krikri::StaticImportMissingFileError, /Could not find or access '#{Regex.escape(missing)}' on the Ansible Controller\./) do
+        Krikri::PlaybookParser.parse_string(playbook_yaml, File.join(root, "site.yml"))
+      end
+    end
+
     it "raises a hard RoleNotFoundError (rc=1 at the top level) when a role can't be found, matching Ansible's own immediate refusal" do
       root = PluginSpecHelper.tmp_path("playbook_parser_missing_role_spec")
       FileUtils.rm_rf(root) if Dir.exists?(root)

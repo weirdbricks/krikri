@@ -2816,7 +2816,10 @@ module Krikri
         end
       end
 
-      resolved_path = resolve_include_path(file_rel, file_dir)
+      # Ansible's observed behaviour: DataLoader.path_dwim_relative falls
+      # back to the playbook directory when a role's import target is
+      # missing, so the error names the playbook-dir path.
+      resolved_path = resolve_include_path(file_rel, file_dir, playbook_dir ? File.expand_path(playbook_dir) : nil)
       # Typed fatal, not a bare string raise: ansible-playbook
       # hard-stops the whole run here (see
       # StaticImportMissingFileError's own comment), and a bare Exception
