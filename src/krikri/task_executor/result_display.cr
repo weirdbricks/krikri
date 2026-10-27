@@ -1003,6 +1003,24 @@ module Krikri
         ErrorBlock.emit(root.with_chain(ErrorBlock::DIRECT_CAUSE, true, cause))
         return
       end
+      # An uncaught exception from a raw-run Python module (py_module's crash
+      # result): Ansible's module loader catches it and hands the exception to
+      # the task as a cause event, so the block keeps the "Module failed."
+      # segment and the "<<< caused by >>>" section rather than collapsing
+      # into one line the way a plain fail_json does (live-verified vs
+      # ansible-playbook 2.19 with linux-system-roles.nbde_server's
+      # TangAnsibleError, issue #555).
+      if result["_ansible_module_exception"]?.try(&.as_bool?) == true
+        root = ErrorBlock::Node.new("Task failed.", source_context: origin)
+        if msg.empty?
+          ErrorBlock.emit(root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new("Module failed.")))
+          return
+        end
+        module_failed = ErrorBlock::Node.new("Module failed.")
+          .with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(msg, events: [] of ErrorBlock::Node))
+        ErrorBlock.emit(root.with_chain(ErrorBlock::DIRECT_CAUSE, true, module_failed))
+        return
+      end
       ErrorBlock.emit(task_error_chain(source_task.module_name, msg, origin))
     end
 
