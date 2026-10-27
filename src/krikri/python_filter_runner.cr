@@ -492,6 +492,45 @@ module Krikri
       end
     end
 
+    # The callback_plugins twin (issue #596, ovirt.disaster-recovery
+    # 1.3.0's stdout.py: `from __future__ import` after other imports ->
+    # SyntaxError). Unlike the filter scan above, Ansible's callback
+    # loader imports a role's callback_plugins/*.py EAGERLY at role
+    # load, so the warning fires at playbook load time - before the
+    # first PLAY banner - and only for roles loaded STATICALLY (play
+    # roles:, import_role:, and their meta dependencies): a role reached
+    # only through include_role: prints nothing (live-verified vs
+    # 2.19.11). Directory-scoped so a role loaded twice (a play role also
+    # import_role:'d) costs one scan, and the per-file warning dedup
+    # below comes from filter_names' own once-per-file cache.
+    @@scanned_callback_dirs = Set(String).new
+
+    # Ansible's "Skipping plugin" warning for a role's unloadable
+    # callback_plugins/*.py, emitted at the static role load itself
+    # (which for krikri's parser is playbook parse time, before any PLAY
+    # output). Reuses the filter wrapper's import check: a file that
+    # fails to import is reported skipped with str(exc) - for a
+    # SyntaxError exactly Ansible's tail ("from __future__ imports must
+    # occur at the beginning of the file (stdout.py, line 6)"). A VALID
+    # callback file just imports cleanly and contributes no filter names
+    # (find_sources never consults callback_plugins/ roots), so nothing
+    # is registered or executed beyond the import check Ansible itself
+    # performs at load.
+    def warn_unloadable_role_callback_plugins(role_path : String, collection_name : String? = nil) : Nil
+      # Collection-hosted roles resolve plugins through their collection,
+      # not role-adjacent directories - same gate as
+      # register_role_plugin_roots.
+      return if collection_name
+      dir = File.join(role_path, "callback_plugins")
+      @@scan_mutex.synchronize do
+        return if @@scanned_callback_dirs.includes?(dir)
+        @@scanned_callback_dirs << dir
+      end
+      return unless Dir.exists?(dir)
+      files = py_sources_in(dir)
+      filter_names(files) unless files.empty?
+    end
+
     # Test teardown support for the registry scan trigger touches: a spec
     # that registers a fixture role would otherwise keep it reachable from
     # EVERY later marker-bearing render in the suite process (the trigger
@@ -506,6 +545,7 @@ module Krikri
       end
       @@scan_mutex.synchronize do
         @@scanned_filter_dirs.reject! { |dir| dir.starts_with?(base_path) }
+        @@scanned_callback_dirs.reject! { |dir| dir.starts_with?(base_path) }
       end
     end
 
