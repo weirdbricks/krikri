@@ -2950,6 +2950,12 @@ module Krikri
     # set_fact/assert/add_host/group_by/include_vars/pause/stat/ping/debug.
     private def finalization_failure_json(ex : Exception, task : Task) : JSON::Any
       h = Hash(String, JSON::Any).new
+      # Ansible raises the finalization error before the module ever runs,
+      # outside the until:/retries: attempt loop - so the failure is never
+      # retried, never evaluated against until:, and its fatal carries no
+      # attempts key (issue #587 ground truth). The marker lets the retry
+      # loop escape the same way _ansible_action_level does.
+      h["_ansible_finalization_failure"] = JSON::Any.new(true)
       unless finalization_module_name(task) == "ansible.builtin.debug"
         h["changed"] = JSON::Any.new(false)
       else
@@ -3270,7 +3276,7 @@ module Krikri
       # When the fourth chained stanza is emitted, the third level's text
       # shortens to the prefix alone - the inner message moves entirely
       # into the chained stanza (live-verified p12 vs 2.19.11).
-      chain_stanza = chain_value_failure_stanza(task, msg)
+      chain_stanza = chain_value_failure_stanza(task, msg, host)
       if chain_stanza && (cm = msg.match(/\A(Error while resolving value for '[^']+'): /))
         l3 = cm[1] + "."
       end
@@ -3370,7 +3376,7 @@ module Krikri
     # strictly fails WITH that name's message - anything ambiguous (or a
     # direct, non-chained undefined) keeps the three-stanza block, never
     # a mislabeled Origin.
-    private def chain_value_failure_stanza(task : Task, msg : String) : String?
+    private def chain_value_failure_stanza(task : Task, msg : String, host : Host) : String?
       m = msg.match(/\A(Error while resolving value for '([^']+)': )'([A-Za-z_][A-Za-z0-9_]*)' is undefined\z/)
       unless m
         # Same fourth stanza for an empty-key `groups[...]` miss inside the
@@ -3382,6 +3388,20 @@ module Krikri
           origin = value_failure_var_origin(task, lazy[2], reachable_from: seed.is_a?(String) ? seed : nil)
           return nil unless origin
           return "#{lazy[2]}\n" +
+            origin_context_block(origin.path, File.read_lines(origin.path), origin.line, origin.column)
+        end
+        # Same fourth stanza for a var whose own template value bottoms
+        # out at a missing dict ATTRIBUTE (issue #587: `temp_directory:
+        # "{{ ansible_env.TEMP }}"` consumed by win_get_url's dest:) -
+        # ansible puts the bare dict-miss message in the stanza with
+        # Origin at the variable's definition, the value token's first
+        # character (quote included).
+        dict_attr = msg.match(/\AError while resolving value for '([^']+)': (object of type '(.+?)' has no attribute '(.*?)')\z/)
+        if dict_attr
+          seed = task.params[dict_attr[1]]?
+          origin = value_failure_var_origin(task, dict_attr[2], reachable_from: seed.is_a?(String) ? seed : nil, host: host)
+          return nil unless origin
+          return "#{dict_attr[2]}\n" +
             origin_context_block(origin.path, File.read_lines(origin.path), origin.line, origin.column)
         end
         # Same fourth stanza for indexing an empty play/role/set_fact
@@ -3558,7 +3578,7 @@ module Krikri
     # `jail_name: '{{ jail_net_ip }}'` plus an unrelated role var also
     # mentioning `jail_net_ip` kept the stanza hidden). nil (callers
     # without the param text) keeps the previous all-layers behaviour.
-    private def value_failure_var_origin(task : Task, message : String, skip_key : String? = nil, required_text : String? = nil, reachable_from : String? = nil, first_leaf : Bool = false) : FileVarOrigin?
+    private def value_failure_var_origin(task : Task, message : String, skip_key : String? = nil, required_text : String? = nil, reachable_from : String? = nil, first_leaf : Bool = false, host : Host? = nil) : FileVarOrigin?
       merged = {} of String => JSON::Any
       origins = {} of String => VarOrigin
       merge_var_layer(merged, origins, @play_vars, @play_var_origins)
@@ -3577,6 +3597,19 @@ module Krikri
       # injecting it only lets the exactly-one-match scan below see the
       # actual dict-miss failure rather than a spurious undefined.
       merged["groups"] ||= JSON::Any.new(build_groups) if message.starts_with?("'#{Krikri::LAZY_TEMPLATE_DICT_TYPE} object'") || message.starts_with?("object of type '")
+
+      # A dict-attribute miss can bottom out in a FACT rather than any
+      # var layer (issue #587: `ansible_env.TEMP` on a Linux host) -
+      # facts live outside every layer merged above, so without them the
+      # re-render of the defining value fails with "'x' is undefined"
+      # instead of the dict-miss and the scan never reproduces the
+      # message. Facts sit at ansible's lowest precedence, so they never
+      # override a var layer's own value here.
+      if h = host
+        if facts = @facts[h.name]?
+          facts.each { |key, value| merged[key] ||= value }
+        end
+      end
 
       reachable = candidate_reachable_keys(merged, reachable_from)
 
