@@ -29,6 +29,7 @@ BUILD_MODE="debug"
 STATIC=false
 FORCE=false
 STATIC_PODMAN=false
+SKIP_FUZZ=false
 
 # Stamp file recording what the binaries in $OUTPUT_DIR were last built
 # as (build mode + static/dynamic linkage + crystal version) - see the
@@ -109,6 +110,10 @@ while [[ $# -gt 0 ]]; do
             STATIC_PODMAN=true
             shift
             ;;
+        --no-differential-fuzz)
+            SKIP_FUZZ=true
+            shift
+            ;;
         --clean)
             echo -e "${YELLOW}🧹 Cleaning build artifacts...${NC}"
             rm -rf "$OUTPUT_DIR" "$CACHE_ROOT"
@@ -149,6 +154,7 @@ while [[ $# -gt 0 ]]; do
             echo "             at ~/.cache/krikri-static mounted at /cache), installing the"
             echo "             Alpine static libs above first. Implies --release --static,"
             echo "             and adds --force when the stamp says bin/ isn't static."
+            echo "  --no-differential-fuzz  Skip bin/differential_fuzz (a dev-only sweep tool)"
             echo "  --clean    Remove build artifacts"
             echo ""
             echo "Environment:"
@@ -690,7 +696,9 @@ elif [ -n "$(binary_build_flavor "$FUZZ_BINARY")" ] && [ "$(binary_build_flavor 
     NEEDS_BUILD=true
 fi
 
-if [ "$NEEDS_BUILD" = true ]; then
+if [ "$SKIP_FUZZ" = true ]; then
+    echo -e "   ${BLUE}-${NC} differential_fuzz (skipped: --no-differential-fuzz)"
+elif [ "$NEEDS_BUILD" = true ]; then
     MAIN_BUILDS+=("differential_fuzz|$FUZZ_SOURCE|$FUZZ_BINARY")
 else
     echo -e "   ${BLUE}✓${NC} differential_fuzz (up to date)"
