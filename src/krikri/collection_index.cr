@@ -569,6 +569,16 @@ module Krikri
         return {resolves: builtin_target?(kind, leaf), warning: nil}
       end
 
+      # An installed collection is the truth for its own names: real
+      # ansible refuses an FQCN whose installed collection ships no such
+      # module (ansible.netcommon 8.1.0 has no cli_parse, and
+      # ansible-playbook dies at load with rc=4 on it), so this check
+      # must come first - the blanket legacy rule below would otherwise
+      # swallow every ansible.netcommon.* name.
+      if dirs = collection_dirs["#{ns}.#{coll}"]?
+        return installed_collection_resolution(kind, leaf, dirs, fqcn, seen)
+      end
+
       # The LEGACY-CORE collections (posix/netcommon/utils/windows) are
       # part of the ansible.builtin surface this engine implements:
       # ansible-core's own runtime data binds their names into builtin
@@ -582,10 +592,6 @@ module Krikri
       # teeth for the genuinely optional community collections.
       if ns == "ansible" && {"posix", "netcommon", "utils", "windows", "legacy"}.includes?(coll)
         return {resolves: true, warning: nil}
-      end
-
-      if dirs = collection_dirs["#{ns}.#{coll}"]?
-        return installed_collection_resolution(kind, leaf, dirs, fqcn, seen)
       end
 
       # Collection directory absent: the builtin runtime's FQCN redirect
