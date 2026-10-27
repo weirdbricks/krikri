@@ -179,6 +179,20 @@ describe "argsplat warning" do
     warning_count(output).must_equal(0)
   end
 
+  # Real ansible-core 2.19.11 prints no argsplat warning for a templated
+  # string whose content is pure key=value (its parse_kv split leaves no
+  # free-form `_raw_params` text, so no bare string layer reaches the
+  # TaskArgsFinalizer): `set_fact: "{{ x }}={{ 'v' }}"` is silent, while
+  # `debug: "{{ d }}"` warns.
+  it "does not warn for a templated string made only of key=value pairs" do
+    success, output = run_play([
+      "    - name: kv templated args",
+      "      ansible.builtin.set_fact: \"{{ kv_key }}={{ 'kv value' }}\"",
+    ], ["  vars:", "    kv_key: kv_fact"])
+    success.must_equal(true, output)
+    warning_count(output).must_equal(0)
+  end
+
   it "does not warn for a when-false skipped task" do
     success, output = run_play([
       "    - name: skipped",

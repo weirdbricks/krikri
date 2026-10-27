@@ -2764,6 +2764,7 @@ module Krikri
     # `_`-prefixed keys anyway).
     private def expand_templated_args(params : Hash(String, String), substitutor : VarSubstitutor, task : Task? = nil) : Hash(String, String)
       raw = params.delete("_templated_args")
+      templated_warns = params.delete("_argsplat_warn")
       # The `{% ... %}`/`{# ... #}` string-args marker (see
       # parse_module_params's marker comment) warns through the SAME
       # once-per-task-occurrence argsplat machinery as the `{{ }}`
@@ -2773,15 +2774,24 @@ module Krikri
       # value is known.
       block_marker = params.delete("_argsplat_block_marker")
       jinja_block_args = params.delete("_jinja_block_args")
-      # Ansible warns as soon as it starts resolving such a string args layer
-      # (the Ansible module's TaskArgsFinalizer.finalize), BEFORE
-      # the value is known to resolve to a dict - so a `copy: "{# c #}"`
-      # still gets the warning and only then fails to resolve, and so does
-      # the unquoted-`{%`-token shape below (the same finalizer pass sees
-      # the string layer first). `task` is
+      # Ansible's TaskArgsFinalizer only puts a bare STRING layer into
+      # the finalizer when its parse_kv split of the string args leaves
+      # free-form text (an `_raw_params` value: tokens with no `=`) - a
+      # key=value-only string parses to a plain dict and prints no
+      # warning (live-verified vs 2.19.11: `set_fact: "{{ x }}={{ 'v' }}"`
+      # is silent while `debug: "{{ d }}"` warns) - so the `{{ }}`
+      # sentinel warns only when the parser's `_argsplat_warn` marker
+      # says that split left a leftover on the UNRENDERED string (the
+      # rendered value here may have lost the template spans that kept
+      # a token whole). The `{% %}`/`{# #}` marker shapes keep the
+      # unconditional warn: their tokens carry no `=` either, and Ansible warns there before
+      # anything about the rendered value is known - a `copy: "{# c #}"`
+      # still gets the warning and only then fails to resolve, and so
+      # does the unquoted-`{%`-token shape below (the same finalizer
+      # pass sees the string layer first). `task` is
       # nil only where no Task is at hand (never today); the warning's
       # best-effort Origin needs it.
-      emit_argsplat_warning(task) if task && (raw || block_marker || jinja_block_args)
+      emit_argsplat_warning(task) if task && ((raw && templated_warns) || block_marker || jinja_block_args)
       # An unquoted `{%`-starting token made Ansible finalize the WHOLE
       # free-form string as one Jinja template (see parse_module_params's
       # `_jinja_block_args` marker comment). The rendered text is not a
@@ -2832,17 +2842,19 @@ module Krikri
     #
     # Its trigger (the Ansible module's post_validate +
     # the Ansible module's TaskArgsFinalizer) is NOT "the value
-    # renders to a dict": it is "this module does not take free-form
-    # params AND the string args STARTS AND ENDS with a Jinja delimiter"
-    # (so `{% ... %}`, `{# ... #}` count too). Modules that DO take
+    # renders to a dict": ansible only puts a bare STRING layer into
+    # the finalizer when its parse_kv split of the string args leaves
+    # free-form text (an `_raw_params` value - tokens with no `=`);
+    # a key=value-only string parses to a plain dict and prints no
+    # warning (live-verified vs 2.19.11: `set_fact: "{{ x }}={{ 'v' }}"`
+    # is silent while `debug: "{{ d }}"` warns). Modules that DO take
     # free-form params (`command:`/`shell:`/`script:`/`raw:`, see
-    # module_registry.cr's RAW_COMMAND_MODULES) never warn, and a
-    # non-template string fails earlier with Ansible's own "does not
-    # support raw params" error - which is exactly the parser's
-    # `_templated_args` sentinel condition, so keying off that sentinel
-    # reproduces the same set of tasks. Gated on INJECT_FACTS_AS_VARS
-    # upstream; that is true by default and krikri does not model the
-    # knob.
+    # module_registry.cr's RAW_COMMAND_MODULES) never reach that
+    # string layer at all. krikri's `{{ }}` sentinel warns only when the
+    # parser's `_argsplat_warn` marker (the parse_kv leftover of the
+    # unrendered string) is set, since the executor only ever sees the
+    # rendered value. Gated on INJECT_FACTS_AS_VARS upstream; that is
+    # true by default and krikri does not model the knob.
     #
     # Live-verified print counts: ONE per task occurrence however many
     # hosts it runs on and however many loop items it has (real dedups by
