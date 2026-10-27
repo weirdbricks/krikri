@@ -143,6 +143,11 @@ module Krikri
     def self.preload_static_import_role(name : String, play : Play, playbook_dir : String, tasks_from : String?) : Nil
       role_dir = resolve_role_dir(name, playbook_dir)
       return unless role_dir
+      # import_role: is static for Ansible too (its callback_plugins
+      # warning fires at playbook load, issue #596), but this engine
+      # splices it through include_role's RUNTIME path - the parse-time
+      # preload below is the only static hook, so the warning fires here.
+      PythonFilterRunner.warn_unloadable_role_callback_plugins(role_dir, ansible_collection_name_for(name))
       chain = play.static_preload_chain
       return if chain.includes?(role_dir)
       chain.add(role_dir)
@@ -484,6 +489,14 @@ module Krikri
       # in the registrar to keep this loader's cyclomatic complexity
       # where it was).
       PythonFilterRunner.register_role_plugin_roots(role_dir, collection_name)
+      # Issue #596: Ansible's callback loader imports a STATICALLY loaded
+      # role's callback_plugins/*.py at role load and warns once per
+      # unloadable file on stderr, before the first PLAY banner. play_scope
+      # is exactly the static set here (play roles:, their meta
+      # dependencies); include_role: loads are play_scope false and print
+      # nothing, matching Ansible. import_role: needs its own hook - see
+      # preload_static_import_role.
+      PythonFilterRunner.warn_unloadable_role_callback_plugins(role_dir, collection_name) if play_scope
 
       # meta/main.yml dependencies run BEFORE this role's own tasks - they
       # get the SAME parent_names as the declaring role itself (not
