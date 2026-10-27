@@ -2522,6 +2522,17 @@ module Krikri
           # "Error rendering template:" regardless of whether the arg is
           # a scalar or a container (live-verified 2.19.11, both shapes).
           raise UndefinedVariableError.new("Error while resolving value for '#{key}': Error rendering template: #{e.message}")
+        rescue e : KrikriJinja::TemplateError
+          # A `+`/`-` TypeError that fell through to krikri-jinja's own
+          # evaluator (e.g. inside a dict literal passed to combine())
+          # fails the same finalization chain - ansible-core 2.19.11 words
+          # it in Python's TypeError shape (live-verified), so reword it
+          # when the operand shape is recognized, else keep the engine's
+          # own text.
+          if py = PlusMinusOperandError.from_engine_message(e.raw_message)
+            raise UndefinedVariableError.new("Error while resolving value for '#{key}': #{py.template_text}")
+          end
+          raise e
         rescue e : Exception
           # Same routing for any LOOKUP plugin's failure ("The lookup
           # plugin 'file' failed: Unable to access ..."); everything
