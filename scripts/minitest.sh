@@ -29,9 +29,11 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-# Same host-wide compile lock build.sh takes (see COMPILE_LOCK there): one crystal compile at a time.
+# Same host-wide compile lock and shared cache build.sh uses (see COMPILE_LOCK and SHARED_CACHE
+# there): one crystal compile at a time, and every checkout's suite binary lives in one cache.
 COMPILE_LOCK="${KRIKRI_COMPILE_LOCK:-${XDG_CACHE_HOME:-$HOME/.cache}/krikri-compile.lock}"
-mkdir -p "$(dirname "$COMPILE_LOCK")"
+SHARED_CACHE="${KRIKRI_CRYSTAL_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/krikri-crystal}"
+mkdir -p "$(dirname "$COMPILE_LOCK")" "$SHARED_CACHE"
 
 # Scratch from the suite goes under one TMPDIR per run (Dir.tempdir and File.tempname follow it),
 # removed when the run ends. It lives on disk under the user's cache, not /tmp: /tmp is a RAM-backed
@@ -86,7 +88,7 @@ fi
 # A single explicit test file is run directly; no globbing needed.
 if [ $# -gt 0 ] && [ -f "${1:-}" ]; then
   cd "$ROOT"
-  flock "$COMPILE_LOCK" crystal run "$@"
+  CRYSTAL_CACHE_DIR="$SHARED_CACHE/minitest" flock "$COMPILE_LOCK" crystal run "$@"
   exit 0
 fi
 
@@ -137,7 +139,7 @@ if [ ! -f "$HASHFILE" ] || [ "$(cat "$HASHFILE")" != "$hash" ] || [ ! -f "$BINAR
   # recorded hash and the previous binary, or the next run would
   # "validate" against the hash and silently execute stale code.
   echo "$hash" > "$HASHFILE"
-  if ! (cd "$ROOT" && flock "$COMPILE_LOCK" crystal build --no-debug "$ENTRYPOINT" -o "$BINARY"); then
+  if ! (cd "$ROOT" && CRYSTAL_CACHE_DIR="$SHARED_CACHE/minitest" flock "$COMPILE_LOCK" crystal build --no-debug "$ENTRYPOINT" -o "$BINARY"); then
     rm -f "$BINARY" "$HASHFILE"
     exit 1
   fi
