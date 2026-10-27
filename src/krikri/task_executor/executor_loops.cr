@@ -99,6 +99,17 @@ module Krikri
       nil
     end
 
+    # A filter chain resolving to Python None renders as "" in the text
+    # above, so wrapping that text would iterate with an empty-STRING
+    # item where real ansible iterates the None itself, shown as
+    # (item=None). Recover the structured value to preserve None; a
+    # genuine empty-string resolution stays "" (real prints (item=)).
+    private def filter_chain_loop_item(result : String, bare : String, vars_context : Hash(String, JSON::Any)) : JSON::Any
+      structured = structured_loop_source_value(bare, vars_context)
+      return JSON::Any.new(nil) if structured && structured.raw.nil?
+      JSON::Any.new(result)
+    end
+
     # Ansible templates the whole loop-source string, so a mixed
     # literal-plus-{{ }} value ("{{ os | lower }}.yml") is real text
     # around one expression, not a single whole-string expression - the
@@ -289,7 +300,7 @@ module Krikri
         # undefined") where Ansible flattens the one-element array
         # one level and iterates ONCE with the scalar as `item`. Same
         # array-wrapped fallback the direct-resolution path below applies.
-        return [JSON::Any.new(result)] if task.loop_template_array_wrapped?
+        return [filter_chain_loop_item(result, bare, vars_context)] if task.loop_template_array_wrapped?
         # A complex `loop:`/`with_list:` source that resolved to a
         # non-list scalar gets the same hard type error the direct
         # scalar form already raises (live-verified matrix vs 2.19.11:
@@ -314,7 +325,7 @@ module Krikri
         # nephelaiio.xclip) used to fall through to `return nil` and run the
         # task ONCE with `item` unbound ("'item' is undefined") instead of
         # looping once with the scalar.
-        return [JSON::Any.new(result)] if kind == "with_items"
+        return [filter_chain_loop_item(result, bare, vars_context)] if kind == "with_items"
         return nil
       end
 
