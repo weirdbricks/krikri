@@ -2285,6 +2285,23 @@ module Krikri
         return no_log_keyword_failure_json(task, undefined)
       end
 
+      # ansible 2.19.11 resolves a mapping-form local_action:/action:'s
+      # module BEFORE templating the task args: observed live with an
+      # undefined variable in the args, the failure is "Cannot resolve
+      # '...' to an action or module." (rc=2), not "Finalization of task
+      # args ... failed" - the undefined variable never surfaces. A
+      # reached task whose mapping module is definitively unresolvable
+      # therefore fails HERE, before arg templating. As with the
+      # unavailable-module skip below, a role-private library/ source
+      # still runs (same python_module_source_for condition), and this
+      # failure never registers in reachable_unavailable_modules - it is
+      # the task's own rc=2, not the engine-limit exit-4 accounting (a
+      # when:-false task skips upstream in when_passes? with no
+      # registration either).
+      if task.unresolvable_mapping_module? && python_module_source_for(task).nil?
+        return unresolvable_mapping_module_failure(task)
+      end
+
       begin
         substitute_block_name_chain(task, substitutor)
         task = resolve_templated_action(task, substitutor)
@@ -2336,10 +2353,13 @@ module Krikri
 
       # A genuinely-reached unavailable module whose when: passed and whose
       # arg finalization was clean skips HERE, not inside when_passes? -
-      # ansible's order is when: -> arg finalization -> module resolution,
-      # so an undefined variable in the args had to fail above (see
-      # when_passes?'s defer_unavailable_module comment) before this skip
-      # could happen. Same bookkeeping when_passes? would have performed.
+      # ansible's order is when: -> arg finalization -> module resolution
+      # for a RESOLVABLE module, so an undefined variable in the args had
+      # to fail above (see when_passes?'s defer_unavailable_module comment)
+      # before this skip could happen; a definitively-unresolvable mapping
+      # module is the 2.19.11-observed exception (module resolved before
+      # arg templating) handled by the guard above. Same bookkeeping
+      # when_passes? would have performed.
       if (unavailable = task.unavailable_module) && python_module_source_for(task).nil?
         # The exit-4 accounting for an unported module registers HERE,
         # after arg finalization succeeded (and only for a module that will

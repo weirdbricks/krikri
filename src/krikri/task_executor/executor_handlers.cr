@@ -791,6 +791,15 @@ module Krikri
             return when_error_result(ex, handler, host)
           end
         end
+        # A mapping-form `action:`/`local_action:` handler whose module
+        # name is definitively unresolvable (Task#
+        # unresolvable_mapping_module, issue #666) fails like a regular
+        # task when reached - ansible's lazy mapping resolution fails
+        # the handler itself (rc=2, "Cannot resolve '...' to an action
+        # or module."), not the exit-4 unported-module accounting.
+        if reached && handler.unresolvable_mapping_module?
+          return unresolvable_mapping_module_failure(handler)
+        end
         reachable_unavailable_modules << module_name if reached
         connection_host = host.name
         suffix = (item = vars_context["item"]?) ? " => (item=#{resolve_task_no_log(handler, vars_context) ? "(censored due to no_log)" : item_display(item)}) " : ""
