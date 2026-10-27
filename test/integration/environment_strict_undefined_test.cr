@@ -180,4 +180,84 @@ describe "environment: keyword strict-undefined" do
     status.success?.must_equal(true)
     output.to_s.must_include("failed=0")
   end
+
+  it "warns and runs the task when the environment value renders to a non-object JSON list" do
+    # ansible-playbook 2.19.11 prints
+    # "[WARNING]: could not parse environment value, skipping:
+    # ['{{ proxy_env }}']" for `proxy_env: []` and still runs the task;
+    # krikri used to fail it (round 601446) and later swallowed the
+    # warning silently.
+    playbook = File.tempname("environment-list-warning", ".yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        gather_facts: false
+        connection: local
+        vars:
+          proxy_env: []
+        tasks:
+          - name: task with a non-dict environment value
+            ansible.builtin.command: /bin/true
+            environment: "{{ proxy_env }}"
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+
+    status.success?.must_equal(true)
+    output.to_s.must_include(
+      "[WARNING]: could not parse environment value, skipping: ['{{ proxy_env }}']"
+    )
+    output.to_s.must_include("failed=0")
+  end
+
+  it "warns and succeeds when the environment value is a literal non-JSON string" do
+    # `environment: "foo bar"` renders to a string no JSON parser
+    # accepts; ansible-playbook 2.19.11 warns `['foo bar']` and the
+    # task succeeds. krikri used to raise "Unexpected char 'o'" out of
+    # JSON.parse and fail the task.
+    playbook = File.tempname("environment-non-json-string", ".yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        gather_facts: false
+        connection: local
+        tasks:
+          - name: task with a literal non-JSON environment
+            ansible.builtin.command: /bin/true
+            environment: "foo bar"
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+
+    status.success?.must_equal(true)
+    output.to_s.must_include(
+      "[WARNING]: could not parse environment value, skipping: ['foo bar']"
+    )
+    output.to_s.must_include("failed=0")
+  end
+
+  it "skips the could-not-parse warning for a when-false task with an unparseable environment" do
+    # Ansible finalizes the environment keyword only for tasks that
+    # actually run: a `when:`-skipped task prints no warning even
+    # though its environment value would fail to parse.
+    playbook = File.tempname("environment-skipped-no-warning", ".yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        gather_facts: false
+        connection: local
+        vars:
+          proxy_env: []
+        tasks:
+          - name: skipped task with a non-dict environment value
+            ansible.builtin.command: /bin/true
+            environment: "{{ proxy_env }}"
+            when: false
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+
+    status.success?.must_equal(true)
+    output.to_s.wont_include("could not parse environment value")
+  end
 end
