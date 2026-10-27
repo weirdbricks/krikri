@@ -325,6 +325,21 @@ describe Krikri::ArgspecValidator do
       vars).must_be_nil
   end
 
+  # Ansible accepts `pull: yes` on docker_container: its choices include
+  # the native Python True/False, which are members of BOOLEANS_TRUE/
+  # BOOLEANS_FALSE themselves, so the rewrite lands on the bool choice
+  # rather than failing the single-overlap rule.
+  it "rewrites a bool value to a native True/False choice (docker_container pull: yes)" do
+    Krikri::ArgspecValidator.validate(
+      "docker_container", "community.docker.docker_container",
+      {"name" => "telegraf", "image" => "telegraf:latest", "pull" => "true"},
+      vars).must_be_nil
+    Krikri::ArgspecValidator.validate(
+      "docker_container", "community.docker.docker_container",
+      {"name" => "telegraf", "image" => "telegraf:latest", "pull" => "false"},
+      vars).must_be_nil
+  end
+
   it "never validates the modules Ansible does not validate" do
     {"ansible.builtin.fetch"     => {"src" => "/etc/hostname", "dest" => "/tmp/x", "zz" => "1"},
      "ansible.builtin.set_fact"  => {"zz" => "1"},
