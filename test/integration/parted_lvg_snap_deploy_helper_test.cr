@@ -103,6 +103,14 @@ describe "deploy_helper plugin" do
     result["msg"].as_s.must_include("missing required arguments: path")
   end
 
+  it "fails with Python's os.makedirs error when path is empty" do
+    result = PluginSpecHelper.run("deploy_helper", {"path" => "", "state" => "present"})
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("Task failed: Module failed: [Errno 2] No such file or directory: ''")
+    result["_ansible_error_detail"].as_s.must_equal("[Errno 2] No such file or directory: ''")
+  end
+
   it "fails on an invalid state" do
     result = PluginSpecHelper.run("deploy_helper", {"path" => "/tmp/krikri-deploy-test", "state" => "bogus"})
 

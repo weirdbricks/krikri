@@ -65,9 +65,13 @@ module Krikri
 
     # os.path.join(path, sub): a relative sub hangs off the project
     # path (real gather_facts() joins every one of the three paths onto
-    # it), an absolute one is used verbatim.
+    # it), an absolute one is used verbatim. Python joins an empty first
+    # segment onto nothing (os.path.join('', 'releases') == 'releases',
+    # a RELATIVE path) - e.g. manala.deploy with manala_deploy_dir unset -
+    # so an empty project path must not grow a leading '/' here.
     private def deploy_path_join(path : String, sub : String) : String
       return sub if sub.starts_with?('/')
+      return sub if path.empty?
       "#{path.rstrip('/')}/#{sub}"
     end
 
@@ -163,6 +167,15 @@ module Krikri
 
       if check_mode
         return deploy_helper_result("present", facts_any(facts), changed: changed)
+      end
+
+      # Real create_path(project_path) runs first in main(), so an empty
+      # project path (manala.deploy with manala_deploy_dir unset) reaches
+      # os.makedirs('') and dies there - before releases/shared are ever
+      # touched - with this exact OSError. Check mode never calls
+      # create_path, so it does not crash.
+      if path.empty?
+        return os_crash("[Errno 2] No such file or directory: ''")
       end
 
       unless missing.empty?
