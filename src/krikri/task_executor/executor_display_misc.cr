@@ -364,6 +364,11 @@ module Krikri
           ctx.push(e.message.to_s, error_origin || ctx.origin)
         rescue e : UndefinedVariableError
           msg = e.message.to_s
+          # Real 2.19.11 prefixes an operator TypeError with "Error
+          # rendering template: " in the task-NAME marker but leaves an
+          # undefined name bare - the raw message stays the dotted-leaf
+          # comparison key either way.
+          display = e.is_a?(PlusMinusOperandError) ? e.template_text : msg
           # Live-verified vs 2.19.11 (q-probes): whether the span's failure
           # truncates the template run depends on the span's SHAPE, not just
           # the failure:
@@ -385,13 +390,13 @@ module Krikri
           #   an operator present it precedes the truncation error exactly
           #   like a pre-rendered bare-ident value's error does.
           if (leaf = dotted_leaf_failure(span, span_vars, msg, task, host))
-            ctx.push(msg, leaf || error_origin || ctx.origin)
+            ctx.push(display, leaf || error_origin || ctx.origin)
             abort = true if name_span_combines_operands?(span)
           elsif name_span_combines_operands?(span)
-            ctx.push(msg, error_origin || ctx.origin)
+            ctx.push(display, error_origin || ctx.origin)
             abort = true
           else
-            ctx.push(msg, error_origin || ctx.origin)
+            ctx.push(display, error_origin || ctx.origin)
           end
         rescue e
           ctx.push("Error rendering template: #{e.message}", error_origin || ctx.origin)
@@ -419,7 +424,9 @@ module Krikri
       VarSubstitutor.new(vars: vars, host_name: host.name).substitute(raw, strict: true)
       nil
     rescue e : UndefinedVariableError
-      e.message.to_s
+      # Same prefix rule as the name-marker path: operator TypeErrors get
+      # "Error rendering template: ", undefined names stay bare.
+      e.is_a?(PlusMinusOperandError) ? e.template_text : e.message.to_s
     end
 
     # Whether a span's expression combines operand values with a binary

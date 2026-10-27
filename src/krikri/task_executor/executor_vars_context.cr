@@ -2496,7 +2496,12 @@ module Krikri
           # finalize_args_failure_message adds the Finalization wrapper.
           already_wrapped = e.message.try(&.starts_with?("Error while resolving value for"))
           raise e if already_wrapped
-          raise UndefinedVariableError.new("Error while resolving value for '#{key}': #{e.message}")
+          # Real ansible-core 2.19.11 wraps an operator TypeError as
+          # "Error rendering template: ..." inside the finalization chain
+          # but leaves an undefined name bare - the exception type carries
+          # the distinction, not the call path.
+          detail = e.is_a?(PlusMinusOperandError) ? e.template_text : e.message.to_s
+          raise UndefinedVariableError.new("Error while resolving value for '#{key}': #{detail}")
         rescue e : VariableSubstitutor::FilterEngine::UnknownFilterError
           raise UndefinedVariableError.new("Error while resolving value for '#{key}': Syntax error in template: #{e.message}")
         rescue e : VariableSubstitutor::UnknownTestError
