@@ -1,5 +1,6 @@
 require "../minitest_helper"
 require "../../src/krikri/plugin_helpers/python_apt_probe"
+require "../../src/krikri/plugin_helpers/python_lib_gate"
 
 # The package_facts plugin enumerates the real installed packages (read-only).
 # On any Unix-like host there is at least one package manager present.
@@ -36,6 +37,24 @@ describe "package_facts plugin" do
     result = PluginSpecHelper.run("package_facts", {"manager" => "rpm"})
 
     result["failed"].as_bool.must_equal(true)
+  end
+
+  it "attaches real's unusable-rpm warning to the failed result (issue #597)" do
+    # Real (ansible-core 2.19) warns before the failure when the target's
+    # python can't `import rpm` - the message the no_log ovirt.engine-setup
+    # run hides its [ERROR] block around. The warning text is real's
+    # missing_required_lib wording, composed by the same gate helper the
+    # plugin calls; on a dev box whose python DOES import rpm the gate
+    # can't fire, so skip rather than fail on the environment.
+    gate = Krikri.missing_python_library("rpm", "rpm")
+    skip "python on this host can import rpm" if gate.nil?
+
+    result = PluginSpecHelper.run("package_facts", {"manager" => "rpm"})
+
+    result["failed"].as_bool.must_equal(true)
+    result["warnings"].as_a.map(&.as_s).must_equal(
+      ["Requested package manager rpm was not usable by this module: #{gate[:msg]}"]
+    )
   end
 
   it "accepts manager: apt (Ansible's own distinct, python-apt-backed value), not just auto/dpkg" do

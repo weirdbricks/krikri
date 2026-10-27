@@ -3,6 +3,7 @@
 require "json"
 require "../src/krikri/base_plugin"
 require "../src/krikri/plugin_helpers/python_apt_probe"
+require "../src/krikri/plugin_helpers/python_lib_gate"
 
 module Krikri
   # PackageFacts Plugin - populate the ansible_facts.packages dict with the
@@ -153,12 +154,30 @@ module Krikri
       packages = Hash(String, JSON::Any).new
       found = 0
       seen = Set(String).new
+      # Real's unusable-manager warning text, collected and attached to
+      # whichever result shape the run ends in (success or the found==0
+      # failure) - same key real's module.warn feeds its result with.
+      warnings = [] of String
       managers.each do |mgr|
         break if strategy == "first" && found > 0
 
         canonical = CANONICAL_MANAGERS[mgr]? || mgr
         next if seen.includes?(canonical)
         seen << canonical
+
+        # Real's rpm gatherer treats the manager as usable only when the
+        # target's python can `import rpm` (package_facts.py's
+        # missing_required_lib gate, issue #597, ovirt.engine-setup);
+        # when it can't, the manager is skipped like any other unusable
+        # one - `manager: dnf` fails with its own ['dnf'] list there -
+        # while real's "Requested package manager ... was not usable"
+        # warn text names only the manager the user literally wrote
+        # (live-verified: `auto` and `dnf` on an apt-capable host print
+        # no rpm warning).
+        if canonical == "rpm" && (gate = Krikri.missing_python_library("rpm", "rpm"))
+          warnings << "Requested package manager rpm was not usable by this module: #{gate[:msg]}" if requested.includes?("rpm")
+          next
+        end
 
         entries = canonical == "rpm" ? rpm_packages : apt_packages
         # Real code only counts a manager as 'found' when it yields a
@@ -175,7 +194,7 @@ module Krikri
         end
       end
 
-      return no_manager_result(failure_managers) if found == 0
+      return with_warnings(no_manager_result(failure_managers), warnings) if found == 0
 
       # Ansible 2.19.11 registered package_facts result (live-verified):
       # ansible_facts, failed, changed - the module's exit_json passes no
@@ -185,13 +204,19 @@ module Krikri
       # "Gathered N package facts" msg key sat between ansible_facts and
       # failed - Ansible has no msg at all, live-verified via
       # `{{ r.keys() | list | to_json }}`).
-      PluginResult.new(
+      result = PluginResult.new(
         changed: false,
         failed: false,
         omit_changed: true,
         ansible_facts: JSON::Any.new({"packages" => JSON::Any.new(packages)}),
         key_order: ["ansible_facts"]
       )
+      return with_warnings(result, warnings)
+    end
+
+    private def with_warnings(result : PluginResult, warnings : Array(String)) : PluginResult
+      result.extra["warnings"] = JSON::Any.new(warnings.map { |text| JSON::Any.new(text) }) unless warnings.empty?
+      result
     end
 
     # Ansible's `manager` is a list; in YAML a scalar string is also
