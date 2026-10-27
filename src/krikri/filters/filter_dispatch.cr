@@ -1071,7 +1071,7 @@ module Krikri
           # that takes another list as its argument, not specific to
           # union.
           other = resolve_expression(filter_args)
-          JSON::Any.new(FilterCore.union(value.as_a? || [] of JSON::Any, other.as_a? || [] of JSON::Any))
+          JSON::Any.new(FilterCore.union(FilterCore.to_set_items(value), FilterCore.to_set_items(other)))
         when "path_join"
           # path_join(list) - Ansible filter: joins a list of path
           # components with os.path.join semantics (an absolute
@@ -1280,7 +1280,7 @@ module Krikri
           # symmetric_difference(other) - Ansible filter: elements
           # in exactly one of value/other, not both.
           other = resolve_expression(filter_args)
-          JSON::Any.new(FilterCore.symmetric_difference(value.as_a? || [] of JSON::Any, other.as_a? || [] of JSON::Any))
+          JSON::Any.new(FilterCore.symmetric_difference(FilterCore.to_set_items(value), FilterCore.to_set_items(other)))
         when "combinations"
           # combinations(n) - Ansible filter, Python's own
           # itertools.combinations(value, n): every n-length combination
@@ -1522,7 +1522,7 @@ module Krikri
           # each blocklisted package" loop into "attempt to
           # apt-get-remove every installed package one at a time" -
           # correctness bug and a multi-hour hang, not just wrong data.
-          JSON::Any.new(FilterCore.intersect(as_array(value), as_array(resolve_expression(filter_args))))
+          JSON::Any.new(FilterCore.intersect(FilterCore.to_set_items(value), FilterCore.to_set_items(resolve_expression(filter_args))))
         when "difference"
           # difference(other) - Ansible's own filter: elements of
           # *value* that do NOT appear in *other*, deduplicated, order
@@ -1538,7 +1538,7 @@ module Krikri
           # PLAY RECAP divergence (task counted as "ok" instead of
           # "skipped") that would recur in any role using this common
           # required-facts guard pattern.
-          JSON::Any.new(FilterCore.difference(as_array(value), as_array(resolve_expression(filter_args))))
+          JSON::Any.new(FilterCore.difference(FilterCore.to_set_items(value), FilterCore.to_set_items(resolve_expression(filter_args))))
           # ipwrap is not in this when-list, and neither is any BARE
           # ansible.utils name: both are ansible.utils collection filters,
           # not core, so they fall through to krikri's unknown-filter

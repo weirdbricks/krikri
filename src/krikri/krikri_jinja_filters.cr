@@ -1021,20 +1021,23 @@ module Krikri
 
       # Set filters keep element types and first-seen order (Ansible's own
       # unique-preserving implementations), shared with FilterEngine.
+      # Operands go through FilterCore.to_set_items: Python's set() over a
+      # dict iterates its keys, so Ansible treats a dict operand as its
+      # key list rather than an empty list.
       KrikriJinja.register_default_json_filter("union") do |value, args, _kwargs|
-        JSON::Any.new(VariableSubstitutor::FilterCore.union(value.as_a? || [] of JSON::Any, args[0]?.try(&.as_a?) || [] of JSON::Any))
+        JSON::Any.new(VariableSubstitutor::FilterCore.union(VariableSubstitutor::FilterCore.to_set_items(value), args[0]?.try { |arg| VariableSubstitutor::FilterCore.to_set_items(arg) } || [] of JSON::Any))
       end
 
       KrikriJinja.register_default_json_filter("intersect") do |value, args, _kwargs|
-        JSON::Any.new(VariableSubstitutor::FilterCore.intersect(value.as_a? || [] of JSON::Any, args[0]?.try(&.as_a?) || [] of JSON::Any))
+        JSON::Any.new(VariableSubstitutor::FilterCore.intersect(VariableSubstitutor::FilterCore.to_set_items(value), args[0]?.try { |arg| VariableSubstitutor::FilterCore.to_set_items(arg) } || [] of JSON::Any))
       end
 
       KrikriJinja.register_default_json_filter("difference") do |value, args, _kwargs|
-        JSON::Any.new(VariableSubstitutor::FilterCore.difference(value.as_a? || [] of JSON::Any, args[0]?.try(&.as_a?) || [] of JSON::Any))
+        JSON::Any.new(VariableSubstitutor::FilterCore.difference(VariableSubstitutor::FilterCore.to_set_items(value), args[0]?.try { |arg| VariableSubstitutor::FilterCore.to_set_items(arg) } || [] of JSON::Any))
       end
 
       KrikriJinja.register_default_json_filter("symmetric_difference") do |value, args, _kwargs|
-        JSON::Any.new(VariableSubstitutor::FilterCore.symmetric_difference(value.as_a? || [] of JSON::Any, args[0]?.try(&.as_a?) || [] of JSON::Any))
+        JSON::Any.new(VariableSubstitutor::FilterCore.symmetric_difference(VariableSubstitutor::FilterCore.to_set_items(value), args[0]?.try { |arg| VariableSubstitutor::FilterCore.to_set_items(arg) } || [] of JSON::Any))
       end
 
       # path_join takes a list of components; an absolute one resets.

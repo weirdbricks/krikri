@@ -88,6 +88,17 @@ describe Krikri::KrikriJinjaFilters do
     render("{{ 'a,b' | split(',') | join('|') }}").must_equal("a|b")
   end
 
+  it "set filters treat a dict operand as its keys" do
+    # ansible_facts.packages is a dict keyed by package name; Python's
+    # set() over a dict iterates its keys, so a dict operand subtracts
+    # (and unions/intersects) as its key list, not as nothing.
+    render("{{ ['podman'] | difference({'podman': ['5.0'], 'podman-plugins': ['5.0']}) | join(',') }}").must_equal("")
+    render("{{ {'podman': ['5.0'], 'podman-plugins': ['5.0']} | difference(['podman']) | join(',') }}").must_equal("podman-plugins")
+    render("{{ ['podman'] | union({'podman-plugins': ['5.0']}) | join(',') }}").must_equal("podman,podman-plugins")
+    render("{{ ['podman'] | intersect({'podman': ['5.0']}) | join(',') }}").must_equal("podman")
+    render("{{ ['podman'] | symmetric_difference({'podman-plugins': ['5.0']}) | join(',') }}").must_equal("podman,podman-plugins")
+  end
+
   it "registers the ipaddr family (FQCN only), jmespath, and conversion filters" do
     # The family is ansible.utils collection filters: only the FQCN
     # spelling resolves, bare names fail like real ansible-core
