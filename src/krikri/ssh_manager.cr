@@ -889,7 +889,7 @@ module Krikri
       end
 
       ssh_cmd = ssh_argv(control_path, identity_file, port, user, host,
-        [daemon_remote_command(remote_binary_path, become_user, sudo_needs_password)], password, extra_options: extra_args)
+        [daemon_remote_command(remote_binary_path, become_user, sudo_needs_password, ENV["TERM"]?)], password, extra_options: extra_args)
 
       process = TimingProfile.measure("transport.daemon_spawn", "transport.spawn") do
         Process.new(
@@ -940,13 +940,21 @@ module Krikri
     # #spawn_daemon has already put the password line on the stdin pipe
     # ahead of the frames. Public as a spec seam: the -n/-S command
     # construction is pinned directly in the unit tests.
-    def self.daemon_remote_command(remote_binary_path : String, become_user : String?, sudo_needs_password : Bool = false) : String
+    #
+    # *term* is the controller's TERM, forwarded only for become daemons.
+    # Ansible's ssh connection runs every become task under `ssh -tt`
+    # (use_tty defaults to true), so the remote sudo and module inherit
+    # the controller's TERM. A script that colours its output via tput
+    # emits ANSI codes there and plain text without TERM (issue #606).
+    # Non-become daemons get no pty in ansible, so they get no TERM here.
+    def self.daemon_remote_command(remote_binary_path : String, become_user : String?, sudo_needs_password : Bool = false, term : String? = nil) : String
       return "#{shell_quote(remote_binary_path)} --daemon" unless become_user
       # -H (set HOME to the become user's) is part of ansible's sudo
       # become plugin's own defaults - without it the daemon keeps
       # HOME=/root and ~/.ansible/tmp resolves wrong (issue #629).
       flags = sudo_needs_password ? "-H -S -p ''" : "-H -n"
-      "sudo #{flags} -u #{shell_quote(become_user)} -- #{shell_quote(remote_binary_path)} --daemon"
+      term_prefix = term && !term.empty? ? "TERM=#{shell_quote(term)} " : ""
+      "#{term_prefix}sudo #{flags} -u #{shell_quote(become_user)} -- #{shell_quote(remote_binary_path)} --daemon"
     end
 
     private def self.write_daemon_frame(io : IO, payload : String) : Nil
