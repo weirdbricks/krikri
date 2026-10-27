@@ -39,7 +39,11 @@ describe "undefined delegate_to: variable" do
 
     status.exit_code.must_equal(2)
     output.must_include("'undefined_delegate_var' is undefined")
-    output.wont_include("SHOULD-NOT-PRINT")
+    # The task's own msg literal also appears inside the [ERROR] block's
+    # source excerpt now, so absence is checked via the executed-output
+    # marker instead: the debug module never ran.
+    output.wont_include("ok: [localhost]")
+    output.must_include("ok=0")
     output.wont_include("SENTINEL-SHOULD-NOT-RUN")
     # Never an unhandled exception / bogus hostname connection attempt.
     output.wont_include("Unhandled exception")
@@ -98,10 +102,13 @@ describe "undefined delegate_to: variable" do
     output.must_include("failed=1")
   end
 
-  # Ansible evaluates when: BEFORE delegate_to:, so the common
-  # `when: var is defined` guard skips cleanly without ever templating
-  # the delegate target.
-  it "skips cleanly when a when: var is defined guard is False" do
+  # live-verified vs 2.19.11: delegate_to: templates BEFORE when:, so a
+  # failing delegate template (undefined variable) fails the task even
+  # behind a False when: guard - issue #661,
+  # wittdennis.kubernetes_node_uncordon's "Wait for cilium" (when False
+  # by default, delegate group undefined; real prints the fatal
+  # [ERROR] block and aborts the play, krikri used to skip and run on).
+  it "fails the task even when a when: guard is False, because ansible templates delegate_to: first" do
     status, output = run_playbook(<<-YAML)
       - hosts: localhost
         connection: local
@@ -117,11 +124,40 @@ describe "undefined delegate_to: variable" do
               msg: "SENTINEL-OK"
       YAML
 
-    status.success?.must_equal(true)
-    output.must_include("skipping:")
-    output.must_include("SENTINEL-OK")
-    output.wont_include("SHOULD-NOT-PRINT")
-    output.must_include("failed=0")
+    status.exit_code.must_equal(2)
+    output.must_include("'undefined_delegate_var' is undefined")
+    output.must_include("fatal: [localhost -> {{ undefined_delegate_var }}]: FAILED!")
+    output.wont_include("SENTINEL-OK")
+    output.must_include("failed=1")
+    output.must_include("skipped=0")
+  end
+
+  # The same delegate_to:-before-when: ordering for the dict-missing-key
+  # shape: ansible words it "object of type 'dict' has no attribute
+  # 'missing_key'" (live-verified vs 2.19.11, issue #661).
+  it "fails the task for a dict-missing-key delegate even when when: is False" do
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          some_dict:
+            existing: "x"
+        tasks:
+          - name: delegate to missing dict key
+            ansible.builtin.debug:
+              msg: "SHOULD-NOT-PRINT"
+            when: false
+            delegate_to: "{{ some_dict.missing_key }}"
+          - name: sentinel
+            ansible.builtin.debug:
+              msg: "SENTINEL-OK"
+      YAML
+
+    status.exit_code.must_equal(2)
+    output.must_include("object of type 'dict' has no attribute 'missing_key'")
+    output.wont_include("SENTINEL-OK")
+    output.must_include("failed=1")
   end
 
   it "still delegates to a defined templated target" do

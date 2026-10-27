@@ -589,22 +589,14 @@ module Krikri
                     begin
                       resolve_delegate_host(task, host, vars_context, shared: shared_sub, strict: true)
                     rescue ex : WhenEvaluationError
-                      # Ansible evaluates when: before ever templating
-                      # delegate_to:, so a when: that is False without the undefined
-                      # variable bound (`when: restic_backup_destination_server is
-                      # defined`) is a plain skip, not a failure. Otherwise degrade to
-                      # ONE clean failed task through the normal result pipeline -
-                      # never the unhandled-exception abort the "undefined" hostname
-                      # used to produce at SSH time.
-                      if when_skips_task?(task, vars_context, host, shared_sub)
-                        @results[host.name]["skipped"] += 1
-                        puts Krikri::Oneline.skip_line(host.name, Krikri::ResultDisplay.skip_line_suffix(task.when_condition)).colorize(:cyan)
-                        register_skip_result(task, host)
-                        return
-                      end
-                      # Ansible prints this one as a bare [ERROR] block with the task
-                      # name's Origin and no "Task failed." / caused-by lines, then a
-                      # plain failed fatal line - not the generic failure display.
+                      # Ansible templates delegate_to: BEFORE when:, so a
+                      # delegate template that fails (undefined variable, a
+                      # dict missing a key) fails the task even when the
+                      # when: is False - live-verified vs 2.19.11, issue
+                      # #661 (wittdennis.kubernetes_node_uncordon's "Wait
+                      # for cilium": when False by default, delegate group
+                      # undefined, real prints the fatal [ERROR] block and
+                      # aborts the play).
                       if ex.is_a?(EmptyDelegateError)
                         emit_empty_delegate_error_block(task)
                         # Only the fatal line's `host -> target` label is read from
@@ -613,7 +605,12 @@ module Krikri
                         finish_single_task(task, host, loop_error_result(ex, task), vars_context: vars_context, exec_host: label_host)
                         return
                       end
-                      finish_single_task(task, host, when_error_result(ex, task, host), vars_context: vars_context)
+                      prefixed = ex.message.to_s.starts_with?("Task failed: ") ? ex.message.to_s : "Task failed: #{ex.message}"
+                      emit_delegate_error_chain(task, prefixed)
+                      # The fatal label carries the raw delegate_to: text, same
+                      # as the empty-delegate branch above.
+                      label_host = Host.new(task.delegate_to.to_s, ENV["USER"]? || "root", 22)
+                      finish_single_task(task, host, loop_error_result(WhenEvaluationError.new(prefixed), task), vars_context: vars_context, exec_host: label_host)
                       return
                     end
                   else
@@ -766,8 +763,13 @@ module Krikri
         substitutor.substitute(delegate_to, strict: strict)
       rescue ex : UndefinedVariableError
         if strict
-          raise WhenEvaluationError.new(
-            "The task includes an option with an undefined variable. The error was: #{ex.message}")
+          # The RAW inner error text - callers add the "Task failed: "
+          # prefix themselves and point the chain's caused-by Origin at
+          # the delegate_to: value (live-verified vs 2.19.11, issue #661);
+          # the old "The task includes an option with an undefined
+          # variable." wrap was the module-args wording, which real does
+          # not use here.
+          raise WhenEvaluationError.new(ex.message)
         end
         raise ex
       end
@@ -876,24 +878,6 @@ module Krikri
       !!task.loop_items || !!task.loop_fileglob || !!task.loop_file ||
         !!task.loop_first_found || !!task.loop_template || !!task.loop_flattened ||
         !!task.loop_nested_sources || !!task.loop_together_sources || !!task.loop_subelements_list || !!task.loop_filetree
-    end
-
-    # Shared lenient when: re-check for a delegate_to: templating failure -
-    # Ansible evaluates when: BEFORE delegate_to:, so a when: that is
-    # False without the undefined variable ever bound is a plain skip
-    # (never touches the delegate target). Same shape the loop-resolution
-    # sites use. Always evaluated leniently: a when: that is ITSELF
-    # strictly-undefined fails downstream through when_passes?'s own
-    # raise_undefined: path, not silently here.
-    private def when_skips_task?(task : Task, vars_context : Hash(String, JSON::Any), host : Host, substitutor : VarSubstitutor?) : Bool
-      return false unless when_condition = task.when_condition
-
-      sub = substitutor || VarSubstitutor.new(vars: vars_context, host_name: host.name)
-      begin
-        !ConditionalEvaluator.evaluate(sub.substitute(when_condition), vars_context)
-      rescue
-        false
-      end
     end
 
     # run_once: on every host after the first, skip execution outright but
