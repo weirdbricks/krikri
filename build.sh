@@ -401,6 +401,12 @@ CACHE_PARENT="${CRYSTAL_CACHE_DIR:-$CACHE_ROOT}"
 CACHE_DIR_ROOT="$CACHE_PARENT/$BUILD_MODE${STATIC:+-static}${CRYSTAL_VERSION_TAG:+-crystal-$CRYSTAL_VERSION_TAG}"
 mkdir -p "$CACHE_DIR_ROOT"
 
+# One crystal compile at a time across every checkout and process on the host. A compile peaks near
+# 2.4 GB and 4-5 cores, so overlapping them pushed the box into swap; parallel jobs queue on this
+# flock instead. KRIKRI_COMPILE_LOCK moves the lock file.
+COMPILE_LOCK="${KRIKRI_COMPILE_LOCK:-${XDG_CACHE_HOME:-$HOME/.cache}/krikri-compile.lock}"
+mkdir -p "$(dirname "$COMPILE_LOCK")"
+
 # Shared scratch dir for the whole run: per-build failure output is
 # recorded here (one file per build) for the parent to report once the
 # pool drains. The compiler caches themselves live in $CACHE_DIR_ROOT
@@ -492,7 +498,7 @@ launch_bg() {
 # concurrently-starting builds would otherwise overwrite each other.
 build_main_exec() {
     local name="$1" source="$2" binary="$3"
-    if OUTPUT=$(CRYSTAL_CACHE_DIR="$CACHE_DIR_ROOT/cache-$name" crystal build "$source" -o "$binary" $BUILD_FLAGS 2>&1); then
+    if OUTPUT=$(CRYSTAL_CACHE_DIR="$CACHE_DIR_ROOT/cache-$name" flock "$COMPILE_LOCK" crystal build "$source" -o "$binary" $BUILD_FLAGS 2>&1); then
         strip_release_binary "$binary"
         echo -e "   Building $name... ${GREEN}✓${NC}"
     else
@@ -937,7 +943,7 @@ build_fat_plugin() {
         if [ "$STATIC" != true ] && [ "$IS_DARWIN" != true ]; then
             fat_link_flags=("--link-flags=-Wl,-Bstatic -lbz2 -Wl,-Bdynamic")
         fi
-        if OUTPUT=$(CRYSTAL_CACHE_DIR="$CACHE_DIR_ROOT/cache-fat-plugin" crystal build "$generated" -o "$fat_binary" $BUILD_FLAGS "${fat_link_flags[@]}" 2>&1); then
+        if OUTPUT=$(CRYSTAL_CACHE_DIR="$CACHE_DIR_ROOT/cache-fat-plugin" flock "$COMPILE_LOCK" crystal build "$generated" -o "$fat_binary" $BUILD_FLAGS "${fat_link_flags[@]}" 2>&1); then
             chmod +x "$fat_binary"
             strip_release_binary "$fat_binary"
             echo -e "   ${GREEN}✓${NC} fat plugin binary"
@@ -1121,7 +1127,7 @@ if [ "$REBUILT_COUNT" -gt 0 ]; then
         # ~100s per big release rebuild - see the CACHE_DIR_ROOT comment
         # up top. A failed build wipes its own dir so a corrupt cache
         # can't poison the next run.
-        if OUTPUT=$(CRYSTAL_CACHE_DIR="$CACHE_DIR_ROOT/cache-$plugin" crystal build "$source" -o "$binary" $BUILD_FLAGS "${link_flags[@]}" 2>&1); then
+        if OUTPUT=$(CRYSTAL_CACHE_DIR="$CACHE_DIR_ROOT/cache-$plugin" flock "$COMPILE_LOCK" crystal build "$source" -o "$binary" $BUILD_FLAGS "${link_flags[@]}" 2>&1); then
             chmod +x "$binary"
             # Release-mode strip: see the main strip_release_binary
             # definition above for the rationale. Inlined here (and not
@@ -1142,7 +1148,7 @@ if [ "$REBUILT_COUNT" -gt 0 ]; then
         fi
     }
     export -f build_one_plugin
-    export PLUGINS_DIR BUILD_FLAGS STATUS_DIR RED GREEN YELLOW NC BZ2_STATIC_PLUGINS BUILD_MODE STRIP_AVAILABLE STATIC STRIP_FLAGS IS_DARWIN CACHE_DIR_ROOT
+    export PLUGINS_DIR BUILD_FLAGS STATUS_DIR RED GREEN YELLOW NC BZ2_STATIC_PLUGINS BUILD_MODE STRIP_AVAILABLE STATIC STRIP_FLAGS IS_DARWIN CACHE_DIR_ROOT COMPILE_LOCK
 
     printf '%s\n' "${TO_BUILD[@]}" | xargs -P "$JOBS" -I{} bash -c 'build_one_plugin "$@"' _ {}
 
