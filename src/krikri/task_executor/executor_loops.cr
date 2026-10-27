@@ -2430,8 +2430,12 @@ module Krikri
           # with the task-level fatal (see any_when_failed) BEFORE the
           # ...ignoring line. Both are default-callback output - the
           # oneline callback's aggregate line below already carries the
-          # failure.
-          if any_when_failed && !Krikri::Oneline.enabled?
+          # failure. A label-failed item whose when: was False counts as
+          # a skip verdict to ansible, and a non-debug module's skip
+          # verdict prints no trailing fatal at all (live-verified vs
+          # 2.19.11 on file, command, script; one and two items).
+          skip_verdict_only = all_items_label_skips && !debug_module?(task)
+          if any_when_failed && !Krikri::Oneline.enabled? && !skip_verdict_only
             # The task-level fatal closing a loop with a when:-failed
             # item carries the delegated label too (CallbackBase.
             # host_label reads the task keyword).
