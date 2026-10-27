@@ -4949,60 +4949,83 @@ module Krikri
     # bare {{ }} span resolves natively so a variable holding a dict
     # stays a dict; anything else must render to a JSON object.
     private def substitute_task_environment(task : Task, substitutor : VarSubstitutor) : Hash(String, String)?
-      return nil unless task.environment || task.environment_raw
+      return nil if task.inherited_environment.empty? && !task.environment && !task.environment_raw
 
+      merged = Hash(String, String).new
       begin
-        if env = task.environment
-          substituted = Hash(String, String).new
-          env.each do |key, value|
-            substituted[substitutor.substitute(key, strict: true)] = substitutor.substitute(value, strict: true)
+        # Ansible's environment: keyword is extend=True down the
+        # play > block > task chain: every layer's dict merges onto the
+        # previous one with the innermost value winning per variable,
+        # and a layer that cannot be turned into a dict is skipped (see
+        # substitute_environment_raw), not fatal for the whole chain.
+        task.inherited_environment.each do |layer|
+          if layer.is_a?(Hash(String, String))
+            layer.each do |key, value|
+              merged[substitutor.substitute(key, strict: true)] = substitutor.substitute(value, strict: true)
+            end
+          elsif resolved = substitute_environment_raw(layer, substitutor)
+            merged.merge!(resolved)
           end
-          substituted
-        elsif raw = task.environment_raw
-          stripped = raw.strip
-          # Ansible never fails a task over an environment value it cannot
-          # turn into a dict - it warns "could not parse environment value,
-          # skipping" and runs the task with no extra env (same reason the
-          # non-dict branch below returns nil). An empty raw used to reach
-          # JSON.parse("") and crash finalization with "unexpected token
-          # '<EOF>' at line 1, column 1" before the task ever ran
-          # (lifeofguenter.nginx round 5250092's bare `environment:` key).
-          return nil if stripped.empty?
-          native = if stripped.starts_with?("{{") && stripped.ends_with?("}}") && stripped.scan("{{").size == 1
-                     VariableSubstitutor::VariableLookup.new(substitutor.vars).resolve(stripped[2..-3].strip)
-                   end
-
-          resolved_object = native.try(&.as_h?)
-          unless resolved_object
-            rendered = native ? native.to_s : substitutor.substitute(raw, strict: true)
-            # Ansible drops the whole environment when its template renders
-            # to `omit` (e.g. `environment: "{{ proxy_env | default(omit) }}"`
-            # with proxy_env undefined) instead of passing the omit marker
-            # through, which would fail JSON parsing downstream.
-            return nil if rendered.includes?(OMIT_SENTINEL)
-            parsed = JSON.parse(rendered)
-            object = parsed.as_h?
-            # Ansible never fails a task over a non-dict environment
-            # value - it just warns "could not parse environment value,
-            # skipping" and treats the environment as empty. The common
-            # trigger is a role default like `proxy_env: []`, meant to be
-            # overridden by the caller with a real dict but left as an
-            # empty list otherwise (ryandaniels.connectivity_test round
-            # 601446: the whole package: task failed here in krikri while
-            # ansible-playbook just installed the packages with no
-            # extra env). Confirmed against ansible-core 2.19 for `[]`, a
-            # non-empty list, and a plain string - none of those raise.
-            return nil unless object
-            resolved_object = object
-          end
-
-          stringified = Hash(String, String).new
-          resolved_object.each { |key, value| stringified[key] = value.as_s? ? value.as_s : value.to_s }
-          stringified
         end
+
+        if env = task.environment
+          env.each do |key, value|
+            merged[substitutor.substitute(key, strict: true)] = substitutor.substitute(value, strict: true)
+          end
+        elsif raw = task.environment_raw
+          merged.merge!(substitute_environment_raw(raw, substitutor) || Hash(String, String).new)
+        end
+        merged
       rescue e : UndefinedVariableError
         raise UndefinedVariableError.new("Error processing keyword 'environment': #{e.message}")
       end
+    end
+
+    # The string form of one environment: layer (`environment:
+    # "{{ proxy_env }}"`): a single bare {{ }} span resolves natively so
+    # a variable holding a dict stays a dict; anything else must render
+    # to a JSON object. Ansible never fails a task over an environment
+    # value it cannot turn into a dict - it warns "could not parse
+    # environment value, skipping" and runs the task with no extra env,
+    # so every failure path here returns nil instead of raising. An
+    # empty raw used to reach JSON.parse("") and crash finalization with
+    # "unexpected token '<EOF>' at line 1, column 1" before the task
+    # ever ran (lifeofguenter.nginx round 5250092's bare `environment:`
+    # key).
+    private def substitute_environment_raw(raw : String, substitutor : VarSubstitutor) : Hash(String, String)?
+      stripped = raw.strip
+      return nil if stripped.empty?
+      native = if stripped.starts_with?("{{") && stripped.ends_with?("}}") && stripped.scan("{{").size == 1
+                 VariableSubstitutor::VariableLookup.new(substitutor.vars).resolve(stripped[2..-3].strip)
+               end
+
+      resolved_object = native.try(&.as_h?)
+      unless resolved_object
+        rendered = native ? native.to_s : substitutor.substitute(raw, strict: true)
+        # Ansible drops the whole environment when its template renders
+        # to `omit` (e.g. `environment: "{{ proxy_env | default(omit) }}"`
+        # with proxy_env undefined) instead of passing the omit marker
+        # through, which would fail JSON parsing downstream.
+        return nil if rendered.includes?(OMIT_SENTINEL)
+        parsed = JSON.parse(rendered)
+        object = parsed.as_h?
+        # Ansible never fails a task over a non-dict environment
+        # value - it just warns "could not parse environment value,
+        # skipping" and treats the environment as empty. The common
+        # trigger is a role default like `proxy_env: []`, meant to be
+        # overridden by the caller with a real dict but left as an
+        # empty list otherwise (ryandaniels.connectivity_test round
+        # 601446: the whole package: task failed here in krikri while
+        # ansible-playbook just installed the packages with no
+        # extra env). Confirmed against ansible-core 2.19 for `[]`, a
+        # non-empty list, and a plain string - none of those raise.
+        return nil unless object
+        resolved_object = object
+      end
+
+      stringified = Hash(String, String).new
+      resolved_object.each { |key, value| stringified[key] = value.as_s? ? value.as_s : value.to_s }
+      stringified
     end
 
     # An enclosing block:'s `name:` keyword - strict-undefined templating
