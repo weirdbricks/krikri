@@ -441,6 +441,24 @@ describe Krikri::VariableSubstitutor::FilterEngine do
     engine.apply(s("/var/log/mysql/mysql.err"), "basename").as_s.must_equal("mysql.err")
   end
 
+  it "matches Python's os.path.dirname edge cases, not Crystal's File.dirname" do
+    # Crystal's File.dirname returns "." for a bare component and
+    # strips a trailing slash as insignificant; Python's os.path.dirname
+    # (what the Ansible filter wraps) returns "" there and keeps the
+    # head before a trailing slash. The difference decides `x or omit`
+    # guards (xanmanning.k3s issue #664): Python's "" is falsy so the
+    # guard yields omit, Crystal's "." was truthy and produced a real
+    # path. All values below are live-verified os.path.dirname results.
+    engine.apply(s(""), "dirname").as_s.must_equal("")
+    engine.apply(s("foo"), "dirname").as_s.must_equal("")
+    engine.apply(s("/foo"), "dirname").as_s.must_equal("/")
+    engine.apply(s("/"), "dirname").as_s.must_equal("/")
+    engine.apply(s("//"), "dirname").as_s.must_equal("//")
+    engine.apply(s("a/b/"), "dirname").as_s.must_equal("a/b")
+    engine.apply(s("a/b"), "dirname").as_s.must_equal("a")
+    engine.apply(s("//a"), "dirname").as_s.must_equal("//")
+  end
+
   it "re-templates a selectattr()-compared attribute that's itself an unrendered template string" do
     # Real bug found benchmarking openstack.ansible-hardening's own
     # package install/removal: `stig_packages_rhel7 | selectattr(

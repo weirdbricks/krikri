@@ -129,6 +129,51 @@ describe "omit" do
     output.must_include("\"msg\": {\n        \"a\": 0,\n        \"b\": false,\n        \"c\": \"\"\n    }")
   end
 
+  it "drops its whole key from a loop item dict built with default(omit)" do
+    # xanmanning.k3s issue #664: k3s_ensure_directories_exist items are
+    # dicts whose `path` is `... | default(omit)` - Ansible templates
+    # the omit marker's key OUT of the item dict, so the item prints as
+    # {'name': ...} and `item.path is defined` is False (task skipped).
+    # This engine kept the sentinel string as the value, so the item
+    # carried `path: __crystal_ansible_omit__` and `is defined` was
+    # true by accident of the sentinel text.
+    dir = File.tempname("omit-loop-item")
+    Dir.mkdir_p(dir)
+    File.write(File.join(dir, "inv.ini"), "localhost ansible_connection=local\n")
+    File.write(File.join(dir, "inner.yml"), <<-YAML)
+    - name: inner
+      ansible.builtin.debug:
+        msg: "PATH={{ directory.path }}"
+      when: directory.path is defined
+    YAML
+    File.write(File.join(dir, "pb.yml"), <<-YAML)
+    - hosts: all
+      gather_facts: false
+      vars:
+        directory_list:
+          - name: with-omit
+            path: "{{ never_set | default(omit) }}"
+          - name: with-value
+            path: /real
+      tasks:
+        - name: outer
+          ansible.builtin.include_tasks: inner.yml
+          loop: "{{ directory_list }}"
+          loop_control:
+            loop_var: directory
+    YAML
+
+    io = IO::Memory.new
+    Process.run(BINARY, ["-i", "inv.ini", "pb.yml"], output: io, error: io, chdir: dir)
+    output = io.to_s
+    # Only the second item's inner task runs; the first is skipped
+    # because `directory.path` no longer exists at all.
+    output.must_include("PATH=/real")
+    output.wont_include("__crystal_ansible_omit__")
+  ensure
+    FileUtils.rm_rf(dir) if dir && Dir.exists?(dir)
+  end
+
   it "treats a block-tag template rendering to nothing as omitted, not empty" do
     # hbjydev.restic's own content: "{% for f in restic_files %}{{ f
     # }}\n{% endfor %}" with restic_files: [] - live-verified vs

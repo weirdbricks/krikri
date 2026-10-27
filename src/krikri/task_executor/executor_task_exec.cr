@@ -1650,7 +1650,13 @@ module Krikri
       case raw = item.raw
       when Hash
         rendered = raw.each_with_object({} of String => JSON::Any) do |(key, value), acc|
-          acc[key] = deep_render_item(value, vars_context, host_name, strict: strict)
+          rendered_value = deep_render_item(value, vars_context, host_name, strict: strict)
+          # Ansible drops a loop item's key whose value is omit (issue
+          # #664: xanmanning.k3s items print as {'name': ...} with no
+          # `path`, so `item.path is defined` is False), rather than
+          # keeping the marker as the value.
+          next if rendered_value.as_s? == OMIT_SENTINEL
+          acc[key] = rendered_value
         end
         JSON::Any.new(rendered)
       when Array
