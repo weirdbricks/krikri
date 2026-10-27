@@ -25,6 +25,15 @@ describe Krikri::AsyncJobs do
     jids.uniq.size.must_equal(20)
   end
 
+  # Regression: generate_jid used to emit "<unix_ts>.<hex>", but Ansible's
+  # async jids are "j<random>.<pid>" - printed verbatim in the ASYNC
+  # POLL/OK lines and stored as the registered ansible_job_id.
+  it "generates jids in Ansible's j<digits>.<digits> shape" do
+    jid = Krikri::AsyncJobs.generate_jid
+    (/\Aj\d+\.\d+\z/ =~ jid).must_equal(0)
+    Krikri::AsyncJobs.valid_jid?(jid).must_equal(true)
+  end
+
   it "accepts generated and probe-shaped jids as valid" do
     Krikri::AsyncJobs.valid_jid?(Krikri::AsyncJobs.generate_jid).must_equal(true)
     Krikri::AsyncJobs.valid_jid?("no-such-job-#{Krikri::AsyncJobs.generate_jid}").must_equal(true)
