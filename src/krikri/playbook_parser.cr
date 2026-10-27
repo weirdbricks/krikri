@@ -89,6 +89,18 @@ module Krikri
     # no vars context to resolve it against, so the raw text is stashed
     # here and the executor substitutes it strictly at run time.
     property environment_raw : String?
+    # Environment layers inherited from the play and any enclosing
+    # blocks, outermost first. Ansible's `environment:` is an
+    # extend=True keyword: the play's env, then each enclosing block's,
+    # then the task's own merge into one dict with the innermost value
+    # winning per variable - so a play-level `environment: {PATH: ...}`
+    # applies to every task in the play even when the task sets nothing
+    # of its own. Snapshotted from Play#environment_layers at parse
+    # time (the ambient carrier parse_block_task raises/lowers around
+    # its children); a layer is either an already-parsed dict
+    # (templates still raw inside) or the raw templated string form,
+    # substituted and merged in order at execution.
+    property inherited_environment : Array(Hash(String, String) | String) = [] of Hash(String, String) | String
     # `no_log: true` - suppress this task's result detail. A SECURITY
     # control: it is how a playbook keeps a password, token or key out
     # of the log. Previously unparsed and unused, so every such task
@@ -1031,6 +1043,14 @@ module Krikri
     # task > block > play with no parent pointers needed.
     property task_timeout : Int64? = nil
     property task_timeout_expr : String? = nil
+    # `environment:` at play scope - the env-var dict every task in the
+    # play starts from (Ansible's play-level environment keyword; a
+    # task's or block's own value wins per variable). Stored as a
+    # one-element layer list so parse_block_task can stack block layers
+    # on top with the same ambient-inheritance save/set/restore pattern
+    # become/check_mode/timeout use; each task snapshots the list at
+    # parse time (Task#inherited_environment).
+    property environment_layers : Array(Hash(String, String) | String) = [] of Hash(String, String) | String
     # `vars_prompt:` - name/prompt/private/default per entry, asked
     # before the play runs.
     property vars_prompt : Array(Hash(String, String)) = [] of Hash(String, String)
@@ -2253,6 +2273,15 @@ module Krikri
       play.debugger = yaml["debugger"]?.try { |entry| safe_yaml_to_string(entry).strip }
       play.task_timeout, play.task_timeout_expr = parse_timeout_value(yaml["timeout"]?)
 
+      # environment: at play scope - the env-var dict every task in the
+      # play inherits (live-verified vs 2.19.11: a play-level
+      # `environment: {PATH: ...}` applies to every task, so a bare
+      # `command:` with argv finds its binary on the given PATH). A
+      # task's or block's own environment: wins per variable.
+      if play_env = parse_environment_value(yaml["environment"]?)
+        play.environment_layers = [play_env]
+      end
+
       # vars_prompt: each entry is a mapping with at least a name; the
       # rest (prompt, private, default) are optional.
       if prompts = yaml["vars_prompt"]?.try(&.as_a?)
@@ -3210,6 +3239,26 @@ module Krikri
       nil
     end
 
+    # Parse an `environment:` keyword value in either accepted form -
+    # the literal dict (values stringified, `{{ }}` templates left raw
+    # for execution-time substitution) or a single templated string
+    # that must evaluate to the dict at run time. Returns nil for an
+    # absent or null value: ansible-playbook treats a null environment
+    # as "no environment" and runs the task normally, so a bare
+    # `environment:` key must not be stringified into an empty raw
+    # string (the executor's env finalization JSON.parses that raw
+    # value, which would crash on "" before the task ever ran -
+    # lifeofguenter.nginx round 5250092).
+    private def self.parse_environment_value(value : YAML::Any?) : Hash(String, String) | String | Nil
+      return nil if value.nil? || value.raw.nil?
+      if env_yaml = value.as_h?
+        env_hash = Hash(String, String).new
+        env_yaml.each { |key, entry| env_hash[key.to_s] = stringify_value(entry) }
+        return env_hash
+      end
+      safe_yaml_to_string(value)
+    end
+
     # Parse a single task
     private def self.parse_task(yaml : YAML::Any, index : Int32, play : Play, file_dir : String, known_vars : Hash(String, JSON::Any)? = nil, role_path : String? = nil, playbook_dir : String? = nil, source_file : String? = nil, source_map : YamlSourceMap? = nil, source_prefix : String = "") : Task
       unless yaml.as_h?
@@ -3867,26 +3916,22 @@ module Krikri
       # raw (unsubstituted) strings here, same as task.params - real
       # {{ }} substitution happens at execution time once the vars
       # context exists.
-      if env_yaml = task_hash["environment"]?.try(&.as_h?)
-        env_hash = Hash(String, String).new
-        env_yaml.each { |key, value| env_hash[key.to_s] = stringify_value(value) }
-        task.environment = env_hash
-      elsif env_raw = task_hash["environment"]?
+      case parsed_env = parse_environment_value(task_hash["environment"]?)
+      when Hash(String, String)
+        task.environment = parsed_env
+      when String
         # String form - a single template that must evaluate to the
         # env-var dict at run time (see Task#environment_raw). A literal
         # non-hash here used to be silently DROPPED (as_h? returned nil),
         # so a role setting `environment: "{{ proxy_env }}"` never had
         # the variable substituted - and never failed the way
         # Ansible fails when that variable is undefined.
-        # A bare `environment:` key with no value (lifeofguenter.nginx
-        # round 5250092's "Configure" task) must NOT be stringified into
-        # an empty environment_raw either: the executor's env finalization
-        # JSON.parses that raw value, so the empty string crashed with
-        # "unexpected token '<EOF>' at line 1, column 1" before the task
-        # ever ran. ansible-playbook 2.19.11 treats a null environment as
-        # "no environment" and runs the task normally.
-        task.environment_raw = safe_yaml_to_string(env_raw) unless env_raw.raw.nil?
+        task.environment_raw = parsed_env
       end
+      # Whatever the play and any enclosing block set as their own
+      # environment: (the ambient layer list) applies to this task too;
+      # the executor overlays the task's own env on top of it.
+      task.inherited_environment = play.environment_layers
 
       # Parse tags
       # Parse loop / with_* (checked in this priority order; first match wins,
@@ -5402,6 +5447,17 @@ module Krikri
       play.task_timeout = block_timeout if block_timeout
       play.task_timeout_expr = block_timeout_expr if block_timeout_expr
 
+      # Same ambient-inheritance pattern for the block's own
+      # `environment:` (Ansible's precedence task > block > play, per
+      # variable). The block's layer is STACKED onto the ambient list
+      # rather than replacing it, so a block env merges with the play's
+      # instead of clobbering it; a templated string layer stays raw
+      # and resolves at execution.
+      saved_environment_layers = play.environment_layers
+      if block_env = parse_environment_value(task_hash["environment"]?)
+        play.environment_layers = saved_environment_layers + [block_env]
+      end
+
       # ensure-restore, not fall-through-restore: if a child parse raises
       # (a typed bypass like RemovedActionError rethrown through
       # parse_tasks, or any parse error), the play's become must still be
@@ -5432,6 +5488,7 @@ module Krikri
         play.check_mode_expr = saved_check_mode_expr
         play.task_timeout = saved_task_timeout
         play.task_timeout_expr = saved_task_timeout_expr
+        play.environment_layers = saved_environment_layers
       end
 
       # Stamp this block's own name onto every descendant's
