@@ -205,6 +205,17 @@ describe Krikri::VariableSubstitutor::FilterCore do
       core.intersect(list.as_a, other.as_a).map(&.to_json).must_equal([JSON.parse(%({"n": 1})).to_json])
       core.difference(list.as_a, other.as_a).map(&.to_json).must_equal([JSON.parse(%({"n": 2})).to_json])
     end
+
+    it "set filters treat a dict operand as its keys" do
+      packages = JSON.parse(%({"podman": ["5.0"], "podman-plugins": ["5.0"]}))
+      core.to_set_items(packages).map(&.as_s).must_equal(["podman", "podman-plugins"])
+      core.difference(core.to_set_items(a), core.to_set_items(packages)).map(&.raw).must_equal([1, 2, 3])
+      core.difference(core.to_set_items(packages), core.to_set_items(b)).map(&.as_s).must_equal(["podman", "podman-plugins"])
+      core.intersect(core.to_set_items(a), core.to_set_items(packages)).must_equal([] of JSON::Any)
+      core.union(core.to_set_items(packages), core.to_set_items(b)).map(&.raw).must_equal(["podman", "podman-plugins", 3, 4])
+      core.symmetric_difference(core.to_set_items(packages), core.to_set_items(b)).map(&.raw)
+        .must_equal(["podman", "podman-plugins", 3, 4])
+    end
   end
 
   describe "family 4: byte formatting" do

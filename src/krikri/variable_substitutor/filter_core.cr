@@ -512,6 +512,20 @@ module Krikri
         end
       end
 
+      # A Python set() over a dict iterates its keys (`x in d` checks
+      # the keys too), so Ansible's set filters treat a dict operand as
+      # its key list - e.g. ansible_facts.packages is a dict keyed by
+      # package name, and `['podman'] | difference(ansible_facts.packages)`
+      # is empty when the key exists. Coercing a non-array operand to an
+      # empty list instead makes the subtraction silently do nothing.
+      def self.to_set_items(value : JSON::Any) : Array(JSON::Any)
+        if hash = value.as_h?
+          hash.keys.map { |key| JSON::Any.new(key) }
+        else
+          value.as_a? || [] of JSON::Any
+        end
+      end
+
       # Set operations over JSON arrays - Ansible's own filters
       # (`list(set(a) OP set(b))`). For plain integer lists CPython's set
       # order is deterministic, so it is reproduced exactly (see PySet);
