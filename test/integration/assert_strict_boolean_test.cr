@@ -65,4 +65,57 @@ describe "assert: strict-boolean that:" do
     output.must_include("All assertions passed")
     output.must_include("failed=0")
   end
+
+  # Real 2.19 also labels the non-bool fatal msg with the tested value's
+  # DEFINING site (" at '<file>:<line>:<col>'" - the same data-lineage
+  # clause the when: path prints) and wraps the failure in the two-level
+  # [ERROR] chain: "Task failed." at the task's name, "<<< caused by >>>"
+  # with the conditional message again at the failing that: item's own
+  # Origin, then the ALLOW_BROKEN_CONDITIONALS hint (live-verified vs
+  # ansible-playbook 2.19.11). A dotted `name.key` item points at the
+  # nested key's VALUE token in the file that supplies `name` - for the
+  # play-vars shape below, the `pass:` line of the playbook itself.
+  it "labels a non-bool dotted that: item with its defining site and prints the failure chain" do
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          dict_var:
+            pass: ''
+        tasks:
+          - name: Dict attr check
+            ansible.builtin.assert:
+              that:
+                - dict_var.pass
+      YAML
+
+    status.success?.must_equal(false)
+    output.must_match(/Conditional result \(False\) was derived from value of type 'str' at '[^']+:\d+:\d+'\. Conditionals must have a boolean result\./)
+    output.must_include("Task failed.")
+    output.must_include("<<< caused by >>>")
+    output.must_include("Broken conditionals can be temporarily allowed with the `ALLOW_BROKEN_CONDITIONALS` configuration option.")
+    output.must_include("failed=1")
+  end
+
+  it "labels a non-bool bare-var that: item with the var's defining site" do
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          flag: ''
+        tasks:
+          - name: Bare var check
+            ansible.builtin.assert:
+              that:
+                - flag
+      YAML
+
+    status.success?.must_equal(false)
+    output.must_match(/Conditional result \(False\) was derived from value of type 'str' at '[^']+:\d+:\d+'\. Conditionals must have a boolean result\./)
+    output.must_include("Task failed.")
+    output.must_include("<<< caused by >>>")
+    output.must_include("failed=1")
+  end
 end

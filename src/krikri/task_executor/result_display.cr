@@ -940,14 +940,23 @@ module Krikri
       # assert:'s that: conditional failure: two-level chain, the second
       # Origin pointing at the failing that: item (index carried in the
       # internal _ansible_that_index key; when: failures are emitted by
-      # TaskExecutor's own emit_when_error_chain instead).
+      # TaskExecutor's own emit_when_error_chain instead). The non-bool
+      # "Conditional result" class additionally carries the
+      # ALLOW_BROKEN_CONDITIONALS hint after the block - but only when
+      # the chain itself printed (live-verified vs 2.19.11: the other
+      # wording classes end the block at the Origin, no hint).
       if (idx = result["_ansible_that_index"]?.try(&.as_i64?)) &&
          (msg.starts_with?("Task failed: Error while evaluating conditional") ||
          msg.starts_with?("Task failed: Syntax error in expression") ||
          msg.starts_with?("Task failed: Error rendering expression") ||
          msg.starts_with?("Task failed: The test plugin ") ||
-         msg.starts_with?("Task failed: The filter plugin "))
-        emit_assert_that_chain(source_task, msg["Task failed: ".size..], idx.to_i)
+         msg.starts_with?("Task failed: The filter plugin ") ||
+         msg.starts_with?("Task failed: Conditional result"))
+        if emit_assert_that_chain(source_task, msg["Task failed: ".size..], idx.to_i) &&
+           msg.starts_with?("Task failed: Conditional result")
+          puts "Broken conditionals can be temporarily allowed with the `ALLOW_BROKEN_CONDITIONALS` configuration option."
+          puts ""
+        end
         return
       end
       return if msg.includes?("Error while evaluating conditional")
@@ -1130,10 +1139,10 @@ module Krikri
         .with_chain(ErrorBlock::DIRECT_CAUSE, true, cause))
     end
 
-    private def self.emit_assert_that_chain(task : Task, inner : String, index : Int32) : Nil
+    private def self.emit_assert_that_chain(task : Task, inner : String, index : Int32) : Bool
       task_origin = error_origin_context(task)
       item_origin = assert_that_origin(task, index)
-      return unless task_origin && item_origin
+      return false unless task_origin && item_origin
 
       root = ErrorBlock::Node.new("Task failed.", source_context: task_origin)
       cause = ErrorBlock::Node.new(inner, source_context: item_origin)
