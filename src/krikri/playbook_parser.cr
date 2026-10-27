@@ -6670,10 +6670,19 @@ module Krikri
           # string STARTS AND ENDS with the delimiters, so a trailing
           # space (`copy: "{{ d }} "`) is not one and takes Ansible's "does
           # not support raw params" error path instead - stripping first
-          # turned such a value into a template and, with the argsplat
-          # warning keyed off this sentinel, warned where Ansible does not.
+          # turned such a value into a template and pushed it through this
+          # sentinel, where the argsplat warning (keyed off the
+          # `_argsplat_warn` marker set here) would warn where Ansible does
+          # not.
           if possibly_all_template?(yaml.as_s) && !RAW_COMMAND_MODULES.includes?(module_name)
             params["_templated_args"] = yaml.as_s.strip
+            # Ansible only warns when its parse_kv split of the UNRENDERED
+            # string leaves free-form text: `set_fact: "{{ k }}={{ 'a b' }}"`
+            # is one key=value token and silent, while `debug: "{{ d }}"`
+            # leaves "{{ d }}" and warns. Decided here, not in the executor,
+            # because by then the value has been rendered and its spaces
+            # can split a key=value token into a bare word.
+            params["_argsplat_warn"] = "1" if parse_inline_kv_params(yaml.as_s)[1]
           else
             # A string arg that starts AND ends with any Jinja delimiter -
             # `{% ... %}` / `{# ... #}` (Ansible's check tests the start and
@@ -6779,10 +6788,11 @@ module Krikri
     # delimiters: true when the string STARTS with `{{` and ENDS with
     # `}}` (a folded `>` scalar keeps its trailing newline and so is not
     # one). Ansible also accepts the `{% %}`/`{# #}` pairs, but krikri's
-    # `_templated_args` sentinel - which both this and the argsplat
-    # warning key off - only ever drove `{{ }}` whole-args resolution, so
-    # widening it here would change how those values resolve, not just
-    # whether a warning prints.
+    # `_templated_args` sentinel only ever drove `{{ }}` whole-args
+    # resolution, so widening it here would change how those values
+    # resolve, not just whether a warning prints. Whether the sentinel
+    # warns is decided by the `_argsplat_warn` marker beside it (ansible
+    # only warns when its parse_kv split leaves free-form text).
     private def self.possibly_all_template?(s : String) : Bool
       s.starts_with?("{{") && s.ends_with?("}}")
     end
