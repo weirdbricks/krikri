@@ -299,7 +299,10 @@ module Krikri
           end
           # Transport failures surface in Ansible as urllib's
           # "Request failed: <urlopen error ...>" with the errno text.
-          if reason = {6 => "[Errno -2] Name or service not known", 7 => "[Errno 111] Connection refused"}[result[:exit_code]]?
+          # A curl timeout (28) has no errno - Python's socket.timeout
+          # is errno-less, and ansible's observed message for a
+          # timed-out key URL is a bare "<urlopen error timed out>".
+          if reason = {6 => "[Errno -2] Name or service not known", 7 => "[Errno 111] Connection refused", 28 => "timed out"}[result[:exit_code]]?
             return PluginResult.new(changed: false, failed: true, msg: "Failed to download key at #{url}: Request failed: <urlopen error #{reason}>")
           end
           return PluginResult.new(changed: false, failed: true, msg: "Failed to fetch key from #{url}: #{result[:stderr]}")
