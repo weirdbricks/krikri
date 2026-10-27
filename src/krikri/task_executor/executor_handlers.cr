@@ -731,10 +731,43 @@ module Krikri
       }.to_json)
     end
 
+    # The retry wrapper around the single-attempt body: a handler with
+    # until:/retries:/delay: retries exactly like a regular task - real
+    # prints the FAILED - RETRYING callback lines under the handler's own
+    # banner and stamps the attempts key on the final registered result
+    # (issue #620, live-verified vs real ansible-playbook). Kept here
+    # rather than in execute_handler_internal so a looped handler retries
+    # each loop item independently, the way Ansible's per-item attempt
+    # loop does. The check-mode guard mirrors the regular-task call site
+    # (executor_run_loop's own until: dispatch): check mode never runs
+    # attempts, so there is nothing to retry.
+    private def execute_handler_plugin_once(handler : Task, host : Host, vars_context : Hash(String, JSON::Any)) : JSON::Any
+      if (until_condition = handler.until_condition) && !resolve_task_check_mode(handler, vars_context) && !handler_skipped_before_attempt?(handler, host, vars_context)
+        result = run_until_retries(handler, host, vars_context, until_condition, attempt_body: -> { execute_handler_plugin_attempt(handler, host, vars_context) })
+        # A handler attempt always returns a result (never nil), but the
+        # shared core is typed for the regular-task body's nilable return.
+        return result || JSON.parse({"changed" => false, "failed" => false}.to_json)
+      end
+
+      execute_handler_plugin_attempt(handler, host, vars_context)
+    end
+
+    # Real skips a when:-false handler before its attempt loop ever starts,
+    # so the skipped result carries no attempts key and no FAILED - RETRYING
+    # line (live-verified vs real ansible-playbook). A when: that raises is
+    # likewise a single fatal result, never retried; the attempt body reports
+    # it itself, so this only tells the caller to bypass the retry loop.
+    private def handler_skipped_before_attempt?(handler : Task, host : Host, vars_context : Hash(String, JSON::Any)) : Bool
+      return false unless handler.when_condition
+      !evaluate_when_items(handler, vars_context, host)
+    rescue WhenEvaluationError
+      true
+    end
+
     # The actual single-execution body every handler run (looped or not)
     # goes through - unchanged from before loop: support was added, just
     # extracted so execute_handler_loop can call it once per item.
-    private def execute_handler_plugin_once(handler : Task, host : Host, vars_context : Hash(String, JSON::Any)) : JSON::Any
+    private def execute_handler_plugin_attempt(handler : Task, host : Host, vars_context : Hash(String, JSON::Any)) : JSON::Any
       # Same connection-plugin resolution a regular task gets (see
       # execute_task_once's own check): a fired handler whose connection
       # type resolves to nothing fails the handler, not a silent SSH

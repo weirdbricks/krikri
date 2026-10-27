@@ -2670,9 +2670,15 @@ module Krikri
     # raw item. Rendered against that item's own context, so it can name
     # a field of the item.
     # Shared `until:` retry core - drives task.retries/task.delay attempts
-    # of execute_task_once until the rendered condition passes. Used both
-    # by execute_task_with_retries (single task, displays its final result)
-    # and, per item, by execute_looped_task's non-batched path (Ansible retries each loop item independently).
+    # of execute_task_once (or the caller's attempt_body) until the rendered
+    # condition passes. Used both by execute_task_with_retries (single task,
+    # displays its final result) and, per item, by execute_looped_task's
+    # non-batched path (Ansible retries each loop item independently).
+    # The attempt_body Proc overrides the per-attempt body: execute_handler_
+    # plugin_once passes its own single-attempt body so a handler's
+    # until:/retries:/delay: retries too - real prints the same
+    # FAILED - RETRYING callback lines and attempts key for handlers
+    # (issue #620, live-verified vs real ansible-playbook).
     private def run_until_retries(
       task : Task,
       host : Host,
@@ -2681,6 +2687,7 @@ module Krikri
       exec_host : Host = host,
       defer_loop_stats : Bool = false,
       item_label : String? = nil,
+      attempt_body : Proc(JSON::Any?)? = nil,
     ) : JSON::Any?
       register_name = task.register
       # Real task_executor's attempt loop (task_executor.py): total runs =
@@ -2700,7 +2707,7 @@ module Krikri
 
       while attempt < total_runs
         attempt += 1
-        result = execute_task_once(task, host, vars_context, item_label: item_label, exec_host: exec_host, defer_loop_stats: defer_loop_stats)
+        result = attempt_body ? attempt_body.call : execute_task_once(task, host, vars_context, item_label: item_label, exec_host: exec_host, defer_loop_stats: defer_loop_stats)
         break unless result
 
         # An action-level failure (the result's _ansible_action_level marker,
