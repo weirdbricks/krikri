@@ -29,6 +29,20 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+# Scratch from the suite goes under one TMPDIR per run (Dir.tempdir and File.tempname follow it),
+# removed when the run ends. It lives on disk under the user's cache, not /tmp: /tmp is a RAM-backed
+# tmpfs on the dev box, and the suite used to leave hundreds of krikri-* dirs there. It stays outside
+# the checkout too: lint reports paths relative to the cwd when a file is inside it, and its import
+# tests expect absolute paths. Files a rootless container wrote are owned by its subuid, which rm
+# cannot remove, so podman unshare is the fallback.
+RUN_TMP="${KRIKRI_TEST_TMPDIR:-${XDG_CACHE_HOME:-$HOME/.cache}/krikri-test-tmp}/run-$$"
+mkdir -p "$RUN_TMP"
+export TMPDIR="$RUN_TMP"
+cleanup_run_tmp() {
+  rm -rf "$RUN_TMP" 2>/dev/null || podman unshare rm -rf "$RUN_TMP" 2>/dev/null || true
+}
+trap cleanup_run_tmp EXIT
+
 # The caller's ANSIBLE_* settings leak into every krikri-playbook the suite
 # spawns: a developer shell with ANSIBLE_CACHE_PLUGIN=...pickle made
 # cross-play hostvars reads pass locally (served from the pickle cache)
@@ -68,7 +82,8 @@ fi
 # A single explicit test file is run directly; no globbing needed.
 if [ $# -gt 0 ] && [ -f "${1:-}" ]; then
   cd "$ROOT"
-  exec crystal run "$@"
+  crystal run "$@"
+  exit 0
 fi
 
 # The entrypoint has to live inside the project: `crystal run` only resolves
@@ -132,4 +147,5 @@ export CRYSTAL_WORKERS="${CRYSTAL_WORKERS:-1}"
 # so a leading -- would silently disable every option after it.
 [ "${1:-}" = "--" ] && shift
 
-exec timeout -k 5 "${MINITEST_TIMEOUT:-600}" "$BINARY" "$@"
+# Not exec: the EXIT trap has to run after the suite to remove its TMPDIR.
+timeout -k 5 "${MINITEST_TIMEOUT:-600}" "$BINARY" "$@"
