@@ -845,6 +845,13 @@ module Krikri
         elsif executed
           @results[host.name]["ok"] += 1
         else
+          # Every item was skipped by its own when: - real prints the
+          # per-item `skipping: => (item=...)` lines above and then one
+          # bare trailing `skipping: [host]` line, booked as one skipped
+          # (same shape as the looped-task path's executed_count == 0
+          # branch). linux-system-roles.storage's set_vars.yml hits this
+          # when none of its four candidate vars files exist.
+          puts Krikri::Oneline.skip_line(host.name, Krikri::ResultDisplay.skip_line_suffix_all_skipped).colorize(:cyan)
           @results[host.name]["skipped"] += 1
         end
         return
