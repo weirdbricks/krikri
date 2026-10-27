@@ -5035,7 +5035,22 @@ module Krikri
       end
 
       cause_context = nil
-      if task.delegate_to && (pos = locate_delegate_to_line(lines, name_idx, task.delegate_to.to_s))
+      # When the failure is a plain "'<name>' is undefined" and the
+      # delegate_to: template reaches a var whose own value references
+      # that name, real ansible points the cause at that DEFINING var's
+      # value (the line where the var is defined, caret at the value's
+      # opening quote), not at the delegate_to: token (live-verified vs
+      # 2.19.x, issue #609) - the same chain resolution the loop error
+      # path uses. A bare `delegate_to: "{{ undefined_var }}"` has no
+      # defining var to find, so the cause stays on the delegate_to:
+      # value token itself, as for every other inner message.
+      if m = inner.to_s.match(/\A'([A-Za-z_][A-Za-z0-9_]*)' is undefined\z/)
+        if origin = undef_chain_var_origin(task, m[1], reachable_from: task.delegate_to.to_s)
+          cause_context = origin_context_block(origin.path, File.read_lines(origin.path), origin.line, origin.column)
+        elsif task.delegate_to && (pos = locate_delegate_to_line(lines, name_idx, task.delegate_to.to_s))
+          cause_context = origin_context_block(path, lines, pos[0] + 1, pos[1])
+        end
+      elsif task.delegate_to && (pos = locate_delegate_to_line(lines, name_idx, task.delegate_to.to_s))
         cause_context = origin_context_block(path, lines, pos[0] + 1, pos[1])
       end
 

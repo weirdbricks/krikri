@@ -178,4 +178,30 @@ describe "undefined delegate_to: variable" do
     output.must_include("DEFINED-DELEGATE-OK")
     output.must_include("failed=0")
   end
+
+  # live-verified vs 2.19.x: when delegate_to: goes through a var whose
+  # own value fails on an undefined name, real ansible points the cause
+  # stanza's Origin at the DEFINING var's value (line 5 here, caret at
+  # the value's opening quote), not at the delegate_to: line - issue
+  # #609. Without a defining var the cause stays on the delegate_to:
+  # token (covered by the first test above).
+  it "points the cause Origin at the defining var, not the delegate_to: line" do
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          delegated_host_name: "{{ nosuch_var }}"
+        tasks:
+          - name: delegate through a chained var
+            ansible.builtin.debug:
+              msg: "SHOULD-NOT-PRINT"
+            delegate_to: "{{ delegated_host_name }}"
+      YAML
+
+    status.exit_code.must_equal(2)
+    output.must_include("'nosuch_var' is undefined")
+    output.must_match(/<<< caused by >>>\n\n'nosuch_var' is undefined\nOrigin: \S*delegate-undefined\S*\.yml:5:26\n/)
+    output.must_include(%(delegated_host_name: "{{ nosuch_var }}"))
+  end
 end
