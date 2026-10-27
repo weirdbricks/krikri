@@ -92,4 +92,33 @@ describe "looped include_tasks with a raising when: recaps one failure" do
     output.wont_include("ignored=3")
     output.wont_include("failed=1")
   end
+
+  # ansible-core 2.19.11 (live-verified, issue #627): before the per-item
+  # lines real prints the two-level [ERROR] chain ONCE, its "caused by"
+  # Origin on the tested value's DEFINING site - the start of the
+  # `ubuntu:` sequence in the play vars (fixture line 8, the `-` at
+  # column 9) - not on the when: token the compound branch used to give.
+  # Each item's failed dump carries the loop bindings
+  # (ansible_loop_var + the item under loop_repository), alphabetical.
+  it "prints the [ERROR] chain once at the defining site and loop bindings per item" do
+    status, output = run_playbook(looped_broken_when_playbook(false))
+
+    status.exit_code.must_equal(2)
+    # One chain block only, regardless of how many items raised.
+    output.scan("[ERROR]: Task failed: Conditional result (True) was derived from value of type 'list'").size.must_equal(1)
+    # The defining site of the subscripted pass-through value: the
+    # sequence start of repositories['ubuntu'] in the play vars.
+    output.must_match(/was derived from value of type 'list' at '[^']*site\.yml:8:9'\. Conditionals must have a boolean result\./)
+    # The chain's task-level Origin is the include task's `- name:` line;
+    # the caused-by Origin is the when: value token.
+    output.must_match(/Task failed\.\nOrigin: [^\n]*site\.yml:15:7\n/)
+    output.must_match(/<<< caused by >>>\n\nConditional result \(True\) was derived from value of type 'list' at '[^']*site\.yml:8:9'/)
+    output.must_match(/Origin: [^\n]*site\.yml:20:13\n/)
+    output.scan("ALLOW_BROKEN_CONDITIONALS").size.must_equal(1)
+    # Per-item failed dumps carry the loop bindings, keys alphabetical.
+    output.scan(/"ansible_loop_var": "loop_repository"/).size.must_equal(3)
+    output.must_include("{\"ansible_loop_var\": \"loop_repository\", \"changed\": false, \"loop_repository\": {\"name\": \"a\", \"repo\": \"r1\"}, \"msg\": \"Task failed: ")
+    output.must_include("{\"ansible_loop_var\": \"loop_repository\", \"changed\": false, \"loop_repository\": {\"name\": \"b\", \"repo\": \"r2\"}, \"msg\": \"Task failed: ")
+    output.must_include("{\"ansible_loop_var\": \"loop_repository\", \"changed\": false, \"loop_repository\": {\"name\": \"c\", \"repo\": \"r3\"}, \"msg\": \"Task failed: ")
+  end
 end

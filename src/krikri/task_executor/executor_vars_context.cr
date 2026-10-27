@@ -4611,6 +4611,20 @@ module Krikri
             return decorate_conditional_value_origin(task, msg, h, ident, clause_key, clause_raw)
           end
         end
+        # The same pass-through rule reaches a subscripted/dotted operand
+        # (`repositories['ubuntu'] | default(false)`): the tested value is
+        # the subscripted leaf's own, so real labels the leaf's DEFINING
+        # site - the sequence start of the `ubuntu:` list
+        # (issue #627, arillso.repositories' looped "include subtasks
+        # repository"), not the when: token the compound branch below
+        # gives. A leaf the context can't resolve (or a non-file base
+        # origin) has no definable site and stays with the compound
+        # branch rather than guessing.
+        if (h = host) && (parts = subscripted_default_operand_parts(raw)) &&
+           defined_subscripted_leaf?(task, h, parts) &&
+           (leaf = dotted_leaf_origin(task, h, parts)).is_a?(FileVarOrigin) && leaf.column > 0
+          return with_origin_clause(msg, "'#{leaf.path}:#{leaf.line}:#{leaf.column}'")
+        end
         # An and/or chain returns one operand's own value, so real labels
         # the error with that operand variable's defining origin
         # (`nvm_dir and not nvm_profile` with both "" -> nvm_dir's play-var
@@ -4706,6 +4720,34 @@ module Krikri
       return msg unless (type_match = msg.match(/was derived from value of type '([a-zA-Z]+)'/))
       clause = "was derived from value of type '#{type_match[1]}'"
       msg.sub(clause, "#{clause} at #{location}")
+    end
+
+    # The path parts of a subscripted/dotted `default`-pass-through operand
+    # (`repositories['ubuntu'] | default(false)` -> ["repositories",
+    # "ubuntu"], `n.a | d(false)` -> ["n", "a"]), nil for any other shape -
+    # only the pass-through spelling this decoration mirrors is matched,
+    # so a subscript key that is itself an expression falls through.
+    private def subscripted_default_operand_parts(raw : String) : Array(String)?
+      return nil unless (m = raw.strip.match(/\A([A-Za-z_][A-Za-z0-9_]*)((?:(?:\[\s*(?:'[^']+'|"[^"]+")\s*\])|\.[A-Za-z_][A-Za-z0-9_]*)+)\s*\|\s*d(?:efault)?\s*\(.*\)\s*\z/))
+      parts = [m[1]]
+      m[2].scan(/(?:\[\s*(?:'([^']+)'|"([^"]+)")\s*\])|\.([A-Za-z_][A-Za-z0-9_]*)/) do |access|
+        key = access[1] || access[2] || access[3]
+        parts << key if key
+      end
+      parts
+    end
+
+    # Whether the subscripted leaf actually resolves in the host's context:
+    # `default(...)` only passes through a DEFINED value, so an unresolvable
+    # path means the tested value was the fallback (no lineage to follow).
+    private def defined_subscripted_leaf?(task : Task, host : Host, parts : Array(String)) : Bool
+      node = build_vars_context(task, host)[parts[0]]?
+      return false unless node
+      parts[1..].each do |key|
+        node = node.as_h?.try(&.[key]?)
+        return false unless node
+      end
+      true
     end
 
     # assert:'s non-bool that: failure carries the same " at '...'"

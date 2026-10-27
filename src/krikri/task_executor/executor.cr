@@ -520,6 +520,10 @@ module Krikri
       # hostvars).
       @registered_vars = registered_store || Hash(String, Hash(String, JSON::Any)).new
       @halted_hosts = Set(String).new
+      # A looped include_tasks' [ERROR] conditional chain prints once per
+      # (task, host) - at the FIRST failing item, not once per item
+      # (issue #627).
+      @item_when_chain_emitted = Set({UInt64, String}).new
 
       # The failing task + result per host, for `rescue:`'s ansible_failed_task /
       # ansible_failed_result vars (real exposes both inside rescue and always
