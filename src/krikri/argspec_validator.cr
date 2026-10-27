@@ -998,8 +998,12 @@ module Krikri
     # ansible.module_utils.parsing.convert_bool.BOOLEANS_TRUE/FALSE's
     # string members - the choices a 'True'/'False' value can rewrite to
     # when exactly one of them appears in an option's choices list.
-    BOOL_TRUE_CHOICES  = {"y", "yes", "on", "1", "true", "t"}
-    BOOL_FALSE_CHOICES = {"n", "no", "off", "0", "false", "f"}
+    # Python's True/False are members of those same sets (True == 1),
+    # so a native-bool choice rendered as "True"/"False" (Python repr)
+    # overlaps too - without them a bool-typed choices option like
+    # docker_container's `pull` refuses a value real accepts.
+    BOOL_TRUE_CHOICES  = {"y", "yes", "on", "1", "true", "t", "True"}
+    BOOL_FALSE_CHOICES = {"n", "no", "off", "0", "false", "f", "False"}
 
     # Ansible's service action plugin deletes from the args it forwards,
     # beside `use` (consumed above), the params its UNUSED_PARAMS table
