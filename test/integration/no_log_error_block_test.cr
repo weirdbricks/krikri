@@ -7,8 +7,9 @@ require "../../src/krikri/plugin_helpers/python_lib_gate"
 # censored fatal dump. This engine replicates that block only where the
 # msg is one of copy's fixed controller-side required-argument texts,
 # which ansible composes itself and so can never carry the secret a
-# no_log task is protecting (issue #271); every other failure keeps the
-# censored-only fatal line. Shapes captured from ansible-playbook 2.19.11
+# no_log task is protecting (issue #271), or command/shell's fixed
+# "non-zero return code" exit text (issue #623); every other failure keeps
+# the censored-only fatal line. Shapes captured from ansible-playbook 2.19.11
 # (live-verified there: no_log copy with no src/content prints the block
 # and the censored fatal, a no_log fail with a data-carrying msg prints
 # neither the msg nor any block).
@@ -249,5 +250,40 @@ describe "failed no_log copy's [ERROR] block" do
     # Real ansible drops a module's own exception key from the controller
     # result (issue #557) - the traceback must not trail the [ERROR] block.
     output.wont_include("Traceback (most recent call last)")
+  end
+
+  # command/shell's non-zero exit (issue #623): the wording is ansible's
+  # own fixed command-action text, naming none of the task's data, and
+  # the command's stdout/stderr are never part of the block - so it
+  # prints like real's does, before the censored fatal line (live-verified
+  # against 2.19 for both command and shell).
+  it "prints the block above the censored fatal for a no_log shell non-zero exit" do
+    output = run_playbook(<<-YAML)
+          - ansible.builtin.shell:
+              cmd: echo SECRET_CMD_SENTINEL >&2; exit 1
+            no_log: true
+            ignore_errors: true
+    YAML
+
+    output.must_include("[ERROR]: Task failed: Module failed: non-zero return code")
+    block_precedes_fatal?(output).must_equal(true, output)
+    output.must_include(%(fatal: [localhost]: FAILED! => {"censored": "the output has been hidden due to the fact that 'no_log: true' was specified for this result", "changed": true}))
+    output.must_include("...ignoring")
+    output.wont_include("SECRET_CMD_SENTINEL")
+  end
+
+  it "prints the block above the censored fatal for a no_log command non-zero exit" do
+    output = run_playbook(<<-YAML)
+          - ansible.builtin.command:
+              cmd: sh -c 'echo SECRET_CMD_SENTINEL >&2; exit 1'
+            no_log: true
+            ignore_errors: true
+    YAML
+
+    output.must_include("[ERROR]: Task failed: Module failed: non-zero return code")
+    block_precedes_fatal?(output).must_equal(true, output)
+    output.must_include(%(fatal: [localhost]: FAILED! => {"censored": "the output has been hidden due to the fact that 'no_log: true' was specified for this result", "changed": true}))
+    output.must_include("...ignoring")
+    output.wont_include("SECRET_CMD_SENTINEL")
   end
 end
