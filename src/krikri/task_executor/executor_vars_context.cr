@@ -5321,7 +5321,7 @@ module Krikri
             layer.each do |key, value|
               merged[substitutor.substitute(key, strict: true)] = substitutor.substitute(value, strict: true)
             end
-          elsif resolved = substitute_environment_raw(layer, substitutor)
+          elsif resolved = substitute_environment_raw(layer, substitutor, task)
             merged.merge!(resolved)
           end
         end
@@ -5331,7 +5331,7 @@ module Krikri
             merged[substitutor.substitute(key, strict: true)] = substitutor.substitute(value, strict: true)
           end
         elsif raw = task.environment_raw
-          merged.merge!(substitute_environment_raw(raw, substitutor) || Hash(String, String).new)
+          merged.merge!(substitute_environment_raw(raw, substitutor, task) || Hash(String, String).new)
         end
         merged
       rescue e : UndefinedVariableError
@@ -5347,16 +5347,36 @@ module Krikri
     # "{{ proxy_env }}"`): a single bare {{ }} span resolves natively so
     # a variable holding a dict stays a dict; anything else must render
     # to a JSON object. Ansible never fails a task over an environment
-    # value it cannot turn into a dict - it warns "could not parse
-    # environment value, skipping" and runs the task with no extra env,
-    # so every failure path here returns nil instead of raising. An
-    # empty raw used to reach JSON.parse("") and crash finalization with
+    # value it cannot turn into a dict - it prints "could not parse
+    # environment value, skipping: <repr of the whole layer list>" and
+    # still runs the task with no extra env. The warning covers every
+    # unparseable shape ansible-playbook 2.19.11 shows it for: an
+    # empty/whitespace raw string (`environment: ""` warns `['']`), a
+    # template rendering to a non-JSON string (`environment: "foo bar"`
+    # warns `['foo bar']` and the task succeeds), and a template
+    # rendering to non-object JSON (`proxy_env: []`,
+    # ryandaniels.connectivity_test). The repr covers the whole layer
+    # list - play and block layers first, then the task's own - because
+    # Ansible's environment keyword is extend/prepend, so that list IS
+    # the value it fails to parse (`[{'PLAY_VAR': 'one'},
+    # '{{ proxy_env }}']`). Ansible prints each distinct message once
+    # per run, which emit_display_warning dedupes the same way. A bare
+    # `environment:` key never reaches here - the parser leaves
+    # environment_raw nil for a null value - so no warning fires for
+    # it, and a template rendering to `omit` stays silent the same way
+    # (omit means "deliberately no environment", not "couldn't parse").
+    # Every failure path still returns nil instead of raising; only the
+    # warning is new (it used to be swallowed silently). An empty raw
+    # used to reach JSON.parse("") and crash finalization with
     # "unexpected token '<EOF>' at line 1, column 1" before the task
     # ever ran (lifeofguenter.nginx round 5250092's bare `environment:`
     # key).
-    private def substitute_environment_raw(raw : String, substitutor : VarSubstitutor) : Hash(String, String)?
+    private def substitute_environment_raw(raw : String, substitutor : VarSubstitutor, task : Task) : Hash(String, String)?
       stripped = raw.strip
-      return nil if stripped.empty?
+      if stripped.empty?
+        warn_unparsed_environment(task)
+        return nil
+      end
       native = if stripped.starts_with?("{{") && stripped.ends_with?("}}") && stripped.scan("{{").size == 1
                  VariableSubstitutor::VariableLookup.new(substitutor.vars).resolve(stripped[2..-3].strip)
                end
@@ -5367,9 +5387,20 @@ module Krikri
         # Ansible drops the whole environment when its template renders
         # to `omit` (e.g. `environment: "{{ proxy_env | default(omit) }}"`
         # with proxy_env undefined) instead of passing the omit marker
-        # through, which would fail JSON parsing downstream.
+        # through, which would fail JSON parsing downstream. No warning
+        # here either: omit means "deliberately no environment", not
+        # "couldn't parse".
         return nil if rendered.includes?(OMIT_SENTINEL)
-        parsed = JSON.parse(rendered)
+        # A literal non-JSON string (`environment: "foo bar"`) must
+        # warn like any other unparseable value, not crash: Ansible
+        # never fails the task here (2.19.11: `['foo bar']`, task
+        # succeeds).
+        parsed = begin
+          JSON.parse(rendered)
+        rescue JSON::ParseException
+          warn_unparsed_environment(task)
+          return nil
+        end
         object = parsed.as_h?
         # Ansible never fails a task over a non-dict environment
         # value - it just warns "could not parse environment value,
@@ -5381,13 +5412,48 @@ module Krikri
         # ansible-playbook just installed the packages with no
         # extra env). Confirmed against ansible-core 2.19 for `[]`, a
         # non-empty list, and a plain string - none of those raise.
-        return nil unless object
+        unless object
+          warn_unparsed_environment(task)
+          return nil
+        end
         resolved_object = object
       end
 
       stringified = Hash(String, String).new
       resolved_object.each { |key, value| stringified[key] = value.as_s? ? value.as_s : value.to_s }
       stringified
+    end
+
+    # The warning payload for an environment value that could not be
+    # turned into a dict covers the WHOLE layer list (Ansible's
+    # environment keyword is extend/prepend, so the value being parsed
+    # is play and block layers first, then the task's own), e.g.
+    # 2.19.11 prints "[{'PLAY_VAR': 'one'}, '{{ proxy_env }}']" for a
+    # play-level dict environment plus a task-level template that
+    # rendered to a non-dict. String layers stay as their raw
+    # (unrendered) text, the same way Ansible shows the template
+    # itself, not its result.
+    private def warn_unparsed_environment(task : Task) : Nil
+      layers = [] of JSON::Any
+      task.inherited_environment.each do |layer|
+        layers << case layer
+        when Hash(String, String)
+          hash = JSON::Any.new({} of String => JSON::Any)
+          layer.each { |key, value| hash.as_h[key] = JSON::Any.new(value) }
+          hash
+        else
+          JSON::Any.new(layer.as(String))
+        end
+      end
+      if env = task.environment
+        hash = JSON::Any.new({} of String => JSON::Any)
+        env.each { |key, value| hash.as_h[key] = JSON::Any.new(value) }
+        layers << hash
+      elsif raw = task.environment_raw
+        layers << JSON::Any.new(raw)
+      end
+      repr = ResultDisplay.python_repr(JSON::Any.new(layers))
+      ResultDisplay.emit_display_warning("could not parse environment value, skipping: #{repr}")
     end
 
     # An enclosing block:'s `name:` keyword - strict-undefined templating
