@@ -63,6 +63,36 @@ describe "environment: keyword strict-undefined" do
     output.to_s.must_include("failed=1")
   end
 
+  # ansible-core 2.19 prints ONE [ERROR] block for an undefined variable in
+  # a string-form environment: the keyword chain ("Task failed." at the
+  # name: key, "Error processing keyword 'environment'." with no Origin and
+  # the raw value's python repr, then the bare "'proxy_env' is undefined"
+  # at the value's first character) - not the "Finalization of task args"
+  # chain a task-arg failure gets (live-captured, issue #625).
+  it "prints the keyword chain block for a string-form environment with an undefined variable" do
+    playbook = File.tempname("environment-string-chain", ".yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: string-form environment with undefined variable
+            ansible.builtin.command: /bin/true
+            environment: "{{ proxy_env }}"
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+
+    status.success?.must_equal(false)
+    output.to_s.must_include("Error processing keyword 'environment'.\nOrigin: <unknown>")
+    output.to_s.must_include("['{{ proxy_env }}']")
+    output.to_s.wont_include("Finalization of task args")
+    output.to_s.must_include("\"msg\": \"Task failed: Error processing keyword 'environment': 'proxy_env' is undefined\"")
+    # ansible-core leaves a blank line between the value's caret and the fatal: line
+    output.to_s.must_match(/\^ column \d+\n\nfatal: /)
+  end
+
   it "treats a bare environment: key with no value as no environment, not a crash" do
     # lifeofguenter.nginx round 5250092's "Configure" task has a bare
     # `environment:` with no value. ansible-playbook 2.19.11 treats a

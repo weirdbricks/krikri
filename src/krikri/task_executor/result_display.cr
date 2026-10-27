@@ -844,8 +844,12 @@ module Krikri
       return if result["_ansible_loop_source_error"]?.try(&.as_bool?) == true
       # Task-arg finalization failures ("Task failed: Finalization of task
       # args for ...") get their own multi-level block from the executor
-      # (emit_finalization_error_block) before the fatal line.
-      return if msg.starts_with?("Task failed: Finalization of task args for")
+      # (emit_finalization_error_block) before the fatal line; the
+      # environment: keyword failure ("Task failed: Error processing
+      # keyword 'environment': ...") rides the same stash and gets its own
+      # keyword chain the same way (issue #625) - not this generic shape.
+      return if msg.starts_with?("Task failed: Finalization of task args for") ||
+                msg.starts_with?("Task failed: Error processing keyword 'environment': ")
       # Loop-source / loop-item templating failures get their chain block
       # straight from the executor (emit_loop_error_chain), whose cause
       # stanza points at the failing value's own defining site - not a
