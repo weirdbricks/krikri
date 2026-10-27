@@ -67,4 +67,34 @@ describe "task-arg finalization error block (spaced-colon param key)" do
   ensure
     FileUtils.rm_rf(tempdir) if tempdir
   end
+
+  # A param key that is the module's own name (`stat:` under `stat:`) used
+  # to match the same-line needle against the module key itself, putting
+  # the innermost Origin at the module key line; ansible-core 2.19.11
+  # points it at the param's VALUE token on the param's own line.
+  it "does not mistake a same-named param key for the module key" do
+    tempdir = File.tempname("final-block-same-name").tap { |dir| Dir.mkdir(dir) }
+    role = File.join(tempdir, "roles", "samename")
+    FileUtils.mkdir_p(File.join(role, "tasks"))
+    playbook = File.join(tempdir, "site.yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        gather_facts: false
+        roles:
+          - samename
+      YAML
+    tasks_file = File.join(role, "tasks", "main.yml")
+    # 4 spaces + `stat:` + space puts the value quote at column 11, line 3.
+    File.write(tasks_file, %(- name: Logout from oVirt\n  stat:\n    stat: "{{ missing_path }}"\n))
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+    text = output.to_s
+
+    status.exit_code.must_equal(2)
+    text.must_include("Error while resolving value for 'stat': 'missing_path' is undefined\nOrigin: #{tasks_file}:3:11\n")
+    text.must_include("          ^ column 11\n")
+    text.wont_include("Error while resolving value for 'stat': 'missing_path' is undefined\nOrigin: #{tasks_file}:2:3")
+  ensure
+    FileUtils.rm_rf(tempdir) if tempdir
+  end
 end

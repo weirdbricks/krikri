@@ -4202,7 +4202,15 @@ module Krikri
       # longer identifier's match.
       module_line = lines[from_idx]
       key_needle = /#{Regex.escape(key)}[ \t]*:/
-      if (m = module_line.match(key_needle)) && (key_idx = m.begin(0)) > 0 && module_line[key_idx - 1].whitespace?
+      # A param key that is the module's own name (`ovirt_auth:` under
+      # `ovirt_auth:`, issue #599) matches this needle ON the module line
+      # itself, but ansible-core 2.19.11 still points the innermost Origin
+      # at that param's VALUE token on its own line there - so a same-line
+      # hit only counts after the module key's colon, i.e. only for real
+      # flow-style args on the module line, not the module key echoing its
+      # own name.
+      if (m = module_line.match(key_needle)) && (colon_idx = module_line.index(':')) &&
+         (key_idx = m.begin(0)) > colon_idx && module_line[key_idx - 1].whitespace?
         return {from_idx, key_idx + 1}
       end
       if (key_idx = module_line.index("#{key}=")) && key_idx > 0 && module_line[key_idx - 1].whitespace?
