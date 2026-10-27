@@ -73,6 +73,32 @@ module Krikri
     # changed-stripping) run later against that original and need the
     # resolved spelling; they read it back off the task's result.
     property resolved_templated_name : String?
+    # A MAPPING-form legacy `action:`/`local_action:` whose module name is
+    # DEFINITIVELY unresolvable on the controller (CollectionIndex#
+    # controller_resolves? verdict resolves: false - no collection ships
+    # it, nothing redirects to it). Ansible does not refuse such a
+    # playbook at load the way it refuses a bare-key module name: the
+    # mapping's module resolves lazily, so the task only fails (per host,
+    # rc=2, "Cannot resolve '...' to an action or module.", issue #666)
+    # when its own when: actually lets it run - behind `when: false` it
+    # is an ordinary skip. Deliberately distinct from unavailable_module
+    # (a name the controller CAN resolve but krikri has not ported -
+    # those keep the graceful skip plus the exit-4 reachable_unavailable_
+    # modules accounting); the executor's reached-unavailable paths key
+    # on this flag to fail instead of skip.
+    property? unresolvable_mapping_module : Bool = false
+    # The as-written module name the failure message echoes, and - when
+    # resolution died on an absent collection directory - the [WARNING]
+    # text ansible-core's loader prints right before the task-failure
+    # [ERROR] chain ("Error loading plugin '<fqcn>': ...").
+    property unresolvable_mapping_name : String?
+    property unresolvable_mapping_warning : String?
+    # The mapping's own `module:` VALUE token - playbook path plus 1-based
+    # (line, column) - which real 2.19.11 pins the chain's "caused by"
+    # Origin at (6:17 in the issue #666 repro), distinct from the
+    # task-level Origin at the task's name line. nil without a source map
+    # (the stanza is then omitted, never mislabeled).
+    property unresolvable_mapping_origin : {String, Int32, Int32}?
     property params : Hash(String, String)
     property vars : Hash(String, JSON::Any)
     # environment: - per-task env vars (Ansible keyword). Raw,
@@ -3556,13 +3582,23 @@ module Krikri
       # legacy `sudo:` reports "conflicting action statements: wait_for,
       # sudo" (mrlesmithjr.lsi-megaraid), not the literal directive key.
       is_local_action = false
-      # True only for a MAPPING-form legacy `action:` (never
-      # `local_action:`). Ansible resolves such a mapping's module lazily
-      # at run time (after the task's when:), so a when:-gated task with
-      # an unresolvable module name must not abort the load here - real
-      # 2.19.11 still prints the mapping-form deprecation at load, then
-      # only refuses the name if the task is ever reached.
+      # True for a MAPPING-form legacy `action:` OR `local_action:`.
+      # Ansible resolves such a mapping's module lazily at run time
+      # (after the task's when:) for EITHER directive, so a when:-gated
+      # task with an unresolvable module name must not abort the load
+      # here - real 2.19.11 still prints the mapping-form deprecation at
+      # load, then only fails the task if it is ever reached. The old
+      # `unless is_local_action` exclusion kept a mapping local_action:
+      # on the bare-key load-refusal path: issue #666
+      # (xlab_si.nuage_create_entity) refused the whole playbook at load
+      # with rc=4 and zero tasks run, while real 2.19.11 runs the play -
+      # plain skip behind `when: false` (rc=0), "Cannot resolve '...'
+      # to an action or module." on a reached task (rc=2).
       action_mapping = false
+      # The mapping's own `module:` VALUE token (1-based line, column) -
+      # the runtime failure chain's "caused by" Origin (see Task#
+      # unresolvable_mapping_origin).
+      mapping_module_origin = nil.as({Int32, Int32}?)
       templated_action_string = nil.as(String?)
       if (directive_key = module_name) && ACTION_DIRECTIVE_KEYS.includes?(directive_key)
         is_local_action = module_name.includes?("local_action")
@@ -3587,11 +3623,12 @@ module Krikri
             module_params = rest && !rest.strip.empty? ? YAML::Any.new(rest) : YAML::Any.new(Hash(YAML::Any, YAML::Any).new)
           end
         elsif (mp2 = module_params) && (h = mp2.as_h?)
-          action_mapping = true unless is_local_action
+          action_mapping = true
           # Real 2.19.11 prints the same mapping-form deprecation for a
           # mapping `local_action:` as for a mapping `action:` (live
-          # verified), with the Origin at the mapping's first key; only
-          # the lazy-resolution flag above stays local_action-specific.
+          # verified), with the Origin at the mapping's first key. The
+          # lazy-resolution treatment above covers both directives - only
+          # localhost delegation stays local_action-specific.
           if action_mapping || is_local_action
             warn_action_mapping_deprecation(source_file, source_map,
               task_source_prefix(source_prefix, index), directive_key)
@@ -3630,6 +3667,14 @@ module Krikri
           templated_action_string = mod if mod.includes?("{{")
           module_name = mod
           module_params = YAML::Any.new(collected)
+          # The `module:` VALUE token's own source-map position - real
+          # 2.19.11 pins the runtime unresolvable-module chain's "caused
+          # by" Origin at it (the issue #666 repro's 6:17), distinct from
+          # the task-level Origin at the task's name line. Captured for
+          # every mapping-form directive; only a reached unresolvable one
+          # ever renders it.
+          mapping_module_origin = source_map.try(&.at?(
+            "#{task_source_prefix(source_prefix, index)}/#{directive_key}/module"))
         end
       end
 
@@ -3726,6 +3771,8 @@ module Krikri
       # FQCN-resolved one - Ansible's `TASK [debug]` banner echoes
       # the source spelling, not `ansible.builtin.debug`.
       as_written_module_name = module_name
+      mapping_module_unresolvable = false
+      mapping_module_warning = nil.as(String?)
       if templated_action_string
         # Never unavailable/skipped - resolved (or failed) at run time.
         resolved_module_name = nil
@@ -3795,6 +3842,18 @@ module Krikri
         # wherever krikri has the port). The refusal keeps its teeth for
         # names krikri has NOT ported - those genuinely cannot run here,
         # exactly the set ansible-core refuses on such a controller.
+        # A MAPPING-form directive's module (action_mapping now covers
+        # both `action:` and `local_action:`) is never refused here:
+        # ansible resolves a mapping's module lazily at run time, so a
+        # definitively-unresolvable name (this same resolves:false
+        # verdict) is recorded on the Task (unresolvable_mapping_module)
+        # and becomes a per-host task FAILURE only if the task is ever
+        # reached - behind `when: false` it is an ordinary skip (issue
+        # #666). Tombstoned names already refused above; a bare-key
+        # (non-mapping) task keeps the whole-playbook load refusal.
+        mapping_module_unresolvable =
+          action_mapping && resolution[:resolves] == false && resolved_module_name.nil?
+        mapping_module_warning = resolution[:missing_collection_warning]
         if !action_mapping && resolution[:resolves] == false && resolved_module_name.nil?
           message = "couldn't resolve module/action '#{module_name}'. " \
                     "This often indicates a misspelling, missing collection, or incorrect module path."
@@ -3851,6 +3910,18 @@ module Krikri
         task.params = (mp3 = module_params) && mp3.as_h? ? parse_module_params(mp3, module_name) : Hash(String, String).new
       else
         task.unavailable_module = unavailable_module_name
+        # The definitively-unresolvable mapping name rides the lazy
+        # unavailable_module flow (so a when:-false task still skips
+        # through the executor's existing paths) with the reached-task
+        # failure stamped on - see Task#unresolvable_mapping_module.
+        if mapping_module_unresolvable
+          task.unresolvable_mapping_module = true
+          task.unresolvable_mapping_name = as_written_module_name
+          task.unresolvable_mapping_warning = mapping_module_warning
+          if source_file && (line_col = mapping_module_origin)
+            task.unresolvable_mapping_origin = {source_file, line_col[0], line_col[1]}
+          end
+        end
         # Params are parsed even for an unavailable module now: a
         # role-private `library/<name>.py` module runs through the
         # py_module runner (see PythonModuleRunner), and its argument

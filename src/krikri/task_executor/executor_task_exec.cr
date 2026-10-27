@@ -500,6 +500,71 @@ module Krikri
       @halted_hosts.add(host.name) unless ignore_errors
     end
 
+    # The failure for a REACHED mapping-form `action:`/`local_action:`
+    # task whose module name is definitively unresolvable on the
+    # controller (Task#unresolvable_mapping_module, issue #666). Ansible
+    # resolves a mapping's module lazily, per task, after its when: - so
+    # a reached task fails there (rc=2) with the loader's [WARNING]
+    # (missing collection) ahead of the two-segment "Cannot resolve '...'
+    # to an action or module." [ERROR] chain (task-level Origin at the
+    # task's name line, cause's at the mapping's own `module:` VALUE
+    # token - live-captured vs 2.19.11 on the xlab_si.nuage_create_entity
+    # repro), while a when:-false task is an ordinary skip. The returned
+    # result flows through the normal failure pipeline (display, stats,
+    # halt) - the chain is emitted HERE so it precedes the fatal line,
+    # deduped per exact text like Display._deduplicate; the result's
+    # _ansible_unresolvable_module_emitted marker keeps the generic
+    # failure display from printing a second, differently-shaped block.
+    @@unresolvable_mapping_blocks_seen = Set(String).new
+
+    private def unresolvable_mapping_module_failure(task : Task) : JSON::Any
+      name = task.unresolvable_mapping_name || task.action_name || task.module_name
+      message = "Cannot resolve '#{name}' to an action or module."
+      if warning = task.unresolvable_mapping_warning
+        ResultDisplay.emit_display_warning(warning)
+      end
+      emit_unresolvable_mapping_error_block(task, message)
+      JSON.parse({
+        "changed"                              => false,
+        "failed"                               => true,
+        "msg"                                  => "Task failed: #{message}",
+        "_ansible_unresolvable_module_emitted" => true,
+      }.to_json)
+    end
+
+    private def emit_unresolvable_mapping_error_block(task : Task, message : String) : Nil
+      path = task.source_file || @playbook_file
+      return unless path && File.file?(path)
+
+      lines = File.read_lines(path)
+      if located = locate_name_line(lines, task)
+        name_idx, name_col = located
+      else
+        # A nameless task's origin is the module key line itself - the
+        # same fallback emit_when_error_chain uses.
+        return unless task.source_line > 0 && task.source_line <= lines.size
+        name_idx = task.source_line - 1
+        name_col = task.source_col > 0 ? task.source_col : (lines[name_idx].size - lines[name_idx].lstrip.size + 1)
+      end
+
+      text = String.build do |io|
+        io << "[ERROR]: Task failed: " << message << "\n"
+        io << "\nTask failed.\n"
+        io << origin_context_block(path, lines, name_idx + 1, name_col)
+        io << "\n<<< caused by >>>\n\n"
+        io << message << "\n"
+        if origin = task.unresolvable_mapping_origin
+          origin_path, origin_line, origin_col = origin
+          if File.file?(origin_path)
+            io << origin_context_block(origin_path, File.read_lines(origin_path), origin_line, origin_col)
+          end
+        end
+        io << "\n"
+      end
+      return unless @@unresolvable_mapping_blocks_seen.add?(text)
+      puts text
+    end
+
     # The [ERROR] block real 2.19.11 prints before the fatal line for
     # that same validate-args templating crash: the headline, a
     # "Task failed." segment whose Origin is <unknown> (the exception

@@ -151,5 +151,73 @@ describe "Krikri::PlaybookParser (playbook_parser_local_action_test.cr)" do
       task.unavailable_module.must_be_nil
       task.delegate_to.must_equal("localhost")
     end
+
+    # Issue #666 (xlab_si.nuage_create_entity): ansible resolves a
+    # MAPPING-form `local_action:`'s module lazily at run time, exactly
+    # like a mapping `action:` - so a definitively unresolvable name must
+    # not refuse the whole playbook at load (the old behavior, rc=4 with
+    # zero tasks run); the name rides the task instead and only fails it
+    # if the task is ever reached.
+    it "flags a mapping local_action with an unresolvable module instead of refusing the load" do
+      pb = Krikri::PlaybookParser.parse_string(<<-YAML)
+        - name: unresolvable mapping local_action
+          hosts: all
+          gather_facts: false
+          tasks:
+            - name: reach nuage
+              local_action:
+                module: some_unknown_module_xyz
+                auth: x
+        YAML
+      task = pb.plays[0].tasks[0]
+      task.unresolvable_mapping_module?.must_equal(true)
+      task.unresolvable_mapping_name.must_equal("some_unknown_module_xyz")
+      task.unresolvable_mapping_warning.must_be_nil
+      # The `module:` VALUE token's own position (the runtime chain's
+      # "caused by" Origin) - line 7, column 17 in the heredoc above.
+      task.unresolvable_mapping_origin.try { |_, line, col| {line, col} }.must_equal({7, 17})
+      # The lazy unavailable_module flow still backs the when:-false skip.
+      task.unavailable_module.must_equal("some_unknown_module_xyz")
+      task.delegate_to.must_equal("localhost")
+    end
+
+    it "flags a mapping action with an unresolvable module the same way" do
+      pb = Krikri::PlaybookParser.parse_string(<<-YAML)
+        - name: unresolvable mapping action
+          hosts: all
+          gather_facts: false
+          tasks:
+            - name: reach nuage
+              action:
+                module: some_unknown_module_xyz
+                auth: x
+        YAML
+      task = pb.plays[0].tasks[0]
+      task.unresolvable_mapping_module?.must_equal(true)
+      task.unresolvable_mapping_name.must_equal("some_unknown_module_xyz")
+      task.delegate_to.must_be_nil
+    end
+
+    it "carries the missing-collection warning on an FQCN mapping local_action" do
+      # An FQCN whose namespace directory is absent is the shape where
+      # ansible-core's loader ALSO prints its "Error loading plugin"
+      # [WARNING] before the runtime failure - the executor replays that
+      # text from the task's carried warning.
+      pb = Krikri::PlaybookParser.parse_string(<<-YAML)
+        - name: unresolvable fqcn mapping local_action
+          hosts: all
+          gather_facts: false
+          tasks:
+            - name: reach nuage
+              local_action:
+                module: absentns.absentcoll.thing
+                auth: x
+        YAML
+      task = pb.plays[0].tasks[0]
+      task.unresolvable_mapping_module?.must_equal(true)
+      task.unresolvable_mapping_name.must_equal("absentns.absentcoll.thing")
+      task.unresolvable_mapping_warning.must_equal(
+        "Error loading plugin 'absentns.absentcoll.thing': No module named 'ansible_collections.absentns'")
+    end
   end
 end

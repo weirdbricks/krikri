@@ -792,6 +792,11 @@ module Krikri
       # emit_validate_args_inline_failure_block) - real's single-level
       # AnsibleActionFail chain, not this generic two-segment shape.
       return if result["_ansible_validate_args_error_emitted"]?.try(&.as_bool?) == true
+      # The unresolvable mapping-module chain (issue #666) likewise comes
+      # straight from the executor (emit_unresolvable_mapping_error_block)
+      # - its "caused by" Origin points at the mapping's own `module:`
+      # VALUE token, not a shape this generic path can rebuild.
+      return if result["_ansible_unresolvable_module_emitted"]?.try(&.as_bool?) == true
       # A task `timeout:` deadline kill (the executor's task_timeout_
       # result) or an out-of-range timeout value (its
       # task_timeout_invalid_result): real's chain is the COLLAPSED
