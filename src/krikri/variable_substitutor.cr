@@ -3162,7 +3162,21 @@ module Krikri
       # undefined" for the variable that merely holds the template text
       # (live-verified matrix vs 2.19.11). Outside a strict span the
       # historical lenient verdict (var reads as undefined) stands.
-      raise e if VarSubstitutor.strict_span_active? && e.message.try(&.includes?("has no attribute"))
+      #
+      # ansible-core 2.19.11 (live-verified) also tolerates a var whose
+      # own plain `{{ }}` template bottoms out at a missing dict key
+      # (`wb: "{{ wal['x86_64'] }}"` with no such key) when the consumer
+      # only guards it (`wb | default(...)`, `wb is defined`): there the
+      # miss flows OUT of the value unconsumed and the consumer decides -
+      # so demote to undefined instead of raising. A genuine consumption
+      # still fails with the innermost attribute wording, recovered from
+      # the demoted "'wb' is undefined" by Krikri.chain_failure_message.
+      # Only demote when that chain can recover the wording (no block
+      # tags, not unsafe text); anything else keeps the direct raise.
+      if VarSubstitutor.strict_span_active? && e.message.try(&.includes?("has no attribute"))
+        return true if raw.includes?("{{") && !raw.includes?("{%") && !raw.includes?("{#") && !UnsafeValues.unsafe_text?(raw)
+        raise e
+      end
       true
     end
 

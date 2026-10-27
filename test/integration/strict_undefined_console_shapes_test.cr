@@ -61,4 +61,37 @@ describe "strict undefined / mandatory / when-error console shapes" do
   ensure
     File.delete(playbook) if playbook && File.exists?(playbook)
   end
+
+  it "tolerates a nested dict-key miss through default() but fails it when consumed" do
+    playbook = File.tempname("strict-dict-miss", ".yml")
+    File.write(playbook, <<-YAML)
+      ---
+      - hosts: localhost
+        gather_facts: false
+        tasks:
+          - debug: msg="{{ 'a' ~ wb ~ 'b' }}"
+            ignore_errors: true
+            vars:
+              wb: "{{ wal['x86_64'] }}"
+              wal:
+                amd64: x
+          - debug: msg="{{ wb | default('UNDEF') }}"
+            vars:
+              wb: "{{ wal['x86_64'] }}"
+              wal:
+                amd64: x
+      YAML
+    output = IO::Memory.new
+    Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+    text = output.to_s
+
+    # Live-verified vs 2.19.11: the consumed miss fails the arg finalization
+    # with the attribute wording of the innermost dict, while a guard-only
+    # read of the same value stays tolerated (ansible renders UNDEF).
+    text.must_include("Error while resolving value for 'msg': object of type 'dict' has no attribute 'x86_64'")
+    text.must_include("\"msg\": \"UNDEF\"")
+    text.wont_include("Error while resolving value for 'msg': 'wb' is undefined")
+  ensure
+    File.delete(playbook) if playbook && File.exists?(playbook)
+  end
 end
