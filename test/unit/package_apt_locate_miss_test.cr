@@ -41,6 +41,11 @@ APT_NO_CANDIDATE_STDERR              = "E: Package 'krikri-virtual-pkg-195' has 
 APT_VIRTUAL_ALL_NOT_CANDIDATE_STDOUT = "Reading package lists...\nBuilding dependency tree...\nPackage krikri-virtual-pkg-195 is a virtual package provided by:\n  krikri-fake-provider-a 1.0-1 [Not candidate version]\n  krikri-fake-provider-b 2.0-1 [Not candidate version]\n\n0 upgraded, 0 newly installed\n"
 APT_UNTAGGED_PROVIDER_STDOUT         = "Reading package lists...\nBuilding dependency tree...\nPackage krikri-virtual-pkg-195 is a virtual package provided by:\n  krikri-fake-provider-a 1.0-1\n  krikri-fake-provider-b 2.0-1 [Not candidate version]\n\n0 upgraded, 0 newly installed\n"
 APT_NO_LISTING_STDOUT                = "Reading package lists...\nBuilding dependency tree...\n0 upgraded, 0 newly installed\n"
+# Issue #647's shape: a stub name (no installation candidate) EARLIER in
+# the list than a locate miss - ansible's apt.py resolves names in list
+# order and fails on the stub first, so a whole-list per-kind check
+# skipping past it reported the later locate miss instead.
+APT_STUB_THEN_LOCATE_MISS_STDERR = "E: Package 'krikri-stub-pkg-647' has no installation candidate\nE: Unable to locate package krikri-no-such-pkg-647\n"
 
 private def with_failing_apt_get_shim(stderr : String, stdout : String = "", dpkg_version : String? = nil, &)
   shim_dir = PluginSpecHelper.tmp_path("fake-apt-get-fail")
@@ -100,6 +105,40 @@ describe "package:/apt locate-miss failure shape (issues 194 and 195)" do
       result["failed"].as_bool.must_equal(true)
       result["msg"].as_s.must_equal("No package matching 'krikri-no-such-pkg-194' is available")
       result.as_h.has_key?("stderr").must_equal(false)
+    end
+  end
+
+  it "reports the earlier stub name when a later name is a locate miss (present)" do
+    with_failing_apt_get_shim(APT_STUB_THEN_LOCATE_MISS_STDERR) do
+      result = PluginSpecHelper.run("package",
+        {"name" => "krikri-stub-pkg-647,krikri-no-such-pkg-647", "state" => "present", "use" => "apt"})
+
+      result["failed"].as_bool.must_equal(true)
+      result["changed"].as_bool.must_equal(false)
+      result["msg"].as_s.must_equal("No package matching 'krikri-stub-pkg-647' is available")
+      result.as_h.has_key?("stderr").must_equal(false)
+    end
+  end
+
+  it "reports the earlier stub name when a later name is a locate miss (latest)" do
+    with_failing_apt_get_shim(APT_STUB_THEN_LOCATE_MISS_STDERR) do
+      result = PluginSpecHelper.run("package",
+        {"name" => "krikri-stub-pkg-647,krikri-no-such-pkg-647", "state" => "latest", "use" => "apt"})
+
+      result["failed"].as_bool.must_equal(true)
+      result["msg"].as_s.must_equal("No package matching 'krikri-stub-pkg-647' is available")
+      result.as_h.has_key?("stderr").must_equal(false)
+    end
+  end
+
+  it "names the earlier stub under check mode, where apt's simulate output carries the E: lines on stdout" do
+    with_failing_apt_get_shim(APT_STUB_THEN_LOCATE_MISS_STDERR) do
+      result = PluginSpecHelper.run("package",
+        {"name" => "krikri-stub-pkg-647,krikri-no-such-pkg-647", "state" => "present", "use" => "apt", "_ansible_check_mode" => "true"})
+
+      result["failed"].as_bool.must_equal(true)
+      result["changed"].as_bool.must_equal(false)
+      result["msg"].as_s.must_equal("No package matching 'krikri-stub-pkg-647' is available")
     end
   end
 

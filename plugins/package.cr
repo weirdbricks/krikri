@@ -1080,6 +1080,28 @@ module Krikri
       nil
     end
 
+    # apt.py resolves names in LIST order and fails the first one it can't
+    # resolve - and a stub name reported as "has no installation candidate"
+    # is a miss just like a locate miss. Checking one miss kind across the
+    # whole list before the other skips an earlier stub (issue #647:
+    # [freeipa-server, freeipa-server-dns] - real ansible fails on
+    # freeipa-server, a whole-list locate check only ever reported the
+    # later freeipa-server-dns), so each requested name gets both checks
+    # before the walk moves on. The dpkg-record-has-a-version guard stops
+    # the walk and hands back nil so the caller keeps the raw result, same
+    # as the two-step lookup it replaced.
+    private def apt_first_missing_name(stderr : String, names : Array(String)) : String?
+      names.each do |requested|
+        if missing = apt_unlocatable_name(stderr, [requested])
+          return missing
+        end
+        if missing = apt_no_candidate_name(stderr, [requested])
+          return apt_dpkg_has_version?(missing) ? nil : missing
+        end
+      end
+      nil
+    end
+
     # True when dpkg has a status record for the name that carries a
     # Version - the config-files "rc" remnant case behind the exception
     # documented on apt_no_candidate_name. A dpkg record WITHOUT a
@@ -1214,7 +1236,10 @@ module Krikri
             return PluginResult.new(
               changed: false,
               failed: true,
-              msg: no_package_msg(name),
+              # apt.py names the first unresolvable list member, not the
+              # whole joined name it was handed. The simulate call folds
+              # stderr into stdout (2>&1), so the E: lines live in stdout.
+              msg: no_package_msg(apt_first_missing_name(sim[:stdout] + sim[:stderr], names) || name),
               rc: sim[:exit_code],
               stderr: sim[:stderr].empty? ? sim[:stdout] : sim[:stderr]
             )
@@ -1273,11 +1298,7 @@ module Krikri
             # keeps the "rc"-remnant case (dpkg record with a Version, no
             # repo candidate) on the raw result, matching ansible (see
             # apt_no_candidate_name).
-            missing = apt_unlocatable_name(install_result[:stderr], names)
-            unless missing
-              missing = apt_no_candidate_name(install_result[:stderr], names)
-              missing = nil if missing && apt_dpkg_has_version?(missing)
-            end
+            missing = apt_first_missing_name(install_result[:stderr], names)
             if missing
               PluginResult.new(
                 changed: false,
@@ -1448,11 +1469,7 @@ module Krikri
           # Same locate-miss mapping as the present-state branch above
           # (same dpkg-record-has-a-version guard - see
           # apt_no_candidate_name).
-          missing = apt_unlocatable_name(upgrade_result[:stderr], names)
-          unless missing
-            missing = apt_no_candidate_name(upgrade_result[:stderr], names)
-            missing = nil if missing && apt_dpkg_has_version?(missing)
-          end
+          missing = apt_first_missing_name(upgrade_result[:stderr], names)
           if missing
             return PluginResult.new(
               changed: false,
