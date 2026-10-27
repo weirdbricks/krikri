@@ -181,6 +181,28 @@ describe "failed no_log copy's [ERROR] block" do
     output.wont_include("SECRET_FAIL_SENTINEL")
   end
 
+  # package_facts's not-detectable failure (issue #597, observed on
+  # ovirt.engine-setup's no_log pre_install_checks.yml on a dpkg-only
+  # host): real prints the [ERROR] block - whose wording ansible composes
+  # from only the requested manager list - before the censored fatal
+  # line. Like the rpm-less package_facts spec above, "rpm" is safe to
+  # force here because this suite's hosts are dpkg-based; skip when the
+  # host's python can actually import rpm, since the gate then can't fire.
+  it "prints the block above the censored fatal for a no_log package_facts failure" do
+    skip "python on this host can import rpm" if Krikri.missing_python_library("rpm", "rpm").nil?
+
+    output = run_playbook(<<-YAML)
+          - package_facts:
+              manager: rpm
+            no_log: true
+            ignore_errors: true
+    YAML
+
+    output.must_include("[ERROR]: Task failed: Module failed: Could not detect a supported package manager from the following list: ['rpm'], or the required Python library is not installed. Check warnings for details.")
+    output.must_include(%(fatal: [localhost]: FAILED! => {"censored": "the output has been hidden due to the fact that 'no_log: true' was specified for this result", "changed": false}))
+    block_precedes_fatal?(output).must_equal(true, output)
+  end
+
   # The shim path behind the gate (issue #557 on a target WITHOUT
   # ansible-core): py_module runs the raw module script against the
   # shim bundle its probe triggers, and a module that imports

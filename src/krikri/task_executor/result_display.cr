@@ -793,6 +793,12 @@ module Krikri
       # because crash-mimicking plugins compose it into their own msg
       # while a fail_json result carries the bare text.
       return true if msg =~ /\A(?:Task failed: Module failed: )?Failed to import the required Python library \([^\s()]+\) on \S+'s Python \S+\. .*Please read the module documentation and install it in the appropriate location\. If the required library is installed, but Ansible is using the wrong Python interpreter, please consult the documentation on ansible_python_interpreter\z/
+      # package_facts's not-detectable failure (issue #597, observed on
+      # ovirt.engine-setup's no_log pre_install_checks): ansible composes
+      # this wording itself and it names only the manager list the user
+      # requested - none of the task's data - so the block prints like
+      # real's does (live-verified: before the censored fatal line).
+      return true if msg =~ /\A(?:Task failed: Module failed: )?Could not detect a supported package manager from the following list: \[[^\]]*\], or the required Python library is not installed\. Check warnings for details\.\z/
       !!(copy_task && NO_LOG_SAFE_MSGS.includes?(msg))
     end
 
