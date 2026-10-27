@@ -581,6 +581,20 @@ describe Krikri::VariableSubstitutor::JinjaRenderer do
     renderer.render(%({{ lookup('template', '#{path}') }})).must_equal("value is computed\n")
   end
 
+  it "renders lookup('template', path) as None when the render emits no output" do
+    none_path = PluginSpecHelper.tmp_path("crinja_lookup_template_none_spec.j2")
+    Dir.mkdir_p(File.dirname(none_path))
+    File.write(none_path, "{% if false %}x{% endif %}\n")
+    empty_expr_path = PluginSpecHelper.tmp_path("crinja_lookup_template_empty_expr_spec.j2")
+    Dir.mkdir_p(File.dirname(empty_expr_path))
+    File.write(empty_expr_path, "{{ '' }}\n")
+
+    v = Hash(String, JSON::Any).new
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
+    renderer.evaluate_value!("lookup('template', '#{none_path}')").must_be_nil
+    renderer.evaluate_value!("lookup('template', '#{empty_expr_path}')").try(&.raw).must_equal("")
+  end
+
   # Real find_file_in_search_path(variables, 'templates', term): a
   # RELATIVE lookup term resolves against the role's templates/ dir
   # first, then files/, then the role root - the previous files/-only
