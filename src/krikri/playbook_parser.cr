@@ -1911,12 +1911,14 @@ module Krikri
 
     # Parse playbook from file
     def self.parse(path : String) : Playbook
-      unless File.exists?(path)
-        raise "Playbook file not found: #{path}"
-      end
+      collecting_reserved_warnings do
+        unless File.exists?(path)
+          raise "Playbook file not found: #{path}"
+        end
 
-      content = Vault.maybe_decrypt(File.read(path))
-      parse_string(content, path)
+        content = Vault.maybe_decrypt(File.read(path))
+        parse_string(content, path)
+      end
     end
 
     # The task-level source position lookup path for a task at `index`
@@ -1954,6 +1956,12 @@ module Krikri
 
     # Parse playbook from string
     def self.parse_string(content : String, path : String = "playbook.yml") : Playbook
+      collecting_reserved_warnings do
+        parse_string_uncollected(content, path)
+      end
+    end
+
+    private def self.parse_string_uncollected(content : String, path : String = "playbook.yml") : Playbook
       playbook = Playbook.new(path)
 
       begin
@@ -2533,7 +2541,17 @@ module Krikri
     # can run the SAME lookup at parse time and stay graceful for exactly
     # the tasks the runner would later execute - nil means "not
     # knowable at this call site", never a false "source exists".
+    # Buffered like the top-level loads: runtime include_tasks/handlers
+    # loads go through here too, and a load Ansible refuses (a removed
+    # bare `include:` aborts before its task vars are ever evaluated)
+    # must not emit the reserved-name warnings it already scanned.
     def self.parse_tasks(tasks_yaml : Array(YAML::Any), play : Play, context : String, file_dir : String, known_vars : Hash(String, JSON::Any)? = nil, role_path : String? = nil, playbook_dir : String? = nil, source_file : String? = nil, source_map : YamlSourceMap? = nil, source_prefix : String = "") : Array(Task)
+      collecting_reserved_warnings do
+        parse_tasks_uncollected(tasks_yaml, play, context, file_dir, known_vars, role_path, playbook_dir, source_file, source_map, source_prefix)
+      end
+    end
+
+    private def self.parse_tasks_uncollected(tasks_yaml : Array(YAML::Any), play : Play, context : String, file_dir : String, known_vars : Hash(String, JSON::Any)? = nil, role_path : String? = nil, playbook_dir : String? = nil, source_file : String? = nil, source_map : YamlSourceMap? = nil, source_prefix : String = "") : Array(Task)
       tasks = [] of Task
 
       tasks_yaml.each_with_index do |task_yaml, index|
@@ -4514,6 +4532,32 @@ module Krikri
       STDERR.puts text
     end
 
+    # ansible-core emits the reserved-name warning from
+    # VariableManager.get_vars, i.e. only once a task actually executes -
+    # a load refused before the first task (e.g. a removed bare `include:`)
+    # shows no reserved-name warning (live-verified vs 2.19.11, issue
+    # #634). While a load is in flight its warnings are buffered per
+    # scope: a successful load flushes them (nested loads append into the
+    # enclosing scope), a refused load discards them.
+    @@reserved_warning_buffers = [] of String
+
+    def self.collecting_reserved_warnings(&)
+      @@reserved_warning_buffers.push("")
+      begin
+        result = yield
+      rescue ex
+        @@reserved_warning_buffers.pop
+        raise ex
+      end
+      text = @@reserved_warning_buffers.pop
+      if @@reserved_warning_buffers.empty?
+        STDERR.print text
+      else
+        @@reserved_warning_buffers[-1] += text
+      end
+      result
+    end
+
     private def self.warn_reserved_vars(keys : Array(String), source_file : String?, from_line : Int32) : Nil
       return unless sf = source_file
       # Runs once per parsed task: the key check comes before any
@@ -4526,9 +4570,16 @@ module Krikri
         next unless RESERVED_VAR_NAMES.includes?(key)
         found = locate_reserved_key(lines, key, from_line)
         next unless found
-        STDERR.puts "[WARNING]: Found variable using reserved name '#{key}'."
-        STDERR.puts reserved_origin_block(sf, lines, found[0], found[1])
-        STDERR.puts
+        # Byte-identical to the direct STDERR.puts sequence it replaces:
+        # the Origin block already ends in a newline, so one more gives the
+        # blank line ansible prints after it.
+        text = "[WARNING]: Found variable using reserved name '#{key}'.\n" \
+               "#{reserved_origin_block(sf, lines, found[0], found[1])}\n"
+        if @@reserved_warning_buffers.empty?
+          STDERR.print text
+        else
+          @@reserved_warning_buffers[-1] += text
+        end
       end
     end
 
