@@ -13,9 +13,12 @@ module Krikri
     class InvalidJidError < Exception; end
 
     # Jids are joined into file paths under the async dir, so anything
-    # that isn't a bare, simple job-id-shaped token (generate_jid's
-    # "<unix_ts>.<hex>", Ansible's own "12345.67890123" shape, or a
-    # lookup probe like
+    # that isn't a bare, simple job-id-shaped token (generate_jid's and
+    # Ansible's own "j<digits>.<digits>" shape - Ansible builds it as
+    # j<random> in the action plugin and appends ".<pid>" in
+    # async_wrapper - printed verbatim in its ASYNC POLL/OK lines and
+    # stored as the registered ansible_job_id, so we match it for output
+    # parity; or a lookup probe like
     # "no-such-job-...") is rejected before it can carry "/" or ".." into
     # the join - a traversal jid would otherwise let an async_status task
     # read (status mode) or delete (mode: cleanup) an arbitrary
@@ -96,8 +99,14 @@ module Krikri
       nil
     end
 
+    # Ansible's async jid is "j<random digits>.<pid>" (action plugin
+    # makes j<random>, async_wrapper appends the pid), and that exact
+    # string shows up in the ASYNC POLL/OK output lines and as the
+    # registered ansible_job_id - so generate_jid follows the same
+    # shape for byte-level output parity. Random::Secure keeps it
+    # unpredictable like Ansible's secrets.randbelow.
     def self.generate_jid : String
-      "#{Time.utc.to_unix}.#{Random::Secure.hex(6)}"
+      "j#{Random::Secure.rand(999_999_999_999_i64)}.#{Random::Secure.rand(1..4_194_304)}"
     end
 
     def self.finished?(status : JSON::Any) : Bool
