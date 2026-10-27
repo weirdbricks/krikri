@@ -69,9 +69,15 @@ module Krikri
 
     # The [ERROR] chain's second Origin points at the failing that: item,
     # so each conditional-error arm tags its result with that item's index.
-    private def that_index_error(msg : String, current_index : Int32) : ActionResult
+    # The non-bool arm additionally passes the failing item's RAW text
+    # through (_ansible_that_raw): the fatal msg's " at '...'" lineage
+    # clause needs the tested value's DEFINING site, which only the
+    # executor's var_origin_for can resolve - the action plugin sees
+    # @vars alone (same split as every other origin-decorated failure).
+    private def that_index_error(msg : String, current_index : Int32, raw : String? = nil) : ActionResult
       result = ActionResult.conditional_error_result_json(msg)
       result.as_h["_ansible_that_index"] = JSON::Any.new(current_index.to_i64)
+      result.as_h["_ansible_that_raw"] = JSON::Any.new(raw) if raw
       ActionResult.final(result)
     end
 
@@ -172,9 +178,14 @@ module Krikri
         # evaluating conditional: " - verified against the exact
         # message ansible-core 2.19.4 raises for a non-bool `that:`
         # result (mrlesmithjr.postgresql's own `that: postgresql_
-        # version | default(false)` with a real int default).
-        return ActionResult.final(ActionResult.conditional_error_result_json(
-          "Task failed: #{ex.message}"))
+        # version | default(false)` with a real int default). The
+        # failing item's index AND raw text ride along: real 2.19
+        # prints the same two-level [ERROR] chain the other wording
+        # classes get (the "caused by" Origin at the failing that:
+        # item) plus the ALLOW_BROKEN_CONDITIONALS hint, and labels
+        # the fatal msg itself with the tested value's defining site.
+        return that_index_error("Task failed: #{ex.message}", current_index,
+          conditions[current_index]?)
       end
 
       failing ? failure_result(failing) : nil

@@ -3028,6 +3028,9 @@ module Krikri
     end
 
     private def apply_changed_failed_when(task : Task, result : JSON::Any, vars_context : Hash(String, JSON::Any), host : Host) : JSON::Any
+      # assert:'s non-bool that: failure rides its raw item text for the
+      # fatal msg's lineage clause - inert for every other result shape.
+      result = decorate_assert_that_origin(task, result, host)
       # A templated action's resolved module name only exists on the
       # shallow copy resolve_templated_action made inside execute_task_once,
       # but the display runs later against the shared original task (whose

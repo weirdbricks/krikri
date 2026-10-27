@@ -4354,7 +4354,13 @@ module Krikri
         # Equally, a nested entry's own deeper-indented `when:` (a
         # subtask's or a nested mapping's) is not this task's keyword -
         # accepting it would mislabel the Origin.
-        next unless stripped.starts_with?("#{key}:") && (line.size - line.lstrip.size) == task_key_indent
+        # assert:'s `that:` is an action-plugin ARGUMENT, nested one level
+        # under the module key (`ansible.builtin.assert:`), so its callers
+        # locate it one indent deeper than a task-level keyword - a
+        # `when:`/`until:` at that depth is a nested entry's own and stays
+        # rejected (the mislabel guard below).
+        key_indent = key == "that" ? task_key_indent + 2 : task_key_indent
+        next unless stripped.starts_with?("#{key}:") && (line.size - line.lstrip.size) == key_indent
         rest = line[line.index!("#{key}:") + key.size + 1..]
         if rest.lstrip.empty?
           # Folded list form: scan the item lines for the raw conditional.
@@ -4548,6 +4554,77 @@ module Krikri
       return msg unless (type_match = msg.match(/was derived from value of type '([a-zA-Z]+)'/))
       clause = "was derived from value of type '#{type_match[1]}'"
       msg.sub(clause, "#{clause} at #{location}")
+    end
+
+    # assert:'s non-bool that: failure carries the same " at '...'"
+    # lineage clause real 2.19 labels the fatal msg with for when: - the
+    # tested value's defining site - but the action plugin has no route
+    # to var_origin_for, so the result carries the failing item's raw
+    # text (_ansible_that_raw) and the executor adds the clause here, on
+    # the way through apply_changed_failed_when. A bare identifier goes
+    # through the same decoration the when: path applies (play var, role
+    # default, CLI -e, runtime values); a dotted `name.key` reference
+    # points at the nested key's VALUE token in the file that supplies
+    # `name` (dotted_leaf_origin's own rule); a `x | default(...)`
+    # pass-through keeps the operand var's own lineage whatever its
+    # type. When nothing can be located reliably, the msg is returned
+    # undecorated - never guessed at.
+    private def decorate_assert_that_origin(task : Task, result : JSON::Any, host : Host) : JSON::Any
+      return result unless (raw = result["_ansible_that_raw"]?.try(&.as_s?)) &&
+                           (msg = result["msg"]?.try(&.as_s?)) &&
+                           msg.starts_with?("Task failed: Conditional result") &&
+                           !msg.includes?(" at '") && !msg.includes?(" at \"")
+
+      item = raw.strip.gsub(/\A["']|["']\z/, "")
+      decorated : String? = nil
+      if (m = item.match(/\A([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*)\z/)) &&
+         (leaf = dotted_leaf_origin(task, host, [m[1], m[2]])) &&
+         leaf.is_a?(FileVarOrigin) && leaf.column > 0
+        decorated = with_origin_clause(msg, "'#{leaf.path}:#{leaf.line}:#{leaf.column}'")
+      elsif (m = item.match(/\A\s*([A-Za-z_][A-Za-z0-9_]*)\s*\|\s*d(?:efault)?\s*\(.*\)\s*\z/)) &&
+            (origin = var_origin_for(task, host, m[1], runtime_marker: true)) &&
+            (clause_body = assert_that_origin_clause(task, origin, item))
+        decorated = with_origin_clause(msg, clause_body)
+      elsif (deciding = deciding_bare_operand(task, host, item)) &&
+            (origin = var_origin_for(task, host, deciding, runtime_marker: true)) &&
+            (clause_body = assert_that_origin_clause(task, origin, item))
+        decorated = with_origin_clause(msg, clause_body)
+      elsif item.matches?(/\A[A-Za-z_][A-Za-z0-9_]*\z/)
+        # A bare identifier (and its single-template lineage chain):
+        # decorate_conditional_value_origin's bare branch already renders
+        # every origin shape, the runtime fallback included.
+        candidate = decorate_conditional_value_origin(task, msg, host,
+          operand: item, clause_key: "that", clause_raw: item)
+        decorated = candidate != msg ? candidate : nil
+      elsif (tok = when_token_position(task, "that", item))
+        # Any other compound has no single defining var: real labels the
+        # failing that: item's own token (live-verified vs 2.19.11:
+        # `that: [flag ~ 'suffix']` with play var flag: '' reports the
+        # item line, exactly like when:'s own compound rule).
+        decorated = with_origin_clause(msg, "'#{tok[0]}:#{tok[1]}:#{tok[2]}'")
+      end
+      return result unless decorated && decorated != msg
+
+      hash = result.as_h.dup
+      hash["msg"] = JSON::Any.new(decorated)
+      JSON.parse(hash.to_json)
+    end
+
+    # The quoted " at ..." clause body for a resolved VarOrigin on the
+    # assert that: path - the same shapes decorate_conditional_value_
+    # origin's bare branch renders, with a runtime-sourced value (no
+    # defining site) falling back to the failing that: item's own token,
+    # exactly as the when: path labels its own clause token there.
+    private def assert_that_origin_clause(task : Task, origin : VarOrigin, raw : String) : String?
+      case origin
+      when FileVarOrigin
+        origin.column <= 0 ? "'#{origin.path}:#{origin.line}'" : "'#{origin.path}:#{origin.line}:#{origin.column}'"
+      when TextVarOrigin
+        "\"#{origin.label}\""
+      else
+        return nil unless (tok = when_token_position(task, "that", raw))
+        "'#{tok[0]}:#{tok[1]}:#{tok[2]}'"
+      end
     end
 
     # The bare-variable operand whose own value an `a and b` / `a or b`
