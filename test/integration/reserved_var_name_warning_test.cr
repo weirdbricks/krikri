@@ -40,6 +40,61 @@ describe "reserved variable name warning" do
     File.delete(playbook) if playbook && File.exists?(playbook)
   end
 
+  # ansible warns only when a task executes, so a load refused before the
+  # first task (removed `include:`) shows no reserved-name warning
+  # (live-verified vs ansible-core 2.19.11, issue #634).
+  it "does not warn for a reserved task var when the load is refused by a removed include" do
+    playbook = File.tempname("reserved-var-refused", ".yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        gather_facts: false
+        tasks:
+          - debug: msg="hi"
+            vars:
+              roles: "x"
+          - include: users.yml
+      YAML
+    output = IO::Memory.new
+    Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+    text = output.to_s
+
+    text.must_include("has been removed")
+    refute(text.includes?("reserved name 'roles'"))
+  ensure
+    File.delete(playbook) if playbook && File.exists?(playbook)
+  end
+
+  # Same refusal shape but via a runtime include_tasks load: Ansible
+  # evaluates a task's vars only at execution, so the included file's
+  # reserved-name warnings never fire when its own removed `include:`
+  # aborts the load first (live-verified vs 2.19.11, issue #634).
+  it "does not warn for a reserved task var in an include_tasks file refused by a removed include" do
+    dir = File.tempname("reserved-var-include")
+    Dir.mkdir_p(dir)
+    playbook = File.join(dir, "pb.yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        gather_facts: false
+        tasks:
+          - include_tasks: projects.yml
+      YAML
+    tasks_file = File.join(dir, "projects.yml")
+    File.write(tasks_file, <<-YAML)
+      - debug: msg="hi"
+        vars:
+          roles: "x"
+      - include: users.yml
+      YAML
+    output = IO::Memory.new
+    Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+    text = output.to_s
+
+    text.must_include("has been removed")
+    refute(text.includes?("reserved name 'roles'"))
+  ensure
+    FileUtils.rm_rf(dir) if dir
+  end
+
   it "points include_role's `name` warning at the vars entry, not the module's own name key" do
     dir = File.tempname("reserved-var-role")
     Dir.mkdir_p(File.join(dir, "roles", "myrole", "tasks"))
