@@ -515,23 +515,40 @@ module Krikri
       basedir = expand_tilde(expand_dollar_vars(configured && !configured.empty? ? configured : "~/.ansible/tmp"))
       return nil if basedir.empty? || File.exists?(basedir)
 
-      # os.makedirs(path, mode=0o700) modes every directory component it
-      # creates; walk the missing prefixes so an existing parent keeps its
-      # mode. A failed creation silently drops the warning (real's makedirs
-      # OSError goes down the error_as_warning system-tmp fallback instead).
+      missing = remote_tmp_missing_dirs(basedir)
+      begin
+        missing.reverse_each { |dir| Dir.mkdir(dir, 0o700) }
+      rescue ex : File::Error
+        return remote_tmp_create_failure_warning(basedir, ex)
+      end
+
+      "Module remote_tmp #{basedir} did not exist and was created with a mode of 0700, this may cause issues when running as another user. To avoid this, create the remote_tmp dir with the correct permissions manually"
+    end
+
+    # os.makedirs(path, mode=0o700) modes every directory component it
+    # creates; walk the missing prefixes so an existing parent keeps its
+    # mode.
+    private def remote_tmp_missing_dirs(basedir : String) : Array(String)
       missing = [] of String
       walk = basedir
       until walk == "/" || walk == "." || File.exists?(walk)
         missing << walk
         walk = File.dirname(walk)
       end
-      begin
-        missing.reverse_each { |dir| Dir.mkdir(dir, 0o700) }
-      rescue File::Error
-        return nil
-      end
+      missing
+    end
 
-      "Module remote_tmp #{basedir} did not exist and was created with a mode of 0700, this may cause issues when running as another user. To avoid this, create the remote_tmp dir with the correct permissions manually"
+    # A failed creation takes real's error_as_warning fallback: the OSError
+    # rides the warning (basic.py's tmpdir property keeps going with the
+    # system tmp), which on the observed become_user host (/home/prometheus
+    # uncreatable, issue #629) prints the compact module-stderr line plus
+    # the expanded msg + "<<< caused by >>>" exception block.
+    private def remote_tmp_create_failure_warning(basedir : String, ex : File::Error) : String
+      errno = ex.os_error
+      strerror = errno.try(&.message) || "Unknown error"
+      cause = "[Errno #{errno.try(&.value)}] #{strerror}: '#{ex.file}'"
+      msg = "Unable to use '#{basedir}' as temporary directory, falling back to system default"
+      "#{msg}: #{cause}\n\n#{msg}.\n\n<<< caused by >>>\n\n#{cause}"
     end
 
     # os.path.expandvars: $name and ${name} expand from the process

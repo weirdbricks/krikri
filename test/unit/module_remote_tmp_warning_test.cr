@@ -132,4 +132,33 @@ describe "module remote_tmp init fallback warning" do
       FileUtils.rm_rf(home)
     end
   end
+
+  it "warns with the OSError fallback block when the remote_tmp dir cannot be created" do
+    skip "root bypasses the cwd permissions the fallback needs" if PluginSpecHelper.running_as_root?
+
+    locked = PluginSpecHelper.tmp_path("locked-cwd")
+    home = PluginSpecHelper.tmp_path("no-write-home")
+    FileUtils.mkdir_p(locked)
+    FileUtils.mkdir_p(home)
+    begin
+      # A read-only HOME stands in for the real host's uncreatable
+      # /home/prometheus: makedirs fails on the first missing component
+      # and real falls back to the system tmp printing the compact
+      # module-stderr line plus the error_as_warning block (issue #629).
+      result = PluginSpecHelper.run("ping", {} of String => String, chdir: locked,
+        before_input: -> { File.chmod(locked, 0o311); File.chmod(home, 0o555); nil },
+        env: {"HOME" => home})
+
+      msg = "Unable to use '#{File.join(home, ".ansible/tmp")}' as temporary directory, falling back to system default"
+      cause = "[Errno 13] Permission denied: '#{File.join(home, ".ansible")}'"
+      result["warnings"]?.try(&.as_a?).try(&.map(&.as_s)).must_equal([
+        "#{msg}: #{cause}\n\n#{msg}.\n\n<<< caused by >>>\n\n#{cause}",
+      ])
+    ensure
+      File.chmod(locked, 0o755)
+      File.chmod(home, 0o755)
+      FileUtils.rm_rf(locked)
+      FileUtils.rm_rf(home)
+    end
+  end
 end

@@ -92,7 +92,7 @@ describe "become password command construction (become_password_test.cr)" do
   describe "SSHManager daemon sudo command" do
     it "keeps sudo -n (clean framed stdin) when no password is needed" do
       Krikri::SSHManager.daemon_remote_command("/p/command", "deploy")
-        .must_equal("sudo -n -u 'deploy' -- '/p/command' --daemon")
+        .must_equal("sudo -H -n -u 'deploy' -- '/p/command' --daemon")
       Krikri::SSHManager.daemon_remote_command("/p/command", nil)
         .must_equal("'/p/command' --daemon")
     end
@@ -103,7 +103,7 @@ describe "become password command construction (become_password_test.cr)" do
       # the remote shell's `bash -c`. #spawn_daemon writes the password
       # line into the daemon's stdin pipe ahead of the frames instead.
       cmd = Krikri::SSHManager.daemon_remote_command("/p/command", "deploy", true)
-      cmd.must_equal("sudo -S -p '' -u 'deploy' -- '/p/command' --daemon")
+      cmd.must_equal("sudo -H -S -p '' -u 'deploy' -- '/p/command' --daemon")
       cmd.includes?("deploy'").must_equal(true)
     end
   end

@@ -1270,6 +1270,15 @@ module Krikri
       paths = paths.uniq
       return nil if paths.empty?
 
+      # find inherits the SSH login's working directory, usually /root (0700)
+      # under a root login - a become_user such as prometheus cannot enter it
+      # and find fails before touching any member ("Failed to change
+      # directory: /root: Permission denied"). Ansible's own pass never has
+      # this problem: set_owner/group/mode_if_different use os.lchown/chmod
+      # on absolute paths, so it never depends on the process cwd at all.
+      # A relative dest keeps the un-anchored form: it is meant to resolve
+      # against the login cwd exactly as before.
+      find_prefix = dest.starts_with?("/") ? "cd / && find" : "find"
       paths.each_slice(MEMBER_CHUNK_SIZE) do |chunk|
         # -P (GNU find's own default, made explicit here so a future
         # edit can't silently switch to -L): a symlink member start
@@ -1283,14 +1292,14 @@ module Krikri
           # change onto any file it points at (outside dest) -
           # Ansible's set_owner_if_different always uses os.lchown,
           # never the dereferencing form.
-          result = remote_exec("find #{member_args} -exec chown -h #{shell_single_quote(owner)} {} +")
+          result = remote_exec("#{find_prefix} #{member_args} -exec chown -h #{shell_single_quote(owner)} {} +")
           if result[:exit_code] != 0
             return PluginResult.new(changed: true, failed: true, msg: "Failed to set owner under #{dest}: #{result[:stderr]}")
           end
         end
         if group = @params["group"]?
           # -h: same symlink-dereference hazard as chown above (Ansible's set_group_if_different uses os.lchown too).
-          result = remote_exec("find #{member_args} -exec chgrp -h #{shell_single_quote(group)} {} +")
+          result = remote_exec("#{find_prefix} #{member_args} -exec chgrp -h #{shell_single_quote(group)} {} +")
           if result[:exit_code] != 0
             return PluginResult.new(changed: true, failed: true, msg: "Failed to set group under #{dest}: #{result[:stderr]}")
           end
@@ -1304,7 +1313,7 @@ module Krikri
           # and then restores the underlying mode (net effect: the
           # target's mode is unchanged); never touching it reaches the
           # same end state without the transient write.
-          result = remote_exec("find #{member_args} ! -type l -exec chmod #{shell_single_quote(mode)} {} +")
+          result = remote_exec("#{find_prefix} #{member_args} ! -type l -exec chmod #{shell_single_quote(mode)} {} +")
           if result[:exit_code] != 0
             return PluginResult.new(changed: true, failed: true, msg: "Failed to set mode under #{dest}: #{result[:stderr]}")
           end

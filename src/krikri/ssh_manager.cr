@@ -935,14 +935,17 @@ module Krikri
     # deliberately NOT the password itself - a password must never land
     # in this string, which travels as an argv element of the local ssh
     # process AND of the remote shell's own `bash -c`). With it set,
-    # sudo runs `sudo -S -p ''` (read the password from stdin, empty
+    # sudo runs `sudo -H -S -p ''` (read the password from stdin, empty
     # prompt so nothing is written to the daemon channel's stderr) and
     # #spawn_daemon has already put the password line on the stdin pipe
     # ahead of the frames. Public as a spec seam: the -n/-S command
     # construction is pinned directly in the unit tests.
     def self.daemon_remote_command(remote_binary_path : String, become_user : String?, sudo_needs_password : Bool = false) : String
       return "#{shell_quote(remote_binary_path)} --daemon" unless become_user
-      flags = sudo_needs_password ? "-S -p ''" : "-n"
+      # -H (set HOME to the become user's) is part of ansible's sudo
+      # become plugin's own defaults - without it the daemon keeps
+      # HOME=/root and ~/.ansible/tmp resolves wrong (issue #629).
+      flags = sudo_needs_password ? "-H -S -p ''" : "-H -n"
       "sudo #{flags} -u #{shell_quote(become_user)} -- #{shell_quote(remote_binary_path)} --daemon"
     end
 
