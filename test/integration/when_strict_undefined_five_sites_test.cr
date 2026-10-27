@@ -159,7 +159,10 @@ describe "strict-undefined when: - execute_block (single-host block:)" do
 
     status.exit_code.must_equal(2)
     output.wont_include("Unhandled exception")
-    output.wont_include("should not print")
+    # ansible-core prints the failing tasks' YAML context (including their msg:)
+    # inside the [ERROR] chain, so the msg text itself can appear; the real
+    # check is that no task succeeded.
+    output.wont_include("ok: [localhost]")
     output.wont_include("always body should not print")
     # Both "block one" and "always one" fail on the same condition;
     # "block two" never runs (the halt from "block one" skips it).

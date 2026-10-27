@@ -101,7 +101,10 @@ describe "block: rescue accounting with a raising when:" do
 
     status.exit_code.must_equal(2)
     output.wont_include("Unhandled exception")
-    output.wont_include("should not print")
+    # ansible-core prints the failing tasks' YAML context (including their msg:)
+    # inside the [ERROR] chain, so the msg text itself can appear; the real
+    # check is that no task succeeded.
+    output.wont_include("ok: [localhost]")
     output.must_include("failed=2")
     output.must_include("rescued=1")
   end
