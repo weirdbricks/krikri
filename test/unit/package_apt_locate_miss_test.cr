@@ -14,19 +14,19 @@ require "json"
 #
 # Issue #195 extends that to the other unresolvable-name shape: "E:
 # Package 'X' has no installation candidate". ansible's apt.py resolves
-# the name itself (cache[X] plus get_providing_packages) BEFORE apt-get
-# runs, so it fails with its own "No package matching 'X' is available"
-# both when every listed provider lacks a candidate (apt-get stdout
-# lists the providers, each tagged "[Not candidate version]") and when
-# the name has no providers at all - apt-get prints the same E: line
-# then, but with NO provider listing. One provider with a candidate
-# sends the task to apt-get, keeping the raw result. The deliberate
-# exception is a name with a dpkg status record but no repo candidate
-# (a config-files "rc" remnant): python-apt's cache lookup succeeds
-# there and real ansible says "no available installation candidate for
-# X" instead, so the plugin guards the mapping with a dpkg-record check
-# on the failure path - the test host has no dpkg record for the
-# shimmed name, so the shim tests below exercise the mapping itself.
+# the name itself (cache[X] plus get_providing_packages with
+# candidate_only=True) BEFORE apt-get runs, so it fails with its own "No
+# package matching 'X' is available" whenever no provider has a
+# candidate - the E: line already implies that (apt would otherwise
+# have installed the provider), so apt-get's stdout provider listing
+# is not a valid gate and the mapping ignores stdout entirely. The
+# deliberate exception is a name with a dpkg status record that carries
+# a Version but no repo candidate (a config-files "rc" remnant):
+# python-apt's cache lookup succeeds there and real ansible says "no
+# available installation candidate for X" instead, so the plugin guards
+# the mapping with a dpkg-record-has-a-version check on the failure path
+# - the test host has no dpkg record for the shimmed name, so the shim
+# tests below exercise the mapping itself.
 #
 # The plugin binary is exercised for real against a shimmed apt-get on
 # PATH (same pattern as dnf_install_failure_shape_test.cr's fake dnf),
@@ -39,10 +39,10 @@ APT_LOCATE_MISS_STDERR = "E: Unable to locate package krikri-no-such-pkg-194\n"
 APT_BROKEN_REPO_STDERR               = "E: The repository 'http://example.com/debian broken Release' does not have a Release file.\n"
 APT_NO_CANDIDATE_STDERR              = "E: Package 'krikri-virtual-pkg-195' has no installation candidate\n"
 APT_VIRTUAL_ALL_NOT_CANDIDATE_STDOUT = "Reading package lists...\nBuilding dependency tree...\nPackage krikri-virtual-pkg-195 is a virtual package provided by:\n  krikri-fake-provider-a 1.0-1 [Not candidate version]\n  krikri-fake-provider-b 2.0-1 [Not candidate version]\n\n0 upgraded, 0 newly installed\n"
-APT_VIRTUAL_ONE_CANDIDATE_STDOUT     = "Reading package lists...\nBuilding dependency tree...\nPackage krikri-virtual-pkg-195 is a virtual package provided by:\n  krikri-fake-provider-a 1.0-1\n  krikri-fake-provider-b 2.0-1 [Not candidate version]\n\n0 upgraded, 0 newly installed\n"
+APT_UNTAGGED_PROVIDER_STDOUT         = "Reading package lists...\nBuilding dependency tree...\nPackage krikri-virtual-pkg-195 is a virtual package provided by:\n  krikri-fake-provider-a 1.0-1\n  krikri-fake-provider-b 2.0-1 [Not candidate version]\n\n0 upgraded, 0 newly installed\n"
 APT_NO_LISTING_STDOUT                = "Reading package lists...\nBuilding dependency tree...\n0 upgraded, 0 newly installed\n"
 
-private def with_failing_apt_get_shim(stderr : String, stdout : String = "", &)
+private def with_failing_apt_get_shim(stderr : String, stdout : String = "", dpkg_version : String? = nil, &)
   shim_dir = PluginSpecHelper.tmp_path("fake-apt-get-fail")
   Dir.mkdir_p(shim_dir)
   # The stdout heredoc's terminator must sit on its own line: the <<- literals
@@ -51,6 +51,19 @@ private def with_failing_apt_get_shim(stderr : String, stdout : String = "", &)
   script = "cat <<'KRIKRI_FAKE_APT_EOF'\n#{stdout}\nKRIKRI_FAKE_APT_EOF\ncat <<'KRIKRI_FAKE_APT_EOF' >&2\n#{stderr}KRIKRI_FAKE_APT_EOF\nexit 100\n"
   File.write("#{shim_dir}/apt-get", script)
   File.chmod("#{shim_dir}/apt-get", 0o755)
+  if dpkg_version
+    # Shims dpkg-query to print the given Version only for the plugin's
+    # -f='${Version}' query (a versionless record prints nothing but
+    # still exits 0, like dpkg's `unknown ok not-installed` state).
+    dq_script = <<-SH
+      #!/bin/sh
+      if [ "$2" = '-f=${Version}' ]; then
+        printf '%s' "#{dpkg_version}"
+      fi
+      SH
+    File.write("#{shim_dir}/dpkg-query", dq_script)
+    File.chmod("#{shim_dir}/dpkg-query", 0o755)
+  end
   PluginSpecHelper::ENV_MUTEX.synchronize do
     old_path = ENV["PATH"]?
     ENV["PATH"] = "#{shim_dir}:#{old_path}"
@@ -123,14 +136,18 @@ describe "package:/apt locate-miss failure shape (issues 194 and 195)" do
     end
   end
 
-  it "keeps the raw Failed to install result when a virtual provider has a candidate" do
-    with_failing_apt_get_shim(APT_NO_CANDIDATE_STDERR, APT_VIRTUAL_ONE_CANDIDATE_STDOUT) do
+  it "reports No package matching when the listing shows an untagged provider with no repo candidate" do
+    # An untagged provider line is an installed provider with no repo
+    # candidate - the old stdout-based gate wrongly fell through to the
+    # raw result here, while real ansible maps the E: line.
+    with_failing_apt_get_shim(APT_NO_CANDIDATE_STDERR, APT_UNTAGGED_PROVIDER_STDOUT) do
       result = PluginSpecHelper.run("package",
         {"name" => "krikri-virtual-pkg-195", "state" => "present", "use" => "apt"})
 
       result["failed"].as_bool.must_equal(true)
-      result["msg"].as_s.must_equal("Failed to install krikri-virtual-pkg-195: #{APT_NO_CANDIDATE_STDERR}")
-      result.as_h.has_key?("stderr").must_equal(true)
+      result["changed"].as_bool.must_equal(false)
+      result["msg"].as_s.must_equal("No package matching 'krikri-virtual-pkg-195' is available")
+      result.as_h.has_key?("stderr").must_equal(false)
     end
   end
 
@@ -142,6 +159,35 @@ describe "package:/apt locate-miss failure shape (issues 194 and 195)" do
       result["failed"].as_bool.must_equal(true)
       result["msg"].as_s.must_equal("No package matching 'krikri-virtual-pkg-195' is available")
       result.as_h.has_key?("stderr").must_equal(false)
+    end
+  end
+
+  it "reports No package matching for a no-candidate name whose dpkg record has no version" do
+    # A versionless dpkg record (`unknown ok not-installed`) still makes
+    # python-apt's cache[X] raise KeyError, so ansible fails with its
+    # own No package matching message despite the record existing.
+    with_failing_apt_get_shim(APT_NO_CANDIDATE_STDERR, APT_NO_LISTING_STDOUT, "") do
+      result = PluginSpecHelper.run("package",
+        {"name" => "krikri-virtual-pkg-195", "state" => "present", "use" => "apt"})
+
+      result["failed"].as_bool.must_equal(true)
+      result["changed"].as_bool.must_equal(false)
+      result["msg"].as_s.must_equal("No package matching 'krikri-virtual-pkg-195' is available")
+      result.as_h.has_key?("stderr").must_equal(false)
+    end
+  end
+
+  it "keeps the raw Failed to install result when the dpkg record carries a version (rc remnant)" do
+    # A rc remnant (deinstall ok config-files) has a Version in dpkg, so
+    # python-apt's cache lookup succeeds and ansible says something
+    # else - the raw result stays.
+    with_failing_apt_get_shim(APT_NO_CANDIDATE_STDERR, APT_NO_LISTING_STDOUT, "1.0-1") do
+      result = PluginSpecHelper.run("package",
+        {"name" => "krikri-virtual-pkg-195", "state" => "present", "use" => "apt"})
+
+      result["failed"].as_bool.must_equal(true)
+      result["msg"].as_s.must_equal("Failed to install krikri-virtual-pkg-195: #{APT_NO_CANDIDATE_STDERR}")
+      result.as_h.has_key?("stderr").must_equal(true)
     end
   end
 end

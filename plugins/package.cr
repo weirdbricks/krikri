@@ -1038,43 +1038,42 @@ module Krikri
     end
 
     # apt-get has a second unresolvable-name shape: exit 100 with
-    # "E: Package 'X' has no installation candidate" on stderr. When the
-    # name has providers, apt-get lists them on stdout under "Package X
-    # is a virtual package provided by:"; when it has none (python-apt's
-    # cache[X] raises KeyError and get_providing_packages comes back
-    # empty), the SAME E: line is printed with NO listing at all.
-    # ansible's apt.py resolves the name itself before apt-get runs and
-    # fails all of these with its own "No package matching 'X' is
-    # available"; one provider with a candidate sends the task on to
-    # apt-get, whose raw failure is then the right result. Each provider
-    # line apt prints carries "[Not candidate version]" exactly when it
-    # has no candidate version. One case must NOT map: a name with a
-    # dpkg status record but no repo candidate (a config-files "rc"
-    # remnant) prints the same E: line, but python-apt's cache lookup
-    # succeeds for it and real ansible says "no available installation
-    # candidate for X" instead - the call sites keep that case on the
-    # raw result with a dpkg-record guard. Issue #195, live-verified
-    # against ansible-playbook 2.19 and real apt.
-    private def apt_no_candidate_name(stdout : String, stderr : String, names : Array(String)) : String?
-      out_lines = stdout.lines
+    # "E: Package 'X' has no installation candidate" on stderr. ansible's
+    # apt.py resolves the name itself before apt-get runs: for a missing
+    # cache[X] it calls get_providing_packages(name) with
+    # candidate_only=True, and when that comes back empty it fails with
+    # its own "No package matching 'X' is available". The E: line already
+    # implies no candidate for X or any provider (apt would otherwise
+    # have installed the provider), so the provider listing on stdout is
+    # not a valid gate - a provider without a repo candidate must not
+    # send the task back to the raw result. One case must NOT map: a
+    # name with a dpkg status record that carries a Version but no repo
+    # candidate (a config-files "rc" remnant) prints the same E: line,
+    # but python-apt's cache lookup succeeds for it and real ansible
+    # says "no available installation candidate for X" instead - the
+    # call sites keep that case on the raw result with a
+    # dpkg-record-has-a-version guard. Issue #195, live-verified against
+    # ansible-playbook 2.19 and real apt.
+    private def apt_no_candidate_name(stderr : String, names : Array(String)) : String?
       names.each do |requested|
         base_name = requested.split('=').first
-        next unless stderr.includes?("E: Package '#{base_name}' has no installation candidate")
-        # No listing on stdout means no providers at all - the same
-        # zero-candidate situation ansible's apt.py resolution fails on.
-        return base_name unless listing_start = out_lines.index(&.starts_with?("Package #{base_name} is a virtual package provided by:"))
-        providers = out_lines[(listing_start + 1)..].take_while { |line| !line.strip.empty? }
-        return base_name if providers.all?(&.includes?("[Not candidate version]"))
+        return base_name if stderr.includes?("E: Package '#{base_name}' has no installation candidate")
       end
       nil
     end
 
-    # True when dpkg has ANY status record for the name, including a
-    # config-files "rc" remnant - the dpkg fact behind the "rc"
-    # exception documented on apt_no_candidate_name. Runs on the failure
-    # path only, once per candidate name that would otherwise map.
-    private def apt_dpkg_recorded?(base_name : String) : Bool
-      remote_exec("dpkg-query -W -f='${Package}' #{shell_single_quote(base_name)} 2>/dev/null")[:exit_code] == 0
+    # True when dpkg has a status record for the name that carries a
+    # Version - the config-files "rc" remnant case behind the exception
+    # documented on apt_no_candidate_name. A dpkg record WITHOUT a
+    # Version (`dpkg-query -W -f='${Version}' X` exits 0 and prints
+    # nothing, status `unknown ok not-installed`) still makes python-apt's
+    # cache[X] raise KeyError, so real ansible fails with "No package
+    # matching 'X' is available" there and the mapping must fire. Runs on
+    # the failure path only, once per candidate name that would otherwise
+    # map.
+    private def apt_dpkg_has_version?(base_name : String) : Bool
+      dpkg = remote_exec("dpkg-query -W -f='${Version}' #{shell_single_quote(base_name)} 2>/dev/null")
+      dpkg[:exit_code] == 0 && !dpkg[:stdout].strip.empty?
     end
 
     private def handle_apt(name : String, state : String, names : Array(String), pkg_tokens : String) : PluginResult
@@ -1229,13 +1228,14 @@ module Krikri
             # A locate miss on a requested name is apt.py's own candidate
             # resolution failing (see apt_unlocatable_name and
             # apt_no_candidate_name) - the raw "Failed to install" result
-            # is for everything else. The dpkg-record guard keeps the
-            # "rc"-remnant case (dpkg record, no repo candidate) on the
-            # raw result, matching ansible (see apt_no_candidate_name).
+            # is for everything else. The dpkg-record-has-a-version guard
+            # keeps the "rc"-remnant case (dpkg record with a Version, no
+            # repo candidate) on the raw result, matching ansible (see
+            # apt_no_candidate_name).
             missing = apt_unlocatable_name(install_result[:stderr], names)
             unless missing
-              missing = apt_no_candidate_name(install_result[:stdout], install_result[:stderr], names)
-              missing = nil if missing && apt_dpkg_recorded?(missing)
+              missing = apt_no_candidate_name(install_result[:stderr], names)
+              missing = nil if missing && apt_dpkg_has_version?(missing)
             end
             if missing
               PluginResult.new(
@@ -1405,12 +1405,12 @@ module Krikri
         # never installed at all.
         if upgrade_result[:exit_code] != 0
           # Same locate-miss mapping as the present-state branch above
-          # (including the all-providers-uncandidate virtual package and
-          # the same dpkg-record guard - see apt_no_candidate_name).
+          # (same dpkg-record-has-a-version guard - see
+          # apt_no_candidate_name).
           missing = apt_unlocatable_name(upgrade_result[:stderr], names)
           unless missing
-            missing = apt_no_candidate_name(upgrade_result[:stdout], upgrade_result[:stderr], names)
-            missing = nil if missing && apt_dpkg_recorded?(missing)
+            missing = apt_no_candidate_name(upgrade_result[:stderr], names)
+            missing = nil if missing && apt_dpkg_has_version?(missing)
           end
           if missing
             return PluginResult.new(

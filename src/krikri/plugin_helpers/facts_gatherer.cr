@@ -1303,6 +1303,19 @@ module Krikri
         facts["ansible_default_ipv4"] = default_ipv4
       end
 
+      # Ansible's collector always emits ansible_default_ipv6 - as an
+      # empty dict when the host has no IPv6 default route, never simply
+      # absent. Entirely missing before - found benchmarking
+      # linux-system-roles.vpn (issue #560): its set_vars.yml gates a
+      # redundant setup include on `__vpn_required_facts |
+      # difference(ansible_facts.keys()|list) | length > 0` with
+      # default_ipv6 among the required facts, so the key's permanent
+      # absence made that difference non-empty on every run and re-ran a
+      # setup task Ansible skips. A host WITH an IPv6 default route also
+      # gets {} here - the route itself is not gathered (not part of
+      # this fix).
+      facts["ansible_default_ipv6"] = {} of String => JSON::Any
+
       unless all_ipv4_addrs.empty?
         facts["ansible_all_ipv4_addresses"] = all_ipv4_addrs
       end
