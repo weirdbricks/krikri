@@ -1343,6 +1343,16 @@ module Krikri
             puts Krikri::Oneline.skip_line(connection_host, meta_skip_dump(nested_task, host)).colorize(:cyan)
           end
         else
+          # Real templates a skipped task's no_log: too (ansible-core
+          # templates every keyword before deciding the task ran), and any
+          # core deprecation that templating raises still prints here -
+          # a bare skip otherwise hides it (real: `no_log: "{{ '' | bool
+          # }}"` under when: false emits the bool-filter deprecation line
+          # before the skipping line). Only the templated form needs this
+          # probe; a literal no_log raises nothing.
+          if nested_task.no_log_expr
+            resolve_task_no_log(nested_task, build_vars_context(nested_task, host, include_legacy_ssh_aliases: false))
+          end
           puts Krikri::Oneline.skip_line(connection_host, skipped_line_suffix_for(nested_task, host, inherited_when)).colorize(:cyan)
         end
         # A skipped meta: task (e.g. a named meta: flush_handlers inside

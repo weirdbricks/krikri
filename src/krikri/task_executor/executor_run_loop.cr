@@ -1165,6 +1165,14 @@ module Krikri
         return true if evaluate_when_items(task, vars_context, host, shared)
       end
 
+      # Real templates a skipped task's no_log: too, and any core
+      # deprecation that templating raises prints before the skipping
+      # line - a bare skip that never resolves no_log would hide it
+      # (real: `no_log: "{{ '' | bool }}"` under when: false). Loop items
+      # are excluded: perform_skip already resolves their no_log.
+      if item_label.nil? && task.no_log_expr && !defer_display
+        resolve_task_no_log(task, vars_context)
+      end
       perform_skip(task, host, item_label, defer_stats, defer_display, item)
       false
     end
