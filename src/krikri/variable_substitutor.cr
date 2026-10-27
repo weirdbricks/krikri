@@ -104,6 +104,20 @@ module Krikri
   # re-raise its OWN verdict through the conservative validation gate
   # (which swallows every OTHER internal raise as "cannot validate").
   class PlusMinusOperandError < UndefinedVariableError
+    # Real ansible-core 2.19.11 wraps an operator TypeError ("unsupported
+    # operand type(s) for +: 'NoneType' and 'str'", "can only concatenate
+    # str (not \"NoneType\") to str", "bad operand type for unary -") as
+    # "Error rendering template: <msg>" everywhere it surfaces, but leaves
+    # a genuinely undefined NAME bare ("'x' is undefined"). The same class
+    # carries both shapes, so the display sites ask this instead of
+    # guessing from the call path.
+    def operand_type_failure? : Bool
+      message.to_s.matches?(/\A(unsupported operand type\(s\) for |can only concatenate |bad operand type for unary )/)
+    end
+
+    def template_text : String
+      operand_type_failure? ? "Error rendering template: #{message}" : message.to_s
+    end
   end
 
   # Raised by the first_found lookup (ExpressionEvaluator's
