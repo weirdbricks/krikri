@@ -3203,6 +3203,24 @@ module Krikri
         rescue e : ConditionalEvaluator::ConditionalBooleanError | ConditionalEvaluator::UndefinedVariableError | VariableSubstitutor::FilterEngine::UnknownFilterError
           hash["failed"] = JSON::Any.new(true)
           hash["failed_when_result"] = JSON::Any.new(changed_failed_when_error_text(task, "failed_when", failed_when, host, e))
+          # On a result the module did NOT already fail, a RAISING failed_when:
+          # finalizes through AnsibleActionCapturedError like the bool-true
+          # verdict above - the text-valued failed_when_result keeps the
+          # error text, so the display chain never sees the boolean shape
+          # and needs the same action-level markers here (issue #616:
+          # `failed_when: r.stdout` on a healthy command result reported
+          # "Module failed." where real prints "Task failed: Action
+          # failed.", live-verified vs 2.19).
+          if !module_failed
+            if !hash.has_key?("msg")
+              hash["msg"] = JSON::Any.new("Task failed: Action failed: Unknown error.")
+              hash["_ansible_action_level"] = JSON::Any.new(true)
+              hash["_ansible_error_detail"] = JSON::Any.new("Action failed: Unknown error.")
+            elsif hash["msg"].as_s? == ""
+              hash["_ansible_action_level"] = JSON::Any.new(true)
+              hash["_ansible_error_detail"] = JSON::Any.new("Action failed.")
+            end
+          end
         end
       end
 
