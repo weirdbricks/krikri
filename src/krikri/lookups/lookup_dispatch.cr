@@ -205,6 +205,18 @@ module Krikri
         # falling through every dispatch to the "undefined" fallback.
         lookup_type = lookup_type.try(&.sub(/^community\.general\./, ""))
 
+        # ansible-core templates every lookup term before the plugin runs, so
+        # a bare undefined name fails the task with its own "'x' is undefined"
+        # message; left alone it rendered the "undefined" sentinel and the
+        # plugin ran on that literal text (`lookup('template', nope)`).
+        parts.skip(1).each do |part|
+          name = part.strip
+          next unless name.matches?(/\A[A-Za-z_][A-Za-z0-9_]*\z/)
+          next if name.in?("True", "False", "None", "true", "false", "none")
+          next if @vars.has_key?(name)
+          raise UndefinedVariableError.new("'#{name}' is undefined")
+        end
+
         evaluate_lookup_scalar(lookup_type, parts, kwargs, query_mode) ||
           evaluate_lookup_file(lookup_type, parts, kwargs) ||
           evaluate_lookup_list(lookup_type, parts, kwargs, query_mode) ||

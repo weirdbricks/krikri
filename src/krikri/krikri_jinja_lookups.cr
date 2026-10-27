@@ -21,6 +21,13 @@ module Krikri
       {"lookup" => false, "query" => true, "q" => true}.each do |function_name, query_mode|
         KrikriJinja.register_default_function(function_name) do |args, kwargs, ctx|
           raise KrikriJinja::TemplateError.new("#{function_name}() requires a lookup name", 0) if args.empty?
+          # ansible-core fails the lookup argument's undefined name before the
+          # plugin runs; the lenient Undefined would otherwise stringify to ""
+          # and the plugin would run on an empty (then literal "undefined") term.
+          args.each do |arg|
+            next unless (undefined = arg.raw.as?(KrikriJinja::Undefined))
+            raise KrikriJinja::TemplateError.new(KrikriJinja.undefined_message(undefined), 0, kind: KrikriJinja::ErrorKind::Undefined)
+          end
           name = text(args[0]).sub(/^ansible\.(builtin|legacy)\./, "")
           result = lookup(name, prepare_lookup_terms(args[1..], ctx), kwargs, ctx, query_mode)
           if query_mode && !result.raw.is_a?(KrikriJinja::Undefined) && !result.raw.nil? && !result.raw.is_a?(Array)
