@@ -3088,6 +3088,13 @@ module Krikri
         # task that sets its own keeps it (see import_delegate above).
         if import_delegate && task.delegate_to.nil?
           task.delegate_to = import_delegate
+          # Real ansible prints `ok: [testhost -> localhost]` for every
+          # task inside an imported `block:` (robertdebock.haproxy's
+          # assert.yml): the import's delegate_to: reaches the block's
+          # children, not just the block task itself.
+          propagate_delegate_to_descendants(task.block_tasks || [] of Task, import_delegate)
+          propagate_delegate_to_descendants(task.rescue_tasks || [] of Task, import_delegate)
+          propagate_delegate_to_descendants(task.always_tasks || [] of Task, import_delegate)
         end
       end
 

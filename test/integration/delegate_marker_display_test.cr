@@ -82,4 +82,34 @@ describe "delegated result marker ([host -> target])" do
     output.must_match(/ok: \[h1 -> localhost\]/)
     output.wont_match(/ok: \[h1\]\n/)
   end
+
+  it "propagates an import_tasks: line's delegate_to: onto the tasks inside an imported block" do
+    status, output = run_with_marker_playbook(<<-YAML,
+      - hosts: h1
+        gather_facts: false
+        tasks:
+          - name: Import inner block
+            ansible.builtin.import_tasks: inner.yml
+            run_once: yes
+            delegate_to: localhost
+      YAML
+      <<-INNER)
+        - name: block inside import
+          block:
+            - name: assert inside imported block
+              ansible.builtin.assert:
+                that:
+                  - 1 == 1
+            - name: looped command inside imported block
+              ansible.builtin.command: echo "{{ item }}"
+              loop:
+                - a
+                - b
+      INNER
+
+    status.exit_code.must_equal(0)
+    output.must_match(/ok: \[h1 -> localhost\]/)
+    output.must_match(/changed: \[h1 -> localhost\] => \(item=b\)/)
+    output.wont_match(/ok: \[h1\]\n/)
+  end
 end
