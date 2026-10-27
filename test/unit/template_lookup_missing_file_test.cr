@@ -81,6 +81,26 @@ describe "lookup('template', missing file)" do
     combined.must_include("Unable to find '#{MISSING}' in expected paths (use -vvvvv to see paths)")
   end
 
+  it "hard-fails an undefined lookup term like ansible" do
+    # Issue #586: ansible-core fails the lookup argument's undefined name
+    # before the plugin runs; krikri previously stringified it to "" and let
+    # the lookup run (even re-probing with the literal "undefined").
+    _, out, err = run_playbook_binary(<<-YAML
+      - name: repro
+        hosts: localhost
+        gather_facts: false
+        tasks:
+          - name: S1 set_fact with an undefined lookup term
+            ansible.builtin.set_fact:
+              cfg: "{{ lookup('template', nope_var) }}"
+      YAML
+    )
+    combined = out + err
+    combined.must_include("'nope_var' is undefined")
+    combined.wont_include("Unable to find")
+    combined.wont_include("could not be found for the lookup")
+  end
+
   it "carries on with an empty result for errors='ignore'" do
     status, out, _err = run_playbook_binary(<<-YAML
       - name: repro
