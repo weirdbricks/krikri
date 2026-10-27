@@ -5567,6 +5567,24 @@ module Krikri
         play.environment_layers = saved_environment_layers
       end
 
+      # Real inherits a block's own scalar `when:` into every task under
+      # block:/rescue:/always: - the executor's inherit_when_condition
+      # performs that run-time merge - and a child failing its inherited
+      # conditional still gets real's two-level [ERROR] chain, with the
+      # "caused by" Origin pinned at the BLOCK's when: VALUE token (issue
+      # #570). The child's own file holds no `when:` for the executor's
+      # locate_conditional_origin to scan (the inherited clause lives one
+      # indent level up, on the block itself), so - like the import path's
+      # stamp above - the same record the import stamp uses must travel
+      # onto the children here, at parse time.
+      if (block_when = task_hash["when"]?) && block_when.as_a?.nil? && source_file &&
+         (when_pos = source_map.try(&.at?(task_source_prefix(source_prefix, source_index) + "/when")))
+        block_when_origin = {File.expand_path(source_file), when_pos[0], when_pos[1]}
+        propagate_import_when_origins(task.block_tasks || [] of Task, nil, block_when_origin)
+        propagate_import_when_origins(task.rescue_tasks || [] of Task, nil, block_when_origin)
+        propagate_import_when_origins(task.always_tasks || [] of Task, nil, block_when_origin)
+      end
+
       # Stamp this block's own name onto every descendant's
       # block_name_chain - AFTER the children parse, so a nested block's
       # own stamping (its children carry its name innermost) is already
