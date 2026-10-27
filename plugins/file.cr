@@ -650,6 +650,25 @@ module Krikri
       )
     end
 
+    # Ansible's file.py (ensure_symlink) skips set_fs_attributes_if_different
+    # and calls module.warn when follow: is true and the dest symlink's
+    # target does not exist - chowning through the dangling link would
+    # fail with ENOENT, where Ansible only warns, on both the created-link
+    # and the already-correct-link success paths (its check_mode return
+    # happens before this point, so check mode never warns).
+    DANGLING_FOLLOW_LINK_WARNING = "Cannot set fs attributes on a non-existent symlink target. follow should be set to False to avoid this."
+
+    private def dangling_follow_link?(path : String) : Bool
+      follow_symlinks? && File.symlink?(path) && !File.exists?(path)
+    end
+
+    # The warning fires on every non-check-mode run over a dangling
+    # follow link, changed or not.
+    private def attach_dangling_follow_warning(result : PluginResult, path : String) : Nil
+      return unless dangling_follow_link?(path)
+      result.extra["warnings"] = JSON::Any.new([JSON::Any.new(DANGLING_FOLLOW_LINK_WARNING)])
+    end
+
     # Handle state=link (symbolic link)
     private def handle_link(path : String) : PluginResult
       src = link_src(path)
@@ -657,36 +676,7 @@ module Krikri
 
       # Check if link already exists and points to correct target
       current_target = try_readlink(path)
-      if current_target
-        if current_target == src
-          # Link exists and points to correct target
-          changed = update_attributes_if_needed(path, is_directory: false, skip_mode: true)
-
-          if @check_mode
-            return PluginResult.new(
-              changed: changed,
-              failed: false,
-              msg: "",
-              dest: path,
-              src: src,
-              key_order: SUCCESS_KEY_ORDER
-            )
-          end
-
-          if changed
-            apply_file_attributes(path)
-          end
-
-          return PluginResult.new(
-            changed: changed,
-            failed: false,
-            msg: "",
-            dest: path,
-            src: src,
-            key_order: SUCCESS_KEY_ORDER
-          )
-        end
-      end
+      return existing_link_result(path, src) if current_target == src
 
       # Link doesn't exist or points to wrong target
       if @check_mode
@@ -720,17 +710,61 @@ module Krikri
         )
       end
 
+      created_link_result(path, src)
+    end
+
+    private def existing_link_result(path : String, src : String) : PluginResult
+      # Link exists and points to correct target
+      changed = update_attributes_if_needed(path, is_directory: false, skip_mode: true)
+
+      if @check_mode
+        return PluginResult.new(
+          changed: changed,
+          failed: false,
+          msg: "",
+          dest: path,
+          src: src,
+          key_order: SUCCESS_KEY_ORDER
+        )
+      end
+
+      # Ansible's file.py skips fs attributes and warns when follow is
+      # true and the link's target is missing (update_attributes_if_needed
+      # already reports nothing to do for a dangling follow link, since
+      # stat_follow comes back nil).
+      if changed && !dangling_follow_link?(path)
+        apply_file_attributes(path)
+      end
+
+      result = PluginResult.new(
+        changed: changed,
+        failed: false,
+        msg: "",
+        dest: path,
+        src: src,
+        key_order: SUCCESS_KEY_ORDER
+      )
+      attach_dangling_follow_warning(result, path)
+      result
+    end
+
+    private def created_link_result(path : String, src : String) : PluginResult
       # Apply attributes - Ansible's file module defaults follow: to
       # true for every state (including state: link), so it follows the
       # dest symlink and chowns the TARGET, not the link itself; a chown
       # the running user isn't allowed to do on the target therefore
-      # fails the task exactly as it would on a plain file.
-      apply_file_attributes(path)
+      # fails the task exactly as it would on a plain file. When that
+      # target is missing (a dangling link), Ansible instead skips the
+      # attributes entirely and only warns - applying them would chown
+      # through the link and die on ENOENT.
+      unless dangling_follow_link?(path)
+        apply_file_attributes(path)
+      end
 
       # Ansible's link results carry NO msg on any success path - created,
       # re-pointed or already-correct alike (live-verified vs 2.19.11 at
       # -v: {changed, dest, src} + the add_path_info stat fields only).
-      PluginResult.new(
+      result = PluginResult.new(
         changed: true,
         failed: false,
         msg: "",
@@ -738,6 +772,8 @@ module Krikri
         src: src,
         key_order: SUCCESS_KEY_ORDER
       )
+      attach_dangling_follow_warning(result, path)
+      result
     end
 
     # Resolves state=link's src:, returning either the tilde-expanded
