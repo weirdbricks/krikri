@@ -3190,6 +3190,17 @@ module Krikri
       free_form_include_vars = free_form_include_vars?(task)
       msg = msg.sub("Error while resolving value for 'cmd':", "Error while resolving value for '_raw_params':") if free_form
       msg = msg.sub("Error while resolving value for 'file':", "Error while resolving value for '_raw_params':") if free_form_include_vars
+      # ansible-core 2.19 renders an undefined variable under the
+      # environment: keyword as its own three-link keyword chain (issue
+      # #625, live-captured), NOT the "Finalization of task args" chain
+      # below - a keyword failure is not a task-arg one, and the middle
+      # link carries no Origin with the raw value's python repr instead.
+      env_prefix = "Task failed: Error processing keyword 'environment': "
+      if msg.starts_with?(env_prefix)
+        env_name = msg[env_prefix.size..].match(/\A'([A-Za-z_][A-Za-z0-9_]*)' is undefined\z/).try(&.[1])
+        return nil unless env_name
+        return environment_keyword_undefined_block(task, env_name, path, lines)
+      end
       l3 = msg
       l2 = "Finalization of task args for '#{finalization_module_name(task)}' failed."
       l1 = "Task failed: Finalization of task args for '#{finalization_module_name(task)}' failed: #{msg}"
@@ -3354,6 +3365,81 @@ module Krikri
       # task-unique, so a looped task's failing items display the chain
       # once) - applied by the caller at print time.
       text
+    end
+
+    # The [ERROR] chain ansible-core 2.19 prints for an undefined variable
+    # under the environment: keyword (issue #625, live-captured): "Task
+    # failed." Origin'd at the task's name: key, then "Error processing
+    # keyword 'environment'." with Origin: <unknown> followed by the task's
+    # RAW environment value wrapped as a one-element list in python repr
+    # form, then the bare "'x' is undefined" Origin'd at the failing
+    # value's first character (string form: the quote after `environment:`;
+    # dict form: the entry whose value templates the missing name).
+    private def environment_keyword_undefined_block(task : Task, undefined_name : String, path : String, lines : Array(String)) : String?
+      return nil unless name_line = locate_name_line(lines, task)
+      return nil unless value_pos = environment_value_position(lines, task, undefined_name)
+      repr = if raw_text = task.environment_raw
+               python_repr(JSON.parse([raw_text].to_json))
+             elsif env_hash = task.environment
+               python_repr(JSON.parse([env_hash].to_json))
+             else
+               return nil
+             end
+
+      String.build do |io|
+        io << "[ERROR]: Task failed: Error processing keyword 'environment': '" << undefined_name << "' is undefined\n"
+        io << "\nTask failed.\n"
+        io << origin_context_block(path, lines, name_line[0] + 1, name_line[1])
+        io << "\n<<< caused by >>>\n\n"
+        io << "Error processing keyword 'environment'.\n"
+        io << "Origin: <unknown>\n\n"
+        io << repr << "\n"
+        io << "\n<<< caused by >>>\n\n"
+        io << "'" << undefined_name << "' is undefined\n"
+        io << origin_context_block(path, lines, value_pos[0] + 1, value_pos[1])
+        # ansible-core 2.19 leaves a blank line between this block and the
+        # fatal: line (live-captured, both forms), like the finalization chain
+        io << "\n"
+      end
+    end
+
+    # The failing environment: VALUE's source position, scanned forward
+    # from the task's own line the way keyword_value_origin scans. A value
+    # written inline after `environment:` is the string form - its first
+    # non-space character is the Origin column; a value on deeper-indented
+    # entry lines is the dict form - the entry whose value templates the
+    # undefined name owns the Origin, at that value's first character.
+    private def environment_value_position(lines : Array(String), task : Task, undefined_name : String) : {Int32, Int32}?
+      return nil unless task.source_line > 0 && task.source_line <= lines.size
+      ((task.source_line - 1)...lines.size).each do |idx|
+        line = lines[idx]
+        at = line.index("environment:")
+        next unless at
+        next unless line[0...at].strip.empty?
+        col = at + "environment:".size
+        while col < line.size && line[col] == ' '
+          col += 1
+        end
+        return {idx, col + 1} if col < line.size && line[col] != '#'
+        indent = line.size - line.lstrip.size
+        ((idx + 1)...lines.size).each do |entry_idx|
+          entry = lines[entry_idx]
+          next if entry.strip.empty?
+          break if entry.size - entry.lstrip.size <= indent
+          entry_colon = entry.index(':')
+          next unless entry_colon
+          value_col = entry_colon + 1
+          while value_col < entry.size && entry[value_col] == ' '
+            value_col += 1
+          end
+          next unless value_col < entry.size
+          value_text = entry[value_col..]
+          next unless value_text.includes?("{{") && value_text.includes?(undefined_name)
+          return {entry_idx, value_col + 1}
+        end
+        return nil
+      end
+      nil
     end
 
     # Batch-build (execute_batch_group / execute_looped_task_batched)
@@ -5249,7 +5335,11 @@ module Krikri
         end
         merged
       rescue e : UndefinedVariableError
-        raise UndefinedVariableError.new("Error processing keyword 'environment': #{e.message}")
+        # ansible-core 2.19 prefixes the fatal msg with "Task failed: "
+        # (live-captured), the same wrapping the name:/become: keyword
+        # failures above use - finalize_args_failure_message passes an
+        # already-prefixed message through unchanged.
+        raise UndefinedVariableError.new("Task failed: Error processing keyword 'environment': #{e.message}")
       end
     end
 
