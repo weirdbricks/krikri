@@ -110,10 +110,11 @@ module Krikri
     # (the real callback dumps the whole setup result there).
     @facts_results = Hash(String, JSON::Any).new
     # Per-host setup failures caused by a missing ansible_python_interpreter:
-    # the interpreter path plus whether the gather ran over SSH. The
-    # Gathering Facts report prints ansible's interpreter-not-found fatal
-    # block for such hosts instead of the generic two-line failure.
-    @facts_interpreter_missing = {} of String => {String, Bool}
+    # the interpreter path, whether the gather ran over SSH, and whether
+    # the target's /bin/sh is dash. The Gathering Facts report prints
+    # ansible's interpreter-not-found fatal block for such hosts instead
+    # of the generic two-line failure.
+    @facts_interpreter_missing = {} of String => {String, Bool, Bool}
     # The subset of @facts[host.name] that came from `set_fact`/
     # `register`-style high-precedence writes rather than an ordinary
     # fact-gathering module (setup/package_facts/service_facts/etc).

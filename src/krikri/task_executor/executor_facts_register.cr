@@ -160,13 +160,13 @@ module Krikri
           @results[host.name]["ok"] += 1
         else
           if missing = @facts_interpreter_missing[host.name]?
-            interp, remote = missing
+            interp, remote, dash_shell = missing
             # Ansible prints a full failed-setup block for a missing
             # module interpreter (cause chain, sub-event box, fatal line
             # with the failed_modules payload) - not the generic two-line
             # failure report. The fatal line gets the red tint like every
             # neighbouring fatal line; the block's other lines stay plain.
-            report_lines = Krikri::FactsGatherer.interpreter_missing_report(host.name, interp, host.connection_host, remote).split("\n")
+            report_lines = Krikri::FactsGatherer.interpreter_missing_report(host.name, interp, host.connection_host, remote, dash_shell).split("\n")
             fatal_line = report_lines.pop
             report_lines.each { |line| puts line }
             puts fatal_line.colorize(:red)
@@ -328,10 +328,13 @@ module Krikri
         end
         # The gatherer marks an rc-127 interpreter-not-found failure with
         # the configured path itself - remember it (and whether this ran
-        # over SSH, which decides which shell-error form ansible shows)
-        # so the report below can print the real fatal block.
+        # over SSH, which decides which shell-error form ansible shows,
+        # and whether the target's /bin/sh is dash, which decides that
+        # form's wording) so the report below can print the real fatal
+        # block.
         if (interp = result["interpreter_missing"]?.try(&.as_s?)) && !interp.empty?
-          @facts_interpreter_missing[host.name] = {interp, remote}
+          dash = result["shell_dash"]?.try(&.as_bool?) == true
+          @facts_interpreter_missing[host.name] = {interp, remote, dash}
         end
         return {false, msg, result["unreachable"]?.try(&.as_bool?) == true}
       end

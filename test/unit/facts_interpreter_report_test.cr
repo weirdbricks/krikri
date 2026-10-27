@@ -38,4 +38,11 @@ describe "Krikri::FactsGatherer.interpreter_missing_report (facts_interpreter_re
     report.must_include("module_stderr\": \"Shared connection to 10.0.0.5 closed.\\r\\n\"")
     report.must_include("module_stdout\": \"/bin/sh: line 1: /usr/bin/python3: No such file or directory\\r\\n\"")
   end
+
+  it "uses dash's remote shell error when the target's /bin/sh is dash" do
+    report = Krikri::FactsGatherer.interpreter_missing_report("web1", "/usr/bin/env python3", "10.0.0.5", true, true)
+    report.must_include("module_stderr\": \"Shared connection to 10.0.0.5 closed.\\r\\n\"")
+    report.must_include("module_stdout\": \"/bin/sh: 1: /usr/bin/env python3: not found\\r\\n\"")
+    report.wont_include("line 1:")
+  end
 end

@@ -116,6 +116,17 @@ module Krikri
       end
     end
 
+    # dash words a missing command as "/bin/sh: 1: X: not found" while
+    # bash words it as "/bin/sh: line 1: X: No such file or directory" -
+    # ansible shows whichever of the two the target's /bin/sh really is,
+    # so the flavour has to be detected on the machine running this code.
+    def dash_shell? : Bool
+      return false unless File.exists?("/bin/sh")
+      File.basename(File.real_path("/bin/sh")) == "dash"
+    rescue
+      false
+    end
+
     # The exact block ansible-playbook prints when the implicit setup
     # module dies with rc 127 on a missing interpreter (live-verified
     # output): the failed-task banner, the cause chain, the sub-event
@@ -124,9 +135,10 @@ module Krikri
     # uncoloured as its last line - the executor applies the red tint
     # there, like every other fatal line, without touching the rest.
     #
-    # module_stdout/module_stderr differ by transport: over a real SSH
-    # round trip the interpreter error is the remote shell's
-    # ("/bin/sh: line 1: ... No such file or directory") and the
+    # module_stdout/module_stderr differ by transport AND by target
+    # shell: over a real SSH round trip the interpreter error is the
+    # remote shell's (dash says "/bin/sh: 1: ... not found", bash says
+    # "/bin/sh: line 1: ... No such file or directory") and the
     # connection-closed notice lands in stderr, while on
     # ansible_connection=local the controller's own /bin/sh raises
     # "not found" on stderr and stdout is empty.
@@ -135,9 +147,9 @@ module Krikri
     # payload exactly, so it is written with JSON.build in that order
     # rather than left to a hash's iteration - the escaped \r\n inside
     # the shell strings is how ansible displays them inside the JSON.
-    def interpreter_missing_report(host_name : String, interpreter : String, connection_addr : String, remote : Bool) : String
+    def interpreter_missing_report(host_name : String, interpreter : String, connection_addr : String, remote : Bool, dash_shell : Bool = false) : String
       module_stderr = remote ? "Shared connection to #{connection_addr} closed.\r\n" : "/bin/sh: 1: #{interpreter}: not found\n"
-      module_stdout = remote ? "/bin/sh: line 1: #{interpreter}: No such file or directory\r\n" : ""
+      module_stdout = remote ? (dash_shell ? "/bin/sh: 1: #{interpreter}: not found\r\n" : "/bin/sh: line 1: #{interpreter}: No such file or directory\r\n") : ""
       not_found_msg = "The module interpreter '#{interpreter}' was not found."
       failed_modules_msg = "The following modules failed to execute: ansible.legacy.setup."
       sub_event_msg = "The module interpreter '#{interpreter}' was not found. Consider overriding the configured interpreter path for this host. See stdout/stderr for the returned output."
@@ -2708,8 +2720,10 @@ module Krikri
           # Not an ansible result key - a marker for the executor, which
           # needs the configured path itself to reproduce ansible's
           # interpreter-not-found fatal block (the msg alone only carries
-          # it embedded in prose).
+          # it embedded in prose). shell_dash lets the executor pick the
+          # remote shell-error wording the target's own /bin/sh prints.
           "interpreter_missing" => interpreter,
+          "shell_dash"          => dash_shell?,
         }.to_json
       end
 
