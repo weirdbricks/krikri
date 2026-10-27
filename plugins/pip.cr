@@ -2,6 +2,7 @@
 
 require "json"
 require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/run_command_failure"
 
 module Krikri
   # Pip plugin - manages Python packages via pip. Compatible with (a
@@ -537,6 +538,13 @@ module Krikri
       if true?(@params["virtualenv_site_packages"]?)
         parts << "--system-site-packages"
       else
+        # Ansible's _get_cmd_options runs `<cmd> --help` through
+        # AnsibleModule.run_command, which raises OSError for a missing
+        # binary, so the failure surfaces as the exec-failure shape
+        # rather than "Could not get output from ...".
+        if failure = PluginHelpers::RunCommandFailure.exec_check(cmd0)
+          return PluginHelpers::RunCommandFailure.exec_failure(cmd0, failure[0], failure[1], "#{cmd0} --help")
+        end
         help = remote_exec("#{Shell.single_quote(cmd0)} --help")
         unless help[:exit_code] == 0
           return PluginResult.new(changed: false, failed: true, msg: "Could not get output from #{cmd0} --help: #{help[:stdout]}#{help[:stderr]}")
