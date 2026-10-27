@@ -2696,7 +2696,7 @@ module Krikri
       result = nil
       attempt = 0
       condition_met = false
-      action_level_escape = false
+      exception_escape = false
 
       while attempt < total_runs
         attempt += 1
@@ -2711,7 +2711,12 @@ module Krikri
         # retried, never evaluated against until:, and never gets the loop's
         # attempts key. The first result is the final one, exactly as the
         # plugin produced it (issue #131, live-verified vs 2.19.11).
-        # script: is the exception to the escape: its non-zero-exit failure
+        # An arg-finalization failure is the other escape shape: ansible
+        # raises it before the module runs, outside the attempt loop as
+        # well, so the until:/retries: task is never retried either (issue
+        # #587 ground truth: no FAILED - RETRYING lines, no attempts key).
+        # script: is the exception to the action-level escape: its
+        # non-zero-exit failure
         # is a RETURNED dict, not a raise - real's attempt loop calls
         # handler.run() directly, and the action-context error raise for a
         # returned dict happens in _execute(), OUTSIDE this loop - so it
@@ -2725,15 +2730,16 @@ module Krikri
         # 2.19.11).
         if result_hash = result.as_h?
           action_plugin_name = task.action_name || task.module_name
-          if Krikri.result_failed_flag(result) &&
-             result_hash["_ansible_action_level"]?.try(&.as_bool?) == true &&
-             !SCRIPT_MODULES.includes?(action_plugin_name) &&
-             !DICT_FAILURE_ACTION_PLUGINS.includes?(action_plugin_name)
+          action_level = result_hash["_ansible_action_level"]?.try(&.as_bool?) == true &&
+                         !SCRIPT_MODULES.includes?(action_plugin_name) &&
+                         !DICT_FAILURE_ACTION_PLUGINS.includes?(action_plugin_name)
+          finalization = result_hash["_ansible_finalization_failure"]?.try(&.as_bool?) == true
+          if Krikri.result_failed_flag(result) && (action_level || finalization)
             if register_name && !register_name.empty?
               register_result(host, register_name, result)
               vars_context[register_name] = @registered_vars[host.name][register_name]
             end
-            action_level_escape = true
+            exception_escape = true
             break
           end
         end
@@ -2800,8 +2806,10 @@ module Krikri
       # retries-exhausted and every other failed registered result project
       # it; the fatal path just never gets to show it off). A single-run
       # until task (retries: 0) gets NEITHER key (Ansible never engages the
-      # loop machinery).
-      if result && total_runs > 1 && !action_level_escape
+      # loop machinery). The action-level and finalization escapes above
+      # keep the loop from ever engaging, so they skip the key the same
+      # way a single-run task does.
+      if result && total_runs > 1 && !exception_escape
         result_hash = result.as_h.dup
         result_hash["attempts"] = JSON::Any.new((condition_met ? attempt : total_runs - 1).to_i64)
         unless condition_met
@@ -2834,6 +2842,13 @@ module Krikri
       if changed && (notify_list = task.notify)
         notify_handlers(task, host, notify_list)
       end
+
+      # Same stashed-finalization-block flush as the plain path (see
+      # executor_task_exec's display_result call): the [ERROR] chain block
+      # goes under the task's own banner, just before the fatal line -
+      # without it an until:/retries: task whose args fail to finalize
+      # silently drops the block (issue #587).
+      TaskExecutor.flush_deferred_finalization_error_block(result)
 
       if @adhoc
         ResultDisplay.display_adhoc_result(host, result, @diff_mode, module_name: task.module_name)
