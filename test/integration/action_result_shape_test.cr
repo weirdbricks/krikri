@@ -98,6 +98,22 @@ describe "raw result shape" do
     result["msg"].as_s.must_equal("non-zero return code")
   end
 
+  it "reports a missing executable as the login shell's 127 without cmd or exception" do
+    result = registered_dump(<<-T)
+      - ansible.builtin.raw: echo hi
+        args:
+          executable: /nonexistent-krikri-631/sh
+        register: r
+        ignore_errors: true
+      T
+    result.as_h.keys.must_equal(%w[rc stdout stdout_lines stderr stderr_lines changed failed msg])
+    result["rc"].as_i.must_equal(127)
+    result["msg"].as_s.must_equal("non-zero return code")
+    result["stdout"].as_s.must_equal("")
+    result["stderr"].as_s.must_equal("/bin/sh: 1: /nonexistent-krikri-631/sh: not found\n")
+    result["failed"].as_bool.must_equal(true)
+  end
+
   it "skips under check mode with the bare skipped, failed, changed shape" do
     result = registered_dump(<<-T)
       - ansible.builtin.raw: echo hi
