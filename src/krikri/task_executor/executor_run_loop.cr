@@ -1,4 +1,6 @@
 require "./executor"
+require "../plugin_helpers/ansible_splitlines"
+require "../plugin_helpers/script_pty_capture"
 
 module Krikri
   class TaskExecutor
@@ -2728,7 +2730,9 @@ module Krikri
       if period = marker_task_timeout(result)
         return task_timeout_result(period)
       end
-      result = shape_raw_result(task, result)
+      result = shape_raw_result(task, result, substituted_params,
+        PluginManager.remote_execution?("shell", exec_host, dispatch_vars),
+        exec_host.connection_host)
       result = shape_script_result(task, result)
       result = attach_invocation(task, substituted_params, result)
       apply_changed_failed_when(task, result, vars_context, host)
@@ -2743,7 +2747,9 @@ module Krikri
     # plus msg/exception on a non-zero rc (live-verified 2.19.11).
     # Internal `_ansible_*` keys the failure renderer needs are kept,
     # after the real keys.
-    private def shape_raw_result(task : Task, result : JSON::Any) : JSON::Any
+    # executable the task names: raw's spawn failure is a LOGIN-SHELL
+    # report, not a spawn report (see raw_spawn_failure_shape below).
+    private def shape_raw_result(task : Task, result : JSON::Any, substituted_params : Hash(String, String), remote : Bool, addr : String) : JSON::Any
       return result unless RAW_MODULES.includes?(task.action_name || task.module_name)
       hash = result.as_h? || return result
       failed = hash["failed"]?.try(&.as_bool?) || false
@@ -2751,6 +2757,14 @@ module Krikri
       # bare {skipped, failed, changed} shape.
       if hash["skipped"]?.try(&.as_bool?)
         return JSON.parse({"skipped" => true, "failed" => false, "changed" => false}.to_json)
+      end
+      # A shell-plugin spawn failure means the task's own `executable:` was
+      # missing/inexecutable - real's raw action hands it to the connection's
+      # login shell instead and reports what THAT shell printed (the rewrite
+      # below). Everything else keeps the aliased-plugin shape untouched.
+      if failed && (exe = substituted_params["executable"]?) &&
+         (spawn_failure = TaskExecutor.raw_spawn_failure_shape(hash, exe, remote, addr))
+        return spawn_failure
       end
       shaped = {} of String => JSON::Any
       %w[rc stdout stdout_lines stderr stderr_lines changed failed].each do |key|
@@ -2772,6 +2786,58 @@ module Krikri
         shaped[key] = value unless shaped.has_key?(key) || dropped.includes?(key)
       end
       JSON::Any.new(shaped)
+    end
+
+    # The shell plugin pre-checks the task's `executable:` locally and
+    # reports the raw errno as rc (2 ENOENT, 13 EACCES) with msg "Error
+    # executing command." - but real's raw action never spawns the
+    # executable itself. It passes it to _low_level_execute_command, which
+    # sends `<executable> -c '<cmd>'` through the CONNECTION's own login
+    # shell; the missing/inexecutable binary is then reported BY that shell
+    # as an ordinary non-zero exit - 127 for ENOENT, 126 for EACCES - which
+    # the raw action wraps in the plain failed dict: changed: true, msg
+    # "non-zero return code", and none of the spawn report's cmd/exception
+    # keys. The wording differs by branch because the shells differ: local
+    # runs through /bin/sh (dash: "not found"), remote through the
+    # pty-attached ssh login shell - issue #631's capture shows bash's "No
+    # such file or directory" there (dash login shells would word it
+    # differently; not verified). Returns nil when the hash is not a raw
+    # spawn failure, so every other raw path keeps its shape.
+    def self.raw_spawn_failure_shape(hash : Hash(String, JSON::Any), executable : String, remote : Bool, addr : String) : JSON::Any?
+      return nil unless hash["failed"]?.try(&.as_bool?) &&
+                        hash["msg"]?.try(&.as_s?) == "Error executing command."
+      local_reason, remote_reason, rc = case hash["rc"]?.try(&.as_i?)
+                                        when  2 then {"not found", "No such file or directory", 127}
+                                        when 13 then {"Permission denied", "Permission denied", 126}
+                                        else         return nil
+                                        end
+      if remote
+        # The remote side's output rides the pty into stdout (ONLCR turns
+        # every \n into \r\n), leaving only openssh's own close notice on
+        # the ssh client's stderr - the same shapes the script action's
+        # pty-attached run produces.
+        raw_stdout = "bash: line 1: #{executable}: #{remote_reason}\n"
+        stdout = PluginHelpers::ScriptPtyCapture.pty_stdout(raw_stdout)
+        stderr = PluginHelpers::ScriptPtyCapture.connection_closed_stderr(addr)
+        stderr_lines = [stderr.rstrip("\r\n")]
+      else
+        raw_stdout = ""
+        stdout = ""
+        stderr = "/bin/sh: 1: #{executable}: #{local_reason}\n"
+        stderr_lines = PluginHelpers::AnsibleSplitlines.split(stderr)
+      end
+      JSON.parse({
+        "rc"                    => rc,
+        "stdout"                => stdout,
+        "stdout_lines"          => PluginHelpers::AnsibleSplitlines.split(raw_stdout),
+        "stderr"                => stderr,
+        "stderr_lines"          => stderr_lines,
+        "changed"               => true,
+        "failed"                => true,
+        "msg"                   => "non-zero return code",
+        "_ansible_action_level" => true,
+        "_ansible_error_detail" => "Action failed: non-zero return code",
+      }.to_json)
     end
 
     SCRIPT_MODULES = {"script", "ansible.builtin.script", "ansible.legacy.script"}
