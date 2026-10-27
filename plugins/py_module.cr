@@ -5,6 +5,7 @@ require "base64"
 require "file_utils"
 require "../src/krikri/base_plugin"
 require "../src/krikri/python_module_runner"
+require "../src/krikri/plugin_helpers/python_lib_gate"
 
 module Krikri
   # PythonModuleRunner plugin - executes a role-private custom module
@@ -70,7 +71,17 @@ module Krikri
       python_module = first_line.nil? || !first_line.starts_with?("#!") ||
                       first_line.includes?("python")
 
-      python = %w[python3 python].find { |bin| !`command -v #{bin} 2>/dev/null`.strip.empty? }
+      # The interpreter's own path lands in the module's
+      # missing_required_lib message (basic.py embeds sys.executable),
+      # and Ansible runs the module under ITS discovered interpreter - a
+      # bare `python3` here made the message name /usr/bin/python3 where
+      # real named /usr/bin/python3.13 (issue #557, observed on
+      # linux-system-roles.selinux's library/selinux_modules_facts.py).
+      # Prefer the same discovery Ansible does; the plain PATH lookup
+      # stays as the fallback for a target where no fallback name
+      # resolves.
+      python = Krikri.discovered_target_python ||
+               %w[python3 python].find { |bin| !`command -v #{bin} 2>/dev/null`.strip.empty? }
       if python_module && !python
         return PluginResult.new(changed: false, failed: true, msg: "py_module: no python3/python on the target - cannot run custom module #{module_name}")
       end
@@ -231,7 +242,13 @@ module Krikri
 
         extra = Hash(String, JSON::Any).new
         result_hash.each do |key, value|
-          next if key.in?("changed", "failed", "msg", "invocation")
+          # Real ansible drops a module's own fail_json(exception=...) key from
+          # the controller result - it surfaces only at -vvv, never in the
+          # [ERROR] block (issue #557). Keeping it here would feed
+          # result_display's "<msg>: <exception>" composition, which is meant
+          # only for krikri-native plugins emulating a controller-side
+          # ErrorSummary.
+          next if key.in?("changed", "failed", "msg", "invocation", "exception")
           extra[key] = value
         end
 

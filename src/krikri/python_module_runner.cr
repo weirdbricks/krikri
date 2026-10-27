@@ -260,9 +260,33 @@ module Krikri
     BASIC_PY_SHIM = <<-PYTHON
       import json
       import os
+      import platform
       import subprocess
       import sys
       import tempfile
+
+
+      # Real basic.py ships this import-gate helper beside AnsibleModule,
+      # and role-private modules import both names in one line
+      # (linux-system-roles.selinux's library/selinux_modules_facts.py on
+      # a target without python3-libsemanage, issue #557): without it
+      # here the import itself raised ImportError, the module printed no
+      # result JSON and the task died as MODULE FAILURE where real's
+      # bundled basic.py lets the module fail through fail_json. Verbatim
+      # from ansible-core 2.19's basic.py so the composed text - library,
+      # hostname, interpreter path, fixed advice - matches the [ERROR]
+      # block real prints for the same failure.
+      def missing_required_lib(library, reason=None, url=None):
+          hostname = platform.node()
+          msg = "Failed to import the required Python library (%s) on %s's Python %s." % (library, hostname, sys.executable)
+          if reason:
+              msg += " This is required %s." % reason
+          if url:
+              msg += " See %s for more info." % url
+          msg += (" Please read the module documentation and install it in the appropriate location."
+                  " If the required library is installed, but Ansible is using the wrong Python interpreter,"
+                  " please consult the documentation on ansible_python_interpreter")
+          return msg
 
 
       class AnsibleModule(object):

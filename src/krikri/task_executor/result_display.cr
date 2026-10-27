@@ -746,6 +746,18 @@ module Krikri
       # per-item lines, once for identical loop items).
       return true if module_name.try { |name| name == "debconf" || name.ends_with?(".debconf") } &&
                      msg.starts_with?("Task failed: Module failed: Failed to find required executable \"debconf-get-selections\" in paths: ")
+      # missing_required_lib's import gate (issue #557, observed on
+      # linux-system-roles.selinux's own library/selinux_modules_facts.py
+      # without python3-libsemanage): the wording is ansible's basic.py
+      # helper text, composed from only the library name, the target
+      # hostname and the interpreter path - none of the task's data - so
+      # the block prints like real's does (live-verified: before the
+      # censored fatal line). A module's own reason sentence
+      # (gssapi-style) may sit between the first sentence and the generic
+      # advice; the "Task failed: Module failed: " brief is optional
+      # because crash-mimicking plugins compose it into their own msg
+      # while a fail_json result carries the bare text.
+      return true if msg =~ /\A(?:Task failed: Module failed: )?Failed to import the required Python library \([^\s()]+\) on \S+'s Python \S+\. .*Please read the module documentation and install it in the appropriate location\. If the required library is installed, but Ansible is using the wrong Python interpreter, please consult the documentation on ansible_python_interpreter\z/
       !!(copy_task && NO_LOG_SAFE_MSGS.includes?(msg))
     end
 
