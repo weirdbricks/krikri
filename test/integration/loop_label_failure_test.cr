@@ -303,4 +303,40 @@ describe "loop_control.label templating failure (loop_label_failure_test.cr)" do
   ensure
     File.delete(playbook) if playbook && File.exists?(playbook)
   end
+
+  # Live-verified against ansible-playbook 2.19.11: a non-debug module
+  # with a label-failed item whose when: was False prints the failed
+  # item line and no trailing fatal at all.
+  it "prints no trailing fatal for a non-debug label-failed item whose when was False" do
+    playbook = File.tempname("loop-label-nodebug-fatal", ".yml")
+    File.write(playbook, <<-YAML
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          is_suse: false
+        tasks:
+          - name: Touch suse marker
+            file:
+              dest: /tmp/krikri-issue-571-test
+              state: touch
+            with_items:
+              - common_name: bob
+            loop_control:
+              loop_var: oc
+              label: "{{ oc.name }}"
+            when: is_suse
+      YAML
+    )
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+    text = output.to_s
+    status.success?.must_equal(false)
+    text.must_include(%q{failed: [localhost] (item=None) => })
+    text.must_include("Failed to template loop_control.label")
+    text.includes?("fatal:").must_equal(false)
+    text.must_match(/failed=1\b/)
+  ensure
+    File.delete(playbook) if playbook && File.exists?(playbook)
+  end
 end
