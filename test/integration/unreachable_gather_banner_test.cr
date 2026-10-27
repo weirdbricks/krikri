@@ -1,19 +1,14 @@
 require "file_utils"
 require "../minitest_helper"
 
-# ansible-core 2.19.11 (live-verified 2026-10-07, byte-identical stdout vs
-# this engine) reports a host the implicit Gathering Facts task cannot
-# reach as:
+# ansible-core 2.19.11 reports a host the implicit Gathering Facts task
+# cannot reach as one plain error block with no "Task failed." head and
+# no "<<< caused by >>>" chain (re-observed 2026-10-26 against a refusing
+# and a blackholed host, both fresh Gathering Facts runs):
 #
 #   PLAY [all] ...
 #   TASK [Gathering Facts] ...
 #   [ERROR]: Task failed: Failed to connect to the host via ssh: ssh: connect to host 127.0.0.1 port 1: Connection refused
-#
-#   Task failed.
-#
-#   <<< caused by >>>
-#
-#   Failed to connect to the host via ssh: ssh: connect to host 127.0.0.1 port 1: Connection refused
 #
 #   fatal: [deadhost]: UNREACHABLE! => {"changed": false, "msg": "Task failed: Failed to connect to the host via ssh: ssh: ...", "unreachable": true}
 #   ok: [h1]
@@ -78,6 +73,9 @@ describe "unreachable host at the implicit Gathering Facts task" do
     # way ansible-core 2.19 composes task errors
     output.must_include(%(fatal: [deadhost]: UNREACHABLE! => {"changed": false, "msg": "Task failed: Failed to connect to the host via ssh: ssh: connect to host 127.0.0.1 port 1: Connection refused", "unreachable": true}))
     output.wont_include("Failed to upload")
+    # ansible's UNREACHABLE error is a single plain block: no "Task failed."
+    # head and no "<<< caused by >>>" chain before the fatal line
+    output.wont_include("<<< caused by >>>")
 
     recap = output.lines.find(&.starts_with?("deadhost"))
     recap.wont_be_nil

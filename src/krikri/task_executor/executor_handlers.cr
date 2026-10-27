@@ -355,6 +355,23 @@ module Krikri
       # handlers merge per item inside #execute_handler_loop.
       merge_ansible_facts(host, result, handler.module_name.ends_with?("set_fact"), handler)
 
+      # An SSH-transport-level failure (unreachable: true on the result -
+      # the reboot handler whose host never came back, where the
+      # post-timeout tmpdir cleanup is what failed over ssh) is Ansible's
+      # UNREACHABLE for a handler too, not a failed-or-ok handler: it is
+      # booked exactly the way finish_single_task books a regular task's
+      # (fatal report, unreachable count, host halted), and a counted
+      # marker keeps HandlerRunner's own recording step from displaying
+      # and recounting it as ok.
+      if unreachable_task_result?(result)
+        report_unreachable(handler, host, result["stderr"]?.try(&.as_s?), no_log: resolve_task_no_log(handler, vars_context))
+        @unreachable_hosts << host.name unless handler.ignore_unreachable?
+        return JSON.parse({
+          "changed"                     => false,
+          "handler_unreachable_counted" => true,
+        }.to_json)
+      end
+
       # A handler can itself notify: further handlers (robertdebock.
       # auditd's own "Run augenrules" -> notify: "Load rules" ->
       # Ansible runs "Load rules" within the SAME flush_handlers pass,

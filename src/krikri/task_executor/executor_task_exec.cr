@@ -1048,9 +1048,17 @@ module Krikri
 
       deadline = Time.instant + reboot_timeout.seconds
       reconnected = false
+      last_result = nil
+      last_attempt_timed_out = false
       until Time.instant >= deadline
-        result = SSHManager.exec(connection_host, user, test_command, conn.port, timeout: connect_timeout, identity_file: identity_file, extra_args: conn.ssh_extra_options) rescue nil
-        if result && result[:exit_code] == 0
+        # A probe killed by the exec timeout exits 137 with empty stderr,
+        # so connection_level_failure? has nothing to match on - but
+        # Ansible treats an expiring ssh ConnectTimeout as a transport
+        # failure (UNREACHABLE), so time the attempt itself to catch that.
+        attempt_started = Time.instant
+        last_result = SSHManager.exec(connection_host, user, test_command, conn.port, timeout: connect_timeout, identity_file: identity_file, extra_args: conn.ssh_extra_options) rescue nil
+        last_attempt_timed_out = (Time.instant - attempt_started) >= connect_timeout.seconds
+        if last_result && last_result[:exit_code] == 0
           reconnected = true
           break
         end
@@ -1058,6 +1066,26 @@ module Krikri
       end
 
       unless reconnected
+        # Ansible's reboot action runs the task-end tmpdir cleanup (the
+        # `rm -f -r <tmpdir>` over ssh) AFTER the wait loop - so when the
+        # wait times out on a host that never came back, that cleanup is
+        # what fails at the transport level, and the raised
+        # AnsibleConnectionFailure out of the executor's finally is what
+        # ansible-playbook reports: UNREACHABLE (exit 4, unreachable=1
+        # failed=0) carrying the ssh error, never its own timeout
+        # message. A wait that timed out with the host still reachable
+        # over ssh (e.g. test_command keeps returning non-zero) keeps the
+        # cleanup working and reports FAILED with the timeout message -
+        # that path below stays as it always was.
+        if ssh_error = TaskExecutor.reboot_wait_unreachable_error(last_result, last_attempt_timed_out, connection_host, conn.port)
+          timed_out_unreachable = {
+            "changed"     => false,
+            "unreachable" => true,
+            "msg"         => "Failed to connect to the host via ssh: #{ssh_error}",
+            "stderr"      => ssh_error,
+          }
+          return JSON.parse(timed_out_unreachable.to_json)
+        end
         return JSON.parse({
           "changed" => false,
           "elapsed" => (Time.instant - reboot_started_at).total_seconds.to_i,
@@ -1079,6 +1107,28 @@ module Krikri
         "rebooted" => true,
         "msg"      => "Reboot complete",
       }.to_json)
+    end
+
+    # The reboot wait loop's UNREACHABLE-vs-FAILED decision, kept pure and
+    # public so the exit-137 / empty-stderr case (a probe killed by the
+    # exec timeout) stays testable. Returns the ssh error line for the
+    # UNREACHABLE result, or nil to keep the FAILED timeout path: Ansible
+    # reports UNREACHABLE when its ssh ConnectTimeout expires (a transport
+    # failure), but FAILED when the host is still reachable and only the
+    # test command keeps failing.
+    def self.reboot_wait_unreachable_error(last_result : NamedTuple(exit_code: Int32, stdout: String, stderr: String)?, timed_out : Bool, host : String, port : Int32?) : String?
+      r = last_result
+      # Only a probe SIGKILLed by the exec timeout (137) is a hung connection;
+      # a slow probe that finished with its own status is a live host.
+      killed = timed_out && !r.nil? && r[:exit_code] == 137
+      return nil unless r.nil? || killed || SSHManager.connection_level_failure?(r[:exit_code], r[:stderr], r[:stdout])
+      connect_timeout_error = "ssh: connect to host #{host} port #{port || 22}: Connection timed out"
+      # A killed probe's stderr is whatever ssh printed before the kill
+      # (often just "Warning: ..." lines), not Ansible's error - the
+      # ConnectTimeout line itself is.
+      return connect_timeout_error if killed
+      stderr = r ? r[:stderr] : ""
+      stderr.strip.empty? ? connect_timeout_error : stderr
     end
 
     # Whether *result* is a connection-level (SSH transport) failure

@@ -1,4 +1,8 @@
 require "../minitest_helper"
+require "../../src/krikri/run_options"
+require "../../src/krikri/output_banner"
+require "../../src/krikri/profile_tasks"
+require "../../src/krikri/plugin_manager"
 require "../../src/krikri/task_executor/handler_runner"
 
 private def make_host(name : String = "localhost") : Krikri::Host
@@ -165,5 +169,41 @@ describe Krikri::HandlerRunner do
     # it exactly once in the second pass - not zero times.
     counts["Restart {{ svc }}"].must_equal(1)
     counts["late"].must_equal(1)
+  end
+
+  it "stands down recording for a handler_unreachable_counted result" do
+    # The executor books an unreachable handler result itself (fatal
+    # report, unreachable stat, host halted) before handing it back -
+    # the counted marker must keep this recording step from displaying
+    # and recounting it as ok.
+    host = make_host
+    runner = Krikri::HandlerRunner.new([make_handler("restart host")], [host])
+    runner.notify(host, "restart host")
+
+    results = fresh_results(host)
+    callback = ->(_handler : Krikri::Task, _host : Krikri::Host) {
+      JSON.parse({
+        "changed"                     => false,
+        "handler_unreachable_counted" => true,
+      }.to_json)
+    }
+    runner.run(callback, results, false)
+
+    results[host.name]["ok"].must_equal(0)
+    results[host.name]["failed"].must_equal(0)
+  end
+
+  it "recounts a handler result when the counted marker is absent" do
+    host = make_host
+    runner = Krikri::HandlerRunner.new([make_handler("restart host")], [host])
+    runner.notify(host, "restart host")
+
+    results = fresh_results(host)
+    callback = ->(_handler : Krikri::Task, _host : Krikri::Host) {
+      JSON.parse({"changed" => false, "failed" => false}.to_json)
+    }
+    runner.run(callback, results, false)
+
+    results[host.name]["ok"].must_equal(1)
   end
 end

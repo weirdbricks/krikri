@@ -53,14 +53,13 @@ module Krikri
         else
           unless no_log
             origin = task.try { |failed_task| ResultDisplay.error_origin_context(failed_task) }
-            # The two segments ("Task failed." / the transport error) render
-            # separately in ansible's block; without a source context on
-            # either node they would collapse into one, so the cause breaks
-            # the collapse the way a context-bearing child does (an empty
-            # events list is never rendered - see ErrorBlock#collapse).
-            cause = ErrorBlock::Node.new(inner, events: [] of ErrorBlock::Node)
-            head = ErrorBlock::Node.new("Task failed.", source_context: origin)
-            ErrorBlock.emit_to(io, head.with_chain(ErrorBlock::DIRECT_CAUSE, true, cause))
+            # Ansible's UNREACHABLE error is one plain "Task failed: <ssh
+            # error>" block with the Origin under it - no "Task failed." head
+            # and no "<<< caused by >>>" chain. Live-verified: an implicit
+            # Gathering Facts host that dies mid-run and a reboot handler
+            # whose post-timeout cleanup fails over ssh both print that
+            # shape (no Origin for the former, since it has no task).
+            ErrorBlock.emit_to(io, ErrorBlock::Node.new(msg, source_context: origin))
           end
           unreachable_host_label = delegate_target ? "#{host.name} -> #{delegate_target}" : host.name
           io << %(fatal: [#{unreachable_host_label}]: UNREACHABLE! => {"changed": false, "msg": #{msg.to_json}, "unreachable": true}).colorize(:red)
