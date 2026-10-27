@@ -150,7 +150,7 @@ module Krikri
             # <reason>" with the reason phrase the SERVER sent.
             raise http_error(response) unless response.status_code == 200
 
-            write_body(response, dest)
+            write_body(response, dest, uri.scheme.to_s)
             Result.new(final_url: url, headers: response.headers)
           end
         rescue ex : FetchError
@@ -269,6 +269,15 @@ module Krikri
         nil
       end
 
+      # Python words a TLS read timeout differently from a plaintext one:
+      # ssl reads surface ssl.SSLError("The read operation timed out"),
+      # while a plain socket read is the bare socket.timeout's "timed
+      # out" - so ansible's copyfileobj failure text depends on the URL
+      # scheme, not on anything in the response.
+      def self.body_timeout_reason(scheme : String) : String
+        scheme.downcase == "https" ? "The read operation timed out" : "timed out"
+      end
+
       # Streams the response body onto the staging path. perm 0666 (not
       # Crystal's 0644 default): this staged file becomes the final dest
       # after the rename, and Ansible's atomic_move gives a new dest
@@ -278,12 +287,12 @@ module Krikri
       # A failure HERE is not fetch_url's - the request was fine and
       # returned - so it is get_url's own copyfileobj failure, reported
       # with str(ex) as the reason.
-      private def self.write_body(response : HTTP::Client::Response, dest : String) : Nil
+      private def self.write_body(response : HTTP::Client::Response, dest : String, scheme : String) : Nil
         File.open(dest, "w", 0o666) do |file|
           IO.copy(response.body_io, file)
         end
       rescue IO::TimeoutError
-        raise FetchError.new(FetchError::Kind::ContentCopy, "", reason: "timed out")
+        raise FetchError.new(FetchError::Kind::ContentCopy, "", reason: body_timeout_reason(scheme))
       rescue ex
         raise FetchError.new(FetchError::Kind::ContentCopy, "", reason: ex.message || ex.class.name)
       end
