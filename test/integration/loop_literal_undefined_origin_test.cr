@@ -263,4 +263,71 @@ describe "undefined loop item cause stanza origin" do
   ensure
     FileUtils.rm_rf(src_dir) if src_dir
   end
+
+  it "pins a literal item's defining var, not the item line" do
+    # Issue #592 (opencore.keystores): the failing item references a
+    # play var whose OWN value is what fails - ansible's cause Origin
+    # sits on that defining value (DIR_A's opening quote, line 6 col
+    # 12), not on the item line. DIR_B fails identically but is not
+    # reached by the first failing item, so it must not win.
+    src_dir = File.tempname("loop-undef-origin-item-var")
+    Dir.mkdir_p(src_dir)
+    text = run_playbook(src_dir, <<-YAML)
+      ---
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          DIR_A: "{{ BASE }}"
+          DIR_B: "{{ BASE }}/b"
+        tasks:
+          - name: Make dirs
+            ansible.builtin.debug:
+              msg: "{{ item }}"
+            with_items:
+              - "{{ DIR_A }}"
+              - "{{ DIR_B }}"
+      YAML
+
+    playbook = File.expand_path(File.join(src_dir, "pb.yml"))
+    text.must_include("[ERROR]: Task failed: 'BASE' is undefined")
+    text.must_include("Origin: #{playbook}:6:12")
+    text.must_include("6     DIR_A: \"{{ BASE }}\"\n             ^ column 12")
+    text.wont_include("Origin: #{playbook}:13:")
+    text.wont_include("Origin: #{playbook}:14:")
+  ensure
+    FileUtils.rm_rf(src_dir) if src_dir
+  end
+
+  it "pins the first failing item's defining var when the items are swapped" do
+    # Same playbook, DIR_B first: ansible stops at the first FAILING
+    # item, so the cause Origin moves to DIR_B's defining value.
+    src_dir = File.tempname("loop-undef-origin-item-var-swapped")
+    Dir.mkdir_p(src_dir)
+    text = run_playbook(src_dir, <<-YAML)
+      ---
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          DIR_A: "{{ BASE }}"
+          DIR_B: "{{ BASE }}/b"
+        tasks:
+          - name: Make dirs
+            ansible.builtin.debug:
+              msg: "{{ item }}"
+            with_items:
+              - "{{ DIR_B }}"
+              - "{{ DIR_A }}"
+      YAML
+
+    playbook = File.expand_path(File.join(src_dir, "pb.yml"))
+    text.must_include("[ERROR]: Task failed: 'BASE' is undefined")
+    text.must_include("Origin: #{playbook}:7:12")
+    text.wont_include("Origin: #{playbook}:6:12")
+    text.wont_include("Origin: #{playbook}:13:")
+    text.wont_include("Origin: #{playbook}:14:")
+  ensure
+    FileUtils.rm_rf(src_dir) if src_dir
+  end
 end

@@ -5053,6 +5053,28 @@ module Krikri
       locate_conditional_origin(lines, name_idx, "delegate_to", raw)
     end
 
+    # A literal `with_items:`/`loop:` list has no loop-source template to
+    # seed undef_chain_var_origin's reachability scan from - but ansible
+    # still templates the items in document order and stops at the FIRST
+    # failing one, and that item's caused-by Origin is the defining value
+    # of the var it references (live-verified vs 2.19.11, issue #592,
+    # opencore.keystores). Seeding the scan with each template-bearing
+    # item's own text makes the first non-nil origin the first failing
+    # item's defining var; items without `{{` (plain literals) and items
+    # that never reach the missing name yield nil and fall through to the
+    # failing-element behaviour.
+    private def literal_loop_item_origin(task : Task, missing : String) : FileVarOrigin?
+      return nil unless task.loop_literal_kind
+      items = task.loop_items || return nil
+      items.each do |item|
+        next unless (text = item.as_s?) && text.includes?("{{")
+        if origin = undef_chain_var_origin(task, missing, reachable_from: text)
+          return origin
+        end
+      end
+      nil
+    end
+
     # The `[ERROR]:` chain block real 2.19.11 prints on stdout for a
     # loop-source / loop-item templating failure (live-captured):
     #
@@ -5095,10 +5117,13 @@ module Krikri
         # unrelated var also references the same undefined name, the
         # caused-by Origin is that first leaf's position - not the first
         # textually-matching var elsewhere in the file (issue #359,
-        # Rheinwerk.update_sshd_config). A literal loop list has no source
-        # template to seed from, so both stay off and the previous
-        # all-layers, exactly-one-leaf scan keeps running.
-        if origin = undef_chain_var_origin(task, m[1], reachable_from: task.loop_template, first_leaf: !task.loop_template.nil?)
+        # Rheinwerk.update_sshd_config).
+        # A literal item list has no loop_template to seed from, so the
+        # all-layers scan below sees every var that references the name
+        # and stays ambiguous; the first failing item's chain decides it.
+        if origin = literal_loop_item_origin(task, m[1])
+          cause_context = origin_context_block(origin.path, File.read_lines(origin.path), origin.line, origin.column)
+        elsif origin = undef_chain_var_origin(task, m[1], reachable_from: task.loop_template, first_leaf: !task.loop_template.nil?)
           cause_context = origin_context_block(origin.path, File.read_lines(origin.path), origin.line, origin.column)
         elsif task_has_loop_source?(task) && (pos = locate_loop_source_line(lines, task, missing: m[1]))
           # An UNDEFINED loop source (`loop: "{{ wordpress_sites }}"`) has
