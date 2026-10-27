@@ -492,7 +492,7 @@ module Krikri
         executed_count += 1
         any_changed ||= result["changed"]?.try(&.as_bool) || false
         any_failed ||= Krikri.result_failed_flag(result)
-        ResultDisplay.display_result(host, result, @diff_mode, item_label: item_display(item), ignore_errors: resolve_task_ignore_errors(handler, base_vars_context), no_log: resolve_task_no_log(handler, base_vars_context), module_name: handler.module_name, delegate_target: delegate_display_target(handler, host, base_vars_context), source_task: handler, loop_item: item, loop_var_name: loop_var)
+        ResultDisplay.display_result(host, result, @diff_mode, item_label: include_item_display_label(handler, item, vars_context, host), ignore_errors: resolve_task_ignore_errors(handler, base_vars_context), no_log: resolve_task_no_log(handler, base_vars_context), module_name: handler.module_name, delegate_target: delegate_display_target(handler, host, base_vars_context), source_task: handler, loop_item: item, loop_var_name: loop_var)
       end
 
       # A looped handler whose every item was skipped (per-item when:,
@@ -802,7 +802,7 @@ module Krikri
         end
         reachable_unavailable_modules << module_name if reached
         connection_host = host.name
-        suffix = (item = vars_context["item"]?) ? " => (item=#{resolve_task_no_log(handler, vars_context) ? "(censored due to no_log)" : item_display(item)}) " : ""
+        suffix = (item = vars_context["item"]?) ? " => (item=#{include_item_display_label(handler, item, vars_context, host)}) " : ""
         unless Krikri::Oneline.enabled? && item
           puts Krikri::Oneline.skip_line(connection_host, "#{suffix}#{Krikri::ResultDisplay.skip_line_suffix(nil, item)}").colorize(:cyan)
         end
@@ -845,7 +845,7 @@ module Krikri
 
         unless when_result
           connection_host = host.name
-          suffix = (item = vars_context["item"]?) ? " => (item=#{resolve_task_no_log(handler, vars_context) ? "(censored due to no_log)" : item_display(item)}) " : ""
+          suffix = (item = vars_context["item"]?) ? " => (item=#{include_item_display_label(handler, item, vars_context, host)}) " : ""
           unless Krikri::Oneline.enabled? && item
             puts Krikri::Oneline.skip_line(connection_host, "#{suffix}#{Krikri::ResultDisplay.skip_line_suffix(handler.when_condition, item)}").colorize(:cyan)
           end
