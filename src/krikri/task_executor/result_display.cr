@@ -182,11 +182,46 @@ module Krikri
     def self.emit_core_deprecation(text : String) : Nil
       line = "[DEPRECATION WARNING]: #{text}"
       return unless @@deprecation_texts.add?(line)
+      emit_deprecation_hint
+      STDERR.puts line.colorize(:light_magenta)
+    end
+
+    # The one-time "can be disabled" hint Ansible prints before a run's
+    # first deprecation of ANY kind - shared by every deprecation emitter
+    # so a later source never repeats it.
+    private def self.emit_deprecation_hint : Nil
       unless @@deprecation_hint_seen
         @@deprecation_hint_seen = true
         STDERR.puts "[WARNING]: Deprecation warnings can be disabled by setting `deprecation_warnings=False` in ansible.cfg.".colorize(:light_magenta)
       end
-      STDERR.puts line.colorize(:light_magenta)
+    end
+
+    # The `play_hosts` magic variable's READ deprecation (ansible-core
+    # 2.19.11 emits the block below each time a template resolves the
+    # variable, deduplicated per distinct Origin per run - the same
+    # template read by two tasks prints once, two different templates
+    # print twice). *origin* is the fully formatted Origin block - the
+    # template path alone for a template-file read, param_value_origin's
+    # excerpt-and-caret block for a task param read; nil (a read whose
+    # Origin krikri does not reproduce - a vars file, a when:) stays
+    # silent rather than mis-attribute the warning. Dedup keyed on the
+    # Origin string with a mutex, the same per-Origin pattern the lookup
+    # dispatch's Jinja-const warning uses.
+    @@play_hosts_deprecation_origins = Set(String).new
+    PLAY_HOSTS_DEPRECATION_MUTEX = Mutex.new
+
+    def self.emit_play_hosts_deprecation(origin : String?) : Nil
+      return unless origin
+      PLAY_HOSTS_DEPRECATION_MUTEX.synchronize do
+        return if @@play_hosts_deprecation_origins.includes?(origin)
+        @@play_hosts_deprecation_origins << origin
+        emit_deprecation_hint
+        STDERR.puts "[DEPRECATION WARNING]: The `play_hosts` magic variable is deprecated. This feature will be removed from ansible-core version 2.23.".colorize(:light_magenta)
+        STDERR.puts origin.colorize(:light_magenta)
+        STDERR.puts
+        STDERR.puts "Use `ansible_play_batch` instead.".colorize(:light_magenta)
+        STDERR.puts
+      end
     end
 
     # An action-plugin warning raised while validating task args (the

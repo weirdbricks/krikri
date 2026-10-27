@@ -190,7 +190,17 @@ module Krikri
           # one of them when rendering, so put back whatever the source had
           # beyond the rendered result's own trailing newlines, the same
           # reconciliation the template: action uses.
-          rendered = renderer.render(template_content)
+          # ansible-core 2.19.11 attributes a play_hosts read deprecation
+          # raised inside a lookup('template') render to the LOOKUP's
+          # template file as Origin (path alone, no line/column), not to
+          # the calling task param - registered on the fiber for the
+          # render's variable reads to pick up (play_hosts_read_origin).
+          VarSubstitutor.push_current_template_file(resolved_path)
+          begin
+            rendered = renderer.render(template_content)
+          ensure
+            VarSubstitutor.pop_current_template_file
+          end
           missing = (template_content.size - template_content.rstrip('\n').size) - (rendered.size - rendered.rstrip('\n').size)
           rendered += "\n" * missing if !rendered.empty? && missing > 0
           rendered

@@ -1501,6 +1501,45 @@ module Krikri
       @@templated_task_param[Fiber.current]?.try(&.last?)
     end
 
+    # Fiber-scoped stack of the template FILE a render is currently
+    # reading variables out of (a `template:` task's src, a
+    # `lookup('template', ...)` term) - ansible-core 2.19.11 attributes a
+    # magic-variable read deprecation raised while rendering a template
+    # file to the FILE as Origin (path alone, no line/column), overriding
+    # the templated task param's own position. A stack, like
+    # current_task_param, for the same nesting reason: the render's own
+    # value preparation descends into further renders.
+    @@current_template_file = {} of Fiber => Array(String)
+
+    def self.push_current_template_file(path : String) : Nil
+      (@@current_template_file[Fiber.current] ||= Array(String).new).push(path)
+    end
+
+    def self.pop_current_template_file : Nil
+      fiber = Fiber.current
+      return unless stack = @@current_template_file[fiber]?
+      stack.pop
+      @@current_template_file.delete(fiber) if stack.empty?
+    end
+
+    def self.current_template_file : String?
+      @@current_template_file[Fiber.current]?.try(&.last?)
+    end
+
+    # The formatted Origin block for a play_hosts read deprecation: a
+    # template-file render in progress wins (the read belongs to the
+    # file), then the templated task param being finalized; nil when
+    # neither applies - reads whose Origin krikri does not reproduce (a
+    # vars file, a when:) stay silent rather than mis-attribute the
+    # warning.
+    def self.play_hosts_read_origin : String?
+      if path = current_template_file
+        return ErrorBlock.origin_context(File.expand_path(path), 0, nil, show_content: false)
+      end
+      return unless site = current_task_param
+      ResultDisplay.param_value_origin(site.source_file, site.source_line, site.key)
+    end
+
     # Per-host registry of UNSAFE variable names - names whose current
     # value was produced by EXECUTION (a `register:`ed module result, a
     # `set_fact:` write, or a gathered fact) rather than read out of a

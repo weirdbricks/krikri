@@ -38,6 +38,14 @@ module Krikri
         value = if name == "vars"
                   build_vars_dict
                 elsif @raw_vars.has_key?(name)
+                  # ansible-core 2.19.11 emits the play_hosts read
+                  # deprecation each time the magic variable resolves, even
+                  # reached through the `vars` dict's own materialization -
+                  # both funnel through this per-name resolution. The
+                  # Origin comes from the fiber's current render/param
+                  # context (play_hosts_read_origin); reads with no
+                  # reproducible Origin stay silent.
+                  Krikri::ResultDisplay.emit_play_hosts_deprecation(VarSubstitutor.play_hosts_read_origin) if name == "play_hosts"
                   convert(name)
                 elsif name == "omit"
                   KrikriJinja::AnyValue.new(Krikri::OMIT_SENTINEL)

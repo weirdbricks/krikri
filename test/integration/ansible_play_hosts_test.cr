@@ -85,4 +85,51 @@ describe "ansible_play_hosts / ansible_play_hosts_all magic vars" do
   ensure
     File.delete(playbook) if playbook && File.exists?(playbook)
   end
+
+  it "prints the play_hosts read deprecation with the template path as Origin" do
+    # ansible-core 2.19.11 emits the play_hosts deprecation block on each
+    # read of the magic variable, deduplicated per distinct Origin per
+    # run: the same template read by two tasks (both hosts here) prints
+    # ONCE, a canonical ansible_play_hosts read stays silent, and a
+    # template: file's Origin is the absolute template path with no
+    # line/column.
+    src = File.tempname("play-hosts-deprecation", ".j2")
+    dest = File.tempname("play-hosts-deprecation")
+    playbook = File.tempname("play-hosts-deprecation", ".yml")
+    File.write(src, "{% for h in play_hosts %}{{ h }}{% endfor %}")
+
+    File.write(playbook, <<-YAML)
+      - name: repro
+        hosts: all
+        gather_facts: false
+        tasks:
+          - name: render
+            ansible.builtin.template:
+              src: #{src}
+              dest: #{dest}
+          - name: render_again
+            ansible.builtin.template:
+              src: #{src}
+              dest: #{dest}.2
+          - name: canonical
+            ansible.builtin.debug:
+              msg: "{{ ansible_play_hosts | join(',') }}"
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+
+    status.success?.must_equal(true)
+    combined = output.to_s
+    combined.must_include("[DEPRECATION WARNING]: The `play_hosts` magic variable is deprecated. This feature will be removed from ansible-core version 2.23.")
+    combined.must_include("Origin: #{File.expand_path(src)}")
+    combined.wont_include("Origin: #{File.expand_path(src)}:")
+    combined.must_include("Use `ansible_play_batch` instead.")
+    combined.scan("[DEPRECATION WARNING]: The `play_hosts`").size.must_equal(1, combined)
+  ensure
+    File.delete(playbook) if playbook && File.exists?(playbook)
+    File.delete(src) if src && File.exists?(src)
+    File.delete(dest) if dest && File.exists?(dest)
+    File.delete("#{dest}.2") if File.exists?("#{dest}.2")
+  end
 end

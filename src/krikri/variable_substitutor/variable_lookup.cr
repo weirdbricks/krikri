@@ -287,7 +287,15 @@ module Krikri
       end
 
       private def resolve_simple(name : String) : JSON::Any?
-        @vars[name.strip]?
+        value = @vars[name.strip]?
+        # ansible-core 2.19.11 emits the play_hosts read deprecation each
+        # time the magic variable resolves. The Origin comes from the
+        # fiber's current render/param context (play_hosts_read_origin);
+        # a read with no reproducible Origin (a vars file, a when:) stays
+        # silent rather than mis-attribute the warning, and a resolved
+        # name that is not exactly the deprecated alias never warns.
+        Krikri::ResultDisplay.emit_play_hosts_deprecation(VarSubstitutor.play_hosts_read_origin) if value && name.strip == "play_hosts"
+        value
       end
 
       # Marks *host* as the origin host when *current* IS the hostvars
