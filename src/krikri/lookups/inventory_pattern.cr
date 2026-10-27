@@ -141,8 +141,13 @@ module Krikri
       # but matched group stays silent, 'all' always matches, and an
       # out-of-range subscript on matched hosts takes the error path
       # instead - hence the check on the pre-subscript enumeration.
+      # The warning text goes through the shared Display warning path
+      # because Ansible's Display dedupes identical warning lines across
+      # the whole run (_warns), so a second lookup call with the same
+      # unmatched pattern must not print the line again either; the
+      # per-call set above is only the plugin's own _pattern_cache.
       if warned_patterns && matched.empty? && !matched_groups && base != "all" && warned_patterns.add?(base)
-        STDERR.puts "[WARNING]: Could not match supplied host pattern, ignoring: #{base}"
+        ResultDisplay.emit_display_warning("Could not match supplied host pattern, ignoring: #{base}")
       end
       apply_host_subscript(matched, subscript)
     end
