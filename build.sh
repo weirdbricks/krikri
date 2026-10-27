@@ -160,8 +160,8 @@ while [[ $# -gt 0 ]]; do
             echo "Environment:"
             echo "  BUILD_PARALLELISM  Max concurrent crystal builds (default: min(nproc, 8))"
             echo "  CRYSTAL_CACHE_DIR  Base dir for the per-target compiler caches"
-            echo "                     (default: ~/.cache/krikri-crystal, shared by every"
-            echo "                     checkout; KRIKRI_CRYSTAL_CACHE moves that default)"
+            echo "                     (default: .crystal-build-cache in the repo; set it"
+            echo "                     to keep container-build caches out of the repo)"
             echo ""
             echo "  --help     Show this help message"
             echo ""
@@ -395,13 +395,9 @@ fi
 # interrupted/corrupt cache self-heals instead of poisoning the next
 # run. An ambient CRYSTAL_CACHE_DIR (e.g. /cache inside the
 # --static-podman container) becomes the base the per-target dirs live
-# under. Unset, every checkout on the host shares one base under the
-# user's cache: the compile lock (COMPILE_LOCK) means no two compiles
-# ever write to it at once, and the compiler keys its entries by source
-# path, so checkouts at different paths never read each other's objects.
+# under; unset, the repo-local $CACHE_ROOT is used as before.
 CRYSTAL_VERSION_TAG=$(crystal --version 2>/dev/null | grep -oE '[0-9]+(\.[0-9]+)+' | head -1)
-SHARED_CACHE="${KRIKRI_CRYSTAL_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/krikri-crystal}"
-CACHE_PARENT="${CRYSTAL_CACHE_DIR:-$SHARED_CACHE}"
+CACHE_PARENT="${CRYSTAL_CACHE_DIR:-$CACHE_ROOT}"
 CACHE_DIR_ROOT="$CACHE_PARENT/$BUILD_MODE${STATIC:+-static}${CRYSTAL_VERSION_TAG:+-crystal-$CRYSTAL_VERSION_TAG}"
 mkdir -p "$CACHE_DIR_ROOT"
 
