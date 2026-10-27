@@ -2018,6 +2018,23 @@ module Krikri
       missing_remote_binary?(result, target, remote_plugin_dir(remote_user))
     end
 
+    # Which steps of a batch script must be sent again after some step found
+    # its plugin binary missing. Only the missing steps and the steps that
+    # never got a result are re-sent: every other step already ran on the
+    # target, and re-sending it repeats its side effects (a `file:` step
+    # reruns and reports ok because the first run already created the
+    # directory). Real ansible runs each task once, so its tasks are never
+    # re-sent.
+    def self.batch_steps_to_resend(interpreted : Hash(Int32, JSON::Any), module_names : Array(String), remote_user : String?) : Array(Int32)
+      missing = (0...module_names.size).select do |idx|
+        result = interpreted[idx]?
+        result && missing_remote_binary_on_host?(result, "#{remote_plugin_dir(remote_user)}/#{module_names[idx]}", remote_user)
+      end
+      return [] of Int32 if missing.empty?
+
+      (0...module_names.size).select { |idx| interpreted[idx]?.nil? || missing.includes?(idx) }
+    end
+
     def self.host_state_satisfies_for_spec?(host_key : String, names : Array(String)) : Bool
       host_state_satisfies?(host_key, names)
     end

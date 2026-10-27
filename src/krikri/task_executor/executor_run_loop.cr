@@ -1698,33 +1698,45 @@ module Krikri
       # rough edge, which is why the recovery has to cover this path and
       # not just PluginManager#execute_remote_plugin's one-shot path.
       #
-      # Re-running the whole group is safe here specifically because a
-      # missing binary means NOTHING in it ran: every step dispatches
-      # the same binary, and the script fail-fasts at the first one.
+      # Re-sending the whole group after a missing binary was wrong: the
+      # script fail-fasts at the missing step, so every step before it
+      # already ran on the target, and running those again repeats their
+      # side effects (a `file:` step reports ok on its second run because
+      # the first run created the directory). Only the missing step and the
+      # steps that never ran are sent again.
       ssh_user = conn.user
-      if interpreted.any? { |_, step| PluginManager.missing_remote_binary_on_host?(step, "#{PluginManager.remote_plugin_dir(ssh_user)}/#{steps.first.module_name}", ssh_user) }
-        # The re-upload this recovery performs fails exactly like any
-        # other upload when the host has gone unreachable mid-play -
-        # convert that to UNREACHABLE results for the whole group (the
-        # same conversion execute_remote_plugin applies to its own
-        # lazy-upload path) instead of letting the exception kill the
-        # run. Any other exception still propagates.
-        begin
-          PluginManager.recover_missing_plugins!(host, steps.map(&.module_name).uniq!, host.vars)
-        rescue ex
-          raise ex unless SSHManager.connection_level_exception?(ex)
-          detail = ex.message.to_s.lines.first?.to_s
-          unreachable = JSON.parse({
-            "changed"     => false,
-            "msg"         => "Failed to connect to the host via ssh: #{detail}",
-            "stderr"      => detail,
-            "unreachable" => true,
-          }.to_json)
-          return steps.each_index.to_h { |idx| {idx, unreachable} }
-        end
-        return interpret_batch_script(host, conn, steps)
+      resend = PluginManager.batch_steps_to_resend(interpreted, steps.map(&.module_name), ssh_user)
+      return interpreted if resend.empty?
+
+      # The re-upload this recovery performs fails exactly like any
+      # other upload when the host has gone unreachable mid-play -
+      # convert that to UNREACHABLE results for the steps being re-sent
+      # (the same conversion execute_remote_plugin applies to its own
+      # lazy-upload path) instead of letting the exception kill the
+      # run. Any other exception still propagates.
+      begin
+        PluginManager.recover_missing_plugins!(host, resend.map { |idx| steps[idx].module_name }.uniq!, host.vars)
+      rescue ex
+        raise ex unless SSHManager.connection_level_exception?(ex)
+        detail = ex.message.to_s.lines.first?.to_s
+        unreachable = JSON.parse({
+          "changed"     => false,
+          "msg"         => "Failed to connect to the host via ssh: #{detail}",
+          "stderr"      => detail,
+          "unreachable" => true,
+        }.to_json)
+        resend.each { |idx| interpreted[idx] = unreachable }
+        return interpreted
       end
 
+      resent = interpret_batch_script(host, conn, resend.map { |idx| steps[idx] })
+      resend.each_with_index do |idx, pos|
+        if result = resent[pos]?
+          interpreted[idx] = result
+        else
+          interpreted.delete(idx)
+        end
+      end
       interpreted
     end
 
