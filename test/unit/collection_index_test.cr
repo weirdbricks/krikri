@@ -127,6 +127,22 @@ describe Krikri::CollectionIndex do
       "Error loading plugin 'community.google.gc_storage': No module named 'ansible_collections.community.google'")
   end
 
+  it "treats an installed ansible.netcommon as the truth for its own names" do
+    # Real ansible refuses an FQCN whose installed collection ships no
+    # such module (ansible.netcommon has no cli_parse, ansible-playbook
+    # dies at load), so the installed collection must win over the
+    # blanket legacy-core rule for ansible.netcommon.*.
+    FileUtils.mkdir_p(File.join(@fixture_root, "ansible_collections", "ansible", "netcommon", "plugins", "modules"))
+    File.write(File.join(@fixture_root, "ansible_collections", "ansible", "netcommon", "plugins", "modules", "cli_backup.py"), "# fixture module\n")
+    ENV["ANSIBLE_COLLECTIONS_PATH"] = @fixture_root
+    Krikri::CollectionIndex.reset!
+    result = Krikri::CollectionIndex.controller_resolves?("ansible.netcommon.cli_backup")
+    result[:resolves].must_equal(true)
+    result = Krikri::CollectionIndex.controller_resolves?("ansible.netcommon.cli_parse")
+    result[:resolves].must_equal(false)
+    result[:missing_collection_warning].must_be_nil
+  end
+
   # ------------------------------------------------------------------
   # Real-machine-state specs: the fixture env is gone again, the index
   # rescanned the controller's actual collections.
