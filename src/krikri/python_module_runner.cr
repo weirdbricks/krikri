@@ -596,5 +596,38 @@ module Krikri
       end
       nil
     end
+
+    # Recovers the message of a module's uncaught exception from the raw
+    # run's stderr. Real Ansible wraps every module run in an Exception
+    # handler (AnsiballZ's loader) and reports the exception as a clean
+    # module failure - but only Exception: SystemExit,
+    # KeyboardInterrupt and GeneratorExit pass through unhandled there,
+    # so they return nil here too. "" means the exception had no
+    # message (bare `raise SomeError()`, which Ansible spells
+    # "Module failed."), nil means no parseable traceback at all. The
+    # chained-exception case keeps only the FINAL traceback's message,
+    # the way Ansible reports it.
+    def uncaught_exception_detail(stderr : String) : String?
+      marker = "Traceback (most recent call last):"
+      idx = stderr.rindex(marker)
+      return nil unless idx
+      exc_lines = stderr[(idx + marker.size)..].lines.reject do |line|
+        line.empty? || line.starts_with?(' ') || line.starts_with?('\t')
+      end
+      first = exc_lines.first?
+      return nil unless first
+      # An exception line starts with the class name (possibly dotted);
+      # anything else means this isn't a parseable Python traceback.
+      match = first.match(/\A[A-Za-z_][\w.]*/)
+      return nil unless match
+      return nil if match[0].in?("SystemExit", "KeyboardInterrupt", "GeneratorExit")
+      rest = first[match[0].size..]
+      return nil unless rest.empty? || rest.starts_with?(": ")
+      detail = rest.empty? ? "" : rest[2..]
+      if extra = exc_lines[1..]?
+        detail = "#{detail}\n#{extra.join("\n")}" unless extra.empty?
+      end
+      detail
+    end
   end
 end

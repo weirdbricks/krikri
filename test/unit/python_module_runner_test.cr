@@ -1,6 +1,11 @@
 require "../minitest_helper"
 require "file_utils"
 require "../../src/krikri/python_module_runner"
+# Single-file mode needs the runner's own dependencies spelled out
+# (PythonFilterRunner, commit 1803a3e9; Krikri.non_string_scalar in
+# param_sentinels.cr); the full-suite entrypoint has them all.
+require "../../src/krikri/python_filter_runner"
+require "../../src/krikri/param_sentinels"
 
 private def write_module(dir : String, name : String, content : String) : String
   lib_dir = File.join(dir, "library")
@@ -220,6 +225,93 @@ describe Krikri::PythonModuleRunner do
     result["failed"].as_bool.must_equal(true)
     result["msg"].as_s.must_include("MODULE FAILURE")
     result["stderr"].as_s.must_include("boom")
+  end
+
+  it "reports an uncaught module exception as Ansible's module-failure message" do
+    skip("python3 not available") unless File.exists?("/usr/bin/python3")
+    # Ansible's AnsiballZ loader catches Exception and fails the task
+    # with the exception's message; a raw run left only the traceback on
+    # stderr and the MODULE FAILURE shape (linux-system-roles.nbde_server
+    # raising TangAnsibleError, issue #555).
+    source = "#!/usr/bin/python\nraise ValueError('boom')\n"
+    result = PluginSpecHelper.run("py_module", {
+      "module_name"         => "testmod_exc",
+      "module_source"       => Base64.strict_encode(source),
+      "new_style"           => "false",
+      "kv_argv"             => "[]",
+      "_ansible_check_mode" => "false",
+    })
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("Task failed: Module failed: boom")
+    result["msg"].as_s.wont_include("MODULE FAILURE")
+    result["_ansible_module_exception"].as_bool.must_equal(true)
+  end
+
+  it "reports an uncaught exception with no message as Ansible's message-less module failure" do
+    skip("python3 not available") unless File.exists?("/usr/bin/python3")
+    source = "#!/usr/bin/python\nraise ValueError()\n"
+    result = PluginSpecHelper.run("py_module", {
+      "module_name"         => "testmod_exc_empty",
+      "module_source"       => Base64.strict_encode(source),
+      "new_style"           => "false",
+      "kv_argv"             => "[]",
+      "_ansible_check_mode" => "false",
+    })
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("Task failed: Module failed.")
+    result["_ansible_module_exception"].as_bool.must_equal(true)
+  end
+
+  # ---- uncaught-exception recovery from stderr ----
+
+  it "extracts the FINAL exception's message from a chained traceback" do
+    stderr = <<-STDERR
+      Traceback (most recent call last):
+        File "m.py", line 2, in <module>
+          raise ValueError('inner')
+      ValueError: inner
+
+      During handling of the above exception, another exception occurred:
+
+      Traceback (most recent call last):
+        File "m.py", line 4, in <module>
+          raise TangAnsibleError({'msg': 'Listing keys failed'})
+      TangAnsibleError: {'msg': 'Listing keys failed'}
+      STDERR
+    Krikri::PythonModuleRunner.uncaught_exception_detail(stderr)
+      .must_equal("{'msg': 'Listing keys failed'}")
+  end
+
+  it "joins a multi-line exception message's non-indented continuation lines" do
+    stderr = <<-'STDERR'
+      Traceback (most recent call last):
+        File "m.py", line 1, in <module>
+          raise ValueError('line1\\nline2')
+      ValueError: line1
+      line2
+      STDERR
+    Krikri::PythonModuleRunner.uncaught_exception_detail(stderr).must_equal("line1\nline2")
+  end
+
+  it "returns an empty string for an exception with no message" do
+    stderr = <<-STDERR
+      Traceback (most recent call last):
+        File "m.py", line 1, in <module>
+          raise ValueError()
+      ValueError
+      STDERR
+    Krikri::PythonModuleRunner.uncaught_exception_detail(stderr).must_equal("")
+  end
+
+  it "returns nil for a BaseException that passes through Ansible's wrapper" do
+    stderr = <<-STDERR
+      Traceback (most recent call last):
+        File "m.py", line 1, in <module>
+          raise SystemExit('boom')
+      SystemExit: boom
+      STDERR
+    Krikri::PythonModuleRunner.uncaught_exception_detail(stderr).must_be_nil
+    Krikri::PythonModuleRunner.uncaught_exception_detail("no traceback here").must_be_nil
   end
 
   # ---- role's own module_utils package collection ----

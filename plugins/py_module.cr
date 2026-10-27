@@ -243,6 +243,23 @@ module Krikri
         return result
       end
 
+      # Ansible's AnsiballZ loader catches Exception around the module
+      # run and reports it as a clean module failure - the raw run here
+      # instead leaves the traceback on stderr with no result JSON.
+      # BaseException-only exits (SystemExit etc., nil from the helper,
+      # or no traceback at all) still fall through to MODULE FAILURE.
+      if python_module && (detail = PythonModuleRunner.uncaught_exception_detail(err_text))
+        crash = PluginResult.new(changed: false, failed: true,
+          msg: detail.empty? ? "Task failed: Module failed." : "Task failed: Module failed: #{detail}",
+          _ansible_error_detail: detail)
+        # The exception is a cause event in Ansible's error block, so the
+        # block splits into "Module failed." plus "<<< caused by >>>" instead
+        # of collapsing into the one segment a plain fail_json gets (a
+        # message-less exception has no cause segment to split out).
+        crash.extra["_ansible_module_exception"] = JSON::Any.new(true)
+        return crash
+      end
+
       # No result JSON at all - Ansible's MODULE FAILURE shape.
       result = PluginResult.new(
         changed: false,
