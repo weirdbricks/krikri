@@ -381,18 +381,24 @@ module Krikri
         KrikriJinja.ansible_strict_undefined, JinjaHostContext.new(template_vars)
       )
       begin
-        # Ansible/Jinja2 compile the WHOLE template before any of it runs:
-        # every filter name is resolved at compile time, so an unknown
-        # filter fails the task even from a branch that never executes (an
-        # `{% if %}` over an empty list, `{% if false %}`; issue #651,
-        # live-verified vs 2.19.11). The engine itself only raises when a
-        # filter node is evaluated, so the same "unknown filter" error is
-        # raised up front here and the rescue below handles it through its
-        # normal path - including the role-local filter_plugins retry,
-        # which registers the filter on this engine before re-rendering.
+        # Ansible/Jinja2 compile the WHOLE template before any of it runs,
+        # so every filter name in a non-soft frame is resolved at compile
+        # time: an unknown filter fails the task even from a branch that
+        # never executes when the nearest enclosing construct is a for,
+        # with, filter/set/call block or the top level (an `{% if %}` over
+        # an empty list wrapping a `{% for %}`; issue #651, live-verified
+        # vs 2.19.11). An if branch or conditional expression is a SOFT
+        # frame - real defers the name there and only fails at render time
+        # if it is actually evaluated (issue #660). The engine itself only
+        # raises when a filter node is evaluated, so the same "unknown
+        # filter" error is raised up front here for the non-soft names and
+        # the rescue below handles it through its normal path - including
+        # the role-local filter_plugins retry, which registers the filter
+        # on this engine before re-rendering.
         if template = parsed_template
           validate_template_filters(engine, template)
         end
+        compile_checked = true
         render_once(engine, content, template_vars)
       rescue ex : KrikriJinja::TemplateError
         # A role-local `filter_plugins/*.py` filter is resolved on demand
@@ -408,8 +414,19 @@ module Krikri
         elsif filter_name
           # Still unknown after the role-local plugin chance: real fails
           # at compile time with the uncaught TemplateAssertionError
-          # shape (see @render_error_unknown_filter).
-          @render_error_unknown_filter = "Syntax error in template: No filter named '#{filter_name}'."
+          # shape (see @render_error_unknown_filter) when the name sat in
+          # a non-soft frame, but a soft-frame name (if branch,
+          # conditional expression) that reached evaluation is real's
+          # RENDER-time failure wording instead (live-verified vs
+          # 2.19.11, issue #660) - it only ever errors once evaluated, so
+          # a false if keeps the task passing. compile_checked is set
+          # before the first render, so it is false only for an error
+          # raised by validate_template_filters above.
+          @render_error_unknown_filter = if compile_checked
+                                           "Error rendering template: No filter named '#{filter_name}' found."
+                                         else
+                                           "Syntax error in template: No filter named '#{filter_name}'."
+                                         end
           raise ex
         elsif test_name = KrikriJinjaFilters.unknown_test_name(ex)
           if KrikriJinjaFilters.ensure_python_test(test_name, template_vars, engine)
@@ -517,7 +534,12 @@ module Krikri
     # Compile-time filter-name validation over the whole parsed template,
     # raising the engine's own "unknown filter" wording (the same message
     # shape its runtime evaluation raises) for the first name the render's
-    # engine could not resolve. The check MUST mirror the runtime lookup
+    # engine could not resolve AND that Jinja2's compiler would resolve
+    # eagerly: a filter whose nearest enclosing construct is an if or a
+    # conditional expression sits in a soft frame and is only resolved
+    # when actually evaluated (see
+    # PythonFilterRunner.collect_compile_time_filter_calls, issue #660).
+    # The check MUST mirror the runtime lookup
     # exactly or valid templates break: Context#filter resolves an exact
     # name first, then - for a 2+-dot collection-qualified name - its
     # trailing segment (`ansible.builtin.ternary` -> `ternary`); engine.
@@ -526,7 +548,7 @@ module Krikri
     # check consults the render engine's own filter hash directly.
     private def validate_template_filters(engine : KrikriJinja::Engine,
                                           template : KrikriJinja::Nodes::TemplateNode) : Nil
-      Krikri::PythonFilterRunner.collect_filter_calls(template).each do |(name, line)|
+      Krikri::PythonFilterRunner.collect_compile_time_filter_calls(template).each do |(name, line)|
         next if resolvable_filter?(engine, name)
         raise KrikriJinja::TemplateError.new("unknown filter #{name.inspect}", line)
       end

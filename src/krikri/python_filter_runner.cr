@@ -138,6 +138,23 @@ module Krikri
       collect_node_filters(node)
     end
 
+    # The compile-frame twin of collect_filter_calls, used by the template
+    # action's filter-name validation: only the (name, line) pairs real
+    # Jinja2 resolves at COMPILE time. compiler.py's _filter_test_common
+    # fails "No filter named 'x'." up front only when the filter's frame
+    # is not soft; visit_If (if_frame = frame.soft()) and visit_CondExpr
+    # (frame = frame.soft()) hand soft frames to everything they enclose,
+    # so an unknown filter in a never-executed if branch or conditional
+    # expression is deferred and surfaces at render time instead. Every
+    # other block construct (for, with, filter/set/call block, macro,
+    # block) builds its frame with Frame.inner(), whose constructor
+    # unconditionally resets soft_frame to False - which is why a for
+    # nested in a dead if still fails at compile time even though the if
+    # never runs (live-verified vs 2.19.11, issue #660).
+    def self.collect_compile_time_filter_calls(node : KrikriJinja::Nodes::Node) : Array({String, Int32})
+      compile_frame_filters(node, false)
+    end
+
     # The render-side triggers: a parsed template/expression whose AST
     # contains a filter call runs the scan once (already-scanned dirs
     # are skipped inside). The AST walk is the exact gate - a naive
@@ -326,6 +343,153 @@ module Krikri
                                           kwargs : Array(Tuple(String, KrikriJinja::Nodes::ExprNode))) : Array({String, Int32})
       args.flat_map { |arg| collect_expr_filters(arg) } +
         kwargs.flat_map { |(_, value)| collect_expr_filters(value) }
+    end
+
+    # The soft-frame-aware twins of the collectors above: the same walk,
+    # but a FilterNode is kept only when its frame is not soft (the
+    # `soft` argument mirrors compiler.py's Frame.soft_frame).
+    private def self.compile_frame_filters(node : KrikriJinja::Nodes::Node,
+                                           soft : Bool) : Array({String, Int32})
+      case node
+      when KrikriJinja::Nodes::IfNode
+        # visit_If: if_frame = frame.soft() covers the test, every elif
+        # and the else body - soft no matter what frame the if sits in
+        node.branches.flat_map { |(_, body)| compile_body_filters(body, true) } +
+          compile_body_filters(node.orelse, true)
+      when KrikriJinja::Nodes::ForNode
+        # visit_For: the iter is visited with the ENCLOSING frame, but
+        # the inline test and the body/else get frame.inner() frames
+        # whose constructor resets soft_frame to False
+        compile_expr_filters(node.iter, soft) +
+          compile_opt_expr_filters(node.test, false) +
+          compile_body_filters(node.body, false) +
+          compile_body_filters(node.orelse, false)
+      when KrikriJinja::Nodes::SetNode
+        # a set BLOCK is an AssignBlock inner frame; a plain `{% set %}`
+        # visits its expressions with the frame it sits in
+        set_soft = node.body ? false : soft
+        block_filter = node.filter_name.try { |name| [{name, node.line}] } || [] of {String, Int32}
+        block_filter + compile_args_filters(node.filter_args, node.filter_kwargs, set_soft) +
+          compile_expr_filters(node.expr, set_soft) +
+          compile_opt_expr_filters(node.attr_target, set_soft) +
+          compile_body_filters(node.body, set_soft)
+      when KrikriJinja::Nodes::CallNode
+        # the call itself is visited with the enclosing frame, the
+        # macro body (call block) is a macro_body inner frame
+        compile_expr_filters(node.macro_expr, soft) +
+          compile_args_filters(node.args, node.kwargs, soft) +
+          compile_body_filters(node.body, false)
+      when KrikriJinja::Nodes::WithNode
+        # visit_With: the values are visited with the ENCLOSING frame,
+        # the body with the inner with_frame
+        node.bindings.flat_map { |(_, value)| compile_expr_filters(value, soft) } +
+          compile_body_filters(node.body, false)
+      when KrikriJinja::Nodes::FilterBlockNode
+        # visit_FilterBlock: even the filter expression is visited with
+        # the inner filter_frame
+        compile_expr_filters(node.filter, false) + compile_body_filters(node.body, false)
+      when KrikriJinja::Nodes::BlockNode, KrikriJinja::Nodes::AutoescapeNode
+        compile_body_filters(node.body, false)
+      when KrikriJinja::Nodes::MacroNode
+        # macro_body's inner frame - a macro's filters resolve when the
+        # macro is DEFINED, not when it is called
+        node.params.flat_map { |(_, default)| compile_opt_expr_filters(default, false) } +
+          compile_body_filters(node.body, false)
+      else
+        compile_frame_rest_filters(node, soft)
+      end
+    end
+
+    private def self.compile_frame_rest_filters(node : KrikriJinja::Nodes::Node,
+                                                soft : Bool) : Array({String, Int32})
+      case node
+      when KrikriJinja::Nodes::TemplateNode
+        compile_body_filters(node.body, soft)
+      when KrikriJinja::Nodes::OutputNode
+        compile_expr_filters(node.expr, soft)
+      when KrikriJinja::Nodes::DoNode
+        compile_expr_filters(node.expr, soft)
+      when KrikriJinja::Nodes::IncludeNode, KrikriJinja::Nodes::ExtendsNode, KrikriJinja::Nodes::ImportNode
+        compile_expr_filters(node.template, soft)
+      else
+        [] of {String, Int32}
+      end
+    end
+
+    private def self.compile_body_filters(body : Array(KrikriJinja::Nodes::Node)?,
+                                          soft : Bool) : Array({String, Int32})
+      body.try { |list| compile_list_filters(list, soft) } || [] of {String, Int32}
+    end
+
+    private def self.compile_list_filters(body : Array(KrikriJinja::Nodes::Node),
+                                          soft : Bool) : Array({String, Int32})
+      body.flat_map { |child| compile_frame_filters(child, soft) }
+    end
+
+    private def self.compile_opt_expr_filters(expr : KrikriJinja::Nodes::ExprNode?,
+                                              soft : Bool) : Array({String, Int32})
+      expr.try { |sub| compile_expr_filters(sub, soft) } || [] of {String, Int32}
+    end
+
+    private def self.compile_args_filters(args : Array(KrikriJinja::Nodes::ExprNode),
+                                          kwargs : Array(Tuple(String, KrikriJinja::Nodes::ExprNode)),
+                                          soft : Bool) : Array({String, Int32})
+      args.flat_map { |arg| compile_expr_filters(arg, soft) } +
+        kwargs.flat_map { |(_, value)| compile_expr_filters(value, soft) }
+    end
+
+    # Inside an expression subtree softness can only CHANGE at a
+    # conditional expression (visit_CondExpr softens its whole subtree
+    # including the test); a soft frame stays soft for everything below
+    # it, so a soft expression defers every filter it holds.
+    private def self.compile_expr_filters(expr : KrikriJinja::Nodes::ExprNode,
+                                          soft : Bool) : Array({String, Int32})
+      return [] of {String, Int32} if soft
+      case expr
+      when KrikriJinja::Nodes::CondExprNode
+        # frame = frame.soft() before the test and both arms are visited,
+        # so nothing in a conditional expression resolves at compile time
+        [] of {String, Int32}
+      when KrikriJinja::Nodes::FilterNode
+        [{expr.name, expr.line}] + compile_expr_filters(expr.target, false) +
+          compile_args_filters(expr.args, expr.kwargs, false)
+      when KrikriJinja::Nodes::ConstNode, KrikriJinja::Nodes::NameNode, KrikriJinja::Nodes::InTestNode
+        [] of {String, Int32}
+      when KrikriJinja::Nodes::ListExprNode, KrikriJinja::Nodes::TupleExprNode
+        expr.items.flat_map { |item| compile_expr_filters(item, false) }
+      when KrikriJinja::Nodes::DictExprNode
+        expr.keys.flat_map { |key| compile_expr_filters(key, false) } +
+          expr.values.flat_map { |value| compile_expr_filters(value, false) }
+      when KrikriJinja::Nodes::BinOpNode
+        compile_expr_filters(expr.left, false) + compile_expr_filters(expr.right, false)
+      when KrikriJinja::Nodes::UnaryOpNode
+        compile_expr_filters(expr.operand, false)
+      when KrikriJinja::Nodes::CompareNode
+        compile_expr_filters(expr.left, false) +
+          expr.comparators.flat_map { |comparator| compile_expr_filters(comparator, false) }
+      else
+        compile_expr_rest_filters(expr)
+      end
+    end
+
+    private def self.compile_expr_rest_filters(expr : KrikriJinja::Nodes::ExprNode) : Array({String, Int32})
+      case expr
+      when KrikriJinja::Nodes::TestNode
+        compile_expr_filters(expr.target, false) + compile_args_filters(expr.args, expr.kwargs, false)
+      when KrikriJinja::Nodes::GetattrNode
+        compile_expr_filters(expr.obj, false)
+      when KrikriJinja::Nodes::GetitemNode
+        compile_expr_filters(expr.obj, false) + compile_expr_filters(expr.key, false)
+      when KrikriJinja::Nodes::SliceNode
+        compile_expr_filters(expr.obj, false) + compile_opt_expr_filters(expr.start, false) +
+          compile_opt_expr_filters(expr.stop, false) + compile_opt_expr_filters(expr.step, false)
+      when KrikriJinja::Nodes::CallExprNode
+        compile_expr_filters(expr.func, false) + compile_args_filters(expr.args, expr.kwargs, false)
+      when KrikriJinja::Nodes::ConcatNode
+        expr.parts.flat_map { |part| compile_expr_filters(part, false) }
+      else
+        [] of {String, Int32}
+      end
     end
 
     # Test teardown support for the registry scan trigger touches: a spec
