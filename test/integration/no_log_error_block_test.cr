@@ -91,6 +91,27 @@ describe "failed no_log copy's [ERROR] block" do
     block_precedes_fatal?(output).must_equal(false)
   end
 
+  # A failed no_log include_vars: (issue #645) prints the block in real
+  # ansible: its msg is the action's own fixed "unknown error" text, which
+  # carries no task data - the missing file's path lives only in the
+  # result's `message` key, which never reaches the block - so real shows
+  # the generic block over the censored fatal and the path stays hidden.
+  it "prints the block above the censored fatal for a no_log include_vars file miss" do
+    output = run_playbook(<<-YAML)
+          - include_vars:
+              file: no-such-vars-file.yml
+            no_log: true
+            ignore_errors: true
+    YAML
+
+    output.must_include("[ERROR]: Task failed: Action failed: Unknown error.")
+    output.must_include(%(fatal: [localhost]: FAILED! => {"censored": "the output has been hidden due to the fact that 'no_log: true' was specified for this result", "changed": false}))
+    block_precedes_fatal?(output).must_equal(true, output)
+    output.must_include("...ignoring")
+    output.wont_include("no-such-vars-file.yml")
+    output.wont_include("Could not find or access")
+  end
+
   # debconf's vtype: password read-back fails on get_bin_path when
   # debconf-get-selections is absent (issue #578): real prints the block
   # before the censored per-item lines, once for the identical items

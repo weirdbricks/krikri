@@ -881,6 +881,17 @@ module Krikri
          !dest.includes?("{{") && !dest.includes?("{%") && !dest.includes?("{#")
         return true if msg == "Destination directory #{File.dirname(dest)} does not exist"
       end
+      # A failed include_vars: (issue #645): ansible prints this generic
+      # block under no_log for the action's own load failure, and its msg
+      # is ansible's own fixed "unknown error" text - it names no task
+      # data (the missing file lives only in the result's `message` key,
+      # which never reaches the block), so the block can print without
+      # leaking (live-verified: before the censored fatal line). The
+      # parser models include_vars: as the internal "_include_vars"
+      # pseudo-module (playbook_parser.cr), so that name is what the
+      # executor passes here.
+      return true if module_name.try { |name| name == "include_vars" || name == "_include_vars" || name.ends_with?(".include_vars") } &&
+                     msg == "Task failed: Action failed: Unknown error."
       !!(copy_task && NO_LOG_SAFE_MSGS.includes?(msg))
     end
 
