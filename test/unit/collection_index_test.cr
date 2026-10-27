@@ -127,6 +127,34 @@ describe Krikri::CollectionIndex do
       "Error loading plugin 'community.google.gc_storage': No module named 'ansible_collections.community.google'")
   end
 
+  it "warns once per absent listed collection when a bare name is walked through collections:" do
+    # Ansible walks each collections: entry for the bare name and prints
+    # the loader's warning for every one it cannot import; the present
+    # testns.prov imports fine and adds nothing.
+    Krikri::CollectionIndex.missing_listed_collection_warnings("systemd", ["absentns.absentcoll", "testns.prov", "testns.absentcoll"]).must_equal([
+      "Error loading plugin 'systemd': No module named 'ansible_collections.absentns'",
+      "Error loading plugin 'systemd': No module named 'ansible_collections.testns.absentcoll'",
+    ])
+  end
+
+  it "carries the collections-walk warning on a service task in a play declaring an absent collection" do
+    pb = Krikri::PlaybookParser.parse_string(<<-YAML)
+      - name: svc play
+        hosts: all
+        gather_facts: false
+        collections:
+          - absentns.absentcoll
+        tasks:
+          - name: start it
+            ansible.builtin.service:
+              name: x
+              state: started
+      YAML
+    pb.plays[0].tasks[0].service_collection_warnings.must_equal([
+      "Error loading plugin 'systemd': No module named 'ansible_collections.absentns'",
+    ])
+  end
+
   it "treats an installed ansible.netcommon as the truth for its own names" do
     # Real ansible refuses an FQCN whose installed collection ships no
     # such module (ansible.netcommon has no cli_parse, ansible-playbook
