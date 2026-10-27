@@ -53,4 +53,45 @@ describe "when: block-inherited conditional failure chain" do
   ensure
     FileUtils.rm_rf(root) if root
   end
+
+  # Issue #577 (mrlesmithjr.mariadb_galera_cluster): a when: reading a var whose
+  # OWN value does a NON-empty dict-subscript miss (`groups[<no such
+  # group>]`) gets the same three-record chain real 2.19.11 already
+  # prints for the empty-key miss - with the third stanza's Origin at the
+  # defining var's value token, here the play-var line in the playbook
+  # (live-verified 2.19.11).
+  it "chains the defining var's Origin for a non-empty dict miss inside a when-read var" do
+    root = PluginSpecHelper.tmp_path("block-when-chain-577")
+    playbook = File.join(root, "pb.yml")
+    FileUtils.mkdir_p(root)
+    File.write(playbook, <<-YAML)
+      ---
+      - hosts: localhost
+        gather_facts: false
+        connection: local
+        vars:
+          galera_cluster_nodes_group: "galera-cluster-nodes"
+          galera_mysql_first_node: "{{ groups[galera_cluster_nodes_group][0] }}"
+        tasks:
+          - name: first node wait
+            debug:
+              msg: hi
+            when: inventory_hostname == galera_mysql_first_node
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", "localhost,", playbook],
+      output: output, error: output, input: IO::Memory.new)
+
+    text = output.to_s
+    status.success?.must_equal(false)
+    text.must_include("[ERROR]: Task failed: Error while evaluating conditional: object of type 'dict' has no attribute 'galera-cluster-nodes'")
+    text.scan("<<< caused by >>>").size.must_equal(2)
+    # third stanza: the defining var's value line carries the Origin
+    # (line 7 is the `galera_mysql_first_node:` play-var line)
+    text.must_include("Origin: #{playbook}:7:")
+    text.must_include("galera_mysql_first_node: \"{{ groups[galera_cluster_nodes_group][0] }}\"")
+  ensure
+    FileUtils.rm_rf(root) if root
+  end
 end

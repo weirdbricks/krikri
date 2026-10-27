@@ -3553,7 +3553,11 @@ module Krikri
       # The lazy-dict miss comes from subscripting the `groups` magic var,
       # which no var layer carries - without it the re-render fails on
       # `'groups' is undefined` instead and never reproduces the message.
-      merged["groups"] ||= JSON::Any.new(build_groups) if message.starts_with?("'#{Krikri::LAZY_TEMPLATE_DICT_TYPE} object'")
+      # The same applies to the NON-empty subscript miss on the same magic
+      # var: `groups` is always defined in real ansible (2.19.11), so
+      # injecting it only lets the exactly-one-match scan below see the
+      # actual dict-miss failure rather than a spurious undefined.
+      merged["groups"] ||= JSON::Any.new(build_groups) if message.starts_with?("'#{Krikri::LAZY_TEMPLATE_DICT_TYPE} object'") || message.starts_with?("object of type '")
 
       reachable = candidate_reachable_keys(merged, reachable_from)
 
@@ -4790,6 +4794,19 @@ module Krikri
         # Empty-key `groups[...]` miss inside a var the when: reads: the
         # same shortened middle link and var-definition cause (live-verified
         # 2.19.11, issue #319).
+        mid = "Error while evaluating conditional."
+        cause_stanza = "#{m[1]}\n" +
+                       origin_context_block(origin.path, File.read_lines(origin.path), origin.line, origin.column)
+      elsif (m = inner.match(/\AError while evaluating conditional: (object of type '[^']+' has no attribute '[^']+')\z/)) &&
+            (origin = value_failure_var_origin(task, m[1], reachable_from: raw))
+        # A non-empty dict-subscript miss inside a var the when: reads gets
+        # the SAME third record real 2.19.11 adds for the empty-key miss
+        # above - live-verified 2.19.11 on a role default
+        # `galera_mysql_first_node: "{{ groups[galera_cluster_nodes_group][0] }}"`
+        # under `when: inventory_hostname == galera_mysql_first_node` with
+        # no such group: the templar's dict-typed rewording ("object of
+        # type 'dict' has no attribute '...'") still chains through the
+        # defining var's value.
         mid = "Error while evaluating conditional."
         cause_stanza = "#{m[1]}\n" +
                        origin_context_block(origin.path, File.read_lines(origin.path), origin.line, origin.column)
