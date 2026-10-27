@@ -258,7 +258,9 @@ krikri aims for byte-for-byte identical stdout/stderr/exit code to `ansible-play
 ### Role-private custom `action_plugin`s are not supported (module execution is; action plugins are not)
 
 - Found via the `amtega.*` Galaxy collection (~28 roles), which depend on `amtega.check_platform`'s
-  role-private `action_plugins/_check_platform.py` - a real `ActionBase` subclass running on the
+  role-private `action_plugins/_check_platform.py`, and via `yourlabs.remember` (issue #669), whose
+  role-private `action_plugins/remember.py` is the task's only implementation (its `library/remember.py`
+  is empty) - a real `ActionBase` subclass running on the
   controller with access to `action_loader`, `templar` and `connection` internals. Role-private
   `library/*.py` custom **modules** already run here; custom **action plugins** are different in kind -
   controller-side Python reaching into Ansible's own plugin-loading/templating/connection APIs, meant
