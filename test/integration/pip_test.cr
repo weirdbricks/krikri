@@ -336,6 +336,34 @@ describe "pip plugin" do
       end
     end
 
+    it "reports the exec-failure shape when an absolute virtualenv_command does not exist" do
+      # Ansible's _get_cmd_options probes `<cmd> --help` through
+      # run_command, whose exec of a missing absolute path raises
+      # OSError - msg "Error executing command.", rc 2, the [Errno]
+      # exception text - not the "Could not get output from" wording.
+      missing_dir = File.join(Dir.tempdir, "krikri-pip-spec-missing-#{Random::Secure.hex(8)}")
+      missing = File.join(missing_dir, "ome-python3-virtualenv")
+      venv = File.join(Dir.tempdir, "krikri-pip-spec-venv-#{Random::Secure.hex(8)}")
+      begin
+        result = PluginSpecHelper.run("pip", {
+          "name"               => "pip",
+          "virtualenv"         => venv,
+          "virtualenv_command" => missing,
+        })
+
+        result["failed"].as_bool.must_equal(true)
+        result["changed"].as_bool.must_equal(false)
+        result["msg"].as_s.must_equal("Error executing command.")
+        result["rc"].as_i.must_equal(2)
+        result["cmd"].as_s.must_equal("#{missing} --help")
+        result["exception"].as_s.must_equal("[Errno 2] No such file or directory: b'#{missing}'")
+        File.directory?(venv).must_equal(false)
+      ensure
+        FileUtils.rm_rf(venv)
+        FileUtils.rm_rf(missing_dir)
+      end
+    end
+
     # Issue #343: a failing venv command fails through Ansible's _fail
     # shape - the command's own argv plus both output streams ("stdout: "
     # only when present, then "\n:stderr: ..."), not the stderr-only
