@@ -2718,10 +2718,17 @@ module Krikri
         # retries normally (live-verified vs 2.19.11: "FAILED - RETRYING"
         # still prints and the final result keeps the attempts key, while
         # the [ERROR] block still reads "Action failed:").
+        # yum/dnf get the same exemption: real's dnf action plugin RETURNS
+        # its backend-resolution failure (`result.update({'failed': True,
+        # ...})` in dnf.py) instead of raising, so the attempt loop treats
+        # it as an ordinary failed result and retries it (live-verified vs
+        # 2.19.11).
         if result_hash = result.as_h?
+          action_plugin_name = task.action_name || task.module_name
           if Krikri.result_failed_flag(result) &&
              result_hash["_ansible_action_level"]?.try(&.as_bool?) == true &&
-             !SCRIPT_MODULES.includes?(task.action_name || task.module_name)
+             !SCRIPT_MODULES.includes?(action_plugin_name) &&
+             !DICT_FAILURE_ACTION_PLUGINS.includes?(action_plugin_name)
             if register_name && !register_name.empty?
               register_result(host, register_name, result)
               vars_context[register_name] = @registered_vars[host.name][register_name]

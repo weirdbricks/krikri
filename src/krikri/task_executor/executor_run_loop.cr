@@ -2738,6 +2738,15 @@ module Krikri
 
     SCRIPT_MODULES = {"script", "ansible.builtin.script", "ansible.legacy.script"}
 
+    # yum/dnf belong here alongside script: real's dnf ACTION plugin resolves
+    # its backend and, when it cannot, RETURNS a failed dict
+    # (`result.update({'failed': True, 'msg': ...})` in dnf.py) instead of
+    # raising - so the executor's attempt loop sees an ordinary failed
+    # result and retries it like any other failure (live-verified vs
+    # 2.19.11). Their `_ansible_action_level`-marked results therefore must
+    # NOT take the raised-exception escape from run_until_retries.
+    DICT_FAILURE_ACTION_PLUGINS = {"yum", "dnf", "ansible.builtin.yum", "ansible.builtin.dnf", "ansible.legacy.yum", "ansible.legacy.dnf"}
+
     # script is an ACTION plugin in real: ansible-core's script.py action
     # runs the transferred file itself and returns its OWN result dict (no
     # inner module), so task_executor's maybe_raise_on_result sees that dict
