@@ -697,6 +697,53 @@ describe "strict-undefined loop ITEM entries and dict-subscript-miss messages" d
     output.must_include("zk_list: '{{ groups[zk_group] | list }}'")
   end
 
+  # Issue #582: an EMPTY play-var list indexed at [0] inside another
+  # var's value words the miss with ansible's lazy LIST class (the
+  # index-0 lazy-wrapper shape, live-verified 2.19.11) and chains the
+  # defining var's Origin like the "'x' is undefined" fourth stanza.
+  it "chains the defining var's Origin for an empty-list [0] miss inside another var" do
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          letsencrypt_domains: []
+          letsencrypt_domain_key_path: '{{ letsencrypt_domains[0] }}.key'
+        tasks:
+          - name: direct
+            ansible.builtin.debug:
+              msg: 'echo {{ letsencrypt_domain_key_path }}'
+      YAML
+
+    status.exit_code.must_equal(2)
+    output.must_include("ansible._internal._templating._lazy_containers._AnsibleLazyTemplateList object has no element 0")
+    output.must_include("Error while resolving value for 'msg'.")
+    output.must_include("letsencrypt_domain_key_path: '{{ letsencrypt_domains[0] }}.key'")
+  end
+
+  # Issue #582 (role shape): a free-form command's text rides under "cmd",
+  # so the reachability filter must seed from it - otherwise the sibling
+  # path vars that index the same empty list make the Origin ambiguous.
+  it "chains the Origin for a free-form command when sibling vars index the same empty list" do
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          letsencrypt_domains: []
+          letsencrypt_domain_csr_path: '{{ letsencrypt_domains[0] }}.csr'
+          letsencrypt_domain_key_path: '{{ letsencrypt_domains[0] }}.key'
+        tasks:
+          - name: direct
+            command: echo {{ letsencrypt_domain_key_path }}
+      YAML
+
+    status.exit_code.must_equal(2)
+    output.must_include("Error while resolving value for '_raw_params'.")
+    output.must_include("ansible._internal._templating._lazy_containers._AnsibleLazyTemplateList object has no element 0")
+    output.must_include("letsencrypt_domain_key_path: '{{ letsencrypt_domains[0] }}.key'")
+  end
+
   it "keeps the dict wording for a non-empty missing groups key" do
     status, output = run_playbook(<<-YAML)
       - hosts: localhost

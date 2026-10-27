@@ -584,6 +584,15 @@ module Krikri
   # `k: 'nope'`).
   LAZY_TEMPLATE_DICT_TYPE = "ansible._internal._templating._lazy_containers._AnsibleLazyTemplateDict"
 
+  # Play/role/set_fact list variables are wrapped in ansible's lazy
+  # template list, and 2.19.11 reports an out-of-range INDEX on such a
+  # bare-identifier var with Jinja's own "no element" wording (its
+  # "object of type ... has no attribute" hint is only built for
+  # truthy names, so index 0 - the one shape live-verified on the
+  # issue #582 repro - falls through to it). Literal lists and other
+  # indexes keep the plain list wording.
+  LAZY_TEMPLATE_LIST_TYPE = "ansible._internal._templating._lazy_containers._AnsibleLazyTemplateList"
+
   def self.dict_attribute_miss_message(missing_key : String, miss_type : String) : String
     if missing_key.empty?
       "'#{LAZY_TEMPLATE_DICT_TYPE} object' has no attribute ''"
@@ -865,6 +874,12 @@ module Krikri
         return "None has no element #{index}"
       when Array
         in_range = index.negative? ? index >= -list.size : index < list.size
+        if !in_range && index == 0 && rest =~ /\A[A-Za-z_][A-Za-z0-9_]*\z/
+          # ansible's lazy list wrapper owns bare-identifier vars, so its
+          # index-0 miss surfaces with the lazy type name rather than
+          # "'list'" - the observable wording on 2.19.11 (issue #582).
+          return "#{LAZY_TEMPLATE_LIST_TYPE} object has no element 0"
+        end
         return "object of type 'list' has no attribute #{index}" unless in_range
         current = list[index]
       else
