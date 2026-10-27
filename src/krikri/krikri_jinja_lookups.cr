@@ -328,6 +328,15 @@ module Krikri
       rendered = render_nested(ctx, content, extra)
       missing = (content.size - content.rstrip('\n').size) - (rendered.size - rendered.rstrip('\n').size)
       rendered += "\n" * missing if !rendered.empty? && missing > 0
+      # Ansible's template lookup yields None, not "", when the render
+      # produces no output at all (only block tags / comments, or a loop
+      # body that never runs - live-verified vs 2.19.x), so a var holding
+      # the lookup becomes None where we used to give "" (2 bytes apart in
+      # the rendered config: linux-system-roles.logging's rsyslog subrole
+      # renders its empty custom_templates list as "None" vs our ""). A
+      # source with no block/comment markup, an empty file, or an
+      # expression yielding "" still renders "" exactly as Ansible does.
+      return AnyValue.new(nil) if rendered.empty? && (content.includes?("{%") || content.includes?("{#"))
       AnyValue.new(rendered)
     rescue KrikriJinja::TemplateError
       AnyValue.new(nil)
