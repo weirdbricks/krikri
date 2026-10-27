@@ -3128,6 +3128,15 @@ module Krikri
         # out of #run, crashing the whole binary with a stack trace.
         # condname is the clause being evaluated when the error raised
         # ('changed' first, then 'failed').
+        # On a result the module did NOT already fail, a RAISING
+        # changed_when: finalizes like failed_when:'s failure does - real
+        # 2.19.11 routes it through AnsibleActionCapturedError, so the
+        # msgless result gets "Task failed: Action failed: Unknown error."
+        # (live-verified with file state=absent + a changed_when on
+        # result.diff). A result already failed by the module was
+        # normalized with the module's own class ("Module failed.") before
+        # changed_when: ever ran, and must keep that shape.
+        module_failed = hash["failed"]?.try(&.as_bool?) == true
         begin
           if changed_when
             maybe_conditional_delimiters_deprecation(task, changed_when, "changed_when", eval_context)
@@ -3136,6 +3145,11 @@ module Krikri
         rescue e : ConditionalEvaluator::ConditionalBooleanError | ConditionalEvaluator::UndefinedVariableError | VariableSubstitutor::FilterEngine::UnknownFilterError
           hash["failed"] = JSON::Any.new(true)
           hash["changed_when_result"] = JSON::Any.new(changed_failed_when_error_text(task, "changed_when", changed_when, host, e))
+          if !module_failed && !hash.has_key?("msg")
+            hash["msg"] = JSON::Any.new("Task failed: Action failed: Unknown error.")
+            hash["_ansible_action_level"] = JSON::Any.new(true)
+            hash["_ansible_error_detail"] = JSON::Any.new("Action failed: Unknown error.")
+          end
         end
 
         begin

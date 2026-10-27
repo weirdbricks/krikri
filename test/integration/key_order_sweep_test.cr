@@ -241,7 +241,7 @@ describe "wait_for plugin result key order" do
 end
 
 describe "unarchive plugin result key order" do
-  it "serializes an extract as handler, dest, src, changed, then the stat block (extract_results absent, files empty)" do
+  it "serializes an extract as handler, dest, src, extract_results (rc 0), changed, then the stat block (files empty)" do
     work = unique_tmp("unarchive-order")
     Dir.mkdir_p(work)
     src_dir = File.join(work, "srcdir")
@@ -255,14 +255,57 @@ describe "unarchive plugin result key order" do
     result = PluginSpecHelper.run("unarchive", {"src" => archive, "dest" => dest})
     result["changed"].as_bool.must_equal(true)
     result.as_h.keys.must_equal([
-      "handler", "dest", "src", "changed", "files",
+      "handler", "dest", "src", "extract_results", "changed", "files",
       "uid", "gid", "owner", "group", "mode", "state", "size",
     ])
+    # Real Ansible only sets extract_results when it actually extracted
+    # (unarchive.py's res_args['extract_results'] = handler.unarchive()),
+    # so a role's `changed_when: result.extract_results.rc != 0` reads rc
+    # off it; absent here, that when was fatal ("object of type 'dict'
+    # has no attribute 'extract_results'", marverix.chromium's
+    # tasks/download.yml).
+    extract_results = result["extract_results"].as_h
+    extract_results.keys.must_equal(["cmd", "rc", "out", "err"])
+    extract_results["rc"].as_i.must_equal(0)
   ensure
     FileUtils.rm_r(work) if work && Dir.exists?(work)
   end
 
-  it "serializes the already-extracted rerun in the same order with changed false" do
+  it "keeps a changed_when reading r.extract_results.rc non-fatal on the changed path" do
+    work = unique_tmp("unarchive-changed-when")
+    Dir.mkdir_p(work)
+    src_dir = File.join(work, "srcdir")
+    Dir.mkdir_p(src_dir)
+    File.write(File.join(src_dir, "a.txt"), "one\n")
+    archive = File.join(work, "pack.tgz")
+    Process.run("tar", ["czf", archive, "-C", src_dir, "."], output: Process::Redirect::Close, error: Process::Redirect::Close)
+    dest = File.join(work, "unpack")
+    Dir.mkdir_p(dest)
+
+    keys = run_registered_dump(<<-YAML)
+      - name: repro
+        hosts: localhost
+        gather_facts: false
+        connection: local
+        tasks:
+          - name: extract
+            ansible.builtin.unarchive:
+              src: #{archive}
+              dest: #{dest}
+            register: r
+            changed_when: "r.extract_results.rc != 0"
+          - name: dump
+            ansible.builtin.copy:
+              content: |-
+                {{ r | to_json }}
+              dest: KRIKRI_DUMP_PATH
+    YAML
+    keys.must_include("extract_results")
+  ensure
+    FileUtils.rm_r(work) if work && Dir.exists?(work)
+  end
+
+  it "serializes the already-extracted rerun in the same order with changed false and no extract_results" do
     work = unique_tmp("unarchive-order2")
     Dir.mkdir_p(work)
     src_dir = File.join(work, "srcdir")

@@ -74,4 +74,28 @@ describe "changed_when:/failed_when: evaluation errors keep the module's own msg
     # registered result but the console fatal block doesn't display it,
     # on either engine.)
   end
+
+  it "normalizes a raising changed_when on an ok msgless result through Action failed" do
+    _status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: file absent with a changed_when on the missing diff key
+            ansible.builtin.file:
+              path: /tmp/krikri-issue-567-nonexistent-path
+              state: absent
+            register: result
+            changed_when: result.diff.before.state != 'file'
+            ignore_errors: true
+      YAML
+
+    # On a result the module did not fail, the raising changed_when
+    # finalizes through AnsibleActionCapturedError (real 2.19.11): the
+    # msgless result gains the action-level msg and the ERROR banner
+    # repeats it - not the module-class "Module failed." block.
+    output.must_include("Task failed: Action failed: Unknown error.")
+    output.must_include(%("msg": "Task failed: Action failed: Unknown error."))
+    output.wont_include("Task failed: Module failed.")
+  end
 end
