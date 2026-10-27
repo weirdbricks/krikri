@@ -549,11 +549,18 @@ module Krikri
 
       changed = handler == :tar ? tar_changed?(src, dest, exclude, include_files, keep_newer, extra_opts) : zip_changed?(src, dest, exclude, include_files, keep_newer)
 
+      extract_results = nil
       if changed
-        result = handler == :tar ? extract_tar(src, dest, exclude, include_files, keep_newer, extra_opts) : extract_zip(src, dest, exclude, include_files, keep_newer)
-        unless result
+        extraction = handler == :tar ? extract_tar(src, dest, exclude, include_files, keep_newer, extra_opts) : extract_zip(src, dest, exclude, include_files, keep_newer)
+        unless extraction[:exit_code] == 0
           return PluginResult.new(changed: false, failed: true, msg: "failed to extract #{src}")
         end
+        extract_results = JSON.parse({
+          cmd: extraction[:cmd],
+          rc:  extraction[:exit_code],
+          out: extraction[:stdout],
+          err: extraction[:stderr],
+        }.to_json)
       end
 
       if attr_error = apply_dest_attributes(dest, handler, src)
@@ -570,8 +577,16 @@ module Krikri
       # live-verified vs 2.19.11 via `{{ r | to_json }}` for both the
       # extract and the already-extracted rerun. krikri always carries
       # `files` (empty without list_files), which lands in files' real
-      # position; extract_results is absent here and skipped.
-      PluginResult.new(
+      # position.
+      #
+      # extract_results carries the extraction command's
+      # {cmd, rc, out, err} on the changed path only (unarchive.py's
+      # `res_args['extract_results'] = handler.unarchive()`) - the
+      # unchanged path keeps it absent, matching real. Leaving it out
+      # used to make `changed_when: result.extract_results.rc != 0`
+      # fatal with "object of type 'dict' has no attribute
+      # 'extract_results'" (marverix.chromium's tasks/download.yml).
+      plugin_result = PluginResult.new(
         changed: changed,
         failed: false,
         msg: "",
@@ -588,6 +603,8 @@ module Krikri
         files: files || [] of String,
         key_order: %w[handler dest src extract_results changed files uid gid owner group mode state size]
       )
+      plugin_result.extra["extract_results"] = extract_results if extract_results
+      plugin_result
     end
 
     private def members(handler : Symbol, src : String) : Array(String)
@@ -685,7 +702,7 @@ module Krikri
       exempt_from_diff.any? { |pattern, exempt| !exempt && pattern.matches?(line) }
     end
 
-    private def extract_tar(src : String, dest : String, exclude : Array(String), include_files : Array(String), keep_newer : Bool, extra_opts : Array(String) = [] of String) : Bool
+    private def extract_tar(src : String, dest : String, exclude : Array(String), include_files : Array(String), keep_newer : Bool, extra_opts : Array(String) = [] of String) : NamedTuple(cmd: String, exit_code: Int32, stdout: String, stderr: String)
       # Real's TgzArchive#unarchive (unarchive.py) passes a task-given
       # owner:/group: straight to tar itself (`--owner=`/`--group=` on the
       # --extract command), so ownership is applied AT EXTRACTION - to
@@ -709,7 +726,8 @@ module Krikri
       owner_flag = (owner = @params["owner"]?) ? " --owner=#{shell_single_quote(owner)}" : ""
       group_flag = (group = @params["group"]?) ? " --group=#{shell_single_quote(group)}" : ""
       cmd = "tar --extract -C #{shell_single_quote(dest)} -f #{shell_single_quote(src)}#{owner_flag}#{group_flag}#{tar_flags(exclude, include_files, keep_newer, extra_opts)}"
-      remote_exec(cmd)[:exit_code] == 0
+      result = remote_exec(cmd)
+      {cmd: cmd, exit_code: result[:exit_code], stdout: result[:stdout], stderr: result[:stderr]}
     end
 
     private def zip_flags(exclude : Array(String), include_files : Array(String)) : String
@@ -887,7 +905,7 @@ module Krikri
       LibC.mktime(pointerof(tm))
     end
 
-    private def extract_zip(src : String, dest : String, exclude : Array(String), include_files : Array(String), keep_newer : Bool) : Bool
+    private def extract_zip(src : String, dest : String, exclude : Array(String), include_files : Array(String), keep_newer : Bool) : NamedTuple(cmd: String, exit_code: Int32, stdout: String, stderr: String)
       overwrite_flag = keep_newer ? "-n" : "-o"
       # No -q: Ansible invokes plain `unzip -o src -d dest`, and
       # Info-ZIP unzip exits 1 (warning) when it has to sanitize a
@@ -898,7 +916,8 @@ module Krikri
       # over the raw (unsanitized) member names. Matching Ansible's
       # exact invocation means matching its exact failure.
       cmd = "unzip #{overwrite_flag} -d #{shell_single_quote(dest)} #{shell_single_quote(src)}#{zip_flags(exclude, include_files)}"
-      remote_exec(cmd)[:exit_code] == 0
+      result = remote_exec(cmd)
+      {cmd: cmd, exit_code: result[:exit_code], stdout: result[:stdout], stderr: result[:stderr]}
     end
 
     # Returns a failed PluginResult if any of owner:/group:/mode: fails
