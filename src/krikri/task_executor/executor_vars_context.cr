@@ -4415,8 +4415,17 @@ module Krikri
             item_stripped = item_line.strip
             break unless item_stripped.starts_with?("- ")
             item = item_stripped[2..].strip
-            unquoted = item.gsub(/\A["']|["']\z/, "")
-            next unless unquoted == raw.strip
+            # ansible pins the Origin on the clause's own text, and a
+            # clause can legitimately END in a quote character (e.g.
+            # `user_setup_group != "root"`): stripping quotes from both
+            # ends unconditionally removes that trailing quote, the item
+            # no longer matches the raw clause, and the Origin lookup
+            # silently fails. Only a YAML scalar wrapped in ONE matching
+            # quote pair may lose its quotes.
+            quoted = item.size >= 2 &&
+                     (item.starts_with?('"') && item.ends_with?('"') ||
+                      item.starts_with?('\'') && item.ends_with?('\''))
+            next unless item == raw.strip || (quoted && item[1..-2] == raw.strip)
             dash_idx = item_line.index!("- ")
             item_rest = item_line[(dash_idx + 2)..]
             column = dash_idx + 2 + (item_rest.size - item_rest.lstrip.size) + 1
