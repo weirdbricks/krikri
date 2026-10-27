@@ -8,7 +8,8 @@ require "../../src/krikri/plugin_helpers/python_lib_gate"
 # msg is one of copy's fixed controller-side required-argument texts,
 # which ansible composes itself and so can never carry the secret a
 # no_log task is protecting (issue #271), or command/shell's fixed
-# "non-zero return code" exit text (issue #623); every other failure keeps
+# "non-zero return code" exit text (issue #623), and copy's missing-parent
+# message when dest is a literal (issue #644); every other failure keeps
 # the censored-only fatal line. Shapes captured from ansible-playbook 2.19.11
 # (live-verified there: no_log copy with no src/content prints the block
 # and the censored fatal, a no_log fail with a data-carrying msg prints
@@ -285,5 +286,45 @@ describe "failed no_log copy's [ERROR] block" do
     output.must_include(%(fatal: [localhost]: FAILED! => {"censored": "the output has been hidden due to the fact that 'no_log: true' was specified for this result", "changed": true}))
     output.must_include("...ignoring")
     output.wont_include("SECRET_CMD_SENTINEL")
+  end
+
+  # copy's missing-parent check (issue #644): real echoes the destination
+  # directory in its block. With a literal dest the text is already in the
+  # playbook source the Origin excerpt shows, so the block prints above the
+  # censored fatal line. A templated dest can carry a secret, so its block
+  # stays suppressed (only the censored fatal line remains).
+  it "prints the block above the censored fatal for a no_log copy with a literal dest whose parent is missing" do
+    scratch = PluginSpecHelper.tmp_path("no-log-literal-missing-dest")
+    FileUtils.mkdir_p(scratch)
+    missing_parent = File.join(scratch, "no-such-parent")
+    output = run_playbook_in(scratch, <<-YAML)
+          - copy:
+              content: hi
+              dest: #{missing_parent}/out.txt
+            no_log: true
+            ignore_errors: true
+    YAML
+
+    output.must_include("[ERROR]: Task failed: Module failed: Destination directory #{missing_parent} does not exist")
+    block_precedes_fatal?(output).must_equal(true, output)
+    output.must_include(%(fatal: [localhost]: FAILED! => {"censored": "the output has been hidden due to the fact that 'no_log: true' was specified for this result", "changed": false}))
+    output.must_include("...ignoring")
+  end
+
+  it "keeps the block suppressed for a no_log copy whose dest is templated" do
+    scratch = PluginSpecHelper.tmp_path("no-log-templated-missing-dest")
+    FileUtils.mkdir_p(scratch)
+    missing_parent = File.join(scratch, "no-such-parent")
+    output = run_playbook_in(scratch, <<-YAML)
+          - copy:
+              content: hi
+              dest: #{missing_parent}/{{ 'out.txt' }}
+            no_log: true
+            ignore_errors: true
+    YAML
+
+    output.wont_include("[ERROR]: Task failed:")
+    output.wont_include("Destination directory")
+    output.must_include(%(fatal: [localhost]: FAILED! => {"censored": "the output has been hidden due to the fact that 'no_log: true' was specified for this result", "changed": false}))
   end
 end
