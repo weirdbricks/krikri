@@ -1,4 +1,5 @@
 require "../minitest_helper"
+require "../../src/krikri/plugin_helpers/http_download"
 require "http/server"
 require "openssl/digest"
 require "base64"
@@ -676,6 +677,17 @@ describe "get_url plugin" do
     ensure
       stall_server.try(&.close)
       File.delete(dest) if dest && File.exists?(dest)
+    end
+
+    it "words the body-read timeout reason by URL scheme" do
+      # Live-verified against ansible-core: a TLS read timeout surfaces as
+      # ssl.SSLError's "The read operation timed out", while a plaintext
+      # socket read is socket.timeout's bare "timed out" - so the
+      # copyfileobj reason text depends on the URL scheme
+      # (see PluginHelpers::HTTPDownload.body_timeout_reason).
+      Krikri::PluginHelpers::HTTPDownload.body_timeout_reason("https").must_equal("The read operation timed out")
+      Krikri::PluginHelpers::HTTPDownload.body_timeout_reason("HTTPS").must_equal("The read operation timed out")
+      Krikri::PluginHelpers::HTTPDownload.body_timeout_reason("http").must_equal("timed out")
     end
 
     it "reports a directory dest as the directory itself on a download failure" do
