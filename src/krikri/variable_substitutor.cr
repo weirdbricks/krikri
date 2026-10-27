@@ -326,6 +326,10 @@ module Krikri
     filter_name == name
   end
 
+  # The head of ansible-core's mandatory filter-plugin failure text, as the
+  # finalization chain words it (see #mandatory_message for the full text).
+  MANDATORY_FAILED_PREFIX = "The filter plugin 'ansible.builtin.mandatory' failed: "
+
   # mandatory's failure text: Ansible's filter plugin uses its msg argument
   # when given ("custom message here"), else "Mandatory variable 'X' not
   # defined." quoting the UNDEFINED variable's name (live-verified).
@@ -1309,6 +1313,27 @@ module Krikri
           if VarSubstitutor.strict_span_active? && value_has_no_probe_side_effect?(inner_expr) &&
              (KrikriJinja.miss_count > signal_before || Krikri.strict_probe_candidate?(inner_expr, vars)) &&
              (msg = Krikri.strict_undefined_probe_message(inner_expr, vars))
+            # ansible-core 2.19 words a nested value whose own template is
+            # an undefined-source chain piped FIRST through mandatory with
+            # the mandatory filter-plugin wrapper, not the plain undefined
+            # error (issue #632, sscheib.openwrt_extroot:
+            # `_usb: '{{ usb | mandatory }}'` read through the assert
+            # success_msg's `lookup('ansible.builtin.vars', ...)` - the
+            # task fails "The filter plugin 'ansible.builtin.mandatory'
+            # failed: Mandatory variable 'usb' not defined.", live-verified).
+            # The direct `{{ usb | mandatory }}` span already gets that
+            # wording from #raise_if_strict_undefined; this probe (which
+            # runs for the nested value only) settled for the plain
+            # "'usb' is undefined" the strict engine evaluation produced,
+            # because the lenient structured evaluation demoted the
+            # undefined source to JSON null before the filter could be
+            # blamed. Same chain shape, same wording, checked before the
+            # probe's own message is used.
+            if (undefined_name = Krikri.undefined_filter_chain_source(inner_expr, vars)) &&
+               Krikri.chain_first_filter?(inner_expr, "mandatory")
+              detail = Krikri.mandatory_message(inner_expr, undefined_name)
+              raise Krikri::FilterPluginError.new(MANDATORY_FAILED_PREFIX + detail, detail)
+            end
             raise UndefinedVariableError.new(msg)
           end
           structured
@@ -1323,6 +1348,18 @@ module Krikri
         # return - that nil sent every caller down its re-render fallback,
         # re-attempting the same cycle forever (the round-5460170 hang).
         Rerender.re_raise_recursion(e)
+        # A mandatory failure is a task failure in ansible-core, not a
+        # "path does not apply" verdict. The engine re-wraps a resolver's
+        # filter-plugin failure as a runtime TemplateError carrying the same
+        # text after a `line N:` prefix, so match the wording (as the
+        # lookup-plugin arm does) and
+        # keep the failure: `_ext_usb_device_part: "{{ ... _ext_usb_device
+        # ~ 1 }}"` otherwise passed as '' where ansible fails the item
+        # with the mandatory message (issue #632).
+        if (msg = e.message) && (start = msg.index(MANDATORY_FAILED_PREFIX))
+          detail = msg[start + MANDATORY_FAILED_PREFIX.size..]
+          raise Krikri::FilterPluginError.new(msg[start..], detail)
+        end
         nil
       end
 
