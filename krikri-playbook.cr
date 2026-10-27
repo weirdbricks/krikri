@@ -53,7 +53,10 @@ end
 # ignoring: <token>" - in execution AND in every listing mode. Verified
 # against 2.19.11: the warning fires for named patterns that match no
 # host ('a', 'web', 'nosuch2' split on , and :), never for 'all',
-# 'ungrouped' or the ! / & restricted forms, and Display dedups repeats.
+# 'ungrouped' or the ! / & restricted forms. Emitted through ResultDisplay,
+# not a raw STDERR.puts, because Ansible's Display dedupes identical
+# warning lines across the whole run: the same token warned by a lookup
+# and by a play's hosts: field prints once.
 def warn_unmatched_play_patterns(inventory : Krikri::Inventory, play : Krikri::Play, warned : Set(String)) : Nil
   hosts_field = play.hosts
   pattern = hosts_field.is_a?(Array) ? hosts_field.join(":") : hosts_field
@@ -64,7 +67,7 @@ def warn_unmatched_play_patterns(inventory : Krikri::Inventory, play : Krikri::P
     next unless inventory.get_hosts(token).empty?
     message = "Could not match supplied host pattern, ignoring: #{token}"
     next unless warned.add?(message)
-    STDERR.puts "[WARNING]: #{message}".colorize(:yellow)
+    Krikri::ResultDisplay.emit_display_warning(message)
   end
 end
 
@@ -1193,12 +1196,16 @@ permanently_failed_hosts = Set(String).new
 
 # A --limit that matches nothing in the whole inventory aborts before any
 # play: one warning per unmatched pattern, then the no-hosts error, rc 1.
+# Emitted through ResultDisplay for the same reason as
+# warn_unmatched_play_patterns: Ansible's Display dedupe of identical
+# warning lines is process-wide, so a token already warned elsewhere in
+# the run (a lookup, a play's hosts:) prints once.
 unless limit_hosts.empty?
   limit_tokens = limit_hosts.split(/[,:]/).map(&.strip).reject(&.empty?)
   limit_tokens.each do |tok|
     next if tok.starts_with?('!') || tok.starts_with?('&')
     next unless inventory.get_hosts(tok).empty?
-    STDERR.puts "[WARNING]: Could not match supplied host pattern, ignoring: #{tok}".colorize(:yellow)
+    Krikri::ResultDisplay.emit_display_warning("Could not match supplied host pattern, ignoring: #{tok}")
   end
   if inventory.get_hosts(limit_hosts).empty?
     STDERR.puts "[ERROR]: Specified inventory, host pattern and/or --limit leaves us with no hosts to target.".colorize(:red)

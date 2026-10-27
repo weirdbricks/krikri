@@ -136,4 +136,61 @@ describe "lookup('inventory_hostnames', ...) no-match warning" do
     _stdout, stderr = run_pattern("lookup('inventory_hostnames', 'nosuchgroup,nosuchgroup')")
     stderr.scan(/Could not match supplied host pattern, ignoring: nosuchgroup/).size.must_equal(1)
   end
+
+  it "prints the no-match warning once when two tasks repeat the same unmatched lookup" do
+    dir = File.tempname("ih-warn", ".d")
+    Dir.mkdir(dir)
+    inventory = File.join(dir, "inventory.ini")
+    File.write(inventory, INVENTORY)
+    playbook = File.join(dir, "pb.yml")
+    File.write(playbook, <<-PLAYBOOK)
+      ---
+      - hosts: localhost
+        gather_facts: false
+        tasks:
+          - name: first
+            debug:
+              msg: "{{ query('inventory_hostnames', 'nosuchgroup') }}"
+          - name: second
+            debug:
+              msg: "{{ query('inventory_hostnames', 'nosuchgroup') }}"
+      PLAYBOOK
+
+    stdout = IO::Memory.new
+    stderr = IO::Memory.new
+    Process.run(BINARY, ["-i", inventory, playbook], output: stdout, error: stderr)
+    stderr.to_s.scan(/Could not match supplied host pattern, ignoring: nosuchgroup/).size.must_equal(1)
+  ensure
+    FileUtils.rm_r(dir) if dir && Dir.exists?(dir)
+  end
+
+  it "prints the no-match warning once when a lookup and a later play's hosts: match the same missing group" do
+    dir = File.tempname("ih-warn", ".d")
+    Dir.mkdir(dir)
+    inventory = File.join(dir, "inventory.ini")
+    File.write(inventory, INVENTORY)
+    playbook = File.join(dir, "pb.yml")
+    File.write(playbook, <<-PLAYBOOK)
+      ---
+      - hosts: localhost
+        gather_facts: false
+        tasks:
+          - name: lookup
+            debug:
+              msg: "{{ query('inventory_hostnames', 'nosuchgroup') }}"
+      - hosts: nosuchgroup
+        gather_facts: false
+        tasks:
+          - name: never runs
+            debug:
+              msg: "unreachable"
+      PLAYBOOK
+
+    stdout = IO::Memory.new
+    stderr = IO::Memory.new
+    Process.run(BINARY, ["-i", inventory, playbook], output: stdout, error: stderr)
+    stderr.to_s.scan(/Could not match supplied host pattern, ignoring: nosuchgroup/).size.must_equal(1)
+  ensure
+    FileUtils.rm_r(dir) if dir && Dir.exists?(dir)
+  end
 end
