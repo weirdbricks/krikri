@@ -264,6 +264,41 @@ describe "undefined loop item cause stanza origin" do
     FileUtils.rm_rf(src_dir) if src_dir
   end
 
+  # Issue #640: a block-mapping element's own `value:` continuation line
+  # ended the element scan, so a failing LATER element was never reached
+  # and the Origin fell back to the first element's start - real ansible
+  # templates element scalars in order and pins the failing element's
+  # `value:` token (systemli.jitsi_meet's jitsi-meet.yml loop).
+  it "scans a block-mapping element past an earlier element's value lines" do
+    src_dir = File.tempname("loop-undef-origin-blockmap-cont")
+    Dir.mkdir_p(src_dir)
+    text = run_playbook(src_dir, <<-YAML)
+      ---
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: Block mapping element after a multi-line one
+            ansible.builtin.debug:
+              msg: "{{ item.key }}={{ item.value }}"
+            loop:
+              - key: "M2_HOME"
+                value: "static"
+              - key: "OTHER"
+                value: "{{ install_dir }}"
+      YAML
+
+    playbook = File.expand_path(File.join(src_dir, "pb.yml"))
+    text.must_include("[ERROR]: Task failed: 'install_dir' is undefined")
+    # The first element carries no failing value and its `value: "static"`
+    # continuation line must not end the scan: the Origin belongs on the
+    # second element's `value:` line (13) at the quote (col 18).
+    text.must_include("Origin: #{playbook}:13:18")
+    text.must_include("13           value: \"{{ install_dir }}\"\n                    ^ column 18")
+  ensure
+    FileUtils.rm_rf(src_dir) if src_dir
+  end
+
   it "pins a literal item's defining var, not the item line" do
     # Issue #592 (opencore.keystores): the failing item references a
     # play var whose OWN value is what fails - ansible's cause Origin

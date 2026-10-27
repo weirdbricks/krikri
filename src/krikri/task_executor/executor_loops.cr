@@ -1308,13 +1308,29 @@ module Krikri
           # blank and comment-only lines are skipped in between.
           key_indent = line.size - line.lstrip.size
           first_element_pos = nil
+          # A block-mapping element (`- key: "M2_HOME"` plus its deeper
+          # `value:` line) spans several lines, and ansible templates an
+          # element's own scalars before moving on, so a failing LATER
+          # element must still be reached: continuation lines of the
+          # element just scanned (its key/value lines, or a nested list
+          # under one of its keys) are indented deeper than that
+          # element's dash and must be skipped, not treated as the end
+          # of the sequence (live-verified vs 2.19.11, issue #640:
+          # without this the walk broke inside the first element and the
+          # Origin fell back to that element's start).
+          element_dash_idx : Int32? = nil
           ((idx + 1)...lines.size).each do |val_idx|
             val_line = lines[val_idx]
             val_stripped = val_line.strip
             next if val_stripped.empty? || val_stripped.starts_with?("#")
-            break if (val_line.size - val_line.lstrip.size) < key_indent
+            val_indent = val_line.size - val_line.lstrip.size
+            break if val_indent < key_indent
+            if (element_dash = element_dash_idx) && val_indent > element_dash
+              next
+            end
             if val_stripped.starts_with?("- ")
-              dash_idx = val_line.size - val_line.lstrip.size
+              dash_idx = val_indent
+              element_dash_idx = dash_idx
               after_dash = val_line[(dash_idx + 1)..]
               pos = {val_idx, dash_idx + 2 + (after_dash.size - after_dash.lstrip.size)}
               # A flow-mapping/flow-list element (`- { line: 'Port {{ x }}' }`)
