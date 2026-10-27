@@ -1682,11 +1682,14 @@ module Krikri
           end
         end
 
-        # Track parentheses
+        # Track bracket nesting - parens, subscripts and dict literals.
+        # Ansible tokenizes `or`/`and`/`if` inside any of them as part of
+        # the expression, not as a top-level split point (ansible
+        # evaluates `a[b or c]` as one operand).
         if !in_quotes
-          if char == '('
+          if char == '(' || char == '[' || char == '{'
             paren_depth += 1
-          elsif char == ')'
+          elsif char == ')' || char == ']' || char == '}'
             paren_depth -= 1
           end
         end
