@@ -219,4 +219,51 @@ describe "version_compare test alias" do
     output.wont_include("%q{\"msg\": \"SHOULD-NOT-RUN\"}")
     output.must_include("Version comparison failed: invalid semantic version '1.2'")
   end
+
+  # Verified against ansible-playbook 2.19: a version test on an UNDEFINED
+  # variable inside a template span reports the missing variable by name, not
+  # the test's empty-input wording - "{{ dirsrv_package_version is
+  # version('1.4.0', '<') }}" fails with "'dirsrv_package_version' is
+  # undefined". This only holds when the test sees the raw Undefined operand
+  # and stays silent, so the lenient evaluation completes and the
+  # strict-undefined probe raises the named message.
+  it "reports an undefined version operand by name inside a template span" do
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: undefined operand via set_fact
+            ansible.builtin.set_fact:
+              dirsrv_legacy: "{{ dirsrv_package_version is version('1.4.0', '<') }}"
+            ignore_errors: true
+      YAML
+
+    status.success?.must_equal(true)
+    output.must_include("'dirsrv_package_version' is undefined")
+    output.wont_include("Input version value cannot be empty")
+  end
+
+  # The same span with the variable deliberately DEFINED as null keeps the
+  # empty-input wording - real ansible-playbook 2.19 fails the identical
+  # playbook with "Input version value cannot be empty" there too, so the
+  # undefined branch above must not swallow this one.
+  it "still fails with the empty-input wording for a variable defined as null" do
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          dirsrv_package_version: null
+        tasks:
+          - name: null operand via set_fact
+            ansible.builtin.set_fact:
+              dirsrv_legacy: "{{ dirsrv_package_version is version('1.4.0', '<') }}"
+            ignore_errors: true
+      YAML
+
+    status.success?.must_equal(true)
+    output.must_include("Input version value cannot be empty")
+    output.wont_include("'dirsrv_package_version' is undefined")
+  end
 end

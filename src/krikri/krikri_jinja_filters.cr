@@ -367,7 +367,21 @@ module Krikri
     # Ansible's own tests (ansible.builtin), which Jinja2 does not ship.
     def self.register_tests : Nil
       {"version", "version_compare"}.each do |test_name|
-        KrikriJinja.register_default_json_test(test_name) do |value, args, kwargs|
+        # Raw-value registration instead of register_default_json_test: the
+        # JSON wrapper coerces a lenient Undefined operand to null, so the test
+        # could only report it as "Input version value cannot be empty". Real
+        # ansible-playbook 2.19 names the missing variable instead: for
+        # "{{ dirsrv_package_version is version('1.4.0', '<') }}" with the
+        # variable never set it fails with "'dirsrv_package_version' is
+        # undefined". Returning false here lets the lenient evaluation finish so
+        # the strict-undefined probe raises that named message; a variable
+        # deliberately defined as null still gets "Input version value cannot be
+        # empty", as in Ansible.
+        KrikriJinja.register_default_test(test_name) do |raw_value, raw_args, raw_kwargs, _ctx|
+          next false if raw_value.raw.is_a?(KrikriJinja::Undefined)
+          value = KrikriJinja.to_json_any(raw_value)
+          args = raw_args.map { |arg| KrikriJinja.to_json_any(arg) }
+          kwargs = raw_kwargs.transform_values { |arg| KrikriJinja.to_json_any(arg) }
           begin
             # A dict operand (the bare `ansible_version` magic var rather than
             # its `.full` field) is a templating error in Ansible, not a
