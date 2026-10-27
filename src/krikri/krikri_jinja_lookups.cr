@@ -325,7 +325,17 @@ module Krikri
       # Ansible's template lookup keeps the template's trailing newlines
       # (live-verified vs ansible-core 2.19.11), so restore whatever the
       # source had beyond the rendered result's own, as lookup_file.cr does.
-      rendered = render_nested(ctx, content, extra)
+      # ansible-core 2.19.11 attributes a play_hosts read deprecation
+      # raised inside a lookup('template') render to the LOOKUP's template
+      # file as Origin (path alone, no line/column), not to the calling
+      # task param - registered on the fiber for the render's variable
+      # reads to pick up (play_hosts_read_origin).
+      VarSubstitutor.push_current_template_file(resolved)
+      begin
+        rendered = render_nested(ctx, content, extra)
+      ensure
+        VarSubstitutor.pop_current_template_file
+      end
       missing = (content.size - content.rstrip('\n').size) - (rendered.size - rendered.rstrip('\n').size)
       rendered += "\n" * missing if !rendered.empty? && missing > 0
       # Ansible's template lookup yields None, not "", when the render

@@ -375,6 +375,21 @@ module Krikri
         nil
       end
 
+      # The play_hosts read deprecation: this render hands the engine its
+      # whole variable scope up front with no per-read resolver hook, so
+      # the read is detected on the PARSED template instead - a direct
+      # `play_hosts` name in the AST is a read, an attribute access
+      # (`x.play_hosts`) or a string/comment occurrence is not.
+      # ansible-core 2.19.11's Origin here is the template file alone, no
+      # line/column.
+      if template = parsed_template
+        if template_reads_play_hosts?(template)
+          Krikri::ResultDisplay.emit_play_hosts_deprecation(
+            ErrorBlock.origin_context(File.expand_path(template_path), 0, nil, show_content: false)
+          )
+        end
+      end
+
       template_vars = prepare_template_vars_json(template_path)
       engine = KrikriJinja.derive_engine(
         build_template_loader(template_path), options,
@@ -558,6 +573,104 @@ module Krikri
       return true if engine.filters.has_key?(name)
       short = name.count('.') >= 2 ? name.rpartition('.')[2] : nil
       !!(short && engine.filters.has_key?(short))
+    end
+
+    # Whether the parsed template contains a direct read of `play_hosts`
+    # - the one magic variable whose read krikri warns about (the read
+    # hook above). Statement bodies are walked for nested expressions,
+    # expressions for their operand/subexpression trees; assignment
+    # TARGETS are strings on their nodes, not NameNodes, so `{% set
+    # play_hosts = ... %}` marks nothing itself (a later READ of the
+    # shadowed name still counts - the shadowing shape is rare enough
+    # that real-vs-krikri stays aligned in practice). The catch-all
+    # `else` keeps an engine adding a node type here from crashing a
+    # render over a deprecation scan.
+    private def template_reads_play_hosts?(node : KrikriJinja::Nodes::Node) : Bool
+      case node
+      when KrikriJinja::Nodes::NameNode
+        node.name == "play_hosts"
+      when KrikriJinja::Nodes::TextNode, KrikriJinja::Nodes::ConstNode,
+           KrikriJinja::Nodes::InTestNode
+        false
+      when KrikriJinja::Nodes::TemplateNode
+        any_node_reads_play_hosts?(node.body)
+      when KrikriJinja::Nodes::OutputNode, KrikriJinja::Nodes::DoNode
+        template_reads_play_hosts?(node.expr)
+      when KrikriJinja::Nodes::IfNode
+        node.branches.any? { |(test, body)| template_reads_play_hosts?(test) || any_node_reads_play_hosts?(body) } ||
+          (node.orelse.try { |orelse| any_node_reads_play_hosts?(orelse) } || false)
+      when KrikriJinja::Nodes::ForNode
+        template_reads_play_hosts?(node.iter) ||
+          (node.test.try { |test| template_reads_play_hosts?(test) } || false) ||
+          any_node_reads_play_hosts?(node.body) ||
+          (node.orelse.try { |orelse| any_node_reads_play_hosts?(orelse) } || false)
+      when KrikriJinja::Nodes::SetNode
+        template_reads_play_hosts?(node.expr) ||
+          (node.attr_target.try { |target| template_reads_play_hosts?(target) } || false) ||
+          (node.body.try { |body| any_node_reads_play_hosts?(body) } || false) ||
+          exprs_read_play_hosts?(node.filter_args) ||
+          node.filter_kwargs.any? { |kwarg| template_reads_play_hosts?(kwarg[1]) }
+      when KrikriJinja::Nodes::BlockNode, KrikriJinja::Nodes::AutoescapeNode
+        any_node_reads_play_hosts?(node.body)
+      when KrikriJinja::Nodes::MacroNode
+        node.params.any? { |param| (default = param[1]) && template_reads_play_hosts?(default) } ||
+          any_node_reads_play_hosts?(node.body)
+      when KrikriJinja::Nodes::CallNode
+        template_reads_play_hosts?(node.macro_expr) ||
+          exprs_read_play_hosts?(node.args) ||
+          node.kwargs.any? { |kwarg| template_reads_play_hosts?(kwarg[1]) } ||
+          (node.body.try { |body| any_node_reads_play_hosts?(body) } || false)
+      when KrikriJinja::Nodes::FilterBlockNode
+        template_reads_play_hosts?(node.filter) || any_node_reads_play_hosts?(node.body)
+      when KrikriJinja::Nodes::WithNode
+        node.bindings.any? { |binding| template_reads_play_hosts?(binding[1]) } ||
+          any_node_reads_play_hosts?(node.body)
+      when KrikriJinja::Nodes::IncludeNode, KrikriJinja::Nodes::ExtendsNode, KrikriJinja::Nodes::ImportNode
+        template_reads_play_hosts?(node.template)
+      when KrikriJinja::Nodes::ListExprNode, KrikriJinja::Nodes::TupleExprNode
+        exprs_read_play_hosts?(node.items)
+      when KrikriJinja::Nodes::ConcatNode
+        exprs_read_play_hosts?(node.parts)
+      when KrikriJinja::Nodes::DictExprNode
+        exprs_read_play_hosts?(node.keys) || exprs_read_play_hosts?(node.values)
+      when KrikriJinja::Nodes::BinOpNode
+        template_reads_play_hosts?(node.left) || template_reads_play_hosts?(node.right)
+      when KrikriJinja::Nodes::UnaryOpNode
+        template_reads_play_hosts?(node.operand)
+      when KrikriJinja::Nodes::CompareNode
+        template_reads_play_hosts?(node.left) || exprs_read_play_hosts?(node.comparators)
+      when KrikriJinja::Nodes::FilterNode, KrikriJinja::Nodes::TestNode
+        template_reads_play_hosts?(node.target) ||
+          exprs_read_play_hosts?(node.args) ||
+          node.kwargs.any? { |kwarg| template_reads_play_hosts?(kwarg[1]) }
+      when KrikriJinja::Nodes::GetattrNode
+        template_reads_play_hosts?(node.obj)
+      when KrikriJinja::Nodes::GetitemNode
+        template_reads_play_hosts?(node.obj) || template_reads_play_hosts?(node.key)
+      when KrikriJinja::Nodes::SliceNode
+        template_reads_play_hosts?(node.obj) ||
+          (node.start.try { |expr| template_reads_play_hosts?(expr) } || false) ||
+          (node.stop.try { |expr| template_reads_play_hosts?(expr) } || false) ||
+          (node.step.try { |expr| template_reads_play_hosts?(expr) } || false)
+      when KrikriJinja::Nodes::CallExprNode
+        template_reads_play_hosts?(node.func) ||
+          exprs_read_play_hosts?(node.args) ||
+          node.kwargs.any? { |kwarg| template_reads_play_hosts?(kwarg[1]) }
+      when KrikriJinja::Nodes::CondExprNode
+        template_reads_play_hosts?(node.test) ||
+          template_reads_play_hosts?(node.truthy) ||
+          (node.falsy.try { |expr| template_reads_play_hosts?(expr) } || false)
+      else
+        false
+      end
+    end
+
+    private def any_node_reads_play_hosts?(body : Array(KrikriJinja::Nodes::Node)) : Bool
+      body.any? { |child| template_reads_play_hosts?(child) }
+    end
+
+    private def exprs_read_play_hosts?(exprs : Array(KrikriJinja::Nodes::ExprNode)) : Bool
+      exprs.any? { |expr| template_reads_play_hosts?(expr) }
     end
 
     # Engine-scope conversion for the template render's variable loading.
