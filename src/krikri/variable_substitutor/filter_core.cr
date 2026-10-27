@@ -198,8 +198,16 @@ module Krikri
         File.basename(s)
       end
 
+      # Mirrors Python's os.path.dirname, not Crystal's File.dirname: role
+      # code uses `(x | default('')) | dirname or omit` guards (issue
+      # #664), where Python's "" for a bare or empty path is falsy and
+      # drops the key, while Crystal's "." was truthy and kept a real path.
+      # A head made only of separators is kept verbatim ("//a" -> "//").
       def self.dirname(s : String) : String
-        File.dirname(s)
+        i = s.rindex('/') || return ""
+        head = s[0..i]
+        stripped = head.rstrip('/')
+        stripped.empty? ? head : stripped
       end
 
       # splitext() - mirrors Python's os.path.splitext: {root, ext} with

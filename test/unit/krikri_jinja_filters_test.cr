@@ -72,6 +72,15 @@ describe Krikri::KrikriJinjaFilters do
     render("{{ '1.00 KB' | human_to_bytes }}").must_equal("1024")
   end
 
+  it "registers dirname with Python os.path.dirname empty-string semantics" do
+    # Python's os.path.dirname("") is "" (falsy, so `| dirname or omit`
+    # guards yield omit); Crystal's File.dirname returned "." there -
+    # truthy - which produced a real directory path instead (issue #664).
+    render("{{ '' | dirname }}").must_equal("")
+    render("{{ 'foo' | dirname }}").must_equal("")
+    render("{{ 'a/b/' | dirname }}").must_equal("a/b")
+  end
+
   it "registers the collection filters and Ansible value helpers" do
     render("{{ {'a': 1, 'b': 2} | omit('a') | tojson }}").must_equal(%({"b": 2}))
     render("{{ [] | mandatory }}").must_equal("[]")
