@@ -510,6 +510,20 @@ module Krikri
       "No module named '#{module_name}'"
     end
 
+    # The [WARNING] lines ansible-core's loader prints while it walks a
+    # task's collections: list to find a bare module name (a service
+    # action's delegated `systemd` module): one per listed collection that
+    # cannot be imported. A listed collection that IS installed imports
+    # cleanly and adds nothing, so only absent entries warn.
+    def self.missing_listed_collection_warnings(name : String, task_collections : Array(String)) : Array(String)
+      task_collections.compact_map do |entry|
+        next unless entry.count('.') == 1
+        namespace, collection = entry.split('.')
+        next if collection_dirs.has_key?("#{namespace}.#{collection}")
+        "Error loading plugin '#{name}': #{missing_collection_reason(namespace, collection)}"
+      end
+    end
+
     # A role's own meta/main.yml `collections:` list - the role's
     # declaration of the collections its bare module names resolve
     # through, which ansible-core folds into the task's collection

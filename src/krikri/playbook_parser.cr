@@ -99,6 +99,11 @@ module Krikri
     # task-level Origin at the task's name line. nil without a source map
     # (the stanza is then omitted, never mislabeled).
     property unresolvable_mapping_origin : {String, Int32, Int32}?
+    # The [WARNING] lines ansible-core's loader prints when a service
+    # action's delegated `systemd` module lookup walks this task's
+    # collections: list and a listed collection is absent (set only on
+    # service tasks; emitted by the executor when the systemd manager runs).
+    property service_collection_warnings : Array(String) = [] of String
     property params : Hash(String, String)
     property vars : Hash(String, JSON::Any)
     # environment: - per-task env vars (Ansible keyword). Raw,
@@ -3905,6 +3910,9 @@ module Krikri
       task = Task.new(name || as_written_module_name, module_name)
       task.action_name = as_written_module_name
       task.has_explicit_name = !name.nil?
+      if module_name.split('.').last == "service"
+        task.service_collection_warnings = CollectionIndex.missing_listed_collection_warnings("systemd", task_collections || [] of String)
+      end
       if templated_action_string
         task.templated_action = templated_action_string
         # A dict-form directive's args: payload is static (only the module
