@@ -1,7 +1,7 @@
 require "../minitest_helper"
 require "../../src/krikri/plugin_helpers/facts_gatherer"
 
-# Pins two fact-presence fixes, both against Ansible's own
+# Pins three fact-presence fixes, all against Ansible's own
 # collector semantics:
 #
 # - ansible_selinux.status: Ansible's SelinuxFactCollector loads
@@ -20,6 +20,12 @@ require "../../src/krikri/plugin_helpers/facts_gatherer"
 #   `__kdump_required_facts | difference(ansible_facts.keys()|list) |
 #   length > 0` never emptied and a redundant setup task re-ran
 #   (round 952548).
+# - ansible_default_ipv6: Ansible's collector ALWAYS emits this fact
+#   ({} when there is no IPv6 default route), never simply absent.
+#   krikri never set it, so linux-system-roles.vpn's set_vars.yml gate
+#   `__vpn_required_facts | difference(ansible_facts.keys()|list) |
+#   length > 0` never emptied and a redundant setup task re-ran
+#   (issue #560).
 # Independent re-derivation of the libselinux probe (different code
 # path from the engine's own helper, which goes ldconfig-cache first)
 # so a broken probe cannot make these specs pass tautologically.
@@ -96,6 +102,33 @@ describe "Krikri::FactsGatherer (facts_selinux_ipv6_test.cr)" do
       listed = `ip -6 addr show 2>/dev/null | grep 'inet6 ' | awk '{print $2}' | cut -d/ -f1`.split
       expect = listed.reject("::1").uniq!.sort!
       addresses.uniq.sort!.must_equal(expect)
+    end
+  end
+
+  describe "ansible_default_ipv6" do
+    it "is always set once network facts are gathered, and is {} on a host with no IPv6 default route (issue #560)" do
+      facts = JSON.parse(Krikri::FactsGatherer.run(nil))["ansible_facts"].as_h
+
+      # Same ip-binary gate Ansible's LinuxNetwork.populate applies
+      # before gathering anything: without iproute2 there are no network
+      # facts at all (see facts_mount_network_scoping_spec.cr for FS5).
+      ip_present = ((ENV["PATH"]?.try(&.split(':')) || [] of String) +
+                    ["/sbin", "/usr/sbin", "/bin", "/usr/bin"]).any? do |dir|
+        !dir.empty? && File::Info.executable?(File.join(dir, "ip"))
+      end
+
+      skip("conditional skip") unless ip_present
+
+      default_ipv6 = facts["ansible_default_ipv6"]?
+      default_ipv6.wont_be_nil
+      default_ipv6.as(JSON::Any).as_h?.wont_be_nil
+
+      # {} is only provably correct where no IPv6 default route exists;
+      # on a routed host this fix deliberately still emits {} (the route
+      # itself is not gathered).
+      if `ip -6 route show default 2>/dev/null`.strip.empty?
+        default_ipv6.as(JSON::Any).as_h.must_be_empty
+      end
     end
   end
 end
