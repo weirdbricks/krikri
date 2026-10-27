@@ -3377,11 +3377,30 @@ module Krikri
         # arg's variable (live-verified 2.19.11, issue #319): the bare
         # lazy-dict message with Origin at the variable's definition.
         lazy = msg.match(/\AError while resolving value for '([^']+)': ('#{Regex.escape(Krikri::LAZY_TEMPLATE_DICT_TYPE)} object' has no attribute '')\z/)
-        return nil unless lazy
-        seed = task.params[lazy[1]]?
-        origin = value_failure_var_origin(task, lazy[2], reachable_from: seed.is_a?(String) ? seed : nil)
+        if lazy
+          seed = task.params[lazy[1]]?
+          origin = value_failure_var_origin(task, lazy[2], reachable_from: seed.is_a?(String) ? seed : nil)
+          return nil unless origin
+          return "#{lazy[2]}\n" +
+            origin_context_block(origin.path, File.read_lines(origin.path), origin.line, origin.column)
+        end
+        # Same fourth stanza for indexing an empty play/role/set_fact
+        # LIST variable (live-verified 2.19.11, issue #582): ansible
+        # wraps those in its lazy template list, so the bare innermost
+        # message carries that type name, with Origin at the defining
+        # value's first character - the same mechanism the nested
+        # "'x' is undefined" stanza uses.
+        lazy_list = msg.match(/\AError while resolving value for '([^']+)': (#{Regex.escape(Krikri::LAZY_TEMPLATE_LIST_TYPE)} object has no element 0)\z/)
+        return nil unless lazy_list
+        # A free-form command's text lives under "cmd" (the module's own
+        # key), not the "_raw_params" the message names - without that seed
+        # the reachability filter never narrows, so sibling defaults that
+        # index the same empty list look ambiguous and no Origin is shown
+        # (live-verified 2.19.11, issue #582: a role's four path defaults).
+        seed = lazy_list[1] == "_raw_params" ? (task.params["cmd"]? || task.params["_raw_params"]?) : task.params[lazy_list[1]]?
+        origin = value_failure_var_origin(task, lazy_list[2], reachable_from: seed.is_a?(String) ? seed : nil)
         return nil unless origin
-        return "#{lazy[2]}\n" +
+        return "#{lazy_list[2]}\n" +
           origin_context_block(origin.path, File.read_lines(origin.path), origin.line, origin.column)
       end
       # Real 2.19.11 only follows the vars actually reachable from the

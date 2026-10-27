@@ -130,6 +130,18 @@ describe "Krikri::VarSubstitutor (undefined_variable_error_test.cr)" do
       end
     end
 
+    it "words an empty bare-identifier list's index 0 with ansible's lazy list class (issue #582)" do
+      # Play/role/set_fact lists reach ansible's evaluator wrapped in
+      # _AnsibleLazyTemplateList, and its index-0 miss carries Jinja's
+      # "no element" wording rather than the attribute-error shape -
+      # live-verified against 2.19.11.
+      vars = {"empty_list" => JSON.parse(%([]))}
+      sub = Krikri::VarSubstitutor.new(vars: vars, host_name: "h1")
+      assert_raises_message(Krikri::UndefinedVariableError, /_AnsibleLazyTemplateList object has no element 0/) do
+        sub.substitute("{{ empty_list[0] }}", strict: true)
+      end
+    end
+
     it "still extracts the captured group when the regex genuinely matches" do
       # This leading-paren shape delegates to Crinja internally
       # (`evaluate_leading_paren_crinja_first`), which re-encodes the
