@@ -1057,9 +1057,25 @@ module Krikri
     # the display - ansible's callback then finds no _ansible_item_label
     # and shows "None" rather than crashing.
     private def include_item_display_label(task : Task, item : JSON::Any, vars_context : Hash(String, JSON::Any), host : Host) : String
+      # Ansible censors the loop item on the include-style per-iteration
+      # lines (`included:`/`skipping:`) when the include's own no_log
+      # resolves true - the item can itself be the secret (issue #613).
+      return "(censored due to no_log)" if resolve_task_no_log(task, vars_context)
       item_label_for(task, item, vars_context, host)
     rescue Krikri::TaskExecutor::LoopLabelError
       "None"
+    end
+
+    private def included_line_item_label(task : Task, item_label : String?) : String?
+      return nil unless item_label
+      # The `included:` line follows a different rule than the `skipping:`
+      # one: ansible's include callback reads the RAW no_log keyword, so
+      # ANY templated no_log censors the item (even when the template
+      # resolves false, or its variable is undefined), while a literal
+      # `no_log: false` shows it. The `skipping:` line keeps the resolved
+      # rule (include_item_display_label above) - live-verified vs 2.19.
+      return "(censored due to no_log)" if task.no_log_expr || task.no_log?
+      item_label
     end
 
     private def item_display(item : JSON::Any) : String

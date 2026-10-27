@@ -2230,7 +2230,10 @@ module Krikri
         # per-iteration suffix when one applies, matching the successful
         # parse below. A looped caller has nothing to defer here, so it
         # just gets :ok back.
-        suffix = item_label ? " => (item=#{item_label})" : ""
+        # The included: line censors on the raw no_log keyword (any
+        # templated value), not the resolved one - included_line_item_label.
+        included_label = included_line_item_label(task, item_label)
+        suffix = included_label ? " => (item=#{included_label})" : ""
         puts "included: #{resolved_path} for #{host.name}#{suffix}".colorize(:cyan)
         return :ok
       end
@@ -2352,7 +2355,8 @@ module Krikri
       # <host>` (plus ` => (item=...)` for a looped include). Printed
       # after the load succeeds, before any included task runs.
       connection_names = [host.name]
-      suffix = item_label ? " => (item=#{item_label})" : ""
+      included_label = included_line_item_label(task, item_label)
+      suffix = included_label ? " => (item=#{included_label})" : ""
       puts "included: #{resolved_path} for #{connection_names.join(", ")}#{suffix}".colorize(:cyan)
 
       if defer_run
