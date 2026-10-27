@@ -1307,7 +1307,7 @@ module Krikri
     # when:-raising task prints "...ignoring" and continues with `ok=2
     # ... ignored=1`, exit 0). Always returns `false`, the same "don't
     # run this task" signal every caller already treats a when:-skip as.
-    private def swallow_when_error(task : Task, host : Host, ex : WhenEvaluationError, item_label : String? = nil, defer_stats : Bool = false, defer_display : Bool = false) : Bool
+    private def swallow_when_error(task : Task, host : Host, ex : WhenEvaluationError, item_label : String? = nil, defer_stats : Bool = false, defer_display : Bool = false, emit_chain_for_item : Bool = false, loop_item : JSON::Any? = nil) : Bool
       msg = decorate_conditional_value_origin(task, ex.message || "Error while evaluating conditional", host)
       ignore_errors = resolve_task_ignore_errors(task, host: host)
       # A delegated task's fatal/failed lines carry the `-> delegate`
@@ -1390,10 +1390,40 @@ module Krikri
           # loop-failure shape instead of the solo fatal: one
           # (`failed: [host] (item=N) => {...}` - item BEFORE the =>),
           # with the chain printed once per task, before the items.
-          emit_when_error_chain(task, msg, host) unless item_label
+          # A looped include_tasks' caller opts in per item
+          # (emit_chain_for_item) so the chain lands once, before the
+          # FIRST failing item's line - ansible prints the block before
+          # the per-item lines even for a looped include (issue #627);
+          # include_role's looped per-item shape keeps its existing
+          # no-chain display.
+          if item_label
+            if emit_chain_for_item && @item_when_chain_emitted.add?({task.object_id, host.name})
+              emit_when_error_chain(task, msg, host)
+            end
+          else
+            emit_when_error_chain(task, msg, host)
+          end
           display_msg = msg.starts_with?("Task failed: ") ? msg : "Task failed: #{msg}"
           if item_label
-            puts "failed: [#{host_label}] (item=#{item_label}) => {\"changed\": false, \"msg\": #{display_msg.to_json}}".colorize(:red)
+            # Ansible's loop-item failed dump carries the loop bindings
+            # (ansible_loop_var + the item under the loop var's name) for
+            # a looped include_tasks too - live-verified 2.19.11:
+            # {"ansible_loop_var": "loop_repository", "changed": false,
+            # "loop_repository": {...}, "msg": "Task failed: ..."} (issue
+            # #627). A looped plain module task's when:-failed dump does
+            # NOT carry them, so this stays keyed on the include path's
+            # own opt-in (loop_item), not on item_label alone.
+            if loop_item && (loop_var_name = task.loop_var || "item")
+              dump = {
+                "ansible_loop_var" => JSON::Any.new(loop_var_name),
+                "changed"          => JSON::Any.new(false),
+                loop_var_name      => loop_item,
+                "msg"              => JSON::Any.new(display_msg),
+              } of String => JSON::Any
+              puts "failed: [#{host_label}] (item=#{item_label}) => #{ResultDisplay.python_json_dump(JSON::Any.new(dump))}".colorize(:red)
+            else
+              puts "failed: [#{host_label}] (item=#{item_label}) => {\"changed\": false, \"msg\": #{display_msg.to_json}}".colorize(:red)
+            end
           elsif debug_module?(task)
             # Task-level conditional failures on a debug: dump the msg
             # alone - real 2.19.11 shows {"msg": "Task failed: ..."} with

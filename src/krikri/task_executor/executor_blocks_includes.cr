@@ -2142,8 +2142,15 @@ module Krikri
           # booked failed=3). The looped caller books that single
           # aggregate from this method's false return; the non-looped
           # call site has no aggregation around it and keeps
-          # swallow_when_error's own direct booking.
-          swallow_when_error(task, host, ex, item_label: item_label, defer_stats: defer_when_stats)
+          # swallow_when_error's own direct booking. The looped caller
+          # also opts the item lines into the once-per-task [ERROR]
+          # chain (emit_chain_for_item) and Ansible's loop-item dump
+          # shape (loop_item: the loop var's own binding), both of
+          # which real prints for a looped include and neither of
+          # which the solo include path shows (issue #627).
+          loop_var_name = task.loop_var || "item"
+          swallow_when_error(task, host, ex, item_label: item_label, defer_stats: defer_when_stats,
+            emit_chain_for_item: !item_label.nil?, loop_item: vars_context[loop_var_name]?)
           return :failed
         end
 
