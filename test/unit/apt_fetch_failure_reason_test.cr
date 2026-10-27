@@ -10,11 +10,13 @@ require "../minitest_helper"
 #   str() empty, so retry warnings and the final msg carry NO reason
 #   (round 1100002's verified shape).
 # - `FetchFailedException(e)` wrapping apt_pkg's SystemError for
-#   repository-level errors - a signature that can't be verified
-#   ("W: GPG error ... NO_PUBKEY ...", "E: The repository ... is not
-#   signed."). str() is the W:/E: diagnostic lines, marker-space
-#   stripped, ", "-joined; from the second failed attempt on, apt
-#   prepends its two untrusted-repo lines. Round 5210000
+#   repository-level errors ("E: The repository ... is not signed.",
+#   other top-level E: diagnostics). A standalone "W: GPG error ...
+#   NO_PUBKEY ..." warning is NOT one of them: python-apt raises only on
+#   a failed item, so a warning-only update exits 0 and succeeds. str()
+#   is the W:/E: diagnostic lines, marker-space stripped, ", "-joined;
+#   from the second failed attempt on, apt prepends its two
+#   untrusted-repo lines. Round 5210000
 #   (artem_shestakov.nginx): real ansible-core 2.19.11 warned five
 #   times with this text and failed with "Failed to update apt cache
 #   after 5 retries: W:..., E:..." while krikri classified the case as
@@ -41,10 +43,32 @@ private GPG_RESULT = {
   stderr:    "W: GPG error: https://nginx.org/packages/ubuntu jammy InRelease: The following signatures couldn't be verified because the public key is not available: NO_PUBKEY 2FD21310B49F6B46\nE: The repository 'https://nginx.org/packages/ubuntu jammy InRelease' is not signed.\n",
 }
 
+private GPG_WARNING_ONLY_RESULT = {
+  exit_code: 0,
+  stdout:    "",
+  stderr:    "W: GPG error: https://mirror.rackspace.com/mariadb/mariadb-11.8.9/repo/ubuntu jammy InRelease: The following signatures couldn't be verified because the public key is not available: NO_PUBKEY F1656F24C74CD1D8\n",
+}
+
+private UNSIGNED_WARNING_RESULT = {
+  exit_code: 0,
+  stdout:    "",
+  stderr:    "W: The repository 'file:/srv/r ./ Release' is not signed.\nW: No Hash entry in Release file /var/lib/apt/lists/_srv_r_._Release\n",
+}
+
 private BARE_FETCH_RESULT = {
   exit_code: 0,
   stdout:    "Err:2 http://bogus.invalid/ubuntu jammy InRelease\n  Could not resolve host\n",
   stderr:    "W: Failed to fetch http://bogus.invalid/ubuntu jammy InRelease\nW: Some index files failed to download. They have been ignored, or old ones used instead.\n",
+}
+
+# xe0nic.ansible_vprotect_server: a mixed GPG-warning + 404 update
+# failure exactly as apt's CLI prints it.
+private VPROTECT_STDERR = "W: GPG error: https://mirror.rackspace.com/mariadb/mariadb-11.8.9/repo/ubuntu jammy InRelease: The following signatures couldn't be verified because the public key is not available: NO_PUBKEY F1656F24C74CD1D8\nE: Failed to fetch http://repo.storware.eu/storware/current/el22/./Packages  404  Not Found [IP: 46.174.177.28 80]\nE: Some index files failed to download. They have been ignored, or old ones used instead.\n"
+
+private VPROTECT_RESULT = {
+  exit_code: 0,
+  stdout:    "",
+  stderr:    VPROTECT_STDERR,
 }
 
 # Three GPG-broken repositories, the round-29883431 amottier.debian_minimal
@@ -82,6 +106,18 @@ describe Krikri::AptLockRetry do
     it "does not classify a plain fetch failure as signature-shaped" do
       Krikri::AptLockRetryTestProbe.new.apt_fetch_signature_failure?(BARE_FETCH_RESULT).must_equal(false)
     end
+
+    it "ignores the allow-insecure W: unsigned-repo warning" do
+      probe = Krikri::AptLockRetryTestProbe.new
+      probe.apt_fetch_signature_failure?(UNSIGNED_WARNING_RESULT).must_equal(false)
+      probe.apt_fetch_failed?(UNSIGNED_WARNING_RESULT).must_equal(false)
+    end
+
+    it "ignores a standalone GPG warning with no failed item" do
+      probe = Krikri::AptLockRetryTestProbe.new
+      probe.apt_fetch_signature_failure?(GPG_WARNING_ONLY_RESULT).must_equal(false)
+      probe.apt_fetch_failed?(GPG_WARNING_ONLY_RESULT).must_equal(false)
+    end
   end
 
   describe "#apt_fetch_failure_reason" do
@@ -94,6 +130,12 @@ describe Krikri::AptLockRetry do
 
     it "stays empty for the bare-exception class" do
       Krikri::AptLockRetryTestProbe.new.apt_fetch_failure_reason(BARE_FETCH_RESULT).must_equal("")
+    end
+
+    it "returns the vprotect repo's W:/E: lines unchanged, with no untrusted-repo prefix" do
+      Krikri::AptLockRetryTestProbe.new.apt_fetch_failure_reason(VPROTECT_RESULT).must_equal(
+        "W:GPG error: https://mirror.rackspace.com/mariadb/mariadb-11.8.9/repo/ubuntu jammy InRelease: The following signatures couldn't be verified because the public key is not available: NO_PUBKEY F1656F24C74CD1D8, E:Failed to fetch http://repo.storware.eu/storware/current/el22/./Packages  404  Not Found [IP: 46.174.177.28 80], E:Some index files failed to download. They have been ignored, or old ones used instead."
+      )
     end
 
     # python-apt separates each failed repository's GPG block with its
@@ -147,6 +189,20 @@ describe Krikri::AptLockRetry do
       # untrusted-repo diagnostic lines to the exception text
       outcome[:warnings][2].starts_with?("Failed to update cache after 2 retries due to W:Updating from such a repository can't be done securely").must_equal(true)
       outcome[:last_reason].starts_with?("W:Updating from such a repository can't be done securely").must_equal(true)
+    end
+
+    it "recovers on a GPG-warning-only update that exits 0" do
+      harness = FetchRetryHarness.new
+      outcome = harness.run(2, 0, GPG_WARNING_ONLY_RESULT)
+      outcome[:recovered].must_equal(true)
+      outcome[:last_reason].must_equal("")
+    end
+
+    it "recovers on the allow-insecure W: unsigned-repo warning with no retry" do
+      harness = FetchRetryHarness.new
+      outcome = harness.run(2, 0, UNSIGNED_WARNING_RESULT)
+      outcome[:recovered].must_equal(true)
+      harness.calls.size.must_equal(1)
     end
 
     it "keeps the empty-reason bare-exception shape" do

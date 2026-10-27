@@ -121,6 +121,10 @@ module Krikri
     # apt_fail_bogus_source). The CLI-observable equivalent of
     # python-apt's "res == failed" check is the failed-item markers apt
     # itself prints: an `Err:` line per failed item plus the W: summary.
+    # python-apt raises ONLY on a failed item - the E:/Err: markers; a
+    # warning-only line (a standalone "W: GPG error ... NO_PUBKEY ..."
+    # with no failed item) exits 0 and python-apt raises nothing, so the
+    # update succeeds just as real ansible reports it changed.
     def apt_fetch_failed?(result : NamedTuple(exit_code: Int32, stdout: String, stderr: String)) : Bool
       combined = "#{result[:stdout]}#{result[:stderr]}"
       combined.includes?("Err:") ||
@@ -131,21 +135,25 @@ module Krikri
 
     # The SECOND FetchFailedException shape python-apt raises:
     # `raise FetchFailedException(e)` around the SystemError apt_pkg throws
-    # for repository-level errors - a signature that can't be verified
-    # ("W: GPG error ... NO_PUBKEY ...", "E: The repository ... is not
-    # signed."). Unlike the bare `raise FetchFailedException()` a plain
-    # network fetch failure takes, this one CARRIES the diagnostic lines as
-    # its str() text, so the retry warnings and the final failure message
-    # quote them (round 5210000, artem_shestakov.nginx: real ansible-core
-    # 2.19.11 warned five times with the GPG/E: text and failed with
-    # "Failed to update apt cache after 5 retries: W:... , E:..." while
-    # krikri classified the case as a plain nonzero-exit failure and failed
-    # fast). Detected the same way the CLI shows it: a top-level "E: "
-    # diagnostic line, or apt's own GPG-failure wording.
+    # for repository-level errors, which the CLI surfaces as a top-level
+    # "E:" diagnostic line ("E: The repository ... is not signed.").
+    # python-apt raises only on a failed item, and a top-level E: line is
+    # exactly how a failed item prints, so the E: form is the whole
+    # detection. Every warning-only shape exits 0 and must succeed, the
+    # same changed outcome real ansible reports: a standalone "W: GPG
+    # error ... NO_PUBKEY ..." line raises nothing, and the W: form of
+    # the unsigned-repo message (apt's allow-insecure path, "W: The
+    # repository ... is not signed.") likewise never marks the update
+    # failed. Unlike the bare `raise FetchFailedException()` a plain
+    # network fetch failure takes, this shape CARRIES the diagnostic
+    # lines as its str() text, so the retry warnings and the final
+    # failure message quote them (round 5210000, artem_shestakov.nginx:
+    # real ansible-core 2.19.11 warned five times with the GPG/E: text
+    # and failed with "Failed to update apt cache after 5 retries:
+    # W:... , E:..." while krikri classified the case as a plain
+    # nonzero-exit failure and failed fast).
     def apt_fetch_signature_failure?(result : NamedTuple(exit_code: Int32, stdout: String, stderr: String)) : Bool
       combined = "#{result[:stdout]}\n#{result[:stderr]}"
-      return true if combined.includes?("GPG error") ||
-                     combined.includes?("is not signed")
       # A bare top-level "E: " diagnostic line is python-apt's
       # SystemError-wrapped shape - EXCEPT the lock-contention one
       # ("E: Could not get lock /var/lib/dpkg/lock-frontend ..."), which
