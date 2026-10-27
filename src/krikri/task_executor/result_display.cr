@@ -799,6 +799,15 @@ module Krikri
       # requested - none of the task's data - so the block prints like
       # real's does (live-verified: before the censored fatal line).
       return true if msg =~ /\A(?:Task failed: Module failed: )?Could not detect a supported package manager from the following list: \[[^\]]*\], or the required Python library is not installed\. Check warnings for details\.\z/
+      # command/shell's non-zero exit (issue #623): the wording is
+      # ansible's own fixed command-action text, naming none of the
+      # task's data, and the command's stdout/stderr are never part of
+      # the block - so it prints like real's does (live-verified against
+      # 2.19 for both command and shell, before the censored fatal line).
+      # The gate sees the raw module msg; the "Task failed: Module
+      # failed: " brief is composed by the chain builder.
+      return true if module_name.try { |name| name == "command" || name.ends_with?(".command") || name == "shell" || name.ends_with?(".shell") } &&
+                     msg == "non-zero return code"
       !!(copy_task && NO_LOG_SAFE_MSGS.includes?(msg))
     end
 
@@ -809,15 +818,17 @@ module Krikri
     # is emitted by TaskExecutor's own emit_when_error_chain, including
     # the `when:` value's own Origin), or no_log hides the result -
     # except the messages no_log_error_block_allowed? clears (copy's
-    # fixed required-argument texts, debconf's get_bin_path miss), the
-    # classes whose uncensored block carries no secret (see above).
+    # fixed required-argument texts, debconf's get_bin_path miss,
+    # command/shell's non-zero return code), the classes whose
+    # uncensored block carries no secret (see above).
     private def self.emit_task_error_block(source_task : Task?, result : JSON::Any, msg : String) : Nil
       return unless source_task
       # no_log's block suppression is lifted only for the messages
       # no_log_error_block_allowed? clears (copy's fixed controller-side
       # required-argument texts, issue #271; debconf's get_bin_path miss,
-      # issue #578) - ansible's own block here carries the raw msg, which
-      # would otherwise echo the data no_log exists to hide. The no_log
+      # issue #578; command/shell's non-zero return code, issue #623) -
+      # ansible's own block here carries the raw msg, which would
+      # otherwise echo the data no_log exists to hide. The no_log
       # display branch calls this method only for those messages already;
       # the same gate here keeps every other caller (helpers) equally
       # blocked.
