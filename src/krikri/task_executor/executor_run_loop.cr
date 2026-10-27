@@ -2102,6 +2102,7 @@ module Krikri
         # directory"). Batchable tasks never carry delegate_to:, so this is
         # nil in practice here.
         action_result = ActionPluginManager.execute_action(task.module_name, substituted_params, vars_context, host, @inventory, task.delegate_to ? host : nil, resolve_task_check_mode(task, vars_context))
+        emit_assert_that_deprecations(task, substituted_params, action_result, vars_context)
 
         unless action_result.success?
           failed = {
@@ -2620,6 +2621,7 @@ module Krikri
           raise "task timeout expiry without a period" unless period
           return task_timeout_result(period)
         end
+        emit_assert_that_deprecations(task, substituted_params, action_result, vars_context)
 
         unless action_result.success?
           failed = {

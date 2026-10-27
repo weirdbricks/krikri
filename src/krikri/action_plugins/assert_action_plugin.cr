@@ -78,7 +78,15 @@ module Krikri
       result = ActionResult.conditional_error_result_json(msg)
       result.as_h["_ansible_that_index"] = JSON::Any.new(current_index.to_i64)
       result.as_h["_ansible_that_raw"] = JSON::Any.new(raw) if raw
+      set_that_evaluated(result, current_index)
       ActionResult.final(result)
+    end
+
+    # Ansible warns (its templating-delimiters deprecation) for every
+    # `that:` item it evaluated, up to and including the one that failed
+    # or errored - a later item is never evaluated and never warned.
+    private def set_that_evaluated(result : JSON::Any, current_index : Int32) : Nil
+      result.as_h["_ansible_that_evaluated"] = JSON::Any.new((current_index + 1).to_i64)
     end
 
     private def evaluate_conditions(conditions : Array(String), substitutor : VarSubstitutor) : ActionResult?
@@ -106,6 +114,7 @@ module Krikri
       # a failed conditional, live-verified; see
       # ActionResult.conditional_error_result_json itself).
       current_index = 0
+      failing_idx = -1
       begin
         failing = nil.as(String?)
         conditions.each_with_index do |condition, idx|
@@ -124,6 +133,7 @@ module Krikri
           substituted = substitutor.substitute(condition)
           next if evaluate_that(substituted)
           failing = condition
+          failing_idx = idx
           break
         end
       rescue ex : ConditionalEvaluator::TemplateDelimiterError
@@ -183,12 +193,14 @@ module Krikri
         # prints the same two-level [ERROR] chain the other wording
         # classes get (the "caused by" Origin at the failing that:
         # item) plus the ALLOW_BROKEN_CONDITIONALS hint, and labels
-        # the fatal msg itself with the tested value's defining site.
+        # the fatal msg itself with the tested value's defining site;
+        # that_index_error also records how many items were evaluated,
+        # so the templating-delimiters deprecation covers this arm too.
         return that_index_error("Task failed: #{ex.message}", current_index,
           conditions[current_index]?)
       end
 
-      failing ? failure_result(failing) : nil
+      failing ? failure_result(failing, failing_idx) : nil
     end
 
     # A condition that evaluated false: the first failing `that:` entry
@@ -206,7 +218,7 @@ module Krikri
       raise RenderExpressionError.new("Error rendering expression: #{ex.message}")
     end
 
-    private def failure_result(failing : String) : ActionResult
+    private def failure_result(failing : String, failing_index : Int32) : ActionResult
       fail_msg = @params["fail_msg"]? || @params["msg"]? || "Assertion failed"
       # a bare YAML bool item (`that: [false]`) is reported as the bool itself
       assertion = failing == "false" ? JSON::Any.new(false) : (failing == "true" ? JSON::Any.new(true) : JSON::Any.new(failing))
@@ -218,8 +230,10 @@ module Krikri
       unless true?(@params["quiet"]?)
         extra["_ansible_verbose_always"] = JSON::Any.new(true)
       end
-      ActionResult.final(Krikri.mark_failed_key_order(
-        ActionResult.plugin_result_json(false, true, fail_msg, extra), FAILED_KEY_ORDER_ASSERT))
+      result = Krikri.mark_failed_key_order(
+        ActionResult.plugin_result_json(false, true, fail_msg, extra), FAILED_KEY_ORDER_ASSERT)
+      set_that_evaluated(result, failing_index)
+      ActionResult.final(result)
     end
 
     # Every `that:` condition held. Real assert tags its successful result

@@ -4649,7 +4649,7 @@ module Krikri
     @@finalization_error_chain_seen = Set(String).new
     @@loop_error_chain_seen = Set(String).new
 
-    private def maybe_conditional_delimiters_deprecation(task : Task, raw : String, key : String, vars_context : Hash(String, JSON::Any)) : Nil
+    private def maybe_conditional_delimiters_deprecation(task : Task, raw : String, key : String, vars_context : Hash(String, JSON::Any), that_index : Int32? = nil) : Nil
       conditional = raw.strip
       return unless conditional.size > 4 &&
                     conditional.starts_with?("{{") && conditional.ends_with?("}}") &&
@@ -4662,14 +4662,33 @@ module Krikri
       return unless value
       return if value.as_s?
 
-      text = conditional_deprecation_text(task, key, raw)
+      text = conditional_deprecation_text(task, key, raw, that_index)
       return if text.empty?
       return unless @@conditional_deprecation_seen.add?(text)
       DeprecationHint.print_hint_once
       STDERR.puts text
     end
 
-    private def conditional_deprecation_text(task : Task, key : String, raw : String) : String
+    # Ansible warns for every `that:` item it EVALUATED - all of them on
+    # a passing assert, only the prefix up to the first false/erroring
+    # item on a failing one (later items are never evaluated and never
+    # warned). AssertActionPlugin records that count as
+    # _ansible_that_evaluated (absent when every item ran), which is
+    # what bounds this scan. Only assert: itself: its `that:` reaches
+    # the action call as raw JSON (the arg-finalization guard leaves it
+    # unsubstituted), so the per-item raw condition is parseable here.
+    private def emit_assert_that_deprecations(task : Task, substituted_params : Hash(String, String), action_result : ActionResult, vars_context : Hash(String, JSON::Any)) : Nil
+      return unless task.module_name == "ansible.builtin.assert"
+      raw = substituted_params["that"]?
+      return unless raw
+      conditions = Array(String).from_json(raw) rescue return
+      evaluated = action_result.final_result.try(&.as_h["_ansible_that_evaluated"]?.try(&.as_i?)) || conditions.size
+      (0...Math.min(evaluated, conditions.size)).each do |idx|
+        maybe_conditional_delimiters_deprecation(task, conditions[idx], "that", vars_context, idx)
+      end
+    end
+
+    private def conditional_deprecation_text(task : Task, key : String, raw : String, that_index : Int32? = nil) : String
       path = task.source_file || @playbook_file
       return "" unless path && File.file?(path)
 
@@ -4690,7 +4709,16 @@ module Krikri
         return ""
       end
 
-      located_key = locate_conditional_origin(lines, name_idx, key, raw)
+      # assert's `that:` items point their Origin at the item's own
+      # scalar line:column, found by the item-position scan, not at the
+      # `key:` line's value token the way when:/until: do.
+      located_key = if that_index
+                      if pos = ResultDisplay.assert_that_position(lines, name_idx, that_index)
+                        {pos[0] - 1, pos[1]}
+                      end
+                    else
+                      locate_conditional_origin(lines, name_idx, key, raw)
+                    end
       return "" unless located_key
       key_idx, column = located_key
 
