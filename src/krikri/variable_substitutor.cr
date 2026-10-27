@@ -118,6 +118,43 @@ module Krikri
     def template_text : String
       operand_type_failure? ? "Error rendering template: #{message}" : message.to_s
     end
+
+    # A `+`/`-` between mismatched operand types can also surface from
+    # krikri-jinja's own evaluator (its "unsupported operands for +: Nil
+    # and Int64" TemplateError) when the expression falls through to the
+    # engine - e.g. the `+` sits inside a dict literal handed to a filter
+    # (sansible.aws_volume's `tags: "{{ ... | combine({...}) }}"`). Real
+    # ansible-core 2.19.11 words that failure in Python's TypeError shape,
+    # so translate the engine's raw message onto a PlusMinusOperandError
+    # when the shape is recognized; nil leaves the engine's own wording
+    # alone rather than guessing (string/list concatenation uses a
+    # different Python message that is not verified here).
+    def self.from_engine_message(raw : String) : PlusMinusOperandError?
+      match = raw.match(/\Aunsupported operands for ([+\-*]): (.+?) and (.+)\z/)
+      return nil unless match
+      op, left, right = match[1], match[2], match[3]
+      return nil unless op == "+" || op == "-"
+      return nil if left == "String" || left.starts_with?("Array(")
+      left_type = python_operand_type(left)
+      right_type = python_operand_type(right)
+      return nil unless left_type && right_type
+      PlusMinusOperandError.new("unsupported operand type(s) for #{op}: '#{left_type}' and '#{right_type}'")
+    end
+
+    # Module-arg ints arrive natively tagged in ansible-core 2.19
+    # (_AnsibleTaggedInt), hence the int mapping (param_sentinels.cr).
+    private def self.python_operand_type(klass : String)
+      case klass.split('(').first
+      when "Nil"     then "NoneType"
+      when "Bool"    then "bool"
+      when "Int64"   then "_AnsibleTaggedInt"
+      when "Int32"   then "_AnsibleTaggedInt"
+      when "Float64" then "_AnsibleTaggedFloat"
+      when "String"  then "str"
+      when "Array"   then "list"
+      when "Hash"    then "dict"
+      end
+    end
   end
 
   # Raised by the first_found lookup (ExpressionEvaluator's
