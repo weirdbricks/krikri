@@ -59,6 +59,46 @@ describe "include_vars: with a literal loop: (not with_first_found:)" do
   ensure
     FileUtils.rm_rf(src_dir) if src_dir
   end
+
+  it "prints a bare trailing skipping: line when every literal loop: item is skipped by when:" do
+    # linux-system-roles.storage's set_vars.yml, with none of its candidate
+    # vars files present: real prints one `skipping: => (item=...)` line per
+    # item and then the usual bare trailing `skipping: [host]` line (the
+    # aggregate of an all-skipped loop, live-verified vs ansible-core 2.19),
+    # which krikri's literal-loop include_vars: path omitted.
+    src_dir = File.tempname("include-vars-all-skipped-role")
+    Dir.mkdir_p(File.join(src_dir, "roles", "myrole", "vars"))
+    Dir.mkdir_p(File.join(src_dir, "roles", "myrole", "tasks"))
+    File.write(File.join(src_dir, "roles", "myrole", "tasks", "main.yml"), <<-YAML)
+      - name: Set platform/version specific variables
+        include_vars: "{{ __vars_file }}"
+        loop:
+          - "absent.yml"
+          - "also-absent.yml"
+        vars:
+          __vars_file: "{{ role_path }}/vars/{{ item }}"
+        when: __vars_file is file
+      YAML
+
+    playbook = File.join(src_dir, "pb.yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        roles:
+          - myrole
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output, chdir: src_dir)
+
+    status.success?.must_equal(true)
+    output.to_s.must_include("skipping: [localhost] => (item=absent.yml)")
+    output.to_s.must_include("skipping: [localhost] => (item=also-absent.yml)")
+    output.to_s.must_include("\nskipping: [localhost]\n")
+  ensure
+    FileUtils.rm_rf(src_dir) if src_dir
+  end
 end
 
 describe "include_vars: with with_fileglob: (not with_first_found:/loop:)" do
