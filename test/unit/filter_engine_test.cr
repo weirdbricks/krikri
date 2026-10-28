@@ -202,6 +202,55 @@ describe Krikri::VariableSubstitutor::FilterEngine do
     expect(str_starts_with?(engine.apply(s("secret"), %(password_hash('md5'))).as_s, "$1$")).must_equal(true)
   end
 
+  # Dispatch-path pins for the rounds=/salt_size parity fix (issue #676);
+  # all vectors live-verified against ansible-core 2.19.11.
+  it "password_hash drops the rounds marker at exactly 5000 and keeps it otherwise" do
+    engine.apply(s("hello"), %(password_hash('sha512', 'mysalt', rounds=5000))).as_s
+      .must_equal("$6$mysalt$HjkH9tPwoOZC7.Tbbf.865I0VP2JrcvX25YLWcUkIkNvMWhU/minCmQlwt98agkOaRtd2xgXkljSlU1AN7Lr/0")
+    engine.apply(s("hello"), %(password_hash('sha512', 'mysalt', rounds=10000))).as_s
+      .must_equal("$6$rounds=10000$mysalt$Y.NsiCg9v3qJJqwtWQr2JyC5YjD5NMnQlXmjnGeZuQkzEL5tHFttP93F1Uak4nRD.TEGswHgFaWy0Wzcvgblf1")
+  end
+
+  it "password_hash's fourth positional is rounds, third is salt_size" do
+    # live-verified: 'get_encrypted_password() got multiple values for
+    # argument 'rounds'' when both the 4th positional and rounds= are
+    # given - so the 4th positional IS rounds (the issue had it
+    # kwargs-only)
+    engine.apply(s("hello"), %(password_hash('sha512', 'mysalt', 8, 10000))).as_s
+      .must_equal("$6$rounds=10000$mysalt$Y.NsiCg9v3qJJqwtWQr2JyC5YjD5NMnQlXmjnGeZuQkzEL5tHFttP93F1Uak4nRD.TEGswHgFaWy0Wzcvgblf1")
+    engine.apply(s("hello"), %(password_hash('sha512', 'mysalt', 8, 5000))).as_s
+      .must_equal("$6$mysalt$HjkH9tPwoOZC7.Tbbf.865I0VP2JrcvX25YLWcUkIkNvMWhU/minCmQlwt98agkOaRtd2xgXkljSlU1AN7Lr/0")
+    # salt_size positional with explicit salt leaves the salt untouched
+    engine.apply(s("hello"), %(password_hash('sha512', 'mysalt', 8))).as_s
+      .must_equal(engine.apply(s("hello"), %(password_hash('sha512', 'mysalt'))).as_s)
+  end
+
+  it "password_hash surfaces passlib's error texts through the engine" do
+    assert_raises_message(Exception,
+      "Could not hash the secret: sha512_crypt: min_desired_rounds (999) is too low, must be at least 1000") do
+      engine.apply(s("hello"), %(password_hash('sha512', 'mysalt', rounds=999)))
+    end
+    assert_raises_message(Exception,
+      "Could not hash the secret: salt too large (sha512_crypt requires <= 16 chars)") do
+      engine.apply(s("hello"), %(password_hash('sha512', 'longsaltvalue0123456789abcdef')))
+    end
+    assert_raises_message(Exception,
+      "MinimalHandler.using() got an unexpected keyword argument 'rounds'") do
+      engine.apply(s("hello"), %(password_hash('md5', 'mysalt', rounds=5000)))
+    end
+    # hashtype is case-sensitive in real ansible ('SHA512' errors)
+    assert_raises_message(Exception,
+      "SHA512 is not in the list of supported passlib algorithms: md5, sha256, sha512") do
+      engine.apply(s("hello"), %(password_hash('SHA512', 'mysalt')))
+    end
+  end
+
+  it "password_hash generated-salt length follows salt_size" do
+    # default-rounds marker is 14 chars; sha512 hash body is 86
+    engine.apply(s("hello"), %(password_hash('sha512', salt_size=8))).as_s.size.must_equal(112)
+    engine.apply(s("hello"), "password_hash").as_s.size.must_equal(120)
+  end
+
   it "to_json uses Python's own ', '/': ' separators, matching json.dumps" do
     result = engine.apply(JSON.parse(%(["a", "b"])), "to_json")
     result.as_s.must_equal(%(["a", "b"]))

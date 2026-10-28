@@ -940,23 +940,40 @@ module Krikri
                         end
           JSON::Any.new(FilterCore.hash(hash_source, algorithm))
         when "password_hash"
-          # password_hash(hashtype='sha512', salt=None, rounds=None) -
-          # Ansible's own filter (passlib-backed), a salted crypt(3)
-          # hash suitable for /etc/shadow, NOT a plain digest like
-          # `hash` above. Entirely unimplemented - a `password: "{{
-          # plaintext | password_hash('sha512') }}"` (the standard way
-          # any role sets a user's password, e.g. robertdebock.users)
-          # silently passed the plaintext string straight through
-          # unfiltered, landing verbatim in /etc/shadow. Covers the
-          # three crypt(3) schemes `openssl passwd` itself supports
-          # (sha512/sha256/md5, matching /etc/shadow's own $6$/$5$/$1$)
-          # - passlib-only schemes like bcrypt aren't available without
-          # a real passlib port, same scope limit already documented for
-          # the htpasswd plugin's own crypt_scheme handling.
-          args = split_top_level_args(filter_args)
-          hashtype = (args[0]?.try { |arg| as_string(resolve_expression(arg)) } || "sha512").downcase
-          explicit_salt = args[1]?.try { |arg| as_string(resolve_expression(arg)) }
-          JSON::Any.new(FilterCore.password_hash(as_string(value), hashtype, explicit_salt))
+          # password_hash(hashtype='sha512', salt=None, salt_size=None,
+          # rounds=None, ident=None) - Ansible's own filter
+          # (passlib-backed), a salted crypt(3) hash suitable for
+          # /etc/shadow, NOT a plain digest like `hash` above. Entirely
+          # unimplemented - a `password: "{{ plaintext |
+          # password_hash('sha512') }}"` (the standard way any role sets
+          # a user's password, e.g. robertdebock.users) silently passed
+          # the plaintext string straight through unfiltered, landing
+          # verbatim in /etc/shadow. Covers the three crypt(3) schemes
+          # passlib has that `openssl passwd` itself supports
+          # (md5/sha256/sha512, matching /etc/shadow's own
+          # $1$/$5$/$6$) - passlib-only schemes like bcrypt aren't
+          # available without a real passlib port, same scope limit
+          # already documented for the htpasswd plugin's own
+          # crypt_scheme handling.
+          #
+          # Shape live-verified against ansible-core 2.19.11 (issue
+          # #676): the THIRD positional is salt_size and the FOURTH is
+          # rounds (the rounds kwarg is real, and rounds= is the
+          # kwargs-only spelling); ident is accepted and ignored for the
+          # crypt(3) schemes. The rounds marker is omitted only at
+          # exactly 5000, and rounds/salt_size follow python falsiness
+          # (0/false/'' are skipped). All hashing rules/error texts live
+          # in FilterCore.password_hash, shared with the krikri-jinja
+          # registration (which delegates here).
+          positional, kwargs = split_positional_and_kwargs(filter_args,
+            ["hashtype", "salt", "salt_size", "rounds"])
+          hashtype = positional[0]? || kwargs["hashtype"]?
+          hashtype = hashtype ? as_string(hashtype) : "sha512"
+          salt_arg = positional[1]? || kwargs["salt"]?
+          salt = salt_arg.nil? || salt_arg.try(&.raw).nil? ? nil : as_string(salt_arg)
+          salt_size = positional[2]? || kwargs["salt_size"]?
+          rounds = positional[3]? || kwargs["rounds"]?
+          JSON::Any.new(FilterCore.password_hash(as_string(value), hashtype, salt, salt_size, rounds))
         when "type_debug"
           # type_debug - Ansible/Jinja2's own filter, returns
           # Python's type name for the value (matching `type(x).

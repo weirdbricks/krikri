@@ -107,7 +107,141 @@ describe Krikri::VariableSubstitutor::FilterCore do
     it "password_hash produces a salted crypt(3) hash of the right scheme" do
       result = core.password_hash("s3cret", "sha512", "salt1234")
       expect(str_starts_with?(result, "$6$rounds=656000$salt1234$")).must_equal(true)
-      assert_raises_message(Exception, "unsupported hashtype") { core.password_hash("x", "bcrypt") }
+      assert_raises_message(Exception,
+        "bcrypt is not in the list of supported passlib algorithms: md5, sha256, sha512") do
+        core.password_hash("x", "bcrypt")
+      end
+    end
+
+    # All vectors live-verified against ansible-core 2.19.11 (issue #676,
+    # /tmp/pw676 probe matrix, 2026-10-28).
+    it "password_hash omits the rounds marker only at exactly 5000" do
+      core.password_hash("hello", "sha512", "mysalt", rounds: JSON::Any.new(5000i64))
+        .must_equal("$6$mysalt$HjkH9tPwoOZC7.Tbbf.865I0VP2JrcvX25YLWcUkIkNvMWhU/minCmQlwt98agkOaRtd2xgXkljSlU1AN7Lr/0")
+      core.password_hash("hello", "sha512", "mysalt", rounds: JSON::Any.new(10000i64))
+        .must_equal("$6$rounds=10000$mysalt$Y.NsiCg9v3qJJqwtWQr2JyC5YjD5NMnQlXmjnGeZuQkzEL5tHFttP93F1Uak4nRD.TEGswHgFaWy0Wzcvgblf1")
+      core.password_hash("hello", "sha256", "mysalt", rounds: JSON::Any.new(5000i64))
+        .must_equal("$5$mysalt$njl.kLzQo5JAjJgLM8UhuINnLhZQslCv5IeR4hpzccC")
+      core.password_hash("hello", "sha256", "mysalt", rounds: JSON::Any.new(535000i64))
+        .must_equal("$5$rounds=535000$mysalt$w1QrE//RvCPjpCsmz.J/bih1OCrx7mmpPLAc/111C5.")
+    end
+
+    it "password_hash skips falsy rounds/salt_size like python truthiness" do
+      # rounds=0/false/'' are indistinguishable from no kwarg: the
+      # default-rounds hash WITH its marker.
+      default = core.password_hash("hello", "sha512", "mysalt")
+      default.must_equal("$6$rounds=656000$mysalt$mMWk1/71/712cx6xA3/Cq1qE0R7B2BDA2FPgmbySa7l3J4.y2eYwItEJRJZFDSUdAB3o/rIM.TZR3qDHk9Vp5/")
+      core.password_hash("hello", "sha512", "mysalt", rounds: JSON::Any.new(0i64)).must_equal(default)
+      core.password_hash("hello", "sha512", "mysalt", rounds: JSON::Any.new(false)).must_equal(default)
+      core.password_hash("hello", "sha512", "mysalt", rounds: JSON::Any.new("")).must_equal(default)
+      # truthy bool coerces to int (rounds=true == rounds=1)
+      assert_raises_message(Exception,
+        "Could not hash the secret: sha512_crypt: min_desired_rounds (1) is too low, must be at least 1000") do
+        core.password_hash("hello", "sha512", "mysalt", rounds: JSON::Any.new(true))
+      end
+    end
+
+    it "password_hash accepts string rounds and rejects float/invalid rounds" do
+      core.password_hash("hello", "sha512", "mysalt", rounds: JSON::Any.new("10000"))
+        .must_equal("$6$rounds=10000$mysalt$Y.NsiCg9v3qJJqwtWQr2JyC5YjD5NMnQlXmjnGeZuQkzEL5tHFttP93F1Uak4nRD.TEGswHgFaWy0Wzcvgblf1")
+      assert_raises_message(Exception, "min_desired_rounds must be integer, not float") do
+        core.password_hash("hello", "sha512", "mysalt", rounds: JSON::Any.new(10000.5))
+      end
+      assert_raises_message(Exception,
+        "Could not hash the secret: invalid literal for int() with base 10: 'x'") do
+        core.password_hash("hello", "sha512", "mysalt", rounds: JSON::Any.new("x"))
+      end
+    end
+
+    it "password_hash enforces passlib's rounds bounds with its exact error text" do
+      assert_raises_message(Exception,
+        "Could not hash the secret: sha512_crypt: min_desired_rounds (999) is too low, must be at least 1000") do
+        core.password_hash("hello", "sha512", "mysalt", rounds: JSON::Any.new(999i64))
+      end
+      assert_raises_message(Exception,
+        "Could not hash the secret: sha256_crypt: min_desired_rounds (999) is too low, must be at least 1000") do
+        core.password_hash("hello", "sha256", "mysalt", rounds: JSON::Any.new(999i64))
+      end
+      assert_raises_message(Exception,
+        "Could not hash the secret: sha512_crypt: min_desired_rounds (1000000000) is too large, cannot be more than 999999999") do
+        core.password_hash("hello", "sha512", "mysalt", rounds: JSON::Any.new(1000000000i64))
+      end
+      # a string rounds beyond Int64 still reports the too-large bound
+      # with the raw digits (python ints are arbitrary precision)
+      assert_raises_message(Exception,
+        "Could not hash the secret: sha512_crypt: min_desired_rounds (99999999999999999999) is too large, cannot be more than 999999999") do
+        core.password_hash("hello", "sha512", "mysalt", rounds: JSON::Any.new("99999999999999999999"))
+      end
+    end
+
+    it "password_hash's salt_size only sizes the generated salt" do
+      # explicit salts are never truncated: 8 or 32, 'mysalt' stays
+      core.password_hash("hello", "sha512", "mysalt", salt_size: JSON::Any.new(8i64))
+        .must_equal(core.password_hash("hello", "sha512", "mysalt"))
+      # generated salt length follows salt_size (default-rounds marker
+      # is 14 chars: $6$ + rounds=656000 + $ + salt + $ + 86 hash chars)
+      core.password_hash("hello", "sha512", salt_size: JSON::Any.new(8i64)).size.must_equal(112)
+      core.password_hash("hello", "sha512").size.must_equal(120)
+      # md5's own cap is 8; its generated salt defaults to 8, not 16
+      core.password_hash("hello", "md5").size.must_equal(34)
+      core.password_hash("hello", "md5", salt_size: JSON::Any.new(4i64)).size.must_equal(30)
+    end
+
+    it "password_hash validates salt_size type and range, salt length and charset" do
+      assert_raises_message(Exception, "salt_size must be an integer") do
+        core.password_hash("hello", "sha512", "mysalt", salt_size: JSON::Any.new("x"))
+      end
+      assert_raises_message(Exception, "salt_size must be an integer") do
+        core.password_hash("hello", "sha512", "mysalt", salt_size: JSON::Any.new("8"))
+      end
+      assert_raises_message(Exception,
+        "Could not hash the secret: sha512_crypt: salt_size (32) above max_salt_size (16)") do
+        core.password_hash("hello", "sha512", "mysalt", salt_size: JSON::Any.new(32i64))
+      end
+      assert_raises_message(Exception,
+        "Could not hash the secret: sha512_crypt: salt_size (-1) below min_salt_size (0)") do
+        core.password_hash("hello", "sha512", "mysalt", salt_size: JSON::Any.new(-1i64))
+      end
+      assert_raises_message(Exception,
+        "Could not hash the secret: salt too large (sha512_crypt requires <= 16 chars)") do
+        core.password_hash("hello", "sha512", "longsaltvalue0123456789abcdef")
+      end
+      assert_raises_message(Exception,
+        "Could not hash the secret: salt too large (md5_crypt requires <= 8 chars)") do
+        core.password_hash("hello", "md5", "longsaltvalue0123456789")
+      end
+      assert_raises_message(Exception,
+        "Could not hash the secret: invalid characters in sha512_crypt salt") do
+        core.password_hash("hello", "sha512", "sal~t")
+      end
+      assert_raises_message(Exception,
+        "Could not hash the secret: invalid characters in md5_crypt salt") do
+        core.password_hash("hello", "md5", "sal~t")
+      end
+      # ordering live-verified: salt_size range BEFORE salt length,
+      # salt length BEFORE rounds bounds
+      assert_raises_message(Exception,
+        "Could not hash the secret: sha512_crypt: salt_size (32) above max_salt_size (16)") do
+        core.password_hash("hello", "sha512", "longsaltvalue0123456789abcdef", JSON::Any.new(32i64), JSON::Any.new(999i64))
+      end
+      assert_raises_message(Exception,
+        "Could not hash the secret: salt too large (sha512_crypt requires <= 16 chars)") do
+        core.password_hash("hello", "sha512", "longsaltvalue0123456789abcdef", nil, JSON::Any.new(999i64))
+      end
+    end
+
+    it "password_hash is case-sensitive in hashtype and md5 rejects rounds at using() time" do
+      assert_raises_message(Exception,
+        "SHA512 is not in the list of supported passlib algorithms: md5, sha256, sha512") do
+        core.password_hash("hello", "SHA512", "mysalt")
+      end
+      assert_raises_message(Exception,
+        "MinimalHandler.using() got an unexpected keyword argument 'rounds'") do
+        core.password_hash("hello", "md5", "mysalt", rounds: JSON::Any.new(5000i64))
+      end
+      # md5 rounds=0 is falsy -> skipped, no error
+      expect(str_starts_with?(core.password_hash("hello", "md5", "mysalt", rounds: JSON::Any.new(0i64)), "$1$mysalt$"))
+        .must_equal(true)
     end
 
     it "to_uuid is deterministic (Ansible's own namespace)" do
