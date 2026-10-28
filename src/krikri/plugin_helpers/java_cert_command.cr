@@ -101,9 +101,20 @@ module Krikri
       # Wraps a command with the stdin data the Ansible module's
       # run_command(data=...) feeds it, via printf piped to the
       # command. Each data string is one line.
+      #
+      # The feeder's stderr is suppressed: its only possible output is
+      # bash's own "printf: write error: Broken pipe" when the consumer
+      # exits without reading stdin and the scheduler runs the feeder's
+      # pipeline subshell after that exit (reproduced under load with a
+      # keytool shim that consumes no stdin). Real Ansible feeds stdin
+      # through run_command(data=...), where CPython ignores EPIPE on
+      # the stdin write for exactly this reason - so silencing our
+      # generated printf matches the real module instead of masking
+      # real output (the consumer's own stderr is a different pipeline
+      # element and unaffected).
       def self.with_stdin(command : String, data : Array(String)) : String
         quoted = data.map { |line| "'" + line.gsub("'", "'\\''") + "'" }
-        "printf '%s\\n' #{quoted.join(' ')} | #{command}"
+        "printf '%s\\n' #{quoted.join(' ')} 2>/dev/null | #{command}"
       end
     end
   end

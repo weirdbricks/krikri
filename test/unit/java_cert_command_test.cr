@@ -80,11 +80,17 @@ describe Krikri::PluginHelpers::JavaCertCommand do
   end
 
   describe ".with_stdin" do
-    it "feeds each data string as one stdin line, shell-quoted" do
+    it "feeds each data string as one stdin line, shell-quoted, feeder stderr silenced" do
+      # The 2>/dev/null on the feeder mirrors real Ansible's stdin feed:
+      # run_command(data=...) ignores EPIPE when the consumer exits
+      # without reading stdin, while our shell pipeline's printf would
+      # otherwise append bash's "printf: write error: Broken pipe" to
+      # the captured stderr when the scheduler runs the feeder subshell
+      # after the consumer's exit (reproduced under load).
       Krikri::PluginHelpers::JavaCertCommand.with_stdin("keytool -list", ["pass"])
-        .must_equal("printf '%s\\n' 'pass' | keytool -list")
+        .must_equal("printf '%s\\n' 'pass' 2>/dev/null | keytool -list")
       Krikri::PluginHelpers::JavaCertCommand.with_stdin("keytool -importcert", ["pass", "pass"])
-        .must_equal("printf '%s\\n' 'pass' 'pass' | keytool -importcert")
+        .must_equal("printf '%s\\n' 'pass' 'pass' 2>/dev/null | keytool -importcert")
     end
   end
 end
