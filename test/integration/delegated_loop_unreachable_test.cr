@@ -29,9 +29,27 @@ private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 
 private DELEGATE_NAME = "your_CA_controller_inventory_hostname"
-# The ssh transport's own error for a name the resolver refuses (EAI_NONAME);
-# same host-dependent wording the non-looped issue-#102 test asserts.
-private SSH_DETAIL = "ssh: Could not resolve hostname #{DELEGATE_NAME.downcase}: Name or service not known"
+# The ssh transport's own error wording for a name the resolver refuses is
+# gai_strerror(getaddrinfo(...)) on this host - EAI_NONAME ("Name or service
+# not known") on a resolver that answers NXDOMAIN, EAI_AGAIN ("Temporary
+# failure in name resolution") on one that answers SERVFAIL (docker's
+# embedded DNS on GitHub Actions job containers does exactly that for the
+# underscore-bearing name). The ssh subprocess and this probe share the
+# container's resolver and glibc, so re-deriving the wording the same way
+# the postgresql plugin does keeps the full-line pins below exact without
+# pinning one resolver's behavior.
+private SSH_DETAIL = "ssh: Could not resolve hostname #{DELEGATE_NAME.downcase}: #{resolver_refusal_detail}"
+
+private def resolver_refusal_detail : String
+  hints = LibC::Addrinfo.new
+  hints.ai_family = LibC::AF_UNSPEC
+  hints.ai_socktype = LibC::SOCK_STREAM
+  code = LibC.getaddrinfo(DELEGATE_NAME.downcase, nil, pointerof(hints), out addrs)
+  LibC.freeaddrinfo(addrs) if addrs && code == 0
+  # A resolver that somehow answers the name is not an environment this
+  # test's shape can occur on; fall back to the EAI_NONAME wording.
+  code == 0 ? "Name or service not known" : String.new(LibC.gai_strerror(code))
+end
 
 private def run_play(playbook : String) : {Process::Status, String}
   dir = PluginSpecHelper.tmp_path("delegated-loop-unreach")

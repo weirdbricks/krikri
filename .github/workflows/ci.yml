@@ -54,16 +54,18 @@ jobs:
         # lvol modules' binaries), npm (the community.general npm
         # module's binary, whose key-order and executable specs need a
         # resolvable npm; the plain `nodejs` package ships no npm binary,
-        # so it has to be the `npm` package itself), and docker.io +
-        # docker-compose-v2 for the live docker_compose_v2 tests (the
-        # runner mounts the host docker socket into job containers, so
-        # a client-side install is enough to reach it).
+        # so it has to be the `npm` package itself), cron (the cron
+        # plugin's CronTab.get_bin_path(required=True) - every cron spec
+        # needs the binary present even when it only edits a cron_file),
+        # and docker.io + docker-compose-v2 for the live docker_compose_v2
+        # tests (the runner mounts the host docker socket into job
+        # containers, so a client-side install is enough to reach it).
         run: |
           apt-get update -qq
           apt-get install -y -qq \
             liblzma-dev libbz2-dev libssl-dev libpcre2-dev \
             libevent-dev libgmp-dev libyaml-dev libxml2-dev zlib1g-dev \
-            rsync iproute2 libcap2-bin kmod \
+            rsync iproute2 libcap2-bin kmod cron \
             python3 python3-pip python3-venv python3-apt python3-debian \
             python3-pexpect python3-lxml python3-passlib \
             acl parted lvm2 npm \
@@ -82,9 +84,17 @@ jobs:
         # deprecation specs (proxmox_kvm -> community.proxmox, docker_swarm_service) see
         # "No module named 'ansible_collections.community'" and the
         # unported-module paths exit 4 instead of the 2 real ansible gives.
+        # community.mysql:5.0.2 is what the mysql redirect-deprecation
+        # specs need: without it the community.mysql.mysql_replication/
+        # mysql_role resolution dies at the collection-missing check
+        # instead of reaching the redirect table's task-load-time
+        # [DEPRECATION WARNING] they pin. community.zabbix:4.1.0 is what
+        # the block-style-list-param finalization spec needs: without it
+        # zabbix_host dies at FQCN resolution ("Cannot resolve") instead
+        # of reaching param finalization and its host_groups error chain.
         run: |
           pip3 install --break-system-packages ansible-core==2.19.11
-          ansible-galaxy collection install community.general:12.5.0 community.docker:5.2.1 community.proxmox:1.3.0
+          ansible-galaxy collection install community.general:12.5.0 community.docker:5.2.1 community.proxmox:1.3.0 community.mysql:5.0.2 community.zabbix:4.1.0
 
       - name: Cache shards
         uses: actions/cache@v4
