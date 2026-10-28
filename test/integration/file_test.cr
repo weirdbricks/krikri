@@ -131,8 +131,11 @@ describe "file plugin" do
     it "updates mtime on an existing file" do
       path = tmp_path("retouch.txt")
       File.write(path, "x")
-      old_mtime = File.info(path).modification_time
-      sleep 1.1.seconds
+      # Backdate the mtime instead of sleeping out a whole second: the
+      # assertion only needs the touch to move mtime FORWARD, and utimes
+      # gives the old stamp an unambiguous past value without the wait.
+      old_mtime = Time.unix(1_000_000_000)
+      File.utime(old_mtime, old_mtime, path)
       result = PluginSpecHelper.run("file", {"path" => path, "state" => "touch"})
 
       result["changed"].as_bool.must_equal(true)

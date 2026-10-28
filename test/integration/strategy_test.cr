@@ -21,7 +21,7 @@ private def run_strategy(strategy : String?) : {Int32, Array(String)}
     #{line.rstrip}
       tasks:
         - name: slow on h1
-          ansible.builtin.command: sh -c "test '{{ inventory_hostname }}' = h1 && sleep 2; echo A"
+          ansible.builtin.command: sh -c "test '{{ inventory_hostname }}' = h1 && sleep 1; echo A"
         - name: second
           ansible.builtin.command: echo B
     YAML

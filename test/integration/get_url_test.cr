@@ -136,6 +136,18 @@ Fiber.yield
 
 private GET_URL_TEST_BASE = "http://#{GET_URL_TEST_ADDRESS}"
 
+# Whole-second `elapsed` from a fast local request, pinned as a small
+# non-negative int rather than an exact 0: under `-p 8` the single-OS-
+# thread suite juggles 8 worker fibers plus this file's own HTTP::Server
+# fiber, and a request that normally answers in milliseconds can be
+# scheduled past a whole-second boundary. The shape (present, int, tiny)
+# is what these specs guard - the old exact-0 pins flaked on it.
+private def assert_fast_elapsed(result) : Nil
+  elapsed = result["elapsed"].as_i
+  (elapsed >= 0).must_equal(true)
+  (elapsed < 5).must_equal(true, "elapsed=#{elapsed} for a fast local request")
+end
+
 # SHA1 hexdigest of `content` - get_url.py's own comparison digest
 # (module.sha1) for both the staged download and the existing dest.
 def sha1_of(content : String) : String
@@ -536,7 +548,7 @@ describe "get_url plugin" do
       result["response"].as_s.must_match(/\AHTTP Error 404: \S+/)
       result["url"].as_s.must_equal("#{GET_URL_TEST_BASE}/missing.txt")
       result["dest"].as_s.must_equal(dest)
-      result["elapsed"].as_i.must_equal(0)
+      assert_fast_elapsed(result)
       File.exists?(dest).must_equal(false)
     ensure
       File.delete(dest) if dest && File.exists?(dest)
@@ -554,7 +566,7 @@ describe "get_url plugin" do
       result["msg"].as_s.must_equal("Request failed: <urlopen error [Errno 111] Connection refused>")
       result["url"].as_s.must_equal("http://127.0.0.1:#{closed_port}/x")
       result["dest"].as_s.must_equal(dest)
-      result["elapsed"].as_i.must_equal(0)
+      assert_fast_elapsed(result)
       result["status_code"]?.must_be_nil
       result["response"]?.must_be_nil
       File.exists?(dest).must_equal(false)
@@ -668,8 +680,10 @@ describe "get_url plugin" do
 
       result["failed"].as_bool.must_equal(true)
       result["msg"].as_s.must_equal("failed to create temporary content file: timed out")
-      # elapsed is the real run time, so the 1s timeout shows up in it.
-      result["elapsed"].as_i.must_equal(1)
+      # elapsed is the real run time, so the 1s timeout shows up in it -
+      # pinned as a lower bound only: scheduler delay under -p 8 can push
+      # the whole-second read past 1.
+      (result["elapsed"].as_i >= 1).must_equal(true)
       result["url"]?.must_be_nil
       result["dest"]?.must_be_nil
       result["status_code"]?.must_be_nil
@@ -1402,7 +1416,7 @@ describe "get_url plugin" do
     result["msg"].as_s.must_equal("Request failed: <urlopen error [Errno 2] No such file or directory: '#{src}'>")
     result["url"].as_s.must_equal("file://#{src}")
     result["dest"].as_s.must_equal(dest)
-    result["elapsed"].as_i.must_equal(0)
+    assert_fast_elapsed(result)
     result["status_code"]?.must_be_nil
     File.exists?(dest).must_equal(false)
   ensure
@@ -1426,7 +1440,7 @@ describe "get_url plugin" do
       result["msg"].as_s.must_equal("Connection failure: ('No cipher can be selected.',)")
       result["url"].as_s.must_equal("#{GET_URL_TEST_BASE}/file.txt")
       result["dest"].as_s.must_equal(dest)
-      result["elapsed"].as_i.must_equal(0)
+      assert_fast_elapsed(result)
       # status_code belongs to the OTHER get_url failure (its non-200
       # "Request failed" branch), not to this one.
       result["status_code"]?.must_be_nil
@@ -1520,7 +1534,7 @@ describe "get_url plugin" do
       result["msg"].as_s.must_equal("Connection failure: ('No cipher can be selected.',)")
       result["url"].as_s.must_equal("#{GET_URL_TEST_BASE}/file.txt")
       result["dest"].as_s.must_equal(dest)
-      result["elapsed"].as_i.must_equal(0)
+      assert_fast_elapsed(result)
     ensure
       File.delete(dest) if dest && File.exists?(dest)
     end

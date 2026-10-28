@@ -26,9 +26,9 @@ describe "wait_for plugin" do
   end
 
   it "spends the delay inside the timeout budget, failing at elapsed=timeout" do
-    result = PluginSpecHelper.run("wait_for", {"port" => "1", "host" => "127.0.0.1", "delay" => "2", "timeout" => "3", "connect_timeout" => "1"})
+    result = PluginSpecHelper.run("wait_for", {"port" => "1", "host" => "127.0.0.1", "delay" => "1", "timeout" => "2", "connect_timeout" => "1"})
     result["failed"].as_bool.must_equal(true)
-    result["elapsed"].as_i.must_equal(3)
+    result["elapsed"].as_i.must_equal(2)
   end
 
   it "succeeds immediately when an open port is already listening" do

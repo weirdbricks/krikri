@@ -62,10 +62,11 @@ library shards (krikri-jinja, krikri-xml, ...) stay MIT; GPL krikri may use them
                                      #   and a debug binary runs ~1.8x slower wall-clock on identical work -
                                      #   `krikri-role-tester` warns (not refuses) when it detects one, and records
                                      #   the build type, commit and a stale-binary check in the run's `versions.txt`
-scripts/minitest.sh                 # the full minitest suite under test/
-scripts/minitest.sh -- -p 4         # same suite on 4 worker fibers (the suite is
-                                     #   IO/sleep-bound, so tests genuinely overlap;
-                                     #   parallel-safety rules in test/minitest_helper.cr)
+scripts/minitest.sh                 # the full minitest suite under test/ (defaults to
+                                     #   8 worker fibers; the suite is IO/sleep-bound, so
+                                     #   tests genuinely overlap; parallel-safety rules in
+                                     #   test/minitest_helper.cr)
+scripts/minitest.sh -- -p 4         # same suite on 4 worker fibers
 scripts/minitest.sh test/unit/foo_test.cr   # one file
 scripts/minitest.sh -- -n /pattern/ # a subset by test-name regex
 ameba                               # lint
@@ -86,7 +87,7 @@ script runs that file directly, and anything after `--` goes to
 `docker_container published_ports` tests bring real podman/compose projects up (~135s of a
 ~230s suite) and skip unless `KRIKRI_DOCKER_TESTS=1`. CI always sets it;
 `krikri-fix-issues` sets it when a fix touches docker code. Run them locally with
-`KRIKRI_DOCKER_TESTS=1 scripts/minitest.sh -- -p 4`.
+`KRIKRI_DOCKER_TESTS=1 scripts/minitest.sh`.
 
 **Parallel-safety rules** (required for `-- -p N`; full detail in
 `test/minitest_helper.cr`):
@@ -199,7 +200,8 @@ skill's first step is to ask for it, and it documents the layout.
    Add a regression test where practically possible (some things - real dpkg/apt mutation, real
    crontab mutation, real pip installs - have no test at all by design; verify those live instead
    and say so in the commit message). Bump `VERSION` per logical fix or tightly-related group of
-   fixes, run the full `scripts/minitest.sh -- -p 4` suite, and `./build.sh`.
+   fixes, run the full `scripts/minitest.sh` suite (defaults to 8 worker
+   fibers), and `./build.sh`.
 
 5. **Confirm phase:** ask the user to re-run *only* the roles that diverged
    (`./bin/krikri-role-tester --auto-mode --queue <file>`, queue lines copied from the old

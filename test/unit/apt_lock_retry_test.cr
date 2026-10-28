@@ -108,7 +108,13 @@ describe "apt lock-contention retry helpers (round 153 follow-up, 0.9.502)" do
 
     it "respects lock_timeout - returns the last error when budget exhausted" do
       stub = StubExec.new([DPKG_LOCK_STILL_HELD] * 20)
-      r = HostClass.new.apt_with_lock_retry("apt-get -y install nginx", 2, ->(c : String) { stub.call(c) })
+      # Real (unscaled) sleeps: this is the one spec that pins the
+      # wall-clock budget itself. The suite's KRIKRI_TEST_SLEEP_SCALE
+      # would shrink the inter-attempt sleeps until the loop spun
+      # through the whole stub queue without ever reaching the budget,
+      # so this test opts out via the sleeper param.
+      r = HostClass.new.apt_with_lock_retry("apt-get -y install nginx", 2,
+        ->(c : String) { stub.call(c) }, ->(s : Time::Span) { sleep s })
       r[:exit_code].must_equal(100)
       expect((stub.exec_count) >= (2)).must_equal(true)
       expect((stub.exec_count) <= (3)).must_equal(true)

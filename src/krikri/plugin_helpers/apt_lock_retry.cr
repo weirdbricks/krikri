@@ -51,7 +51,8 @@ module Krikri
     # lock-holding error when the budget is exhausted, exactly the
     # way Ansible's apt module does.
     def apt_with_lock_retry(cmd : String, lock_timeout : Int32,
-                            exec_remote : Proc(String, NamedTuple(exit_code: Int32, stdout: String, stderr: String)))
+                            exec_remote : Proc(String, NamedTuple(exit_code: Int32, stdout: String, stderr: String)),
+                            sleeper : Proc(Time::Span, Nil)? = nil)
       start = Time.instant
       loop do
         result = exec_remote.call(cmd)
@@ -63,7 +64,11 @@ module Krikri
         end
 
         sleep_for = Math.min(3, lock_timeout - elapsed)
-        ::sleep(sleep_for.seconds)
+        if sl = sleeper
+          sl.call(sleep_for.seconds)
+        else
+          retry_sleep(sleep_for)
+        end
       end
     end
 
@@ -80,13 +85,27 @@ module Krikri
       return result if result[:exit_code] == 0 || !apt_lock_held?(result[:stderr])
 
       retries.times do
-        ::sleep(delay.seconds)
+        retry_sleep(delay)
         delay = Math.min(delay * 2, retry_max_delay)
         result = exec_remote.call(cmd)
         return result if result[:exit_code] == 0 || !apt_lock_held?(result[:stderr])
       end
 
       result
+    end
+
+    # The helpers' inter-attempt sleep, scaled by KRIKRI_TEST_SLEEP_SCALE
+    # when the environment sets it (e.g. "0.01"). Test-only: the suite's
+    # retry-exhaustion specs exercise the retry/booking logic, not the
+    # wall-clock backoff, and without the scale they pay the real 1-3s
+    # sleeps per attempt. Unset (production), this is an exact ::sleep.
+    # A zero/garbage scale makes the loops spin with no backoff, so it
+    # must only ever be set around stub-command tests.
+    private def retry_sleep(seconds : Float64) : Nil
+      if scale = ENV["KRIKRI_TEST_SLEEP_SCALE"]?
+        seconds *= scale.to_f
+      end
+      ::sleep(seconds.seconds)
     end
 
     # python-apt's Cache.update() - what real apt.py's update_cache pass
@@ -217,7 +236,7 @@ module Krikri
         warnings << "Failed to update cache after #{attempt + 1} retries due to #{warned_reason}, retrying"
         delay = 2.0 ** attempt + (rand(1000) / 1000.0)
         delay = retry_max_delay + (rand(1000) / 1000.0) if delay > retry_max_delay
-        ::sleep(delay.seconds)
+        retry_sleep(delay)
         # ansible formats the delay with %i, which truncates (1.7s -> "1")
         warnings << "Sleeping for #{delay.to_i} seconds, before attempting to refresh the cache again"
         result = exec_remote.call("apt-get update")

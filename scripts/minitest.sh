@@ -15,8 +15,10 @@
 #   scripts/minitest.sh test/unit/foo_test.cr   # a single file, passed through
 #   scripts/minitest.sh -- -n /pattern/       # args after -- go to the binary
 #
-# Parallelism: pass -- -p N for N worker fibers. Workers run on fibers, so
-# the suite's IO/sleep-bound tests genuinely overlap (~6x faster at -p 8),
+# Parallelism: defaults to -p 8 (override with an explicit -p/--parallel).
+# Workers run on fibers, so
+# the suite's IO/sleep-bound tests genuinely overlap (~35% faster than
+# -p 4, measured),
 # but the tests must then be parallel-safe: per-test tmp state comes from
 # PluginSpecHelper.tmp_path (scoped by the run_one hook in
 # test/minitest_helper.cr), and ENV/global-state tests serialize on
@@ -57,6 +59,13 @@ while IFS= read -r var; do
   unset "$var"
 done < <(env | grep -o '^ANSIBLE_[A-Za-z0-9_]*')
 unset DOCKER_HOST DOCKER_CONTEXT
+
+# Shrink the apt retry helpers' inter-attempt backoff (1-3s sleeps) to
+# milliseconds: the retry specs exercise the retry/booking logic and warn
+# texts, not the wall-clock backoff, and the "Sleeping for N seconds"
+# texts are computed from the unscaled delay so they stay live-captured.
+# Only AptLockRetry#retry_sleep reads it; never set it outside the suite.
+export KRIKRI_TEST_SLEEP_SCALE=0.01
 
 # Most integration specs don't call engine code in-process: they spawn
 # bin/krikri-playbook (and bin/plugins/*) and assert on what it prints.
@@ -152,6 +161,22 @@ export CRYSTAL_WORKERS="${CRYSTAL_WORKERS:-1}"
 # program saw ARGV; the bare binary doesn't, and OptionParser stops at it,
 # so a leading -- would silently disable every option after it.
 [ "${1:-}" = "--" ] && shift
+
+# Default parallelism: 8 worker fibers. The suite is IO/sleep-bound, so
+# the sleeps genuinely overlap and wall time drops ~35% vs -p 4 (measured:
+# 1m25s vs 2m00s); the workers stay on ONE OS thread (CRYSTAL_WORKERS=1
+# above), so this costs no extra cores. An explicit -p/--parallel on the
+# command line wins.
+parallel_given=false
+for arg in "$@"; do
+  case "$arg" in
+    -p|--parallel) parallel_given=true ;;
+    -p[0-9]*)      parallel_given=true ;;
+  esac
+done
+if [ "$parallel_given" = false ]; then
+  set -- "$@" -p 8
+fi
 
 # Not exec: the EXIT trap has to run after the suite to remove its TMPDIR.
 timeout -k 5 "${MINITEST_TIMEOUT:-600}" "$BINARY" "$@"

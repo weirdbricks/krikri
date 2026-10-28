@@ -139,8 +139,8 @@ jobs:
         # scripts/minitest.sh globs test/**/*_test.cr into a generated
         # entrypoint (minitest registers tests in-process, so one entrypoint
         # has to require every test file), builds the .minitest_all.bin
-        # binary once, and runs the suite. `-- -p 4` runs the tests on 4
-        # worker fibers: the suite is IO/sleep bound, so they genuinely
+        # binary once, and runs the suite. The script defaults to 8 worker
+        # fibers: the suite is IO/sleep bound, so they genuinely
         # overlap and wall time drops accordingly. MINITEST_TIMEOUT (the
         # script's default is 600s) hard-fails a wedged run instead of
         # hanging the job.
@@ -164,7 +164,7 @@ jobs:
         env:
           CRYSTAL_CACHE_DIR: /root/.cache/krikri-minitest
           KRIKRI_DOCKER_TESTS: "1"
-        run: scripts/minitest.sh -- -p 4
+        run: scripts/minitest.sh
 
       - name: Lint (ameba)
         # lib/ameba/bin/ameba does not exist after `shards install`:

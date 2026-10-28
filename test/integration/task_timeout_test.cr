@@ -5,7 +5,9 @@ require "../../src/krikri/task_batcher"
 # The task-level `timeout:` keyword, end to end through bin/krikri-playbook.
 # Every expected string below was live-captured from ansible-core 2.19.11
 # running the same playbook locally (connection: local, `shell: sleep 30`
-# with `timeout: 2` and variants: loop, ignore_errors, rescue, block-/
+# with `timeout: 2`; the fixtures below run `timeout: 1` so a suite pass
+# doesn't pay 2s per test - the captured wording's N tracks the configured
+# timeout) and variants: loop, ignore_errors, rescue, block-/
 # play-/roles:-entry inheritance, timeout: 0, an out-of-range value, a
 # templated value, include_tasks, register).
 #
@@ -43,7 +45,7 @@ private def leaked_sleep?(marker : String) : Bool
   !output.to_s.strip.empty?
 end
 
-private FATAL_LINE = "fatal: [localhost]: FAILED! => {\"changed\": false, \"msg\": \"Task failed: Timed out after 2 second(s).\", \"timedout\": {\"frame\": \"Configure `DISPLAY_TRACEBACK` to see a traceback on timeout errors.\", \"period\": 2}}"
+private FATAL_LINE = "fatal: [localhost]: FAILED! => {\"changed\": false, \"msg\": \"Task failed: Timed out after 1 second(s).\", \"timedout\": {\"frame\": \"Configure `DISPLAY_TRACEBACK` to see a traceback on timeout errors.\", \"period\": 1}}"
 
 describe "task timeout keyword" do
   it "fails a task that outlives its timeout with Ansible's exact output" do
@@ -51,11 +53,11 @@ describe "task timeout keyword" do
     success, output = run_play([
       "    - name: slow",
       "      ansible.builtin.shell: sleep 900 # #{marker}",
-      "      timeout: 2",
+      "      timeout: 1",
     ])
 
     success.must_equal(false)
-    output.includes?("[ERROR]: Task failed: Timed out after 2 second(s).").must_equal(true, output)
+    output.includes?("[ERROR]: Task failed: Timed out after 1 second(s).").must_equal(true, output)
     output.includes?(FATAL_LINE).must_equal(true, output)
     output.includes?("localhost                  : ok=0    changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0").must_equal(true, output)
     leaked_sleep?(marker).must_equal(false, "timed-out plugin process leaked")
@@ -65,20 +67,20 @@ describe "task timeout keyword" do
     success, output = run_play([
       "    - name: loop slow",
       "      ansible.builtin.shell: sleep 900",
-      "      timeout: 2",
+      "      timeout: 1",
       "      loop: [a, b]",
     ])
 
     success.must_equal(false)
-    output.includes?("failed: [localhost] (item=a) => {\"ansible_loop_var\": \"item\", \"changed\": false, \"item\": \"a\", \"msg\": \"Task failed: Timed out after 2 second(s).\", \"timedout\": {\"frame\": \"Configure `DISPLAY_TRACEBACK` to see a traceback on timeout errors.\", \"period\": 2}}").must_equal(true, output)
-    output.includes?("failed: [localhost] (item=b) => {\"ansible_loop_var\": \"item\", \"changed\": false, \"item\": \"b\", \"msg\": \"Task failed: Timed out after 2 second(s).\", \"timedout\": {\"frame\": \"Configure `DISPLAY_TRACEBACK` to see a traceback on timeout errors.\", \"period\": 2}}").must_equal(true, output)
+    output.includes?("failed: [localhost] (item=a) => {\"ansible_loop_var\": \"item\", \"changed\": false, \"item\": \"a\", \"msg\": \"Task failed: Timed out after 1 second(s).\", \"timedout\": {\"frame\": \"Configure `DISPLAY_TRACEBACK` to see a traceback on timeout errors.\", \"period\": 1}}").must_equal(true, output)
+    output.includes?("failed: [localhost] (item=b) => {\"ansible_loop_var\": \"item\", \"changed\": false, \"item\": \"b\", \"msg\": \"Task failed: Timed out after 1 second(s).\", \"timedout\": {\"frame\": \"Configure `DISPLAY_TRACEBACK` to see a traceback on timeout errors.\", \"period\": 1}}").must_equal(true, output)
   end
 
   it "honors ignore_errors and plays on" do
     success, output = run_play([
       "    - name: slow ignored",
       "      ansible.builtin.shell: sleep 900",
-      "      timeout: 2",
+      "      timeout: 1",
       "      ignore_errors: true",
       "    - ansible.builtin.debug:",
       "        msg: after",
@@ -96,7 +98,7 @@ describe "task timeout keyword" do
       "    - name: rescue test",
       "      block:",
       "        - ansible.builtin.shell: sleep 900",
-      "          timeout: 2",
+      "          timeout: 1",
       "      rescue:",
       "        - ansible.builtin.debug:",
       "            msg: rescued",
@@ -113,7 +115,7 @@ describe "task timeout keyword" do
       "    - name: block timeout",
       "      block:",
       "        - ansible.builtin.shell: sleep 900",
-      "      timeout: 2",
+      "      timeout: 1",
     ])
 
     success.must_equal(false)
@@ -126,7 +128,7 @@ describe "task timeout keyword" do
       "- hosts: localhost",
       "  gather_facts: false",
       "  connection: local",
-      "  timeout: 2",
+      "  timeout: 1",
       "  tasks:",
       "    - name: slow",
       "      ansible.builtin.shell: sleep 900",
@@ -151,7 +153,7 @@ describe "task timeout keyword" do
       "  connection: local",
       "  roles:",
       "    - role: timeout-role",
-      "      timeout: 2",
+      "      timeout: 1",
     ].join("\n") + "\n")
     output = IO::Memory.new
     status = Process.run(BINARY, ["-i", "localhost,", playbook],
@@ -166,7 +168,7 @@ describe "task timeout keyword" do
   it "treats timeout 0 as no limit" do
     success, output = run_play([
       "    - name: slow but unbounded",
-      "      ansible.builtin.shell: sleep 2",
+      "      ansible.builtin.shell: sleep 0.5",
       "      timeout: 0",
     ])
 
@@ -226,7 +228,7 @@ describe "task timeout keyword" do
       "  tasks:",
       "    - name: include wrapper",
       "      ansible.builtin.include_tasks: #{included}",
-      "      timeout: 2",
+      "      timeout: 1",
     ].join("\n") + "\n")
     output = IO::Memory.new
     status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output, input: IO::Memory.new)
@@ -241,7 +243,7 @@ describe "task timeout keyword" do
     success, output = run_play([
       "    - name: slow",
       "      ansible.builtin.shell: sleep 900",
-      "      timeout: 2",
+      "      timeout: 1",
       "      register: r",
       "      ignore_errors: true",
       "    - ansible.builtin.debug:",
@@ -250,7 +252,7 @@ describe "task timeout keyword" do
 
     success.must_equal(true)
     output.includes?(FATAL_LINE).must_equal(true, output)
-    output.includes?("\"msg\": 2").must_equal(true, output)
+    output.includes?("\"msg\": 1").must_equal(true, output)
   end
 
   # Atlantic round 3100000's KEYORDER probe: real's registered timed-out
@@ -263,7 +265,7 @@ describe "task timeout keyword" do
     success, output = run_play([
       "    - name: slow",
       "      ansible.builtin.shell: sleep 900",
-      "      timeout: 2",
+      "      timeout: 1",
       "      register: r1",
       "      ignore_errors: true",
       "    - ansible.builtin.debug:",
@@ -274,12 +276,12 @@ describe "task timeout keyword" do
     output.includes?(FATAL_LINE).must_equal(true, output)
     # The debug display JSON-escapes the msg body, so the escaped quotes
     # below are the literal output text (same shape real's stdout shows).
-    output.includes?(%q{KEYORDER|{\"timedout\": {\"frame\": \"Configure `DISPLAY_TRACEBACK` to see a traceback on timeout errors.\", \"period\": 2}, \"failed\": true, \"exception\": \"(traceback unavailable)\", \"msg\": \"Task failed: Timed out after 2 second(s).\", \"changed\": false}}).must_equal(true, output)
+    output.includes?(%q{KEYORDER|{\"timedout\": {\"frame\": \"Configure `DISPLAY_TRACEBACK` to see a traceback on timeout errors.\", \"period\": 1}, \"failed\": true, \"exception\": \"(traceback unavailable)\", \"msg\": \"Task failed: Timed out after 1 second(s).\", \"changed\": false}}).must_equal(true, output)
   end
 
   # Real's alarm wraps ALL of handler.run (ansible/executor/
   # task_executor.py:621), action plugin included - `pause: seconds: 30`
-  # with `timeout: 2` dies mid-sleep with the standard task-timeout
+  # with `timeout: 1` dies mid-sleep with the standard task-timeout
   # failure, but its "Pausing for 30 seconds" console line (which
   # real's pause action writes itself just before the alarm fires) is
   # still there, and the [ERROR] block is the TWO-SEGMENT action-failure
@@ -291,16 +293,16 @@ describe "task timeout keyword" do
       "    - name: slow pause",
       "      ansible.builtin.pause:",
       "        seconds: 30",
-      "      timeout: 2",
+      "      timeout: 1",
     ])
 
     success.must_equal(false)
     output.includes?("Pausing for 30 seconds").must_equal(true, output)
-    output.includes?("[ERROR]: Task failed: Timed out after 2 second(s).").must_equal(true, output)
+    output.includes?("[ERROR]: Task failed: Timed out after 1 second(s).").must_equal(true, output)
     # The two-segment block: headline + task Origin, then the caused-by
     # separator and the bare timeout message (no task context of its own).
     output.includes?("Task failed.\nOrigin: ").must_equal(true, output)
-    output.includes?("<<< caused by >>>\n\nTimed out after 2 second(s).").must_equal(true, output)
+    output.includes?("<<< caused by >>>\n\nTimed out after 1 second(s).").must_equal(true, output)
     output.includes?(FATAL_LINE).must_equal(true, output)
     output.includes?("localhost                  : ok=0    changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0").must_equal(true, output)
   end
@@ -310,15 +312,15 @@ describe "task timeout keyword" do
       "    - name: loop pause",
       "      ansible.builtin.pause:",
       "        seconds: 30",
-      "      timeout: 2",
+      "      timeout: 1",
       "      loop: [a, b]",
     ])
 
     success.must_equal(false)
     # Real: "Pausing" before EACH item's failed line, the [ERROR] block
     # once (Display-level dedup), and both items attempted.
-    output.includes?("failed: [localhost] (item=a) => {\"ansible_loop_var\": \"item\", \"changed\": false, \"item\": \"a\", \"msg\": \"Task failed: Timed out after 2 second(s).\", \"timedout\": {\"frame\": \"Configure `DISPLAY_TRACEBACK` to see a traceback on timeout errors.\", \"period\": 2}}").must_equal(true, output)
-    output.includes?("failed: [localhost] (item=b) => {\"ansible_loop_var\": \"item\", \"changed\": false, \"item\": \"b\", \"msg\": \"Task failed: Timed out after 2 second(s).\", \"timedout\": {\"frame\": \"Configure `DISPLAY_TRACEBACK` to see a traceback on timeout errors.\", \"period\": 2}}").must_equal(true, output)
+    output.includes?("failed: [localhost] (item=a) => {\"ansible_loop_var\": \"item\", \"changed\": false, \"item\": \"a\", \"msg\": \"Task failed: Timed out after 1 second(s).\", \"timedout\": {\"frame\": \"Configure `DISPLAY_TRACEBACK` to see a traceback on timeout errors.\", \"period\": 1}}").must_equal(true, output)
+    output.includes?("failed: [localhost] (item=b) => {\"ansible_loop_var\": \"item\", \"changed\": false, \"item\": \"b\", \"msg\": \"Task failed: Timed out after 1 second(s).\", \"timedout\": {\"frame\": \"Configure `DISPLAY_TRACEBACK` to see a traceback on timeout errors.\", \"period\": 1}}").must_equal(true, output)
     output.scan("Pausing for 30 seconds").size.must_equal(2, output)
     first_pause = output.index!("Pausing for 30 seconds")
     item_a = output.index!("(item=a) =>")
@@ -335,7 +337,7 @@ describe "task timeout keyword" do
       "    - name: ignored pause",
       "      ansible.builtin.pause:",
       "        seconds: 30",
-      "      timeout: 2",
+      "      timeout: 1",
       "      ignore_errors: true",
       "    - ansible.builtin.debug:",
       "        msg: after",
@@ -354,7 +356,7 @@ describe "task timeout keyword" do
       "      block:",
       "        - ansible.builtin.pause:",
       "            seconds: 30",
-      "          timeout: 2",
+      "          timeout: 1",
       "      rescue:",
       "        - ansible.builtin.debug:",
       "            msg: rescued",
@@ -372,7 +374,7 @@ describe "task timeout keyword" do
       "      block:",
       "        - ansible.builtin.pause:",
       "            seconds: 30",
-      "      timeout: 2",
+      "      timeout: 1",
     ])
 
     success.must_equal(false)
@@ -421,7 +423,7 @@ describe "task timeout keyword" do
       "    - name: slow handler",
       "      ansible.builtin.pause:",
       "        seconds: 30",
-      "      timeout: 2",
+      "      timeout: 1",
     ].join("\n") + "\n")
     output = IO::Memory.new
     status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output, input: IO::Memory.new)
@@ -429,7 +431,7 @@ describe "task timeout keyword" do
     text = output.to_s
     text.includes?("RUNNING HANDLER [slow handler] ***").must_equal(true, text)
     text.includes?("Pausing for 30 seconds").must_equal(true, text)
-    text.includes?("<<< caused by >>>\n\nTimed out after 2 second(s).").must_equal(true, text)
+    text.includes?("<<< caused by >>>\n\nTimed out after 1 second(s).").must_equal(true, text)
     text.includes?(FATAL_LINE).must_equal(true, text)
     text.includes?("localhost                  : ok=1    changed=1    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0").must_equal(true, text)
   ensure
@@ -448,7 +450,7 @@ describe "task timeout keyword" do
       "      ansible.builtin.command: echo hi",
       "    - name: slow",
       "      ansible.builtin.shell: sleep 900",
-      "      timeout: 2",
+      "      timeout: 1",
       "    - name: c",
       "      ansible.builtin.command: echo hi",
     ].join("\n"))
