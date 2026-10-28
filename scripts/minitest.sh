@@ -11,21 +11,33 @@
 # full ~12-15s compile on every invocation.
 #
 # Usage:
-#   scripts/minitest.sh                 # whole minitest suite
+#   scripts/minitest.sh                 # whole minitest suite, 4 shards by default
+#   scripts/minitest.sh --shard 8       # whole suite on 8 shard processes
 #   scripts/minitest.sh test/unit/foo_test.cr   # a single file, passed through
 #   scripts/minitest.sh -- -n /pattern/       # args after -- go to the binary
 #
-# Parallelism: defaults to -p 8 (override with an explicit -p/--parallel).
-# Workers run on fibers, so
-# the suite's IO/sleep-bound tests genuinely overlap (~35% faster than
-# -p 4, measured),
-# but the tests must then be parallel-safe: per-test tmp state comes from
-# PluginSpecHelper.tmp_path (scoped by the run_one hook in
-# test/minitest_helper.cr), and ENV/global-state tests serialize on
-# PluginSpecHelper::ENV_MUTEX / ::STATE_MUTEX. The workers stay on ONE OS
-# thread (CRYSTAL_WORKERS=1): spread over multiple threads the suite hits
-# GC double-free aborts and futex deadlocks (Crystal 1.21 MT runtime), so
-# the cap is set here unless overridden.
+# Parallelism: the full suite defaults to 4 OS processes (`--shard N`, or
+# KRIKRI_TEST_SHARDS), each running ~1/4 of the test files with -p 4 worker
+# fibers on ONE OS thread (CRYSTAL_WORKERS=1). Sharding by process is what
+# actually uses the extra cores: within one process the fibers all share a
+# single OS thread, so CPU-bound work (process spawns, parsing) serializes -
+# 4 processes x -p 4 measured ~44% faster wall-clock than one process at
+# -p 8 (43s vs 77s), and N=6 adds nothing. Each shard needs its own compiled
+# binary (the entrypoint only requires its own slice of test files), built
+# concurrently and hash-gated like the single binary; the tradeoff is that a
+# source change now costs N compiles instead of one (~45s parallel vs ~15s),
+# which is still small next to the suite itself. KRIKRI_TEST_SHARDS=1 or
+# --shard 1 falls back to the original single-process path below.
+#
+# The tests must then be parallel-safe both within a shard and across shard
+# processes: per-test tmp state comes from PluginSpecHelper.tmp_path (scoped
+# by the run_one hook in test/minitest_helper.cr), ENV/global-state tests
+# serialize on PluginSpecHelper::ENV_MUTEX / ::STATE_MUTEX within their
+# process, and there is no shared mutable suite state across processes by
+# construction (each shard gets its own TMPDIR subtree). The workers stay on
+# ONE OS thread per shard (CRYSTAL_WORKERS=1): spread over multiple threads
+# the suite hits GC double-free aborts and futex deadlocks (Crystal MT
+# runtime), so the cap is set here unless overridden.
 
 set -euo pipefail
 
@@ -118,6 +130,32 @@ if [ ${#files[@]} -eq 0 ]; then
   exit 2
 fi
 
+# Shard count for full-suite runs: --shard N on the command line wins over
+# KRIKRI_TEST_SHARDS, which wins over the default of 4. 1 disables sharding.
+shards="${KRIKRI_TEST_SHARDS:-4}"
+shard_args=()
+next_is_shard=false
+for arg in "$@"; do
+  if [ "$next_is_shard" = true ]; then
+    shards="$arg"
+    next_is_shard=false
+    continue
+  fi
+  case "$arg" in
+    --shard=*) shards="${arg#--shard=}" ;;
+    --shard)   next_is_shard=true ;;
+    *)         shard_args+=("$arg") ;;
+  esac
+done
+if [ "$next_is_shard" = true ]; then
+  echo "--shard given without a count" >&2
+  exit 2
+fi
+if ! [ "$shards" -ge 1 ] 2>/dev/null; then
+  echo "--shard/KRIKRI_TEST_SHARDS must be a positive integer, got '$shards'" >&2
+  exit 2
+fi
+
 # Non-_test.cr support files (test/minitest_helper.cr) are pulled into the
 # build transitively but aren't in `files`, so hash them too or a helper-only
 # change would silently run a stale binary.
@@ -134,6 +172,111 @@ source_files=()
 while IFS= read -r file; do
   source_files+=("$file")
 done < <(find "$ROOT/src" "$ROOT/plugins" "$ROOT/lib" -name '*.cr' | sort)
+
+cd "$ROOT"
+export CRYSTAL_WORKERS="${CRYSTAL_WORKERS:-1}"
+
+# `crystal run` used to strip the conventional `--` separator before the
+# program saw ARGV; the bare binary doesn't, and OptionParser stops at it,
+# so a leading -- would silently disable every option after it. shard_args
+# was captured before the shift, so strip the leading -- here instead.
+if [ ${#shard_args[@]} -gt 0 ] && [ "${shard_args[0]}" = "--" ]; then
+  shard_args=("${shard_args[@]:1}")
+fi
+set -- ${shard_args[@]+"${shard_args[@]}"}
+
+# ---- sharded path: N OS processes, each with its own entrypoint/binary ----
+if [ "$shards" -ge 2 ]; then
+  # Default per-shard fiber count: 4 (4 shards x -p 4 was the measured
+  # sweet spot; N=6 added nothing). An explicit -p/--parallel on the
+  # command line wins and applies to every shard.
+  parallel_given=false
+  for arg in "$@"; do
+    case "$arg" in
+      -p|--parallel) parallel_given=true ;;
+      -p[0-9]*)      parallel_given=true ;;
+    esac
+  done
+  if [ "$parallel_given" = false ]; then
+    set -- "$@" -p 4
+  fi
+
+  # Round-robin the test files across shards (by file count; balancing by
+  # historical runtime would be better but needs a timings source).
+  shard_pids=()
+  shard_built=()
+  for ((i=0; i<shards; i++)); do
+    s_ep="$ROOT/.minitest_shard_${i}.cr"
+    s_bin="$ROOT/.minitest_shard_${i}.bin"
+    s_hash="$ROOT/.minitest_shard_${i}.hash"
+    s_tmp_ep="$s_ep.tmp"
+    : > "$s_tmp_ep"
+    reqs=()
+    for ((j=i; j<${#files[@]}; j+=shards)); do
+      reqs+=("${files[$j]#"$ROOT"/}")
+    done
+    for req in "${reqs[@]}"; do
+      printf 'require "./%s"\n' "$req" >> "$s_tmp_ep"
+    done
+    mv "$s_tmp_ep" "$s_ep"
+    # Same hash discipline as the single binary below: the shard's own file
+    # slice, the non-_test.cr support files, all compiled sources and
+    # shard.lock.
+    s_h=$( (printf '%s\n' "${reqs[@]}"; cat "${support_files[@]}" "${source_files[@]}" "$ROOT/shard.lock") | sha256sum | cut -d' ' -f1)
+    shard_built[$i]=0
+    if [ ! -f "$s_hash" ] || [ "$(cat "$s_hash")" != "$s_h" ] || [ ! -x "$s_bin" ]; then
+      # Hash first, binary second; on build failure drop BOTH or the next
+      # run would "validate" against the hash and run stale code.
+      echo "$s_h" > "$s_hash"
+      ( crystal build --no-debug "$s_ep" -o "$s_bin" ) >"$RUN_TMP/build_$i.log" 2>&1 &
+      shard_pids[$i]=$!
+      shard_built[$i]=1
+    fi
+  done
+
+  build_failed=0
+  for ((i=0; i<shards; i++)); do
+    if [ "${shard_built[$i]}" = 1 ]; then
+      if ! wait "${shard_pids[$i]}"; then
+        echo "test: shard $i BUILD FAILED:" >&2
+        tail -20 "$RUN_TMP/build_$i.log" >&2
+        rm -f "$ROOT/.minitest_shard_${i}.bin" "$ROOT/.minitest_shard_${i}.hash"
+        build_failed=1
+      fi
+    fi
+  done
+  [ "$build_failed" = 0 ] || exit 1
+
+  echo "test: running $shards shards in parallel" >&2
+  for ((i=0; i<shards; i++)); do
+    s_bin="$ROOT/.minitest_shard_${i}.bin"
+    s_log="$RUN_TMP/shard_$i.log"
+    (
+      export TMPDIR="$RUN_TMP/s$i"
+      mkdir -p "$TMPDIR"
+      crc=0
+      timeout -k 5 "${MINITEST_TIMEOUT:-600}" "$s_bin" "$@" >"$s_log" 2>&1 || crc=$?
+      echo "$crc" > "$RUN_TMP/shard_$i.rc"
+    ) &
+  done
+  wait
+
+  rc_total=0
+  for ((i=0; i<shards; i++)); do
+    s_log="$RUN_TMP/shard_$i.log"
+    crc=$(cat "$RUN_TMP/shard_$i.rc")
+    summary=$(grep -E '^[0-9]+ (tests|runs),' "$s_log" | tail -1)
+    echo "shard $i: exit=$crc  ${summary:-<no summary - see $s_log>}" >&2
+    if [ "$crc" -ne 0 ]; then
+      rc_total=$crc
+      echo "--- shard $i output (last 120 lines; full log: $s_log) ---" >&2
+      tail -n 120 "$s_log" >&2
+    fi
+  done
+  exit "$rc_total"
+fi
+
+# ---- single-process path (shards=1): one entrypoint, one binary ----
 
 hash=$(cat "${files[@]}" "${support_files[@]}" "${source_files[@]}" "$ROOT/shard.lock" | sha256sum | cut -d' ' -f1)
 
@@ -153,14 +296,6 @@ if [ ! -f "$HASHFILE" ] || [ "$(cat "$HASHFILE")" != "$hash" ] || [ ! -f "$BINAR
     exit 1
   fi
 fi
-
-cd "$ROOT"
-export CRYSTAL_WORKERS="${CRYSTAL_WORKERS:-1}"
-
-# `crystal run` used to strip the conventional `--` separator before the
-# program saw ARGV; the bare binary doesn't, and OptionParser stops at it,
-# so a leading -- would silently disable every option after it.
-[ "${1:-}" = "--" ] && shift
 
 # Default parallelism: 8 worker fibers. The suite is IO/sleep-bound, so
 # the sleeps genuinely overlap and wall time drops ~35% vs -p 4 (measured:

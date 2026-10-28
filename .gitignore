@@ -79,4 +79,9 @@ __pycache__/
 # scripts/minitest.sh's build-once suite binary + file-list hash
 /.minitest_all.bin
 /.minitest_all.hash
+
+# scripts/minitest.sh's sharded-mode entrypoints/binaries/hashes (--shard N)
+/.minitest_shard_*.cr
+/.minitest_shard_*.bin
+/.minitest_shard_*.hash
 /ws
