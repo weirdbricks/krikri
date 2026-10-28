@@ -358,9 +358,18 @@ module Krikri
     # reproduced as a printf pipe when the password is not on the command
     # line (run_command(bits, check_rc, data=stdin_data) hands svn the
     # password bytes with no trailing newline).
+    #
+    # The feeder's stderr is suppressed: its only possible output is
+    # bash's own "printf: write error: Broken pipe" when the consumer
+    # exits without reading stdin (svn failing before it reaches the
+    # password, or a shim in the specs). Real Ansible feeds stdin through
+    # run_command(data=...), where CPython ignores EPIPE on the stdin
+    # write - so silencing the generated printf matches the real module
+    # instead of masking real output (the command's own stderr is a
+    # different pipeline element and unaffected).
     private def svn_exec(command : String)
       if password = @svn_stdin_password
-        remote_exec("printf '%s' #{shell_quote(password)} | #{command}")
+        remote_exec("printf '%s' #{shell_quote(password)} 2>/dev/null | #{command}")
       else
         remote_exec(command)
       end

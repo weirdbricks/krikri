@@ -394,10 +394,18 @@ module Krikri
       # RIGHT side of the pipe, and propagates the command's own exit
       # code unchanged. single-quoted printf data is literal to the
       # shell (newlines, quotes and all) via #shell_single_quote.
+      #
+      # The feeder's stderr is suppressed: a command that exits without
+      # reading stdin can otherwise append bash's "printf: write error:
+      # Broken pipe" to the captured stderr. Real Ansible writes stdin
+      # through a pipe whose EPIPE the module runner ignores, so the
+      # silenced printf matches the real module instead of masking
+      # output (the command's own stderr is a different pipeline
+      # element and unaffected).
       if stdin_data = @params["stdin"]?
         stdin_add_newline = true?(@params["stdin_add_newline"]?, default: true)
         stdin_payload = stdin_add_newline ? "#{stdin_data}\n" : stdin_data
-        remote_command = "printf %s #{shell_single_quote(stdin_payload)} | { #{remote_command}; }"
+        remote_command = "printf %s #{shell_single_quote(stdin_payload)} 2>/dev/null | { #{remote_command}; }"
       end
 
       # force_shell: the shell module's string is ALWAYS interpreted by
