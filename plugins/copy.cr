@@ -954,7 +954,7 @@ module Krikri
     # plugin never did at all (see KNOWN_MISSING.md's own writeup: found
     # while fixing template.cr's validate:/remote_tmp staging gap).
     # Mirrors template.cr's own approach exactly: stage the final content
-    # under /tmp (remote_tmp-style, matching Ansible's own
+    # under Dir.tempdir (TMPDIR, else /tmp; remote_tmp-style, matching Ansible's own
     # `~/.ansible/tmp/...` location - see that plugin's own comment on
     # why dest-adjacent staging diverges from Ansible under
     # AppArmor/SELinux confinement), run the validate: command against
@@ -1015,11 +1015,11 @@ module Krikri
         return {failure: PluginResult.new(changed: false, failed: true, msg: "validate must contain %s: #{validate_cmd}"), staged: nil}
       end
 
-      temp_file = File.join("/tmp", ".krikri-playbook-copy-#{Random::Secure.hex(8)}.tmp")
+      temp_file = File.join(Dir.tempdir, ".krikri-playbook-copy-#{Random::Secure.hex(8)}.tmp")
       begin
         # SECURITY: created EMPTY 0600 and settled to its final mode
         # (0666 & ~umask for a new dest, narrowed by the task's numeric
-        # mode: - this /tmp staging is mv'd in as a new inode, it does
+        # mode: - this staging file is mv'd in as a new inode, it does
         # NOT inherit an existing dest's mode, matching the old perm:
         # 0o666 creation semantics) BEFORE the content lands - see
         # BasePlugin#create_staging_temp. The old write-then-chmod
@@ -1028,6 +1028,7 @@ module Krikri
         create_staging_temp(temp_file, staging_temp_mode(dest, 0o666, preserve_dest_mode: false))
         File.write(temp_file, content, perm: 0o600)
       rescue ex
+        File.delete(temp_file) if File.exists?(temp_file)
         return {failure: PluginResult.new(changed: false, failed: true, msg: "Failed to write temporary file: #{ex.message}"), staged: nil}
       end
 
@@ -1039,6 +1040,7 @@ module Krikri
         # the staged content around (do_cleanup_files runs on failure).
         # stdout_lines/stderr_lines come from _return_formatted's own
         # splitter.
+        File.delete(temp_file) if File.exists?(temp_file)
         stdout = validation[:stdout]
         stderr = validation[:stderr]
         result = PluginResult.new(

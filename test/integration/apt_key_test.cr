@@ -77,7 +77,7 @@ SH
 # inherits the spec process's environment. ENV is process-global, so
 # under minitest's parallel workers the whole block holds ENV_MUTEX.
 private def with_apt_key_shim(state_file : String, &)
-  shim_dir = File.tempname("/tmp", ".krikri-spec-aptkey-shim")
+  shim_dir = File.tempname(".krikri-spec-aptkey-shim")
   shim = File.join(shim_dir, "apt-key")
   Dir.mkdir(shim_dir)
   File.write(shim, APT_KEY_SHIM)
@@ -116,7 +116,7 @@ private def without_apt_key_on_path(&)
 end
 
 private def apt_key_spec_state_file : String
-  File.tempname("/tmp", ".krikri-spec-aptkey-state")
+  File.tempname(".krikri-spec-aptkey-state")
 end
 
 describe "apt_key plugin" do

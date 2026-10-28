@@ -51,7 +51,7 @@ private def dict_vars_for(tag : String) : Array(String)
 end
 
 private def private_dest(tag : String) : String
-  "/tmp/argsplat-warning-#{tag}-#{Random::Secure.hex(6)}.txt"
+  File.join(Dir.tempdir, "argsplat-warning-#{tag}-#{Random::Secure.hex(6)}.txt")
 end
 
 private PLAY_HEADER = [

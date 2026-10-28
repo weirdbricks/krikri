@@ -135,7 +135,7 @@ describe "pip plugin" do
   # being part of the package spec - verified live against the real
   # host that found it.
   it "sends a comma-joined multi-package name to pip as separately quoted argv words" do
-    shim_dir = File.tempname("/tmp", ".krikri-spec-pip-bin")
+    shim_dir = File.tempname(".krikri-spec-pip-bin")
     Dir.mkdir(shim_dir)
     shim = File.join(shim_dir, "multi-pkg-pip")
     File.write(shim, <<-SH
@@ -203,7 +203,7 @@ describe "pip plugin" do
     # three pieces and pip failed with its own "Invalid requirement:
     # 'horovod[keras'" before ever attempting the install. The shim
     # records its argv, so the assertion is on what pip actually got.
-    shim_dir = File.tempname("/tmp", ".krikri-spec-pip-bin")
+    shim_dir = File.tempname(".krikri-spec-pip-bin")
     Dir.mkdir(shim_dir)
     pip = write_pip_shim(shim_dir)
     begin
@@ -227,7 +227,7 @@ describe "pip plugin" do
     # this shape). Each spec must still reach pip as its own argv word,
     # not one comma-glued "package" (the konstruktoid.docker_rootless
     # bug this split originally fixed, 0.9.616).
-    shim_dir = File.tempname("/tmp", ".krikri-spec-pip-bin")
+    shim_dir = File.tempname(".krikri-spec-pip-bin")
     Dir.mkdir(shim_dir)
     pip = write_pip_shim(shim_dir)
     begin
@@ -252,7 +252,7 @@ describe "pip plugin" do
     # pip as exactly two argv words - `pkgA[extra1,extra2]` (extras
     # commas kept, matching pip.py's _recover_package_name) and
     # `pkgB==1.0` (a genuine separator comma still splits).
-    shim_dir = File.tempname("/tmp", ".krikri-spec-pip-bin")
+    shim_dir = File.tempname(".krikri-spec-pip-bin")
     Dir.mkdir(shim_dir)
     pip = write_pip_shim(shim_dir)
     begin
@@ -373,7 +373,7 @@ describe "pip plugin" do
     # neither -p nor --no-site-packages can be appended) and fails after
     # printing, like ensurepip's message does.
     it "reports Ansible's _fail shape when the virtualenv_command itself fails" do
-      shim_dir = File.tempname("/tmp", ".krikri-spec-pip-bin")
+      shim_dir = File.tempname(".krikri-spec-pip-bin")
       Dir.mkdir(shim_dir)
       File.symlink("/bin/sh", File.join(shim_dir, "sh"))
       write_failing_venv_shim(shim_dir, "pyvenv")
@@ -470,7 +470,7 @@ describe "pip plugin" do
       python = Process.find_executable("python3") || Process.find_executable("python")
       raise "this spec needs a working python3 -m pip on the spec machine" unless python && python_with_pip?(python)
 
-      shim_dir = File.tempname("/tmp", ".krikri-spec-pip-bin")
+      shim_dir = File.tempname(".krikri-spec-pip-bin")
       Dir.mkdir(shim_dir)
       File.write(File.join(shim_dir, "python3.9"), <<-SH
         #!/bin/sh
@@ -513,7 +513,7 @@ describe "pip plugin" do
     it "finds an absolute interpreter when the task PATH hides every bare python name" do
       raise "this spec needs /usr/bin/python3 on the spec machine" unless File.exists?("/usr/bin/python3")
 
-      shim_dir = File.tempname("/tmp", ".krikri-spec-pip-bin")
+      shim_dir = File.tempname(".krikri-spec-pip-bin")
       Dir.mkdir(shim_dir)
       File.symlink("/bin/sh", File.join(shim_dir, "sh"))
       begin
@@ -540,7 +540,7 @@ describe "pip plugin" do
     # getting past discovery to the install's own failure proves the
     # probe no longer gates on pip's CLI.
     it "selects an interpreter whose pip module is present but whose pip CLI is broken" do
-      shim_dir = File.tempname("/tmp", ".krikri-spec-pip-bin")
+      shim_dir = File.tempname(".krikri-spec-pip-bin")
       Dir.mkdir(shim_dir)
       File.write(File.join(shim_dir, "python3"), <<-SH
         #!/bin/sh
@@ -585,7 +585,7 @@ describe "pip plugin" do
       python = Process.find_executable("python3") || Process.find_executable("python")
       raise "this spec needs a python3 on PATH" unless python
 
-      shim_dir = File.tempname("/tmp", ".krikri-spec-pip-bin")
+      shim_dir = File.tempname(".krikri-spec-pip-bin")
       Dir.mkdir(shim_dir)
       File.symlink("/bin/sh", File.join(shim_dir, "sh"))
       write_venv_shim(shim_dir, "fakevenv", false)
@@ -614,7 +614,7 @@ describe "pip plugin" do
       python = Process.find_executable("python3") || Process.find_executable("python")
       raise "this spec needs a python3 on PATH" unless python
 
-      shim_dir = File.tempname("/tmp", ".krikri-spec-pip-bin")
+      shim_dir = File.tempname(".krikri-spec-pip-bin")
       Dir.mkdir(shim_dir)
       File.symlink("/bin/sh", File.join(shim_dir, "sh"))
       # virtualenv-tool-like: --help lists --no-site-packages (the
@@ -660,7 +660,7 @@ describe "pip plugin" do
   # pip, no network.
   describe "break_system_packages" do
     it "sets PIP_BREAK_SYSTEM_PACKAGES=1 on the pip install invocation when true" do
-      shim_dir = File.tempname("/tmp", ".krikri-spec-pip-bin")
+      shim_dir = File.tempname(".krikri-spec-pip-bin")
       Dir.mkdir(shim_dir)
       pip = write_pip_shim(shim_dir)
       begin
@@ -680,7 +680,7 @@ describe "pip plugin" do
     end
 
     it "leaves PIP_BREAK_SYSTEM_PACKAGES unset when the param is absent" do
-      shim_dir = File.tempname("/tmp", ".krikri-spec-pip-bin")
+      shim_dir = File.tempname(".krikri-spec-pip-bin")
       Dir.mkdir(shim_dir)
       pip = write_pip_shim(shim_dir)
       begin
@@ -699,7 +699,7 @@ describe "pip plugin" do
     end
 
     it "also sets PIP_BREAK_SYSTEM_PACKAGES=1 on the pip uninstall invocation (PEP 668 blocks that too)" do
-      shim_dir = File.tempname("/tmp", ".krikri-spec-pip-bin")
+      shim_dir = File.tempname(".krikri-spec-pip-bin")
       Dir.mkdir(shim_dir)
       pip = write_pip_shim(shim_dir)
       begin
@@ -738,7 +738,7 @@ describe "pip plugin" do
   # own "Successfully installed argparse-1.4.0" line.
   describe "pip stdlib-skipped distributions" do
     it "reports changed: true for a repeat install of argparse (pip reinstalls stdlib-shadow names every run)" do
-      shim_dir = File.tempname("/tmp", ".krikri-spec-pip-bin")
+      shim_dir = File.tempname(".krikri-spec-pip-bin")
       Dir.mkdir(shim_dir)
       pip = write_stdlib_skip_shim(shim_dir)
       begin
@@ -756,7 +756,7 @@ describe "pip plugin" do
     end
 
     it "still runs the install for a non-stdlib package pip show finds, changed decided by pip's own output" do
-      shim_dir = File.tempname("/tmp", ".krikri-spec-pip-bin")
+      shim_dir = File.tempname(".krikri-spec-pip-bin")
       Dir.mkdir(shim_dir)
       pip = write_stdlib_skip_shim(shim_dir)
       begin
@@ -794,7 +794,7 @@ describe "pip plugin" do
   # dep-reconciliation "Successfully installed" line.
   describe "pip present has no idempotency pre-check for plain name/version specs" do
     it "reports changed when pip itself reconciles a violated dependency pin despite a satisfied top-level pin" do
-      shim_dir = File.tempname("/tmp", ".krikri-spec-pip-bin")
+      shim_dir = File.tempname(".krikri-spec-pip-bin")
       Dir.mkdir(shim_dir)
       pip = write_dep_reconcile_shim(shim_dir)
       begin
@@ -876,7 +876,7 @@ describe "pip plugin" do
   end
 
   it "leaves version: at state: present alone" do
-    shim_dir = File.tempname("/tmp", ".krikri-spec-pip-latest-bin")
+    shim_dir = File.tempname(".krikri-spec-pip-latest-bin")
     Dir.mkdir(shim_dir)
     pip = write_pip_shim(shim_dir)
     begin
@@ -964,7 +964,7 @@ end
 # network, and mutates nothing. Yields the absolute path (trusted
 # as-is by the plugin's executable: resolution).
 private def with_absent_pip_shim(&)
-  shim_dir = File.tempname("/tmp", ".krikri-spec-pip-absent")
+  shim_dir = File.tempname(".krikri-spec-pip-absent")
   Dir.mkdir(shim_dir)
   shim = File.join(shim_dir, "absent-pip")
   File.write(shim, <<-SH
