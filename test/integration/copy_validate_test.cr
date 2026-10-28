@@ -11,7 +11,7 @@ private INVENTORY    = File.join(__DIR__, "..", "fixtures", "inventory-explicit-
 # `copy:` previously had no `validate:` handling at all (unlike
 # `template:`, which supports it) - see KNOWN_MISSING.md's own
 # (now-fixed) writeup. Mirrors template.cr's own staging approach:
-# staged under /tmp (remote_tmp-style), validated, then moved into
+# staged under Dir.tempdir (remote_tmp-style), validated, then moved into
 # place via FileUtils.mv (falls back to copy-then-delete on a
 # cross-device move).
 describe "copy: with validate:" do
@@ -56,13 +56,16 @@ describe "copy: with validate:" do
             ansible.builtin.copy:
               content: "hello world\\n"
               dest: #{dest}
-              validate: "false %s"
+              validate: "cp %s #{stage}/seen; false"
       YAML
 
     output = IO::Memory.new
     status = Process.run(BINARY, ["-i", INVENTORY, playbook], env: {"TMPDIR" => stage}, output: output, error: output)
 
     status.success?.must_equal(false)
+    # The validate command copies the staged file to "seen" first, so the
+    # check below proves staging really happened under the private TMPDIR.
+    File.exists?(File.join(stage, "seen")).must_equal(true)
     Dir.children(stage).none?(&.starts_with?(".krikri-playbook-copy-")).must_equal(true)
     # Ansible's copy module fails with fail_json(msg="failed to validate",
     # exit_status=rc, stdout=..., stderr=...) - the wording is
