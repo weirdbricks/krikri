@@ -32,7 +32,7 @@ describe "runtime include-load TaskInclude attribute refusal" do
     File.write(File.join(dir, "tasks", "empty.yml"), "---\n")
 
     captured = IO::Memory.new
-    status = Process.run(BINARY, ["-i", "localhost,", "-c", "local", File.join(dir, "site.yml")],
+    status = Process.run(BINARY, ["-i", File.join(__DIR__, "..", "fixtures", "inventory-localhost-local.ini"), "-c", "local", File.join(dir, "site.yml")],
       output: captured, error: captured, chdir: dir)
     status.exit_code.must_equal(4)
     out = captured.to_s

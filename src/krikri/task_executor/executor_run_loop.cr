@@ -842,8 +842,7 @@ module Krikri
         dispatch["ansible_host"] = JSON::Any.new(exec_host.name)
       end
       dispatch["ansible_connection"] =
-        exec_host.vars["ansible_connection"]? ||
-          JSON::Any.new(exec_host.name == "localhost" || exec_host.name == "127.0.0.1" ? "local" : "ssh")
+        exec_host.vars["ansible_connection"]? || JSON::Any.new("ssh")
       dispatch
     end
 

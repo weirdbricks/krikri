@@ -47,7 +47,7 @@ describe "issue 245 templated list element rendering (templated_list_element_tes
 
     out_io = IO::Memory.new
     err_io = IO::Memory.new
-    status = Process.run(BINARY, ["-i", "localhost,", playbook], output: out_io, error: err_io)
+    status = Process.run(BINARY, ["-i", File.join(__DIR__, "..", "fixtures", "inventory-localhost-local.ini"), playbook], output: out_io, error: err_io)
     status.success?.must_equal true, "playbook failed: #{err_io}"
     out_io.to_s
   end

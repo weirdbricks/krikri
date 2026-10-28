@@ -40,7 +40,7 @@ def docker_cmd_list_play(yaml : String) : String
   playbook = PluginSpecHelper.tmp_path("dk2-cmd-list.yml")
   File.write(playbook, yaml)
   output = IO::Memory.new
-  Process.run(DOCKER_CMD_LIST_BINARY, ["-i", "localhost,", "-c", "local", playbook],
+  Process.run(DOCKER_CMD_LIST_BINARY, ["-i", File.join(__DIR__, "..", "fixtures", "inventory-localhost-local.ini"), "-c", "local", playbook],
     output: output, error: output)
   output.to_s
 end

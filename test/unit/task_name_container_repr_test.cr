@@ -53,7 +53,7 @@ describe "container vars in a TASK banner render as Python repr" do
       YAML
 
     output = IO::Memory.new
-    status = Process.run(BINARY, ["-i", "localhost,", playbook], output: output, error: output, chdir: src_dir)
+    status = Process.run(BINARY, ["-i", File.join(__DIR__, "..", "fixtures", "inventory-localhost-local.ini"), playbook], output: output, error: output, chdir: src_dir)
 
     status.success?.must_equal(true)
     out = output.to_s

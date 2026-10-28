@@ -35,7 +35,7 @@ describe "when: block-inherited conditional failure chain" do
       YAML
 
     output = IO::Memory.new
-    status = Process.run(BINARY, ["-i", "localhost,", playbook],
+    status = Process.run(BINARY, ["-i", File.join(__DIR__, "..", "fixtures", "inventory-localhost-local.ini"), playbook],
       output: output, error: output, input: IO::Memory.new)
 
     text = output.to_s
@@ -80,7 +80,7 @@ describe "when: block-inherited conditional failure chain" do
       YAML
 
     output = IO::Memory.new
-    status = Process.run(BINARY, ["-i", "localhost,", playbook],
+    status = Process.run(BINARY, ["-i", File.join(__DIR__, "..", "fixtures", "inventory-localhost-local.ini"), playbook],
       output: output, error: output, input: IO::Memory.new)
 
     text = output.to_s

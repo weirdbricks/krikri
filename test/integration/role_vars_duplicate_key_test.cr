@@ -24,7 +24,7 @@ private def run_role_playbook(work : String, role_name : String = "duprole") : {
   stderr = IO::Memory.new
   status = Process.run(
     BINARY,
-    ["-i", "localhost,", playbook],
+    ["-i", File.join(__DIR__, "..", "fixtures", "inventory-localhost-local.ini"), playbook],
     output: stdout,
     error: stderr,
     chdir: work

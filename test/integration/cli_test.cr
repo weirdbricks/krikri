@@ -937,7 +937,7 @@ describe "krikri-playbook CLI (--check mode)" do
       YAML
     begin
       captured = IO::Memory.new
-      status = Process.run(BINARY, ["-i", "localhost,", tmp], output: captured, error: captured)
+      status = Process.run(BINARY, ["-i", File.join(__DIR__, "..", "fixtures", "inventory-localhost-local.ini"), tmp], output: captured, error: captured)
       status.success?.must_equal(true)
       out1 = captured.to_s
       out1.must_include("=> (item=#{dirs[0]})")
@@ -945,7 +945,7 @@ describe "krikri-playbook CLI (--check mode)" do
       out1.must_include("changed=1")
 
       captured2 = IO::Memory.new
-      status2 = Process.run(BINARY, ["-i", "localhost,", tmp], output: captured2, error: captured2)
+      status2 = Process.run(BINARY, ["-i", File.join(__DIR__, "..", "fixtures", "inventory-localhost-local.ini"), tmp], output: captured2, error: captured2)
       status2.success?.must_equal(true)
       captured2.to_s.must_include("changed=0")
     ensure
@@ -1835,7 +1835,7 @@ describe "krikri-playbook CLI (--check mode)" do
         YAML
       begin
         captured = IO::Memory.new
-        status = Process.run(BINARY, ["-i", "localhost,", tmp], output: captured, error: captured)
+        status = Process.run(BINARY, ["-i", File.join(__DIR__, "..", "fixtures", "inventory-localhost-local.ini"), tmp], output: captured, error: captured)
         status.exit_code.must_equal(4)
         captured.to_s.must_include("Cannot execute 'end_role' from outside of a role")
       ensure
@@ -1864,7 +1864,7 @@ describe "krikri-playbook CLI (--check mode)" do
         YAML
       begin
         captured = IO::Memory.new
-        status = Process.run(BINARY, ["-i", "localhost,", tmp], output: captured, error: captured)
+        status = Process.run(BINARY, ["-i", File.join(__DIR__, "..", "fixtures", "inventory-localhost-local.ini"), tmp], output: captured, error: captured)
         status.success?.must_equal(true)
         captured.to_s.must_include("reached after reset_connection")
         captured.to_s.must_include("ok=1")
@@ -1958,7 +1958,7 @@ describe "krikri-playbook CLI (--check mode)" do
         YAML
       begin
         captured = IO::Memory.new
-        status = Process.run(BINARY, ["-i", "localhost,", tmp], output: captured, error: captured)
+        status = Process.run(BINARY, ["-i", File.join(__DIR__, "..", "fixtures", "inventory-localhost-local.ini"), tmp], output: captured, error: captured)
         captured.to_s.must_include(
           "[WARNING]: Not waiting for response to prompt as stdin is not interactive")
         captured.to_s.must_include("ok: [localhost]")
@@ -2245,7 +2245,7 @@ describe "krikri-playbook CLI (--check mode)" do
 
     run_adhoc = ->(module_name : String, module_args : String) {
       output = IO::Memory.new
-      Process.run(adhoc, ["localhost", "-c", "local", "-i", "localhost,", "-m", "community.mysql." + module_name, "-a", module_args],
+      Process.run(adhoc, ["localhost", "-c", "local", "-i", File.join(__DIR__, "..", "fixtures", "inventory-localhost-local.ini"), "-m", "community.mysql." + module_name, "-a", module_args],
         output: output, error: output, chdir: PROJECT_ROOT)
       output.to_s
     }

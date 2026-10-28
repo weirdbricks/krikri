@@ -15,7 +15,7 @@ private def run_pause_playbook(yaml : String) : String
   playbook = PluginSpecHelper.tmp_path("pause-console.yml")
   File.write(playbook, yaml)
   output = IO::Memory.new
-  Process.run(BINARY, ["-i", "localhost,", "-c", "local", playbook], output: output, error: output)
+  Process.run(BINARY, ["-i", File.join(__DIR__, "..", "fixtures", "inventory-localhost-local.ini"), "-c", "local", playbook], output: output, error: output)
   output.to_s
 end
 

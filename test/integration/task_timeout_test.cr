@@ -156,7 +156,7 @@ describe "task timeout keyword" do
       "      timeout: 1",
     ].join("\n") + "\n")
     output = IO::Memory.new
-    status = Process.run(BINARY, ["-i", "localhost,", playbook],
+    status = Process.run(BINARY, ["-i", File.join(__DIR__, "..", "fixtures", "inventory-localhost-local.ini"), playbook],
       output: output, error: output, input: IO::Memory.new, env: {"ANSIBLE_ROLES_PATH" => File.dirname(playbook)})
     status.success?.must_equal(false)
     output.to_s.includes?(FATAL_LINE).must_equal(true, output.to_s)

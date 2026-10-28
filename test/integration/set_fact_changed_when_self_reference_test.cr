@@ -31,7 +31,7 @@ describe "set_fact: changed_when: referencing a fact the same task just set" do
       YAML
 
     output = IO::Memory.new
-    status = Process.run(BINARY, ["-i", "localhost,", playbook], output: output, error: output)
+    status = Process.run(BINARY, ["-i", File.join(__DIR__, "..", "fixtures", "inventory-localhost-local.ini"), playbook], output: output, error: output)
     captured = output.to_s
 
     status.success?.must_equal(true, captured)

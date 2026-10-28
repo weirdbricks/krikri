@@ -31,7 +31,7 @@ describe "when: list item clause ending in a quote (chain Origin)" do
       YAML
 
     output = IO::Memory.new
-    status = Process.run(BINARY, ["-i", "localhost,", playbook],
+    status = Process.run(BINARY, ["-i", File.join(__DIR__, "..", "fixtures", "inventory-localhost-local.ini"), playbook],
       output: output, error: output, input: IO::Memory.new,
       env: {"ANSIBLE_ROLES_PATH" => root})
 

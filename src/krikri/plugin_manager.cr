@@ -2635,25 +2635,32 @@ module Krikri
         return conn.as_s? == "local"
       end
 
-      # Check if host is localhost - "127.0.0.1" is Ansible's other
-      # well-known spelling for the controller itself (`delegate_to:
-      # 127.0.0.1` is a common idiom for a controller-side task,
-      # ansible-community.ansible-vault's own local package download/
-      # unarchive tasks all use it) and is treated identically to
-      # "localhost" - without this, a delegated task tried to SSH-upload
-      # plugin binaries to "127.0.0.1" as if it were a genuine remote
-      # target, which needs actual SSH access to itself and isn't what
-      # `delegate_to: 127.0.0.1` means at all.
-      return true if host.name == "localhost" || host.name == "127.0.0.1"
-
       # Fall back to the passed vars - for the same-host (non-delegate)
       # case this is the host's own merged context (inventory-set
       # ansible_connection, or the "ssh" default build_vars_context
-      # injects), for a delegate it correctly loses to the checks above.
+      # injects), for a delegate it correctly loses to the check above.
       if conn = vars["ansible_connection"]?
         return conn.as_s? == "local"
       end
 
+      # The HOST NAME itself is never a connection decision (issue #677):
+      # real ansible-core runs an inventory-defined "localhost"/"127.0.0.1"
+      # over plain ssh - `{{ ansible_connection }}` renders "ssh" on a
+      # bare inventory localhost entry (live-verified vs 2.19.11, which
+      # UNREACHABLEs with "connect to host localhost port 22" for both a
+      # direct and a delegated task), and one carrying connection vars
+      # (ansible_port=2299 etc.) SSHes to that port. Only the IMPLICIT
+      # localhost ansible auto-creates when no inventory entry exists is
+      # local, and it is local because InventoryData's
+      # _create_implicit_localhost SETS ansible_connection=local on it -
+      # which this engine mirrors at both implicit-localhost creation
+      # sites (the inventory pattern resolver and the unresolvable-
+      # delegate fallback), so every genuinely-local localhost already
+      # carries the var and the old name shortcut here only ever
+      # misrouted inventory-defined ones to the controller (issue #677:
+      # become: on an inventory localhost with ansible_port fed the
+      # become password to the CONTROLLER user's sudo; nothing reached
+      # the target).
       false
     end
 

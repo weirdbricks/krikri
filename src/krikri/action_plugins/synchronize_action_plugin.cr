@@ -273,9 +273,14 @@ module Krikri
     end
 
     private def local_connection? : Bool
-      return true if @host.name == "localhost" || @host.name == "127.0.0.1"
+      # vars first, then the name fallback: an inventory-defined
+      # localhost is a plain ssh target (issue #677) - the name only
+      # means "this machine" when nothing in the connection vars says
+      # otherwise (the implicit localhost always carries
+      # ansible_connection=local, so the vars branch answers it).
       conn = @vars["ansible_connection"]?
-      conn.try(&.as_s?) == "local"
+      return conn.try(&.as_s?) == "local" if conn
+      @host.name == "localhost" || @host.name == "127.0.0.1"
     end
 
     private def connection_host : String

@@ -170,8 +170,23 @@ if ARGV[0]? == "__async_run"
   status_path = ARGV[3]
 
   config_json = JSON.parse(File.read(config_path))
-  local_host = Krikri::Host.new("localhost")
-  result = Krikri::PluginManager.execute_plugin(module_name, config_json, local_host, {} of String => JSON::Any)
+  # The connection decision must come from the config's own wire vars:
+  # this Host is a bare name reconstruction with NO vars of its own, so
+  # with an empty vars hash PluginManager.local_connection? has nothing
+  # to read and misclassifies the invocation as remote - SSH-uploading
+  # the plugin to "localhost" from a LOCAL async task (issue #677: the
+  # old name shortcut masked this by treating any "localhost" as local).
+  # The dispatching parent has already decided local here - the
+  # controller-side execute_async path spawns __async_run only for local
+  # async, and the remote path runs this same entry point ON the target
+  # with with_local_connection's ansible_connection=local injected - so
+  # the wire vars always carry ansible_connection=local for a __async_run
+  # invocation, and the vars hash is also what Passwords.become reads
+  # (WIRE_VAR_KEYS carries no password keys, so this stays nil exactly
+  # as before for pruned configs).
+  child_host = Krikri::Host.new(config_json["host"]?.try(&.["name"]?.try(&.as_s?)) || "localhost")
+  child_vars = config_json["vars"]?.try(&.as_h?) || Hash(String, JSON::Any).new
+  result = Krikri::PluginManager.execute_plugin(module_name, config_json, child_host, child_vars)
 
   # as_h.dup, not JSON.parse(result.to_json).as_h: only a top-level key is
   # added below, so a shallow copy is equivalent to the round trip, and

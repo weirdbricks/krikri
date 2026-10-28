@@ -49,7 +49,7 @@ describe "loop source dict-of-lists first failing leaf origin" do
       YAML
 
     stdout = IO::Memory.new
-    Process.run(BINARY, ["-i", "localhost,", playbook], output: stdout, error: Process::Redirect::Inherit)
+    Process.run(BINARY, ["-i", File.join(__DIR__, "..", "fixtures", "inventory-localhost-local.ini"), playbook], output: stdout, error: Process::Redirect::Inherit)
     text = stdout.to_s
 
     text.must_include("[ERROR]: Task failed: 'CD_UNDEFINED_ENV' is undefined")

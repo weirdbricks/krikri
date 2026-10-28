@@ -594,7 +594,18 @@ module Krikri
         if conn = delegate.first.vars["ansible_connection"]?.try(&.as_s?)
           return conn
         end
+        # An inventory-RESOLVED delegate without its own
+        # ansible_connection is a plain ssh target even when its name is
+        # a localhost spelling (issue #677 - real ansible-core treats an
+        # inventory-defined localhost as a regular host; only the
+        # implicit one is local). Note the implicit localhost carries
+        # ansible_connection=local in its vars, so it is answered by the
+        # branch above, never by the fallback below.
+        return "ssh"
       end
+      # Unresolvable delegate name: the same shape resolve_delegate_host
+      # gives its fallback Host (implicit localhost is local, everything
+      # else ssh), so a `when:` on the task and the dispatch agree.
       delegate_name == "localhost" || delegate_name == "127.0.0.1" ? "local" : "ssh"
     end
 

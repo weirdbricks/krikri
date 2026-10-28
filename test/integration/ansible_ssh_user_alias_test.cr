@@ -174,7 +174,7 @@ describe "ansible_ssh_user/ansible_ssh_host/ansible_ssh_port legacy aliases" do
       YAML
 
     output = IO::Memory.new
-    status = Process.run(BINARY, ["-i", "localhost,", playbook], output: output, error: output)
+    status = Process.run(BINARY, ["-i", File.join(__DIR__, "..", "fixtures", "inventory-localhost-local.ini"), playbook], output: output, error: output)
     status.success?.must_equal(false)
     output.to_s.must_include("'ansible_ssh_user' is undefined")
   ensure
@@ -222,7 +222,7 @@ describe "ansible_ssh_user/ansible_ssh_host/ansible_ssh_port legacy aliases" do
       YAML
 
     output = IO::Memory.new
-    status = Process.run(BINARY, ["-i", "localhost,", playbook], output: output, error: output)
+    status = Process.run(BINARY, ["-i", File.join(__DIR__, "..", "fixtures", "inventory-localhost-local.ini"), playbook], output: output, error: output)
     status.success?.must_equal(true)
     output.to_s.must_include("user=testuser")
     output.to_s.must_include("path=/home/testuser/phergie")

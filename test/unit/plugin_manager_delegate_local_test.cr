@@ -17,13 +17,20 @@ require "../../src/krikri/host"
 describe "Krikri::PluginManager (plugin_manager_delegate_local_test.cr)" do
   it "delegated localhost is local even when the origin host's vars say ssh" do
     origin_vars = {"ansible_connection" => JSON::Any.new("ssh")} # build_vars_context's injected default
-    localhost = Krikri::Host.new("localhost", "root", 22)        # implicit/delegate fallback, no own connection var
+    # The implicit/delegate-fallback localhost - what resolve_delegate_host
+    # actually returns for `delegate_to: localhost` with no inventory
+    # entry: ansible_connection=local SET on its own vars (issue #677:
+    # the fallback Host carries the marker; a bare Host.new("localhost")
+    # with no vars is an inventory-defined localhost and runs ssh).
+    localhost = Krikri::Host.new("localhost", "root", 22)
+    localhost.vars["ansible_connection"] = JSON::Any.new("local")
     Krikri::PluginManager.local_connection?(localhost, origin_vars).must_equal(true)
   end
 
   it "delegated 127.0.0.1 is local regardless of origin vars" do
     origin_vars = {"ansible_connection" => JSON::Any.new("ssh")}
     loopback = Krikri::Host.new("127.0.0.1", "root", 22)
+    loopback.vars["ansible_connection"] = JSON::Any.new("local")
     Krikri::PluginManager.local_connection?(loopback, origin_vars).must_equal(true)
   end
 
