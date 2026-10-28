@@ -17,12 +17,13 @@
 #   scripts/minitest.sh -- -n /pattern/       # args after -- go to the binary
 #
 # Parallelism: the full suite defaults to 4 OS processes (`--shard N`, or
-# KRIKRI_TEST_SHARDS), each running ~1/4 of the test files with -p 4 worker
+# KRIKRI_TEST_SHARDS), each running ~1/4 of the test files with -p 8 worker
 # fibers on ONE OS thread (CRYSTAL_WORKERS=1). Sharding by process is what
 # actually uses the extra cores: within one process the fibers all share a
 # single OS thread, so CPU-bound work (process spawns, parsing) serializes -
-# 4 processes x -p 4 measured ~44% faster wall-clock than one process at
-# -p 8 (43s vs 77s), and N=6 adds nothing. Each shard needs its own compiled
+# 4 processes x -p 8 measured ~47% faster wall-clock than one process at
+# -p 8 (41s vs 77s), and N=6, -p 12 per shard and CRYSTAL_WORKERS=2 all
+# added nothing. Each shard needs its own compiled
 # binary (the entrypoint only requires its own slice of test files), built
 # concurrently and hash-gated like the single binary; the tradeoff is that a
 # source change now costs N compiles instead of one (~45s parallel vs ~15s),
@@ -187,8 +188,8 @@ set -- ${shard_args[@]+"${shard_args[@]}"}
 
 # ---- sharded path: N OS processes, each with its own entrypoint/binary ----
 if [ "$shards" -ge 2 ]; then
-  # Default per-shard fiber count: 4 (4 shards x -p 4 was the measured
-  # sweet spot; N=6 added nothing). An explicit -p/--parallel on the
+  # Default per-shard fiber count: 8 (measured 41s vs 45s at -p 4; -p 12
+  # and CRYSTAL_WORKERS=2 added nothing). An explicit -p/--parallel on the
   # command line wins and applies to every shard.
   parallel_given=false
   for arg in "$@"; do
@@ -198,11 +199,37 @@ if [ "$shards" -ge 2 ]; then
     esac
   done
   if [ "$parallel_given" = false ]; then
-    set -- "$@" -p 4
+    set -- "$@" -p 8
   fi
 
-  # Round-robin the test files across shards (by file count; balancing by
-  # historical runtime would be better but needs a timings source).
+  # Balance the shards by measured weight, not by file count: a plain
+  # round-robin leaves the slowest shard ~29% heavier than the lightest
+  # (2632 vs 2051 tests), and the wall time IS the slowest shard. Weight
+  # each file by its `it` count (a static runtime proxy, one awk pass) and
+  # assign heaviest-file-to-lightest-shard (LPT). Deterministic: the file
+  # list is sorted and ties break on path, so the same sources always
+  # produce the same assignment - which matters because the assignment is
+  # baked into each shard's hashed entrypoint.
+  mapfile -t weighted < <(awk '
+    FNR == 1 { if (seen) print cnt "\t" prev; prev = FILENAME; cnt = 0; seen = 1 }
+    /^[[:space:]]*it[[:space:]]/ { cnt++ }
+    END { if (seen) print cnt "\t" prev }
+  ' "${files[@]}" | sort -t$'\t' -k1,1nr -k2,2)
+  shard_weights=()
+  shard_flists=()
+  for ((i=0; i<shards; i++)); do
+    shard_weights[$i]=0
+    shard_flists[$i]=""
+  done
+  while IFS=$'\t' read -r cnt fpath; do
+    best=0
+    for ((i=1; i<shards; i++)); do
+      if (( shard_weights[$i] < shard_weights[$best] )); then best=$i; fi
+    done
+    shard_weights[$best]=$(( shard_weights[$best] + cnt ))
+    shard_flists[$best]+="$fpath"$'\n'
+  done < <(printf '%s\n' "${weighted[@]}")
+
   shard_pids=()
   shard_built=()
   for ((i=0; i<shards; i++)); do
@@ -212,9 +239,9 @@ if [ "$shards" -ge 2 ]; then
     s_tmp_ep="$s_ep.tmp"
     : > "$s_tmp_ep"
     reqs=()
-    for ((j=i; j<${#files[@]}; j+=shards)); do
-      reqs+=("${files[$j]#"$ROOT"/}")
-    done
+    while IFS= read -r f; do
+      reqs+=("${f#"$ROOT"/}")
+    done < <(printf '%s' "${shard_flists[$i]}" | sort)
     for req in "${reqs[@]}"; do
       printf 'require "./%s"\n' "$req" >> "$s_tmp_ep"
     done
