@@ -592,6 +592,22 @@ module Krikri
       sources.uniq
     end
 
+    # One retry for a wrapper-LEVEL failure (nil = python3 couldn't be
+    # spawned at all - fork/exec hiccup, OOM kill of the short-lived
+    # interpreter under a loaded controller - and ok:false = the wrapper
+    # crashed): the introspection it wraps is the read-only "list"
+    # action, so a retry is safe; the "call" action is never routed
+    # through here, since a filter may have side effects. The result is
+    # deliberately NOT cached by filter_names, so a still-failing lookup
+    # is retried on the NEXT render instead of being trusted for the
+    # rest of the run (issue #675).
+    private def run_wrapper_retrying(payload) : JSON::Any?
+      result = run_wrapper(payload)
+      return result if result && result["ok"]?.try(&.as_bool?)
+      sleep 0.05
+      run_wrapper(payload)
+    end
+
     # The CONTROLLER's own python3 - the interpreter Ansible needs
     # on the controller anyway (same detection pattern facts_gatherer
     # uses for its controller-side needs).
@@ -615,6 +631,17 @@ module Krikri
     # file and keeps loading the rest); it is emitted only on a cache
     # miss, i.e. once per file per process, matching Ansible's
     # once-per-load behaviour.
+    #
+    # Only a wrapper that actually ANSWERED ({"ok": true}) is cached:
+    # a wrapper-level failure (python3 unspawnable, an ok:false crash)
+    # used to be cached as this file's empty name set, permanently
+    # turning every later lookup of its filters into "No filter named"
+    # for the rest of the run - the compile-time filter validation and
+    # the render's one-chance role-local retry consult this same cache,
+    # so one transient spawn hiccup under a heavily loaded controller
+    # failed the whole run (issue #675). An UNLOADABLE file (import
+    # error) still caches as empty: that answer is final, and it keeps
+    # the "Skipping plugin" warning once-per-process like Ansible's.
     def filter_names(sources : Array(String)) : Set(String)
       names = Set(String).new
       sources.each do |path|
@@ -628,7 +655,7 @@ module Krikri
           end
         end
 
-        result = run_wrapper({
+        result = run_wrapper_retrying({
           "action" => "list",
           "paths"  => [path],
         })
@@ -643,8 +670,8 @@ module Krikri
               emit_skip_warning(path, error)
             end
           end
+          @@names_cache[path] = {mtime, set}
         end
-        @@names_cache[path] = {mtime, set}
         set.each { |set_name| names << set_name }
       end
       names

@@ -1,6 +1,7 @@
 require "../minitest_helper"
 require "file_utils"
 require "../../src/krikri/python_filter_runner"
+require "../../src/krikri/python_test_runner"
 
 # Ansible loads a role's own `filter_plugins/*.py` (Python files
 # exposing a FilterModule class whose filters() method returns a
@@ -609,5 +610,60 @@ describe "role-local filter_plugins file that fails to import" do
       FileUtils.rm_rf(filterless_root) if filterless_root
       FileUtils.rm_rf(filter_root) if filter_root
     end
+  end
+end
+
+describe "a wrapper-level introspection failure is not cached as an empty name set" do
+  exclusive! # ENV["PATH"] is process-wide: no other test may overlap the blank window
+
+  it "retries the filter wrapper after a spawn failure instead of poisoning the names cache" do
+    root = PluginSpecHelper.tmp_path("filter-transient-spawn")
+    Dir.mkdir_p(File.join(root, "filter_plugins"))
+    good = File.join(root, "filter_plugins", "good.py")
+    File.write(good, <<-PYTHON)
+      class FilterModule(object):
+          def filters(self):
+              return {"double": lambda x: x * 2}
+      PYTHON
+
+    # A controller where python3 cannot be spawned at all is the
+    # deterministic stand-in for the transient fork/exec/OOM failure
+    # issue #675 saw under heavily loaded parallel runs: the first
+    # lookup fails, and (the bug) that failure used to be CACHED as the
+    # file's empty name set, so every later lookup - including the
+    # render path's one-chance role-local retry - kept answering
+    # "No filter named" for the rest of the run.
+    real_path = ENV["PATH"]?
+    begin
+      ENV.delete("PATH")
+      Krikri::PythonFilterRunner.filter_names([good]).includes?("double").must_equal(false)
+    ensure
+      ENV["PATH"] = real_path if real_path
+    end
+
+    # with the interpreter reachable again, the SAME process must find
+    # the filter - the failed introspection was never cached
+    Krikri::PythonFilterRunner.filter_names([good]).includes?("double").must_equal(true)
+  end
+
+  it "retries the test wrapper after a spawn failure instead of poisoning the names cache" do
+    root = PluginSpecHelper.tmp_path("test-transient-spawn")
+    Dir.mkdir_p(File.join(root, "test_plugins"))
+    good = File.join(root, "test_plugins", "good.py")
+    File.write(good, <<-PYTHON)
+      class TestModule(object):
+          def tests(self):
+              return {"is_even": lambda x: x % 2 == 0}
+      PYTHON
+
+    real_path = ENV["PATH"]?
+    begin
+      ENV.delete("PATH")
+      Krikri::PythonTestRunner.test_names([good]).includes?("is_even").must_equal(false)
+    ensure
+      ENV["PATH"] = real_path if real_path
+    end
+
+    Krikri::PythonTestRunner.test_names([good]).includes?("is_even").must_equal(true)
   end
 end
