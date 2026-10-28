@@ -277,17 +277,44 @@ describe "pip plugin" do
   # it would fail with "Failed to find required executable ... in
   # paths:"). These specs pass the space-separated `python3 -m venv`
   # form explicitly, which is itself one of the two virtualenv_command
-  # shapes Ansible documents - and runs a REAL `python3 -m venv`
-  # (no network, ensurepip is self-contained) under Dir.tempdir,
-  # cleaned up after.
+  # shapes Ansible documents. Creating a real venv is deliberately kept
+  # out of the per-test path - `python3 -m venv`'s ensurepip step is
+  # ~1.4s of each ~1.7s test - so both specs start from pip_venv_skeleton,
+  # a REAL venv built once (cached under gitignored test/tmp/, validated
+  # by a `pip --version` probe so a system Python upgrade rebuilds it)
+  # and copied per test: the plugin's contract for a venv is only
+  # "run the given command with the target as its last argument, then
+  # find a working <venv>/bin/pip", which the copy satisfies exactly
+  # like a fresh creation does.
   describe "virtualenv:" do
     it "reports changed: true when the task itself created the virtualenv (even if the package is already satisfied by the fresh venv)" do
+      # A python3 shim keeps the command form the plugin executes literally
+      # `python3 -m venv` (space-separated argv splitting, the real
+      # `--help` probe - delegated to the real interpreter - and last-arg
+      # targeting) while replacing only the expensive ensurepip creation
+      # with a copy of the skeleton venv.
+      shim_dir = File.tempname(".krikri-spec-pip-venv-bin")
+      Dir.mkdir(shim_dir)
+      python3_shim = File.join(shim_dir, "python3")
+      File.write(python3_shim, <<-SH
+        #!/bin/sh
+        export PATH=/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin
+        case "$1" in
+        --help) exec "$(command -v python3)" "$@" ;;
+        esac
+        for last in "$@"; do :; done
+        mkdir -p "$last"
+        cp -a #{pip_venv_skeleton}/. "$last/"
+        SH
+      )
+      File.chmod(python3_shim, 0o755)
       venv = File.join(Dir.tempdir, "krikri-pip-spec-venv-#{Random::Secure.hex(8)}")
       begin
         result = PluginSpecHelper.run("pip", {
           "name"               => "pip",
           "virtualenv"         => venv,
           "virtualenv_command" => "python3 -m venv",
+          "_environment"       => {"PATH" => "#{shim_dir}:#{ENV["PATH"]? || "/usr/local/bin:/usr/bin:/bin"}"}.to_json,
         })
 
         result["failed"]?.try(&.as_bool).wont_equal(true)
@@ -400,7 +427,7 @@ describe "pip plugin" do
     it "reports changed: false for an already-satisfied package in a pre-existing virtualenv" do
       venv = File.join(Dir.tempdir, "krikri-pip-spec-venv-#{Random::Secure.hex(8)}")
       begin
-        system("python3 -m venv #{venv}").must_equal(true)
+        FileUtils.cp_r(pip_venv_skeleton, venv)
         result = PluginSpecHelper.run("pip", {
           "name"       => "pip",
           "virtualenv" => venv,
@@ -1023,4 +1050,52 @@ private def python_with_pip?(python : String) : Bool
   Process.run(python, ["-m", "pip", "--version"]).success?
 rescue
   false
+end
+
+# A real venv, built once and cached under gitignored test/tmp/, then
+# COPIED per test: `python3 -m venv`'s ensurepip step dominates each
+# venv-creating spec, and the copied tree is indistinguishable to the
+# plugin (bin/pip, pyvenv.cfg, the bin/python* symlinks all come
+# along). The cached tree's bin/pip* scripts are rewritten to a
+# launcher that resolves its own directory - venv's originals hardcode
+# the creating venv's absolute path in their shebangs - so a copy needs
+# no per-copy fixing. A stale skeleton (e.g. after a system Python
+# upgrade, which strands the bin/python3 symlink's modules) fails the
+# `pip --version` validity probe and is rebuilt.
+PIP_VENV_SKELETON       = File.join(PluginSpecHelper::PROJECT_ROOT, "test", "tmp", "pip-venv-skeleton")
+PIP_VENV_SKELETON_MUTEX = Mutex.new
+
+private def pip_venv_skeleton : String
+  PIP_VENV_SKELETON_MUTEX.synchronize do
+    build_pip_venv_skeleton unless pip_venv_skeleton_valid?(PIP_VENV_SKELETON)
+    PIP_VENV_SKELETON
+  end
+end
+
+private def pip_venv_skeleton_valid?(skeleton : String) : Bool
+  return false unless File.file?(File.join(skeleton, "pyvenv.cfg")) &&
+                      File.file?(File.join(skeleton, "bin", "pip"))
+  system("#{skeleton}/bin/python3 -m pip --version >/dev/null 2>&1")
+end
+
+private def build_pip_venv_skeleton : Nil
+  FileUtils.mkdir_p(File.dirname(PIP_VENV_SKELETON))
+  staging = File.join(File.dirname(PIP_VENV_SKELETON),
+    "pip-venv-skeleton.build-#{Process.pid}-#{Random::Secure.hex(4)}")
+  begin
+    FileUtils.rm_rf(staging)
+    system("python3 -m venv #{staging}") ||
+      raise("python3 -m venv failed while building the pip test skeleton venv")
+    Dir.glob(File.join(staging, "bin", "pip*")).each do |script|
+      File.write(script, <<-SH)
+        #!/bin/sh
+        exec "$(dirname "$0")/python3" -m pip "$@"
+        SH
+      File.chmod(script, 0o755)
+    end
+    FileUtils.rm_rf(PIP_VENV_SKELETON)
+    FileUtils.mv(staging, PIP_VENV_SKELETON)
+  ensure
+    FileUtils.rm_rf(staging) if File.exists?(staging)
+  end
 end
