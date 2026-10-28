@@ -83,6 +83,15 @@ entrypoint (`.minitest_all.cr`, gitignored), builds one hash-gated binary
 script runs that file directly, and anything after `--` goes to
 `Minitest.run`.
 
+**One compile-or-suite at a time on this host**: full-suite runs (not
+single-file ones) hold the host compile lock
+`${KRIKRI_COMPILE_LOCK:-$HOME/.cache/krikri-compile.lock}` across the shard
+builds AND the run, waiting for it if something else holds it. Stacked
+crystal compilers (a second suite, or krikri-role-tester's fix-issues
+builds and quick suites, which take the same lock) OOM'd the desktop;
+build the same discipline into anything that compiles or runs the suite
+unattended.
+
 **Live docker tests are off by default**: the `docker_compose_v2` and
 `docker_container published_ports` tests bring real podman/compose projects up (~135s of a
 ~230s suite) and skip unless `KRIKRI_DOCKER_TESTS=1`. CI always sets it;

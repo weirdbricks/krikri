@@ -119,6 +119,19 @@ if [ $# -gt 0 ] && [ -f "${1:-}" ]; then
   exit 0
 fi
 
+# One heavy compile-or-suite activity at a time on this host: the shard builds below
+# spawn one crystal compiler per shard, and a second suite (or fix-issues' build.sh and
+# quick suite, which take the same lock) stacked on top OOM'd / hung the desktop. Held
+# across the builds AND the run; released when the script and the children that
+# inherited fd 9 exit. Single-file runs (the early exit above) stay lockless.
+LOCK="${KRIKRI_COMPILE_LOCK:-${XDG_CACHE_HOME:-$HOME/.cache}/krikri-compile.lock}"
+mkdir -p "$(dirname "$LOCK")"
+exec 9>"$LOCK"
+if ! flock -n 9; then
+  echo "test: another compile or suite run holds $LOCK - waiting ..." >&2
+  flock 9
+fi
+
 # The entrypoint has to live inside the project: `crystal run` only resolves
 # relative requires against the entrypoint's own directory, and absolute
 # requires are not resolved from a file outside the project root.
