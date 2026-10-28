@@ -1015,7 +1015,7 @@ module Krikri
         return {failure: PluginResult.new(changed: false, failed: true, msg: "validate must contain %s: #{validate_cmd}"), staged: nil}
       end
 
-      temp_file = File.join("/tmp", ".krikri-playbook-copy-#{Random::Secure.hex(8)}.tmp")
+      temp_file = File.join(Dir.tempdir, ".krikri-playbook-copy-#{Random::Secure.hex(8)}.tmp")
       begin
         # SECURITY: created EMPTY 0600 and settled to its final mode
         # (0666 & ~umask for a new dest, narrowed by the task's numeric
@@ -1039,6 +1039,7 @@ module Krikri
         # the staged content around (do_cleanup_files runs on failure).
         # stdout_lines/stderr_lines come from _return_formatted's own
         # splitter.
+        File.delete(temp_file) if File.exists?(temp_file)
         stdout = validation[:stdout]
         stderr = validation[:stderr]
         result = PluginResult.new(

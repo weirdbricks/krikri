@@ -43,6 +43,10 @@ describe "copy: with validate:" do
   it "fails the task and leaves dest untouched when validate: fails, for content:" do
     dest = File.tempname("copy-validate-content-fail-dest")
     playbook = File.tempname("copy-validate-content-fail", ".yml")
+    # The staged file must not outlive a failed validate; a private TMPDIR
+    # lets this test look at it without matching other tests' staging.
+    stage = File.join(Dir.tempdir, "copy-validate-stage-#{Random::Secure.hex(4)}")
+    FileUtils.mkdir_p(stage)
     File.write(playbook, <<-YAML)
       - hosts: localhost
         connection: local
@@ -56,9 +60,10 @@ describe "copy: with validate:" do
       YAML
 
     output = IO::Memory.new
-    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], env: {"TMPDIR" => stage}, output: output, error: output)
 
     status.success?.must_equal(false)
+    Dir.children(stage).none?(&.starts_with?(".krikri-playbook-copy-")).must_equal(true)
     # Ansible's copy module fails with fail_json(msg="failed to validate",
     # exit_status=rc, stdout=..., stderr=...) - the wording is
     # "failed to validate", never "Validation failed"
@@ -72,6 +77,7 @@ describe "copy: with validate:" do
   ensure
     File.delete(playbook) if playbook && File.exists?(playbook)
     File.delete(dest) if dest && File.exists?(dest)
+    FileUtils.rm_rf(stage) if stage && Dir.exists?(stage)
   end
 
   it "handles a %s path containing shell metacharacters (spaces)" do

@@ -23,7 +23,7 @@ end
 describe "is* test aliases (P2.1-P2.3)" do
   # Shared fixture tree on the CONTROLLER's filesystem (these path tests
   # always check the controller, like Ansible's os.path.* wrappers).
-  TMPDIR    = File.tempname("/tmp", "is_alias_spec")
+  TMPDIR    = File.tempname("is_alias_spec")
   Dir.mkdir_p(TMPDIR)
   REAL_FILE = File.join(TMPDIR, "real.conf")
   REAL_DIR = File.join(TMPDIR, "real.d")
@@ -166,8 +166,7 @@ describe "is* test aliases (P2.1-P2.3)" do
     renderer.render(%({% if config is is_file %}yes{% else %}no{% endif %})).must_equal("yes")
   end
 
-  # NOTE: no TMPDIR cleanup here - Crystal spec runs inside its own
-  # at_exit handler, so an at_exit registered in a describe body fires
-  # before the examples run (files would vanish mid-spec). The fixture
-  # tree is left in /tmp; /tmp is cleaned periodically anyway.
+  # NOTE: no cleanup here - an at_exit registered in a describe body would
+  # fire before the examples run (files would vanish mid-spec). The fixture
+  # tree is under Dir.tempdir, which scripts/minitest.sh removes at run end.
 end
