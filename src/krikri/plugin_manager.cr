@@ -2184,11 +2184,22 @@ module Krikri
     # rather than mis-executing anything.
     # Public as a spec seam: the command construction is pinned
     # directly in the unit tests.
+    #
+    # The feeder's stderr is suppressed (`2>/dev/null` on printf and cat):
+    # when the consumer exits without reading its stdin - sudo failing to
+    # exec the plugin (e.g. the plugin-upload race), or the plugin crashing
+    # before its first `STDIN.gets_to_end` - the feeder subshell can run
+    # after that exit and append bash's own "printf: write error: Broken
+    # pipe" / "cat: write error: Broken pipe" to the captured stderr. Real
+    # Ansible feeds the become password via run_command(data=...), where
+    # CPython ignores EPIPE on the stdin write, so silencing the feeder
+    # matches real output instead of masking a divergence (same rationale
+    # as java_cert_command's stdin feeder). sudo's own stderr still flows.
     def self.sudo_password_become_wrapper(plugin_path : String, become_user : String, become_password : String) : String
       q_user = Shell.quote_arg(become_user)
       "if sudo -n -u #{q_user} -- true 2>/dev/null; " \
       "then sudo -n -u #{q_user} -- #{plugin_path}; " \
-      "else { printf '%s\\n' #{Shell.single_quote(become_password)}; cat; } | " \
+      "else { printf '%s\\n' #{Shell.single_quote(become_password)} 2>/dev/null; cat 2>/dev/null; } | " \
       "sudo -S -p '' -u #{q_user} -- #{plugin_path}; fi"
     end
 

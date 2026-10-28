@@ -8,14 +8,21 @@ describe "pause plugin" do
 
     result["changed"].as_bool.must_equal(false)
     falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
-    result["stdout"].as_s.must_equal("Paused for 1.0 seconds")
+    # Real elapsed rounded to 2 decimals: 1.0 usually, 1.01 whenever the
+    # real sleep overshoots the 5ms rounding boundary under load - real
+    # Ansible rounds the same measured elapsed, so only the format is
+    # pinned here (the standalone pause binary is deliberately unscaled).
+    result["stdout"].as_s.must_match(/\APaused for 1\.0\d? seconds\z/)
     result["delta"].as_i.must_equal(1)
     (elapsed.total_seconds >= 1.0).must_equal(true)
   end
 
   it "sleeps for the given minutes, converted to seconds" do
     result = PluginSpecHelper.run("pause", {"minutes" => "0.02"})
-    result["stdout"].as_s.must_equal("Paused for 0.02 minutes")
+    # Same rounding sensitivity as the seconds case above: 1.2s of real
+    # sleep shows as 0.02 minutes, 0.03 once the sleep overshoots the
+    # 1.25s boundary.
+    result["stdout"].as_s.must_match(/\APaused for 0\.0[23] minutes\z/)
     (result["delta"].as_i >= 1).must_equal(true)
   end
 

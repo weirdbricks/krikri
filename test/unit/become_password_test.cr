@@ -22,8 +22,10 @@ describe "become password command construction (become_password_test.cr)" do
       target.includes?("if sudo -n -u appuser -- true 2>/dev/null; ").must_equal(true)
       target.includes?("then sudo -n -u appuser -- #{dir}/copy; ").must_equal(true)
       # The password-required branch: sudo -S with an empty prompt, and
-      # the password line prepended to the same stdin stream.
-      target.includes?("printf '%s\\n' 'pw123'; cat; } | ").must_equal(true)
+      # the password line prepended to the same stdin stream. The
+      # feeder's stderr is silenced (EPIPE noise when the consumer exits
+      # before reading stdin - see sudo_password_become_wrapper).
+      target.includes?("printf '%s\\n' 'pw123' 2>/dev/null; cat 2>/dev/null; } | ").must_equal(true)
       target.includes?("sudo -S -p '' -u appuser -- #{dir}/copy; fi").must_equal(true)
       # It is still ONE command fragment the usual pipe can target.
       target.starts_with?("if ").must_equal(true)
@@ -57,7 +59,7 @@ describe "become password command construction (become_password_test.cr)" do
 
     it "single-quotes a password containing quotes and metacharacters" do
       wrapper = Krikri::PluginManager.sudo_password_become_wrapper("/p/copy", "deploy", "it's $`\"\\ pw;")
-      wrapper.includes?("printf '%s\\n' 'it'\\''s $`\"\\ pw;'").must_equal(true)
+      wrapper.includes?("printf '%s\\n' 'it'\\''s $`\"\\ pw;' 2>/dev/null").must_equal(true)
       # The password only ever sits inside the printf argument, after
       # the format - never as a bare word a shell could expand.
       wrapper.includes?("$`\"\\ pw; ; cat").must_equal(false)

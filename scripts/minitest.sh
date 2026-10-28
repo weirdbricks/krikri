@@ -11,19 +11,22 @@
 # full ~12-15s compile on every invocation.
 #
 # Usage:
-#   scripts/minitest.sh                 # whole minitest suite, 4 shards by default
+#   scripts/minitest.sh                 # whole minitest suite, 6 shards by default
 #   scripts/minitest.sh --shard 8       # whole suite on 8 shard processes
 #   scripts/minitest.sh test/unit/foo_test.cr   # a single file, passed through
 #   scripts/minitest.sh -- -n /pattern/       # args after -- go to the binary
 #
-# Parallelism: the full suite defaults to 4 OS processes (`--shard N`, or
-# KRIKRI_TEST_SHARDS), each running ~1/4 of the test files with -p 8 worker
-# fibers on ONE OS thread (CRYSTAL_WORKERS=1). Sharding by process is what
-# actually uses the extra cores: within one process the fibers all share a
-# single OS thread, so CPU-bound work (process spawns, parsing) serializes -
-# 4 processes x -p 8 measured ~47% faster wall-clock than one process at
-# -p 8 (41s vs 77s), and N=6, -p 12 per shard and CRYSTAL_WORKERS=2 all
-# added nothing. Each shard needs its own compiled
+# Parallelism: the full suite defaults to 6 OS processes (`--shard N`, or
+# KRIKRI_TEST_SHARDS), each running its slice of the test files with -p 8
+# worker fibers on ONE OS thread (CRYSTAL_WORKERS=1). Sharding by process is
+# what actually uses the extra cores: within one process the fibers all
+# share a single OS thread, so CPU-bound work (process spawns, parsing)
+# serializes - 4 processes x -p 8 measured ~47% faster wall-clock than one
+# process at -p 8 (41s vs 77s). The old "N=6 added nothing" measurement was
+# made with count-based shard weights; re-measured interleaved against
+# --shard 4 after the switch to measured-time weights, 6 was faster in
+# every contemporaneous pairing (~5-11s, more under ambient load). Each
+# shard needs its own compiled
 # binary (the entrypoint only requires its own slice of test files), built
 # concurrently and hash-gated like the single binary; the tradeoff is that a
 # source change now costs N compiles instead of one (~45s parallel vs ~15s),
@@ -134,8 +137,8 @@ if [ ${#files[@]} -eq 0 ]; then
 fi
 
 # Shard count for full-suite runs: --shard N on the command line wins over
-# KRIKRI_TEST_SHARDS, which wins over the default of 4. 1 disables sharding.
-shards="${KRIKRI_TEST_SHARDS:-4}"
+# KRIKRI_TEST_SHARDS, which wins over the default of 6. 1 disables sharding.
+shards="${KRIKRI_TEST_SHARDS:-6}"
 shard_args=()
 next_is_shard=false
 for arg in "$@"; do

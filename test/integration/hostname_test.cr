@@ -5,8 +5,10 @@ require "../minitest_helper"
 # Safety: this must never actually change the live system hostname. So:
 # - The "no change" case feeds the *current* hostname (read-only).
 # - The "would change" case uses check_mode (no hostnamectl/hostname call).
-# - We only ever assert against facts derived from `hostname`(1) / `System.hostname`
-#   or the static input, never by mutating state the host didn't already have.
+# - We only ever assert against facts derived from the system hostname
+#   (System.hostname - the same gethostname call the fact gatherer itself
+#   uses) or the static input, never by mutating state the host didn't
+#   already have.
 
 describe "hostname plugin" do
   it "fails with a clear message when name is missing" do
@@ -17,7 +19,7 @@ describe "hostname plugin" do
   end
 
   it "reports no change when name already equals the current hostname (read-only)" do
-    current = `hostname`.strip
+    current = System.hostname
     result = PluginSpecHelper.run("hostname", {"name" => current})
 
     result["changed"].as_bool.must_equal(false)
@@ -34,7 +36,7 @@ describe "hostname plugin" do
 
   it "reports it would change the hostname in check_mode, without touching the live hostname" do
     target = "krikri-playbook-hostname-spec-target"
-    before = `hostname`.strip
+    before = System.hostname
 
     result = PluginSpecHelper.run("hostname", {"name" => target, "_ansible_check_mode" => "true"})
 
@@ -48,17 +50,17 @@ describe "hostname plugin" do
     result["ansible_facts"]["ansible_hostname"].as_s.must_equal(target)
     result["ansible_facts"]["ansible_nodename"].as_s.must_equal(target)
     # Live hostname is untouched in check_mode.
-    `hostname`.strip.must_equal(before)
+    System.hostname.must_equal(before)
   end
 
   it "does not touch the live hostname when the name differs but check_mode is off AND it's already set (still read-only)" do
     # Belt-and-braces: re-run the no-change path with check_mode explicitly
     # off to ensure even the non-check path is a no-op when nothing differs.
-    current = `hostname`.strip
+    current = System.hostname
     result = PluginSpecHelper.run("hostname", {"name" => current, "_ansible_check_mode" => "false"})
 
     result["changed"].as_bool.must_equal(false)
     falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
-    `hostname`.strip.must_equal(current)
+    System.hostname.must_equal(current)
   end
 end

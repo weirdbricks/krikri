@@ -47,6 +47,6 @@ describe "ansible_hostname without gathered facts" do
 
   it "resolves to the real hostname after gather_facts" do
     rendered = render_with("true")
-    rendered.must_equal("host=#{`hostname`.strip}\n")
+    rendered.must_equal("host=#{System.hostname}\n")
   end
 end
