@@ -84,4 +84,8 @@ __pycache__/
 /.minitest_shard_*.cr
 /.minitest_shard_*.bin
 /.minitest_shard_*.hash
+
+# scripts/minitest.sh's per-test timing records (shard-balancing weights)
+/.minitest_timings.tsv
+
 /ws

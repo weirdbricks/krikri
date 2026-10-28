@@ -77,7 +77,9 @@ unset DOCKER_HOST DOCKER_CONTEXT
 # milliseconds: the retry specs exercise the retry/booking logic and warn
 # texts, not the wall-clock backoff, and the "Sleeping for N seconds"
 # texts are computed from the unscaled delay so they stay live-captured.
-# Only AptLockRetry#retry_sleep reads it; never set it outside the suite.
+# AptLockRetry#retry_sleep and the controller-side pause action plugin read
+# it; the standalone plugins/pause.cr binary does NOT (its specs assert real
+# elapsed time). Never set it outside the suite.
 export KRIKRI_TEST_SLEEP_SCALE=0.01
 
 # Most integration specs don't call engine code in-process: they spawn
@@ -177,6 +179,28 @@ done < <(find "$ROOT/src" "$ROOT/plugins" "$ROOT/lib" -name '*.cr' | sort)
 cd "$ROOT"
 export CRYSTAL_WORKERS="${CRYSTAL_WORKERS:-1}"
 
+# Per-test wall-clock timings, recorded by run_one in test/minitest_helper.cr
+# and fed back as the NEXT full run's shard weights (see the sharded path).
+# After each run the file is compacted to one max-per-name line, so it stays
+# small and - crucially - stable between source changes: a changed timings
+# file changes the shard assignment, which changes the hashed entrypoints
+# and forces N recompiles. Max-over-runs is monotone, so weights only drift
+# when a test genuinely got slower; whole-second quantization in the weights
+# script absorbs the rest of the jitter.
+MINITEST_TIMINGS_PATH="$ROOT/.minitest_timings.tsv"
+touch "$MINITEST_TIMINGS_PATH"
+export MINITEST_TIMINGS="$MINITEST_TIMINGS_PATH"
+
+# Compact to one max-per-name record (same rule as minitest_timings.sh's
+# summarizer). Run after every full-suite invocation - both paths below.
+compact_timings() {
+  local tmp
+  tmp=$(mktemp)
+  awk -F'\t' '{ t = $1 + 0; m[$3] = (t > m[$3] + 0 ? t : m[$3] + 0) }
+    END { for (k in m) print m[k] + 0 "\tparallel\t" k }' "$MINITEST_TIMINGS_PATH" > "$tmp"
+  mv "$tmp" "$MINITEST_TIMINGS_PATH"
+}
+
 # `crystal run` used to strip the conventional `--` separator before the
 # program saw ARGV; the bare binary doesn't, and OptionParser stops at it,
 # so a leading -- would silently disable every option after it. shard_args
@@ -205,28 +229,43 @@ if [ "$shards" -ge 2 ]; then
   # Balance the shards by measured weight, not by file count: a plain
   # round-robin leaves the slowest shard ~29% heavier than the lightest
   # (2632 vs 2051 tests), and the wall time IS the slowest shard. Weight
-  # each file by its `it` count (a static runtime proxy, one awk pass) and
-  # assign heaviest-file-to-lightest-shard (LPT). Deterministic: the file
-  # list is sorted and ties break on path, so the same sources always
-  # produce the same assignment - which matters because the assignment is
+  # each file by the measured seconds of its tests (from the timings file
+  # the previous run wrote; minitest_file_weights.sh reconstructs test
+  # names per file the way minitest builds them, and falls back to the
+  # seconds-per-test average times it-count for anything unmeasured - or
+  # to pure it-counts, one awk pass, when no timings exist yet) and assign
+  # heaviest-file-to-lightest-shard (LPT). Deterministic: the file
+  # list is sorted and ties break on path, so the same sources + timings
+  # always produce the same assignment - which matters because the assignment is
   # baked into each shard's hashed entrypoint.
-  mapfile -t weighted < <(awk '
-    FNR == 1 { if (seen) print cnt "\t" prev; prev = FILENAME; cnt = 0; seen = 1 }
-    /^[[:space:]]*it[[:space:]]/ { cnt++ }
-    END { if (seen) print cnt "\t" prev }
-  ' "${files[@]}" | sort -t$'\t' -k1,1nr -k2,2)
+  if [ -s "$MINITEST_TIMINGS_PATH" ]; then
+    mapfile -t weighted < <(scripts/minitest_file_weights.sh "$MINITEST_TIMINGS_PATH" "${files[@]}")
+  else
+    mapfile -t weighted < <(awk '
+      FNR == 1 { if (seen) print cnt "\t" prev; prev = FILENAME; cnt = 0; seen = 1 }
+      /^[[:space:]]*it[[:space:]]/ { cnt++ }
+      END { if (seen) print cnt "\t" prev }
+    ' "${files[@]}" | sort -t$'\t' -k1,1nr -k2,2)
+  fi
   shard_weights=()
   shard_flists=()
+  shard_counts=()
   for ((i=0; i<shards; i++)); do
     shard_weights[$i]=0
+    shard_counts[$i]=0
     shard_flists[$i]=""
   done
   while IFS=$'\t' read -r cnt fpath; do
     best=0
     for ((i=1; i<shards; i++)); do
-      if (( shard_weights[$i] < shard_weights[$best] )); then best=$i; fi
+      if (( shard_weights[$i] < shard_weights[$best] )); then best=$i
+      # equal-weight tie-break on fewest files: zero-weight files would
+      # otherwise all pile onto one shard (weight 0 + weight 0 = 0)
+      elif (( shard_weights[$i] == shard_weights[$best] && shard_counts[$i] < shard_counts[$best] )); then best=$i
+      fi
     done
     shard_weights[$best]=$(( shard_weights[$best] + cnt ))
+    shard_counts[$best]=$(( shard_counts[$best] + 1 ))
     shard_flists[$best]+="$fpath"$'\n'
   done < <(printf '%s\n' "${weighted[@]}")
 
@@ -287,6 +326,7 @@ if [ "$shards" -ge 2 ]; then
     ) &
   done
   wait
+  compact_timings
 
   rc_total=0
   for ((i=0; i<shards; i++)); do
@@ -341,4 +381,7 @@ if [ "$parallel_given" = false ]; then
 fi
 
 # Not exec: the EXIT trap has to run after the suite to remove its TMPDIR.
-timeout -k 5 "${MINITEST_TIMEOUT:-600}" "$BINARY" "$@"
+rc=0
+timeout -k 5 "${MINITEST_TIMEOUT:-600}" "$BINARY" "$@" || rc=$?
+compact_timings
+exit "$rc"

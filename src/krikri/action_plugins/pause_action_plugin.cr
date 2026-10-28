@@ -72,7 +72,7 @@ module Krikri
       # to the end of the loop (executor_loops.cr's finish_looped_task)
       # and writing here would print every item's banner before the very
       # first item's "ok:".
-      console_lines, timed_out = pause_console(wait, echo_note)
+      console_lines, timed_out, credited = pause_console(wait, echo_note)
       stop = Time.local
 
       # The task's own `timeout:` deadline expired during the wait - real's
@@ -87,7 +87,7 @@ module Krikri
       # deadline guard expires, so this result always wins that race.
       return deadline_kill_result(console_lines) if timed_out
 
-      elapsed = (stop - start).total_seconds
+      elapsed = (stop - start).total_seconds + credited
       shown = unit == "minutes" ? (elapsed / 60).round(2) : elapsed.round(2)
 
       extra = {
@@ -172,18 +172,32 @@ module Krikri
         }))
     end
 
-    # A duration pause's console lines (nil when there is no wait at
-    # all), doing the sleep itself - and honoring the task's `timeout:`
+    # A duration pause's console lines (nil when there is no wait at all),
+    # doing the sleep itself - and honoring the task's `timeout:`
     # deadline when it is shorter than the wait (the second tuple element
-    # reports that expiry). Real clamps the CONVERTED second count up to 1
+    # reports that expiry, the third credits back the sleep the test scale
+    # shrank, so the reported elapsed stays the unscaled duration). Real
+    # clamps the CONVERTED second count up to 1
     # before both the console line and the sleep, so `seconds: 0`,
     # `minutes: 0` and any negative all announce and wait the same 1
     # second. The interrupt hint is the PROMPT's slot, not an extra line:
     # with a prompt Ansible prints it after the "Pausing for" line, and with
     # no prompt it REPLACES the prompt instead - which is never written at
     # all with non-interactive stdin.
-    private def pause_console(wait : Int64?, echo_note : String) : {Array(JSON::Any)?, Bool}
-      return {nil, false} unless wait
+    # KRIKRI_TEST_SLEEP_SCALE, same contract as AptLockRetry's retry sleep:
+    # the suite sets it (e.g. "0.01") so duration pauses don't pay the real
+    # wall clock; unset it is 1.0 and this is an exact sleep. Standalone
+    # plugins/pause.cr stays unscaled - its own specs assert real elapsed
+    # time. The pause_console sleep only shrinks; the console line and the
+    # reported elapsed/`Paused for` text stay computed from the UNSCALED
+    # duration (the caller credits the difference back).
+    private def test_sleep_scale : Float64
+      raw = ENV["KRIKRI_TEST_SLEEP_SCALE"]?.try(&.to_f?)
+      raw ? raw.clamp(0.0, 1.0) : 1.0
+    end
+
+    private def pause_console(wait : Int64?, echo_note : String) : {Array(JSON::Any)?, Bool, Float64}
+      return {nil, false, 0.0} unless wait
       clamped = wait < 1 ? 1_i64 : wait
       console = ["Pausing for #{clamped} seconds#{echo_note}"]
       console << INTERRUPT_HINT if prompt_given?
@@ -194,10 +208,11 @@ module Krikri
         # (which carries the console lines real shows before the
         # [ERROR] block) beats the executor's own deadline guard.
         sleep Math.max(left - 0.1, 0.0).seconds
-        return {lines, true}
+        return {lines, true, 0.0}
       end
-      sleep clamped.seconds
-      {lines, false}
+      scale = test_sleep_scale
+      sleep (clamped * scale).seconds
+      {lines, false, clamped * (1.0 - scale)}
     end
 
     # Ansible's own `if new_module_args['prompt']` truthiness test on the

@@ -283,19 +283,16 @@ module Krikri
       loaded = kind == "modules" ? @@builtin_redirects_loaded : @@builtin_action_redirects_loaded
       return cache if loaded
 
-      if kind == "modules"
-        @@builtin_redirects_loaded = true
-      else
-        @@builtin_action_redirects_loaded = true
-      end
       ansible_pkg_dirs.each do |pkg|
         path = File.join(pkg, "config", "ansible_builtin_runtime.yml")
         next unless File.file?(path)
         table = parse_runtime_redirects(path, kind)
         if kind == "modules"
           @@builtin_redirects = table
+          @@builtin_redirects_loaded = true
         else
           @@builtin_action_redirects = table
+          @@builtin_action_redirects_loaded = true
         end
         return table
       end
@@ -308,9 +305,11 @@ module Krikri
       baked_modules, baked_action = Krikri.builtin_runtime_redirects
       if kind == "modules"
         @@builtin_redirects = baked_modules
+        @@builtin_redirects_loaded = true
         return baked_modules
       else
         @@builtin_action_redirects = baked_action
+        @@builtin_action_redirects_loaded = true
         return baked_action
       end
     end

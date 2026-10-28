@@ -1,5 +1,4 @@
 require "file_utils"
-require "system/user"
 require "../minitest_helper"
 
 # Runs the compiled binary against a real playbook, since this is about
@@ -75,12 +74,17 @@ describe "template: with validate:" do
               validate: "false %s"
       YAML
 
-    home = ENV["HOME"]? || System::User.find_by?(id: LibC.getuid.to_s).try(&.home_directory) || ""
+    # Private HOME: the snapshot below must see only THIS run's staging,
+    # not a concurrently running test's spawn - every krikri-playbook in
+    # the suite shares the real home's ~/.ansible/tmp otherwise (same
+    # pattern as the issue-615 spec below).
+    home = PluginSpecHelper.tmp_path("validate-cleanup-home-#{Random::Secure.hex(4)}")
+    Dir.mkdir_p(home)
     ansible_tmp = File.join(home, ".ansible", "tmp")
-    staging_before = Dir.exists?(ansible_tmp) ? Dir.children(ansible_tmp) : [] of String
 
     output = IO::Memory.new
-    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output,
+      env: {"HOME" => home})
 
     status.success?.must_equal(false)
     # Real copy.py's validate site (the template module runs through it)
@@ -93,14 +97,17 @@ describe "template: with validate:" do
     output.to_s.must_include("\"msg\": \"failed to validate\"")
     output.to_s.must_include("\"exit_status\": 1")
     # Real removes its per-run tmp dir on every path (do_cleanup_files
-    # `rm -f -r`s it even after a failed validate:), so nothing new is
-    # left in ~/.ansible/tmp after the task fails - snapshot the
-    # directory's children before and after to prove it.
-    (Dir.exists?(ansible_tmp) ? Dir.children(ansible_tmp) : [] of String).must_equal(staging_before)
+    # `rm -f -r`s it even after a failed validate:), so the private
+    # home's ~/.ansible/tmp holds no leftover ansible-tmp dir after the
+    # task fails.
+    (Dir.exists?(ansible_tmp) ? Dir.children(ansible_tmp) : [] of String)
+      .select { |entry| entry.starts_with?("ansible-") }
+      .must_equal([] of String)
     File.exists?(dest).must_equal(false)
   ensure
     File.delete(playbook) if playbook && File.exists?(playbook)
     File.delete(src) if src && File.exists?(src)
+    FileUtils.rm_rf(home) if home && Dir.exists?(home)
     FileUtils.rm_rf(dest_dir) if dest_dir
   end
 

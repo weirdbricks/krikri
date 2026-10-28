@@ -99,6 +99,16 @@ script runs that file directly, and anything after `--` goes to
   `PluginSpecHelper::STATE_MUTEX` across setup, body AND teardown, and
   before_each/after_each ENV pinning is covered too. Helpers that need
   the same guarantee take that mutex themselves (it is reentrant).
+- `serial!` only serializes serial-vs-serial: a concurrently running
+  non-serial test keeps executing straight through a serial test's
+  window. If that window disturbs state OTHER tests read without
+  opting in (the `CollectionIndex` fixture scan, which re-points
+  ANSIBLE_COLLECTIONS_PATH and resets the memoized index that every
+  in-process parse consults), the describe calls `exclusive!` instead:
+  it runs with the whole process quiesced - no other test's
+  setup/body/teardown overlaps it. Costs the process's other worker
+  fibers for the window, so it is for genuinely process-visible
+  mutations only.
 - `PluginSpecHelper.run`/`run_raw` accept `chdir:`,
   `before_input:` and `umask:` parameters - use them instead of doing it
   yourself: never `Dir.cd` the suite process, never `LibC.umask` the

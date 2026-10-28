@@ -16,13 +16,16 @@ require "../../src/krikri/collection_index"
 # point ANSIBLE_COLLECTIONS_PATH at a scratch tree instead and are
 # serial! (ENV is process-wide); CollectionIndex.reset! forgets the
 # scan so the fixture is actually seen, and the env is restored
-# afterwards.
+# afterwards. exclusive! rather than serial! alone: the scan's
+# memoized roots are read by every in-process parse in this process,
+# not just by tests that opt in to serial!, so no other test may run
+# inside the fixture window.
 describe Krikri::CollectionIndex do
   # ------------------------------------------------------------------
   # Fixture-scoped specs: an isolated collection tree via
   # ANSIBLE_COLLECTIONS_PATH, so the assertions don't depend on what
   # else this machine has installed.
-  serial!
+  exclusive!
 
   @fixture_root : String = ""
 

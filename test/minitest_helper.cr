@@ -76,6 +76,63 @@ module PluginSpecHelper
   STATE_MUTEX = Mutex.new(:reentrant)
   ENV_MUTEX   = STATE_MUTEX
 
+  # Exclusive-scope gate (a readers-writer lock over the process's test
+  # fibers): parallel tests are "readers" (any number may run at once),
+  # exclusive tests are the "writer" (runs alone - no other test's
+  # setup/body/teardown overlaps it, and it waits for the in-flight ones
+  # to finish first). serial! alone cannot provide this: it serializes
+  # serial-vs-serial on STATE_MUTEX, but a CONCURRENT non-serial test
+  # keeps running right through a serial test's window - fine for the
+  # usual ENV-poking specs, which only disturb other tests that also
+  # opt in, but not for a spec that re-points ANSIBLE_COLLECTIONS_PATH
+  # and re-scans CollectionIndex while ~140 other unit files' in-process
+  # parses read that same memoized state (observed as flaky
+  # tombstone/local-action failures once the shard grouping co-scheduled
+  # them in one process; count-based grouping had just never hit the
+  # interleaving). The busy-wait sleeps yield the fiber scheduler, and a
+  # parallel test's worst-case tail is bounded by the plugin watchdog,
+  # so the wait is bounded. Lock order is EXCL_MUTEX before
+  # STATE_MUTEX everywhere; neither is held while waiting on the other.
+  EXCL_MUTEX = Mutex.new
+  @@exclusive = false
+  @@active_parallel = 0
+
+  def self.enter_exclusive : Nil
+    loop do
+      EXCL_MUTEX.lock
+      if @@active_parallel == 0
+        @@exclusive = true
+        return EXCL_MUTEX.unlock
+      end
+      EXCL_MUTEX.unlock
+      sleep 1.millisecond
+    end
+  end
+
+  def self.exit_exclusive : Nil
+    EXCL_MUTEX.lock
+    @@exclusive = false
+    EXCL_MUTEX.unlock
+  end
+
+  def self.enter_parallel : Nil
+    loop do
+      EXCL_MUTEX.lock
+      unless @@exclusive
+        @@active_parallel += 1
+        return EXCL_MUTEX.unlock
+      end
+      EXCL_MUTEX.unlock
+      sleep 1.millisecond
+    end
+  end
+
+  def self.exit_parallel : Nil
+    EXCL_MUTEX.lock
+    @@active_parallel -= 1
+    EXCL_MUTEX.unlock
+  end
+
   # Runs `binary` with `config_json` on stdin, streaming stdout into
   # `output`. Crystal 1.21's Process.run has no timeout parameter anymore,
   # so this watchdog kills a plugin that runs past 60s and turns it into a
@@ -438,8 +495,30 @@ class Minitest::Spec
     false
   end
 
+  # See exclusive! below - default is an ordinary parallel test.
+  def exclusive? : Bool
+    false
+  end
+
   macro serial!
     def serial? : Bool
+      true
+    end
+  end
+
+  # Describes that must run with the WHOLE process quiesced - every
+  # concurrently-running test finished and none started - call
+  # `exclusive!` in their body (implies serial!). Only for specs whose
+  # window of disturbed global state is visible to tests that do not
+  # opt in themselves (the CollectionIndex fixture scan, today); the
+  # plain serial! scope stays the default for ENV/engine-state poking,
+  # because exclusive tests idle the process's other worker fibers.
+  macro exclusive!
+    def serial? : Bool
+      true
+    end
+
+    def exclusive? : Bool
       true
     end
   end
@@ -456,16 +535,32 @@ class Minitest::Spec
   # on the same worker fiber, so begin/end here bracket exactly one test.
   def run_one(name : String, proc : Test ->) : Nil
     PluginSpecHelper.begin_test_tmp
-    if serial?
+    if exclusive?
+      PluginSpecHelper.enter_exclusive
+      begin
+        PluginSpecHelper::STATE_MUTEX.synchronize do
+          started = Time.instant
+          super
+          PluginSpecHelper.record_timing("#{self.class.name}##{name}", true, Time.instant - started)
+        end
+      ensure
+        PluginSpecHelper.exit_exclusive
+      end
+    elsif serial?
       PluginSpecHelper::STATE_MUTEX.synchronize do
         started = Time.instant
         super
         PluginSpecHelper.record_timing("#{self.class.name}##{name}", true, Time.instant - started)
       end
     else
-      started = Time.instant
-      super
-      PluginSpecHelper.record_timing("#{self.class.name}##{name}", false, Time.instant - started)
+      PluginSpecHelper.enter_parallel
+      begin
+        started = Time.instant
+        super
+        PluginSpecHelper.record_timing("#{self.class.name}##{name}", false, Time.instant - started)
+      ensure
+        PluginSpecHelper.exit_parallel
+      end
     end
   ensure
     PluginSpecHelper.end_test_tmp
