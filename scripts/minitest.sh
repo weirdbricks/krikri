@@ -47,10 +47,16 @@ trap cleanup_run_tmp EXIT
 # spawns: a developer shell with ANSIBLE_CACHE_PLUGIN=...pickle made
 # cross-play hostvars reads pass locally (served from the pickle cache)
 # while the same tests failed in CI. Tests that need an ANSIBLE_* value set
-# it themselves.
+# it themselves. Same for the docker CLI's ambient connection settings: a
+# DOCKER_HOST at a socket-activated podman daemon makes every plugin run
+# that probes the daemon pay a ~2s activation (or ~0s when already warm -
+# nondeterministic), and lets daemon-dependent smoke tests run against a
+# "reachable" daemon they did not provision. Tests that need a connection
+# set docker_host/_environment explicitly.
 while IFS= read -r var; do
   unset "$var"
 done < <(env | grep -o '^ANSIBLE_[A-Za-z0-9_]*')
+unset DOCKER_HOST DOCKER_CONTEXT
 
 # Most integration specs don't call engine code in-process: they spawn
 # bin/krikri-playbook (and bin/plugins/*) and assert on what it prints.
