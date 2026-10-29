@@ -392,6 +392,21 @@ describe "apt lock-contention retry helpers (round 153 follow-up, 0.9.502)" do
       msg.not_nil!.must_include("python3-apt must be installed to use check mode")
       commands.none?(&.includes?("apt-get")).must_equal(true)
     end
+
+    # coopdevs.zulip_role (#468): `package: {name: certbot}` with
+    # check_mode: true and no update_cache at all. Real apt.py fails at
+    # module start for any task in check mode, so the refusal takes
+    # nothing but the check-mode flag and the python3-apt probe.
+    it "refuses a plain name install in check mode, with no cache flag involved" do
+      probes = [] of String
+      msg = HostClass.new.apt_check_mode_python_apt_refusal(true, ->(c : String) {
+        probes << c
+        {exit_code: 1, stdout: "", stderr: ""}
+      })
+      msg.must_equal(Krikri::AptLockRetry::CHECK_MODE_NO_PYTHON_APT_MSG)
+      probes.size.must_equal(1)
+      probes.first.must_include("import apt")
+    end
   end
 
   # Regression spec for the apt-404-on-krikri-host-only pattern (rounds

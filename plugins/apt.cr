@@ -289,6 +289,18 @@ module Krikri
         return result
       end
 
+      # The refusal is module-start-wide, not cache-flag-gated: real
+      # apt.py cannot even begin when the bindings are missing and it
+      # is in check mode, so a plain name install fails there too
+      # (check mode's only recovery would be the auto-install, which
+      # is a real host mutation).
+      if @check_mode && !python_apt_present?
+        return PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: AptLockRetry::CHECK_MODE_NO_PYTHON_APT_MSG
+        )
+      end
       # Ansible's apt module auto-installs the python3-apt bindings
       # (with an `apt-get update` prefetch) at module start when missing
       # and then respawns - see AptLockRetry#apt_auto_install_python_apt
