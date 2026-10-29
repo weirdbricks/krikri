@@ -35,6 +35,14 @@ private EMPTY_VARS = Hash(String, JSON::Any).new
 describe Krikri::ConditionalEvaluator do
   serial! # mutates process-global state (ENV / engine settings)
 
+  describe "slice operand in a + chain" do
+    it "resolves var[:3] as a string operand of + (idealista.nginx_role luaJIT check)" do
+      v = vars({"ver" => "2.1-20200102", "out" => "LuaJIT 2.1.0"} of String => JSON::Any::Type)
+      Krikri::ConditionalEvaluator.evaluate(%("LuaJIT " + ver[:3] not in out), v).must_equal(false)
+      Krikri::ConditionalEvaluator.evaluate(%("LuaJIT " + ver[:3] == "LuaJIT 2.1"), v).must_equal(true)
+    end
+  end
+
   describe "equality" do
     it "evaluates == true when values match" do
       v = vars({"foo" => "bar"} of String => JSON::Any::Type)

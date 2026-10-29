@@ -2034,7 +2034,12 @@ module Krikri
         # default([])` in `acc | default([]) + [item]`) needs the full
         # recursive evaluator, not the plain variable lookup below, which
         # only ever resolves a bare/dotted/indexed name.
-        if expr.includes?('|') || (expr.starts_with?('(') && expr.ends_with?(')'))
+        # A Python slice operand (`'LuaJIT ' + version[:3]`) needs the
+        # engine too: the plain lookup below has no slice handling, so the
+        # operand came back null and Ansible's concatenating `when:` failed
+        # here with "can only concatenate str (not NoneType)".
+        if expr.includes?('|') || (expr.starts_with?('(') && expr.ends_with?(')')) ||
+           expr.matches?(/\[[^\[\]]*:[^\[\]]*\]/)
           # Crinja (krikri-jinja) FIRST, as a typed structured value: `|`
           # binds tighter than `+`, so a filter-chain operand's own result
           # type is what `combine_plus` must see - `v|string` on a float

@@ -2902,7 +2902,7 @@ module Krikri
     # Modules whose registered per-item results (loop `results[]`) carry
     # Ansible's `invocation.module_args` and whose args this engine can
     # reproduce from the argspec table (verified against ansible-core 2.19.11).
-    INVOCATION_MODULES = %w[command shell stat file ping slurp lineinfile replace blockinfile find getent]
+    INVOCATION_MODULES = %w[command shell stat file ping slurp lineinfile replace blockinfile find getent get_url]
 
     private def attach_invocation(task : Task, params : Hash(String, String), result : JSON::Any) : JSON::Any
       short = task.module_name.sub(/\Aansible\.(builtin|legacy)\./, "")
