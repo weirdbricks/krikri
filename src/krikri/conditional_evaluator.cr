@@ -3382,7 +3382,11 @@ module Krikri
       # sdarwin.nagios's own `when: item[8:] not in query('varnames',
       # '.*')` looped set_fact (round 5210000): every item failed with
       # "'item' is undefined" while Ansible set the fact (ok=1).
-      if expr.matches?(/\[[^\[\]]+\s*:\s*[^\[\]]*\]/) || expr.includes?("|") || expr.includes?("(") || expr.includes?(" - ") || expr.includes?("~") ||
+      # An empty start (`[:3]`) is as valid as an empty stop (`[8:]`):
+      # Ansible evaluates `when: ver[:3] == "8.5"` on a defined var to
+      # false (skipping), while the naive splitter hard-failed "'ver' is
+      # undefined" (ecgalaxy.php, issue #488).
+      if expr.matches?(/\[[^\[\]]*\s*:\s*[^\[\]]*\]/) || expr.includes?("|") || expr.includes?("(") || expr.includes?(" - ") || expr.includes?("~") ||
          expr.includes?("*") || expr.includes?("/") || expr.includes?("+")
         # A filter chain fed by a genuinely undefined variable is fatal
         # for a `when:`/`assert:` in Ansible exactly as a bare

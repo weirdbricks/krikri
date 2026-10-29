@@ -77,4 +77,28 @@ describe "not() expression and when: slice parsing" do
     output.must_include("alpha=one")
     output.wont_include("'item' is undefined")
   end
+
+  it "evaluates an empty-start slice in a when: like Ansible" do
+    # Ansible treats `[:3]` as a plain slice against a defined var (ecgalaxy.php's
+    # `when: php_version[:3] == "8.5"` shape, issue #488): false just skips.
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          ver: "8.3"
+        tasks:
+          - debug:
+              msg: "eight-five"
+            when: ver[:3] == "8.5"
+          - debug:
+              msg: "eight-three"
+            when: ver[:3] == "8.3"
+      YAML
+
+    status.exit_code.must_equal(0)
+    output.must_include("eight-three")
+    output.wont_include("eight-five")
+    output.wont_include("'ver' is undefined")
+  end
 end

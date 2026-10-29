@@ -283,6 +283,11 @@ module Krikri
     end
   end
 
+  lib LibLocale
+    LC_ALL = 6
+    fun setlocale(category : Int32, locale : UInt8*) : UInt8*
+  end
+
   # Base class for all plugins
   abstract class BasePlugin
     property host : Host
@@ -755,10 +760,10 @@ module Krikri
     # each plugin needing its own wiring.
     private def task_environment : Hash(String, String)?
       env_json = @params["_environment"]?
-      return nil unless env_json
+      return (module_locale_fallback? ? with_usable_locale(nil) : nil) unless env_json
 
       env = Hash(String, String).from_json(env_json)
-      return nil if env.empty?
+      return (module_locale_fallback? ? with_usable_locale(nil) : nil) if env.empty?
 
       # The KEY must be a valid POSIX identifier before it can reach a
       # shell: on the SSH path the key is interpolated into an
@@ -776,7 +781,43 @@ module Krikri
           )
         end
       end
-      env
+      module_locale_fallback? ? with_usable_locale(env) : env
+    end
+
+    # Only command/shell: their spawned children are where a broken locale
+    # becomes visible output (perl's "Setting locale failed" on stderr).
+    protected def module_locale_fallback? : Bool
+      false
+    end
+
+    # AnsibleModule#_check_locale: when setlocale(LC_ALL, "") fails under the
+    # module process's effective environment (LANG=en_US.UTF-8 exported by
+    # ssh's SendEnv but never generated on the target), ansible picks the
+    # first of C.utf8, C.UTF-8, en_US.utf8, en_US.UTF-8, C, POSIX that
+    # `locale -a` lists and exports it as LANG, LC_ALL and LC_MESSAGES for
+    # every child run_command spawns. A working locale is left untouched.
+    protected def with_usable_locale(task_env : Hash(String, String)?) : Hash(String, String)?
+      keys = %w[LANG LC_ALL LC_CTYPE LC_MESSAGES LANGUAGE]
+      saved = keys.map { |k| {k, ENV[k]?} }
+      begin
+        task_env.try(&.each { |k, v| ENV[k] = v if keys.includes?(k) })
+        return task_env unless LibLocale.setlocale(LibLocale::LC_ALL, "").null?
+      ensure
+        saved.each { |k, v| ENV[k] = v }
+      end
+
+      best = "C"
+      begin
+        listing = IO::Memory.new
+        status = Process.run("locale", ["-a"], output: listing, error: Process::Redirect::Close)
+        if status.success?
+          available = listing.to_s.lines.map(&.strip)
+          best = ["C.utf8", "C.UTF-8", "en_US.utf8", "en_US.UTF-8", "C", "POSIX"].find { |candidate| available.includes?(candidate) } || "C"
+        end
+      rescue File::Error
+      end
+
+      (task_env || {} of String => String).merge({"LANG" => best, "LC_ALL" => best, "LC_MESSAGES" => best})
     end
 
     # Builds the stdin-fed script for the SSH path: `export K='V'; ...`

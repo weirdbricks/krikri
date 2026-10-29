@@ -33,6 +33,10 @@ module Krikri
   # command.cr's own doc comment for how this was found (a real playbook
   # over real SSH comparing captured stdout against a constant).
   class ShellPlugin < BasePlugin
+    protected def module_locale_fallback? : Bool
+      true
+    end
+
     # ansible.builtin.shell's `type: bool` options, in the real argument-spec
     # declaration order (ansible-doc -j ansible.builtin.shell). Validated at
     # module setup by BasePlugin#validate_bool_params! - see its block
