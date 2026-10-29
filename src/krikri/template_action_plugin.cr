@@ -498,6 +498,15 @@ module Krikri
       if ex.raw_message.includes?("unsupported operand type(s) for +=:")
         return "The filter plugin 'ansible.builtin.indent' failed: #{ex.raw_message}"
       end
+      # A division by an int (bodsch.rspamd's macros.j2 divides a string
+      # literal by 0, issue #435) is Python's TypeError too, same crash
+      # shape and Origin. The engine reports no operand types, so
+      # str-by-int is the only shape live-verified against ansible 2.19;
+      # other operand combinations need the engine to report them before
+      # they can be worded.
+      if ex.raw_message == "unsupported operand for /"
+        return "Error rendering template: unsupported operand type(s) for /: 'str' and 'int'"
+      end
       match = ex.raw_message.match(/\A(?:\w+::)*(?<cls>\w+) is not iterable\z/)
       return nil unless match
       py_type = case match["cls"]

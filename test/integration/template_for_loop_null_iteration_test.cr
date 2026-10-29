@@ -59,6 +59,49 @@ describe "a {% for %} loop over a defined-but-null variable" do
     File.delete(dest) if dest && File.exists?(dest)
   end
 
+  it "fails a string divided by an int with real Ansible's TypeError wording, cause pointed at the template file" do
+    # Issue #435: bodsch.rspamd's macros.j2 has `{{ "Your rspamd_config
+    # contains an invalid value"/0 }}` - ansible-core 2.19.11 fails the
+    # template task with an uncaught TypeError, same crash shape as the
+    # not-iterable one above ("Task failed: Error rendering template: ...",
+    # <<< caused by >>> with the template FILE's Origin), worded
+    # "unsupported operand type(s) for /: 'str' and 'int'" - while krikri
+    # printed the engine's raw TemplateError ("Failed to render template:
+    # line 0: unsupported operand for /").
+    src = File.tempname("str-div-int-src", ".j2")
+    dest = File.tempname("str-div-int-dest")
+    playbook = File.tempname("str-div-int", ".yml")
+    File.write(src, "{{ \"x\"/0 }}\n")
+
+    File.write(playbook, <<-YAML)
+      - name: repro
+        hosts: localhost
+        gather_facts: false
+        tasks:
+          - name: render
+            ansible.builtin.template:
+              src: #{src}
+              dest: #{dest}
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+
+    status.success?.must_equal(false)
+    text = output.to_s
+    text.must_include("Error rendering template: unsupported operand type(s) for /: 'str' and 'int'")
+    text.must_include("<<< caused by >>>")
+    text.must_include("Origin: #{src}")
+    # The engine's raw wording must not surface anywhere.
+    text.wont_include("unsupported operand for /")
+    text.wont_include("Failed to render template")
+    File.exists?(dest).must_equal(false)
+  ensure
+    File.delete(playbook) if playbook && File.exists?(playbook)
+    File.delete(src) if src && File.exists?(src)
+    File.delete(dest) if dest && File.exists?(dest)
+  end
+
   it "prints the same [ERROR] block under no_log: true, before the censored fatal line" do
     # Real 2.19.11 prints the full [ERROR] block for a failed no_log
     # task too (the message is ansible-composed from a type name, no

@@ -217,6 +217,58 @@ describe "role-local filter_plugins/*.py custom filters" do
     FileUtils.rm_rf(root) if root
   end
 
+  it "hands the filter Ansible 2.19-tagged operand types so type(var).__name__ reports the tags (issue #435, bodsch.rspamd)" do
+    # bodsch.rspamd's typeFilter.py is `return type(var).__name__`,
+    # used in macros as `value | type == "str"` with an else branch
+    # dividing strings - on ansible-core 2.19+ var values reaching a
+    # Python filter are tagged subclasses (_AnsibleTaggedStr,
+    # _AnsibleTaggedInt, _AnsibleTaggedFloat, _AnsibleLazyTemplateList,
+    # _AnsibleLazyTemplateDict), so the role's string branch matched
+    # only untagged (computed) values and the divide failed with
+    # "unsupported operand type(s) for /: 'str' and 'int'" (exit 2).
+    # krikri handed plain JSON-marshaled types and the role "succeeded"
+    # where ansible fails. bool cannot be tagged in ansible and None
+    # stays NoneType, so both keep their plain names.
+    root = File.tempname("filter-plugins-tagged-types")
+    Dir.mkdir_p(File.join(root, "roles", "myrole", "filter_plugins"))
+    Dir.mkdir_p(File.join(root, "roles", "myrole", "tasks"))
+    File.write(File.join(root, "roles", "myrole", "filter_plugins", "typeFilter.py"), <<-PYTHON)
+      def typeFilter(var):
+          return type(var).__name__
+
+      class FilterModule(object):
+          def filters(self):
+              return {"type": typeFilter}
+      PYTHON
+    File.write(File.join(root, "roles", "myrole", "tasks", "main.yml"), <<-YAML)
+      - name: report the tagged type names
+        ansible.builtin.debug:
+          msg: >-
+            {{ s | type }} / {{ i | type }} / {{ f | type }} /
+            {{ b | type }} / {{ l | type }} / {{ d | type }}
+        vars:
+          s: hello
+          i: 7
+          f: 2.5
+          b: true
+          l: [1, 2]
+          d: {"a": 1}
+      YAML
+
+    status, output = run_playbook(root, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        roles:
+          - myrole
+      YAML
+
+    status.success?.must_equal(true, output)
+    output.must_include("_AnsibleTaggedStr / _AnsibleTaggedInt / _AnsibleTaggedFloat / bool / _AnsibleLazyTemplateList / _AnsibleLazyTemplateDict", output)
+  ensure
+    FileUtils.rm_rf(root) if root
+  end
+
   it "still hard-fails a genuinely unknown filter behind a leading paren instead of degrading to 'undefined'" do
     # The other half of the paren-path gate: with no filter_plugins
     # source defining the name, the expression must fail the task with
