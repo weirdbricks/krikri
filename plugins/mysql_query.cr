@@ -82,8 +82,8 @@ module Krikri
   # Ansible skips the task with "remote module (...) does not
   # support check mode" after argument validation - reproduced.
   #
-  # Not implemented: positional_args:/named_args: (parameterized
-  # queries) - no real caller in this codebase uses them yet.
+  # positional_args:/named_args: are bound client-side like pymysql
+  # (see bind_arguments).
   class MysqlQueryPlugin < BasePlugin
     include PluginHelpers::AnsibleArgValidation
 
@@ -139,6 +139,9 @@ module Krikri
       end
 
       statements = parse_statements(raw_query)
+      bound = bind_arguments(statements)
+      return bound if bound.is_a?(PluginResult)
+      statements = bound
 
       uri = PluginHelpers::MysqlConnection.build_uri(
         host: @params["login_host"]?,
@@ -199,6 +202,72 @@ module Krikri
         PluginResult.new(changed: false, failed: true, msg: "unable to connect to database, check login_user and login_password are correct or login_unix_socket password is empty: #{ex.message}"))
     rescue ex : MySql::Connection::PacketError
       PluginHelpers::MysqlConnection.add_mysqldb_connector_warning(PluginHelpers::DbErrors.query_failed(ex, "MySQL"))
+    end
+
+    # pymysql's cursor.execute(query, args) interpolates client-side: %s
+    # (positional_args) or %(name)s (named_args) become escaped literals
+    # and %% a literal percent. Without args the query goes through
+    # untouched, so a bare % stays as written.
+    private def bind_arguments(statements : Array(String)) : Array(String) | PluginResult
+      positional = @params["positional_args"]?
+      named = @params["named_args"]?
+      return statements unless positional || named
+
+      args = JSON.parse(positional || named || "") rescue nil
+      if positional
+        list = args.try(&.as_a?)
+        return bind_failure("positional_args must be a list") unless list
+        statements.map { |stmt| bind_positional(stmt, list) }
+      else
+        map = args.try(&.as_h?)
+        return bind_failure("named_args must be a dict") unless map
+        statements.map { |stmt| bind_named(stmt, map) }
+      end
+    rescue ex : BindError
+      bind_failure(ex.message || "")
+    end
+
+    private class BindError < Exception
+    end
+
+    private def bind_failure(msg : String) : PluginResult
+      PluginResult.new(changed: false, failed: true, msg: msg)
+    end
+
+    private def bind_positional(stmt : String, list : Array(JSON::Any)) : String
+      index = 0
+      stmt.gsub(/%(%|s)/) do |_, match|
+        next "%" if match[1] == "%"
+        value = list[index]? || raise BindError.new("not enough arguments for format string")
+        index += 1
+        self.class.sql_literal(value)
+      end
+    end
+
+    private def bind_named(stmt : String, map : Hash(String, JSON::Any)) : String
+      stmt.gsub(/%(%|\((\w+)\)s)/) do |_, match|
+        next "%" if match[1] == "%"
+        value = map[match[2]]? || raise BindError.new("'#{match[2]}'")
+        self.class.sql_literal(value)
+      end
+    end
+
+    SQL_ESCAPES = {"\0" => "\\0", "\n" => "\\n", "\r" => "\\r", "\x1a" => "\\Z"}
+
+    def self.sql_literal(value : JSON::Any) : String
+      case raw = value.raw
+      when Nil     then "NULL"
+      when Bool    then raw ? "1" : "0"
+      when Int64   then raw.to_s
+      when Float64 then raw.to_s
+      when String  then quote_string(raw)
+      else              quote_string(value.to_json)
+      end
+    end
+
+    def self.quote_string(text : String) : String
+      escaped = text.gsub(/[\\'\0\n\r\x1a]/) { |found| SQL_ESCAPES[found]? || "\\#{found}" }
+      "'#{escaped}'"
     end
 
     private def parse_statements(raw : String) : Array(String)

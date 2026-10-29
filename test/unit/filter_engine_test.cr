@@ -375,6 +375,16 @@ describe Krikri::VariableSubstitutor::FilterEngine do
     chain.must_equal([%(replace('a|b', 'c')), "upper"])
   end
 
+  # A `|` inside a list literal belongs to that element's own chain, never
+  # to the outer one - claranet.mariadb's
+  # `[users, patch | d([])] | lists_mergeby(...)` split on the inner pipe
+  # and dispatched the mangled remainder `d([])]` as a filter name (issue
+  # #455). Jinja's grammar gives the list literal precedence over the pipe.
+  it "does not split a | that appears inside a list literal" do
+    chain = Krikri::VariableSubstitutor::FilterEngine.split_chain(%([a, b | d([])] | community.general.lists_mergeby('name')))
+    chain.must_equal([%([a, b | d([])]), %(community.general.lists_mergeby('name'))])
+  end
+
   it "int filter truncates a native Float64 directly, matching Python's int()" do
     # Real bug found benchmarking geerlingguy.swap's own check-size.yml
     # (`(stat.size / 1024 / 1024) | int`) once division itself was

@@ -184,8 +184,17 @@ module Krikri
 
       # Splits a `|`-joined filter chain into its individual filter
       # expressions, ignoring any `|` inside a quoted string or a
-      # parenthesized argument list - `replace('a|b', 'c')` is one filter,
+      # bracketed/parenthesized argument list - `replace('a|b', 'c')` is one filter,
       # not two split on the `|` inside its own argument.
+      #
+      # Tracks square/curly brackets too, not just parens: a `|` INSIDE a
+      # list literal belongs to that element's own chain, never to the
+      # outer one - claranet.mariadb's
+      # `[users, patch | d([])] | community.general.lists_mergeby(...)`
+      # split on the inner `|` and dispatched the mangled remainder
+      # `d([])]` as a filter name ("No filter named 'd([])]'.", issue
+      # #455). Jinja's grammar gives the list literal precedence over the
+      # pipe, so `[...]`/`{...}` are boundaries exactly like `(...)`.
       def self.split_chain(expr : String) : Array(String)
         parts = [] of String
         current = String::Builder.new
@@ -199,10 +208,10 @@ module Krikri
           elsif char == '\'' || char == '"'
             quote = char
             current << char
-          elsif char == '('
+          elsif char == '(' || char == '[' || char == '{'
             depth += 1
             current << char
-          elsif char == ')'
+          elsif char == ')' || char == ']' || char == '}'
             depth -= 1
             current << char
           elsif char == '|' && depth == 0

@@ -143,6 +143,50 @@ describe "db module argument-spec parity" do
     msg.must_include("query, session_vars, single_transaction (ssl_ca, ssl_cert, ssl_key).")
   end
 
+  # claranet.mariadb's "Get list of hosts for the anonymous user."
+  # (issue #455): a literal YAML-list positional_args used to reach the
+  # plugin on the comma-joined wire (a single '' binding collapsed to
+  # ""), which the bind step rejected as "positional_args must be a
+  # list" BEFORE the connection - real ansible fails later, at the
+  # server. Validation-only: the connection failure proves the bind
+  # step accepted the list, no database needed. The looped case pins
+  # the per-leaf rendering (a binding containing quotes/commas must
+  # not corrupt the JSON wire).
+  it "accepts a literal-list positional_args (fails at the connection, not the bind)" do
+    play = String.build do |io|
+      io << "- hosts: localhost\n"
+      io << "  connection: local\n"
+      io << "  gather_facts: false\n"
+      io << "  tasks:\n"
+      io << "    - name: anonymous hosts\n"
+      io << "      community.mysql.mysql_query:\n"
+      io << "        login_db: mysql\n"
+      io << "        login_unix_socket: /nonexistent/krikri-parity.sock\n"
+      io << "        query: SELECT Host FROM mysql.user WHERE User = %s\n"
+      io << "        positional_args:\n"
+      io << "          - ''\n"
+      io << "      ignore_errors: true\n"
+      io << "    - name: looped bindings with hostile text\n"
+      io << "      community.mysql.mysql_query:\n"
+      io << "        login_db: mysql\n"
+      io << "        login_unix_socket: /nonexistent/krikri-parity.sock\n"
+      io << "        query: DELETE FROM mysql.user WHERE User=%s AND Host=%s\n"
+      io << "        positional_args:\n"
+      io << "          - ''\n"
+      io << "          - \"{{ item }}\"\n"
+      io << "      loop:\n"
+      io << "        - localhost\n"
+      io << "        - 'has \"quotes\" and, commas'\n"
+      io << "      ignore_errors: true\n"
+    end
+
+    output = run_playbook(play)
+    output.includes?("positional_args must be a list").must_equal(false)
+    # the " [ERROR] ... " line plus the fatal JSON line, per task item
+    connection_failures = output.split("unable to connect to database").size - 1
+    assert connection_failures >= 5
+  end
+
   it "names postgresql_query without its collection prefix, like real" do
     msg = task_msg("postgresql_query", <<-PARAMS)
       query: "select 1"

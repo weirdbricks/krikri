@@ -3106,6 +3106,32 @@ describe Krikri::PlaybookParser do
       parsed[0]["name"].as_s.must_equal("solo-net")
     end
 
+    # mysql_query's bound parameters ride the same JSON wire as `query:`:
+    # a literal YAML `positional_args: ['']` comma-joins to the EMPTY
+    # string, so the plugin-side JSON decode saw "not a list" and failed
+    # the task before it ever reached the server (claranet.mariadb's
+    # "Get list of hosts for the anonymous user.", issue #455) - real
+    # ansible accepts it and only fails later, at the connection.
+    it "JSON-encodes mysql_query positional_args/named_args containers" do
+      task = single_task(<<-YAML)
+        - name: t
+          community.mysql.mysql_query:
+            query: SELECT Host FROM mysql.user WHERE User = %s AND Host = %(h)s
+            positional_args:
+              - ''
+              - "{{ item }}"
+            named_args:
+              h: localhost
+        YAML
+
+      positional = JSON.parse(task.params["positional_args"]).as_a
+      positional.size.must_equal(2)
+      positional[0].as_s.must_equal("")
+      positional[1].as_s.must_equal("{{ item }}")
+      named = JSON.parse(task.params["named_args"]).as_h
+      named["h"].as_s.must_equal("localhost")
+    end
+
     # community.docker's env/labels are dict-typed options that
     # Ansible also accepts written as a list of KEY=VALUE strings, and
     # such an element may legitimately contain a comma (a JSON blob, a

@@ -32,6 +32,18 @@ describe "mysql_query plugin argument validation" do
     result["msg"].as_s.must_equal("parameters are mutually exclusive: positional_args|named_args")
   end
 
+  it "accepts positional_args and fails on too few for the placeholders before connecting" do
+    result = PluginSpecHelper.run("mysql_query", {
+      "query"             => "DELETE FROM mysql.user WHERE User=%s AND Host=%s",
+      "positional_args"   => "[\"\"]",
+      "login_user"        => "root",
+      "login_unix_socket" => "/run/mysqld/mysqld.sock",
+    })
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("not enough arguments for format string")
+  end
+
   it "fails a non-boolean single_transaction" do
     result = PluginSpecHelper.run("mysql_query", {
       "query"              => "SELECT 1",
