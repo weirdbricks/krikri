@@ -1,3 +1,4 @@
+require "file_utils"
 require "../minitest_helper"
 require "../../src/krikri/playbook_parser"
 require "../../src/krikri/collection_index"
@@ -91,6 +92,41 @@ describe "ansible.mariadb module resolution" do
       output.wont_include("uses unimplemented plugin: mariadb_db")
       output.wont_include("unavailable modules")
       status.exit_code.wont_equal(4)
+    end
+  end
+
+  it "refuses ansible.mariadb.mariadb_db reached through include_tasks (rc=4) on a controller without the collection" do
+    dir = File.tempname("mariadb-include")
+    Dir.mkdir_p(dir)
+    begin
+      File.write(File.join(dir, "databases.yml"), <<-YAML)
+        ---
+        - name: Ensure MariaDB databases are present (or absent)
+          ansible.mariadb.mariadb_db:
+            name: specdb
+            state: absent
+        YAML
+      playbook = File.join(dir, "play.yml")
+      File.write(playbook, <<-YAML)
+        - hosts: localhost
+          connection: local
+          gather_facts: false
+          tasks:
+            - name: Include task databases.yml
+              ansible.builtin.include_tasks: databases.yml
+        YAML
+      captured = IO::Memory.new
+      status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: captured, error: captured)
+      output = captured.to_s
+      if mariadb_collection_state == false
+        status.exit_code.must_equal(4, output)
+        output.must_include("[ERROR]: couldn't resolve module/action 'ansible.mariadb.mariadb_db'. This often indicates a misspelling, missing collection, or incorrect module path.")
+        output.wont_include("PLAY RECAP")
+      else
+        status.exit_code.wont_equal(4)
+      end
+    ensure
+      FileUtils.rm_rf(dir)
     end
   end
 
