@@ -187,6 +187,40 @@ describe "get_url plugin" do
     File.delete(dest) if dest && File.exists?(dest)
   end
 
+  it "keeps the dest's stat info on the failure for an unresolvable owner: (kilip.chezmoi)" do
+    dest = File.tempname("get-url-spec")
+    result = PluginSpecHelper.run("get_url", {"url" => "#{GET_URL_TEST_BASE}/file.txt", "dest" => dest, "owner" => ""})
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("chown failed: failed to look up user ")
+    result["path"].as_s.must_equal(dest)
+    result["state"].as_s.must_equal("file")
+    result["uid"].as_i64.must_equal(File.info(dest).owner_id.to_i64)
+  ensure
+    File.delete(dest) if dest && File.exists?(dest)
+  end
+
+  it "applies mode: only after owner:/group: resolve, so an unresolvable owner leaves the download mode: (kilip.chezmoi)" do
+    # Ansible's set_fs_attributes_if_different runs owner, then group,
+    # then mode - the unresolvable owner ("") fails the task BEFORE the
+    # chmod, so the dest keeps the download's own 0644 and the failure's
+    # stat block reports it. krikri used to chmod first and reported 0777
+    # on both the dest and in the failure - and the executable dest then
+    # made the role's follow-up command task succeed where real ansible
+    # failed with "Permission denied" on the warm rerun.
+    dest = File.tempname("get-url-spec")
+    result = PluginSpecHelper.run("get_url",
+      {"url" => "#{GET_URL_TEST_BASE}/file.txt", "dest" => dest, "mode" => "0777", "owner" => ""},
+      umask: 0o022)
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("chown failed: failed to look up user ")
+    result["mode"].as_s.must_equal("0644")
+    File.info(dest).permissions.value.to_s(8).must_equal("644")
+  ensure
+    File.delete(dest) if dest && File.exists?(dest)
+  end
+
   it "strips surrounding whitespace off the url before downloading, but reports the raw url" do
     # Real Ansible strips leading/trailing whitespace (including
     # newlines) off the url before requesting it - urllib rejects the
