@@ -1940,6 +1940,7 @@ module Krikri
         task.source_line, task.source_col = pos
       end
       warn_reserved_vars(task.vars.keys, task.source_file, task.source_line)
+      warn_reserved_register(task.register, task.source_file, task.source_line)
 
       # The task's own `vars:` entries' defining positions - real points a
       # name-template error inside one at its `vars:` value (live-verified
@@ -4570,17 +4571,44 @@ module Krikri
         next unless RESERVED_VAR_NAMES.includes?(key)
         found = locate_reserved_key(lines, key, from_line)
         next unless found
-        # Byte-identical to the direct STDERR.puts sequence it replaces:
-        # the Origin block already ends in a newline, so one more gives the
-        # blank line ansible prints after it.
-        text = "[WARNING]: Found variable using reserved name '#{key}'.\n" \
-               "#{reserved_origin_block(sf, lines, found[0], found[1])}\n"
-        if @@reserved_warning_buffers.empty?
-          STDERR.print text
-        else
-          @@reserved_warning_buffers[-1] += text
+        emit_reserved_warning(key, sf, lines, found)
+      end
+    end
+
+    # Shared emit for every task-parse-path reserved-name warning: the
+    # Origin block already ends in a newline, so one more gives the blank
+    # line ansible prints after it.
+    private def self.emit_reserved_warning(key : String, source_file : String, lines : Array(String), found : Tuple(Int32, Int32)) : Nil
+      text = "[WARNING]: Found variable using reserved name '#{key}'.\n" \
+             "#{reserved_origin_block(source_file, lines, found[0], found[1])}\n"
+      if @@reserved_warning_buffers.empty?
+        STDERR.print text
+      else
+        @@reserved_warning_buffers[-1] += text
+      end
+    end
+
+    # ansible-core 2.19 warns for a task's `register:` name too (issue
+    # #469) - same text, Origin pointing at the register VALUE token.
+    private def self.warn_reserved_register(register : String?, source_file : String?, from_line : Int32) : Nil
+      return unless register && RESERVED_VAR_NAMES.includes?(register)
+      return unless sf = source_file
+      return unless File.file?(sf)
+      lines = source_lines(sf) || return
+      found = locate_reserved_register(lines, from_line)
+      return unless found
+      emit_reserved_warning(register, sf, lines, found)
+    end
+
+    private def self.locate_reserved_register(lines : Array(String), from_line : Int32) : Tuple(Int32, Int32)?
+      ((from_line - 1)...lines.size).each do |idx|
+        line = lines[idx]
+        break if idx > (from_line - 1) && line.strip.empty? == false && line.strip.starts_with?("- ") && line.size - line.lstrip.size < 4
+        if m = line.match(/^(\s*)register:(\s*)(\S)/)
+          return {idx, m[1].size + "register:".size + m[2].size + 1}
         end
       end
+      nil
     end
 
     # The var key's own line: the first `key:` after *from_line* (1-based),

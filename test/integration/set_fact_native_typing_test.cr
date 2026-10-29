@@ -241,4 +241,76 @@ describe "set_fact keeps a Jinja string expression a string (2.19 native typing)
     output.must_include("V=str")
     output.must_include("J=str")
   end
+
+  it "keeps block-tag yes/no output a string so when: fails the bool check" do
+    # Issue #469: ansible-core keeps `{% if %}...{% endif %}` output a
+    # str (native typing needs the whole AST to be one expression), so
+    # `when: a` on a fact holding the text "yes" errors with the
+    # conditional-type message instead of silently coercing to true.
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - set_fact:
+              a: '{% if true %}yes{% else %}no{% endif %}'
+          - debug:
+              msg: never runs
+            when: a
+      YAML
+
+    status.success?.must_equal(false)
+    output.must_include("Conditionals must have a boolean result")
+  end
+
+  it "keeps block-tag True/False output a string so when: fails the bool check" do
+    # Issue #469 (criecm.common's do_sys): the exact text "True" is also
+    # a str in ansible when it comes from block-tag output, so the strict
+    # conditional gate must not mistake it for a preserved bool.
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - set_fact:
+              do_sys: "{% if true %}True{% else %}False{% endif %}"
+          - debug:
+              msg: never runs
+            when: do_sys
+      YAML
+
+    status.success?.must_equal(false)
+    output.must_include("Conditionals must have a boolean result")
+    output.wont_include("\"msg\": \"never runs\"")
+  end
+
+  it "still runs when: on a real bool fact" do
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - set_fact:
+              literal_bool: true
+              expr_bool: "{{ 1 == 1 }}"
+          - debug:
+              msg: literal ran
+            when: literal_bool
+          - debug:
+              msg: expr ran
+            when: expr_bool
+          - set_fact:
+              from_item: "{{ item }}"
+            loop: ["{{ 1 == 1 }}"]
+          - debug:
+              msg: item ran
+            when: from_item
+      YAML
+
+    status.success?.must_equal(true)
+    output.must_include("literal ran")
+    output.must_include("expr ran")
+    # a templated loop item is natively typed in ansible, not "True" text
+    output.must_include("item ran")
+  end
 end

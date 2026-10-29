@@ -3667,6 +3667,28 @@ module Krikri
           # every host instead of skipping it.
           json_any_to_value(rerender_container_templated(vars, value, raise_undefined, expr))
         else
+          # A stored String exactly "True"/"False" here is a genuine str,
+          # not this engine's whole-`{{ }}` bool rendering: a whole-value
+          # `{{ expr }}` takes the templated branch above (where issue
+          # #73's structural typing recovers the real bool), and a YAML
+          # bare bool is stored as a JSON bool - the only producers left
+          # are block-tag/multi-node templates (`{% if x %}True{% endif
+          # %}`, set_fact's stored render) whose result real
+          # ansible-core 2.19 keeps a plain str (Template.render()
+          # stringifies the moment the AST is more than one output node),
+          # so `when:` on it must fail like any other string. Raised here
+          # rather than left to the strict String gate's "True"/"False"
+          # carve-out above, which exists for values stringified before
+          # the conditional ever saw them and cannot tell these apart.
+          # Result text stays "True" even for "False" - a non-empty str
+          # is truthy, the same wording the 'str' gate emits.
+          if strict && !allow_broken_conditionals? &&
+             (raw_str = value.raw.as?(String)) && (raw_str == "True" || raw_str == "False") &&
+             !raw_str.includes?("{{") && !raw_str.includes?("{%")
+            raise ConditionalBooleanError.new(
+              "Conditional result (True) was derived from value of type 'str'. " \
+              "Conditionals must have a boolean result.")
+          end
           json_any_to_value(value)
         end
       else

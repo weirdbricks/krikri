@@ -82,70 +82,68 @@ module Krikri
           # fall through to the legacy coercion
         end
       end
-      case value
-      when "true", "True", "yes"
-        JSON::Any.new(true)
-      when "false", "False", "no"
-        JSON::Any.new(false)
+      # WHY: no bool coercion here on purpose. ansible's block-tag
+      # output ({% if %}...{% endif %}) stays a str, so bare "yes"/"no"/
+      # "true"/"false" text must NOT become a JSON bool - only a
+      # whole-span `{{ }}` (NATIVE_TYPED_PREFIX above) or a literal
+      # YAML scalar is natively typed. See issue #469.
+      if leading_zero_number?(value)
+        # Real bug found live-verifying the Crinja templating convergence
+        # work against dev-sec os_hardening: `.to_i64?` happily
+        # parses "0755" as decimal 755 - Crystal's decimal integer
+        # parsing simply ignores leading zeros, the same way `"0755".
+        # to_i` does in most languages. os_hardening's own dynamic
+        # `set_fact: "{{ item.key }}": "{{ item.value }}"` (see the
+        # comment on the JSON branch below) round-trips EVERY
+        # os_mnt_*_dir_mode/os_*_perms value through this coercion,
+        # silently turning the octal-style mode STRING "0755" into the
+        # int 755 - which downstream (`file: mode: "{{ ... }}"`, fed
+        # straight to a chmod syscall expecting octal bits) applied as
+        # mode 01363 instead of 0755 (755 read as octal digits, not
+        # decimal), corrupting real directory permissions on
+        # `/dev`/`/run`/`/var`/`/home`/`/tmp`/`/dev/shm`/`/var/tmp` on
+        # a live host. A leading zero followed by more digits is never
+        # a genuine decimal integer literal (Python 3 itself rejects
+        # `0755` as invalid int syntax) - always either a deliberate
+        # octal-style string (this codebase's own file-mode convention)
+        # or otherwise never meant to lose that leading zero, so it's
+        # excluded from int coercion entirely and falls through to the
+        # plain-string case below.
+        JSON::Any.new(value)
+      elsif value.matches?(/\A[0-7]{3,4}\z/)
+        # Same class of bug, one zero shorter: an octal-MODE-shaped
+        # string with no leading zero ("1777" - os_hardening's own
+        # /dev/shm, /tmp and /var/tmp entries are exactly this shape)
+        # decimal-coerced into the int 1777. Ansible's native
+        # typing keeps a string-sourced fact a string, and the string
+        # is what downstream mode:/consumers need - a fed-back int
+        # instead re-triggers the executor's int-mode reformatting
+        # (`'%04o'`, see substitute_task_params's key == "mode"
+        # comment), turning "1777" into "3361" and corrupting real
+        # directory permissions again. The executor's reformat can
+        # afford to be unconditional (and must be - geerlingguy.redis's
+        # `mode: "{{ redis_conf_mode }}"` with 0640's decimal 416 was
+        # misapplied as octal 416, never converging against
+        # redis-server's own postinst chmod 640) precisely because this
+        # coercion no longer manufactures fake ints out of octal-shaped
+        # strings. Numeric comparisons are unaffected either way -
+        # compare_values parses both sides numerically.
+        JSON::Any.new(value)
+      elsif int_value = value.to_i64?
+        JSON::Any.new(int_value)
+      elsif float_value = value.to_f64?
+        JSON::Any.new(float_value)
+      elsif (value.starts_with?('{') || value.starts_with?('[')) && (parsed = try_parse_json(value))
+        # A dict/list-valued fact (e.g. dynamic `set_fact: "{{
+        # item.key }}": "{{ item.value }}"` over a dict item, as
+        # dev-sec os_hardening's os_shadow_perms/os_passwd_perms are
+        # built) arrives here as the JSON text VariableLookup#format_value
+        # serialized it to - parse it back to a real Hash/Array so
+        # later dotted access (`os_shadow_perms.owner`) works, instead
+        # of leaving it a flat string that renders "undefined".
+        parsed
       else
-        if leading_zero_number?(value)
-          # Real bug found live-verifying the Crinja templating convergence
-          # work against dev-sec os_hardening: `.to_i64?` happily
-          # parses "0755" as decimal 755 - Crystal's decimal integer
-          # parsing simply ignores leading zeros, the same way `"0755".
-          # to_i` does in most languages. os_hardening's own dynamic
-          # `set_fact: "{{ item.key }}": "{{ item.value }}"` (see the
-          # comment on the JSON branch below) round-trips EVERY
-          # os_mnt_*_dir_mode/os_*_perms value through this coercion,
-          # silently turning the octal-style mode STRING "0755" into the
-          # int 755 - which downstream (`file: mode: "{{ ... }}"`, fed
-          # straight to a chmod syscall expecting octal bits) applied as
-          # mode 01363 instead of 0755 (755 read as octal digits, not
-          # decimal), corrupting real directory permissions on
-          # `/dev`/`/run`/`/var`/`/home`/`/tmp`/`/dev/shm`/`/var/tmp` on
-          # a live host. A leading zero followed by more digits is never
-          # a genuine decimal integer literal (Python 3 itself rejects
-          # `0755` as invalid int syntax) - always either a deliberate
-          # octal-style string (this codebase's own file-mode convention)
-          # or otherwise never meant to lose that leading zero, so it's
-          # excluded from int coercion entirely and falls through to the
-          # plain-string case below.
-          JSON::Any.new(value)
-        elsif value.matches?(/\A[0-7]{3,4}\z/)
-          # Same class of bug, one zero shorter: an octal-MODE-shaped
-          # string with no leading zero ("1777" - os_hardening's own
-          # /dev/shm, /tmp and /var/tmp entries are exactly this shape)
-          # decimal-coerced into the int 1777. Ansible's native
-          # typing keeps a string-sourced fact a string, and the string
-          # is what downstream mode:/consumers need - a fed-back int
-          # instead re-triggers the executor's int-mode reformatting
-          # (`'%04o'`, see substitute_task_params's key == "mode"
-          # comment), turning "1777" into "3361" and corrupting real
-          # directory permissions again. The executor's reformat can
-          # afford to be unconditional (and must be - geerlingguy.redis's
-          # `mode: "{{ redis_conf_mode }}"` with 0640's decimal 416 was
-          # misapplied as octal 416, never converging against
-          # redis-server's own postinst chmod 640) precisely because this
-          # coercion no longer manufactures fake ints out of octal-shaped
-          # strings. Numeric comparisons are unaffected either way -
-          # compare_values parses both sides numerically.
-          JSON::Any.new(value)
-        elsif int_value = value.to_i64?
-          JSON::Any.new(int_value)
-        elsif float_value = value.to_f64?
-          JSON::Any.new(float_value)
-        elsif (value.starts_with?('{') || value.starts_with?('[')) && (parsed = try_parse_json(value))
-          # A dict/list-valued fact (e.g. dynamic `set_fact: "{{
-          # item.key }}": "{{ item.value }}"` over a dict item, as
-          # dev-sec os_hardening's os_shadow_perms/os_passwd_perms are
-          # built) arrives here as the JSON text VariableLookup#format_value
-          # serialized it to - parse it back to a real Hash/Array so
-          # later dotted access (`os_shadow_perms.owner`) works, instead
-          # of leaving it a flat string that renders "undefined".
-          parsed
-        else
-          JSON::Any.new(value)
-        end
+        JSON::Any.new(value)
       end
     end
 
