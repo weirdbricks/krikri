@@ -59,6 +59,28 @@ describe "delegated task to a host not in the inventory (issue #102)" do
     output.must_match(/testhost\s*: ok=0\s+changed=0\s+unreachable=1\s+failed=0/)
   end
 
+  it "prints the Task failed. chain with the ssh error as its caused-by link" do
+    # Ansible-core 2.19.11 shows a delegated task's unreachable from a LOCAL
+    # origin as the "Task failed." head with the Origin under it and the ssh
+    # error after "<<< caused by >>>" - not the plain single "Task failed:
+    # <ssh error>" block an ssh origin gets (see report_unreachable).
+    status, output = run_playbook(
+      "testhost ansible_connection=local\n",
+      <<-YAML
+        - hosts: testhost
+          gather_facts: false
+          tasks:
+            - name: delegated
+              command: "true"
+              delegate_to: mynode.mycluster.invalid
+        YAML
+    )
+
+    status.exit_code.must_equal(4)
+    output.must_match(/\[ERROR\]: Task failed: Failed to connect to the host via ssh: ssh: Could not resolve hostname mynode\.mycluster\.invalid.*\n\nTask failed\.\nOrigin: .*\n\n.*<<< caused by >>>\n\nFailed to connect to the host via ssh: ssh: Could not resolve hostname mynode\.mycluster\.invalid/m)
+    output.must_match(/fatal: \[testhost -> mynode\.mycluster\.invalid\]: UNREACHABLE!/)
+  end
+
   it "still runs delegated localhost tasks locally" do
     status, output = run_playbook(
       "testhost ansible_connection=local\n",
