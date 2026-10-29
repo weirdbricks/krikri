@@ -107,6 +107,10 @@ module Krikri
     private def filter_chain_loop_item(result : String, bare : String, vars_context : Hash(String, JSON::Any)) : JSON::Any
       structured = structured_loop_source_value(bare, vars_context)
       return JSON::Any.new(nil) if structured && structured.raw.nil?
+      # A bool item stays a real bool (ansible natively types the loop
+      # source), else its "True" text fails a later strict `when:` on a
+      # fact set from `item` (issue #469).
+      return structured if structured && !structured.as_bool?.nil?
       JSON::Any.new(result)
     end
 

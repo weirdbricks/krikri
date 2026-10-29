@@ -1851,7 +1851,11 @@ module Krikri
               stripped[2..-3].strip, vars_context, strict: strict,
               host_context: JinjaHostContext.new(vars_context)
             )
-            return evaluated if evaluated && (evaluated.as_a? || evaluated.as_h?)
+            # A bool result stays a real bool for the same reason: the
+            # stringified "True" would later fail a strict `when: item`
+            # / `when: fact_set_from_item` where ansible's native-typed
+            # loop item passes (live-verified, issue #469).
+            return evaluated if evaluated && (evaluated.as_a? || evaluated.as_h? || !evaluated.as_bool?.nil?)
           rescue
             # Not a list/dict, or not even valid JSON (an ordinary
             # rendered string) - fall through to the generic path below,

@@ -95,6 +95,35 @@ describe "reserved variable name warning" do
     FileUtils.rm_rf(dir) if dir
   end
 
+  # ansible-core 2.19 warns for a task's `register:` name too (issue
+  # #469): Origin points at the register VALUE token - the line of
+  # `register:`, the column of the first character after `register:` and
+  # its spaces.
+  it "warns for a reserved register name with the value token's Origin" do
+    playbook = File.tempname("reserved-register", ".yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        gather_facts: false
+        tasks:
+          - name: get date
+            command: 'date +%s'
+            register: now
+          - debug: msg="hi"
+            register: not_reserved_at_all
+      YAML
+    output = IO::Memory.new
+    Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+    text = output.to_s
+
+    text.must_include("[WARNING]: Found variable using reserved name 'now'.")
+    text.must_include("Origin: #{playbook}:6:17")
+    # a non-reserved register name never warns
+    refute(text.includes?("not_reserved_at_all"))
+    text.scan("Found variable using reserved name").size.must_equal(1)
+  ensure
+    File.delete(playbook) if playbook && File.exists?(playbook)
+  end
+
   it "points include_role's `name` warning at the vars entry, not the module's own name key" do
     dir = File.tempname("reserved-var-role")
     Dir.mkdir_p(File.join(dir, "roles", "myrole", "tasks"))

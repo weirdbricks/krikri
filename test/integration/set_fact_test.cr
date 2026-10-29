@@ -10,14 +10,15 @@ describe "set_fact plugin" do
     result["ansible_facts"]["greeting"].as_s.must_equal("hi")
   end
 
-  it "coerces bool-looking and int-looking values, and leaves other strings alone" do
+  it "coerces int-looking values, and leaves bool-looking and other strings alone" do
     result = PluginSpecHelper.run("set_fact", {
       "is_ready" => "true", "is_done" => "false", "count" => "3", "ratio" => "1.5", "name" => "web01",
     })
 
     facts = result["ansible_facts"]
-    facts["is_ready"].as_bool.must_equal(true)
-    facts["is_done"].as_bool.must_equal(false)
+    # Un-prefixed bare true/false is block-tag output, a str in ansible.
+    facts["is_ready"].as_s.must_equal("true")
+    facts["is_done"].as_s.must_equal("false")
     facts["count"].as_i64.must_equal(3)
     facts["ratio"].as_f.must_equal(1.5)
     facts["name"].as_s.must_equal("web01")

@@ -1348,17 +1348,24 @@ describe Krikri::ConditionalEvaluator do
     # under ansible-core 2.19's strict conditional-boolean requirement)
     # and always raised, even for the plain bare-variable idiom (`when:
     # dns_forced_in_dhclientconf` alone), not just combined via `and`.
-    it "does not raise for a bare variable whose value is the string \"True\"/\"False\"" do
+    # The whole-value template shape above is recovered structurally
+    # (templated branch); a STORED plain str "True"/"False" is a genuine
+    # str in ansible (block-tag set_fact output, issue #469) and fails.
+    it "raises for a bare variable whose stored value is the plain string \"True\"/\"False\"" do
       v = Hash(String, JSON::Any).new
       v["dns_forced_in_dhclientconf"] = JSON::Any.new("True")
-      Krikri::ConditionalEvaluator.evaluate(
-        "dns_forced_in_dhclientconf", v, strict: true
-      ).must_equal(true)
+      assert_raises_message(Krikri::ConditionalEvaluator::ConditionalBooleanError, /type 'str'/) do
+        Krikri::ConditionalEvaluator.evaluate(
+          "dns_forced_in_dhclientconf", v, strict: true
+        )
+      end
 
       v["dns_forced_in_dhclientconf"] = JSON::Any.new("False")
-      Krikri::ConditionalEvaluator.evaluate(
-        "dns_forced_in_dhclientconf", v, strict: true
-      ).must_equal(false)
+      assert_raises_message(Krikri::ConditionalEvaluator::ConditionalBooleanError, /type 'str'/) do
+        Krikri::ConditionalEvaluator.evaluate(
+          "dns_forced_in_dhclientconf", v, strict: true
+        )
+      end
     end
 
     it "does not raise for that same boolean-string variable combined via 'and'" do
