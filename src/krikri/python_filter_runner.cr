@@ -816,6 +816,52 @@ module Krikri
               return key in self.vars
 
 
+      class _AnsibleTaggedStr(str):
+          pass
+
+
+      class _AnsibleTaggedInt(int):
+          pass
+
+
+      class _AnsibleTaggedFloat(float):
+          pass
+
+
+      class _AnsibleLazyTemplateList(list):
+          pass
+
+
+      class _AnsibleLazyTemplateDict(dict):
+          pass
+
+
+      def _tag_var(value):
+          # Ansible 2.19+ data tagging wraps every value flowing from
+          # play vars into a Python filter in a tagged subclass, so
+          # `type(var).__name__` reports the tag, not the plain
+          # builtin. The JSON-marshaled operand carries no provenance,
+          # so all var-like operands are tagged here (ansible keeps
+          # computed values like `v | upper` plain str - an accepted
+          # approximation). bool cannot be tagged and None stays
+          # NoneType in ansible, so both are left untouched; args and
+          # kwargs are literal expressions, never tagged.
+          if value is None or isinstance(value, bool):
+              return value
+          if isinstance(value, str):
+              return _AnsibleTaggedStr(value)
+          if isinstance(value, int):
+              return _AnsibleTaggedInt(value)
+          if isinstance(value, float):
+              return _AnsibleTaggedFloat(value)
+          if isinstance(value, list):
+              return _AnsibleLazyTemplateList(_tag_var(item) for item in value)
+          if isinstance(value, dict):
+              return _AnsibleLazyTemplateDict(
+                  (_tag_var(key), _tag_var(item)) for key, item in value.items())
+          return value
+
+
       def _plugin_filters(path):
           module = _load_plugin(path)
           plugin_dir = os.path.dirname(os.path.abspath(path))
@@ -875,7 +921,7 @@ module Krikri
               call_args = [_StubContext(payload.get("vars") or {})]
           else:
               call_args = []
-          call_args.append(payload.get("value"))
+          call_args.append(_tag_var(payload.get("value")))
           call_args.extend(payload.get("args") or [])
           result = func(*call_args, **(payload.get("kwargs") or {}))
           sys.stdout.write(json.dumps({"ok": True, "result": result}, default=_serialize))
