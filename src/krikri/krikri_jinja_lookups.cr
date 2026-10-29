@@ -1,5 +1,6 @@
 require "json"
 require "krikri-jinja/krikri_jinja"
+require "./collection_index"
 require "./lookup_plugins"
 require "./python_lookup_runner"
 require "./jinja_host_context"
@@ -453,7 +454,20 @@ module Krikri
       role_path = scope_string(ctx, "role_path")
       playbook_dir = scope_string(ctx, "playbook_dir")
       source = PythonLookupRunner.find_source(name, role_path, playbook_dir)
-      raise KrikriJinja::TemplateError.new("lookup plugin (#{name}) not found", 0) unless source
+      # Ansible fails the task the moment a lookup plugin cannot be found
+      # ("The lookup plugin 'nope.nope.php_version' was not found." -
+      # the plugin loader's own error, before any plugin run or
+      # errors= option handling); the old "lookup plugin (name) not
+      # found" TemplateError got swallowed by the renderer's
+      # give-back-the-text fallback instead of failing. The typed
+      # LookupError is what JinjaRenderer#render! re-raises as a hard
+      # task failure - same message shape the hand-rolled dispatch
+      # raises for the same condition.
+      # Same loader-ImportError [WARNING] real prints before this failure
+      # when the name names a collection that cannot be imported; bare
+      # names and installed collections stay silent (the helper filters).
+      Krikri::CollectionIndex.warn_missing_lookup_plugin(name) unless source
+      raise PythonLookupRunner::LookupError.new("The lookup plugin '#{name}' was not found.") unless source
 
       options = {} of String => JSON::Any
       kwargs.each do |key, value|

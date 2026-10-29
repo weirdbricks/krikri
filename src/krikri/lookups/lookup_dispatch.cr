@@ -1,4 +1,5 @@
 require "json"
+require "../collection_index"
 
 module Krikri
   module VariableSubstitutor
@@ -188,6 +189,10 @@ module Krikri
         )
         lookup_type = parts[0]?.try { |part| quoted_string_literal(part.strip) }.try(&.as_s?)
 
+        # The name exactly as the role spelled it - the prefix strips below
+        # must not leak into the not-found error message.
+        original_lookup_type = lookup_type
+
         # Ansible accepts a lookup plugin's name either bare
         # ('first_found') or fully-qualified ('ansible.builtin.
         # first_found') - every `when "..."` case below only matches the
@@ -224,7 +229,35 @@ module Krikri
           evaluate_lookup_misc(lookup_type, parts, kwargs) ||
           evaluate_lookup_file_parsers(lookup_type, parts, kwargs) ||
           evaluate_custom_python_lookup(lookup_type, parts, kwargs, query_mode) ||
+          unknown_fqcn_lookup_failure(original_lookup_type, lookup_type) ||
           "undefined"
+      end
+
+      # ansible-core 2.19 hard-fails a lookup whose fully-qualified name
+      # names a collection that is not installed ("The lookup plugin
+      # 'nope.nope.php_version' was not found." - task-fatal at arg
+      # finalization for geoffreyvanwyk.moodle's own
+      # lookup('geoffreyvanwyk.moodle.php_version', ...)); falling through
+      # the whole dispatch to the "undefined" sentinel instead let the
+      # task silently succeed with the lookup's consumer holding the
+      # literal text "undefined". Only a fully-qualified ns.coll.name
+      # whose collection is DEFINITELY absent fails here: bare names keep
+      # the fallback, ansible.builtin/ansible.legacy and community.general
+      # are stripped above (and never fail), and a collection that IS
+      # installed may still carry lookups this evaluator does not
+      # implement - those keep the "undefined" degradation exactly as
+      # before. ansible's own errors= option cannot rescue this either -
+      # the plugin loader's not-found failure happens before any plugin
+      # run could be wrapped.
+      private def unknown_fqcn_lookup_failure(original : String?, stripped : String?) : Nil
+        return unless name = stripped
+        return unless name.matches?(/\A\w+\.\w+\.\w+\z/)
+        namespace, collection, _leaf = name.split('.', 3)
+        return if Krikri::CollectionIndex.installed?(namespace, collection)
+        # Real prints the loader's ImportError as a [WARNING] the moment
+        # it tries to load the plugin, ahead of the hard not-found failure.
+        Krikri::CollectionIndex.warn_missing_lookup_plugin(name)
+        raise PythonLookupRunner::LookupError.new("The lookup plugin '#{original}' was not found.")
       end
 
       # A lookup type with no handler above falls back to role-local
