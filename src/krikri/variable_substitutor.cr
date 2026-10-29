@@ -80,6 +80,21 @@ module Krikri
     end
   end
 
+  # A BLOCK's `name:` keyword failing its strict template with an
+  # undefined variable at child-execution time. Carries the ENCLOSING
+  # block's `name:` VALUE origin (the child's own file has no `name:` for
+  # that block) so the failure result can build Ansible's three-link
+  # keyword chain with the middle link Origin'd at the block's own line -
+  # ansible-core 2.19 fails the child at the keyword level, not as a
+  # "Finalization of task args" failure.
+  class BlockNameKeywordError < UndefinedVariableError
+    getter keyword_origin : String?
+
+    def initialize(message : String, @keyword_origin : String?)
+      super(message)
+    end
+  end
+
   # A Python list-method call's runtime failure ("'z' is not in list",
   # "pop from empty list", ...) surfacing through a STRICT render: real
   # 2.19.11 words the when:-side failure "Task failed: Error rendering

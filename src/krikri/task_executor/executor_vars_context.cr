@@ -5558,14 +5558,43 @@ module Krikri
     private def substitute_block_name_chain(task : Task, substitutor : VarSubstitutor) : Nil
       return unless chain = task.block_name_chain
 
-      chain.each do |raw_name|
+      chain.each_with_index do |raw_name, idx|
         next unless raw_name.includes?("{{")
         begin
           substitutor.substitute(raw_name, strict: true)
         rescue e : UndefinedVariableError
-          raise UndefinedVariableError.new("Task failed: Error processing keyword 'name': #{e.message}")
+          # The chain's middle link must point at the failing BLOCK's own
+          # `name:` value, which no scan of the child task's source can
+          # find - the parser carries each entry's position alongside.
+          origin = task.block_name_chain_origins.try { |origins| origins[idx]? }
+          raise BlockNameKeywordError.new("Task failed: Error processing keyword 'name': #{e.message}", origin)
         end
       end
+    end
+
+    # A block `name:` keyword's strict-undefined failure: ansible-core
+    # 2.19 fails the child at the KEYWORD level, not as a "Finalization
+    # of task args" failure - the fatal msg stays the bare keyword text
+    # (finalize_args_failure_message passes any "Task failed:" message
+    # through unchanged) and the [ERROR] block is the three-link keyword
+    # chain: "Task failed." at the child task, "Error processing keyword
+    # 'name'." at the BLOCK's name value, and the bare "'X' is undefined"
+    # at the variable DEFINITION whose own value references the missing
+    # name (the become_user keyword chain's conversion_origin mechanism,
+    # issue #209). Routing through the generic finalization shape instead
+    # printed a "Finalization of task args for '<module>' failed" middle
+    # link ansible never shows, plus a spurious second "Module failed"
+    # block.
+    private def block_name_keyword_failure_json(ex : BlockNameKeywordError, task : Task) : JSON::Any
+      result = finalization_failure_json(ex, task)
+      conversion = (ex.message || "").lchop("Task failed: Error processing keyword 'name': ")
+      result.as_h["_ansible_keyword_conversion"] = JSON.parse({
+        "keyword"           => "name",
+        "conversion"        => conversion,
+        "origin"            => ex.keyword_origin,
+        "conversion_origin" => undef_chain_origin_block(task, conversion),
+      }.to_json)
+      result
     end
 
     # For copy:/template:/assemble:-style controller src resolution shared
