@@ -31,6 +31,18 @@ private def write_lookup_plugin(dir : String, name : String, content : String) :
 end
 
 describe Krikri::PythonLookupRunner do
+  it "fails hashi_vault with ansible's load error when the controller python lacks hvac" do
+    dir = File.join(Dir.tempdir, "krikri-hvac-spec-#{Random.rand(1_000_000)}")
+    Dir.mkdir_p(dir)
+    fake = File.join(dir, "python3")
+    File.write(fake, "#!/bin/sh\nexit 1\n")
+    File.chmod(fake, 0o755)
+    message = Krikri::PythonLookupRunner.hashi_vault_load_failure("hashi_vault", fake)
+    message.to_s.must_match(/\AThe lookup plugin 'hashi_vault' failed to load: Failed to import the required Python library \(hvac\) on .+'s Python #{Regex.escape(fake)}\./)
+    Krikri::PythonLookupRunner.hashi_vault_load_failure("file", fake).must_be_nil
+    FileUtils.rm_r(dir)
+  end
+
   # ---- source resolution ----
 
   it "finds a role-private lookup plugin" do

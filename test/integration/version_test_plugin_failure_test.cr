@@ -53,4 +53,25 @@ describe "test plugin failure finalization chain" do
   ensure
     File.delete(playbook) if playbook && File.exists?(playbook)
   end
+
+  it "splits a hashi_vault load failure into its own innermost stanza" do
+    hvac_present = Process.run("python3", ["-c", "import hvac"], output: Process::Redirect::Close, error: Process::Redirect::Close).success?
+    unless hvac_present
+      playbook = File.tempname("hashi-vault-fail", ".yml")
+      File.write(playbook, <<-YAML)
+        - hosts: localhost
+          gather_facts: false
+          tasks:
+            - debug: msg="{{ lookup('hashi_vault', 'secret=kv/data/x') }}"
+        YAML
+      output = IO::Memory.new
+      Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+      text = output.to_s
+
+      text.must_include("Error while resolving value for 'msg': The lookup plugin 'hashi_vault' failed to load.\nOrigin: #{playbook}:4:14")
+      text.must_match(/<<< caused by >>>\n\nFailed to import the required Python library \(hvac\) on .+'s Python .+\n\nfatal: /)
+    end
+  ensure
+    File.delete(playbook) if playbook && File.exists?(playbook)
+  end
 end

@@ -88,6 +88,23 @@ module Krikri
       Process.find_executable("python3") || Process.find_executable("python")
     end
 
+    # community.hashi_vault's lookup is not implemented, but ansible's
+    # loader imports `hvac` before the lookup runs, so on a controller
+    # python3 without it the task fails at load time with this message
+    # (the host whose Python is named is the controller itself). With hvac
+    # present ansible would go on to reach a Vault server, which krikri
+    # cannot do either, so only the missing-library case is reproducible.
+    def hashi_vault_load_failure(name : String?, python : String? = python_executable) : String?
+      return nil unless name && name.in?("hashi_vault", "community.hashi_vault.hashi_vault")
+      return nil unless python
+      status = Process.run(python, ["-c", "import hvac"],
+        output: Process::Redirect::Close, error: Process::Redirect::Close)
+      return nil if status.success?
+      "The lookup plugin '#{name}' failed to load: Failed to import the required Python library (hvac) on #{System.hostname}'s Python #{python}. Please read the module documentation and install it in the appropriate location. If the required library is installed, but Ansible is using the wrong Python interpreter, please consult the documentation on ansible_python_interpreter"
+    rescue
+      nil
+    end
+
     # Invokes the `LookupModule` from the plugin source for *name* with
     # the resolved *terms*/*kwargs* and the current task *variables*
     # (Ansible passes its own vars dict, which conventionally
