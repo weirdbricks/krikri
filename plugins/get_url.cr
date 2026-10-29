@@ -275,7 +275,24 @@ module Krikri
       force = false,
       last_mod_time : Time? = nil,
     ) : PluginResult
-      tmp_path = staging_path(dest_param, dest_is_dir)
+      tmp_path = staging_path
+      begin
+        download_to_dest_staged(tmp_path, url, request_url, dest_param, checksum, dest_is_dir, force, last_mod_time)
+      ensure
+        cleanup_staging_dir(tmp_path)
+      end
+    end
+
+    private def download_to_dest_staged(
+      tmp_path : String,
+      url : String,
+      request_url : String,
+      dest_param : String,
+      checksum : {String, String}?,
+      dest_is_dir = false,
+      force = false,
+      last_mod_time : Time? = nil,
+    ) : PluginResult
       started = Time.utc
       info = begin
         download(request_url, tmp_path, force, last_mod_time)
@@ -536,44 +553,87 @@ module Krikri
       begin
         File.rename(tmp_path, dest)
       rescue ex
-        raise ex unless true?(@params["unsafe_writes"]?)
+        # Ansible's atomic_move copies across devices when rename gives
+        # EXDEV (staging dir and dest on different filesystems), so the
+        # download still lands instead of failing the task.
+        raise ex unless cross_device?(ex) || true?(@params["unsafe_writes"]?)
         unsafe_move_fallback(tmp_path, dest)
       end
     end
 
+    private def cross_device?(ex : Exception) : Bool
+      ex.is_a?(File::Error) && ex.os_error == Errno::EXDEV
+    end
+
     # Where the download is staged (real get_url's
     # tempfile.mkstemp(dir=tmp_dest); tmp_dest validity was already
-    # checked in #execute). Normally the staging file goes NEXT TO dest
-    # rather than in the system tmp dir: same-filesystem staging is
-    # what makes the final File.rename unconditionally atomic, where
-    # Ansible (which starts from the system tmp dir) needs its own
-    # EXDEV fallback inside atomic_move to reach the same place.
+    # checked in #execute).
     #
-    # A directory dest stages INSIDE itself, not in dirname(dest): the
-    # final file goes there too (File.join(dest, name)), and dirname of
-    # e.g. /tmp is / - potentially another filesystem, which would kill
-    # the very rename this staging choice exists to keep atomic (issue
-    # #475). Ansible doesn't face this because its own staging lives in
-    # its remote tmp dir and its atomic_move falls back to copying
-    # across devices.
+    # Ansible stages in module.tmpdir, which its executor hands the
+    # module as _ansible_tmpdir: the per-task ansible-tmp-<epoch>-<pid>-
+    # <rand> dir under ~/.ansible/tmp - and reports that staged path back
+    # as the result's `src`, never dest-adjacent (live-verified: for a
+    # dest: /tmp download ansible-core's src reads
+    # /root/.ansible/tmp/ansible-tmp-.../tmpxd0r4kbj, issue #525).
+    # Stage in the same shape (unarchive.cr's resolve_src and copy.cr's
+    # staged_src_echo mirror it too). The final move may then cross
+    # devices, which #move_into_place's EXDEV fallback (Ansible's own
+    # atomic_move behavior) covers; the older dest-adjacent staging here
+    # existed to keep the rename unconditionally atomic before that
+    # fallback landed (issue #475).
     #
-    # The exception is a destination directory that cannot be written:
-    # Ansible stages in its own remote tmp dir (module.tmpdir) and
-    # only discovers the unwritable destination afterwards, in
-    # destination_failure_result - staging there too is what makes the
-    # download SUCCEED and the task fail with the destination message,
-    # instead of dying with a permission error on the staging file. An
-    # explicit tmp_dest: is always honoured (its own validity checks ran
-    # in #execute, and a task that names an unwritable one must fail on
-    # it rather than quietly stage somewhere else).
-    private def staging_path(dest : String, dest_is_dir = false) : String
+    # An explicit tmp_dest: is always honoured (its own validity checks
+    # ran in #execute, and a task that names an unwritable one must fail
+    # on it rather than quietly stage somewhere else). Staging away from
+    # dest also keeps the unwritable-destination behavior: the download
+    # succeeds and the task fails with destination_failure_result's
+    # message, instead of dying with a permission error on the staging
+    # file.
+    private def staging_path : String
       if tmp_dest = @params["tmp_dest"]?
-        return File.join(tmp_dest, ".get_url_#{Process.pid}_#{Random::Secure.hex(8)}.tmp")
+        return mkstemp_path(tmp_dest)
       end
 
-      base_dir = dest_is_dir ? dest : File.dirname(dest)
-      base = File::Info.writable?(base_dir) ? base_dir : Dir.tempdir
-      File.join(base, ".get_url_#{Process.pid}_#{Random::Secure.hex(8)}.tmp")
+      tmpdir = expand_tilde("~/.ansible/tmp/ansible-tmp-#{sprintf("%.7f", Time.local.to_unix_f)}-#{Process.pid}-#{Random.rand(100_000_000_000_000..999_999_999_999_999)}")
+      Dir.mkdir_p(tmpdir, mode: 0o700)
+      mkstemp_path(tmpdir)
+    end
+
+    # Python tempfile.mkstemp() naming with no prefix/suffix: "tmp" +
+    # 8 random chars from [a-z0-9_] (tempfile._RandomNameSequence),
+    # exclusive-created and retried on a collision, exactly like
+    # unarchive.cr's create_staged_download loop. Raw LibC.open because
+    # Crystal's File.open mode strings have no exclusive-creation form;
+    # mode 0666 (& ~umask via open(2)) keeps the moved dest's mode the
+    # same as the previous dest-adjacent staging produced.
+    private def mkstemp_path(dir : String) : String
+      chars = "abcdefghijklmnopqrstuvwxyz0123456789_"
+      10.times do
+        name = String.build(11) do |builder|
+          builder << "tmp"
+          8.times { builder << chars[Random.rand(chars.size)] }
+        end
+        candidate = File.join(dir, name)
+        fd = LibC.open(candidate, LibC::O_WRONLY | LibC::O_CREAT | LibC::O_EXCL, 0o666)
+        next if fd == -1
+        LibC.close(fd)
+        return candidate
+      end
+      raise "unable to create a temporary file in #{dir}"
+    end
+
+    # The ansible-tmp staging dir is plugin-local (krikri has no
+    # executor-level cleanup of it), so drop it as soon as the staged
+    # file is gone - rmdir only succeeds on an empty dir, so the
+    # best-effort delete can never remove anything else.
+    private def cleanup_staging_dir(tmp_path : String) : Nil
+      tmpdir = File.dirname(tmp_path)
+      return unless File.basename(tmpdir).starts_with?("ansible-tmp-")
+      begin
+        Dir.delete(tmpdir)
+      rescue
+        nil
+      end
     end
 
     # tmp_dest: directory the download is staged in before the final move

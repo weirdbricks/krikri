@@ -173,6 +173,20 @@ describe "get_url plugin" do
     File.delete(dest) if dest && File.exists?(dest)
   end
 
+  it "copies across devices when the staged file cannot be renamed onto dest (EXDEV)" do
+    # /dev/shm is a separate mount from the tmp dir, so tmp_dest there forces EXDEV on rename.
+    if Dir.exists?("/dev/shm")
+      dest = File.tempname("get-url-spec")
+      result = PluginSpecHelper.run("get_url", {"url" => "#{GET_URL_TEST_BASE}/file.txt", "dest" => dest, "tmp_dest" => "/dev/shm"})
+
+      falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+      result["changed"].as_bool.must_equal(true)
+      File.read(dest).must_equal(FILE_CONTENT)
+    end
+  ensure
+    File.delete(dest) if dest && File.exists?(dest)
+  end
+
   it "strips surrounding whitespace off the url before downloading, but reports the raw url" do
     # Real Ansible strips leading/trailing whitespace (including
     # newlines) off the url before requesting it - urllib rejects the
@@ -1044,18 +1058,16 @@ describe "get_url plugin" do
     FileUtils.rm_rf(dest_dir) if dest_dir && Dir.exists?(dest_dir)
   end
 
-  it "stages a directory-dest download inside the dest directory itself" do
-    # A directory dest's final file lands inside the directory, so the
-    # staged copy must live there too: staging in dirname(dest) can be
-    # a different filesystem (dest: /tmp would stage in /) and the
-    # final File.rename dies with "Invalid cross-device link" while
-    # real Ansible - whose staging sits in its own tmp dir with an
-    # atomic_move cross-device fallback - succeeds (issue #475,
-    # observed on a real host). The success result's src: is the
-    # staging path, so the location is asserted directly rather than
-    # only inferred from the rename succeeding.
-    parent = PluginSpecHelper.tmp_path("geturl-stage-#{Random::Secure.hex(4)}")
-    dest_dir = File.join(parent, "dl")
+  it "stages a directory-dest download in an ansible-tmp module dir like Ansible's src" do
+    # Real get_url stages in module.tmpdir (the per-task ansible-tmp-
+    # <epoch>-<pid>-<rand> dir under ~/.ansible/tmp) and reports THAT
+    # staged path as the result's src, never dest-adjacent (issue #525:
+    # krikri's src read /tmp/.get_url_* where ansible reported the
+    # ansible-tmp path). The final move may then cross devices, covered
+    # by move_into_place's EXDEV fallback (Ansible's own atomic_move
+    # behavior). The staging dir is plugin-local, so it must also be
+    # gone once the download landed.
+    dest_dir = PluginSpecHelper.tmp_path("geturl-stage-#{Random::Secure.hex(4)}")
     Dir.mkdir_p(dest_dir)
 
     result = PluginSpecHelper.run("get_url", {"url" => "#{GET_URL_TEST_BASE}/file.txt", "dest" => dest_dir})
@@ -1065,11 +1077,32 @@ describe "get_url plugin" do
     dest_file = File.join(dest_dir, "file.txt")
     result["dest"].as_s.must_equal(dest_file)
     File.read(dest_file).must_equal(FILE_CONTENT)
-    File.dirname(result["src"].as_s).must_equal(dest_dir)
-    # the staged copy is gone once it was moved into place
-    Dir.glob(File.join(dest_dir, ".get_url_*.tmp")).must_be_empty
+    src = result["src"].as_s
+    File.dirname(src).must_match(%r{/\.ansible/tmp/ansible-tmp-[\d.\-]+\z})
+    File.basename(src).must_match(/\Atmp[a-z0-9_]{8}\z/)
+    File.exists?(src).must_equal(false)
+    Dir.exists?(File.dirname(src)).must_equal(false)
   ensure
-    FileUtils.rm_rf(parent) if parent
+    FileUtils.rm_rf(dest_dir) if dest_dir && Dir.exists?(dest_dir)
+  end
+
+  it "stages a file-dest download in an ansible-tmp module dir and cleans it up (issue #525)" do
+    # Same staging shape as the directory-dest case above, asserted on
+    # the plain dest path the nginx role's "Decompress external modules"
+    # task uses (dest: /tmp): the reported src is the staged tmp file in
+    # an ansible-tmp module dir, and nothing is left behind.
+    dest = File.join(PluginSpecHelper.tmp_path("geturl-stage2-#{Random::Secure.hex(4)}"), "file.txt")
+    Dir.mkdir_p(File.dirname(dest))
+
+    result = PluginSpecHelper.run("get_url", {"url" => "#{GET_URL_TEST_BASE}/file.txt", "dest" => dest})
+
+    falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+    result["changed"].as_bool.must_equal(true)
+    File.read(dest).must_equal(FILE_CONTENT)
+    result["src"].as_s.must_match(%r{/\.ansible/tmp/ansible-tmp-[\d.\-]+/tmp[a-z0-9_]{8}\z})
+    Dir.exists?(File.dirname(result["src"].as_s)).must_equal(false)
+  ensure
+    FileUtils.rm_rf(File.dirname(dest)) if dest && Dir.exists?(File.dirname(dest))
   end
 
   it "resolves a checksum URL by parsing the per-file hash from a sha256sums file" do
