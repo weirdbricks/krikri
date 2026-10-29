@@ -1,16 +1,16 @@
 class Krikri < Formula
   desc "Ansible-compatible automation tool, written in Crystal"
   homepage "https://github.com/weirdbricks/krikri"
-  version "0.9.2058"
+  version "0.9.2089"
   license "GPL-3.0-or-later"
 
   on_macos do
     if Hardware::CPU.arm?
-      url "https://github.com/weirdbricks/krikri/releases/download/v0.9.2058/krikri-v0.9.2058-darwin-arm64.tar.gz"
-      sha256 "036513198e0839398831435e7dd3a1b07f0510a0086b6ca641a426a5508de581"
+      url "https://github.com/weirdbricks/krikri/releases/download/v0.9.2089/krikri-v0.9.2089-darwin-arm64.tar.gz"
+      sha256 "b71466d7798d4a550ab358402241de0c9adb82168bd7d4c075ea43daafd938ad"
     else
-      url "https://github.com/weirdbricks/krikri/releases/download/v0.9.2058/krikri-v0.9.2058-darwin-x86_64.tar.gz"
-      sha256 "579a6c8ec0f419409a2617e42d8400211b0011cf02805ca82c6b4e890c92740b"
+      url "https://github.com/weirdbricks/krikri/releases/download/v0.9.2089/krikri-v0.9.2089-darwin-x86_64.tar.gz"
+      sha256 "9f25486a176a12592028b650c00476b5b3bc0585807d214f8047577bc6a5bc22"
     end
 
     # Unlike the Linux binaries (fully static musl builds, zero runtime
@@ -30,11 +30,11 @@ class Krikri < Formula
 
   on_linux do
     if Hardware::CPU.arm?
-      url "https://github.com/weirdbricks/krikri/releases/download/v0.9.2058/krikri-v0.9.2058-linux-arm64.tar.gz"
-      sha256 "8b19457dcf76d0b72b276a81cf41a8ff93fd633a2351735b09c9e28ef2a71a33"
+      url "https://github.com/weirdbricks/krikri/releases/download/v0.9.2089/krikri-v0.9.2089-linux-arm64.tar.gz"
+      sha256 "6f7e37f18fb6375adc2d917231c6e33743ff62b2dbfe5cbf70f6bba930d55e22"
     else
-      url "https://github.com/weirdbricks/krikri/releases/download/v0.9.2058/krikri-v0.9.2058-linux-x86_64.tar.gz"
-      sha256 "e7a5c7ce4516da3e39bb0d8fb4774b24204e63387d1c3e5c97353943bf03b61e"
+      url "https://github.com/weirdbricks/krikri/releases/download/v0.9.2089/krikri-v0.9.2089-linux-x86_64.tar.gz"
+      sha256 "f297cb54b1d6dbb315f89dc15d8ddecd52cf0c9fcf70cd800a7d632d238703f2"
     end
   end
 
