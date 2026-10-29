@@ -1180,21 +1180,72 @@ module Krikri
     # symlink skips the mode check (`skip_mode: true`) for the same
     # lchmod-doesn't-exist reason `update_attributes_if_needed`'s own
     # doc comment gives for `state: link`.
+    # Entries are checked with lstat semantics (follow: false) even when
+    # the task's follow: default is true: Ansible's recursive_set_attributes
+    # (file.py) swaps each walked entry's path into the top-level file_args
+    # and calls set_fs_attributes_if_different WITHOUT re-resolving it
+    # through load_file_common_arguments, and basic.py's
+    # set_owner_if_different/set_group_if_different read with os.lstat and
+    # change with os.lchown - so for a symlink ENTRY the compare and the
+    # chown both hit the LINK ITSELF, not its target. Found benchmarking
+    # bmeme.mule (issue #432): install.yml deletes and recreates the
+    # version symlink /opt/mule/mule on every run, so at recurse time the
+    # link's own owner is still root while its target already belongs to
+    # mule - Ansible reports changed (and lchowns the link), while
+    # stat-following the link saw the already-correct target and reported
+    # ok forever.
     private def recursive_attributes_need_update?(dir : String) : Bool
+      recursive_attributes_need_update?(dir, Set(String).new)
+    end
+
+    private def recursive_attributes_need_update?(dir : String, seen_targets : Set(String)) : Bool
       Dir.each_child(dir) do |child|
         child_path = File.join(dir, child)
         info = File.info?(child_path, follow_symlinks: false)
         next unless info
         is_symlink = info.symlink?
         is_dir = info.directory? && !is_symlink
-        return true if update_attributes_if_needed(child_path, is_directory: is_dir, skip_mode: is_symlink)
-        return true if is_dir && recursive_attributes_need_update?(child_path)
+        return true if update_attributes_if_needed(child_path, is_directory: is_dir, skip_mode: is_symlink, follow: false)
+        return true if is_symlink && follow_symlinks? && symlink_target_needs_update?(dir, child, seen_targets)
+        return true if is_dir && recursive_attributes_need_update?(child_path, seen_targets)
       end
       false
     rescue File::Error
       # Permission denied, etc. - matches walk_apply_attributes's own
       # skip-rather-than-fail behavior for the same case.
       false
+    end
+
+    # The follow: true half of a walked symlink entry: Ansible additionally
+    # resolves the link one level (os.path.join of the walk root and
+    # os.readlink - an absolute target stands alone) and applies the same
+    # attributes to that target path, recursing into it when it is a
+    # directory (os.walk itself never descends through symlinks, so this is
+    # the only way an out-of-tree target gets corrected). seen_targets
+    # guards against a symlinked cycle, which Ansible only escapes by
+    # blowing Python's recursion limit and failing the whole task; the set
+    # is shared with (and mutated for) the whole walk.
+    private def symlink_target_needs_update?(dir : String, child : String, seen_targets : Set(String)) : Bool
+      target = link_target_path(dir, child)
+      return false unless target
+      target_stat = lstat(target)
+      return false unless target_stat
+      target_key = "#{target_stat.st_dev}:#{target_stat.st_ino}"
+      return false if seen_targets.includes?(target_key)
+      seen_targets << target_key
+      file_type = target_stat.st_mode & LibC::S_IFMT
+      return true if update_attributes_if_needed(target, is_directory: file_type == LibC::S_IFDIR, skip_mode: file_type == LibC::S_IFLNK, follow: false)
+      file_type == LibC::S_IFDIR && recursive_attributes_need_update?(target, seen_targets)
+    end
+
+    # The recursion-side equivalent of Ansible's
+    # os.path.join(walk_root, os.readlink(entry)): an absolute link target
+    # replaces the root entirely, a relative one resolves against the link's
+    # own directory.
+    private def link_target_path(dir : String, child : String) : String?
+      target = try_readlink(File.join(dir, child))
+      return nil unless target
+      target.starts_with?("/") ? target : File.join(dir, target)
     end
 
     # owner:/group: as the module sees them. A YAML null (bare `owner:`, or
@@ -1207,8 +1258,14 @@ module Krikri
       @params[key]?
     end
 
-    private def update_attributes_if_needed(path : String, is_directory : Bool, skip_mode : Bool = false) : Bool
-      follow = follow_symlinks?
+    private def update_attributes_if_needed(path : String, is_directory : Bool, skip_mode : Bool = false, follow : Bool? = nil) : Bool
+      # Recursion overrides this per entry (see
+      # recursive_attributes_need_update?): Ansible's recursive walk never
+      # re-resolves entry paths through load_file_common_arguments, so its
+      # per-entry owner/group compare is os.lstat on the entry itself even
+      # when the task's follow: default (true) would resolve the TOP-level
+      # path.
+      follow = follow_symlinks? if follow.nil?
       changed = false
       info = follow ? stat_follow(path) : lstat(path)
       return false unless info
@@ -1398,11 +1455,25 @@ module Krikri
     end
 
     private def walk_apply_attributes(dir : String) : Nil
+      walk_apply_attributes(dir, Set(String).new)
+    end
+
+    private def walk_apply_attributes(dir : String, seen_targets : Set(String)) : Nil
       Dir.each_child(dir) do |child|
         child_path = File.join(dir, child)
-        apply_single_file_attributes(child_path)
+        # Recursion entries are applied with lchown semantics (follow: false)
+        # for the same reason the changed-check reads them with lstat: Ansible
+        # swaps each walked entry's path into the top-level file_args without
+        # re-resolving it through load_file_common_arguments, so a symlink
+        # entry gets the LINK ITSELF chowned, not its target (issue #432).
+        apply_single_file_attributes(child_path, follow: false)
         info = File.info?(child_path, follow_symlinks: false)
-        walk_apply_attributes(child_path) if info && info.directory? && !info.symlink?
+        next unless info
+        if info.symlink?
+          apply_symlink_target_attributes(dir, child, seen_targets) if follow_symlinks?
+        elsif info.directory?
+          walk_apply_attributes(child_path, seen_targets)
+        end
       end
     rescue File::Error
       # Permission denied, etc. - skip this directory rather than
@@ -1410,13 +1481,32 @@ module Krikri
       # not checking chown -R/chmod -R's exit code either).
     end
 
-    private def apply_single_file_attributes(path : String) : Nil
+    # Apply-side twin of symlink_target_needs_update? - the follow: true half
+    # of a walked symlink entry: chown the readlink target (recursing into it
+    # when it is a directory), guarded against symlinked cycles by the same
+    # shared visited-inode set the check uses.
+    private def apply_symlink_target_attributes(dir : String, child : String, seen_targets : Set(String)) : Nil
+      target = link_target_path(dir, child)
+      return unless target
+      target_stat = lstat(target)
+      return unless target_stat
+      target_key = "#{target_stat.st_dev}:#{target_stat.st_ino}"
+      return if seen_targets.includes?(target_key)
+      seen_targets << target_key
+      apply_single_file_attributes(target, follow: false)
+      walk_apply_attributes(target, seen_targets) if (target_stat.st_mode & LibC::S_IFMT) == LibC::S_IFDIR
+    end
+
+    private def apply_single_file_attributes(path : String, follow : Bool? = nil) : Nil
       # SELinux context runs FIRST, matching the order of Ansible's
       # set_fs_attributes_if_different (set_context_if_different ->
       # owner -> group -> mode -> attributes).
       apply_secontext(path)
 
-      follow = follow_symlinks?
+      # Recursion entries pass follow: false explicitly (see
+      # walk_apply_attributes): basic.py's per-entry setters lstat/lchown the
+      # entry itself, symlink or not.
+      follow = follow_symlinks? if follow.nil?
       uid = -1
       gid = -1
       if owner = requested_attr("owner")
