@@ -214,6 +214,23 @@ describe Krikri::CollectionIndex do
     result[:resolves].must_equal(true)
   end
 
+  it "finds a role-local action_plugins file as a bare-name source" do
+    root = PluginSpecHelper.tmp_path("collection-index-action-plugins")
+    FileUtils.mkdir_p(File.join(root, "roles", "actrole", "action_plugins"))
+    File.write(File.join(root, "roles", "actrole", "action_plugins", "warn.py"), "# fixture\n")
+    result = Krikri::CollectionIndex.controller_resolves?("warn",
+      role_path: File.join(root, "roles", "actrole"))
+    result[:resolves].must_equal(true)
+  end
+
+  it "refuses a bare name whose role-local action_plugins file is absent" do
+    root = PluginSpecHelper.tmp_path("collection-index-action-plugins-empty")
+    FileUtils.mkdir_p(File.join(root, "roles", "noactrole", "action_plugins"))
+    result = Krikri::CollectionIndex.controller_resolves?("nosuchaction",
+      role_path: File.join(root, "roles", "noactrole"))
+    result[:resolves].must_equal(false)
+  end
+
   it "does not count a dangling library/ symlink as a module source" do
     root = PluginSpecHelper.tmp_path("collection-index-dangling")
     FileUtils.mkdir_p(File.join(root, "roles", "dangrole", "library"))
