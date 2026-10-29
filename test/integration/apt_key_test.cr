@@ -282,6 +282,42 @@ describe "apt_key plugin" do
     result["msg"].as_s.wont_include("Failed to fetch key")
   end
 
+  it "maps a curl timeout (exit 28) to Ansible's urllib timed-out message" do
+    # A real unroutable URL takes ~130s to time out (the plugin's curl
+    # invocation carries no --max-time), so a fake curl fronted on PATH
+    # (same mechanism as the apt-key double above) stands in: exit 28
+    # with a stderr line, like a real timed-out connect prints. Real
+    # ansible's message for a timed-out key URL is urllib's bare
+    # "<urlopen error timed out>" - no errno prefix and none of curl's
+    # own stderr, which krikri used to leak with a trailing newline.
+    shim_dir = PluginSpecHelper.tmp_path("curl-timeout-shim")
+    Dir.mkdir(shim_dir)
+    fake_curl = File.join(shim_dir, "curl")
+    File.write(fake_curl, <<-'SH')
+      #!/bin/bash
+      echo 'curl: (28) Failed to connect to keyserver.example.com port 443 after 130000 ms: Connection timed out' >&2
+      exit 28
+      SH
+    File.chmod(fake_curl, 0o755)
+    File.write(File.join(shim_dir, "apt-key"), APT_KEY_SHIM)
+    File.chmod(File.join(shim_dir, "apt-key"), 0o755)
+    state = PluginSpecHelper.tmp_path("apt-key-state")
+    PluginSpecHelper::ENV_MUTEX.synchronize do
+      old_path = ENV["PATH"]?
+      ENV["PATH"] = "#{shim_dir}:#{old_path}"
+      ENV["KRIKRI_APT_KEY_STATE"] = state
+      begin
+        result = PluginSpecHelper.run("apt_key", {"state" => "present", "url" => "https://keyserver.example.com/key.gpg"})
+
+        result["failed"].as_bool.must_equal(true)
+        result["msg"].as_s.must_equal("Failed to download key at https://keyserver.example.com/key.gpg: Request failed: <urlopen error timed out>")
+      ensure
+        ENV["PATH"] = old_path if old_path
+        ENV.delete("KRIKRI_APT_KEY_STATE")
+      end
+    end
+  end
+
   it "attempts a real keyserver fetch (and fails cleanly, not a crash) when id: is given but not yet present" do
     # This dev machine has no real apt-key binary or network access for
     # a real fetch, so this only confirms the plugin reaches and
