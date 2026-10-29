@@ -75,5 +75,11 @@ describe "Krikri::FactsGatherer (facts_mount_network_scoping_test.cr)" do
         facts["ansible_lo"]?.must_be_nil
       end
     end
+
+    it "never lists 127.* addresses in ansible_all_ipv4_addresses (issue #535)" do
+      facts = JSON.parse(Krikri::FactsGatherer.run(nil))["ansible_facts"].as_h
+      addrs = facts["ansible_all_ipv4_addresses"]?.try(&.as_a?) || [] of JSON::Any
+      addrs.each { |addr| addr.as_s.starts_with?("127.").must_equal(false) }
+    end
   end
 end
