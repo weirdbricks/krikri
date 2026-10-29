@@ -496,7 +496,10 @@ module Krikri
 
       cookie_acc.try(&.concat(response_cookies(response.headers)))
 
-      if response.status.redirection? && (location = response.headers["Location"]?) && should_follow_redirect?(method)
+      # Same redirect rule as fetch_url: follow any 3xx whose Location is
+      # present and non-empty; otherwise report the status itself (issue #656).
+      if response.status.redirection? &&
+         (location = response.headers["Location"]?) && !location.empty? && should_follow_redirect?(method)
         return request(resolve_redirect(uri, location), redirect_method(method, response.status_code), username, password, src_body, redirects_left - 1, true, last_mod_time, cookie_acc)
       end
 
