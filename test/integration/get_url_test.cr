@@ -1004,6 +1004,34 @@ describe "get_url plugin" do
     FileUtils.rm_rf(dest_dir) if dest_dir && Dir.exists?(dest_dir)
   end
 
+  it "stages a directory-dest download inside the dest directory itself" do
+    # A directory dest's final file lands inside the directory, so the
+    # staged copy must live there too: staging in dirname(dest) can be
+    # a different filesystem (dest: /tmp would stage in /) and the
+    # final File.rename dies with "Invalid cross-device link" while
+    # real Ansible - whose staging sits in its own tmp dir with an
+    # atomic_move cross-device fallback - succeeds (issue #475,
+    # observed on a real host). The success result's src: is the
+    # staging path, so the location is asserted directly rather than
+    # only inferred from the rename succeeding.
+    parent = PluginSpecHelper.tmp_path("geturl-stage-#{Random::Secure.hex(4)}")
+    dest_dir = File.join(parent, "dl")
+    Dir.mkdir_p(dest_dir)
+
+    result = PluginSpecHelper.run("get_url", {"url" => "#{GET_URL_TEST_BASE}/file.txt", "dest" => dest_dir})
+
+    result["changed"].as_bool.must_equal(true)
+    falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+    dest_file = File.join(dest_dir, "file.txt")
+    result["dest"].as_s.must_equal(dest_file)
+    File.read(dest_file).must_equal(FILE_CONTENT)
+    File.dirname(result["src"].as_s).must_equal(dest_dir)
+    # the staged copy is gone once it was moved into place
+    Dir.glob(File.join(dest_dir, ".get_url_*.tmp")).must_be_empty
+  ensure
+    FileUtils.rm_rf(parent) if parent
+  end
+
   it "resolves a checksum URL by parsing the per-file hash from a sha256sums file" do
     # Real bug found benchmarking andrewrothstein.terraform (round 154 v3):
     # Ansible's get_url documents checksum: as accepting a URL

@@ -275,7 +275,7 @@ module Krikri
       force = false,
       last_mod_time : Time? = nil,
     ) : PluginResult
-      tmp_path = staging_path(dest_param)
+      tmp_path = staging_path(dest_param, dest_is_dir)
       started = Time.utc
       info = begin
         download(request_url, tmp_path, force, last_mod_time)
@@ -549,6 +549,14 @@ module Krikri
     # Ansible (which starts from the system tmp dir) needs its own
     # EXDEV fallback inside atomic_move to reach the same place.
     #
+    # A directory dest stages INSIDE itself, not in dirname(dest): the
+    # final file goes there too (File.join(dest, name)), and dirname of
+    # e.g. /tmp is / - potentially another filesystem, which would kill
+    # the very rename this staging choice exists to keep atomic (issue
+    # #475). Ansible doesn't face this because its own staging lives in
+    # its remote tmp dir and its atomic_move falls back to copying
+    # across devices.
+    #
     # The exception is a destination directory that cannot be written:
     # Ansible stages in its own remote tmp dir (module.tmpdir) and
     # only discovers the unwritable destination afterwards, in
@@ -558,13 +566,13 @@ module Krikri
     # explicit tmp_dest: is always honoured (its own validity checks ran
     # in #execute, and a task that names an unwritable one must fail on
     # it rather than quietly stage somewhere else).
-    private def staging_path(dest : String) : String
+    private def staging_path(dest : String, dest_is_dir = false) : String
       if tmp_dest = @params["tmp_dest"]?
         return File.join(tmp_dest, ".get_url_#{Process.pid}_#{Random::Secure.hex(8)}.tmp")
       end
 
-      dest_dir = File.dirname(dest)
-      base = File::Info.writable?(dest_dir) ? dest_dir : Dir.tempdir
+      base_dir = dest_is_dir ? dest : File.dirname(dest)
+      base = File::Info.writable?(base_dir) ? base_dir : Dir.tempdir
       File.join(base, ".get_url_#{Process.pid}_#{Random::Secure.hex(8)}.tmp")
     end
 
