@@ -1003,6 +1003,16 @@ describe Krikri::ConditionalEvaluator do
       Krikri::ConditionalEvaluator.evaluate("a_null is none", v).must_equal(true)
     end
 
+    it "stringifies a null variable as 'None' in 'is match(...)' like Ansible's regex test" do
+      # chameleon.docker_service: `service_name:` (null) in defaults, then
+      # `when: service_name is not match("[A-Za-z0-9\.\-_]+")` is skipped in
+      # Ansible because "None" matches.
+      v = Hash(String, JSON::Any).new
+      v["service_name"] = JSON::Any.new(nil)
+      Krikri::ConditionalEvaluator.evaluate(%(service_name is not match("[A-Za-z0-9\\.\\-_]+")), v).must_equal(false)
+      Krikri::ConditionalEvaluator.evaluate(%(service_name is match("None")), v).must_equal(true)
+    end
+
     it "evaluates 'is match(...)' / 'is search(...)' (plus negations), Jinja2 regex tests" do
       # Real bug found benchmarking geerlingguy.node_exporter's own
       # `when: node_exporter_version is match("latest") or
