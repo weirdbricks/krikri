@@ -229,8 +229,15 @@ module Krikri
           evaluate_lookup_misc(lookup_type, parts, kwargs) ||
           evaluate_lookup_file_parsers(lookup_type, parts, kwargs) ||
           evaluate_custom_python_lookup(lookup_type, parts, kwargs, query_mode) ||
+          hashi_vault_lookup_failure(original_lookup_type) ||
           unknown_fqcn_lookup_failure(original_lookup_type, lookup_type) ||
           "undefined"
+      end
+
+      private def hashi_vault_lookup_failure(original : String?) : Nil
+        if message = PythonLookupRunner.hashi_vault_load_failure(original)
+          raise PythonLookupRunner::LookupError.new(message)
+        end
       end
 
       # ansible-core 2.19 hard-fails a lookup whose fully-qualified name

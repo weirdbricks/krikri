@@ -3259,6 +3259,16 @@ module Krikri
         plugin_cause = m[2]
       end
 
+      # A lookup that fails while its plugin loads (a missing Python
+      # library) splits like the test-plugin case: the middle stanza
+      # shortens to "...failed to load." and the loader's reason becomes an
+      # Origin-less innermost stanza (live-captured 2.19 on hashi_vault).
+      if plugin_cause.nil? &&
+         (m = msg.match(/\A(Error while resolving value for '[^']+': The lookup plugin '[^']+' failed to load): (.+)\z/m))
+        l3 = m[1] + "."
+        plugin_cause = m[2]
+      end
+
       # The undecryptable-vault case splits the same way, and its
       # innermost stanza gets its own Origin at the vault variable's
       # DEFINITION (live-captured 2.19.11; see vault_value_failure_origin
