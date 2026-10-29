@@ -1027,9 +1027,13 @@ module Krikri
                   else             pv.to_s
                   end
 
+        # Ansible's regex test stringifies a non-string with to_text, so a
+        # null role default (`service_name:` in defaults/main.yml) is the
+        # text "None" and matches `[A-Za-z0-9._-]+` - chameleon.docker_service's
+        # `service_name is not match(...)` validation is skipped there.
         str_value = case value = evaluate_value(var_expr, vars)
                     when String then value
-                    when Nil    then ""
+                    when Nil    then "None"
                     else             value.to_s
                     end
 
