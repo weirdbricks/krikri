@@ -86,6 +86,23 @@ describe "role argument_specs.yaml" do
     output.wont_include("missing required arguments: from_main")
   end
 
+  it "skips the validation task when the role's when is false" do
+    # Real ansible tags the auto-inserted "Validating arguments" task with
+    # the role's (or dependency's) `when:`, so a false condition skips it -
+    # `skipping: [host]`, recap skipped=1 - and never validates, so even a
+    # missing required option can't fail the play (issue #479).
+    files = role_files
+    files["play.yml"] = "- hosts: all\n  gather_facts: false\n  roles:\n    - role: r1\n      when: false\n"
+    status, output = run_playbook(files)
+
+    status.exit_code.must_equal(0)
+    output.must_include("TASK [r1 : Validating arguments against arg spec 'main' - Manage SSH CA]")
+    output.must_include("skipping: [localhost]")
+    output.wont_include("ok: [localhost]")
+    output.must_include("skipped=2")
+    output.wont_include("missing required arguments")
+  end
+
   it "names the argument_specs.yaml file in a spec-default origin line" do
     files = role_files
     files["roles/r1/meta/argument_specs.yaml"] = <<-YAML

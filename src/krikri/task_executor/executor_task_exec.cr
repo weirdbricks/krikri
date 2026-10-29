@@ -171,6 +171,20 @@ module Krikri
 
     private def execute_validate_argument_spec(task : Task, host : Host) : Nil
       vars_context = build_vars_context(task, host)
+
+      # Real ansible runs a validate_argument_spec task's `when:` like any
+      # other task's. The auto-inserted "Validating arguments against arg
+      # spec" task carries the role's/dependency's `when:` (apply_role_when
+      # tags every role task with it), so a false condition skips it with
+      # "skipping:" and a recap skipped= bump - and no validation happens at
+      # all, so invalid arguments can't fail a validation that never ran.
+      begin
+        return unless when_passes?(task, vars_context, host)
+      rescue ex : WhenEvaluationError
+        swallow_when_error(task, host, ex)
+        return
+      end
+
       options = task.validate_argument_spec_options || Hash(String, JSON::Any).new
       substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
 
