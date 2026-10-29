@@ -18,7 +18,8 @@ describe "Krikri::VariableSubstitutor::FilterEngine (lists_mergeby_test.cr)" do
       value = j(%([{"name": "a", "port": 1}, {"name": "b", "port": 2}]))
       result = engine.apply(value, %(lists_mergeby([{"name": "a", "host": "x"}], "name")))
       result.as_a.size.must_equal(2)
-      # First-seen key order preserved; the colliding item's dicts merged.
+      # Upstream ends with sorted(d.values(), key=itemgetter(index)); a,b
+      # happens to be both sorted and first-seen here.
       result.as_a[0].as_h["name"].as_s.must_equal("a")
       result.as_a[0].as_h["port"].as_i.must_equal(1)
       result.as_a[0].as_h["host"].as_s.must_equal("x")
@@ -64,6 +65,24 @@ describe "Krikri::VariableSubstitutor::FilterEngine (lists_mergeby_test.cr)" do
       value = j(%([{"name": "a", "tags": ["x"]}]))
       result = engine.apply(value, %(lists_mergeby([{"name": "a", "tags": ["y"]}], "name", list_merge='append')))
       result.as_a[0].as_h["tags"].as_a.map(&.as_s).must_equal(["x", "y"])
+    end
+
+    it "sorts the merged list by the merge-key value, not first-seen order (strings)" do
+      value = j(%([{"k": "b", "v": 2}, {"k": "c", "v": 3}, {"k": "a", "v": 1}]))
+      result = engine.apply(value, %(lists_mergeby([], "k")))
+      result.as_a.map(&.as_h["k"].as_s).must_equal(["a", "b", "c"])
+    end
+
+    it "sorts the merged list numerically when all merge-key values are numbers" do
+      value = j(%([{"k": 10, "v": "x"}, {"k": 2, "v": "y"}, {"k": 1, "v": "z"}]))
+      result = engine.apply(value, %(lists_mergeby([], "k")))
+      result.as_a.map(&.as_h["v"].as_s).must_equal(["z", "y", "x"])
+    end
+
+    it "keeps first-seen order for merge-key values Python could not compare (mixed types)" do
+      value = j(%([{"k": "b", "v": 1}, {"k": 5, "v": 2}]))
+      result = engine.apply(value, %(lists_mergeby([], "k")))
+      result.as_a.map(&.as_h["v"].as_i).must_equal([1, 2])
     end
 
     it "raises when a list item is not a dict" do
