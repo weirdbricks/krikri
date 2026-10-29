@@ -2565,16 +2565,23 @@ module Krikri
     # in the recap, and the play halts for that host UNCONDITIONALLY -
     # ignore_errors: does not apply (rc=2). Shared by the removed-module
     # and role-not-found flavors, which differ only in their STDERR block.
-    private def emit_include_fatal_lines(task : Task, hosts : Array(Host), message : String, include_name : String? = nil) : Nil
+    # print_lines=false skips only the stdout fatal/FAILED! lines - a
+    # LOOPED include_tasks: loading a file with a static import_role:
+    # naming a missing role prints just the STDERR block per item in
+    # Ansible (no fatal: line per item, live-verified vs 2.19), while the
+    # failed count and the unconditional halt are unchanged.
+    private def emit_include_fatal_lines(task : Task, hosts : Array(Host), message : String, include_name : String? = nil, print_lines : Bool = true) : Nil
       include_native = include_name ? JSON.parse(include_name.to_json) : task.include_file_native
       include_json = include_native.try(&.to_json) || task.include_file.to_s.to_json
       hosts.each do |host|
-        if Krikri::Oneline.enabled?
-          puts "#{host.name} | FAILED! => #{ResultDisplay.dump_oneline_json(JSON.parse({"changed" => false, "include" => include_native || JSON.parse(task.include_file.to_s.to_json), "reason" => message}.to_json))}".colorize(:red)
-        else
-          delegate_target = delegate_display_target(task, host)
-          fatal_host_label = delegate_target ? "#{host.name} -> #{delegate_target}" : host.name
-          puts "fatal: [#{fatal_host_label}]: FAILED! => {\"changed\": false, \"include\": #{include_json}, \"reason\": #{message.to_json}}".colorize(:red)
+        if print_lines
+          if Krikri::Oneline.enabled?
+            puts "#{host.name} | FAILED! => #{ResultDisplay.dump_oneline_json(JSON.parse({"changed" => false, "include" => include_native || JSON.parse(task.include_file.to_s.to_json), "reason" => message}.to_json))}".colorize(:red)
+          else
+            delegate_target = delegate_display_target(task, host)
+            fatal_host_label = delegate_target ? "#{host.name} -> #{delegate_target}" : host.name
+            puts "fatal: [#{fatal_host_label}]: FAILED! => {\"changed\": false, \"include\": #{include_json}, \"reason\": #{message.to_json}}".colorize(:red)
+          end
         end
         @results[host.name]["failed"] += 1
         halt_if_failed(task, host, true, force_halt: true)
@@ -2619,7 +2626,11 @@ module Krikri
     # used to give it.
     private def fail_include_not_found(task : Task, hosts : Array(Host), ex : RoleNotFoundError) : Nil
       emit_include_wrapped_error_block(ex.message || "role not found", ex.render)
-      emit_include_fatal_lines(task, hosts, ex.message || "")
+      # looped include: a static import_role: naming a missing role
+      # inside a looped include_tasks:-loaded file prints the STDERR
+      # block per item but NO per-host fatal: line in Ansible
+      # (live-verified vs 2.19) - the failed count and halt stay.
+      emit_include_fatal_lines(task, hosts, ex.message || "", print_lines: !task_has_loop?(task))
     end
 
     # include_role:'s removed-module fatal carries only changed+reason -
