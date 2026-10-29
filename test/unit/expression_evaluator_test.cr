@@ -1,6 +1,7 @@
 require "../minitest_helper"
 require "file_utils"
 require "../../src/krikri/variable_substitutor/expression_evaluator"
+require "../../src/krikri/variable_substitutor/jinja_renderer"
 # Pull in the Ansible-specific Crinja filter registrations (to_datetime
 # etc.), as template_action_plugin.cr does for every real template-rendering
 # binary - without this the ExpressionEvaluator's Crinja env has none of them.
@@ -2209,6 +2210,104 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
 
     it "keeps `~` LENIENT on a missing operand (deliberate scope boundary: strictness is +/- only)" do
       evaluator.evaluate("missing_var ~ host").must_equal("web1")
+    end
+  end
+
+  describe "unknown fully-qualified lookup collections fail like Ansible (issue #511)" do
+    serial! # swaps CollectionIndex.missing_lookup_warning_sink (process-global)
+
+    private def evaluator
+      Krikri::VariableSubstitutor::ExpressionEvaluator.new(Hash(String, JSON::Any).new)
+    end
+
+    it "fails a lookup whose ns.coll collection is not installed, with Ansible's not-found message" do
+      # Real ansible-core 2.19 (verified against geoffreyvanwyk.moodle's
+      # own lookup('geoffreyvanwyk.moodle.php_version', ...), a lookup
+      # plugin that does not exist anywhere): task-fatal
+      # "The lookup plugin 'nope.nope.php_version' was not found." -
+      # NOT the "undefined" sentinel the dispatch used to fall back to.
+      # Real also [WARNING]s the loader's ImportError on stderr the
+      # moment it tries to load the plugin, ahead of the failure.
+      captured = IO::Memory.new
+      previous = Krikri::CollectionIndex.missing_lookup_warning_sink
+      begin
+        Krikri::CollectionIndex.missing_lookup_warning_sink = captured
+        ex = assert_raises(Krikri::PythonLookupRunner::LookupError) do
+          evaluator.evaluate("lookup('nope.nope.php_version', moodle_version='4.5')")
+        end
+        ex.message.must_equal("The lookup plugin 'nope.nope.php_version' was not found.")
+      ensure
+        Krikri::CollectionIndex.missing_lookup_warning_sink = previous
+      end
+      captured.to_s.must_include("[WARNING]: Error loading plugin 'nope.nope.php_version': No module named 'ansible_collections.nope'")
+    end
+
+    it "prints the loader-ImportError warning only once per absent collection" do
+      # Real Display.warning dedupes on the formatted message, so a
+      # repeated lookup of the same absent collection stays silent after
+      # the first line; a distinct leaf name keeps this independent of
+      # the slot the not-found test above may already have consumed
+      # (minitest order is randomized).
+      captured = IO::Memory.new
+      previous = Krikri::CollectionIndex.missing_lookup_warning_sink
+      begin
+        Krikri::CollectionIndex.missing_lookup_warning_sink = captured
+        2.times do
+          assert_raises(Krikri::PythonLookupRunner::LookupError) do
+            evaluator.evaluate("lookup('nope.nope.dup_lookup', moodle_version='4.5')")
+          end
+        end
+      ensure
+        Krikri::CollectionIndex.missing_lookup_warning_sink = previous
+      end
+
+      captured.to_s.lines.count { |line| !line.strip.empty? }.must_equal(1, captured.to_s)
+      captured.to_s.must_include("Error loading plugin 'nope.nope.dup_lookup'")
+    end
+
+    it "warns the same loader ImportError on the krikri-jinja engine path" do
+      # The same lookup through a real {{ }} render rides the engine's
+      # own dispatcher (python_lookup), which raises the same typed
+      # LookupError - it must warn identically, not only the hand-rolled
+      # dispatch.
+      captured = IO::Memory.new
+      previous = Krikri::CollectionIndex.missing_lookup_warning_sink
+      begin
+        Krikri::CollectionIndex.missing_lookup_warning_sink = captured
+        renderer = Krikri::VariableSubstitutor::JinjaRenderer.new({} of String => JSON::Any)
+        assert_raises(Krikri::PythonLookupRunner::LookupError) do
+          renderer.render("{{ lookup('nope.nope.jinja_lookup') }}")
+        end
+      ensure
+        Krikri::CollectionIndex.missing_lookup_warning_sink = previous
+      end
+
+      captured.to_s.must_include("[WARNING]: Error loading plugin 'nope.nope.jinja_lookup': No module named 'ansible_collections.nope'")
+    end
+
+    it "stays silent for a bare lookup name that cannot be found" do
+      # Real only warns when the name resolves into a collection that
+      # cannot be imported; a bare unknown lookup type gets no loader
+      # warning (it never reaches the collection loader) and keeps the
+      # "undefined" fallback.
+      captured = IO::Memory.new
+      previous = Krikri::CollectionIndex.missing_lookup_warning_sink
+      begin
+        Krikri::CollectionIndex.missing_lookup_warning_sink = captured
+        evaluator.evaluate("lookup('nope_nope_bare_missing', moodle_version='4.5')").must_equal("undefined")
+      ensure
+        Krikri::CollectionIndex.missing_lookup_warning_sink = previous
+      end
+
+      captured.to_s.must_be_empty
+    end
+
+    it "still resolves a known fully-qualified builtin lookup" do
+      # ansible.builtin is stripped before the not-found gate, so
+      # `lookup('ansible.builtin.env', ...)` must keep working - the
+      # never-fail carve-outs must not swallow the legitimate spellings
+      # alongside the unknown ones.
+      evaluator.evaluate("lookup('ansible.builtin.env', 'PATH')").wont_equal("undefined")
     end
   end
 end

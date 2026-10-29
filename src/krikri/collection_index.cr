@@ -1,4 +1,5 @@
 require "base64"
+require "colorize"
 require "compress/gzip"
 require "json"
 require "./builtin_module_names_data"
@@ -531,6 +532,32 @@ module Krikri
         next if collection_dirs.has_key?("#{namespace}.#{collection}")
         "Error loading plugin '#{name}': #{missing_collection_reason(namespace, collection)}"
       end
+    end
+
+    # Where the missing-lookup-plugin [WARNING] goes - STDERR in
+    # production, replaceable so a spec can capture the text without
+    # touching the process's STDERR (same indirection as
+    # PythonFilterRunner.warning_sink).
+    class_property missing_lookup_warning_sink : IO = STDERR
+
+    # A distinct lookup-plugin [WARNING] already printed this run - real
+    # Display.warning dedupes on the formatted message, so a repeated
+    # lookup of the same absent collection stays silent after the first.
+    @@missing_lookup_warnings = Set(String).new
+
+    # The [WARNING] real's plugin loader prints the moment a lookup name
+    # resolves into a collection that cannot be imported, ahead of the
+    # hard not-found failure ("Error loading plugin 'nope.nope.php_version':
+    # No module named 'ansible_collections.nope'"). Bare names and names
+    # inside an installed collection stay silent - real only surfaces
+    # the loader's ImportError there.
+    def self.warn_missing_lookup_plugin(fqcn : String) : Nil
+      return unless fqcn.count('.') >= 2
+      namespace, collection, _leaf = fqcn.split('.', 3)
+      return if installed?(namespace, collection)
+      line = "[WARNING]: Error loading plugin '#{fqcn}': #{missing_collection_reason(namespace, collection)}"
+      return unless @@missing_lookup_warnings.add?(line)
+      missing_lookup_warning_sink.puts line.colorize(:light_magenta)
     end
 
     # A role's own meta/main.yml `collections:` list - the role's
