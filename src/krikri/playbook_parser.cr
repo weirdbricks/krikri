@@ -1128,10 +1128,11 @@ module Krikri
     # Ansible's phrasing and its worked-example hint. Any other error
     # keeps our YAML library's own message - Ansible's prose for
     # those comes from ITS parser and cannot be reproduced verbatim.
-    COLON_DETAIL  = "mapping values are not allowed in this context"
-    COLON_MESSAGE = "Colons in unquoted values must be followed by a non-space character."
-    TAB_DETAIL    = "found a tab character"
-    TAB_MESSAGE   = "Tabs are usually invalid in YAML."
+    COLON_DETAIL         = "mapping values are not allowed in this context"
+    COLON_MESSAGE        = "Colons in unquoted values must be followed by a non-space character."
+    MISSING_COLON_DETAIL = "could not find expected ':'"
+    TAB_DETAIL           = "found a tab character"
+    TAB_MESSAGE          = "Tabs are usually invalid in YAML."
     # ansible-core's loader refuses a collection used as a mapping key
     # with its own wording (not libyaml's - libyaml parses `key: {{ x }}`
     # happily as a flow-mapping key); verified against 2.19: rc=4, this
@@ -1194,6 +1195,11 @@ module Krikri
     # multi-line plain scalar (over-indented mapping under `- name: x`)
     # keeps libyaml's wording, capitalized, with no hint.
     def colon_error? : Bool
+      # A multi-line plain scalar whose next line is a bare `key:` (jbertozzi
+      # .cis_rhel8's section_1.yml:75) reaches libyaml as "could not find
+      # expected ':'" and ansible-core gives it the same colon message and
+      # worked example, at the colon itself - so no earlier-colon check.
+      return true if detail.downcase.includes?(MISSING_COLON_DETAIL)
       return false unless detail.downcase.includes?(COLON_DETAIL)
       src = @content.lines[@line - 1]?
       return true unless src

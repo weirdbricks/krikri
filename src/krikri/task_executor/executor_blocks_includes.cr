@@ -174,7 +174,11 @@ module Krikri
         begin
           text = Vault.maybe_decrypt(File.read(resolved_path))
           UnsafeValues.mark_yaml_text(text)
-          yaml = YAML.parse(text)
+          yaml = begin
+            YAML.parse(text)
+          rescue ex : YAML::ParseException
+            raise YamlSyntaxError.new(resolved_path, text, ex)
+          end
           # A comment-only (or entirely blank) tasks file - Ansible
           # treats this as zero tasks, not an error (ansistrano.deploy's
           # own tasks/empty.yml, deliberately shipped as a no-op include
@@ -290,6 +294,11 @@ module Krikri
           # run (Ansible's playbook-load check), it must not
           # degrade to a per-task "Failed to load included tasks"
           # failure. See UnresolvedModuleError's own comment.
+          raise ex
+        rescue ex : YamlSyntaxError
+          # A runtime-loaded file that is not valid YAML is ansible-core's
+          # whole-run parser refusal (rc=4, [ERROR] YAML parsing failed
+          # block, no recap), not a per-task include failure.
           raise ex
         rescue ex : PlaybookParser::InvalidIncludeAttributeError
           # Same bypass: a runtime-loaded file's own import_tasks:/
@@ -2254,7 +2263,11 @@ module Krikri
 
       text = Vault.maybe_decrypt(File.read(resolved_path))
       UnsafeValues.mark_yaml_text(text)
-      yaml = YAML.parse(text)
+      yaml = begin
+        YAML.parse(text)
+      rescue ex : YAML::ParseException
+        raise YamlSyntaxError.new(resolved_path, text, ex)
+      end
       # A comment-only (or entirely blank) tasks file - see the batched
       # #execute_include_tasks_multi path's identical check for why this
       # can't be folded into the `unless yaml.as_a?` check below. Zero
@@ -2417,6 +2430,9 @@ module Krikri
       # load included tasks" degradation.
       fail_include_not_found(task, [host], ex)
       :ok
+    rescue ex : YamlSyntaxError
+      # Same whole-run parser refusal as the batched include path above.
+      raise ex
     rescue ex : PlaybookParser::InvalidIncludeAttributeError
       # Same bypass as the batched include path above - see there.
       raise ex
