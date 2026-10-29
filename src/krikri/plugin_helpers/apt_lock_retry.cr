@@ -335,9 +335,15 @@ module Krikri
     # pkgs.k8s.io repo, whose freshly-fetched indexes genuinely move the
     # lists mtime) reported changed=true there, while this engine stayed
     # on the absent path and reported ok.
+    #
+    # `force_absent` is a spec seam only (never set by real playbooks): it
+    # short-circuits the live probe so a spec running on a dev box that really
+    # has the bindings can still drive the absent path through the plugin's
+    # own call site.
     def apt_auto_install_python_apt(skip_prefetch : Bool,
-                                    exec_remote : Proc(String, NamedTuple(exit_code: Int32, stdout: String, stderr: String))) : NamedTuple(exit_code: Int32, stdout: String, stderr: String)?
-      return nil if apt_python_apt_present?(exec_remote)
+                                    exec_remote : Proc(String, NamedTuple(exit_code: Int32, stdout: String, stderr: String)),
+                                    force_absent : Bool = false) : NamedTuple(exit_code: Int32, stdout: String, stderr: String)?
+      return nil if !force_absent && apt_python_apt_present?(exec_remote)
 
       unless skip_prefetch
         result = exec_remote.call("apt-get update")

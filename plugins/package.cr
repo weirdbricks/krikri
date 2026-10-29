@@ -1124,6 +1124,30 @@ module Krikri
       if refusal = apt_check_mode_python_apt_refusal(@check_mode, ->remote_exec(String))
         return PluginResult.new(changed: false, failed: true, msg: refusal)
       end
+      # Real apt.py auto-installs the python3-apt bindings at module start
+      # when they are missing and then RESPAWNS - the respawned module re-runs
+      # the whole task against a host that now HAS the bindings, so a
+      # `package: {name: [python3-apt], state: present}` request (bodsch.dhcpd's
+      # own "make sure python3-apt is installed" task, issue #433) exits with
+      # the respawn's changed=false "ok" instead of counting the auto-install
+      # as a change of its own. This backend only emulated that module-start
+      # auto-install on the cache-refresh-only path (update_cache_only above,
+      # the geerlingguy.kubernetes fix); the named-package path went straight
+      # to the dpkg-query installed check, found the requested python3-apt
+      # absent, and installed it as the REQUESTED package - reporting
+      # changed=true where Ansible's respawn reports ok, and through the
+      # registered `_installed.changed` making downstream only-on-change
+      # blocks (the role's "clean apt cache") run where Ansible skips them.
+      # Mirrors apt.cr's own identical block at module start. Check mode skips
+      # this - the refusal above already mirrors Ansible's fail-fast there.
+      # `_python_apt_absent` is a spec seam only (never set by real playbooks),
+      # forcing the absent path on a dev box that really has the bindings.
+      unless @check_mode
+        explicitly_no_cache = @params["update_cache"]? ? !true?(@params["update_cache"]?) : false
+        if failure = apt_auto_install_python_apt(explicitly_no_cache, ->remote_exec(String), force_absent: true?(@params["_python_apt_absent"]?))
+          return PluginResult.new(changed: false, failed: true, msg: "Failed to auto-install python3-apt: #{failure[:stderr]}")
+        end
+      end
       # A `deb:` install (URL or local .deb) carries no name: - ansible's
       # package action plugin forwards deb: verbatim to apt.py, whose
       # main() dispatches it before the name path ("deb only supports
