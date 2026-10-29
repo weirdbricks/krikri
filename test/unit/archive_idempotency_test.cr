@@ -68,6 +68,23 @@ describe "archive rerun idempotency" do
     FileUtils.rm_rf(work) if work
   end
 
+  it "reports changed when a log-like member grows between runs (ansible's own syslog writes do this to /var/log)" do
+    work = PluginSpecHelper.tmp_path("archive-idem-growth")
+    src = make_idem_src("archive-idem-growth-src")
+    Dir.mkdir_p(work)
+    dest = File.join(work, "pack.tar.bz2")
+
+    PluginSpecHelper.run("archive", {"path" => src, "dest" => dest, "format" => "bz2", "mode" => "0644"})
+    File.open(File.join(src, "a.txt"), "a") { |log| log.print("Invoked with\n") }
+    File.touch(File.join(src, "a.txt"), Time.utc(2030, 1, 1))
+
+    result = PluginSpecHelper.run("archive", {"path" => src, "dest" => dest, "format" => "bz2", "mode" => "0644"})
+    result["changed"].as_bool.must_equal(true)
+  ensure
+    FileUtils.rm_rf(src) if src
+    FileUtils.rm_rf(work) if work
+  end
+
   it "stays content-sensitive only for zip (real compares filename+CRC, no mtimes)" do
     work = PluginSpecHelper.tmp_path("archive-idem-zip")
     src = make_idem_src("archive-idem-zip-src")
