@@ -2062,6 +2062,36 @@ module Krikri
             vars_context["item"] = rendered_item
           end
           vars_context[index_var] = JSON::Any.new(idx.to_i64) if index_var
+          # A looped include's own vars: may depend on the loop item
+          # (issue #483: a `vars: first_found` keyed on `item` gated the
+          # include's `when:`, and every iteration skipped because `found`
+          # was still the pre-loop render "[]"), but base_vars_context was
+          # built before the loop bound anything - restore the raw vars:
+          # into this iteration's context and re-render with `item` bound,
+          # matching the looped include_vars and ordinary looped-task
+          # paths, so both the include path template and the when: see the
+          # per-item values. The loop's own binding must always win over
+          # an inherited one for the same key.
+          task.vars.each do |key, raw_value|
+            next if key == "item" || key == loop_var || key == index_var
+            vars_context[key] = raw_value
+          end
+          item_label = include_item_display_label(task, rendered_item, vars_context, host)
+          begin
+            render_task_vars(task, vars_context, host.name)
+          rescue ex : VariableSubstitutor::FilterEngine::UnknownFilterError
+            # An unknown filter with `item` now BOUND is the real
+            # per-iteration verdict (the pre-loop render was made lenient
+            # for looped tasks - see build_vars_context's
+            # loop_lenient_vars comment): channel it through the same
+            # per-item when-failure path run_include_tasks_once's own
+            # rescue uses, so the looped caller's aggregate booking
+            # reports it instead of crashing the process.
+            swallow_when_error(task, host, WhenEvaluationError.new(ex.message), item_label: item_label, defer_stats: true, emit_chain_for_item: true, loop_item: vars_context[loop_var || "item"]?)
+            looped_when_failed = true
+            any_iteration_ran = true
+            next
+          end
           # Each include_tasks loop iteration counts as one `ok` in the
           # recap, matching Ansible (which tallies the include plus
           # every included task per iteration) - but only once the
@@ -2072,7 +2102,7 @@ module Krikri
           # ultimately skipped still got counted as `ok` AND `skipped`
           # for the same task. See the non-looped branch's comment below
           # for how this was found.
-          status = run_include_tasks_once(task, host, vars_context, include_item_display_label(task, rendered_item, vars_context, host), defer_when_stats: true, defer_run: true, collected: deferred_iterations)
+          status = run_include_tasks_once(task, host, vars_context, item_label, defer_when_stats: true, defer_run: true, collected: deferred_iterations)
           looped_when_failed = true if status == :failed
           any_iteration_ran = true unless status == :skipped
         end
@@ -2754,6 +2784,24 @@ module Krikri
           vars_context["item"] = item unless loop_var
           vars_context[loop_var] = item if loop_var
           vars_context[index_var] = JSON::Any.new(idx.to_i64) if index_var
+          # Same per-iteration vars: re-render as the looped include_tasks
+          # path above (issue #483): a looped include_role:'s own vars:
+          # keyed on the loop item was stuck at the pre-loop render, so
+          # both the role invocation and the when: saw stale values on
+          # every iteration.
+          task.vars.each do |key, raw_value|
+            next if key == "item" || key == loop_var || key == index_var
+            vars_context[key] = raw_value
+          end
+          begin
+            render_task_vars(task, vars_context, host.name)
+          rescue ex : VariableSubstitutor::FilterEngine::UnknownFilterError
+            # Same unknown-filter-with-item-bound channeling as the
+            # looped include_tasks path above - the per-iteration verdict,
+            # not a process crash.
+            swallow_when_error(task, host, WhenEvaluationError.new(ex.message), item_label: include_item_display_label(task, item, vars_context, host), loop_item: vars_context[loop_var || "item"]?)
+            next
+          end
           run_include_role_once(task, host, vars_context, include_item_display_label(task, item, vars_context, host), idx)
         end
       else

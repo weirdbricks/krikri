@@ -56,4 +56,54 @@ describe "include_tasks: loop_control.index_var propagation into the included fi
     File.delete(playbook) if playbook && File.exists?(playbook)
     FileUtils.rm_rf(tasks_dir) if tasks_dir
   end
+
+  it "re-renders the include's own vars: per loop item so a first_found-keyed when: does not skip every iteration" do
+    # Issue #483 (diademiemi.github_cli's tasks/assert include loop): a looped
+    # include_tasks: whose `vars:` (a first_found lookup keyed on `item`)
+    # feed its `when:` skipped on EVERY iteration - the pre-loop render of
+    # `found` ("[]", skip: true) was stuck in the per-iteration context
+    # because the looped branch never restored the raw vars: to re-render
+    # them with `item` bound. Real Ansible includes the found file for the
+    # existing candidate and skips the missing one.
+    tasks_dir = PluginSpecHelper.tmp_path("issue-483-tasks")
+    Dir.mkdir_p(File.join(tasks_dir, "assert"))
+    found_file = File.join(tasks_dir, "assert", "default.yml")
+    File.write(found_file, <<-YAML)
+      - name: prove the include ran
+        ansible.builtin.debug:
+          msg: "RAN-DEFAULT"
+      YAML
+
+    playbook = PluginSpecHelper.tmp_path("issue-483.yml")
+    File.write(playbook, <<-YAML)
+      - name: repro
+        hosts: localhost
+        gather_facts: false
+        vars:
+          ord: ["default.yml", "missing.yml"]
+        tasks:
+          - name: inc
+            ansible.builtin.include_tasks: "{{ found }}"
+            vars:
+              find:
+                files: ["{{ item }}"]
+                skip: true
+                paths: ["#{tasks_dir}/assert"]
+              found: "{{ lookup('ansible.builtin.first_found', find) }}"
+            when: found | length > 0
+            loop: "{{ ord | unique }}"
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+
+    status.success?.must_equal(true)
+    combined = output.to_s
+    combined.must_include("RAN-DEFAULT")
+    combined.must_include("item=default.yml")
+    combined.must_include("(item=missing.yml)")
+  ensure
+    FileUtils.rm_rf(tasks_dir) if tasks_dir
+    File.delete(playbook) if playbook && File.exists?(playbook)
+  end
 end
