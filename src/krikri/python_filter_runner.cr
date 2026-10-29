@@ -79,7 +79,14 @@ module Krikri
       # not role-adjacent directories - Ansible's own gate at Role.load.
       return if collection_name
       @@plugin_roots_mutex.synchronize do
-        {"filter_plugins", "test_plugins", "library", "action_plugins"}.each do |subdir|
+        # Every role-plugin subdir Ansible's add_all_plugin_dirs itself
+        # registers, not just the templating ones: a meta dependency's
+        # lookup_plugins/ serves the depending role's lookup() calls
+        # (gzm55.local_id_plugin's `id` serving
+        # gzm55.local_ssh_known_hosts, issue #519) and its action_plugins/
+        # resolves the depending role's module names, so both ride the
+        # same registry the filter/test/library consumers already read.
+        {"filter_plugins", "test_plugins", "library", "lookup_plugins", "action_plugins"}.each do |subdir|
           dir = File.join(role_path, subdir)
           next unless Dir.exists?(dir)
           roots = @@loaded_role_plugin_roots[subdir] ||= [] of String

@@ -80,6 +80,30 @@ describe Krikri::PythonLookupRunner do
     FileUtils.rm_r(pb)
   end
 
+  it "finds a lookup plugin in a loaded dependency role's registered lookup_plugins/ root" do
+    # Ansible's add_all_plugin_dirs puts a meta dependency's
+    # lookup_plugins/ on the search path for the rest of the run
+    # (gzm55.local_id_plugin's `id` serving
+    # gzm55.local_ssh_known_hosts, issue #519), so find_source consults
+    # the loaded-role registry when neither the current role nor the
+    # playbook dir ships the name.
+    root = PluginSpecHelper.tmp_path("pylookup-dependency-root")
+    dep_role = File.join(root, "dep_role")
+    path = write_lookup_plugin(dep_role, "mylookup.py", "# dependency role plugin")
+    Krikri::PythonFilterRunner.register_role_plugin_roots(dep_role)
+    begin
+      Krikri::PythonLookupRunner.find_source("mylookup", nil, nil).must_equal(path)
+      # the current role's own lookup_plugins/ still wins over the
+      # registry (nearest-first, like PythonFilterRunner#find_sources)
+      own_role = File.join(root, "own_role")
+      own_path = write_lookup_plugin(own_role, "mylookup.py", "# own role plugin")
+      Krikri::PythonLookupRunner.find_source("mylookup", own_role, nil).must_equal(own_path)
+    ensure
+      Krikri::PythonFilterRunner.unregister_role_plugin_roots_under(root)
+    end
+    FileUtils.rm_r(root)
+  end
+
   # ---- dispatch ----
 
   it "round-trips a custom lookup plugin's run(terms, variables, **kwargs) result" do

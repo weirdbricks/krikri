@@ -278,7 +278,7 @@ module Krikri
         list_form = query_mode || truthy?(kwargs["wantlist"]?) || hosts.empty?
         list_form ? AnyValue.new(hosts.map { |host| AnyValue.new(host) }) : AnyValue.new(hosts.join(","))
       else
-        python_lookup(name, terms, kwargs, ctx)
+        python_lookup(name, terms, kwargs, ctx, query_mode)
       end
     end
 
@@ -449,7 +449,7 @@ module Krikri
     end
 
     private def self.python_lookup(name : String, terms : Array(AnyValue), kwargs : Hash(String, AnyValue),
-                                   ctx : KrikriJinja::Context) : AnyValue
+                                   ctx : KrikriJinja::Context, query_mode : Bool = false) : AnyValue
       host = ctx.host_context.as?(JinjaHostContext)
       role_path = scope_string(ctx, "role_path")
       playbook_dir = scope_string(ctx, "playbook_dir")
@@ -480,13 +480,26 @@ module Krikri
         options[key] = json(value)
       end
       variables = host ? host.lookup_variables : {"omit" => JSON::Any.new(Krikri::OMIT_SENTINEL)}
-      begin
+      result = begin
         KrikriJinja.from_json_any(PythonLookupRunner.call_lookup(name, source, terms.map { |term| json(term) }, variables, options))
       rescue ex : PythonLookupRunner::LookupUnavailableError
         return AnyValue.new(nil) if ex.unavailable?
         return AnyValue.new(nil) if kwargs["errors"]?.try { |value| text(value).downcase } == "ignore"
         raise ex
       end
+      # Same list-form convention as the hand-rolled evaluator's
+      # evaluate_custom_python_lookup: a list-shaped result is
+      # comma-joined into a scalar for a plain lookup() - ansible's
+      # lookup()/query() distinction (live-verified vs ansible-playbook:
+      # lookup() of a plugin returning ['bob','alice'] renders
+      # "bob,alice"), while query()/wantlist=True/an empty result stay a
+      # real list. Without this a resolved lookup fed the WHOLE list to
+      # its consumer (issue #519: ansible_become_user became
+      # "['bob']" instead of "bob" and the owning task still failed).
+      items = result.raw.as?(Array(AnyValue))
+      return result unless items && !items.empty? &&
+                           !(query_mode || truthy?(kwargs["wantlist"]?))
+      AnyValue.new(items.map { |item| (str = item.raw.as?(String)) ? str : text(item) }.join(","))
     end
   end
 end

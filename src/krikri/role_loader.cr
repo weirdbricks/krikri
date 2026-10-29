@@ -480,11 +480,14 @@ module Krikri
 
       # ansible-core's add_all_plugin_dirs(self._role_path) at Role.load:
       # every LEGACY role loaded this run (play roles, meta dependencies,
-      # include_role:) contributes its filter_plugins//test_plugins/ to
-      # the controller's plugin search path for the rest of the run -
-      # which is how a meta dependency's custom filters serve the
-      # depending role's own templates (nephelaiio.plugins' sorted_get
-      # used by nephelaiio.i3, round 5250000). Collection-hosted roles
+      # include_role:) contributes its filter_plugins//test_plugins//
+      # library//lookup_plugins//action_plugins/ to the controller's
+      # plugin search path for the rest of the run - which is how a meta
+      # dependency's custom filters serve the depending role's own
+      # templates (nephelaiio.plugins' sorted_get used by nephelaiio.i3,
+      # round 5250000) and its lookup plugins the depending role's own
+      # lookups (gzm55.local_id_plugin's `id` serving
+      # gzm55.local_ssh_known_hosts, issue #519). Collection-hosted roles
       # are excluded, matching Ansible's own gate (the nil check lives
       # in the registrar to keep this loader's cyclomatic complexity
       # where it was).

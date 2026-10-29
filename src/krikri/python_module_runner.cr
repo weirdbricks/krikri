@@ -207,7 +207,7 @@ module Krikri
         end
     end
 
-    private def typed_value(value : String) : JSON::Any
+    def typed_value(value : String) : JSON::Any
       stripped = value.strip
       if stripped.starts_with?('{') || stripped.starts_with?('[')
         # A whole-value `{{ list_var }}`/`{{ dict_var }}` container arg
