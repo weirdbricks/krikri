@@ -21,6 +21,7 @@ require "../timing_profile"
 require "../fact_cache"
 require "../argspec_validator"
 require "../python_module_runner"
+require "../python_action_runner"
 require "random/secure"
 
 require "../cli_options"

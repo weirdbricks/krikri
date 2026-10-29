@@ -2986,17 +2986,71 @@ module Krikri
       # Ansible's own "module (name) is missing interpreter line"
       # guard, which a shebangless old-style module fixture failed on
       # the real side while this engine ran it and succeeded.
-      # Ansible resolves a role's action_plugins/<name>.py before the
+      # Ansible resolves a role's action_plugins/<name>.py BEFORE the
       # library/<name> file, which roles ship only as a placeholder
-      # (gzm55.local_ssh_known_hosts). Running Python action plugins is
-      # unsupported, so say so instead of blaming the placeholder.
-      if (rp = task.role_path) && PythonModuleRunner.missing_interpreter_line?(source_text, new_style)
-        plugin = File.join(rp, "action_plugins", "#{module_name}.py")
-        if File.file?(plugin)
+      # (gzm55.local_ssh_known_hosts): the CONTROLLER-side plugin runs
+      # with self._play_context carrying the connection's resolved
+      # remote_addr/port, and its returned dict IS the task result -
+      # register: sees the play context fields the plugin echoes and
+      # the plugin's own changed/failed verdicts (issue #519).
+      # The resolving role's own action_plugins/ wins; a plugin that
+      # lives only in a META DEPENDENCY role's action_plugins/
+      # (gzm55.local_ssh_known_hosts's real dispatch lives in neither
+      # role it is used from - ansible's add_all_plugin_dirs puts every
+      # loaded role's action_plugins/ on the search path in load order)
+      # resolves through the loaded-role registry, mirroring
+      # collection_index.local_action_plugin?.
+      action_plugin = if (rp = task.role_path) &&
+                         (plugin = File.join(rp, "action_plugins", "#{module_name}.py")) &&
+                         File.file?(plugin)
+                        plugin
+                      else
+                        PythonFilterRunner.loaded_role_roots("action_plugins")
+                          .find { |root| File.file?(File.join(root, "#{module_name}.py")) }
+                          .try { |root| File.join(root, "#{module_name}.py") }
+                      end
+      if action_plugin
+        # The typed-arg convention PythonModuleRunner.build_module_args
+        # already established: a parser-marked non-string literal decodes
+        # to its native JSON value, a whole-value container template back
+        # into a real container, everything else stays a string.
+        args = Hash(String, JSON::Any).new
+        substituted_params.each do |key, value|
+          next if key.in?("check_mode", "diff_mode", "_verbosity", "_environment")
+          args[key] = Krikri.non_string_scalar(value) || PythonModuleRunner.typed_value(value)
+        end
+        # The effective connection the executor already resolved into the
+        # magic var (inventory value, or this task's own connection:
+        # override) - the same local-vs-ssh verdict every dispatch site
+        # applies; play_context.remote_user mirrors ansible_user the same
+        # way build_vars_context fills it.
+        connection = vars_context["ansible_connection"]?.try(&.as_s?) ||
+                     (PluginManager.local_connection?(exec_host, vars_context) ? "local" : "ssh")
+        remote_user = vars_context["ansible_user"]?.try(&.as_s?) || exec_host.user
+        # play_context.port is var-driven only: the ansible_port var when
+        # one is in scope, otherwise None - even over ssh (ansible's ssh
+        # connection leaves the option unset and ssh resolves the port
+        # itself; live-verified both directions vs ansible-playbook
+        # 2.19.11). NOT the executor's own Host#port: the implicit
+        # localhost defaults that to 22 for transport dispatch, which
+        # would leak a port ansible's play_context never carries.
+        port = vars_context["ansible_port"]?.try(&.as_i?) ||
+               vars_context["ansible_ssh_port"]?.try(&.as_i?)
+        begin
+          return PythonActionRunner.run_action(action_plugin, module_name, args, connection,
+            exec_host.connection_host, port, remote_user, become, become_user,
+            resolve_task_check_mode(task, wire_vars), vars_context)
+        rescue PythonActionRunner::ActionUnavailableError
           return JSON.parse({
             "changed" => false,
             "failed"  => true,
-            "msg"     => "role-local Python action plugin (#{plugin}) is not supported by krikri",
+            "msg"     => "role-local Python action plugin (#{action_plugin}) is not supported by krikri",
+          }.to_json)
+        rescue ex : PythonActionRunner::ActionError
+          return JSON.parse({
+            "changed" => false,
+            "failed"  => true,
+            "msg"     => ex.message.to_s,
           }.to_json)
         end
       end

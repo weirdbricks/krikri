@@ -38,9 +38,10 @@ require "json"
 # before, so roles WITHOUT custom lookup plugins (the overwhelming
 # majority) behave bit-for-bit identically.
 #
-# Deliberately scoped to role-private `lookup_plugins/` directories and
-# the playbook-adjacent `lookup_plugins/` (Ansible's two most
-# common search roots, mirroring PythonFilterRunner#find_sources and
+# Deliberately scoped to role-private `lookup_plugins/` directories,
+# the playbook-adjacent `lookup_plugins/` and the `lookup_plugins/` of
+# every role loaded this run (Ansible's most common search roots,
+# mirroring PythonFilterRunner#find_sources and
 # PythonModuleRunner#find_source); third-party COLLECTION lookup
 # plugins are still the unchanged scope cut - those live inside
 # installed collections, not in the playbook tree this runner can see.
@@ -65,17 +66,25 @@ module Krikri
 
     # A `lookup_plugins/<name>.py` source for *name*, searched in the
     # role's own `lookup_plugins/` first, then the playbook-adjacent
-    # one (nearest-first, same convention as
-    # PythonFilterRunner#find_sources). Unlike filters - whose names
-    # come from each FilterModule's `filters()` dict - Ansible's
-    # plugin loader derives a lookup plugin's name from its FILE NAME,
-    # so no Python introspection (and no mtime cache) is needed here:
-    # `lookup_plugins/manala_environment_files.py` IS the
+    # one, then the lookup_plugins/ of every role LOADED this run
+    # (Ansible's add_all_plugin_dirs at Role.load - a meta dependency's
+    # lookup plugin stays reachable from the depending role's own
+    # tasks, which is how gzm55.local_id_plugin's `id` served
+    # gzm55.local_ssh_known_hosts, issue #519; same nearest-first
+    # convention as PythonFilterRunner#find_sources). Unlike filters -
+    # whose names come from each FilterModule's `filters()` dict -
+    # Ansible's plugin loader derives a lookup plugin's name from its
+    # FILE NAME, so no Python introspection (and no mtime cache) is
+    # needed here: `lookup_plugins/manala_environment_files.py` IS the
     # `manala_environment_files` lookup, whatever class it declares.
     def find_source(name : String, role_path : String?, playbook_dir : String?) : String?
       [role_path, playbook_dir].each do |root|
         next unless root && !root.empty?
         path = File.join(root, "lookup_plugins", "#{name}.py")
+        return path if File.file?(path)
+      end
+      PythonFilterRunner.loaded_role_roots("lookup_plugins").each do |root|
+        path = File.join(root, "#{name}.py")
         return path if File.file?(path)
       end
       nil
