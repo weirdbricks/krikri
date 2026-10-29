@@ -1328,8 +1328,12 @@ module Krikri
       # this fix).
       facts["ansible_default_ipv6"] = {} of String => JSON::Any
 
+      # Ansible's network/linux.py only appends addresses that do not start
+      # with '127.' (loopback lives in ansible_lo, never here); a role looping
+      # over this fact sees one iteration fewer than a krikri that kept
+      # 127.0.0.1 (jtprogru.hosts, issue #535).
       unless all_ipv4_addrs.empty?
-        facts["ansible_all_ipv4_addresses"] = all_ipv4_addrs
+        facts["ansible_all_ipv4_addresses"] = all_ipv4_addrs.reject(&.starts_with?("127."))
       end
 
       # ansible_all_ipv6_addresses - Ansible's LinuxNetwork collector
