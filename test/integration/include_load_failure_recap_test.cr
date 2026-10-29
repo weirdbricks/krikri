@@ -93,7 +93,9 @@ describe "include_tasks: whose included file fails to load" do
 
     status.exit_code.must_equal(2)
     output.must_include("<<< caused by >>>")
-    output.must_include(%("include": "instance.yml"))
+    # Live-verified vs 2.19: a LOOPED include prints only the stderr block,
+    # no stdout fatal: line (issue #443).
+    output.wont_include(%("include": "instance.yml"))
     output.must_include("ok=0    changed=0    unreachable=0    failed=1")
   end
 

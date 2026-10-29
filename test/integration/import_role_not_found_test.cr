@@ -138,4 +138,40 @@ describe "static import_role: naming a missing role" do
 
     FileUtils.rm_rf(dir)
   end
+
+  it "prints no fatal line for a looped include_tasks: whose file has a missing import_role:" do
+    # Real 2.19 (live-verified): when the include_tasks: is LOOPED, the
+    # missing-role failure prints only the wrapped stderr block per item;
+    # the per-host fatal: line is gone, but the recap still counts
+    # failed=1 and rc stays 2.
+    dir = PluginSpecHelper.tmp_path("import-role-missing-looped", Random::Secure.hex(4))
+    FileUtils.mkdir_p(File.join(dir, "roles", "r4", "tasks"))
+    File.write(File.join(dir, "roles", "r4", "tasks", "main.yml"), <<-YAML)
+      - include_tasks: inst.yml
+        loop: [a]
+        loop_control:
+          loop_var: instance
+      YAML
+    File.write(File.join(dir, "roles", "r4", "tasks", "inst.yml"), <<-YAML)
+      - import_role:
+          name: nonexistent.role
+      YAML
+    File.write(File.join(dir, "site.yml"), <<-YAML)
+      - hosts: localhost
+        gather_facts: false
+        connection: local
+        roles: [r4]
+      YAML
+
+    status, output = run_playbook(dir)
+
+    output.must_include("[ERROR]: the role 'nonexistent.role' was not found in #{dir}/roles:")
+    output.must_include("<<< caused by >>>")
+    output.wont_include("fatal: [localhost]")
+    output.must_match(/ok=0\s+changed=0\s+unreachable=0\s+failed=1\s+skipped=0\s+rescued=0\s+ignored=0/)
+    exit_code = status.exit_code
+    exit_code.must_equal(2)
+
+    FileUtils.rm_rf(dir)
+  end
 end
