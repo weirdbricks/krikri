@@ -135,6 +135,31 @@ describe "user plugin" do
     result["groups"].as_s.must_equal("root")
   end
 
+  # buluma.vector passes `groups: "{{ vector_groups | default('') }}"`,
+  # which renders to an explicitly-provided empty string; real
+  # ansible-core 2.19 stays silent about append for that (verified on a
+  # real host) - its append warning only fires when the groups: key is
+  # missing from the task entirely.
+  it "stays silent about append when groups is an explicitly-provided empty string (check mode)" do
+    result = PluginSpecHelper.run("user", {
+      "name" => "root", "state" => "present", "groups" => "",
+      "append" => "true", "_ansible_check_mode" => "true",
+    })
+
+    append_warning = result["warnings"]?.try(&.as_a.any?(&.as_s.includes?("'append' is set")))
+    falsey?(append_warning).must_equal(true)
+  end
+
+  it "warns when append is set and groups is absent from the task entirely (check mode)" do
+    result = PluginSpecHelper.run("user", {
+      "name" => "root", "state" => "present",
+      "append" => "true", "_ansible_check_mode" => "true",
+    })
+
+    result["warnings"].as_a.map(&.as_s).includes?(
+      "'append' is set, but no 'groups' are specified. Use 'groups' for appending new groups.This will change to an error in Ansible 2.14.").must_equal(true)
+  end
+
   # Real user.py only echoes system/create_home on the create path AFTER
   # it actually ran (a check-mode create of a missing user exits bare
   # changed before ever reaching that echo) - verified live vs 2.19.11

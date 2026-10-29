@@ -174,18 +174,15 @@ module Krikri::FiletreeLookup
               return nil
             end
 
+    # Build the hash in insertion order: root, path, state, then src (only
+    # for file/link), then the stat properties. Ansible's file_props builds
+    # its dict in exactly this order, and that order is observable - it
+    # shows up in item= output of looped tasks, so krikri must match it
+    # byte for byte.
     props = {
       "root"  => JSON::Any.new(root),
       "path"  => JSON::Any.new(relpath),
       "state" => JSON::Any.new(state),
-      "uid"   => JSON::Any.new(stat.st_uid.to_i64),
-      "gid"   => JSON::Any.new(stat.st_gid.to_i64),
-      "owner" => owner_name(stat.st_uid),
-      "group" => group_name(stat.st_gid),
-      "mode"  => JSON::Any.new(sprintf("0%03o", mode & 0o777)),
-      "size"  => JSON::Any.new(stat.st_size.to_i64),
-      "mtime" => JSON::Any.new(timespec_to_f(stat_mtime_ts(stat))),
-      "ctime" => JSON::Any.new(timespec_to_f(stat_ctime_ts(stat))),
     } of String => JSON::Any
 
     case state
@@ -194,6 +191,15 @@ module Krikri::FiletreeLookup
     when "link"
       props["src"] = JSON::Any.new(File.readlink(abspath))
     end
+
+    props["uid"] = JSON::Any.new(stat.st_uid.to_i64)
+    props["gid"] = JSON::Any.new(stat.st_gid.to_i64)
+    props["owner"] = owner_name(stat.st_uid)
+    props["group"] = group_name(stat.st_gid)
+    props["mode"] = JSON::Any.new(sprintf("0%03o", mode & 0o777))
+    props["size"] = JSON::Any.new(stat.st_size.to_i64)
+    props["mtime"] = JSON::Any.new(timespec_to_f(stat_mtime_ts(stat)))
+    props["ctime"] = JSON::Any.new(timespec_to_f(stat_ctime_ts(stat)))
 
     props
   end

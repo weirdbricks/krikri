@@ -126,6 +126,41 @@ describe Krikri::FiletreeLookup do
       entries.must_equal([] of Hash(String, JSON::Any))
     end
 
+    it "orders item keys like real filetree.py: src right after state, before the stat props" do
+      root = File.tempname("filetree-root")
+      Dir.mkdir_p(root)
+      File.write(File.join(root, "app.conf"), "app")
+
+      entries = Krikri::FiletreeLookup.resolve([root], nil)
+
+      # Ansible's file_props inserts src (for file/link) right after
+      # state, before the stat properties; that order is visible in the
+      # item= output of looped tasks, so krikri must match it.
+      entries[0].keys.must_equal([
+        "root", "path", "state", "src",
+        "uid", "gid", "owner", "group", "mode", "size", "mtime", "ctime",
+      ])
+    ensure
+      FileUtils.rm_rf(root) if root
+    end
+
+    it "orders link entries the same way, with src after state" do
+      root = File.tempname("filetree-root")
+      Dir.mkdir_p(root)
+      File.write(File.join(root, "real.conf"), "real")
+      File.symlink(File.join(root, "real.conf"), File.join(root, "link.conf"))
+
+      entries = Krikri::FiletreeLookup.resolve([root], nil)
+      link = entries.find { |e| ft_s(e, "path") == "link.conf" }.not_nil!
+
+      link.keys.must_equal([
+        "root", "path", "state", "src",
+        "uid", "gid", "owner", "group", "mode", "size", "mtime", "ctime",
+      ])
+    ensure
+      FileUtils.rm_rf(root) if root
+    end
+
     it "dwims a relative source against the role's files/ directory" do
       role_path = File.tempname("filetree-role")
       Dir.mkdir_p(File.join(role_path, "files", "config"))
