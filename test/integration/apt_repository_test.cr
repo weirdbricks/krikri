@@ -86,6 +86,34 @@ describe "apt_repository plugin" do
     result["repo"].as_s.must_equal("deb https://ppa.launchpadcontent.net/nginx/stable/ubuntu jammy main")
   end
 
+  # Real Ansible's UbuntuSourcesList does `codename or distro.codename`, so
+  # an empty-string codename falls back to the host codename (the
+  # redis_cluster role ships the default `apt_repository_codename: ''` and
+  # still ends up with a valid deb line). The plugin detects the fallback
+  # from the spec host's own /etc/os-release, so pin the expected codename
+  # to that file and skip where a host has none.
+  it "falls back to the host codename when codename is an empty string (check mode, no network)" do
+    host_codename = File.read("/etc/os-release").each_line
+      .find(&.starts_with?("VERSION_CODENAME="))
+      .try(&.split('=', 2)[1].strip.strip('"').presence)
+    skip("test host /etc/os-release has no VERSION_CODENAME") unless host_codename
+
+    sources_list = PluginSpecHelper.tmp_path("codename-empty", "sources.list")
+    list_d = PluginSpecHelper.tmp_path("codename-empty", "sources.list.d")
+    FileUtils.mkdir_p(list_d)
+
+    result = PluginSpecHelper.run("apt_repository", {
+      "repo"                => "ppa:nginx/stable",
+      "codename"            => "",
+      "_ansible_check_mode" => "true",
+      "_sources_list"       => sources_list,
+      "_sources_list_d"     => list_d,
+    })
+
+    result["changed"].as_bool.must_equal(true)
+    result["repo"].as_s.must_equal("deb https://ppa.launchpadcontent.net/nginx/stable/ubuntu #{host_codename} main")
+  end
+
   # Real apt_repository's sources_added/sources_removed: the full paths
   # of the sources files whose valid-line set appeared/disappeared with
   # the operation (its SourcesList dump keys, live-verified against
