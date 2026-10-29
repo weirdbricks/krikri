@@ -1117,6 +1117,13 @@ module Krikri
     end
 
     private def handle_apt(name : String, state : String, names : Array(String), pkg_tokens : String) : PluginResult
+      # Ansible's apt module fails at module start in check mode when
+      # python3-apt is missing (its only recovery is a real host
+      # mutation), no matter what the task asked for - `package:`
+      # forwards to apt, so mirror that refusal before anything else.
+      if refusal = apt_check_mode_python_apt_refusal(@check_mode, ->remote_exec(String))
+        return PluginResult.new(changed: false, failed: true, msg: refusal)
+      end
       # A `deb:` install (URL or local .deb) carries no name: - ansible's
       # package action plugin forwards deb: verbatim to apt.py, whose
       # main() dispatches it before the name path ("deb only supports
