@@ -696,8 +696,11 @@ module Krikri
       roots.each do |root|
         return true if File.file?(File.join(root, "#{short}.py"))
         return true if File.file?(File.join(root, short))
+        # A dangling symlink (debops-contrib.btrfs ships library/
+        # btrfs_subvolume.py -> ../submodules/..., an uninitialised git
+        # submodule) is no module file: ansible-core refuses the name.
         found = Dir.glob(File.join(root, "#{short}.*")).sort.any? do |other|
-          !ignore_exts.any? { |ext| other.ends_with?(ext) }
+          File.file?(other) && !ignore_exts.any? { |ext| other.ends_with?(ext) }
         end
         return true if found
       end

@@ -214,6 +214,16 @@ describe Krikri::CollectionIndex do
     result[:resolves].must_equal(true)
   end
 
+  it "does not count a dangling library/ symlink as a module source" do
+    root = PluginSpecHelper.tmp_path("collection-index-dangling")
+    FileUtils.mkdir_p(File.join(root, "roles", "dangrole", "library"))
+    File.symlink("../submodules/missing/getthing2.py",
+      File.join(root, "roles", "dangrole", "library", "getthing2.py"))
+    result = Krikri::CollectionIndex.controller_resolves?("getthing2",
+      role_path: File.join(root, "roles", "dangrole"))
+    result[:resolves].must_equal(false)
+  end
+
   # ------------------------------------------------------------------
   # The no-ansible-core fallback (round 5440000's confirm roles: the
   # krikri host has no ansible-core install at all - the index used to
