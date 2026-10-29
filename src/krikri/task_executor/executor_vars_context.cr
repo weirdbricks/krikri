@@ -2497,6 +2497,23 @@ module Krikri
           # the dict-shaped argsplat params (`args:` loops) that consume
           # the rendered span as structured data.
           substituted_value = native_typed || substitutor.substitute(value, strict: true, output: !whole_single_span, native: native_containers)
+          # A set_fact value rendered from a `{% %}` block tag can land on
+          # exactly a boolean spelling ("yes", "True", "false", ...). Real
+          # ansible 2.19 keeps the templated result a STR (type_debug ->
+          # str) - its native typing only preserves the type of `{{ expr }}`
+          # results, never block-tag output - so a later `when: that_fact`
+          # fails with "Conditional result (True) was derived from value of
+          # type 'str'. Conditionals must have a boolean result." (live-
+          # verified). The legacy string-shape coercion in set_fact's coerce
+          # would turn it into a real bool here and wrongly run the task;
+          # re-marking it with NATIVE_TYPED_PREFIX + a JSON STRING makes
+          # coerce's prefix decode keep it the string Ansible keeps.
+          if native_containers && !native_typed && value.includes?("{%")
+            stripped = substituted_value.strip
+            if stripped.in?("true", "false", "True", "False", "yes", "no")
+              substituted_value = Krikri::NATIVE_TYPED_PREFIX + substituted_value.to_json
+            end
+          end
         rescue e : UndefinedVariableError
           # ansible-core 2.19 wraps every undefined module-arg
           # reference with the param it failed on: the task's fatal msg

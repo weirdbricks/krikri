@@ -434,4 +434,54 @@ describe "strict boolean conditionals" do
     output.wont_match(/at '[^']+\.yml:\d+:\d+'/)
     output.wont_include("\"msg\": \"TASK-RAN\"")
   end
+
+  # Issue #470: a set_fact value rendered from a `{% %}` block tag stays a
+  # str in real ansible 2.19 even when the text is a boolean spelling
+  # ("yes", "True", "false", ...), so `when:` on it fails with the str
+  # type-check message. The legacy string-shape coercion turned it into a
+  # real bool and the gated task wrongly ran.
+  it "keeps a block-tag set_fact boolean spelling a str in when:" do
+    yaml = <<-YAML
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: block-tag fact
+            ansible.builtin.set_fact:
+              block_fact: '{% if 1 == 1 %}yes{% endif %}'
+
+          - name: gated
+            ansible.builtin.debug:
+              msg: "TASK-RAN"
+            when: block_fact
+      YAML
+    status, output = run_playbook(yaml)
+
+    status.exit_code.must_equal(2)
+    output.must_include("Conditional result (True) was derived from value of type 'str'")
+    output.must_include("Conditionals must have a boolean result")
+    output.wont_include("\"msg\": \"TASK-RAN\"")
+  end
+
+  # Same fact, queried with type_debug: the template output must reach the
+  # fact as the str "yes", not a coerced bool "True".
+  it "keeps a block-tag set_fact boolean spelling a str via type_debug" do
+    yaml = <<-YAML
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: block-tag fact
+            ansible.builtin.set_fact:
+              block_fact: '{% if 1 == 1 %}yes{% endif %}'
+
+          - name: type check
+            ansible.builtin.debug:
+              msg: "{{ block_fact | type_debug }}"
+      YAML
+    status, output = run_playbook(yaml)
+
+    status.exit_code.must_equal(0)
+    output.must_include("\"msg\": \"str\"")
+  end
 end
