@@ -103,6 +103,53 @@ describe Krikri::PythonModuleRunner do
     Krikri::PythonModuleRunner.new_style?("#!/usr/bin/python\nimport json\nprint('{}')").must_equal(false)
   end
 
+  it "classifies a legacy INCLUDE-marker module as new-style and splices the import in" do
+    # Ansible's modularizer (executor/module_common.py _find_module_utils)
+    # gives a module carrying `#<<INCLUDE_ANSIBLE_MODULE_COMMON>>` the
+    # same treatment as one importing module_utils directly: the marker
+    # becomes `from ansible.module_utils.basic import *` and the module
+    # is NEW-style. kunik.deploy-metadata's library/deployment_facts
+    # relies on this - it calls AnsibleModule(argument_spec = dict())
+    # without importing it - and this engine shipped the raw source, so
+    # the module died with "name 'AnsibleModule' is not defined" while
+    # ansible-playbook ran it fine (issue #543).
+    source = "#!/usr/bin/python\n" \
+             "#<<INCLUDE_ANSIBLE_MODULE_COMMON>>\n" \
+             "module = AnsibleModule(argument_spec = dict())\n"
+    Krikri::PythonModuleRunner.new_style?(source).must_equal(true)
+    modularized = Krikri::PythonModuleRunner.modularize(source)
+    modularized.includes?("from ansible.module_utils.basic import *").must_equal(true)
+    modularized.includes?(Krikri::PythonModuleRunner::MODULE_COMMON_MARKER).must_equal(false)
+    # A module without the marker passes through untouched.
+    Krikri::PythonModuleRunner.modularize("#!/usr/bin/python\nprint('{}')\n")
+      .must_equal("#!/usr/bin/python\nprint('{}')\n")
+  end
+
+  it "runs a legacy INCLUDE-marker module end-to-end after modularization" do
+    skip("python3 not available") unless File.exists?("/usr/bin/python3")
+    # The composed path the kunik.deploy-metadata fix rides on: the
+    # marker is swapped for the import BEFORE the plugin sees the
+    # source, so the module's AnsibleModule resolves - against real
+    # ansible-core's basic.py when it's installed on the target, against
+    # this engine's shim bundle when it isn't - and the module's own
+    # exit_json reaches the result JSON (issue #543).
+    source = "#!/usr/bin/python\n" \
+             "#<<INCLUDE_ANSIBLE_MODULE_COMMON>>\n" \
+             "module = AnsibleModule(argument_spec = dict())\n" \
+             "result = {}\n" \
+             "result['ansible_facts'] = {'deployment': {'timestamp': '20260101000000'}}\n" \
+             "module.exit_json(**result)\n"
+    result = PluginSpecHelper.run("py_module", {
+      "module_name"         => "deployment_facts",
+      "module_source"       => Base64.strict_encode(Krikri::PythonModuleRunner.modularize(source)),
+      "new_style"           => "true",
+      "module_args"         => "{}",
+      "_ansible_check_mode" => "false",
+    })
+    result["failed"]?.must_be_nil
+    result["ansible_facts"]["deployment"]["timestamp"].as_s.must_equal("20260101000000")
+  end
+
   # ---- argument building ----
 
   it "re-types JSON-encoded params and adds the reserved _ansible keys" do

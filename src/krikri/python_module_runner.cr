@@ -140,14 +140,39 @@ module Krikri
       files
     end
 
-    # Ansible's own new-style detection (ansiballz): a module
-    # importing ansible.module_utils gets its args as a JSON dict (via
-    # the ANSIBLE_MODULE_ARGS env var its basic.py reads when no argv
-    # is given); everything else is old-style key=value argv.
+    # The legacy module-boilerplate marker: a module leaving
+    # `#<<INCLUDE_ANSIBLE_MODULE_COMMON>>` in its source expects the
+    # controller to splice the module_utils bundle in at that spot.
+    # Real ansible-core's modularizer (executor/module_common.py
+    # _find_module_utils) replaces the marker with
+    # `from ansible.module_utils.basic import *` and then classifies
+    # the module as NEW-style - so kunik.deploy-metadata's
+    # library/deployment_facts (which calls AnsibleModule(argument_spec
+    # = dict()) without ever importing it) ran fine under
+    # ansible-playbook while this engine - shipping the raw source -
+    # died with "name 'AnsibleModule' is not defined" (issue #543).
+    MODULE_COMMON_MARKER = "#<<INCLUDE_ANSIBLE_MODULE_COMMON>>"
+
+    # Ansible's own new-style detection (module_common.py
+    # _find_module_utils): a module importing ansible.module_utils - or
+    # one carrying the legacy INCLUDE marker, which the modularizer
+    # rewrites into `from ansible.module_utils.basic import *` - gets
+    # its args as a JSON dict (via the ANSIBLE_MODULE_ARGS env var its
+    # basic.py reads when no argv is given); everything else is
+    # old-style key=value argv.
     def new_style?(source : String) : Bool
       source.includes?("from ansible.module_utils") ||
         source.includes?("import ansible.module_utils") ||
-        source.includes?("ansible.module_utils.basic")
+        source.includes?("ansible.module_utils.basic") ||
+        source.includes?(MODULE_COMMON_MARKER)
+    end
+
+    # The modularizer step itself: swap the legacy marker for the
+    # import the marker stood for, exactly as _find_module_utils does
+    # before anything else looks at the source. A module without the
+    # marker comes back untouched.
+    def modularize(source : String) : String
+      source.includes?(MODULE_COMMON_MARKER) ? source.gsub(MODULE_COMMON_MARKER, "from ansible.module_utils.basic import *") : source
     end
 
     # Ansible refuses to ship a module payload whose first line is
