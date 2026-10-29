@@ -531,11 +531,15 @@ module Krikri
       # both collections' actual sources), so - same call as raw: above -
       # they alias straight onto the existing plugin binaries rather
       # than shipping near-duplicates. fauust.mariadb (round 6002) calls
-      # the FQCN forms. Controller collection-set awareness makes both
-      # spellings dead aliases on a controller without ansible.mariadb
-      # installed (real refuses the FQCN at load, and the bare spellings
-      # carry no builtin-runtime redirect at all, live-verified vs
-      # 2.19.11) - kept for controllers that do have it.
+      # the FQCN forms. The aliases are only live where the controller
+      # actually has ansible.mariadb: without it real refuses the whole
+      # playbook at load (rc=4) for the FQCN spellings, and the bare
+      # spellings carry no builtin-runtime redirect at all, live-verified
+      # vs 2.19.11 - so parse_task's controller-collection refusal also
+      # covers these four spellings (MARIADB_FORK_ALIASES below, issue
+      # #499): without that carve-out the alias would make
+      # resolved_module_name non-nil and buy them the native-names-never-
+      # refuse policy real does not grant them.
       "mariadb_db"                   => "community.mysql.mysql_db",
       "mariadb_user"                 => "community.mysql.mysql_user",
       "ansible.mariadb.mariadb_db"   => "community.mysql.mysql_db",
@@ -597,6 +601,18 @@ module Krikri
       "ansible.legacy.snap"  => "community.general.snap",
       # virt_net's collection namespace (see its AVAILABLE_PLUGINS entry).
       "community.libvirt.virt_net" => "virt_net",
+    }
+
+    # The MODULE_ALIASES spellings aliased onto community.mysql's
+    # mysql_db/mysql_user - the small set parse_task's controller-
+    # collection refusal additionally covers when CollectionIndex says
+    # the controller lacks ansible.mariadb (real refuses all four at
+    # playbook load there, issue #499): the alias alone would make
+    # resolved_module_name non-nil and exempt them from a refusal real
+    # still performs.
+    MARIADB_FORK_ALIASES = Set{
+      "mariadb_db", "mariadb_user",
+      "ansible.mariadb.mariadb_db", "ansible.mariadb.mariadb_user",
     }
 
     # community.docker's own removal text for docker_compose v1
