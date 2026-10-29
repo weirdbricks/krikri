@@ -952,27 +952,25 @@ module Krikri
     end
 
     # dest:'s mode:/owner:/group: file-common args, mirroring copy.cr's
-    # proven apply_file_attributes (octal-or-symbolic mode split, native
-    # chown via System::User/Group lookups, best-effort on permission
-    # failures). Returns true when anything actually changed on disk.
+    # apply_file_attributes (octal-or-symbolic mode split, native chown
+    # via System::User/Group lookups, best-effort on permission
+    # failures) - except the application ORDER follows basic.py's
+    # set_fs_attributes_if_different (owner, group, then mode), which
+    # copy.cr's own copy does not. Returns true when anything actually
+    # changed on disk.
     private def apply_file_attributes(path : String) : Bool
       before = File.info?(path, follow_symlinks: false)
 
-      if mode = @params["mode"]?
-        begin
-          # All-digit mode strings parse as octal (leading zero or not);
-          # anything symbolic goes to the real chmod binary - see
-          # copy.cr's own apply_file_attributes for the full story.
-          if mode =~ /\A0?[0-7]{3,4}\z/
-            File.chmod(path, mode.to_i(8))
-          else
-            Process.run("chmod", [mode, path], output: Process::Redirect::Close, error: Process::Redirect::Close)
-          end
-        rescue File::Error
-          # Mode setting failed, continue anyway
-        end
-      end
-
+      # basic.py's set_fs_attributes_if_different applies owner, then
+      # group, then mode (each setter failing the task before the next
+      # runs). krikri used to chmod FIRST, so a get_url with both mode:
+      # and an unresolvable owner failed with the chmod already applied
+      # (round29888377 kilip.chezmoi: mode "0777" + owner "" reported
+      # mode "0777" in the failure's stat block where ansible reported
+      # the download's 0644 - and the now-executable dest made the
+      # role's follow-up command task succeed where ansible hit
+      # "Permission denied"). The chmod therefore only runs after BOTH
+      # chown lookups have resolved.
       uid = -1
       gid = -1
 
@@ -990,6 +988,21 @@ module Krikri
       end
 
       File.chown(path, uid: uid, gid: gid) if uid != -1 || gid != -1
+
+      if mode = @params["mode"]?
+        begin
+          # All-digit mode strings parse as octal (leading zero or not);
+          # anything symbolic goes to the real chmod binary - see
+          # copy.cr's own apply_file_attributes for the full story.
+          if mode =~ /\A0?[0-7]{3,4}\z/
+            File.chmod(path, mode.to_i(8))
+          else
+            Process.run("chmod", [mode, path], output: Process::Redirect::Close, error: Process::Redirect::Close)
+          end
+        rescue File::Error
+          # Mode setting failed, continue anyway
+        end
+      end
 
       after = File.info?(path, follow_symlinks: false)
       return false unless before && after
@@ -1089,7 +1102,18 @@ module Krikri
     # itself errored (both fail the task like Ansible - neither is
     # silently swallowed the way a chmod/chown EPERM is).
     private def apply_extended_attributes(path : String) : {Bool, PluginResult?}
-      changed = apply_file_attributes(path)
+      begin
+        changed = apply_file_attributes(path)
+      rescue ex : OwnerLookupFailure
+        # Ansible's set_owner_if_different fails with fail_json(path=path,
+        # ...), and fail_json attaches the dest's stat info, so the failure
+        # carries path/uid/gid/owner/group/mode/state/size; letting the
+        # exception reach run_and_capture would drop them all.
+        failure = PluginResult.new(changed: false, failed: true, msg: ex.message || "owner lookup failed")
+        add_path_info(failure, path)
+        failure.extra["path"] = JSON::Any.new(path)
+        return {false, failure}
+      end
 
       attr_changed, failure = apply_attr(path)
       return {false, failure} if failure
