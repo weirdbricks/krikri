@@ -1264,14 +1264,18 @@ module Krikri
     # failed/_ansible_*), while a registered var keeps the full
     # changed+failed+msg shape either way (register strips the marker
     # with every other _ansible_* key).
-    private def when_error_result(ex : WhenEvaluationError, task : Task? = nil, host : Host? = nil) : JSON::Any
+    private def when_error_result(ex : WhenEvaluationError, task : Task? = nil, host : Host? = nil, loop_item : JSON::Any? = nil, loop_index : Int32? = nil) : JSON::Any
       # A loop-source typing/lookup failure keeps real's own shape: the
       # bare msg (no "Task failed:" prefix), a msg-only dump, and the
       # emit_task_error_block suppression marker - see
       # loop_source_error_result's comment (round 5410000).
       return loop_source_error_result(ex) if ex.is_a?(LoopTypeError) || ex.is_a?(LoopLookupError)
       msg = ex.message || "Error while evaluating conditional"
-      msg = decorate_conditional_value_origin(task, msg, host) if task
+      # The loop bindings let a `when: item.<key>` failure carry the
+      # failing ITEM's own origin in the msg (ansible's lineage labels
+      # the tested item field's defining site, not the task's when:) -
+      # each failing loop item's dump differs, like real's.
+      msg = decorate_conditional_value_origin(task, msg, host, loop_item: loop_item, loop_index: loop_index) if task
       fields = {"changed" => false, "failed" => true, "msg" => msg}
       fields["_ansible_task_error_msg_only"] = true if task && debug_module?(task)
       # A conditional-EVALUATION failure's [ERROR] chain was already
@@ -2270,6 +2274,9 @@ module Krikri
       exec_host : Host = host,
       shared : VarSubstitutor? = nil,
       defer_loop_stats : Bool = false,
+      loop_item : JSON::Any? = nil,
+      loop_index : Int32? = nil,
+      defer_when_chain : Bool = false,
     ) : JSON::Any?
       substitutor = shared || VarSubstitutor.new(vars: vars_context, host_name: host.name)
 
@@ -2289,12 +2296,17 @@ module Krikri
         #
         # ansible-core 2.19.11 prints the [ERROR] chain block BEFORE
         # the fatal line (see emit_when_error_chain) - here, at catch
-        # time, so it precedes whatever the pipeline prints. For a looped
-        # task every failing item raises through this same rescue; the
-        # chain itself dedups per distinct text, so a loop displays it
-        # once, exactly like real.
-        emit_when_error_chain(task, ex.message || "", host)
-        return when_error_result(ex, task, host)
+        # time, so it precedes whatever the pipeline prints. A looped
+        # caller (defer_when_chain) defers instead: every failing item
+        # raises through this same rescue, but ansible prints each
+        # item's block immediately before THAT item's failed line, in
+        # iteration order - finish_looped_task emits it there off the
+        # result's (already per-item-origin-decorated) msg. The chain
+        # dedups identical repeats only.
+        unless defer_when_chain
+          emit_when_error_chain(task, ex.message || "", host, loop_item: loop_item, loop_index: loop_index)
+        end
+        return when_error_result(ex, task, host, loop_item: loop_item, loop_index: loop_index)
       end
 
       # A delegated task's CONNECTION is the delegated host's, not the

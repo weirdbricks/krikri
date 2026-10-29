@@ -305,6 +305,13 @@ module Krikri
     # failed line; nil (or a task without a parsed position) suppresses
     # the block.
     def self.display_result(host : Host, result : JSON::Any, diff_mode : Bool, item_label : String? = nil, ignore_errors : Bool = false, no_log : Bool = false, module_name : String? = nil, delegate_target : String? = nil, source_task : Task? = nil, loop_item : JSON::Any? = nil, loop_var_name : String? = nil) : Nil
+      # Ansible's task-level `diff:` keyword overrides the --diff flag for
+      # that task (live-verified vs 2.19.11: `diff: true` shows the file
+      # diff without --diff, `diff: false` suppresses it under --diff),
+      # so the display resolves the task's own keyword first.
+      if source_task && (task_diff = source_task.diff_mode?)
+        diff_mode = task_diff
+      end
       TimingProfile.measure("display.result", "display") do
         display_result_measured(host, result, diff_mode, item_label, ignore_errors, no_log, module_name, delegate_target, source_task, loop_item, loop_var_name)
       end

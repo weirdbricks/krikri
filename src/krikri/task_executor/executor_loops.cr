@@ -1663,6 +1663,14 @@ module Krikri
       # finish_looped_task needs to replay the item's real registered
       # result; left empty by the one-at-a-time path, which prints its own
       # skips in order inside execute_task_once.
+      # Per-item `when:`-failure [ERROR] chains print immediately before
+      # THAT item's failed line in iteration order (ansible interleaves
+      # block and failed line per item, live-verified vs 2.19.11), so
+      # both loop paths defer the emission to finish_looped_task's
+      # in-order display instead of printing at their catch sites - the
+      # batch-prep loop runs before any item displays, and the
+      # one-at-a-time path collects its results before finishing too.
+      # finish_looped_task detects the failing items off the result msg.
       skipped_items = Hash(Int32, SkippedLoopItem).new
       item_results = if loop_batch_eligible?(task, host, exec_host, base_vars_context)
                        execute_looped_task_batched(task, host, base_vars_context, rendered_items, skipped_items)
@@ -1839,7 +1847,7 @@ module Krikri
                                     # dropping retries for looped tasks.
                                     run_until_retries(task, host, vars_context, until_condition, item_exec_host, defer_loop_stats: true, item_label: item_label)
                                   else
-                                    execute_task_once(task, host, vars_context, item_label: item_label, exec_host: item_exec_host, defer_loop_stats: true)
+                                    execute_task_once(task, host, vars_context, item_label: item_label, exec_host: item_exec_host, defer_loop_stats: true, loop_item: item, loop_index: idx, defer_when_chain: true)
                                   end
                          # A nil from a looped execute_task_once call on an
                          # unported module is the arg-finalized unavailable
@@ -2009,13 +2017,12 @@ module Krikri
           # failed=1, not skipped=1.
           #
           # The chain block result_display suppresses (via
-          # _ansible_when_error_emitted) must still be printed HERE,
-          # before the per-item failed lines - otherwise the batched path
-          # never shows it on remote hosts. The chain dedups per distinct
-          # text, so a loop prints it once, and non-conditional
-          # failures (var-render) no-op.
-          emit_when_error_chain(task, ex.message || "", host)
-          item_results[idx] = when_error_result(ex, task, host)
+          # _ansible_when_error_emitted) prints immediately before this
+          # item's failed line - finish_looped_task emits it there, in
+          # iteration order (the batch-prep loop runs before any item
+          # displays). The chain dedups per distinct text, and
+          # non-conditional failures (var-render) no-op.
+          item_results[idx] = when_error_result(ex, task, host, loop_item: item, loop_index: idx)
           next
         end
 
@@ -2355,6 +2362,20 @@ module Krikri
             next
           end
 
+          # A when:-evaluation failure's [ERROR] chain prints immediately
+          # before THIS item's failed line, once per failing item
+          # (ansible interleaves block and failed line per item,
+          # live-verified vs 2.19.11: two failing items each print their
+          # own block - the per-item lineage origin in the msg makes the
+          # texts distinct, so the chain's Display-level dedup only
+          # collapses identical repeats). The looped paths defer the
+          # emission here from their catch sites (a solo task emits at
+          # its own catch, before its fatal line); the msg is already
+          # decorated with the failing item's own origin, so the chain
+          # re-uses it verbatim.
+          if failed && (fail_msg = result["msg"]?.try(&.as_s?)) && conditional_evaluation_failure?(fail_msg)
+            emit_when_error_chain(task, fail_msg, host, loop_item: item, loop_index: idx)
+          end
           # A batch-prepared (or solo) finalization failure carries its
           # [ERROR] chain block stashed on the result (see
           # stash_finalization_error_block) - print it in iteration order,

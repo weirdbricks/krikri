@@ -59,4 +59,64 @@ describe "ansible_diff_mode magic var" do
   ensure
     File.delete(playbook) if playbook && File.exists?(playbook)
   end
+
+  # Issue #457 (live-verified vs ansible-core 2.19.11): the task-level
+  # `diff:` keyword overrides the --diff flag for that task - `diff: true`
+  # shows the file diff on a plain run, `diff: false` suppresses it under
+  # --diff - for both the module's diff payload (via _ansible_diff) and
+  # the callback's display.
+  it "shows the copy diff on a plain run with task-level diff: true" do
+    playbook = File.tempname("task-diff-on", ".yml")
+    dest = PluginSpecHelper.tmp_path("task-diff-on.txt")
+    FileUtils.mkdir_p(File.dirname(dest))
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: Diff without --diff
+            ansible.builtin.copy:
+              content: "hello\\n"
+              dest: #{dest}
+            diff: true
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-c", "local", "-i", INVENTORY, playbook], output: output, error: output)
+
+    status.success?.must_equal(true)
+    output.to_s.must_include("--- before")
+    output.to_s.must_include("+++ after: #{dest}")
+    output.to_s.must_include("+hello")
+  ensure
+    File.delete(playbook) if playbook && File.exists?(playbook)
+    File.delete(dest) if dest && File.exists?(dest)
+  end
+
+  it "suppresses the copy diff under --diff with task-level diff: false" do
+    playbook = File.tempname("task-diff-off", ".yml")
+    dest = PluginSpecHelper.tmp_path("task-diff-off.txt")
+    FileUtils.mkdir_p(File.dirname(dest))
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: No diff despite --diff
+            ansible.builtin.copy:
+              content: "hello\\n"
+              dest: #{dest}
+            diff: false
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["--diff", "-c", "local", "-i", INVENTORY, playbook], output: output, error: output)
+
+    status.success?.must_equal(true)
+    output.to_s.must_include("changed: [localhost]")
+    output.to_s.wont_include("--- before")
+  ensure
+    File.delete(playbook) if playbook && File.exists?(playbook)
+    File.delete(dest) if dest && File.exists?(dest)
+  end
 end

@@ -4599,7 +4599,7 @@ module Krikri
     # and compound-expression branches below locate the ORIGINATING
     # clause's value token, so changed_when:/failed_when: callers pass
     # their own clause key and raw text, not the when: shape.
-    private def decorate_conditional_value_origin(task : Task, msg : String, host : Host? = nil, operand : String? = nil, clause_key : String = "when", clause_raw : String? = nil) : String
+    private def decorate_conditional_value_origin(task : Task, msg : String, host : Host? = nil, operand : String? = nil, clause_key : String = "when", clause_raw : String? = nil, loop_item : JSON::Any? = nil, loop_index : Int32? = nil) : String
       return msg unless msg.includes?("Conditionals must have a boolean result")
       return msg if msg.includes?(" at '") || msg.includes?(" at \"")
       # A YAML null's strict check reports no origin: real 2.19 has no
@@ -4628,6 +4628,22 @@ module Krikri
             else
               task.when_condition.to_s.strip
             end
+      # A looped task's when: reading the item (`when: item.when`) tests the
+      # ITEM FIELD's own value, so ansible 2.19's data lineage labels the
+      # strict failure with where THAT value was defined: the item's
+      # `<key>:` value token inside the task's literal inline loop: list
+      # (live-verified vs 2.19.11: two failing items report their OWN
+      # item's `when:` value token - play.yml:20:17 and 23:17 - not the
+      # task's when: token the compound branch below gives). Only a
+      # literal inline list has per-item source positions to locate; a
+      # templated loop: (or an unlocatable item) keeps the existing
+      # fallback rather than guessing.
+      if host && loop_index &&
+         (m = raw.match(/\A\s*item(?:\.([A-Za-z_][A-Za-z0-9_]*)|\[\s*(?:'([^']+)'|"([^"]+)")\s*\])\s*\z/)) &&
+         (key = m[1]? || m[2]? || m[3]?) &&
+         (pos = loop_item_value_position(task, key, loop_index))
+        return with_origin_clause(msg, "'#{pos[0]}:#{pos[1]}:#{pos[2]}'")
+      end
       unless raw.matches?(/\A[A-Za-z_][A-Za-z0-9_]*\z/)
         # ansible's `default` filter is a pass-through for a defined
         # variable, so the conditional's tested value keeps that
@@ -4954,6 +4970,102 @@ module Krikri
         .try { |(idx, col)| {File.expand_path(path), idx + 1, col} }
     end
 
+    # The failing loop item's `<key>:` value token position in the task's
+    # own literal inline loop: list - the position ansible 2.19's data
+    # lineage reports for a `when: item.<key>` strict-conditional failure
+    # (the tested value's defining site, live-verified vs 2.19.11: the
+    # item's `when: sslpath | dirname == ''` VALUE start, e.g. 20:17).
+    # Best-effort like the other locators: only a literal inline list
+    # (loop_literal_kind set by the parser) with the item entries in
+    # block form ("- " lines) can be located; a templated loop:, a flow
+    # list or an inline-mapping item returns nil and the caller keeps
+    # its fallback labeling rather than guessing. with_items: flattens
+    # one level, so its index only aligns while no entry is itself a
+    # list - the check below bails out of the flattened shapes instead
+    # of mislabeling.
+    private def loop_item_value_position(task : Task, key : String, item_index : Int32) : {String, Int32, Int32}?
+      return nil unless (loop_items = task.loop) && item_index >= 0 && item_index < loop_items.size
+      literal_kind = task.loop_literal_kind
+      return nil unless literal_kind == "loop" || literal_kind == "with_items"
+      if literal_kind == "with_items" && loop_items.any?(&.as_a?)
+        return nil
+      end
+      path = task.source_file || @playbook_file
+      return nil unless path && File.file?(path)
+      lines = File.read_lines(path)
+      name_idx = if located = locate_name_line(lines, task)
+                   located[0]
+                 else
+                   return nil unless task.source_line > 0 && task.source_line <= lines.size
+                   task.source_line - 1
+                 end
+      anchor = lines[name_idx]
+      anchor_indent = anchor.size - anchor.lstrip.size
+      task_key_indent = anchor.strip.starts_with?("- ") ? anchor_indent + 2 : anchor_indent
+      loop_idx = nil
+      ((name_idx + 1)...lines.size).each do |idx|
+        line = lines[idx]
+        stripped = line.strip
+        break if stripped.starts_with?("- ") && (line.size - line.lstrip.size) <= task_key_indent - 2
+        next unless stripped.starts_with?("#{literal_kind}:") &&
+                    (line.size - line.lstrip.size) == task_key_indent
+        loop_idx = idx
+        break
+      end
+      return nil unless loop_idx
+      loop_indent = lines[loop_idx].size - lines[loop_idx].lstrip.size
+      item_indent = nil
+      item_start = nil
+      item_seen = 0
+      ((loop_idx + 1)...lines.size).each do |idx|
+        line = lines[idx]
+        stripped = line.strip
+        next if stripped.empty? || stripped.starts_with?('#')
+        indent = line.size - line.lstrip.size
+        break if indent <= loop_indent
+        next unless stripped.starts_with?("- ")
+        next if item_indent && indent != item_indent
+        item_indent ||= indent
+        if item_seen == item_index
+          item_start = idx
+          break
+        end
+        item_seen += 1
+      end
+      return nil unless item_start && (dash_indent = item_indent)
+      # The item's mapping keys sit one level deeper than its dash (or on
+      # the dash line itself for the first key); the item block ends at
+      # the next entry's dash or any dedent below the dash indent.
+      ((item_start)...lines.size).each do |idx|
+        line = lines[idx]
+        stripped = line.strip
+        indent = line.size - line.lstrip.size
+        if idx > item_start && !stripped.empty? && indent <= dash_indent
+          break
+        end
+        next if stripped.empty? || stripped.starts_with?('#')
+        content_start_col = if idx == item_start && stripped.starts_with?("- ")
+                              dash = line.index!("- ")
+                              remainder = line[(dash + 2)..]
+                              dash + 2 + (remainder.size - remainder.lstrip.size) + 1
+                            else
+                              indent + 1
+                            end
+        content = if idx == item_start && stripped.starts_with?("- ")
+                    stripped[2..].lstrip
+                  else
+                    stripped
+                  end
+        colon = content.index(':')
+        next unless colon
+        next unless content[0...colon].strip == key
+        value = content[(colon + 1)..]
+        value_column = content_start_col + colon + 1 + (value.size - value.lstrip.size)
+        return {File.expand_path(path), idx + 1, value_column}
+      end
+      nil
+    end
+
     # Whether a WhenEvaluationError message is a conditional-EVALUATION
     # failure (the only shape ansible-core 2.19.11 decorates with
     # the two-level [ERROR] chain block and the "Task failed: "-prefixed
@@ -5013,8 +5125,8 @@ module Krikri
     # unknown-filter failure (issue #318) passes its own key/raw so the
     # Origin lands on the until: value token, the position real reports
     # for it there too.
-    private def emit_when_error_chain(task : Task, msg : String, host : Host? = nil, clause_key : String = "when", clause_raw : String? = nil) : Nil
-      msg = decorate_conditional_value_origin(task, msg, host)
+    private def emit_when_error_chain(task : Task, msg : String, host : Host? = nil, clause_key : String = "when", clause_raw : String? = nil, loop_item : JSON::Any? = nil, loop_index : Int32? = nil) : Nil
+      msg = decorate_conditional_value_origin(task, msg, host, loop_item: loop_item, loop_index: loop_index)
       inner = msg.starts_with?("Task failed: ") ? msg["Task failed: ".size..] : msg
       return unless conditional_evaluation_failure?(msg)
       path = task.source_file || @playbook_file
