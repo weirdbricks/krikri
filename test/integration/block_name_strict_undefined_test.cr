@@ -137,6 +137,46 @@ describe "block: name keyword strict-undefined" do
     output.to_s.wont_include("'service_name' is undefined")
   end
 
+  # ansible-core 2.19 fails the child at the KEYWORD level: the [ERROR]
+  # block is the three-link chain (child task / the BLOCK's own name
+  # value / the variable definition whose value references the missing
+  # name), never the "Finalization of task args" middle link or a second
+  # "Module failed" block the generic routing used to print.
+  it "renders the keyword chain with block-name and var-definition origins" do
+    playbook = File.tempname("block-name-keyword-chain", ".yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          service_name: "{{ container_name }}-x.service"
+        tasks:
+          - name: do tasks when "{{ service_name }}" state is "running"
+            block:
+              - name: Check for user namespace support in kernel
+                ansible.builtin.stat:
+                  path: /proc/sys/kernel/unprivileged_userns_clone
+                register: userns
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+
+    status.success?.must_equal(false)
+    text = output.to_s
+    # The [ERROR] headline and the fatal msg carry the bare keyword text.
+    text.must_include("[ERROR]: Task failed: Error processing keyword 'name': 'container_name' is undefined")
+    text.must_include("\"msg\": \"Task failed: Error processing keyword 'name': 'container_name' is undefined\"")
+    # The three links, each with its own Origin: the child task's own
+    # start, the block's name value, and the variable definition.
+    text.must_include("Task failed.\nOrigin: #{playbook}:9:11")
+    text.must_include("Error processing keyword 'name'.\nOrigin: #{playbook}:7:13")
+    text.must_include("'container_name' is undefined\nOrigin: #{playbook}:5:19")
+    text.must_include("<<< caused by >>>")
+    text.wont_include("Finalization of task args")
+    text.wont_include("Module failed")
+  end
+
   it "still runs the children when the block name renders cleanly" do
     playbook = File.tempname("block-name-defined", ".yml")
     File.write(playbook, <<-YAML)

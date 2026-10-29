@@ -1962,6 +1962,12 @@ module Krikri
         substitute_block_name_chain(task, substitutor)
         substituted_params = expand_templated_args(substitute_task_params(task.params, substitutor, native_containers: task.module_name.ends_with?("set_fact"), module_name: task.module_name, task: task), substitutor, task)
         substituted_env = substitute_task_environment(task, substitutor)
+      rescue ex : BlockNameKeywordError
+        # A block name's strict-undefined failure is a KEYWORD failure in
+        # ansible (the child fails at "Error processing keyword 'name'"),
+        # not a task-arg finalization one - its own three-link chain, no
+        # "Finalization of task args" middle link.
+        return block_name_keyword_failure_json(ex, task)
       rescue ex
         # Same "finalization of task args failed" handling as
         # execute_task_once's own identical rescue (see there) - this
@@ -2362,6 +2368,11 @@ module Krikri
         task = resolve_templated_action(task, substitutor)
         substituted_params = expand_templated_args(substitute_task_params(task.params, substitutor, native_containers: task.module_name.ends_with?("set_fact"), module_name: task.module_name, task: task), substitutor, task)
         substituted_env = substitute_task_environment(task, substitutor)
+      rescue ex : BlockNameKeywordError
+        # Same keyword-level shape as prepare_batch_step's identical
+        # rescue above: ansible fails the child at "Error processing
+        # keyword 'name'", not "Finalization of task args".
+        return block_name_keyword_failure_json(ex, task)
       rescue ex
         # A raised exception during param substitution (e.g. lookup('url',
         # ...) hitting a real HTTP error - see ExpressionEvaluator#

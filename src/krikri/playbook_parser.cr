@@ -515,6 +515,13 @@ module Krikri
     # still runs/skips it normally), so only the enclosing-chain names
     # are tracked.
     property block_name_chain : Array(String)?
+    # Parallel to block_name_chain: each entry is the origin context of the
+    # corresponding enclosing block's own `name:` VALUE (first character of
+    # the rendered-to-be scalar), nil when no source map located it - the
+    # child task's own file section has no `name:` key for the block, so
+    # the keyword-failure chain's middle link must be pointed at the
+    # block's own line the way ansible-core 2.19 does.
+    property block_name_chain_origins : Array(String?)?
     # Set on every task loaded from a role (tasks/main.yml and
     # handlers/main.yml alike) by RoleLoader. role_defaults is the lowest
     # precedence tier (role's defaults/main.yml); role_vars sits above
@@ -5540,13 +5547,17 @@ module Krikri
     # parse_block_task's helper - prepends the enclosing block's name to
     # each descendant's block_name_chain, recursing through nested
     # block:/rescue:/always: wrappers so a doubly-nested task's chain
-    # reads outermost-first (see Task.block_name_chain).
-    private def self.prepend_block_name_to_descendants(tasks : Array(Task), name : String) : Nil
+    # reads outermost-first (see Task.block_name_chain). ORIGIN travels
+    # with it (nil when the block's name value had no locatable position)
+    # so a strict-undefined failure can point the keyword chain's middle
+    # link at the block's own `name:` value.
+    private def self.prepend_block_name_to_descendants(tasks : Array(Task), name : String, origin : String?) : Nil
       tasks.each do |child|
         child.block_name_chain = [name] + (child.block_name_chain || [] of String)
-        prepend_block_name_to_descendants(child.block_tasks || [] of Task, name)
-        prepend_block_name_to_descendants(child.rescue_tasks || [] of Task, name)
-        prepend_block_name_to_descendants(child.always_tasks || [] of Task, name)
+        child.block_name_chain_origins = [origin] + (child.block_name_chain_origins || [] of String?)
+        prepend_block_name_to_descendants(child.block_tasks || [] of Task, name, origin)
+        prepend_block_name_to_descendants(child.rescue_tasks || [] of Task, name, origin)
+        prepend_block_name_to_descendants(child.always_tasks || [] of Task, name, origin)
       end
     end
 
@@ -5693,10 +5704,19 @@ module Krikri
       # block_name_chain - AFTER the children parse, so a nested block's
       # own stamping (its children carry its name innermost) is already
       # in place and this outer pass prepends on top of it, outermost
-      # first. See Task.block_name_chain for why the chain exists.
-      prepend_block_name_to_descendants(task.block_tasks || [] of Task, name)
-      prepend_block_name_to_descendants(task.rescue_tasks || [] of Task, name)
-      prepend_block_name_to_descendants(task.always_tasks || [] of Task, name)
+      # first. See Task.block_name_chain for why the chain exists. The
+      # name VALUE's own position rides along (nil when the source map
+      # has no node for it) - the failure chain's middle link points
+      # there, not at the child task.
+      block_name_origin = nil
+      if sf = source_file
+        if (nm_pos = source_map.try(&.at?(task_source_prefix(source_prefix, source_index) + "/name"))) && File.file?(sf)
+          block_name_origin = ErrorBlock.origin_context(File.expand_path(sf), nm_pos[0], nm_pos[1])
+        end
+      end
+      prepend_block_name_to_descendants(task.block_tasks || [] of Task, name, block_name_origin)
+      prepend_block_name_to_descendants(task.rescue_tasks || [] of Task, name, block_name_origin)
+      prepend_block_name_to_descendants(task.always_tasks || [] of Task, name, block_name_origin)
 
       # A block's delegate_to: is inherited by every task nested inside it
       # (block:/rescue:/always:), the child's own delegate_to: winning -
