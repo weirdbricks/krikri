@@ -2240,6 +2240,22 @@ module Krikri
       resolved_task
     end
 
+    # ansible coerces the templated async:/poll: value with int(), so a
+    # templated bool (async: "{{ not ansible_check_mode }}") arrives as
+    # int(True)=1 / int(False)=0 rather than an unparseable "True" string
+    # - and a 0 async: means synchronous. The substituted text carries
+    # Crystal's Bool#to_s capitalization ("True"/"False"), so match it
+    # case-insensitively alongside plain integers; poll: 0 (fire and
+    # forget) stays a legal 0, only the async: consumer treats 0 as off.
+    private def substitute_async_value(text : String) : Int32?
+      stripped = text.strip
+      case stripped.downcase
+      when "true"  then 1
+      when "false" then 0
+      else              stripped.to_i?
+      end
+    end
+
     private def execute_task_once(
       task : Task,
       host : Host,
@@ -2680,11 +2696,11 @@ module Krikri
       # resolved values into execute_async only.
       resolved_async = task.async_seconds
       if resolved_async.nil? && (raw_async = task.async_raw)
-        resolved_async = substitutor.substitute(raw_async).strip.to_i?
+        resolved_async = substitute_async_value(substitutor.substitute(raw_async))
       end
       resolved_poll = task.poll_seconds
       if resolved_poll.nil? && (raw_poll = task.poll_raw)
-        resolved_poll = substitutor.substitute(raw_poll).strip.to_i?
+        resolved_poll = substitute_async_value(substitutor.substitute(raw_poll))
       end
       if resolved_async && (resolved_async != task.async_seconds || resolved_poll != task.poll_seconds)
         task = task.dup
@@ -2692,7 +2708,12 @@ module Krikri
         task.poll_seconds = resolved_poll
       end
 
-      if task.async_seconds && !resolve_task_check_mode(task, wire_vars)
+      # async: 0 must run synchronously like ansible: its task executor
+      # coerces async_val with int() (templated bools land as 1/0) and
+      # then gates the async path on Python truthiness, where 0 is falsy -
+      # e.g. async: "{{ not ansible_check_mode }}" on a real run is plain
+      # synchronous execution with a registered result, not a job.
+      if (async_secs = task.async_seconds) && async_secs != 0 && !resolve_task_check_mode(task, wire_vars)
         # async: writes this config verbatim to a job file; the detached
         # __async_run process resolves become:/become_user: back out of
         # it via the JSON::Any entry point, exactly as before. Remote

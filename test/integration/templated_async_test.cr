@@ -77,4 +77,54 @@ describe "templated async:/poll: resolved at execution time" do
     output.must_match(/ASYNC OK on localhost: jid=\S+/)
     output.must_include("finished=True")
   end
+
+  # async: "{{ not ansible_check_mode }}" (roles use this idiom) templates
+  # to a bool; ansible's task executor int()s that to 1/0, so a run with
+  # it true gets a real job id - previously "True" failed to_i? and the
+  # task ran synchronously with no ansible_job_id in the registered var.
+  it "resolves a templated bool async: and registers ansible_job_id" do
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: async templated to a bool
+            ansible.builtin.command: /bin/sleep 0.2
+            async: "{{ true }}"
+            poll: 0
+            register: r
+          - name: show job id
+            ansible.builtin.debug:
+              msg: "jid={{ r.ansible_job_id }}"
+      YAML
+
+    status.success?.must_equal(true, output)
+    # poll: 0 is fire-and-forget, so no ASYNC POLL/OK lines - the job id
+    # only surfaces through the registered var.
+    output.wont_match(/ASYNC (POLL|OK)/)
+    output.must_match(/jid=j\d+\.\d+/)
+  end
+
+  # int(False)=0 and Python treats async 0 as falsy, so the false branch
+  # of that idiom is a plain synchronous task - no job, no job id.
+  it "runs a templated false async: synchronously without a job id" do
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: async templated to false
+            ansible.builtin.command: /bin/echo sync
+            async: "{{ false }}"
+            poll: 0
+            register: r
+          - name: show job id
+            ansible.builtin.debug:
+              msg: "jid={{ r.ansible_job_id | default('none') }} changed={{ r.changed }}"
+      YAML
+
+    status.success?.must_equal(true, output)
+    output.wont_match(/ASYNC (POLL|OK)/)
+    output.must_include("jid=none")
+  end
 end
