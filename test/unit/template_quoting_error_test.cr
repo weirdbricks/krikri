@@ -115,6 +115,30 @@ describe "Krikri::PlaybookParser.check_template_quoting (template_quoting_error_
     )
   end
 
+  it "renders libyaml's missing-colon error with the colon message and worked example" do
+    ex = Krikri::YamlSyntaxError.new("pb.yml", "- name: \"1.1.5 Ensure noexec\n  block\n    template:\n",
+      YAML::ParseException.new("could not find expected ':' at line 3, column 13, while scanning a simple key at line 2, column 3", 3, 13, nil))
+    ex.render.must_equal(
+      "[ERROR]: YAML parsing failed: Colons in unquoted values must be followed by a non-space character.\n" \
+      "Origin: #{File.expand_path("pb.yml")}:3:13\n" \
+      "\n" \
+      "1 - name: \"1.1.5 Ensure noexec\n" \
+      "2   block\n" \
+      "3     template:\n" \
+      "              ^ column 13\n" \
+      "\n" \
+      "\n" \
+      "For example:\n" \
+      "\n" \
+      "    raw: echo 'name: ansible'\n" \
+      "\n" \
+      "Should be:\n" \
+      "\n" \
+      "    raw: \"echo 'name: ansible'\"\n" \
+      "\n"
+    )
+  end
+
   it "keeps the colon error's worked example byte-identical" do
     ex = Krikri::YamlSyntaxError.new("pb.yml", "this: is: bad: [\n",
       YAML::ParseException.new("mapping values are not allowed in this context", 1, 9, nil))

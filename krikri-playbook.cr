@@ -1478,6 +1478,17 @@ playbook.plays.each_with_index do |play, _play_index|
         puts "[ERROR]: #{ex.message}".colorize(:red)
       end
       exit 4
+    rescue ex : Krikri::YamlSyntaxError
+      # Same whole-run abort for a runtime-loaded include_tasks:/import_tasks:
+      # file that is not valid YAML: ansible-core's loader refuses the whole
+      # run with the [ERROR] YAML parsing failed block on STDERR and rc=4,
+      # no recap (live-verified vs 2.19.11: jbertozzi.cis_rhel8's
+      # section_1.yml:75 bare-key-under-scalar, issue #534) - not the
+      # per-task "Failed to load included tasks" failure the generic rescue
+      # in the executor would otherwise produce. The render was built at the
+      # raise site.
+      STDERR.print ex.render
+      exit 4
     rescue ex : Krikri::PlaybookParser::InvalidIncludeAttributeError
       # Same whole-run abort discovered by a runtime-loaded file's own
       # include-family directive (include_tasks:-loaded file with
