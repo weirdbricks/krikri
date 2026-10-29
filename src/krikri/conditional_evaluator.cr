@@ -3020,12 +3020,99 @@ module Krikri
         # is true because 5.0 == 5. The elements are stringified ("5"),
         # so the plain string compare misses "5.0" - a bare `when:` with
         # that expression ran a task Ansible skips.
+        #
+        # But stringification ALSO erased each element's original type,
+        # and Python's == never crosses the str/number boundary: `8 in
+        # ["7", "8"]` is False in real Jinja2 (int 8 != str "8"), while
+        # the all-strings compare below answered True. bodsch.php's own
+        # prepare.yml asserts exactly that shape (`php_version | int not
+        # in ["7", "8"]` - an assert Ansible passes, this engine
+        # fatals). Where the container's real element types are still
+        # recoverable (the structured Jinja path evaluates the same
+        # expression to typed values), compare against the TYPED
+        # elements with Python's own equality rules - authoritative
+        # when available, so a non-match is NOT re-checked against the
+        # stringified view (which would re-match int 8 against "8").
+        # Anything the structured path can't type keeps the
+        # pre-existing stringified compare below, so the rc/float
+        # cases above stay answered the way they always were.
+        if (typed = typed_membership_elements(container_expr, vars))
+          return typed.any? { |element| python_membership_equal?(item, element) }
+        end
         numeric = item.as?(Int64).try(&.to_f64) || item.as?(Float64)
         container.any? do |element|
           next true if element == item.to_s
           next false unless numeric
           element.to_f? == numeric
         end
+      else
+        false
+      end
+    end
+
+    # The container of an `in`/`not in` test, re-evaluated STRUCTURALLY
+    # (typed JSON::Any elements) instead of this evaluator's own
+    # stringified Array(String) view. Returns nil whenever the typed
+    # view is unavailable or untrustworthy - a structured evaluation
+    # failure, a non-list result, a list holding a nested list/dict
+    # (this evaluator's value model has no structural == to compare a
+    # membership item against), or an element that is still unrendered
+    # Jinja (the structured path does not perform Ansible's recursive
+    # re-templating of a variable's own value, so comparing such an
+    # element raw would test the literal template text) - and the
+    # caller keeps its pre-existing stringified comparison.
+    private def self.typed_membership_elements(container_expr : String, vars : Hash(String, JSON::Any)) : Array(JSON::Any)?
+      # A lookup runs real side effects; the stringified view above has
+      # already evaluated the container once, so a second full
+      # evaluation here would run them twice.
+      return nil if container_expr.includes?("lookup(") || container_expr.includes?("query(")
+
+      typed = begin
+        VariableSubstitutor::ExpressionEvaluator.new(vars).evaluate_structured(container_expr)
+      rescue
+        nil
+      end
+      return nil unless typed && typed.raw.is_a?(Array)
+
+      elements = typed.raw.as(Array)
+      elements.each do |element|
+        raw = element.raw
+        return nil if raw.is_a?(Array) || raw.is_a?(Hash)
+        return nil if raw.is_a?(String) && (raw.includes?("{{") || raw.includes?("{%"))
+      end
+      elements
+    end
+
+    # Python's own `==` semantics for one `in`-list membership check: a
+    # str never equals a number or bool (`8 == "8"` is False - the
+    # assert bodsch.php's prepare.yml gates its php-version sanity on,
+    # which the stringified compare wrongly matched), numbers compare
+    # across int/float by value (`8 == 8.0` is True), and bool is
+    # Python's int subclass (`True == 1`). None only equals None.
+    private def self.python_membership_equal?(item : String | Int64 | Float64 | Bool | Nil | Array(String), element : JSON::Any) : Bool
+      case element.raw
+      when String
+        item.is_a?(String) && item == element.as_s
+      when Int64
+        case item
+        when Int64   then item == element.as_i64
+        when Float64 then item == element.as_i64.to_f64
+        when Bool    then (item ? 1 : 0) == element.as_i64
+        else              false
+        end
+      when Float64
+        case item
+        when Int64   then item.to_f64 == element.as_f
+        when Float64 then item == element.as_f
+        when Bool    then (item ? 1.0 : 0.0) == element.as_f
+        else              false
+        end
+      when Bool
+        (item.is_a?(Bool) && item == element.as_bool) ||
+          (item.is_a?(Int64) && item == (element.as_bool ? 1 : 0)) ||
+          (item.is_a?(Float64) && item == (element.as_bool ? 1.0 : 0.0))
+      when Nil
+        item.nil?
       else
         false
       end

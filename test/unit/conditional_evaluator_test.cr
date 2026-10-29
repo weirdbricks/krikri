@@ -511,6 +511,47 @@ describe Krikri::ConditionalEvaluator do
       Krikri::ConditionalEvaluator.evaluate("target|float not in [3, 3.0, 4, 4.0, 5, 5.1]", v).must_equal(true)
     end
 
+    it "keeps Python's str/number boundary in list membership" do
+      # Real bug found benchmarking bodsch.php (round 29883596): its own
+      # prepare.yml sanity assert is `php_version | int not in
+      # ["7", "8"]` - with the role's default `php_version: "8"` that is
+      # `8 not in ["7", "8"]`, which Python answers False (int 8 != str
+      # "8"), so the assert PASSES in Ansible. Every element this
+      # evaluator stringifies became "8", so the all-strings compare
+      # matched the int item by its stringified text and the assert
+      # fatally failed, halting the whole role. The typed container
+      # path must keep Python's own == semantics: a str element only
+      # ever equals a str item, numbers compare across int/float by
+      # value, and bool is Python's int subclass.
+      v = Hash(String, JSON::Any).new
+      v["php_version"] = JSON::Any.new("8")
+      Krikri::ConditionalEvaluator.evaluate(%(php_version | int not in ["7", "8"]), v).must_equal(true)
+      Krikri::ConditionalEvaluator.evaluate(%(php_version | int in ["7", "8"]), v).must_equal(false)
+
+      # The mirror shape: a str item never matches a numeric element
+      # either (`"80" in [80, 443]` is False in real Jinja2/Python),
+      # in a list literal AND in a real variable's typed elements.
+      v["str_num"] = JSON::Any.new("80")
+      v["ports"] = JSON.parse(%([80, 443]))
+      Krikri::ConditionalEvaluator.evaluate(%(str_num not in ports), v).must_equal(true)
+      Krikri::ConditionalEvaluator.evaluate(%(str_num in ports), v).must_equal(false)
+      Krikri::ConditionalEvaluator.evaluate(%(str_num not in [80, 443]), v).must_equal(true)
+      Krikri::ConditionalEvaluator.evaluate(%(str_num in [80, 443]), v).must_equal(false)
+      Krikri::ConditionalEvaluator.evaluate(%(80 in ports), v).must_equal(true)
+      Krikri::ConditionalEvaluator.evaluate(%(80.0 in ports), v).must_equal(true)
+
+      # A str item still matches a str element by text, list or variable.
+      v["str_ports"] = JSON.parse(%(["80", "443"]))
+      Krikri::ConditionalEvaluator.evaluate(%(str_num in str_ports), v).must_equal(true)
+      Krikri::ConditionalEvaluator.evaluate(%(str_num in ["80", "443"]), v).must_equal(true)
+
+      # Python's bool/int equality survives the typed compare.
+      v["one"] = JSON.parse(%(1))
+      Krikri::ConditionalEvaluator.evaluate(%(one in [true]), v).must_equal(true)
+      Krikri::ConditionalEvaluator.evaluate(%(one in [false]), v).must_equal(false)
+      Krikri::ConditionalEvaluator.evaluate(%(true in [1]), v).must_equal(true)
+    end
+
     it "checks membership against a METHOD CALL (not just a bare variable or filter)" do
       # Real bug found benchmarking robertdebock.squid (round 48,
       # krikri-playbook 0.9.389): its own assert.yml has
