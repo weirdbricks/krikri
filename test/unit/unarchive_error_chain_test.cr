@@ -33,6 +33,19 @@ describe "unarchive task_error_chain shapes" do
     Krikri::ErrorBlock.brief_message(chain).must_equal("Task failed: Module failed: " + msg)
   end
 
+  it "uses the generic Module-failed chain for an unpack failure" do
+    msg = "failed to unpack /root/.ansible/tmp/x to /usr/bin"
+    chain = Krikri::ResultDisplay.task_error_chain("ansible.builtin.unarchive", msg, "Origin: /pb.yml:6")
+
+    chain.msg.must_equal("Task failed.")
+    middle = chain.chain.as(Krikri::ErrorBlock::Node)
+    middle.msg.must_equal("Module failed.")
+    cause = middle.chain.as(Krikri::ErrorBlock::Node)
+    cause.msg.must_equal(msg)
+    cause.chain.must_be_nil
+    Krikri::ErrorBlock.brief_message(chain).must_equal("Task failed: Module failed: " + msg)
+  end
+
   it "keeps the collapsed chain for the controller-side src miss" do
     msg = "Task failed: Source '/x.tar' failed to transfer"
     chain = Krikri::ResultDisplay.task_error_chain("ansible.builtin.unarchive", msg, "Origin: /pb.yml:6")

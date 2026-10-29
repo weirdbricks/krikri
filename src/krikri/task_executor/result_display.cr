@@ -1444,7 +1444,7 @@ module Krikri
         # for a controller-side src miss (live-verified: the fatal msg
         # carries the "Task failed: " brief prefix itself and the block
         # is the single collapsed segment).
-        if msg.starts_with?("Failed to find handler for ") || msg.starts_with?("Failure downloading ")
+        if msg.starts_with?("Failed to find handler for ") || msg.starts_with?("Failure downloading ") || msg.starts_with?("failed to unpack ")
           # pick_handler's and fetch_file's failures are raised by the MODULE
           # itself (AnsibleModule.fail_json in unarchive.py), not the
           # controller-side action plugin - real renders the generic

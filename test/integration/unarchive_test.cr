@@ -280,14 +280,23 @@ describe "unarchive plugin" do
     result["msg"].as_s.must_include("owner")
   end
 
-  it "fails with the real fail_json shape (msg plus handler/dest/src/extract_results) when extraction itself fails" do
+  it "fails with the real fail_json shape (msg plus handler/dest/src/extract_results plus dest path info) when extraction itself fails" do
     # Real unarchive.py reports an extraction failure as
     # fail_json(msg="failed to unpack <src> to <dest>", **res_args) with
-    # res_args = {handler, dest, src, extract_results} - previously this
-    # engine returned only a bare "failed to extract <src>" msg, losing
-    # the command/rc/output a role's changed_when: may read. The
-    # displayed fatal JSON key-sorts and strips failed/exception, so its
-    # read order is changed, dest, extract_results, handler, msg, src.
+    # res_args = {handler, dest, src, extract_results}, and its
+    # fail_json runs add_path_info over the result, so the dest's stat
+    # fields ride along too - the real captured output for
+    # igor_nikiforov.etcd's failed extraction (issue #528) sorts out as
+    # changed, dest, extract_results, gid, group, handler, mode, msg,
+    # owner, size, src, state, uid. Previously this engine returned only
+    # a bare "failed to extract <src>" msg, losing the command/rc/output
+    # a role's changed_when: may read.
+    #
+    # extract_results.cmd is the tar command as a JSON ARRAY (argv),
+    # with the tar binary resolved to its absolute path - real builds
+    # every tar command through get_bin_path('gtar')/('tar') and reports
+    # the list itself (issue #528's real failure carries
+    # "/usr/bin/tar", "--extract", ... as an array).
     dest = fresh_dest("tar-extract-failure")
     src = File.join(TMP_DIR, "traversal.tar.gz")
     result = PluginSpecHelper.run("unarchive", {"src" => src, "dest" => dest})
@@ -300,9 +309,25 @@ describe "unarchive plugin" do
     extract_results = result["extract_results"]
     extract_results["rc"].as_i.must_equal(2)
     extract_results["err"].as_s.must_include("Member name contains '..'")
-    extract_results["cmd"].as_s.must_include("tar --extract")
-    # Wire key order matches the real fail_json insertion/sorted shape.
-    result.as_h.keys[0, 6].must_equal(["changed", "dest", "extract_results", "handler", "msg", "src"])
+    cmd = extract_results["cmd"].as_a.map(&.as_s)
+    cmd.first.must_match(/\/g?tar$/)
+    cmd[1].must_equal("--extract")
+    cmd.must_include(dest)
+    cmd.must_include(src)
+    # dest is an existing directory by the time extraction runs, so the
+    # add_path_info block reports it as one.
+    result["state"].as_s.must_equal("directory")
+    assert result["size"].as_i > 0
+    result["owner"].as_s.wont_be_empty
+    result["group"].as_s.wont_be_empty
+    result["mode"].as_s.must_match(/\A0?[0-7]{3,4}\z/)
+    result["uid"].as_i.wont_be_nil
+    result["gid"].as_i.wont_be_nil
+    # Wire key order matches the real fail_json shape: the module's own
+    # dict (sorted as displayed), then fail_json's own exception/failed
+    # additions, which only the display layer strips - the raw module
+    # result a role registers carries both.
+    result.as_h.keys.must_equal(%w[changed dest extract_results gid group handler mode msg owner size src state uid exception failed])
   end
 
   it "reports changed: false on an idempotent rerun (tar --compare based)" do
