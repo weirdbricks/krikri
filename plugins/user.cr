@@ -170,8 +170,13 @@ module Krikri
 
     def execute : PluginResult
       result = execute_inner
-      # user.py warns (deprecation-style) when append is set without groups
-      if true?(@params["append"]?) && @params["groups"]?.to_s.strip.empty? && @params["groups"]?.to_s != "[]"
+      # user.py warns (deprecation-style) when append is set without groups,
+      # but real ansible-core 2.19 only does so when the groups: key is
+      # absent entirely: buluma.vector passes
+      # `groups: "{{ vector_groups | default('') }}"`, which renders to an
+      # explicitly-provided empty string, and ansible emits no warning for
+      # that (verified on a real host) - same for a rendered empty list.
+      if true?(@params["append"]?) && @params["groups"]?.nil?
         existing = result.extra["warnings"]?.try(&.as_a?) || [] of JSON::Any
         result.extra["warnings"] = JSON::Any.new(existing + [JSON::Any.new("'append' is set, but no 'groups' are specified. Use 'groups' for appending new groups.This will change to an error in Ansible 2.14.")])
       end
