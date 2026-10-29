@@ -3885,10 +3885,20 @@ module Krikri
         # reached - behind `when: false` it is an ordinary skip (issue
         # #666). Tombstoned names already refused above; a bare-key
         # (non-mapping) task keeps the whole-playbook load refusal.
+        # One carve-out from the never-refuse policy above - the four
+        # mariadb fork-alias spellings (MARIADB_FORK_ALIASES): the
+        # MODULE_ALIASES mapping would make resolved_module_name non-nil
+        # and exempt them, but on a controller without ansible.mariadb
+        # real refuses every one of them at playbook load (the FQCNs
+        # because the collection is absent, the bare ones because no
+        # builtin runtime redirect carries them), so the alias must not
+        # outlive the collection that justifies it (issue #499).
+        mariadb_fork_refusal =
+          MARIADB_FORK_ALIASES.includes?(module_name) && resolution[:resolves] == false
         mapping_module_unresolvable =
-          action_mapping && resolution[:resolves] == false && resolved_module_name.nil?
+          action_mapping && resolution[:resolves] == false && (resolved_module_name.nil? || mariadb_fork_refusal)
         mapping_module_warning = resolution[:missing_collection_warning]
-        if !action_mapping && resolution[:resolves] == false && resolved_module_name.nil?
+        if !action_mapping && resolution[:resolves] == false && (resolved_module_name.nil? || mariadb_fork_refusal)
           message = "couldn't resolve module/action '#{module_name}'. " \
                     "This often indicates a misspelling, missing collection, or incorrect module path."
           prefix = task_source_prefix(source_prefix, index)
