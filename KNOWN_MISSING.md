@@ -242,6 +242,18 @@ krikri aims for byte-for-byte identical stdout/stderr/exit code to `ansible-play
   controller-side write outside `dest` is exactly that CVE. Non-escaping paths match real
   byte-for-byte.
 
+### Modules do not log "Invoked with" lines to the target's syslog/journal
+
+- Every real Ansible module run writes `ansible-<module> Invoked with ...` to the target's
+  syslog or journal (observed: 181 such lines in a local `/var/log/syslog` after a few playbook
+  runs). Krikri's plugins write nothing there. A role that archives `/var/log`
+  (`deekayen.log_mailer`'s `community.general.archive` + `fetch`) therefore sees a changed
+  archive between a cold and a warm run under Ansible (syslog mtime/size moved) but an identical
+  one under krikri, so `Archive logs.`/`Fetch logs.` read `changed` vs `ok` on the warm run.
+  Deliberate: emulating the log lines would mean every one of the ~148 plugins writing
+  Ansible-format entries to a host-specific log sink, for no behavior a playbook should depend on.
+  The archive plugin's own comparison (member-header set, mtime-sensitive) matches real.
+
 ### `ansible_version` is pinned to a fixed ansible-core release, not this project's own version
 
 - `ANSIBLE_VERSION_MAGIC_VAR` reports `2.19.4` regardless of which `ansible-playbook` is
