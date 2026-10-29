@@ -636,10 +636,10 @@ module Krikri
 
     private def task_environment : Process::Env
       env_json = @params["_environment"]?
-      return nil unless env_json
-
-      env = Hash(String, String).from_json(env_json)
-      env.empty? ? nil : env.transform_values { |v| v.as(String?) }
+      env = env_json ? Hash(String, String).from_json(env_json) : nil
+      env = nil if env && env.empty?
+      env = with_usable_locale(env)
+      env ? env.transform_values { |v| v.as(String?) } : nil
     end
 
     # Parses `argv:`'s JSON-array text into its literal argument list - no
