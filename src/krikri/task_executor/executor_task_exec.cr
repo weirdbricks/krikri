@@ -2751,7 +2751,13 @@ module Krikri
       # Add check_mode and diff_mode to params
       final_params = params.dup
       final_params["_ansible_check_mode"] = resolve_task_check_mode(task, vars_context).to_s
-      final_params["_ansible_diff"] = @diff_mode.to_s
+      # A task-level `diff:` keyword overrides --diff for that task
+      # (live-verified vs 2.19.11: `diff: true` diffs without --diff,
+      # `diff: false` suppresses the diff under --diff), so the plugin
+      # computes its diff payload from the effective mode, not the CLI
+      # flag alone; nil (keyword unset) keeps the flag.
+      final_params["_ansible_diff"] =
+        (task.diff_mode?.nil? ? @diff_mode : task.diff_mode?).to_s
       # The module name exactly as the playbook invoked it -
       # Ansible's check-mode skip message echoes it ("remote module
       # (ansible.builtin.tempfile) does not support check mode", see

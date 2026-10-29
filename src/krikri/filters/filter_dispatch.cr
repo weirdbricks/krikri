@@ -534,9 +534,9 @@ module Krikri
           # collisions, exactly like `combine`'s later-positional-wins;
           # `recursive=` and `list_merge=` carry combine's same
           # merge semantics). Items whose key value appears in only
-          # one list pass through untouched; result order is
-          # first-seen key order (real CPython 3.7+ dict semantics,
-          # same ordering the Crinja-side dict2items relies on).
+          # one list pass through untouched; result order is by merge-key
+          # value (see FilterCore.lists_mergeby - upstream ends with
+          # `sorted(d.values(), key=itemgetter(index))`).
           # Entirely unimplemented before - found via a real-host
           # benchmark round where a role's own vars assembly (lists of
           # per-source dicts keyed by name) hit the unknown-filter

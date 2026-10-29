@@ -1059,15 +1059,17 @@ module Krikri
       end
 
       # `lists_mergeby(*lists, merge_key, recursive=False, list_merge='replace')`:
-      # merges dict items sharing the same `merge_key` value, first-seen order.
+      # merges dict items sharing the same `merge_key` value.
       def self.lists_mergeby(lists : Array(JSON::Any), merge_key : String, recursive : Bool, list_merge : String) : JSON::Any
         index = {} of String => JSON::Any
+        key_values = {} of String => JSON::Any
         lists.each do |list|
           items = list.as_a? || next
           items.each do |item|
             hash = item.as_h? || raise "lists_mergeby: list item is not a dict: #{item.to_json}"
             item_key = hash[merge_key]? || raise "lists_mergeby: merge key '#{merge_key}' not found in list item: #{item.to_json}"
             key = item_key.to_json
+            key_values[key] = item_key unless key_values.has_key?(key)
             if existing = index[key]?
               merged = existing.as_h.dup
               merge_into(merged, hash, recursive, list_merge)
@@ -1077,7 +1079,26 @@ module Krikri
             end
           end
         end
-        JSON::Any.new(index.values)
+        JSON::Any.new(sort_mergeby_items(index, key_values))
+      end
+
+      # community.general's lists_mergeby ends with
+      # `sorted(d.values(), key=itemgetter(index))`, so the merged items come
+      # back ordered by merge-key value (strings byte-wise, numbers
+      # numerically), not first-seen order. Python's sorted() is stable, so
+      # equal keys keep first-seen order - the position tiebreak reproduces
+      # that. Values that cannot be compared (other types, or a string/number
+      # mix, which would be a TypeError upstream) leave first-seen order
+      # unchanged rather than failing the whole task.
+      private def self.sort_mergeby_items(index : Hash(String, JSON::Any), key_values : Hash(String, JSON::Any)) : Array(JSON::Any)
+        ranked = key_values.map_with_index { |(key, value), position| {key, value, position} }
+        raws = ranked.map(&.[1].raw)
+        if raws.all?(String)
+          ranked.sort_by! { |(_, value, position)| {value.as_s, position} }
+        elsif raws.all? { |raw| raw.is_a?(Int64) || raw.is_a?(Float64) }
+          ranked.sort_by! { |(_, value, position)| {number_of(value), position} }
+        end
+        ranked.map(&.[0]).map { |key| index[key] }
       end
 
       # `zip(*others)` / `zip_longest(*others, fillvalue=None)`.
