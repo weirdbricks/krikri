@@ -473,7 +473,17 @@ module Krikri
         return {resolves: true, missing_collection_warning: nil}
       end
 
-      return {resolves: true, missing_collection_warning: nil} if library_module?(name, role_path, playbook_dir)
+      if library_module?(name, role_path, playbook_dir)
+        return {resolves: true, missing_collection_warning: nil}
+      end
+      # Same treatment for a role-local action plugin: ansible's observed
+      # behaviour (gwerlas.libvirt, issue #517) is that shipping
+      # `action_plugins/warn.py` inside a role makes the bare action name
+      # `warn:` resolve at load time, so the playbook runs - parse must
+      # not refuse a name whose only source is such a file.
+      if local_action_plugin?(name, role_path, playbook_dir)
+        return {resolves: true, missing_collection_warning: nil}
+      end
 
       {resolves: false, missing_collection_warning: nil}
     end
@@ -705,6 +715,24 @@ module Krikri
         return true if found
       end
       false
+    end
+
+    # The action-plugin analogue of library_module?: ansible resolves a
+    # bare action name to a role's (or the playbook's) own
+    # `action_plugins/<short>.py` at load time (issue #517:
+    # gwerlas.libvirt's `warn:` handler), so the name counts as resolved
+    # whenever such a file exists. Only `.py` files count here - unlike
+    # `library/`, action plugins cannot be extensionless shell scripts.
+    private def self.local_action_plugin?(name : String, role_path : String?, playbook_dir : String?) : Bool
+      short = name.rpartition('.')[2]
+      return false if short.empty?
+
+      roots = [] of String
+      roots << File.join(role_path, "action_plugins") if role_path && !role_path.empty?
+      roots.concat(PythonFilterRunner.loaded_role_roots("action_plugins"))
+      roots << File.join(playbook_dir, "action_plugins") if playbook_dir && !playbook_dir.empty?
+
+      roots.any? { |root| File.file?(File.join(root, "#{short}.py")) }
     end
   end
 end

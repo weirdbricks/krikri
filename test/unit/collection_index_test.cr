@@ -224,6 +224,23 @@ describe Krikri::CollectionIndex do
     result[:resolves].must_equal(false)
   end
 
+  it "resolves a bare action name via a role-local action_plugins/<name>.py file" do
+    root = PluginSpecHelper.tmp_path("collection-index-action-plugin")
+    FileUtils.mkdir_p(File.join(root, "roles", "aprole", "action_plugins"))
+    File.write(File.join(root, "roles", "aprole", "action_plugins", "warnx.py"), "# fixture\n")
+    result = Krikri::CollectionIndex.controller_resolves?("warnx",
+      role_path: File.join(root, "roles", "aprole"))
+    result[:resolves].must_equal(true)
+  end
+
+  it "still refuses a bare action name with no role-local action_plugins file" do
+    root = PluginSpecHelper.tmp_path("collection-index-no-action-plugin")
+    FileUtils.mkdir_p(File.join(root, "roles", "bare-role", "tasks"))
+    result = Krikri::CollectionIndex.controller_resolves?("warnx",
+      role_path: File.join(root, "roles", "bare-role"))
+    result[:resolves].must_equal(false)
+  end
+
   # ------------------------------------------------------------------
   # The no-ansible-core fallback (round 5440000's confirm roles: the
   # krikri host has no ansible-core install at all - the index used to
