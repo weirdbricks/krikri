@@ -91,6 +91,49 @@ describe "user plugin generate_ssh_key" do
     end
   end
 
+  # Regression for issue #501 (fiaasco.borgbackup): real user.py declares
+  # ssh_key_file type='path', so AnsibleModule runs os.path.expanduser on
+  # it before the module sees it - "~root/.ssh/id_borg_rsa" arrives
+  # absolute and the key gets generated, while krikri treated the tilde
+  # path as relative and joined it onto the home (mkdir on a literal
+  # '~root' directory). The account below is one whose passwd home does
+  # not exist on purpose: with expansion working the path becomes
+  # absolute and the home is never consulted, but if expansion ever
+  # regresses the relative path fails the home-existence check instead of
+  # writing a literal '~' directory into a real home - so a regression
+  # fails this spec without touching anything outside the temp dir.
+  it "expands a ~/-prefixed ssh_key_file against $HOME like ansible's path-type args" do
+    line = `getent passwd`.split("\n").find do |entry|
+      home = entry.split(":")[5]?
+      home && !home.empty? && !File.directory?(home)
+    end
+    skip "no account with a missing home directory on this host" unless line
+    account_name = line.not_nil!.split(":")[0]
+
+    dir = File.tempname("krikri-ssh-key")
+    Dir.mkdir_p(dir)
+    key_path = File.join(dir, "id_ed25519")
+
+    begin
+      result = PluginSpecHelper.run("user", {
+        "name"             => account_name,
+        "generate_ssh_key" => "true",
+        "ssh_key_type"     => "ed25519",
+        "ssh_key_file"     => "~/id_ed25519",
+        "ssh_key_comment"  => "krikri-spec",
+      }, env: {"HOME" => dir})
+
+      result["changed"].as_bool.must_equal(true)
+      falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+      result["ssh_key_file"].as_s.must_equal(key_path)
+      File.exists?(key_path).must_equal(true)
+      File.exists?(key_path + ".pub").must_equal(true)
+      File.exists?(File.join(dir, "~")).must_equal(false)
+    ensure
+      FileUtils.rm_rf(dir) if dir && Dir.exists?(dir)
+    end
+  end
+
   # A missing home directory is real user.py's ssh_key_gen failure, and
   # main() reports it the way it reports every other command failure:
   # fail_json(name=..., msg=..., rc=1). The account name and rc were

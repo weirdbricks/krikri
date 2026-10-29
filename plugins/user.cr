@@ -399,8 +399,19 @@ module Krikri
     # {nil, failure_result} when the home doesn't exist.
     private def resolve_ssh_key_path(name : String, facts : PluginHelpers::UserState::User?, check_mode : Bool) : {String, Nil} | {Nil, PluginResult}
       key_type = @params["ssh_key_type"]?.presence || "rsa"
-      ssh_file = @params["ssh_key_file"]?.presence || ".ssh/id_#{key_type}"
+      param_file = @params["ssh_key_file"]?.presence
+      ssh_file = param_file || ".ssh/id_#{key_type}"
       home = facts.try(&.home) || @params["home"]? || File.join("/home", name)
+
+      # real user.py declares ssh_key_file type='path', so AnsibleModule
+      # runs os.path.expanduser on it before the module ever sees it -
+      # e.g. fiaasco.borgbackup passes "~root/.ssh/id_borg_rsa" and
+      # ansible generates the key at /root/.ssh/..., while treating it
+      # as relative had krikri running mkdir on a literal '~root'
+      # directory (issue #501). The built-in default stays relative on
+      # purpose: AnsibleModule expands only the task's argument, and a
+      # relative default joined onto home is what ansible does too.
+      ssh_file = expand_tilde(ssh_file) if param_file
 
       return {ssh_file, nil} if ssh_file.starts_with?('/')
 
