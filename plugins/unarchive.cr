@@ -552,15 +552,26 @@ module Krikri
       extract_results = nil
       if changed
         extraction = handler == :tar ? extract_tar(src, dest, exclude, include_files, keep_newer, extra_opts) : extract_zip(src, dest, exclude, include_files, keep_newer)
-        unless extraction[:exit_code] == 0
-          return PluginResult.new(changed: false, failed: true, msg: "failed to extract #{src}")
-        end
+        # Real unarchive.py collects the handler's {cmd, rc, out, err}
+        # return into res_args BEFORE deciding how to report it, so the
+        # same dict rides both the success result and the failure
+        # fail_json(msg="failed to unpack %s to %s" % (src, dest),
+        # **res_args) - a failing extraction still reports the exact
+        # command, rc and output that produced it.
         extract_results = JSON.parse({
           cmd: extraction[:cmd],
           rc:  extraction[:exit_code],
           out: extraction[:stdout],
           err: extraction[:stderr],
         }.to_json)
+        unless extraction[:exit_code] == 0
+          # Real's fatal result is fail_json(msg=..., **res_args) with
+          # res_args = {handler, dest, src, extract_results}; the
+          # displayed fatal JSON (the stdout callback key-sorts and
+          # strips failed/exception) then reads changed, dest,
+          # extract_results, handler, msg, src.
+          return extraction_failure_result(src, dest, handler, extract_results)
+        end
       end
 
       if attr_error = apply_dest_attributes(dest, handler, src)
@@ -605,6 +616,19 @@ module Krikri
       )
       plugin_result.extra["extract_results"] = extract_results if extract_results
       plugin_result
+    end
+
+    private def extraction_failure_result(src : String, dest : String, handler : Symbol, extract_results : JSON::Any) : PluginResult
+      PluginResult.new(
+        changed: false,
+        failed: true,
+        msg: "failed to unpack #{src} to #{dest}",
+        handler: handler == :tar ? "TgzArchive" : "ZipArchive",
+        dest: dest,
+        src: src,
+        extract_results: extract_results,
+        key_order: %w[changed dest extract_results handler msg src]
+      )
     end
 
     private def members(handler : Symbol, src : String) : Array(String)
