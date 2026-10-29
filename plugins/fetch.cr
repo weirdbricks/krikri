@@ -55,7 +55,27 @@ module Krikri
       if result = ensure_dest_dir(dest_path, src)
         return result
       end
+      # Ansible's fetch writes the destination through a plain open()
+      # (FileUtils.copyfile creates it with 0666 & ~umask), so a NEW dest
+      # never inherits the source's mode, and a pre-existing dest keeps its
+      # own mode because the copy only truncates/rewrites the content.
+      # Pre-create a missing dest empty at 0666 explicitly (mirroring
+      # Python open()'s default creation mode; Crystal's own open() default
+      # differs) so its mode is already 0666 & ~umask before the transfer.
+      existed = File.exists?(dest_path)
+      unless existed
+        File.open(dest_path, "w", 0o666) { }
+      end
+      prior_mode = File.info(dest_path).permissions
       remote_download(src, dest_path)
+      # The local transfer is File.copy, which deliberately re-chmods the
+      # destination to the source's mode even when the dest already
+      # existed - undoing both cases above. Restore the mode ansible's
+      # write-through-open() would have left: 0666 & ~umask for a new
+      # dest, the pre-existing dest's own mode otherwise.
+      if File.info(dest_path).permissions != prior_mode
+        File.chmod(dest_path, prior_mode)
+      end
 
       success_result(dest_path, remote_checksum, src)
     end
