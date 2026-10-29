@@ -2980,6 +2980,13 @@ module Krikri
     private def execute_python_module(task : Task, source_path : String, substituted_params : Hash(String, String), exec_host : Host, vars_context : Hash(String, JSON::Any), wire_vars : Hash(String, JSON::Any), become : Bool, become_user : String?, substituted_become_user : String?, substituted_env : Hash(String, String)? = nil, task_timeout : Int64? = nil) : JSON::Any
       module_name = PythonModuleRunner.short_name(task.unavailable_module || task.module_name)
       source_text = File.read(source_path)
+      # Ansible's modularizer rewrites the legacy boilerplate marker
+      # into the import that pulls AnsibleModule in BEFORE style
+      # detection, so the marker-bearing module ships as new-style
+      # (JSON stdin args, bundled/shimmed basic.py) like any other -
+      # without this the raw source ran with AnsibleModule undefined
+      # (kunik.deploy-metadata's deployment_facts, issue #543).
+      source_text = PythonModuleRunner.modularize(source_text)
       new_style = PythonModuleRunner.new_style?(source_text)
 
       # See PythonModuleRunner.missing_interpreter_line? -
