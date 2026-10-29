@@ -21,6 +21,13 @@ describe Krikri::ArgspecValidator do
     args.keys.must_equal(%w[age hidden paths recurse patterns read_whole_file file_type age_stamp follow get_checksum checksum_algorithm use_regex exact_mode excludes contains size depth mode encoding limit])
   end
 
+  it "builds get_url's invocation.module_args with supplied args sorted, then defaults" do
+    args = Krikri::ArgspecValidator.invocation_args("ansible.builtin.get_url", {"url" => "http://x/y", "dest" => "/tmp", "timeout" => "20"}).as(Hash(String, JSON::Any))
+    args.keys.first(3).must_equal(%w[dest timeout url])
+    args["timeout"].as_i.must_equal(20)
+    args["force"].as_bool.must_equal(false)
+  end
+
   it "has no invocation for an unknown module" do
     Krikri::ArgspecValidator.invocation_args("ansible.builtin.nope", {} of String => String).must_be_nil
   end
