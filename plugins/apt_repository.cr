@@ -345,7 +345,12 @@ module Krikri
           # fail_json. python-apt raises only when apt itself reports a
           # failed item (E:/Err: markers); a standalone "W: GPG error ...
           # NO_PUBKEY ..." warning exits 0 and the update succeeds, the
-          # same changed outcome real ansible reports. The signed-repo
+          # same changed outcome real ansible reports. The retry loop's
+          # Cache().update() calls all run in ONE python-apt process, and
+          # from the second call onward an unauthenticated-repo reason
+          # gains the fixed two-line W: untrusted-repo prefix
+          # (AptLockRetry.apt_fetch_attempt_reason) - live-verified
+          # against ansible-core 2.19.11. The signed-repo
           # retry shape is still caught (see
           # AptLockRetry.apt_fetch_signature_failure?) - previously this
           # plugin classified signature-level failures as plain
@@ -501,7 +506,9 @@ module Krikri
     # FetchFailedException(e) with the W:/E: diagnostic lines as
     # str()), and each failed attempt's exception text becomes the next
     # warning's reason, with apt's two untrusted-repo lines prepended
-    # once a signature failure has happened (AptLockRetry helpers).
+    # once a repo has been refused authentication - never for the
+    # tolerated failure shapes, whose reason stays identical and
+    # unprefixed on every attempt (AptLockRetry helpers).
     private def update_cache_with_repo_retry(retries : Int32) : NamedTuple(failed: Bool, last_reason: String)
       max_delay = int_param("update_cache_retry_max_delay", AptRepositoryCacheRetry::DEFAULT_UPDATE_CACHE_RETRY_MAX_DELAY)
       attempt = 0

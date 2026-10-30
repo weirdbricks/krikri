@@ -16,7 +16,11 @@ require "../minitest_helper"
 #   a failed item, so a warning-only update exits 0 and succeeds. str()
 #   is the W:/E: diagnostic lines, marker-space stripped, ", "-joined;
 #   from the second failed attempt on, apt prepends its two
-#   untrusted-repo lines. Round 5210000
+#   untrusted-repo lines - but only once a repo has been REFUSED
+#   authentication: tolerated shapes (a [trusted=yes] repo's standalone
+#   GPG warning, allow-insecure W: warnings, plain index 404s) keep the
+#   identical unprefixed reason on every attempt, which is issue #665's
+#   real round. Round 5210000
 #   (artem_shestakov.nginx): real ansible-core 2.19.11 warned five
 #   times with this text and failed with "Failed to update apt cache
 #   after 5 retries: W:..., E:..." while krikri classified the case as
@@ -69,6 +73,29 @@ private VPROTECT_RESULT = {
   exit_code: 0,
   stdout:    "",
   stderr:    VPROTECT_STDERR,
+}
+
+# Two [trusted=yes] GPG-broken repos plus a 404 one, exactly as apt's CLI
+# prints that combination: two adjacent "W: GPG error ..." warnings with
+# no refusal line under either (live-verified in-process on jammy 22.04,
+# issue #665's repo family: python-apt's exception text joins the two GPG
+# lines DIRECTLY, with no untrusted-repo pair between them).
+private TWO_TOLERATED_GPG_RESULT = {
+  exit_code: 100,
+  stdout:    "",
+  stderr:    "W: GPG error: http://127.0.0.1:8765/a stable InRelease: The following signatures couldn't be verified because the public key is not available: NO_PUBKEY 1105AB94A44953F4\nW: GPG error: http://127.0.0.1:8765/e stable InRelease: The following signatures couldn't be verified because the public key is not available: NO_PUBKEY 1105AB94A44953F4\nE: Failed to fetch http://127.0.0.1:8765/b/./Packages  404  File not found [IP: 127.0.0.1 8765]\nE: Some index files failed to download. They have been ignored, or old ones used instead.\n",
+}
+
+# One REFUSED repo (no [trusted=yes], so apt emits the top-level
+# "E: The repository ... is not signed." refusal) followed by one
+# tolerated [trusted=yes] GPG-warning repo - live-verified in-process on
+# jammy 22.04: python-apt's exception text puts the untrusted-repo pair
+# between the refused block and the next block, whatever that next block
+# is, and repeats that same text on every attempt.
+private MIXED_GPG_RESULT = {
+  exit_code: 100,
+  stdout:    "",
+  stderr:    "W: GPG error: http://127.0.0.1:8765/a stable InRelease: The following signatures couldn't be verified because the public key is not available: NO_PUBKEY 1105AB94A44953F4\nE: The repository 'http://127.0.0.1:8765/a stable InRelease' is not signed.\nW: GPG error: http://127.0.0.1:8765/e stable InRelease: The following signatures couldn't be verified because the public key is not available: NO_PUBKEY 1105AB94A44953F4\n",
 }
 
 # Three GPG-broken repositories, the round-29883431 amottier.debian_minimal
@@ -150,6 +177,26 @@ describe Krikri::AptLockRetry do
         "W:GPG error: https://nginx.org/packages/ubuntu jammy InRelease: The following signatures couldn't be verified because the public key is not available: NO_PUBKEY 2FD21310B49F6B46, E:The repository 'https://nginx.org/packages/ubuntu jammy InRelease' is not signed."
       )
     end
+
+    # Tolerated [trusted=yes] GPG warnings carry no refusal line, so apt
+    # never marks those repos unauthenticated and its exception text
+    # joins the two GPG lines directly (live-verified in-process, jammy
+    # 22.04) - inserting the pair there would diverge from real ansible
+    # on exactly the issue-#665 repo family.
+    it "does not insert the pair between tolerated trusted-repo GPG blocks" do
+      Krikri::AptLockRetryTestProbe.new.apt_fetch_failure_reason(TWO_TOLERATED_GPG_RESULT).must_equal(
+        "W:GPG error: http://127.0.0.1:8765/a stable InRelease: The following signatures couldn't be verified because the public key is not available: NO_PUBKEY 1105AB94A44953F4, W:GPG error: http://127.0.0.1:8765/e stable InRelease: The following signatures couldn't be verified because the public key is not available: NO_PUBKEY 1105AB94A44953F4, E:Failed to fetch http://127.0.0.1:8765/b/./Packages  404  File not found [IP: 127.0.0.1 8765], E:Some index files failed to download. They have been ignored, or old ones used instead."
+      )
+    end
+
+    # The pair follows a REFUSED block whatever comes next - live-verified
+    # in-process (jammy 22.04) with a refused repo followed by a
+    # tolerated [trusted=yes] GPG-warning repo.
+    it "inserts the pair after a refused GPG block, before the next block" do
+      Krikri::AptLockRetryTestProbe.new.apt_fetch_failure_reason(MIXED_GPG_RESULT).must_equal(
+        "W:GPG error: http://127.0.0.1:8765/a stable InRelease: The following signatures couldn't be verified because the public key is not available: NO_PUBKEY 1105AB94A44953F4, E:The repository 'http://127.0.0.1:8765/a stable InRelease' is not signed., #{Krikri::AptLockRetry::APT_FETCH_SECURE_REPO_PREPEND}, W:GPG error: http://127.0.0.1:8765/e stable InRelease: The following signatures couldn't be verified because the public key is not available: NO_PUBKEY 1105AB94A44953F4"
+      )
+    end
   end
 
   describe "#apt_fetch_attempt_reason" do
@@ -171,6 +218,38 @@ describe Krikri::AptLockRetry do
       outcome = probe.apt_fetch_attempt_reason("", false)
       outcome[0].must_equal("")
       outcome[1].must_equal(false)
+    end
+
+    # Issue #665 (xe0nic.ansible_vprotect_server), round 29884722's real
+    # diff: both of the role's repos are `deb [trusted=yes]`, so the
+    # failing update's reason is the mariadb repo's tolerated standalone
+    # "W: GPG error ..." warning plus the storware 404 E: lines - a
+    # reason apt never marks a repo unauthenticated for, and real ansible
+    # quoted it UNPREFIXED on every attempt (and in the final msg) while
+    # the previous flag trigger (any non-empty reason) prefixed the later
+    # ones. Live-verified in-process on jammy 22.04: five identical
+    # unprefixed exception texts for exactly this repo combination.
+    it "keeps the flag down for a tolerated trusted-repo GPG-warning + 404 reason" do
+      probe = Krikri::AptLockRetryTestProbe.new
+      reason = probe.apt_fetch_failure_reason(VPROTECT_RESULT)
+
+      outcome = probe.apt_fetch_attempt_reason(reason, false)
+      outcome[0].must_equal(reason)
+      outcome[1].must_equal(false)
+    end
+
+    # The flag's second refusal shape, live-verified in-process on jammy
+    # 22.04: a repo with no metadata at all is refused with a top-level
+    # "E: The repository ... does not have a Release file." line and
+    # gains the same two-line untrusted-repo prefix from the second
+    # update call onward.
+    it "flips the flag for a refused missing-Release-file reason" do
+      probe = Krikri::AptLockRetryTestProbe.new
+      reason = "E:The repository 'http://127.0.0.1:8765/c stable Release' does not have a Release file."
+
+      outcome = probe.apt_fetch_attempt_reason(reason, false)
+      outcome[0].must_equal(reason)
+      outcome[1].must_equal(true)
     end
   end
 
@@ -212,6 +291,20 @@ describe Krikri::AptLockRetry do
       outcome[:warnings][0].must_equal("Failed to update cache after 1 retries due to , retrying")
       outcome[:warnings][2].must_equal("Failed to update cache after 2 retries due to , retrying")
       outcome[:last_reason].must_equal("")
+    end
+
+    # Issue #665's harness-level regression: with no refusal anywhere in
+    # the reason, no attempt's warning and no final reason ever carry the
+    # untrusted-repo prefix (live-verified in-process on jammy 22.04:
+    # five identical unprefixed exception texts).
+    it "never prepends the tolerated trusted-repo + 404 shape across attempts" do
+      harness = FetchRetryHarness.new
+      reason = Krikri::AptLockRetryTestProbe.new.apt_fetch_failure_reason(VPROTECT_RESULT)
+      outcome = harness.run(2, 0, VPROTECT_RESULT, initial_reason: reason)
+      outcome[:recovered].must_equal(false)
+      outcome[:warnings][0].must_equal("Failed to update cache after 1 retries due to #{reason}, retrying")
+      outcome[:warnings][2].must_equal("Failed to update cache after 2 retries due to #{reason}, retrying")
+      outcome[:last_reason].must_equal(reason)
     end
 
     # Multi-repo shape (issue #408): every attempt's text is the
