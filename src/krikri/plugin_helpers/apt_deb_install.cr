@@ -10,13 +10,6 @@ module Krikri
   # two plugins can't drift; requires the including plugin to provide
   # BasePlugin's remote_exec/params/check_mode surface.
   module AptDebInstall
-    # Parses the version column (3rd whitespace-separated field) out of
-    # a `dpkg -l <pkg> | grep '^ii'` line, e.g. "ii  rabbitmq-server
-    # 3.12.2-1  amd64  ...".
-    private def installed_version(dpkg_line : String) : String?
-      dpkg_line.split(/\s+/)[2]?
-    end
-
     # One `dpkg-query` round trip for the WHOLE package list instead of
     # one `dpkg -l <pkg>` per package (N+1 remote commands on every
     # multi-package apt task). Returns installed-ness, the installed
@@ -36,7 +29,20 @@ module Krikri
         next unless parts.size == 3
         bare = parts[2].strip.split(":").first
         next if statuses.has_key?(bare)
-        installed = parts[0].starts_with?("ii")
+        # dpkg's Status-Abbrev is the one-letter DESIRED action followed
+        # by the one-letter current STATE, and "installed" is what both
+        # python-apt (whose `Package.installed` the Ansible modules ask)
+        # and apt-get's own no-op check key on - the desired action is
+        # irrelevant. Matching the whole "ii" pair instead meant a package
+        # pinned with `apt-mark hold`/dpkg_selections - abbrev "hi", whose
+        # STATE is still installed - was read as absent, so every rerun
+        # reinstalled it and reported changed (issue #413,
+        # andrewmackett.splunk_common: the cold run's "pin splunk version"
+        # holds splunk, so the warm run's "install splunk from deb"
+        # re-ran dpkg -i, which also silently un-pinned it for the next
+        # task, satisfied a `when: splunk_installed.changed` touch and
+        # fired the failing "restart splunk" handler).
+        installed = parts[0].ends_with?("i")
         statuses[bare] = {installed, installed ? parts[1] : nil, parts[0]}
       end
       statuses
@@ -185,27 +191,22 @@ module Krikri
 
       installed_deb_ver : String? = nil
       if pkg_name && pkg_version
-        check_result = remote_exec("dpkg -l #{shell_single_quote(pkg_name)} 2>/dev/null | grep '^ii'")
-        if check_result[:exit_code] == 0
-          installed_deb_ver = installed_version(check_result[:stdout])
-          if installed_deb_ver == pkg_version
-            # Real install_deb's already-installed exit: the deps install
-            # produced no retvals, so exit_json(changed=False,
-            # stdout='', stderr='', diff='') - diff is the EMPTY STRING,
-            # not a dict (round-99500x apt_real_deb_again capture), and
-            # there is no msg key.
-            return PluginResult.new(changed: false, failed: false,
-              stdout: "", stderr: "", diff: JSON::Any.new(""),
-              key_order: ["changed", "stdout", "stderr", "diff", "stdout_lines", "stderr_lines"])
-          end
-        else
-          # dpkg -l returned non-zero: the package may not be installed,
-          # but we cannot be certain (e.g. dpkg database issue). To match
-          # Ansible's idempotent behavior on warm reruns, we proceed to
-          # the dpkg -i call which will determine if actual change is needed.
-          # Without this else-branch, a non-zero dpkg -l exit would cause
-          # the module to always report changed:true on reruns even when
-          # the package is already at the correct version.
+        # Upstream asks python-apt (`apt.Cache()[pkg_key].installed.version`)
+        # and skips the install when it equals the .deb's own version -
+        # "installed" there is dpkg's STATE, independent of the desired
+        # action, so the same probe #dpkg_installed_status runs for the
+        # dependency resolution answers it here too (a `hold`-pinned
+        # package is "hi", not "ii").
+        installed_deb_ver = dpkg_installed_status([pkg_name])[pkg_name]?.try(&.[1])
+        if installed_deb_ver == pkg_version
+          # Real install_deb's already-installed exit: the deps install
+          # produced no retvals, so exit_json(changed=False,
+          # stdout='', stderr='', diff='') - diff is the EMPTY STRING,
+          # not a dict (round-99500x apt_real_deb_again capture), and
+          # there is no msg key.
+          return PluginResult.new(changed: false, failed: false,
+            stdout: "", stderr: "", diff: JSON::Any.new(""),
+            key_order: ["changed", "stdout", "stderr", "diff", "stdout_lines", "stderr_lines"])
         end
       end
 
