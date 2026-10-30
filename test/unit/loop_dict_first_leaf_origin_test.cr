@@ -60,3 +60,49 @@ describe "loop source dict-of-lists first failing leaf origin" do
     text.must_include("'CD_UNDEFINED_ENV' is undefined\nOrigin: #{defaults}:8:9")
   end
 end
+
+# Issue #387 (T2L.php): a with_dict source subscripted with a NON-string
+# key - the loop item itself, an empty dict (`php_configuration[{}]`) -
+# must fail with ansible's truthiness-gated wording: a falsy key falls
+# through Jinja's "no element" branch carrying the lazy dict wrapper's
+# full dotted class path, NOT the templar's "object of type 'dict' has
+# no attribute" rewording with the stringified key (live-verified vs
+# 2.19.11).
+describe "dict subscript miss with a non-string key" do
+  it "words a falsy dict-key miss with the lazy template dict class" do
+    src_dir = PluginSpecHelper.tmp_path("lazy-dict-nonstring-key", "role")
+    Dir.mkdir_p(File.join(src_dir, "roles", "rdtest", "defaults"))
+    Dir.mkdir_p(File.join(src_dir, "roles", "rdtest", "tasks"))
+    File.write(File.join(src_dir, "roles", "rdtest", "defaults", "main.yml"), <<-YAML)
+      ---
+      php_configuration:
+        phpini:
+          upload_max_filesize: "20M"
+      YAML
+    File.write(File.join(src_dir, "roles", "rdtest", "tasks", "main.yml"), <<-YAML)
+      ---
+      - name: Configure PHP, section {{ php_configuration_section }}
+        ansible.builtin.debug:
+          msg: "x"
+        vars:
+          php_configuration_section: {}
+        with_dict: "{{ php_configuration[php_configuration_section] }}"
+      YAML
+    playbook = File.join(src_dir, "pb.yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        roles:
+          - rdtest
+      YAML
+
+    stdout = IO::Memory.new
+    status = Process.run(BINARY, ["-i", File.join(__DIR__, "..", "fixtures", "inventory-localhost-local.ini"), playbook], output: stdout, error: Process::Redirect::Inherit)
+    text = stdout.to_s
+
+    status.exit_code.must_equal(2)
+    text.must_include("[ERROR]: Task failed: ansible._internal._templating._lazy_containers._AnsibleLazyTemplateDict object has no element {}")
+    text.wont_include("object of type 'dict' has no attribute '{}'")
+  end
+end

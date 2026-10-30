@@ -2282,7 +2282,7 @@ module Krikri
         # just gets :ok back.
         # The included: line censors on the raw no_log keyword (any
         # templated value), not the resolved one - included_line_item_label.
-        included_label = included_line_item_label(task, item_label)
+        included_label = included_line_item_label(task, item_label, included_line_label_value(task, item_label, vars_context))
         suffix = included_label ? " => (item=#{included_label})" : ""
         puts "included: #{resolved_path} for #{host.name}#{suffix}".colorize(:cyan)
         return :ok
@@ -2405,7 +2405,7 @@ module Krikri
       # <host>` (plus ` => (item=...)` for a looped include). Printed
       # after the load succeeds, before any included task runs.
       connection_names = [host.name]
-      included_label = included_line_item_label(task, item_label)
+      included_label = included_line_item_label(task, item_label, included_line_label_value(task, item_label, vars_context))
       suffix = included_label ? " => (item=#{included_label})" : ""
       puts "included: #{resolved_path} for #{connection_names.join(", ")}#{suffix}".colorize(:cyan)
 
@@ -3066,7 +3066,16 @@ module Krikri
       # Real v2_playbook_on_include line for a dynamic include_role.
       unless task.is_static_import?
         connection_name = host.name
-        suffix = item_label ? " => (item=#{item_label})" : ""
+        # The ` => (item=...)` suffix follows the include callback's
+        # `if label:` truthiness gate - a falsy loop item ({}, 0, "",
+        # None) prints the role's included: line bare (live-verified vs
+        # 2.19.11; the same v2_playbook_on_include callback as the
+        # include_tasks lines above).
+        shown_label = item_label
+        if (label_obj = included_line_label_value(task, item_label, vars_context)) && Krikri.python_falsy?(label_obj)
+          shown_label = nil
+        end
+        suffix = shown_label ? " => (item=#{shown_label})" : ""
         puts "included: #{role_name} for #{connection_name}#{suffix}".colorize(:cyan)
       end
       # A successful dynamic include statement itself books an `ok` (line

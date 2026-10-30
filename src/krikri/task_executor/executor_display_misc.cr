@@ -1084,7 +1084,7 @@ module Krikri
       "None"
     end
 
-    private def included_line_item_label(task : Task, item_label : String?) : String?
+    private def included_line_item_label(task : Task, item_label : String?, label_value : JSON::Any? = nil) : String?
       return nil unless item_label
       # The `included:` line follows a different rule than the `skipping:`
       # one: ansible's include callback reads the RAW no_log keyword, so
@@ -1093,7 +1093,25 @@ module Krikri
       # `no_log: false` shows it. The `skipping:` line keeps the resolved
       # rule (include_item_display_label above) - live-verified vs 2.19.
       return "(censored due to no_log)" if task.no_log_expr || task.no_log?
+      # Ansible's v2_playbook_on_include then adds ` => (item=...)` only
+      # `if label:` - the PYTHON truthiness of the label OBJECT, so a
+      # falsy loop item ({}, [], "", 0, false, None) prints the included:
+      # line bare (live-verified vs 2.19.11 on T2L.php's `included:
+      # tasks/configure_php.yml for testhost` with item {}). The
+      # `skipping:`/`ok:` per-item lines have no such gate.
+      gated = task.loop_label ? JSON::Any.new(item_label) : label_value
+      return nil if gated && Krikri.python_falsy?(gated)
       item_label
+    end
+
+    # The looped include's label object for the included: line's
+    # truthiness gate: the loop_control.label's rendered text when one is
+    # set (that is what Ansible stores as _ansible_item_label), else the
+    # bound item itself under loop_var or "item".
+    private def included_line_label_value(task : Task, item_label : String?, vars_context : Hash(String, JSON::Any)) : JSON::Any?
+      return JSON::Any.new(item_label) if task.loop_label
+      bound = vars_context[(task.loop_var || "item")]?
+      bound
     end
 
     private def item_display(item : JSON::Any) : String

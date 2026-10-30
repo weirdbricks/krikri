@@ -1367,7 +1367,19 @@ module Krikri
                 return pos
               end
             else
-              break
+              # The keyword's value is a block MAPPING scalar written on its
+              # own line under the key (`with_dict:` newline
+              # `  "{{ ... }}"`): ansible pins the Origin at that scalar's
+              # first character - opening quote included - not at the end
+              # of the key line (live-verified vs 2.19.11 on T2L.php's
+              # configure_php.yml: the caused-by Origin is 19:5, the value's
+              # line/column, where a key-line-derived Origin lands one line
+              # up at 18:13).
+              break if val_indent <= key_indent
+              if missing && !(val_stripped.includes?("{{") && val_stripped.matches?(/\b#{Regex.escape(missing)}\b/))
+                break
+              end
+              return {val_idx, val_indent + 1}
             end
           end
           return first_element_pos if first_element_pos
