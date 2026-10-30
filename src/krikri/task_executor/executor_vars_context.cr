@@ -714,6 +714,55 @@ module Krikri
       build_vars_context(task, host, include_legacy_ssh_aliases: false, loop_lenient_vars: task_has_loop?(task))
     end
 
+    # Ansible-core 2.19.11's legacy ssh alias magic (see
+    # #synthesize_legacy_ssh_aliases for the task-arg half of the matrix)
+    # is NOT visible when templating the become:/become_user: keywords:
+    # `become_user: "{{ ansible_ssh_user }}"` hard-fails strict with
+    # "'ansible_ssh_user' is undefined" even with ansible_user set in the
+    # inventory, and so does a role default that merely routes to it
+    # (issue #420, ansible-role.nodejs's `role_nodejs_nvm_user:
+    # "{{ ansible_ssh_user }}"` feeding `become_user:` - ansible aborts
+    # with exit 2 while krikri resolved the alias and RAN the task).
+    # Live-verified vs ansible-playbook for both keywords, direct and
+    # role-default-routed, while name:/when:/environment:/timeout: and the
+    # module args all still resolve the alias on the same engine.
+    #
+    # So the become keyword templates render against the same alias-free
+    # snapshot loop-source resolution uses, with the per-iteration loop
+    # bindings carried over from the caller's context - unlike a loop
+    # SOURCE, a `become_user: "{{ item }}"` is evaluated with the item
+    # bound (real templates it per iteration), and dropping that binding
+    # would regress it. An EXPLICITLY-set legacy spelling survives the
+    # rebuild (it is a real inventory/task var, visible to become_user in
+    # ansible too), exactly like the loop-source snapshot guarantees.
+    private def become_keyword_vars_context(task : Task, host : Host, vars_context : Hash(String, JSON::Any)) : Hash(String, JSON::Any)
+      ctx = loop_source_vars_context(task, host, vars_context)
+      return ctx if ctx.same?(vars_context)
+      if item = vars_context["item"]?
+        ctx["item"] ||= item
+      end
+      if (loop_var = task.loop_var) && (value = vars_context[loop_var]?)
+        ctx[loop_var] ||= value
+      end
+      if (index_var = task.index_var) && (value = vars_context[index_var]?)
+        ctx[index_var] ||= value
+      end
+      if extended = vars_context["ansible_loop"]?
+        ctx["ansible_loop"] ||= extended
+      end
+      ctx
+    end
+
+    # The substitutor the become/become_user keyword templates render
+    # with: the caller's own unless its context carries a legacy ssh
+    # alias (synthesized OR explicit), in which case a fresh one over the
+    # alias-free snapshot - see #become_keyword_vars_context.
+    private def become_keyword_substitutor(task : Task, host : Host, vars_context : Hash(String, JSON::Any), substitutor : VarSubstitutor) : VarSubstitutor
+      ctx = become_keyword_vars_context(task, host, vars_context)
+      return substitutor if ctx.same?(vars_context)
+      VarSubstitutor.new(vars: ctx, host_name: host.name)
+    end
+
     # First of the 2 #build_vars_context base caches - see the
     # @base_context_a_cache ivar's own comment for why there are 2 and
     # what order this preserves. @play_vars is fixed for this
@@ -1920,7 +1969,7 @@ module Krikri
     # interpret falls back to the keyword path instead of erroring (the
     # lenient-degradation rule this codebase already applies to templated
     # connection vars).
-    private def resolve_task_become(task : Task, substitutor : VarSubstitutor) : Bool
+    private def resolve_task_become(task : Task, host : Host, vars_context : Hash(String, JSON::Any), substitutor : VarSubstitutor) : Bool
       if raw = substitutor.vars["ansible_become"]?
         decided = ansible_become_var_boolean(raw, substitutor)
         return decided unless decided.nil?
@@ -1939,9 +1988,15 @@ module Krikri
       # undefined", with gather_facts: false the var never becomes a
       # gathered fact) - the lenient render used to produce the
       # "undefined" sentinel and fail later with the wrong
-      # could-not-convert wording (issue #159).
+      # could-not-convert wording (issue #159). The keyword template also
+      # renders against the alias-free snapshot (see
+      # #become_keyword_vars_context): ansible fails
+      # `become: "{{ ansible_ssh_user }}"` as undefined even with
+      # ansible_user set (issue #420's matrix probe, live-verified vs
+      # 2.19.11), while the old full-context render converted 'labros'
+      # and reported the wrong could-not-convert wording.
       rendered = begin
-        substitutor.substitute(expr, strict: true)
+        become_keyword_substitutor(task, host, vars_context, substitutor).substitute(expr, strict: true)
       rescue e : UndefinedVariableError
         raise UndefinedVariableError.new("Task failed: Error processing keyword 'become': #{e.message}")
       end
@@ -1958,7 +2013,7 @@ module Krikri
     # manager: direct > vars > keyword): an `ansible_become_user` var in
     # the task's vars context outranks a task-level `become_user:`
     # keyword, which falls back to nil (the caller defaults to "root").
-    private def resolve_task_become_user(task : Task, vars_context : Hash(String, JSON::Any), substitutor : VarSubstitutor) : String?
+    private def resolve_task_become_user(task : Task, host : Host, vars_context : Hash(String, JSON::Any), substitutor : VarSubstitutor) : String?
       if raw = vars_context["ansible_become_user"]?
         if user = ansible_become_var_string(raw, substitutor)
           return user
@@ -1971,10 +2026,14 @@ module Krikri
       # `sudo -u undefined` instead of failing the task (issue #31). The
       # ansible_become_user var path above stays lenient: that is a plain
       # variable, not keyword templating, and its lenient degradation is
-      # the rule the become-var tests rely on.
+      # the rule the become-var tests rely on. The keyword template itself
+      # renders against the alias-free snapshot (see
+      # #become_keyword_vars_context) - ansible-core 2.19 does not see the
+      # `ansible_ssh_user` legacy alias here, direct or routed through a
+      # role default (issue #420).
       task.become_user.try do |raw_user|
         begin
-          substitutor.substitute(raw_user, strict: true)
+          become_keyword_substitutor(task, host, vars_context, substitutor).substitute(raw_user, strict: true)
         rescue e : UndefinedVariableError
           raise UndefinedVariableError.new("Task failed: Error processing keyword 'become_user': #{e.message}")
         end
@@ -3053,9 +3112,10 @@ module Krikri
       if (msg = ex.message) && msg.starts_with?(prefix)
         result = finalization_failure_json(ex, task)
         result.as_h["_ansible_keyword_conversion"] = JSON.parse({
-          "keyword"    => "become",
-          "conversion" => msg[prefix.size..],
-          "origin"     => keyword_value_origin(task, "become"),
+          "keyword"           => "become",
+          "conversion"        => msg[prefix.size..],
+          "origin"            => keyword_value_origin(task, "become"),
+          "conversion_origin" => undef_chain_origin_block(task, msg[prefix.size..]),
         }.to_json)
         return result
       end
@@ -3095,6 +3155,27 @@ module Krikri
         col = at + keyword.size + 1
         while col < line.size && line[col] == ' '
           col += 1
+        end
+        if col >= line.size
+          # Block-form keyword (`become_user:` alone on its line, the
+          # quoted value on the next): Ansible's origin is the VALUE
+          # node's own line/column (live-verified vs 2.19.11 on issue
+          # #420's ansible-role.nodejs `become_user:` shape), not the
+          # key line. A next line that is not indented deeper than the
+          # key's own column is the following sibling key, not this
+          # keyword's value - no origin to report.
+          nxt = idx + 1
+          while nxt < lines.size && lines[nxt].strip.empty?
+            nxt += 1
+          end
+          if nxt < lines.size
+            ncol = 0
+            while ncol < lines[nxt].size && lines[nxt][ncol] == ' '
+              ncol += 1
+            end
+            return ErrorBlock.origin_context(path, nxt + 1, ncol + 1) if ncol > at
+          end
+          return nil
         end
         return ErrorBlock.origin_context(path, idx + 1, col + 1)
       end
