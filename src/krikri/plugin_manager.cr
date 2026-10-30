@@ -1219,7 +1219,10 @@ module Krikri
       task_timeout : Int64? = nil,
     ) : JSON::Any
       if remote_execution?(plugin_name, host, vars)
-        execute_remote_plugin(plugin_name, config, host, vars, become, become_user, task_timeout)
+        apply_task_end_remote_cleanup(
+          execute_remote_plugin(plugin_name, config, host, vars, become, become_user, task_timeout),
+          host, vars
+        )
       elsif controller_only?(plugin_name)
         # A controller-only plugin (fetch, see CONTROLLER_ONLY_PLUGINS'
         # own comment) always runs unprivileged on the controller itself,
@@ -1707,6 +1710,96 @@ module Krikri
       detail = ex.message.to_s.lines.first?.to_s
       JSON.parse({
         "changed"     => false,
+        "msg"         => "Failed to connect to the host via ssh: #{detail}",
+        "stderr"      => detail,
+        "unreachable" => true,
+      }.to_json)
+    end
+
+    # Ansible's task executor ends EVERY non-async remote module task with a
+    # remote tmpdir cleanup (ActionBase.cleanup -> _remove_tmp_path, out of
+    # the attempt loop's `finally`) - over the default pipelining=off ssh
+    # transport that is one more `rm -f -r <tmpdir>` exec, made right after
+    # the module's result came back. An exception raised out of that cleanup
+    # is NOT swallowed: coming from a `finally` it REPLACES whatever the
+    # module produced, and a connection-level failure books the task
+    # UNREACHABLE ("Failed to connect to the host via ssh: <ssh stderr>" -
+    # the host is dropped from the rest of the play, the run exits 4). That
+    # second connection attempt is real's second net for a host that goes
+    # down while a task runs: aguamala.reboot-and-wait-for's `command:
+    # shutdown -r now` idiom (issue #400) takes its own ssh session down,
+    # and real's task-end cleanup - a fresh connection attempted after the
+    # module result - is what turned that task into UNREACHABLE carrying the
+    # ssh error, where this engine's module result (rc 0, `changed`) stood
+    # alone and the play ran on into the role's wait_for task (exit 2).
+    #
+    # krikri creates no per-task remote tmpdir (its plugin binaries are
+    # pre-uploaded; batch dirs are swept by their own script), so the exec
+    # removes an Ansible-shaped never-existing path under ~/.ansible/tmp:
+    # against a live host it succeeds silently (rc 0, no output - no
+    # observable difference anywhere), and its ONLY observable behavior is
+    # the transport-failure case this exists to replicate. Batched task
+    # groups don't get the per-step exec (their steps share one round trip;
+    # the batch script's own tail sweep stands in) - this issue's task is
+    # always a size-1 solo dispatch (fact gathering runs off-batch, and a
+    # become: task follows it), so the solo paths are the ones that matter
+    # here. The async re-dispatch entry point below never reaches this hook,
+    # matching Ansible's own `not self._task.async_val` cleanup guard.
+    private def self.apply_task_end_remote_cleanup(result : JSON::Any, host : Host, vars : Hash(String, JSON::Any)) : JSON::Any
+      # An ALREADY-unreachable module result is the transport dying while
+      # the module ran: Ansible's action plugin never reaches its cleanup
+      # line there (_execute_module raises straight through it, the raised
+      # exception IS the booking) - re-running the cleanup exec over the
+      # same dead transport would only rewrite the reported ssh detail, and
+      # swapping this engine's own unreachable shape for a second one
+      # dropped the `failed: true` flag the transport shape carries, which
+      # the facts booking path reads (an unreachable Gathering Facts came
+      # back out as `ok:`, halting nothing).
+      return result if result["unreachable"]?.try(&.as_bool?) == true
+      conn = ConnectionSettings.resolve(host, vars)
+      # Ansible's own tmpdir shape (ansible-tmp-<epoch>-<pid>-<rand> under
+      # the connection user's ~/.ansible/tmp, ~ expanded remote-side). The
+      # random tail keeps a hostile pre-creation impractical, and `rm -f -r`
+      # on a never-existing path is a silent rc 0 - the transport failure is
+      # the only signal this exec can produce, which is the point.
+      path = "~/.ansible/tmp/ansible-tmp-#{Time.utc.to_unix}-#{Process.pid}-#{Random::Secure.hex(12)}"
+      cleanup = SSHManager.exec(
+        conn.conn_host,
+        conn.user,
+        "rm -f -r #{path}/ > /dev/null 2>&1",
+        conn.port,
+        identity_file: conn.identity_file,
+        extra_args: conn.ssh_extra_options,
+        # A fresh end-to-end connection, not a ride-along on the pooled
+        # master: real's own cleanup goes fresh exactly when its module took
+        # the master's session down with it (the `command: shutdown -r now`
+        # idiom), and that fresh connect is what carries the task's fatal
+        # ssh error. This engine's module completes before the host dies, so
+        # its master is still standing here - riding it would answer from
+        # the stale local pipe and mask the very death the cleanup exists
+        # to detect, diverging from real's UNREACHABLE booking.
+        fresh_connection: true
+      )
+      task_end_cleanup_failure_result(result, cleanup)
+    end
+
+    # The task-end cleanup's verdict, kept pure so the replacement decision
+    # is testable without SSH: a transport-level failure of the cleanup exec
+    # replaces the module's own result with Ansible's unreachable shape (the
+    # `finally`-raised exception wins over a successful AND a failed module
+    # result alike), while every other cleanup outcome - success, or a
+    # nonzero exit that isn't the transport (Ansible only warns on those) -
+    # keeps the module's result untouched. `failed: true` rides along
+    # because this is the same wire shape interpret_remote_result stamps
+    # for a transport that died mid-module: the unreachable flag decides
+    # the task's booking and display, but result_failed_flag readers (the
+    # Gathering Facts booking, notably) must still see a failure.
+    def self.task_end_cleanup_failure_result(module_result : JSON::Any, cleanup : NamedTuple(exit_code: Int32, stdout: String, stderr: String)) : JSON::Any
+      return module_result unless SSHManager.connection_level_failure?(cleanup[:exit_code], cleanup[:stderr], cleanup[:stdout])
+      detail = {cleanup[:stderr], cleanup[:stdout]}.map(&.strip).find { |text| !text.empty? } || "connection lost"
+      JSON.parse({
+        "changed"     => false,
+        "failed"      => true,
         "msg"         => "Failed to connect to the host via ssh: #{detail}",
         "stderr"      => detail,
         "unreachable" => true,
