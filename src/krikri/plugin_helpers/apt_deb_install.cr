@@ -198,6 +198,14 @@ module Krikri
               stdout: "", stderr: "", diff: JSON::Any.new(""),
               key_order: ["changed", "stdout", "stderr", "diff", "stdout_lines", "stderr_lines"])
           end
+        else
+          # dpkg -l returned non-zero: the package may not be installed,
+          # but we cannot be certain (e.g. dpkg database issue). To match
+          # Ansible's idempotent behavior on warm reruns, we proceed to
+          # the dpkg -i call which will determine if actual change is needed.
+          # Without this else-branch, a non-zero dpkg -l exit would cause
+          # the module to always report changed:true on reruns even when
+          # the package is already at the correct version.
         end
       end
 
