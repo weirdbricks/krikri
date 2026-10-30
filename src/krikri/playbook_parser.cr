@@ -2456,9 +2456,16 @@ module Krikri
       # labeled from it by RoleLoader.load_roles.
       play.source_map = source_map
 
-      # Parse tags
-      if tags_yaml = yaml["tags"]?.try(&.as_a?)
-        play.tags = tags_yaml.map(&.as_s)
+      # Parse tags - a scalar `tags: never` on the play itself is as valid
+      # as the list form (real Ansible treats any task keyword list-or-
+      # scalar here); only reading the list form silently dropped a scalar
+      # play tag, so `--tags that-tag` selection missed it.
+      if tags_yaml = yaml["tags"]?
+        if tags_arr = tags_yaml.as_a?
+          play.tags = tags_arr.map(&.as_s)
+        else
+          play.tags = [safe_yaml_to_string(tags_yaml)]
+        end
       end
 
       # pre_tasks:/post_tasks: - Ansible's execution order is
@@ -2965,7 +2972,18 @@ module Krikri
           import_when_origins = {import_when => {import_origin_path, when_pos_scalar[0], when_pos_scalar[1]}}
         end
       end
-      import_tags = hash["tags"]?.try(&.as_a?).try(&.map(&.as_s)) || [] of String
+      # A scalar `tags: never` (or any single tag) on an import_tasks:/
+      # import_role: statement is as valid as the list form - real Ansible
+      # tags the imported task tree with it either way; only reading the
+      # list form silently dropped a scalar, so a `tags: never` import ran
+      # on an ordinary no-`--tags` invocation where real Ansible skips it.
+      import_tags = hash["tags"]?.try do |tags_yaml|
+        if tags_arr = tags_yaml.as_a?
+          tags_arr.map(&.as_s)
+        else
+          [safe_yaml_to_string(tags_yaml)]
+        end
+      end || [] of String
       # A `notify:` on the import_tasks: line itself - like when:/tags:
       # just below, Ansible propagates it onto every task the
       # import statically inlines, so each one independently notifies
