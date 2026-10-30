@@ -1775,7 +1775,29 @@ module Krikri
         # instead of the role's own intended fallback of 500.
         stripped = raw.strip
         if stripped.starts_with?("{{") && stripped.ends_with?("}}") && stripped.scan("{{").size == 1
-          native = VariableSubstitutor::VariableLookup.new(vars_context).resolve(stripped[2..-3].strip)
+          # Ansible templates the loop-source list with module-arg
+          # strict-undefined semantics (see the substitute call's own
+          # comment at the bottom of this method), and that strictness
+          # has to reach the nested re-templating of a referenced
+          # variable's OWN value too (issue #421, ansibleguy.infra_mariadb:
+          # a literal loop: item `{{ MARIADB_CONFIG.config.path_base }}`
+          # whose MARIADB_CONFIG value is `combine(default_mariadb,
+          # mariadb)` with `mariadb` set nowhere - real fails THIS task
+          # with "'mariadb' is undefined", live-verified; the bare
+          # lenient VariableLookup below collapsed the undefined combine
+          # argument to null, handed back the default path, and the
+          # looped task ran whole past Ansible's hard stop). Entering a
+          # strict span lets Rerender.whole_span_structured's existing
+          # probe render the value strictly, which raises on exactly the
+          # consumed-undefined shape while `| default(...)` tolerations
+          # stay silent; a `when:` that skips the task still wins over
+          # it (render_loop_items_strict_or_raise's rescue).
+          native = begin
+            VarSubstitutor.enter_strict_span if strict
+            VariableSubstitutor::VariableLookup.new(vars_context).resolve(stripped[2..-3].strip)
+          ensure
+            VarSubstitutor.exit_strict_span if strict
+          end
           # Audit pass (2026-08-11, following the ansible-vault/
           # prometheus/grafana rounds finding 5 independent copies of
           # this exact bug): a variable whose own raw value is itself
