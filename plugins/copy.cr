@@ -396,7 +396,7 @@ module Krikri
             # file: recurse: immediately followed by copy: on a file
             # inside that tree) left copy: silently reporting ok forever
             # while dutifully fixing the attribute on disk every run.
-            attributes_fixed, failure = apply_extended_attributes(dest)
+            attributes_fixed, failure = apply_extended_attributes(dest, content_sha1)
             return failure if failure
             result = PluginResult.new(
               changed: attributes_fixed,
@@ -505,7 +505,7 @@ module Krikri
       staged = write[:staged]
 
       # Set file permissions if requested
-      _attrs_fixed, failure = apply_extended_attributes(dest)
+      _attrs_fixed, failure = apply_extended_attributes(dest, content_sha1)
       return failure if failure
 
       result = PluginResult.new(
@@ -556,7 +556,7 @@ module Krikri
           return result
         end
 
-        attributes_fixed, failure = apply_extended_attributes(dest)
+        attributes_fixed, failure = apply_extended_attributes(dest, @params["__precomputed_checksum"]?.presence)
         return failure if failure
         result = PluginResult.new(
           changed: attributes_fixed,
@@ -712,7 +712,10 @@ module Krikri
       # (same identical-content `changed: false` bug as
       # #handle_content_copy above; see its comment for the live repro).
       unless changed
-        attributes_fixed, failure = apply_extended_attributes(dest)
+        # remote_src: has no controller-side local_checksum for the copy
+        # action to inject into a failed result (its flow runs the module
+        # directly), so the stat-carrying failure must omit checksum there.
+        attributes_fixed, failure = apply_extended_attributes(dest, true?(@params["remote_src"]?) ? nil : src_sha1)
         return failure if failure
         # Ansible's equal-content src path result (the action's
         # already-correct-hash branch calls the FILE module): dest + path
@@ -787,7 +790,7 @@ module Krikri
       end
 
       # Set ownership and permissions
-      _attrs_fixed, failure = apply_extended_attributes(dest)
+      _attrs_fixed, failure = apply_extended_attributes(dest, true?(@params["remote_src"]?) ? nil : src_sha1)
       return failure if failure
 
       result = PluginResult.new(
@@ -1434,11 +1437,28 @@ module Krikri
     # flags, then the SELinux context - the same order Ansible's
     # set_fs_attributes_if_different applies them. Returns {changed,
     # failure}: changed true when anything actually changed on disk,
-    # failure a failed PluginResult when the chattr/chcon call itself
-    # errored (both fail the task like Ansible - neither is
-    # silently swallowed the way a chmod/chown EPERM is).
-    private def apply_extended_attributes(path : String) : {Bool, PluginResult?}
-      changed = apply_file_attributes(path)
+    # failure a failed PluginResult when an unresolvable owner:/group:
+    # name or the chattr/chcon call itself errored (all fail the task
+    # like Ansible - none is silently swallowed the way a chmod/chown
+    # EPERM is).
+    private def apply_extended_attributes(path : String, checksum : String? = nil) : {Bool, PluginResult?}
+      changed = begin
+        apply_file_attributes(path)
+      rescue ex : OwnerLookupFailure
+        # Ansible's set_owner_if_different fails with fail_json(path=path,
+        # ...), and _return_formatted's add_path_info grafts the dest's stat
+        # block (uid/gid/owner/group/mode/state/size) onto the FAILURE
+        # result; the copy action then injects its local_checksum into any
+        # result that lacks one - failed results included (live-verified vs
+        # 2.19.11 on zaiste.essentials' "provide default SSH config", issue
+        # #670). Letting the exception reach run_and_capture instead prints
+        # a bare {changed, msg} with all of that dropped.
+        failure = PluginResult.new(changed: false, failed: true, msg: ex.message || "owner lookup failed")
+        add_path_info(failure, path)
+        failure.extra["path"] = JSON::Any.new(path)
+        failure.extra["checksum"] = JSON::Any.new(checksum) if checksum
+        return {false, failure}
+      end
 
       attr_changed, failure = apply_attr(path)
       return {false, failure} if failure
