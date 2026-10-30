@@ -23,7 +23,7 @@ module Krikri
   #   `==` when the version starts with a digit, or with NO separator
   #   when it starts with a comparison operator (`>=22` -> `pip>=22`),
   #   matching Ansible's own pip module
-  # - state: present (default) | absent | latest
+  # - state: present (default) | absent | latest | forcereinstall
   # - virtualenv: path to a venv - created via `python3 -m venv` if it
   #   doesn't already exist, and used instead of the system pip
   # - virtualenv_python: python interpreter for `venv` creation
@@ -71,7 +71,14 @@ module Krikri
   # converges to what is already installed. `latest` always
   # invokes `pip install --upgrade` and inspects its own output for
   # "Requirement already up-to-date" vs. an actual install/upgrade,
-  # matching Ansible's own PipModule.
+  # matching Ansible's own PipModule. `forcereinstall` likewise mirrors
+  # Ansible's state_map entry ['install', '-U', '--force-reinstall']: it
+  # was treated as plain `present` before, so a satisfied constraint
+  # (JonasPammer.pip's `pip>=22` on a host whose system pip already
+  # satisfies it) printed "Requirement already satisfied" and reinstalled
+  # nothing, leaving the role's before/after `pip --version` outputs
+  # identical and flipping its `changed_when: before != after` comparison
+  # task from Ansible's changed to ok (issue #380).
   #
   # - editable: adds `-e` to extra_args (deduplicated if extra_args
   #   already includes it) - verified against the Ansible module
@@ -148,6 +155,9 @@ module Krikri
                  remove(pip_bin, name || raise "pip: name is required with state=absent")
                when "latest"
                  install(pip_bin, target_spec(name, nil), upgrade: true)
+               when "forcereinstall"
+                 install(pip_bin, target_spec(name, @params["version"]?), upgrade: true,
+                   force_reinstall: true, requirements: requirements)
                else
                  install(pip_bin, target_spec(name, @params["version"]?), upgrade: false, requirements: requirements)
                end
@@ -653,7 +663,7 @@ module Krikri
       nil
     end
 
-    private def install(pip_bin : String, spec : String?, upgrade : Bool, requirements : String? = nil) : PluginResult
+    private def install(pip_bin : String, spec : String?, upgrade : Bool, requirements : String? = nil, force_reinstall : Bool = false) : PluginResult
       target = install_target(spec, requirements)
       return target if target.is_a?(PluginResult)
 
@@ -709,8 +719,8 @@ module Krikri
       # through the `elsif spec` branch above and are handled directly
       # below, one per name.
       quoted_target = requirements ? target : split_requirements(target).map { |tval| Process.quote(tval) }.join(" ")
-      argv = install_argv(pip_bin, upgrade, extra, requirements, target)
-      cmd = with_umask(with_chdir("#{break_system_packages_env}#{quoted_command(pip_bin)} install #{upgrade ? "--upgrade " : ""}#{extra_tokens(extra)} #{quoted_target}".strip))
+      argv = install_argv(pip_bin, upgrade, force_reinstall, extra, requirements, target)
+      cmd = with_umask(with_chdir("#{break_system_packages_env}#{quoted_command(pip_bin)} install #{upgrade ? "--upgrade " : ""}#{force_reinstall ? "--force-reinstall " : ""}#{extra_tokens(extra)} #{quoted_target}".strip))
       result = remote_exec(cmd)
 
       unless result[:exit_code] == 0
@@ -737,9 +747,9 @@ module Krikri
         key_order: ["changed", "stdout"])
     end
 
-    private def install_argv(pip_bin : String, upgrade : Bool, extra : String, requirements : String?, target : String) : Array(String)
+    private def install_argv(pip_bin : String, upgrade : Bool, force_reinstall : Bool, extra : String, requirements : String?, target : String) : Array(String)
       argv_target = requirements ? target.split(' ').reject(&.empty?) : split_requirements(target)
-      pip_bin.split(' ').reject(&.empty?) + ["install"] + (upgrade ? ["--upgrade"] : [] of String) + extra.split(' ').reject(&.empty?) + argv_target
+      pip_bin.split(' ').reject(&.empty?) + ["install"] + (upgrade ? ["--upgrade"] : [] of String) + (force_reinstall ? ["--force-reinstall"] : [] of String) + extra.split(' ').reject(&.empty?) + argv_target
     end
 
     # ansible's _fail reports only cmd (the argv it ran) and msg, and

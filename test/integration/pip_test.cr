@@ -919,6 +919,50 @@ describe "pip plugin" do
       FileUtils.rm_rf(shim_dir)
     end
   end
+
+  it "runs forcereinstall as 'install --upgrade --force-reinstall' like Ansible's state_map" do
+    # JonasPammer.pip's cold run (issue #380): state: forcereinstall fell
+    # through to a bare `pip install pip>=22`, which - the constraint
+    # already satisfied - printed "Requirement already satisfied" and
+    # reinstalled nothing, so the role's before/after `pip --version`
+    # comparison task reported ok where Ansible's
+    # `pip install -U --force-reinstall pip>=22` genuinely upgraded pip
+    # and reported changed. The shim prints pip's own two distinguishable
+    # outputs depending on whether the reinstall flags are present, so
+    # both the invocation and the changed verdict are pinned here.
+    shim_dir = File.tempname(".krikri-spec-pip-forcereinstall")
+    Dir.mkdir(shim_dir)
+    marker = File.join(shim_dir, "marker")
+    shim = File.join(shim_dir, "forcereinstall-pip")
+    File.write(shim, <<-SH
+      #!/bin/sh
+      export PATH=/usr/local/bin:/usr/bin:/bin
+      printf '%s\\n' "$*" >> #{marker}
+      if [ "$1" = "install" ]; then
+        case "$*" in
+          *--force-reinstall*) echo "Attempting uninstall: pip"; echo "Successfully installed pip-26.2.2"; exit 0 ;;
+          *) echo "Requirement already satisfied: pip>=22 in /usr/lib/python3/dist-packages (24.0)"; exit 0 ;;
+        esac
+      fi
+      exit 1
+      SH
+    )
+    File.chmod(shim, 0o755)
+    begin
+      result = PluginSpecHelper.run("pip", {
+        "name"       => "pip",
+        "state"      => "forcereinstall",
+        "version"    => ">=22",
+        "executable" => shim,
+      })
+
+      result["failed"]?.try(&.as_bool).wont_equal(true)
+      File.read(marker).must_include("--upgrade --force-reinstall pip>=22")
+      result["changed"].as_bool.must_equal(true)
+    ensure
+      FileUtils.rm_rf(shim_dir)
+    end
+  end
 end
 
 # A fake pip mirroring real pip's argparse duality: `show argparse`
