@@ -957,7 +957,7 @@ module Krikri
       # Same keyword-first ordering as execute_task_once (Ansible templates
       # become_user before finalizing module args).
       substituted_become_user = begin
-        resolve_task_become_user(handler, vars_context, substitutor)
+        resolve_task_become_user(handler, host, vars_context, substitutor)
       rescue ex : UndefinedVariableError
         result = keyword_failure_json(ex, handler)
         if register_name = handler.register
@@ -1171,7 +1171,7 @@ module Krikri
       end
 
       become = begin
-        resolve_task_become(handler, substitutor)
+        resolve_task_become(handler, host, vars_context, substitutor)
       rescue ex : UndefinedVariableError
         return keyword_failure_json(ex, handler)
       end

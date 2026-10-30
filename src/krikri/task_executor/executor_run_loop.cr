@@ -1950,7 +1950,7 @@ module Krikri
       # finalized, so an undefined keyword reports its own error even when
       # an arg is undefined too.
       substituted_become_user = begin
-        resolve_task_become_user(task, vars_context, substitutor)
+        resolve_task_become_user(task, host, vars_context, substitutor)
       rescue ex : UndefinedVariableError
         return keyword_failure_json(ex, task)
       end
@@ -2070,7 +2070,7 @@ module Krikri
       # action plugin runs, so a non-boolean templated become: fails debug:
       # and the other controller-side actions too (issue #143).
       begin
-        resolve_task_become(task, substitutor)
+        resolve_task_become(task, host, vars_context, substitutor)
       rescue ex : UndefinedVariableError
         return keyword_failure_json(ex, task)
       end
@@ -2133,7 +2133,7 @@ module Krikri
       end
 
       become = begin
-        resolve_task_become(task, substitutor)
+        resolve_task_become(task, host, vars_context, substitutor)
       rescue ex : UndefinedVariableError
         return keyword_failure_json(ex, task)
       end
@@ -2344,7 +2344,7 @@ module Krikri
       # itself is never mutated here, since Task is shared/reused across
       # hosts and loop iterations.
       substituted_become_user = begin
-        resolve_task_become_user(task, vars_context, substitutor)
+        resolve_task_become_user(task, host, vars_context, substitutor)
       rescue ex : UndefinedVariableError
         return keyword_failure_json(ex, task)
       end
@@ -2571,7 +2571,7 @@ module Krikri
       # so a non-boolean templated become: fails debug: and the other
       # controller-side actions too (issue #143).
       begin
-        resolve_task_become(task, substitutor)
+        resolve_task_become(task, host, vars_context, substitutor)
       rescue ex : UndefinedVariableError
         return keyword_failure_json(ex, task)
       end
@@ -2683,7 +2683,7 @@ module Krikri
       # resolve_become) carries the same var-aware verdict the dispatch
       # below uses.
       become = begin
-        resolve_task_become(task, substitutor)
+        resolve_task_become(task, host, vars_context, substitutor)
       rescue ex : UndefinedVariableError
         return keyword_failure_json(ex, task)
       end

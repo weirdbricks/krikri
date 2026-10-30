@@ -789,7 +789,7 @@ module Krikri
       become = false
       become_user = nil
       become_resolved = begin
-        substitutor && resolve_task_become(task, substitutor)
+        substitutor && resolve_task_become(task, exec_host, vars, substitutor)
       rescue ex : UndefinedVariableError
         return keyword_failure_json(ex, task)
       end

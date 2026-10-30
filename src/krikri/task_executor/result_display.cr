@@ -964,13 +964,33 @@ module Krikri
       if kw = result["_ansible_keyword_conversion"]?.try(&.as_h?)
         if origin = error_origin_context(source_task)
           origin_text = kw["origin"]?.try(&.as_s?)
+          conversion = kw["conversion"]?.try(&.as_s?) || ""
+          # A keyword template failing on a DIRECT reference to an
+          # undefined variable has no separate definition site for the
+          # innermost link to point at, and ansible-core 2.19.11 then
+          # COLLAPSES the chain to two links, folding the bare message
+          # into the middle segment ("Error processing keyword
+          # 'become_user': 'nope_var' is undefined", live-captured on
+          # direct-undefined probes next to issue #420's role). Only the
+          # routed case - a variable whose OWN value fails, Origin'd at
+          # its definition line (issue #209 / #420's role-default shape,
+          # conversion_origin set and different) - keeps the three-link
+          # chain with the bare middle.
+          conversion_origin = kw["conversion_origin"]?.try(&.as_s?)
+          if conversion.ends_with?(" is undefined") && (conversion_origin.nil? || conversion_origin == origin_text)
+            ErrorBlock.emit(ErrorBlock::Node.new("Task failed.", source_context: origin)
+              .with_chain(ErrorBlock::DIRECT_CAUSE, true,
+                ErrorBlock::Node.new("Error processing keyword '#{kw["keyword"]?.try(&.as_s?)}': #{conversion}",
+                  source_context: origin_text)))
+            return
+          end
           keyword = ErrorBlock::Node.new("Error processing keyword '#{kw["keyword"]?.try(&.as_s?)}'.",
             source_context: origin_text)
           # become_user's innermost link points at the variable definition
           # that failed, not at the keyword value (see keyword_failure_json).
-          conversion_origin = kw["conversion_origin"]?.try(&.as_s?) || origin_text
+          conversion_origin = conversion_origin || origin_text
           keyword.with_chain(ErrorBlock::DIRECT_CAUSE, true,
-            ErrorBlock::Node.new(kw["conversion"]?.try(&.as_s?) || "", source_context: conversion_origin))
+            ErrorBlock::Node.new(conversion, source_context: conversion_origin))
           ErrorBlock.emit(ErrorBlock::Node.new("Task failed.", source_context: origin)
             .with_chain(ErrorBlock::DIRECT_CAUSE, true, keyword))
         end
