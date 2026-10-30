@@ -1640,6 +1640,17 @@ module Krikri
   # so it propagates to the top-level parse-error handler like
   # Ansible's own hard stop.
   class InvalidRegisterError < Exception
+    # The rendered [ERROR] + Origin block for the task-load refusal whose
+    # source position is known (built at the raise site, where the source
+    # map lives) - ansible-core prints the Origin of the register VALUE
+    # itself (the opening quote) with a caused-by chain, so the
+    # byte-for-byte match needs it (probed live vs 2.19.11). nil renders
+    # message-only, as the source-less raise sites always did.
+    getter render : String?
+
+    def initialize(message : String, @render : String? = nil)
+      super(message)
+    end
   end
 
   # Raised at RUN time - from `TaskExecutor#notify_handlers`, at the
@@ -1888,13 +1899,31 @@ module Krikri
     # RAW: Ansible never templates a register: value, so
     # `register: '{{ var }}'` is rejected whatever var resolves to
     # (webbylab.sources, round 900914).
-    def self.validate_register_name(value : String) : Nil
+    def self.validate_register_name(value : String, source_file : String? = nil, source_map : YamlSourceMap? = nil, prefix : String = "") : Nil
       return if register_identifier?(value)
 
-      raise InvalidRegisterError.new(
-        "Invalid 'register' specified: Invalid variable name '#{value}'. " \
-        "Variable names must be strings starting with a letter or underscore character, " \
-        "and contain only letters, numbers and underscores.")
+      message = "Invalid 'register' specified: Invalid variable name '#{value}'. " \
+                "Variable names must be strings starting with a letter or underscore character, " \
+                "and contain only letters, numbers and underscores."
+      # Ansible prints the Origin of the register VALUE (the opening
+      # quote), not the task's own mapping, with a caused-by chain: the
+      # task-level "Invalid 'register' specified." refusal causing the
+      # bare variable-name error, whose help text carries the
+      # variable-name rules. Same two-segment shape as
+      # static_import_undefined_render.
+      render = nil
+      if source_file && source_map && (pos = source_map.at?("#{prefix}/register"))
+        origin = ErrorBlock.origin_context(File.expand_path(source_file), pos[0], pos[1])
+        cause_node = ErrorBlock::Node.new(
+          "Invalid variable name '#{value}'.",
+          source_context: origin,
+          help_text: "Variable names must be strings starting with a letter or underscore character, " \
+                     "and contain only letters, numbers and underscores.")
+        node = ErrorBlock::Node.new("Invalid 'register' specified.", source_context: origin)
+        node.with_chain(ErrorBlock::DIRECT_CAUSE, true, cause_node)
+        render = "[ERROR]: " + ErrorBlock.format_event(node)
+      end
+      raise InvalidRegisterError.new(message, render)
     end
 
     # Python's str.isidentifier semantics, which is what Ansible's
@@ -4044,7 +4073,7 @@ module Krikri
       parse_common_task_attributes(task, task_hash, play)
       task.register = task_hash["register"]?.try do |v|
         register_value = safe_yaml_to_string(v)
-        validate_register_name(register_value)
+        validate_register_name(register_value, source_file, source_map, task_source_prefix(source_prefix, index))
         register_value
       end
       # Task's own check_mode: wins; unset falls back to the ambient
@@ -5098,7 +5127,7 @@ module Krikri
       # reference raised "'vars_result.results' is undefined".
       task.register = task_hash["register"]?.try do |v|
         register_value = safe_yaml_to_string(v)
-        validate_register_name(register_value)
+        validate_register_name(register_value, source_file, source_map, task_source_prefix(source_prefix, source_index))
         register_value
       end
 

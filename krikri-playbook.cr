@@ -959,6 +959,20 @@ rescue ex : Krikri::PlaybookParser::InvalidIncludeAttributeError
     STDERR.puts "[ERROR]: #{ex.message}".colorize(:red)
   end
   exit 4
+rescue ex : Krikri::InvalidRegisterError
+  # A non-identifier register: value (`register: '{{var}}'`) is Ansible's
+  # own whole-playbook-load refusal - ansible refuses the run at task-load
+  # time with rc=4 and the [ERROR]+Origin+caused-by block on STDERR, the
+  # Origin pointing at the register VALUE itself (live-verified vs
+  # 2.19.11). The render was built at the raise site (it needs the source
+  # map); print it verbatim, falling back to the bare [ERROR] line when
+  # no source position was known.
+  if render = ex.render
+    STDERR.print render
+  else
+    STDERR.puts "[ERROR]: #{ex.message}".colorize(:red)
+  end
+  exit 4
 rescue ex : Krikri::StaticImportUndefinedError
   # A static import's path referencing an undefined variable is Ansible's
   # own playbook-load refusal: the [ERROR] + Origin block on STDERR, rc=4
