@@ -530,41 +530,24 @@ module Krikri
       extra_opts = parse_list_param(@params["extra_opts"]?)
 
       handler = detect_handler(src)
-      unless handler
-        # Real unarchive's pick_handler composes its failure as
-        # 'Failed to find handler for "<src>". Make sure the required
-        # command to extract the file is installed.\n<reasons>' - the
-        # head is deterministic; the reason list after it is NOT ordered
-        # (2.14 collects the per-handler probe reasons into a Python
-        # set, so even real-vs-real ordering shuffles run to run), so
-        # the reasons are appended in handler order with duplicates
-        # dropped - the only stable replica. Found via the podman-diff
-        # unarchive_edge_cases E6 harness case, where this engine said
-        # "Unsupported archive format for <src>" instead.
-        head = %(Failed to find handler for "#{staged_src_echo(src)}". Make sure the required command to extract the file is installed.)
-        reasons = handler_failure_reasons(src)
-        msg = reasons.empty? ? head : "#{head}\n#{reasons.join("\n")}"
-        return PluginResult.new(changed: false, failed: true, msg: msg)
+      return handler_missing_result(src) unless handler
+
+      outcome = extract_if_changed(src, dest, handler, exclude, include_files, keep_newer, extra_opts)
+      if failure = outcome[:failure]
+        return failure
       end
+      changed = outcome[:changed]
+      extract_results = outcome[:extract_results]
 
-      changed = handler == :tar ? tar_changed?(src, dest, exclude, include_files, keep_newer, extra_opts) : zip_changed?(src, dest, exclude, include_files, keep_newer)
-
-      extract_results = nil
-      if changed
-        extraction = handler == :tar ? extract_tar(src, dest, exclude, include_files, keep_newer, extra_opts) : extract_zip(src, dest, exclude, include_files, keep_newer)
-        unless extraction[:exit_code] == 0
-          return PluginResult.new(changed: false, failed: true, msg: "failed to extract #{src}")
+      if attr = apply_dest_attributes(dest, handler, src)
+        if error = attr[:error]
+          return error
         end
-        extract_results = JSON.parse({
-          cmd: extraction[:cmd],
-          rc:  extraction[:exit_code],
-          out: extraction[:stdout],
-          err: extraction[:stderr],
-        }.to_json)
-      end
-
-      if attr_error = apply_dest_attributes(dest, handler, src)
-        return attr_error
+        # Real ORs every attribute fixup into the reported changed flag
+        # (set_fs_attributes_if_different's return value) - see
+        # apply_dest_attributes for why this must be able to flip a
+        # clean tar --diff to changed.
+        changed = changed || attr[:changed]
       end
       stat_fields = dest_stat_fields(dest)
 
@@ -607,18 +590,178 @@ module Krikri
       plugin_result
     end
 
+    private def handler_missing_result(src : String) : PluginResult
+      # Real unarchive's pick_handler composes its failure as
+      # 'Failed to find handler for "<src>". Make sure the required
+      # command to extract the file is installed.\n<reasons>' - the
+      # head is deterministic; the reason list after it is NOT ordered
+      # (2.14 collects the per-handler probe reasons into a Python
+      # set, so even real-vs-real ordering shuffles run to run), so
+      # the reasons are appended in handler order with duplicates
+      # dropped - the only stable replica. Found via the podman-diff
+      # unarchive_edge_cases E6 harness case, where this engine said
+      # "Unsupported archive format for <src>" instead.
+      head = %(Failed to find handler for "#{staged_src_echo(src)}". Make sure the required command to extract the file is installed.)
+      reasons = handler_failure_reasons(src)
+      msg = reasons.empty? ? head : "#{head}\n#{reasons.join("\n")}"
+      PluginResult.new(changed: false, failed: true, msg: msg)
+    end
+
+    private def extract_if_changed(src : String, dest : String, handler : Symbol, exclude : Array(String), include_files : Array(String), keep_newer : Bool, extra_opts : Array(String)) : NamedTuple(changed: Bool, extract_results: JSON::Any?, failure: PluginResult?)
+      changed = handler == :tar ? tar_changed?(src, dest, exclude, include_files, keep_newer, extra_opts) : zip_changed?(src, dest, exclude, include_files, keep_newer)
+      return {changed: changed, extract_results: nil, failure: nil} unless changed
+
+      extraction = handler == :tar ? extract_tar(src, dest, exclude, include_files, keep_newer, extra_opts) : extract_zip(src, dest, exclude, include_files, keep_newer)
+      # Real unarchive.py collects the handler's {cmd, rc, out, err}
+      # return into res_args BEFORE deciding how to report it, so the
+      # same dict rides both the success result and the failure
+      # fail_json(msg="failed to unpack %s to %s" % (src, dest),
+      # **res_args) - a failing extraction still reports the exact
+      # command, rc and output that produced it.
+      extract_results = JSON.parse({
+        cmd: extraction[:cmd],
+        rc:  extraction[:exit_code],
+        out: extraction[:stdout],
+        err: extraction[:stderr],
+      }.to_json)
+      unless extraction[:exit_code] == 0
+        # Real's fatal result is fail_json(msg=..., **res_args) with
+        # res_args = {handler, dest, src, extract_results}; the
+        # displayed fatal JSON (the stdout callback key-sorts and
+        # strips failed/exception) then reads changed, dest,
+        # extract_results, handler, msg, src.
+        return {changed: true, extract_results: extract_results, failure: extraction_failure_result(src, dest, handler, extract_results)}
+      end
+      {changed: true, extract_results: extract_results, failure: nil}
+    end
+
+    private def extraction_failure_result(src : String, dest : String, handler : Symbol, extract_results : JSON::Any) : PluginResult
+      # Real's fail_json (unarchive.py:1134) runs add_path_info over the
+      # result, so the fatal output also carries the DEST's stat fields
+      # - the captured real output for igor_nikiforov.etcd's failed
+      # extraction (issue #528) reads {"changed": false, "dest": ...,
+      # "extract_results": {...}, "gid": 0, "group": "root", "handler":
+      # "TgzArchive", "mode": "0755", "msg": "failed to unpack ... to
+      # /usr/bin", "owner": "root", "size": 4096, "src": ...,
+      # "state": "directory", "uid": 0}, i.e. the same add_path_info
+      # block the success path carries (dest is guaranteed an existing
+      # directory by the earlier gate, hence state "directory").
+      stat_fields = dest_stat_fields(dest)
+      PluginResult.new(
+        changed: false,
+        failed: true,
+        msg: "failed to unpack #{src} to #{dest}",
+        handler: handler == :tar ? "TgzArchive" : "ZipArchive",
+        dest: dest,
+        src: src,
+        extract_results: extract_results,
+        state: "directory",
+        size: stat_fields[:size],
+        uid: stat_fields[:uid],
+        gid: stat_fields[:gid],
+        owner: stat_fields[:owner],
+        group: stat_fields[:group],
+        mode: stat_fields[:mode],
+        key_order: %w[changed dest extract_results gid group handler mode msg owner size src state uid]
+      )
+    end
+
     private def members(handler : Symbol, src : String) : Array(String)
       cmd = handler == :tar ? "tar tf #{shell_single_quote(src)}" : "unzip -Z1 #{shell_single_quote(src)}"
       remote_exec(cmd)[:stdout].split("\n").map(&.strip).reject(&.empty?)
     end
 
-    private def tar_flags(exclude : Array(String), include_files : Array(String), keep_newer : Bool, extra_opts : Array(String) = [] of String) : String
-      String.build do |str|
-        str << " --keep-newer-files" if keep_newer
-        extra_opts.each { |opt| str << " " << shell_single_quote(opt) }
-        exclude.each { |pattern| str << " --exclude=#{shell_single_quote(pattern)}" }
-        str << " " << include_files.map { |path| shell_single_quote(path) }.join(" ") unless include_files.empty?
+    # Real resolves the tar binary through get_bin_path('gtar') with a
+    # 'tar' fallback - always an ABSOLUTE path - and then runs every tar
+    # command with that resolved path as argv[0] (unarchive.py's
+    # TgzArchive#can_handle_archive/unarchive/is_unarchived). Two
+    # observable consequences: every reported cmd carries the absolute
+    # path ("/usr/bin/tar"), and tar's own stderr is prefixed with that
+    # same path ("/usr/bin/tar: ..."), because tar echoes argv[0] -
+    # found via igor_nikiforov.etcd's failed extraction (issue #528),
+    # whose extract_results.err reads "/usr/bin/tar: etcdctl: Cannot
+    # change ownership ..." where this engine used to report "tar: ...".
+    private def tar_bin : String?
+      out = remote_exec("command -v gtar 2>/dev/null || command -v tar 2>/dev/null")
+      path = out[:stdout].strip
+      out[:exit_code] == 0 && !path.empty? ? path : nil
+    end
+
+    # Real picks the tar flavour by TRIAL, not by filename (pick_handler
+    # tries TgzArchive before TarArchive, and each can_handle_archive
+    # probes with its own zipflag): -z rides the --diff/--extract
+    # commands exactly when a forced-gzip listing (`tar tzf`) succeeds,
+    # never otherwise - a plain .tar must NOT get -z (`gzip: stdin: not
+    # in gzip format`, rc=2) or is_unarchived reads the failure as
+    # "nothing differs", extraction is skipped and the attribute pass
+    # find-globs over paths that were never extracted. Memoized per src:
+    # one probe result is shared by the --diff and --extract commands.
+    @tar_zipflag_cache = {} of String => String?
+
+    private def tar_zipflag(src : String) : String?
+      return @tar_zipflag_cache[src] if @tar_zipflag_cache.has_key?(src)
+      flag = remote_exec("tar tzf #{shell_single_quote(src)} > /dev/null 2>&1")[:exit_code] == 0 ? "-z" : nil
+      @tar_zipflag_cache[src] = flag
+      flag
+    end
+
+    # Real's TgzArchive builds its tar commands as ONE argv list shared
+    # between is_unarchived (--diff) and unarchive (--extract):
+    # [tar, <op>, -C, dest, <zipflag>] (the zipflag only when the
+    # handler's forced-gzip listing trial succeeded - see tar_zipflag)
+    # then, in this order,
+    # --show-transformed-names + extra_opts (only when extra_opts is
+    # non-empty), --owner=/--group= (independently of extra_opts),
+    # --keep-newer-files, the --exclude= patterns, -f src and the
+    # include_files operands. That same list is what the result reports
+    # as extract_results.cmd - a JSON ARRAY, not a shell-quoted string
+    # (issue #528) - so it is built once here and shell-quoted only at
+    # the remote_exec boundary.
+    #
+    # A task-given owner:/group: goes straight to tar itself
+    # (--owner=/--group= on the --extract command), so ownership is
+    # applied AT EXTRACTION - to every path tar creates, including
+    # intermediate directories the archive's own listing never mentions
+    # as entries (a tarball built without explicit directory members,
+    # e.g. apache-zookeeper-*.tar.gz: only its FILES are listed, yet
+    # real's extraction still owner-adjusts the directories tar
+    # synthesizes around them). The post-extraction pass
+    # (apply_dest_attributes) only ever walks LISTED members plus the
+    # top-level folders, so without these flags an unlisted intermediate
+    # dir kept the archive's own embedded uid/gid (round 5420000,
+    # bilalcaliskan.zookeeper: the extracted top dir stayed root-owned -
+    # uid 1000 embedded in the tarball - and the role's later `file:
+    # state=directory owner:` task reported changed where real reported
+    # ok). GNU tar ignores --owner/--group it cannot apply (a non-root
+    # run silently extracts as the invoking user, rc=0), so this is safe
+    # to pass whenever the task names them - the post pass still
+    # surfaces a real chown failure as a task failure, exactly like
+    # real's set_fs_attributes_if_different does.
+    private def tar_argv(op : String, src : String, dest : String, exclude : Array(String), include_files : Array(String), keep_newer : Bool, extra_opts : Array(String)) : Array(String)?
+      tar = tar_bin || return nil
+      argv = [tar, op, "-C", dest]
+      if zipflag = tar_zipflag(src)
+        argv << zipflag
       end
+      unless extra_opts.empty?
+        argv << "--show-transformed-names"
+        extra_opts.each { |opt| argv << opt }
+      end
+      if owner = @params["owner"]?
+        argv << "--owner=#{owner}"
+      end
+      if group = @params["group"]?
+        argv << "--group=#{group}"
+      end
+      argv << "--keep-newer-files" if keep_newer
+      exclude.each { |pattern| argv << "--exclude=#{pattern}" }
+      argv << "-f" << src
+      argv.concat(include_files)
+      argv
+    end
+
+    private def tar_shell(argv : Array(String)) : String
+      argv.map { |arg| shell_single_quote(arg) }.join(" ")
     end
 
     # A meaningful-difference line from `tar --compare`'s own output -
@@ -644,8 +787,8 @@ module Krikri
     MISSING_FILE_WARNING = /: Warning: Cannot stat: No such file or directory$/
 
     private def tar_changed?(src : String, dest : String, exclude : Array(String), include_files : Array(String), keep_newer : Bool, extra_opts : Array(String) = [] of String) : Bool
-      cmd = "tar --compare -C #{shell_single_quote(dest)} -f #{shell_single_quote(src)}#{tar_flags(exclude, include_files, keep_newer, extra_opts)}"
-      result = remote_exec(cmd)
+      argv = tar_argv("--diff", src, dest, exclude, include_files, keep_newer, extra_opts) || return true
+      result = remote_exec(tar_shell(argv))
       lines = (result[:stdout].split("\n") + result[:stderr].split("\n"))
 
       # Ansible's own TgzArchive#is_unarchived (unarchive.py) only
@@ -702,32 +845,11 @@ module Krikri
       exempt_from_diff.any? { |pattern, exempt| !exempt && pattern.matches?(line) }
     end
 
-    private def extract_tar(src : String, dest : String, exclude : Array(String), include_files : Array(String), keep_newer : Bool, extra_opts : Array(String) = [] of String) : NamedTuple(cmd: String, exit_code: Int32, stdout: String, stderr: String)
-      # Real's TgzArchive#unarchive (unarchive.py) passes a task-given
-      # owner:/group: straight to tar itself (`--owner=`/`--group=` on the
-      # --extract command), so ownership is applied AT EXTRACTION - to
-      # every path tar creates, including intermediate directories the
-      # archive's own listing never mentions as entries (a tarball built
-      # without explicit directory members, e.g. apache-zookeeper-*.tar.gz:
-      # only its FILES are listed, yet real's extraction still
-      # owner-adjusts the directories tar synthesizes around them). The
-      # post-extraction pass (apply_dest_attributes) only ever walks
-      # LISTED members plus the top-level folders, so without these
-      # flags an unlisted intermediate dir kept the archive's own
-      # embedded uid/gid (round 5420000, bilalcaliskan.zookeeper: the
-      # extracted top dir stayed root-owned - uid 1000 embedded in the
-      # tarball - and the role's later `file: state=directory owner:`
-      # task reported changed where real reported ok). GNU tar ignores
-      # --owner/--group it cannot apply (a non-root run silently
-      # extracts as the invoking user, rc=0), so this is safe to pass
-      # whenever the task names them - the post pass still surfaces a
-      # real chown failure as a task failure, exactly like real's
-      # set_fs_attributes_if_different does.
-      owner_flag = (owner = @params["owner"]?) ? " --owner=#{shell_single_quote(owner)}" : ""
-      group_flag = (group = @params["group"]?) ? " --group=#{shell_single_quote(group)}" : ""
-      cmd = "tar --extract -C #{shell_single_quote(dest)} -f #{shell_single_quote(src)}#{owner_flag}#{group_flag}#{tar_flags(exclude, include_files, keep_newer, extra_opts)}"
-      result = remote_exec(cmd)
-      {cmd: cmd, exit_code: result[:exit_code], stdout: result[:stdout], stderr: result[:stderr]}
+    private def extract_tar(src : String, dest : String, exclude : Array(String), include_files : Array(String), keep_newer : Bool, extra_opts : Array(String) = [] of String) : NamedTuple(cmd: Array(String), exit_code: Int32, stdout: String, stderr: String)
+      argv = tar_argv("--extract", src, dest, exclude, include_files, keep_newer, extra_opts) ||
+             return {cmd: [] of String, exit_code: 127, stdout: "", stderr: "Unable to find required 'gtar' or 'tar' binary in the path"}
+      result = remote_exec(tar_shell(argv))
+      {cmd: argv, exit_code: result[:exit_code], stdout: result[:stdout], stderr: result[:stderr]}
     end
 
     private def zip_flags(exclude : Array(String), include_files : Array(String)) : String
@@ -1231,8 +1353,24 @@ module Krikri
       end.uniq!
     end
 
-    private def apply_dest_attributes(dest : String, handler : Symbol, src : String) : PluginResult?
-      return nil unless @params["owner"]? || @params["group"]? || @params["mode"]?
+    # Real's attribute pass (unarchive.py's main(): set_fs_attributes_
+    # if_different over every listed member plus the top folders) ORs
+    # each per-path fixup into res_args['changed'] - so a member whose
+    # ownership/mode still differs from the task's request flips the
+    # WHOLE task to changed: true even when is_unarchived's tar --diff
+    # already said "up to date". That combination is exactly the warm
+    # rerun of a FAILED extraction (issue #528, igor_nikiforov.etcd):
+    # the failed cold run left the files extracted with ownership
+    # unapplied, the warm --diff comes back clean because its
+    # Uid/Gid-differs lines are deliberately exempted whenever the task
+    # itself gives owner:/group: (trusting THIS pass to apply them), and
+    # real then reports changed purely from the ownership fixup - with
+    # no re-extraction, since unarchive.py only extracts when
+    # is_unarchived reported False. This engine used to apply the same
+    # chowns/chmods blindly and always return nil, reporting ok where
+    # real reported changed.
+    private def apply_dest_attributes(dest : String, handler : Symbol, src : String) : NamedTuple(error: PluginResult?, changed: Bool)
+      return {error: nil, changed: false} unless @params["owner"]? || @params["group"]? || @params["mode"]?
 
       # A tar built via `tar czf archive.tar.gz -C src .` (archiving the
       # CURRENT directory) lists a leading self-referential "./" member
@@ -1268,7 +1406,9 @@ module Krikri
       # simply visited twice, exactly like real does.
       paths = member_paths + top_folder_paths(dest, handler, src).map { |path| shell_single_quote(path) }
       paths = paths.uniq
-      return nil if paths.empty?
+      return {error: nil, changed: false} if paths.empty?
+
+      attrs_changed = false
 
       # find inherits the SSH login's working directory, usually /root (0700)
       # under a root login - a become_user such as prometheus cannot enter it
@@ -1286,40 +1426,100 @@ module Krikri
         # -maxdepth 0 means find never descends past the start points
         # anyway, but -P also pins down the start-point lstat itself.
         member_args = "-P #{chunk.join(" ")} -maxdepth 0"
-        if owner = @params["owner"]?
-          # -h: chown defaults to dereferencing symlinks, which would
-          # let an archive's symlink member redirect the ownership
-          # change onto any file it points at (outside dest) -
-          # Ansible's set_owner_if_different always uses os.lchown,
-          # never the dereferencing form.
-          result = remote_exec("#{find_prefix} #{member_args} -exec chown -h #{shell_single_quote(owner)} {} +")
-          if result[:exit_code] != 0
-            return PluginResult.new(changed: true, failed: true, msg: "Failed to set owner under #{dest}: #{result[:stderr]}")
-          end
-        end
-        if group = @params["group"]?
-          # -h: same symlink-dereference hazard as chown above (Ansible's set_group_if_different uses os.lchown too).
-          result = remote_exec("#{find_prefix} #{member_args} -exec chgrp -h #{shell_single_quote(group)} {} +")
-          if result[:exit_code] != 0
-            return PluginResult.new(changed: true, failed: true, msg: "Failed to set group under #{dest}: #{result[:stderr]}")
-          end
-        end
-        if mode = @params["mode"]?
-          # ! -type l: chmod has no no-dereference form on Linux, so a
-          # symlink member must be SKIPPED entirely - chmodding through
-          # it would change the mode of whatever file the archive points
-          # the link at, anywhere on the filesystem. Ansible's
-          # set_mode_if_different on a symlink chmods through the link
-          # and then restores the underlying mode (net effect: the
-          # target's mode is unchanged); never touching it reaches the
-          # same end state without the transient write.
-          result = remote_exec("#{find_prefix} #{member_args} ! -type l -exec chmod #{shell_single_quote(mode)} {} +")
-          if result[:exit_code] != 0
-            return PluginResult.new(changed: true, failed: true, msg: "Failed to set mode under #{dest}: #{result[:stderr]}")
-          end
-        end
+        owner = apply_identity_on_chunk(member_args, find_prefix, dest, "owner", "chown", "! -user")
+        attrs_changed ||= owner[:changed]
+        return {error: owner[:error], changed: attrs_changed} if owner[:error]
+        group = apply_identity_on_chunk(member_args, find_prefix, dest, "group", "chgrp", "! -group")
+        attrs_changed ||= group[:changed]
+        return {error: group[:error], changed: attrs_changed} if group[:error]
+        mode = apply_mode_on_chunk(member_args, find_prefix, dest)
+        attrs_changed ||= mode[:changed]
+        return {error: mode[:error], changed: attrs_changed} if mode[:error]
       end
-      nil
+      {error: nil, changed: attrs_changed}
+    end
+
+    # chown and chgrp share Ansible's exact probe-then-apply shape
+    # (set_owner_if_different / set_group_if_different): both are
+    # identity changes with a -h no-dereference form, so one helper
+    # drives both.
+    private def apply_identity_on_chunk(member_args : String, find_prefix : String, dest : String, attribute : String, verb : String, probe_flag : String) : NamedTuple(error: PluginResult?, changed: Bool)
+      value = @params[attribute]? || return {error: nil, changed: false}
+      # -h: chown/chgrp default to dereferencing symlinks, which would
+      # let an archive's symlink member redirect the ownership change
+      # onto any file it points at (outside dest) - Ansible's
+      # set_owner_if_different / set_group_if_different always use
+      # os.lchown, never the dereferencing form.
+      #
+      # The probe first tests each path's lstat uid/gid - the exact
+      # comparison set_owner/group_if_different makes - so `changed`
+      # is only flagged for paths that genuinely differ and the
+      # chown/chgrp is skipped entirely on an already-conforming tree.
+      probe = remote_exec("#{find_prefix} #{member_args} #{probe_flag} #{shell_single_quote(value)}")
+      apply_cmd = "#{find_prefix} #{member_args} -exec #{verb} -h #{shell_single_quote(value)} {} +"
+      if probe[:exit_code] != 0
+        # find itself failed (e.g. an owner name that resolves to
+        # no user errors the probe before any path is visited) -
+        # fall through to the blind apply, whose failure surfaces
+        # exactly as it always did.
+        result = remote_exec(apply_cmd)
+        return {error: attribute_failure(dest, attribute, result), changed: true} if result[:exit_code] != 0
+        {error: nil, changed: true}
+      elsif !probe[:stdout].strip.empty?
+        result = remote_exec(apply_cmd)
+        return {error: attribute_failure(dest, attribute, result), changed: true} if result[:exit_code] != 0
+        {error: nil, changed: true}
+      else
+        {error: nil, changed: false}
+      end
+    end
+
+    private def apply_mode_on_chunk(member_args : String, find_prefix : String, dest : String) : NamedTuple(error: PluginResult?, changed: Bool)
+      mode = @params["mode"]? || return {error: nil, changed: false}
+      # ! -type l: chmod has no no-dereference form on Linux, so a
+      # symlink member must be SKIPPED entirely - chmodding through
+      # it would change the mode of whatever file the archive points
+      # the link at, anywhere on the filesystem. Ansible's
+      # set_mode_if_different on a symlink chmods through the link
+      # and then restores the underlying mode (net effect: the
+      # target's mode is unchanged); never touching it reaches the
+      # same end state without the transient write - and the
+      # re-lstat after that restore also means a symlink member can
+      # never flip `changed` in real, which the probe's own
+      # ! -type l mirrors.
+      #
+      # The ! -perm probe only runs for a pure-octal mode, where it
+      # is exactly set_mode_if_different's prev_mode != requested
+      # comparison. A symbolic mode string resolves against EACH
+      # path's own current mode in real
+      # (_symbolic_mode_to_octal(path_stat, mode)), which no single
+      # find probe can express - those keep the blind apply with no
+      # change detection (tar sets modes itself at extraction, so a
+      # failed run leaves modes applied and only ownership ever
+      # needs this flip in practice).
+      if mode.matches?(/\A[0-7]+\z/)
+        probe = remote_exec("#{find_prefix} #{member_args} ! -type l ! -perm #{shell_single_quote(mode)}")
+        apply_cmd = "#{find_prefix} #{member_args} ! -type l -exec chmod #{shell_single_quote(mode)} {} +"
+        if probe[:exit_code] != 0
+          result = remote_exec(apply_cmd)
+          return {error: attribute_failure(dest, "mode", result), changed: true} if result[:exit_code] != 0
+          {error: nil, changed: true}
+        elsif !probe[:stdout].strip.empty?
+          result = remote_exec(apply_cmd)
+          return {error: attribute_failure(dest, "mode", result), changed: true} if result[:exit_code] != 0
+          {error: nil, changed: true}
+        else
+          {error: nil, changed: false}
+        end
+      else
+        result = remote_exec("#{find_prefix} #{member_args} ! -type l -exec chmod #{shell_single_quote(mode)} {} +")
+        return {error: attribute_failure(dest, "mode", result), changed: false} if result[:exit_code] != 0
+        {error: nil, changed: false}
+      end
+    end
+
+    private def attribute_failure(dest : String, attribute : String, result : NamedTuple(exit_code: Int32, stdout: String, stderr: String)) : PluginResult
+      PluginResult.new(changed: true, failed: true, msg: "Failed to set #{attribute} under #{dest}: #{result[:stderr]}")
     end
 
     private def dest_stat_fields(dest : String) : NamedTuple(size: Int64, uid: Int64, gid: Int64, owner: String, group: String, mode: String)

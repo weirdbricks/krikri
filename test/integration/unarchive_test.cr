@@ -67,6 +67,19 @@ private TMP_DIR = begin
   File.write(File.join(dir, "multi_member_src", "LICENSE"), "license")
   `tar czf #{File.join(dir, "multi_member.tar.gz")} -C #{File.join(dir, "multi_member_src")} hugo README.md LICENSE`
 
+  # An archive whose member name escapes dest (`../evil.txt`, built with
+  # --transform because GNU tar itself strips a ../ prefix it is handed
+  # on the command line). tar refuses to EXTRACT such a member ("Member
+  # name contains '..'", exit 2) while the preceding `tar --compare`
+  # idempotency probe still reports a change (its own leading-../
+  # stripping makes the probe warn "Cannot stat: No such file or
+  # directory", which the plugin reads as changed) - so this fixture is
+  # the deterministic way to reach the extraction-failure branch without
+  # mocking the tar binary.
+  Dir.mkdir_p(File.join(dir, "traversal_src"))
+  File.write(File.join(dir, "traversal_src", "payload.txt"), "payload")
+  `tar czf #{File.join(dir, "traversal.tar.gz")} --transform 's|.*|../evil.txt|' -C #{File.join(dir, "traversal_src")} payload.txt`
+
   # A GitHub-release-shaped tarball whose wrapper dir carries a LICENSE
   # member beside the binary (foi.sing_box's own real shape:
   # sing-box-1.14.3-linux-amd64-musl/{LICENSE,sing-box}) - the fixture
@@ -265,6 +278,56 @@ describe "unarchive plugin" do
 
     result["failed"].as_bool.must_equal(true)
     result["msg"].as_s.must_include("owner")
+  end
+
+  it "fails with the real fail_json shape (msg plus handler/dest/src/extract_results plus dest path info) when extraction itself fails" do
+    # Real unarchive.py reports an extraction failure as
+    # fail_json(msg="failed to unpack <src> to <dest>", **res_args) with
+    # res_args = {handler, dest, src, extract_results}, and its
+    # fail_json runs add_path_info over the result, so the dest's stat
+    # fields ride along too - the real captured output for
+    # igor_nikiforov.etcd's failed extraction (issue #528) sorts out as
+    # changed, dest, extract_results, gid, group, handler, mode, msg,
+    # owner, size, src, state, uid. Previously this engine returned only
+    # a bare "failed to extract <src>" msg, losing the command/rc/output
+    # a role's changed_when: may read.
+    #
+    # extract_results.cmd is the tar command as a JSON ARRAY (argv),
+    # with the tar binary resolved to its absolute path - real builds
+    # every tar command through get_bin_path('gtar')/('tar') and reports
+    # the list itself (issue #528's real failure carries
+    # "/usr/bin/tar", "--extract", ... as an array).
+    dest = fresh_dest("tar-extract-failure")
+    src = File.join(TMP_DIR, "traversal.tar.gz")
+    result = PluginSpecHelper.run("unarchive", {"src" => src, "dest" => dest})
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("failed to unpack #{src} to #{dest}")
+    result["handler"].as_s.must_equal("TgzArchive")
+    result["dest"].as_s.must_equal(dest)
+    result["src"].as_s.must_equal(src)
+    extract_results = result["extract_results"]
+    extract_results["rc"].as_i.must_equal(2)
+    extract_results["err"].as_s.must_include("Member name contains '..'")
+    cmd = extract_results["cmd"].as_a.map(&.as_s)
+    cmd.first.must_match(/\/g?tar$/)
+    cmd[1].must_equal("--extract")
+    cmd.must_include(dest)
+    cmd.must_include(src)
+    # dest is an existing directory by the time extraction runs, so the
+    # add_path_info block reports it as one.
+    result["state"].as_s.must_equal("directory")
+    assert result["size"].as_i > 0
+    result["owner"].as_s.wont_be_empty
+    result["group"].as_s.wont_be_empty
+    result["mode"].as_s.must_match(/\A0?[0-7]{3,4}\z/)
+    result["uid"].as_i.wont_be_nil
+    result["gid"].as_i.wont_be_nil
+    # Wire key order matches the real fail_json shape: the module's own
+    # dict (sorted as displayed), then fail_json's own exception/failed
+    # additions, which only the display layer strips - the raw module
+    # result a role registers carries both.
+    result.as_h.keys.must_equal(%w[changed dest extract_results gid group handler mode msg owner size src state uid exception failed])
   end
 
   it "reports changed: false on an idempotent rerun (tar --compare based)" do
