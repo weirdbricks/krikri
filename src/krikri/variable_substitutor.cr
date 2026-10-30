@@ -1154,6 +1154,22 @@ module Krikri
     end
     return nil if msg.includes?("has no element")
     return nil if msg.matches?(/has no attribute '\d+'\z/)
+    # A `when:` probe hands the WHOLE condition here (`hostvars[master_item].
+    # redis_role == "master"`), which is no plain chain, so the walker above
+    # declines it even though the miss sits on one plain-chain OPERAND whose
+    # container Ansible still types - the redis_cluster round 29884671
+    # reported "object of type 'dict' has no attribute 'redis_role'" where
+    # real Ansible blames the hostvars entry's HostVarsVars wrapper
+    # (live-verified vs 2.19.11). Walk the expr's plain-chain operands and
+    # let the one carrying the blamed attribute name the miss; a blamed
+    # attribute no candidate explains keeps the engine's own wording.
+    if msg.includes?("has no attribute") && (blamed = msg.match(/has no attribute '([^']+)'\z/))
+      expr.gsub(/'[^']*'|"[^"]*"/, " ").scan(/[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*|\[[^\[\]]+\])+/).each do |cand|
+        if (missing_key = Krikri.dict_attribute_miss_name(cand[0], vars)) && missing_key == blamed[1]
+          return Krikri.dict_attribute_miss_message(missing_key, Krikri.miss_type)
+        end
+      end
+    end
     # The engine reports a missing attribute in Jinja2's own wording
     # ("'dict object' has no attribute 'x'"); ansible-core 2.19's
     # templar words the same failure "object of type 'dict' has no

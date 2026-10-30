@@ -107,6 +107,24 @@ describe "strict missing-attribute matrix (ansible-core 2.19 semantics)" do
     error.message.must_equal("object of type 'dict' has no attribute 'missing'")
   end
 
+  # The same HostVarsVars wording must surface from a `when:` condition,
+  # not just a {{ }} substitution: v0112358.redis_cluster round 29884671
+  # gated a set_fact loop on `hostvars[master_item].redis_role == "master"`
+  # for a host with no redis_role, and real Ansible blames the HostVarsVars
+  # wrapper (live-verified vs 2.19.11), where krikri's condition evaluator
+  # reported a plain 'dict'.
+  it "labels a hostvars entry miss in a when: condition 'HostVarsVars'" do
+    vars = matrix_vars_hash
+    vars["hostvars"] = JSON.parse(%({"myhost": {}}))
+    vars["master_item"] = JSON::Any.new("myhost")
+
+    error = assert_raises(Krikri::ConditionalEvaluator::UndefinedVariableError) do
+      Krikri::ConditionalEvaluator.evaluate(
+        "hostvars[master_item].redis_role == \"master\"", vars, raise_undefined: true)
+    end
+    error.message.must_equal("object of type 'HostVarsVars' has no attribute 'redis_role'")
+  end
+
   # Issue 353 (pinkeen.intnet, live-verified vs 2.19.11): a bracket
   # subscript KEY is its own sub-expression - the chain inside the key
   # evaluates first and ITS miss is what gets reported (the HostVarsVars

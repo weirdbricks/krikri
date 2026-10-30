@@ -3352,6 +3352,17 @@ module Krikri
     # dict, not the whole path, is what tells a role author the variable
     # resolved fine and only the attribute is missing.
     private def self.undefined_reference_message(expr : String, vars : Hash(String, JSON::Any)) : String
+      # Ask the shared chain walker first: it names the miss's container the
+      # way Ansible actually types it, which the dot-only check below can't
+      # tell - a miss on a hostvars per-host entry reports Ansible's
+      # HostVarsVars wrapper, not a plain dict (v0112358.redis_cluster
+      # round 29884671's `when: hostvars[master_item].redis_role ==
+      # "master"`; live-verified vs 2.19.11). Where the walker fully
+      # resolves the chain it declines, so every shape this check was
+      # written for still lands on the same wording as before.
+      if (missing_key = Krikri.dict_attribute_miss_name(expr, vars))
+        return Krikri.dict_attribute_miss_message(missing_key, Krikri.miss_type)
+      end
       if (idx = expr.rindex('.')) && idx > 0 && idx < expr.size - 1
         attr = expr[(idx + 1)..]
         if attr.matches?(/\A\w+\z/)
