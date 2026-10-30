@@ -492,7 +492,7 @@ module Krikri
         executed_count += 1
         any_changed ||= result["changed"]?.try(&.as_bool) || false
         any_failed ||= Krikri.result_failed_flag(result)
-        ResultDisplay.display_result(host, result, @diff_mode, item_label: include_item_display_label(handler, item, vars_context, host), ignore_errors: resolve_task_ignore_errors(handler, base_vars_context), no_log: resolve_task_no_log(handler, base_vars_context), module_name: handler.module_name, delegate_target: delegate_display_target(handler, host, base_vars_context), source_task: handler, loop_item: item, loop_var_name: loop_var)
+        ResultDisplay.display_result(host, result, resolve_task_diff_mode(handler, base_vars_context), item_label: include_item_display_label(handler, item, vars_context, host), ignore_errors: resolve_task_ignore_errors(handler, base_vars_context), no_log: resolve_task_no_log(handler, base_vars_context), module_name: handler.module_name, delegate_target: delegate_display_target(handler, host, base_vars_context), source_task: handler, loop_item: item, loop_var_name: loop_var)
       end
 
       # A looped handler whose every item was skipped (per-item when:,
@@ -529,7 +529,7 @@ module Krikri
           "msg"     => JSON::Any.new(any_failed ? "One or more items failed" : "All items completed"),
         } of String => JSON::Any
         aggregate["failed"] = JSON::Any.new(true) if any_failed
-        ResultDisplay.display_result(host, JSON::Any.new(aggregate), @diff_mode, module_name: handler.module_name, source_task: handler)
+        ResultDisplay.display_result(host, JSON::Any.new(aggregate), resolve_task_diff_mode(handler, base_vars_context), module_name: handler.module_name, source_task: handler)
       end
 
       JSON.parse({

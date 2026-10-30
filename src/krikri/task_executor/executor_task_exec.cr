@@ -1314,7 +1314,7 @@ module Krikri
       if @adhoc
         ResultDisplay.display_adhoc_result(host, result, @diff_mode, module_name: task.module_name)
       else
-        ResultDisplay.display_result(host, result, @diff_mode, ignore_errors: ignore_errors, no_log: no_log, module_name: task.module_name, delegate_target: exec_host && exec_host != host ? exec_host.name : nil, source_task: task)
+        ResultDisplay.display_result(host, result, resolve_task_diff_mode(task, vars_context), ignore_errors: ignore_errors, no_log: no_log, module_name: task.module_name, delegate_target: exec_host && exec_host != host ? exec_host.name : nil, source_task: task)
       end
       ResultDisplay.update_stats(@results[host.name], result, ignore_errors)
       halt_if_failed(task, host, failed, result)
@@ -2797,9 +2797,10 @@ module Krikri
       # (live-verified vs 2.19.11: `diff: true` diffs without --diff,
       # `diff: false` suppresses the diff under --diff), so the plugin
       # computes its diff payload from the effective mode, not the CLI
-      # flag alone; nil (keyword unset) keeps the flag.
+      # flag alone; nil (keyword unset) keeps the flag. A templated
+      # diff: re-renders against live vars (resolve_task_diff_mode).
       final_params["_ansible_diff"] =
-        (task.diff_mode?.nil? ? @diff_mode : task.diff_mode?).to_s
+        resolve_task_diff_mode(task, vars_context).to_s
       # The module name exactly as the playbook invoked it -
       # Ansible's check-mode skip message echoes it ("remote module
       # (ansible.builtin.tempfile) does not support check mode", see
