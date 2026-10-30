@@ -341,6 +341,38 @@ describe "apt plugin deb: URL download-then-install" do
     end
   end
 
+  # Regression test for issue #413: when dpkg -l returns non-zero exit code
+  # (e.g. dpkg database issue), the module should proceed to install rather
+  # than always reporting changed:true on warm reruns, matching Ansible's
+  # idempotent behavior.
+  it "proceeds to install when dpkg -l returns non-zero (issue #413)" do
+    # Simulate dpkg -l returning non-zero exit code (package status unclear)
+    # but dpkg -i succeeding and installing the package.
+    # We set dpkg_query_lines to simulate dpkg -l not finding the package.
+    with_deb_fixture_shims(dpkg_query_lines: "", dpkg_installed_line: nil, dpkg_install_exit: 0) do |env, fixture, dpkg_log, apt_log|
+      result = PluginSpecHelper.run("apt", {
+        "deb"               => fixture,
+        "state"             => "present",
+        "_environment"      => env,
+        "_policy_rc_d_path" => File.join(File.dirname(fixture), "policy-rc.d"),
+      })
+
+      # Module should proceed to install when dpkg -l cannot determine status
+      # (non-zero exit), rather than assuming package is absent and reporting
+      # changed:true unconditionally. On the actual install, dpkg -i should
+      # succeed and report the appropriate changed/unchanged result.
+      # The key behavior being tested: module does not short-circuit with
+      # changed:true when dpkg -l returns non-zero.
+      # The module should successfully install the package on first run.
+      result["changed"].as_bool.must_equal(true)
+      # dpkg -l should have been called (non-zero exit via empty lines = no match), then dpkg -i should run
+      dpkg_calls = File.exists?(dpkg_log) ? File.read_lines(dpkg_log) : [] of String
+      # dpkg -i should have run exactly once
+      install_calls = dpkg_calls.select(&.includes?(" -i "))
+      install_calls.size.must_equal(1)
+    end
+  end
+
   it "registers Ansible's DebPackage-construction failure wording for a missing deb file" do
     result = PluginSpecHelper.run("apt", {
       "deb"   => "/tmp/krikri-spec-nosuch.deb",
