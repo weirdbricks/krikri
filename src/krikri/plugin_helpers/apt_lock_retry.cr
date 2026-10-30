@@ -167,12 +167,35 @@ module Krikri
     # transformed), joined with ", ". Empty for the bare-exception class
     # (plain fetch failures), whose warnings and final msg stay empty - the
     # round-1100002-verified shape.
+    #
+    # With SEVERAL failing repositories python-apt does not join their
+    # diagnostic blocks bare: each block ("W:GPG error ..." + "E:The
+    # repository ... is not signed.") is separated from the next by its two
+    # untrusted-repo lines ("W:Updating from such a repository ...",
+    # "W:See apt-secure(8) ..."), probed live in a GPG-broken trixie
+    # container - a three-repo first attempt's exception text was
+    # "W:GPG<r1>, E:<r1>, W:Updating..., W:See..., W:GPG<r2>, E:<r2>,
+    # W:Updating..., W:See..., W:GPG<r3>, E:<r3>" while the CLI stderr
+    # carries the same W:/E: lines with NO untrusted-repo lines at all.
+    # The CLI gives no way to tell those lines apart, so re-insert the
+    # pair at every GPG block start but the first (issue #408: real
+    # ansible's retry warnings quote one pair per repo, krikri used to
+    # quote none until its single from-attempt-2 prepend).
     def apt_fetch_failure_reason(result : NamedTuple(exit_code: Int32, stdout: String, stderr: String)) : String
       return "" unless apt_fetch_signature_failure?(result)
       combined = "#{result[:stdout]}\n#{result[:stderr]}"
-      combined.split('\n').select { |line| line.starts_with?("W:") || line.starts_with?("E:") }
+      lines = combined.split('\n').select { |line| line.starts_with?("W:") || line.starts_with?("E:") }
         .map(&.sub(/\A([WE]): /, "\\1:"))
-        .join(", ")
+      separated = [] of String
+      saw_gpg_block = false
+      lines.each do |line|
+        if line.starts_with?("W:GPG error:")
+          separated << APT_FETCH_SECURE_REPO_PREPEND if saw_gpg_block
+          saw_gpg_block = true
+        end
+        separated << line
+      end
+      separated.join(", ")
     end
 
     # After a signature-failed attempt, apt marks the repo untrusted and
