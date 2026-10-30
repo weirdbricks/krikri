@@ -3029,10 +3029,28 @@ module Krikri
         # would leak a port ansible's play_context never carries.
         port = vars_context["ansible_port"]?.try(&.as_i?) ||
                vars_context["ansible_ssh_port"]?.try(&.as_i?)
+        # A plugin's self._execute_module('uri', ...) must run the named
+        # module on THIS task's target through the engine's own dispatch -
+        # the host, connection, become and check-mode the task already
+        # resolved - and hand the module's result dict back to the plugin,
+        # because for these roles the inner module's result IS the task
+        # result (agaffney.synology_dsm's Login fails with the uri module's
+        # own message, live-verified vs 2.19.11, issue #399).
+        dispatcher = ->(inner_module : String, inner_args : Hash(String, JSON::Any)) : JSON::Any {
+          inner_params = Hash(String, String).new
+          inner_args.each do |key, value|
+            inner_params[key] = value.as_s? || value.to_json
+          end
+          inner_task = Task.new(task.name, inner_module)
+          inner_config = build_plugin_config(inner_task, exec_host, inner_params, wire_vars,
+            substituted_become_user, substituted_env, become_flag: become)
+          PluginManager.execute_plugin(inner_module, inner_config, exec_host, vars_context,
+            become, become_user, task_timeout)
+        }
         begin
           return PythonActionRunner.run_action(action_plugin, module_name, args, connection,
             exec_host.connection_host, port, remote_user, become, become_user,
-            resolve_task_check_mode(task, wire_vars), vars_context)
+            resolve_task_check_mode(task, wire_vars), vars_context, dispatcher)
         rescue PythonActionRunner::ActionUnavailableError
           return JSON.parse({
             "changed" => false,
@@ -3760,6 +3778,14 @@ module Krikri
       end
       if apply_when = task.include_apply_when
         inherit_when_condition(apply_when, task.include_apply_when_list, loaded)
+      end
+      # Ansible's module_defaults context is a RUNTIME stack: an
+      # include_tasks: inside a defaults-carrying block applies those
+      # defaults to the tasks it loads, though no parse-time pass ever
+      # saw them (agaffney.synology_dsm's wrapper block hands its
+      # synology_dsm_api_request base_url to login.yml, issue #399).
+      unless task.effective_module_defaults.empty?
+        PlaybookParser.apply_module_defaults(loaded, task.effective_module_defaults)
       end
     end
 

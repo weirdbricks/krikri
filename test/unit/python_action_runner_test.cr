@@ -212,4 +212,95 @@ describe Krikri::PythonActionRunner do
       FileUtils.rm_r(dir)
     end
   end
+
+  it "answers the plugin's _execute_module through the engine dispatcher" do
+    # agaffney.synology_dsm's synology_dsm_api_request builds 'uri' params
+    # and delegates to self._execute_module, whose result dict IS the
+    # task's own result (issue #399). The stub runtime cannot run ansible's
+    # real module-transfer machinery, so the wrapper relays the call to the
+    # caller's dispatcher and the module's result comes back verbatim.
+    dir = File.join(Dir.tempdir, "krikri-pyaction-spec-#{Random.rand(1_000_000)}")
+    path = write_action_plugin(dir, "myaction.py", <<-PYTHON)
+      from ansible.plugins.action import ActionBase
+
+      class ActionModule(ActionBase):
+          TRANSFERS_FILES = False
+
+          def run(self, tmp=None, task_vars=None):
+              result = super(ActionModule, self).run(tmp, task_vars)
+              del tmp
+              inner = self._execute_module(
+                  'uri', module_args={'url': 'http://example.invalid/', 'method': 'GET'})
+              self._remove_tmp_path(self._connection._shell.tmpdir)
+              if inner.get('failed', False):
+                  inner['failed'] = True
+              return inner
+      PYTHON
+
+    seen = [] of String
+    dispatcher = Krikri::PythonActionRunner::ModuleDispatcher.new do |mod, margs|
+      seen << mod
+      seen << margs["url"].as_s
+      JSON.parse(%({"changed": false, "failed": true, "msg": "Status code was -1"}))
+    end
+
+    begin
+      call = -> {
+        Krikri::PythonActionRunner.run_action(path, "myaction", Hash(String, JSON::Any).new,
+          "local", "localhost", nil, nil, false, nil, false,
+          Hash(String, JSON::Any).new, dispatcher)
+      }
+      if ansible_importable
+        result = call.call
+        seen.must_equal(["uri", "http://example.invalid/"])
+        result.as_h["failed"].as_bool.must_equal(true)
+        result.as_h["msg"].as_s.must_equal("Status code was -1")
+      else
+        assert_unavailable(call)
+      end
+    ensure
+      FileUtils.rm_r(dir)
+    end
+  end
+
+  it "turns a dispatcher failure into the plugin's own task failure" do
+    dir = File.join(Dir.tempdir, "krikri-pyaction-spec-#{Random.rand(1_000_000)}")
+    path = write_action_plugin(dir, "myaction.py", <<-PYTHON)
+      from ansible.plugins.action import ActionBase
+
+      class ActionModule(ActionBase):
+          TRANSFERS_FILES = False
+
+          def run(self, tmp=None, task_vars=None):
+              result = super(ActionModule, self).run(tmp, task_vars)
+              del tmp
+              return self._execute_module('nosuchmod', module_args={})
+      PYTHON
+
+    dispatcher = Krikri::PythonActionRunner::ModuleDispatcher.new do |mod, _args|
+      raise "Plugin not available: #{mod}"
+    end
+
+    begin
+      call = -> {
+        Krikri::PythonActionRunner.run_action(path, "myaction", Hash(String, JSON::Any).new,
+          "local", "localhost", nil, nil, false, nil, false,
+          Hash(String, JSON::Any).new, dispatcher)
+      }
+      if ansible_importable
+        failed = false
+        begin
+          call.call
+        rescue ex : Krikri::PythonActionRunner::ActionError
+          failed = true
+          ex.message.to_s.must_include("Plugin not available: nosuchmod")
+        end
+        failed.must_equal(true)
+      else
+        assert_unavailable(call)
+      end
+    ensure
+      FileUtils.rm_r(dir)
+    end
+  end
 end

@@ -484,6 +484,12 @@ module Krikri
       rescue ex : Socket::ConnectError
         # this hop is the one that failed, so its URL is the one to re-probe
         raise Exception.new(PluginHelpers::SocketConnect.urlopen_error_text(uri, ex) || ex.message)
+      rescue ex : Socket::Addrinfo::Error
+        # getaddrinfo never got to a socket: urllib's URLError carries the
+        # gaierror's own text, "<urlopen error [Errno -2] Name or service
+        # not known>" (live-verified vs 2.19.11, issue #399) - Crystal's
+        # wording is its own and must not reach the message.
+        raise Exception.new(PluginHelpers::SocketConnect.urlopen_dns_error_text(ex) || ex.message)
       rescue ex : IO::TimeoutError
         # urllib wraps a connect timeout in URLError, so Ansible reports
         # "Request failed: <urlopen error timed out>" (live-verified vs
