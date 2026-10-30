@@ -88,4 +88,40 @@ describe "looped include_role: with an unresolvable role name" do
 
     FileUtils.rm_rf(src_dir)
   end
+
+  it "keeps the fatal line and the k=v string Origin for a k=v include_role" do
+    # A k=v string form (`include_role: name=...`) has no `name:` KEY for
+    # the source map, but real still prints the Origin block there,
+    # pointing at the k=v string's FIRST char (live-verified vs 2.19.11:
+    # still the string's start when name= is not the first param).
+    src_dir = File.tempname("include-role-missing-kv")
+    Dir.mkdir_p(src_dir)
+
+    playbook = File.join(src_dir, "pb.yml")
+    File.write(playbook, <<-YAML)
+      ---
+      - hosts: localhost
+        gather_facts: false
+        connection: local
+        tasks:
+          - name: include missing role
+            include_role: name=stafwag.nope
+      YAML
+
+    stdout = IO::Memory.new
+    stderr = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: stdout, error: stderr, chdir: src_dir, input: IO::Memory.new)
+    out = stdout.to_s
+    err = stderr.to_s
+
+    out.must_include("fatal: [localhost]: FAILED! => {\"changed\": false, \"reason\": \"the role 'stafwag.nope' was not found in ")
+    # Line 7, column 21 = the k=v string's first char (6-space indent +
+    # "include_role: ").
+    err.must_include("Origin: #{playbook}:7:21\n")
+    err.must_include("^ column 21\n")
+    out.must_match(/ok=0\s+changed=0\s+unreachable=0\s+failed=1\s+skipped=0\s+rescued=0\s+ignored=0/)
+    status.exit_code.must_equal(2)
+
+    FileUtils.rm_rf(src_dir)
+  end
 end
