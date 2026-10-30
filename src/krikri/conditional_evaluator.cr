@@ -342,6 +342,27 @@ module Krikri
     end
 
     def self.evaluate(condition : String, vars : Hash(String, JSON::Any), strict : Bool = false, raise_undefined : Bool = false) : Bool
+      # Ansible's per-access laziness applies to `when:` exactly as it
+      # does to module-arg finalization (issue #422:
+      # `when: BOOTSTRAP.install_tools` on a defaults dict carrying an
+      # untouched `ssh.port: "{{ ansible_port }}"` sibling renders fine
+      # on ansible-core 2.19.11 - live-verified): bracketing the
+      # condition lets JinjaRenderer#prepare_rerender_walk DEFER such
+      # nested leaves instead of failing the whole condition on them.
+      # Access points keep failing a leaf that IS read: the strict probe
+      # below re-renders bare references, the hand-rolled chain-head
+      # fallback renders its deferred leaves strictly on attribute
+      # extraction, and #force_whole_structure_leaves! still fires for
+      # whole-container serializers.
+      VarSubstitutor.enter_conditional_eval
+      begin
+        evaluate_bracketed(condition, vars, strict, raise_undefined)
+      ensure
+        VarSubstitutor.exit_conditional_eval
+      end
+    end
+
+    private def self.evaluate_bracketed(condition : String, vars : Hash(String, JSON::Any), strict : Bool, raise_undefined : Bool) : Bool
       # The strict-undefined PROBE (see Krikri.strict_undefined_probe_
       # message): when undefined references must raise, give the whole
       # condition one strict-engine evaluation first. This closes the

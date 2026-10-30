@@ -1816,6 +1816,61 @@ module Krikri
       (@@strict_span_depth[Fiber.current]? || 0) > 0
     end
 
+    # The conditional-evaluation twin of #enter_strict_span: set by
+    # ConditionalEvaluator.evaluate around ONE condition's probe +
+    # evaluation. JinjaRenderer#prepare_rerender_walk defers container
+    # variables' nested undefined-bottoming leaves inside it (issue #422:
+    # ansible-core's per-access laziness applies to `when:` exactly as it
+    # does to arg finalization - `when: BOOTSTRAP.install_tools` must not
+    # fail on an UNTOUCHED sibling leaf), while the access points keep
+    # rendering the leaf strictly. Every OTHER lenient caller keeps the
+    # pre-existing eager conversion the hand-rolled chain-head fallback
+    # (round-952484) was built around.
+    @@conditional_eval_depth = {} of Fiber => Int32
+
+    def self.enter_conditional_eval : Nil
+      fiber = Fiber.current
+      @@conditional_eval_depth[fiber] = (@@conditional_eval_depth[fiber]? || 0) + 1
+    end
+
+    def self.exit_conditional_eval : Nil
+      fiber = Fiber.current
+      @@conditional_eval_depth[fiber] = (@@conditional_eval_depth[fiber]? || 1) - 1
+    end
+
+    def self.conditional_eval_active? : Bool
+      (@@conditional_eval_depth[Fiber.current]? || 0) > 0
+    end
+
+    # The verdict-probe twin of #enter_conditional_eval: set by
+    # #unresolvable_template? around its trial render, which only ASKS
+    # whether a variable's own template bottoms out at a name set
+    # nowhere. ansible-core resolves such a variable LAZILY per access,
+    # so a nested container leaf it never reaches must not make the
+    # verdict "unresolvable" (issue #422, live-verified vs 2.19.11:
+    # `defaults_bo` carrying an untouched `ssh.port: "{{ ansible_port }}"`
+    # still answers `{% if BOOTSTRAP.hostname is defined %}` False inside
+    # a strict block-tag arg finalization, while krikri's eager walk
+    # raised on the sibling, demoted the whole BOOTSTRAP to undefined, and
+    # failed the "Set localhost name resolution" task). JinjaRenderer
+    # #prepare_rerender_walk defers bottomed-out container leaves inside
+    # this window too; the access points keep rendering them strictly.
+    @@deferred_walk_depth = {} of Fiber => Int32
+
+    def self.enter_deferred_walk : Nil
+      fiber = Fiber.current
+      @@deferred_walk_depth[fiber] = (@@deferred_walk_depth[fiber]? || 0) + 1
+    end
+
+    def self.exit_deferred_walk : Nil
+      fiber = Fiber.current
+      @@deferred_walk_depth[fiber] = (@@deferred_walk_depth[fiber]? || 1) - 1
+    end
+
+    def self.deferred_walk_active? : Bool
+      (@@deferred_walk_depth[Fiber.current]? || 0) > 0
+    end
+
     # Fiber-scoped stack of "the task param value this fiber is templating
     # right now" - pushed by TaskExecutor exactly around the substitution
     # of ONE param during module-arg finalization and popped in an ensure.
@@ -2768,7 +2823,56 @@ module Krikri
             # "{{ x }}" and never re-scans it, while a blind re-pass
             # templated the brace text a second time ("{{ literal }}" ->
             # "literal") or died on it.
-            substitute_impl(rendered, strict, output, native)
+            if strict && (re_value.raw.is_a?(Hash) || re_value.raw.is_a?(Array)) &&
+               (VarSubstitutor.conditional_eval_active? || VarSubstitutor.deferred_walk_active?)
+              # Inside a task condition - or the #unresolvable_template?
+              # verdict probe, which asks the same per-access question -
+              # the brace text left inside a CONTAINER is a leaf the scope
+              # preparation deliberately DEFERRED, not a new template
+              # level: ansible-core renders a
+              # lazy container's values per-access, so a `when:` that reads
+              # one key never forces its sibling's undefined reference
+              # (live-verified vs 2.19.11, issue #422 -
+              # `when: BOOTSTRAP.install_tools` evaluates true next to an
+              # untouched `ssh.port: "{{ ansible_port }}"`, while
+              # `when: BOOTSTRAP.ssh.port|int > 0` and
+              # `when: BOOTSTRAP | to_json | length > 0` both fail with
+              # 'ansible_port' is undefined). Re-scanning the formatted dict
+              # here is what raised on that untouched leaf; the two shapes
+              # that DO consume the leaf keep failing at their own access
+              # points (this method's per-leaf strict render of the String
+              # the access returned, and JinjaRenderer's
+              # #force_whole_structure_leaves! for a whole-structure
+              # serializer), so leaving the deferred text untouched costs
+              # nothing.
+              rendered
+            else
+              substitute_impl(rendered, strict, output, native)
+            end
+          elsif strict && re_value && (re_value.raw.is_a?(Hash) || re_value.raw.is_a?(Array)) &&
+                (rendered.includes?("{{") || rendered.includes?("{%") || rendered.includes?("{#")) &&
+                !re_value.to_s.includes?("lookup(") && !re_value.to_s.includes?("query(")
+            # A full-structure consumer (to_json/to_nice_yaml/..., and any
+            # other filter whose serialized output still carries brace
+            # text) can only have gotten that leftover `{{`/`{%` out of a
+            # nested leaf the strict-span scope preparation DEFERRED
+            # (issue #422: ansible-core renders such leaves per-access, so
+            # a chain that never reads one succeeds - but serializing the
+            # container reads every one, and Ansible's materialization
+            # renders each strictly, failing with the innermost missing
+            # name: live-verified vs 2.19.11, `{{ BOOTSTRAP.ssh }}` fails
+            # where the key access passes). Force the head's whole
+            # structure strictly now - leaves that render simply
+            # reproduce what the chain already rendered (the result is
+            # discarded, only a failure matters), and a leaf that bottoms
+            # out at an unset name fails the task exactly like the
+            # pre-deferral eager scope conversion did. Lenient (strict:
+            # false) spans keep the round-952484 raw-text behavior -
+            # their accepted limitation is pre-existing and untouched
+            # here - and side-effecting lookups stay unforced (the probe
+            # convention this file follows throughout).
+            VariableSubstitutor::JinjaRenderer.rerender_nested_templates(re_value, self)
+            rendered
           else
             rendered
           end
@@ -3585,6 +3689,17 @@ module Krikri
     # task the lenient caller never wanted failed.
     def unresolvable_template?(raw : String) : Bool
       return false unless raw.includes?("{{")
+      self.class.enter_deferred_walk
+      begin
+        unresolvable_template_verdict?(raw)
+      ensure
+        self.class.exit_deferred_walk
+      end
+    end
+
+    # The trial render behind #unresolvable_template?, run inside its
+    # deferred-leaf window (see #enter_deferred_walk).
+    private def unresolvable_template_verdict?(raw : String) : Bool
       # Same memoized-structured short-circuit as
       # #raise_if_nested_value_undefined: a memo hit (or a successful
       # scalar structured evaluation) proves the template resolves, and

@@ -376,6 +376,7 @@ module Krikri
       end
 
       private def evaluate_value_once!(expr : String) : JSON::Any?
+        JinjaRenderer.force_whole_structure_leaves!(expr, @vars)
         cache = @decode ? @@jinja_decode_expression_cache : @@jinja_expression_cache
         node = cache[expr] ||= KrikriJinja.parse_expression(
           expr, KrikriJinja::LexerOptions.new(verbatim_expression_strings: !@decode)
@@ -425,6 +426,62 @@ module Krikri
         else
           value
         end
+      end
+
+      # Filters whose every legitimate implementation serializes the WHOLE
+      # structure it is applied to - every nested string is read by
+      # definition, so Ansible's container materialization forces a deep
+      # strict template of all of them (the fail-on-whole-container-
+      # consumption half of the issue #422 laziness matrix, live-verified
+      # vs 2.19.11: rendering `{{ BOOTSTRAP.ssh }}` fails with
+      # 'ansible_port' is undefined even though a key access does not).
+      WHOLE_STRUCTURE_FILTERS = /\|\s*(?:to_json|to_nice_json|to_yaml|to_nice_yaml)\b/
+
+      # The fail-on-consumption counterpart of prepare_var's lazy nested
+      # leaves (see #prepare_rerender_walk): when a chain's head is a
+      # bare name whose stored value is a still-templated container and
+      # the chain pipes it into a whole-structure serializer, render the
+      # container strictly BEFORE the chain runs - the same raise (same
+      # class, same innermost "'x' is undefined" message) the old eager
+      # variable-scope conversion produced for these shapes, and what
+      # nested_container_undefined_filter_test spec'd against real
+      # ansible-core. A strictly-rendered leaf feeds the serializer the
+      # same rendered value scope conversion used to hand it; only leaves
+      # that would genuinely raise in Ansible change the outcome here, so
+      # the guard is a no-op for every already-rendered structure.
+      def self.force_whole_structure_leaves!(expr : String, vars : Hash(String, JSON::Any)) : Nil
+        head = whole_structure_deferred_head(expr, vars) || return
+        rerender_nested_templates(head, VarSubstitutor.new(vars: vars))
+      end
+
+      # The chain-head value #force_whole_structure_leaves! must render
+      # strictly, or nil when the expression's shape or the variable's
+      # provenance means the serializer can see no deferred leaves: a
+      # bare-name head (`root | to_json`, not a dotted or filtered head)
+      # whose stored value is a still-templated container, excluding an
+      # execution-resolved root (verbatim content, never re-rendered -
+      # the shared resolved-value carve-out) and an unsafe root.
+      private def self.whole_structure_deferred_head(expr : String, vars : Hash(String, JSON::Any)) : JSON::Any?
+        return unless expr.matches?(WHOLE_STRUCTURE_FILTERS)
+        match = expr.match(/\A\s*([A-Za-z_][A-Za-z0-9_]*)\s*\|/)
+        return unless match
+        root = match[1]
+        raw = vars[root]?
+        return unless raw
+        return unless (raw_raw = raw.raw).is_a?(Array) || raw_raw.is_a?(Hash)
+        return if VarSubstitutor.resolved_var_name?(VarSubstitutor.host_from_vars(vars), root)
+        return if VarSubstitutor.unsafe_root?(vars, expr)
+        return unless unforced_template_text?(raw.to_s)
+        raw
+      end
+
+      # A stored container still carries template source a strict render
+      # would chase, and no side-effecting lookup a forced pass would run
+      # twice (the probe convention every evaluation path in this file
+      # follows - the engine's own scope preparation runs lookups once).
+      private def self.unforced_template_text?(text : String) : Bool
+        return false unless text.includes?("{{") || text.includes?("{%") || text.includes?("{#")
+        !text.includes?("lookup(") && !text.includes?("query(")
       end
 
       # Guards against a genuine infinite-recursion trap distinct from
@@ -523,7 +580,9 @@ module Krikri
         active.push(base_name)
         @@prepare_vars_depth += 1
         begin
-          rendered = rerender_nested_templates(raw_value, substitutor)
+          # The strict-span nested-leaf deferral (see
+          # #prepare_rerender_walk).
+          rendered = prepare_rerender_walk(raw_value, substitutor)
           # Ansible 2.19.11 turns a variable whose stored text uses block
           # tags (`{% for %}`/`{% if %}`) and renders to nothing into None,
           # while `{{ "" }}` and a literal '' stay "" - so
@@ -539,6 +598,48 @@ module Krikri
           @@prepare_vars_depth -= 1
           active.pop
           @@prepare_vars_active.delete(Fiber.current) if active.empty?
+        end
+      end
+
+      # prepare_var's recursive re-templating walk. Container values
+      # inside a strict templating operation (module-arg/param
+      # finalization) or a `when:`/conditional evaluation walk their
+      # nested leaves DEFERRED: ansible-core's lazy templating renders a
+      # dict variable's values per-access, so a key access or conditional
+      # that never reaches a sibling leaf must not fail on that leaf's
+      # undefined reference - live-verified vs 2.19.11
+      # (ansibleguy.linux_bootstrap, issue #422): next to an untouched
+      # `ssh.port: "{{ ansible_port }}"` sibling,
+      # `{{ BOOTSTRAP.hostname | default(inventory_hostname) }}` and
+      # `when: BOOTSTRAP.install_tools` both evaluate fine, while an
+      # access that DOES read the sibling still renders it strictly at
+      # the access point (the round-952484 machinery: the hand-rolled
+      # chain-head fallback's map/selectattr attribute extraction and
+      # dotted-lookup re-render, the strict probes,
+      # #force_whole_structure_leaves! for whole-container serializers,
+      # and substitute_impl's brace re-pass) - so the fail-on-access
+      # half of Ansible's matrix is preserved, not forced here. The same
+      # deferral applies inside #unresolvable_template?'s verdict probe
+      # (VarSubstitutor #deferred_walk_active?): when the engine merely
+      # ASKS whether a variable bottoms out, an untouched sibling must
+      # not answer "unresolvable" (issue #422 - the
+      # `line: "127.0.1.1 {{ inventory_hostname }} {% if BOOTSTRAP.hostname
+      # is defined %}..."` block-tag arg, whose strict render probe
+      # resolves BOOTSTRAP through unresolvable_template? and must not
+      # fail on the untouched sibling). Outside those contexts the walk
+      # stays EAGER, exactly as the lenient
+      # hand-rolled callers that never deferred have always relied on.
+      private def self.prepare_rerender_walk(raw_value : JSON::Any, substitutor : VarSubstitutor) : JSON::Any
+        # Hash only: a top-level LIST is consumed whole by its readers
+        # (a `msg: "{{ dep_list }}"` arg, selectattr/map over its items),
+        # where ansible fails on the undefined leaf at that read; only a
+        # dict's untouched sibling KEY stays lazy (#422).
+        if raw_value.raw.is_a?(Hash) &&
+           (VarSubstitutor.strict_span_active? || VarSubstitutor.conditional_eval_active? ||
+           VarSubstitutor.deferred_walk_active?)
+          rerender_nested_templates(raw_value, substitutor, true)
+        else
+          rerender_nested_templates(raw_value, substitutor)
         end
       end
 
@@ -592,6 +693,7 @@ module Krikri
       # rendering it first (linux-system-roles.postgresql, round
       # 981063). Returns nil for an undefined result.
       def self.evaluate_structured(source : String, vars : Hash(String, JSON::Any), strict : Bool = false) : JSON::Any?
+        force_whole_structure_leaves!(source, vars)
         node = KrikriJinja.parse_expression(source)
         # Same deferred filter_plugins trigger as #render!/#evaluate_value!
         # (see PythonFilterRunner#scan_for_filter_use): callers of this
@@ -662,13 +764,21 @@ module Krikri
       # (`mylist | selectattr('state', ...)` never touching a sibling `name:`
       # whose template references an intentionally-undefined caller var,
       # round 952484 / stackhpc.libvirt-vm) must not fail the whole chain on
-      # it. The default (false) keeps the pre-existing strict behavior for
-      # every caller that renders a structure as a WHOLE (variable-scope
-      # conversion, the to_json-family guards in FilterEngine) - those
-      # access every leaf by definition, where Ansible fails just as
-      # this strict path does. A deferred leaf that IS later accessed is
-      # rendered strictly at its access point (FilterEngine's map/selectattr
-      # attribute extraction), restoring fail-on-access semantics there.
+      # it. Engine-scope preparation of a CONTAINER variable
+      # (prepare_var's Hash/Array walk) sets it inside a strict
+      # templating operation for exactly this reason - Ansible renders
+      # such a variable's values per-access and an untouched leaf is
+      # never forced (issue #422), while the lenient/conditional walk
+      # stays eager like the hand-rolled chain-head fallback expects.
+      # The default (false)
+      # keeps the pre-existing strict behavior for every caller that
+      # renders a structure as a WHOLE (the to_json-family guards in
+      # FilterEngine) - those access every leaf by definition, where
+      # Ansible fails just as this strict path does. A deferred leaf that
+      # IS later accessed is rendered strictly at its access point (the
+      # per-span re-template in VarSubstitutor#substitute_impl,
+      # FilterEngine's map/selectattr attribute extraction), restoring
+      # fail-on-access semantics there.
       private def self.rerender_string_value(raw : String, value : JSON::Any, substitutor : VarSubstitutor, defer_unresolved : Bool = false, deferred_leaves : Hash(String, String)? = nil) : JSON::Any
         # Unsafe gate (UnsafeValues.unsafe_text?, the shared value-level
         # registry): a leaf whose exact text was recorded from an execution
@@ -702,39 +812,60 @@ module Krikri
         unless raw.includes?("{{") || raw.includes?("{%") || raw.includes?("{#")
           return value
         end
-        # strict: true - a nested leaf that is a BARE/dotted reference to a
-        # name set nowhere must FAIL the whole render ("'x' is undefined"),
-        # not collapse to this engine's literal "undefined" sentinel text
-        # and get serialized as ordinary content. Found via a role
+        # A leaf that is a bare/dotted reference to a name set nowhere is
+        # rendered STRICT, and callers that consume the whole structure as
+        # a WHOLE must FAIL the render on it. Found via a role
         # `my_config: {foo: {bar: "{{ some_undefined_var }}"}}` fed through
         # `{{ my_config | to_json }}`/`| to_nice_yaml`: ansible-playbook
-        # fails immediately (it templates every nested string value at every
-        # level, strictly), while krikri quietly wrote
-        # {"foo":{"bar":"undefined"}}. This one call site is shared by BOTH
-        # evaluators - the engine's variable preparation (prepare_var) AND the
-        # hand-rolled FilterEngine path (ExpressionEvaluator's
-        # retemplated_lookup_value -> rerender_nested_templates) - so a
-        # filter like to_json on a dict with an undefined nested leaf fails
-        # identically either way. substitute's own strictness already
-        # forgives exactly what Ansible does: `default()`/`d()`-guarded
-        # leaves, `omit`, literals, operators (raise_if_strict_undefined's
-        # own bare-ref rule), so deliberately-lenient nested values keep
-        # rendering.
-        # Whole-single-span values keep the expression's NATIVE type
-        # (ansible-core 2.19 native typing - see
-        # Rerender.whole_span_structured): a vars entry `b: "{{ 42 }}"`
-        # is the int 42, `"{{ '42' }}"` the str "42", `"{{ none }}"`
-        # None. The old substitute-then-render_pure_mustache_value detour
-        # re-typed by TEXT shape and only for containers/bools/None, so a
-        # templated int/float var arrived at the engine's scope as a
-        # string (`v_int is integer` -> False where Ansible says
-        # True, live-verified vs 2.19.11). nil (undefined, engine
-        # failure, or not actually whole-span) falls back to the
-        # pre-existing substitute path below, which owns the
-        # strict-undefined failure and the defer_unresolved carve-out
-        # unchanged - and which only re-runs the evaluation for a value
-        # that just resolved to nothing, so a side-effecting lookup in a
-        # whole-span value still runs exactly once.
+        # fails immediately (materializing a container forces a deep strict
+        # template of its values, reporting the innermost missing name),
+        # while krikri quietly wrote {"foo":{"bar":"undefined"}}.
+        # substitute's own strictness already forgives exactly what Ansible
+        # does: `default()`/`d()`-guarded leaves, `omit`, literals,
+        # operators (raise_if_strict_undefined's own bare-ref rule), so
+        # deliberately-lenient nested values keep rendering.
+        #
+        # Ansible does NOT fail on an UNTOUCHED leaf, though: its lazy
+        # containers template only what an access reaches. A role dict with
+        # a sibling leaf `ssh.port: "{{ ansible_port }}"` pointing at a
+        # name set nowhere still answers
+        # `{{ BOOTSTRAP.hostname | default(inventory_hostname) }}` fine
+        # (ansibleguy.linux_bootstrap, issue #422 - krikri failed the
+        # hostname task on the untouched sibling's undefined reference).
+        # That laziness is the defer_unresolved walk (prepare_var's
+        # container recursion), while every strict whole-structure caller
+        # keeps the raise.
+        begin
+          render_leaf_value(raw, value, substitutor)
+        rescue e : Krikri::UndefinedVariableError
+          # The defer_unresolved carve-out (see the cheat-sheet comment on
+          # #rerender_nested_templates below): out of a strict render that
+          # proved the leaf bottoms out at a name set nowhere, the chain
+          # gets either the raw still-templated form (round-952484
+          # laziness) or the marked form (the template action plugin's
+          # collecting walk, #mark_deferred_undefined_leaf), and only a
+          # caller asking for neither raises. The rescue brackets ALL of
+          # the leaf's strict render sites: for the engine's deferred walk
+          # the live raise for a `{{ ansible_port }}`-style leaf comes from
+          # the whole-span structured probe (its strict-span check), not
+          # from the substitute call the carve-out originally wrapped.
+          # Extracted so this method stays within ameba's
+          # cyclomatic-complexity ceiling.
+          raise e unless defer_unresolved
+          mark_deferred_undefined_leaf(e, raw, value, deferred_leaves)
+        end
+      end
+
+      # The strict-render body of #rerender_string_value: whole-span
+      # values keep the expression's NATIVE type (ansible-core 2.19 native
+      # typing - see Rerender.whole_span_structured): a vars entry
+      # `b: "{{ 42 }}"` is the int 42, `"{{ '42' }}"` the str "42",
+      # `"{{ none }}"` None. nil (undefined, engine failure, or not
+      # actually whole-span) falls back to the substitute path below,
+      # which only re-runs the evaluation for a value that just resolved
+      # to nothing, so a side-effecting lookup in a whole-span value still
+      # runs exactly once.
+      private def self.render_leaf_value(raw : String, value : JSON::Any, substitutor : VarSubstitutor) : JSON::Any
         structured = Rerender.whole_span_structured(substitutor.vars, raw)
         return structured if structured
 
@@ -763,20 +894,7 @@ module Krikri
         # convention the module-arg finalization path records at
         # executor_vars_context.cr's native_containers branch).
         whole_span = VarSubstitutor.single_top_level_span?(raw.strip)
-        begin
-          rendered = substitutor.substitute(raw, strict: true, output: !whole_span)
-        rescue e : Krikri::UndefinedVariableError
-          # The defer_unresolved carve-out (see the cheat-sheet comment on
-          # #rerender_nested_templates above): out of a strict render that
-          # proved the leaf bottoms out at a name set nowhere, the chain
-          # gets either the raw still-templated form (round-952484
-          # laziness) or the marked form (the template action plugin's
-          # collecting walk, #mark_deferred_undefined_leaf), and only a
-          # caller asking for neither raises. Extracted so this method
-          # stays within ameba's cyclomatic-complexity ceiling.
-          raise e unless defer_unresolved
-          return mark_deferred_undefined_leaf(e, raw, value, deferred_leaves)
-        end
+        rendered = substitutor.substitute(raw, strict: true, output: !whole_span)
         stripped = raw.strip
         if whole_span
           render_pure_mustache_value(rendered, stripped, substitutor)
