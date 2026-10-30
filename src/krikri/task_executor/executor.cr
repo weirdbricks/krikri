@@ -493,6 +493,12 @@ module Krikri
       @fact_path : String? = nil,
       # See Play#remote_user.
       @remote_user : String? = nil,
+      # The play's `become:` keyword - the become flag the play's implicit
+      # Gathering Facts task inherits (real's implicit setup task is a real
+      # task carrying the play's become settings, so its become-plugin
+      # resolution - and its ansible_become_method var check - run there
+      # too; issue #395).
+      @play_become : Bool = false,
       # See Play#debugger.
       @debugger : String? = nil,
       # The playbook FILE path (not just #playbook_dir) - Ansible's

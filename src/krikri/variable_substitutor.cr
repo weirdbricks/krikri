@@ -95,6 +95,18 @@ module Krikri
     end
   end
 
+  # A task whose become is enabled and whose `ansible_become_method` var
+  # renders to None/empty: real's become_loader refuses an empty plugin
+  # name (ValueError in PluginLoader.get_with_context), which the task
+  # books as the fatal "Task failed: A non-empty plugin name is
+  # required." - raised before any module runs (issue #395:
+  # adarnimrod.openbsd-bootstrap exports that var from vars/main.yml, so
+  # even the play's implicit Gathering Facts task dies on it). Subclasses
+  # UndefinedVariableError so every existing resolve_task_become rescue
+  # site books it as the task failure it is, unchanged.
+  class BecomeMethodError < UndefinedVariableError
+  end
+
   # A Python list-method call's runtime failure ("'z' is not in list",
   # "pop from empty list", ...) surfacing through a STRICT render: real
   # 2.19.11 words the when:-side failure "Task failed: Error rendering

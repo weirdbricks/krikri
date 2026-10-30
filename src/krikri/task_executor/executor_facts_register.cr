@@ -170,6 +170,19 @@ module Krikri
             fatal_line = report_lines.pop
             report_lines.each { |line| puts line }
             puts fatal_line.colorize(:red)
+          elsif error_message && error_message.includes?(PluginManager::BECOME_METHOD_EMPTY)
+            # The become-method failure dies in real's task executor
+            # (become_loader's ValueError) before any module runs: the
+            # [ERROR] block is the collapsed single "Task failed." segment
+            # with NO Origin (the implicit task has no source position)
+            # and the fatal carries {"changed": false, "msg": ...} exactly
+            # like a regular task's (live-verified vs 2.19.11, issue #395).
+            # Use #includes? instead of == to handle any minor formatting
+            # differences in the error message while still detecting the
+            # become method failure condition.
+            ErrorBlock.emit(ErrorBlock::Node.new("Task failed.")
+              .with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(PluginManager::BECOME_METHOD_EMPTY)))
+            puts "fatal: [#{host.name}]: FAILED! => {\"changed\": false, \"msg\": \"Task failed: #{PluginManager::BECOME_METHOD_EMPTY}\"}".colorize(:red)
           else
             puts "failed: [#{host.name}]".colorize(:red)
             puts "  Error gathering facts: #{error_message}".colorize(:red)
@@ -241,6 +254,41 @@ module Krikri
       msg
     end
 
+    # The fatal message for a Gathering Facts task whose become is
+    # enabled and whose `ansible_become_method` var resolves to
+    # None/empty (see check_task_become_method's own comment for the
+    # ansible mechanics, issue #395), or nil when the gather proceeds.
+    # The become flag follows ansible's TaskExecutor._set_become_plugin
+    # order: an `ansible_become` var (when set and convertible) wins,
+    # otherwise the play's `become:` keyword. The method var is read
+    # from the same three layers the implicit task's vars would carry
+    # here - play-wide exported role vars (highest) > play vars >
+    # inventory host vars.
+    private def facts_become_method_failure(host : Host) : String?
+      context = host.vars.dup
+      @play_vars.each { |key, value| context[key] ||= value }
+      @all_role_vars.each { |key, value| context[key] = value }
+
+      substitutor = VarSubstitutor.new(vars: context, host_name: host.name)
+      become = if raw = context["ansible_become"]?
+                 decided = ansible_become_var_boolean(raw, substitutor)
+                 decided.nil? ? @play_become : decided
+               else
+                 @play_become
+               end
+      return nil unless become
+
+      raw = context["ansible_become_method"]?
+      return nil unless ansible_var_truthy?(raw)
+      return nil unless (method_raw = raw)
+
+      rendered = render_task_var_value(method_raw, context, host.name)
+      value = rendered.raw
+      return nil unless value.nil? || (value.is_a?(String) && value.empty?)
+
+      "Task failed: #{PluginManager::BECOME_METHOD_EMPTY}"
+    end
+
     private def gather_facts_for_host_measured(host : Host) : {Bool, String?, Bool}
       vars_context = Hash(String, JSON::Any).new
       host.vars.each { |key, value| vars_context[key] = value }
@@ -252,6 +300,20 @@ module Krikri
       # UNREACHABLE for what Ansible reports as a plain failure).
       if (conn_msg = unresolvable_connection_message(host))
         return {false, conn_msg, false}
+      end
+
+      # Real resolves the become plugin for the implicit setup task as
+      # well (it is a real task carrying the play's become settings), and
+      # a role's vars/main.yml is exported to every task in the play -
+      # Gathering Facts included - at very high precedence. A role var
+      # like `ansible_become_method: '{{ check.something if check is
+      # defined else None }}'` therefore templates to None there and
+      # fails the gather with "Task failed: A non-empty plugin name is
+      # required." before any facts module runs (adarnimrod.
+      # openbsd-bootstrap on ubuntu, issue #395: ansible's Gathering
+      # Facts fatal vs krikri's ok).
+      if (method_msg = facts_become_method_failure(host))
+        return {false, method_msg, false}
       end
 
       # If this gathers over SSH the wire payload needs

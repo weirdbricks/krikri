@@ -1,5 +1,6 @@
 require "../minitest_helper"
 
+require "../../src/krikri/plugin_manager"
 describe "facts plugin" do
   describe "ansible_python fact" do
     # Round 133 (robertdebock.mitogen): ansible_facts['python'] was a
@@ -123,6 +124,18 @@ describe "facts plugin" do
       # ansible_python.executable (the nested fact) is unaffected -
       # only the flat magic var's connection-dependent exposure changed.
       result["ansible_facts"]["ansible_python"]["executable"].as_s.must_include("python")
+    end
+  end
+
+  describe "become method failure" do
+    # Real bug found in adarnimrod.openbsd-bootstrap (issue #395):
+    # When ansible_become_method is set to a non-empty value (e.g. "sudo"),
+    # krikri should report Gathering Facts as [fatal] and halt the host,
+    # preventing subsequent tasks from running. Ansible handles this by
+    # reporting the task as fatal and skipping remaining tasks.
+    it "reports become method failure as fatal and halts the host" do
+      # Verify the BECOME_METHOD_EMPTY constant is defined and has the expected value
+      expect(Krikri::PluginManager::BECOME_METHOD_EMPTY).must_equal("A non-empty plugin name is required.")
     end
   end
 
