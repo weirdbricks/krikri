@@ -44,7 +44,20 @@ module Krikri
     # found (a Python exception inside `run`, no `ActionModule` in the
     # file, an unparseable wrapper response). Callers surface it as a
     # real task failure - it is never an "unsupported" condition.
+    #
+    # `detail` is set only for the TASK_FAILED kind: the plugin raised
+    # AnsibleError itself, which Ansible's task executor turns into the
+    # task's own failure with the bare exception text in the [ERROR]
+    # block and "Task failed: <text>" as the fatal msg (issue #411, on
+    # amtega.check_platform's `_check_platform` - live-verified vs
+    # 2.19.11). Callers render that shape from detail; a plain runner
+    # crash keeps detail nil and surfaces this exception's message.
     class ActionError < Exception
+      getter detail : String?
+
+      def initialize(message : String, @detail : String? = nil)
+        super(message)
+      end
     end
 
     # Raised when the mechanism itself is unavailable on this
@@ -64,6 +77,10 @@ module Krikri
     end
 
     UNAVAILABLE_KIND = "unavailable"
+    # The dispatched plugin raised AnsibleError inside run() - Ansible's
+    # own "this task failed" signal, not a runner crash (see ActionError
+    # #detail).
+    TASK_FAILED_KIND = "task_failed"
 
     # The CONTROLLER's own python3 - the interpreter Ansible needs on
     # the controller anyway (same detection pattern as
@@ -108,6 +125,9 @@ module Krikri
       unless result["ok"]?.try(&.as_bool?)
         kind = result["kind"]?.try(&.as_s?) || "error"
         detail = result["error"]?.try(&.as_s?) || "unknown error"
+        if kind == TASK_FAILED_KIND
+          raise ActionError.new("Task failed: #{detail}", detail)
+        end
         # Ansible words an import failure while loading the plugin file
         # as "failed to load", without the exception class name.
         message = case kind
@@ -166,6 +186,7 @@ module Krikri
       _unavailable = None
       try:
           from ansible.plugins.action import ActionBase
+          from ansible.errors import AnsibleError
       except Exception as exc:
           _unavailable = "%s: %s" % (type(exc).__name__, exc)
 
@@ -186,6 +207,19 @@ module Krikri
           if isinstance(value, bytes):
               return value.decode("utf-8", "replace")
           return str(value)
+
+
+      class _PassthroughTemplar(object):
+          # Krikri hands the plugin task_vars as plain values (the
+          # executor's own var context); Ansible would template them
+          # again here, which is a no-op for the literal data the
+          # supported plugins read (amtega.check_platform's
+          # check_platform_distributions dict and friends, issue #411).
+          # A plugin needing REAL templating gets its value untouched
+          # and fails like a plugin crashing in Ansible would.
+
+          def template(self, variable, **kwargs):
+              return variable
 
 
       def main():
@@ -242,8 +276,18 @@ module Krikri
               check_mode=bool(payload.get("check_mode")),
               diff=False,
           )
-          instance = plugin_class(task, connection, play_context, None, None)
-          result = instance.run(task_vars=payload.get("task_vars") or {})
+          instance = plugin_class(task, connection, play_context, None, _PassthroughTemplar())
+          try:
+              result = instance.run(task_vars=payload.get("task_vars") or {})
+          except AnsibleError as exc:
+              # An AnsibleError raised by the plugin itself IS the task's
+              # failure (Ansible's task executor reports it as the plain
+              # action-level "Task failed: <text>" shape, live-verified vs
+              # 2.19.11) - report the bare text under its own kind, not
+              # the class-name-prefixed runner-crash shape.
+              sys.stdout.write(json.dumps(
+                  {"ok": False, "kind": "task_failed", "error": "%s" % exc}))
+              return
           sys.stdout.write(json.dumps({"ok": True, "result": result},
                                       default=_serialize))
 
