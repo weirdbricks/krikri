@@ -46,6 +46,32 @@ describe "Krikri::VariableSubstitutor::FilterEngine (lists_mergeby_test.cr)" do
       result.as_a[0].as_h["m"].as_i.must_equal(2)
     end
 
+    # community.general's single-term form: the piped value with no
+    # further list argument is itself a LIST OF LISTS (real
+    # lists_mergeby.py: `len(terms) == 1` takes terms[0] whole, then
+    # flattens one level). claranet.mariadb's
+    # `[mariadb_users, _mariadb_hosts_patch | d([])] |
+    # community.general.lists_mergeby('name', ...)` is exactly that
+    # shape - it previously failed with "list item is not a dict"
+    # (issue #455).
+    it "merges a single piped list-of-lists (the one-term form)" do
+      value = j(%([[{"name": "a", "port": 1}], [{"name": "a", "host": "x"}, {"name": "b"}]]))
+      result = engine.apply(value, %(lists_mergeby("name")))
+      result.as_a.size.must_equal(2)
+      result.as_a[0].as_h["name"].as_s.must_equal("a")
+      result.as_a[0].as_h["port"].as_i.must_equal(1)
+      result.as_a[0].as_h["host"].as_s.must_equal("x")
+      result.as_a[1].as_h["name"].as_s.must_equal("b")
+    end
+
+    # The same flatten accepts bare dict elements mixed with list
+    # elements (`for l in lists: extend(l) if list else append(l)`).
+    it "flattens mixed list/dict elements in the one-term form" do
+      value = j(%([[{"name": "a", "v": 1}], {"name": "b", "v": 2}]))
+      result = engine.apply(value, %(lists_mergeby("name")))
+      result.as_a.map { |i| i.as_h["name"].as_s }.must_equal(["a", "b"])
+    end
+
     it "replaces nested dicts wholesale with recursive=False (default)" do
       value = j(%([{"name": "a", "opts": {"x": 1, "y": 2}}]))
       result = engine.apply(value, %(lists_mergeby([{"name": "a", "opts": {"z": 3}}], "name")))

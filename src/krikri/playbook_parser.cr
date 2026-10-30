@@ -150,6 +150,9 @@ module Krikri
     # in TaskExecutor#resolve_task_no_log against live vars, same
     # deferred-evaluation shape ignore_errors_expr/check_mode_expr use.
     property no_log_expr : String?
+    # True when the task wrote its own `no_log:` (nearest scope wins over a
+    # block's no_log: that its children inherit).
+    property? no_log_explicit : Bool = false
     # `ignore_unreachable: true` - an unreachable host does not fail the
     # play at this task; it is reported, counted as ignored, and the host
     # carries on to the next task (which may itself be unreachable).
@@ -4394,6 +4397,22 @@ module Krikri
       end
     end
 
+    # Ansible resolves no_log: through the parent chain, so a block's value
+    # censors loop items and results of every task in block:/rescue:/always:
+    # (claranet.mariadb: `(item=(censored due to no_log))` on a skipped
+    # looped set_fact inside a `no_log: "{{ not mariadb_debug }}"` block).
+    private def self.inherit_no_log(block : Task) : Nil
+      [block.block_tasks, block.rescue_tasks, block.always_tasks].each do |children|
+        children.try &.each do |child|
+          unless child.no_log_explicit?
+            child.no_log = block.no_log?
+            child.no_log_expr = block.no_log_expr
+          end
+          inherit_no_log(child)
+        end
+      end
+    end
+
     private def self.directive(task_hash : Hash(YAML::Any, YAML::Any), name : String) : YAML::Any?
       task_hash[name]? || task_hash["ansible.builtin.#{name}"]? || task_hash["ansible.legacy.#{name}"]?
     end
@@ -4847,6 +4866,7 @@ module Krikri
       task.ignore_errors_expr = template_expression(task_hash["ignore_errors"]?)
       task.no_log = parse_become_value(task_hash["no_log"]?) || false
       task.no_log_expr = template_expression(task_hash["no_log"]?)
+      task.no_log_explicit = !task_hash["no_log"]?.nil?
       task.ignore_unreachable = parse_become_value(task_hash["ignore_unreachable"]?) || false
       task.throttle = task_hash["throttle"]?.try { |tv_blk| safe_yaml_to_string(tv_blk).to_i? } || 0
       task.remote_user = task_hash["remote_user"]?.try { |entry| safe_yaml_to_string(entry).strip }
@@ -5776,6 +5796,7 @@ module Krikri
       # rescue: and always: (real resolves it through the parent chain), so a
       # failing rescue task under `ignore_errors: true` is ignored too.
       inherit_ignore_errors(task)
+      inherit_no_log(task)
       task.become = resolve_become(task_hash, play)
       task.become_expr = become_expr(task_hash)
       task.become_user = task_hash["become_user"]?.try { |v| safe_yaml_to_string(v) } || play.become_user
@@ -6598,6 +6619,31 @@ module Krikri
             # back into an Array(String) on the plugin side.
             statements = value.as_a.map { |item| stringify_value(item) }
             params[key.to_s] = statements.to_json
+          elsif (module_name == "ansible.mysql.mysql_query" || module_name == "community.mysql.mysql_query") &&
+                (key.to_s == "positional_args" || key.to_s == "named_args") &&
+                (value.as_a? || value.as_h?)
+            # `positional_args:` (a list) and `named_args:` (a list or a
+            # dict) are pymysql's client-side bound parameters - the same
+            # JSON wire as `query:` above, because the generic comma-join
+            # is even more lossy here: claranet.mariadb's
+            # `positional_args: ['']` (a single EMPTY binding, secure
+            # -installation.yml "Get list of hosts for the anonymous
+            # user.") comma-joins to exactly "", which the plugin-side
+            # JSON decode could not tell apart from an unset parameter
+            # and failed the task with "positional_args must be a list"
+            # before ever reaching the server (real ansible fails later,
+            # at the connection, live-verified). A multi-element list
+            # would equally fuse on every comma inside an SQL-bound
+            # value. JSON-encoded here; MysqlQueryPlugin#bind_arguments
+            # decodes it back on the plugin side.
+            params[key.to_s] =
+              if list = value.as_a?
+                list.map { |item| stringify_value(item) }.to_json
+              else
+                value.as_h.each_with_object(Hash(String, String).new) do |pair, encoded|
+                  encoded[pair[0].to_s] = stringify_value(pair[1])
+                end.to_json
+              end
           elsif (module_name == "community.general.ini_file" || module_name == "ini_file") && key.to_s == "values" && value.as_a?
             # `values:` (community.general.ini_file's list form of
             # `value:`, Ansible module's do_ini) has the same comma-joining

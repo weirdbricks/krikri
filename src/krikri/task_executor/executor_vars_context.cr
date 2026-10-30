@@ -2345,23 +2345,36 @@ module Krikri
       parsed.raw.is_a?(Array) || parsed.raw.is_a?(Hash) ? parsed : nil
     end
 
+    # The bare JSON container behind a mysql_query bound-parameters wire
+    # value (parse_module_params's positional_args/named_args branch), or
+    # nil for any other shape.
+    private def json_container_value(stripped_value : String) : JSON::Any?
+      return nil unless stripped_value.starts_with?('[') || stripped_value.starts_with?('{')
+      parsed = begin
+        JSON.parse(stripped_value)
+      rescue JSON::ParseException
+        return nil
+      end
+      parsed.raw.is_a?(Array) || parsed.raw.is_a?(Hash) ? parsed : nil
+    end
+
     # Renders a native-typed msg container's STRING leaves through the
     # substitutor (each list item is its own template in Ansible - mixed
     # text around a `{{ }}` span stays mixed text) and re-encodes the
     # NATIVE_TYPED_PREFIX wire; non-string leaves pass through natively.
     private def render_debug_msg_container(substitutor : VarSubstitutor, node : JSON::Any) : String
-      Krikri::NATIVE_TYPED_PREFIX + render_debug_msg_leaves(substitutor, node).to_json
+      Krikri::NATIVE_TYPED_PREFIX + render_json_container_leaves(substitutor, node).to_json
     end
 
-    private def render_debug_msg_leaves(substitutor : VarSubstitutor, node : JSON::Any) : JSON::Any
+    private def render_json_container_leaves(substitutor : VarSubstitutor, node : JSON::Any) : JSON::Any
       case raw = node.raw
       when String
         msg_leaf_rendered(substitutor, raw)
       when Array
-        JSON::Any.new(raw.map { |item| render_debug_msg_leaves(substitutor, item) })
+        JSON::Any.new(raw.map { |item| render_json_container_leaves(substitutor, item) })
       when Hash
         rendered = Hash(String, JSON::Any).new
-        raw.each { |k, v| rendered[k] = render_debug_msg_leaves(substitutor, v) }
+        raw.each { |k, v| rendered[k] = render_json_container_leaves(substitutor, v) }
         JSON::Any.new(rendered)
       else
         node
@@ -2491,6 +2504,22 @@ module Krikri
         # undefined" shape is unaffected.
         if module_name == "ansible.builtin.assert" && key == "that"
           result[key] = value
+          next
+        end
+        # mysql_query's positional_args:/named_args: JSON wire (see
+        # parse_module_params) carries template LEAVES, and rendering the
+        # container as flat output text would paste a bound value's own
+        # quotes/commas/backslashes into the JSON unescaped and corrupt
+        # the list (claranet.mariadb's looped DELETE with
+        # `item.Host`-style bindings, issue #455). Decode, render
+        # leaf-by-leaf the way Ansible templates each list element
+        # individually, and re-encode - msg_leaf_rendered keeps a
+        # whole-span leaf's native type, which pymysql binding wants too
+        # (a YAML-int binding stays an unquoted SQL literal).
+        if (module_name == "ansible.mysql.mysql_query" || module_name == "community.mysql.mysql_query") &&
+           (key == "positional_args" || key == "named_args") &&
+           (bound_container = json_container_value(value.strip))
+          result[key] = render_json_container_leaves(substitutor, bound_container).to_json
           next
         end
         # Dynamic variable names - `set_fact: "{{ item.key }}": "{{ item.value }}"`

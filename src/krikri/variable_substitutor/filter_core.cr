@@ -1058,24 +1058,41 @@ module Krikri
         end
       end
 
-      # `lists_mergeby(*lists, merge_key, recursive=False, list_merge='replace')`:
-      # merges dict items sharing the same `merge_key` value.
+      # merges dict items sharing the same `merge_key` value, first-seen order.
+      #
+      # Flattens one level exactly like community.general's own
+      # lists_mergeby (its `for l in lists: extend(list) else append`):
+      # the piped value with NO further list argument is itself a list OF
+      # LISTS (claranet.mariadb's
+      # `[mariadb_users, _mariadb_hosts_patch | d([])] |
+      # community.general.lists_mergeby('name', ...)` - the single-term
+      # branch takes terms[0] whole), while each element of a multi-list
+      # call is normally already a dict item. A bare dict element (the
+      # flat `list_of_dicts | lists_mergeby('k')` form) appends as one
+      # item either way.
       def self.lists_mergeby(lists : Array(JSON::Any), merge_key : String, recursive : Bool, list_merge : String) : JSON::Any
         index = {} of String => JSON::Any
         key_values = {} of String => JSON::Any
         lists.each do |list|
           items = list.as_a? || next
           items.each do |item|
-            hash = item.as_h? || raise "lists_mergeby: list item is not a dict: #{item.to_json}"
-            item_key = hash[merge_key]? || raise "lists_mergeby: merge key '#{merge_key}' not found in list item: #{item.to_json}"
-            key = item_key.to_json
-            key_values[key] = item_key unless key_values.has_key?(key)
-            if existing = index[key]?
-              merged = existing.as_h.dup
-              merge_into(merged, hash, recursive, list_merge)
-              index[key] = JSON::Any.new(merged)
+            if sublist = item.as_a?
+              entries = sublist
             else
-              index[key] = item
+              entries = [item]
+            end
+            entries.each do |entry|
+              hash = entry.as_h? || raise "lists_mergeby: list item is not a dict: #{entry.to_json}"
+              item_key = hash[merge_key]? || raise "lists_mergeby: merge key '#{merge_key}' not found in list item: #{entry.to_json}"
+              key = item_key.to_json
+              key_values[key] = item_key unless key_values.has_key?(key)
+              if existing = index[key]?
+                merged = existing.as_h.dup
+                merge_into(merged, hash, recursive, list_merge)
+                index[key] = JSON::Any.new(merged)
+              else
+                index[key] = entry
+              end
             end
           end
         end

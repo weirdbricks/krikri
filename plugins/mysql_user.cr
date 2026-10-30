@@ -98,41 +98,18 @@ module Krikri
       # user"). That rejection happens in Ansible's argument-spec check,
       # which krikri runs controller-side before this plugin is ever
       # reached; keep the plugin itself reading the canonical name only.
-      name = @params["name"]?
-      unless name
-        # AnsibleModule's own required-arguments failure is plural
-        # "arguments" even for a single missing param (same wording the
-        # dpkg_selections fix aligned to) - live-verified against
-        # community.mysql.mysql_user via the podman-diff
-        # mysql_user_edge_cases W8 harness case.
-        return PluginResult.new(changed: false, failed: true, msg: "missing required arguments: name")
+      if err = missing_required_arguments_error
+        return err
       end
 
-      host = @params["host"]? || "localhost"
-      state = @params["state"]? || "present"
-      # Real community.mysql's argument-spec choices check fails the
-      # task BEFORE any connection attempt; this engine accepted any
-      # unknown state as if it were present and CREATED the account
-      # (W7: state: present-nowhere reported changed=true "User added")
-      # where Ansible fails with the standard choices message
-      # (live-verified, same harness case).
-      unless ["present", "absent"].includes?(state)
-        return PluginResult.new(changed: false, failed: true,
-          msg: "value of state must be one of: absent, present, got: #{state}")
+      params = read_params
+
+      if err = argument_spec_error(params)
+        return err
       end
-      password = @params["password"]?
-      priv = @params["priv"]?
-      append_privs = true?(@params["append_privs"]?)
-      update_password = @params["update_password"]? || "always"
-      check_mode = true?(@params["_ansible_check_mode"]?)
-      host_all = true?(@params["host_all"]?)
 
-      plugin = @params["plugin"]?
-      plugin_hash_string = @params["plugin_hash_string"]?
-      plugin_auth_string = @params["plugin_auth_string"]?
-      @salt = @params["salt"]?
-
-      if err = validate_inputs(update_password, password, plugin, plugin_hash_string, plugin_auth_string)
+      if err = validate_inputs(params.update_password, params.password, params.plugin,
+           params.plugin_hash_string, params.plugin_auth_string)
         return err
       end
 
@@ -145,10 +122,13 @@ module Krikri
         config_file: @params["config_file"]? || "~/.my.cnf",
       )
 
+      @salt = @params["salt"]?
+
       result = with_shape(
-        run_with_db(uri, name, host, state, password, update_password, priv, append_privs, plugin,
-          plugin_hash_string, plugin_auth_string, check_mode, host_all),
-        name
+        run_with_db(uri, params.name, params.host, params.state, params.password,
+          params.update_password, params.priv, params.append_privs, params.plugin,
+          params.plugin_hash_string, params.plugin_auth_string, params.check_mode, params.host_all),
+        params.name
       )
       # mysql_user.py's account work happens after mysql_connect, so the
       # connector warn inside it has been recorded even on a failed
@@ -174,6 +154,60 @@ module Krikri
           msg: "unable to connect to database, check login_user and login_password are correct or #{option_file_display} has the credentials. Exception message: #{ex.message}"))
     rescue ex : MySql::Connection::PacketError
       PluginHelpers::MysqlConnection.add_mysqldb_connector_warning(PluginHelpers::DbErrors.query_failed(ex, "MySQL"))
+    end
+
+    private record ParsedParams, name : String, host : String, state : String, password : String?,
+      priv : String?, append_privs : Bool, update_password : String, check_mode : Bool,
+      host_all : Bool, plugin : String?, plugin_hash_string : String?, plugin_auth_string : String?
+
+    # AnsibleModule's own required-arguments failure is plural
+    # "arguments" even for a single missing param (same wording the
+    # dpkg_selections fix aligned to) - live-verified against
+    # community.mysql.mysql_user via the podman-diff
+    # mysql_user_edge_cases W8 harness case.
+    private def missing_required_arguments_error : PluginResult?
+      return PluginResult.new(changed: false, failed: true, msg: "missing required arguments: name") unless @params["name"]?
+      nil
+    end
+
+    private def read_params : ParsedParams
+      # Python's truthiness gates every password branch in the real
+      # module (`if bool(password):` in user_mod/user_add): an EMPTY
+      # string password is "not provided" - no IDENTIFIED clause on
+      # create, no hash compare on update (claranet.mariadb's
+      # `password: "{{ mariadb_admin_password }}"` with the role default
+      # '' reported changed where real reported ok, issue #455). Both an
+      # empty string and an explicit null normalize to nil.
+      password = @params["password"]?
+      password = nil if password.try(&.empty?)
+      ParsedParams.new(
+        @params["name"],
+        @params["host"]? || "localhost",
+        @params["state"]? || "present",
+        password,
+        @params["priv"]?,
+        true?(@params["append_privs"]?),
+        @params["update_password"]? || "always",
+        true?(@params["_ansible_check_mode"]?),
+        true?(@params["host_all"]?),
+        @params["plugin"]?,
+        @params["plugin_hash_string"]?,
+        @params["plugin_auth_string"]?,
+      )
+    end
+
+    # Real community.mysql's argument-spec choices check fails the
+    # task BEFORE any connection attempt; this engine accepted any
+    # unknown state as if it were present and CREATED the account
+    # (W7: state: present-nowhere reported changed=true "User added")
+    # where Ansible fails with the standard choices message
+    # (live-verified, same harness case).
+    private def argument_spec_error(params : ParsedParams) : PluginResult?
+      unless ["present", "absent"].includes?(params.state)
+        return PluginResult.new(changed: false, failed: true,
+          msg: "value of state must be one of: absent, present, got: #{params.state}")
+      end
+      nil
     end
 
     # The config_file path as real's module shows it in the

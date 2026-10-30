@@ -162,4 +162,33 @@ describe "mysql_user default-plugin password path" do
       drop_spec_user(server)
     end
   end
+
+  # Real gates EVERY password branch on Python truthiness
+  # (`if bool(password):` in user_mod/user_add): an EMPTY string password
+  # is "not provided" - no hash compare, no ALTER, task reports ok.
+  # claranet.mariadb's `password: "{{ mariadb_admin_password }}"` with
+  # the role default '' reported changed where real reported ok (issue
+  # #455). Live-verified vs 2.19.11 + community.mysql 5.0.2 on a
+  # throwaway mariadb:11 container (real: ok with password: '').
+  it "treats an empty-string password as not provided on an existing account" do
+    servers = SERVERS.select { |server| daemon_reachable?(server[:host], server[:port]) }
+    skip "no MySQL/MariaDB server on 33306/33307" if servers.empty?
+
+    servers.each do |server|
+      drop_spec_user(server)
+
+      created = PluginSpecHelper.run("mysql_user", {
+        "name" => SPEC_USER, "host" => "%", "password" => "krikri-np-empty",
+      }.merge(login_args(server)))
+      skip "cannot create the probe account on this server" if failed?(created)
+
+      result = PluginSpecHelper.run("mysql_user", {
+        "name" => SPEC_USER, "host" => "%", "password" => "",
+      }.merge(login_args(server)))
+      failed?(result).must_equal(false)
+      result["changed"].as_bool.must_equal(false)
+
+      drop_spec_user(server)
+    end
+  end
 end
