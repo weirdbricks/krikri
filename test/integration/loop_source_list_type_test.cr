@@ -313,3 +313,82 @@ describe "loop sources whose resolved value is itself MIXED template text" do
     output.wont_include("item=undefined")
   end
 end
+
+# Issue #379 (HanXHX.debian_bootstrap): a vars-level default whose raw
+# value is itself a block-tag template (`dbs_repo_old: "{% if
+# ansible_local.apt_sources.dbs_repo_old | d() %}{{
+# ansible_local.apt_sources.dbs_repo_old }}{% else %}['dummy']{% endif
+# %}"`). Ansible's native templating types the render by the RUNTIME
+# output chunks of the branch actually taken, not by how the rendered
+# text reads: the `['dummy']` else-branch finalizes as the plain str
+# "['dummy']" (cold phase: `loop:` hard-fails "not 'str'" with exit 2
+# - this engine used to re-parse the text into a bogus one-item list
+# and run the task `ok`), while a branch whose only output is one
+# `{{ }}` expression keeps that expression's native type (warm phase:
+# over a real list fact the loop iterates it). Both verdicts
+# live-verified against ansible-core 2.19.11.
+describe "block-tag loop sources type by the taken output chunk, not by text" do
+  it "loop: over a block-tag var rendering list-looking text fails as 'str'" do
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          repo_old: "{% if false %}{{ x }}{% else %}['dummy']{% endif %}"
+        tasks:
+          - name: looped
+            ansible.builtin.debug:
+              msg: "item={{ item }}"
+            loop: "{{ repo_old }}"
+      YAML
+
+    status.exit_code.must_equal(2, output)
+    output.must_include("The `loop` value must resolve to a 'list', not 'str'.")
+    output.must_include("Provide a list of items/templates, or a template resolving to a list.")
+    output.wont_include("item=dummy")
+  end
+
+  it "with_items: wraps the same list-looking rendered text as ONE string item" do
+    # Verified live: ansible iterates the STRING "['a','b']" as a single
+    # item - legacy lookups no longer safe-eval rendered text either.
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          blockstr: "{% if true %}['a','b']{% else %}zz{% endif %}"
+        tasks:
+          - name: looped
+            ansible.builtin.debug:
+              msg: "got {{ item }}"
+            with_items: "{{ blockstr }}"
+      YAML
+
+    status.success?.must_equal(true, output)
+    output.must_include("(item=['a','b'])")
+    output.wont_include("got a")
+  end
+
+  it "loop: over the single-expression branch of the same template iterates the real list" do
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          a_struct:
+            - one two main
+            - three four main
+          templ: "{% if a_struct is defined %}{{ a_struct }}{% else %}['dummy']{% endif %}"
+        tasks:
+          - name: looped
+            ansible.builtin.debug:
+              msg: "item={{ item }}"
+            loop: "{{ templ }}"
+      YAML
+
+    status.success?.must_equal(true, output)
+    output.must_include("item=one two main")
+    output.must_include("item=three four main")
+    output.wont_include("must resolve to a 'list'")
+  end
+end

@@ -1794,8 +1794,41 @@ module Krikri
         # 'list', not 'str'" instead of the single-item list
         # Ansible produces from with_items:'s own scalar-wrapping.
         if raw.includes?("{%") || raw.includes?("{#")
-          rendered = VariableSubstitutor::JinjaRenderer.new(vars_context).render(raw)
-          current = Krikri.parse_json_or_python_literal(rendered)
+          # Ansible's native templating types a rendered template by
+          # RUNTIME output chunks, not by static AST: when the taken
+          # branch contributes exactly ONE `{{ }}` expression chunk and
+          # no text of its own, that chunk keeps its native type (a
+          # `{% if %}{{ a_real_list }}{% else %}['dummy']{% endif %}`
+          # over a present fact iterates as a list - HanXHX.debian_
+          # bootstrap's warm phase); literal text - including the
+          # `['dummy']` else-branch of that same template - finalizes
+          # as a plain STRING however list-looking it reads (the cold
+          # phase then hard-fails "The `loop` value must resolve to a
+          # 'list', not 'str'."; live-verified vs 2.19.11, issue #379).
+          # Re-parsing the rendered text unconditionally (the old
+          # behavior) silently iterated the cold case.
+          renderer = VariableSubstitutor::JinjaRenderer.new(vars_context)
+          rendered = renderer.render(raw)
+          current = JSON::Any.new(rendered)
+          raw.scan(/\{\{(.*?)\}\}/m) do |span_match|
+            span = span_match[1].strip
+            next if span.empty?
+            # The span's alone-rendered display equals the whole
+            # template's render iff that expression was the only output
+            # chunk the taken path emitted (literal text or untrimmed
+            # whitespace around it would make the two differ - exactly
+            # ansible's multi-chunk finalization staying a string).
+            next unless renderer.render("{{ #{span} }}") == rendered
+            typed = begin
+              VariableSubstitutor::JinjaRenderer.evaluate_structured(span, vars_context)
+            rescue
+              nil
+            end
+            if typed
+              current = typed
+              break
+            end
+          end
         else
           current = evaluate_bare_mustache_preserving_type(raw, vars_context) || begin
             inner = raw.strip
