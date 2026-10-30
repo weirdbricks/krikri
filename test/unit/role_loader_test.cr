@@ -1,6 +1,7 @@
 require "../minitest_helper"
 require "file_utils"
 require "../../src/krikri/role_loader"
+require "../../src/krikri/tag_filter"
 
 private def roles_root : String
   PluginSpecHelper.tmp_path("role_loader_spec")
@@ -276,6 +277,65 @@ describe Krikri::RoleLoader do
     tasks, _ = Krikri::RoleLoader.load_roles(roles_yaml("- dependent"), fresh_play, roles_root)
 
     tasks.map(&.name).must_equal(["base task", "dependent task"])
+  end
+
+  # Real bug found benchmarking abims_sbr.sequenceserver (issue #391): its
+  # meta/main.yml writes every dependency as `- role: nginxinc.nginx, tags: never`
+  # - the scalar tag form. Only the list form (`tags: [never]`) was read, so
+  # the `never` was silently dropped and the dependency roles' whole task
+  # trees RAN on a plain no-`--tags` invocation, where real Ansible skips
+  # them entirely (tag-excluded tasks print nothing at all - no banners,
+  # no skipping lines - so the output diverged from the first dependency
+  # task header onward).
+  it "applies a meta dependency's SCALAR tags: to the dependency's tasks" do
+    build_role("base") { |role| role.tasks(<<-YAML) }
+      - name: base task
+        ansible.builtin.debug:
+          msg: base
+      YAML
+
+    build_role("dependent") do |role|
+      role.tasks(<<-YAML)
+        - name: dependent task
+          ansible.builtin.debug:
+            msg: dependent
+        YAML
+      role.meta("dependencies:\n  - role: base\n    tags: never\n")
+    end
+
+    tasks, _ = Krikri::RoleLoader.load_roles(roles_yaml("- dependent"), fresh_play, roles_root)
+
+    base_task = tasks.first
+    base_task.name.must_equal("base task")
+    base_task.tags.must_include("never")
+
+    # The tag is not decorative: on an ordinary no-`--tags` run the
+    # dependency's task tree is filtered out entirely (exactly what real
+    # Ansible does with a `tags: never` role dependency), while an
+    # explicit `--tags never` asks for it and runs it.
+    kept = Krikri::TagFilter.apply(tasks, [] of String, [] of String)
+    kept.map(&.name).must_equal(["dependent task"])
+
+    asked = Krikri::TagFilter.apply(tasks, ["never"], [] of String)
+    # The untagged parent task stays out under --tags never - real Ansible
+    # (live-verified) runs ONLY the never-tagged dependency task there.
+    asked.map(&.name).must_equal(["base task"])
+  end
+
+  it "applies a play roles: entry's SCALAR tags: to the role's tasks" do
+    build_role("tagged_role") do |role|
+      role.tasks(<<-YAML)
+        - name: tagged role task
+          ansible.builtin.debug:
+            msg: hi
+        YAML
+    end
+
+    tasks, _ = Krikri::RoleLoader.load_roles(roles_yaml("- role: tagged_role\n  tags: mytag\n"), fresh_play, roles_root)
+
+    tasks.first.tags.must_include("mytag")
+    kept = Krikri::TagFilter.apply(tasks, ["mytag"], [] of String)
+    kept.map(&.name).must_equal(["tagged role task"])
   end
 
   it "puts a dependency's when: ahead of a dependency task's own multi-item when: list" do

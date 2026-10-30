@@ -2380,6 +2380,44 @@ describe Krikri::PlaybookParser do
       playbook.plays[0].tasks[0].tags.must_equal(["imported"])
     end
 
+    # Real bug class of issue #391 (abims_sbr.sequenceserver): role entries
+    # (and, the same way, import statements) accept a SCALAR tags: value -
+    # `tags: never` is the usual form - and only reading the list form
+    # silently dropped it, so a `tags: never` import ran where real Ansible
+    # skips the whole imported task tree on a plain no-`--tags` invocation.
+    it "applies the import's own SCALAR tags: to each imported task individually" do
+      root = import_tasks_root("import_tasks_scalar_tags_spec")
+      File.write(File.join(root, "common.yml"), <<-YAML)
+        - name: t
+          ansible.builtin.debug:
+            msg: hi
+        YAML
+
+      playbook = Krikri::PlaybookParser.parse_string(<<-YAML, File.join(root, "site.yml"))
+        - name: play
+          hosts: all
+          tasks:
+            - import_tasks: common.yml
+              tags: never
+        YAML
+
+      playbook.plays[0].tasks[0].tags.must_equal(["never"])
+    end
+
+    it "parses a SCALAR tags: on the play itself" do
+      playbook = Krikri::PlaybookParser.parse_string(<<-YAML)
+        - name: play
+          hosts: all
+          tags: mytag
+          tasks:
+            - name: t
+              ansible.builtin.debug:
+                msg: hi
+        YAML
+
+      playbook.plays[0].tags.must_equal(["mytag"])
+    end
+
     it "applies the import's own notify: to each imported task individually" do
       # Real bug found benchmarking filviu.activemq's own "Install
       # apachemq {{ activemq_version }}" (`import_tasks: install.yml,
