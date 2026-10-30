@@ -380,6 +380,17 @@ module Krikri
         text = warning.as_s? || warning.to_s
         emit_display_warning(text)
       end
+      # The facts gatherer's interpreter-DISCOVERY warnings (controller-side
+      # Display warnings in real, never result keys) ride an internal
+      # marker on an explicit `setup:` task's result - emit and strip here,
+      # the same way the implicit gather's own path does (see
+      # gather_facts_for_host_measured).
+      if (top = result.as_h?) && top.has_key?("_ansible_discovery_warning")
+        top["_ansible_discovery_warning"]?.try(&.as_a?).try &.each do |warning|
+          emit_display_warning(warning.as_s? || warning.to_s)
+        end
+        result = JSON::Any.new(top.reject("_ansible_discovery_warning"))
+      end
       emit_debug_template_error_warning(source_task, result)
 
       # Console lines a controller-side action plugin produced ITSELF
@@ -1091,6 +1102,28 @@ module Krikri
         cause = ErrorBlock::Node.new(msg, source_context: param_origin)
         ErrorBlock.emit(root.with_chain(ErrorBlock::DIRECT_CAUSE, true, cause))
         return
+      end
+      # A module dispatched under a `connection: local` override whose
+      # resolved interpreter (the host's ansible_python_interpreter var
+      # or its gathered discovered_interpreter_python fact) is missing
+      # on the CONTROLLER: real's action raises the module-
+      # deserialization AnsibleError WITH help_text, so the chain is the
+      # three-link action shape - "Task failed." at the task's Origin,
+      # the bare "Action failed." middle, then the message + help_text
+      # leaf (issue #374, 2kloc.trellis-monit's `find:` task; shape
+      # live-captured vs 2.19.11). The generic _ansible_action_level
+      # routing below would fold it into one segment and lose both the
+      # middle link and the help text.
+      if interp = result["_ansible_interpreter_missing"]?.try(&.as_s?)
+        unless interp.empty?
+          mid = ErrorBlock::Node.new("Action failed.")
+          mid.with_chain(ErrorBlock::DIRECT_CAUSE, true,
+            ErrorBlock::Node.new("The module interpreter '#{interp}' was not found.",
+              help_text: "Consider overriding the configured interpreter path for this host. See stdout/stderr for the returned output."))
+          ErrorBlock.emit(ErrorBlock::Node.new("Task failed.", source_context: origin)
+            .with_chain(ErrorBlock::DIRECT_CAUSE, true, mid))
+          return
+        end
       end
       # A plugin flagging _ansible_action_level failed in Ansible's controller-
       # side ACTION plugin (a bare AnsibleActionFail: no "Module failed."

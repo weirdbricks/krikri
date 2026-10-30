@@ -127,6 +127,29 @@ module Krikri
       false
     end
 
+    # The rc-127 interpreter-not-found failure the module bootstrap
+    # produces when the resolved interpreter cannot be executed - the
+    # same payload whether the path came from the host's configured
+    # ansible_python_interpreter or from discovery's fallback (the
+    # executor renders the pretty fatal block from the
+    # interpreter_missing marker either way).
+    private def missing_interpreter_failure(interpreter : String) : String
+      {
+        "changed" => false,
+        "failed"  => true,
+        "msg"     => "The module interpreter '#{interpreter}' was not found. Consider overriding the configured interpreter path for this host. See stdout/stderr for the returned output.",
+        "stderr"  => "/bin/sh: 1: #{interpreter}: not found",
+        "rc"      => 127,
+        # Not an ansible result key - a marker for the executor, which
+        # needs the configured path itself to reproduce ansible's
+        # interpreter-not-found fatal block (the msg alone only carries
+        # it embedded in prose). shell_dash lets the executor pick the
+        # remote shell-error wording the target's own /bin/sh prints.
+        "interpreter_missing" => interpreter,
+        "shell_dash"          => dash_shell?,
+      }.to_json
+    end
+
     # The exact block ansible-playbook prints when the implicit setup
     # module dies with rc 127 on a missing interpreter (live-verified
     # output): the failed-task banner, the cause chain, the sub-event
@@ -203,6 +226,53 @@ module Krikri
       output.to_s.strip
     rescue
       ""
+    end
+
+    # Ansible's INTERPRETER_PYTHON_FALLBACK default (ansible-core
+    # 2.19.11, ansible/config/base.yml) - the ordered candidate list its
+    # interpreter discovery probes. Discovery is deliberately dumb: one
+    # `command -v` per candidate through the connection's /bin/sh, and
+    # the first absolute path in the output wins, /usr/bin/python3 when
+    # nothing does. That is why a Ubuntu 22.04 target discovers the
+    # VERSIONED /usr/bin/python3.10 and not whatever its `python3`
+    # resolves to - the value this engine's python facts used to stamp
+    # into discovered_interpreter_python by probing under
+    # find_executable("python3"), which real never reports (issue #374:
+    # the divergence is observable from the controller, where a
+    # `connection: local` task executes the discovered path).
+    INTERPRETER_PYTHON_FALLBACK = ["python3.13", "python3.12", "python3.11", "python3.10", "python3.9", "python3.8", "/usr/bin/python3", "python3"]
+
+    # Runs ansible's discovery bootstrap on THIS machine (the plugin
+    # executes on the target for a remote gather, so "this machine" is
+    # the target there, exactly like real's `_low_level_execute_command`
+    # through the connection). Returns {interpreter, found_any}:
+    # found_any distinguishes ansible's two fallback shapes - "no
+    # interpreters found" (warning, early return, no second warning)
+    # from "unexpected bootstrap output" (which real treats as the
+    # fallback with the ordinary discovered-interpreter warning).
+    def discover_python_interpreter : {String, Bool}
+      bootstrap = "echo FOUND; #{INTERPRETER_PYTHON_FALLBACK.map { |python| "command -v '#{python}'" }.join("; ")}; echo ENDFOUND"
+      parse_discovery_output(capture_merged("/bin/sh", ["-c", bootstrap]))
+    end
+
+    # The FOUND/ENDFOUND parsing half of discover_interpreter: only
+    # absolute paths count (ansible's `if interp.startswith('/')`), the
+    # first one wins, and output that does not match the bootstrap
+    # wrapper at all falls back to /usr/bin/python3 the way real's
+    # caught-ValueError path does.
+    def parse_discovery_output(raw : String) : {String, Bool}
+      if match = raw.match(/\AFOUND(.*)ENDFOUND/m)
+        found = match[1].split('\n').map(&.strip).select(&.starts_with?("/"))
+        return {found.first, true} unless found.empty?
+        return {"/usr/bin/python3", false}
+      end
+      {"/usr/bin/python3", true}
+    end
+
+    # Python repr() of the fallback list, for ansible's "No python
+    # interpreters found for host 'x' (tried [...])." warning text.
+    def interpreter_fallback_repr : String
+      "[" + INTERPRETER_PYTHON_FALLBACK.map { |python| "'#{python}'" }.join(", ") + "]"
     end
 
     # The /proc and /sys file reads that used to go through
@@ -420,7 +490,7 @@ module Krikri
     #
     # Subsetting exists to skip the EXPENSIVE families: `!hardware` avoids
     # reading every block device, `!mounts` avoids statting every mount.
-    def gather_facts(subset : Array(String) = [] of String, remote_connection : Bool = false, gather_timeout : Int64? = nil, fact_path : String? = DEFAULT_FACT_PATH) : FactSet
+    def gather_facts(subset : Array(String) = [] of String, remote_connection : Bool = false, gather_timeout : Int64? = nil, fact_path : String? = DEFAULT_FACT_PATH, python_interpreter : String? = nil) : FactSet
       # No tokens at all means Ansible's argument-spec default
       # gather_subset=["all"], not a bare "min" resolution.
       subset = ["all"] if subset.empty?
@@ -445,7 +515,7 @@ module Krikri
       if families.includes?("min")
         jobs << FactJob.new("hostname", ->(f : FactSet) { gather_hostname(f) })
         jobs << FactJob.new("os_facts", ->(f : FactSet) { gather_os_facts(f) })
-        jobs << FactJob.new("python_facts", ->(f : FactSet) { gather_python_facts(f, remote_connection) })
+        jobs << FactJob.new("python_facts", ->(f : FactSet) { gather_python_facts(f, remote_connection, python_interpreter) })
         jobs << FactJob.new("user_facts", ->(f : FactSet) { gather_user_facts(f) })
         jobs << FactJob.new("date_time_facts", ->(f : FactSet) { gather_date_time_facts(f) })
         jobs << FactJob.new("environment_facts", ->(f : FactSet) { gather_environment_facts(f) })
@@ -2049,7 +2119,7 @@ module Krikri
       } of String => Int64 | String
     end
 
-    def gather_python_facts(facts, remote_connection : Bool = false)
+    def gather_python_facts(facts, remote_connection : Bool = false, interpreter_override : String? = nil)
       # Ansible's PythonFactCollector exposes ansible_facts['python'] as
       # a single nested dict (version/version_info/executable/
       # has_sslcontext/type) - not the flat ansible_python (path string) /
@@ -2058,7 +2128,13 @@ module Krikri
       # the interpreter to introspect itself (like Ansible's own collector
       # does, running inside Python) is more robust than re-deriving each
       # field by shelling out separately.
-      python_bin = Process.find_executable("python3") || Process.find_executable("python")
+      # Real's setup module runs UNDER the interpreter its discovery (or
+      # the host's ansible_python_interpreter) resolved - its
+      # PythonFactCollector's sys.executable is therefore that path, not
+      # whatever a bare `python3` resolves to. gather() resolves it and
+      # threads it down here; the find_executable fallback only remains
+      # for direct callers that predate the resolution.
+      python_bin = interpreter_override || Process.find_executable("python3") || Process.find_executable("python")
       return unless python_bin
 
       script = <<-PY
@@ -2701,6 +2777,8 @@ module Krikri
       fact_path = params.try(&.["fact_path"]?).try(&.as_s?) || DEFAULT_FACT_PATH
 
       remote_connection = params.try(&.["_remote_connection"]?).try(&.as_s?) == "true"
+      first_gather = params.try(&.["_first_gather"]?).try(&.as_s?) == "true"
+      host_name = config.try(&.["host"]?).try(&.["name"]?).try(&.as_s?) || ""
 
       # Ansible's setup module runs under the host's configured
       # ansible_python_interpreter and fails Gathering Facts with rc 127
@@ -2709,23 +2787,42 @@ module Krikri
       # instead of gathering under whatever interpreter this machine has.
       if (interpreter = params.try(&.["ansible_python_interpreter"]?).try(&.as_s?)) &&
          !interpreter.empty? && interpreter_missing?(interpreter)
-        return {
-          "changed" => false,
-          "failed"  => true,
-          "msg"     => "The module interpreter '#{interpreter}' was not found. Consider overriding the configured interpreter path for this host. See stdout/stderr for the returned output.",
-          "stderr"  => "/bin/sh: 1: #{interpreter}: not found",
-          "rc"      => 127,
-          # Not an ansible result key - a marker for the executor, which
-          # needs the configured path itself to reproduce ansible's
-          # interpreter-not-found fatal block (the msg alone only carries
-          # it embedded in prose). shell_dash lets the executor pick the
-          # remote shell-error wording the target's own /bin/sh prints.
-          "interpreter_missing" => interpreter,
-          "shell_dash"          => dash_shell?,
-        }.to_json
+        return missing_interpreter_failure(interpreter)
       end
 
-      facts = gather_facts(requested_subset, remote_connection, gather_timeout, fact_path)
+      # Interpreter resolution for the module itself: a configured
+      # ansible_python_interpreter wins and discovery never runs (real
+      # stamps no discovered_interpreter_python fact then), otherwise
+      # discovery runs through the connection's /bin/sh exactly like
+      # interpreter_discovery.discover_interpreter - on Ubuntu 22.04
+      # that yields the VERSIONED /usr/bin/python3.10, not whatever a
+      # bare python3 resolves to. Real then runs the module under the
+      # resolved interpreter, so a discovered path missing on this
+      # machine (the /usr/bin/python3 fallback on a pythonless target)
+      # fails the gather rc 127 exactly like the configured case. The
+      # discovery warnings are controller-side Display warnings, never
+      # result keys - they ride back under the _ansible_discovery_warning
+      # marker (gated on _first_gather, since a later gather finds the
+      # discovery already cached in real and never warns again) for the
+      # executor to emit on stderr.
+      python_bin = params.try(&.["ansible_python_interpreter"]?).try(&.as_s?)
+      python_bin = nil if python_bin.try(&.empty?)
+      discovered_interpreter = nil
+      discovery_warnings = [] of String
+      if python_bin.nil?
+        python_bin, found_any = discover_python_interpreter
+        discovered_interpreter = python_bin
+        if !found_any
+          discovery_warnings << "No python interpreters found for host '#{host_name}' (tried #{interpreter_fallback_repr})."
+        elsif first_gather
+          discovery_warnings << "Host '#{host_name}' is using the discovered Python interpreter at '#{python_bin}', but future installation of another Python interpreter could cause a different interpreter to be discovered. See https://docs.ansible.com/ansible-core/2.19/reference_appendices/interpreter_discovery.html for more information."
+        end
+        if interpreter_missing?(python_bin)
+          return missing_interpreter_failure(python_bin)
+        end
+      end
+
+      facts = gather_facts(requested_subset, remote_connection, gather_timeout, fact_path, python_interpreter: python_bin)
 
       # Ansible's own meta facts - every setup result carries the
       # requested subset list and module_setup under ansible_facts
@@ -2743,19 +2840,14 @@ module Krikri
       # already cached), and a bare ad-hoc `-m setup` doesn't either.
       # The once-per-host gate is executor state, so the executor passes
       # it in under _first_gather; without that param (ad-hoc module
-      # run) nothing is stamped.
-      discovered_interpreter = nil
-      python_value = facts["ansible_python"]?
-      if python_value.is_a?(Hash(String, JSON::Any))
-        discovered_interpreter = python_value["executable"]?.try(&.as_s?)
-      end
-
+      # run) nothing is stamped. Only a run that actually DISCOVERED
+      # stamps: with a configured ansible_python_interpreter real's
+      # _get_shebang never raises InterpreterDiscoveryRequiredError, so
+      # no discovery fact exists at all.
       facts = apply_fact_filter(facts, filter_spec)
 
-      if params.try(&.["_first_gather"]?).try(&.as_s?) == "true"
-        if discovered = discovered_interpreter
-          facts["discovered_interpreter_python"] = discovered unless discovered.empty?
-        end
+      if first_gather && (discovered = discovered_interpreter)
+        facts["discovered_interpreter_python"] = discovered unless discovered.empty?
       end
 
       # Ansible 2.19.11's registered setup/gather_facts result key order -
@@ -2765,11 +2857,13 @@ module Krikri
       # none). The registered tail is failed BEFORE changed here, unlike
       # the executor-backfilled modules where failed lands after every
       # wire key - setup's wire carries both itself, in this order.
-      {
+      result = JSON.parse({
         "ansible_facts" => facts,
         "failed"        => false,
         "changed"       => false,
-      }.to_json
+      }.to_json).as_h
+      result["_ansible_discovery_warning"] = JSON.parse(discovery_warnings.to_json) unless discovery_warnings.empty?
+      result.to_json
     rescue ex : BadSubsetError
       {
         "changed" => false,

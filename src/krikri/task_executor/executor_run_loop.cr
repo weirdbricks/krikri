@@ -2284,6 +2284,74 @@ module Krikri
       end
     end
 
+    # Modules real executes WITHOUT its python interpreter machinery:
+    # raw/command/shell/script hand their payload straight to the
+    # connection's shell, so no interpreter is resolved for them and a
+    # missing interpreter cannot fail them (every other module reaching
+    # the local dispatch is a python-module run as far as the
+    # interpreter question goes).
+    NO_INTERPRETER_MODULES = Set{
+      "raw", "ansible.builtin.raw", "ansible.legacy.raw",
+      "command", "ansible.builtin.command", "ansible.legacy.command",
+      "shell", "ansible.builtin.shell", "ansible.legacy.shell",
+      "script", "ansible.builtin.script", "ansible.legacy.script",
+    }
+
+    # The synthesized result for a local-dispatch module whose resolved
+    # interpreter is missing on the controller, or nil when the task
+    # would have run (real included). Resolution follows module_common's
+    # _get_shebang: the ansible_python_interpreter var wins when defined
+    # (an "auto*" value re-enters discovery, i.e. consults the gathered
+    # discovered_interpreter_python fact next), otherwise that fact,
+    # otherwise real would run discovery through the local connection
+    # and succeed - so no interpreter means no failure here. Delegated
+    # tasks return nil (see the dispatch-site comment).
+    private def local_interpreter_missing_result(task : Task, host : Host, exec_host : Host, vars_context : Hash(String, JSON::Any), substitutor : VarSubstitutor) : JSON::Any?
+      return nil unless exec_host == host
+      return nil if NO_INTERPRETER_MODULES.includes?(task.module_name)
+      return nil if PluginManager.remote_execution?(task.module_name, exec_host, vars_context)
+      return nil if PluginManager.controller_only?(task.module_name)
+
+      configured = nil
+      if raw = vars_context["ansible_python_interpreter"]?
+        begin
+          configured = render_task_var_value(raw, vars_context, host.name).as_s?
+        rescue UndefinedVariableError
+          # An unrenderable interpreter var fails real's module run
+          # through its own templating error later, not through this
+          # check - leave the task to the ordinary dispatch.
+          configured = nil
+        end
+      end
+
+      interpreter = if configured && !configured.empty? && !configured.starts_with?("auto")
+                      configured
+                    else
+                      vars_context["discovered_interpreter_python"]?.try(&.as_s?)
+                    end
+      return nil unless interpreter && !interpreter.empty?
+      return nil unless FactsGatherer.interpreter_missing?(interpreter)
+
+      # Real's action raises the deserialization AnsibleError when the
+      # interpreter's output is not module JSON - the fatal payload
+      # below is its exact result_dict (live-captured, issue #374),
+      # with the _ansible_* markers driving the [ERROR] block's
+      # three-link action chain in ResultDisplay.
+      result = JSON.parse({
+        "changed"                      => false,
+        "failed"                       => true,
+        "module_stderr"                => "/bin/sh: 1: #{interpreter}: not found\n",
+        "module_stdout"                => "",
+        "msg"                          => "The module interpreter '#{interpreter}' was not found.",
+        "rc"                           => 127,
+        "_ansible_action_level"        => true,
+        "_ansible_error_detail"        => "Action failed: The module interpreter '#{interpreter}' was not found.",
+        "_ansible_interpreter_missing" => interpreter,
+      }.to_json)
+      Krikri.mark_failed_key_order(result, FAILED_KEY_ORDER_MSG_FIRST)
+      result
+    end
+
     private def execute_task_once(
       task : Task,
       host : Host,
@@ -2748,6 +2816,28 @@ module Krikri
         task = task.dup
         task.async_seconds = resolved_async
         task.poll_seconds = resolved_poll
+      end
+
+      # Ansible resolves a python module's interpreter from the PLAYED
+      # HOST's vars even when the task itself runs on the controller
+      # under a `connection: local` override (module_common's
+      # _get_shebang consults task_vars regardless of the connection):
+      # the ansible_python_interpreter var, or the interpreter the
+      # host's own fact gathering discovered
+      # (discovered_interpreter_python), is executed by the
+      # controller's /bin/sh, and a path that only exists on the remote
+      # host dies with rc 127 and an empty module stdout, which real
+      # reports as the module-interpreter-not-found action failure
+      # (2kloc.trellis-monit's `find:` task, issue #374: the controller
+      # has no /usr/bin/python3.10; the Ubuntu 22.04 target discovered
+      # it at gather time). Krikri's plugins are native binaries that
+      # would run happily through this exact setup, so the case is
+      # detected here and shaped like real's deserialization failure.
+      # Delegated tasks stay out of scope: the interpreter then comes
+      # from the DELEGATE host's vars, which this dispatch context does
+      # not carry faithfully.
+      if failure = local_interpreter_missing_result(task, host, exec_host, vars_context, substitutor)
+        return apply_changed_failed_when(task, failure, vars_context, host)
       end
 
       # async: 0 must run synchronously like ansible: its task executor
