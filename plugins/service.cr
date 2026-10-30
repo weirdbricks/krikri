@@ -695,6 +695,19 @@ module Krikri
       end
 
       is_running = service_running?(name)
+      # Ansible's `stopped` branch alone also counts a unit whose stop job
+      # is still in flight as needing action: it tests
+      # `is_running_service(...) or is_deactivating_service(...)` (its
+      # systemd_service.py), where is_running_service is active|activating
+      # and is_deactivating_service is deactivating. Every other requested
+      # state looks at active|activating only, so a `deactivating` unit is
+      # started (never restarted/reloaded) rather than treated as running -
+      # which is why this widens ONLY the stop decision below.
+      # Frzk.chrony's "Disable conflicting services" loop caught `ntp`
+      # mid-stop on the Ansible host: Ansible issued another `systemctl
+      # stop` and read changed, this engine read the same unit as already
+      # stopped and reported ok (issue #378).
+      needs_stop = is_running || (@manager == Manager::Systemd && @systemd_active_state == "deactivating")
 
       case state
       when "started"
@@ -702,7 +715,7 @@ module Krikri
         return would("start #{name}") if @check_mode
         run_action(name, "start", "Service started")
       when "stopped"
-        return unchanged unless is_running
+        return unchanged unless needs_stop
         return would("stop #{name}") if @check_mode
         run_action(name, "stop", "Service stopped")
       when "restarted"
