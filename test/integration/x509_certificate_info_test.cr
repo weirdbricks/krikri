@@ -182,4 +182,38 @@ describe "x509_certificate_info plugin" do
   ensure
     File.delete(playbook) if playbook && File.exists?(playbook)
   end
+
+  # Live-verified against ansible-core 2.19.11 (community.crypto 3.1.1):
+  # the registered result's key list ends `valid_at`, `failed`, `changed`
+  # - real registers failed=false inside the module's own key order,
+  # before changed. A plugin success result that doesn't put failed on
+  # the wire gets it backfilled by the executor AFTER changed instead.
+  it "registers valid_at, failed, changed as the result's final keys" do
+    path = cert_path("key-order.pem")
+    `openssl req -x509 -newkey rsa:2048 -keyout #{cert_path("key-order.key")} -out #{path} -days 30 -nodes -subj "/CN=www.example.com" 2>/dev/null`
+
+    playbook = File.tempname("x509-key-order", ".yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: Read certificate
+            community.crypto.x509_certificate_info:
+              path: #{path}
+            register: info
+          - name: Show top-level result key order
+            debug:
+              msg: "{{ info.keys() | list }}"
+      YAML
+
+    captured = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: captured, error: captured)
+    output = captured.to_s
+    status.success?.must_equal(true, "playbook failed: #{output}")
+    tail = /"valid_at",\s*"failed",\s*"changed"/
+    output.matches?(tail).must_equal(true, "expected valid_at, failed, changed tail, got: #{output}")
+  ensure
+    File.delete(playbook) if playbook && File.exists?(playbook)
+  end
 end
