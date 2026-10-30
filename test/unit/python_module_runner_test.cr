@@ -476,6 +476,57 @@ describe Krikri::PythonModuleRunner do
 
   # ---- the basic.py shim (targets without ansible-core) ----
 
+  it "shims ansible.module_utils.distro for role modules that import it" do
+    skip("python3 not available") unless File.exists?("/usr/bin/python3")
+    # The exact shape that hard-failed the whole role (bodsch.php's own
+    # library/php_version.py and library/php_modules.py):
+    # `from ansible.module_utils import distro` died with
+    # "cannot import name 'distro' from 'ansible.module_utils'" on a
+    # target without ansible-core, while ansible - which vendors
+    # python-distro into every module payload - ran the same module.
+    # The shim's linux_distribution tuple drives the role's own
+    # package-manager branching, so the distribution id must reflect
+    # the host's real /etc/os-release (the same file upstream
+    # python-distro reads first), not a hardcoded value.
+    work_dir = File.join(Dir.tempdir, "krikri-shim-distro-spec-#{Random.rand(1_000_000)}")
+    Dir.mkdir_p(work_dir)
+    Krikri::PythonModuleRunner.write_module_utils_bundle(work_dir)
+    module_path = File.join(work_dir, "distro_probe_spec.py")
+    File.write(module_path, "import json\n" \
+                            "from ansible.module_utils import distro\n" \
+                            "print(json.dumps({\n" \
+                            "  'tuple': list(distro.linux_distribution(full_distribution_name=False)),\n" \
+                            "  'named': list(distro.linux_distribution(full_distribution_name=True)),\n" \
+                            "  'id': distro.id(),\n" \
+                            "}))\n")
+    stdout_io = IO::Memory.new
+    status = Process.run("/usr/bin/python3", [module_path],
+      input: Process::Redirect::Close, output: stdout_io, error: Process::Redirect::Close)
+    FileUtils.rm_r(work_dir)
+    status.success?.must_equal(true)
+    parsed = JSON.parse(stdout_io.to_s)
+    os_release_field = ->(key : String, downcase : Bool) {
+      value = File.read("/etc/os-release")
+        .each_line
+        .select(&.includes?("="))
+        .map { |line| line.strip.split("=", 2) }
+        .find { |pair| pair[0] == key }
+        .try { |pair| pair[1].strip.strip('"') }
+      downcase ? value.try(&.downcase) : value
+    }
+    os_release_id = os_release_field.call("ID", true)
+    parsed["id"].as_s.must_equal(os_release_id)
+    parsed["tuple"][0].as_s.must_equal(os_release_id)
+    parsed["tuple"][1].as_s.wont_equal("")
+    parsed["tuple"].as_a.size.must_equal(3)
+    # Upstream python-distro's linux_distribution(True) returns the
+    # os-release NAME ("Ubuntu"), never PRETTY_NAME with the version
+    # digits in it ("Ubuntu 22.04.4 LTS") - pin the shim to that.
+    parsed["named"].as_a.size.must_equal(3)
+    parsed["named"][0].as_s.must_equal(os_release_field.call("NAME", false))
+    parsed["named"][0].as_s.wont_match(/\d/)
+  end
+
   it "shims ansible.module_utils.basic for a new-style module on a target without ansible-core" do
     skip("python3 not available") unless File.exists?("/usr/bin/python3")
     # The exact shape that hard-failed on every fresh target
