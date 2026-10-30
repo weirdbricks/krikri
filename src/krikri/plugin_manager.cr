@@ -1441,6 +1441,12 @@ module Krikri
 
     BECOME_PREMATURE_END = "Premature end of stream waiting for become success."
 
+    # become_loader's ValueError for a become METHOD that resolved to
+    # None/empty (become is enabled, the var is present, the template
+    # rendered to nothing): the task executor books it as this fatal
+    # before any module runs (issue #395).
+    BECOME_METHOD_EMPTY = "A non-empty plugin name is required."
+
     BECOME_CHOWN_FAILURE = "Failed to change ownership of the temporary files Ansible (via chmod nor setfacl) needs to create despite connecting as a privileged user. Unprivileged become user would be unable to read the file."
 
     # sudo exits before the plugin ever runs (e.g. "sudo: a password is

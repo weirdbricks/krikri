@@ -938,6 +938,21 @@ module Krikri
         end
         return
       end
+      # A become METHOD that resolved to None/empty (a role-exported
+      # ansible_become_method templating to None on a task that runs before
+      # the register it references exists - issue #395): real's
+      # become_loader raises the bare ValueError in the task executor
+      # itself, so the chain collapses to the single "Task failed."
+      # segment with the task's own Origin and no "Module failed." middle
+      # (no module ever ran; live-verified vs 2.19.11 on both a play-level
+      # task and the implicit Gathering Facts task).
+      if msg == "Task failed: #{PluginManager::BECOME_METHOD_EMPTY}"
+        if origin = error_origin_context(source_task)
+          ErrorBlock.emit(ErrorBlock::Node.new("Task failed.", source_context: origin)
+            .with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(msg["Task failed: ".size..])))
+        end
+        return
+      end
       # A templated `timeout:` that resolved to a non-integer (the
       # executor's task_timeout_conversion_failure): the brief is real's
       # exact wording; the chain is a best-effort two-link approximation

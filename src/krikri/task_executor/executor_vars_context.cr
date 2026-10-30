@@ -1970,6 +1970,58 @@ module Krikri
     # lenient-degradation rule this codebase already applies to templated
     # connection vars).
     private def resolve_task_become(task : Task, host : Host, vars_context : Hash(String, JSON::Any), substitutor : VarSubstitutor) : Bool
+      become = resolve_task_become_flag(task, host, vars_context, substitutor)
+      check_task_become_method(vars_context, host, substitutor) if become
+      become
+    end
+
+    # Real resolves the become PLUGIN for every task whose become is on
+    # (TaskExecutor._set_become_plugin), reading `ansible_become_method`
+    # out of the task's vars - and a role's vars/main.yml is EXPORTED to
+    # every task in the play at very high precedence (VariableManager's
+    # "exported vars from all roles" layer), so a role var like
+    # `ansible_become_method: '{{ check.something if check is defined else
+    # None }}'` is visible (and truthy raw) on tasks that run before the
+    # register it references exists - the play's implicit Gathering Facts
+    # task included. Templating it there yields None, and
+    # become_loader.get(None) raises ValueError("A non-empty plugin name
+    # is required.") which the task books as a fatal before any module
+    # runs (adarnimrod.openbsd-bootstrap on ubuntu, issue #395: ansible's
+    # Gathering Facts fatal vs krikri's ok). Krikri escalates through sudo
+    # only, so a method that renders to a real name changes nothing here;
+    # only the None/empty result needs reproducing. The raw-truthiness
+    # gate mirrors ansible's `if cvars.get('ansible_become_method')`: a
+    # null/false/empty/zero raw var skips the check and keeps the sudo
+    # default.
+    private def check_task_become_method(vars_context : Hash(String, JSON::Any), host : Host, substitutor : VarSubstitutor) : Nil
+      raw = vars_context["ansible_become_method"]?
+      return unless ansible_var_truthy?(raw)
+      return unless (method_raw = raw)
+
+      rendered = render_task_var_value(method_raw, vars_context, host.name)
+      value = rendered.raw
+      return unless value.nil? || (value.is_a?(String) && value.empty?)
+
+      raise BecomeMethodError.new("Task failed: #{PluginManager::BECOME_METHOD_EMPTY}")
+    end
+
+    # Python truthiness over a raw JSON var value - the gate ansible's
+    # `if cvars.get(...)` applies before templating a connection/become
+    # var: None, false, "", 0 and empty containers all skip the check.
+    private def ansible_var_truthy?(raw : JSON::Any?) : Bool
+      return false unless raw
+      case value = raw.raw
+      when Bool   then value
+      when String then !value.empty?
+      when Int    then value != 0
+      when Float  then value != 0.0
+      when Array  then !value.empty?
+      when Hash   then !value.empty?
+      else             true
+      end
+    end
+
+    private def resolve_task_become_flag(task : Task, host : Host, vars_context : Hash(String, JSON::Any), substitutor : VarSubstitutor) : Bool
       if raw = substitutor.vars["ansible_become"]?
         decided = ansible_become_var_boolean(raw, substitutor)
         return decided unless decided.nil?
