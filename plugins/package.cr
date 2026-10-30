@@ -410,7 +410,12 @@ module Krikri
         next unless parts.size == 3
         bare = parts[2].strip.split(":").first
         next if statuses.has_key?(bare)
-        installed = parts[0].starts_with?("ii")
+        # The STATE letter (second), not the whole pair: apt's - and
+        # python-apt's `Package.installed`, which Ansible's apt module
+        # asks - idea of "installed" ignores the desired action, so a
+        # hold-pinned "hi" package is installed like an "ii" one (see
+        # AptDebInstall#dpkg_installed_status for the issue #413 case).
+        installed = parts[0].ends_with?("i")
         statuses[bare] = {installed, installed ? parts[1] : nil}
       end
       statuses

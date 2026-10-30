@@ -28,13 +28,13 @@ require "http/server"
 
 # Builds a real minimal .deb (real dpkg-deb control metadata, so the
 # plugin's `dpkg-deb -f` read is genuinely executed, not shape-matched)
-# plus a PATH shim dir: `dpkg` logs every invocation,
-# answers `-l <pkg>` with an optionally-installed status line, delegates
+# plus a PATH shim dir: `dpkg` logs every invocation, delegates
 # `--compare-versions` to the real /usr/bin/dpkg (Debian-version
 # ordering is not reimplemented in a shell shim) and simulates a
 # successful `-i` install; `dpkg-query` answers with an optional
-# pre-set status-line set (driving the dependency resolver's installed
-# status probe); `apt-cache` answers `policy <name>` with a
+# pre-set status-line set, which drives BOTH installed-status probes -
+# the deb's own name/version idempotency check and the dependency
+# resolver's; `apt-cache` answers `policy <name>` with a
 # "Candidate: 1.0" line for a configurable name list (nothing for any
 # other name = an unknown name), "Candidate: (none)" for a configurable
 # purely-virtual name list, and `showpkg <name>` with a Reverse Provides
@@ -44,7 +44,7 @@ require "http/server"
 # for real against the fixture. Yields the `_environment` JSON param,
 # the fixture path, the dpkg call log and the
 # apt-get call log.
-private def with_deb_fixture_shims(dpkg_installed_line : String? = nil, dpkg_install_exit : Int32 = 0,
+private def with_deb_fixture_shims(dpkg_install_exit : Int32 = 0,
                                    depends : String? = nil, recommends : String? = nil,
                                    dpkg_query_lines : String? = nil, apt_candidate_names : String? = nil,
                                    apt_virtual_names : String? = nil, apt_provides : String? = nil,
@@ -71,12 +71,6 @@ private def with_deb_fixture_shims(dpkg_installed_line : String? = nil, dpkg_ins
     echo "$@" >> "$KRIKRI_DPKG_CALLS"
     if [ "$1" = "--compare-versions" ]; then
       exec /usr/bin/dpkg "$@"
-    fi
-    if [ "$1" = "-l" ]; then
-      if [ -n "$KRIKRI_DPKG_INSTALLED_LINE" ]; then
-        echo "$KRIKRI_DPKG_INSTALLED_LINE"
-      fi
-      exit 0
     fi
     echo "Selecting previously unselected package krikri-spec-deb."
     echo "(Reading database ... 1 files and directories currently installed.)"
@@ -140,7 +134,6 @@ private def with_deb_fixture_shims(dpkg_installed_line : String? = nil, dpkg_ins
     "KRIKRI_DPKG_CALLS"          => dpkg_log,
     "KRIKRI_APT_CALLS"           => apt_log,
     "KRIKRI_DPKG_INSTALL_EXIT"   => dpkg_install_exit.to_s,
-    "KRIKRI_DPKG_INSTALLED_LINE" => dpkg_installed_line.to_s,
     "KRIKRI_DPKG_QUERY_LINES"    => dpkg_query_lines.to_s,
     "KRIKRI_APT_CANDIDATE_NAMES" => apt_candidate_names.to_s,
     "KRIKRI_APT_VIRTUAL_NAMES"   => apt_virtual_names.to_s,
@@ -294,7 +287,7 @@ describe "apt plugin deb: URL download-then-install" do
   end
 
   it "skips the install when the deb's own name/version is already installed" do
-    with_deb_fixture_shims(dpkg_installed_line: "ii  krikri-spec-deb  1.0  all  krikri apt deb spec fixture") do |env, fixture, dpkg_log, apt_log|
+    with_deb_fixture_shims(dpkg_query_lines: "ii 1.0 krikri-spec-deb") do |env, fixture, dpkg_log, apt_log|
       result = PluginSpecHelper.run("apt", {
         "deb"               => fixture,
         "state"             => "present",
@@ -312,6 +305,37 @@ describe "apt plugin deb: URL download-then-install" do
       result["diff"].as_s.must_equal("")
       # Only the metadata + idempotency probes ran - no install, no
       # apt-get fallback.
+      dpkg_calls = File.exists?(dpkg_log) ? File.read_lines(dpkg_log) : [] of String
+      dpkg_calls.select(&.includes?(" -i ")).empty?.must_equal(true)
+      File.exists?(apt_log).must_equal(false)
+    end
+  end
+
+  it "skips the install when the deb's package is installed under a hold selection (issue #413)" do
+    # `dpkg --set-selections '<pkg> hold'` - what dpkg_selections does, and
+    # what andrewmackett.splunk_common's "pin splunk version" task runs
+    # right after its "install splunk from deb" - leaves dpkg's
+    # Status-Abbrev "hi": DESIRED hold, STATE installed. Ansible asks
+    # python-apt's `Package.installed`, which reads only the STATE, so its
+    # warm rerun of the deb task is changed=False. Reading the whole "ii"
+    # pair instead made every rerun of a pinned package reinstall it: the
+    # changed then also un-pinned it for the following task, satisfied a
+    # `when: <task>.changed` touch, and fired a restart handler real
+    # ansible never notified (the #413 round's exit 2 vs ansible's 0).
+    with_deb_fixture_shims(dpkg_query_lines: "hi 1.0 krikri-spec-deb") do |env, fixture, dpkg_log, apt_log|
+      result = PluginSpecHelper.run("apt", {
+        "deb"               => fixture,
+        "state"             => "present",
+        "_environment"      => env,
+        "_policy_rc_d_path" => File.join(File.dirname(fixture), "policy-rc.d"),
+      })
+
+      falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+      result["changed"].as_bool.must_equal(false)
+      result["msg"]?.must_be_nil
+      result["stdout"].as_s.must_equal("")
+      result["stderr"].as_s.must_equal("")
+      result["diff"].as_s.must_equal("")
       dpkg_calls = File.exists?(dpkg_log) ? File.read_lines(dpkg_log) : [] of String
       dpkg_calls.select(&.includes?(" -i ")).empty?.must_equal(true)
       File.exists?(apt_log).must_equal(false)
@@ -440,6 +464,28 @@ describe "apt plugin deb: dependency pre-install" do
       # The satisfaction decision went through dpkg's own version ordering.
       dpkg_calls = File.exists?(dpkg_log) ? File.read_lines(dpkg_log) : [] of String
       dpkg_calls.any?(&.includes?("--compare-versions")).must_equal(true)
+      dpkg_calls.count(&.includes?(" -i ")).must_equal(1)
+    end
+  end
+
+  it "satisfies a versioned dependency from a hold-pinned package without touching apt-get" do
+    # The same STATE-not-DESIRED rule the deb idempotency probe above
+    # needs (issue #413): python-apt's check() asks whether the dependency
+    # has an installed version, and an `apt-mark hold`/dpkg_selections pin
+    # ("hi") does - so it never lands in missing_deps and no apt-get runs.
+    with_deb_fixture_shims(depends: "dep-a (>= 1.0)",
+      dpkg_query_lines: "hi 1.0 dep-a") do |env, fixture, dpkg_log, apt_log|
+      result = PluginSpecHelper.run("apt", {
+        "deb"               => fixture,
+        "state"             => "present",
+        "_environment"      => env,
+        "_policy_rc_d_path" => File.join(File.dirname(fixture), "policy-rc.d"),
+      })
+
+      falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+      result["changed"].as_bool.must_equal(true)
+      File.exists?(apt_log).must_equal(false)
+      dpkg_calls = File.exists?(dpkg_log) ? File.read_lines(dpkg_log) : [] of String
       dpkg_calls.count(&.includes?(" -i ")).must_equal(1)
     end
   end
@@ -585,7 +631,7 @@ describe "apt plugin deb: dependency pre-install" do
   end
 
   it "fails with DebPackage's later-version wording when the installed version is newer" do
-    with_deb_fixture_shims(dpkg_installed_line: "ii  krikri-spec-deb  2.0  all  krikri apt deb spec fixture") do |env, fixture, dpkg_log, _|
+    with_deb_fixture_shims(dpkg_query_lines: "ii 2.0 krikri-spec-deb") do |env, fixture, dpkg_log, _|
       result = PluginSpecHelper.run("apt", {
         "deb"               => fixture,
         "state"             => "present",
@@ -601,7 +647,7 @@ describe "apt plugin deb: dependency pre-install" do
   end
 
   it "proceeds with the dpkg downgrade when force: releases the later-version gate" do
-    with_deb_fixture_shims(dpkg_installed_line: "ii  krikri-spec-deb  2.0  all  krikri apt deb spec fixture") do |env, fixture, dpkg_log, _|
+    with_deb_fixture_shims(dpkg_query_lines: "ii 2.0 krikri-spec-deb") do |env, fixture, dpkg_log, _|
       result = PluginSpecHelper.run("apt", {
         "deb"               => fixture,
         "state"             => "present",
