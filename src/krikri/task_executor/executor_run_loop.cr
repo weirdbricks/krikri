@@ -1602,6 +1602,12 @@ module Krikri
                            # consumer reports it instead of the process
                            # crashing out of execute_batch_group entirely.
                            cache[task] = {when_error_result(WhenEvaluationError.new(ex.message || "Failed to render task vars"), task, host), Hash(String, JSON::Any).new}
+                           # This member is a hard failure, so Ansible's play stops
+                           # here: later members must not join the round trip (see
+                           # the when-rescue below for the issue #649 shape). No
+                           # vars_context exists to resolve a templated
+                           # ignore_errors: against - the parse-time value stands.
+                           halted = true unless task.ignore_errors?
                            next
                          end
                        end
@@ -1623,6 +1629,17 @@ module Krikri
           end
         rescue ex : WhenEvaluationError
           cache[task] = {when_error_result(ex, task, host), vars_context}
+          # A member whose when: RAISED is a failed task, not a skipped one, and
+          # Ansible aborts the play at it - so the group's remaining members must
+          # never reach the target. Without this the round trip still dispatched
+          # them: tumf.docker-compose's `when: ver|failed` (issue #649) failed the
+          # Remove Old Version task, yet the group's next member - Install Docker
+          # Compose's get_url - ran anyway and left a real docker-compose binary
+          # on the host, so krikri's warm phase stat-ed a file ansible's warm
+          # phase never created (skipping vs ok). The solo path gets this for
+          # free: finish_single_task halts the host before the consumer reaches
+          # later tasks, while a batch build executes every member it adds.
+          halted = true unless resolve_task_ignore_errors(task, vars_context, host)
           next
         end
 
