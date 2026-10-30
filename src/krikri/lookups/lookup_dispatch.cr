@@ -411,6 +411,21 @@ module Krikri
           # parse below would have flipped it).
           return JSON::Any.new(evaluate(part))
         end
+        # A bare-variable term whose value is Python None must reach the
+        # plugin as null: ansible-core passes a native call's argument
+        # objects through unstringified, while rendering None to text and
+        # re-typing it here yields the EMPTY STRING instead. That flipped
+        # `query('list', none_var)` from [None] to [""], so andrewrothstein.
+        # docker-cleanup's `loop: {{ query('list', docker_cleanup_label_
+        # filters) }}` (its None default, issue #414) iterated item=""
+        # where ansible iterates item=None, so the task's
+        # `when: item is not none` skipped for ansible but ran (and
+        # failed on `"".name`) here. A genuinely empty-string variable
+        # takes the text path below and stays "" exactly as before.
+        if stripped.matches?(/\A[A-Za-z_][A-Za-z0-9_]*\z/) &&
+           (term_value = @vars[stripped]?) && term_value.raw.nil?
+          return JSON::Any.new(nil)
+        end
         rendered = evaluate(part)
         Krikri.parse_json_or_python_literal(rendered)
       end
