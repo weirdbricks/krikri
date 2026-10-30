@@ -479,13 +479,20 @@ module Krikri
       timeout : Int32 = DEFAULT_EXEC_TIMEOUT_SECONDS,
       identity_file : String? = nil,
       extra_args : Array(String) = [] of String,
+      fresh_connection : Bool = false,
     ) : NamedTuple(exit_code: Int32, stdout: String, stderr: String)
       init
       @@stats["commands_executed"] += 1
 
       # Build SSH command with ControlMaster for connection pooling
       password = password_for(host, user, port)
-      control_path = get_control_path(host, user, port, connection_sig(identity_file, extra_args, password))
+      # `ControlPath=none` is OpenSSH's own "multiplexing disabled" spelling:
+      # this invocation never attaches to (nor creates) a pooled master, so
+      # it makes a real end-to-end connection attempt of its own. The task-end
+      # tmpdir cleanup exec uses this - a ride-along on a pooled master whose
+      # remote end died mid-task would answer from the stale local pipe and
+      # mask exactly the host death it exists to detect (issue #400).
+      control_path = fresh_connection ? "none" : get_control_path(host, user, port, connection_sig(identity_file, extra_args, password))
 
       # Important: We pass the command through bash -c to ensure proper shell
       # interpretation on the remote side. This prevents the local shell from

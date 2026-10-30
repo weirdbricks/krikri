@@ -23,7 +23,12 @@ describe "set_fact reserved variable name warning" do
                 - sdc
       YAML
     output = IO::Memory.new
-    Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+    # One merged stream (child-side `2>&1`): the warning is written to stderr
+    # and the ok line to stdout, and only a single shared stream preserves
+    # their true order - two separate pipes drained into one IO can
+    # interleave either way under parallel-suite load, flipping this
+    # ordering assert nondeterministically.
+    Process.run("/bin/sh", ["-c", "#{BINARY} -i #{INVENTORY} #{playbook} 2>&1"], output: output, error: output)
     text = output.to_s
 
     text.must_include("[WARNING]: Found variable using reserved name 'tags'.")
