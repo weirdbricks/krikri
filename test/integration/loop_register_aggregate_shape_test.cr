@@ -84,3 +84,46 @@ describe "stat loop-item register key order" do
     output.must_include("KEYS|changed,stat,invocation,failed")
   end
 end
+
+# Real's module-side _return_formatted adds `invocation` BEFORE deriving
+# stdout_lines/stderr_lines (live capture, issue #672 zorlin.rust
+# round29884741: the registered shell loop item reads .../msg/invocation/
+# stdout_lines/stderr_lines/failed), and a free-form command arrives as
+# Ansible's OWN supplied arg `_raw_params` (sorted first in module_args)
+# while `cmd` stays a never-supplied null default - krikri's params carry
+# the command as `cmd`, so both key SLOTS must swap, not just the values.
+describe "shell loop-item register key order" do
+  it "reads msg/invocation/stdout_lines/stderr_lines/failed like real's loop item" do
+    code, output = run_play(<<-YAML)
+      - hosts: all
+        gather_facts: false
+        tasks:
+          - ansible.builtin.shell: "echo hi | cat"
+            loop: [one]
+            register: r
+            changed_when: false
+          - ansible.builtin.debug:
+              msg: "KEYS|{{ r.results[0] | dict2items | map(attribute='key') | join(',') }}"
+      YAML
+
+    code.must_equal(0)
+    output.must_include("KEYS|changed,stdout,stderr,rc,cmd,start,end,delta,msg,invocation,stdout_lines,stderr_lines,failed")
+  end
+
+  it "orders module_args with _raw_params supplied-first and cmd among the nulls" do
+    code, output = run_play(<<-YAML)
+      - hosts: all
+        gather_facts: false
+        tasks:
+          - ansible.builtin.shell: "echo hi | cat"
+            loop: [one]
+            register: r
+            changed_when: false
+          - ansible.builtin.debug:
+              msg: "ARGS|{{ r.results[0].invocation.module_args | dict2items | map(attribute='key') | join(',') }}"
+      YAML
+
+    code.must_equal(0)
+    output.must_include("ARGS|_raw_params,_uses_shell,expand_argument_vars,stdin_add_newline,strip_empty_ends,cmd,argv,chdir,executable,creates,removes,stdin")
+  end
+end

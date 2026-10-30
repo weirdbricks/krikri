@@ -3269,23 +3269,51 @@ module Krikri
         echo_override.each { |key, value| args[key] = value }
       end
       args["_uses_shell"] = JSON::Any.new(true) if short == "shell"
-      if free_form_raw_command?(task) && args["cmd"]?.try(&.raw.is_a?(String))
-        args["_raw_params"] = args["cmd"]
-        args["cmd"] = JSON::Any.new(nil)
+      if free_form_raw_command?(task) && (cmd_val = args["cmd"]?) && cmd_val.raw.is_a?(String)
+        # Ansible's controller sends a free-form command as `_raw_params`
+        # (the caller's own supplied arg, so it sorts into the invocation's
+        # first slot) and never supplies `cmd` (a null-default arg, sitting
+        # in the declaration-order nulls). The engine's task params carry
+        # the command as `cmd`, so the two keys must swap SLOTS as well as
+        # values - swapping values alone leaves cmd leading the dump and
+        # _raw_params among the nulls (issue #672, zorlin.rust's registered
+        # shell loop item).
+        if args.has_key?("_raw_params")
+          swapped = Hash(String, JSON::Any).new
+          args.each do |key, value|
+            case key
+            when "cmd"
+              swapped["_raw_params"] = cmd_val
+            when "_raw_params"
+              swapped["cmd"] = JSON::Any.new(nil)
+            else
+              swapped[key] = value
+            end
+          end
+          args = swapped
+        else
+          args["_raw_params"] = cmd_val
+          args["cmd"] = JSON::Any.new(nil)
+        end
       end
       copy = hash.dup
       invocation = JSON::Any.new({"module_args" => JSON::Any.new(args)} of String => JSON::Any)
-      # Real's loop-registered stat item orders invocation BEFORE the
-      # trailing failed: false (round 5410000, pacifica.ansible_certinfra's
-      # nested stat-result loop; probed single-stat registers carry NO
-      # invocation at all, which the non-loop path preserves elsewhere) -
-      # insert ahead of an existing `failed` key instead of appending, so
-      # the registered item reads changed/stat/invocation/failed like
-      # real's.
-      if copy.has_key?("failed")
+      # Real's module-side _return_formatted adds `invocation` BEFORE it
+      # derives stdout_lines/stderr_lines, so a command/shell loop item
+      # reads .../msg/invocation/stdout_lines/stderr_lines/failed (live
+      # capture, issue #672 zorlin.rust round29884741 - both the ok and the
+      # ignored-failure shapes place it after msg/failed, never after the
+      # lines). For line-less results the anchor is the trailing failed:
+      # false - real's loop-registered stat item orders invocation before
+      # it (round 5410000, pacifica.ansible_certinfra's nested stat-result
+      # loop; probed single-stat registers carry NO invocation at all,
+      # which the non-loop path preserves elsewhere). Insert ahead of the
+      # first anchor key instead of appending.
+      anchor = {"stdout_lines", "stderr_lines", "failed"}.find { |key| copy.has_key?(key) }
+      if anchor
         new_hash = Hash(String, JSON::Any).new
         copy.each do |k, v|
-          new_hash["invocation"] = invocation if k == "failed"
+          new_hash["invocation"] = invocation if k == anchor
           new_hash[k] = v
         end
         copy = new_hash
