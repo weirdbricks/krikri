@@ -443,6 +443,67 @@ describe Krikri::PlaybookParser do
       end
     end
 
+    it "renders ansible's [ERROR] + Origin + caused-by block for an invalid register: value" do
+      # parse_string has no source file, so the exception carries no
+      # render there - the Origin block only exists when the playbook is
+      # parsed from a file and the source map has the register VALUE's
+      # own position (the opening quote), which is where ansible points
+      # its Origin (live-verified vs 2.19.11, issue #659).
+      root = PluginSpecHelper.tmp_path("playbook_parser_register_origin_spec")
+      FileUtils.rm_rf(root) if Dir.exists?(root)
+      Dir.mkdir_p(root)
+      path = File.join(root, "site.yml")
+      # The register: line has to sit at line 8 with its quote at column
+      # 17 to keep the Origin byte-for-byte comparable with the real
+      # ansible output this test was written from.
+      File.write(path, <<-YAML)
+        - hosts: localhost
+          connection: local
+          gather_facts: false
+          tasks:
+            - name: register via template
+              debug:
+                msg: hi
+              register: '{{sources_register}}'
+        YAML
+
+      ex = assert_raises(Krikri::InvalidRegisterError) do
+        Krikri::PlaybookParser.parse(File.expand_path(path))
+      end
+
+      playbook_path = File.expand_path(path)
+      origin = "Origin: #{playbook_path}:8:17"
+      expected = <<-RENDER + "\n"
+        [ERROR]: Invalid 'register' specified: Invalid variable name '{{sources_register}}'.
+
+        Invalid 'register' specified.
+        #{origin}
+
+        6       debug:
+        7         msg: hi
+        8       register: '{{sources_register}}'
+                          ^ column 17
+
+        <<< caused by >>>
+
+        Invalid variable name '{{sources_register}}'.
+        #{origin}
+
+        6       debug:
+        7         msg: hi
+        8       register: '{{sources_register}}'
+                          ^ column 17
+
+        Variable names must be strings starting with a letter or underscore character, and contain only letters, numbers and underscores.
+
+        RENDER
+
+      ex.message.must_equal("Invalid 'register' specified: Invalid variable name '{{sources_register}}'. " \
+                            "Variable names must be strings starting with a letter or underscore character, " \
+                            "and contain only letters, numbers and underscores.")
+      ex.render.as(String).must_equal(expected)
+    end
+
     it "still accepts a legal register: identifier, including underscores and digits after the first character" do
       playbook = Krikri::PlaybookParser.parse_string(<<-YAML
         - hosts: all
