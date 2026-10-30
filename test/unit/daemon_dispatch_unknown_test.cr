@@ -103,16 +103,21 @@ describe "solo daemon path dispatch-vs-response-lost classification" do
   end
 
   it "flags a CACHED daemon that dies mid-request as transport-level (UNREACHABLE class)" do
-    # The fake daemon exits shortly after spawn without reading: the
-    # controller's write lands in the pipe buffer, then the read gets
-    # EOF - exactly what a real ssh transport death behind a cached
-    # daemon looks like (sshd session killed mid-play). Found live on
-    # Atlantic.net (probe role kop_sshd_solo, round 4250001): real
-    # ansible 2.19.11 booked the task UNREACHABLE (rc=4, host dropped,
-    # recap `unreachable=1`), this engine booked a FAILED task that
-    # `ignore_errors:` reduced to `ignored=1` and kept the host alive,
-    # running every later task and exiting 0.
-    seed_daemon(fake_daemon("sleep 0.3; exit 0"))
+    # The fake daemon consumes the whole request frame, then exits without
+    # answering: the controller's write always lands (the daemon is blocked
+    # in its read until the full frame arrives), then the response read
+    # gets EOF - exactly what a real ssh transport death behind a cached
+    # daemon looks like (sshd session killed mid-play). The old
+    # `sleep 0.3; exit 0` fake could exit BEFORE the write whenever the
+    # parallel suite delayed this fiber past the sleep, degrading the
+    # pinned read-side EOF into a write-time EPIPE (the "nothing
+    # dispatched" raw-exception class) and flaking the assertion.
+    # Found live on Atlantic.net (probe role kop_sshd_solo, round
+    # 4250001): real ansible 2.19.11 booked the task UNREACHABLE (rc=4,
+    # host dropped, recap `unreachable=1`), this engine booked a FAILED
+    # task that `ignore_errors:` reduced to `ignored=1` and kept the host
+    # alive, running every later task and exiting 0.
+    seed_daemon(fake_daemon("python3 -c 'import sys, struct; f = sys.stdin.buffer; f.read(struct.unpack(\">I\", f.read(4))[0])'"))
     begin
       ex = assert_raises(Krikri::SSHManager::DaemonDispatchUnknownError) do
         spec_send(timeout: 5)

@@ -298,6 +298,52 @@ describe Krikri::FactsGatherer do
     end
   end
 
+  describe "ansible_fqdn fallback when the resolver yields nothing" do
+    it "falls back to the plain hostname, never hostname -f's forward canonical" do
+      # Oefenweb.hostname (issue #382): on a host whose DNS forward-resolves
+      # the short name but has no PTR for it, ansible's socket.getfqdn()
+      # returns the queried name itself (its gethostbyaddr error branch),
+      # so the role's `when: ansible_facts['fqdn'] != hostname_hostname`
+      # (inventory alias, dotless) was false and the task skipped; the old
+      # `hostname -f` fallback here reported the DNS canonical instead,
+      # flipped that when: to true, and the role's
+      # `{{ hostname_hostname.split('.', 1)[1] }}` crashed arg finalization.
+      # The shims emulate exactly that resolver state for the child plugin
+      # process only: forward answer, no reverse answer, and a hostname -f
+      # that reports a dotted canonical.
+      shim_dir = PluginSpecHelper.tmp_path("fqdn-fallback-shim")
+      Dir.mkdir_p(shim_dir)
+      getent_shim = File.join(shim_dir, "getent")
+      File.write(getent_shim, <<-SH)
+        #!/bin/sh
+        if [ "$1" = "ahosts" ]; then
+          echo "10.0.0.5     STREAM $2"
+          exit 0
+        fi
+        if [ "$1" = "hosts" ] && [ "$2" = "10.0.0.5" ]; then
+          exit 2
+        fi
+        exec /usr/bin/getent "$@"
+        SH
+      hostname_shim = File.join(shim_dir, "hostname")
+      File.write(hostname_shim, <<-SH)
+        #!/bin/sh
+        if [ "$1" = "-f" ]; then
+          echo "testhost.example.net"
+          exit 0
+        fi
+        exec /usr/bin/hostname "$@"
+        SH
+      File.chmod(getent_shim, 0o755)
+      File.chmod(hostname_shim, 0o755)
+      result = PluginSpecHelper.run("facts", {} of String => String,
+        env: {"PATH" => "#{shim_dir}:#{ENV["PATH"]? || "/usr/bin:/bin"}"})
+      facts = result["ansible_facts"].as_h
+      facts["ansible_fqdn"].as_s.must_equal(System.hostname)
+      facts["ansible_domain"].as_s.must_equal("")
+    end
+  end
+
   describe "ansible_memory_mb (ansible_facts.memory_mb)" do
     it "gathers the namespaced memory dict, not just the legacy flat facts" do
       # Found via geerlingguy.swap's "Disable swap (if configured).":

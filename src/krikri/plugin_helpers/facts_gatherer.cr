@@ -572,31 +572,25 @@ module Krikri
       # dotless "localhost" is skipped in favor of "localhost.localdomain",
       # so ansible-playbook reports ansible_fqdn as
       # "localhost.localdomain" - and keeps re-reporting changed on the
-      # role's hostname:/blockinfile: tasks every run - while `hostname -f`
-      # (a FORWARD lookup of the queried name) echoed the short name back,
-      # making this engine falsely idempotent there. `getent hosts` reads
+      # role's hostname:/blockinfile: tasks every run. `getent` reads
       # the same NSS sources Python's socket module does, without assuming
-      # python3 exists on the managed node. The old `hostname -f` fallback
-      # chain is kept only for hosts where getent yields no usable name
-      # at all (a minimal container image with no DNS setup): nothing to
-      # reverse-resolve, or a reverse answer with no name field, then
-      # `hostname -f` fails outright to empty stdout and it still lands
-      # on the plain hostname, the same final fallback Ansible's getfqdn
-      # itself documents.
-      fqdn = ""
-      ip = capture("getent", ["ahosts", hostname]).split("\n").first?.try(&.split.first?)
-      unless ip.nil? || ip.empty?
-        reverse = capture("getent", ["hosts", ip]).split("\n").first?
-        unless reverse.nil?
-          # socket.getfqdn()'s all-dotless fallback is the reverse
-          # lookup's own canonical name (CPython's `name = hostname`
-          # branch), which the helper returns directly; only when getent
-          # yields no usable reverse answer at all does control fall
-          # through to the `hostname -f` chain below.
-          fqdn = fqdn_from_getent_hosts(reverse)
-        end
-      end
-      fqdn = capture("hostname", ["-f"]) if fqdn.empty?
+      # python3 exists on the managed node.
+      #
+      # The fallback when the resolver chain yields nothing usable is the
+      # PLAIN hostname, never `hostname -f`: CPython's getfqdn() has no
+      # forward-lookup step at all - on any gethostbyaddr error it returns
+      # the queried name itself (live-verified: getfqdn() of an
+      # unresolvable name echoes it back). `hostname -f` diverges exactly
+      # on a host whose DNS forward-resolves the short name but has no PTR
+      # for it: it reports the DNS canonical ("testhost.example.net")
+      # where ansible reports "testhost", which flipped Oefenweb.hostname's
+      # `when: ansible_facts['fqdn'] != hostname_hostname` (inventory alias,
+      # dotless) to true here while ansible skipped the task - and the
+      # role's `{{ hostname_hostname.split('.', 1)[1] }}` then died in arg
+      # finalization (issue #382, round round29884321). The hostname plugin
+      # returns its own facts through the same lookup + plain-name fallback
+      # so the two always agree.
+      fqdn = PluginHelpers::Getfqdn.lookup(hostname)
       fqdn = hostname if fqdn.empty?
       facts["ansible_fqdn"] = fqdn unless fqdn.empty?
 
