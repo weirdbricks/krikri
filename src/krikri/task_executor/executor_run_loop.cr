@@ -2999,23 +2999,9 @@ module Krikri
       # with self._play_context carrying the connection's resolved
       # remote_addr/port, and its returned dict IS the task result -
       # register: sees the play context fields the plugin echoes and
-      # the plugin's own changed/failed verdicts (issue #519).
-      # The resolving role's own action_plugins/ wins; a plugin that
-      # lives only in a META DEPENDENCY role's action_plugins/
-      # (gzm55.local_ssh_known_hosts's real dispatch lives in neither
-      # role it is used from - ansible's add_all_plugin_dirs puts every
-      # loaded role's action_plugins/ on the search path in load order)
-      # resolves through the loaded-role registry, mirroring
-      # collection_index.local_action_plugin?.
-      action_plugin = if (rp = task.role_path) &&
-                         (plugin = File.join(rp, "action_plugins", "#{module_name}.py")) &&
-                         File.file?(plugin)
-                        plugin
-                      else
-                        PythonFilterRunner.loaded_role_roots("action_plugins")
-                          .find { |root| File.file?(File.join(root, "#{module_name}.py")) }
-                          .try { |root| File.join(root, "#{module_name}.py") }
-                      end
+      # the plugin's own changed/failed verdicts (issue #519; the
+      # search-path rationale lives with action_plugin_source_for).
+      action_plugin = action_plugin_source_for(task)
       if action_plugin
         # The typed-arg convention PythonModuleRunner.build_module_args
         # already established: a parser-marked non-string literal decodes
@@ -3054,6 +3040,21 @@ module Krikri
             "msg"     => "role-local Python action plugin (#{action_plugin}) is not supported by krikri",
           }.to_json)
         rescue ex : PythonActionRunner::ActionError
+          if detail = ex.detail
+            # The plugin raised AnsibleError itself: ansible's task
+            # executor makes that the task's own failure - the fatal
+            # msg carries the "Task failed: " prefix while the [ERROR]
+            # block shows the bare text in the plain action-level chain
+            # with no "Module failed." middle segment (live-verified
+            # vs 2.19.11 on amtega.check_platform, issue #411).
+            return JSON.parse({
+              "changed"               => false,
+              "failed"                => true,
+              "msg"                   => "Task failed: #{detail}",
+              "_ansible_error_detail" => detail,
+              "_ansible_action_level" => true,
+            }.to_json)
+          end
           return JSON.parse({
             "changed" => false,
             "failed"  => true,
@@ -3152,13 +3153,51 @@ module Krikri
       )
     end
 
+    # A name krikri has not ported is only "unavailable" when NOTHING
+    # that can run it resolves - a role-private `library/*.py` source or
+    # a role-private `action_plugins/*.py` plugin. Ansible resolves a
+    # bare task name against the loaded roles' (and the playbook's) own
+    # action_plugins/ and RUNS that plugin: amtega.check_platform's
+    # `_check_platform:` is implemented solely by
+    # action_plugins/_check_platform.py with no `library/` placeholder at
+    # all (issue #411 - ansible ran the plugin, which failed the task
+    # with its own "<dist> distribution is not supported" AnsibleError,
+    # rc=2, while this engine - finding no source - treated the name as
+    # an unavailable module and exit-4s'd). So an unavailable_module with
+    # an action plugin beside it is dispatched like the gzm55
+    # library+action pair, not skipped; this feeds the skip and
+    # registration guards in when_passes?, the run loop, the loop paths
+    # and the handler paths alike.
     private def python_module_source_for(task : Task) : String?
       unavailable = task.unavailable_module || return nil
       PythonModuleRunner.find_source(
         PythonModuleRunner.short_name(unavailable),
         task.role_path,
         @playbook_dir
-      )
+      ) || action_plugin_source_for(task)
+    end
+
+    # The runtime counterpart of collection_index.local_action_plugin?:
+    # the resolving role's own action_plugins/ wins; a plugin that lives
+    # only in a META DEPENDENCY role's action_plugins/ resolves through
+    # the loaded-role registry (ansible's add_all_plugin_dirs puts every
+    # loaded role's action_plugins/ on the search path in load order);
+    # then the playbook's own action_plugins/ dir.
+    private def action_plugin_source_for(task : Task) : String?
+      module_name = PythonModuleRunner.short_name(task.unavailable_module || task.module_name)
+      if (rp = task.role_path) && !rp.empty?
+        own = File.join(rp, "action_plugins", "#{module_name}.py")
+        return own if File.file?(own)
+      end
+      if found_root = PythonFilterRunner.loaded_role_roots("action_plugins")
+           .find { |candidate| File.file?(File.join(candidate, "#{module_name}.py")) }
+        return File.join(found_root, "#{module_name}.py")
+      end
+      unless @playbook_dir.empty?
+        pb_plugin = File.join(@playbook_dir, "action_plugins", "#{module_name}.py")
+        return pb_plugin if File.file?(pb_plugin)
+      end
+      nil
     end
 
     # async:/poll: - runs the module as a detached background OS process
