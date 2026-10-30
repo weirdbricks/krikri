@@ -135,4 +135,62 @@ describe "role-private Python action plugin with an empty library placeholder (r
   ensure
     FileUtils.rm_rf(root) if root
   end
+
+  it "runs an action-plugin-only role task to success: ok line, full recap, exit 0 (issue #412)" do
+    # The issue #412 round (amtega.check_platform on ubuntu) hit the SAME
+    # dispatch as #411 but the other outcome: with the role's shipped
+    # defaults (check_platform_distributions: {}) the plugin raises no
+    # AnsibleError and returns dict(changed=False, ansible_facts=...), so
+    # ansible-playbook printed "ok" and exited 0 while this engine still
+    # exit-4'd on the unresolved name. #411's test pins the failure shape;
+    # this pins the success shape - a dispatched plugin's returned dict IS
+    # the task result, not a skip and not the unavailable-modules abort.
+    root = File.tempname("role-local-action-success")
+    Dir.mkdir_p(File.join(root, "roles", "check_platform", "action_plugins"))
+    Dir.mkdir_p(File.join(root, "roles", "check_platform", "tasks"))
+
+    File.write(File.join(root, "roles", "check_platform", "action_plugins", "_check_platform.py"), <<-PYTHON)
+      from ansible.plugins.action import ActionBase
+
+      class ActionModule(ActionBase):
+          TRANSFERS_FILES = False
+
+          def run(self, tmp=None, task_vars=None):
+              distributions = self._templar.template(
+                  (task_vars or {}).get("check_platform_distributions", {}))
+              if distributions:
+                  raise Exception("expected the role's default empty dict")
+              return dict(changed=False, ansible_facts={})
+      PYTHON
+
+    File.write(File.join(root, "roles", "check_platform", "tasks", "main.yml"), <<-YAML)
+      - name: Check platform
+        _check_platform:
+      YAML
+
+    File.write(File.join(root, "pb.yml"), <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          check_platform_distributions: {}
+        roles:
+          - check_platform
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, "pb.yml"], output: output, error: output, chdir: root)
+
+    if ansible_importable
+      status.exit_code.must_equal(0, output.to_s)
+      output.to_s.must_include("ok: [localhost]", output.to_s)
+      output.to_s.must_include("PLAY RECAP", output.to_s)
+      output.to_s.must_include("failed=0", output.to_s)
+      output.to_s.wont_include("unavailable modules", output.to_s)
+    else
+      output.to_s.must_include("is not supported by krikri", output.to_s)
+    end
+  ensure
+    FileUtils.rm_rf(root) if root
+  end
 end
