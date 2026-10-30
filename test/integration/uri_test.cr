@@ -235,6 +235,22 @@ describe "uri plugin" do
       "Status code was -1 and not [200]: Request failed: <urlopen error [Errno 111] Connection refused>")
   end
 
+  it "names a DNS lookup failure with urllib's gaierror text" do
+    # Live-verified against ansible-core 2.19.11: agaffney.synology_dsm's
+    # Login (issue #399) hits an unresolvable hostname and the uri msg
+    # carries urllib wrapping socket.gaierror - "[Errno -2] Name or
+    # service not known", the EAI_* code's own gai_strerror text (the
+    # wording differs per libc, which is why the expected shape is a
+    # Python-shaped [Errno N] pair rather than one hardcoded string, not
+    # Crystal's own "Hostname lookup for X failed" wording).
+    result = PluginSpecHelper.run("uri", {"url" => "http://krikri-issue-399.invalid/"})
+
+    result["failed"].as_bool.must_equal(true)
+    result["status"].as_i.must_equal(-1)
+    result["msg"].as_s.must_match(
+      /\AStatus code was -1 and not \[200\]: Request failed: <urlopen error \[Errno -\d+\] .+>\z/)
+  end
+
   it "accepts a custom status_code list" do
     result = PluginSpecHelper.run("uri", {"url" => "#{URI_BASE}/notfound", "status_code" => "404,410"})
     falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)

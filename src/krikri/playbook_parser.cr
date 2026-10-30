@@ -170,6 +170,17 @@ module Krikri
     property timeout_expr : String? = nil
     # Block- and task-scope `module_defaults:` - see Play#module_defaults.
     property module_defaults : Hash(String, Hash(String, String)) = Hash(String, Hash(String, String)).new
+    # The merged `module_defaults` in force for this task's scope, stamped
+    # by the apply_module_defaults post-pass (play defaults + every
+    # enclosing block/task scope). Ansible's module_defaults context is a
+    # RUNTIME stack, so it also covers tasks an `include_tasks:` loads at
+    # run time - which no parse-time pass ever sees. The include sites
+    # hand this to apply_module_defaults for the tasks they parse then
+    # (agaffney.synology_dsm's wrapper block gives its included login.yml
+    # the synology_dsm_api_request base_url, without which the plugin
+    # falls back to localhost and the failure message diverges, issue
+    # #399).
+    property effective_module_defaults : Hash(String, Hash(String, String)) = Hash(String, Hash(String, String)).new
     # Where this task's own YAML mapping starts in its source file -
     # Ansible's task-level `Origin:` position (the first key of the
     # task mapping, e.g. `name` at column 5 of `  - name: x`). Sourced
@@ -2258,6 +2269,7 @@ module Krikri
             effective[module_name] = merged
           end
         end
+        task.effective_module_defaults = effective
 
         if task.block?
           apply_module_defaults(task.block_tasks || [] of Task, effective)

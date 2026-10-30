@@ -139,6 +139,24 @@ module Krikri
         urlopen_error_text(host, url.port || (url.scheme == "https" ? 443 : 80), ex)
       end
 
+      # Python's `str(socket.gaierror)` inside urllib's URLError text for a
+      # name-resolution failure: "<urlopen error [Errno -2] Name or service
+      # not known>" (live-verified vs ansible-core 2.19.11 on a uri request
+      # to an unresolvable hostname, agaffney.synology_dsm's Login, issue
+      # #399). Crystal reports the same failure as `Socket::Addrinfo::Error`
+      # with its OWN wording ("Hostname lookup for X failed: No address
+      # found"); the EAI_* code rides in os_error as a negative value, and
+      # Ansible's message echoes gai_strerror's text for exactly that code -
+      # produced here from the same host's libc, so glibc, musl and macOS
+      # each get their own wording just like the Python side does.
+      def self.urlopen_dns_error_text(ex : Socket::Addrinfo::Error) : String?
+        code = ex.os_error.as?(Errno).try(&.value.to_i32)
+        return nil if code.nil? || code >= 0
+        "<urlopen error [Errno #{code}] #{String.new(LibC.gai_strerror(code))}>"
+      rescue
+        nil
+      end
+
       # Runs connect(2) on `socket` (already non-blocking, as the event loop
       # configures it) and resolves the connection attempt: Errno::NONE when
       # connected, the real errno when the kernel refused it. Raises
