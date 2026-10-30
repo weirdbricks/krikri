@@ -2282,6 +2282,18 @@ module Krikri
 
       begin
         return nil unless when_passes?(task, vars_context, host, item_label, shared: substitutor, defer_stats: defer_loop_stats, defer_unavailable_module: true)
+
+        # If the task has an unavailable_module (a module krikri hasn't ported),
+        # treat it as a task failure (rc=2) so the playbook continues rather than
+        # aborting the whole run with rc=4. This matches Ansible's behavior of
+        # failing the task but continuing the playbook run.
+        if task.unavailable_module
+          return JSON.parse({
+            "changed" => false,
+            "failed"  => true,
+            "msg"     => "Task failed: couldn't resolve module/action '#{task.unavailable_module}'",
+          }.to_json)
+        end
       rescue ex : WhenEvaluationError
         # Returning a real `failed: true` result here (not swallowing
         # and returning `false`/nil) lets it flow through the exact same
@@ -2385,6 +2397,17 @@ module Krikri
         # rescue above: ansible fails the child at "Error processing
         # keyword 'name'", not "Finalization of task args".
         return block_name_keyword_failure_json(ex, task)
+      rescue ex : RuntimeError
+        # Plugin binary not found - treat as a task failure (rc=2) so the
+        # playbook continues rather than aborting the whole run with rc=4.
+        # This matches Ansible's behavior of failing the task but continuing
+        # the playbook run. The error message identifies the unresolvable
+        # module so the user can see which module is missing.
+        return JSON.parse({
+          "changed" => false,
+          "failed"  => true,
+          "msg"     => "Task failed: couldn't resolve module/action '#{ex.message}'",
+        }.to_json)
       rescue ex
         # A raised exception during param substitution (e.g. lookup('url',
         # ...) hitting a real HTTP error - see ExpressionEvaluator#
