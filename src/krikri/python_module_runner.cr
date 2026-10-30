@@ -532,6 +532,7 @@ module Krikri
       File.write(package_init, "")
       File.write(module_utils_init, "")
       File.write(basic_py, BASIC_PY_SHIM)
+      File.write(File.join(work_dir, "ansible", "module_utils", "distro.py"), DISTRO_PY_SHIM)
       File.write(File.join(work_dir, "ansible", "module_utils", "_text.py"), TEXT_PY_SHIM)
       common_init = File.join(work_dir, "ansible", "module_utils", "common", "__init__.py")
       text_init = File.join(work_dir, "ansible", "module_utils", "common", "text", "__init__.py")
@@ -541,6 +542,151 @@ module Krikri
       File.write(text_init, "")
       File.write(File.join(work_dir, "ansible", "module_utils", "common", "text", "converters.py"), CONVERTERS_PY_SHIM)
     end
+
+    # ansible-core vendors the python-distro project inside module_utils
+    # (`ansible/module_utils/distro/`) and ships it in every module
+    # payload, so role-private modules detect the target distribution
+    # without python3-distro being installed on it. This engine runs the
+    # raw module script instead, so on a target without ansible-core the
+    # `from ansible.module_utils import distro` import died with
+    # "cannot import name 'distro' from 'ansible.module_utils'" and the
+    # module printed no result JSON - hard-FAILING the task where
+    # ansible ran it successfully (found via bodsch.php: both of its own
+    # library/php_version.py and library/php_modules.py import distro and
+    # gate their package-manager search on the returned distribution id,
+    # so the role died at its very first custom-module task). The shim
+    # covers python-distro's documented surface over the same files
+    # upstream python-distro reads - /etc/os-release, then
+    # /usr/lib/os-release, then /etc/lsb-release - including the
+    # `linux_distribution(full_distribution_name=...)` compatibility
+    # tuple both bodsch modules call; targets WITH ansible-core keep
+    # importing its real vendored distro, unchanged from pre-shim
+    # behavior.
+    DISTRO_PY_SHIM = <<-PYTHON
+      def _os_release():
+          for path in ("/etc/os-release", "/usr/lib/os-release"):
+              try:
+                  with open(path, "r", encoding="utf-8", errors="replace") as fh:
+                      data = {}
+                      for line in fh:
+                          line = line.strip()
+                          if not line or line.startswith("#") or "=" not in line:
+                              continue
+                          key, _, value = line.partition("=")
+                          value = value.strip()
+                          if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
+                              value = value[1:-1]
+                          data[key.strip()] = value
+                      return data
+              except OSError:
+                  continue
+          return {}
+
+
+      def _lsb_release():
+          try:
+              with open("/etc/lsb-release", "r", encoding="utf-8", errors="replace") as fh:
+                  data = {}
+                  for line in fh:
+                      line = line.strip()
+                      if not line or line.startswith("#") or "=" not in line:
+                          continue
+                      key, _, value = line.partition("=")
+                      data[key.strip()] = value.strip()
+                  return data
+          except OSError:
+              return {}
+
+
+      def id():
+          return _os_release().get("ID", "").lower()
+
+
+      def name(pretty=False):
+          info = _os_release()
+          if pretty:
+              return info.get("PRETTY_NAME", "") or info.get("NAME", "")
+          return info.get("NAME", "")
+
+
+      def version(best=False):
+          info = _os_release()
+          version_id = info.get("VERSION_ID", "")
+          if version_id:
+              return version_id
+          version_text = info.get("VERSION", "")
+          if version_text:
+              text = version_text.split("(", 1)[0].strip()
+              return text.split(" ")[0] if text else ""
+          return ""
+
+
+      def codename():
+          info = _os_release()
+          result = info.get("VERSION_CODENAME", "")
+          if not result:
+              result = _lsb_release().get("DISTRIB_CODENAME", "")
+          if not result:
+              version_text = info.get("VERSION", "")
+              if "(" in version_text and ")" in version_text:
+                  result = version_text.split("(", 1)[1].split(")", 1)[0].strip()
+          return result
+
+
+      def like():
+          return _os_release().get("ID_LIKE", "")
+
+
+      def version_parts(best=False):
+          text = version(best)
+          parts = (text.split(".") + ["", "", ""])[:3]
+          return tuple(parts)
+
+
+      def major_version(best=False):
+          return version_parts(best)[0]
+
+
+      def minor_version(best=False):
+          return version_parts(best)[1]
+
+
+      def build_number(best=False):
+          return version_parts(best)[2]
+
+
+      def linux_distribution(full_distribution_name=True):
+          # Upstream python-distro's compat shim calls name() WITHOUT
+          # pretty=True here, so the full name is os-release NAME
+          # ("Ubuntu"), not PRETTY_NAME ("Ubuntu 22.04.4 LTS").
+          distro_name = name() if full_distribution_name else id()
+          return (distro_name, version(), codename())
+
+
+      def info(best=False):
+          return {
+              "id": id(),
+              "version": version(best),
+              "like": like(),
+              "codename": codename(),
+          }
+
+
+      def os_release_attr(attribute):
+          return _os_release().get(attribute, "")
+
+
+      def lsb_release_attr(attribute):
+          return _lsb_release().get(attribute, "")
+
+
+      def best_version():
+          return version(best=True)
+
+
+      def main():
+          pass
+      PYTHON
 
     # The `ansible/module_utils/_text` helpers a new-style module can
     # import DIRECTLY alongside basic (nbde_server_tang via
