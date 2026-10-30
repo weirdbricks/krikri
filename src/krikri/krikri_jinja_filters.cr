@@ -739,21 +739,50 @@ module Krikri
         JSON::Any.new(py_truthy(value))
       end
 
+      # Jinja2's make_attrgetter feeds every attribute segment through
+      # Environment.getitem, which retries an all-digit segment as an
+      # INTEGER INDEX after the string lookup fails. krikri-jinja's
+      # engine-side get_attr only knows dict keys and method names, so
+      # map(attribute='1') over groupby's [grouper, list] pairs yielded
+      # undefined for every item - and Xenion1987.user_management's
+      # vars/main.yml merges its layered user lists through exactly that
+      # chain, so its strict loop-source templating failed with
+      # "'missing' is undefined" while ansible ran the USER task ok
+      # (issue #389). Resolve segments here: engine get_attr first (dict
+      # key "1", method names), then int indexing on lists and strings.
+      map_attr_segment = ->(current : KrikriJinja::AnyValue, part : String) : KrikriJinja::AnyValue? do
+        found = KrikriJinja.get_attr(current, part)
+        if found.nil? || found.raw.is_a?(KrikriJinja::Undefined)
+          if idx = part.to_i64?
+            case raw = current.raw
+            when Array
+              idx += raw.size if idx < 0
+              found = raw[idx]?
+            when String
+              idx += raw.size if idx < 0
+              found = KrikriJinja::AnyValue.new(raw[idx]?.to_s) if (0...raw.size).covers?(idx)
+            end
+          end
+        end
+        found
+      end
+
       # map(attribute='a.b') resolves the dotted path through nested dicts:
       # Ansible gives the nested value, where krikri-jinja's map looked up
       # the literal key "a.b" and yielded undefined for every item
       # (ansible_facts.q through a registered result list, triplepoint's
-      # secure_device ufw policies). Only the dotted form is intercepted;
-      # every other map form keeps krikri-jinja's own implementation.
+      # secure_device ufw policies). The dotted and all-digit forms are
+      # intercepted; every other map form keeps krikri-jinja's own
+      # implementation.
       original_map = KrikriJinja::BUILTIN_FILTERS["map"]
       KrikriJinja.default_engine.register_filter("map") do |value, args, kwargs, context|
         attr = kwargs["attribute"]?.try(&.raw.as?(String))
-        if attr && attr.includes?('.')
+        if attr && (attr.includes?('.') || attr.to_i64?)
           default = kwargs["default"]? || KrikriJinja::AnyValue.new(nil)
           has_default = !default.raw.nil? && !default.raw.is_a?(KrikriJinja::Undefined)
           items = KrikriJinja.to_iterable(value).map do |item|
             found = attr.split('.').reduce(item.as(KrikriJinja::AnyValue?)) do |current, part|
-              current && KrikriJinja.get_attr(current, part)
+              current && map_attr_segment.call(current, part)
             end
             if found.nil? || found.raw.is_a?(KrikriJinja::Undefined)
               has_default ? default : KrikriJinja::AnyValue.new(context.undefined)
