@@ -700,6 +700,34 @@ describe Krikri::ConditionalEvaluator do
       Krikri::ConditionalEvaluator.evaluate("check is changed", v).must_equal(true)
       Krikri::ConditionalEvaluator.evaluate("check is not skipped", v).must_equal(true)
     end
+
+    it "reads the field off a SUBSCRIPTED registered result (looped register's .results[i])" do
+      # Stouts.openvpn's "Pack clients" (issue #386) gates on
+      # `openvpn_clients_changed.results[index] is changed` - Ansible
+      # evaluates a registered-result test on any expression, not just a
+      # bare registration name. The old result_field only ever did a flat
+      # vars[var_name] lookup, so an expression key always missed and the
+      # when: silently answered false: krikri skipped the task (printing
+      # two "skipping" lines) where Ansible ran it ("changed"), diverging
+      # the per-task result and the PLAY RECAP ok/changed/skipped counters.
+      v = Hash(String, JSON::Any).new
+      v["reg"] = JSON.parse(%({"results": [{"failed": false, "changed": true}, {"failed": false, "changed": false}]}))
+      Krikri::ConditionalEvaluator.evaluate("reg.results[0] is changed", v).must_equal(true)
+      Krikri::ConditionalEvaluator.evaluate("reg.results[1] is changed", v).must_equal(false)
+      Krikri::ConditionalEvaluator.evaluate("reg.results[0] is not changed", v).must_equal(false)
+      Krikri::ConditionalEvaluator.evaluate("reg.results[1] is not changed", v).must_equal(true)
+    end
+
+    it "resolves a variable index inside a subscripted registered result" do
+      # The role's own spelling is `results[index]` with loop_control's
+      # index_var, not a literal integer - the index has to resolve through
+      # the same lookup any other computed subscript already does.
+      v = Hash(String, JSON::Any).new
+      v["reg"] = JSON.parse(%({"results": [{"failed": false, "changed": true}]}))
+      v["index"] = JSON::Any.new(0_i64)
+      Krikri::ConditionalEvaluator.evaluate("reg.results[index] is changed", v).must_equal(true)
+      Krikri::ConditionalEvaluator.evaluate("reg.results[index] is not changed", v).must_equal(false)
+    end
   end
 
   describe "truthiness" do

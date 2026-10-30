@@ -1900,7 +1900,21 @@ module Krikri
     # never sets "skipped") defaults to false, matching Ansible's
     # own tests never raising for a missing field.
     private def self.result_field(vars : Hash(String, JSON::Any), var_name : String, test_name : String) : Bool
-      result = vars[var_name]?
+      # A registered-result test can subscript the registration first -
+      # Stouts.openvpn's "Pack clients" gates on
+      # `openvpn_clients_changed.results[index] is changed`, reading the
+      # per-item changed flag out of a looped task's results list. A bare
+      # `vars[var_name]?` (the previous implementation) never matches an
+      # expression key, so such a when: silently evaluated false and the
+      # whole task skipped while Ansible ran it. Resolve dotted/indexed
+      # expressions through VariableLookup, the same way `defined?` above
+      # already does.
+      result =
+        if var_name.includes?(".") || var_name.includes?("[")
+          VariableSubstitutor::VariableLookup.new(vars).resolve(var_name)
+        else
+          vars[var_name]?
+        end
       return false unless result
 
       failed = result["failed"]?.try(&.as_bool?) || false
