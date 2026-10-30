@@ -47,6 +47,32 @@ private BARE_FETCH_RESULT = {
   stderr:    "W: Failed to fetch http://bogus.invalid/ubuntu jammy InRelease\nW: Some index files failed to download. They have been ignored, or old ones used instead.\n",
 }
 
+# Three GPG-broken repositories, the round-29883431 amottier.debian_minimal
+# shape (issue #408): the CLI stderr carries one "W: GPG error ..." +
+# "E: ... is not signed." block per repo with no untrusted-repo lines.
+private MULTI_GPG_RESULT = {
+  exit_code: 0,
+  stdout:    "",
+  stderr:    "W: GPG error: https://deb.debian.org/debian trixie InRelease: The following signatures couldn't be verified because the public key is not available: NO_PUBKEY 6ED0E7B82643E131 NO_PUBKEY 78DBA3BC47EF2265 NO_PUBKEY 762F67A0B2C39DE4\nE: The repository 'https://deb.debian.org/debian trixie InRelease' is not signed.\nW: GPG error: https://security.debian.org/debian-security trixie-security InRelease: The following signatures couldn't be verified because the public key is not available: NO_PUBKEY BDE6D2B9216EC7A8 NO_PUBKEY 8E9F831205B4BA95\nE: The repository 'https://security.debian.org/debian-security trixie-security InRelease' is not signed.\nW: GPG error: https://deb.debian.org/debian trixie-updates InRelease: The following signatures couldn't be verified because the public key is not available: NO_PUBKEY 6ED0E7B82643E131 NO_PUBKEY 78DBA3BC47EF2265\nE: The repository 'https://deb.debian.org/debian trixie-updates InRelease' is not signed.\n",
+}
+
+private def multi_gpg_blocks : Array(String)
+  [
+    "W:GPG error: https://deb.debian.org/debian trixie InRelease: The following signatures couldn't be verified because the public key is not available: NO_PUBKEY 6ED0E7B82643E131 NO_PUBKEY 78DBA3BC47EF2265 NO_PUBKEY 762F67A0B2C39DE4",
+    "E:The repository 'https://deb.debian.org/debian trixie InRelease' is not signed.",
+    "W:GPG error: https://security.debian.org/debian-security trixie-security InRelease: The following signatures couldn't be verified because the public key is not available: NO_PUBKEY BDE6D2B9216EC7A8 NO_PUBKEY 8E9F831205B4BA95",
+    "E:The repository 'https://security.debian.org/debian-security trixie-security InRelease' is not signed.",
+    "W:GPG error: https://deb.debian.org/debian trixie-updates InRelease: The following signatures couldn't be verified because the public key is not available: NO_PUBKEY 6ED0E7B82643E131 NO_PUBKEY 78DBA3BC47EF2265",
+    "E:The repository 'https://deb.debian.org/debian trixie-updates InRelease' is not signed.",
+  ]
+end
+
+private def multi_gpg_separated_reason : String
+  pair = Krikri::AptLockRetry::APT_FETCH_SECURE_REPO_PREPEND
+  blocks = multi_gpg_blocks
+  [blocks[0], blocks[1], pair, blocks[2], blocks[3], pair, blocks[4], blocks[5]].join(", ")
+end
+
 describe Krikri::AptLockRetry do
   describe "#apt_fetch_signature_failure?" do
     it "detects the GPG/unsigned-repo shape" do
@@ -68,6 +94,19 @@ describe Krikri::AptLockRetry do
 
     it "stays empty for the bare-exception class" do
       Krikri::AptLockRetryTestProbe.new.apt_fetch_failure_reason(BARE_FETCH_RESULT).must_equal("")
+    end
+
+    # python-apt separates each failed repository's GPG block with its
+    # two untrusted-repo lines (probed live in a trixie container,
+    # issue #408) - the CLI stderr carries none of them
+    it "separates each failed repo's GPG block with the untrusted-repo pair" do
+      Krikri::AptLockRetryTestProbe.new.apt_fetch_failure_reason(MULTI_GPG_RESULT).must_equal(multi_gpg_separated_reason)
+    end
+
+    it "keeps a single GPG block bare without the untrusted-repo pair" do
+      Krikri::AptLockRetryTestProbe.new.apt_fetch_failure_reason(GPG_RESULT).must_equal(
+        "W:GPG error: https://nginx.org/packages/ubuntu jammy InRelease: The following signatures couldn't be verified because the public key is not available: NO_PUBKEY 2FD21310B49F6B46, E:The repository 'https://nginx.org/packages/ubuntu jammy InRelease' is not signed."
+      )
     end
   end
 
@@ -117,6 +156,27 @@ describe Krikri::AptLockRetry do
       outcome[:warnings][0].must_equal("Failed to update cache after 1 retries due to , retrying")
       outcome[:warnings][2].must_equal("Failed to update cache after 2 retries due to , retrying")
       outcome[:last_reason].must_equal("")
+    end
+
+    # Multi-repo shape (issue #408): every attempt's text is the
+    # block-per-repo reason with the untrusted-repo pair between the
+    # blocks, and from the second failed attempt on the pair is ALSO
+    # prepended once - live-verified against ansible-core 2.19.11 on a
+    # GPG-broken trixie container (attempt 1 quoted two pairs, attempts
+    # 2+ quoted three, one before each repo's block)
+    it "quotes the multi-repo separated reason bare, then with the prepend" do
+      probe = Krikri::AptLockRetryTestProbe.new
+      reason = probe.apt_fetch_failure_reason(MULTI_GPG_RESULT)
+      reason.must_equal(multi_gpg_separated_reason)
+
+      harness = FetchRetryHarness.new
+      outcome = harness.run(2, 0, MULTI_GPG_RESULT,
+        initial_reason: reason,
+        initial_signature_failed: true)
+      outcome[:recovered].must_equal(false)
+      outcome[:warnings][0].must_equal("Failed to update cache after 1 retries due to #{reason}, retrying")
+      outcome[:warnings][2].must_equal("Failed to update cache after 2 retries due to #{Krikri::AptLockRetry::APT_FETCH_SECURE_REPO_PREPEND}, #{reason}, retrying")
+      outcome[:last_reason].must_equal("#{Krikri::AptLockRetry::APT_FETCH_SECURE_REPO_PREPEND}, #{reason}")
     end
   end
 end
