@@ -211,7 +211,19 @@ module Krikri
       if File.exists?(dest)
         begin
           existing_bytes = File.open(dest, "rb", &.getb_to_end)
-          existing_content = String.new(existing_bytes, "UTF-8", invalid: :skip)
+          # Only a dest that is not already valid UTF-8 may go through the
+          # encoding-conversion decode: String.new with an encoding routes
+          # through iconv, and with invalid: :skip Crystal opens the
+          # converter as "UTF-8//IGNORE" - glibc's iconv then silently
+          # DROPS a byte at each internal buffer boundary even for input
+          # that is already valid UTF-8 (observed: 4 single characters
+          # vanished from a 4.3 KB dest, corrupting the --diff "before"
+          # side with typos that exist in no file). Valid UTF-8 (the
+          # overwhelming common case) is copied byte-for-byte instead; the
+          # iconv skip path stays only for the non-UTF-8 output_encoding
+          # files it was written for.
+          decoded = String.new(existing_bytes)
+          existing_content = decoded.valid_encoding? ? decoded : String.new(existing_bytes, "UTF-8", invalid: :skip)
         rescue
           # File exists but can't read - continue anyway
         end
