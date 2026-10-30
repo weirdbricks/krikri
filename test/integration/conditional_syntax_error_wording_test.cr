@@ -183,4 +183,51 @@ describe "unknown filter/test in conditionals: Syntax error in expression" do
     output.must_include("[DEPRECATION WARNING]: Conditionals should not be surrounded by templating delimiters")
     output.wont_include("Template delimiters are not supported")
   end
+
+  # assert: evaluates `that:` items in order and stops at the first false
+  # one, and real warns (the templating-delimiters deprecation, each with
+  # its own Origin at the item's opening quote) for every item it
+  # EVALUATED: all of them on a passing assert, only the evaluated prefix
+  # on a failing one (issue #581). The folded item's Origin stays on its
+  # first line.
+  it "warns for each evaluated whole-template that: item, up to the failing one" do
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          supported: ['ubuntu']
+        tasks:
+          - name: All three items pass
+            ansible.builtin.assert:
+              that:
+                - "{{ 'ubuntu' in supported }}"
+                - "{{ '22.04' in ['22.04', '24.04'] }}"
+                - "{{ 'x86_64' in ['x86_64'] }}"
+              success_msg: passed
+
+          - name: Second item fails, third never evaluated
+            ansible.builtin.assert:
+              that:
+                - "{{ 'ubuntu' in supported }}"
+                - "{{ 'centos' in supported }}"
+                - "{{ 'x86_64' in ['x86_64'] }}"
+              fail_msg: failed
+            ignore_errors: true
+
+          - name: Folded multi-line conditional with ternary
+            ansible.builtin.assert:
+              that:
+                - "{{ (supported | first == 'ubuntu')
+                  if 'ubuntu' in supported else supported | first == 'x' }}"
+              success_msg: passed
+      YAML
+    status.exit_code.must_equal(0)
+    warning = "[DEPRECATION WARNING]: Conditionals should not be surrounded by templating delimiters such as {{ }} or {% %}. This feature will be removed from ansible-core version 2.23."
+    output.scan(warning).size.must_equal(6, output)
+    origins = output.scan(/\[DEPRECATION WARNING\][^\n]*\nOrigin: [^\n]*\.yml:(\d+):(\d+)/)
+    origins.size.must_equal(6, output)
+    origins.map { |match| {match[1].to_i, match[2].to_i} }.must_equal(
+      [{10, 13}, {11, 13}, {12, 13}, {18, 13}, {19, 13}, {27, 13}], output)
+  end
 end

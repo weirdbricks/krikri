@@ -1123,6 +1123,7 @@ module Krikri
           raise "handler timeout expiry without a period" unless period
           return task_timeout_result(period)
         end
+        emit_assert_that_deprecations(handler, substituted_params, action_result, vars_context)
 
         unless action_result.success?
           failed = {

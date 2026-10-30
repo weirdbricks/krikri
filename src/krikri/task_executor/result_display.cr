@@ -1231,27 +1231,46 @@ module Krikri
       return nil unless path && task.source_line > 0 && File.file?(path)
 
       lines = File.read_lines(path)
-      ((task.source_line - 1)...lines.size).each do |idx|
+      if pos = assert_that_position(lines, task.source_line - 1, index)
+        ErrorBlock.origin_context(path, pos[0], pos[1])
+      end
+    end
+
+    # Position (1-based line, 1-based column) of assert's that: item
+    # number `index` (0-based) within the source, scanned from start_idx.
+    # Public so the templating-delimiters deprecation emitter can point
+    # assert's per-item Origin without going through the ErrorBlock
+    # text form.
+    def self.assert_that_position(lines : Array(String), start_idx : Int32, index : Int32) : {Int32, Int32}?
+      (start_idx...lines.size).each do |idx|
         line = lines[idx]
         key_at = line.index("that:")
         next unless key_at && line[0...key_at].strip.empty?
         rest = line[(key_at + 5)..]
         unless rest.strip.empty?
           column = key_at + 5 + (rest.size - rest.lstrip.size) + 1
-          return ErrorBlock.origin_context(path, idx + 1, column)
+          return {idx + 1, column}
         end
 
+        key_indent = line.size - line.lstrip.size
         count = 0
         ((idx + 1)...lines.size).each do |item_idx|
           item_line = lines[item_idx]
           stripped = item_line.strip
           next if stripped.empty? || stripped.starts_with?('#')
-          break unless stripped.starts_with?("- ")
+          # A folded multi-line item's continuation lines sit deeper than
+          # the `that:` key without starting with "- " - they belong to
+          # the item just passed, so skipping them (not ending the scan)
+          # is what lets later items still get their positions.
+          unless stripped.starts_with?("- ")
+            break unless item_line.size - item_line.lstrip.size > key_indent
+            next
+          end
           if count == index
             dash = item_line.index!("- ")
             item_rest = item_line[(dash + 2)..]
             column = dash + 2 + (item_rest.size - item_rest.lstrip.size) + 1
-            return ErrorBlock.origin_context(path, item_idx + 1, column)
+            return {item_idx + 1, column}
           end
           count += 1
         end
