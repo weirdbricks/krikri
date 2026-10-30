@@ -3893,8 +3893,8 @@ module Krikri
     # fourth stanza): same layer merge, same exactly-one-match
     # protection - ambiguous or lineage-less definitions (extra vars,
     # inventory) yield nil so no origin ever gets mislabeled.
-    private def undef_chain_var_origin(task : Task, missing : String, reachable_from : String? = nil, first_leaf : Bool = false) : FileVarOrigin?
-      value_failure_var_origin(task, "'#{missing}' is undefined", skip_key: missing, required_text: missing, reachable_from: reachable_from, first_leaf: first_leaf)
+    private def undef_chain_var_origin(task : Task, missing : String, reachable_from : String? = nil, first_leaf : Bool = false, host : Host? = nil) : FileVarOrigin?
+      value_failure_var_origin(task, "'#{missing}' is undefined", skip_key: missing, required_text: missing, reachable_from: reachable_from, first_leaf: first_leaf, host: host)
     end
 
     # The unique var-layer DEFINITION whose plain-`{{ }}` own value
@@ -5584,12 +5584,21 @@ module Krikri
     # item's defining var; items without `{{` (plain literals) and items
     # that never reach the missing name yield nil and fall through to the
     # failing-element behaviour.
-    private def literal_loop_item_origin(task : Task, missing : String) : FileVarOrigin?
+    # HOST: the failing task's host, threaded into the scan's merged vars.
+    # Real resolves the defining value in the SAME context the task ran
+    # (facts included), so a defining var whose nested template reads a
+    # FACT - ansibleguy.infra_mariadb's
+    # `StandardOutput: "{{ 'syslog' if ansible_distribution_version == '10' else 'journal' }}"`
+    # under `MARIADB_CONFIG: "{{ default_mariadb | combine(mariadb) }}"`,
+    # issue #421 - must not fail the probe render on the FACT name instead
+    # of `mariadb`: the message-equality gate would then reject the true
+    # defining site and mis-pin the cause stanza at the loop item.
+    private def literal_loop_item_origin(task : Task, missing : String, host : Host? = nil) : FileVarOrigin?
       return nil unless task.loop_literal_kind
       items = task.loop_items || return nil
       items.each do |item|
         next unless (text = item.as_s?) && text.includes?("{{")
-        if origin = undef_chain_var_origin(task, missing, reachable_from: text)
+        if origin = undef_chain_var_origin(task, missing, reachable_from: text, host: host)
           return origin
         end
       end
@@ -5615,7 +5624,7 @@ module Krikri
     # rather than a mislabeled one. The caller marks the failed result
     # (_ansible_loop_error_emitted) so ResultDisplay does not print a
     # second, differently-shaped block for the same failure.
-    private def emit_loop_error_chain(task : Task, msg : String) : Nil
+    private def emit_loop_error_chain(task : Task, msg : String, host : Host? = nil) : Nil
       inner = msg.starts_with?("Task failed: ") ? msg["Task failed: ".size..] : msg
       path = task.source_file || @playbook_file
       return unless path && File.file?(path)
@@ -5642,9 +5651,9 @@ module Krikri
         # A literal item list has no loop_template to seed from, so the
         # all-layers scan below sees every var that references the name
         # and stays ambiguous; the first failing item's chain decides it.
-        if origin = literal_loop_item_origin(task, m[1])
+        if origin = literal_loop_item_origin(task, m[1], host)
           cause_context = origin_context_block(origin.path, File.read_lines(origin.path), origin.line, origin.column)
-        elsif origin = undef_chain_var_origin(task, m[1], reachable_from: task.loop_template, first_leaf: !task.loop_template.nil?)
+        elsif origin = undef_chain_var_origin(task, m[1], reachable_from: task.loop_template, first_leaf: !task.loop_template.nil?, host: host)
           cause_context = origin_context_block(origin.path, File.read_lines(origin.path), origin.line, origin.column)
         elsif task_has_loop_source?(task) && (pos = locate_loop_source_line(lines, task, missing: m[1]))
           # An UNDEFINED loop source (`loop: "{{ wordpress_sites }}"`) has
