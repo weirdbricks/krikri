@@ -5635,7 +5635,8 @@ module Krikri
         # the cause stanza at that variable's defining value, not at the
         # loop keyword (live-verified, issue #319).
         cause_context = origin_context_block(origin.path, File.read_lines(origin.path), origin.line, origin.column)
-      elsif inner.to_s.match(/\Aobject of type '[^']+' has no attribute '[^']+'\z/) &&
+      elsif (inner.to_s.matches?(/\Aobject of type '[^']+' has no attribute .+\z/) ||
+            inner.to_s.matches?(/\A(#{Regex.escape(Krikri::LAZY_TEMPLATE_DICT_TYPE)}|#{Regex.escape(Krikri::LAZY_TEMPLATE_LIST_TYPE)}) object has no element .+\z/)) &&
             task_has_loop_source?(task) &&
             (pos = locate_loop_source_line(lines, task))
         # A loop source that IS defined but has the wrong shape (`loop:

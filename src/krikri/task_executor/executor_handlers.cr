@@ -685,7 +685,15 @@ module Krikri
           return JSON.parse({"changed" => false, "failed" => true, "handler_include_failure" => true}.to_json)
         end
 
-        puts "included: #{resolved_path} for #{host.name} => (item=#{include_item_display_label(handler, item, vars_context, host)})".colorize(:cyan)
+        # Ansible's v2_playbook_on_include adds the ` => (item=...)`
+        # suffix only `if label:` - the label OBJECT's Python truthiness -
+        # so a falsy handler loop item ({}, 0, "", None) prints the
+        # included: line bare (live-verified vs 2.19.11; same callback as
+        # the include_tasks lines).
+        item_label = include_item_display_label(handler, item, vars_context, host)
+        label_obj = handler.loop_label ? JSON::Any.new(item_label) : item
+        suffix = Krikri.python_falsy?(label_obj) ? "" : " => (item=#{item_label})"
+        puts "included: #{resolved_path} for #{host.name}#{suffix}".colorize(:cyan)
         @results[host.name]["ok"] += 1
         any_iteration_ran = true
         deferred_iterations << included_tasks

@@ -675,7 +675,48 @@ module Krikri
   # indexes keep the plain list wording.
   LAZY_TEMPLATE_LIST_TYPE = "ansible._internal._templating._lazy_containers._AnsibleLazyTemplateList"
 
+  # The structured value a dict/list-subscript miss was keyed with, when
+  # the key was NOT a string (T2L.php's `php_configuration[{}]` - the loop
+  # item itself, an empty dict). Ansible words a non-string key miss by
+  # the key's PYTHON truthiness, not by quoting its rendering (live-
+  # verified vs 2.19.11): a truthy key gets the templar's attribute
+  # rewording with the bare Python repr ("object of type 'dict' has no
+  # attribute {'x': 1}" / "... 5" / "... [1, 2]" / "... True"), a falsy
+  # one falls through to Jinja's element wording carrying the lazy
+  # container's full dotted class path ("ansible._internal._templating.
+  # _lazy_containers._AnsibleLazyTemplateDict object has no element {}" /
+  # "... _AnsibleLazyTemplateList object has no element {}" / "... element
+  # None"). nil = a string key, which keeps the quoted wording above.
+  @@miss_key_json : JSON::Any? = nil
+
+  # Python truthiness of a JSON value (None/False/0/0.0/""/[]/{} are
+  # falsy) - ansible's display callbacks gate the ` => (item=...)` suffix
+  # and non-string miss wording on the label/key OBJECT, not its text.
+  def self.python_falsy?(value : JSON::Any) : Bool
+    case raw = value.raw
+    when Nil  then true
+    when Bool then !raw
+    when Int64, Int32
+      raw == 0
+    when Float64 then raw == 0.0
+    when String  then raw.empty?
+    when Array   then raw.empty?
+    when Hash    then raw.empty?
+    else              false
+    end
+  end
+
   def self.dict_attribute_miss_message(missing_key : String, miss_type : String) : String
+    key = @@miss_key_json
+    @@miss_key_json = nil
+    if key && !key.as_s?
+      shown = Krikri::ResultDisplay.python_repr(key)
+      if python_falsy?(key)
+        lazy = miss_type == "list" ? LAZY_TEMPLATE_LIST_TYPE : LAZY_TEMPLATE_DICT_TYPE
+        return "#{lazy} object has no element #{shown}"
+      end
+      return "object of type '#{miss_type}' has no attribute #{shown}"
+    end
     if missing_key.empty?
       "'#{LAZY_TEMPLATE_DICT_TYPE} object' has no attribute ''"
     else
@@ -699,6 +740,7 @@ module Krikri
 
   def self.dict_attribute_miss_name(expr : String, vars : Hash(String, JSON::Any)) : String?
     @@miss_type = "dict"
+    @@miss_key_json = nil
     return nil unless expr.matches?(PLAIN_CHAIN_SHAPE)
 
     base_end = expr.index(/\.|\[/) || expr.size
@@ -739,6 +781,7 @@ module Krikri
         # A miss here lands on the container Ansible typed the value with:
         # for a hostvars per-host entry that's the HostVarsVars wrapper.
         @@miss_type = hostvars_entry ? "HostVarsVars" : "dict"
+        @@miss_key_json = dict_chain_key_json(token, vars)
         return {key, nil}
       end
       {nil, raw[key]}
@@ -750,9 +793,25 @@ module Krikri
         @@miss_type = "list"
         return {token[1..], nil}
       end
-      return {nil, nil} unless token.starts_with?('[') && (idx = token[1..-2].strip.to_i32?)
-      return {nil, nil} if idx.negative? || idx >= raw.size
-      {nil, raw[idx]}
+      return {nil, nil} unless token.starts_with?('[')
+      if (idx = token[1..-2].strip.to_i32?)
+        return {nil, nil} if idx.negative? || idx >= raw.size
+        return {nil, raw[idx]}
+      end
+      # A dynamic (or string) key on a list is always a miss, and ansible
+      # words it by the key's truthiness through the lazy template list
+      # (live-verified vs 2.19.11 on `{{ k_list[{}] }}` ->
+      # "_AnsibleLazyTemplateList object has no element {}"); only a key
+      # that resolves to a NON-string value is nameable that way - a
+      # string key on a list keeps the generic wording (not verified).
+      kv = dict_chain_key_json(token, vars)
+      return {nil, nil} unless kv && !kv.as_s?
+      if (i = kv.as_i64?) && i >= 0 && i < raw.size
+        return {nil, raw[i]}
+      end
+      @@miss_type = "list"
+      @@miss_key_json = kv
+      return {kv.to_s, nil}
     else
       # `.attr` on a scalar: Python's "object of type 'int' has no attribute 'b'"
       if token.starts_with?('.')
@@ -780,6 +839,27 @@ module Krikri
 
     rendered = VariableSubstitutor::ExpressionEvaluator.new(vars).evaluate_or_undefined(inner)
     rendered.is_a?(VariableSubstitutor::Undefined) ? nil : rendered
+  end
+
+  # The KEY as ansible would subscript with it: a quoted literal or
+  # `.attr` is a string, and a dynamic bracket key resolves to its
+  # STRUCTURED value (a bare/chain reference through the VariableLookup -
+  # an empty dict key must stay a dict, not its rendering "{}", for
+  # dict_attribute_miss_message's truthiness wording). nil when the key
+  # expression resolves to nothing nameable.
+  private def self.dict_chain_key_json(token : String, vars : Hash(String, JSON::Any)) : JSON::Any?
+    return JSON::Any.new(token[1..]) if token.starts_with?('.')
+
+    inner = token[1..-2].strip
+    if (inner.starts_with?('"') && inner.ends_with?('"')) ||
+       (inner.starts_with?('\'') && inner.ends_with?('\''))
+      return JSON::Any.new(inner[1..-2])
+    end
+
+    resolved = VariableSubstitutor::VariableLookup.new(vars).resolve(inner)
+    return resolved if resolved
+    return JSON::Any.new(nil) if inner == "none" || inner == "None"
+    nil
   end
 
   # The full strict-undefined error message for a failed lookup: a
@@ -1061,6 +1141,17 @@ module Krikri
   rescue e : KrikriJinja::TemplateError
     return nil unless e.kind == KrikriJinja::ErrorKind::Undefined
     msg = e.raw_message
+    # The engine words a dict-subscript miss from the key's STRINGIFIED
+    # form, which loses a non-string key's type and truthiness - exactly
+    # the information ansible's wording turns on ({} key -> the lazy-dict
+    # "no element {}" shape, int/bool/dict key -> the unquoted repr
+    # "attribute {'x': 1}"). The structured chain walker sees the real
+    # JSON key values, so when it can name the miss on this very
+    # expression its wording wins; anything it declines (undefined key
+    # expression, non-plain-chain shape) keeps the engine's rewording.
+    if msg.includes?("has no attribute") && (missing_key = Krikri.dict_attribute_miss_name(expr, vars))
+      return Krikri.dict_attribute_miss_message(missing_key, Krikri.miss_type)
+    end
     return nil if msg.includes?("has no element")
     return nil if msg.matches?(/has no attribute '\d+'\z/)
     # The engine reports a missing attribute in Jinja2's own wording
