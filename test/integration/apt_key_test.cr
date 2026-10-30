@@ -21,6 +21,18 @@ private APT_KEY_TEST_SERVER = HTTP::Server.new do |context|
   when "/key.asc"
     context.response.status_code = 200
     context.response.print(FAKE_KEY_BODY)
+  when "/temporary-redirect-307"
+    # urllib's HTTPRedirectHandler follows this hop; curl's --location
+    # would too. Relative Location exercises the same urljoin the real
+    # handler does.
+    context.response.status_code = 307
+    context.response.headers["Location"] = "/key.asc"
+  when "/permanent-redirect-308"
+    # urllib does NOT register http_error_308 before Python 3.11 - the
+    # exact shape http://packages.elasticsearch.org/GPG-KEY-elasticsearch
+    # answers azavea.logstash's apt_key task with (issue #427).
+    context.response.status_code = 308
+    context.response.headers["Location"] = "/key.asc"
   else
     context.response.status_code = 404
   end
@@ -280,6 +292,44 @@ describe "apt_key plugin" do
 
     result["failed"].as_bool.must_equal(true)
     result["msg"].as_s.wont_include("Failed to fetch key")
+  end
+
+  it "fails a 308 url: with urllib's HTTP Error instead of following it like curl" do
+    # Real apt_key.py's download_key runs fetch_url through urllib, whose
+    # redirect handling follows only 301/302/303/307 - a 308 falls to the
+    # default error handler and the task fails with
+    # "Failed to download key at <url>: HTTP Error 308: Permanent
+    # Redirect" (confirmed on the azavea.logstash ubuntu 22.04 host, and
+    # reproduced here by running ansible's own module_utils.urls
+    # open_url with the 3.10 redirect_request code tuple). curl's
+    # --location follows 308, so krikri used to download the key and
+    # report changed where ansible is fatal, cascading into every later
+    # task (issue #427). The apt-key double stands in for the binary the
+    # benchmark hosts all still had - without it the find_needed_binaries
+    # check fails long before the fetch, on this dev machine.
+    state = apt_key_spec_state_file
+    with_apt_key_shim(state) do
+      result = PluginSpecHelper.run("apt_key", {"state" => "present", "url" => "#{APT_KEY_TEST_BASE}/permanent-redirect-308"})
+
+      result["failed"].as_bool.must_equal(true)
+      result["msg"].as_s.must_equal("Failed to download key at #{APT_KEY_TEST_BASE}/permanent-redirect-308: HTTP Error 308: Permanent Redirect")
+    end
+    File.delete(state) rescue nil
+  end
+
+  it "still follows a 307 url: redirect, which urllib follows too" do
+    # The mirror image of the 308 spec: 307 IS in urllib's followed set
+    # (ansible's handler delegates to stdlib's 301/302/303/307), so the
+    # key behind the redirect must still download - reaching the same
+    # later failure the plain 200 fetch hits, not a download error.
+    state = apt_key_spec_state_file
+    with_apt_key_shim(state) do
+      result = PluginSpecHelper.run("apt_key", {"state" => "present", "url" => "#{APT_KEY_TEST_BASE}/temporary-redirect-307"})
+
+      result["failed"].as_bool.must_equal(true)
+      result["msg"].as_s.wont_include("Failed to download key")
+    end
+    File.delete(state) rescue nil
   end
 
   it "maps a curl timeout (exit 28) to Ansible's urllib timed-out message" do

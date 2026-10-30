@@ -271,41 +271,8 @@ module Krikri
     # success.
     private def stage_key_material(url : String?, data : String?, file_path : String?, tmp_path : String) : PluginResult?
       if url
-        # Fetched via curl on the TARGET rather than Crystal's own
-        # HTTP::Client - a real, reproducible Crystal 1.20.3 stdlib
-        # bug truncates chunked-transfer-encoded HTTPS response
-        # bodies for at least this real key server (pkgs.tailscale.
-        # com), silently returning a partial/corrupt body with no
-        # error (fetch "succeeds", 200 OK, but 1399 of the real 2288
-        # bytes) - `gpg`/`apt-key add` then correctly rejects the
-        # truncated key material as invalid. Confirmed the truncation
-        # is deterministic and independent of how the response is
-        # consumed (direct `.body`, streaming `.body_io.gets_to_end`,
-        # and the top-level `HTTP::Client.get` convenience method all
-        # reproduce it identically), and confirmed real `curl` fetches
-        # the same URL correctly (byte-for-byte) both from this
-        # sandbox and from the live target host - so this shells out
-        # to curl instead of trying to work around Crystal's own HTTP
-        # client, matching how #add_key's `keyserver:` branch already
-        # shells out to `apt-key adv` rather than reimplementing a
-        # keyserver protocol client.
-        insecure_flag = true?(@params["validate_certs"]?, default: true) ? "" : "--insecure "
-        result = remote_exec("curl --fail --silent --show-error --location #{insecure_flag}-w '%{http_code}' -o #{Shell.quote_arg(tmp_path)} #{shell_single_quote(url)}")
-        unless result[:exit_code] == 0
-          # Ansible's fetch_url reports an HTTP failure as urllib's
-          # "HTTP Error <code>: <phrase>" under "Failed to download key at".
-          if result[:exit_code] == 22 && (code = result[:stdout].strip.to_i?) && code >= 400
-            return PluginResult.new(changed: false, failed: true, msg: "Failed to download key at #{url}: HTTP Error #{code}: #{HTTP::Status.new(code).description}")
-          end
-          # Transport failures surface in Ansible as urllib's
-          # "Request failed: <urlopen error ...>" with the errno text.
-          # A curl timeout (28) has no errno - Python's socket.timeout
-          # is errno-less, and ansible's observed message for a
-          # timed-out key URL is a bare "<urlopen error timed out>".
-          if reason = {6 => "[Errno -2] Name or service not known", 7 => "[Errno 111] Connection refused", 28 => "timed out"}[result[:exit_code]]?
-            return PluginResult.new(changed: false, failed: true, msg: "Failed to download key at #{url}: Request failed: <urlopen error #{reason}>")
-          end
-          return PluginResult.new(changed: false, failed: true, msg: "Failed to fetch key from #{url}: #{result[:stderr]}")
+        if failure = download_key_url(url, tmp_path)
+          return failure
         end
       elsif d = data
         File.write(tmp_path, d)
@@ -322,6 +289,98 @@ module Krikri
         end
       end
 
+      nil
+    end
+
+    # Stages the url: key material into *tmp_path*. Returns a failure
+    # PluginResult, or nil once the bytes are staged.
+    #
+    # Fetched via curl on the TARGET rather than Crystal's own
+    # HTTP::Client - a real, reproducible Crystal 1.20.3 stdlib
+    # bug truncates chunked-transfer-encoded HTTPS response
+    # bodies for at least this real key server (pkgs.tailscale.
+    # com), silently returning a partial/corrupt body with no
+    # error (fetch "succeeds", 200 OK, but 1399 of the real 2288
+    # bytes) - `gpg`/`apt-key add` then correctly rejects the
+    # truncated key material as invalid. Confirmed the truncation
+    # is deterministic and independent of how the response is
+    # consumed (direct `.body`, streaming `.body_io.gets_to_end`,
+    # and the top-level `HTTP::Client.get` convenience method all
+    # reproduce it identically), and confirmed real `curl` fetches
+    # the same URL correctly (byte-for-byte) both from this
+    # sandbox and from the live target host - so this shells out
+    # to curl instead of trying to work around Crystal's own HTTP
+    # client, matching how #add_key's `keyserver:` branch already
+    # shells out to `apt-key adv` rather than reimplementing a
+    # keyserver protocol client.
+    #
+    # Redirects are followed MANUALLY, in urllib's set, not curl's:
+    # Ansible's download_key runs fetch_url through urllib's
+    # HTTPRedirectHandler, which follows exactly 301/302/303/307 for
+    # GET - a 308 falls through to the default error handler and
+    # raises "HTTP Error 308: Permanent Redirect" on the Python
+    # (<= 3.10) that runs the module on the benchmark hosts. curl's
+    # --location DOES follow 308, which is how krikri downloaded
+    # http://packages.elasticsearch.org/GPG-KEY-elasticsearch (every
+    # GET to it answers 308) and reported changed for azavea.logstash's
+    # "Configure Logstash APT key" where ansible dies at the download
+    # (issue #427), diverging every task after it. Each hop asks curl
+    # for the response code + redirect target and mirrors urllib's
+    # handler, including its loop guard (max 10 distinct URLs, max 4
+    # visits to one URL, and that handler's HTTPError text).
+    private def download_key_url(url : String, tmp_path : String) : PluginResult?
+      insecure_flag = true?(@params["validate_certs"]?, default: true) ? "" : "--insecure "
+      current = url
+      visited = {} of String => Int32
+      loop do
+        result = remote_exec("curl --fail --silent --show-error #{insecure_flag}-w '%{http_code} %{redirect_url}' -o #{Shell.quote_arg(tmp_path)} #{shell_single_quote(current)}")
+        parts = result[:stdout].strip.split(' ', 2)
+        code = parts[0]?.try(&.to_i?)
+        location = parts[1]?.try { |loc| loc.empty? ? nil : loc }
+
+        unless result[:exit_code] == 0
+          # Ansible's fetch_url reports an HTTP failure as urllib's
+          # "HTTP Error <code>: <phrase>" under "Failed to download key at".
+          if result[:exit_code] == 22 && (bad = code) && bad >= 400
+            return PluginResult.new(changed: false, failed: true, msg: "Failed to download key at #{url}: HTTP Error #{bad}: #{HTTP::Status.new(bad).description}")
+          end
+          # Transport failures surface in Ansible as urllib's
+          # "Request failed: <urlopen error ...>" with the errno text.
+          # A curl timeout (28) has no errno - Python's socket.timeout
+          # is errno-less, and ansible's observed message for a
+          # timed-out key URL is a bare "<urlopen error timed out>".
+          if reason = {6 => "[Errno -2] Name or service not known", 7 => "[Errno 111] Connection refused", 28 => "timed out"}[result[:exit_code]]?
+            return PluginResult.new(changed: false, failed: true, msg: "Failed to download key at #{url}: Request failed: <urlopen error #{reason}>")
+          end
+          return PluginResult.new(changed: false, failed: true, msg: "Failed to fetch key from #{url}: #{result[:stderr]}")
+        end
+
+        # urllib's followed-redirect set, http/https/ftp targets only
+        # (a redirect to any other scheme is where urllib raises
+        # instead of following).
+        if (hop = code) && {301, 302, 303, 307}.includes?(hop) && (target = location) &&
+           (target.starts_with?("http://") || target.starts_with?("https://") || target.starts_with?("ftp://"))
+          if (visited[target]? || 0) >= 4 || visited.size >= 10
+            # urllib's HTTPRedirectHandler loop-break HTTPError text:
+            # its inf_msg prefix, then the 3xx reason phrase.
+            phrase = "The HTTP server returned a redirect error that would lead to an infinite loop.\nThe last 30x error message was:\n#{HTTP::Status.new(hop).description}"
+            return PluginResult.new(changed: false, failed: true, msg: "Failed to download key at #{url}: HTTP Error #{hop}: #{phrase}")
+          end
+          visited[target] = (visited[target]? || 0) + 1
+          current = target
+          next
+        end
+
+        # Any other 3xx - the 308 this whole branch exists for first
+        # and foremost - is where urllib's default error handler
+        # raises HTTPError("<code>: <reason phrase>"), so the task
+        # fails here instead of following it.
+        if (unfollowed = code) && unfollowed >= 300 && unfollowed < 400
+          return PluginResult.new(changed: false, failed: true, msg: "Failed to download key at #{url}: HTTP Error #{unfollowed}: #{HTTP::Status.new(unfollowed).description}")
+        end
+
+        break
+      end
       nil
     end
 
