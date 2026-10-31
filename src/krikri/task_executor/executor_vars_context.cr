@@ -2528,7 +2528,21 @@ module Krikri
       # several undefined args the one named in the error is the first by
       # name (live-verified: get_url `checksum` before `url`, copy `dest`
       # before `src`). `result` is reordered to the original order below.
-      params.keys.sort!.each do |key|
+      # The free string of a command:/shell:-style task lives in Ansible's
+      # args dict under `_raw_params` (ModuleArgsParser stores it there),
+      # so its alphabetical position is the `_` prefix, BEFORE named args
+      # like `chdir` (issue #409, amritsingh.eye, live-captured 2.19.11:
+      # with both the free string and `chdir:` undefined, Ansible reports
+      # `_raw_params` first). krikri stores that string under `cmd`, which
+      # sorts after `chdir` and flipped the reported key; sort it under
+      # Ansible's own name without touching the storage key the plugins
+      # read.
+      raw_command_module = module_name.is_a?(String) &&
+                           PlaybookParser::RAW_COMMAND_MODULES.includes?(PlaybookParser.resolve_module_name(module_name) || module_name)
+      params.keys.sort! do |a, b|
+        (a == "cmd" && raw_command_module ? "_raw_params" : a) <=>
+          (b == "cmd" && raw_command_module ? "_raw_params" : b)
+      end.each do |key|
         value = params[key]
         # The `_jinja_block_args` raw string (see parse_module_params's
         # marker comment) must reach expand_templated_args UNRENDERED:
@@ -3557,7 +3571,20 @@ module Krikri
       # free_form_value_position already finds.
       dict_args_failure = msg.starts_with?("Task args must resolve to a 'dict'")
       include_tasks = ["include_tasks", "_include_tasks"].includes?(task.module_name)
-      param_idx, param_col = free_form || dict_args_failure || free_form_include_vars ? free_form_value_position(lines, module_idx, task.module_name) : (locate_param_value_line(lines, module_idx, msg) || (include_tasks ? ((msg.starts_with?("Error while resolving value for '_raw_params':") ? locate_param_key_position(lines, module_idx, "file") : nil) || free_form_value_position(lines, module_idx, finalization_module_name(task))) : {module_idx, module_col}))
+      # A free-form command/shell task's failing key is only the module
+      # key's line when it names the free string itself (Ansible's
+      # `_raw_params`, stored here as `cmd`): a NAMED key's error goes
+      # through locate_param_value_line, which keeps both of Ansible's
+      # origin rules - a key parsed out of the INLINE free string
+      # (`creates={{ x }}` on the command line) carries the string's own
+      # start position, while a key coming from the `args:` dict
+      # (`chdir: "{{ app_path }}"`) carries its own value line (issue
+      # #409, amritsingh.eye, live-captured 2.19.11).
+      err_key = (m = msg.match(/\AError while resolving value for '([^']+)':/m)) ? m[1] : nil
+      raw_params_failure = dict_args_failure ||
+                           (free_form && (err_key.nil? || err_key == "_raw_params" || err_key == "cmd")) ||
+                           (free_form_include_vars && (err_key.nil? || err_key.in?("file", "_raw_params")))
+      param_idx, param_col = raw_params_failure ? free_form_value_position(lines, module_idx, task.module_name) : (locate_param_value_line(lines, module_idx, msg) || (include_tasks ? ((msg.starts_with?("Error while resolving value for '_raw_params':") ? locate_param_key_position(lines, module_idx, "file") : nil) || free_form_value_position(lines, module_idx, finalization_module_name(task))) : {module_idx, module_col}))
 
       # When the fourth chained stanza is emitted, the third level's text
       # shortens to the prefix alone - the inner message moves entirely
