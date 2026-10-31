@@ -54,6 +54,25 @@ describe "strict conditional origin for compound expressions" do
     output.must_include("Conditional result (False) was derived from value of type 'str' at '#{playbook}:5:14'. Conditionals must have a boolean result.")
   end
 
+  # Issue #370: `X is defined` yields a bool the chain passes through, so
+  # real labels the surviving bare operand's defining position, not the
+  # when: token.
+  it "labels an X is defined and X chain with the defining variable's position" do
+    status, output, playbook = run_playbook(<<-YAML)
+    - hosts: localhost
+      connection: local
+      gather_facts: false
+      vars:
+        proj_dir: /tmp/krikri-issue-370-proj
+      tasks:
+        - fail:
+          when: proj_dir is defined and proj_dir
+    YAML
+
+    status.exit_code.must_equal(2)
+    output.must_include("Conditional result (True) was derived from value of type 'str' at '#{playbook}:5:15'. Conditionals must have a boolean result.")
+  end
+
   it "labels a filter result with the when: token position" do
     status, output, playbook = run_playbook(<<-YAML)
     - hosts: localhost
