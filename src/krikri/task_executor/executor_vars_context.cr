@@ -4265,11 +4265,33 @@ module Krikri
     # call (execute_task_once, the batched loop, the handler loop): nil
     # unless the carrying result is an undefined-chain template failure
     # whose var scan resolved.
-    private def undef_chain_result_origin(task : Task, action_result : ActionResult) : String?
+    private def undef_chain_result_origin(task : Task, action_result : ActionResult, host : Host? = nil) : String?
       return nil unless action_result.undef_chain?
       detail = action_result.error_detail?
       return nil unless detail
-      undef_chain_origin_block(task, detail, action_result.error_origin?)
+      undef_chain_origin_block(task, detail, action_result.error_origin?) ||
+        attribute_miss_value_origin(task, detail, action_result.error_origin?, host)
+    end
+
+    # The template action's attribute-miss crash ("object of type 'dict'
+    # has no attribute 'iteritems'", issue #451 chris1984.motd): the
+    # failing expression lived in a VARIABLE's own template value - the
+    # role default read through `{{ motd_content }}` in the template file,
+    # so the walk marked the value as a chain-undefined leaf carrying that
+    # message and the engine raised it on consumption - and real 2.19.11
+    # points the chain's "caused by" Origin at that value's DEFINITION
+    # (defaults/main.yml:14:15, caret at the value token), not the
+    # template file the undefined-chain fallback keeps. The template
+    # file's own source seeds the reachability filter, so a miss that
+    # happened in the TEMPLATE file itself - real keeps the template-file
+    # Origin there, live-verified - finds no var-layer candidate the
+    # template never references and keeps the fallback.
+    private def attribute_miss_value_origin(task : Task, detail : String, template_path : String?, host : Host?) : String?
+      return nil unless detail.matches?(/\Aobject of type '.+?' has no attribute '.+?'\z/)
+      seed = template_path && File.file?(template_path) ? File.read(template_path) : nil
+      origin = value_failure_var_origin(task, detail, reachable_from: seed, host: host, first_leaf: true)
+      return nil unless origin
+      ErrorBlock.origin_context(origin.path, origin.line, origin.column)
     end
 
     private def merge_var_layer(merged : Hash(String, JSON::Any), origins : Hash(String, VarOrigin), values : Hash(String, JSON::Any)?, layer_origins : Hash(String, VarOrigin)?) : Nil
