@@ -1911,7 +1911,14 @@ module Krikri
         # completion, rc=0, mkdir-ing directories named "undefined").
         # Callers that can't safely propagate the failure pass strict:
         # false (see each site's own comment).
-        JSON::Any.new(substitutor.substitute(raw, strict: strict))
+        rendered_item = substitutor.substitute(raw, strict: strict)
+        # Same observed ansible behaviour as JinjaRenderer#
+        # rerender_string_value (GitHub issue #388): a block-tag-only
+        # template producing ZERO output nodes renders to None in real
+        # ansible, not "" - gated on "{%" so an emptiness coming from
+        # spans themselves (`{{ '' }}{{ '' }}`) keeps the string "".
+        return JSON::Any.new(nil) if raw.includes?("{%") && rendered_item == ""
+        JSON::Any.new(rendered_item)
       else
         item
       end

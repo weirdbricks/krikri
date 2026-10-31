@@ -1773,6 +1773,24 @@ describe "JinjaRenderer.rerender_nested_templates chain-undefined leaf marking (
     result.as_s.must_equal("{{ bind_addr }}")
   end
 
+  it "renders a zero-output-node block-only value to nil and {{ '' }} to \"\" (issue 388)" do
+    # Real ansible (GitHub issue #388, confirmed vs upstream) renders a
+    # template whose output node list is EMPTY - block tags only, no
+    # literal text, no `{{ }}` spans - by natively concatenating zero
+    # nodes, which is None, not "": `{% if nope is defined %}x{% endif %}`
+    # yields None. A whole-string single span (`{{ '' }}`) is ONE empty
+    # node instead, so it keeps the string "".
+    sub = Krikri::VarSubstitutor.new(vars: {} of String => JSON::Any, host_name: "h1")
+
+    Krikri::VariableSubstitutor::JinjaRenderer.rerender_nested_templates(
+      JSON::Any.new("{% if nope is defined %}x{% endif %}"), sub
+    ).raw.must_equal(nil)
+
+    Krikri::VariableSubstitutor::JinjaRenderer.rerender_nested_templates(
+      JSON::Any.new("{{ '' }}"), sub
+    ).as_s.must_equal("")
+  end
+
   it "keeps the trailing newline trim_blocks eats after a folded scalar's bare block tag (issue 287)" do
     # The folded `shell: >` shape from issue 287: folding joins the
     # source lines into ONE line, so the scalar's only newline is its

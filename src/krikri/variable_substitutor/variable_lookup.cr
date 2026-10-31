@@ -375,8 +375,16 @@ module Krikri
       # true) is the full strict pipeline: span probes plus block-tag
       # handling.
       private def rerender_full_template(render_vars : Hash(String, JSON::Any), raw : String) : JSON::Any
-        strict_span_substitute(render_vars, raw) ||
-          parse_rendered_or_wrap(JinjaRenderer.new(render_vars).render(raw))
+        rendered = strict_span_substitute(render_vars, raw) ||
+                   parse_rendered_or_wrap(JinjaRenderer.new(render_vars).render(raw))
+        # Same observed ansible behaviour as JinjaRenderer#
+        # rerender_string_value (GitHub issue #388): a template that
+        # produces ZERO output nodes - block tags only, no literal text,
+        # no `{{ }}` spans - is None in real ansible, not "". Gated on
+        # "{%" so an emptiness coming from spans themselves
+        # (`{{ '' }}{{ '' }}`) keeps the string "" those spans own.
+        return JSON::Any.new(nil) if raw.includes?("{%") && rendered.as_s? == ""
+        rendered
       end
 
       # The strict-span half of the re-render paths: when the OUTER
