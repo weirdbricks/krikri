@@ -2230,8 +2230,19 @@ module Krikri
     # import_playbook: is only valid at the top level of a playbook (a list
     # item alongside plays, not inside tasks:) - "{import_playbook: path}"
     # rather than a normal play mapping (which requires 'hosts').
+    # Ansible resolves the key as a collection-backed action name, so the
+    # fully qualified `ansible.builtin.import_playbook:` spellings run the
+    # same way as the bare one (verified against ansible-core 2.20.1);
+    # spelling only the bare key would make an FQCN entry look like a
+    # malformed play and get silently dropped as a parse warning.
     private def self.extract_import_playbook(yaml : YAML::Any) : String?
-      yaml.as_h?.try(&.["import_playbook"]?).try(&.as_s?)
+      hash = yaml.as_h? || return
+      ["import_playbook", "ansible.builtin.import_playbook", "ansible.legacy.import_playbook"].each do |key|
+        if raw = hash[key]?
+          return raw.as_s?
+        end
+      end
+      nil
     end
 
     # Parse a single play
