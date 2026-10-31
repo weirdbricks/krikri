@@ -8,42 +8,6 @@ module Krikri
     # Scalar-returning lookups (config/env, inventory_hostnames, url, vars) -
     # extracted verbatim from expression_evaluator.cr (lookup-dispatch split).
     class ExpressionEvaluator
-      # Defaults matching ansible-core 2.19's own constants when no
-      # ansible.cfg / env override is set. Only the options real roles
-      # actually look up (buluma.multi's COLOR_* / DEFAULT_* / RETRY_*)
-      # are covered; anything else returns "" rather than inventing a value.
-      private def ansible_config_value(name : String) : String
-        name_up = name.upcase
-        ansible_color_config_value(name_up) || ansible_default_config_value(name_up) ||
-          # Honour a matching ANSIBLE_<NAME> env var when present (Ansible's own resolution order: env > cfg > default).
-          ENV["ANSIBLE_#{name_up}"]? || ""
-      end
-
-      private def ansible_color_config_value(name_up : String) : String?
-        case name_up
-        when "COLOR_OK"                    then "green"
-        when "COLOR_CHANGED"               then "yellow"
-        when "COLOR_SKIP"                  then "cyan"
-        when "COLOR_UNREACHABLE"           then "bright red"
-        when "COLOR_ERROR", "COLOR_FAILED" then "red"
-        when "COLOR_DEBUG"                 then "dark gray"
-        when "COLOR_VERBOSE"               then "blue"
-        when "COLOR_WARN"                  then "bright purple"
-        end
-      end
-
-      private def ansible_default_config_value(name_up : String) : String?
-        case name_up
-        when "DEFAULT_BECOME_USER" then "root"
-        when "DEFAULT_ROLES_PATH"  then "~/.ansible/roles:/usr/share/ansible/roles:/etc/ansible/roles"
-        when "DEFAULT_HOST_LIST"   then "/etc/ansible/hosts"
-        when "RETRY_FILES_SAVE_PATH"
-          ""
-        when "DEFAULT_TIMEOUT" then "10"
-        when "DEFAULT_FORKS"   then "5"
-        end
-      end
-
       private def evaluate_lookup_scalar(lookup_type : String?, parts : Array(String), kwargs : Array(String), query_mode : Bool = false) : String?
         case lookup_type
         when "first_found"
@@ -98,16 +62,29 @@ module Krikri
         # loop bound `item` to nothing and the debug failed with
         # `'item' is undefined`). Defaults match ansible-core 2.19's own
         # DEFAULT_*/COLOR_* constants when no ansible.cfg override is set.
+        # Plugin-scoped options (`q('config', 'remote_tmp',
+        # plugin_type='shell', plugin_name='sh')` - real fails with "No
+        # config definition exists" WITHOUT the plugin kwargs) and
+        # pathspec options (DEFAULT_ROLES_PATH comes back as a real
+        # home-expanded list, not the colon-joined string) both resolve
+        # with ansible's own type casting through the shared
+        # LookupPlugins.ansible_config_typed_value.
         wantlist = kwargs.any? { |part| part.strip.downcase.starts_with?("wantlist=true") }
         names = parts[1..].compact_map { |part|
           quoted_string_literal(part.strip).try(&.as_s?) || evaluate(part.strip).presence
         }
         return "undefined" if names.empty?
-        values = names.map { |nval| ansible_config_value(nval) }
+        plugin_kwargs = {} of String => String
+        kwargs.each do |part|
+          key, sep, val = part.strip.partition('=')
+          next if sep.empty?
+          plugin_kwargs[key] = quoted_string_literal(val.strip).try(&.as_s?) || val.strip
+        end
+        values = names.map { |nval| LookupPlugins.ansible_config_typed_value(nval, plugin_kwargs) }
         if wantlist || names.size > 1
           values.to_json
         else
-          values[0]
+          values[0].as_s? || values[0].to_json
         end
       end
 

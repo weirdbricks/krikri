@@ -31,9 +31,43 @@ module Krikri
       }
     end
 
-    def self.ansible_config_value(name : String) : String
+    # Options ansible's config manager casts to a LIST of paths (base.yml
+    # `type: pathspec`): the config lookup hands back the split,
+    # home-expanded list, not the colon-joined raw string - real
+    # ansible-core 2.19 renders `['/root/.ansible/roles', ...]` for
+    # lookup('config', 'DEFAULT_ROLES_PATH') (buluma.multi's "Print out
+    # role paths" msg interpolates it).
+    private PATHSPEC_CONFIG_OPTIONS = ["DEFAULT_ROLES_PATH"]
+
+    # The config lookup's value with ansible's own TYPE casting applied:
+    # pathspec options come back as a real JSON array, everything else as
+    # the plain string. *plugin_kwargs carries the call's `key=value`
+    # keyword arguments (strings already unquoted) - `remote_tmp` is only
+    # resolvable as a plugin-scoped option (plugin_type/plugin_name), so a
+    # bare `lookup('config', 'remote_tmp')` with no plugin kwargs stays on
+    # the unknown-option "" fallback rather than inventing a value real
+    # rejects with "No config definition exists".
+    def self.ansible_config_typed_value(name : String, plugin_kwargs : Hash(String, String) = {} of String => String) : JSON::Any
       key = name.upcase
-      (default_colors[key]? || default_general[key]?) || ENV["ANSIBLE_#{key}"]? || ""
+      if key == "REMOTE_TMP" && !plugin_kwargs.empty?
+        # 'remote_tmp' is NOT a global ansible.cfg option (real's config
+        # lookup fails with "No config definition exists for 'remote_tmp'"
+        # when no plugin kwargs are given) - it only exists per
+        # connection/shell plugin, and every shell plugin's default is the
+        # same unexpanded '~/.ansible/tmp' (buluma.multi queries the sh
+        # shell plugin's). Resolved only when the call carries plugin
+        # kwargs, so the bare form keeps the unknown-option "" fallback;
+        # same resolution the shell plugin's own option follows (env >
+        # default; krikri has no ansible.cfg parser to consult the ini key
+        # in between).
+        return JSON::Any.new(ENV["ANSIBLE_REMOTE_TMP"]? || ENV["ANSIBLE_REMOTE_TEMP"]? || "~/.ansible/tmp")
+      end
+      raw = (default_colors[key]? || default_general[key]?) || ENV["ANSIBLE_#{key}"]? || ""
+      if PATHSPEC_CONFIG_OPTIONS.includes?(key)
+        JSON::Any.new(raw.split(':').reject(&.empty?).map { |part| JSON::Any.new(expand_home(part.strip)) })
+      else
+        JSON::Any.new(raw)
+      end
     end
 
     # Ansible's file-family lookups run the term through os.path.expanduser

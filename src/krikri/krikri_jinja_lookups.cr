@@ -153,11 +153,17 @@ module Krikri
         AnyValue.new(var_name.empty? ? "" : (ENV[var_name]? || ""))
       when "config"
         names = terms.map { |term| text(term) }.reject { |term| term.empty? || term.downcase.starts_with?("wantlist=") }
-        values = names.map { |config_name| LookupPlugins.ansible_config_value(config_name) }
+        # The `key=value` kwargs (plugin_type/plugin_name for the config
+        # lookup's plugin-scoped options) ride along so pathspec options and
+        # plugin options resolve with ansible's own TYPE casting (a real
+        # JSON list for DEFAULT_ROLES_PATH, not the colon-joined string).
+        plugin_kwargs = {} of String => String
+        kwargs.each { |kw_name, kw_value| plugin_kwargs[kw_name] = text(kw_value) }
+        values = names.map { |config_name| KrikriJinja.from_json_any(LookupPlugins.ansible_config_typed_value(config_name, plugin_kwargs)) }
         if names.size > 1 || truthy?(kwargs["wantlist"]?) || terms.any? { |term| text(term).downcase.starts_with?("wantlist=true") }
-          AnyValue.new(values.map { |value| AnyValue.new(value) })
+          AnyValue.new(values)
         else
-          AnyValue.new(values[0]? || "")
+          values[0]? || AnyValue.new("")
         end
       when "vars"
         var_name = text(first)
