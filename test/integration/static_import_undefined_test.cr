@@ -47,7 +47,10 @@ describe "static import referencing a fact" do
             ansible.builtin.import_tasks: "setup-{{ ansible_os_family }}.yml"
       YAML
       status.exit_code.must_equal(4)
-      output.wont_include("BEFORE")
+      # The refusal's own Origin block quotes the surrounding source lines
+      # (including `name: BEFORE`), so the no-task-ran assertion has to
+      # target the task banner, not the bare word.
+      output.wont_include("TASK [BEFORE]")
       output.must_include("Error when evaluating variable in import path")
     end
   end
