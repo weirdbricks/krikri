@@ -361,6 +361,45 @@ describe Krikri::PythonModuleRunner do
     Krikri::PythonModuleRunner.uncaught_exception_detail("no traceback here").must_be_nil
   end
 
+  it "extracts the ErrorSummary chain's cause message from a real basic.py fail_json result" do
+    result = JSON.parse(<<-JSON)
+      {"rc": 2, "stdout": "", "stderr": "", "cmd": "rails db:migrate",
+       "failed": true, "msg": "Error executing command.",
+       "exception": {"event": {"msg": "Error executing command.",
+         "chain": {"msg_reason": "<<< caused by >>>",
+           "traceback_reason": "...",
+           "event": {"msg": "[Errno 2] No such file or directory: b'rails'",
+             "__ansible_type": "Event"},
+           "follow": true, "__ansible_type": "EventChain"},
+         "__ansible_type": "Event"},
+         "__ansible_type": "ErrorSummary"},
+       "invocation": {"module_args": {}}}
+      JSON
+    Krikri::PythonModuleRunner.error_exception_summary(result)
+      .must_equal("[Errno 2] No such file or directory: b'rails'")
+  end
+
+  it "follows nested ErrorSummary chains to the deepest cause, joined in order" do
+    result = JSON.parse(<<-JSON)
+      {"failed": true, "msg": "outer",
+       "exception": {"event": {"msg": "outer",
+         "chain": {"event": {"msg": "middle",
+           "chain": {"event": {"msg": "deepest", "__ansible_type": "Event"},
+             "__ansible_type": "EventChain"},
+           "__ansible_type": "Event"},
+           "__ansible_type": "EventChain"},
+         "__ansible_type": "Event"},
+         "__ansible_type": "ErrorSummary"}}
+      JSON
+    Krikri::PythonModuleRunner.error_exception_summary(result).must_equal("middle: deepest")
+  end
+
+  it "returns nil for a plain-string exception result" do
+    result = JSON.parse("{\"failed\": true, \"msg\": \"Module failed\", \"exception\": \"Traceback ...\"}")
+    Krikri::PythonModuleRunner.error_exception_summary(result).must_be_nil
+    Krikri::PythonModuleRunner.error_exception_summary(JSON.parse("{}")).must_be_nil
+  end
+
   # ---- role's own module_utils package collection ----
 
   it "collects a role's own module_utils package tree, relative paths first" do
@@ -645,6 +684,46 @@ describe Krikri::PythonModuleRunner do
     parsed.wont_be_nil
     parsed["found"].as_bool.must_equal(true)
     parsed["missing_raises_valueerror"].as_bool.must_equal(true)
+  end
+
+  it "shim run_command ignores a missing cwd and fails like real basic.py on a missing binary" do
+    skip("python3 not available") unless File.exists?("/usr/bin/python3")
+    # The exact shape that died with a raw Python traceback on a target
+    # without ansible-core (the manageiq role's run_command(['rails', ...],
+    # cwd='/var/www/miq/vmdb') runs before that checkout exists, issue
+    # #384): real basic.py runs with ignore_invalid_cwd=True - the
+    # non-existent cwd is silently dropped instead of reaching Popen - and
+    # its bytes argv make the Popen OSError fail_json with rc=errno,
+    # empty stdout/stderr, the shlex-quoted cmd, and the exception str
+    # composed into the task error header on the controller side (the
+    # _ansible_error_exception transport the Crystal side reads).
+    work_dir = File.join(Dir.tempdir, "krikri-shim-spec-#{Random.rand(1_000_000)}")
+    Dir.mkdir_p(work_dir)
+    Krikri::PythonModuleRunner.write_module_utils_bundle(work_dir)
+    module_path = File.join(work_dir, "run_command_cwd_spec.py")
+    File.write(module_path, "from ansible.module_utils.basic import AnsibleModule\n" \
+                            "module = AnsibleModule(argument_spec={})\n" \
+                            "module.run_command(['definitely-not-a-binary-xyz'], cwd='/nonexistent/dir')\n")
+    stdout_io = IO::Memory.new
+    status = Process.run("/usr/bin/python3", [module_path],
+      input: IO::Memory.new(%({"ANSIBLE_MODULE_ARGS": {}})),
+      output: stdout_io, error: Process::Redirect::Close)
+    FileUtils.rm_r(work_dir)
+    status.success?.must_equal(false)
+    parsed = Krikri::PythonModuleRunner.parse_module_output(stdout_io.to_s).not_nil!
+    parsed.wont_be_nil
+    parsed["failed"].as_bool.must_equal(true)
+    parsed["msg"].as_s.must_equal("Error executing command.")
+    parsed["rc"].as_i.must_equal(2)
+    parsed["cmd"].as_s.must_equal("definitely-not-a-binary-xyz")
+    parsed["stdout"].as_s.must_equal("")
+    parsed["stderr"].as_s.must_equal("")
+    parsed["stdout_lines"].as_a.size.must_equal(0)
+    parsed["stderr_lines"].as_a.size.must_equal(0)
+    parsed.as_h.has_key?("changed").must_equal(false)
+    parsed.as_h.has_key?("exception").must_equal(false)
+    parsed["_ansible_error_exception"].as_s.must_equal(
+      "[Errno 2] No such file or directory: b'definitely-not-a-binary-xyz'")
   end
 
   it "shim provides ansible.module_utils._text for modules importing to_native" do

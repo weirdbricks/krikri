@@ -1069,9 +1069,18 @@ module Krikri
       # "(traceback unavailable)" placeholder base_plugin injects when
       # no exception was passed is NOT part of the chain in real
       # (fail_json only builds an ErrorSummary for an actual
-      # exception), so it is ignored here.
-      if (exc = result["exception"]?.try(&.as_s?)) && !exc.empty? &&
-         exc != "(traceback unavailable)"
+      # exception), so it is ignored here. A module-side
+      # fail_json(exception=...) hands the same text over as the
+      # _ansible_error_exception internal key instead (py_module forwards
+      # _ansible_* keys; the shim run_command's Popen OSError is the live
+      # case, issue #384) - the real result's dumped shape stays clean.
+      exc = result["exception"]?.try(&.as_s?)
+      # The placeholder is injected into every failed result that carries no
+      # real traceback, so it must not shadow the module's own cause text.
+      if exc.nil? || exc == "(traceback unavailable)"
+        exc = result["_ansible_error_exception"]?.try(&.as_s?) || exc
+      end
+      if exc && !exc.empty? && exc != "(traceback unavailable)"
         # Ansible's own _text_utils.concat_message (ported on ErrorBlock)
         # strips a trailing ". " from the left side - "Error, could not
         # touch target." + "[Errno 20] ..." collapses to "...target: [Errno 20] ...".
