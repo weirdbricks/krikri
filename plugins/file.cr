@@ -2159,34 +2159,58 @@ module Krikri
       System::Group.find_by?(id: gid.to_s).try(&.name) || gid.to_s
     end
 
-    # Generate attribute diff for file
+    # Generate attribute diff for an existing file. Ansible's shape comes
+    # from two places: file.py's initial_diff() seeds before/after with
+    # {"path": ...} unconditionally (every state handler builds its diff
+    # that way), and basic.py's set_*_if_different setters each add their
+    # own before/after entry ONLY when that attribute actually differs -
+    # a requested-but-already-correct owner:/group: contributes no lines
+    # (verified live vs 2.19.11: `mode: "0640" owner: <current user>`
+    # diffs just the mode, no owner/group lines). The setter entries are
+    # also the raw numeric uid/gid, never the resolved name:
+    # diff['before']['owner'] = orig_uid (an int) in
+    # set_owner_if_different/set_group_if_different.
     private def get_attribute_diff(path : String) : JSON::Any?
       return nil unless @diff_mode
       info = lstat(path)
       return nil unless info
 
-      before = {} of String => String
-      after = {} of String => String
-
-      # Get current mode
-      if @params["mode"]?
-        before["mode"] = PluginHelpers::StatFields.perm_octal(info.st_mode.to_i32)
-        after["mode"] = @params["mode"].to_s
-      end
+      before = {} of String => JSON::Any
+      after = {} of String => JSON::Any
+      before["path"] = JSON::Any.new(path)
+      after["path"] = JSON::Any.new(path)
 
       # Get current owner
       if owner = requested_attr("owner")
-        before["owner"] = owner_name(info.st_uid)
-        after["owner"] = owner
+        if owner_changed?(info.st_uid, owner)
+          before["owner"] = JSON::Any.new(info.st_uid.to_i64)
+          after["owner"] = JSON::Any.new(resolve_uid(owner).to_i64)
+        end
       end
 
       # Get current group
       if group = requested_attr("group")
-        before["group"] = group_name(info.st_gid)
-        after["group"] = group
+        if group_changed?(info.st_gid, group)
+          before["group"] = JSON::Any.new(info.st_gid.to_i64)
+          after["group"] = JSON::Any.new(resolve_gid(group).to_i64)
+        end
       end
 
-      return nil if before.empty?
+      # Get current mode - Ansible formats both sides with Python's
+      # '0%03o' (basic.py set_mode_if_different): a literal leading "0"
+      # over a >=3-digit octal of the S_IMODE bits, so 0o664 -> "0664"
+      # and a setuid 0o4755 -> "04755". The after side is the RESOLVED
+      # target (octal strings parsed with int(mode, 8), symbolic modes
+      # computed against the current stat), not the task's raw string -
+      # a task `mode: "640"` diffs against "0640".
+      if mode = @params["mode"]?
+        if mode_param_changed?(info.st_mode.to_i32, mode, skip_mode: false)
+          current_bits = info.st_mode.to_i32 & 0o7777
+          target_bits = mode =~ /^0?\d+$/ ? mode.to_i(8) : resolve_symbolic_mode(current_bits, mode)
+          before["mode"] = JSON::Any.new("0#{current_bits.to_s(8).rjust(3, '0')}")
+          after["mode"] = JSON::Any.new("0#{target_bits.to_s(8).rjust(3, '0')}")
+        end
+      end
 
       generate_attribute_diff(before, after)
     end

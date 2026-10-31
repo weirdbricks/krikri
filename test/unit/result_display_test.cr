@@ -117,4 +117,30 @@ describe Krikri::ResultDisplay do
       out.must_include("+new")
     end
   end
+
+  describe ".display_diff attribute diffs" do
+    # Ansible serializes dict diffs with a trailing "\n" appended to each
+    # side (callback __init__.py _serialize_diff), so the unified differ
+    # never sees a final line lacking a terminator and never emits a
+    # "\ No newline at end of file" marker - which the system `diff -u`
+    # krikri shells out to used to add on every file-attribute diff
+    # (issue #687).
+    it "renders a file-attribute diff without a no-newline marker" do
+      diff = JSON.parse(%({"before": {"path": "/tmp/f", "mode": "0664"}, "after": {"path": "/tmp/f", "mode": "0640"}}))
+      out = capture_output { Krikri::ResultDisplay.display_diff(diff) }
+      out.must_include("-    \"mode\": \"0664\"")
+      out.must_include("+    \"mode\": \"0640\"")
+      out.wont_include("No newline at end of file")
+    end
+
+    # difflib's unified_diff yields no lines when the two sides are
+    # identical and the callback prints only when it produced at least
+    # one - so a dict diff whose entries all cancelled out prints
+    # nothing, ---/+++ headers included.
+    it "prints nothing for an attribute diff with identical sides" do
+      diff = JSON.parse(%({"before": {"path": "/tmp/f"}, "after": {"path": "/tmp/f"}}))
+      out = capture_output { Krikri::ResultDisplay.display_diff(diff) }
+      out.must_equal("")
+    end
+  end
 end

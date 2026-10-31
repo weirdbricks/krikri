@@ -834,6 +834,76 @@ describe "file plugin" do
       result["changed"].as_bool.must_equal(false)
     end
   end
+
+  describe "diff-mode attribute diff payload (issue #687)" do
+    # Ansible's file.py initial_diff() seeds before/after with {"path": ...}
+    # and basic.py's set_mode_if_different formats both sides with Python's
+    # '0%03o' (a literal "0" over a >=3-digit octal) - so a 0664 file diffs
+    # as "0664", not GNU-stat's "664". Live-verified vs 2.19.11 --check
+    # --diff.
+    it "diffs the mode as 4-digit octal with the path present in both sides" do
+      path = tmp_path("diff-mode-0664.txt")
+      File.write(path, "x")
+      File.chmod(path, 0o664)
+
+      result = PluginSpecHelper.run("file", {"path" => path, "mode" => "0640", "_ansible_check_mode" => "true", "_ansible_diff" => "true"})
+
+      result["changed"].as_bool.must_equal(true)
+      result["diff"]["before"].as_h.keys.must_equal(["path", "mode"])
+      result["diff"]["before"]["path"].as_s.must_equal(path)
+      result["diff"]["before"]["mode"].as_s.must_equal("0664")
+      result["diff"]["after"].as_h.keys.must_equal(["path", "mode"])
+      result["diff"]["after"]["path"].as_s.must_equal(path)
+      result["diff"]["after"]["mode"].as_s.must_equal("0640")
+    end
+
+    # A task `mode: "640"` diffs against the RESOLVED target ("0640"),
+    # because basic.py parses the octal string with int(mode, 8) before
+    # formatting - the raw task string never reaches the diff.
+    it "diffs an unpadded task mode against the padded resolved form" do
+      path = tmp_path("diff-mode-unpadded.txt")
+      File.write(path, "x")
+      File.chmod(path, 0o660)
+
+      result = PluginSpecHelper.run("file", {"path" => path, "mode" => "640", "_ansible_check_mode" => "true", "_ansible_diff" => "true"})
+
+      result["changed"].as_bool.must_equal(true)
+      result["diff"]["after"]["mode"].as_s.must_equal("0640")
+    end
+
+    # basic.py's set_owner_if_different/set_group_if_different only add
+    # their diff entries when the uid/gid ACTUALLY differs, and as the
+    # raw numeric id (diff['before']['owner'] = orig_uid), never the
+    # resolved name - a requested-but-already-correct owner:/group:
+    # contributes no diff lines at all.
+    it "omits owner/group entries when the requested values already match" do
+      path = tmp_path("diff-mode-owner-match.txt")
+      File.write(path, "x")
+      File.chmod(path, 0o664)
+      own_uid = File.info(path, follow_symlinks: false).owner_id
+      own_gid = File.info(path, follow_symlinks: false).group_id
+
+      result = PluginSpecHelper.run("file", {"path" => path, "mode" => "0640", "owner" => own_uid.to_s, "group" => own_gid.to_s, "_ansible_check_mode" => "true", "_ansible_diff" => "true"})
+
+      result["changed"].as_bool.must_equal(true)
+      result["diff"]["before"].as_h.keys.must_equal(["path", "mode"])
+      result["diff"]["after"].as_h.keys.must_equal(["path", "mode"])
+    end
+
+    it "diffs a changed owner as the raw numeric uid, not the name" do
+      path = tmp_path("diff-mode-owner-change.txt")
+      File.write(path, "x")
+      File.chmod(path, 0o664)
+      own_uid = File.info(path, follow_symlinks: false).owner_id
+
+      result = PluginSpecHelper.run("file", {"path" => path, "owner" => "0", "_ansible_check_mode" => "true", "_ansible_diff" => "true"})
+
+      result["changed"].as_bool.must_equal(true)
+      result["diff"]["before"]["owner"].as_i.must_equal(own_uid.to_i)
+      result["diff"]["after"]["owner"].as_i.must_equal(0)
+      result["diff"]["before"].as_h.keys.must_equal(["path", "owner"])
+    end
+  end
 end
 
 # ansible-core 2.19.11's registered file result key order -
