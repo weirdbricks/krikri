@@ -346,6 +346,69 @@ describe "pip plugin" do
       end
     end
 
+    # Issue #686: the glued `-mvenv` form must classify as a venv command
+    # too (Ansible's _is_venv_command parses the command with argparse,
+    # which glues a short option to its value, so `-mvenv` == `-m venv`).
+    # The python3 shim records its argv to a marker file, so the absence
+    # of `-p...` in the creation invocation is asserted directly - with
+    # the argv-ignoring creation shim, a wrongly appended `-p` would not
+    # fail the task on its own.
+    it "treats the glued -mvenv form as a venv-style command and appends no -p" do
+      shim_dir = File.tempname(".krikri-spec-pip-venv-bin")
+      Dir.mkdir(shim_dir)
+      python3_shim = File.join(shim_dir, "python3")
+      marker = File.join(shim_dir, "marker")
+      File.write(python3_shim, <<-SH
+        #!/bin/sh
+        export PATH=/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin
+        case "$1" in
+        --help) exec "$(command -v python3)" "$@" ;;
+        esac
+        printf '%s\\n' "$@" > #{marker}
+        for last in "$@"; do :; done
+        mkdir -p "$last"
+        cp -a #{pip_venv_skeleton}/. "$last/"
+        SH
+      )
+      File.chmod(python3_shim, 0o755)
+      venv = File.join(Dir.tempdir, "krikri-pip-spec-venv-#{Random::Secure.hex(8)}")
+      begin
+        result = PluginSpecHelper.run("pip", {
+          "name"               => "pip",
+          "virtualenv"         => venv,
+          "virtualenv_command" => "python3 -mvenv",
+          "_environment"       => {"PATH" => "#{shim_dir}:#{ENV["PATH"]? || "/usr/local/bin:/usr/bin:/bin"}"}.to_json,
+        })
+
+        result["failed"]?.try(&.as_bool).wont_equal(true)
+        File.directory?(venv).must_equal(true)
+        marker_content = File.read(marker)
+        marker_content.must_include("-mvenv")
+        marker_content.wont_include("-ppython")
+      ensure
+        FileUtils.rm_rf(shim_dir)
+        FileUtils.rm_rf(venv)
+      end
+    end
+
+    it "rejects virtualenv_python with the glued -mvenv form like the spaced form" do
+      venv = File.join(Dir.tempdir, "krikri-pip-spec-venv-#{Random::Secure.hex(8)}")
+      begin
+        result = PluginSpecHelper.run("pip", {
+          "name"               => "pip",
+          "virtualenv"         => venv,
+          "virtualenv_command" => "python3 -mvenv",
+          "virtualenv_python"  => "/usr/bin/python3",
+        })
+
+        result["failed"].as_bool.must_equal(true)
+        result["msg"].as_s.must_equal("virtualenv_python should not be used when using the venv module or pyvenv as virtualenv_command")
+        File.directory?(venv).must_equal(false)
+      ensure
+        FileUtils.rm_rf(venv)
+      end
+    end
+
     it "fails when the virtualenv_command binary is missing from PATH" do
       venv = File.join(Dir.tempdir, "krikri-pip-spec-venv-#{Random::Secure.hex(8)}")
       begin
