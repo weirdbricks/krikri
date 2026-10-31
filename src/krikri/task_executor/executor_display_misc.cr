@@ -294,6 +294,19 @@ module Krikri
           child_out = marker_render_chunks(raw_template, substitutor, vars_context, task, host, child, state, depth + 1, nil)
           return complete_name_context(child, state, child_out)
         end
+        # A value carrying `{%`/`{#` tags renders as its own SEGMENTED
+        # run (block_marker_render_value): ansible keeps the partial
+        # output up to the failure and truncates there, with the errors
+        # carried at the value's defining site (andrewrothstein.openjdk,
+        # issue #419). A construct the renderer cannot decide keeps the
+        # collapsed single marker.
+        if (block_raw = block_var_raw_template(span, vars_context)) && depth < MAX_NAME_MARKER_DEPTH
+          child = NameTemplateContext.new
+          child.origin = var_origin_for(task, host, name)
+          if (child_out = block_marker_render_value(block_raw, substitutor, vars_context, task, host, child, state, depth + 1))
+            return complete_name_context(child, state, child_out)
+          end
+        end
         idx = ctx.push(e.message.to_s, error_origin || ctx.origin)
         return "#{state.placeholder_prefix}#{idx}\uE001"
       rescue
@@ -526,6 +539,151 @@ module Krikri
       return nil unless raw && (value = raw.as_s?) && value.includes?("{{")
       return nil if value.includes?("{%") || value.includes?("{#")
       value
+    end
+
+    # The raw stored value of a failed span's bare variable reference when
+    # that value carries `{%`/`{#` tags - the shape block_marker_render_value
+    # exists for. Still requires a `{{ }}` reference inside the value: a
+    # tag-only value's collapse is a separate (unaddressed) gap.
+    private def block_var_raw_template(span : String, vars_context : Hash(String, JSON::Any)) : String?
+      return nil unless (m = span.match(/\A\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}\z/))
+      raw = vars_context[m[1]]?
+      return nil unless raw && (value = raw.as_s?) && value.includes?("{{")
+      return nil unless value.includes?("{%") || value.includes?("{#")
+      value
+    end
+
+    # A `{%`/`{#`-bearing variable value, rendered with the same marker
+    # behavior ansible's name templating applies to it (andrewrothstein.openjdk,
+    # issue #419): literals and `{{ }}` spans render chunk-wise exactly like
+    # any multi-part value, `{% if %}`/`{% elif %}`/`{% else %}` branches are
+    # decided against the live vars, and a failure inside the value truncates
+    # THAT run at the failure point - the partial output before it survives,
+    # the failing condition's error plus one "template potentially truncated"
+    # error carry the value's DEFINING site as their origin (live-verified
+    # 2.19.11: the warning block names vars/main.yml, not the task), and the
+    # marker text is spliced into the enclosing name leniently (the name's
+    # own trailing literals survive, no truncation of its own). Constructs
+    # this segmented renderer cannot decide (`{% for %}`, `{% set %}`, ...)
+    # return nil so the caller keeps the collapsed single marker rather than
+    # guessing at branch structure it cannot see.
+    private def block_marker_render_value(text : String, substitutor : VarSubstitutor, vars_context : Hash(String, JSON::Any), task : Task, host : Host, ctx : NameTemplateContext, state : NameTemplateErrorState, depth : Int32) : String?
+      pieces = [] of String
+      # Branch frames `{emitting, ever_taken, seen_else}`: a frame's
+      # content renders only while every enclosing frame still emits, and
+      # a condition is evaluated only where its outcome can still matter.
+      frames = [] of {Bool, Bool, Bool}
+      pos = 0
+      while pos < text.size
+        marks = [text.index("{{", pos), text.index("{%", pos), text.index("{#", pos)].compact
+        break if marks.empty?
+        at = marks.min
+        if at > pos && frames.all?(&.[0])
+          errors_before = ctx.errors.size
+          pieces << marker_render_chunks(text[pos...at], substitutor, vars_context, task, host, ctx, state, depth, nil)
+          return pieces.join if block_run_truncated?(ctx, errors_before)
+        end
+        case text[at, 2]
+        when "{{"
+          stop = text.index("}}", at) || return nil
+          span = text[at..stop + 1]
+          return nil if span.includes?("{%") || span.includes?("{#")
+          if frames.all?(&.[0])
+            errors_before = ctx.errors.size
+            pieces << marker_render_chunks(span, substitutor, vars_context, task, host, ctx, state, depth, nil)
+            return pieces.join if block_run_truncated?(ctx, errors_before)
+          end
+          pos = stop + 2
+        when "{#"
+          stop = text.index("#}", at) || return nil
+          pos = stop + 2
+        else # "{%"
+          stop = text.index("%}", at) || return nil
+          tag = text[(at + 2)...stop].strip
+          keyword = tag[/\A[A-Za-z_]+/]?.to_s
+          case keyword
+          when "if", "elif"
+            cond = tag[keyword.size..].strip
+            return nil if cond.empty?
+            if keyword == "if"
+              taken = false
+              if frames.all?(&.[0])
+                case block_tag_condition(cond, vars_context, ctx, state, pieces)
+                when BlockTagVerdict::Aborted     then return pieces.join
+                when BlockTagVerdict::Undecidable then return nil
+                when BlockTagVerdict::Taken       then taken = true
+                end
+              end
+              frames << {taken, taken, false}
+            else
+              frame = frames.last? || return nil
+              return nil if frame[2]
+              parent_active = frames[0...-1].all?(&.[0])
+              if parent_active && !frame[1]
+                case block_tag_condition(cond, vars_context, ctx, state, pieces)
+                when BlockTagVerdict::Aborted     then return pieces.join
+                when BlockTagVerdict::Undecidable then return nil
+                when BlockTagVerdict::Taken       then frames[-1] = {true, true, false}
+                end
+              elsif parent_active
+                frames[-1] = {false, frame[1], false}
+              end
+            end
+          when "else"
+            frame = frames.last? || return nil
+            return nil if frame[2]
+            frames[-1] = {frames[0...-1].all?(&.[0]) && !frame[1], true, true}
+          when "endif"
+            return nil unless frames.pop?
+          else
+            return nil
+          end
+          pos = stop + 2
+        end
+      end
+      if pos < text.size && frames.all?(&.[0])
+        errors_before = ctx.errors.size
+        pieces << marker_render_chunks(text[pos..], substitutor, vars_context, task, host, ctx, state, depth, nil)
+        return pieces.join if block_run_truncated?(ctx, errors_before)
+      end
+      pieces.join
+    end
+
+    # The outcome of a `{% if %}`/`{% elif %}` condition: decided either
+    # way, aborted (an undefined consumption - the run-aborting error
+    # ansible reports, 'x' is undefined, already pushed with its
+    # truncation marker), or undecidable (an evaluator gap - the caller
+    # keeps today's collapsed marker rather than rendering a branch it
+    # guessed at).
+    private enum BlockTagVerdict
+      Taken
+      NotTaken
+      Aborted
+      Undecidable
+    end
+
+    private def block_tag_condition(cond : String, vars_context : Hash(String, JSON::Any), ctx : NameTemplateContext, state : NameTemplateErrorState, pieces : Array(String)) : BlockTagVerdict
+      if probe = Krikri.strict_undefined_probe_message(cond, vars_context)
+        err_start = ctx.errors.size
+        ctx.push(probe, ctx.origin)
+        ctx.push("template potentially truncated", ctx.origin)
+        pieces << (err_start...ctx.errors.size).map { |i| "#{state.placeholder_prefix}#{i}\uE001" }.join
+        return BlockTagVerdict::Aborted
+      end
+      begin
+        ConditionalEvaluator.evaluate(cond, vars_context) ? BlockTagVerdict::Taken : BlockTagVerdict::NotTaken
+      rescue
+        BlockTagVerdict::Undecidable
+      end
+    end
+
+    # Whether the chunk rendered since *errors_before* aborted the run -
+    # an aborting complex span pushes its own "template potentially
+    # truncated" error into this context; a bare span's inline marker does
+    # not abort and must not stop the run.
+    private def block_run_truncated?(ctx : NameTemplateContext, errors_before : Int32) : Bool
+      ctx.errors.size > errors_before &&
+        ctx.errors[errors_before..].any? { |err| err[0] == "template potentially truncated" }
     end
 
     # The old lenient whole-name substitution - still used for names
