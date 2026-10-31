@@ -164,6 +164,16 @@ module Krikri
         parse_extensions(text, result)
         parse_public_key(pubkey_pem, spki_der, result)
 
+        # The real module's extension getters return (None, False) for
+        # every extension the certificate does not carry - the keys are
+        # ALWAYS present, the values None (observed against
+        # community.crypto 3.1.1; the CSR half applies the same rule).
+        {"basic_constraints", "key_usage", "extended_key_usage",
+         "subject_alt_name"}.each do |key|
+          result[key] = JSON::Any.new(nil) unless result.has_key?(key)
+          result["#{key}_critical"] = JSON::Any.new(false) unless result.has_key?("#{key}_critical")
+        end
+
         result["fingerprints"] = fingerprints_any(der) if der
         result["public_key_fingerprints"] = fingerprints_any(spki_der) if spki_der
         result
@@ -222,14 +232,6 @@ module Krikri
         # the real backend's extension getters return (None, False) for
         # every extension the request does not carry - the keys are
         # ALWAYS present, the values None
-        # the real csr_info's key_usage is a LIST of usage strings; the
-        # shared extension parser (matching the certificate half) emits
-        # one comma-joined string
-        if usage = result["key_usage"]?
-          if usage_s = usage.as_s?
-            result["key_usage"] = JSON::Any.new(usage_s.split(", ").map { |entry| JSON::Any.new(entry) })
-          end
-        end
         {"basic_constraints", "key_usage", "extended_key_usage",
          "ocsp_must_staple", "subject_alt_name"}.each do |key|
           result[key] = JSON::Any.new(nil) unless result.has_key?(key)
@@ -535,7 +537,7 @@ module Krikri
             result["basic_constraints_critical"] = JSON::Any.new(critical)
           when "X509v3 Key Usage"
             list = body.split(",").map(&.strip).reject(&.empty?).sort!
-            result["key_usage"] = JSON::Any.new(list.join(", "))
+            result["key_usage"] = JSON::Any.new(list.map { |e| JSON::Any.new(e) })
             result["key_usage_critical"] = JSON::Any.new(critical)
           when "X509v3 Extended Key Usage"
             list = body.split(",").map(&.strip).reject(&.empty?).sort!
@@ -549,12 +551,21 @@ module Krikri
             result["ocsp_must_staple"] = JSON::Any.new(body.includes?("Status Request"))
             result["ocsp_must_staple_critical"] = JSON::Any.new(critical)
           when "X509v3 Subject Key Identifier"
+            # ansible reports this as lowercase colon-hex, whatever case
+            # the openssl text shows
             result["subject_key_identifier"] = JSON::Any.new(body.split("
-").first.to_s.strip)
+").first.to_s.strip.downcase)
           when "X509v3 Authority Key Identifier"
-            keyid = body.split("
-").map(&.strip).find(&.starts_with?("keyid:"))
-            aki = keyid ? keyid.lchop("keyid:").strip : nil
+            # openssl 3.x prints the key id as the value on the line
+            # after the header, with no "keyid:" prefix (older openssl
+            # prefixed it); ansible reports lowercase colon-hex either way
+            lines = body.split("
+").map(&.strip).reject(&.empty?)
+            keyid = lines.find(&.starts_with?("keyid:"))
+            # Only a colon-hex line is a key id; the issuer/serial forms
+            # ("DirName:...", "serial:...") must not be read as one.
+            hex_line = lines.find(&.matches?(/\A[0-9a-fA-F]{2}(:[0-9a-fA-F]{2})+\z/))
+            aki = keyid ? keyid.lchop("keyid:").strip.downcase : hex_line.try(&.downcase)
             result["authority_key_identifier"] = JSON::Any.new(aki)
             # issuer/serial-number forms (dirName, serial) need deeper
             # ASN.1 reading; nothing in the corpus generates them

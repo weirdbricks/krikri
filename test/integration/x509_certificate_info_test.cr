@@ -37,6 +37,17 @@ describe "x509_certificate_info plugin" do
     result["public_key_type"].as_s.must_equal("RSA")
     result["public_key_data"].as_h["exponent"].as_i.must_equal(65537)
     result["public_key_data"].as_h["size"].as_i.must_equal(2048)
+    # openssl's default -x509 profile adds basicConstraints CA:TRUE; keyUsage,
+    # extendedKeyUsage and SAN are not requested, so they come out as None.
+    result["basic_constraints"].as_a.must_equal(["CA:TRUE"])
+    # The extension keys are always present even when the certificate
+    # carries none of them - None value, False critical flag.
+    result["key_usage"].raw.must_be_nil
+    result["key_usage_critical"].as_bool.must_equal(false)
+    result["extended_key_usage"].raw.must_be_nil
+    result["extended_key_usage_critical"].as_bool.must_equal(false)
+    result["subject_alt_name"].raw.must_be_nil
+    result["subject_alt_name_critical"].as_bool.must_equal(false)
   end
 
   it "parses the extension set: basic constraints, key usage, extended key usage, SAN" do
@@ -52,9 +63,9 @@ describe "x509_certificate_info plugin" do
 
     result["basic_constraints"].as_a.must_equal(["CA:TRUE"])
     result["basic_constraints_critical"].as_bool.must_equal(true)
-    # The Ansible module sorts the key usage entries and joins them into one
-    # string; "Key Encipherment" sorts before "Digital Signature".
-    result["key_usage"].as_s.must_equal("Digital Signature, Key Encipherment")
+    # The Ansible module returns key_usage as a sorted list of the OpenSSL
+    # long names; "Key Encipherment" sorts before "Digital Signature".
+    result["key_usage"].as_a.map(&.as_s).must_equal(["Digital Signature", "Key Encipherment"])
     result["key_usage_critical"].as_bool.must_equal(false)
     result["extended_key_usage"].as_a.must_equal(["TLS Web Server Authentication"])
     # The Ansible module renders SAN IP entries as "IP:...", not openssl's
@@ -168,6 +179,40 @@ describe "x509_certificate_info plugin" do
     output.wont_include("has no attribute 'valid_at'")
     # The remove task's when: was false, so the cert survived.
     File.exists?(path).must_equal(true)
+  ensure
+    File.delete(playbook) if playbook && File.exists?(playbook)
+  end
+
+  # Live-verified against ansible-core 2.19.11 (community.crypto 3.1.1):
+  # the registered result's key list ends `valid_at`, `failed`, `changed`
+  # - real registers failed=false inside the module's own key order,
+  # before changed. A plugin success result that doesn't put failed on
+  # the wire gets it backfilled by the executor AFTER changed instead.
+  it "registers valid_at, failed, changed as the result's final keys" do
+    path = cert_path("key-order.pem")
+    `openssl req -x509 -newkey rsa:2048 -keyout #{cert_path("key-order.key")} -out #{path} -days 30 -nodes -subj "/CN=www.example.com" 2>/dev/null`
+
+    playbook = File.tempname("x509-key-order", ".yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: Read certificate
+            community.crypto.x509_certificate_info:
+              path: #{path}
+            register: info
+          - name: Show top-level result key order
+            debug:
+              msg: "{{ info.keys() | list }}"
+      YAML
+
+    captured = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: captured, error: captured)
+    output = captured.to_s
+    status.success?.must_equal(true, "playbook failed: #{output}")
+    tail = /"valid_at",\s*"failed",\s*"changed"/
+    output.matches?(tail).must_equal(true, "expected valid_at, failed, changed tail, got: #{output}")
   ensure
     File.delete(playbook) if playbook && File.exists?(playbook)
   end
