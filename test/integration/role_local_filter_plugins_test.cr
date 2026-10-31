@@ -192,6 +192,46 @@ describe "role-local filter_plugins/*.py custom filters" do
     FileUtils.rm_rf(root) if root
   end
 
+  it "reports a role-local filter's failure in a set_fact task arg without the syntax-error prefix or class name" do
+    # Real ansible-core 2.19 fails a task arg that uses a raising
+    # role-local filter directly with just "Error while resolving value
+    # for 'x': The filter plugin 'xrt_latest' failed: <filter's own
+    # message>" - no "Syntax error in template:" wrapper (that wording
+    # is only for a filter name ansible cannot resolve at all) and no
+    # Python exception class name (accelize.xilinx_xrt, issue #393).
+    root = File.tempname("filter-plugins-task-arg-failure")
+    Dir.mkdir_p(File.join(root, "roles", "myrole", "filter_plugins"))
+    Dir.mkdir_p(File.join(root, "roles", "myrole", "tasks"))
+    File.write(File.join(root, "roles", "myrole", "filter_plugins", "myfilters.py"), <<-PYTHON)
+      class FilterModule(object):
+          def filters(self):
+              return {"xrt_latest": self.xrt_latest}
+
+          def xrt_latest(self, x):
+              raise ValueError("No XRT version found for this OS")
+      PYTHON
+    File.write(File.join(root, "roles", "myrole", "tasks", "main.yml"), <<-YAML)
+      - name: set_fact arg uses a filter that raises
+        ansible.builtin.set_fact:
+          x: "{{ 'aws' | xrt_latest }}"
+      YAML
+
+    status, output = run_playbook(root, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        roles:
+          - myrole
+      YAML
+
+    status.success?.must_equal(false, output)
+    output.must_include("Error while resolving value for 'x': The filter plugin 'xrt_latest' failed: No XRT version found for this OS", output)
+    output.wont_include("Syntax error in template", output)
+    output.wont_include("ValueError:", output)
+  ensure
+    FileUtils.rm_rf(root) if root
+  end
+
   it "resolves a custom filter behind a leading parenthesized sub-expression with attribute access (round: diodonfrost.vagrant)" do
     # Real role shape: `{{ (vagrant_index.content | from_json).versions |
     # list | sort_versions | last }}` with the role's own
