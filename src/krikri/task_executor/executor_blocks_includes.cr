@@ -3306,7 +3306,16 @@ module Krikri
       # copy:-with-role-relative-src: round used either remote_src: true
       # or a local connection).
       resolved = params.dup
-      resolved["src"] = File.expand_path(candidate)
+      # Real's loader normalizes every path it resolves (unfrackpath ->
+      # os.path.normpath), which strips the trailing separator - an EMPTY
+      # relative src (`{{ var }}` rendering to "", apolloclark.mysql_deploy's
+      # default `mysql_db_file`) dwims to the role's templates/ dir (or the
+      # role root when there is none) and then fails the read with
+      # "Is a directory: '<dir>'" naming the path WITHOUT a slash. Crystal's
+      # File.expand_path keeps the separator, so the slash survived into the
+      # loader's error text. Never strip past the filesystem root itself.
+      expanded = File.expand_path(candidate)
+      resolved["src"] = expanded == "/" ? expanded : expanded.rstrip('/')
       resolved
     end
 
