@@ -1,6 +1,7 @@
 require "../minitest_helper"
 require "file_utils"
 require "digest/sha1"
+require "../../src/krikri/param_sentinels"
 
 # Proactive parameter-coverage pass for `copy:` - every behavior below
 # was live-verified against the locally-installed ansible-core
@@ -83,6 +84,51 @@ describe "copy plugin - parameter coverage (checksum/attributes/SELinux/follow/l
       result["checksum"].as_s.must_equal(Digest::SHA1.hexdigest("chk body\n"))
       result["expected_checksum"].as_s.must_equal("0" * 40)
       File.exists?(dest).must_equal(false)
+    ensure
+      File.delete(dest) if dest && File.exists?(dest)
+    end
+    # Live-verified against ansible-core 2.19.11 (the aleksanderbl29.
+    # sonos_stream role's `checksum: true` task, issue #404): the module's
+    # argspec coerces the value through its type='str' conversion before
+    # the module body sees it, so a non-string literal reports Python
+    # str(True) = "True" under expected_checksum, not the demoted wire
+    # text "true" - and "False" stays truthy as a non-empty Python string,
+    # so the check still runs and still fails the transfer.
+    it "reports a non-string literal checksum through Ansible's type='str' coercion (str(True) = \"True\")" do
+      dest = File.tempname("copy-checksum-bool-dest")
+      File.delete(dest) if File.exists?(dest)
+      body = "chk bool body\n"
+
+      result = PluginSpecHelper.run("copy", {
+        "content"  => body,
+        "dest"     => dest,
+        "checksum" => Krikri::NON_STRING_PARAM_PREFIX + "true",
+      })
+
+      result["failed"].as_bool.must_equal(true)
+      result["changed"].as_bool.must_equal(false)
+      result["msg"].as_s.must_equal("Copied file does not match the expected checksum. Transfer failed.")
+      result["checksum"].as_s.must_equal(Digest::SHA1.hexdigest(body))
+      result["expected_checksum"].as_s.must_equal("True")
+      File.exists?(dest).must_equal(false)
+    ensure
+      File.delete(dest) if dest && File.exists?(dest)
+    end
+
+    it "treats a false non-string literal checksum as truthy too (Python str(False) = \"False\")" do
+      dest = File.tempname("copy-checksum-bool-false-dest")
+      File.delete(dest) if File.exists?(dest)
+      body = "chk bool false body\n"
+
+      result = PluginSpecHelper.run("copy", {
+        "content"  => body,
+        "dest"     => dest,
+        "checksum" => Krikri::NON_STRING_PARAM_PREFIX + "false",
+      })
+
+      result["failed"].as_bool.must_equal(true)
+      result["msg"].as_s.must_equal("Copied file does not match the expected checksum. Transfer failed.")
+      result["expected_checksum"].as_s.must_equal("False")
     ensure
       File.delete(dest) if dest && File.exists?(dest)
     end

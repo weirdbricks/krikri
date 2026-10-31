@@ -1269,7 +1269,18 @@ module Krikri
         return {failure: PluginResult.new(changed: false, failed: true, msg: "Failed to write temporary file: #{ex.message}"), staged: nil}
       end
 
-      if given_checksum = @params["checksum"]?.presence
+      # Ansible's argspec coerces the module's `checksum` through its
+      # type='str' conversion before the module body sees it (str(True) ->
+      # "True"), so a non-string literal like the sonos_stream role's
+      # `checksum: true` (issue #404) compares against - and reports under
+      # expected_checksum as - the capitalised Python text, not the demoted
+      # wire text "true".
+      given_checksum = if native = non_string_param("checksum")
+                         Krikri.python_str_scalar(native)
+                       else
+                         @params["checksum"]?.presence
+                       end
+      if given_checksum && !given_checksum.empty?
         actual = sha1_of(temp_file)
         unless actual == given_checksum
           File.delete(temp_file) if File.exists?(temp_file)
