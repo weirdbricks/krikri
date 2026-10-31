@@ -293,6 +293,17 @@ module Krikri
       vars_context = Hash(String, JSON::Any).new
       host.vars.each { |key, value| vars_context[key] = value }
 
+      # The implicit setup task runs under the play's connection too: the
+      # play-level `connection:` keyword fills in only where no
+      # ansible_connection var (the host's own, here) already does -
+      # Ansible's vars-vs-keyword rule keeps an inventory-set connection
+      # var above the play keyword (live-verified vs 2.19). Without this
+      # a play `connection: local` still ssh'd out just to gather facts
+      # before its local tasks ever ran.
+      if play_connection = @connection
+        vars_context["ansible_connection"] ||= JSON::Any.new(play_connection)
+      end
+
       # Ansible resolves the connection plugin for the implicit setup
       # task too - an unresolvable ansible_connection fails Gathering
       # Facts with "the connection plugin 'X' was not found" instead of

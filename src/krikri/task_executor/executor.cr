@@ -493,6 +493,11 @@ module Krikri
       @fact_path : String? = nil,
       # See Play#remote_user.
       @remote_user : String? = nil,
+      # See Play#connection - the play's default connection plugin; only
+      # applies where no ansible_connection var does, since Ansible's
+      # vars outrank the play keyword (unlike the task keyword, which
+      # this engine keeps unconditional).
+      @connection : String? = nil,
       # The play's `become:` keyword - the become flag the play's implicit
       # Gathering Facts task inherits (real's implicit setup task is a real
       # task carrying the play's become settings, so its become-plugin

@@ -2,6 +2,35 @@ require "../minitest_helper"
 require "../../src/krikri/plugin_manager"
 require "../../src/krikri/host"
 
+private PROJECT_ROOT = File.expand_path("../..", __DIR__)
+private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
+
+# Issue #684: a play-level `connection: local` was parsed nowhere, so the
+# whole play still went over SSH - the eager plugin upload (and every task)
+# dialed the host and UNREACHABLEd, where real ansible-playbook runs the
+# play on the controller. These run the full binary against an inventory
+# host whose ssh connection is refused instantly (127.0.0.1 port 1), so
+# "did it go remote" shows up in the recap without any dial-out wait.
+private def run_playbook_issue684(playbook_body : String, inventory_line : String = "farhost ansible_host=127.0.0.1 ansible_port=1 ansible_user=root") : String
+  root = PluginSpecHelper.tmp_path("plugin_manager_local_connection_issue684")
+  FileUtils.rm_rf(root) if Dir.exists?(root)
+  Dir.mkdir_p(root)
+  inventory = File.join(root, "inventory.ini")
+  File.write(inventory, "#{inventory_line}\n")
+  playbook = File.join(root, "site.yml")
+  File.write(playbook, playbook_body)
+  out_io = IO::Memory.new
+  err_io = IO::Memory.new
+  Process.run(BINARY, ["-i", inventory, playbook], output: out_io, error: err_io)
+  out_io.to_s
+ensure
+  FileUtils.rm_rf(root) if root && Dir.exists?(root)
+end
+
+private def issue684_recap(output : String) : String
+  output.lines.reverse!.find!(&.includes?("ok="))
+end
+
 # Issue #677: the host NAME is never a local-connection vote. Real
 # ansible-core (2.19.11, live-verified) runs an inventory-defined
 # "localhost"/"127.0.0.1" over plain ssh - `{{ ansible_connection }}`
@@ -67,6 +96,93 @@ describe "Krikri::PluginManager (plugin_manager_local_connection_test.cr)" do
       host = Krikri::Host.new("web1.example.com")
       vars = {"ansible_connection" => JSON::Any.new("local")}
       Krikri::PluginManager.local_connection?(host, vars).must_equal(true)
+    end
+  end
+
+  describe "play-level connection: local end to end (issue #684)" do
+    it "runs a command task locally on an ssh-refusing inventory host" do
+      recap = issue684_recap(run_playbook_issue684(<<-YAML))
+        - hosts: all
+          connection: local
+          gather_facts: false
+          tasks:
+            - ansible.builtin.command: hostname
+              changed_when: false
+        YAML
+
+      recap.must_include("ok=1")
+      recap.must_include("unreachable=0")
+      recap.must_include("failed=0")
+    end
+
+    it "still gathers facts locally under the play keyword on the same host" do
+      recap = issue684_recap(run_playbook_issue684(<<-YAML))
+        - hosts: all
+          connection: local
+          tasks:
+            - ansible.builtin.command: hostname
+              changed_when: false
+        YAML
+
+      recap.must_include("ok=2")
+      recap.must_include("unreachable=0")
+      recap.must_include("failed=0")
+    end
+
+    it "keeps a task-level connection: ssh remote against the play keyword" do
+      # The task's own connection: keyword is that task's explicit choice
+      # and stays unconditional (live-verified shape vs 2.19: the task
+      # goes remote and UNREACHABLEs on the refused port).
+      recap = issue684_recap(run_playbook_issue684(<<-YAML))
+        - hosts: all
+          connection: local
+          gather_facts: false
+          tasks:
+            - ansible.builtin.command: hostname
+              connection: ssh
+              changed_when: false
+        YAML
+
+      recap.must_include("ok=0")
+      recap.must_include("unreachable=1")
+      recap.must_include("failed=0")
+    end
+
+    it "lets a play vars ansible_connection outrank the play keyword" do
+      # Live-verified vs ansible-playbook 2.19: the play keyword ranks
+      # BELOW play vars too.
+      recap = issue684_recap(run_playbook_issue684(<<-YAML))
+        - hosts: all
+          connection: local
+          gather_facts: false
+          vars:
+            ansible_connection: ssh
+          tasks:
+            - ansible.builtin.command: hostname
+              changed_when: false
+        YAML
+
+      recap.must_include("ok=0")
+      recap.must_include("unreachable=1")
+      recap.must_include("failed=0")
+    end
+
+    it "keeps an inventory ansible_connection var above the play keyword" do
+      # Ansible's vars-vs-keyword rule: an explicit inventory
+      # ansible_connection wins over the play keyword (live-verified vs
+      # 2.19: the entry keeps ssh'ing under a play `connection: local`).
+      recap = issue684_recap(run_playbook_issue684(<<-YAML, "farhost ansible_host=127.0.0.1 ansible_port=1 ansible_user=root ansible_connection=ssh"))
+        - hosts: all
+          connection: local
+          gather_facts: false
+          tasks:
+            - ansible.builtin.command: hostname
+              changed_when: false
+        YAML
+
+      recap.must_include("ok=0")
+      recap.must_include("unreachable=1")
+      recap.must_include("failed=0")
     end
   end
 end

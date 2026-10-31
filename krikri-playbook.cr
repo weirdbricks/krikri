@@ -1447,6 +1447,7 @@ playbook.plays.each_with_index do |play, _play_index|
       gather_timeout: play.gather_timeout,
       fact_path: play.fact_path,
       remote_user: play.remote_user,
+      connection: play.connection,
       play_become: play.become?,
       debugger: play.debugger,
       playbook_file: playbook_file,
