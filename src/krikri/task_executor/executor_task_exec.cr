@@ -3297,23 +3297,27 @@ module Krikri
       community.mysql.mysql_query community.mysql.mysql_variables
     ]
 
-    # The service action runs its delegated manager module by BARE name, so
-    # ansible-core's loader walks the task's collections: list first and
-    # prints a [WARNING] for each absent entry before the module runs
-    # (live-verified vs 2.19.11 on a role declaring `collections:` with an
-    # uninstalled collection). Only the systemd manager is affected: an
-    # explicit `use:` names it, `auto` or unset defers to the
-    # ansible_service_mgr fact.
-    private def emit_service_collection_warnings(
+    # A fact-delegating action (service -> systemd, package -> apt) runs its
+    # delegated manager module by BARE name, so ansible-core's loader walks
+    # the task's collections: list and prints a [WARNING] for each absent
+    # entry before the module runs (live-verified vs 2.19.11 on a role
+    # declaring `collections:` with an uninstalled collection - issue #396
+    # for the package half). Only the fact-chosen manager is affected: an
+    # explicit `use:` names it, `auto` or unset defers to the host fact.
+    # Display dedupe makes a second task with the same absent collection
+    # silent, exactly like Ansible's global Display.warning.
+    private def emit_delegated_collection_warnings(
       task : Task,
       params : Hash(String, String),
       vars_context : Hash(String, JSON::Any),
+      manager_fact : String,
+      target_manager : String,
     ) : Nil
-      return if task.service_collection_warnings.empty?
+      return if task.delegated_collection_warnings.empty?
       use = params["use"]?.try(&.downcase)
-      effective = use.nil? || use == "auto" ? vars_context["ansible_service_mgr"]?.try(&.as_s?) : use
-      return unless effective == "systemd"
-      task.service_collection_warnings.each { |warning| ResultDisplay.emit_action_warning(warning) }
+      effective = use.nil? || use == "auto" ? vars_context[manager_fact]?.try(&.as_s?) : use
+      return unless effective == target_manager
+      task.delegated_collection_warnings.each { |warning| ResultDisplay.emit_action_warning(warning) }
     end
 
     private def argspec_validation_result(
@@ -3326,7 +3330,12 @@ module Krikri
       # Role-private library/ modules and the py_module runner run real
       # Python whose spec we don't know - nothing to validate against.
       return nil if task.unavailable_module
-      emit_service_collection_warnings(task, params, vars_context) unless action_level_only
+      case task.module_name.split('.').last
+      when "service"
+        emit_delegated_collection_warnings(task, params, vars_context, "ansible_service_mgr", "systemd") unless action_level_only
+      when "package"
+        emit_delegated_collection_warnings(task, params, vars_context, "ansible_pkg_mgr", "apt") unless action_level_only
+      end
       action_name = task.action_name || task.module_name
       failure = ArgspecValidator.validate(action_name, task.module_name, params, vars_context)
       return nil unless failure

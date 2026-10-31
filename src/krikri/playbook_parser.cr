@@ -99,11 +99,12 @@ module Krikri
     # task-level Origin at the task's name line. nil without a source map
     # (the stanza is then omitted, never mislabeled).
     property unresolvable_mapping_origin : {String, Int32, Int32}?
-    # The [WARNING] lines ansible-core's loader prints when a service
-    # action's delegated `systemd` module lookup walks this task's
-    # collections: list and a listed collection is absent (set only on
-    # service tasks; emitted by the executor when the systemd manager runs).
-    property service_collection_warnings : Array(String) = [] of String
+    # The [WARNING] lines ansible-core's loader prints when a fact-delegating
+    # action (service -> systemd, package -> apt) runs its delegated module
+    # by BARE name, walking this task's collections: list and printing a
+    # warning for each absent entry (set only on service/package tasks;
+    # emitted by the executor when the delegated manager actually runs).
+    property delegated_collection_warnings : Array(String) = [] of String
     property params : Hash(String, String)
     property vars : Hash(String, JSON::Any)
     # environment: - per-task env vars (Ansible keyword). Raw,
@@ -4046,8 +4047,17 @@ module Krikri
       task = Task.new(name || as_written_module_name, module_name)
       task.action_name = as_written_module_name
       task.has_explicit_name = !name.nil?
-      if module_name.split('.').last == "service"
-        task.service_collection_warnings = CollectionIndex.missing_listed_collection_warnings("systemd", task_collections || [] of String)
+      # A fact-delegating action (service -> systemd, package -> apt) runs
+      # its delegated module by BARE name, so ansible-core's loader walks
+      # the task's collections: list first and prints a [WARNING] for each
+      # absent entry before the module runs (live-verified vs 2.19.11 on a
+      # role declaring `collections:` with an uninstalled collection -
+      # issue #396 for the package half). Only the fact-chosen manager is
+      # affected: an explicit `use:` names it, `auto` or unset defers to
+      # the host's manager fact.
+      if (leaf = module_name.split('.').last) == "service" || leaf == "package"
+        bare_module = leaf == "service" ? "systemd" : "apt"
+        task.delegated_collection_warnings = CollectionIndex.missing_listed_collection_warnings(bare_module, task_collections || [] of String)
       end
       if templated_action_string
         task.templated_action = templated_action_string

@@ -153,8 +153,29 @@ describe Krikri::CollectionIndex do
               name: x
               state: started
       YAML
-    pb.plays[0].tasks[0].service_collection_warnings.must_equal([
+    pb.plays[0].tasks[0].delegated_collection_warnings.must_equal([
       "Error loading plugin 'systemd': No module named 'ansible_collections.absentns'",
+    ])
+  end
+
+  it "carries the collections-walk warning on a package task in a play declaring an absent collection" do
+    # The package action delegates to the bare `apt` module on an apt
+    # host, so it is the loader's walk for THAT bare name ansible
+    # warns about - not a walk for `package` itself (issue #396).
+    pb = Krikri::PlaybookParser.parse_string(<<-YAML)
+      - name: pkg play
+        hosts: all
+        gather_facts: false
+        collections:
+          - absentns.absentcoll
+        tasks:
+          - name: install it
+            ansible.builtin.package:
+              name: x
+              state: present
+      YAML
+    pb.plays[0].tasks[0].delegated_collection_warnings.must_equal([
+      "Error loading plugin 'apt': No module named 'ansible_collections.absentns'",
     ])
   end
 
