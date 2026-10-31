@@ -18,6 +18,24 @@ private def with_temp_dir(&)
   end
 end
 
+describe "stat path variable expansion" do
+  it "expands $HOME in path like ansible's path-type args" do
+    result = PluginSpecHelper.run("stat", {"path" => "$HOME"})
+
+    result["failed"]?.try(&.as_bool).wont_equal(true)
+    result["stat"]["exists"].as_bool.must_equal(true)
+    result["stat"]["isdir"].as_bool.must_equal(true)
+  end
+
+  it "expands braced ${HOME} in path like ansible's path-type args" do
+    result = PluginSpecHelper.run("stat", {"path" => "${HOME}"})
+
+    result["failed"]?.try(&.as_bool).wont_equal(true)
+    result["stat"]["exists"].as_bool.must_equal(true)
+    result["stat"]["isdir"].as_bool.must_equal(true)
+  end
+end
+
 describe "stat errno surface" do
   it "fails with the OS error string when the parent is a file (ENOTDIR)" do
     with_temp_dir do |dir|
