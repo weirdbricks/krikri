@@ -164,6 +164,21 @@ module Krikri
       "#{os}-#{arch == "aarch64" ? "arm64" : arch}"
     end
 
+    # A macOS controller managing Linux targets is the one case where the
+    # generic remedy (install the "<os>-<arch>" release's plugins/ next to
+    # the controller) means fetching a LINUX release tarball and guessing
+    # which piece of it to keep - the darwin-with-linux-multiarch bundle
+    # exists precisely for that and is installable via brew (issue #680),
+    # so darwin controllers get it named directly. Linux controllers get
+    # no extra line: their missing key is always the other CPU's own
+    # release, whose plugins/ dir is the whole answer.
+    private def self.multiarch_remedy(arch : String) : String
+      return "" unless controller_os == "darwin" && arch.starts_with?("linux-")
+      " On a macOS controller, the krikri-<version>-darwin-with-linux-multiarch.tar.gz bundle " \
+      "(https://github.com/weirdbricks/krikri/releases, or `brew install weirdbricks/krikri/krikri-multiarch`) " \
+      "already includes the Linux plugin sets for both architectures."
+    end
+
     # Target arch as last probed per host_key - probed fresh in
     # upload_plugins_to_host's round trip 1, remembered across that
     # process's calls here, and persisted in the host-state cache's
@@ -2531,7 +2546,8 @@ module Krikri
           "krikri-<version>-#{release_label(arch)}.tar.gz) and install its plugins/ " \
           "directory as plugins-#{arch}/ next to the krikri-playbook executable (or as " \
           "bin/plugins-#{arch}/ in the checkout); or run ./build.sh on a machine of that " \
-          "architecture and install the resulting bin/plugins/ the same way."
+          "architecture and install the resulting bin/plugins/ the same way." \
+          "#{multiarch_remedy(arch)}"
         )
       end
 

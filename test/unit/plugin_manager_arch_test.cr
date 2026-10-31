@@ -85,6 +85,33 @@ describe "plugin arch awareness (issue #1)" do
         FileUtils.rm_rf(dir)
       end
     end
+
+    it "points a macOS controller at the multiarch bundle when Linux plugins are missing" do
+      # The generic remedy tells the user to download the LINUX release
+      # tarball and keep only its plugins/ dir - on a Mac that tarball is
+      # a controller build they cannot (and must not) run; the
+      # darwin-with-linux-multiarch bundle (brew: krikri-multiarch) is
+      # the packaged answer for exactly this case (issue #680), so a
+      # darwin controller's message names it too.
+      dir = PluginSpecHelper.tmp_path("arch-plugins-os-multiarch-#{Random::Secure.hex(4)}")
+      begin
+        Dir.mkdir_p(dir)
+        Krikri::PluginManager.controller_os = "darwin"
+        Krikri::PluginManager.build_arch = "aarch64"
+        Krikri::PluginManager.executable_path_for_spec = File.join(dir, "krikri-playbook")
+        error = nil
+        begin
+          Krikri::PluginManager.local_plugin_path_for_spec("command", "linux-aarch64")
+        rescue e : Krikri::PluginArchUnsupportedError
+          error = e.message.to_s
+        end
+        message = error.to_s
+        message.includes?("darwin-with-linux-multiarch").must_equal(true, message)
+        message.includes?("krikri-multiarch").must_equal(true, message)
+      ensure
+        FileUtils.rm_rf(dir)
+      end
+    end
   end
 
   describe "per-arch binary selection" do

@@ -42,7 +42,8 @@ darwin-x86_64/krikri-playbook (Intel). It can manage Linux targets of
 both architectures (plugins-linux-x86_64/, plugins-linux-aarch64/) and
 Mac targets of either CPU. Keep the whole directory tree intact.
 
-The macOS binaries need Homebrew's openssl@3, pcre2 and bdw-gc.
+The macOS binaries need Homebrew's openssl@3, pcre2, bdw-gc, gmp,
+libyaml and xz (the plugin binaries link xz's liblzma).
 README
 
 tar -C "$work" -czf "$out/${pkg}.tar.gz" "$pkg"

@@ -89,6 +89,16 @@ brew install weirdbricks/krikri/krikri
 Covers macOS (arm64/x86_64) and Linux (arm64/x86_64) - no Crystal
 toolchain needed. See **Build from source** below instead.
 
+That default macOS install carries only macOS plugin binaries; a Mac
+controller managing **Linux** hosts fails on the first task with "no
+linux-x86_64 plugin binaries available". For that use the opt-in
+multi-arch formula, which additionally installs both Linux plugin sets
+(~79 MB vs ~27 MB):
+
+```bash
+brew install weirdbricks/krikri/krikri-multiarch
+```
+
 ### Build from source
 
 Crystal is only needed to *build* from source (the Homebrew tap above ships
