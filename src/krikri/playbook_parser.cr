@@ -4797,23 +4797,29 @@ module Krikri
     # loader hands over one file's parsed top-level keys at a time;
     # deduped per file+key because load_role re-reads the same files
     # (the play-wide layer reloads defaults) and may load a role more
-    # than once, while Ansible warns once per file per run. Public:
+    # than once. Within one role load the caller also hands in a shared
+    # per-role key set: the merged variable context keeps the FIRST
+    # file's tag for a key, so a reserved key defined in both defaults/
+    # and vars/ warns only from defaults/ (issue #397 - real warned once
+    # with the defaults Origin and never for the vars/ copy). Public:
     # RoleLoader owns the cached parse of role vars files.
     @@reserved_toplevel_var_warnings = Set(String).new
     RESERVED_TOPLEVEL_WARN_MUTEX = Mutex.new
 
-    def self.warn_reserved_toplevel_vars(path : String, keys : Array(String)) : Nil
+    def self.warn_reserved_toplevel_vars(path : String, keys : Array(String), role_warned : Set(String)? = nil) : Nil
       return unless keys.any? { |key| RESERVED_VAR_NAMES.includes?(key) }
       return unless File.file?(path)
       lines = source_lines(path) || return
       keys.each do |key|
         next unless RESERVED_VAR_NAMES.includes?(key)
+        next if role_warned.try(&.includes?(key))
         found = locate_reserved_toplevel_key(lines, key)
         next unless found
         dedup_key = File.expand_path(path) + ":" + key
         RESERVED_TOPLEVEL_WARN_MUTEX.synchronize do
           next if @@reserved_toplevel_var_warnings.includes?(dedup_key)
           @@reserved_toplevel_var_warnings << dedup_key
+          role_warned.try(&.<< key)
           STDERR.puts "[WARNING]: Found variable using reserved name '#{key}'."
           STDERR.puts reserved_origin_block(path, lines, found[0], found[1])
           STDERR.puts

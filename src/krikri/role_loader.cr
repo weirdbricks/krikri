@@ -653,9 +653,13 @@ module Krikri
 
       # Ansible's Role._load_role_data parses tasks and handlers before it
       # reads vars/ and defaults/, so a fatal task-parse error (e.g. the
-      # removed bare `include:`) pre-empts these warnings entirely.
-      warn_reserved_role_vars(File.join(role_dir, "defaults"))
-      warn_reserved_role_vars(File.join(role_dir, "vars"))
+      # removed bare `include:`) pre-empts these warnings entirely. One
+      # key set spans both directories: defaults are merged into the
+      # play's variable context before the role's own vars/ files, so
+      # when both define the same reserved name only the defaults
+      # occurrence warns (issue #397: adyraj.kubernetes_instance's
+      # vars/main.yml `name:` stayed silent behind defaults/main.yml's).
+      warn_reserved_role_vars(role_dir)
 
       # The argument-spec "Validating arguments..." task only applies to
       # the role's own default ("main") entry point, not an arbitrary
@@ -1478,28 +1482,39 @@ module Krikri
       result
     end
 
-    # Reserved-name warnings for a role's defaults/ or vars/ directory:
+    # Reserved-name warnings for a role's defaults/ and vars/ directories:
     # ansible-core 2.19 warns for a reserved name at the TOP LEVEL of
     # every vars-style file the role loads (single main.* or a main/
     # directory of files), at role load time - before the PLAY banner for
     # a play-level role, at the include point for include_role (both
-    # paths go through load_role, so the two call sites below cover
+    # paths go through load_role, so this one call site covers
     # dependencies too). Same file discovery as load_vars_file_main so
     # the Origin always names a file Ansible would actually have read.
-    private def self.warn_reserved_role_vars(dir : String) : Nil
-      files = if found = find_main_file(dir)
-                [found]
-              else
-                main_dir = File.join(dir, "main")
-                if Dir.exists?(main_dir)
-                  (Dir.glob(File.join(main_dir, "*.yml")) + Dir.glob(File.join(main_dir, "*.yaml")) + Dir.glob(File.join(main_dir, "*.json"))).sort
+    # The warning fires once per KEY per role, not once per file: the
+    # merged variable context keeps the tag of the file that first
+    # introduced the key, and defaults/ is read before vars/ (issue
+    # #397), so a key both files define warns with the defaults Origin
+    # only.
+    private def self.warn_reserved_role_vars(role_dir : String) : Nil
+      warned_keys = Set(String).new
+      {
+        File.join(role_dir, "defaults"),
+        File.join(role_dir, "vars"),
+      }.each do |dir|
+        files = if found = find_main_file(dir)
+                  [found]
                 else
-                  [] of String
+                  main_dir = File.join(dir, "main")
+                  if Dir.exists?(main_dir)
+                    (Dir.glob(File.join(main_dir, "*.yml")) + Dir.glob(File.join(main_dir, "*.yaml")) + Dir.glob(File.join(main_dir, "*.json"))).sort
+                  else
+                    [] of String
+                  end
                 end
-              end
-      files.each do |path|
-        keys = cached_yaml(path).as_h?.try(&.keys.map(&.to_s)) || next
-        PlaybookParser.warn_reserved_toplevel_vars(path, keys)
+        files.each do |path|
+          keys = cached_yaml(path).as_h?.try(&.keys.map(&.to_s)) || next
+          PlaybookParser.warn_reserved_toplevel_vars(path, keys, warned_keys)
+        end
       end
     end
 
