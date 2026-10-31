@@ -52,4 +52,35 @@ describe "ansible_version magic var" do
   ensure
     File.delete(playbook) if playbook && File.exists?(playbook)
   end
+
+  it "stringifies the bare dict in ansible's key order, not sorted" do
+    # Real divergence found live by buluma.os_updates (round 29883646):
+    # its SmokeTests task renders the bare dict into a string
+    # ("ansible_version => {{ ansible_version }}"), and Python str()
+    # of ansible's dict emits keys in ansible-core's own insertion
+    # order - {string, full, major, minor, revision} - while this
+    # engine declared the literal sorted-looking and iterated it in
+    # that order, diverging from ansible byte for byte. Python dicts
+    # are insertion-ordered and the render path preserves Crystal
+    # Hash insertion order, so the constant itself must be written in
+    # ansible's order.
+    playbook = File.tempname("ansible-version-order", ".yml")
+    File.write(playbook, <<-YAML)
+      - name: repro
+        hosts: all
+        gather_facts: false
+        tasks:
+          - name: show bare dict
+            ansible.builtin.debug:
+              msg: "ansible_version => {{ ansible_version }}"
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+
+    status.success?.must_equal(true)
+    output.to_s.must_include("ansible_version => {'string': '2.19.11', 'full': '2.19.11', 'major': 2, 'minor': 19, 'revision': 11}")
+  ensure
+    File.delete(playbook) if playbook && File.exists?(playbook)
+  end
 end
