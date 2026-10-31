@@ -856,4 +856,62 @@ describe Krikri::PythonModuleRunner do
     parsed["native"].as_s.must_include("boom")
     parsed["roundtrip"].as_s.must_equal("café")
   end
+
+  # ---- collection imports on the module's PYTHONPATH (issue #692) ----
+
+  it "maps collection roots to PYTHONPATH entries that expose ansible_collections" do
+    # Real ansible never needs the collections importable where the module
+    # runs - its AnsiballZ payload bundles collection module_utils - but
+    # this runner executes the raw script, so the collection install
+    # locations must land on PYTHONPATH instead. A root may name either a
+    # collections ROOT (containing ansible_collections/) or a path pointing
+    # directly AT an ansible_collections dir (the shape the
+    # ansible-core-package scan produces); Python needs the parent of
+    # ansible_collections either way, so both shapes must collapse to the
+    # same entry, and roots without an actual tree behind them (the two
+    # default locations CollectionIndex keeps even when absent) drop out.
+    root = File.join(PluginSpecHelper.tmp_path("coll-import-roots"), "site-packages")
+    Dir.mkdir_p(File.join(root, "ansible_collections", "testns", "coll"))
+    roots = [
+      root,
+      File.join(root, "ansible_collections"),
+      File.join(PluginSpecHelper.tmp_path("coll-import-roots"), "nowhere"),
+    ]
+    Krikri::PythonModuleRunner.collection_import_roots(roots).must_equal([root])
+    FileUtils.rm_rf(File.join(PluginSpecHelper.tmp_path("coll-import-roots")))
+  end
+
+  it "runs a module importing ansible_collections.* module_utils via the collection roots on PYTHONPATH" do
+    # The exact shape that hard-failed the issue #692 repro: a custom
+    # library module importing a collection's module_utils
+    # (`from ansible_collections.amazon.aws.plugins.module_utils.retries
+    # import AWSRetry`) - ansible bundles that import into the payload and
+    # runs the module ok, while the raw run here died with
+    # "No module named 'ansible_collections...'" on a python the
+    # collections were never installed into. The plugin gets the fixture
+    # collection through ANSIBLE_COLLECTIONS_PATH only (its own env, no
+    # process-wide mutation), which no python has on sys.path - the import
+    # can only resolve through the PYTHONPATH the plugin now builds.
+    skip("python3 not available") unless File.exists?("/usr/bin/python3")
+    fixture_root = PluginSpecHelper.tmp_path("pymod-coll-path")
+    mu = File.join(fixture_root, "ansible_collections", "testns", "coll", "plugins", "module_utils")
+    Dir.mkdir_p(mu)
+    File.write(File.join(mu, "marker.py"), "MARKER = 'fixture-value'\n")
+    source = "#!/usr/bin/python\n" \
+             "from ansible.module_utils.basic import AnsibleModule\n" \
+             "from ansible_collections.testns.coll.plugins.module_utils.marker import MARKER\n" \
+             "module = AnsibleModule(argument_spec={}, supports_check_mode=True)\n" \
+             "module.exit_json(changed=False, msg=MARKER)\n"
+    result = PluginSpecHelper.run("py_module", {
+      "module_name"         => "kk_coll",
+      "module_source"       => Base64.strict_encode(source),
+      "new_style"           => "true",
+      "module_args"         => %q({"_ansible_check_mode": false}),
+      "_ansible_check_mode" => "false",
+    }, env: {"ANSIBLE_COLLECTIONS_PATH" => fixture_root})
+    expect(falsey?(result["failed"]?)).must_equal(true)
+    result["msg"].as_s.must_equal("fixture-value")
+  ensure
+    FileUtils.rm_rf(fixture_root) if fixture_root
+  end
 end

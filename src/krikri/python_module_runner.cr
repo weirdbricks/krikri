@@ -1,5 +1,6 @@
 require "json"
 require "base64"
+require "./collection_index"
 
 # Runner for role-private custom modules - a role's own `library/*.py`,
 # outside the plugin set this engine ships as native binaries.
@@ -138,6 +139,44 @@ module Krikri
         end
       end
       files
+    end
+
+    # Directories to put on a custom module's PYTHONPATH so an
+    # `ansible_collections.*` import resolves the way real ansible's
+    # module payload provides it. Real ansible never needs the
+    # collections importable on the target: its AnsiballZ wrapper
+    # bundles every ansible.module_utils.* AND
+    # ansible_collections.<ns>.<coll>.plugins.module_utils.* import INTO
+    # the zipapp it ships (ansible-core remaps collection module_utils
+    # into the payload), so a module doing `from
+    # ansible_collections.amazon.aws.plugins.module_utils.retries
+    # import AWSRetry` runs on a python that cannot import the
+    # collection at all. This runner executes the raw script with the
+    # target's python instead, so when that python is not the one the
+    # collections were installed into (Homebrew's isolated Cellar
+    # interpreter, issue #692; an ansible-galaxy user install under
+    # ~/.ansible/collections, which no python has on sys.path) the
+    # import died with ModuleNotFoundError where ansible-playbook ran
+    # the module fine. The roots are the same ones CollectionIndex
+    # already enumerates for module-name resolution (ANSIBLE_COLLECTIONS_PATH,
+    # the default install locations, the ansible-playbook shebang's
+    # virtualenv site-packages). A root may name either a collections
+    # ROOT (a directory CONTAINING an ansible_collections/ tree) or a
+    # path pointing directly AT an ansible_collections dir - Python
+    # needs the PARENT of ansible_collections on sys.path either way.
+    # Roots whose tree is absent are dropped (CollectionIndex keeps the
+    # two default locations even when they don't exist); `roots` is a
+    # test seam so a spec can pin the mapping without touching the
+    # process-wide collection env.
+    def self.collection_import_roots(roots : Array(String)? = nil) : Array(String)
+      mapped = (roots || CollectionIndex.roots).flat_map do |root|
+        trimmed = root.chomp('/')
+        # A collections root IS the PYTHONPATH entry; a path pointing AT
+        # the ansible_collections dir contributes its parent instead.
+        File.basename(trimmed) == "ansible_collections" ? [File.dirname(trimmed)] : [trimmed]
+      end
+      existing = mapped.select { |dir| Dir.exists?(File.join(dir, "ansible_collections")) }
+      existing.uniq
     end
 
     # The legacy module-boilerplate marker: a module leaving
