@@ -3592,7 +3592,11 @@ module Krikri
       end
 
       if meta_yaml = directive(task_hash, "meta")
-        meta_task = parse_meta_task(name || "meta", task_hash, meta_yaml, source_file, source_map, source_prefix, index)
+        # An unnamed meta: task's banner is the action AS WRITTEN (FQCN or
+        # short) - real (2.20.1) prints `TASK [ansible.builtin.meta]` for
+        # an unnamed `ansible.builtin.meta:` task, same echo-the-source-
+        # spelling rule as every other unnamed task (issue #685).
+        meta_task = parse_meta_task(name || written_directive_key(task_hash, "meta"), task_hash, meta_yaml, source_file, source_map, source_prefix, index)
         meta_task.has_explicit_name = !name.nil?
         return meta_task
       end
