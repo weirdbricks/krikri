@@ -211,7 +211,16 @@ module Krikri
       private def list_forcing_lookup?(expr : String) : Bool
         stripped = expr.strip
         return true if stripped.starts_with?("query(") || stripped.starts_with?("q(")
-        stripped.starts_with?("lookup(") && stripped.matches?(/wantlist\s*=\s*(True|true)/)
+        return true if stripped.starts_with?("lookup(") && stripped.matches?(/wantlist\s*=\s*(True|true)/)
+        # The config lookup returns a NATIVE list for pathspec-typed options
+        # (DEFAULT_ROLES_PATH) even without wantlist=True - ansible-core 2.19
+        # renders buluma.multi's embedded
+        # "These are the configured role paths: {{ lookup('config',
+        # 'DEFAULT_ROLES_PATH') }}" as Python list repr, not the JSON-compact
+        # form. Scalar config lookups (COLOR_OK etc.) never reach this
+        # conversion: evaluate_output only consults list_forcing_lookup? when
+        # the rendered result is already container-shaped.
+        stripped.starts_with?("lookup(") && stripped.matches?(/lookup\(\s*(['"])(ansible\.builtin\.|ansible\.legacy\.)?config\1/)
       end
 
       # The undefined-typed form of #evaluate: Undefined::INSTANCE when the

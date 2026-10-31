@@ -1268,8 +1268,8 @@ module Krikri
       # container.
       return unless find_fact_binary("ip")
 
-      # `ip -4 route get 1` prints one line shaped like
-      # "1.0.0.0 via 192.168.1.1 dev eth0 src 192.168.1.50 uid 0" - $3 is the
+      # `ip -4 route get 8.8.8.8` prints one line shaped like
+      # "8.8.8.8 via 192.168.1.1 dev eth0 src 192.168.1.50 uid 0" - $3 is the
       # gateway (only present when the route actually has a "via" hop), $7
       # the source address (this host's own IP on the default route), $5 the
       # outbound interface name. Ansible's `ansible_default_ipv4` fact
@@ -1285,8 +1285,16 @@ module Krikri
       # Ansible's `is defined` check was true (every routable host has a
       # default gateway), crystal's was always false since the key never
       # existed, so the gated debug task was silently skipped instead of
-      # run.
-      default_route = capture("ip", ["-4", "route", "get", "1"]).split("\n").first?.to_s.strip
+      # run. The destination is 8.8.8.8 because that is the exact command
+      # Ansible's own get_default_interfaces runs (LinuxNetwork in
+      # module_utils/facts/network/linux.py) - the gateway fact must come
+      # from the same kernel route lookup real runs, since the kernel's
+      # choice can depend on the DESTINATION (e.g. an ECMP multi-nexthop
+      # default route hashes the destination to pick the nexthop):
+      # buluma.multi round 29883644 saw ansible print 216.98.9.1 where
+      # krikri printed 45.58.46.1 from `route get 1`, identically in the
+      # cold and warm phases.
+      default_route = capture("ip", ["-4", "route", "get", "8.8.8.8"]).split("\n").first?.to_s.strip
       route_fields = default_route.split(/\s+/)
       ipv4 = route_fields[6]?.to_s
       interface = route_fields[4]?.to_s
