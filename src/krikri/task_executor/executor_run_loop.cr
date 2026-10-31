@@ -3206,7 +3206,7 @@ module Krikri
       py_params["new_style"] = new_style.to_s
       py_params["_ansible_check_mode"] = check_mode.to_s
       if new_style
-        py_params["module_args"] = PythonModuleRunner.build_module_args(substituted_params, check_mode)
+        py_params["module_args"] = PythonModuleRunner.build_module_args(substituted_params, check_mode, module_name)
       else
         py_params["kv_argv"] = PythonModuleRunner.build_kv_argv(substituted_params).to_json
       end

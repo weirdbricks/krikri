@@ -197,11 +197,19 @@ module Krikri
     # `"['a','b']"` becomes a real array for the module, the way
     # Ansible passes typed args. Plus Ansible's own reserved
     # `_ansible_*` keys a new-style module's AnsibleModule reads.
-    def build_module_args(params : Hash(String, String), check_mode : Bool) : String
+    def build_module_args(params : Hash(String, String), check_mode : Bool, module_name : String) : String
       args = Hash(String, JSON::Any).new
       args["_ansible_check_mode"] = JSON::Any.new(check_mode)
       args["_ansible_diff"] = JSON::Any.new(false)
       args["_ansible_verbosity"] = JSON::Any.new(0_i64)
+      # Ansible's action base adds the invoked module's short name to the
+      # args (plugins/action/__init__.py: "module_args['_ansible_module_name']
+      # = module_name"), and real basic.py promotes it into self._name
+      # (PASS_VARS 'module_name') - the name its own messages, including
+      # the "remote module (name) does not support check mode" skip,
+      # carry. Without it, a target WITH ansible-core reported the literal
+      # "(basic.py)" where real named the module.
+      args["_ansible_module_name"] = JSON::Any.new(module_name)
       params.each do |key, value|
         next if key.in?("check_mode", "diff_mode", "_verbosity", "_environment")
         # A parser-marked non-string YAML literal (NON_STRING_PARAM_PREFIX)
@@ -330,6 +338,17 @@ module Krikri
                   raw_args.pop('_ansible_check_mode', False)
                   or os.environ.get('ANSIBLE_CHECK_MODE') == '1')
               self._apply_argument_spec(raw_args)
+              # Real basic.py closes __init__ with this same gate
+              # (basic.py: "if self.check_mode and not
+              # self.supports_check_mode: self.exit_json(skipped=True, ...)"),
+              # placed AFTER argument validation: a module that never
+              # declared supports_check_mode must never reach its own body
+              # under --check - a check-mode run must not make real
+              # changes, and this shim previously let the body run
+              # (issue #693: the module's side effects happened during a
+              # dry run).
+              if self.check_mode and not self.supports_check_mode:
+                  self.exit_json(skipped=True, msg='remote module (%s) does not support check mode' % self._name)
 
           def _read_args(self):
               env_args = os.environ.get('ANSIBLE_MODULE_ARGS')
