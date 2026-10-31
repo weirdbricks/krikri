@@ -117,30 +117,30 @@ module Krikri
 
       # The AnsibleAWSModule boto3-check step: with valid args, the
       # module's next act is importing boto3/botocore, and a host
-      # without them fails here. krikri probes the host's python3 the
-      # same way; a host that HAS the libs gets the native API helpers.
+      # without them fails here. krikri probes the interpreter
+      # Ansible's discovery would hand the module (python_lib_gate's
+      # INTERPRETER_FALLBACK walk - the same probe every other
+      # missing-library gate uses): probing a bare `python3` instead
+      # named the /usr/bin/python3 symlink in the failure message
+      # where real named the versioned interpreter it discovered
+      # (/usr/bin/python3.10 on the Ubuntu 22.04 target, issue #397),
+      # and it probed for the libs under an interpreter the module
+      # itself might never run under.
       def self.boto3_gate(params : Hash(String, String)) : Krikri::PluginResult?
-        python = python_interpreter
-        return nil unless python
+        return nil unless python = Krikri.discovered_target_python
 
         probe = Process.run(python, {"-c", "import botocore, boto3"}, error: Process::Redirect::Close)
         return nil if probe.success?
 
+        # The message names sys.executable of the interpreter the module
+        # would have run under - what Ansible's missing_required_lib()
+        # builds it from - not the path discovery resolved.
+        reported = Krikri.target_python_executable || python
         PluginResult.new(
           changed: false,
           failed: true,
-          msg: Krikri.missing_required_lib_message("botocore and boto3", python),
+          msg: Krikri.missing_required_lib_message("botocore and boto3", reported),
         )
-      end
-
-      private def self.python_interpreter : String?
-        ["python3", "python"].each do |name|
-          io = IO::Memory.new
-          status = Process.run(name, {"-c", "import sys; print(sys.executable)"}, output: io, error: Process::Redirect::Close)
-          path = io.to_s.strip
-          return path if status.success? && !path.empty?
-        end
-        nil
       end
 
       # -- spec-level checks ------------------------------------------------

@@ -118,6 +118,39 @@ describe "reserved variable name warning in role defaults/vars files" do
     FileUtils.rm_rf(src_dir) if src_dir && Dir.exists?(src_dir)
   end
 
+  it "warns once per key when a role's defaults and vars both define it" do
+    # issue #397 (adyraj.kubernetes_instance): defaults/main.yml and
+    # vars/main.yml both define `name` - real warned once, with the
+    # defaults Origin (defaults are merged into the play's variable
+    # context before the role's own vars/, and the merged context keeps
+    # that first tag), while krikri printed a second vars/-origin
+    # warning after the PLAY RECAP.
+    src_dir = File.tempname("reserved-role-both")
+    Dir.mkdir_p(File.join(src_dir, "roles", "r6", "defaults"))
+    Dir.mkdir_p(File.join(src_dir, "roles", "r6", "vars"))
+    Dir.mkdir_p(File.join(src_dir, "roles", "r6", "tasks"))
+    File.write(File.join(src_dir, "roles", "r6", "defaults", "main.yml"), "---\nfirst: x\nname:\n  - a\n")
+    File.write(File.join(src_dir, "roles", "r6", "vars", "main.yml"), "---\nname:\n  - b\n")
+    File.write(File.join(src_dir, "roles", "r6", "tasks", "main.yml"), "---\n- debug: msg=hi\n")
+    playbook = File.join(src_dir, "pb.yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        gather_facts: false
+        roles:
+          - r6
+      YAML
+
+    output = IO::Memory.new
+    Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output, chdir: src_dir)
+    text = output.to_s
+
+    text.scan("Found variable using reserved name").size.must_equal(1)
+    text.must_include("Origin: #{File.join(src_dir, "roles", "r6", "defaults", "main.yml")}:3:1")
+    refute(text.includes?("Found variable using reserved name 'name'.\nOrigin: #{File.join(src_dir, "roles", "r6", "vars", "main.yml")}"))
+  ensure
+    FileUtils.rm_rf(src_dir) if src_dir && Dir.exists?(src_dir)
+  end
+
   it "never warns for a role defaults/vars file with no reserved-name keys" do
     src_dir = File.tempname("reserved-role-clean")
     Dir.mkdir_p(File.join(src_dir, "roles", "r3", "defaults"))
