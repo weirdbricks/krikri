@@ -3767,6 +3767,39 @@ describe Krikri::PlaybookParser do
     ensure
       FileUtils.rm_rf(scratch) if scratch
     end
+
+    it "falls back to the playbook dir for a non-role include when the target isn't under the including file's own dir" do
+      # Issue #690: a playbook subdirectory's include_tasks that names a
+      # sibling by a path relative to the PLAYBOOK directory (`sub/a.yml`
+      # doing `include_tasks: sub/b.yml`, the `tasks_only/` convention).
+      # Ansible's search for a non-role include ends with the playbook
+      # dir (loader.get_basedir() + source) regardless of the including
+      # file's own directory; this engine used to stop at the including
+      # file's dir, doubling the path into sub/sub/b.yml.
+      pb_root = File.tempname("playbook-sub")
+      Dir.mkdir_p(File.join(pb_root, "sub"))
+      File.write(File.join(pb_root, "sub", "b.yml"), "- name: noop\n  ansible.builtin.debug: {msg: hi}\n")
+
+      resolved = Krikri::PlaybookParser.resolve_include_path("sub/b.yml", File.join(pb_root, "sub"), pb_root)
+      resolved.must_equal(File.join(pb_root, "sub", "b.yml"))
+      File.exists?(resolved).must_equal(true)
+    ensure
+      FileUtils.rm_rf(pb_root) if pb_root
+    end
+
+    it "reports a not-found non-role include against the playbook dir, not the including file's dir" do
+      # Ansible's last candidate (loader.path_dwim) is playbook_dir +
+      # source, so that's the path its "Could not find or access" error
+      # shows even for a non-role include - not the doubled
+      # including-file-relative path.
+      pb_root = File.tempname("playbook-missing")
+      Dir.mkdir_p(File.join(pb_root, "sub"))
+
+      resolved = Krikri::PlaybookParser.resolve_include_path("sub/b.yml", File.join(pb_root, "sub"), pb_root)
+      resolved.must_equal(File.join(pb_root, "sub", "b.yml"))
+    ensure
+      FileUtils.rm_rf(pb_root) if pb_root
+    end
   end
 
   describe "meta: task vars: parsing" do
