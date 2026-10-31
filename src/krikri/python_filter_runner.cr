@@ -937,9 +937,13 @@ module Krikri
       try:
           main()
       except Exception as exc:
+          # str(exc) only: ansible-core 2.19 surfaces a raising filter's
+          # error as the exception's own message ("The filter plugin 'x'
+          # failed: No XRT version found for this OS"), never with the
+          # python type name prefixed.
           sys.stdout.write(json.dumps(
               {"ok": False, "kind": "error",
-               "error": "%s: %s" % (type(exc).__name__, exc)}))
+               "error": str(exc)}))
       PYTHON
   end
 end

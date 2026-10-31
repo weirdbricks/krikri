@@ -154,6 +154,44 @@ describe "role-local filter_plugins/*.py custom filters" do
     FileUtils.rm_rf(root) if root
   end
 
+  it "words a raising filter's failure through a role default consumed by set_fact without the syntax-error prefix (issue #392)" do
+    root = File.tempname("filter-plugins-set-fact-failure")
+    Dir.mkdir_p(File.join(root, "roles", "myrole", "defaults"))
+    Dir.mkdir_p(File.join(root, "roles", "myrole", "filter_plugins"))
+    Dir.mkdir_p(File.join(root, "roles", "myrole", "tasks"))
+    File.write(File.join(root, "roles", "myrole", "filter_plugins", "myfilters.py"), <<-PYTHON)
+      class FilterModule(object):
+          def filters(self):
+              return {"xrt_latest": self.xrt_latest}
+
+          def xrt_latest(self, x):
+              raise ValueError("No XRT version found for this OS")
+      PYTHON
+    File.write(File.join(root, "roles", "myrole", "defaults", "main.yml"), <<-YAML)
+      xrt_package: "{{ 'aws' | xrt_latest }}"
+      YAML
+    File.write(File.join(root, "roles", "myrole", "tasks", "main.yml"), <<-YAML)
+      - name: consume the failing role default
+        ansible.builtin.set_fact:
+          xrt_package_path: "/tmp/{{ xrt_package }}"
+      YAML
+
+    status, output = run_playbook(root, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        roles:
+          - myrole
+      YAML
+
+    status.success?.must_equal(false, output)
+    output.must_include("Error while resolving value for 'xrt_package_path': The filter plugin 'xrt_latest' failed: No XRT version found for this OS", output)
+    output.wont_include("Syntax error in template", output)
+    output.wont_include("ValueError", output)
+  ensure
+    FileUtils.rm_rf(root) if root
+  end
+
   it "resolves a custom filter behind a leading parenthesized sub-expression with attribute access (round: diodonfrost.vagrant)" do
     # Real role shape: `{{ (vagrant_index.content | from_json).versions |
     # list | sort_versions | last }}` with the role's own
