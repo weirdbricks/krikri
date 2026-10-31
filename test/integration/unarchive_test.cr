@@ -945,6 +945,32 @@ describe "unarchive plugin" do
     result["msg"].as_s.must_match(/\AFailure downloading #{Regex.escape(url)}, HTTP Error 404: /)
   end
 
+  it "fails a URL src with a newline in its path with fetch_url's control-character text" do
+    # Templating accidents in roles put newlines inside download URLs;
+    # Python refuses such a request target before connecting and
+    # fetch_url folds that into "Failure downloading <url>, <msg>" with
+    # the path shown as Python repr (the newline as literal \n). Before
+    # the preflight-style gate this surfaced Crystal's own ArgumentError
+    # ("Invalid HTTP resource: ...") instead.
+    dest = fresh_dest("url-src-newline")
+    url = "https://dl.google.com/go/go1.27.3\ntime X\n.linux-amd64.tar.gz"
+
+    result = PluginSpecHelper.run("unarchive", {"src" => url, "dest" => dest, "remote_src" => "true"})
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("Failure downloading #{url}, An unknown error occurred: URL can't contain control characters. '/go/go1.27.3\\ntime X\\n.linux-amd64.tar.gz' (found at least '\\n')")
+  end
+
+  it "fails a URL src with a space in its path with fetch_url's control-character text" do
+    dest = fresh_dest("url-src-space")
+    url = "http://127.0.0.1:1/a b.tar.gz"
+
+    result = PluginSpecHelper.run("unarchive", {"src" => url, "dest" => dest, "remote_src" => "true"})
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("Failure downloading #{url}, An unknown error occurred: URL can't contain control characters. '/a b.tar.gz' (found at least ' ')")
+  end
+
   it "fails with a clear message when src or dest is missing" do
     result = PluginSpecHelper.run("unarchive", {"dest" => TMP_DIR})
 

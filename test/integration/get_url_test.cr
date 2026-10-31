@@ -660,6 +660,23 @@ describe "get_url plugin" do
       File.delete(dest) if dest && File.exists?(dest)
     end
 
+    it "rejects a URL path with a newline before sending a request" do
+      # Same failure class as the space above, seen in the wild as a
+      # templating accident inside a version-pinned download URL - the
+      # newline renders as Python repr's literal \n in the message.
+      dest = File.tempname("get-url-spec")
+      url = "https://dl.google.com/go/go1.27.3\ntime X\n.linux-amd64.tar.gz"
+
+      result = PluginSpecHelper.run("get_url", {"url" => url, "dest" => dest})
+
+      result["failed"].as_bool.must_equal(true)
+      result["msg"].as_s.must_equal("An unknown error occurred: URL can't contain control characters. '/go/go1.27.3\\ntime X\\n.linux-amd64.tar.gz' (found at least '\\n')")
+      result["status_code"]?.must_be_nil
+      result["response"]?.must_be_nil
+    ensure
+      File.delete(dest) if dest && File.exists?(dest)
+    end
+
     it "splits Python's URL typing the way urllib does (no RFC scheme required)" do
       # Python's own type split is `([^/:]+):` - everything up to the
       # first colon, so "127.0.0.1:80/x" types as "127.0.0.1" and gets
