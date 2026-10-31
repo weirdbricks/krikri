@@ -55,4 +55,55 @@ describe "StaticImportUndefinedError render" do
                "\n"
     ex.render.must_equal(expected)
   end
+
+  # besmirzanaj.ansible_role_avast_antivirus (issue #431): most roles write
+  # the directive in FQCN + mapping form (`ansible.builtin.import_tasks:`,
+  # `file: ...`), and the source-map lookup keys off the LITERAL spelling -
+  # a bare-name lookup missed the node entirely, dropping the whole Origin
+  # block down to the terse generic parse-error print. Ansible also points
+  # the inner Origin at the file VALUE (the mapping argument holding the
+  # path), not at the directive itself.
+  it "renders the block for an FQCN mapping-form import path, Origin at the file value" do
+    root = PluginSpecHelper.tmp_path("static_undef_render_fqcn")
+    Dir.mkdir_p(root)
+    path = File.join(root, "pb.yml")
+    File.write(path, <<-YAML)
+      - hosts: all
+        gather_facts: true
+        tasks:
+          - name: Install Avast Antivirus
+            ansible.builtin.import_tasks:
+              file: "install-{{ ansible_os_family }}.yml"
+      YAML
+
+    ex = assert_raises(Krikri::StaticImportUndefinedError) do
+      Krikri::PlaybookParser.parse(File.expand_path(path))
+    end
+
+    origin = File.expand_path(path)
+    expected = "[ERROR]: Error when evaluating variable in import path 'install-{{ ansible_os_family }}.yml': 'ansible_os_family' is undefined\n\n" \
+               "Error when evaluating variable in import path 'install-{{ ansible_os_family }}.yml'.\n" \
+               "Origin: #{origin}:4:7\n" \
+               "\n" \
+               "2   gather_facts: true\n" \
+               "3   tasks:\n" \
+               "4     - name: Install Avast Antivirus\n" \
+               "        ^ column 7\n" \
+               "\n" \
+               "When using static imports, ensure that any variables used in their names are defined in vars/vars_files\n" \
+               "or extra-vars passed in from the command line. Static imports cannot use variables from facts or inventory\n" \
+               "sources like group or host vars.\n" \
+               "\n" \
+               "<<< caused by >>>\n" \
+               "\n" \
+               "'ansible_os_family' is undefined\n" \
+               "Origin: #{origin}:6:15\n" \
+               "\n" \
+               "4     - name: Install Avast Antivirus\n" \
+               "5       ansible.builtin.import_tasks:\n" \
+               "6         file: \"install-{{ ansible_os_family }}.yml\"\n" \
+               "                ^ column 15\n" \
+               "\n"
+    ex.render.must_equal(expected)
+  end
 end

@@ -2921,12 +2921,27 @@ module Krikri
         begin
           file_rel = VarSubstitutor.new(vars: sub_vars).substitute(file_rel, strict: true)
         rescue ex : UndefinedVariableError
+          # The render's source-map lookups must use the directive name
+          # exactly as written - most roles use the FQCN spelling
+          # (besmirzanaj.ansible_role_avast_antivirus's
+          # `ansible.builtin.import_tasks:`), and a bare "import_tasks"
+          # path lookup finds no node, dropping the whole Origin block
+          # down to the terse generic parse-error print. The value's own
+          # sub-path follows Ansible's TaskInclude arg shape: a mapping
+          # value points at its file:/_raw_params value, a bare string at
+          # itself.
+          written_key = written_directive_key(hash, "import_tasks")
+          value_key = nil
+          if dict = import_value.as_h?
+            arg_keys = dict.keys.map(&.to_s)
+            value_key = arg_keys.includes?("file") ? "file" : (arg_keys.includes?("_raw_params") ? "_raw_params" : nil)
+          end
           raise StaticImportUndefinedError.new(
             "Error when evaluating variable in import path '#{original_file_rel}': #{ex.message}\n" \
             "When using static imports, ensure that any variables used in their names are defined in " \
             "vars/vars_files or extra-vars passed in from the command line. Static imports cannot use " \
             "variables from facts or inventory sources like group or host vars.",
-            static_import_undefined_render(original_file_rel, ex.message.to_s, source_file, source_map, source_prefix, source_index))
+            static_import_undefined_render(original_file_rel, ex.message.to_s, source_file, source_map, source_prefix, source_index, written_key, value_key))
         end
       end
 
@@ -5500,12 +5515,21 @@ module Krikri
     # undefined-variable error (Origin at the import_tasks VALUE itself, the
     # opening quote) - live-verified vs 2.19.11. Nil when no source position
     # is known - the exception then renders bare, like the other renders
-    # here.
-    private def self.static_import_undefined_render(import_path : String, cause : String, source_file : String?, source_map : YamlSourceMap?, source_prefix : String, source_index : Int32) : String?
+    # here. directive_key is the directive name as written (short form or
+    # FQCN - the source map keys off the literal spelling); value_key is the
+    # mapping-form argument holding the path ("file"/"_raw_params"), whose
+    # own value Ansible points the inner Origin at (live-verified vs
+    # 2.19.11: `ansible.builtin.import_tasks: {file: ...}` Origins at the
+    # file value string, not the mapping), nil for the bare-string form.
+    private def self.static_import_undefined_render(import_path : String, cause : String, source_file : String?, source_map : YamlSourceMap?, source_prefix : String, source_index : Int32, directive_key : String = "import_tasks", value_key : String? = nil) : String?
       return nil unless source_file && source_map
       prefix = task_source_prefix(source_prefix, source_index)
       task_pos = source_map.at?(prefix)
-      value_pos = source_map.at?("#{prefix}/import_tasks")
+      value_pos = source_map.at?(value_key ? "#{prefix}/#{directive_key}/#{value_key}" : "#{prefix}/#{directive_key}")
+      # A mapping form without the expected argument node in the map (a
+      # non-scalar file value) falls back to the directive's own position
+      # rather than dropping the block.
+      value_pos ||= source_map.at?("#{prefix}/#{directive_key}")
       return nil unless task_pos && value_pos
       path = File.expand_path(source_file)
       cause_node = ErrorBlock::Node.new(cause, source_context: ErrorBlock.origin_context(path, value_pos[0], value_pos[1]))
