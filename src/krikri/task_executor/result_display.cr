@@ -1863,6 +1863,14 @@ module Krikri
       before_header = diff["before_header"]?.try(&.as_s) || "before"
       after_header = diff["after_header"]?.try(&.as_s) || "after"
 
+      # Ansible's callback takes the ---/+++ headers from difflib's
+      # unified_diff itself, which yields no lines at all when the two
+      # sides are identical - so an empty diff payload (e.g. lineinfile's
+      # state=absent no-match wire result, whose content entry carries
+      # headers but empty before/after) renders nothing, headers
+      # included. Verified against 2.19.11 --diff (issue #691).
+      return if before == after
+
       puts "--- #{before_header}".colorize(:red).bold
       puts "+++ #{after_header}".colorize(:green).bold
 
