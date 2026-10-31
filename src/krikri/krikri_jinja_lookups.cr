@@ -2,6 +2,7 @@ require "json"
 require "krikri-jinja/krikri_jinja"
 require "./collection_index"
 require "./lookup_plugins"
+require "./aws_secret_lookup"
 require "./python_lookup_runner"
 require "./jinja_host_context"
 require "./vault"
@@ -277,8 +278,67 @@ module Krikri
         # already pins (verified vs ansible-core 2.19.4).
         list_form = query_mode || truthy?(kwargs["wantlist"]?) || hosts.empty?
         list_form ? AnyValue.new(hosts.map { |host| AnyValue.new(host) }) : AnyValue.new(hosts.join(","))
+      when "aws_secret", "amazon.aws.aws_secret"
+        lookup_aws_secret(name, terms, kwargs, query_mode)
       else
         python_lookup(name, terms, kwargs, ctx, query_mode)
+      end
+    end
+
+    # amazon.aws.aws_secret - natively implemented (see AwsSecretLookup for
+    # why: the collection is deliberately supported and the lookup runs on
+    # the controller, where the PythonLookupRunner cannot reach installed
+    # collections' plugins). The helper raises the plugin's own message;
+    # the generic wrapper prefix and hard-failure here match real
+    # ("The lookup plugin '<name as spelled>' failed: Failed to find secret
+    # x (ResourceNotFound)", live-verified vs amazon.aws 10.1.1) - the same
+    # convention lookup_template's not-found raise rides.
+    private def self.lookup_aws_secret(name : String, terms : Array(AnyValue),
+                                       kwargs : Hash(String, AnyValue), query_mode : Bool) : AnyValue
+      options = {} of String => String
+      kwargs.each do |key, value|
+        next if key.downcase.in?("wantlist", "errors")
+        options[key] = aws_secret_text(value)
+      end
+      term_values = flatten(terms).map { |term| aws_secret_text(term) }
+      begin
+        result = Krikri::AwsSecretLookup.run(term_values, options,
+          warning_sink: ->(warning : String) { ResultDisplay.emit_display_warning(warning) })
+      rescue ex : Krikri::AwsSecretLookup::Error
+        raise PythonLookupRunner::LookupError.new("The lookup plugin '#{name}' failed: #{ex.message}")
+      end
+      converted = KrikriJinja.from_json_any(JSON::Any.new(result))
+      # Same list-form convention as python_lookup's own dispatch: a
+      # list-shaped result is comma-joined into a scalar only for a plain
+      # lookup() that got something - query()/wantlist=True/an empty result
+      # stay a real list.
+      items = converted.raw.as?(Array)
+      if items.nil? || items.empty? || query_mode || truthy?(kwargs["wantlist"]?)
+        return converted
+      end
+      AnyValue.new(items.map { |item| text(item) }.join(","))
+    end
+
+    private def self.aws_secret_text(value : AnyValue) : String
+      case raw = value.raw
+      when Nil       then ""
+      when String    then raw
+      when Bool      then raw ? "true" : "false"
+      when Int64     then raw.to_s
+      when Float64   then raw.to_s
+      when JSON::Any then aws_secret_json_text(raw)
+      else                KrikriJinja.to_json_any(value).to_s
+      end
+    end
+
+    private def self.aws_secret_json_text(raw : JSON::Any) : String
+      case raw.raw
+      when Nil     then ""
+      when String  then raw.as_s
+      when Bool    then raw.as_bool ? "true" : "false"
+      when Int64   then raw.to_s
+      when Float64 then raw.to_s
+      else              raw.to_json
       end
     end
 

@@ -1,5 +1,6 @@
 require "json"
 require "../collection_index"
+require "../aws_secret_lookup"
 
 module Krikri
   module VariableSubstitutor
@@ -229,6 +230,7 @@ module Krikri
           evaluate_lookup_misc(lookup_type, parts, kwargs) ||
           evaluate_lookup_file_parsers(lookup_type, parts, kwargs) ||
           evaluate_custom_python_lookup(lookup_type, parts, kwargs, query_mode) ||
+          evaluate_lookup_aws_secret(lookup_type, parts, kwargs, query_mode) ||
           hashi_vault_lookup_failure(original_lookup_type) ||
           unknown_fqcn_lookup_failure(original_lookup_type, lookup_type) ||
           "undefined"
@@ -322,6 +324,54 @@ module Krikri
         return result.to_json unless items
         list_form = wantlist || query_mode || items.empty?
         list_form ? items.to_json : items.map { |item| item.raw.is_a?(String) ? item.as_s : item.to_json }.join(",")
+      end
+
+      # amazon.aws.aws_secret (Secrets Manager) - natively implemented for
+      # the same reason the amazon.aws module cluster is (the collection is
+      # deliberately supported, but the lookup runs on the CONTROLLER and
+      # the PythonLookupRunner deliberately does not see installed
+      # collections, so the old dispatch chain fell through to the
+      # "undefined" sentinel and never touched AWS). The helper raises the
+      # plugin's own message; the generic wrapper prefix here matches real
+      # ("The lookup plugin '<name as spelled>' failed: Failed to find
+      # secret x (ResourceNotFound)", live-verified vs amazon.aws 10.1.1
+      # through botocore's endpoint override against a local fake Secrets
+      # Manager) and is a hard task failure exactly like every other
+      # dispatched lookup error.
+      private def evaluate_lookup_aws_secret(lookup_type : String?, parts : Array(String),
+                                             kwargs : Array(String), query_mode : Bool) : String?
+        return nil unless lookup_type.try(&.in?("aws_secret", "amazon.aws.aws_secret"))
+
+        options = Hash(String, String).new
+        kwargs.each do |kwarg|
+          key, _, raw_value = kwarg.strip.partition('=')
+          next if key.empty? || key.downcase.in?("wantlist", "errors")
+          options[key] = aws_secret_option_text(evaluate_lookup_term(raw_value))
+        end
+        terms = parts[1..].map { |part| aws_secret_option_text(evaluate_lookup_term(part)) }
+
+        begin
+          result = Krikri::AwsSecretLookup.run(terms, options,
+            warning_sink: ->(warning : String) { ResultDisplay.emit_display_warning(warning) })
+        rescue ex : Krikri::AwsSecretLookup::Error
+          raise PythonLookupRunner::LookupError.new("The lookup plugin '#{lookup_type}' failed: #{ex.message}")
+        end
+        list_form = query_mode || kwargs.any? { |kwarg| kwarg.strip.downcase.starts_with?("wantlist=true") } || result.empty?
+        list_form ? result.to_json : result.map { |item| item.raw.is_a?(String) ? item.as_s : item.to_json }.join(",")
+      end
+
+      # A lookup option/term arrives as a JSON::Any native value - strings
+      # pass through, native booleans (a `region=flag` kwarg evaluated to
+      # True/False) spell the way the plugin's own bool coercion reads them.
+      private def aws_secret_option_text(value : JSON::Any) : String
+        case raw = value.raw
+        when Nil     then ""
+        when String  then raw
+        when Bool    then raw ? "true" : "false"
+        when Int64   then raw.to_s
+        when Float64 then raw.to_s
+        else              value.to_json
+        end
       end
 
       # `query(lookup_type, args)` - Ansible's list-forcing sibling
