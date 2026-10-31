@@ -4527,7 +4527,57 @@ module Krikri
     # carries no key context or the key isn't found before the next task.
     private def locate_param_value_line(lines : Array(String), from_idx : Int32, msg : String) : {Int32, Int32}?
       return nil unless (m = msg.match(/\AError while resolving value for '([^']+)':/m))
-      locate_param_key_position(lines, from_idx, m[1])
+      locate_param_key_position(lines, from_idx, m[1]) || merge_key_anchor_position(lines, from_idx, m[1])
+    end
+
+    # A param that arrives through a YAML merge key (`<<: *name`) is not
+    # written in the task itself, so locate_param_key_position finds
+    # nothing and the chain used to fall back to the module key line.
+    # ansible's observed behaviour (issue #376,
+    # CiscoUcs.ucs/admin/timezone, live-captured vs 2.19): the innermost
+    # Origin points at the value token on the ANCHOR DEFINITION's line
+    # (tasks/main.yml:7:17, caret under the opening quote of
+    # `hostname: "{{ ucs_hostname }}"`, context showing the two anchor
+    # lines above it), even though the anchor lives under the task's
+    # `vars:` ABOVE the module key while the `<<:` line is below it.
+    # The merge key is looked up inside the task's own span; the anchor
+    # definition is searched across the whole file (its `&name` may sit
+    # anywhere). Only entries at the anchored mapping's own level count -
+    # a deeper nesting level is a different mapping, not what the merge
+    # pulls in.
+    private def merge_key_anchor_position(lines : Array(String), from_idx : Int32, key : String) : {Int32, Int32}?
+      merge_needle = /\A<<[ \t]*:[ \t]*\*([A-Za-z0-9_]+)/
+      anchor_name : String? = nil
+      ((from_idx + 1)...lines.size).each do |idx|
+        line = lines[idx]
+        break if next_task_marker?(lines, from_idx, line)
+        if (mm = merge_needle.match(line.strip))
+          anchor_name = mm[1]
+          break
+        end
+      end
+      return nil unless anchor_name
+
+      anchor_idx = lines.index { |line| line =~ /&#{Regex.escape(anchor_name)}\b/ }
+      return nil unless anchor_idx
+      anchor_line = lines[anchor_idx]
+      anchor_indent = anchor_line.size - anchor_line.lstrip.size
+      key_needle = /#{Regex.escape(key)}[ \t]*:/
+      mapping_indent : Int32? = nil
+      ((anchor_idx + 1)...lines.size).each do |idx|
+        line = lines[idx]
+        next if line.strip.empty?
+        indent = line.size - line.lstrip.size
+        break if indent <= anchor_indent
+        mapping_indent ||= indent
+        next unless indent == mapping_indent
+        if (km = key_needle.match(line)) && (key_idx = km.begin(0)) && (key_idx == 0 || line[key_idx - 1].whitespace?)
+          rest = line[km.end(0)..]
+          column = km.end(0) + (rest.size - rest.lstrip.size) + 1
+          return {idx, column}
+        end
+      end
+      nil
     end
 
     private def locate_param_key_position(lines : Array(String), from_idx : Int32, key : String) : {Int32, Int32}?
