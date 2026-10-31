@@ -20,10 +20,13 @@ module Krikri
   # (key usage, extended key usage, basic constraints), which openssl
   # does not do, so parsed entries are sorted here.
   #
-  # Deliberately not implemented: `extensions_by_oid` for CERTIFICATES
-  # (the DER-encoded value of every extension). For CSR parsing it IS
-  # implemented - see parse_extensions_by_oid - so openssl_csr_info's
-  # result carries the full real key set.
+  # `extensions_by_oid` (the DER-encoded value of every extension) comes
+  # from the same asn1parse walk for certificates and CSRs - see
+  # parse_extensions_by_oid.
+  #
+  # Known divergence: integers wider than Int64 (RSA moduli, EC
+  # coordinates, most serial numbers) go out as decimal strings, where the
+  # module returns Python ints - see json_int.
   module X509CertInfo
     # hashlib.algorithms_guaranteed - ALL of it, including the two SHAKE
     # XOFs: the Ansible module emits them too (its bare hexdigest() call
@@ -169,10 +172,17 @@ module Krikri
         # ALWAYS present, the values None (observed against
         # community.crypto 3.1.1; the CSR half applies the same rule).
         {"basic_constraints", "key_usage", "extended_key_usage",
-         "subject_alt_name"}.each do |key|
+         "ocsp_must_staple", "subject_alt_name"}.each do |key|
           result[key] = JSON::Any.new(nil) unless result.has_key?(key)
           result["#{key}_critical"] = JSON::Any.new(false) unless result.has_key?("#{key}_critical")
         end
+        {"subject_key_identifier", "authority_key_identifier", "authority_cert_issuer",
+         "authority_cert_serial_number", "ocsp_uri", "issuer_uri"}.each do |key|
+          result[key] = JSON::Any.new(nil) unless result.has_key?(key)
+        end
+        # The same asn1parse walk as the CSR half: in a certificate an OBJECT followed by a
+        # sibling OCTET STRING only occurs inside the extensions SEQUENCE.
+        result["extensions_by_oid"] = JSON::Any.new(parse_extensions_by_oid(cert_pem))
 
         result["fingerprints"] = fingerprints_any(der) if der
         result["public_key_fingerprints"] = fingerprints_any(spki_der) if spki_der
@@ -304,6 +314,10 @@ module Krikri
       "X509v3 CRL Distribution Points"      => "2.5.29.31",
       "X509v3 Freshest CRL"                 => "2.5.29.46",
       "X509v3 Authority Information Access" => "1.3.6.1.5.5.7.1.1",
+      "Authority Information Access"        => "1.3.6.1.5.5.7.1.1",
+      "Subject Information Access"          => "1.3.6.1.5.5.7.1.11",
+      "CT Precertificate SCTs"              => "1.3.6.1.4.1.11129.2.4.2",
+      "CT Precertificate Poison"            => "1.3.6.1.4.1.11129.2.4.3",
       "X509v3 Subject Information Access"   => "1.3.6.1.5.5.7.1.11",
       "X509v3 Name Constraints"             => "2.5.29.30",
       "X509v3 Policy Constraints"           => "2.5.29.36",
@@ -347,20 +361,26 @@ module Krikri
       critical = false
       text.each_line do |line|
         # "  348:d=7  hl=2 l=  24 prim: OCTET STRING      [HEX DUMP]:30..."
-        md = line.match(/\A\s*(\d+):d=(\d+)\s+hl=\d+\s+l=\s*(\d+)\s+(prim|cons):\s*([A-Z0-9 ]+?)\s*(?::(.*))?\s*\z/)
+        # The value follows the type as ":<text>", except an OCTET STRING's, which openssl
+        # prints as "[HEX DUMP]:<hex>" with no leading colon (missing that alternative left
+        # every extensions_by_oid empty).
+        md = line.match(/\A\s*(\d+):d=(\d+)\s+hl=\d+\s+l=\s*(\d+)\s+(prim|cons):\s*([A-Z0-9 ]+?)\s*(:.*|\[HEX DUMP\]:.*)?\s*\z/)
         next unless md
         depth = md[2].to_i
         kind = md[4]
         type = md[5].strip
-        value = md[6]?
+        value = md[6]?.try { |raw| raw.starts_with?(':') ? raw[1..] : raw }
         if kind == "prim" && type == "OBJECT"
           last_oid = value.try(&.strip)
           last_oid_depth = depth
           critical = false
-        elsif kind == "prim" && type == "BOOLEAN" && depth == last_oid_depth + 1
+          # extnID, critical and extnValue are siblings in the Extension SEQUENCE, so asn1parse
+          # prints them at the SAME depth (the old "+ 1" never matched: every certificate and
+          # CSR came back with an empty extensions_by_oid).
+        elsif kind == "prim" && type == "BOOLEAN" && depth == last_oid_depth
           # a non-DEFAULT TRUE boolean prints ":255"
           critical = value.try(&.strip) == "255"
-        elsif kind == "prim" && type == "OCTET STRING" && depth == last_oid_depth + 1 &&
+        elsif kind == "prim" && type == "OCTET STRING" && depth == last_oid_depth &&
               (hex = value.try { |v| v.starts_with?("[HEX DUMP]:") ? v["[HEX DUMP]:".size..] : nil })
           if oid = resolve_extension_oid(last_oid)
             der = slice_from_hex(hex)
@@ -372,9 +392,9 @@ module Krikri
           last_oid = nil
           critical = false
         elsif kind == "cons"
-          # entering a nested structure invalidates a dangling OBJECT only
-          # if it went past the sibling depth the octet string would sit at
-          last_oid = nil if depth > last_oid_depth + 1
+          # an extension's three fields are all primitive: any structure between an OBJECT
+          # and an OCTET STRING means the OBJECT was not an extnID
+          last_oid = nil
         end
       end
       result
@@ -547,9 +567,20 @@ module Krikri
             list = body.split(",").map(&.strip).reject(&.empty?).map { |e| decode_san_entry(e) }
             result["subject_alt_name"] = JSON::Any.new(list.map { |e| JSON::Any.new(e) })
             result["subject_alt_name_critical"] = JSON::Any.new(critical)
-          when "X509v3 TLS Feature", "1.3.6.1.5.5.7.1.24"
-            result["ocsp_must_staple"] = JSON::Any.new(body.includes?("Status Request"))
+          when "X509v3 TLS Feature", "TLS Feature", "1.3.6.1.5.5.7.1.24"
+            # openssl 3 prints the feature as "status_request", older ones "Status Request"
+            result["ocsp_must_staple"] = JSON::Any.new(body.includes?("status_request") || body.includes?("Status Request"))
             result["ocsp_must_staple_critical"] = JSON::Any.new(critical)
+          when "Authority Information Access", "X509v3 Authority Information Access"
+            # The module reports the first URI of each access method (community.crypto's
+            # get_ocsp_uri / get_issuer_uri), None when the method is absent.
+            lines = body.split("\n").map(&.strip)
+            if ocsp = lines.find(&.starts_with?("OCSP - URI:"))
+              result["ocsp_uri"] = JSON::Any.new(ocsp.lchop("OCSP - URI:"))
+            end
+            if issuers = lines.find(&.starts_with?("CA Issuers - URI:"))
+              result["issuer_uri"] = JSON::Any.new(issuers.lchop("CA Issuers - URI:"))
+            end
           when "X509v3 Subject Key Identifier"
             # ansible reports this as lowercase colon-hex, whatever case
             # the openssl text shows
@@ -623,8 +654,10 @@ module Krikri
         # trailing "Signature Algorithm:"/"Signature Value:" block) ends
         # the extension section.
         break if indent < name_indent
-        is_header = indent == name_indent &&
-                    stripped.matches?(/^(X509v3 [^:]+|[0-9a-fA-F]+(\.[0-9a-fA-F]+)+)(: critical|:)$/)
+        # Not every extension name carries the "X509v3 " prefix ("Authority Information
+        # Access:", "TLS Feature:", "CT Precertificate SCTs:"); requiring it folded those
+        # bodies into the previous extension, losing ocsp_uri/issuer_uri/ocsp_must_staple.
+        is_header = indent == name_indent && stripped.matches?(/^[^:]+(: critical|:)$/)
         if is_header
           if current_name
             entries << {current_name, current_body.to_s.strip}
@@ -660,6 +693,13 @@ module Krikri
       result["public_key_data"] = JSON::Any.new(key_data.to_h { |k, v| {k, v} })
     end
 
+    # openssl's ASN1 OID short names where cryptography names the curve differently (the X9.62
+    # prime curves); every other curve, secp384r1/secp521r1/brainpool* included, agrees.
+    CRYPTOGRAPHY_CURVE_NAMES = {
+      "prime192v1" => "secp192r1",
+      "prime256v1" => "secp256r1",
+    }
+
     # Reads the same openssl -text shapes the Ansible module's Python
     # backend reads from cryptography objects: RSA gives size/modulus/
     # exponent, ECC gives curve/x/y/exponent_size, Ed25519/X25519 etc.
@@ -680,12 +720,13 @@ module Krikri
       end
       if m = text.match(/ASN1 OID:\s*(\S+)/)
         size = text.match(/(Public|Private)-Key:\s*\((\d+) bit/).try(&.[2].to_i)
-        data["curve"] = JSON::Any.new(m[1])
-        data["exponent_size"] = JSON::Any.new(size || 0) if size
+        # cryptography's curve.name, in the module's own key order (curve, x, y, exponent_size)
+        data["curve"] = JSON::Any.new(CRYPTOGRAPHY_CURVE_NAMES[m[1]]? || m[1])
         if coords = parse_ec_point(text, size)
           data["x"] = coords[0]
           data["y"] = coords[1]
         end
+        data["exponent_size"] = JSON::Any.new(size || 0) if size
         return {"ECC", data}
       end
       if m = text.match(/(Ed25519|Ed448|X25519|X448)\s+Public-Key/i)

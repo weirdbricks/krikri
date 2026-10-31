@@ -313,20 +313,23 @@ describe "x509_certificate_info plugin result key order" do
 
     # The cert krikri's selfsigned provider issues from this CSR carries
     # subjectAltName (the CSR's CN-derived SAN) and no basicConstraints,
-    # keyUsage or extendedKeyUsage - those three come out as None/false
-    # pairs at their SUCCESS_KEY_ORDER slots (the real module's
-    # always-present extension keys), in place of the live-verified
-    # dump's basicConstraints pair.
+    # keyUsage or extendedKeyUsage - those come out as None/false pairs at
+    # their SUCCESS_KEY_ORDER slots. Every key below is always present in
+    # the real module's result (live-verified on a certificate with no
+    # extensions at all: the key identifiers and AIA URIs are None).
     result.as_h.keys.must_equal([
       "signature_algorithm", "subject", "subject_ordered", "issuer",
       "issuer_ordered", "version", "key_usage", "key_usage_critical",
       "extended_key_usage", "extended_key_usage_critical",
       "basic_constraints", "basic_constraints_critical",
+      "ocsp_must_staple", "ocsp_must_staple_critical",
       "subject_alt_name", "subject_alt_name_critical", "not_before",
       "not_after", "expired", "public_key", "public_key_type",
       "public_key_data", "public_key_fingerprints", "fingerprints",
-      "subject_key_identifier", "serial_number", "valid_at", "failed",
-      "changed",
+      "subject_key_identifier", "authority_key_identifier",
+      "authority_cert_issuer", "authority_cert_serial_number",
+      "serial_number", "extensions_by_oid", "ocsp_uri", "issuer_uri",
+      "valid_at", "failed", "changed",
     ])
   end
 end

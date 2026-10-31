@@ -44,7 +44,8 @@ describe "openssl_privatekey_info plugin" do
 
     result["type"].as_s.must_equal("ECC")
     public_data = result["public_data"].as_h
-    public_data["curve"].as_s.must_equal("prime256v1")
+    # cryptography's curve.name, as the module reports it (live: secp256r1, not openssl's prime256v1)
+    public_data["curve"].as_s.must_equal("secp256r1")
     public_data["exponent_size"].as_i.must_equal(256)
     # Both coordinates are 77-78 digit decimals for a 256-bit curve.
     (public_data["x"].as_s.size >= 70).must_equal(true)

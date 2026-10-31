@@ -3035,13 +3035,24 @@ module Krikri
     # Ansible's `invocation.module_args` and whose args this engine can
     # reproduce from the argspec table (verified against ansible-core 2.19.11).
     INVOCATION_MODULES = %w[command shell stat file ping slurp lineinfile replace blockinfile find getent get_url]
+    # Collection modules with the same verified shape, by FQCN (after alias resolution).
+    # x509_certificate_info: path, the two defaults, then content/valid_at null (#367,
+    # pacifica.ansible_certinfra's loop over its CA chain).
+    INVOCATION_FQCNS = %w[community.crypto.x509_certificate_info]
 
     private def attach_invocation(task : Task, params : Hash(String, String), result : JSON::Any) : JSON::Any
       short = task.module_name.sub(/\Aansible\.(builtin|legacy)\./, "")
-      return result unless INVOCATION_MODULES.includes?(short)
+      fqcn = PlaybookParser::MODULE_ALIASES[task.module_name]? || task.module_name
+      spec_name = if INVOCATION_MODULES.includes?(short)
+                    "ansible.builtin.#{short}"
+                  else
+                    # a bare name resolves through the collection search path
+                    INVOCATION_FQCNS.find { |name| name == fqcn || name.ends_with?(".#{fqcn}") }
+                  end
+      return result unless spec_name
       hash = result.as_h? || return result
       return result if hash.has_key?("invocation")
-      args = ArgspecValidator.invocation_args("ansible.builtin.#{short}", params) || return result
+      args = ArgspecValidator.invocation_args(spec_name, params) || return result
       args["_uses_shell"] = JSON::Any.new(true) if short == "shell"
       if free_form_raw_command?(task) && args["cmd"]?.try(&.raw.is_a?(String))
         args["_raw_params"] = args["cmd"]

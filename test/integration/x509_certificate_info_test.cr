@@ -217,3 +217,83 @@ describe "x509_certificate_info plugin" do
     File.delete(playbook) if playbook && File.exists?(playbook)
   end
 end
+
+# The pacifica.ansible_certinfra gaps (#366, #367, #369 and the extensions_by_oid hole),
+# each value checked against community.crypto 3.1.1 on a leaf with the same extension shape.
+describe "x509_certificate_info: AIA, TLS feature, extensions_by_oid, EC curves" do
+  private def leaf_with_aia : String
+    ca = cert_path("aia-ca.pem")
+    `openssl req -x509 -newkey rsa:2048 -keyout #{cert_path("aia-ca.key")} -out #{ca} -days 30 -nodes -subj "/CN=AIA-CA" 2>/dev/null`
+    ext = cert_path("aia.cnf")
+    File.write(ext, <<-CNF)
+      [leaf]
+      keyUsage = critical, digitalSignature
+      authorityInfoAccess = OCSP;URI:http://ocsp.example.test, caIssuers;URI:http://ca.example.test/ca.crt
+      1.3.6.1.5.5.7.1.24 = DER:30:03:02:01:05
+      CNF
+    `openssl req -newkey rsa:2048 -nodes -keyout #{cert_path("aia.key")} -out #{cert_path("aia.csr")} -subj "/CN=aia.test" 2>/dev/null`
+    leaf = cert_path("aia.pem")
+    `openssl x509 -req -in #{cert_path("aia.csr")} -CA #{ca} -CAkey #{cert_path("aia-ca.key")} -CAcreateserial -out #{leaf} -days 10 -extfile #{ext} -extensions leaf 2>/dev/null`
+    leaf
+  end
+
+  it "reads ocsp_uri, issuer_uri and OCSP must-staple from extensions without the X509v3 prefix" do
+    result = PluginSpecHelper.run("x509_certificate_info", {"path" => leaf_with_aia})
+    result["ocsp_uri"].as_s.must_equal("http://ocsp.example.test")
+    result["issuer_uri"].as_s.must_equal("http://ca.example.test/ca.crt")
+    result["ocsp_must_staple"].as_bool.must_equal(true)
+    result["ocsp_must_staple_critical"].as_bool.must_equal(false)
+    # the extension before them keeps its own body (it used to swallow theirs)
+    result["key_usage"].as_a.map(&.as_s).must_equal(["Digital Signature"])
+  end
+
+  it "reports every extension by OID with its critical flag and base64 DER value" do
+    by_oid = PluginSpecHelper.run("x509_certificate_info", {"path" => leaf_with_aia})["extensions_by_oid"].as_h
+    # in the certificate's own order; openssl 3's `x509 -req` appends SKI and AKI itself
+    by_oid.keys.must_equal(["2.5.29.15", "1.3.6.1.5.5.7.1.1", "1.3.6.1.5.5.7.1.24", "2.5.29.14", "2.5.29.35"])
+    by_oid["2.5.29.15"].as_h["critical"].as_bool.must_equal(true)
+    by_oid["2.5.29.15"].as_h["value"].as_s.must_equal("AwIHgA==")
+    by_oid["1.3.6.1.5.5.7.1.24"].as_h.must_equal({"critical" => JSON::Any.new(false), "value" => JSON::Any.new("MAMCAQU=")})
+  end
+
+  it "keeps the must-staple and AIA keys, as None, on a certificate without them" do
+    path = cert_path("plain.pem")
+    `openssl req -x509 -newkey rsa:2048 -keyout #{cert_path("plain.key")} -out #{path} -days 30 -nodes -subj "/CN=plain" 2>/dev/null`
+    result = PluginSpecHelper.run("x509_certificate_info", {"path" => path})
+    {"ocsp_must_staple", "ocsp_uri", "issuer_uri"}.each { |key| result[key].raw.must_be_nil }
+    result["ocsp_must_staple_critical"].as_bool.must_equal(false)
+  end
+
+  it "names an X9.62 curve the way cryptography does, in the module's key order" do
+    path = cert_path("ec.pem")
+    `openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -keyout #{cert_path("ec.key")} -out #{path} -days 30 -nodes -subj "/CN=ec" 2>/dev/null`
+    data = PluginSpecHelper.run("x509_certificate_info", {"path" => path})["public_key_data"].as_h
+    data["curve"].as_s.must_equal("secp256r1")
+    data.keys.must_equal(["curve", "x", "y", "exponent_size"])
+  end
+
+  it "carries invocation.module_args on loop-registered items (#367)" do
+    path = cert_path("loop.pem")
+    `openssl req -x509 -newkey rsa:2048 -keyout #{cert_path("loop.key")} -out #{path} -days 30 -nodes -subj "/CN=loop" 2>/dev/null`
+    playbook = File.tempname("x509-invocation", ".yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - community.crypto.x509_certificate_info:
+              path: "{{ item }}"
+            loop: ["#{path}"]
+            register: info
+          - debug:
+              msg: "{{ info.results[0].invocation | to_json }}"
+      YAML
+    captured = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: captured, error: captured)
+    output = captured.to_s
+    status.success?.must_equal(true, output)
+    output.must_include(%(\\"module_args\\": {\\"path\\": \\"#{path}\\", \\"name_encoding\\": \\"ignore\\", \\"select_crypto_backend\\": \\"auto\\", \\"content\\": null, \\"valid_at\\": null}))
+  ensure
+    File.delete(playbook) if playbook && File.exists?(playbook)
+  end
+end

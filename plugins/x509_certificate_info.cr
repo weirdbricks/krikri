@@ -16,9 +16,8 @@ module Krikri
   # one of the two, matching the Ansible module's required_one_of plus
   # mutually_exclusive pair.
   #
-  # Known divergence, deliberate: `extensions_by_oid` is not returned
-  # (needs an ASN.1 decoder this tree does not carry) - see the helper's
-  # own header.
+  # Known divergence: integers wider than Int64 are returned as decimal
+  # strings - see the helper's own header.
   class X509CertificateInfoPlugin < BasePlugin
     include PluginHelpers::AnsibleArgValidation
 
