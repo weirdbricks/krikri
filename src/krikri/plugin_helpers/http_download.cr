@@ -135,6 +135,17 @@ module Krikri
         raise "too many redirects" if redirects_left < 0
 
         uri = URI.parse(url)
+
+        # http.client refuses a request target holding an ASCII control
+        # character or a space (its _validate_path) BEFORE any network
+        # I/O, and fetch_url's catch-all folds that InvalidURL into
+        # info['msg']. URLs like this reach the download path from role
+        # templating accidents (a newline inside a version pin, a space
+        # in a path); without this gate Crystal's HTTP::Client answers
+        # with its own ArgumentError verbatim, which reads nothing like
+        # Ansible's message and names no offending character.
+        reject_control_chars(uri.request_target)
+
         client = build_client(uri, options)
         headers = request_headers(options, auth_attempted)
 
@@ -199,6 +210,49 @@ module Krikri
       # same handshake, failing on the very mismatch being decoded here. So the
       # probe drives LibSSL directly, exactly like Client#initialize but
       # without the X509_VERIFY_PARAM set1_host call.
+
+      # The [\x00-\x20\x7f] scan byte-wise: these are all single-byte
+      # ASCII codepoints, so UTF-8 continuation bytes (all >= 0x80) can
+      # never false-positive, and a byte-level scan also survives a
+      # target that is not valid UTF-8 at all.
+      private def self.reject_control_chars(target : String) : Nil
+        found = target.bytes.find { |byte| byte <= 0x20 || byte == 0x7f }
+        return unless found
+        raise FetchError.new(FetchError::Kind::UrlError,
+          "An unknown error occurred: URL can't contain control characters. #{py_repr(target)} (found at least #{py_repr(found.chr.to_s)})")
+      end
+
+      # Python's repr() for the two quoted fragments in the
+      # control-character message: single quotes unless the string itself
+      # holds a ' but no " (repr picks the quote character that spares
+      # itself an escape), a backslash before any literal backslash, \n,
+      # \r and \t escaped by name, and every other codepoint below 0x20
+      # plus 0x7f as a lowercase \xNN - which is how Python shows control
+      # characters that have no short escape.
+      private def self.py_repr(s : String) : String
+        quote = s.includes?("'") && !s.includes?('"') ? '"' : '\''
+        String.build do |io|
+          io << quote
+          s.each_char do |char|
+            case char
+            when '\\' then io << "\\\\"
+            when '\n' then io << "\\n"
+            when '\r' then io << "\\r"
+            when '\t' then io << "\\t"
+            else
+              if char.ord < 0x20 || char.ord == 0x7f
+                io << "\\x#{char.ord.to_s(16, precision: 2)}"
+              elsif char == quote
+                io << "\\" << char
+              else
+                io << char
+              end
+            end
+          end
+          io << quote
+        end
+      end
+
       private def self.hostname_mismatch_reason(uri : URI) : String?
         host = uri.host
         return nil unless host && !::Socket::IPAddress.valid?(host)
