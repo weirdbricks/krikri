@@ -1796,6 +1796,7 @@ module Krikri
         # state=present (apt.py main(): `state_upgrade = True` for
         # latest, then one install() call), so the command is Ansible's
         # install() shape verbatim - `-y <dpkg_options> <only_upgrade>
+        # <fixed> <force> <autoremove> <fail_on_autoremove> <check_arg>
         # install <specs><trailing>` with the lock-timeout-augmented
         # dpkg_options and the resolved candidate pinned onto each spec
         # (live-verified: `apt-get -y -o Dpkg::Options::=--force-confdef
@@ -1846,12 +1847,22 @@ module Krikri
           version ? "#{base_name}=#{version}" : base_name
         end
         pkg_list = spec_list.map { |spec| naive_single_quote(spec) }.join(" ")
+        # Real install()'s EXACT eight-slot format (same construction the
+        # state=present path below mirrors): the `fixed` and `check_arg`
+        # slots are always empty here - state=fixed routes through its own
+        # handler and check mode returns through the simulate branch above
+        # - but each empty slot KEEPS its separators, so the default shape
+        # carries the seven-space run before "install" that Ansible's
+        # "'cmd' failed" msg shows (buluma.handbrake round 29883637:
+        # the five-space run this path used to emit diverged there).
         flags = [
           real_dpkg_options(lock_timeout),
           @only_upgrade ? "--only-upgrade" : "",
+          "",
           @force ? "--force-yes" : "",
           true?(@params["autoremove"]?) ? "--auto-remove" : "",
           @fail_on_autoremove ? "--no-remove" : "",
+          "",
         ]
         latest_cmd = "#{apt_get_bin} -y #{flags.join(" ")} install #{pkg_list}#{apt_install_trailing_flags}"
         upgrade_result = with_policy_rc_d { apt_install_with_implicit_cache_retry(latest_cmd, lock_timeout, ->remote_exec(String)) }
@@ -1870,10 +1881,22 @@ module Krikri
           # 'git-core=1:2.34.1-1ubuntu1.17'' failed: E: Version ... was not
           # found"); this path previously said its own "Failed to install
           # latest: ..." instead.
+          # Real's failure data is dict(msg=..., stdout=out, stderr=err,
+          # rc=rc) with main() appending the cache keys, and _return_formatted
+          # adding the *_lines pair (buluma.handbrake round 29883637: the
+          # bare-msg-only failure this path used to emit diverged there -
+          # same shape the state=present failure below mirrors).
           return PluginResult.new(
             changed: changed,
             failed: true,
-            msg: "'#{latest_cmd}' failed: #{upgrade_result[:stderr]}"
+            msg: "'#{latest_cmd}' failed: #{upgrade_result[:stderr]}",
+            stdout: upgrade_result[:stdout],
+            stderr: upgrade_result[:stderr],
+            stdout_lines: PluginHelpers::AnsibleSplitlines.split(upgrade_result[:stdout]),
+            stderr_lines: PluginHelpers::AnsibleSplitlines.split(upgrade_result[:stderr]),
+            rc: upgrade_result[:exit_code],
+            cache_update_time: @cache_update_time,
+            key_order: ["stdout", "stderr", "rc", "cache_updated", "cache_update_time", "failed", "msg", "stdout_lines", "stderr_lines"]
           )
         end
 
