@@ -3942,8 +3942,9 @@ module Krikri
       false
     end
 
-    # The unique var-layer DEFINITION whose plain-`{{ }}` own value
-    # strictly fails with "'#{missing}' is undefined" - the Origin real
+    # The unique var-layer DEFINITION whose templated own value (a plain
+    # `{{ }}` string or a full Jinja template with `{%`/`{#` tags) strictly
+    # fails with "'#{missing}' is undefined" - the Origin real
     # 2.19.11 points an [ERROR] chain's variable-templating link at when
     # the missing name is reached through such a var (`server_ip: "{{
     # bind_addr }}"` consumed by template:- live-captured). Shared with
@@ -3955,7 +3956,8 @@ module Krikri
       value_failure_var_origin(task, "'#{missing}' is undefined", skip_key: missing, required_text: missing, reachable_from: reachable_from, first_leaf: first_leaf, host: host)
     end
 
-    # The unique var-layer DEFINITION whose plain-`{{ }}` own value
+    # The unique var-layer DEFINITION whose templated own value (a plain
+    # `{{ }}` string or a full Jinja template with `{%`/`{#` tags)
     # strictly fails with EXACTLY *message* - the general form of the
     # "'x' is undefined" scan above, also reached for failures whose
     # message is the value's own text (`undef(hint=...)`'s hint,
@@ -4024,8 +4026,15 @@ module Krikri
         next if reachable && !reachable.includes?(key)
         raw = value.raw
         if raw.is_a?(String)
-          next unless raw.includes?("{{") &&
-                      !raw.includes?("{%") && !raw.includes?("{#") &&
+          # Block-tag values qualify too (issue #418,
+          # andrewrothstein.openjdk's openjdk_install_subdir mixes `{{ }}`
+          # spans with a `{% if openjdk_app == "jre" %}` tag and bottoms
+          # out at 'openjdk_app' is undefined - real 2.19.11 still points
+          # the chain's inner Origin at that definition). The pre-filter
+          # only keeps the strict re-render off non-templated text; the
+          # exact-message match below, not this gate, is what keeps a
+          # candidate from being mislabeled.
+          next unless (raw.includes?("{{") || raw.includes?("{%") || raw.includes?("{#")) &&
                       !UnsafeValues.unsafe_text?(raw)
           next if required_text && !raw.includes?(required_text)
           next if raw.includes?("lookup(") || raw.includes?("query(")
@@ -4036,6 +4045,12 @@ module Krikri
           rescue e : UndefinedVariableError
             next unless e.message == message
             matches << origin
+          rescue
+            # A `{%`-bearing value can fail to render in ways no
+            # undefined-name report describes (a template syntax error);
+            # the scan only runs on error-display paths, so such a
+            # candidate just drops out.
+            nil
           end
         else
           # A container-typed definition (a list of lazily-templated
@@ -4101,8 +4116,7 @@ module Krikri
           collect_failing_leaf_paths(item, message, required_text, vars, path + [key], matches)
         end
       when String
-        return unless raw.includes?("{{") &&
-                      !raw.includes?("{%") && !raw.includes?("{#") &&
+        return unless (raw.includes?("{{") || raw.includes?("{%") || raw.includes?("{#")) &&
                       !UnsafeValues.unsafe_text?(raw)
         return if required_text && !raw.includes?(required_text)
         return if raw.includes?("lookup(") || raw.includes?("query(")
