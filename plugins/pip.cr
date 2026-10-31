@@ -583,14 +583,33 @@ module Krikri
       nil
     end
 
-    # Ansible's _is_venv_command: pyvenv (any argv[0] equal to it)
-    # or a `-m venv` module invocation counts as a venv-style command;
-    # the classic virtualenv tool does not (it takes -p).
+    # Ansible's _is_venv_command: a first token equal to "pyvenv", or the
+    # rest of the command parsed by an argparse that knows only `-m` (a
+    # value-taking option; unknown options are ignored via
+    # parse_known_args and later occurrences win). argparse glues a short
+    # option to its value, so `-mvenv` parses the same as `-m venv`
+    # (GitHub issue #686: `python3 -mvenv` was misclassified as the
+    # classic virtualenv tool and got `-ppython3` appended, which venv
+    # rejects as an unrecognized argument). `-m=venv` also parses to
+    # m == "venv". The classic virtualenv tool does not count (it takes
+    # -p).
     private def venv_command?(command : String) : Bool
       tokens = command.split(' ').reject(&.empty?)
       return true if tokens[0] == "pyvenv"
 
-      tokens.each_with_index.any? { |token, index| token == "-m" && tokens[index + 1]? == "venv" }
+      m_value : String? = nil
+      expecting_value = false
+      tokens[1..].each do |token|
+        if expecting_value
+          m_value = token
+          expecting_value = false
+        elsif token == "-m"
+          expecting_value = true
+        elsif token.starts_with?("-m")
+          m_value = token[2..].lstrip('=')
+        end
+      end
+      m_value == "venv"
     end
 
     private def with_chdir(command : String) : String
