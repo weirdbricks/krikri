@@ -297,3 +297,200 @@ describe "x509_certificate_info: AIA, TLS feature, extensions_by_oid, EC curves"
     File.delete(playbook) if playbook && File.exists?(playbook)
   end
 end
+
+# Integers wider than Int64 (issue #364): the module returns Python ints
+# for public_key_data.modulus and (almost always) serial_number; krikri
+# used to quote them as decimal strings. The wire carries bare digits and
+# the engine carries the BIGINT_SENTINEL_PREFIX-marked string, so every
+# renderer prints the value the way Ansible's int does - unquoted.
+describe "x509_certificate_info: wide integers" do
+  it "carries modulus and serial_number as marked wide integers" do
+    path = cert_path("wide.pem")
+    `openssl req -x509 -newkey rsa:2048 -keyout #{cert_path("wide.key")} -out #{path} -days 30 -nodes -subj "/CN=wide" 2>/dev/null`
+    result = PluginSpecHelper.run("x509_certificate_info", {"path" => path})
+
+    modulus = Krikri.bigint_digits(result["public_key_data"].as_h["modulus"]).not_nil!
+    (modulus.size >= 600).must_equal(true)
+    serial = Krikri.bigint_digits(result["serial_number"]).not_nil!
+    (serial.size >= 10).must_equal(true)
+    # Small values stay plain Int64s.
+    result["public_key_data"].as_h["exponent"].as_i.must_equal(65537)
+    result["public_key_data"].as_h["size"].as_i.must_equal(2048)
+  end
+
+  it "renders a registered modulus unquoted through to_json, type_debug, debug var and interpolation" do
+    path = cert_path("render.pem")
+    `openssl req -x509 -newkey rsa:2048 -keyout #{cert_path("render.key")} -out #{path} -days 30 -nodes -subj "/CN=render" 2>/dev/null`
+    playbook = File.tempname("x509-wide", ".yml")
+    written = File.join(PluginSpecHelper.tmp_path("wide-dump"), "dump.json")
+    written_nice = File.join(PluginSpecHelper.tmp_path("wide-dump"), "dump-nice.json")
+    FileUtils.mkdir_p(File.dirname(written))
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - community.crypto.x509_certificate_info:
+              path: "#{path}"
+            register: info
+          - debug:
+              var: info.public_key_data.modulus
+          - debug:
+              msg: "{{ info.public_key_data.modulus }}"
+          - debug:
+              msg: "{{ info.public_key_data.modulus | type_debug }}"
+          - debug:
+              msg: "{{ info.public_key_data.modulus > 0 }}"
+          - copy:
+              content: "{{ info | to_json }}\n"
+              dest: "#{written}"
+          - copy:
+              content: "{{ info | to_nice_json }}\n"
+              dest: "#{written_nice}"
+      YAML
+    captured = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: captured, error: captured)
+    output = captured.to_s
+    status.success?.must_equal(true, output)
+
+    # The marker must never leak into ANY rendered output.
+    output.includes?("\u{E000}").must_equal(false, "sentinel marker leaked into display output:\n#{output}")
+
+    rerun = PluginSpecHelper.run("x509_certificate_info", {"path" => path})
+    modulus_digits = Krikri.bigint_digits(rerun["public_key_data"].as_h["modulus"]).not_nil!
+    serial_digits = Krikri.bigint_digits(rerun["serial_number"]).not_nil!
+    # debug: var= prints Python's repr - unquoted digits.
+    output.must_include(%("info.public_key_data.modulus": #{modulus_digits}))
+    # msg interpolation stringifies the int - bare digits, no quotes.
+    output.must_include(%("msg": #{modulus_digits}))
+    # type_debug says int.
+    output.must_include(%("msg": "int"))
+    # the comparison ran against the number, not a string (a str-vs-int
+    # ordering fails the task under ansible's semantics)
+    output.must_include(%("msg": true))
+
+    dumped = File.read(written)
+    dumped.includes?("\u{E000}").must_equal(false, "sentinel marker leaked into to_json output")
+    dumped.must_include(%("modulus": #{modulus_digits}))
+    dumped.must_include(%("serial_number": #{serial_digits}))
+
+    dumped_nice = File.read(written_nice)
+    dumped_nice.includes?("\u{E000}").must_equal(false, "sentinel marker leaked into to_nice_json output")
+    dumped_nice.must_include(%("modulus": #{modulus_digits}))
+    dumped_nice.must_include(%("serial_number": #{serial_digits}))
+  end
+
+  # Ordering comparisons against a marked wide integer, on BOTH evaluators
+  # (the bare `when:` conditional path AND `{{ }}` templating), both
+  # operand orientations, and the negated value. Live-verified against
+  # ansible-core 2.19 with the same play: every run-here task runs there
+  # and every skip-here task skips there.
+  it "compares a wide integer in when: and {{ }} on both operand sides" do
+    path = cert_path("compare.pem")
+    `openssl req -x509 -newkey rsa:2048 -keyout #{cert_path("compare.key")} -out #{path} -days 30 -nodes -subj "/CN=compare" 2>/dev/null`
+    playbook = File.tempname("x509-wide-cmp", ".yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - community.crypto.x509_certificate_info:
+              path: "#{path}"
+            register: info
+          - set_fact:
+              m: "{{ info.public_key_data.modulus }}"
+              neg: "{{ -info.public_key_data.modulus }}"
+          - {debug: {msg: "RUN when 0 < m"}, when: "0 < m"}
+          - {debug: {msg: "RUN when m > 0"}, when: "m > 0"}
+          - {debug: {msg: "RUN when 5 < m"}, when: "5 < m"}
+          - {debug: {msg: "RUN when m >= 5"}, when: "m >= 5"}
+          - {debug: {msg: "RUN when m > 1.5"}, when: "m > 1.5"}
+          - {debug: {msg: "RUN when 1.5 < m"}, when: "1.5 < m"}
+          - {debug: {msg: "RUN when neg < 0"}, when: "neg < 0"}
+          - {debug: {msg: "RUN when 0 > neg"}, when: "0 > neg"}
+          - {debug: {msg: "RUN when neg < m"}, when: "neg < m"}
+          - {debug: {msg: "RUN when m > neg"}, when: "m > neg"}
+          - {debug: {msg: "RUN when modulus > 65537"}, when: "info.public_key_data.modulus > 65537"}
+          - {debug: {msg: "RUN when 65537 < modulus"}, when: "65537 < info.public_key_data.modulus"}
+          - {debug: {msg: "RUN when m == modulus"}, when: "m == info.public_key_data.modulus"}
+          - {debug: {msg: "SKIP when 5 > m"}, when: "5 > m"}
+          - {debug: {msg: "SKIP when m < 5"}, when: "m < 5"}
+          - {debug: {msg: "SKIP when m < 0"}, when: "m < 0"}
+          - {debug: {msg: "SKIP when 1.5 > m"}, when: "1.5 > m"}
+          - {debug: {msg: "SKIP when neg > 0"}, when: "neg > 0"}
+          - {debug: {msg: "SKIP when m > modulus"}, when: "m > info.public_key_data.modulus"}
+          - debug:
+              msg: "RUN tpl 0 < m => {{ 0 < m }}"
+          - debug:
+              msg: "RUN tpl 5 > m => {{ 5 > m }}"
+          - debug:
+              msg: "RUN tpl m < 5 => {{ m < 5 }}"
+          - debug:
+              msg: "RUN tpl m >= 1.5 => {{ m >= 1.5 }}"
+          - debug:
+              msg: "RUN tpl 1.5 >= m => {{ 1.5 >= m }}"
+          - debug:
+              msg: "RUN tpl -m < 0 => {{ -m < 0 }}"
+          - debug:
+              msg: "RUN tpl spaces => {{ -m < 0 }} <= kept"
+          - debug:
+              msg: "RUN tpl neg {{ -info.public_key_data.modulus > 0 }}"
+      YAML
+
+    captured = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: captured, error: captured)
+    output = captured.to_s
+    status.success?.must_equal(true, "playbook failed: #{output}")
+
+    # The marker must never leak into any rendered output.
+    output.includes?("\u{E000}").must_equal(false, "sentinel marker leaked into comparison output:\n#{output}")
+
+    ["0 < m", "m > 0", "5 < m", "m >= 5", "m > 1.5", "1.5 < m",
+     "neg < 0", "0 > neg", "neg < m", "m > neg",
+     "modulus > 65537", "65537 < modulus", "m == modulus"].each do |clause|
+      output.must_include(%("msg": "RUN when #{clause}"))
+    end
+    ["5 > m", "m < 5", "m < 0", "1.5 > m", "neg > 0", "m > modulus"].each do |clause|
+      output.wont_include("SKIP when #{clause}\"")
+    end
+    output.must_include(%("msg": "RUN tpl 0 < m => True"))
+    output.must_include(%("msg": "RUN tpl 5 > m => False"))
+    output.must_include(%("msg": "RUN tpl m < 5 => False"))
+    output.must_include(%("msg": "RUN tpl m >= 1.5 => True"))
+    output.must_include(%("msg": "RUN tpl 1.5 >= m => False"))
+    # The unary minus applies to the wide value AND the span's surrounding
+    # literal text keeps its whitespace (the `{{ -... }}` body used to be
+    # misread as a `{{-` trim marker, eating the minus and the space).
+    output.must_include(%("msg": "RUN tpl -m < 0 => True"))
+    output.must_include(%("msg": "RUN tpl spaces => True <= kept"))
+    output.must_include(%("msg": "RUN tpl neg False"))
+  end
+
+  # Python's float(int) raises OverflowError("int too large to convert to
+  # float") on a modulus-scale integer and Ansible fails the task with it;
+  # silently coercing to 0.0 (the old behavior) produced a WRONG value.
+  it "fails a wide int | float like Ansible's OverflowError" do
+    path = cert_path("floatfail.pem")
+    `openssl req -x509 -newkey rsa:2048 -keyout #{cert_path("floatfail.key")} -out #{path} -days 30 -nodes -subj "/CN=floatfail" 2>/dev/null`
+    playbook = File.tempname("x509-wide-float", ".yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - community.crypto.x509_certificate_info:
+              path: "#{path}"
+            register: info
+          - debug:
+              msg: "{{ info.public_key_data.modulus | float > 1e300 }}"
+      YAML
+
+    captured = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: captured, error: captured)
+    output = captured.to_s
+    status.success?.must_equal(false, "the overflow must fail the task: #{output}")
+    output.must_include("int too large to convert to float")
+  ensure
+    File.delete(playbook) if playbook && File.exists?(playbook)
+  end
+end

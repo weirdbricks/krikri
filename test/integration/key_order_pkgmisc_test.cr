@@ -72,7 +72,10 @@ private def run_probe_dumps(yaml : String, probes : Array(String), env : Hash(St
   probes.each do |probe|
     path = File.join(dump_dir, "#{probe}.json")
     File.exists?(path).must_equal(true)
-    dumps[probe] = JSON.parse(File.read(path))
+    # The bigint-aware parse, like the controller: the dumped probe
+    # result carries an openssl_csr wide integer (public_key/exponent)
+    # as a bare JSON number beyond Int64, where plain JSON.parse raises.
+    dumps[probe] = Krikri::BigJson.parse(File.read(path))
   end
   dumps
 ensure

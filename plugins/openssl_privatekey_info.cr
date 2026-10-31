@@ -26,8 +26,9 @@ module Krikri
   #   private_data - only with return_private_key_data: true (RSA
   #     p/q/exponent, DSA x, ECC multiplier), parsed the same way
   #
-  # Big integers (RSA moduli, ECC coordinates) go out as decimal strings
-  # when they do not fit Int64 - see X509CertInfo.json_int.
+  # Big integers (RSA moduli, ECC coordinates) go out as JSON numbers
+  # even beyond Int64 (sentinel-carried through the controller - see
+  # X509CertInfo.json_int).
   class OpensslPrivatekeyInfoPlugin < BasePlugin
     include PluginHelpers::AnsibleArgValidation
 

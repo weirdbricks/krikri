@@ -1,5 +1,6 @@
 require "json"
 require "../unsafe_values"
+require "../bigint_json"
 require "./filter_engine"
 require "./jinja_renderer"
 
@@ -363,9 +364,41 @@ module Krikri
       private def values_equal?(left : JSON::Any, right : JSON::Any) : Bool
         return true if left.raw == right.raw
 
+        # A BIGINT_SENTINEL_PREFIX-marked string (an integer too wide for
+        # Int64 - see Krikri::BIGINT_SENTINEL_PREFIX) compares as the
+        # number it represents, exactly like Python's arbitrary-precision
+        # int: against another wide int exactly, against an Int64/float
+        # operand numerically. A marked value against a STRING stays
+        # unequal (Python never compares an int to a str as equal).
+        if lbig = Krikri.bigint_digits(left)
+          if rbig = Krikri.bigint_digits(right)
+            return Krikri.bigint_cmp(lbig, rbig) == 0
+          end
+          return big_matches_numeric?(lbig, right)
+        elsif rbig = Krikri.bigint_digits(right)
+          return big_matches_numeric?(rbig, left)
+        end
+
         left_num = equality_numeric_or_nil(left)
         right_num = equality_numeric_or_nil(right)
         !left_num.nil? && !right_num.nil? && left_num == right_num
+      end
+
+      # The numeric side of a wide-int comparison when the OTHER operand
+      # is a real Int64/Float64/Bool: exact digit compare against an
+      # Int64 (a wide int never equals one, but the helper keeps the
+      # shape general), exact against a float through the float's exact
+      # mantissa*2^exp value (Python's int/float equality is exact
+      # arithmetic, and converting the wide digits to Float64 both
+      # rounds and overflows - a 617-digit modulus raises "Invalid
+      # Float64" outright). A NaN float equals nothing.
+      private def big_matches_numeric?(big : String, other : JSON::Any) : Bool
+        case raw = other.raw
+        when Int64, Int32 then Krikri.bigint_cmp(big, raw.to_s) == 0
+        when Float64      then !raw.nan? && Krikri::BigJson.bigint_cmp_float(big, raw) == 0
+        when Bool         then Krikri.bigint_cmp(big, raw ? "1" : "0") == 0
+        else                   false
+        end
       end
 
       # Only the operand classes Python cross-compares numerically - a
@@ -415,10 +448,40 @@ module Krikri
       # are valid Python).
       private def compare_values(left : JSON::Any, right : JSON::Any, op : String,
                                  left_expr : String, right_expr : String) : Int32
+        # A BIGINT_SENTINEL_PREFIX-marked string (an integer too wide for
+        # Int64 - see Krikri::BIGINT_SENTINEL_PREFIX) orders as the
+        # number it represents: wide-vs-wide exactly by digit text, wide-
+        # vs-Int64 exactly, wide-vs-float numerically. A marked value
+        # against a String/None/list still fails like Python's TypeError
+        # (the fall-through below), because the fall-through's
+        # class-based raise is what Ansible produces there.
+        lbig = Krikri.bigint_digits(left)
+        rbig = Krikri.bigint_digits(right)
+        if lbig && rbig
+          return Krikri.bigint_cmp(lbig, rbig)
+        elsif big = (lbig || rbig)
+          # The helper compares BIG vs OTHER - exactly the asked ordering
+          # when the wide value is the LEFT operand (left <=> right = big
+          # <=> other) and its NEGATION when the wide value sits on the
+          # right (left <=> right = -(right <=> left)). The old code
+          # returned the raw big-vs-other result for both sides, so `5 <
+          # m` was computed as m vs 5 and answered backwards.
+          other = lbig ? right : left
+          case raw = other.raw
+          when Int64, Int32, Bool
+            num = raw.is_a?(Bool) ? (raw ? 1_i64 : 0_i64) : raw.to_i64
+            cmp = Krikri.bigint_cmp(big, num.to_s)
+            return lbig ? cmp : -cmp
+          when Float64
+            cmp = Krikri::BigJson.bigint_cmp_float(big, raw)
+            return lbig ? cmp : -cmp
+          end
+        end
+
         # Two raw strings: keep the historical numeric-first cascade for
         # numeric-string pairs, lexicographic for anything else (Python's
         # own str-vs-str semantics).
-        if left.raw.is_a?(String) && right.raw.is_a?(String)
+        if left.raw.is_a?(String) && right.raw.is_a?(String) && !lbig && !rbig
           left_num = numeric_or_nil(left)
           right_num = numeric_or_nil(right)
           if left_num && right_num
@@ -456,7 +519,7 @@ module Krikri
           "str"
         else
           case value.raw
-          when String  then "_AnsibleTaggedStr"
+          when String  then Krikri.bigint_digits(value) ? "int" : "_AnsibleTaggedStr"
           when Int64   then "int"
           when Float64 then "float"
           when Bool    then "bool"

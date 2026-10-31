@@ -959,7 +959,7 @@ module Krikri
           # giving up to a plain string recovers the real
           # array/dict without the JSON-text detour at all.
           inner = stripped[2..-3].strip
-          (JSON.parse(rendered) rescue nil) ||
+          (BigJson.parse(rendered) rescue nil) ||
             (JinjaRenderer.new(substitutor.vars).evaluate_value!(inner) rescue nil) ||
             JSON::Any.new(rendered)
         elsif stripped_rendered.in?("True", "False", "None")

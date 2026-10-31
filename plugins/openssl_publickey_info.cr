@@ -28,8 +28,8 @@ module Krikri
   # read or parse error - the module only ever reports consistency for
   # private keys, never for this one).
   #
-  # Big integers go out as decimal strings when they do not fit Int64 -
-  # see X509CertInfo.json_int.
+  # Big integers go out as JSON numbers even beyond Int64 (sentinel-
+  # carried through the controller - see X509CertInfo.json_int).
   class OpensslPublickeyInfoPlugin < BasePlugin
     include PluginHelpers::AnsibleArgValidation
 

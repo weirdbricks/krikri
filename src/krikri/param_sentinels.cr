@@ -331,4 +331,73 @@ module Krikri
     else                   native.raw.class.to_s
     end
   end
+
+  # Prefix marking a string as the decimal text of an integer too wide for
+  # Int64 (RSA moduli, EC coordinates, big certificate serial numbers).
+  # JSON::Any's raw union tops out at Int64, so such a value cannot exist
+  # as a number in the engine's result world: a module that returns a
+  # Python int beyond Int64 reaches the controller as bare digits on the
+  # JSON wire, the bigint-aware parse (Krikri::BigJson) stores it as this
+  # marked string, and every renderer that prints a value to a user
+  # (ResultDisplay's dumps, PyDump, the filters, string interpolation)
+  # prints it as bare unquoted digits again - the exact text Ansible's
+  # Python ints produce. The engine side (krikri-jinja) turns the marked
+  # string into a real BigIntValue for templating/tests/comparisons; its
+  # canonical constant is KrikriJinja::BIGINT_SENTINEL_PREFIX, duplicated
+  # here because the plugin binaries (which also emit wide integers, and
+  # mark them with this prefix before BasePlugin's wire rewrite unquotes
+  # them) link neither that shard nor the jinja engine. The private-use
+  # control character makes a false positive on real string data
+  # effectively impossible.
+  BIGINT_SENTINEL_PREFIX = "\u{E000}bigint:"
+
+  # The decimal digits a BIGINT_SENTINEL_PREFIX-marked string carries
+  # (sign included), or nil when the text is not a marked value. A prefix
+  # occurrence with a non-integer payload (only possible via hostile
+  # string data, never via the parse boundary) is not a bigint.
+  def self.bigint_digits(text : String?) : String?
+    return nil unless text && text.starts_with?(BIGINT_SENTINEL_PREFIX)
+    digits = text[BIGINT_SENTINEL_PREFIX.size..]
+    digits.matches?(/\A-?(0|[1-9]\d*)\z/) ? digits : nil
+  end
+
+  # The bigint-sentinel check over a JSON::Any node: the decimal digits
+  # when the node is a marked string, nil otherwise.
+  def self.bigint_digits(value : JSON::Any) : String?
+    bigint_digits(value.as_s?)
+  end
+
+  # Builds the marked string for a decimal integer too wide for Int64.
+  def self.bigint_sentinel(digits : String) : String
+    BIGINT_SENTINEL_PREFIX + digits
+  end
+
+  # Rewrites every BIGINT_SENTINEL_PREFIX-marked string in serialized
+  # JSON text to its bare digits: the wire form a module's Python int
+  # takes. Used by BasePlugin#run_and_capture (plugin result -> wire) and
+  # by the serializers that have no per-node hook (Crystal's own
+  # JSON::Any#to_pretty_json, whose quoted-sentinel bytes this post-
+  # processes back to unquoted digits).
+  def self.unquote_bigint_json(text : String) : String
+    return text unless text.includes?(BIGINT_SENTINEL_PREFIX)
+    text.gsub(/"\x{E000}bigint:(-?(?:0|[1-9]\d*))"/) { $1 }
+  end
+
+  # Ordering comparison of two signed decimal integer strings of
+  # arbitrary width (the payloads of BIGINT_SENTINEL_PREFIX-marked
+  # values), for the comparison paths that must treat a marked value as
+  # a real number. Sign first, then magnitude by length (a longer
+  # magnitude is the larger number), then lexicographic on equal
+  # lengths - exact, no Float64 rounding anywhere.
+  def self.bigint_cmp(a : String, b : String) : Int32
+    a_neg = a.starts_with?('-')
+    b_neg = b.starts_with?('-')
+    return -bigint_cmp(a[1..], b[1..]) if a_neg && b_neg
+    return -1 if a_neg
+    return 1 if b_neg
+    a_mag = a
+    b_mag = b
+    return (a_mag.size <=> b_mag.size) || 0 if a_mag.size != b_mag.size
+    a_mag <=> b_mag
+  end
 end

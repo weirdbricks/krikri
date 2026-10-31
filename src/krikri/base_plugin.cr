@@ -596,6 +596,22 @@ module Krikri
     # around this, so every existing one-shot call site (every plugin's
     # own driver trailer) is unaffected.
     def run_and_capture : String
+      # The sentinel wire rewrite: X509CertInfo.json_int marks integers
+      # too wide for Int64 as BIGINT_SENTINEL_PREFIX-marked strings, and
+      # the serialized result carries them as quoted strings. Rewriting
+      # each marked string to its bare digits here makes the wire bytes
+      # exactly what the real module prints (a Python int is unquoted
+      # JSON) for every transport at once - one-shot local, one-shot
+      # ssh, the batch script, and both daemons - while the controller's
+      # bigint-aware parse (Krikri::BigJson) recognizes the digits and
+      # restores the marker inside the engine's JSON::Any world. The
+      # private-use control character keeps a real string holding this
+      # text effectively impossible, so the rewrite cannot touch
+      # anything but the marked values.
+      Krikri.unquote_bigint_json(run_and_capture_result)
+    end
+
+    private def run_and_capture_result : String
       remote_tmp_warning = remote_tmp_init_warning
       finalize_result(attach_remote_tmp_warning(execute, remote_tmp_warning)).to_json
     rescue ex : BoolParamError

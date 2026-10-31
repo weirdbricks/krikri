@@ -1,4 +1,5 @@
 require "json"
+require "../bigint_json"
 require "../py_dump"
 require "../py_set"
 require "uri"
@@ -575,9 +576,12 @@ module Krikri
       end
 
       # from_json() - parses a JSON string into a real structure;
-      # raises on invalid input (Ansible does too).
+      # raises on invalid input (Ansible does too). The bigint-aware
+      # parse keeps an integer too wide for Int64 a number (sentinel-
+      # carried), where plain JSON.parse would raise - Python's
+      # json.loads has no such limit.
       def self.from_json(s : String) : JSON::Any
-        JSON.parse(s)
+        Krikri::BigJson.parse(s)
       rescue
         raise "from_json: invalid JSON input"
       end
@@ -589,7 +593,7 @@ module Krikri
       # already-structured input).
       def self.from_yaml(value : JSON::Any) : JSON::Any
         return value unless value.raw.is_a?(String)
-        JSON.parse(YAML.parse(value.raw.as(String)).to_json)
+        Krikri::BigJson.parse(YAML.parse(value.raw.as(String)).to_json)
       rescue
         raise "from_yaml: invalid YAML input"
       end
@@ -607,7 +611,11 @@ module Krikri
         when Bool
           io << raw
         when String
-          raw.to_json(io)
+          if digits = Krikri.bigint_digits(raw)
+            io << digits
+          else
+            raw.to_json(io)
+          end
         when Int64, Int32, Float64
           io << raw
         when Array
@@ -636,19 +644,25 @@ module Krikri
       # to_nice_json(indent=4, sort_keys=True) - a pretty-printed JSON
       # dump. Crystal's own JSON::Any#to_pretty_json (2-space indent) is
       # used rather than hand-rolling a 4-space emitter - narrower than
-      # Ansible's exact byte output but structurally correct.
+      # Ansible's exact byte output but structurally correct. The
+      # BIGINT_SENTINEL_PREFIX-marked strings (integers too wide for
+      # Int64 - see Krikri::BIGINT_SENTINEL_PREFIX) print as bare
+      # unquoted digits, the way json.dumps prints a Python int.
       def self.to_nice_json(value : JSON::Any, sort_keys : Bool = true) : String
         sorted = sort_keys ? sort_json_keys(value) : value
-        sorted.to_pretty_json
+        Krikri.unquote_bigint_json(sorted.to_pretty_json)
       end
 
       # to_yaml() - a YAML dump (real PyYAML default: block style, keys
-      # sorted). Converts via value.to_json -> YAML.parse -> to_yaml
+      # sorted). Converts via PyDump.json -> YAML.parse -> to_yaml
       # (JSON is a valid YAML flow-syntax subset, round-trips cleanly
-      # through Crystal's own YAML formatter), strips the leading
+      # through Crystal's own YAML formatter; the PyDump bridge keeps a
+      # BIGINT_SENTINEL_PREFIX-marked wide integer a NUMBER into the
+      # YAML tree, where a bare value.to_json would carry it as a
+      # string), strips the leading
       # document marker PyYAML's own output never has.
       def self.to_yaml(value : JSON::Any) : String
-        YAML.parse(sort_json_keys(value).to_json).to_yaml.sub(/\A---[ \t]*\n?/, "").rstrip
+        YAML.parse(Krikri::PyDump.json(sort_json_keys(value))).to_yaml.sub(/\A---[ \t]*\n?/, "").rstrip
       end
 
       # Recursively sorts dict keys - used by to_nice_json/to_yaml
@@ -783,10 +797,12 @@ module Krikri
       # `type(x).__name__`), used almost exclusively in role assert.yml
       # sanity checks (`my_list | type_debug == "list"`).
       def self.type_debug(value : JSON::Any) : String
-        case value.raw
-        when Array   then "list"
-        when Hash    then "dict"
-        when String  then "str"
+        case raw = value.raw
+        when Array then "list"
+        when Hash  then "dict"
+          # A BIGINT_SENTINEL_PREFIX-marked string IS an integer (too wide
+          # for Int64) - type_debug reports Python's type name, `int`.
+        when String  then Krikri.bigint_digits(raw) ? "int" : "str"
         when Int64   then "int"
         when Float64 then "float"
         when Bool    then "bool"
@@ -1219,7 +1235,7 @@ module Krikri
       # `from_yaml_all`: every document of a multi-document YAML string.
       def self.from_yaml_all(text : String) : JSON::Any
         docs = text.split(/^---\s*$/m).map(&.strip).reject(&.empty?)
-        JSON::Any.new(docs.map { |doc| JSON.parse(YAML.parse(doc).to_json) })
+        JSON::Any.new(docs.map { |doc| Krikri::BigJson.parse(YAML.parse(doc).to_json) })
       end
 
       # Raised by the version-comparison cores below for everything

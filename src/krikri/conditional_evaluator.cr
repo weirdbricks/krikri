@@ -2611,16 +2611,20 @@ module Krikri
         # `float` are narrower Jinja2 tests for just one or the other.
         # JSON::Any stores whole numbers as Int64 and fractional ones as
         # Float64, matching Ansible's own YAML/JSON type inference.
+        # A BIGINT_SENTINEL_PREFIX-marked string (an integer too wide for
+        # Int64 - see Krikri::BIGINT_SENTINEL_PREFIX) tests as the int it
+        # represents.
         case test_name
         when "integer"
-          value.raw.is_a?(Int64)
+          value.raw.is_a?(Int64) || (value.raw.is_a?(String) && !!Krikri.bigint_digits(value.raw.as(String)))
         when "float"
           value.raw.is_a?(Float64)
         else
-          value.raw.is_a?(Int64) || value.raw.is_a?(Float64)
+          value.raw.is_a?(Int64) || value.raw.is_a?(Float64) ||
+            (value.raw.is_a?(String) && !!Krikri.bigint_digits(value.raw.as(String)))
         end
       when "string"
-        value.raw.is_a?(String)
+        value.raw.is_a?(String) && !Krikri.bigint_digits(value.raw.as?(String))
       when "iterable"
         value.raw.is_a?(Array) || value.raw.is_a?(Hash) || value.raw.is_a?(String)
       when "none"
@@ -3987,6 +3991,28 @@ module Krikri
     private def self.values_equal?(left : String | Int64 | Float64 | Bool | Nil | Array(String), right : String | Int64 | Float64 | Bool | Nil | Array(String)) : Bool
       return true if left == right
 
+      # A BIGINT_SENTINEL_PREFIX-marked string (an integer too wide for
+      # Int64 - see Krikri::BIGINT_SENTINEL_PREFIX) IS a Python int for
+      # equality: against another wide int exactly by digits, against an
+      # Int64/Bool operand numerically, against a float through the
+      # float's exact mantissa*2^exp value (Python's int/float equality
+      # is exact; converting the wide digits to Float64 both rounds and
+      # overflows). Against a plain string or anything else - unequal,
+      # Python never equates an int with a str.
+      lbig = left.is_a?(String) ? Krikri.bigint_digits(left) : nil
+      rbig = right.is_a?(String) ? Krikri.bigint_digits(right) : nil
+      if lbig && rbig
+        return Krikri.bigint_cmp(lbig, rbig) == 0
+      elsif big = (lbig || rbig)
+        other = lbig ? right : left
+        case other
+        when Int64   then return Krikri.bigint_cmp(big, other.to_s) == 0
+        when Bool    then return Krikri.bigint_cmp(big, other ? "1" : "0") == 0
+        when Float64 then return !other.nan? && Krikri::BigJson.bigint_cmp_float(big, other) == 0
+        else              return false
+        end
+      end
+
       left_num = numeric_or_nil(left)
       right_num = numeric_or_nil(right)
       !left_num.nil? && !right_num.nil? && left_num == right_num
@@ -4015,7 +4041,13 @@ module Krikri
                                           operator : String,
                                           left_expr : String,
                                           right_expr : String) : Nil
-      mixed = (left.is_a?(String) && ordering_number?(right)) || (ordering_number?(left) && right.is_a?(String))
+      # A BIGINT_SENTINEL_PREFIX-marked string is a real Python int, not
+      # a string - it orders numerically against numbers instead of
+      # raising here (see #compare_values for the comparison itself).
+      left_marked = left.is_a?(String) && !!Krikri.bigint_digits(left)
+      right_marked = right.is_a?(String) && !!Krikri.bigint_digits(right)
+      mixed = (left.is_a?(String) && !left_marked && ordering_number?(right)) ||
+              (ordering_number?(left) && right.is_a?(String) && !right_marked)
       return unless mixed
 
       raise OrderingTypeError.new(
@@ -4036,7 +4068,16 @@ module Krikri
                                         operand_expr : String) : String
       case value
       when String
-        fact_string_operand?(operand_expr) ? "str" : "_AnsibleTaggedStr"
+        # A BIGINT_SENTINEL_PREFIX-marked string is an integer too wide
+        # for Int64 (see Krikri::BIGINT_SENTINEL_PREFIX) - Python names
+        # it 'int' in the TypeError, never '_AnsibleTaggedStr'.
+        if Krikri.bigint_digits(value)
+          "int"
+        elsif fact_string_operand?(operand_expr)
+          "str"
+        else
+          "_AnsibleTaggedStr"
+        end
       when Int64   then "int"
       when Float64 then "float"
       when Bool    then "bool"
@@ -4054,6 +4095,27 @@ module Krikri
 
     private def self.compare_values(left : String | Int64 | Float64 | Bool | Nil | Array(String),
                                     right : String | Int64 | Float64 | Bool | Nil | Array(String)) : Int32
+      # A BIGINT_SENTINEL_PREFIX-marked string (an integer too wide for
+      # Int64 - see Krikri::BIGINT_SENTINEL_PREFIX) orders as the number
+      # it represents: wide-vs-wide exactly by digit text, wide-vs-Int64
+      # exactly, wide-vs-float through the float's exact mantissa*2^exp
+      # value. The helper compares BIG vs OTHER - the asked ordering
+      # when the wide value is on the left, its negation when it sits on
+      # the right.
+      lbig = left.is_a?(String) ? Krikri.bigint_digits(left) : nil
+      rbig = right.is_a?(String) ? Krikri.bigint_digits(right) : nil
+      if lbig && rbig
+        return Krikri.bigint_cmp(lbig, rbig)
+      elsif big = (lbig || rbig)
+        other = lbig ? right : left
+        cmp = case other
+              when Int64   then Krikri.bigint_cmp(big, other.to_s)
+              when Bool    then Krikri.bigint_cmp(big, other ? "1" : "0")
+              when Float64 then Krikri::BigJson.bigint_cmp_float(big, other)
+              end
+        return lbig ? cmp : -cmp if cmp
+      end
+
       # Try numeric comparison first
       if left.is_a?(Int64) && right.is_a?(Int64)
         return left <=> right

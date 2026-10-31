@@ -1,4 +1,5 @@
 require "json"
+require "./param_sentinels"
 
 # Crystal reimplementation of the `ansible.utils` ipaddr filter family (ipaddr,
 # ipv4, ipv6, ipsubnet, ipmath, next_nth_usable,
@@ -386,10 +387,16 @@ module Krikri
     end
 
     def json_int(n : UInt128) : JSON::Any
+      # An IPv6 integer is 128-bit: beyond Int64::MAX it goes out as the
+      # BIGINT_SENTINEL_PREFIX-marked decimal string (bare digits on the
+      # wire, back to a real number in the engine) instead of the old
+      # Float64 fallback, whose rounding diverged from Ansible's exact
+      # Python int - see X509CertInfo.json_int for the same mechanism in
+      # the crypto modules.
       if n <= Int64::MAX.to_u128
         JSON::Any.new(n.to_i64)
       else
-        JSON::Any.new(n.to_f64)
+        JSON::Any.new(Krikri.bigint_sentinel(n.to_s))
       end
     end
 

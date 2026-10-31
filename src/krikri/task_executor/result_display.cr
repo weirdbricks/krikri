@@ -1822,7 +1822,7 @@ module Krikri
     # _dump_results(indent=4, sort_keys=True) - real minimal-callback JSON
     # dump shape.
     private def self.dump_pretty(result : JSON::Any) : String
-      VariableSubstitutor::FilterCore.sort_json_keys(result).to_pretty_json("    ")
+      Krikri.unquote_bigint_json(VariableSubstitutor::FilterCore.sort_json_keys(result).to_pretty_json("    "))
     end
 
     # Python json.dumps' compact shapes: separators (", "/": ") when no
@@ -1848,7 +1848,11 @@ module Krikri
       when Bool
         io << raw
       when String
-        raw.to_json(io)
+        if digits = Krikri.bigint_digits(raw)
+          io << digits
+        else
+          raw.to_json(io)
+        end
       when Int64, Int32, Float64
         io << raw
       when Array
@@ -1981,7 +1985,7 @@ module Krikri
       when Bool
         io << raw.to_s
       when String
-        io << raw.to_json
+        io << (Krikri.bigint_digits(raw) || raw.to_json)
       else
         io << raw.to_s
       end
@@ -2154,6 +2158,10 @@ module Krikri
         raw ? "True" : "False"
       when Int64, Int32, Float64
         raw.to_s
+      when String
+        # A BIGINT_SENTINEL_PREFIX-marked string IS an integer too wide
+        # for Int64 - Python's repr of an int is the bare digits.
+        Krikri.bigint_digits(raw) || python_repr_string(raw)
       else
         python_repr_string(raw.as(String))
       end
@@ -2199,6 +2207,8 @@ module Krikri
         raw ? "true" : "false"
       when Int64, Float64
         raw.to_s
+      when String
+        Krikri.bigint_digits(raw) || value.to_s.to_json
       else
         value.to_s.to_json
       end

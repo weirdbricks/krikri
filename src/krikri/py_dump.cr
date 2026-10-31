@@ -1,4 +1,5 @@
 require "json"
+require "./param_sentinels"
 
 module Krikri
   # Byte-exact ports of the two serializers behind ansible's to_json /
@@ -14,13 +15,21 @@ module Krikri
 
     private def self.write_json(io : IO, value : JSON::Any, indent : Int32?, sort_keys : Bool, level : Int32) : Nil
       case raw = value.raw
-      when Nil    then io << "null"
-      when Bool   then io << (raw ? "true" : "false")
-      when Int    then io << raw.to_s
-      when Float  then io << py_float_repr(raw)
-      when String then json_string(io, raw)
-      when Array  then write_json_array(io, raw, indent, sort_keys, level)
-      when Hash   then write_json_object(io, raw, indent, sort_keys, level)
+      when Nil   then io << "null"
+      when Bool  then io << (raw ? "true" : "false")
+      when Int   then io << raw.to_s
+      when Float then io << py_float_repr(raw)
+        # A BIGINT_SENTINEL_PREFIX-marked string is an integer too wide for
+        # Int64 (see Krikri::BIGINT_SENTINEL_PREFIX) - json.dumps prints a
+        # Python int unquoted, so the digits go out bare.
+      when String
+        if digits = Krikri.bigint_digits(raw)
+          io << digits
+        else
+          json_string(io, raw)
+        end
+      when Array then write_json_array(io, raw, indent, sort_keys, level)
+      when Hash  then write_json_object(io, raw, indent, sort_keys, level)
       end
     end
 
@@ -280,12 +289,20 @@ module Krikri
       # implicitly; a string only if its plain form would resolve back to str.
       private def scalar_text(value : JSON::Any) : {String, Bool}
         case raw = value.raw
-        when Nil    then {"null", true}
-        when Bool   then {raw ? "true" : "false", true}
-        when Int    then {raw.to_s, true}
-        when Float  then {float_scalar(raw), true}
-        when String then {raw, string_resolves_to_str?(raw)}
-        else             {value.to_s, true}
+        when Nil   then {"null", true}
+        when Bool  then {raw ? "true" : "false", true}
+        when Int   then {raw.to_s, true}
+        when Float then {float_scalar(raw), true}
+        when String
+          # A BIGINT_SENTINEL_PREFIX-marked string dumps as its bare
+          # digits - PyYAML represents a Python int as a plain scalar,
+          # exactly like this text.
+          if digits = Krikri.bigint_digits(raw)
+            {digits, true}
+          else
+            {raw, string_resolves_to_str?(raw)}
+          end
+        else {value.to_s, true}
         end
       end
 

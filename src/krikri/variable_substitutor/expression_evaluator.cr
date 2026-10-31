@@ -202,7 +202,7 @@ module Krikri
         # Python repr like Ansible's `[1, 2]` in mixed text. A plain
         # lookup('file', ...) whose content merely looks like JSON is NOT
         # converted: only the list-forcing forms are.
-        if list_forcing_lookup?(expr) && (value = (JSON.parse(rendered) rescue nil)) && value.as_a?
+        if list_forcing_lookup?(expr) && (value = (BigJson.parse(rendered) rescue nil)) && value.as_a?
           return @lookup.format_value_output(value)
         end
         rendered
@@ -753,7 +753,7 @@ module Krikri
         return nil unless suffix.lstrip.starts_with?('.')
 
         lookup_rendered = evaluate_lookup(expr[7...close_idx])
-        result = (JSON.parse(lookup_rendered) rescue JSON::Any.new(lookup_rendered))
+        result = (BigJson.parse(lookup_rendered) rescue JSON::Any.new(lookup_rendered))
         result = @lookup.apply_method_suffix(result, suffix) || result
         result.raw.is_a?(String) ? result.as_s : result.to_json
       end
@@ -2019,7 +2019,7 @@ module Krikri
         # on purpose for exactly this round trip.
         if literal_dict_expr?(expr)
           rendered = evaluate_dict_literal(expr)
-          return (JSON.parse(rendered) rescue JSON::Any.new(rendered))
+          return (BigJson.parse(rendered) rescue JSON::Any.new(rendered))
         end
 
         nil
@@ -2033,7 +2033,7 @@ module Krikri
         if mult_div = split_top_level_mult_div(expr)
           parts, ops = mult_div
           rendered = evaluate_mult_div(expr, parts, ops)
-          return (JSON.parse(rendered) rescue JSON::Any.new(rendered))
+          return (BigJson.parse(rendered) rescue JSON::Any.new(rendered))
         end
         nil
       end
@@ -2088,7 +2088,7 @@ module Krikri
           # | d('rules')) + ...` inside a larger `+` chain silently
           # dropped the name entirely). Parenthesizing forces the rescue
           # to actually produce the value `return` sends back.
-          return (JSON.parse(rendered) rescue JSON::Any.new(rendered))
+          return (BigJson.parse(rendered) rescue JSON::Any.new(rendered))
         end
 
         nil
@@ -2181,7 +2181,7 @@ module Krikri
           # fix for the full rationale (found via prometheus.prometheus's
           # own _common role's `_common_dependencies` default).
           rendered = JinjaRenderer.new(render_vars, @decode).render(raw)
-          return (JSON.parse(rendered) rescue JSON::Any.new(rendered))
+          return (BigJson.parse(rendered) rescue JSON::Any.new(rendered))
         end
 
         return nil unless raw.includes?("{{")
@@ -2202,12 +2202,12 @@ module Krikri
                      (ws.split("{{").size - 1) == 1 && (ws.split("}}").size - 1) == 1
         if VarSubstitutor.strict_span_active? && whole_span
           rendered = VarSubstitutor.new(vars: render_vars).substitute(raw, strict: true)
-          return (JSON.parse(rendered) rescue JSON::Any.new(rendered))
+          return (BigJson.parse(rendered) rescue JSON::Any.new(rendered))
         end
         if whole_span
           inner = ws[2..-3].strip
           rendered = render_vars.same?(@vars) ? evaluate(inner) : ExpressionEvaluator.new(render_vars, @decode).evaluate(inner)
-          return (JSON.parse(rendered) rescue JSON::Any.new(rendered))
+          return (BigJson.parse(rendered) rescue JSON::Any.new(rendered))
         end
         # A value that is NOT one whole `{{ }}` span (literal text around
         # spans, or several spans) is TEMPLATE SOURCE, not an expression -
@@ -2223,7 +2223,7 @@ module Krikri
         # set_fact, where the operand var's own value is exactly this
         # multi-span shape).
         rendered = VarSubstitutor.new(vars: render_vars).substitute(raw)
-        (JSON.parse(rendered) rescue JSON::Any.new(rendered))
+        (BigJson.parse(rendered) rescue JSON::Any.new(rendered))
       end
 
       # Splits *expr* on every top-level `~` (outside quotes/brackets),
@@ -2774,7 +2774,7 @@ module Krikri
         rendered = evaluate(inner.strip)
         return rendered if suffix.empty?
 
-        parsed = JSON.parse(rendered) rescue JSON::Any.new(rendered)
+        parsed = BigJson.parse(rendered) rescue JSON::Any.new(rendered)
         walk_part, filter_part = split_suffix_walk_and_filters(suffix)
         # The split cuts at the `|` itself, so the walk-able prefix keeps
         # the blank before it (".versions | ..." -> ".versions ") -
@@ -3038,7 +3038,7 @@ module Krikri
         return nil unless var_expr.starts_with?('(') && var_expr.ends_with?(')')
 
         rendered = evaluate(var_expr[1..-2].strip)
-        (JSON.parse(rendered) rescue JSON::Any.new(rendered))
+        (BigJson.parse(rendered) rescue JSON::Any.new(rendered))
       end
 
       # `range(1, 11) | list` / `range(1, 11) | ...` - same
@@ -3091,7 +3091,7 @@ module Krikri
         return nil unless close_idx = matching_close_paren_index(var_expr, 6)
 
         lookup_rendered = evaluate_lookup(var_expr[7...close_idx])
-        result = (JSON.parse(lookup_rendered) rescue JSON::Any.new(lookup_rendered))
+        result = (BigJson.parse(lookup_rendered) rescue JSON::Any.new(lookup_rendered))
         suffix = var_expr[(close_idx + 1)..]
         result = @lookup.apply_method_suffix(result, suffix) || result unless suffix.empty?
         result
@@ -3135,7 +3135,7 @@ module Krikri
           # than duplicating that logic. "undefined" isn't valid
           # JSON, so it maps to a real JSON null.
           rendered = evaluate(var_expr)
-          return (JSON.parse(rendered) rescue JSON::Any.new(rendered))
+          return (BigJson.parse(rendered) rescue JSON::Any.new(rendered))
         end
 
         nil

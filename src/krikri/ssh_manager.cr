@@ -8,6 +8,7 @@ require "openssl"
 require "./cli_options"
 require "./shell"
 require "./timing_profile"
+require "./bigint_json"
 require "./plugin_daemon"
 
 module Krikri
@@ -776,7 +777,7 @@ module Krikri
       @@daemon_failures.delete(key)
 
       begin
-        JSON.parse(response)
+        BigJson.parse(response)
       rescue ex
         @@daemon_failures[key] += 1
         kill_daemon(host, user, port, become_user, key[4])
@@ -849,7 +850,7 @@ module Krikri
       @@daemon_failures.delete(key)
 
       results = Hash(Int32, JSON::Any).new
-      JSON.parse(response)["results"].as_h.each do |index, value|
+      BigJson.parse(response)["results"].as_h.each do |index, value|
         results[index.to_i] = value
       end
       results

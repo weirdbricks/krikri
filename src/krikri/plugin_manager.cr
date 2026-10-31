@@ -4,6 +4,7 @@ require "digest"
 require "digest/md5"
 require "colorize"
 require "file_utils"
+require "./bigint_json"
 require "./ssh_manager"
 require "./local_plugin_daemon"
 require "./local_executor"
@@ -1648,7 +1649,7 @@ module Krikri
 
         # Try to parse JSON output
         begin
-          normalize_module_result(JSON.parse(output))
+          normalize_module_result(BigJson.parse(output))
         rescue ex
           if sudo_user && (failure = become_premature_end_result(output, stderr.to_s))
             return failure
@@ -2405,7 +2406,7 @@ module Krikri
       end
 
       begin
-        normalize_module_result(JSON.parse(stdout))
+        normalize_module_result(BigJson.parse(stdout))
       rescue
         JSON.parse({
           "changed"             => false,

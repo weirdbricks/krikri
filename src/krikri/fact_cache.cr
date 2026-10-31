@@ -1,4 +1,6 @@
 require "json"
+require "./bigint_json"
+require "./param_sentinels"
 
 module Krikri
   # Ansible's `fact_caching` support (`ANSIBLE_CACHE_PLUGIN`/
@@ -112,7 +114,7 @@ module Krikri
         return nil if age.total_seconds > limit
       end
 
-      parsed = JSON.parse(File.read(path)).as_h?
+      parsed = Krikri::BigJson.parse(File.read(path)).as_h?
       return nil unless parsed
       hash = Hash(String, JSON::Any).new
       parsed.each { |key, value| hash[key] = value }
@@ -136,7 +138,12 @@ module Krikri
       path = path_for(host_name)
       File.open(path, "w") do |io|
         io.chmod(0o600)
-        io.write(facts.to_json.to_slice)
+        # A module-returned integer wider than Int64 rides the cached
+        # facts as the BIGINT_SENTINEL_PREFIX-marked string; the cache
+        # file stores its bare digits (the bytes Ansible's jsonfile
+        # cache writes for a Python int) and the read side restores the
+        # marker through the bigint-aware parse.
+        io.write(Krikri.unquote_bigint_json(facts.to_json).to_slice)
       end
     rescue
     end

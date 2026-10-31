@@ -1,4 +1,5 @@
 require "json"
+require "../param_sentinels"
 
 module Krikri
   module VariableSubstitutor
@@ -288,6 +289,14 @@ module Krikri
         when "max"
           jinja_extreme(as_array(value), prefer_less: false) || JSON::Any.new(nil)
         when "int"
+          # A BIGINT_SENTINEL_PREFIX-marked string IS an integer too wide
+          # for Int64 (see Krikri::BIGINT_SENTINEL_PREFIX) - Python's
+          # int(x) on an int is the identity, so the marked value passes
+          # through unchanged (its digits stay available to every later
+          # renderer/comparison).
+          if value.raw.is_a?(String) && Krikri.bigint_digits(value.raw.as(String))
+            return value
+          end
           # Jinja2's own `int` filter (do_int) truncates a native
           # float/int directly (Python's `int(42.5) == 42`) - going
           # through #as_string first (as this used to do unconditionally)
@@ -316,13 +325,28 @@ module Krikri
             JSON::Any.new(str.to_i64? || str.to_f64?.try(&.to_i64) || 0_i64)
           end
         when "float"
-          case raw = value.raw
-          when Int64, Int32
-            JSON::Any.new(raw.to_f64)
-          when Float64
-            JSON::Any.new(raw)
+          # A BIGINT_SENTINEL_PREFIX-marked wide integer overflows
+          # Float64 more often than not (any RSA modulus). Python's
+          # float(int) raises OverflowError("int too large to convert to
+          # float") there and Ansible fails the task with it - the old
+          # `to_f64? || 0.0` silently answered 0.0, a WRONG value (e.g.
+          # `m | float > 1e300` rendered False where ansible fails the
+          # task). The in-range spellings keep converting normally.
+          if digits = value.raw.as?(String).try { |text| Krikri.bigint_digits(text) }
+            f = digits.to_f64?
+            raise Krikri::FilterPluginError.new(
+              "The filter plugin 'ansible.builtin.float' failed: int too large to convert to float",
+              "int too large to convert to float") if f.nil?
+            JSON::Any.new(f)
           else
-            JSON::Any.new(as_string(value).to_f64? || 0.0)
+            case raw = value.raw
+            when Int64, Int32
+              JSON::Any.new(raw.to_f64)
+            when Float64
+              JSON::Any.new(raw)
+            else
+              JSON::Any.new(as_string(value).to_f64? || 0.0)
+            end
           end
         when "string"
           JSON::Any.new(as_string(value))
@@ -331,7 +355,13 @@ module Krikri
           # implementations cannot drift (see KrikriJinjaFilters.ansible_bool).
           JSON::Any.new(KrikriJinjaFilters.ansible_bool(value))
         when "abs"
-          JSON::Any.new(numeric(value).abs)
+          # A marked wide integer abs()'s exactly like Python's: the
+          # sign comes off the decimal text, magnitude untouched.
+          if digits = value.raw.as?(String).try { |text| Krikri.bigint_digits(text) }
+            JSON::Any.new(Krikri.bigint_sentinel(digits.lstrip('-')))
+          else
+            JSON::Any.new(numeric(value).abs)
+          end
         when "map"
           # map(attribute='x') or map('filtername', ...args) - real
           # Jinja2's map() has both forms; only attribute= was

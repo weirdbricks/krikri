@@ -16,10 +16,9 @@ module Krikri
   # file) or content (PEM text), exactly one of the two, matching the
   # Ansible module's required_one_of plus mutually_exclusive pair.
   #
-  # Known divergence, deliberate: public_key_data's modulus/exponent
-  # beyond Int64 go out as their decimal strings (this engine's result
-  # world is JSON::Any, Int64 at widest - see X509CertInfo#json_int).
-  # Everything else - including extensions_by_oid (see
+  # public_key_data's modulus goes out as a JSON number even beyond
+  # Int64 (sentinel-carried through the controller - see
+  # X509CertInfo#json_int). Everything else - including extensions_by_oid (see
   # X509CertInfo.parse_extensions_by_oid) - follows the Ansible module.
   class OpensslCsrInfoPlugin < BasePlugin
     include PluginHelpers::AnsibleArgValidation

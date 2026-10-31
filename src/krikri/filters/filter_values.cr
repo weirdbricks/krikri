@@ -1,4 +1,5 @@
 require "json"
+require "../param_sentinels"
 
 module Krikri
   module VariableSubstitutor
@@ -134,9 +135,11 @@ module Krikri
       # interpolation, since a filter's own string output ultimately feeds
       # back into the same template text either way.
       private def as_string(value : JSON::Any) : String
-        case value.raw
+        case raw = value.raw
         when String
-          value.as_s
+          # A BIGINT_SENTINEL_PREFIX-marked string is an integer too wide
+          # for Int64 - Python str(int) is the bare digits.
+          Krikri.bigint_digits(raw) || raw
         when Int64, Int32
           value.as_i64.to_s
         when Float64
@@ -159,7 +162,11 @@ module Krikri
         when Bool
           io << raw
         when String
-          raw.to_json(io)
+          if digits = Krikri.bigint_digits(raw)
+            io << digits
+          else
+            raw.to_json(io)
+          end
         when Int64, Int32, Float64
           io << raw
         when Array

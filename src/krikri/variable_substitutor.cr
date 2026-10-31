@@ -3575,8 +3575,16 @@ module Krikri
     end
 
     private def apply_trim_markers(inner : String) : {String, Bool, Bool}
-      lstrip_marker = inner.lstrip.starts_with?('-')
-      rstrip_marker = inner.rstrip.ends_with?('-')
+      # Jinja2's trim markers are ADJACENT to the tag delimiters - the
+      # `-` must be the very first/last character of the tag body
+      # (`{{- expr }}`/`{{ expr -}}`). A `-` after intervening
+      # whitespace (`{{ - expr }}`, `{{ -n < 0 }}`) is a unary minus, and
+      # treating it as a trim marker both ate the operand's sign
+      # (`{{ -n }}` rendered "5", not "-5") and stripped the literal
+      # text before the span (`" => {{ -m < 0 }}"` lost its trailing
+      # space), since that is what a trim marker means.
+      lstrip_marker = inner.starts_with?('-')
+      rstrip_marker = inner.ends_with?('-')
       inner = inner.lstrip.lchop('-') if lstrip_marker
       inner = inner.rstrip.rchop('-') if rstrip_marker
       {inner, lstrip_marker, rstrip_marker}

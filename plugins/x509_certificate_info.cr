@@ -16,8 +16,8 @@ module Krikri
   # one of the two, matching the Ansible module's required_one_of plus
   # mutually_exclusive pair.
   #
-  # Known divergence: integers wider than Int64 are returned as decimal
-  # strings - see the helper's own header.
+  # Integers wider than Int64 go out as JSON numbers too (sentinel-
+  # carried through the controller) - see the helper's json_int.
   class X509CertificateInfoPlugin < BasePlugin
     include PluginHelpers::AnsibleArgValidation
 

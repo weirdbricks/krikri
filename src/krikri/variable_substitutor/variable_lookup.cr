@@ -1237,7 +1237,9 @@ module Krikri
       def python_repr(value : JSON::Any) : String
         case raw = value.raw
         when String
-          python_repr_string(raw)
+          # A BIGINT_SENTINEL_PREFIX-marked string IS an integer too wide
+          # for Int64 - Python's repr of an int is the bare digits.
+          Krikri.bigint_digits(raw) || python_repr_string(raw)
         when Bool
           raw ? "True" : "False"
         when Nil
@@ -1268,18 +1270,28 @@ module Krikri
       def format_value(value : JSON::Any) : String
         case value.raw
         when String
-          # Jinja2 NEVER strips a rendered value's own whitespace -
-          # `{{ some_string }}` renders exactly what the variable holds,
-          # leading/trailing spaces included (only `{%- -%}` BLOCK-TAG
-          # whitespace control, an orthogonal template-syntax feature,
-          # strips anything, and it operates on the template text around
-          # a tag, never on a variable's own value). This unconditional
-          # strip corrupted any variable whose real value legitimately
-          # has meaningful leading/trailing whitespace - found via
-          # robertdebock.functions' own `functions_strings` test data
-          # (" Extra spaces. ", used as-is with no filter at all) commonly
-          # rendering as "Extra spaces." on every `{{ }}` reference.
-          value.as_s
+          # A BIGINT_SENTINEL_PREFIX-marked string is an integer too wide
+          # for Int64 (see Krikri::BIGINT_SENTINEL_PREFIX) - it renders
+          # as its bare digits, exactly what Ansible's str(int) produces.
+          # The internal "render to a String, parse it back" round trips
+          # read the digits back as a marked value through the
+          # bigint-aware parse (Krikri::BigJson), so the marker survives.
+          if digits = Krikri.bigint_digits(value.as_s)
+            digits
+          else
+            # Jinja2 NEVER strips a rendered value's own whitespace -
+            # `{{ some_string }}` renders exactly what the variable holds,
+            # leading/trailing spaces included (only `{%- -%}` BLOCK-TAG
+            # whitespace control, an orthogonal template-syntax feature,
+            # strips anything, and it operates on the template text around
+            # a tag, never on a variable's own value). This unconditional
+            # strip corrupted any variable whose real value legitimately
+            # has meaningful leading/trailing whitespace - found via
+            # robertdebock.functions' own `functions_strings` test data
+            # (" Extra spaces. ", used as-is with no filter at all) commonly
+            # rendering as "Extra spaces." on every `{{ }}` reference.
+            value.as_s
+          end
         when Int64, Int32
           # `JSON::Any#as_i` always narrows to Int32 regardless of the
           # underlying raw type, raising `OverflowError` for any real

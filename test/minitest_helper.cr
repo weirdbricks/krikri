@@ -2,6 +2,7 @@ require "./temp_cleanup"
 require "minitest/autorun"
 require "file_utils"
 require "json"
+require "../src/krikri/bigint_json"
 require "colorize"
 require "yaml"
 
@@ -232,7 +233,11 @@ module PluginSpecHelper
     output = IO::Memory.new
     run_plugin_with_timeout(binary, config.to_json, output, chdir, before_input, umask, env)
 
-    JSON.parse(output.to_s)
+    # The bigint-aware parse, exactly like the controller: a module wire
+    # integer wider than Int64 arrives as the BIGINT_SENTINEL_PREFIX-
+    # marked decimal string (plain JSON.parse would raise "Invalid
+    # Int64" on the bare digits).
+    Krikri::BigJson.parse(output.to_s)
   end
 
   # Same as #run, but the params keep their NATIVE JSON types (int, float,
@@ -259,7 +264,7 @@ module PluginSpecHelper
     output = IO::Memory.new
     run_plugin_with_timeout(binary, config.to_json, output, chdir, before_input, umask, env)
 
-    JSON.parse(output.to_s)
+    Krikri::BigJson.parse(output.to_s)
   end
 
   # Whether the filesystem holding `dir` (default: the spec tempdir)

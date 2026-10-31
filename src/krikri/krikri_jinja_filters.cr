@@ -1050,15 +1050,19 @@ module Krikri
       end
 
       KrikriJinja.register_default_json_filter("type_debug") do |value, _args, _kwargs|
-        JSON::Any.new(case value.raw
+        raw = value.raw
+        JSON::Any.new(case raw
         when Nil     then "NoneType"
         when Bool    then "bool"
         when Int64   then "int"
         when Float64 then "float"
-        when String  then "str"
-        when Array   then "list"
-        when Hash    then "dict"
-        else              value.raw.class.name
+          # A BIGINT_SENTINEL_PREFIX-marked string arrives when the engine's
+          # BigIntValue round-tripped through to_json_any (see
+          # KrikriJinja::BIGINT_SENTINEL_PREFIX) - it IS an int.
+        when String then Krikri.bigint_digits(raw) ? "int" : "str"
+        when Array  then "list"
+        when Hash   then "dict"
+        else             value.raw.class.name
         end)
       end
 

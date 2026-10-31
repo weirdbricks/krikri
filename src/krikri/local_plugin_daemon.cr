@@ -1,4 +1,5 @@
 require "json"
+require "./bigint_json"
 require "./plugin_daemon"
 
 module Krikri
@@ -148,7 +149,7 @@ module Krikri
       @@daemon_failures.delete(key)
 
       begin
-        JSON.parse(response)
+        BigJson.parse(response)
       rescue ex
         @@daemon_failures[key] += 1
         kill_daemon(host_name, become_user)

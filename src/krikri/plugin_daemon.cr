@@ -1,4 +1,5 @@
 require "json"
+require "./bigint_json"
 
 module Krikri
   # Perf items 1-3 (formerly
@@ -176,7 +177,7 @@ module Krikri
         raw = yield step["module"].as_s, step["config"]
 
         parsed = begin
-          JSON.parse(raw)
+          BigJson.parse(raw)
         rescue
           JSON.parse({
             "changed"             => false,

@@ -1,5 +1,6 @@
 require "json"
 require "openssl/digest"
+require "../param_sentinels"
 require "base64"
 
 module Krikri
@@ -24,9 +25,8 @@ module Krikri
   # from the same asn1parse walk for certificates and CSRs - see
   # parse_extensions_by_oid.
   #
-  # Known divergence: integers wider than Int64 (RSA moduli, EC
-  # coordinates, most serial numbers) go out as decimal strings, where the
-  # module returns Python ints - see json_int.
+  # Integers wider than Int64 (RSA moduli, EC coordinates, most serial
+  # numbers) go out as JSON numbers too - see json_int.
   module X509CertInfo
     # hashlib.algorithms_guaranteed - ALL of it, including the two SHAKE
     # XOFs: the Ansible module emits them too (its bare hexdigest() call
@@ -65,11 +65,16 @@ module Krikri
 
     # A value that fits Int64 stays a JSON number (matching the real
     # module's Python ints); anything wider - RSA moduli, ECC
-    # coordinates, big serial numbers - goes out as its decimal string,
-    # because this engine's result world is JSON::Any (Int64 at widest)
-    # and truncating digits would be worse than a string.
+    # coordinates, big serial numbers - goes out as the
+    # BIGINT_SENTINEL_PREFIX-marked decimal string, because this engine's
+    # result world is JSON::Any (Int64 at widest) and truncating digits
+    # would be worse than a string. BasePlugin#run_and_capture rewrites
+    # the marked string to its bare digits on the JSON wire, and the
+    # controller's bigint-aware parse (Krikri::BigJson) turns those bytes
+    # back into the marked string - so every renderer downstream prints
+    # the value exactly like Ansible's Python int.
     def self.json_int(decimal : String) : JSON::Any
-      JSON::Any.new(decimal.to_i64? || decimal)
+      JSON::Any.new(decimal.to_i64? || Krikri.bigint_sentinel(decimal))
     rescue
       JSON::Any.new(decimal)
     end

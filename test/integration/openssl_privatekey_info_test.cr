@@ -26,10 +26,11 @@ describe "openssl_privatekey_info plugin" do
     public_data = result["public_data"].as_h
     public_data["size"].as_i.must_equal(2048)
     public_data["exponent"].as_i.must_equal(65537)
-    # The modulus is wider than Int64 - emitted as its exact decimal
-    # string (309 digits for a 1024-bit... 2048-bit key) rather than
+    # The modulus is wider than Int64 - a real wide integer, carried as
+    # the BIGINT_SENTINEL_PREFIX-marked decimal string (its exact digits,
+    # 617 for a 2048-bit key, unquoted by every renderer) rather than
     # truncated through a float.
-    modulus = public_data["modulus"].as_s
+    modulus = Krikri.bigint_digits(public_data["modulus"]).not_nil!
     modulus.size.must_equal(617)
     fingerprints = result["public_key_fingerprints"].as_h
     fingerprints["sha256"].as_s.must_match(/^(..:){31}..$/)
@@ -47,11 +48,14 @@ describe "openssl_privatekey_info plugin" do
     # cryptography's curve.name, as the module reports it (live: secp256r1, not openssl's prime256v1)
     public_data["curve"].as_s.must_equal("secp256r1")
     public_data["exponent_size"].as_i.must_equal(256)
-    # Both coordinates are 77-78 digit decimals for a 256-bit curve.
-    (public_data["x"].as_s.size >= 70).must_equal(true)
-    (public_data["x"].as_s.size <= 80).must_equal(true)
-    (public_data["y"].as_s.size >= 70).must_equal(true)
-    (public_data["y"].as_s.size <= 80).must_equal(true)
+    # Both coordinates are 77-78 digit decimals for a 256-bit curve,
+    # carried as marked wide integers (see the modulus note above).
+    x = Krikri.bigint_digits(public_data["x"]).not_nil!
+    y = Krikri.bigint_digits(public_data["y"]).not_nil!
+    (x.size >= 70).must_equal(true)
+    (x.size <= 80).must_equal(true)
+    (y.size >= 70).must_equal(true)
+    (y.size <= 80).must_equal(true)
   end
 
   it "fails with can_parse_key false for an unparseable key" do
