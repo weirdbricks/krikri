@@ -1,4 +1,5 @@
 require "../minitest_helper"
+require "file_utils"
 require "../../src/krikri/plugin_helpers/aws_module_args"
 require "../../src/krikri/plugin_helpers/aws_module_specs"
 
@@ -154,5 +155,48 @@ describe "AwsModuleArgs: IN8 dict-with-sub-spec _list_no_log_values ordering" do
       {"image" => "[1]"})
     msg.wont_be_nil
     msg.must_include("Value '1' in the sub parameter field 'image' must by a dict, not 'int'")
+  end
+end
+
+describe "AwsModuleArgs: boto3 gate interpreter" do
+  serial!
+
+  # Real runs an amazon.aws module under the interpreter its own discovery
+  # picked (the versioned /usr/bin/python3.X), so the missing_required_lib
+  # message names THAT interpreter's sys.executable. The gate probed a bare
+  # `python3` instead and named the unversioned symlink - adyraj.kubernetes_
+  # master's ec2_instance task printed "/usr/bin/python3" where real printed
+  # "/usr/bin/python3.10" (issue #398).
+  it "names the discovered interpreter's sys.executable, not a bare python3" do
+    dir = PluginSpecHelper.tmp_path("aws-boto3-gate-interpreter")
+    FileUtils.rm_rf(dir)
+    FileUtils.mkdir_p(dir)
+    interpreter = File.join(dir, Krikri::INTERPRETER_FALLBACK.first)
+    File.write(interpreter, <<-SHIM)
+      #!/bin/sh
+      case "$*" in
+        *"import botocore, boto3"*)
+          echo "ModuleNotFoundError: No module named 'botocore'" >&2
+          exit 1 ;;
+        *"print(sys.executable)"*) echo "/opt/krikri-absent/bin/python3.13" ;;
+        *) exit 0 ;;
+      esac
+      SHIM
+    File.chmod(interpreter, 0o755)
+
+    original_path = ENV["PATH"]?
+    ENV["PATH"] = "#{dir}:#{original_path}"
+    begin
+      msg = Krikri::PluginHelpers::AwsModuleArgs.boto3_gate({} of String => String).try(&.msg) ||
+            raise "expected the boto3 gate to fire"
+      msg.must_equal(
+        "Failed to import the required Python library (botocore and boto3) on #{System.hostname}'s Python " \
+        "/opt/krikri-absent/bin/python3.13. Please read the module documentation and install it in the appropriate location. " \
+        "If the required library is installed, but Ansible is using the wrong Python interpreter, " \
+        "please consult the documentation on ansible_python_interpreter")
+    ensure
+      ENV["PATH"] = original_path if original_path
+      FileUtils.rm_rf(dir) if dir && Dir.exists?(dir)
+    end
   end
 end
