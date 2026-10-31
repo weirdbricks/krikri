@@ -1,8 +1,20 @@
 require "../minitest_helper"
 require "../../src/krikri/task_executor/result_display"
+require "../../src/krikri/task_executor/output_routing"
 
 private def fresh_stats : Hash(String, Int32)
   {"ok" => 0, "changed" => 0, "failed" => 0, "skipped" => 0, "rescued" => 0, "ignored" => 0}
+end
+
+private def capture_output(&)
+  io = IO::Memory.new
+  Krikri::OutputRouting.redirect_current_fiber_to(io)
+  begin
+    yield
+  ensure
+    Krikri::OutputRouting.clear_current_fiber_redirect
+  end
+  io.to_s
 end
 
 describe Krikri::ResultDisplay do
@@ -80,6 +92,29 @@ describe Krikri::ResultDisplay do
 
     it "maps plain success to green 0;32" do
       Krikri::ResultDisplay.adhoc_state_and_color(false, false, false).must_equal({"SUCCESS", "0;32"})
+    end
+  end
+
+  describe ".display_diff" do
+    # lineinfile's no-change wire result (state=absent with no match,
+    # or an idempotent re-run) carries a diff LIST whose content entry
+    # has headers but empty before/after text. Ansible's callback takes
+    # the ---/+++ headers from difflib's unified_diff, which yields
+    # nothing when both sides are identical, so it prints no diff block
+    # at all - krikri used to print the bare header pair (issue #691).
+    it "prints nothing for an empty content diff with headers" do
+      diff = JSON.parse(%([{"before": "", "after": "", "before_header": "/tmp/conf (content)", "after_header": "/tmp/conf (content)"}, {"before_header": "/tmp/conf (file attributes)", "after_header": "/tmp/conf (file attributes)"}]))
+      out = capture_output { Krikri::ResultDisplay.display_diff(diff) }
+      out.must_equal("")
+    end
+
+    it "still prints the header pair and body for a real content diff" do
+      diff = JSON.parse(%({"before": "old\\n", "after": "new\\n", "before_header": "/tmp/conf (content)", "after_header": "/tmp/conf (content)"}))
+      out = capture_output { Krikri::ResultDisplay.display_diff(diff) }
+      out.must_include("--- /tmp/conf (content)")
+      out.must_include("+++ /tmp/conf (content)")
+      out.must_include("-old")
+      out.must_include("+new")
     end
   end
 end
