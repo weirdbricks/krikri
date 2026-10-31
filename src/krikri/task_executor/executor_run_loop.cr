@@ -2122,7 +2122,7 @@ module Krikri
           if err_origin = action_result.error_origin?
             failed["_ansible_error_origin"] = err_origin
           end
-          if undef_origin = undef_chain_result_origin(task, action_result)
+          if undef_origin = undef_chain_result_origin(task, action_result, host)
             failed["_ansible_undef_chain_origin"] = undef_origin
           end
           result_json = JSON.parse(failed.to_json)
@@ -2709,7 +2709,7 @@ module Krikri
           if err_origin = action_result.error_origin?
             failed["_ansible_error_origin"] = err_origin
           end
-          if undef_origin = undef_chain_result_origin(task, action_result)
+          if undef_origin = undef_chain_result_origin(task, action_result, host)
             failed["_ansible_undef_chain_origin"] = undef_origin
           end
           result_json = JSON.parse(failed.to_json)
