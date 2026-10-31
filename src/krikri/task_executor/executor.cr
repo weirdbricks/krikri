@@ -49,8 +49,17 @@ module Krikri
   # unconditionally, a worse outcome than picking one fixed real version.
   # 2.19.11 matches the exact ansible-core release this project's own
   # benchmark rounds compare against (see AGENTS.md/ROLES_TESTED.md).
+  # Key ORDER matters, not just the values: roles that render the bare
+  # dict into a debug string (`"ansible_version => {{ ansible_version }}"`,
+  # buluma.os_updates' SmokeTests task) stringify it in Python dict
+  # insertion order, and ansible-core builds it as
+  # {string, full, major, minor, revision} - live-verified against
+  # ansible-core 2.19.11. Crystal's Hash iterates in insertion order and
+  # the Jinja str() path preserves it, so the literal must be written in
+  # ansible's own order; a sorted-looking order makes the rendered string
+  # diverge from ansible byte for byte.
   ANSIBLE_VERSION_MAGIC_VAR = JSON.parse(%({
-    "full": "2.19.11", "major": 2, "minor": 19, "revision": 11, "string": "2.19.11"
+    "string": "2.19.11", "full": "2.19.11", "major": 2, "minor": 19, "revision": 11
   }))
 
   # TaskExecutor - Executes tasks on hosts
