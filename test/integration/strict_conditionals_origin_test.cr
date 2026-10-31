@@ -73,6 +73,22 @@ describe "strict conditional origin for compound expressions" do
     output.must_include("Conditional result (True) was derived from value of type 'str' at '#{playbook}:5:15'. Conditionals must have a boolean result.")
   end
 
+  it "labels a parenthesized X is defined and X chain with the defining variable's position" do
+    status, output, playbook = run_playbook(<<-YAML)
+    - hosts: localhost
+      connection: local
+      gather_facts: false
+      vars:
+        flag: "yes"
+      tasks:
+        - fail:
+          when: (flag is defined ) and (flag)
+    YAML
+
+    status.exit_code.must_equal(2)
+    output.must_include("Conditional result (True) was derived from value of type 'str' at '#{playbook}:5:11'. Conditionals must have a boolean result.")
+  end
+
   it "labels a filter result with the when: token position" do
     status, output, playbook = run_playbook(<<-YAML)
     - hosts: localhost
