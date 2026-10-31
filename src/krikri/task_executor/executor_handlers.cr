@@ -1179,6 +1179,15 @@ module Krikri
         wire_vars["ansible_connection"] = JSON::Any.new("local")
       end
 
+      # Same interpreter-missing gate as execute_task_once's dispatch
+      # site (see its comment there): a handler's module dispatched
+      # under a `connection: local` override with an interpreter that
+      # only exists on the remote host fails in real before any module
+      # code runs.
+      if failure = local_interpreter_missing_result(handler, host, host, vars_context, substitutor)
+        return apply_changed_failed_when(handler, failure, vars_context, host)
+      end
+
       become = begin
         resolve_task_become(handler, host, vars_context, substitutor)
       rescue ex : UndefinedVariableError

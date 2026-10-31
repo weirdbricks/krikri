@@ -402,6 +402,16 @@ module Krikri
       end
 
       if ansible_facts = result["ansible_facts"]?
+        # The gatherer's discovery warnings ride the result under an
+        # internal marker - real's are controller-side Display warnings,
+        # never result keys, printed on stderr while the first module
+        # executes. Emit them here (the implicit gather's own display
+        # point) and strip the marker before the result is stored or
+        # registered anywhere.
+        result["_ansible_discovery_warning"]?.try(&.as_a?).try &.each do |warning|
+          ResultDisplay.emit_display_warning(warning.as_s? || warning.to_s)
+        end
+        result.as_h?.try(&.delete("_ansible_discovery_warning"))
         @facts_results[host.name] = result
         # A later successful gather clears any stale interpreter-failure
         # stamp, so the report below never prints for a host whose facts
