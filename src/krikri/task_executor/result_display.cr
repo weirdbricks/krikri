@@ -1927,20 +1927,32 @@ module Krikri
     # `--- before` / `+++ after` / `@@ -1,5 +1,5 @@` with the JSON lines
     # as +/-/context), not a per-key `- key: value` listing.
     def self.display_attribute_diff(diff : JSON::Any) : Nil
+      before = python_pretty_json(diff["before"])
+      after = python_pretty_json(diff["after"])
+
+      # difflib's unified_diff yields no lines when the two sides are
+      # identical, and the callback only prints when at least one diff
+      # line was produced - so an attribute diff whose entries all
+      # cancelled out (e.g. a change carried by something the diff
+      # setters don't record) prints nothing, headers included.
+      return if before == after
+
       puts "--- before".colorize(:red).bold
       puts "+++ after".colorize(:green).bold
 
-      show_unified_diff(python_pretty_json(diff["before"]), python_pretty_json(diff["after"]))
+      show_unified_diff(before, after)
       puts ""
     end
 
-    # Python's json.dumps(obj, sort_keys=True, indent=4): sorted keys,
-    # 4-space indent, ": " separators, trailing newline (Ansible's
-    # difflib-based renderer feeds it both sides with trailing
-    # newlines - no "\ No newline at end of file" markers ever appear).
+    # Python's json.dumps(obj, sort_keys=True, indent=4) plus the
+    # trailing "\n" the callback appends when it serializes dict diffs
+    # (callback/__init__.py _serialize_diff). The trailing newline is
+    # what keeps the unified differ from ever emitting a
+    # "\ No newline at end of file" marker for a dict diff (issue #687).
     def self.python_pretty_json(value : JSON::Any) : String
       String.build do |io|
         pretty_json_write(value, io, 0)
+        io << "\n"
       end
     end
 

@@ -1315,5 +1315,16 @@ module Krikri
         "after"  => after,
       }.to_json)
     end
+
+    # Same shape as the String overload, for diffs whose per-attribute
+    # values mix types the way Ansible's do (file.py's initial_diff seeds
+    # path as a string while basic.py's set_owner_if_different records
+    # the raw numeric uid/gid as an int).
+    protected def generate_attribute_diff(before : Hash(String, JSON::Any), after : Hash(String, JSON::Any)) : JSON::Any
+      JSON.parse({
+        "before" => before,
+        "after"  => after,
+      }.to_json)
+    end
   end
 end
