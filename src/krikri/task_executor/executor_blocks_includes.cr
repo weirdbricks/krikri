@@ -1561,7 +1561,15 @@ module Krikri
         Krikri.mark_failed_key_order(JSON::Any.new(h), FAILED_KEY_ORDER_INCLUDE_VARS)
         result = JSON::Any.new(h)
       else
-        key = free_form_call?(task) ? "_raw_params" : "file"
+        # Ansible wraps the undefined-arg failure with the param its args
+        # templating actually failed on: the dir: form reports 'dir'
+        # (live-verified vs 2.19.11, issue #405 - almaops.vars's
+        # `include_vars: {dir: "{{ vars_source }}"}` with vars_source
+        # undefined reads "Error while resolving value for 'dir': ...",
+        # with the innermost Origin at the dir: value, not the module
+        # key), the file: form 'file', and only the free-form path
+        # arrives as '_raw_params' (issue #230).
+        key = free_form_call?(task) ? "_raw_params" : (task.include_vars_dir ? "dir" : "file")
         ex = UndefinedVariableError.new("Error while resolving value for '#{key}': #{message}")
         emit_finalization_error_block(task, ex, host)
         result = finalization_failure_json(ex, task)
