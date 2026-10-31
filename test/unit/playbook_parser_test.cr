@@ -2324,6 +2324,37 @@ describe Krikri::PlaybookParser do
 
       playbook.plays.map(&.name).must_equal(["main play"])
     end
+
+    it "accepts the ansible.builtin.import_playbook spelling as an alias of the bare key" do
+      root = PluginSpecHelper.tmp_path("import_playbook_fqcn_spec")
+      FileUtils.rm_rf(root) if Dir.exists?(root)
+      Dir.mkdir_p(root)
+
+      File.write(File.join(root, "child.yml"), <<-YAML)
+        - name: child play
+          hosts: all
+          tasks:
+            - ansible.builtin.debug:
+                msg: hi
+        YAML
+
+      File.write(File.join(root, "site.yml"), <<-YAML)
+        - name: main play
+          hosts: all
+          tasks:
+            - ansible.builtin.debug:
+                msg: hi
+        - name: Import via FQCN
+          ansible.builtin.import_playbook: child.yml
+        YAML
+
+      playbook = Krikri::PlaybookParser.parse(File.join(root, "site.yml"))
+
+      # Ansible splices the imported plays in place, so the FQCN entry
+      # must not degrade into a "missing 'hosts'" parse warning (which
+      # silently dropped the child plays and still exited 0).
+      playbook.plays.map(&.name).must_equal(["main play", "child play"])
+    end
   end
 
   describe "import_tasks: wiring" do
