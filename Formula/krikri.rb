@@ -42,10 +42,11 @@ class Krikri < Formula
   # src/krikri/plugin_manager.cr#get_local_plugin_path by resolving a
   # "plugins" directory next to krikri-playbook's own (symlink-resolved)
   # executable path - so plugins/ must land in the same Cellar bin/ dir
-  # as the two top-level binaries, not the usual libexec/share split.
+  # as the three top-level binaries, not the usual libexec/share split.
   def install
     bin.install "krikri-playbook"
     bin.install "krikri"
+    bin.install "krikri-lint"
     bin.install "plugins"
   end
 
