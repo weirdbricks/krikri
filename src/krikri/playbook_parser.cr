@@ -2810,12 +2810,18 @@ module Krikri
 
         via_role_root = File.expand_path(file_rel, role_root)
         return via_role_root if File.exists?(via_role_root)
-
-        # A role include that matches nowhere reports the LAST candidate
-        # Ansible tried, which is the playbook directory, not the
-        # including file's own directory.
-        return File.expand_path(file_rel, missing_dir) if missing_dir
       end
+
+      # Ansible's last candidate for a relative include is the PLAYBOOK
+      # directory (loader.get_basedir() + source), in both role and
+      # non-role contexts - not just for role files. So a playbook
+      # subdirectory's include_tasks (`sub/a.yml` doing
+      # `include_tasks: sub/b.yml`) resolves against the playbook dir
+      # when the target isn't a sibling of the including file, and a
+      # not-found include reports this same playbook-dir-joined path
+      # (live-verified against ansible-core 2.20: the missing-file error
+      # shows <playbook_dir>/sub/b.yml, not the doubled sub/sub/b.yml).
+      return File.expand_path(file_rel, missing_dir) if missing_dir
 
       direct
     end
