@@ -94,7 +94,11 @@ module Krikri
       unless path
         return PluginResult.new(changed: false, failed: true, msg: "missing required arguments: path")
       end
-      path = expand_tilde(path)
+      # ansible's `path`-type args run os.path.expandvars before
+      # os.path.expanduser, so `$HOME/...` and `${VAR}/...` must resolve
+      # before tilde handling - otherwise `$HOME/.bashrc` reports
+      # exists: false (issue #373).
+      path = expand_tilde(expand_dollar_vars(path))
       validate_bool_params!
 
       follow = true?(@params["follow"]?, default: false)
