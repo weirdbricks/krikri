@@ -342,13 +342,21 @@ module Krikri
           # own update_cache block: python-apt's Cache().update() inside
           # `for retry in range(update_cache_retries)`, one warn pair per
           # failed attempt, revert_sources_list before the final
-          # fail_json. The GPG signature case is one of the
-          # FetchFailedException shapes that loop catches (see
+          # fail_json. python-apt raises only when apt itself reports a
+          # failed item (E:/Err: markers); a standalone "W: GPG error ...
+          # NO_PUBKEY ..." warning exits 0 and the update succeeds, the
+          # same changed outcome real ansible reports. The retry loop's
+          # Cache().update() calls all run in ONE python-apt process, and
+          # from the second call onward an unauthenticated-repo reason
+          # gains the fixed two-line W: untrusted-repo prefix
+          # (AptLockRetry.apt_fetch_attempt_reason) - live-verified
+          # against ansible-core 2.19.11. The signed-repo
+          # retry shape is still caught (see
           # AptLockRetry.apt_fetch_signature_failure?) - previously this
-          # plugin classified it as a plain nonzero-exit failure and
-          # failed fast with no retries where real warned five times
-          # with the GPG/E: text first (round 5210000,
-          # artem_shestakov.nginx).
+          # plugin classified signature-level failures as plain
+          # nonzero-exit failures and failed fast with no retries where
+          # real warned five times with the GPG/E: text first (round
+          # 5210000, artem_shestakov.nginx).
           rollback_line(target, normalized)
           # Real fail_json(msg=...) carries ONLY changed=false + msg - no
           # repo/state keys, and changed stays false (the file was
@@ -485,14 +493,22 @@ module Krikri
     # (update_cache_retries <= 0) and a bare FetchFailedException's empty
     # str() is quoted verbatim as an empty reason. Every
     # FetchFailedException shape counts as a failed attempt: nonzero
-    # exit, the bare fetch-failure markers, AND the signature class
-    # (GPG error / unsigned repo) that apt-get itself only WARNs about
-    # while exiting 0 - python-apt raises for it (verified live in a
-    # jammy container: Cache().update() raises FetchFailedException(e)
-    # with the W:/E: diagnostic lines as str()), and each failed
-    # attempt's exception text becomes the next warning's reason, with
-    # apt's two untrusted-repo lines prepended once a signature failure
-    # has happened (AptLockRetry helpers).
+    # exit, the bare fetch-failure markers, AND the signature class -
+    # a top-level "E:" diagnostic line such as "E: The repository ...
+    # is not signed." A failed item is what python-apt raises on, and
+    # a top-level E: line is exactly how a failed item prints. The
+    # warning-only shapes that apt-get prints while exiting 0 - a
+    # standalone "W: GPG error ... NO_PUBKEY ..." line, and the W:
+    # form of the unsigned-repo message (apt's allow-insecure path,
+    # "W: The repository ... is not signed.") - raise nothing and must
+    # succeed, the same changed outcome real ansible reports (verified
+    # live in a jammy container: the E:-line case raises
+    # FetchFailedException(e) with the W:/E: diagnostic lines as
+    # str()), and each failed attempt's exception text becomes the next
+    # warning's reason, with apt's two untrusted-repo lines prepended
+    # once a repo has been refused authentication - never for the
+    # tolerated failure shapes, whose reason stays identical and
+    # unprefixed on every attempt (AptLockRetry helpers).
     private def update_cache_with_repo_retry(retries : Int32) : NamedTuple(failed: Bool, last_reason: String)
       max_delay = int_param("update_cache_retry_max_delay", AptRepositoryCacheRetry::DEFAULT_UPDATE_CACHE_RETRY_MAX_DELAY)
       attempt = 0

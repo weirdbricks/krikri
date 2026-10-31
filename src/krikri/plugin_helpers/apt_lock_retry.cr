@@ -121,6 +121,10 @@ module Krikri
     # apt_fail_bogus_source). The CLI-observable equivalent of
     # python-apt's "res == failed" check is the failed-item markers apt
     # itself prints: an `Err:` line per failed item plus the W: summary.
+    # python-apt raises ONLY on a failed item - the E:/Err: markers; a
+    # warning-only line (a standalone "W: GPG error ... NO_PUBKEY ..."
+    # with no failed item) exits 0 and python-apt raises nothing, so the
+    # update succeeds just as real ansible reports it changed.
     def apt_fetch_failed?(result : NamedTuple(exit_code: Int32, stdout: String, stderr: String)) : Bool
       combined = "#{result[:stdout]}#{result[:stderr]}"
       combined.includes?("Err:") ||
@@ -131,21 +135,25 @@ module Krikri
 
     # The SECOND FetchFailedException shape python-apt raises:
     # `raise FetchFailedException(e)` around the SystemError apt_pkg throws
-    # for repository-level errors - a signature that can't be verified
-    # ("W: GPG error ... NO_PUBKEY ...", "E: The repository ... is not
-    # signed."). Unlike the bare `raise FetchFailedException()` a plain
-    # network fetch failure takes, this one CARRIES the diagnostic lines as
-    # its str() text, so the retry warnings and the final failure message
-    # quote them (round 5210000, artem_shestakov.nginx: real ansible-core
-    # 2.19.11 warned five times with the GPG/E: text and failed with
-    # "Failed to update apt cache after 5 retries: W:... , E:..." while
-    # krikri classified the case as a plain nonzero-exit failure and failed
-    # fast). Detected the same way the CLI shows it: a top-level "E: "
-    # diagnostic line, or apt's own GPG-failure wording.
+    # for repository-level errors, which the CLI surfaces as a top-level
+    # "E:" diagnostic line ("E: The repository ... is not signed.").
+    # python-apt raises only on a failed item, and a top-level E: line is
+    # exactly how a failed item prints, so the E: form is the whole
+    # detection. Every warning-only shape exits 0 and must succeed, the
+    # same changed outcome real ansible reports: a standalone "W: GPG
+    # error ... NO_PUBKEY ..." line raises nothing, and the W: form of
+    # the unsigned-repo message (apt's allow-insecure path, "W: The
+    # repository ... is not signed.") likewise never marks the update
+    # failed. Unlike the bare `raise FetchFailedException()` a plain
+    # network fetch failure takes, this shape CARRIES the diagnostic
+    # lines as its str() text, so the retry warnings and the final
+    # failure message quote them (round 5210000, artem_shestakov.nginx:
+    # real ansible-core 2.19.11 warned five times with the GPG/E: text
+    # and failed with "Failed to update apt cache after 5 retries:
+    # W:... , E:..." while krikri classified the case as a plain
+    # nonzero-exit failure and failed fast).
     def apt_fetch_signature_failure?(result : NamedTuple(exit_code: Int32, stdout: String, stderr: String)) : Bool
       combined = "#{result[:stdout]}\n#{result[:stderr]}"
-      return true if combined.includes?("GPG error") ||
-                     combined.includes?("is not signed")
       # A bare top-level "E: " diagnostic line is python-apt's
       # SystemError-wrapped shape - EXCEPT the lock-contention one
       # ("E: Could not get lock /var/lib/dpkg/lock-frontend ..."), which
@@ -178,20 +186,29 @@ module Krikri
     # W:Updating..., W:See..., W:GPG<r3>, E:<r3>" while the CLI stderr
     # carries the same W:/E: lines with NO untrusted-repo lines at all.
     # The CLI gives no way to tell those lines apart, so re-insert the
-    # pair at every GPG block start but the first (issue #408: real
-    # ansible's retry warnings quote one pair per repo, krikri used to
-    # quote none until its single from-attempt-2 prepend).
+    # pair at every GPG block start that follows a REFUSED block - one
+    # whose diagnostics carried the "E: The repository ..." refusal line
+    # (issue #408: real ansible's retry warnings quote one pair per
+    # refused repo, krikri used to quote none until its single
+    # from-attempt-2 prepend). Tolerated GPG blocks - a [trusted=yes]
+    # repo's "W: GPG error ..." warning carries no refusal line - get NO
+    # pair between them (live-verified in-process on jammy 22.04 with two
+    # such repos plus a 404: the two GPG lines sit directly adjacent in
+    # every attempt's text), so keying the insertion on the refusal line
+    # keeps those shapes unprefixed exactly as real ansible quotes them.
     def apt_fetch_failure_reason(result : NamedTuple(exit_code: Int32, stdout: String, stderr: String)) : String
       return "" unless apt_fetch_signature_failure?(result)
       combined = "#{result[:stdout]}\n#{result[:stderr]}"
       lines = combined.split('\n').select { |line| line.starts_with?("W:") || line.starts_with?("E:") }
         .map(&.sub(/\A([WE]): /, "\\1:"))
       separated = [] of String
-      saw_gpg_block = false
+      prev_block_refused = false
       lines.each do |line|
         if line.starts_with?("W:GPG error:")
-          separated << APT_FETCH_SECURE_REPO_PREPEND if saw_gpg_block
-          saw_gpg_block = true
+          separated << APT_FETCH_SECURE_REPO_PREPEND if prev_block_refused
+          prev_block_refused = false
+        elsif apt_fetch_reason_refused_repo?(line)
+          prev_block_refused = true
         end
         separated << line
       end
@@ -218,9 +235,34 @@ module Krikri
     # text from a flag that already includes the current attempt - the
     # apt_repository loop used to do exactly that and warned with the
     # prepend from its very first failure.
+    #
+    # The flag turns on for a REFUSED repo only. apt marks a repo
+    # unauthenticated exactly when it refuses the repo's metadata with a
+    # top-level "E: The repository ..." line ("is not signed", "does not
+    # have a Release file" - both live-verified in-process to gain the
+    # pair from the next update on); the tolerated failure shapes never
+    # mark anything - a [trusted=yes] repo's standalone "W: GPG error ...
+    # NO_PUBKEY ..." warning, the allow-insecure "W: ... potentially
+    # dangerous" lines, and plain index 404s keep the identical unprefixed
+    # reason on every attempt (all live-verified in-process, jammy 22.04
+    # apt 2.4.14). That tolerated shape is exactly issue #665's real round
+    # (xe0nic.ansible_vprotect_server): both of the role's repos are `deb
+    # [trusted=yes]`, so real ansible warned with the same unprefixed
+    # mixed GPG-warning + 404 text five times and failed with it
+    # unprefixed, while the previous flag trigger (any non-empty reason)
+    # prefixed the later attempts and the final msg. The marking is
+    # in-process state: a separate `apt-get update` CLI process never
+    # prints the pair (live-verified, three consecutive CLI runs), so the
+    # prepend stays a synthesis and stays CLI-safe. The reason text
+    # arrives marker-space-stripped from apt_fetch_failure_reason
+    # ("E: The" -> "E:The"), which is why the probe has no space.
+    def apt_fetch_reason_refused_repo?(reason : String) : Bool
+      reason.includes?("E:The repository '")
+    end
+
     def apt_fetch_attempt_reason(reason : String, signature_failed_before : Bool) : {String, Bool}
       last_reason = signature_failed_before && !reason.empty? ? "#{APT_FETCH_SECURE_REPO_PREPEND}, #{reason}" : reason
-      {last_reason, signature_failed_before || !reason.empty?}
+      {last_reason, signature_failed_before || apt_fetch_reason_refused_repo?(reason)}
     end
 
     # apt.py's FetchFailedException retry loop verbatim: `for retry in
@@ -238,8 +280,8 @@ module Krikri
     # iteration 0's "after 1 retries" warn refers to that attempt - and
     # quotes ITS exception text when the failure was the SystemError-
     # wrapped signature class (see apt_fetch_failure_reason). Each later
-    # failed attempt warns with its own text, and once a signature
-    # failure has happened apt prepends the two untrusted-repo lines to
+    # failed attempt warns with its own text, and once a repo has been
+    # refused authentication apt prepends the two untrusted-repo lines to
     # every later attempt's text (APT_FETCH_SECURE_REPO_PREPEND).
     # Returns recovered: true as soon as an attempt succeeds, with the
     # warnings emitted so far (they persist in the registered result
