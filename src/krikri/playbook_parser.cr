@@ -1085,6 +1085,13 @@ module Krikri
     # `remote_user:` at play scope - the connection user, i.e. what
     # `ansible_user` would say. A task's own remote_user: wins over it.
     property remote_user : String? = nil
+    # `connection:` at play scope - the connection plugin every task in
+    # the play defaults to (Ansible's play-level connection keyword; runs
+    # the whole play locally on the controller for "local"). Lower
+    # precedence than any ansible_connection var an inventory/play var
+    # sets, higher than the smart->ssh fallback; a task's own connection:
+    # wins over it.
+    property connection : String? = nil
     # `debugger:` at play scope - always/never/on_failed/on_skipped/
     # on_unreachable. A task's own debugger: wins.
     property debugger : String? = nil
@@ -2380,6 +2387,7 @@ module Krikri
 
       play.order = yaml["order"]?.try { |value| safe_yaml_to_string(value).strip }
       play.remote_user = yaml["remote_user"]?.try { |entry| safe_yaml_to_string(entry).strip }
+      play.connection = yaml["connection"]?.try { |entry| safe_yaml_to_string(entry).strip }
       play.debugger = yaml["debugger"]?.try { |entry| safe_yaml_to_string(entry).strip }
       play.task_timeout, play.task_timeout_expr = parse_timeout_value(yaml["timeout"]?)
 

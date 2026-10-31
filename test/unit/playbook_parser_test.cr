@@ -138,6 +138,19 @@ describe Krikri::PlaybookParser do
       tasks[2].block_tasks.try(&.[0].ignore_errors?).must_equal(true)
     end
 
+    it "parses the play-level connection: keyword (issue #684)" do
+      playbook = Krikri::PlaybookParser.parse_string(<<-YAML)
+        - hosts: all
+          connection: local
+          gather_facts: false
+          tasks:
+            - ansible.builtin.debug:
+                msg: hi
+        YAML
+
+      playbook.plays[0].connection.must_equal("local")
+    end
+
     it "joins a list hosts: value with commas for the fallback play name" do
       playbook = Krikri::PlaybookParser.parse_string(<<-YAML)
         - hosts: [web, db]

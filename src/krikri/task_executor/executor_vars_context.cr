@@ -427,6 +427,23 @@ module Krikri
       # A templated delegate_to: is left alone here - this context is
       # consumed before any delegate name resolution, so only a literal
       # name is knowable at build time.
+      # play-level `connection:` keyword - Ansible's vars-vs-keyword rule
+      # puts any ansible_connection var ABOVE the play keyword (live-
+      # verified vs 2.19: an inventory ansible_connection=ssh entry keeps
+      # ssh'ing - and gathering facts over ssh - under a play
+      # `connection: local`), so it only fills where no var already did,
+      # yet still beats the smart->ssh fallback below. The task-level
+      # keyword keeps its unconditional override - a task's own
+      # connection: is that ONE task's explicit choice either way.
+      # delegate_to: tasks are skipped: their connection magic vars are
+      # seeded from the DELEGATE's connection below/default, and a play
+      # keyword must not preempt that resolution (a delegate never
+      # inherits the origin's connection).
+      if play_connection = @connection
+        unless task.delegate_to
+          vars_context["ansible_connection"] ||= JSON::Any.new(play_connection)
+        end
+      end
       vars_context["ansible_connection"] ||= JSON::Any.new(default_connection_for(task, host, vars_context))
 
       # loop_lenient_vars: a LOOPED task's vars: must not hard-fail on the

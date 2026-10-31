@@ -491,6 +491,16 @@ module Krikri
           # a full pass over every play's tasks up front, not just
           # their hosts:.
           next if local_connection?(host, host.vars)
+          # The play's own `connection: local` keyword routes every task
+          # (and the fact gather) through the controller, so an eager SSH
+          # upload here would try to reach a host the play never needs to
+          # reach - an ssh-unreachable target hung the whole play here,
+          # before the local task that would have succeeded. Only fills
+          # where no ansible_connection var does: inventory/play vars
+          # outrank the play keyword in Ansible's vars-vs-keyword rule.
+          next if play.connection.try(&.==("local")) &&
+                  !host.vars.has_key?("ansible_connection") &&
+                  !play.vars.has_key?("ansible_connection")
 
           # A host whose ansible_connection resolves to no connection
           # plugin (Ansible would fail every task with "the
