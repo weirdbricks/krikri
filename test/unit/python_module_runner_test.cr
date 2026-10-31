@@ -156,12 +156,16 @@ describe Krikri::PythonModuleRunner do
     args = JSON.parse(Krikri::PythonModuleRunner.build_module_args(
       {"name" => "x", "list" => %q(["a", "b"]), "count" => "3",
        "_ansible_check_mode" => "false", "_ansible_diff" => "false", "_verbosity" => "0"},
-      check_mode: false,
+      check_mode: false, module_name: "kk_touch",
     ))
     args["name"].as_s.must_equal("x")
     args["list"].as_a.map(&.as_s).must_equal(["a", "b"])
     args["count"].as_i.must_equal(3)
     args["_ansible_check_mode"].as_bool.must_equal(false)
+    # Ansible's action base names the invoked module in the args
+    # (plugins/action/__init__.py) - the name real basic.py's messages,
+    # including the check-mode skip, carry.
+    args["_ansible_module_name"].as_s.must_equal("kk_touch")
     # the plugin-config bookkeeping keys stay out of the module's args
     args["check_mode"]?.must_be_nil
     args["diff_mode"]?.must_be_nil
@@ -596,6 +600,63 @@ describe Krikri::PythonModuleRunner do
     parsed["changed"].as_bool.must_equal(true)
     parsed["merged"].as_h["a"].as_i.must_equal(1)
     parsed["create"].as_bool.must_equal(false)
+  end
+
+  it "shim skips a module without supports_check_mode under check mode instead of running it" do
+    skip("python3 not available") unless File.exists?("/usr/bin/python3")
+    # Real basic.py closes AnsibleModule.__init__ with the check-mode
+    # gate: a module that never declared supports_check_mode exits with
+    # skipped=True and never reaches its own body, so a --check run can
+    # never make the module's real change (issue #693: the shim used to
+    # run the body and the module made its change during the dry run).
+    # The bundle is written into the module's own directory and the
+    # script dir is sys.path[0], so the shim shadows any installed
+    # ansible-core - the test exercises the shim path deterministically
+    # even on a host that has ansible-core.
+    work_dir = File.join(Dir.tempdir, "krikri-shim-spec-#{Random.rand(1_000_000)}")
+    Dir.mkdir_p(work_dir)
+    Krikri::PythonModuleRunner.write_module_utils_bundle(work_dir)
+    marker = File.join(work_dir, "marker")
+    module_path = File.join(work_dir, "kk_touch.py")
+    File.write(module_path, "from ansible.module_utils.basic import AnsibleModule\n" \
+                            "module = AnsibleModule(argument_spec={})\n" \
+                            "open('#{marker}', 'w').write('created\\n')\n" \
+                            "module.exit_json(changed=True, msg='touched marker')\n")
+    stdout_io = IO::Memory.new
+    status = Process.run("/usr/bin/python3", [module_path],
+      input: IO::Memory.new(%({"ANSIBLE_MODULE_ARGS": {"_ansible_check_mode": true}})),
+      output: stdout_io, error: Process::Redirect::Close)
+    status.success?.must_equal(true)
+    parsed = Krikri::PythonModuleRunner.parse_module_output(stdout_io.to_s).not_nil!
+    parsed["skipped"].as_bool.must_equal(true)
+    parsed["msg"].as_s.must_equal("remote module (kk_touch) does not support check mode")
+    parsed["changed"].as_bool.must_equal(false)
+    File.exists?(marker).must_equal(false)
+    FileUtils.rm_r(work_dir)
+  end
+
+  it "shim still runs a module that declares supports_check_mode under check mode" do
+    skip("python3 not available") unless File.exists?("/usr/bin/python3")
+    # The gate only fires for modules that never opted in - a
+    # check-mode-aware module keeps executing its own body under --check
+    # and reports the change itself, the way real basic.py lets it.
+    work_dir = File.join(Dir.tempdir, "krikri-shim-spec-#{Random.rand(1_000_000)}")
+    Dir.mkdir_p(work_dir)
+    Krikri::PythonModuleRunner.write_module_utils_bundle(work_dir)
+    module_path = File.join(work_dir, "kk_touch_ok.py")
+    File.write(module_path, "from ansible.module_utils.basic import AnsibleModule\n" \
+                            "module = AnsibleModule(argument_spec={}, supports_check_mode=True)\n" \
+                            "module.exit_json(changed=True, msg='touched marker')\n")
+    stdout_io = IO::Memory.new
+    status = Process.run("/usr/bin/python3", [module_path],
+      input: IO::Memory.new(%({"ANSIBLE_MODULE_ARGS": {"_ansible_check_mode": true}})),
+      output: stdout_io, error: Process::Redirect::Close)
+    FileUtils.rm_r(work_dir)
+    status.success?.must_equal(true)
+    parsed = Krikri::PythonModuleRunner.parse_module_output(stdout_io.to_s).not_nil!
+    parsed["changed"].as_bool.must_equal(true)
+    parsed["msg"].as_s.must_equal("touched marker")
+    parsed.as_h.has_key?("skipped").must_equal(false)
   end
 
   it "shim fails a missing required argument through fail_json like real basic.py" do
