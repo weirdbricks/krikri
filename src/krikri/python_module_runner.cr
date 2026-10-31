@@ -286,6 +286,7 @@ module Krikri
       import json
       import os
       import platform
+      import shlex
       import subprocess
       import sys
       import tempfile
@@ -454,15 +455,41 @@ module Krikri
 
           def run_command(self, args, check_rc=False, cwd=None,
                           environ_update=None, **kwargs):
+              # A string command is shlex.split (not str.split) in real
+              # basic.py, so quoting survives; the split tokens are what
+              # _clean_args re-quotes into the cmd: key of a failure.
               if isinstance(args, str):
-                  argv = args.split()
+                  argv = shlex.split(args)
               else:
                   argv = [str(a) for a in args]
+              clean_args = ' '.join(shlex.quote(a) for a in argv)
               env = os.environ.copy()
               if environ_update:
                   env.update({k: str(v) for k, v in environ_update.items()})
-              proc = subprocess.Popen(argv, cwd=cwd, stdout=subprocess.PIPE,
-                                      stderr=subprocess.PIPE, env=env)
+              # Real basic.py runs with ignore_invalid_cwd=True: a cwd that
+              # is not an existing directory is silently dropped (effectively
+              # cwd=None) instead of killing Popen - the manageiq role calls
+              # run_command(['rails', ...], cwd='/var/www/miq/vmdb') before
+              # that checkout exists (issue #384).
+              if cwd and os.path.isdir(cwd):
+                  cwd = os.path.abspath(cwd)
+              else:
+                  cwd = None
+              # Real Popen gets a bytes argv (to_bytes per element), so its
+              # OSError text names the missing binary as b'rails' - the
+              # exact spelling the composed error text must carry.
+              b_args = [str(a).encode('utf-8', 'surrogateescape') for a in argv]
+              try:
+                  proc = subprocess.Popen(b_args, cwd=cwd, stdout=subprocess.PIPE,
+                                          stderr=subprocess.PIPE, env=env)
+              except OSError as ex:
+                  self.fail_json(rc=ex.errno, stdout='', stderr='',
+                                 msg='Error executing command.', cmd=clean_args,
+                                 exception=ex)
+              except Exception as ex:
+                  self.fail_json(rc=257, stdout='', stderr='',
+                                 msg='Error executing command.', cmd=clean_args,
+                                 exception=ex)
               out, err = proc.communicate()
               rc = proc.returncode
               if check_rc and rc != 0:
@@ -499,15 +526,41 @@ module Krikri
           def exit_json(self, **kwargs):
               result = dict(kwargs)
               result.setdefault('changed', False)
+              # Real _return_formatted adds the <key>_lines companions for
+              # stdout/stderr whenever those keys exist (empty list for an
+              # empty string) - a result carrying stdout without them
+              # diverges from real's dumped result shape.
+              if 'stdout' in result:
+                  result['stdout_lines'] = str(result['stdout']).splitlines()
+              if 'stderr' in result:
+                  result['stderr_lines'] = str(result['stderr']).splitlines()
               if self._warnings:
                   result['warnings'] = self._warnings
               sys.stdout.write(json.dumps(result) + '\\n')
               sys.exit(0)
 
           def fail_json(self, msg='Module failed', **kwargs):
+              # Real fail_json accepts an exception kwarg (run_command's
+              # Popen OSError, issue #384): ansible-core 2.19 composes the
+              # task error header as "<msg>: <exception str>" from the
+              # ErrorSummary chain while the dumped result keeps the bare
+              # msg and drops the exception key entirely. The exception str
+              # rides the internal _ansible_error_exception key instead -
+              # the py_module runner forwards _ansible_* keys and the
+              # controller composes from it without ever dumping it.
+              exception = kwargs.pop('exception', None)
               result = dict(kwargs)
               result['failed'] = True
               result['msg'] = msg
+              # Only a real exception object builds an ErrorSummary chain in
+              # real fail_json; a plain-string traceback is just hidden
+              # (issue #557) and must not reach the error header.
+              if isinstance(exception, BaseException):
+                  result['_ansible_error_exception'] = str(exception)
+              if 'stdout' in result:
+                  result['stdout_lines'] = str(result['stdout']).splitlines()
+              if 'stderr' in result:
+                  result['stderr_lines'] = str(result['stderr']).splitlines()
               if self._warnings:
                   result['warnings'] = self._warnings
               sys.stdout.write(json.dumps(result) + '\\n')
@@ -790,6 +843,29 @@ module Krikri
         idx = pos
       end
       nil
+    end
+
+    # Real basic.py's fail_json(exception=...) wraps the exception in an
+    # ErrorSummary event chain whose dumped shape krikri keeps dropping
+    # (issue #557: a plain-string traceback is hidden the same way), yet
+    # real ansible composes the "[ERROR] <msg>: <cause>" header from the
+    # chain's cause messages (issue #384: run_command's missing-binary
+    # Popen OSError). Extracts those cause messages, deepest chain included;
+    # nil when the result carries no ErrorSummary object.
+    def error_exception_summary(result : JSON::Any) : String?
+      summary = result["exception"]?.try(&.as_h?)
+      return nil unless summary && summary["__ansible_type"]?.try(&.as_s?) == "ErrorSummary"
+      msgs = [] of String
+      node = summary.dig?("event", "chain")
+      while node
+        break unless chain = node.as_h?
+        if msg = chain.dig?("event", "msg").try(&.as_s?)
+          msgs << msg unless msg.empty?
+        end
+        node = chain.dig?("event", "chain")
+      end
+      return nil if msgs.empty?
+      msgs.join(": ")
     end
 
     # Recovers the message of a module's uncaught exception from the raw

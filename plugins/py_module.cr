@@ -6,6 +6,7 @@ require "file_utils"
 require "../src/krikri/base_plugin"
 require "../src/krikri/python_module_runner"
 require "../src/krikri/plugin_helpers/python_lib_gate"
+require "../src/krikri/plugin_helpers/ansible_splitlines"
 
 module Krikri
   # PythonModuleRunner plugin - executes a role-private custom module
@@ -252,10 +253,33 @@ module Krikri
           extra[key] = value
         end
 
+        # The ErrorSummary object a real basic.py fail_json(exception=...)
+        # emits is dropped above like any exception key (issue #557), but
+        # real ansible still composes the "[ERROR] <msg>: <cause>" header
+        # from its cause chain (issue #384) - hand the chain text to
+        # result_display under the same internal key the shim's fail_json
+        # already uses.
+        if summary = PythonModuleRunner.error_exception_summary(JSON::Any.new(result_hash))
+          extra["_ansible_error_exception"] = JSON::Any.new(summary)
+        end
+
         result = PluginResult.new(changed: changed, failed: failed, msg: msg)
         result.extra.merge!(extra)
         unless err_text.empty?
           result.extra["stderr"] = JSON::Any.new(err_text)
+        end
+        # Real ansible derives stdout_lines/stderr_lines for the displayed
+        # failed result even when the module's own JSON only carries the
+        # bare strings (issue #384's missing-binary run) - without them the
+        # fatal result dump diverges.
+        if failed
+          {"stdout", "stderr"}.each do |stream|
+            next if result.extra.has_key?("#{stream}_lines")
+            next unless text = result.extra[stream]?.try(&.as_s?)
+            result.extra["#{stream}_lines"] = JSON::Any.new(
+              PluginHelpers::AnsibleSplitlines.split(text).map { |line| JSON::Any.new(line) }
+            )
+          end
         end
         return result
       end
