@@ -3787,7 +3787,12 @@ module Krikri
         dict_attr = msg.match(/\AError while resolving value for '([^']+)': (object of type '(.+?)' has no attribute '(.*?)')\z/)
         if dict_attr
           seed = task.params[dict_attr[1]]?
-          origin = value_failure_var_origin(task, dict_attr[2], reachable_from: seed.is_a?(String) ? seed : nil, host: host)
+          # Real templates the var's container leaves in document order and
+          # stops at the first failure, so when several leaves miss the same
+          # way (issue #415: dotnet_deps's libcurl/libssl/libicu items all
+          # miss a release key) the innermost Origin names the FIRST failing
+          # leaf - the ambiguity rule would hide the stanza entirely.
+          origin = value_failure_var_origin(task, dict_attr[2], reachable_from: seed.is_a?(String) ? seed : nil, host: host, first_leaf: true)
           return nil unless origin
           return "#{dict_attr[2]}\n" +
             origin_context_block(origin.path, File.read_lines(origin.path), origin.line, origin.column)
@@ -3975,6 +3980,18 @@ module Krikri
       merge_var_layer(merged, origins, task.role_vars, task.role_var_origins)
       merge_var_layer(merged, origins, @all_role_vars, @all_role_var_origins)
       merge_var_layer(merged, origins, task.vars, task.vars_origins)
+      # include_vars: file values are baseB - final words below extra vars -
+      # and their per-key origins point at the included file's own value
+      # lines, so a chain stanza reached through an included var (issue
+      # #415: dotnet_deps loaded from vars/Ubuntu.yml) is only findable
+      # with this layer merged; its siblings the failing leaf references
+      # (dotnet_libcurl) are included vars too, so without it the leaf's
+      # re-render fails "'dotnet_libcurl' is undefined" and never
+      # reproduces the dict-miss message the scan must match exactly.
+      if h = host
+        included = @included_vars[h.name]?
+        merge_var_layer(merged, origins, included, included ? @included_var_origins[h.name]? : nil)
+      end
       merge_var_layer(merged, origins, @extra_vars, @extra_var_origins)
 
       # The lazy-dict miss comes from subscripting the `groups` magic var,
