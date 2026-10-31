@@ -3714,6 +3714,27 @@ describe Krikri::PlaybookParser do
     ensure
       FileUtils.rm_rf(root) if root
     end
+
+    it "falls back to the AS-WRITTEN meta keyword for a nameless FQCN meta task" do
+      # Issue #685: an unnamed `ansible.builtin.meta: end_host` task used
+      # to get the hardcoded fallback name "meta", so its banner printed
+      # `TASK [meta]` where real (2.20.1) echoes the written spelling,
+      # `TASK [ansible.builtin.meta]` - the same as-written rule every
+      # other unnamed task's banner follows.
+      root = File.tempname("nameless-fqcn-meta-spec")
+      Dir.mkdir_p(root)
+      File.write(File.join(root, "site.yml"), <<-YAML)
+        - hosts: all
+          tasks:
+            - ansible.builtin.meta: end_host
+        YAML
+
+      playbook = Krikri::PlaybookParser.parse(File.join(root, "site.yml"))
+
+      playbook.plays.first.tasks.first.name.must_equal("ansible.builtin.meta")
+    ensure
+      FileUtils.rm_rf(root) if root
+    end
   end
 
   describe ".resolve_include_path" do
