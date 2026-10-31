@@ -1585,7 +1585,14 @@ module Krikri
             # later `loop: "{{ dbs_repo_old }}"` then correctly hard-
             # failed with "The `loop` value must resolve to a 'list',
             # not 'str'." instead of silently iterating the bogus list.
-            next JSON::Any.new(JinjaRenderer.new(render_vars).render(raw))
+            block_rendered = JinjaRenderer.new(render_vars).render(raw)
+            # Same observed ansible behaviour as JinjaRenderer#
+            # rerender_string_value (GitHub issue #388): a block-tag-only
+            # template producing ZERO output nodes renders to None in real
+            # ansible, not "" - gated on "{%" so an emptiness coming from
+            # spans themselves (`{{ '' }}{{ '' }}`) keeps the string "".
+            next JSON::Any.new(nil) if raw.includes?("{%") && block_rendered == ""
+            next JSON::Any.new(block_rendered)
           end
 
           if structured = whole_span_structured(render_vars, raw)

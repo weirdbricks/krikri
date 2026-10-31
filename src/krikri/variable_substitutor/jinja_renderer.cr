@@ -781,6 +781,13 @@ module Krikri
         if whole_span
           render_pure_mustache_value(rendered, stripped, substitutor)
         else
+          # Real ansible (confirmed against upstream, GitHub issue #388)
+          # renders a template that produces ZERO output nodes - block
+          # tags only, no literal text, no `{{ }}` spans - to None, not
+          # "": its native concat of an empty node list is None. Gated on
+          # "{%" so an emptiness coming from spans themselves
+          # (`{{ '' }}{{ '' }}`) keeps the string "" those spans own.
+          return JSON::Any.new(nil) if raw.includes?("{%") && rendered == ""
           JSON::Any.new(rendered)
         end
       end
