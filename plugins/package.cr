@@ -1121,6 +1121,156 @@ module Krikri
       dpkg[:exit_code] == 0 && !dpkg[:stdout].strip.empty?
     end
 
+    # apt.py's spec parsing (`name=version` split on the FIRST '=') - the
+    # raw dpkg-query calls in this file inline the name half only.
+    private def split_name_version(pkg : String) : {String, String?}
+      idx = pkg.index('=')
+      idx ? {pkg[0...idx], pkg[(idx + 1)..]} : {pkg, nil}
+    end
+
+    # Real apt.py quotes package specs with plain Python "'%s'" formatting
+    # - no shell escaping - and the quoted text is part of the registered
+    # failure msg, so the same naive wrap is load-bearing here.
+    private def naive_single_quote(value : String) : String
+      "'#{value}'"
+    end
+
+    # Real main()'s dpkg_options value - the expand_dpkg_options form above
+    # (with REAL's double-quoted -o values, not shell-quoted ones) plus the
+    # lock-timeout override it appends: `-o "Dpkg::Options::=--force-confdef"
+    # -o "Dpkg::Options::=--force-confold" -o DPkg::Lock::Timeout=60`. The
+    # exact text is quoted verbatim inside Ansible's "'cmd' failed" failure
+    # msg, so the quoting is load-bearing (mirrors apt.cr's own helper).
+    private def real_dpkg_options(lock_timeout : Int32) : String
+      opts = (@params["dpkg_options"]? || "force-confdef,force-confold").split(",")
+        .map(&.strip).reject(&.empty?)
+        .map { |opt| "-o \"Dpkg::Options::=--#{opt}\"" }.join(" ")
+      "#{opts} -o DPkg::Lock::Timeout=#{lock_timeout}"
+    end
+
+    # Real install()'s spec construction for one package: a pinned spec
+    # keeps its pin, a plain name gets the resolved candidate version
+    # pinned on ("sl" -> "sl=5.02-1+b1"), and a purely virtual name
+    # (Candidate: (none)) stays bare (mirrors apt.cr's own helper).
+    private def install_spec(pkg : String, candidates : Hash(String, String?)) : String
+      base_name, pinned_version = split_name_version(pkg)
+      version = candidates[pkg]? || pinned_version || candidates[base_name]?
+      version ? "#{base_name}=#{version}" : base_name
+    end
+
+    # fnmatch.fnmatch semantics for an apt version pin (mirrors apt.cr's
+    # own helper): `*`, `?` and `[...]` classes; a pin without a wildcard
+    # is an exact comparison.
+    private def version_pin_matches?(pin : String, candidate : String) : Bool
+      return pin == candidate unless pin.matches?(/[*?\[]/)
+      regex = String.build do |io|
+        io << "\\A"
+        pin.each_char do |char|
+          case char
+          when '*'      then io << ".*"
+          when '?'      then io << '.'
+          when '[', ']' then io << char
+          else               io << Regex.escape(char.to_s)
+          end
+        end
+        io << "\\z"
+      end
+      Regex.new(regex).matches?(candidate)
+    rescue Regex::Error
+      pin == candidate
+    end
+
+    # Ansible hands apt-get the concrete cache version a wildcard pin
+    # matched first (`unifi=5.6.42*` -> `'unifi=5.6.42-10376-1'`), never
+    # the raw pattern (mirrors apt.cr's own helper).
+    private def resolve_pinned_version(name : String, version : String) : String?
+      probe = remote_exec("apt-cache policy #{shell_single_quote(name)}")
+      return nil unless probe[:exit_code] == 0
+      lines = probe[:stdout].split('\n')
+      start = lines.index(&.includes?("Version table:")) || return nil
+      table_indent : Int32? = nil
+      lines[(start + 1)..].each do |raw|
+        line = raw.gsub("***", "   ")
+        stripped = line.strip
+        indent = line.size - line.lstrip.size
+        table_indent = indent if table_indent.nil? && !stripped.empty?
+        base = table_indent
+        break if base.nil? || stripped.empty? || indent < base
+        next if indent > base
+        next unless first = stripped.split.first?
+        return first if version_pin_matches?(version, first)
+      end
+      nil
+    end
+
+    # Real apt.py's install() rc!=0 failure shape - the one ansible's
+    # "'cmd' failed" msgs show: fail_json(msg="'%s' failed: %s" % (cmd,
+    # err), stdout=out, stderr=err, rc=rc), then main() appends the cache
+    # keys and the controller appends the *_lines pairs (round-99500x
+    # apt_fail_install_dpkgopt capture, the key order apt.cr's own
+    # identical failure carries). package: delegates to the apt module in
+    # real ansible, so its failure result must be the apt module's - this
+    # dispatch previously reported its own "Failed to install X: <stderr>"
+    # with no rc/stdout/*_lines/cache keys (issue #440, buluma.jitsi's
+    # "Install jitsi-meet" task: jitsi-meet-prosody's unmet deps failed
+    # apt-get with "E: Unable to correct problems, you have held broken
+    # packages"). The msg's command text is apt.py's EXACT install()
+    # format - seven flag slots with the empty ones KEEPING their
+    # separators (the seven-space run before "install"), and each plain
+    # name carrying its resolved candidate version - not this dispatch's
+    # own simpler run line.
+    private def apt_install_failure_result(specs : Array(String), installed_status : Hash(String, {Bool, String?}), lock_timeout : Int32, cache_refreshed : Bool, install_result : NamedTuple(exit_code: Int32, stdout: String, stderr: String)) : PluginResult
+      # install() sends only the not-already-satisfied specs to apt-get
+      # (package_status's per-spec installed check), so the msg's package
+      # list excludes installed names the same way.
+      to_install = specs.select do |pkg|
+        base_name, pinned_version = split_name_version(pkg)
+        installed, installed_ver = installed_status[base_name]?.try { |pair| pair } || {false, nil}
+        !(installed && (pinned_version.nil? || ((iv = installed_ver) && version_pin_matches?(pinned_version, iv))))
+      end
+      to_install = specs if to_install.empty?
+      candidates = {} of String => String?
+      plain_names = to_install.reject { |pkg| split_name_version(pkg)[1] }
+        .map { |pkg| split_name_version(pkg)[0] }
+      plain_candidates = apt_candidates_batch(plain_names)
+      to_install.each do |pkg|
+        base_name, pinned_version = split_name_version(pkg)
+        if pinned_version
+          candidates[pkg] = resolve_pinned_version(base_name, pinned_version) || pinned_version
+        else
+          candidates[base_name] = plain_candidates[base_name]?.try(&.[1])
+        end
+      end
+      pkg_list = to_install.map { |pkg| naive_single_quote(install_spec(pkg, candidates)) }.join(" ")
+      flags = [
+        real_dpkg_options(lock_timeout),
+        true?(@params["only_upgrade"]?) ? "--only-upgrade" : "",
+        "", # state=fixed's --fix-broken slot
+        true?(@params["force"]?) ? "--force-yes" : "",
+        true?(@params["autoremove"]?) ? "--auto-remove" : "",
+        true?(@params["fail_on_autoremove"]?) ? "--no-remove" : "",
+        "", # check-mode --simulate slot (never reached in check mode)
+      ]
+      trailing = ""
+      trailing += " --allow-unauthenticated" if true?(@params["allow_unauthenticated"]?)
+      trailing += " --allow-downgrades" if true?(@params["allow_downgrade"]?)
+      trailing += " --allow-change-held-packages" if true?(@params["allow_change_held_packages"]?)
+      install_cmd = "#{apt_get_bin} -y #{flags.join(" ")} install #{pkg_list}#{trailing}"
+      PluginResult.new(
+        changed: false,
+        failed: true,
+        msg: "'#{install_cmd}' failed: #{install_result[:stderr]}",
+        stdout: install_result[:stdout],
+        stderr: install_result[:stderr],
+        stdout_lines: PluginHelpers::AnsibleSplitlines.split(install_result[:stdout]),
+        stderr_lines: PluginHelpers::AnsibleSplitlines.split(install_result[:stderr]),
+        rc: install_result[:exit_code],
+        cache_updated: cache_refreshed,
+        cache_update_time: apt_cache_mtime(->remote_exec(String)),
+        key_order: ["stdout", "stderr", "rc", "cache_updated", "cache_update_time", "failed", "msg", "stdout_lines", "stderr_lines"]
+      )
+    end
+
     private def handle_apt(name : String, state : String, names : Array(String), pkg_tokens : String) : PluginResult
       # Ansible's apt module fails at module start in check mode when
       # python3-apt is missing (its only recovery is a real host
@@ -1342,12 +1492,7 @@ module Krikri
                 msg: no_package_msg(missing)
               )
             else
-              PluginResult.new(
-                changed: false,
-                failed: true,
-                msg: "Failed to install #{name}: #{install_result[:stderr]}",
-                stderr: install_result[:stderr]
-              )
+              apt_install_failure_result(apt_names, installed_status, lock_timeout, cache_refreshed, install_result)
             end
           end
         end
@@ -1513,12 +1658,7 @@ module Krikri
               msg: no_package_msg(missing)
             )
           end
-          return PluginResult.new(
-            changed: false,
-            failed: true,
-            msg: "Failed to install #{name}: #{upgrade_result[:stderr]}",
-            stderr: upgrade_result[:stderr]
-          )
+          return apt_install_failure_result(apt_names, installed_status, lock_timeout, cache_refreshed, upgrade_result)
         end
 
         # "N upgraded, M newly installed, ..." is apt's own reliable,

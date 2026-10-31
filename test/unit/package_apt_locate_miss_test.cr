@@ -47,7 +47,13 @@ APT_NO_LISTING_STDOUT                = "Reading package lists...\nBuilding depen
 # skipping past it reported the later locate miss instead.
 APT_STUB_THEN_LOCATE_MISS_STDERR = "E: Package 'krikri-stub-pkg-647' has no installation candidate\nE: Unable to locate package krikri-no-such-pkg-647\n"
 
-private def with_failing_apt_get_shim(stderr : String, stdout : String = "", dpkg_version : String? = nil, &)
+# Real ansible's apt.py install() rc!=0 failure msg quotes the EXACT
+# command it built: seven flag slots with the empty ones keeping their
+# separators (the seven-space run before "install"), each plain name
+# carrying its resolved candidate pin.
+APT_FAIL_INSTALL_CMD_TAIL = " -y -o \"Dpkg::Options::=--force-confdef\" -o \"Dpkg::Options::=--force-confold\" -o DPkg::Lock::Timeout=60       install "
+
+private def with_failing_apt_get_shim(stderr : String, stdout : String = "", dpkg_version : String? = nil, apt_cache_candidate : String? = nil, &)
   shim_dir = PluginSpecHelper.tmp_path("fake-apt-get-fail")
   Dir.mkdir_p(shim_dir)
   # The stdout heredoc's terminator must sit on its own line: the <<- literals
@@ -68,6 +74,18 @@ private def with_failing_apt_get_shim(stderr : String, stdout : String = "", dpk
       SH
     File.write("#{shim_dir}/dpkg-query", dq_script)
     File.chmod("#{shim_dir}/dpkg-query", 0o755)
+  end
+  if apt_cache_candidate
+    # Shims apt-cache policy with a resolvable candidate, so the
+    # install-failure msg's package list carries the resolved candidate
+    # pin apt.py puts on every plain name (`install 'pkg=1.2.3-1'`) -
+    # the probe's marker/parse protocol is apt_candidates_batch's.
+    ac_script = <<-SH
+      #!/bin/sh
+      printf '%s:\n  Installed: (none)\n  Candidate: #{apt_cache_candidate}\n' "$2"
+      SH
+    File.write("#{shim_dir}/apt-cache", ac_script)
+    File.chmod("#{shim_dir}/apt-cache", 0o755)
   end
   PluginSpecHelper::ENV_MUTEX.synchronize do
     old_path = ENV["PATH"]?
@@ -142,14 +160,43 @@ describe "package:/apt locate-miss failure shape (issues 194 and 195)" do
     end
   end
 
-  it "keeps the raw Failed to install result for non-locate-miss failures" do
-    with_failing_apt_get_shim(APT_BROKEN_REPO_STDERR) do
+  it "reports apt.py's install failure shape for non-locate-miss failures (present)" do
+    # Issue #440 (buluma.jitsi): real ansible's package: delegates to the
+    # apt module, whose install() rc!=0 exit is fail_json(msg="'%s'
+    # failed: %s" % (cmd, err), stdout=out, stderr=err, rc=rc) plus the
+    # cache keys and the controller's *_lines pairs - NOT this engine's
+    # old own-wrapped "Failed to install X: <stderr>" wording with a bare
+    # stderr key and no rc/stdout. The msg's command is apt.py's install()
+    # format with the resolved candidate pinned onto the plain name.
+    with_failing_apt_get_shim(APT_BROKEN_REPO_STDERR, "Reading package lists...\nBuilding dependency tree...", apt_cache_candidate: "1.2.3-1") do
       result = PluginSpecHelper.run("package",
         {"name" => "krikri-no-such-pkg-194", "state" => "present", "use" => "apt"})
 
       result["failed"].as_bool.must_equal(true)
-      result["msg"].as_s.must_equal("Failed to install krikri-no-such-pkg-194: #{APT_BROKEN_REPO_STDERR}")
-      result.as_h.has_key?("stderr").must_equal(true)
+      result["changed"].as_bool.must_equal(false)
+      result["rc"].as_i.must_equal(100)
+      result["msg"].as_s.must_match(/\A'[^']*apt-get#{Regex.escape(APT_FAIL_INSTALL_CMD_TAIL)}'krikri-no-such-pkg-194=1\.2\.3-1'' failed: #{Regex.escape(APT_BROKEN_REPO_STDERR)}\z/)
+      result["stdout"].as_s.must_equal("Reading package lists...\nBuilding dependency tree...\n")
+      result["stdout_lines"].as_a.must_equal(["Reading package lists...", "Building dependency tree..."])
+      result["stderr"].as_s.must_equal(APT_BROKEN_REPO_STDERR)
+      result["stderr_lines"].as_a.must_equal([APT_BROKEN_REPO_STDERR.chomp])
+      result["cache_updated"].as_bool.must_equal(false)
+      result.as_h.has_key?("cache_update_time").must_equal(true)
+    end
+  end
+
+  it "reports apt.py's install failure shape for non-locate-miss failures (latest)" do
+    # state: latest routes through the same install() in real apt.py, so
+    # the failure shape (and its command text) is identical.
+    with_failing_apt_get_shim(APT_BROKEN_REPO_STDERR, "", apt_cache_candidate: "1.2.3-1") do
+      result = PluginSpecHelper.run("package",
+        {"name" => "krikri-no-such-pkg-194", "state" => "latest", "use" => "apt"})
+
+      result["failed"].as_bool.must_equal(true)
+      result["rc"].as_i.must_equal(100)
+      result["msg"].as_s.must_match(/\A'[^']*apt-get#{Regex.escape(APT_FAIL_INSTALL_CMD_TAIL)}'krikri-no-such-pkg-194=1\.2\.3-1'' failed: #{Regex.escape(APT_BROKEN_REPO_STDERR)}\z/)
+      result.as_h.has_key?("stdout_lines").must_equal(true)
+      result.as_h.has_key?("stderr_lines").must_equal(true)
     end
   end
 
@@ -216,16 +263,18 @@ describe "package:/apt locate-miss failure shape (issues 194 and 195)" do
     end
   end
 
-  it "keeps the raw Failed to install result when the dpkg record carries a version (rc remnant)" do
+  it "reports apt.py's install failure shape when the dpkg record carries a version (rc remnant)" do
     # A rc remnant (deinstall ok config-files) has a Version in dpkg, so
     # python-apt's cache lookup succeeds and ansible says something
-    # else - the raw result stays.
-    with_failing_apt_get_shim(APT_NO_CANDIDATE_STDERR, APT_NO_LISTING_STDOUT, "1.0-1") do
+    # else - the raw result stays (issue #440 gave it apt.py's own
+    # install-failure shape).
+    with_failing_apt_get_shim(APT_NO_CANDIDATE_STDERR, APT_NO_LISTING_STDOUT, "1.0-1", "1.2.3-1") do
       result = PluginSpecHelper.run("package",
         {"name" => "krikri-virtual-pkg-195", "state" => "present", "use" => "apt"})
 
       result["failed"].as_bool.must_equal(true)
-      result["msg"].as_s.must_equal("Failed to install krikri-virtual-pkg-195: #{APT_NO_CANDIDATE_STDERR}")
+      result["rc"].as_i.must_equal(100)
+      result["msg"].as_s.must_match(/\A'[^']*apt-get#{Regex.escape(APT_FAIL_INSTALL_CMD_TAIL)}'krikri-virtual-pkg-195=1\.2\.3-1'' failed: #{Regex.escape(APT_NO_CANDIDATE_STDERR)}\z/)
       result.as_h.has_key?("stderr").must_equal(true)
     end
   end
