@@ -162,21 +162,45 @@ module Krikri
         end
       end
 
+      env = ENV.to_h
+      env["ANSIBLE_MODULE_NAME"] = module_name
+      env["ANSIBLE_CHECK_MODE"] = check_mode ? "1" : "0"
+
+      # Real ansible never needs the collections importable on the
+      # target: its AnsiballZ wrapper bundles every
+      # ansible_collections.<ns>.<coll>.plugins.module_utils.* import
+      # INTO the module payload it ships, so `from
+      # ansible_collections.amazon.aws.plugins.module_utils.retries
+      # import AWSRetry` (the standard AnsibleAWSModule pattern) runs on
+      # a python that cannot import the collection at all. This plugin
+      # runs the raw script with the target's python instead, so when
+      # that python is not the one the collections were installed into
+      # (Homebrew's isolated Cellar interpreter, issue #692; a galaxy
+      # user install under ~/.ansible/collections, which no python has
+      # on sys.path) the import died with ModuleNotFoundError where
+      # ansible-playbook ran the module fine. Only modules that actually
+      # reference the collection namespace get the extra path - a
+      # module importing nothing beyond ansible.module_utils keeps the
+      # exact probe/shim behavior it had before.
+      if python_module && source.includes?("ansible_collections")
+        collection_roots = PythonModuleRunner.collection_import_roots
+        unless collection_roots.empty?
+          existing = env["PYTHONPATH"]?
+          env["PYTHONPATH"] = existing && !existing.empty? ? "#{existing}:#{collection_roots.join(":")}" : collection_roots.join(":")
+        end
+      end
+
       probe_out = IO::Memory.new
       probe_err = IO::Memory.new
       if python_module && (py = python) && (staged_utils.nil? || staged_utils.empty?)
         probe = Process.new(
           py, ["-c", "from ansible.module_utils.basic import AnsibleModule"],
-          output: probe_out, error: probe_err
+          env: env, output: probe_out, error: probe_err
         )
         unless probe.wait.success?
           PythonModuleRunner.write_module_utils_bundle(work_dir)
         end
       end
-
-      env = ENV.to_h
-      env["ANSIBLE_MODULE_NAME"] = module_name
-      env["ANSIBLE_CHECK_MODE"] = check_mode ? "1" : "0"
 
       argv = if python_module && (py = python)
                new_style ? [py, module_path] : ([py, module_path] + parse_kv_argv(kv_argv))
