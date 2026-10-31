@@ -5193,7 +5193,7 @@ module Krikri
       return nil if operands.size < 2
       vars = build_vars_context(task, host)
       operands.each do |operand|
-        operand = operand.strip
+        operand = strip_chain_operand(operand)
         # `NAME is defined` is a real boolean, which Jinja's `and`/`or`
         # passes through untouched: a passing test is skipped so the chain
         # reaches the bare variable whose own value is returned (and labeled
@@ -5221,9 +5221,37 @@ module Krikri
       # the operator: Jinja keeps evaluating and the chain returns the LAST
       # operand's own value (`True and "x"` is "x"), which is exactly the
       # non-boolean result the strict check rejected.
-      last = operands.last.strip
+      last = strip_chain_operand(operands.last)
       return last if last.matches?(/\A[A-Za-z_][A-Za-z0-9_]*\z/)
       nil
+    end
+
+    # Parenthesized operands are invisible to which variable decided an
+    # and/or chain: real 2.19 still traces `(x is defined ) and (x)` to x's
+    # own defining site (issue #390), so each operand loses balanced,
+    # fully-enclosing outer parens one pair at a time before matching -
+    # only when the first '(' matches the very last ')' (a split like
+    # `(a) and (b)` keeps its parens and stays non-bare).
+    private def strip_chain_operand(operand : String) : String
+      s = operand.strip
+      while s.size >= 2 && s[0] == '(' && s[-1] == ')'
+        depth = 0
+        enclosing = true
+        s.each_char_with_index do |char, index|
+          if char == '('
+            depth += 1
+          elsif char == ')'
+            depth -= 1
+            if depth == 0
+              enclosing = index == s.size - 1
+              break
+            end
+          end
+        end
+        break unless enclosing
+        s = s[1...s.size - 1].strip
+      end
+      s
     end
 
     # Locates `name`'s value position in the playbook file: the play
