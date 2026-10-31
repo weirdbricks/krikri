@@ -963,3 +963,90 @@ describe "single-operand name-span failures do not truncate" do
     FileUtils.rm_rf(src_dir)
   end
 end
+
+# Issue #419 (andrewrothstein.openjdk): a name-referenced variable whose
+# own value carries `{% if %}` tags renders as its own SEGMENTED marker
+# run - ansible keeps the partial output up to the failing tag, appends
+# the failure's error marker plus one "template potentially truncated"
+# marker, and reports both in one warning block whose Origin points at
+# the value's DEFINING site (the role vars file), not at the task.
+describe "block-tag variable values in the name marker render (issue #419)" do
+  it "keeps a failing block-tag value's partial output and truncates at the failing tag" do
+    src_dir = File.tempname("name-warn-blocktag")
+    Dir.mkdir_p(File.join(src_dir, "roles", "bt", "tasks"))
+    Dir.mkdir_p(File.join(src_dir, "roles", "bt", "defaults"))
+    Dir.mkdir_p(File.join(src_dir, "roles", "bt", "vars"))
+    File.write(File.join(src_dir, "roles", "bt", "vars", "main.yml"), <<-YAML)
+      ---
+      sub_dir: '{{ parent }}/openjdk'
+      sub: '{{ sub_dir }}/{% if ver.major | int > 8 %}jdk-{{ ver.major }}.{{ ver.minor }}.{{ ver.patch }}+{{ ver.b }}{% if app == "jre" %}-jre{% endif %}{% else %}jdk{{ ver.major }}u{{ ver.minor }}-b{{ ver.b }}{% endif %}'
+      YAML
+    File.write(File.join(src_dir, "roles", "bt", "defaults", "main.yml"), <<-YAML)
+      ---
+      parent: /var/tmp/krikri-name-blocktag
+      ver:
+        major: 16
+        minor: 0
+        patch: 1
+        b: 9
+      YAML
+    File.write(File.join(src_dir, "roles", "bt", "tasks", "main.yml"), <<-YAML)
+      ---
+      - name: looking for install subdir at {{ sub }}...
+        ansible.builtin.debug:
+          msg: hi
+      YAML
+    File.write(File.join(src_dir, "pb.yml"), <<-YAML)
+      - hosts: localhost
+        gather_facts: false
+        connection: local
+        roles:
+          - bt
+      YAML
+
+    output = IO::Memory.new
+    Process.run(BINARY, ["-i", INVENTORY, "pb.yml"], output: output, error: output, chdir: src_dir)
+    text = output.to_s
+    vars_main = File.expand_path(File.join(src_dir, "roles", "bt", "vars", "main.yml"))
+
+    # The taken branch's content survives up to the failing nested tag,
+    # then both markers inline; the name's own trailing literal survives.
+    text.must_include("TASK [bt : looking for install subdir at /var/tmp/krikri-name-blocktag/openjdk/jdk-16.0.1+9<< error 1 - 'app' is undefined >><< error 2 - template potentially truncated >>...]")
+    # One block, both errors, at the defining site's value token (col 6 =
+    # the quote after `sub: `).
+    text.must_include("[WARNING]: Encountered 2 template errors.")
+    text.must_include("error 1 - 'app' is undefined\nerror 2 - template potentially truncated\nOrigin: #{vars_main}:3:6")
+    FileUtils.rm_rf(src_dir)
+  end
+
+  it "keeps the collapsed single marker for a construct the segmented renderer cannot decide" do
+    src_dir = File.tempname("name-warn-blocktag-bail")
+    Dir.mkdir_p(File.join(src_dir, "roles", "bt2", "tasks"))
+    Dir.mkdir_p(File.join(src_dir, "roles", "bt2", "vars"))
+    File.write(File.join(src_dir, "roles", "bt2", "vars", "main.yml"), <<-YAML)
+      ---
+      looped: '{% for x in items %}{{ x }}{% endfor %}'
+      YAML
+    File.write(File.join(src_dir, "roles", "bt2", "tasks", "main.yml"), <<-YAML)
+      ---
+      - name: L {{ looped }}
+        ansible.builtin.debug:
+          msg: hi
+      YAML
+    File.write(File.join(src_dir, "pb.yml"), <<-YAML)
+      - hosts: localhost
+        gather_facts: false
+        connection: local
+        roles:
+          - bt2
+      YAML
+
+    output = IO::Memory.new
+    Process.run(BINARY, ["-i", INVENTORY, "pb.yml"], output: output, error: output, chdir: src_dir)
+    text = output.to_s
+    text.must_include("TASK [bt2 : L << error 1 - ")
+    text.must_include("[WARNING]: Encountered 1 template error.")
+    text.wont_include("template potentially truncated")
+    FileUtils.rm_rf(src_dir)
+  end
+end
