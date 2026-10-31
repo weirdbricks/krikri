@@ -1,5 +1,6 @@
 require "./host"
 require "./passwords"
+require "system/user"
 
 module Krikri
   # The SSH connection settings ONE task's dispatch must use - resolved
@@ -70,7 +71,7 @@ module Krikri
       # inventory's ansible_host/ansible_port/... exactly like the old
       # per-site reads did.
       user = tiered_var(vars, host, "ansible_user", "ansible_ssh_user") ||
-             host.user || "root"
+             host.user || default_connection_user
       port = port_var(vars) || port_var(host.vars) || host.port
       conn_host = tiered_var(vars, host, "ansible_host", "ansible_ssh_host") ||
                   host.name
@@ -79,6 +80,28 @@ module Krikri
       common_args = split_ssh_args(tiered_var(vars, host, "ansible_ssh_common_args"))
       extra_args = split_ssh_args(tiered_var(vars, host, "ansible_ssh_extra_args"))
       new(conn_host, user, port, identity_file, password, common_args, extra_args)
+    end
+
+    # With no user anywhere in the ladder (no ansible_user var, no
+    # inventory user, no remote_user:), real ansible-core hands ssh NO
+    # -l/-u at all - live-verified against 2.19.11: the -vvv log reads
+    # "ESTABLISH SSH CONNECTION FOR USER: None" and the ssh argv carries
+    # no -l - so ssh connects as the LOCAL user, and `become: true` only
+    # escalates through sudo on the target. This engine used to fall back
+    # to "root" here, which silently dialed every user-less inventory as
+    # root and failed key auth on hosts that only accept the admin user
+    # (issue #679). Resolved from the process's own uid (falling back to
+    # $USER), memoized - the same resolution PluginManager.local_username
+    # uses for the local connection.
+    @@default_connection_user : String? = nil
+
+    def self.default_connection_user : String
+      @@default_connection_user ||= begin
+        System::User.find_by?(id: LibC.getuid.to_s).try(&.username) ||
+        ENV["USER"]? || "root"
+      rescue
+        ENV["USER"]? || "root"
+      end
     end
 
     # WHY: every connection key is resolved through the SAME two

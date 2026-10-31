@@ -1085,7 +1085,7 @@ end
 inventory.hosts.each_value do |reg_host|
   conn_pw = Krikri::Passwords.connection(reg_host.vars, reg_host)
   next unless conn_pw
-  ssh_user = reg_host.user || "root"
+  ssh_user = reg_host.user || Krikri::ConnectionSettings.default_connection_user
   Krikri::SSHManager.register_connection_password(reg_host.connection_host, ssh_user, reg_host.port, conn_pw)
   # get_connection_host falls back to the inventory NAME when the task's
   # vars carry no ansible_host - key both spellings so either resolves.

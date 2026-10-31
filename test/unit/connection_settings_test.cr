@@ -27,6 +27,19 @@ describe Krikri::ConnectionSettings do
     conn.extra_args.must_equal([] of String)
   end
 
+  it "falls back to the local user, not root, when no user is set anywhere (issue #679)" do
+    host = conn_host("web1")
+    conn = Krikri::ConnectionSettings.resolve(host, nil)
+    conn.user.must_equal(Krikri::ConnectionSettings.default_connection_user)
+    conn.user.wont_equal("root") unless Krikri::ConnectionSettings.default_connection_user == "root"
+  end
+
+  it "resolves the default connection user from the process's own uid" do
+    expected = System::User.find_by?(id: LibC.getuid.to_s).try(&.username) ||
+               ENV["USER"]? || "root"
+    Krikri::ConnectionSettings.default_connection_user.must_equal(expected)
+  end
+
   it "takes user/port/host/key/password/args from the task's vars first" do
     vars = {
       "ansible_user"                 => jv("invuser"),
