@@ -2720,6 +2720,15 @@ module Krikri
           # the distinction, not the call path.
           detail = e.is_a?(PlusMinusOperandError) ? e.template_text : e.message.to_s
           raise UndefinedVariableError.new("Error while resolving value for '#{key}': #{detail}")
+        rescue e : VariableSubstitutor::FilterEngine::FilterFailureError
+          # The filter was FOUND and dispatched - ansible-core 2.19 only
+          # words the failure "Syntax error in template: No filter named
+          # 'x'." when it cannot RESOLVE the name; a filter that raised
+          # mid-run fails the task with its own error and no syntax-error
+          # prefix ("Error while resolving value for 'xrt_package_path':
+          # The filter plugin 'xrt_latest' failed: No XRT version found
+          # for this OS", live-verified vs 2.19, Accelize.aws_fpga).
+          raise UndefinedVariableError.new("Error while resolving value for '#{key}': #{e.message}")
         rescue e : VariableSubstitutor::FilterEngine::UnknownFilterError
           raise UndefinedVariableError.new("Error while resolving value for '#{key}': Syntax error in template: #{e.message}")
         rescue e : VariableSubstitutor::UnknownTestError
