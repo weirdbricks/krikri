@@ -88,6 +88,10 @@ describe "Krikri::FactsGatherer (setup_param_coverage_test.cr)" do
   end
 
   describe "#run" do
+    # #run gathers real facts in-process, spawning ip/lsblk/... by PATH; the PATH-shim specs
+    # swap PATH under ENV_MUTEX, so these take the same lock (seen flaking in fix-issues gates).
+    serial!
+
     it "fails the module on a whitespace-padded token, exactly like Ansible" do
       # Ansible's type=list conversion splits on ',' WITHOUT
       # stripping (live-verified: `gather_subset: "network, virtual"`
@@ -131,6 +135,10 @@ describe "Krikri::FactsGatherer (setup_param_coverage_test.cr)" do
     end
 
     describe "filter" do
+      # #run gathers real facts in-process, spawning ip/lsblk/... by PATH; the PATH-shim specs
+      # swap PATH under ENV_MUTEX, so these take the same lock (seen flaking in fix-issues gates).
+      serial!
+
       it "keeps only fnmatch-matching top-level keys (string form)" do
         result = JSON.parse(Krikri::FactsGatherer.run(config_with(%({"filter": "ansible_hostname"}))))
         facts = result["ansible_facts"].as_h
@@ -183,6 +191,10 @@ describe "Krikri::FactsGatherer (setup_param_coverage_test.cr)" do
     end
 
     describe "gather_timeout parsing" do
+      # #run gathers real facts in-process, spawning ip/lsblk/... by PATH; the PATH-shim specs
+      # swap PATH under ENV_MUTEX, so these take the same lock (seen flaking in fix-issues gates).
+      serial!
+
       it "accepts a JSON number" do
         result = JSON.parse(Krikri::FactsGatherer.run(config_with(%({"gather_timeout": 3, "gather_subset": "min"}))))
         expect(falsey?(result["failed"]?.try(&.as_bool))).must_equal(true)
@@ -213,6 +225,10 @@ describe "Krikri::FactsGatherer (setup_param_coverage_test.cr)" do
     end
 
     describe "fact_path (ansible_local)" do
+      # #run gathers real facts in-process, spawning ip/lsblk/... by PATH; the PATH-shim specs
+      # swap PATH under ENV_MUTEX, so these take the same lock (seen flaking in fix-issues gates).
+      serial!
+
       # Per-test dir (PluginSpecHelper.tmp_path, removed by the run_one
       # hook): a fixed /tmp path shared by both tests let one test's
       # cleanup delete the other's .fact files mid-run under -p.

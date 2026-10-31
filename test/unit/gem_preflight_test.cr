@@ -13,6 +13,10 @@ require "../minitest_helper"
 # - gem_source is mutually exclusive with repository and version (spec
 #   level, before anything else)
 describe "gem plugin pre-flight" do
+  # "no gem binary exists" reads the process PATH, which key_order_sweep8's gem shim swaps
+  # under ENV_MUTEX: without this lock the test intermittently found the shim.
+  serial!
+
   it "fails with get_bin_path wording when no gem binary exists" do
     result = PluginSpecHelper.run("gem", {"name" => "rake"})
 

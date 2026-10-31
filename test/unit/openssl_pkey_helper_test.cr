@@ -1,6 +1,29 @@
 require "../minitest_helper"
 require "../../src/krikri/plugin_helpers/openssl_pkey"
 
+# RSA-1024, PKCS#1 PEM, AES-256-CBC under "s3cret"; "wrong" decrypts it to bad padding (checked
+# deterministic), so the bad-decrypt error queue is stable.
+private WRONG_PASSPHRASE_PEM = <<-PEM
+  -----BEGIN RSA PRIVATE KEY-----
+  Proc-Type: 4,ENCRYPTED
+  DEK-Info: AES-256-CBC,842C6821FA38443276CCC48612CF7197
+
+  EFvVKUH0BTyUR8jpN8EHyWtBb5Q8WA5OkOISq733r1l7JGVYOUoMhKr4d9NH2X6b
+  cUoIfzkL5Y/PrOQQ5dWgxu6rQNAoRIGFNuxxsvwf1lMD8b/g/cJ4Zv42e6OYWzj4
+  zhveFTCJm7argUNL01pumKL4PB7EKiimbog1MwbwY9ke3FTqsr1xo5Tf7Pfz0zIf
+  ghr07knsNcRA8rDyY+oQT8TdBjkOIJKJYs4hK0OesxQUw21U9E9dKaqYGqHMFN1T
+  H8PWHJLgl5qa+3FyDZ/KsE7FH6ixQvFNXbSo1KVl8nPd0A3B4vCH1rhgwBAWokaG
+  gc+ZU81QswiP8D7BnJBxiUmpNkA/qalxnhs4vxTosusnFAtvY+kpznd+F9ovdCCO
+  LrOUt+ltgcEUC9NANHGwTqOCDjb+40iEVNbff2Me2f/Vvf905fhLwyqNhu43zqzc
+  3uVmZp1x9dfAKtXjR+bSAXlzWPHAx+E/dttd5w+LJNKa1z4xloMmf5tQlFCma9Ai
+  qKTthhOwpmDOvwWlRflDp7ury/X0LnCItCCS9IlIxRrybI9U/P3EektKxYjj+hxC
+  9/eT5ujDkgfi46ptlioQu6yHAG7tfCpZdd+U7HDVh6ooe6Ut9VyyDfF/tl1kyD96
+  1fnwSGj8J5AbbQUmuInkUAi2amFYwarnnniXtBTuvqEAbBBXcSs9cjWdE2wIlB3V
+  ajrcA0G92eE1vsep3rSlJ0SYNN/DYwPUqrTQGJO3TNRoScZmyhd3mYak9XS/TL2Y
+  j+j4E3Tv1eSu7vwgxzbTJi+//QD1+daL5+bqUM0bJZsQvUWHRGOpkyO2cE8v91m5
+  -----END RSA PRIVATE KEY-----
+  PEM
+
 # Unit tests for the native libcrypto keygen/serialization helper
 # (plugin_helpers/openssl_pkey.cr) that backs plugins/openssl_privatekey.cr
 # without the `openssl` CLI. All expectations here were checked against
@@ -183,9 +206,10 @@ describe "Krikri::PluginHelpers::Pkey" do
     end
 
     it "fails a wrong passphrase with the bad-decrypt error queue" do
-      pkey = Krikri::PluginHelpers::Pkey.generate("RSA", 2048, 0).not_nil!
-      pem = String.new(Krikri::PluginHelpers::Pkey.serialize_pem(pkey, "RSA", "pkcs1", "s3cret").not_nil!)
-      Krikri::PluginHelpers::Pkey.free_pkey(pkey)
+      # A fixed key, not a fresh one: a wrong passphrase on AES-CBC PEM passes the padding
+      # check about 1 time in 120 (measured), and libcrypto then reports an ASN.1 parse error
+      # queue instead of bad decrypt, so a freshly encrypted key made this test flaky.
+      pem = WRONG_PASSPHRASE_PEM
 
       pkey2, failure = Krikri::PluginHelpers::Pkey.load_checked(pem, "wrong")
       pkey2.must_be_nil
