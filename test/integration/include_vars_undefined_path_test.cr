@@ -118,6 +118,34 @@ describe "include_vars: with a failing templated path" do
     output.wont_include("Error while resolving value for 'file'")
   end
 
+  # The dir: form names its failing arg 'dir' the way the file: form names
+  # 'file' - ansible's observed behaviour (live-verified vs 2.19.11, issue
+  # #405, almaops.vars's `include_vars: {dir: "{{ vars_source }}"}` with
+  # vars_source undefined): "Error while resolving value for 'dir': ..." with
+  # the innermost Origin at the dir: VALUE (line:col of the quote), not the
+  # module key. krikri used to wrap every non-free-form include_vars
+  # undefined failure as 'file', which also mis-pointed the Origin at the
+  # `include_vars:` line because the block locates the param by the key name
+  # in the message.
+  it "reports a dict-form dir path failure as dir with the innermost Origin at the dir value" do
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: loading vars
+            include_vars:
+              dir: "{{ undefined_root }}"
+      YAML
+
+    status.exit_code.must_equal(2)
+    output.must_include("Task failed: Finalization of task args for 'ansible.builtin.include_vars' failed: Error while resolving value for 'dir': 'undefined_root' is undefined")
+    output.must_include("Error while resolving value for 'dir': 'undefined_root' is undefined\n")
+    output.must_match(/Origin: \S+\.yml:7:14\n/)
+    output.must_include(" " * 13 + "^ column 14\n")
+    output.wont_include("Error while resolving value for 'file'")
+  end
+
   it "does not silently fall through to a later first_found candidate when an earlier candidate's template is undefined" do
     status, output = run_in_role_tree(<<-YAML)
       - hosts: localhost
