@@ -448,6 +448,16 @@ module Krikri
         return {resolves: nil, missing_collection_warning: nil}
       end
 
+      # A library/ source outranks everything collection-side: ansible
+      # resolves a bare name against the role's / playbook's own
+      # `library/` BEFORE the collection loader, so a redirect chain that
+      # dies in a removed module (issue #724: bare `consul_acl:` ->
+      # community.general.consul_acl's tombstone) is never consulted
+      # when the library file exists.
+      if library_module?(name, role_path, playbook_dir)
+        return {resolves: true, missing_collection_warning: nil}
+      end
+
       if redirects = builtin_redirects("modules")
         if target = redirects[name]?
           # The warning (when the chain dies on an absent collection)
@@ -474,9 +484,6 @@ module Krikri
         return {resolves: true, missing_collection_warning: nil}
       end
 
-      if library_module?(name, role_path, playbook_dir)
-        return {resolves: true, missing_collection_warning: nil}
-      end
       # Same treatment for a role-local action plugin: ansible's observed
       # behaviour (gwerlas.libvirt, issue #517) is that shipping
       # `action_plugins/warn.py` inside a role makes the bare action name
@@ -720,7 +727,7 @@ module Krikri
     # time (any extension except Ansible's MODULE_IGNORE_EXTS), so the
     # parse-time refusal never fires for a module the runner would
     # actually execute.
-    private def self.library_module?(name : String, role_path : String?, playbook_dir : String?) : Bool
+    def self.library_module?(name : String, role_path : String?, playbook_dir : String?) : Bool
       short = name.rpartition('.')[2]
       return false if short.empty?
 

@@ -908,11 +908,14 @@ module Krikri
       # 'isnan'/'nan' the float-NaN test; 'uri'/
       # 'url' the URL-shaped-string test (P2.5/P2.6).
       {"true", "false", "falsy", "abs", "isnan", "nan", "uri", "url", "mapping", "sequence", "boolean", "number", "string", "integer", "float", "iterable", "none"}.each do |test_name|
+        # Jinja2 accepts an empty call on a test (`x is sequence()`,
+        # eagleusb.consul_acl, issue #724) as the same test; the "()" must
+        # not be left glued to the variable name or it never resolves.
         if condition.includes?(" is not #{test_name}")
-          var_name = condition.gsub(" is not #{test_name}", "").strip
+          var_name = condition.gsub(" is not #{test_name}", "").strip.rchop("()")
           return !matches_type_test?(vars, var_name, test_name)
         elsif condition.includes?(" is #{test_name}")
-          var_name = condition.gsub(" is #{test_name}", "").strip
+          var_name = condition.gsub(" is #{test_name}", "").strip.rchop("()")
           return matches_type_test?(vars, var_name, test_name)
         end
       end
