@@ -3422,9 +3422,29 @@ module Krikri
             become, become_user, task_timeout)
         }
         begin
-          return PythonActionRunner.run_action(action_plugin, module_name, args, connection,
+          result = PythonActionRunner.run_action(action_plugin, module_name, args, connection,
             exec_host.connection_host, port, remote_user, become, become_user,
             resolve_task_check_mode(task, wire_vars), vars_context, dispatcher)
+          # Ansible's task executor classifies EVERY dict the action layer
+          # returns (AnsibleActionCapturedError.maybe_raise_on_result on
+          # _execute's result): a failed dict WITHOUT an exception summary is
+          # an ACTION-level failure - the "Action failed." chain, not
+          # "Module failed." (wcm_io_devops.conga_facts returns
+          # {"failed": true, "msg": "parameter conga_environment is required"}
+          # after catching its own AnsibleOptionsError, issue #658,
+          # live-verified vs 2.19.11) - and a missing 'changed' key becomes
+          # false, the same "set the changed property if it was missing" step
+          # task_executor._execute applies to every result.
+          if (shaped = result.as_h?) && shaped["failed"]?.try(&.as_bool?) == true &&
+             shaped["exception"]?.nil?
+            shaped["changed"] = JSON::Any.new(false) unless shaped["changed"]?
+            if msg = shaped["msg"]?.try(&.as_s?)
+              shaped["_ansible_error_detail"] = JSON::Any.new("Action failed: #{msg}")
+            end
+            shaped["_ansible_action_level"] = JSON::Any.new(true)
+            result = JSON::Any.new(shaped)
+          end
+          return result
         rescue PythonActionRunner::ActionUnavailableError
           return JSON.parse({
             "changed" => false,

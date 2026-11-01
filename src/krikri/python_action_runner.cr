@@ -442,7 +442,14 @@ module Krikri
               check_mode=bool(payload.get("check_mode")),
               diff=False,
           )
-          instance = plugin_class(task, connection, play_context, None, _PassthroughTemplar())
+          # ansible-core 2.19 still passes shared_loader_obj on every action
+          # plugin instantiation (task_executor._get_action_handler), even
+          # though ActionBase.__init__ made it optional (shared_loader_obj=None)
+          # in that release - a legacy plugin whose own __init__ declares it
+          # as a REQUIRED positional parameter (wcm_io_devops.conga_facts,
+          # issue #658) therefore dies with "missing 1 required positional
+          # argument" unless the engine passes it too, like Ansible does.
+          instance = plugin_class(task, connection, play_context, None, _PassthroughTemplar(), None)
           if payload.get("ipc"):
               instance._execute_module = types.MethodType(_ipc_execute_module, instance)
               instance._remove_tmp_path = types.MethodType(_ipc_remove_tmp_path, instance)

@@ -136,6 +136,92 @@ describe "role-private Python action plugin with an empty library placeholder (r
     FileUtils.rm_rf(root) if root
   end
 
+  it "instantiates a legacy 6-arg plugin and renders its returned failed dict as an action-level failure (issue #658)" do
+    # wcm_io_devops.conga_facts ships a legacy action plugin whose own
+    # __init__ declares shared_loader_obj as a REQUIRED positional
+    # parameter. ansible-core 2.19 made it optional on ActionBase but the
+    # task executor still passes it on every instantiation, so the plugin
+    # keeps working there - krikri's wrapper used to instantiate with only
+    # five arguments and the plugin died with
+    # "missing 1 required positional argument" instead of running.
+    # Its run() also CATCHES its own AnsibleOptionsError and RETURNS a
+    # {"failed": true, "msg": ...} dict (no exception): Ansible's task
+    # executor classifies every failed action-returned dict without an
+    # exception summary as an ACTION-level failure ("Action failed."
+    # chain, never "Module failed.") and fills the missing 'changed' key
+    # with false, so the fatal line reads
+    # {"changed": false, "msg": "parameter conga_environment is required"}.
+    root = File.tempname("role-local-action-legacy")
+    Dir.mkdir_p(File.join(root, "roles", "conga_facts", "action_plugins"))
+    Dir.mkdir_p(File.join(root, "roles", "conga_facts", "library"))
+    Dir.mkdir_p(File.join(root, "roles", "conga_facts", "tasks"))
+
+    File.write(File.join(root, "roles", "conga_facts", "action_plugins", "conga_facts.py"), <<-PYTHON)
+      from ansible.errors import AnsibleOptionsError
+      from ansible.plugins.action import ActionBase
+
+      class ActionModule(ActionBase):
+          TRANSFERS_FILES = False
+
+          def __init__(self, task, connection, play_context, loader, templar, shared_loader_obj):
+              super(ActionModule, self).__init__(task, connection, play_context, loader, templar, shared_loader_obj)
+              self._task_vars = None
+
+          def run(self, tmp=None, task_vars=None):
+              result = super(ActionModule, self).run(tmp, task_vars)
+              self._task_vars = task_vars if task_vars is not None else dict()
+              try:
+                  value = self._task.args.get(
+                      "conga_environment", self._task_vars.get("conga_environment"))
+                  value = self._templar.template(value)
+                  if not value:
+                      raise AnsibleOptionsError("parameter conga_environment is required")
+              except Exception as err:
+                  result['failed'] = True
+                  result['msg'] = err.message
+                  return result
+              return result
+      PYTHON
+
+    File.write(File.join(root, "roles", "conga_facts", "library", "conga_facts.py"), "")
+
+    File.write(File.join(root, "roles", "conga_facts", "tasks", "main.yml"), <<-YAML)
+      - name: Setup CONGA facts.
+        conga_facts:
+      YAML
+
+    File.write(File.join(root, "pb.yml"), <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        roles:
+          - conga_facts
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, "pb.yml"], output: output, error: output, chdir: root)
+
+    if ansible_importable
+      # A task failure (rc=2) with a full recap - never the end-of-run
+      # unavailable-modules abort (rc=4), and never the plugin-crash shape.
+      status.exit_code.must_equal(2, output.to_s)
+      output.to_s.must_include("PLAY RECAP", output.to_s)
+      output.to_s.must_include("failed=1", output.to_s)
+      # The action-level chain: "Action failed." - NOT "Module failed.".
+      output.to_s.must_include("Task failed: Action failed: parameter conga_environment is required", output.to_s)
+      output.to_s.wont_include("Module failed.", output.to_s)
+      # The plugin's returned dict IS the fatal result, with the task
+      # executor's own changed:false fill for the missing key.
+      output.to_s.must_include(
+        "fatal: [localhost]: FAILED! => {\"changed\": false, \"msg\": \"parameter conga_environment is required\"}",
+        output.to_s)
+    else
+      output.to_s.must_include("is not supported by krikri", output.to_s)
+    end
+  ensure
+    FileUtils.rm_rf(root) if root
+  end
+
   it "runs an action-plugin-only role task to success: ok line, full recap, exit 0 (issue #412)" do
     # The issue #412 round (amtega.check_platform on ubuntu) hit the SAME
     # dispatch as #411 but the other outcome: with the role's shipped
