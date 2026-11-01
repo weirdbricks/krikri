@@ -1,4 +1,5 @@
 require "../minitest_helper"
+require "digest"
 require "system/user"
 
 describe "copy plugin - owner/group" do
@@ -59,6 +60,39 @@ describe "copy plugin - owner/group" do
     result["failed"].as_bool.must_equal(true)
     result["msg"].as_s.must_equal("chgrp failed: failed to look up group ")
   ensure
+    File.delete(dest) if dest && File.exists?(dest)
+  end
+
+  it "keeps path, dest stat and checksum on the failure for an unresolvable owner: over identical content" do
+    # Issue #670 (zaiste.essentials "provide default SSH config"): when
+    # the dest already holds identical content, Ansible's copy action
+    # short-circuits into the file module, whose fail_json(path=...) gets
+    # _return_formatted's add_path_info stat block grafted onto the
+    # failure, and the action then injects its local_checksum into any
+    # result lacking one - failed ones included (live-verified vs
+    # 2.19.11). krikri printed a bare {changed, msg} there because the
+    # OwnerLookupFailure escaped to run_and_capture.
+    src = File.tempname("copy-owner-stat-src")
+    dest = File.tempname("copy-owner-stat-dest")
+    content = "hello world\n"
+    File.write(src, content)
+    File.write(dest, content)
+    File.chmod(dest, 0o644)
+
+    result = PluginSpecHelper.run("copy",
+      {"src" => src, "dest" => dest, "owner" => "this_user_does_not_exist_zzz"})
+
+    result["failed"].as_bool.must_equal(true)
+    result["changed"].as_bool.must_equal(false)
+    result["msg"].as_s.must_equal("chown failed: failed to look up user this_user_does_not_exist_zzz")
+    result["path"].as_s.must_equal(dest)
+    result["state"].as_s.must_equal("file")
+    result["uid"].as_i64.must_equal(File.info(dest).owner_id.to_i64)
+    result["mode"].as_s.must_equal("0644")
+    result["size"].as_i64.must_equal(content.bytesize.to_i64)
+    result["checksum"].as_s.must_equal(Digest::SHA1.hexdigest(content))
+  ensure
+    File.delete(src) if src && File.exists?(src)
     File.delete(dest) if dest && File.exists?(dest)
   end
 
