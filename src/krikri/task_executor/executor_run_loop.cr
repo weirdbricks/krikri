@@ -3302,6 +3302,18 @@ module Krikri
                else
                  copy.has_key?("failed") ? "failed" : nil
                end
+      # A fail_json result is {failed, msg} from the module itself with
+      # invocation appended right after (live-verified 2.19.11, x509_
+      # certificate_info's non-string valid_at, #703): the "failed" anchor
+      # above only fits the controller-added `failed: false` of a success.
+      if !commandish && copy["failed"]?.try(&.as_bool?) == true && copy.has_key?("msg")
+        new_hash = Hash(String, JSON::Any).new
+        copy.each do |k, v|
+          new_hash[k] = v
+          new_hash["invocation"] = invocation if k == "msg"
+        end
+        return JSON::Any.new(new_hash)
+      end
       if anchor
         new_hash = Hash(String, JSON::Any).new
         copy.each do |k, v|
