@@ -3628,6 +3628,15 @@ module Krikri
     # wording never covers.
     private def changed_failed_when_error_text(task : Task, key : String, raw : String?, host : Host, exc : Exception) : String
       message = exc.message || ""
+      # An unknown filter/test (`search` is a TEST, not a filter - issue
+      # #533) is a Jinja COMPILE-time syntax error for ansible: the
+      # template parse fails before any conditional evaluation begins,
+      # so it escapes the `except AnsibleError` conditional-evaluation
+      # trap and stores the bare "Syntax error in expression: ..." shape
+      # the template engine itself reports, not the prefixed trap wording.
+      if exc.is_a?(VariableSubstitutor::FilterEngine::UnknownFilterError)
+        return "Syntax error in expression: #{message}"
+      end
       unless exc.is_a?(ConditionalEvaluator::ConditionalBooleanError) && message.starts_with?("Conditional result (")
         return "Error while evaluating conditional: #{message}"
       end
