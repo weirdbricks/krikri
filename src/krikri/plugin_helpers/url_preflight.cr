@@ -56,7 +56,9 @@ module Krikri
         # url/dest/elapsed (get_url) or url/status/elapsed/redirected/
         # content (uri) - see the call sites.
         ConnectionFailure
-        # ValueError from urllib: {msg, url, status: -1}.
+        # ValueError from urllib: {msg, url, status: -1}. Also reused for
+        # the http.client ASCII-encode failure on a non-ASCII request
+        # target, whose fetch_url result carries the same keys.
         UnknownUrlType
         # URLError from urllib's UnknownHandler: a URL that HAS a type
         # no default handler serves (gopher://..., "127.0.0.1:80/x") is
@@ -101,6 +103,7 @@ module Krikri
         end
 
         control_character_failure(url, type).try { |failure| return failure }
+        non_ascii_target_failure(url, type).try { |failure| return failure }
 
         nil
       end
@@ -111,16 +114,7 @@ module Krikri
       # the other ConnectionFailure-style failures, no status_code).
       private def self.control_character_failure(url : String, type : String?) : Failure?
         return nil unless type == "http" || type == "https"
-        rest = url.partition(":")[2]
-        rest = rest.partition("#")[0]
-        target = if rest.starts_with?("//")
-                   after = rest[2..]
-                   idx = after.index(/[\/?]/)
-                   idx ? after[idx..] : ""
-                 else
-                   rest
-                 end
-        target = "/" + target if target.empty? || target.starts_with?("?")
+        target = request_target(url)
         found = target.each_char.find { |char| char.ord <= 0x20 || char.ord == 0x7f }
         return nil unless found
         repr = target.gsub("\\", "\\\\").gsub("\n", "\\n").gsub("\r", "\\r").gsub("\t", "\\t")
@@ -132,6 +126,87 @@ module Krikri
                      end
         Failure.new(Kind::ConnectionFailure,
           "An unknown error occurred: URL can't contain control characters. '#{repr}' (found at least '#{found_repr}')")
+      end
+
+      # A non-ASCII byte in the request target never reaches the network at
+      # all: http.client's putrequest encodes the whole request line as
+      # ASCII and the encode raises UnicodeEncodeError, which fetch_url's
+      # catch-all folds into the same info dict as the ValueError above -
+      # {msg, url, status: -1}, no dest/elapsed. Verified against real
+      # ansible-core: "https://h/a\u{a0}b.py" fails with
+      # "'ascii' codec can't encode character '\xa0' in position 34:
+      # ordinal not in range(128)" and the request line is
+      # "GET <target> HTTP/1.1", so the reported position is the target's
+      # char index plus the 4-char "GET " prefix.
+      private def self.non_ascii_target_failure(url : String, type : String?) : Failure?
+        return nil unless type == "http" || type == "https"
+        target = request_target(url)
+        chars = target.chars
+        start = chars.index { |char| char.ord > 0x7f }
+        return nil unless start
+        stop = start
+        while stop + 1 < chars.size && chars[stop + 1].ord > 0x7f
+          stop += 1
+        end
+        position = 4 + start
+        if start == stop
+          Failure.new(Kind::UnknownUrlType,
+            "'ascii' codec can't encode character '#{python_char_repr(chars[start])}' in position #{position}: ordinal not in range(128)")
+        else
+          Failure.new(Kind::UnknownUrlType,
+            "'ascii' codec can't encode characters in position #{position}-#{4 + stop}: ordinal not in range(128)")
+        end
+      end
+
+      # Python repr's own rendering of the offending character: printable
+      # characters (as str.isprintable judges) stay literal, everything
+      # else becomes the \xNN/\uNNNN/\UNNNNNNNN escape.
+      private def self.python_char_repr(char : Char) : String
+        return char.to_s if python_printable?(char)
+        ord = char.ord
+        if ord <= 0xff
+          "\\x#{ord.to_s(16, precision: 2, upcase: false)}"
+        elsif ord <= 0xffff
+          "\\u#{ord.to_s(16, precision: 4, upcase: false)}"
+        else
+          "\\U#{ord.to_s(16, precision: 8, upcase: false)}"
+        end
+      end
+
+      # An approximation of str.isprintable for the codepoints that show up
+      # unencoded in request targets: the Unicode control/format/separator
+      # categories (Cc, Cf, Cs, Zl, Zp, Zs except ASCII space, plus
+      # unassigned) are non-printable, everything else prints as itself.
+      private def self.python_printable?(char : Char) : Bool
+        ord = char.ord
+        return false if ord < 0x20 || ord == 0x7f
+        return false if ord >= 0x80 && ord <= 0xa0
+        return false if ord == 0xad
+        case ord
+        when 0x1680, 0x180e, 0x2000..0x200f, 0x2028..0x202f, 0x205f..0x2064,
+             0x2066..0x206f, 0x3000, 0xfeff, 0xfff9..0xfffb
+          false
+        else
+          true
+        end
+      end
+
+      # The request-target http.client would put on the wire: everything
+      # after the type colon, minus any fragment, and with an empty or
+      # query-only remainder turned into the "/" the real request would
+      # carry (http.client itself does the "/"-padding on empty targets).
+      private def self.request_target(url : String) : String
+        rest = url.partition(":")[2]
+        rest = rest.partition("#")[0]
+        target = if rest.starts_with?("//")
+                   after = rest[2..]
+                   idx = after.index(/[\/?]/)
+                   idx ? after[idx..] : ""
+                 else
+                   rest
+                 end
+        target = "/" + target if target.empty? || target.starts_with?("?")
+        target
       end
 
       # Python's own type split - urllib.request._splittype's

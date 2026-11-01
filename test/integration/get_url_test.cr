@@ -677,6 +677,54 @@ describe "get_url plugin" do
       File.delete(dest) if dest && File.exists?(dest)
     end
 
+    it "reports Python's ascii-encode failure for a single non-ASCII byte in the request target" do
+      # http.client encodes the request line as ASCII before any network
+      # I/O, so a non-ASCII character (here a non-breaking space from a
+      # copy-pasted URL) fails the task with UnicodeEncodeError's own text
+      # and no dest/elapsed - the ValueError result shape, not a request
+      # failure. Position counts from the "GET " prefix.
+      dest = File.tempname("get-url-spec")
+
+      result = PluginSpecHelper.run("get_url", {"url" => "http://127.0.0.1:1/a\u{a0}b.gpg", "dest" => dest})
+
+      result["failed"].as_bool.must_equal(true)
+      result["msg"].as_s.must_equal("'ascii' codec can't encode character '\\xa0' in position 6: ordinal not in range(128)")
+      result["url"].as_s.must_equal("http://127.0.0.1:1/a\u{a0}b.gpg")
+      result["status"].as_i.must_equal(-1)
+      result["dest"]?.must_be_nil
+      result["elapsed"]?.must_be_nil
+    ensure
+      File.delete(dest) if dest && File.exists?(dest)
+    end
+
+    it "reports Python's ascii-encode failure for a run of non-ASCII characters in the request target" do
+      dest = File.tempname("get-url-spec")
+
+      result = PluginSpecHelper.run("get_url", {"url" => "https://127.0.0.1:1/\u{4e2d}\u{6587}", "dest" => dest})
+
+      result["failed"].as_bool.must_equal(true)
+      result["msg"].as_s.must_equal("'ascii' codec can't encode characters in position 5-6: ordinal not in range(128)")
+      result["status"].as_i.must_equal(-1)
+      result["dest"]?.must_be_nil
+      result["elapsed"]?.must_be_nil
+    ensure
+      File.delete(dest) if dest && File.exists?(dest)
+    end
+
+    it "shows a printable non-ASCII character literally in the ascii-encode failure" do
+      dest = File.tempname("get-url-spec")
+
+      result = PluginSpecHelper.run("get_url", {"url" => "https://127.0.0.1:1/\u{4e2d}", "dest" => dest})
+
+      result["failed"].as_bool.must_equal(true)
+      result["msg"].as_s.must_equal("'ascii' codec can't encode character '\u{4e2d}' in position 5: ordinal not in range(128)")
+      result["status"].as_i.must_equal(-1)
+      result["dest"]?.must_be_nil
+      result["elapsed"]?.must_be_nil
+    ensure
+      File.delete(dest) if dest && File.exists?(dest)
+    end
+
     it "splits Python's URL typing the way urllib does (no RFC scheme required)" do
       # Python's own type split is `([^/:]+):` - everything up to the
       # first colon, so "127.0.0.1:80/x" types as "127.0.0.1" and gets
