@@ -49,6 +49,7 @@ Lint/NotNil:
   - test/unit/x509_csr_info_test.cr
   - test/unit/jinja_var_resolver_test.cr
   - test/unit/filetree_lookup_test.cr
+  - test/unit/crypto_time_spec_test.cr
   - krikri-playbook.cr
   - plugins/apt.cr
   - plugins/assemble.cr

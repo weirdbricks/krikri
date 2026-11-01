@@ -3,6 +3,7 @@
 require "json"
 require "../src/krikri/base_plugin"
 require "../src/krikri/plugin_helpers/ansible_arg_validation"
+require "../src/krikri/plugin_helpers/crypto_time_spec"
 require "../src/krikri/plugin_helpers/x509_cert_info"
 
 module Krikri
@@ -68,6 +69,18 @@ module Krikri
         raw = content || ""
       end
 
+      # The Ansible module resolves valid_at AFTER reading the file and
+      # selecting the backend but BEFORE parsing the certificate, so an
+      # invalid spec fails ahead of an unparseable one. Per key, in dict
+      # order (the module mutates module.params["valid_at"] in place, and
+      # every echo - success or plain-fail_json failure - shows the keys
+      # resolved so far): a non-string element fails with fail_json's
+      # plain msg; an invalid spec raises out of main() uncaught - the
+      # unhandled-exception shape ("Task failed: Module failed: ...",
+      # whose module output carries no invocation at all).
+      failure, parsed, resolved = resolve_valid_at
+      return failure if failure
+
       cert_pem = extract_pem(raw)
       if cert_pem.nil? && !raw.includes?("-----BEGIN CERTIFICATE-----")
         cert_pem = convert_der(raw, path)
@@ -81,7 +94,14 @@ module Krikri
       info.each do |key, value|
         res.extra[key] = value
       end
-      res.extra["valid_at"] = valid_at_result(info)
+      res.extra["valid_at"] = valid_at_result(info, resolved)
+      if parsed
+        # The echoed invocation.module_args ride the controller's argspec
+        # reconstruction (attach_invocation); this private marker hands it
+        # the resolved datetimes the booleans above were answered with,
+        # stripped again before register.
+        res.extra["_ansible_invocation_module_args"] = JSON::Any.new({"valid_at" => valid_at_echo(parsed, resolved)} of String => JSON::Any)
+      end
       res
     end
 
@@ -91,61 +111,95 @@ module Krikri
     # through _time.py get_relative_time_option first - a relative
     # +/- sshd_config(5) spec resolved against UTC now, or one of four
     # absolute shapes (the same set crypto_time_spec_valid? accepts).
-    # The parse regex is _time.py's convert_relative_to_datetime pattern
-    # with named groups (the shared RELATIVE_TIME_RE validator uses
-    # unnamed ones, so it can't hand the components over).
-    RELATIVE_SPEC_RE = /^[+-](?<weeks>\d+[wW])?(?<days>\d+[dD])?(?<hours>\d+[hH])?(?<minutes>\d+[mM])?(?<seconds>\d+[sS]?)?$/
-
-    private def valid_at_result(info : Hash(String, JSON::Any)) : JSON::Any
+    private def valid_at_result(info : Hash(String, JSON::Any), resolved : Hash(String, Time)) : JSON::Any
       probes = {} of String => JSON::Any
-      if raw = @params["valid_at"]?
-        if parsed = (JSON.parse(raw).as_h? rescue nil)
-          not_before = asn1_time(info["not_before"]?)
-          not_after = asn1_time(info["not_after"]?)
-          parsed.each do |key, entry|
-            point = resolve_time_point(entry.as_s)
-            if point && (nb = not_before) && (na = not_after)
-              probes[key] = JSON::Any.new(nb <= point <= na)
-            else
-              probes[key] = JSON::Any.new(false)
-            end
+      unless resolved.empty?
+        not_before = asn1_time(info["not_before"]?)
+        not_after = asn1_time(info["not_after"]?)
+        resolved.each do |key, point|
+          if (nb = not_before) && (na = not_after)
+            probes[key] = JSON::Any.new(nb <= point <= na)
+          else
+            probes[key] = JSON::Any.new(false)
           end
         end
       end
       JSON::Any.new(probes)
     end
 
-    private def resolve_time_point(spec : String) : Time?
-      if spec.starts_with?('+') || spec.starts_with?('-')
-        match = spec.match(RELATIVE_SPEC_RE)
-        return nil unless match
-        # Each named group keeps its unit suffix (Python's inner \d+
-        # group is the digits only); strip it before counting.
-        weeks = relative_component(match, "weeks")
-        days = relative_component(match, "days")
-        hours = relative_component(match, "hours")
-        minutes = relative_component(match, "minutes")
-        seconds = relative_component(match, "seconds")
-        offset = (weeks * 7 + days).days + hours.hours + minutes.minutes + seconds.seconds
-        spec[0] == '+' ? Time.utc + offset : Time.utc - offset
-      else
-        case spec.size
-        when 15 then parse_time(spec, "%Y%m%d%H%M%SZ")
-        when 13 then parse_time(spec, "%Y%m%d%H%MZ")
-        when 19 then parse_time(spec, "%Y%m%d%H%M%S%z")
-        when 17 then parse_time(spec, "%Y%m%d%H%M%z")
+    # The module's per-key valid_at loop, verbatim order: for each key
+    # the type check (plain fail_json - invocation still echoes the
+    # dict with every earlier key already resolved) then the resolution
+    # (an invalid spec raises out of main() uncaught). Each key's "now"
+    # is taken fresh, the way real's per-key get_relative_time_option
+    # call does - two keys resolve a couple of microseconds apart.
+    # Returns the failure result (nil on success), the raw parsed dict
+    # and the resolved points.
+    private def resolve_valid_at : {PluginResult?, Hash(String, JSON::Any)?, Hash(String, Time)}
+      resolved = {} of String => Time
+      raw = @params["valid_at"]?
+      return {nil, nil, resolved} unless raw
+      parsed = (JSON.parse(raw).as_h? rescue nil)
+      return {nil, nil, resolved} unless parsed
+      parsed.each do |key, entry|
+        unless entry.as_s?
+          result = failure_hash_type(key, entry)
+          # fail_json echoes module.params - the earlier keys already
+          # mutated in place, this one (and the never-reached ones) raw.
+          result.extra["_ansible_invocation_module_args"] = JSON::Any.new({"valid_at" => valid_at_echo(parsed, resolved)} of String => JSON::Any)
+          return {result, parsed, resolved}
         end
+        spec = entry.as_s
+        point = CryptoTimeSpec.resolve(spec)
+        unless point
+          # No echo marker here: the crash output carries no invocation.
+          return {module_crash_result(invalid_spec_detail(spec, key)), parsed, resolved}
+        end
+        resolved[key] = point
+      end
+      {nil, parsed, resolved}
+    end
+
+    # The echoed valid_at: every resolved key serialized the way real's
+    # module JSON encoder prints the mutated datetime (CryptoTimeSpec.echo),
+    # keyed in the task's own dict order; keys not resolved yet (a
+    # fail_json failure's not-yet-reached tail) echo their raw value.
+    private def valid_at_echo(parsed : Hash(String, JSON::Any), resolved : Hash(String, Time)) : JSON::Any
+      with_timezone = CryptoTimeSpec.with_timezone?
+      echo = JSON::Any.new({} of String => JSON::Any)
+      parsed.each do |key, entry|
+        point = resolved[key]?
+        echo.as_h[key] = point ? JSON::Any.new(CryptoTimeSpec.echo(point, with_timezone)) : entry
+      end
+      echo
+    end
+
+    # The two invalid-spec wordings differ by one word: the relative path
+    # raises 'The timespec "..." is invalid' (convert_relative_to_datetime
+    # returned nil - a lone "+" lands here too), the absolute path
+    # 'The time spec "..." is invalid' (no format matched).
+    private def invalid_spec_detail(spec : String, key : String) : String
+      if spec.starts_with?('+') || spec.starts_with?('-')
+        %(The timespec "#{spec}" for valid_at.#{key} is invalid)
+      else
+        %(The time spec "#{spec}" for valid_at.#{key} is invalid)
       end
     end
 
-    private def relative_component(match : Regex::MatchData, name : String) : Int32
-      (match[name]? || "0").rstrip("wWdDhHmMsS").to_i
+    # fail_json's own msg - no "Task failed: Module failed:" wrapper, the
+    # module output carries invocation (live-verified vs 2.19.11).
+    private def failure_hash_type(key : String, entry : JSON::Any) : PluginResult
+      failure("The value for valid_at.#{key} must be of type string (got #{CryptoTimeSpec.python_type_name(entry)})")
     end
 
-    private def parse_time(value : String, format : String) : Time?
-      Time.parse(value, format, Time::Location::UTC).to_utc
-    rescue Time::Format::Error
-      nil
+    # An unhandled module exception (the valid_at loop sits outside the
+    # module's try block): real renders it as "Task failed: Module
+    # failed: <detail>" with base_plugin's "exception": "(traceback
+    # unavailable)" bookkeeping - same shape assemble.cr/mount.cr use
+    # for their module crashes.
+    private def module_crash_result(detail : String) : PluginResult
+      PluginResult.new(changed: false, failed: true,
+        msg: "Task failed: Module failed: #{detail}", _ansible_error_detail: detail)
     end
 
     private def asn1_time(value : JSON::Any?) : Time?
@@ -159,8 +213,7 @@ module Krikri
     # required_one_of -> types -> choices -> mutually_exclusive ->
     # unsupported (deferred last). Types are str/path/dict here; the
     # dict-typed valid_at's elements each must be a string (a check the
-    # Ansible module runs right before parsing, failing with the same
-    # wording).
+    # module's own per-key loop runs, not AnsibleModule's spec pass).
     private def validate_arguments : PluginResult?
       if @params["path"]?.nil? && @params["content"]?.nil?
         return failure("one of the following is required: path, content")
@@ -181,32 +234,9 @@ module Krikri
         return failure("parameters are mutually exclusive: path|content")
       end
 
-      if error = validate_valid_at
-        return error
-      end
-
       unsupported = unsupported_param_keys(@params, SPEC)
       unless unsupported.empty?
         return unsupported_params_error("community.crypto.x509_certificate_info", unsupported, SPEC)
-      end
-      nil
-    end
-
-    private def validate_valid_at : PluginResult?
-      if raw = @params["valid_at"]?
-        if parsed = (JSON.parse(raw).as_h? rescue nil)
-          parsed.each do |key, entry|
-            unless entry.as_s?
-              return failure("The value for valid_at.#{key} must be of type string (got #{entry.class.to_s.split("::").last})")
-            end
-          end
-          parsed.each do |key, entry|
-            spec = entry.as_s?
-            if spec && !crypto_time_spec_valid?(spec)
-              return failure("The time spec \"#{spec}\" for valid_at.#{key} is invalid")
-            end
-          end
-        end
       end
       nil
     end
