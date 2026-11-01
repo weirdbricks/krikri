@@ -5632,6 +5632,12 @@ module Krikri
       mid = nil
       cause_stanza = nil
       if (m = inner.match(/\AError while evaluating conditional: '([A-Za-z_][A-Za-z0-9_]*)' is undefined\z/)) &&
+         # Real 2.19 only adds the third record when the missing name was
+         # reached THROUGH a var value; when the name appears as a whole
+         # identifier directly in the when: text (nodejs_version_short's
+         # `when: - nodejs_version == _nodejs_version_short`), ansible
+         # fails on that direct reference and keeps the two-record block.
+         !raw.match(/\b#{Regex.escape(m[1])}\b/) &&
          (origin = undef_chain_var_origin(task, m[1], reachable_from: raw))
         mid = "Error while evaluating conditional."
         cause_stanza = "'#{m[1]}' is undefined\n" +
