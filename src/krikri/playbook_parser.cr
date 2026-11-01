@@ -3007,7 +3007,10 @@ module Krikri
       # TaskExecutor's identical include_tasks: fix found in the same
       # round). YAML.parse returns a bare `nil` document for
       # comment-only content, not an empty array.
-      return [] of Task if imported_yaml.raw.nil?
+      if imported_yaml.raw.nil?
+        warn_empty_import(resolved_path)
+        return [] of Task
+      end
       raise "Imported tasks file must be a YAML list: #{resolved_path}" unless imported_yaml.as_a?
 
       # A `become:`/`become_user:` written directly on the import_tasks:
@@ -4980,6 +4983,12 @@ module Krikri
     # The warning is cosmetic - the last value still wins. Public because
     # role_loader warns the same way for the vars/task files it loads
     # through the same YamlSourceMap scan. *io* exists for tests.
+    # ansible-core's load_list_of_tasks warns (plain, uncolored) when a
+    # statically imported file parses to nothing, naming the resolved path.
+    def self.warn_empty_import(path : String, io : IO = STDERR) : Nil
+      io << "[WARNING]: file #{path} is empty and had no tasks to include\n"
+    end
+
     def self.warn_duplicate_map_keys(path : String, source_map : YamlSourceMap, io : IO = STDERR) : Nil
       return if source_map.duplicate_keys.empty?
       return unless File.file?(path)

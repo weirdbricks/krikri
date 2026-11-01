@@ -84,6 +84,12 @@ describe "Krikri::YamlSourceMap duplicate mapping keys (yaml_duplicate_key_test.
 end
 
 describe "Krikri::PlaybookParser.warn_duplicate_map_keys rendering (yaml_duplicate_key_test.cr)" do
+  it "warns like ansible when an imported tasks file is empty" do
+    io = IO::Memory.new
+    Krikri::PlaybookParser.warn_empty_import("/r/tasks/config.yml", io)
+    io.to_s.must_equal "[WARNING]: file /r/tasks/config.yml is empty and had no tasks to include\n"
+  end
+
   it "renders ansible's load-time warning block for a real file" do
     work = PluginSpecHelper.tmp_path("yaml-dup-keys")
     path = File.join(work, "dup.yml")
