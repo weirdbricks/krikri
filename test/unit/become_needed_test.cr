@@ -89,5 +89,76 @@ describe "Krikri::PluginManager (become_needed_test.cr)" do
       target = Krikri::PluginManager.remote_plugin_target("copy", true, "root; rm -rf /", "deploy")
       target.must_include("sudo -H -n -u 'root; rm -rf /' --")
     end
+
+    it "uses sudo -i when become_flags ask for a login shell" do
+      # Ansible's sudo become plugin appends the task's become_flags to
+      # its own fixed argument set, so `become_flags: --login` runs
+      # `sudo --login`: the become user's login profile is sourced before
+      # the command, which is where a profile-built PATH (a venv bin dir)
+      # comes from (issue #716: `shell: nautobot-server migrate` with
+      # `become_flags: --login` resolved the command there, rc 127
+      # "command not found" without it).
+      target = Krikri::PluginManager.remote_plugin_target("copy", true, "appuser", "root", nil, "--login")
+      target.must_equal("sudo -i -n -u appuser -- #{Krikri::PluginManager.remote_plugin_dir(nil)}/copy")
+    end
+
+    it "accepts -i as the login-shell token too" do
+      target = Krikri::PluginManager.remote_plugin_target("copy", true, "appuser", "root", nil, "-i")
+      target.must_include("sudo -i -n -u appuser --")
+    end
+
+    it "keeps plain -H when the flags carry no login token" do
+      # Other become_flags (e.g. sudo options we do not model) must not
+      # flip the invocation away from the historical -H shape.
+      target = Krikri::PluginManager.remote_plugin_target("copy", true, "appuser", "root", nil, "-n --setenv FOO=bar")
+      target.must_equal("sudo -H -n -u appuser -- #{Krikri::PluginManager.remote_plugin_dir(nil)}/copy")
+    end
+
+    it "keeps the password wrapper's shape but swaps -H for -i on login flags" do
+      wrapper = Krikri::PluginManager.sudo_password_become_wrapper("/tmp/copy", "appuser", "s3cret", "--login")
+      wrapper.must_include("sudo -i -n -u appuser -- /tmp/copy")
+      wrapper.must_include("sudo -i -S -p '' -u appuser -- /tmp/copy")
+      wrapper.must_include("sudo -n -u appuser -- true")
+    end
+  end
+
+  describe ".local_sudo_argv (login become_flags)" do
+    it "swaps -H for -i when the flags ask for a login shell" do
+      Krikri::PluginManager.local_sudo_argv("appuser", "/tmp/copy", false, "--login")
+        .must_equal(["-i", "-n", "-u", "appuser", "--", "/tmp/copy"])
+      Krikri::PluginManager.local_sudo_argv("appuser", "/tmp/copy", true, "--login")
+        .must_equal(["-i", "-S", "-p", "", "-u", "appuser", "--", "/tmp/copy"])
+    end
+
+    it "keeps the historical -H argv without login flags" do
+      Krikri::PluginManager.local_sudo_argv("appuser", "/tmp/copy", false, nil)
+        .must_equal(["-H", "-n", "-u", "appuser", "--", "/tmp/copy"])
+    end
+  end
+
+  describe ".daemon_eligible? (login become_flags)" do
+    it "refuses the daemon for a login-shell escalation" do
+      # The daemon spawns once under plain `sudo -n -u <user>` and never
+      # sees the task's become_flags, so a login-shell escalation has to
+      # take the one-shot path whose sudo wrapper carries -i.
+      Krikri::PluginManager.daemon_eligible?("copy", true, "--login").must_equal(false)
+      Krikri::PluginManager.daemon_eligible?("copy", true, "-i").must_equal(false)
+    end
+
+    it "stays eligible without login flags" do
+      Krikri::PluginManager.daemon_eligible?("copy", true, nil).must_equal(true)
+      Krikri::PluginManager.daemon_eligible?("copy", true, "-n").must_equal(true)
+    end
+  end
+
+  describe ".become_login_shell?" do
+    it "matches whole tokens only, in any position" do
+      Krikri::PluginManager.become_login_shell?("--login").must_equal(true)
+      Krikri::PluginManager.become_login_shell?("-H -S -n --login").must_equal(true)
+      Krikri::PluginManager.become_login_shell?("-i").must_equal(true)
+      Krikri::PluginManager.become_login_shell?("--loglevel=debug").must_equal(false)
+      Krikri::PluginManager.become_login_shell?(nil).must_equal(false)
+      Krikri::PluginManager.become_login_shell?("").must_equal(false)
+    end
   end
 end

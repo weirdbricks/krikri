@@ -973,6 +973,15 @@ module Krikri
         end
         return result
       end
+      substituted_become_flags = begin
+        resolve_task_become_flags(handler, host, vars_context, substitutor)
+      rescue ex : UndefinedVariableError
+        result = keyword_failure_json(ex, handler)
+        if register_name = handler.register
+          register_result(host, register_name, result) unless register_name.empty?
+        end
+        return result
+      end
 
       # Same keyword-first ordering as execute_task_once (issue #465):
       # a templated become: renders before any module arg is finalized.
@@ -1208,7 +1217,7 @@ module Krikri
         return keyword_failure_json(ex, handler)
       end
 
-      config = build_plugin_config(handler, host, substituted_params, wire_vars, substituted_become_user, substituted_env, become_flag: become)
+      config = build_plugin_config(handler, host, substituted_params, wire_vars, substituted_become_user, substituted_env, become_flag: become, become_flags: substituted_become_flags)
 
       become_user = nil
 
@@ -1237,7 +1246,8 @@ module Krikri
         vars_context,
         become,
         become_user,
-        dispatch_timeout
+        dispatch_timeout,
+        substituted_become_flags
       )
 
       if period = marker_task_timeout(result)

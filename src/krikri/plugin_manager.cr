@@ -411,9 +411,28 @@ module Krikri
     # SSHManager's own daemon table.
     DAEMON_INELIGIBLE_PLUGINS = Set(String).new
 
-    def self.daemon_eligible?(plugin_name : String, become : Bool) : Bool
+    def self.daemon_eligible?(plugin_name : String, become : Bool, become_flags : String? = nil) : Bool
       _ = become
+      # A login-shell escalation (`become_flags: --login`) must run through
+      # the per-step sudo wrapper that honours the flags - a daemon spawns
+      # once under plain `sudo -n -u <user>` and would run every later
+      # dispatch WITHOUT the login profile that become_flags asked for
+      # (issue #716: the become user's ~/.bash_profile builds the PATH a
+      # venv-installed command needs).
+      return false if become_login_shell?(become_flags)
       !DAEMON_INELIGIBLE_PLUGINS.includes?(simple_plugin_name(plugin_name))
+    end
+
+    # Whether a task's resolved become_flags ask sudo for a login shell
+    # (`--login` or `-i` as a whole token, Ansible's sudo plugin passes
+    # the flags through verbatim, so token position doesn't matter).
+    # Under -i sudo runs `$SHELL -c <command>` after sourcing the become
+    # user's login profile, so PATH (venv bin dirs etc.) comes from that
+    # profile exactly as it does under ansible-playbook.
+    def self.become_login_shell?(become_flags : String?) : Bool
+      return false unless become_flags
+      tokens = become_flags.split
+      tokens.includes?("--login") || tokens.includes?("-i")
     end
 
     # Pre-upload all plugins needed for a playbook to all remote hosts
@@ -1243,10 +1262,11 @@ module Krikri
       become : Bool,
       become_user : String?,
       task_timeout : Int64? = nil,
+      become_flags : String? = nil,
     ) : JSON::Any
       if remote_execution?(plugin_name, host, vars)
         apply_task_end_remote_cleanup(
-          execute_remote_plugin(plugin_name, config, host, vars, become, become_user, task_timeout),
+          execute_remote_plugin(plugin_name, config, host, vars, become, become_user, task_timeout, become_flags),
           host, vars
         )
       elsif controller_only?(plugin_name)
@@ -1266,7 +1286,7 @@ module Krikri
         # configured for itself - unrelated to the actual remote target).
         execute_local_plugin(plugin_name, config, host, false, nil, nil, task_timeout)
       else
-        execute_local_plugin(plugin_name, config, host, become, become_user, Passwords.become(vars, host), task_timeout)
+        execute_local_plugin(plugin_name, config, host, become, become_user, Passwords.become(vars, host), task_timeout, become_flags)
       end
     end
 
@@ -1282,14 +1302,15 @@ module Krikri
     ) : JSON::Any
       become, become_user, become_error = resolve_become(config)
       return become_error if become_error
+      become_flags = config["become_flags"]?.try(&.as_s?)
 
       if remote_execution?(plugin_name, host, vars)
-        execute_remote_plugin(plugin_name, with_local_connection(config), host, vars, become, become_user)
+        execute_remote_plugin(plugin_name, with_local_connection(config), host, vars, become, become_user, nil, become_flags)
       elsif controller_only?(plugin_name)
         # See the other execute_plugin overload's own comment.
         execute_local_plugin(plugin_name, config.to_json, host, false, nil)
       else
-        execute_local_plugin(plugin_name, config.to_json, host, become, become_user, Passwords.become(vars, host))
+        execute_local_plugin(plugin_name, config.to_json, host, become, become_user, Passwords.become(vars, host), nil, become_flags)
       end
     end
 
@@ -1307,7 +1328,7 @@ module Krikri
     end
 
     # Execute plugin locally
-    private def self.execute_local_plugin(plugin_name : String, config : String, host : Host, become : Bool, become_user : String?, become_password : String? = nil, task_timeout : Int64? = nil) : JSON::Any
+    private def self.execute_local_plugin(plugin_name : String, config : String, host : Host, become : Bool, become_user : String?, become_password : String? = nil, task_timeout : Int64? = nil, become_flags : String? = nil) : JSON::Any
       # The local persistent daemon (the ansible_connection=local analogue
       # of the ssh daemon - see LocalPluginDaemon's own header) is tried
       # first when enabled and eligible; on any failure that means the
@@ -1319,11 +1340,11 @@ module Krikri
       # nested measure in the same "transport" group is not recorded at
       # all (see TimingProfile.measure's group rule), and the daemon round
       # trip is its own transport bucket the way the ssh daemon's is.
-      if result = try_local_daemon(plugin_name, config, host, become, become_user, become_password, task_timeout)
+      if result = try_local_daemon(plugin_name, config, host, become, become_user, become_password, task_timeout, become_flags)
         return result
       end
       TimingProfile.measure("transport.local_exec", "transport") do
-        execute_local_plugin_impl(plugin_name, config, become, become_user, become_password, task_timeout)
+        execute_local_plugin_impl(plugin_name, config, become, become_user, become_password, task_timeout, become_flags)
       end
     end
 
@@ -1341,7 +1362,7 @@ module Krikri
     # mode; a daemon attempt on one would fail three times, trip the
     # breaker and never fall back transparently, so it is skipped up front
     # instead.
-    private def self.try_local_daemon(plugin_name : String, config : String, host : Host, become : Bool, become_user : String?, become_password : String?, task_timeout : Int64? = nil) : JSON::Any?
+    private def self.try_local_daemon(plugin_name : String, config : String, host : Host, become : Bool, become_user : String?, become_password : String?, task_timeout : Int64? = nil, become_flags : String? = nil) : JSON::Any?
       return nil unless @@daemon_enabled
       # A `timeout:` task's deadline kill needs a process it owns - a
       # plugin running INSIDE the resident daemon process cannot be
@@ -1352,7 +1373,7 @@ module Krikri
       # treatment as the ssh daemon's gate in
       # #execute_remote_plugin_transport.
       return nil if task_timeout && task_timeout > 0
-      return nil unless daemon_eligible?(plugin_name, become)
+      return nil unless daemon_eligible?(plugin_name, become, become_flags)
 
       plugin_path = get_local_plugin_path(plugin_name)
       return nil unless local_daemon_capable?(plugin_path)
@@ -1442,10 +1463,23 @@ module Krikri
     # argv. NOOPASSWD keeps the historical `sudo -n` with an untouched
     # stdin, so -K with passwordless sudo behaves exactly as before.
     # Public as a spec seam: pinned directly in the unit tests.
-    def self.local_sudo_argv(sudo_user : String, plugin_path : String, interactive : Bool) : Array(String)
+    # *become_flags* is the task's resolved `become_flags:` keyword (or
+    # `ansible_become_flags` var): when it asks for a login shell
+    # (`--login`/`-i`), `-i` replaces `-H` - sudo then sources the become
+    # user's login profile before exec'ing the plugin, which is where a
+    # PATH pointing at a venv's bin dir comes from under ansible-playbook
+    # (issue #716: `shell: nautobot-server migrate` with
+    # `become_flags: --login` found the command there; plain `sudo -H`
+    # kept root's PATH and died with rc 127 "command not found").
+    # Public as a spec seam: pinned directly in the unit tests.
+    def self.local_sudo_argv(sudo_user : String, plugin_path : String, interactive : Bool, become_flags : String? = nil) : Array(String)
       # -H mirrors ansible's sudo become (HOME = become user's), so
       # ~/.ansible/tmp and its warning behave as ansible's (issue #536).
-      interactive ? ["-H", "-S", "-p", "", "-u", sudo_user, "--", plugin_path] : ["-H", "-n", "-u", sudo_user, "--", plugin_path]
+      # -i (login shell) goes further: it also reads the become user's
+      # login profile, which ansible's sudo plugin reaches when the
+      # task's become_flags include --login/-i (issue #716).
+      home_flag = become_login_shell?(become_flags) ? "-i" : "-H"
+      interactive ? [home_flag, "-S", "-p", "", "-u", sudo_user, "--", plugin_path] : [home_flag, "-n", "-u", sudo_user, "--", plugin_path]
     end
 
     # What goes into the local plugin process's stdin: the config, or
@@ -1599,7 +1633,7 @@ module Krikri
       r[:exit_code] == 0
     end
 
-    private def self.execute_local_plugin_impl(plugin_name : String, config : String, become : Bool, become_user : String?, become_password : String? = nil, task_timeout : Int64? = nil) : JSON::Any
+    private def self.execute_local_plugin_impl(plugin_name : String, config : String, become : Bool, become_user : String?, become_password : String? = nil, task_timeout : Int64? = nil, become_flags : String? = nil) : JSON::Any
       plugin_path = get_local_plugin_path(plugin_name)
       plugin_path = staged_local_plugin_path(plugin_name, plugin_path) if become && become_user
 
@@ -1631,7 +1665,7 @@ module Krikri
                       # it always had.
                       Process.new(
                         "setsid",
-                        ["--", "sudo"] + local_sudo_argv(sudo_user, plugin_path, interactive),
+                        ["--", "sudo"] + local_sudo_argv(sudo_user, plugin_path, interactive, become_flags),
                         input: Process::Redirect::Pipe,
                         output: stdout,
                         error: stderr
@@ -1643,7 +1677,7 @@ module Krikri
                       # the remote/SSH path below, where it does.
                       Process.new(
                         "sudo",
-                        local_sudo_argv(sudo_user, plugin_path, interactive),
+                        local_sudo_argv(sudo_user, plugin_path, interactive, become_flags),
                         input: Process::Redirect::Pipe,
                         output: stdout,
                         error: stderr
@@ -1808,8 +1842,9 @@ module Krikri
       become : Bool,
       become_user : String?,
       task_timeout : Int64? = nil,
+      become_flags : String? = nil,
     ) : JSON::Any
-      normalize_module_result(execute_remote_plugin_transport(plugin_name, config, host, vars, become, become_user, task_timeout))
+      normalize_module_result(execute_remote_plugin_transport(plugin_name, config, host, vars, become, become_user, task_timeout, become_flags))
     rescue ex : PluginArchUnsupportedError
       # One clean failed task carrying the actionable arch message (see
       # PluginArchUnsupportedError's own comment) - not an unreachable,
@@ -1967,6 +2002,7 @@ module Krikri
       become : Bool,
       become_user : String?,
       task_timeout : Int64? = nil,
+      become_flags : String? = nil,
     ) : JSON::Any
       # The task's EFFECTIVE connection settings: a task-level (or block/
       # play-level) connection var changes the actual ssh target/user/
@@ -2038,7 +2074,7 @@ module Krikri
       # A `timeout:` task bypasses the daemon (its in-flight module cannot
       # be killed without killing the daemon, and a dispatched-or-not
       # classification would be lost) - same gate as the local daemon's.
-      if @@daemon_enabled && task_timeout.nil? && daemon_eligible?(plugin_name, become) &&
+      if @@daemon_enabled && task_timeout.nil? && daemon_eligible?(plugin_name, become, become_flags) &&
          !SSHManager.daemon_unavailable?(connection_host, conn.user, conn.port, daemon_user,
            SSHManager.connection_sig(conn.identity_file, extra_args, conn.password))
         begin
@@ -2068,7 +2104,7 @@ module Krikri
         end
       end
 
-      target = remote_plugin_target(plugin_name, become, become_user, conn.user, Passwords.become(vars, host))
+      target = remote_plugin_target(plugin_name, become, become_user, conn.user, Passwords.become(vars, host), become_flags)
 
       # Execute plugin remotely with config via stdin.
       #
@@ -2360,7 +2396,7 @@ module Krikri
       Shell.single_quote(str)
     end
 
-    def self.remote_plugin_target(plugin_name : String, become : Bool, become_user : String?, remote_user : String? = nil, become_password : String? = nil) : String
+    def self.remote_plugin_target(plugin_name : String, become : Bool, become_user : String?, remote_user : String? = nil, become_password : String? = nil, become_flags : String? = nil) : String
       simple_name = simple_plugin_name(plugin_name)
       remote_plugin_path = "#{remote_plugin_dir(remote_user)}/#{simple_name}"
       return remote_plugin_path unless become_needed?(become, become_user, remote_user)
@@ -2368,8 +2404,14 @@ module Krikri
       # user's), so ~/.ansible/tmp resolves like ansible's and its
       # unusable-tempdir warning reproduces (issue #536; the daemon path
       # already did this in ssh_manager since issue #629).
-      return "sudo -H -n -u #{Shell.quote_arg(become_user.to_s)} -- #{remote_plugin_path}" unless become_password
-      sudo_password_become_wrapper(remote_plugin_path, become_user.to_s, become_password)
+      # -i (login shell) when the task's become_flags ask for one
+      # (ansible's sudo plugin appends become_flags to its fixed
+      # argument set): the login profile the become user's shell then
+      # reads is where a profile-built PATH (venv bin dirs) comes from
+      # (issue #716).
+      home_flag = become_login_shell?(become_flags) ? "-i" : "-H"
+      return "sudo #{home_flag} -n -u #{Shell.quote_arg(become_user.to_s)} -- #{remote_plugin_path}" unless become_password
+      sudo_password_become_wrapper(remote_plugin_path, become_user.to_s, become_password, become_flags)
     end
 
     # The become-password variant of the `sudo -H -n -u <user> -- <path>`
@@ -2414,15 +2456,19 @@ module Krikri
     # CPython ignores EPIPE on the stdin write, so silencing the feeder
     # matches real output instead of masking a divergence (same rationale
     # as java_cert_command's stdin feeder). sudo's own stderr still flows.
-    def self.sudo_password_become_wrapper(plugin_path : String, become_user : String, become_password : String) : String
+    def self.sudo_password_become_wrapper(plugin_path : String, become_user : String, become_password : String, become_flags : String? = nil) : String
       q_user = Shell.quote_arg(become_user)
       # -H (HOME = the become user's) matches ansible's sudo become
       # plugin, so ~/.ansible/tmp and its warning behave as ansible's
       # (issue #536) - same reason as ssh_manager's daemon command.
+      # -i (login shell) when the task's become_flags ask for one: the
+      # become user's login profile is where a profile-built PATH comes
+      # from under ansible-playbook (issue #716).
+      home_flag = become_login_shell?(become_flags) ? "-i" : "-H"
       "if sudo -n -u #{q_user} -- true 2>/dev/null; " \
-      "then sudo -H -n -u #{q_user} -- #{plugin_path}; " \
+      "then sudo #{home_flag} -n -u #{q_user} -- #{plugin_path}; " \
       "else { printf '%s\\n' #{Shell.single_quote(become_password)} 2>/dev/null; cat 2>/dev/null; } | " \
-      "sudo -H -S -p '' -u #{q_user} -- #{plugin_path}; fi"
+      "sudo #{home_flag} -S -p '' -u #{q_user} -- #{plugin_path}; fi"
     end
 
     # `ANSIBLE_BECOME_ALLOW_SAME_USER` - Ansible's own config knob,

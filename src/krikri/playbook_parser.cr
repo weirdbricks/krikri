@@ -288,6 +288,10 @@ module Krikri
     # host/role vars are available - parse time never has that context.
     property become_expr : String?
     property become_user : String?
+    # Raw `become_flags:` keyword text (Ansible appends it to the sudo
+    # become plugin's fixed argument set); templating happens at execution
+    # time, like become_user's.
+    property become_flags : String?
     property tags : Array(String)
     # Context tags this task carries from OUTSIDE itself - the play's own
     # tags, every enclosing block's tags, a roles:/import_ * invocation's
@@ -744,6 +748,7 @@ module Krikri
     # where ansible-playbook succeeded.
     property include_apply_become : Bool?
     property include_apply_become_user : String?
+    property include_apply_become_flags : String?
     property include_apply_check_mode : Bool?
     property include_apply_check_mode_expr : String?
     property include_apply_vars : Hash(String, JSON::Any)?
@@ -995,6 +1000,7 @@ module Krikri
     property vars : Hash(String, JSON::Any)
     property? become : Bool
     property become_user : String?
+    property become_flags : String?
     property? gather_facts : Bool
     # Whether the play actually wrote a `gather_facts:` key, as opposed to
     # defaulting to true. Only --gathering explicit needs the distinction:
@@ -2403,6 +2409,7 @@ module Krikri
       # Parse play-level settings
       play.become = parse_become_value(yaml["become"]?) || false
       play.become_user = yaml["become_user"]?.try(&.as_s)
+      play.become_flags = yaml["become_flags"]?.try(&.as_s)
       gather_facts_yaml = yaml["gather_facts"]?
       gather_facts_parsed = parse_become_value(gather_facts_yaml)
       play.gather_facts = gather_facts_parsed.nil? ? true : gather_facts_parsed
@@ -3033,8 +3040,10 @@ module Krikri
       # (real network installer + keyserver timeouts, ~250s vs ~5s).
       saved_become = play.become?
       saved_become_user = play.become_user
+      saved_become_flags = play.become_flags
       play.become = resolve_become(hash, play)
       play.become_user = hash["become_user"]?.try { |v| safe_yaml_to_string(v) } || play.become_user
+      play.become_flags = hash["become_flags"]?.try { |v| safe_yaml_to_string(v) } || play.become_flags
       # ensure-restore, not fall-through-restore: if the child parse
       # raises (a parse error, or a nested import), the play's become
       # must still be restored - a clobbered play.become would silently
@@ -3045,6 +3054,7 @@ module Krikri
       ensure
         play.become = saved_become
         play.become_user = saved_become_user
+        play.become_flags = saved_become_flags
       end
 
       import_when = hash["when"]?.try { |v| condition_to_string(v) }
@@ -4196,6 +4206,7 @@ module Krikri
       task.become = resolve_become(task_hash, play)
       task.become_expr = become_expr(task_hash)
       task.become_user = task_hash["become_user"]?.try { |v| safe_yaml_to_string(v) } || play.become_user
+      task.become_flags = task_hash["become_flags"]?.try { |v| safe_yaml_to_string(v) } || play.become_flags
 
       # Parse environment: - Ansible's per-task env-var-setting
       # keyword, used throughout konstruktoid-hardening (PATH overrides
@@ -5826,8 +5837,10 @@ module Krikri
       # not exist" regardless of the real per-user unit's presence.
       saved_become = play.become?
       saved_become_user = play.become_user
+      saved_become_flags = play.become_flags
       play.become = resolve_become(task_hash, play)
       play.become_user = task_hash["become_user"]?.try { |v| safe_yaml_to_string(v) } || play.become_user
+      play.become_flags = task_hash["become_flags"]?.try { |v| safe_yaml_to_string(v) } || play.become_flags
 
       # Same ambient-inheritance pattern as become: above, for the
       # block's own check_mode: (Ansible's precedence task > block
@@ -5894,6 +5907,7 @@ module Krikri
       ensure
         play.become = saved_become
         play.become_user = saved_become_user
+        play.become_flags = saved_become_flags
         play.check_mode = saved_check_mode
         play.check_mode_expr = saved_check_mode_expr
         play.task_timeout = saved_task_timeout
@@ -5963,6 +5977,7 @@ module Krikri
       task.become = resolve_become(task_hash, play)
       task.become_expr = become_expr(task_hash)
       task.become_user = task_hash["become_user"]?.try { |v| safe_yaml_to_string(v) } || play.become_user
+      task.become_flags = task_hash["become_flags"]?.try { |v| safe_yaml_to_string(v) } || play.become_flags
 
       # A block's own `vars:` is inherited by every task nested inside it
       # (Ansible scoping) - was never parsed at all here, so it
@@ -6203,6 +6218,7 @@ module Krikri
         task.include_apply_become = given
       end
       task.include_apply_become_user = args["become_user"]?.try { |v| safe_yaml_to_string(v) }
+      task.include_apply_become_flags = args["become_flags"]?.try { |v| safe_yaml_to_string(v) }
       task.include_apply_check_mode = parse_optional_bool_or_template(args["check_mode"]?)
       task.include_apply_check_mode_expr = template_expression(args["check_mode"]?)
       if vars_yaml = args["vars"]?.try(&.as_h?)
@@ -6230,6 +6246,7 @@ module Krikri
       task.become = resolve_become(task_hash, play)
       task.become_expr = become_expr(task_hash)
       task.become_user = task_hash["become_user"]?.try { |v| safe_yaml_to_string(v) } || play.become_user
+      task.become_flags = task_hash["become_flags"]?.try { |v| safe_yaml_to_string(v) } || play.become_flags
 
       if vars_yaml = task_hash["vars"]?.try(&.as_h?)
         vars = Hash(String, JSON::Any).new
@@ -6527,6 +6544,7 @@ module Krikri
       task.become = resolve_become(task_hash, play)
       task.become_expr = become_expr(task_hash)
       task.become_user = task_hash["become_user"]?.try { |v| safe_yaml_to_string(v) } || play.become_user
+      task.become_flags = task_hash["become_flags"]?.try { |v| safe_yaml_to_string(v) } || play.become_flags
 
       if template_loop = find_loop_template(task_hash)
         task.loop_template_kind = template_loop[0]
