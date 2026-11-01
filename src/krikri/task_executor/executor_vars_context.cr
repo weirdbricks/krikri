@@ -5215,7 +5215,39 @@ module Krikri
         vars = build_vars_context(task, h)
         name = raw
         10.times do
-          value = vars[name]?.try(&.raw)
+          # A set_fact's stored context value is already rendered, so a
+          # chain rooted at a set_fact (`repo_url: "{{ __repo_url }}"`)
+          # never followed past it through the context value alone -
+          # and real 2.19's lineage for such a value still names the
+          # INNERMOST source, the line the template finally reads
+          # (issue #508: `repo_url | default(false)` behind one set_fact
+          # was labeled with the set_fact value token where real points
+          # at the vars file's own `__repo_url` line). When the current
+          # var's winning origin is its recorded set_fact one, read the
+          # value token's own source text instead: a token that is a
+          # single-variable template continues the chain, anything else
+          # keeps the set_fact origin (an inner var with no origin does
+          # the same). Identity comparison, not value equality: only the
+          # recorded set_fact entry proves the value really came from
+          # the set_fact task, not from a higher-precedence layer
+          # shadowing the same name.
+          sf_origin = @set_fact_origins[h.name]?.try(&.[name]?)
+          set_fact_token : String? = nil
+          if sf_origin.is_a?(FileVarOrigin) && sf_origin.column > 0 &&
+             origin.is_a?(FileVarOrigin) && origin.same?(sf_origin) &&
+             File.file?(sf_origin.path) &&
+             (line_text = File.read_lines(sf_origin.path)[sf_origin.line - 1]?) &&
+             sf_origin.column - 1 < line_text.size
+            token = line_text[sf_origin.column - 1..].strip
+            # a trailing comment is not part of the value token
+            token = token.sub(/\s+#.*\z/, "")
+            # a quoted scalar keeps its quoting out of the template check
+            if token.size >= 2 && (token[0] == '"' || token[0] == '\'') && token[-1] == token[0]
+              token = token[1..-2]
+            end
+            set_fact_token = token
+          end
+          value = set_fact_token || vars[name]?.try(&.raw)
           break unless value.is_a?(String)
           m = value.match(/\A\s*\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?:\|\s*default\([^)]*\)\s*)?\}\}\s*\z/)
           break if m.nil?
