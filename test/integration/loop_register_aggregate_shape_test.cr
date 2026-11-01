@@ -85,45 +85,58 @@ describe "stat loop-item register key order" do
   end
 end
 
-# Real's module-side _return_formatted adds `invocation` BEFORE deriving
-# stdout_lines/stderr_lines (live capture, issue #672 zorlin.rust
-# round29884741: the registered shell loop item reads .../msg/invocation/
-# stdout_lines/stderr_lines/failed), and a free-form command arrives as
-# Ansible's OWN supplied arg `_raw_params` (sorted first in module_args)
-# while `cmd` stays a never-supplied null default - krikri's params carry
-# the command as `cmd`, so both key SLOTS must swap, not just the values.
-describe "shell loop-item register key order" do
-  it "reads msg/invocation/stdout_lines/stderr_lines/failed like real's loop item" do
+# Real appends `invocation` at the END of the module's own dict, ahead of the
+# stdout_lines/stderr_lines the command/shell action plugin derives afterwards
+# (live-verified 2.19.11 on the success, non-zero-rc, creates-skipped and
+# check-skipped item shapes). A free-form `shell:`/`command:` also reaches the
+# module with its argument folded into `_raw_params`, so `_raw_params` - not
+# `cmd` - is the single SUPPLIED option and leads `invocation.module_args`,
+# while `cmd` falls back into its declaration-order slot among the null
+# defaults (zzet.rbenv's nested loop over registered shell results, #673).
+describe "command/shell loop-item register key order" do
+  it "places invocation after msg and folds the free-form arg into _raw_params" do
     code, output = run_play(<<-YAML)
       - hosts: all
         gather_facts: false
         tasks:
-          - ansible.builtin.shell: "echo hi | cat"
-            loop: [one]
-            register: r
+          - ansible.builtin.shell: $0 -lc true
+            loop: [a, b]
+            register: rr
             changed_when: false
           - ansible.builtin.debug:
-              msg: "KEYS|{{ r.results[0] | dict2items | map(attribute='key') | join(',') }}"
+              msg: "KEYS|{{ rr.results[0] | dict2items | map(attribute='key') | join(',') }}"
+          - ansible.builtin.debug:
+              msg: "ARGS|{{ rr.results[0].invocation.module_args | dict2items | map(attribute='key') | join(',') }}"
+          - ansible.builtin.debug:
+              msg: "RP|{{ rr.results[0].invocation.module_args._raw_params }}|CMD|{{ rr.results[0].invocation.module_args.cmd }}"
       YAML
 
     code.must_equal(0)
     output.must_include("KEYS|changed,stdout,stderr,rc,cmd,start,end,delta,msg,invocation,stdout_lines,stderr_lines,failed")
+    output.must_include("ARGS|_raw_params,_uses_shell,expand_argument_vars,stdin_add_newline,strip_empty_ends,cmd,argv,chdir,executable,creates,removes,stdin")
+    output.must_include("RP|$0 -lc true|CMD|")
   end
 
-  it "orders module_args with _raw_params supplied-first and cmd among the nulls" do
+  # The keyed form is the opposite fold: `cmd` IS the supplied option, so it
+  # leads module_args and `_raw_params` stays null in its declaration slot.
+  it "keeps cmd as the supplied option for a keyed shell: task" do
     code, output = run_play(<<-YAML)
       - hosts: all
         gather_facts: false
         tasks:
-          - ansible.builtin.shell: "echo hi | cat"
-            loop: [one]
-            register: r
+          - ansible.builtin.shell:
+              cmd: $0 -lc true
+            loop: [a]
+            register: rr
             changed_when: false
           - ansible.builtin.debug:
-              msg: "ARGS|{{ r.results[0].invocation.module_args | dict2items | map(attribute='key') | join(',') }}"
+              msg: "KEYS|{{ rr.results[0] | dict2items | map(attribute='key') | join(',') }}"
+          - ansible.builtin.debug:
+              msg: "ARGS|{{ rr.results[0].invocation.module_args | dict2items | map(attribute='key') | join(',') }}"
       YAML
 
     code.must_equal(0)
-    output.must_include("ARGS|_raw_params,_uses_shell,expand_argument_vars,stdin_add_newline,strip_empty_ends,cmd,argv,chdir,executable,creates,removes,stdin")
+    output.must_include("KEYS|changed,stdout,stderr,rc,cmd,start,end,delta,msg,invocation,stdout_lines,stderr_lines,failed")
+    output.must_include("ARGS|cmd,_uses_shell,expand_argument_vars,stdin_add_newline,strip_empty_ends,_raw_params,argv,chdir,executable,creates,removes,stdin")
   end
 end

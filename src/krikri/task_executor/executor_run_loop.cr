@@ -3264,52 +3264,44 @@ module Krikri
       # source). krikri spells the crash shape with the controller's
       # "Task failed: Module failed: " msg prefix.
       return result if hash["msg"]?.try(&.as_s?).try(&.starts_with?("Task failed: Module failed: "))
-      args = ArgspecValidator.invocation_args(spec_name, params) || return result
+      commandish = short == "command" || short == "shell"
+      spec_params = params
+      # A free-form command/shell hands its argument to the module as
+      # `_raw_params`: the action plugin folds `cmd:` into it before the module
+      # ever runs, so `_raw_params` is the SUPPLIED option and `cmd` an
+      # unsupplied null. Folding the PARAM (rather than the already-built args)
+      # is what puts both in real's slots - supplied args sort alphabetically,
+      # so `_raw_params` leads and `cmd` drops back to its declaration-order
+      # place among the nulls (zzet.rbenv's loop-registered shell item, #673).
+      if commandish && free_form_raw_command?(task) && (raw = params["cmd"]?) && !params.has_key?("_raw_params")
+        folded = params.reject { |key, _| key == "cmd" }
+        folded["_raw_params"] = raw
+        spec_params = folded
+      end
+      args = ArgspecValidator.invocation_args(spec_name, spec_params) || return result
       if echo_override
         echo_override.each { |key, value| args[key] = value }
       end
       args["_uses_shell"] = JSON::Any.new(true) if short == "shell"
-      if free_form_raw_command?(task) && (cmd_val = args["cmd"]?) && cmd_val.raw.is_a?(String)
-        # Ansible's controller sends a free-form command as `_raw_params`
-        # (the caller's own supplied arg, so it sorts into the invocation's
-        # first slot) and never supplies `cmd` (a null-default arg, sitting
-        # in the declaration-order nulls). The engine's task params carry
-        # the command as `cmd`, so the two keys must swap SLOTS as well as
-        # values - swapping values alone leaves cmd leading the dump and
-        # _raw_params among the nulls (issue #672, zorlin.rust's registered
-        # shell loop item).
-        if args.has_key?("_raw_params")
-          swapped = Hash(String, JSON::Any).new
-          args.each do |key, value|
-            case key
-            when "cmd"
-              swapped["_raw_params"] = cmd_val
-            when "_raw_params"
-              swapped["cmd"] = JSON::Any.new(nil)
-            else
-              swapped[key] = value
-            end
-          end
-          args = swapped
-        else
-          args["_raw_params"] = cmd_val
-          args["cmd"] = JSON::Any.new(nil)
-        end
-      end
       copy = hash.dup
       invocation = JSON::Any.new({"module_args" => JSON::Any.new(args)} of String => JSON::Any)
-      # Real's module-side _return_formatted adds `invocation` BEFORE it
-      # derives stdout_lines/stderr_lines, so a command/shell loop item
-      # reads .../msg/invocation/stdout_lines/stderr_lines/failed (live
-      # capture, issue #672 zorlin.rust round29884741 - both the ok and the
-      # ignored-failure shapes place it after msg/failed, never after the
-      # lines). For line-less results the anchor is the trailing failed:
-      # false - real's loop-registered stat item orders invocation before
-      # it (round 5410000, pacifica.ansible_certinfra's nested stat-result
-      # loop; probed single-stat registers carry NO invocation at all,
-      # which the non-loop path preserves elsewhere). Insert ahead of the
-      # first anchor key instead of appending.
-      anchor = {"stdout_lines", "stderr_lines", "failed"}.find { |key| copy.has_key?(key) }
+      # Real appends `invocation` at the end of the MODULE's own dict, before
+      # whatever the action plugin or the controller adds afterwards. For
+      # command/shell the module dict ends with `msg` (fail_json's `failed` too
+      # on a non-zero rc) and the derived stdout_lines/stderr_lines come after
+      # it, so the insertion point is ahead of those - live-verified 2.19.11 on
+      # the success, non-zero-rc, creates-skipped and check-skipped item shapes
+      # (#673), with `failed` only as the last resort for the commandish shapes
+      # that carry neither derived key. For the other modules the only trailing
+      # controller key is `failed: false`, which real keeps AFTER the invocation
+      # (round 5410000, pacifica.ansible_certinfra's nested stat-result loop;
+      # probed single-stat registers carry NO invocation at all, which the
+      # non-loop path preserves elsewhere).
+      anchor = if commandish
+                 {"stdout_lines", "stderr_lines", "failed"}.find { |key| copy.has_key?(key) }
+               else
+                 copy.has_key?("failed") ? "failed" : nil
+               end
       if anchor
         new_hash = Hash(String, JSON::Any).new
         copy.each do |k, v|
