@@ -329,11 +329,16 @@ module Krikri
       unless @check_mode
         explicitly_no_cache = @params["update_cache"]? ? !true?(@params["update_cache"]?) : false
         if failure = apt_auto_install_python_apt(explicitly_no_cache, ->remote_exec(String))
-          return PluginResult.new(
-            changed: false,
-            failed: true,
-            msg: "Failed to auto-install python3-apt: #{failure[:stderr]}"
-          )
+          # Real ansible's fail_json for the failed auto-install stage
+          # carries the RAW command result (msg = stderr.rstrip, no custom
+          # prefix) with NO cache_updated key - the module never got to
+          # touch the cache - plus the warning it emitted before
+          # attempting the install (issue #522). apt's own arg validation
+          # rejects unknown params, so unlike package.cr there is no
+          # `_python_apt_absent` seam here: the absent path is only
+          # reachable on a genuinely bindings-less host.
+          @omit_cache_updated = true
+          return apt_auto_install_failure_result(failure)
         end
       end
 

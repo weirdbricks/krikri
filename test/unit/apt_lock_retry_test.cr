@@ -346,8 +346,11 @@ describe "apt lock-contention retry helpers (round 153 follow-up, 0.9.502)" do
       ])
       result = HostClass.new.apt_auto_install_python_apt(false, ->(c : String) { stub.call(c) })
       result.wont_be_nil
-      result.not_nil![:exit_code].must_equal(100)
-      result.not_nil![:stderr].must_include("failed to download")
+      result.not_nil![:result][:exit_code].must_equal(100)
+      result.not_nil![:result][:stderr].must_include("failed to download")
+      # The reported cmd is apt.py's own resolved absolute path, not the
+      # bare name this engine executes through PATH.
+      result.not_nil![:cmd].must_equal("/usr/bin/apt-get update")
     end
 
     it "returns the failed install result" do
@@ -358,7 +361,8 @@ describe "apt lock-contention retry helpers (round 153 follow-up, 0.9.502)" do
       ])
       result = HostClass.new.apt_auto_install_python_apt(false, ->(c : String) { stub.call(c) })
       result.wont_be_nil
-      result.not_nil![:stderr].must_include("Unable to locate package python3-apt")
+      result.not_nil![:result][:stderr].must_include("Unable to locate package python3-apt")
+      result.not_nil![:cmd].must_equal("/usr/bin/apt-get install --no-install-recommends python3-apt -y -q")
     end
   end
 

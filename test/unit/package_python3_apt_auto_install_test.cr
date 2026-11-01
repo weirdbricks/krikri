@@ -118,10 +118,84 @@ describe "package: python3-apt module-start auto-install (issue #433)" do
         old_path ? (ENV["PATH"] = old_path) : (ENV.delete("PATH"))
       end
 
-      # Mirrors Ansible's check_rc=True hard failure on the auto-install.
+      # Mirrors Ansible's check_rc=True hard failure on the auto-install:
+      # the fail_json carries the RAW command result - msg is the stderr
+      # with its trailing newline stripped (no "Failed to auto-install"
+      # prefix), the reported cmd is apt.py's own resolved absolute
+      # /usr/bin/apt-get path, and there is NO cache_updated key (the
+      # module never got to touch the cache). The shim fails the `update`
+      # prefetch first, so that is the stage being reported. The module
+      # warned about the auto-install it was attempting before failing.
       result["failed"].as_bool.must_equal(true)
       result["changed"].as_bool.must_equal(false)
-      result["msg"].as_s.must_equal("Failed to auto-install python3-apt: E: Unable to locate package python3-apt\n")
+      result["msg"].as_s.must_equal("E: Unable to locate package python3-apt")
+      result["cmd"].as_s.must_equal("/usr/bin/apt-get update")
+      result["rc"].as_i.must_equal(100)
+      result["stderr"].as_s.must_equal("E: Unable to locate package python3-apt\n")
+      result["stderr_lines"].as_a.map(&.as_s).must_equal(["E: Unable to locate package python3-apt"])
+      result["stdout"].as_s.must_equal("")
+      result["stdout_lines"].as_a.empty?.must_equal(true)
+      result["cache_updated"]?.must_be_nil
+      result["warnings"].as_a.map(&.as_s).must_equal(
+        ["Updating cache and auto-installing missing dependency: python3-apt"])
+
+      FileUtils.rm_r(shim_dir)
+    end
+  end
+
+  # The second auto-install stage (the install itself) reports the same
+  # raw fail_json shape (issue #522: real ansible's msg is the failed
+  # stage's stderr with no prefix, the cmd is apt.py's resolved absolute
+  # /usr/bin/apt-get path, there is no cache_updated key, and the
+  # python3-apt warning renders as the final "[WARNING]: ..." line). The
+  # `apt` module's own call site has no `_python_apt_absent` seam (apt's
+  # arg validation rejects unknown params, unlike package's), so this
+  # drives the shared helper through package's path with the update
+  # prefetch succeeding and the install failing.
+  it "package module reports the raw failed-install shape when the auto-install install stage fails" do
+    shim_dir = PluginSpecHelper.tmp_path("fake-python3-apt-autoinstall-install-fail")
+    Dir.mkdir_p(shim_dir)
+    log_path = "#{shim_dir}/apt-get.log"
+    ag_script = <<-SH
+      #!/bin/sh
+      echo "$*" >> #{log_path}
+      if [ "$1" = "update" ]; then
+        echo "Hit:1 http://archive.ubuntu.com/ubuntu jammy InRelease"
+        exit 0
+      fi
+      echo "E: Unable to locate package python3-apt" >&2
+      exit 100
+      SH
+    File.write("#{shim_dir}/apt-get", ag_script)
+    File.chmod("#{shim_dir}/apt-get", 0o755)
+
+    PluginSpecHelper::ENV_MUTEX.synchronize do
+      old_path = ENV["PATH"]?
+      ENV["PATH"] = "#{shim_dir}:#{old_path}"
+      begin
+        result = PluginSpecHelper.run("package",
+          {"name"               => "python3-apt",
+           "state"              => "present",
+           "use"                => "apt",
+           "_python_apt_absent" => "true"})
+      ensure
+        old_path ? (ENV["PATH"] = old_path) : (ENV.delete("PATH"))
+      end
+
+      result["failed"].as_bool.must_equal(true)
+      result["changed"].as_bool.must_equal(false)
+      result["msg"].as_s.must_equal("E: Unable to locate package python3-apt")
+      result["cmd"].as_s.must_equal("/usr/bin/apt-get install --no-install-recommends python3-apt -y -q")
+      result["rc"].as_i.must_equal(100)
+      result["stderr"].as_s.must_equal("E: Unable to locate package python3-apt\n")
+      result["stderr_lines"].as_a.map(&.as_s).must_equal(["E: Unable to locate package python3-apt"])
+      result["cache_updated"]?.must_be_nil
+      result["warnings"].as_a.map(&.as_s).must_equal(
+        ["Updating cache and auto-installing missing dependency: python3-apt"])
+      # The prefetch ran and succeeded before the install failed.
+      calls = File.read(log_path).split("\n").reject(&.empty?)
+      calls.size.must_equal(2)
+      calls.first.must_equal("update")
 
       FileUtils.rm_r(shim_dir)
     end
