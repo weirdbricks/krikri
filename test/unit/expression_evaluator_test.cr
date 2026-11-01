@@ -2022,6 +2022,23 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
       end
     end
 
+    it "reports a later operand's own failure ahead of a bare-undefined left `+` operand" do
+      # Jinja/Python evaluates `+` operands left to right but defers a
+      # bare-undefined operand's failure to the point the operator is
+      # applied - so a later operand whose own evaluation already fails
+      # raises first. geerlingguy.moodle's
+      # `moodle_instance: "{{ moodle_web_domain + ('' if moodle_web_path
+      # == '' else '-' + moodle_web_path) }}"` with both vars undefined:
+      # Ansible names `moodle_web_path`, krikri named `moodle_web_domain`
+      # (issue #512). Two bare undefineds still report the leftmost one.
+      assert_raises_message(Krikri::PlusMinusOperandError, /'b_undef' is undefined/) do
+        evaluator.evaluate("a_undef + ('' if b_undef == '' else '-' + b_undef)")
+      end
+      assert_raises_message(Krikri::PlusMinusOperandError, /'a_undef' is undefined/) do
+        evaluator.evaluate("a_undef + 'x'")
+      end
+    end
+
     it "raises on a defined-null LEFT operand of `+`" do
       assert_raises_message(Krikri::PlusMinusOperandError,
         "unsupported operand type(s) for +: 'NoneType' and 'str'") do
