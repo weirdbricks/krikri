@@ -3,6 +3,7 @@
 require "json"
 require "../src/krikri/base_plugin"
 require "../src/krikri/plugin_helpers/ansible_arg_validation"
+require "../src/krikri/plugin_helpers/script_pty_capture"
 
 module Krikri
   # Shell Plugin - Execute shell commands with full shell features
@@ -412,6 +413,19 @@ module Krikri
         remote_command = "printf %s #{shell_single_quote(stdin_payload)} 2>/dev/null | { #{remote_command}; }"
       end
 
+      # __raw_pty_merge: raw: aliases to this plugin and, over a remote
+      # connection, real ansible runs it through a pty, so the command's
+      # stdout and stderr arrive on ONE stream in execution order (issue
+      # #490). The executor's shaping cannot recover that order from two
+      # separately captured pipes, so the merge happens here instead -
+      # the same `{ ...; } 2>&1` group the remote script run uses. The
+      # executor sets the marker only for remote raw; local raw keeps the
+      # two captured streams (no pty exists there).
+      pty_merge = !@params["__raw_pty_merge"]?.nil?
+      remote_command = PluginHelpers::ScriptPtyCapture.pty_merged_command(
+        remote_command, pty_merge
+      )
+
       # force_shell: the shell module's string is ALWAYS interpreted by
       # the shell on the target, even when it has no metacharacters -
       # without this, a builtin-only command like `command -v foo`
@@ -449,7 +463,15 @@ module Krikri
       # showed up as a nonstandard key in ad-hoc (`ansible -m shell`)
       # result output. Crystal's String#rstrip(set) strips trailing
       # chars from the set, exactly like Python's str.rstrip("\r\n").
-      strip_empty_ends = true?(@params["strip_empty_ends"]?, default: true)
+      # The merged pty capture must NOT be stripped: real's raw ACTION
+      # returns the pty capture untouched (no command-module strip; the
+      # script action behaves the same), so
+      # ansible's remote raw stdout keeps the trailing "\r\n" the pty's
+      # ONLCR attached - stripping it there was the remaining #490
+      # divergence (krikri "out2" vs ansible "out2\r\n").
+      strip_empty_ends = PluginHelpers::ScriptPtyCapture.strip_trailing_newlines?(
+        true?(@params["strip_empty_ends"]?, default: true), pty_merge
+      )
       final_stdout = strip_empty_ends ? result[:stdout].rstrip("\r\n") : result[:stdout]
       final_stderr = strip_empty_ends ? result[:stderr].rstrip("\r\n") : result[:stderr]
 

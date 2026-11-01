@@ -30,6 +30,28 @@ module Krikri
         captured.gsub("\n", "\r\n")
       end
 
+      # The source-side half of the same merge: real's remote raw (a
+      # shell-forced run through `ssh -tt`, issue #490) delivers the
+      # command's stdout AND stderr on the ONE pty, in execution order -
+      # a property no post-hoc concatenation of two separately captured
+      # pipes can reproduce. The caller therefore wraps its invocation in
+      # a `{ ...; } 2>&1` group (one pipe, order preserved, exit code
+      # intact), exactly like the remote script run does; a run whose
+      # connection has no pty must not wrap.
+      def self.pty_merged_command(command : String, merge : Bool) : String
+        merge ? "{ #{command}; } 2>&1" : command
+      end
+
+      # Whether the module capture gets the command module's trailing
+      # \r/\n strip. Real's raw ACTION returns the pty capture untouched
+      # (no command-module strip; the script action behaves the same),
+      # so a pty-merged capture must keep its final "\r\n" for the
+      # executor's raw_remote_pty_shape to match ansible's stdout -
+      # only plain-pipe captures follow strip_empty_ends.
+      def self.strip_trailing_newlines?(requested : Bool, pty_merge : Bool) : Bool
+        requested && !pty_merge
+      end
+
       # The one line a `ssh -tt` mux-client session leaves on its own
       # stderr when the session closes (openssh's clientloop.c), which
       # under the pty merge becomes the whole module stderr.
