@@ -258,6 +258,8 @@ module Krikri
         # module sees the same typed arg either way.
         if native = Krikri.non_string_scalar(value)
           args[key] = native
+        elsif members = typed_member_list(value)
+          args[key] = members
         else
           args[key] = typed_value(value)
         end
@@ -279,9 +281,37 @@ module Krikri
           if native = Krikri.non_string_scalar(value)
             "#{key}=#{Krikri.python_str_scalar(native)}"
           else
-            "#{key}=#{value}"
+            # A comma-joined list param's marked members must never reach
+            # an old-style module's argv - Ansible stringifies a list k=v
+            # arg to plain member text, and the sentinel is engine-internal
+            # bookkeeping no module should ever see.
+            "#{key}=#{Krikri.strip_non_string_markers_in_value(value)}"
           end
         end
+    end
+
+    # A parser comma-joined list param carrying NON_STRING_MEMBER_PREFIX-
+    # marked members (see param_sentinels.cr) reconstructs to a real JSON
+    # array here: real Ansible hands a module a YAML list arg as a list
+    # whose members keep their types (live-verified vs 2.19.11 -
+    # `r: ["{{ x }}", 1]` with an int x reaches a role-local module as
+    # [5, 1], r_type "list"), where this engine used to ship the
+    # comma-joined wire TEXT with the sentinel still inside it
+    # (issue #696: the module saw the string "5,\u{E000}nonmember:1").
+    # Marked members decode to their native YAML scalar; unmarked ones
+    # re-infer from text exactly the way typed_value re-infers a whole
+    # value - the engine's established py-module convention. nil when the
+    # value carries no member marker at all: a plain string arg (a list
+    # of only-string members is indistinguishable from one on the
+    # strings-only wire and stays a string, as before) or a whole-value
+    # JSON container, both unchanged.
+    def typed_member_list(value : String) : JSON::Any?
+      return nil unless value.includes?(Krikri::NON_STRING_MEMBER_PREFIX)
+      members = value.split(',').map do |part|
+        native = Krikri.non_string_member_scalar(part) || Krikri.non_string_scalar(part)
+        native || typed_value(part)
+      end
+      JSON::Any.new(members)
     end
 
     def typed_value(value : String) : JSON::Any
