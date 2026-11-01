@@ -148,7 +148,12 @@ module Krikri
     # following GET, stripped/blank-rejected lines), returning a real
     # Array(String)? here instead of JSON array text - nil on any
     # failure (unreachable host, non-2xx, too many redirects).
-    def self.fetch_url_lines(url : String, redirects_left : Int32 = 5) : Array(String)?
+    # split_lines=False matches Ansible's url lookup's own option: the
+    # WHOLE response body comes back as one untouched string (no strip,
+    # no line splitting, newlines preserved) - diodonfrost.puppet_agent
+    # feeds a PGP key through it into apt_key, and comma-joining the
+    # armor lines breaks the key import.
+    def self.fetch_url_lines(url : String, redirects_left : Int32 = 5, split_lines : Bool = true) : Array(String)?
       return nil if redirects_left < 0
 
       # file:// reads a controller-local file, like Ansible's url
@@ -156,19 +161,20 @@ module Krikri
       # HTTP body below, and the offline-testable form of the
       # with_url:/lookup('url', ...) checksum idiom.
       if url.downcase.starts_with?("file://")
-        return File.read(url["file://".size..]).lines.map(&.strip).reject(&.empty?)
+        body = File.read(url["file://".size..])
+        return split_lines ? body.lines.map(&.strip).reject(&.empty?) : [body]
       end
 
       response = HTTP::Client.get(url)
 
       if response.status.redirection? && (location = response.headers["Location"]?)
         resolved = URI.parse(location).absolute? ? location : URI.parse(url).resolve(location).to_s
-        return fetch_url_lines(resolved, redirects_left - 1)
+        return fetch_url_lines(resolved, redirects_left - 1, split_lines)
       end
 
       return nil unless response.success?
 
-      response.body.lines.map(&.strip).reject(&.empty?)
+      split_lines ? response.body.lines.map(&.strip).reject(&.empty?) : [response.body]
     rescue
       nil
     end
