@@ -259,7 +259,19 @@ module Krikri
         end
         AnyValue.new(pairs)
       when "url"
-        lines = LookupPlugins.fetch_url_lines(text(first))
+        # split_lines=False (Ansible's own url lookup option) returns the
+        # WHOLE response body as one untouched string - diodonfrost.
+        # puppet_agent feeds a PGP key through it into apt_key, and the
+        # default stripped/comma-joined line handling breaks the armor.
+        # Ansible's url lookup declares split_lines as type: bool, whose
+        # conversion also maps the string forms ('false'/'no'/'0') to
+        # false - the same table the hand-rolled path matches below.
+        split_lines = case raw = kwargs["split_lines"]?.try(&.raw)
+                      when String then !raw.downcase.in?("false", "no", "0", "off", "")
+                      when Nil    then true
+                      else             truthy?(kwargs["split_lines"]?)
+                      end
+        lines = LookupPlugins.fetch_url_lines(text(first), split_lines: split_lines)
         if lines.nil?
           AnyValue.new(nil)
         elsif truthy?(kwargs["wantlist"]?)

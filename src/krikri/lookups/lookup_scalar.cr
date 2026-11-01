@@ -159,7 +159,17 @@ module Krikri
         # version file - got the literal text `["v1.31.0"]` spliced
         # into the URL instead of the plain string `v1.31.0`, a 404.
         wantlist = kwargs.any? { |part| part.strip.downcase.starts_with?("wantlist=true") }
-        lines_json = fetch_url_lines(url)
+        # split_lines=False (Ansible's own url lookup option, type: bool)
+        # returns the WHOLE response body as one untouched string -
+        # diodonfrost.puppet_agent feeds a PGP key through it into
+        # apt_key, and the default stripped/comma-joined line handling
+        # breaks the armor. Same boolean conversion table as Ansible
+        # AnsibleModule's bool type ('false'/'no'/'0'/'off' => false).
+        split_lines = kwargs.none? do |part|
+          key, sep, value = part.strip.downcase.partition('=')
+          sep.empty? ? false : key == "split_lines" && value.in?("false", "no", "0", "off", "")
+        end
+        lines_json = fetch_url_lines(url, split_lines: split_lines)
         return lines_json if wantlist
 
         (JSON.parse(lines_json).as_a?.try(&.map(&.as_s).join(",")) rescue nil) || "undefined"
@@ -221,11 +231,11 @@ module Krikri
       # matching how cloudalchemy.prometheus's own `wantlist=True) |
       # list` usage then loops over each line looking for one containing
       # a specific filename substring. Ansible's own url lookup
-      # plugin has richer options (headers, auth, split_lines:) not
+      # plugin has richer options (headers, auth) not
       # implemented here - narrowly scoped to what's actually been
       # needed so far, like several other lookup/filter gaps in this
       # file.
-      private def fetch_url_lines(url : String, redirects_left : Int32 = 5) : String
+      private def fetch_url_lines(url : String, redirects_left : Int32 = 5, split_lines : Bool = true) : String
         return "undefined" if redirects_left < 0
 
         # file:// URLs read a controller-local file - Ansible's own
@@ -237,7 +247,8 @@ module Krikri
         if url.downcase.starts_with?("file://")
           path = url["file://".size..]
           begin
-            return File.read(path).lines.map(&.strip).reject(&.empty?).to_json
+            body = File.read(path)
+            return split_lines ? body.lines.map(&.strip).reject(&.empty?).to_json : [body].to_json
           rescue e : File::Error
             raise "The lookup plugin 'url' failed: Unable to access the file '#{path}': #{e.message}"
           end
@@ -253,7 +264,7 @@ module Krikri
         # an empty 302 body instead of the checksums file.
         if response.status.redirection? && (location = response.headers["Location"]?)
           resolved = URI.parse(location).absolute? ? location : URI.parse(url).resolve(location).to_s
-          return fetch_url_lines(resolved, redirects_left - 1)
+          return fetch_url_lines(resolved, redirects_left - 1, split_lines)
         end
 
         unless response.success?
@@ -281,8 +292,7 @@ module Krikri
           raise "The lookup plugin 'url' failed: Received HTTP error for #{url} : HTTP Error #{response.status_code}: #{response.status.description}"
         end
 
-        lines = response.body.lines.map(&.strip).reject(&.empty?)
-        lines.to_json
+        split_lines ? response.body.lines.map(&.strip).reject(&.empty?).to_json : [response.body].to_json
       rescue Socket::Error | IO::Error
         # Genuine connection-level failures (DNS resolution, connection
         # refused, timeout) still degrade softly to "undefined" rather
