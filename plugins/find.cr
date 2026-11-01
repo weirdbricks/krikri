@@ -80,6 +80,11 @@ module Krikri
     # Ansible's registered find result order (live-verified vs 2.19.11).
     private FIND_KEY_ORDER = %w[files changed msg matched examined skipped_paths]
 
+    # A walked entry's upfront lstat outcome: the stat hash on success,
+    # the failing errno otherwise. Real find lstats every entry before
+    # filtering and turns a failure into a skipped entry (see match).
+    private alias EntryStat = Hash(String, JSON::Any)? | Errno
+
     # contains: with an unknown encoding: name - not a per-file miss but a
     # path-level failure in real (see read_content)
     class UnknownEncoding < Exception; end
@@ -184,11 +189,12 @@ module Krikri
 
       # Real find.py warns ONLY for the per-search-path failures (a
       # not-a-directory path, an UnknownEncoding hit, a non-EPERM/EACCES/
-      # ENOENT directory-listing error) and - live-verified vs 2.19.11 -
-      # any warning flips the result msg to "Not all paths examined,
-      # check warnings for details". An unreadable directory recorded by
-      # os.walk's onerror handler stays silent: msg unchanged, no
-      # warnings key (see walk's rescue).
+      # ENOENT directory-listing error), for every ENTRY whose upfront
+      # lstat failed (see match's own comment), and - live-verified vs
+      # 2.19.11 - any warning flips the result msg to "Not all paths
+      # examined, check warnings for details". An unreadable directory
+      # recorded by os.walk's onerror handler stays silent: msg unchanged,
+      # no warnings key (see walk's rescue).
       extra = warnings.empty? ? nil : warnings
       msg = extra ? "Not all paths examined, check warnings for details" : "All paths examined"
 
@@ -257,11 +263,11 @@ module Krikri
       examined = 0
 
       entries = list_entries(search_path, options, skipped_paths)
-      entries.each do |entry_path|
+      entries.each do |entry_path, stat_or_errno|
         examined += 1
         next if !options.hidden && hidden_path?(entry_path, search_path)
 
-        if stat_hash = match(entry_path, options)
+        if stat_hash = match(entry_path, stat_or_errno, options, skipped_paths, warnings)
           files << JSON::Any.new(stat_hash)
         end
 
@@ -307,14 +313,34 @@ module Krikri
     end
 
     # Returns the stat hash for entry_path if it passes every filter, nil
-    # otherwise.
-    private def match(entry_path : String, options : Options) : Hash(String, JSON::Any)?
+    # otherwise. stat_or_errno is the entry's upfront lstat outcome (see
+    # EntryStat).
+    private def match(entry_path : String, stat_or_errno : EntryStat, options : Options, skipped_paths : Hash(String, JSON::Any), warnings : Array(String)) : Hash(String, JSON::Any)?
+      # Real find lstats EVERY walked entry before any pattern filtering
+      # and turns a failing lstat into a per-entry skip, not a silent
+      # drop: the entry is dropped from the results, recorded in
+      # skipped_paths under its OWN path with the OSError str() text and
+      # warned about (error_as_warning's chain rendering is
+      # "Skipped entry '<path>' due to access issue: <errno text>",
+      # live-verified vs 2.19.11 with a read-but-no-execute directory),
+      # and has_warnings flips the result msg (see execute). The pattern
+      # filters run AFTER the stat in real, so a failing lstat warns even
+      # when the basename would not have matched. claranet.log4shell's
+      # recursive scan of / trips this on vanishing /proc/<pid>/fd/*
+      # symlinks (ENOENT) - krikri previously swallowed the failure
+      # without any warning.
+      if stat_or_errno.is_a?(Errno)
+        text = errno_text(entry_path, stat_or_errno)
+        skipped_paths[entry_path] = JSON::Any.new(text)
+        warnings << "Skipped entry '#{entry_path}' due to access issue: #{text}"
+        return nil
+      end
+      stat_hash = stat_or_errno
+      return nil unless stat_hash.is_a?(Hash(String, JSON::Any))
+
       basename = File.basename(entry_path)
       return nil unless matches_patterns?(basename, options.patterns, options.use_regex)
       return nil if !options.excludes.empty? && matches_patterns?(basename, options.excludes, options.use_regex)
-
-      stat_hash = native_stat(entry_path, false)
-      return nil unless stat_hash
       return nil unless matches_file_type?(stat_hash, options.file_type)
       return nil unless matches_size?(stat_hash, options.size_filter)
       return nil unless matches_age?(stat_hash, options.age_filter, options.age_stamp, options.now)
@@ -368,7 +394,7 @@ module Krikri
     # either way), just not walked into. Unreadable directories are
     # skipped silently rather than failing the whole search, matching the
     # previous shell implementation's `2>/dev/null`.
-    private def list_entries(search_path : String, options : Options, skipped_paths : Hash(String, JSON::Any)) : Array(String)
+    private def list_entries(search_path : String, options : Options, skipped_paths : Hash(String, JSON::Any)) : Array(Tuple(String, EntryStat))
       max_depth = if !options.recurse
                     1
                   elsif depth = options.depth
@@ -377,25 +403,44 @@ module Krikri
                     Int32::MAX
                   end
 
-      entries = [] of String
+      entries = [] of Tuple(String, EntryStat)
       walk(search_path, 1, max_depth, options, entries, skipped_paths)
       entries
     end
 
-    private def walk(dir : String, current_depth : Int32, max_depth : Int32, options : Options, entries : Array(String), skipped_paths : Hash(String, JSON::Any)) : Nil
+    private def walk(dir : String, current_depth : Int32, max_depth : Int32, options : Options, entries : Array(Tuple(String, EntryStat)), skipped_paths : Hash(String, JSON::Any)) : Nil
       return if current_depth > max_depth
 
       Dir.each_child(dir) do |child|
         child_path = File.join(dir, child)
-        entries << child_path
+        # The upfront lstat the entry itself is classified with - the
+        # previous stat(File.directory?)+lstat(File.symlink?) pair cost
+        # two syscalls per entry and its stat EACCES-aborted the whole
+        # level on a read-but-no-execute directory, recording the PARENT's
+        # path in skipped_paths where real find keeps walking.
+        stat_or_errno = native_stat_ex(child_path, false)
+        entries << {child_path, stat_or_errno}
 
-        # File.directory? follows symlinks, so the follow gate keeps
-        # symlinked directories listed-but-unwalked by default -
-        # Ansible's file_type detection lstats every entry regardless of
-        # follow, so follow only widens the walk, never re-classifies a
-        # symlink as its target type.
-        if File.directory?(child_path) && (options.follow || !File.symlink?(child_path))
-          walk(child_path, current_depth + 1, max_depth, options, entries, skipped_paths)
+        # Descend decision off the same upfront lstat the entry itself is
+        # classified with - the previous stat(File.directory?)+
+        # lstat(File.symlink?) pair cost two syscalls per entry and its
+        # stat EACCES-aborted the whole level on a read-but-no-execute
+        # directory, recording the PARENT's path in skipped_paths where
+        # real find keeps walking. A symlink child needs one
+        # target-following stat to learn it points at a directory (the
+        # old File.directory? semantics): with follow: true it is
+        # descended into, with follow: false it stays
+        # listed-but-unwalked - follow only widens the walk, never
+        # re-classifies a symlink as its target type.
+        if (stat = stat_or_errno).is_a?(Hash(String, JSON::Any))
+          descend = if stat["islnk"].as_bool
+                      options.follow && File.directory?(child_path)
+                    else
+                      stat["isdir"].as_bool
+                    end
+          if descend
+            walk(child_path, current_depth + 1, max_depth, options, entries, skipped_paths)
+          end
         end
       end
     rescue ex : File::Error
@@ -417,10 +462,16 @@ module Krikri
     end
 
     # Python's OSError str(): "[Errno 13] Permission denied: '/path'".
+    private def errno_text(path : String, errno : Errno) : String
+      "[Errno #{errno.value}] #{errno.message}: '#{path}'"
+    end
+
     private def os_error_text(path : String, ex : File::Error) : String
-      strerror = ex.os_error.try(&.message) || ex.message.to_s
-      errno_value = ex.os_error.try(&.value) || 0
-      "[Errno #{errno_value}] #{strerror}: '#{path}'"
+      if errno = ex.os_error
+        "[Errno #{errno.value}] #{errno.message}: '#{path}'"
+      else
+        "[Errno 0] #{ex.message}: '#{path}'"
+      end
     end
 
     # True if any path component between search_path and entry_path starts

@@ -144,6 +144,37 @@ describe "find plugin" do
     result["skipped_paths"].as_h.has_key?(missing).must_equal(true)
   end
 
+  it "warns and records an entry whose lstat fails instead of dropping it silently" do
+    # Real find lstats every walked entry before any filtering and turns
+    # a failing lstat into a per-entry skip: the entry is dropped,
+    # recorded in skipped_paths under its own path with the OSError
+    # str() text, warned about ("Skipped entry '<path>' due to access
+    # issue: <errno text>") and the result msg flips to "Not all paths
+    # examined, check warnings for details" - live-verified vs 2.19.11
+    # with a read-but-no-execute directory (the same surface
+    # claranet.log4shell's recursive scan of / trips on via vanishing
+    # /proc/<pid>/fd/* symlinks). krikri previously swallowed the
+    # failure with no warning and msg unchanged. Needs a non-root
+    # runner: root stats through missing +x regardless.
+    skip "running as root: the mode bits do not deny the search" if PluginSpecHelper.running_as_root?
+
+    dir = PluginSpecHelper.tmp_path("find-lstat-failure")
+    Dir.mkdir_p(dir)
+    entry = File.join(dir, "f")
+    File.write(entry, "f")
+    File.chmod(dir, 0o644)
+
+    result = PluginSpecHelper.run("find", {"paths" => dir})
+
+    result["matched"].as_i64.must_equal(0)
+    result["examined"].as_i64.must_equal(1)
+    result["msg"].as_s.must_equal("Not all paths examined, check warnings for details")
+    result["skipped_paths"].as_h[entry].as_s.must_equal("[Errno 13] Permission denied: '#{entry}'")
+    result["warnings"].as_a.map(&.as_s).must_equal([
+      "Skipped entry '#{entry}' due to access issue: [Errno 13] Permission denied: '#{entry}'",
+    ])
+  end
+
   it "fails with a clear message when paths is missing" do
     result = PluginSpecHelper.run("find", {} of String => String)
 
