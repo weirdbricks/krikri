@@ -50,6 +50,15 @@ module Krikri
     # failures take. Holds the full cause wording.
     @render_error_unknown_filter : String? = nil
 
+    # Set alongside @render_error when the render died in the VAR pre-render
+    # (prepare_template_vars_json) with an unknown filter inside a variable's
+    # own value: real 2.19.11 compiles the value when the template reads it,
+    # so the same uncaught TemplateAssertionError crash shape as a
+    # template-file filter name applies (issue #709) - but the chain's inner
+    # Origin is the variable's DEFINITION (like the {% do %} case, issue
+    # #322), not the template file.
+    @render_error_unknown_var_filter : Bool = false
+
     # Set when the template's own leading `#jinja2:` directive line
     # failed Ansible's literal_eval/type validation (see
     # #extract_jinja2_directive): the crash's Origin is the TEMPLATE
@@ -206,6 +215,13 @@ module Krikri
           # when the template reads it: an uncaught TemplateSyntaxError
           # with the crash shape, whose inner Origin is the variable's
           # definition (live-verified, issue #322).
+          return ActionResult.crash_failure(msg, src, undef_chain: true)
+        end
+        if @render_error_unknown_var_filter && (msg = @render_error)
+          # An unknown filter inside a VARIABLE's value is compiled when the
+          # template reads it: the same uncaught-compile-error crash shape as
+          # the {% do %} branch above, with the chain's inner Origin the
+          # variable's definition rather than the template file (issue #709).
           return ActionResult.crash_failure(msg, src, undef_chain: true)
         end
         if wording = @render_error_unknown_filter
@@ -460,6 +476,22 @@ module Krikri
       # "Task failed: ..." wrapper, template-file Origin) instead of the
       # generic "Failed to render template: ..." wording.
       @directive_error = ex.message
+      nil
+    rescue ex : VariableSubstitutor::FilterEngine::UnknownFilterError
+      # The VAR pre-render (prepare_template_vars_json) raises this unwrapped
+      # from JinjaRenderer when a variable's own value uses an unknown filter:
+      # real 2.19.11 compiles the value when the template reads it and fails
+      # as the uncaught "Syntax error in template: No filter named 'x'."
+      # crash (issue #709), not the generic "Failed to render template"
+      # wording. A FilterFailureError (the filter WAS found, its own body
+      # failed) keeps the generic wording - real never calls it an unknown
+      # filter it just successfully ran.
+      if (msg = ex.message) && msg.starts_with?("No filter named '")
+        @render_error = "Syntax error in template: #{msg}"
+        @render_error_unknown_var_filter = true
+      else
+        @render_error = ex.message
+      end
       nil
     rescue ex : KrikriJinja::TemplateError
       @render_error_not_iterable = not_iterable_ansible_wording(ex)

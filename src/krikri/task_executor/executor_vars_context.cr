@@ -4303,6 +4303,11 @@ module Krikri
         return nil unless origin
         return ErrorBlock.origin_context(origin.path, origin.line, origin.column)
       end
+      if m = bare_msg.match(/\ASyntax error in template: No filter named '(.+)'\.\z/)
+        origin = unknown_filter_var_origin(task, m[1], template_path)
+        return nil unless origin
+        return ErrorBlock.origin_context(origin.path, origin.line, origin.column)
+      end
       m = bare_msg.match(/\A'([A-Za-z_][A-Za-z0-9_]*)' is undefined\z/)
       return nil unless m
       origin = undef_chain_var_origin(task, m[1])
@@ -4311,6 +4316,24 @@ module Krikri
     end
 
     DO_TAG_SYNTAX_PREFIX = "Syntax error in template: Encountered unknown tag 'do'"
+
+    # The layered role-var merge every var-definition origin scan here
+    # performs: the same order var_origin_for resolves a name's defining
+    # layer (play vars, then role defaults, role vars, task vars, extra
+    # vars), so a scan's candidate set is the merged view the executor
+    # itself templated against. Returns {merged values, per-name origins}.
+    private def merged_role_var_layers(task : Task) : {Hash(String, JSON::Any), Hash(String, VarOrigin)}
+      merged = {} of String => JSON::Any
+      origins = {} of String => VarOrigin
+      merge_var_layer(merged, origins, @play_vars, @play_var_origins)
+      merge_var_layer(merged, origins, task.role_defaults, task.role_default_origins)
+      merge_var_layer(merged, origins, @all_role_defaults, @all_role_default_origins)
+      merge_var_layer(merged, origins, task.role_vars, task.role_var_origins)
+      merge_var_layer(merged, origins, @all_role_vars, @all_role_var_origins)
+      merge_var_layer(merged, origins, task.vars, task.vars_origins)
+      merge_var_layer(merged, origins, @extra_vars, @extra_var_origins)
+      {merged, origins}
+    end
 
     # The unique var-layer definition whose own text holds a `{% do %}` tag
     # failing with EXACTLY *message* - ansible-core compiles the value when
@@ -4322,15 +4345,7 @@ module Krikri
     # one the template actually reads, so definitions whose key the template
     # *source* mentions win when exactly one does.
     private def do_tag_var_origin(task : Task, message : String, template_path : String? = nil) : FileVarOrigin?
-      merged = {} of String => JSON::Any
-      origins = {} of String => VarOrigin
-      merge_var_layer(merged, origins, @play_vars, @play_var_origins)
-      merge_var_layer(merged, origins, task.role_defaults, task.role_default_origins)
-      merge_var_layer(merged, origins, @all_role_defaults, @all_role_default_origins)
-      merge_var_layer(merged, origins, task.role_vars, task.role_var_origins)
-      merge_var_layer(merged, origins, @all_role_vars, @all_role_var_origins)
-      merge_var_layer(merged, origins, task.vars, task.vars_origins)
-      merge_var_layer(merged, origins, @extra_vars, @extra_var_origins)
+      merged, origins = merged_role_var_layers(task)
       bare = message.lchop("Syntax error in template: ")
       source = template_path && File.file?(template_path) ? File.read(template_path) : nil
       matches = [] of FileVarOrigin
@@ -4344,6 +4359,37 @@ module Krikri
         named << origin if source && source.matches?(/(?<![A-Za-z0-9_])#{Regex.escape(key)}(?![A-Za-z0-9_])/)
       end
       return named[0] if named.size == 1
+      matches.size == 1 ? matches[0] : nil
+    end
+
+    # The var-layer definition whose own value uses the unknown filter the
+    # supplied *name* failed with: ansible-core compiles the variable when
+    # the template reads it, so the same uncaught TemplateAssertionError
+    # chain shape as the {% do %} case points its inner Origin at that
+    # definition (live-verified vs 2.19.11, issue #709 - vars/main.yml's
+    # `x | version_compare('9','>=')`, the caret at the value token). Same
+    # layered merge and exactly-one-match protection as do_tag_var_origin.
+    # Many role vars can carry the same filter name; ansible names the one
+    # the template reads FIRST, so among definitions whose key the template
+    # source mentions the earliest first-occurrence wins, and only when the
+    # template names none of them does a sole match stand.
+    private def unknown_filter_var_origin(task : Task, filter_name : String, template_path : String? = nil) : FileVarOrigin?
+      merged, origins = merged_role_var_layers(task)
+      filter_use = Regex.new("\\|\\s*#{Regex.escape(filter_name)}(?![A-Za-z0-9_.])")
+      source = template_path && File.file?(template_path) ? File.read(template_path) : nil
+      matches = [] of FileVarOrigin
+      named = [] of {FileVarOrigin, Int32}
+      merged.each do |key, value|
+        raw = value.raw
+        next unless raw.is_a?(String) && raw.matches?(filter_use)
+        origin = origins[key]?
+        next unless origin.is_a?(FileVarOrigin) && origin.column > 0 && File.file?(origin.path)
+        matches << origin
+        if source && (m = source.match(/(?<![A-Za-z0-9_])#{Regex.escape(key)}(?![A-Za-z0-9_])/))
+          named << {origin, m.begin(0)}
+        end
+      end
+      return named.min_by(&.[1])[0] unless named.empty?
       matches.size == 1 ? matches[0] : nil
     end
 
