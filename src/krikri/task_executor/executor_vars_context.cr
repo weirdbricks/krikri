@@ -3259,32 +3259,22 @@ module Krikri
     # the plain finalization shape.
     private def keyword_failure_json(ex : UndefinedVariableError, task : Task) : JSON::Any
       return become_conversion_failure_json(ex, task) if ex.is_a?(KeywordBooleanError)
-      # An undefined reference inside the become: template fails with the
-      # same three-link keyword chain as the conversion failure (issue
-      # #159), its innermost link being the bare "'x' is undefined".
-      prefix = "Task failed: Error processing keyword 'become': "
-      if (msg = ex.message) && msg.starts_with?(prefix)
+      # Any keyword-templating failure shares become:'s chain shapes
+      # (issue #694): a direct undefined reference collapses to real's
+      # two-link chain (conversion_origin nil, the display path folds the
+      # bare message into the middle link), a keyword whose rendered value
+      # int() refuses keeps the three-link conversion chain, and an
+      # undefined that resolves to a variable whose OWN value fails points
+      # the innermost link at that definition - all three via the same
+      # become_user machinery.
+      if (msg = ex.message) && (m = msg.match(/\ATask failed: Error processing keyword '([A-Za-z_]+)': (.+)\z/))
+        keyword = m[1]
+        conversion = m[2]
         result = finalization_failure_json(ex, task)
         result.as_h["_ansible_keyword_conversion"] = JSON.parse({
-          "keyword"           => "become",
-          "conversion"        => msg[prefix.size..],
-          "origin"            => keyword_value_origin(task, "become"),
-          "conversion_origin" => undef_chain_origin_block(task, msg[prefix.size..]),
-        }.to_json)
-        return result
-      end
-      # become_user: the same three-link keyword chain, except the innermost
-      # link points at the VARIABLE definition whose own value fails
-      # (`ihs_user: "{{ ibm_user }}"` in defaults/), not at the keyword value
-      # - live-verified vs ansible-core 2.19.11 on BertRaeymaekers.iim (#209).
-      user_prefix = "Task failed: Error processing keyword 'become_user': "
-      if (msg = ex.message) && msg.starts_with?(user_prefix)
-        conversion = msg[user_prefix.size..]
-        result = finalization_failure_json(ex, task)
-        result.as_h["_ansible_keyword_conversion"] = JSON.parse({
-          "keyword"           => "become_user",
+          "keyword"           => keyword,
           "conversion"        => conversion,
-          "origin"            => keyword_value_origin(task, "become_user"),
+          "origin"            => keyword_value_origin(task, keyword),
           "conversion_origin" => undef_chain_origin_block(task, conversion),
         }.to_json)
         return result

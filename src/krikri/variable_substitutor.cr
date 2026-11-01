@@ -91,6 +91,19 @@ module Krikri
     end
   end
 
+  # A task KEYWORD's rendered value that ansible's int() conversion refuses
+  # (`retries: "{{ 'abc' }}"` - issue #694). Same shape and purpose as
+  # KeywordBooleanError: carries the keyword and the rendered value so the
+  # failure result can build Ansible's own three-link [ERROR] chain.
+  class KeywordIntError < UndefinedVariableError
+    getter keyword : String
+    getter rendered : String
+
+    def initialize(@keyword : String, @rendered : String)
+      super("Task failed: Error processing keyword '#{@keyword}': The value '#{@rendered}' could not be converted to 'int'.")
+    end
+  end
+
   # A BLOCK's `name:` keyword failing its strict template with an
   # undefined variable at child-execution time. Carries the ENCLOSING
   # block's `name:` VALUE origin (the child's own file has no `name:` for
