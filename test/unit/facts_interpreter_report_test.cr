@@ -45,4 +45,11 @@ describe "Krikri::FactsGatherer.interpreter_missing_report (facts_interpreter_re
     report.must_include("module_stdout\": \"/bin/sh: 1: /usr/bin/env python3: not found\\r\\n\"")
     report.wont_include("line 1:")
   end
+
+  it "keeps a literal ~/ interpreter unexpanded in dash's remote shell error" do
+    report = Krikri::FactsGatherer.interpreter_missing_report("testhost", "~/bin/python", "10.0.0.5", true, true)
+    report.must_include("module_stdout\": \"/bin/sh: 1: ~/bin/python: not found\\r\\n\"")
+    report.must_include("The module interpreter '~/bin/python' was not found.")
+    report.wont_include("No such file or directory")
+  end
 end
