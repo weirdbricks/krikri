@@ -83,6 +83,14 @@ module Krikri
     #   dump on the EBUSY: {"changed": false, "checksum": "...", "msg":
     #   "Task failed: Module failed: Unable to make ..."}).
     private RENAME_CRASH_KEY_ORDER = %w[changed checksum msg]
+    # - owner:/group: lookup failure in the copy module's attribute
+    #   application (template: delegates to copy, and the chown/chgrp
+    #   fail_json carries the rendered content's checksum plus
+    #   add_path_info's stat block for dest - no dest/src on this failure
+    #   path; live-verified fatal dump vs ansible 2.19, issue #514, whose
+    #   display sorts alphabetically: changed, checksum, gid, group, mode,
+    #   msg, owner, path, size, state, uid).
+    private ATTR_FAIL_KEY_ORDER = %w[changed checksum gid group mode msg owner path size state uid]
 
     property? check_mode : Bool
     property? diff_mode : Bool
@@ -340,7 +348,24 @@ module Krikri
       unless changed
         begin
           attributes_fixed = apply_file_attributes(dest)
-        rescue ex
+        rescue ex : OwnerLookupFailure
+          # Real's copy module (template: delegates to it) fails the
+          # chown/chgrp lookup with the module's own fail_json result -
+          # rendered-content checksum plus the stat block for dest - not
+          # the generic attribute-failure wrapper (live-verified vs
+          # ansible 2.19, issue #514).
+          if owner_group_lookup_failure?(ex)
+            result = PluginResult.new(
+              changed: false,
+              failed: true,
+              msg: ex.message || "owner lookup failed",
+              checksum: content_sha1,
+              path: dest,
+              key_order: ATTR_FAIL_KEY_ORDER
+            )
+            add_path_info(result, dest)
+            return result
+          end
           return PluginResult.new(
             changed: false,
             failed: true,
@@ -635,6 +660,26 @@ module Krikri
       # file.cr's own handling)
       begin
         apply_file_attributes(dest)
+      rescue ex : OwnerLookupFailure
+        # Same copy-module fail_json shape as the identical-content branch
+        # above (live-verified vs ansible 2.19, issue #514).
+        if owner_group_lookup_failure?(ex)
+          result = PluginResult.new(
+            changed: false,
+            failed: true,
+            msg: ex.message || "owner lookup failed",
+            checksum: content_sha1,
+            path: dest,
+            key_order: ATTR_FAIL_KEY_ORDER
+          )
+          add_path_info(result, dest)
+          return result
+        end
+        return PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: ex.message || "Failed to apply file attributes"
+        )
       rescue ex
         return PluginResult.new(
           changed: false,
@@ -789,6 +834,15 @@ module Krikri
       )
 
       {ok: result.exit_code == 0, rc: result.exit_code, stdout: out_io.to_s, stderr: err_io.to_s}
+    end
+
+    # OwnerLookupFailure reaches this plugin with Ansible's basic.py text
+    # ("chown failed: failed to look up user <name>" / "chgrp failed:
+    # failed to look up group <name>"); the copy-module fail_json shape
+    # above applies only to that pair, not to other attribute errors.
+    private def owner_group_lookup_failure?(ex : OwnerLookupFailure) : Bool
+      message = ex.message || ""
+      message.starts_with?("chown failed: ") || message.starts_with?("chgrp failed: ")
     end
 
     # Apply file attributes (owner, group, mode). Returns true if anything
