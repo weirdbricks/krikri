@@ -977,6 +977,19 @@ module Krikri
       sub = substitutor || VarSubstitutor.new(vars: vars_context, host_name: host.name)
       begin
         substituted_condition = sub.substitute(when_condition)
+      rescue ex : VariableSubstitutor::FilterEngine::FilterFailureError
+        # A filter that RAN and failed mid-render (first/last on an empty
+        # sequence) is a conditional-evaluation failure in real, not the
+        # "Syntax error in template:" wording an unresolvable FILTER NAME
+        # gets below (live-probed vs 2.19.11: braced `when: "{{ [] | first
+        # == 'y' }}"` fails "Task failed: Error while evaluating
+        # conditional: No first item, sequence was empty."). A role-local
+        # filter's own failure keeps the plugin wording real prints for it
+        # (live-probed same session, both when: forms).
+        if ex.message.try(&.starts_with?("The filter plugin '"))
+          raise WhenEvaluationError.new("Task failed: #{ex.message}")
+        end
+        raise WhenEvaluationError.new("Task failed: Error while evaluating conditional: #{ex.message}")
       rescue ex : VariableSubstitutor::FilterEngine::UnknownFilterError | VariableSubstitutor::UnknownTestError
         # The `{{ }}`-wrapped `when:` form compiles its filter/test names
         # during the RENDER (substitute), before the unbraced form's own
@@ -1034,6 +1047,18 @@ module Krikri
         # against 2.19.11 for the kwargs matrix, round 5210000
         # follow-up: bodsch.icingaweb2's strict=True).
         raise WhenEvaluationError.new("Task failed: #{ex.message}")
+      rescue ex : VariableSubstitutor::FilterEngine::FilterFailureError
+        # Same FilterFailureError split as the braced-render rescue above:
+        # a filter that ran and failed is conditional-evaluation wording
+        # for a bare runtime failure (first/last on an empty sequence,
+        # live-probed vs 2.19.11 unbraced), the plugin's own message for a
+        # raising role-local filter (live-probed same session) - never the
+        # "Syntax error in expression:" wording an unresolvable FILTER
+        # NAME gets below.
+        if ex.message.try(&.starts_with?("The filter plugin '"))
+          raise WhenEvaluationError.new("Task failed: #{ex.message}")
+        end
+        raise WhenEvaluationError.new("Task failed: Error while evaluating conditional: #{ex.message}")
       rescue ex : VariableSubstitutor::FilterEngine::UnknownFilterError | VariableSubstitutor::UnknownTestError
         # A compile-time-rejected filter/test name gets Ansible's own
         # "Syntax error in expression: " wording - Jinja's compiler

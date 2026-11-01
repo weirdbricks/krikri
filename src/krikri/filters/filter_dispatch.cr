@@ -265,21 +265,31 @@ module Krikri
           # through as `nil` before this fix, failing much LATER with a
           # confusing, unrelated mount(8) error instead of failing
           # immediately with a clear message at the actual source task.
+          # The raise is FilterFailureError, not a bare Exception: the
+          # filter WAS found and ran, it just failed - and the typed
+          # class is what routes the failure through Ansible's own
+          # wording channels (the task-arg finalization chain wrapping
+          # it "Error while resolving value for 'KEY': ...", issue #548,
+          # and the conditional/loop channels instead of an untyped
+          # exception crashing the whole run). StopIteration is NOT a
+          # Python AnsibleFilterError, so the message carries no "The
+          # filter plugin ... failed" wrapper - real words it bare
+          # (lean_delivery.jmeter, live-probed vs 2.19.11).
           if str = value.as_s?
-            raise "No first item, sequence was empty." if str.empty?
+            raise FilterFailureError.new("No first item, sequence was empty.") if str.empty?
             JSON::Any.new(str[0].to_s)
           elsif arr = value.as_a?
-            raise "No first item, sequence was empty." if arr.empty?
+            raise FilterFailureError.new("No first item, sequence was empty.") if arr.empty?
             arr.first
           else
             JSON::Any.new(nil)
           end
         when "last"
           if str = value.as_s?
-            raise "No last item, sequence was empty." if str.empty?
+            raise FilterFailureError.new("No last item, sequence was empty.") if str.empty?
             JSON::Any.new(str[-1].to_s)
           elsif arr = value.as_a?
-            raise "No last item, sequence was empty." if arr.empty?
+            raise FilterFailureError.new("No last item, sequence was empty.") if arr.empty?
             arr.last
           else
             JSON::Any.new(nil)
