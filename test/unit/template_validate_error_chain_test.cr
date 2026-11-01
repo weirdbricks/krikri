@@ -20,6 +20,19 @@ describe "template task_error_chain shapes" do
     Krikri::ErrorBlock.brief_message(chain).must_equal("Task failed: Module failed: failed to validate")
   end
 
+  it "uses the generic Module-failed chain for the owner/group lookup failure" do
+    msg = "chgrp failed: failed to look up group wheel"
+    chain = Krikri::ResultDisplay.task_error_chain("ansible.builtin.template", msg, "Origin: /pb.yml:6")
+
+    chain.msg.must_equal("Task failed.")
+    middle = chain.chain.as(Krikri::ErrorBlock::Node)
+    middle.msg.must_equal("Module failed.")
+    cause = middle.chain.as(Krikri::ErrorBlock::Node)
+    cause.msg.must_equal(msg)
+    cause.chain.must_be_nil
+    Krikri::ErrorBlock.brief_message(chain).must_equal("Task failed: Module failed: " + msg)
+  end
+
   it "keeps the handling chain for the src miss" do
     msg = "Could not find or access 'missing.j2' on the Ansible Controller."
     chain = Krikri::ResultDisplay.task_error_chain("ansible.builtin.template", msg, "Origin: /pb.yml:6")
