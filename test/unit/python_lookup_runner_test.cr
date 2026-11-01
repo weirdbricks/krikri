@@ -277,3 +277,58 @@ describe Krikri::PythonLookupRunner do
     FileUtils.rm_r(role)
   end
 end
+
+# Issue #705: a spawn failure (fork/exec hiccup, fd exhaustion) is
+# distinguishable since #704 - the runner must carry its text into the
+# eventual failure instead of the bare-rescue nil that surfaced only as
+# "is python3 available?". The KRIKRI_TEST_FORCE_PYTHON_SPAWN_FAILURE
+# hook names a counter file: while it holds a positive integer, each
+# python3 spawn attempt consumes one count and fails with a simulated
+# environment-level spawn error.
+describe "PythonLookupRunner spawn failure reporting (#705)" do
+  exclusive! # ENV hook + warning-sink swap are process-wide
+
+  it "surfaces a wrapper spawn failure as an unavailable lookup carrying the spawn text" do
+    role = File.join(Dir.tempdir, "krikri-pylookup-spec-#{Random.rand(1_000_000)}")
+    path = write_lookup_plugin(role, "mylookup.py", "# test plugin")
+    counter = File.join(role, "spawn-counter")
+    File.write(counter, "999")
+
+    ENV["KRIKRI_TEST_FORCE_PYTHON_SPAWN_FAILURE"] = counter
+    empty_vars = Hash(String, JSON::Any).new
+    begin
+      ex = assert_raises(Krikri::PythonLookupRunner::LookupUnavailableError) do
+        Krikri::PythonLookupRunner.call_lookup("mylookup", path, [] of JSON::Any,
+          empty_vars, empty_vars)
+      end
+      # same unavailable-mechanism verdict as before - the caller keeps
+      # its unknown-lookup fallback - only the text is now diagnosable
+      ex.kind.must_equal("unavailable")
+      ex.unavailable?.must_equal(true)
+      ex.message.to_s.must_match(/Failed to spawn process/)
+      ex.message.to_s.must_match(/simulated spawn failure/)
+    ensure
+      ENV["KRIKRI_TEST_FORCE_PYTHON_SPAWN_FAILURE"] = nil
+      FileUtils.rm_r(role)
+    end
+  end
+
+  it "puts the hvac probe's spawn failure on stderr and keeps its nil verdict" do
+    counter = File.join(Dir.tempdir, "krikri-hvac-probe-counter-#{Random.rand(1_000_000)}")
+    File.write(counter, "1")
+    captured = IO::Memory.new
+    previous = Krikri::PythonLookupRunner.warning_sink
+    begin
+      Krikri::PythonLookupRunner.warning_sink = captured
+      ENV["KRIKRI_TEST_FORCE_PYTHON_SPAWN_FAILURE"] = counter
+      Krikri::PythonLookupRunner.hashi_vault_load_failure("hashi_vault").must_be_nil
+    ensure
+      ENV["KRIKRI_TEST_FORCE_PYTHON_SPAWN_FAILURE"] = nil
+      Krikri::PythonLookupRunner.warning_sink = previous
+      File.delete(counter) if File.exists?(counter)
+    end
+
+    captured.to_s.must_match(/\[WARNING\]: Lookup plugin 'hashi_vault' availability probe failed/)
+    captured.to_s.must_match(/simulated spawn failure/)
+  end
+end

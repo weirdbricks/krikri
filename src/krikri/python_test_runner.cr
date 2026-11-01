@@ -1,5 +1,6 @@
 require "json"
 require "./bigint_json"
+require "./spawn_error"
 
 # Runner for role-local custom TEST plugins - a role's own
 # `test_plugins/*.py` (and the playbook-adjacent `test_plugins/`),
@@ -101,10 +102,17 @@ module Krikri
           end
         end
 
-        result = run_wrapper_retrying({
-          "action" => "list",
-          "paths"  => [path],
-        })
+        result = begin
+          run_wrapper_retrying({
+            "action" => "list",
+            "paths"  => [path],
+          })
+        rescue ex : SpawnError
+          # The introspection path has no exception to carry the spawn
+          # failure's text, so stderr is the diagnosability channel.
+          emit_spawn_warning(path, ex.message || "unknown spawn failure")
+          nil
+        end
         set = Set(String).new
         if result && result["ok"]?.try(&.as_bool?)
           result["names"]?.try(&.as_a?).try do |exposed|
@@ -132,15 +140,21 @@ module Krikri
     def call_test(name : String, sources : Array(String), value : JSON::Any,
                   args : Array(JSON::Any), kwargs : Hash(String, JSON::Any),
                   vars : Hash(String, JSON::Any)? = nil) : JSON::Any
-      result = run_wrapper({
-        "action" => "call",
-        "paths"  => sources,
-        "name"   => name,
-        "value"  => value,
-        "args"   => args,
-        "kwargs" => kwargs,
-        "vars"   => vars,
-      })
+      result = begin
+        run_wrapper({
+          "action" => "call",
+          "paths"  => sources,
+          "name"   => name,
+          "value"  => value,
+          "args"   => args,
+          "kwargs" => kwargs,
+          "vars"   => vars,
+        })
+      rescue ex : SpawnError
+        # The wrapper never RAN - not "produced no result" - so carry the
+        # spawn text into the TestError.
+        raise TestError.new("test plugin wrapper failed to spawn: #{ex.message}")
+      end
       raise TestError.new("test plugin wrapper produced no result (is python3 available?)") unless result
       unless result["ok"]?.try(&.as_bool?)
         detail = result["error"]?.try(&.as_s?) || "unknown error"
@@ -163,49 +177,56 @@ module Krikri
       warning_sink.puts "[WARNING]: Skipping plugin (#{File.expand_path(path)}), cannot load: #{error}"
     end
 
+    private def emit_spawn_warning(path : String, error : String) : Nil
+      warning_sink.puts "[WARNING]: Test plugin introspection failed (#{File.expand_path(path)}): #{error}"
+    end
+
     # Runs the wrapper script below against one request. Returns the
-    # parsed response JSON, or nil on ANY failure (no python3, nonzero
-    # exit, unparseable output) - callers treat nil as "not available".
+    # parsed response JSON, nil when the wrapper RAN but did not answer
+    # (nonzero exit, unparseable output, a post-spawn I/O failure), and
+    # raises Krikri::SpawnError only when python3 could not be spawned
+    # at all - LocalExecutor's #704 rule, so a wrapper that ran is never
+    # reclassified as a spawn failure.
     private def run_wrapper(payload) : JSON::Any?
       python = PythonFilterRunner.python_executable
       return nil unless python
-
-      stdout = IO::Memory.new
-      stderr = IO::Memory.new
-      # unquote_bigint_json, not payload.to_json verbatim: an operand or
-      # argument carrying a bigint marker (an integer wider than Int64 a
-      # module returned, carried as a marked string) must reach the
-      # test as a real Python int, the way Ansible passes its own int
-      # objects - unquote_bigint_json rewrites ONLY the exact marked
-      # string form, so a genuine user string is never altered.
-      status = Process.run(python, ["-c", WRAPPER],
-        input: IO::Memory.new(Krikri.unquote_bigint_json(payload.to_json)),
-        output: stdout, error: stderr)
-      return nil unless status.success?
+      # unquote_bigint_json: a bigint marker must reach the test as a
+      # real Python int, the way Ansible passes its own int objects.
+      captured = Krikri.run_captured_helper(python, ["-c", WRAPPER],
+        Krikri.unquote_bigint_json(payload.to_json))
+      return nil unless captured
+      return nil unless captured[:status].success?
 
       # BigJson, not JSON.parse: a test result with an integer wider
-      # than Int64 (Python ints are unbounded) made plain JSON.parse
-      # raise "Invalid Int64" and the whole result became nil.
-      parsed = (Krikri::BigJson.parse(stdout.to_s) rescue nil)
+      # than Int64 made plain JSON.parse raise "Invalid Int64".
+      parsed = (Krikri::BigJson.parse(captured[:stdout]) rescue nil)
       return nil unless parsed && parsed.as_h?
       parsed
-    rescue
-      nil
     end
 
-    # One retry for a wrapper-LEVEL failure (nil = python3 couldn't be
-    # spawned at all, ok:false = the wrapper crashed), the test-side
-    # twin of PythonFilterRunner's (issue #675): the introspection it
-    # wraps is the read-only "list" action, so a retry is safe; the
-    # "call" action is never routed through here, since a test may have
-    # side effects. The result is deliberately NOT cached by test_names,
-    # so a still-failing lookup is retried on the NEXT render instead of
-    # being trusted for the rest of the run.
+    # Retries ONLY an environment-level spawn failure (Krikri::SpawnError)
+    # on the read-only "list" introspection, the test-side twin of
+    # PythonFilterRunner's (issue #675): three attempts with a growing
+    # gap (the #695 window). A wrapper that RAN (ok:false, nonzero exit,
+    # unparseable output) or a controller with no python3 is returned
+    # as-is with NO retry; the result is never cached by test_names
+    # either way, so a still-failing lookup is retried on the NEXT
+    # render. The exhausted SpawnError propagates - test_names turns it
+    # into the stderr introspection warning. The "call" action is never
+    # routed through here, since a test may have side effects.
     private def run_wrapper_retrying(payload) : JSON::Any?
-      result = run_wrapper(payload)
-      return result if result && result["ok"]?.try(&.as_bool?)
-      sleep 0.05
       run_wrapper(payload)
+    rescue ex : SpawnError
+      err = ex
+      {0.05, 0.2}.each do |gap|
+        sleep gap.seconds
+        begin
+          return run_wrapper(payload)
+        rescue exception : SpawnError
+          err = exception
+        end
+      end
+      raise err
     end
 
     # The controller-side wrapper: imports each plugin file, merges

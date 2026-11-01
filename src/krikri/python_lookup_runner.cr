@@ -1,5 +1,6 @@
 require "json"
 require "./bigint_json"
+require "./spawn_error"
 
 # Runner for role-local custom LOOKUP plugins - a role's own
 # `lookup_plugins/*.py` (and the playbook-adjacent `lookup_plugins/`),
@@ -98,6 +99,11 @@ module Krikri
       Process.find_executable("python3") || Process.find_executable("python")
     end
 
+    # Where the spawn-failure warning goes - STDERR in production,
+    # replaceable so a spec can capture the text without touching the
+    # process's STDERR (same pattern as PythonFilterRunner's).
+    class_property warning_sink : IO = STDERR
+
     # community.hashi_vault's lookup is not implemented, but ansible's
     # loader imports `hvac` before the lookup runs, so on a controller
     # python3 without it the task fails at load time with this message
@@ -107,10 +113,31 @@ module Krikri
     def hashi_vault_load_failure(name : String?, python : String? = python_executable) : String?
       return nil unless name && name.in?("hashi_vault", "community.hashi_vault.hashi_vault")
       return nil unless python
-      status = Process.run(python, ["-c", "import hvac"],
-        output: Process::Redirect::Close, error: Process::Redirect::Close)
+      process = begin
+        Krikri.simulated_python_spawn_failure
+        Process.new(python, ["-c", "import hvac"],
+          output: Process::Redirect::Close, error: Process::Redirect::Close)
+      rescue File::Error
+        # A vanished interpreter (the find_executable probe's answer went
+        # stale) keeps the silent nil, matching LocalExecutor's #704
+        # carve-out for a bad executable.
+        return nil
+      rescue ex
+        # A spawn failure here used to be indistinguishable from "cannot
+        # determine" and the lookup then failed as a plain "was not
+        # found" - put the spawn error text on stderr so the real cause
+        # shows in the run's log. The return value stays nil: the probe's
+        # verdict is unchanged.
+        raise SpawnError.new("Failed to spawn process: #{ex.message}")
+      end
+      status = process.wait
       return nil if status.success?
       "The lookup plugin '#{name}' failed to load: Failed to import the required Python library (hvac) on #{System.hostname}'s Python #{python}. Please read the module documentation and install it in the appropriate location. If the required library is installed, but Ansible is using the wrong Python interpreter, please consult the documentation on ansible_python_interpreter"
+    rescue ex : SpawnError
+      warning_sink.puts "[WARNING]: Lookup plugin '#{name}' availability probe failed: #{ex.message}"
+      nil
+    rescue File::Error
+      nil
     rescue
       nil
     end
@@ -125,13 +152,20 @@ module Krikri
     # lookup error).
     def call_lookup(name : String, source : String, terms : Array(JSON::Any),
                     variables : Hash(String, JSON::Any), kwargs : Hash(String, JSON::Any)) : JSON::Any
-      result = run_wrapper({
-        "path"      => source,
-        "name"      => name,
-        "terms"     => terms,
-        "variables" => variables,
-        "kwargs"    => kwargs,
-      })
+      result = begin
+        run_wrapper({
+          "path"      => source,
+          "name"      => name,
+          "terms"     => terms,
+          "variables" => variables,
+          "kwargs"    => kwargs,
+        })
+      rescue ex : SpawnError
+        # The wrapper never RAN - carry the spawn text into the error
+        # instead of only "is python3 available?".
+        raise LookupUnavailableError.new(UNAVAILABLE_KIND,
+          "lookup plugin wrapper failed to spawn: #{ex.message}")
+      end
       # A nil wrapper response means the wrapper itself never got to
       # speak (no python3, a crash outside its own top-level handler,
       # unparseable output) - the mechanism is unavailable, not the
@@ -173,33 +207,26 @@ module Krikri
     end
 
     # Runs the wrapper script below against one request. Returns the
-    # parsed response JSON, or nil on ANY failure (no python3, nonzero
-    # exit, unparseable output) - callers treat nil as "not available".
+    # parsed response JSON, nil when the wrapper RAN but did not answer
+    # (nonzero exit, unparseable output, a post-spawn I/O failure), and
+    # raises Krikri::SpawnError only when python3 could not be spawned
+    # at all - LocalExecutor's #704 rule, so a wrapper that ran is never
+    # reclassified as a spawn failure.
     private def run_wrapper(payload) : JSON::Any?
       python = python_executable
       return nil unless python
-
-      stdout = IO::Memory.new
-      stderr = IO::Memory.new
-      # unquote_bigint_json, not payload.to_json verbatim: a term or
-      # variable carrying a bigint marker (an integer wider than Int64 a
-      # module returned, carried as a marked string) must reach the
-      # lookup as a real Python int, the way Ansible passes its own int
-      # objects - unquote_bigint_json rewrites ONLY the exact marked
-      # string form, so a genuine user string is never altered.
-      status = Process.run(python, ["-c", WRAPPER],
-        input: IO::Memory.new(Krikri.unquote_bigint_json(payload.to_json)),
-        output: stdout, error: stderr)
-      return nil unless status.success?
+      # unquote_bigint_json: a bigint marker must reach the lookup as a
+      # real Python int, the way Ansible passes its own int objects.
+      captured = Krikri.run_captured_helper(python, ["-c", WRAPPER],
+        Krikri.unquote_bigint_json(payload.to_json))
+      return nil unless captured
+      return nil unless captured[:status].success?
 
       # BigJson, not JSON.parse: a lookup result with an integer wider
-      # than Int64 (Python ints are unbounded) made plain JSON.parse
-      # raise "Invalid Int64" and the whole result became nil.
-      parsed = (Krikri::BigJson.parse(stdout.to_s) rescue nil)
+      # than Int64 made plain JSON.parse raise "Invalid Int64".
+      parsed = (Krikri::BigJson.parse(captured[:stdout]) rescue nil)
       return nil unless parsed && parsed.as_h?
       parsed
-    rescue
-      nil
     end
 
     # The controller-side wrapper: imports the plugin file, finds its
