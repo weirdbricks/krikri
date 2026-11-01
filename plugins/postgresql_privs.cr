@@ -230,6 +230,14 @@ module Krikri
         return PluginResult.new(changed: false, failed: true, msg: ex.message || "invalid parameters")
       end
 
+      # Real's main() runs ensure_required_libs() before connecting, so a
+      # target without psycopg2 fails the task with Ansible's
+      # missing_required_lib wording instead of krikri's own connect error
+      # (crystal-pg needs no psycopg2, issue #467).
+      if gate = PluginHelpers::PostgresqlConnection.psycopg2_gate
+        return gate
+      end
+
       login = PluginHelpers::PostgresqlConnection.resolve_login_params(@params)
       uri = PluginHelpers::PostgresqlConnection.build_uri(
         host: login[:host],

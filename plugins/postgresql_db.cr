@@ -118,6 +118,16 @@ module Krikri
       end
       return run_dump_or_restore(state, name) if state == "dump" || state == "restore"
 
+      # Real gates psycopg2 (ensure_required_libs) only on the
+      # present/absent path - dump/restore shell out to pg_dump/pg_restore
+      # and never import it (documented since ansible 2.8) - so a target
+      # without psycopg2 fails with Ansible's missing_required_lib wording
+      # instead of krikri's own connect error (crystal-pg needs no
+      # psycopg2, issue #467).
+      if gate = PluginHelpers::PostgresqlConnection.psycopg2_gate
+        return gate
+      end
+
       uri = build_maintenance_uri
       PluginHelpers::PostgresqlConnection.open(uri, @params) do |dbcon|
         exists = dbcon.query_all("SELECT datname FROM pg_database", as: String).includes?(name)

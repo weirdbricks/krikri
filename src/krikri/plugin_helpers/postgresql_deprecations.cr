@@ -76,6 +76,13 @@ module Krikri
       def self.add_default_db_warning(result : PluginResult, params : Hash(String, String)) : PluginResult
         return result if params.has_key?("login_db") || params.has_key?("db")
 
+        # The warning is module.warn()ed from get_conn_params(), which real
+        # only reaches after ensure_required_libs() has passed - a
+        # missing-psycopg2 failure (issue #467) exits before get_conn_params
+        # ever runs, so its result must carry no warnings key, just like the
+        # argspec failures that precede the gate.
+        return result if result.failed? && result.msg.starts_with?("Failed to import the required Python library (")
+
         existing = result.extra["warnings"]?.try(&.as_a?)
         texts = existing ? existing.map(&.as_s) : [] of String
         texts << DEFAULT_DB_WARNING unless texts.includes?(DEFAULT_DB_WARNING)

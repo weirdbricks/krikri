@@ -153,6 +153,17 @@ module Krikri
       check_mode = true?(@params["_ansible_check_mode"]?)
       return PluginResult.new(changed: false, failed: true, msg: "Using autocommit is mutually exclusive with check_mode") if autocommit && check_mode
 
+      # Real's main() runs ensure_required_libs() here - after the argspec
+      # and autocommit/check_mode checks, before get_conn_params() - so a
+      # target without psycopg2 fails the task with Ansible's
+      # missing_required_lib wording instead of krikri's own connect error
+      # (crystal-pg needs no psycopg2, issue #467). Because real never
+      # reaches get_conn_params() on this failure, its result carries no
+      # default-database warning either.
+      if gate = PluginHelpers::PostgresqlConnection.psycopg2_gate
+        return gate
+      end
+
       search_path = @params["search_path"]?
 
       login = PluginHelpers::PostgresqlConnection.resolve_login_params(@params)
