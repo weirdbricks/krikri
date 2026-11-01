@@ -319,6 +319,28 @@ module Krikri
       nil
     end
 
+    # Whether the WHOLE condition is a single `is defined`-family test
+    # (optionally over a filter chain feeding the test). The strict-
+    # undefined probe declines this shape: real Ansible never fails a
+    # conditional on it - the test's tolerance covers the entire chain
+    # feeding it (live-verified vs 2.19.4: `when: d['missing'] is
+    # defined` skips, never errors; and hwwilliams.duplicati's
+    # `when: duplicati_release_url_list | list | first is defined`,
+    # issue #730, likewise skips with an undefined head where the
+    # probe's strict evaluation raised) - and the is-defined handlers
+    # below answer the test leniently instead.
+    private def self.whole_condition_is_defined_test?(condition : String) : Bool
+      stripped = condition.strip
+      return false unless stripped.ends_with?(" is defined") ||
+                          stripped.ends_with?(" is not defined") ||
+                          stripped.ends_with?(" is undefined") ||
+                          stripped.ends_with?(" is not undefined")
+      # A compound (top-level and/or) condition keeps the probe - its
+      # non-tolerated arms can still be strict failures in real Ansible.
+      no_strings = stripped.gsub(/'[^']*'|"[^"]*"/, " ")
+      !no_strings.includes?(" and ") && !no_strings.includes?(" or ")
+    end
+
     def self.evaluate(condition : String, vars : Hash(String, JSON::Any), strict : Bool = false, raise_undefined : Bool = false) : Bool
       # The strict-undefined PROBE (see Krikri.strict_undefined_probe_
       # message): when undefined references must raise, give the whole
@@ -334,6 +356,7 @@ module Krikri
       # gap, side-effecting lookup) the hand-rolled evaluation below
       # proceeds exactly as before.
       if raise_undefined && !Krikri.probe_has_side_effecting_call?(condition) &&
+         !whole_condition_is_defined_test?(condition) &&
          (msg = Krikri.strict_undefined_probe_message(condition, vars))
         raise UndefinedVariableError.new(msg)
       end
@@ -869,16 +892,16 @@ module Krikri
       call_shaped_operand = condition.includes?("(")
       if condition.includes?(" is not undefined") && !call_shaped_operand
         var_name = condition.gsub(" is not undefined", "").strip
-        return defined?(vars, var_name)
+        return !defined_operand?(vars, var_name)
       elsif condition.includes?(" is undefined") && !call_shaped_operand
         var_name = condition.gsub(" is undefined", "").strip
-        return !defined?(vars, var_name)
+        return !defined_operand?(vars, var_name)
       elsif condition.includes?(" is defined") && !call_shaped_operand
         var_name = condition.gsub(" is defined", "").strip
-        return defined?(vars, var_name)
+        return defined_operand?(vars, var_name)
       elsif condition.includes?(" is not defined") && !call_shaped_operand
         var_name = condition.gsub(" is not defined", "").strip
-        return !defined?(vars, var_name)
+        return !defined_operand?(vars, var_name)
       end
 
       # Handle 'is mapping' / 'is sequence' (plus each "is not ..."
@@ -2087,6 +2110,39 @@ module Krikri
       end
 
       true
+    end
+
+    # An `is defined`-family test whose left side is a FILTER CHAIN
+    # rather than a bare/dotted variable name - hwwilliams.duplicati's
+    # own `duplicati_release_url_list | list | first is defined`
+    # (tasks/find_release.yml, issue #730) - asks about the chain's
+    # RESULT, not about a variable literally named with pipes:
+    # #defined?'s key lookup never matched such a name, so the
+    # condition answered false and the task silently skipped where
+    # Ansible ran it. Ansible applies the test to the chain's value: a
+    # chain that resolves is defined; an undefined head, or `first` of
+    # an empty list, collapses to undefined (false) WITHOUT erroring,
+    # even under a strict task-level when: - an `is defined` guard is
+    # lenient by definition.
+    private def self.defined_operand?(vars : Hash(String, JSON::Any), operand : String) : Bool
+      return defined?(vars, operand) unless operand.includes?("|")
+      begin
+        # Crinja's raw-value path answers definedness directly: nil when
+        # the chain bottoms out at a name set nowhere, a real value
+        # (even a defined null - a defined None IS defined in Jinja2)
+        # when it resolves - the same distinction #evaluate_value's own
+        # None handling draws.
+        !VariableSubstitutor::JinjaRenderer.evaluate_structured(operand, vars).nil?
+      rescue
+        # Crinja couldn't evaluate the chain at all - fall back to the
+        # hand-rolled lenient render and read its "undefined" sentinel.
+        begin
+          rendered = VariableSubstitutor::ExpressionEvaluator.new(vars, true).evaluate(operand)
+          rendered != "undefined" && !rendered.empty?
+        rescue
+          false
+        end
+      end
     end
 
     # Audit pass (2026-08-11, following the ansible-vault/prometheus/

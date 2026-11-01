@@ -664,6 +664,35 @@ describe Krikri::ConditionalEvaluator do
     it "evaluates 'is not defined' true for missing variables" do
       Krikri::ConditionalEvaluator.evaluate("foo is not defined", EMPTY_VARS).must_equal(true)
     end
+
+    # hwwilliams.duplicati's own `when: duplicati_release_url_list | list
+    # | first is defined` (issue #730): the test applies to the filter
+    # chain's RESULT, not to a variable literally named with pipes - the
+    # whole chain text was previously looked up as a bare key, never
+    # matched, and the task silently skipped where Ansible ran it.
+    it "answers 'is defined' on a resolving filter chain (true)" do
+      v = Hash(String, JSON::Any).new
+      v["urls"] = JSON.parse(%(["https://a/x.rpm", "https://b/y.rpm"]))
+      Krikri::ConditionalEvaluator.evaluate("urls | list | first is defined", v).must_equal(true)
+    end
+
+    it "answers 'is defined' false for an undefined chain head, without raising" do
+      Krikri::ConditionalEvaluator.evaluate("no_such_var | list | first is defined", EMPTY_VARS,
+        raise_undefined: true).must_equal(false)
+    end
+
+    it "answers 'is defined' false for first of an empty list" do
+      v = Hash(String, JSON::Any).new
+      v["urls"] = JSON.parse(%([]))
+      Krikri::ConditionalEvaluator.evaluate("urls | list | first is defined", v).must_equal(false)
+    end
+
+    it "negates filter-chain definedness ('is not defined')" do
+      v = Hash(String, JSON::Any).new
+      v["urls"] = JSON.parse(%(["https://a/x.rpm"]))
+      Krikri::ConditionalEvaluator.evaluate("urls | list | first is not defined", v).must_equal(false)
+      Krikri::ConditionalEvaluator.evaluate("no_such_var | list | first is not defined", EMPTY_VARS).must_equal(true)
+    end
   end
 
   describe "registered task result tests (is failed/succeeded/success/changed/skipped)" do
