@@ -1552,6 +1552,17 @@ module Krikri
       # needed. A member with no entry at all (the script halted before
       # reaching it) still yields nil, exactly as `cache[task]?` did.
       result = cache.delete(task).try(&.[0])
+      # Same "when the task is reached, not at batch-build time" rule for
+      # the warnings captured during step preparation (issue #489): the
+      # consumed entry's text prints here, under this task's own banner
+      # just before its result display; entries for never-reached tasks
+      # are never printed.
+      if host_warnings = @batch_captured_warnings[host.name]?
+        if text = host_warnings.delete(task)
+          STDERR.print text
+        end
+        @batch_captured_warnings.delete(host.name) if host_warnings.empty?
+      end
       # A when: that raised while the group was being built was cached
       # without its [ERROR] chain: ansible prints that block just before the
       # task's fatal line, so it is emitted here, when the task is reached,
@@ -1658,10 +1669,23 @@ module Krikri
           next
         end
 
-        case outcome = prepare_batch_step(task, host, vars_context, shared: member_substitutor)
+        # Batch-build prepares every member up front, so rendering a later
+        # member's args can emit stderr warnings here (issue #489: the
+        # authorized_key jinja-constant block) - real only warns when the
+        # task is actually reached, so capture instead of printing and let
+        # try_batched_result emit the text when it consumes the task;
+        # leftovers for members a halt keeps from ever being reached are
+        # simply never printed.
+        outcome = nil
+        captured = ResultDisplay.capture_stderr_warnings do
+          outcome = prepare_batch_step(task, host, vars_context, shared: member_substitutor)
+        end
+        (@batch_captured_warnings[host.name] ||= Hash(Task, String).new)[task] = captured unless captured.empty?
+
+        case step_outcome = outcome
         when JSON::Any
-          cache[task] = {outcome, vars_context}
-          failed = outcome["failed"]?.try(&.as_bool) || false
+          cache[task] = {step_outcome, vars_context}
+          failed = step_outcome["failed"]?.try(&.as_bool) || false
           halted = true if failed && !resolve_task_ignore_errors(task, vars_context)
         when BatchScript::Step
           member_conn = ConnectionSettings.resolve(host, vars_context)
@@ -1691,7 +1715,7 @@ module Krikri
           else
             first_step_conn = member_conn
           end
-          steps << outcome
+          steps << step_outcome
           step_tasks << task
           step_vars << vars_context
         end
