@@ -344,7 +344,11 @@ describe Krikri::PythonModuleRunner do
     result["failed"].as_bool.must_equal(true)
     result["msg"].as_s.must_equal("Task failed: Module failed: boom")
     result["msg"].as_s.wont_include("MODULE FAILURE")
-    result["_ansible_module_exception"].as_bool.must_equal(true)
+    # Real ansible renders the uncaught exception's block FLAT - the same
+    # collapsed one-segment shape a plain fail_json gets, with no second
+    # paragraph and no "<<< caused by >>>" section (live-verified vs 2.19,
+    # issue #523) - so no chain-forcing marker is emitted.
+    result["_ansible_module_exception"]?.must_be_nil
   end
 
   it "reports an uncaught exception with no message as Ansible's message-less module failure" do
@@ -359,7 +363,26 @@ describe Krikri::PythonModuleRunner do
     })
     result["failed"].as_bool.must_equal(true)
     result["msg"].as_s.must_equal("Task failed: Module failed.")
-    result["_ansible_module_exception"].as_bool.must_equal(true)
+    result["_ansible_module_exception"]?.must_be_nil
+  end
+
+  it "reports an uncaught ImportError module flat, without the caused-by marker" do
+    skip("python3 not available") unless File.exists?("/usr/bin/python3")
+    # A top-level `import docker` on a host without the module dies with
+    # ModuleNotFoundError before any result JSON: real ansible prints the
+    # flat block (issue #523) - no "<<< caused by >>>" marker on the result.
+    source = "#!/usr/bin/python\nimport krikri_no_such_module_523\n"
+    result = PluginSpecHelper.run("py_module", {
+      "module_name"         => "testmod_import",
+      "module_source"       => Base64.strict_encode(source),
+      "new_style"           => "false",
+      "kv_argv"             => "[]",
+      "_ansible_check_mode" => "false",
+    })
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s
+      .must_equal("Task failed: Module failed: No module named 'krikri_no_such_module_523'")
+    result["_ansible_module_exception"]?.must_be_nil
   end
 
   # ---- uncaught-exception recovery from stderr ----
@@ -380,6 +403,100 @@ describe Krikri::PythonModuleRunner do
       STDERR
     Krikri::PythonModuleRunner.uncaught_exception_detail(stderr)
       .must_equal("{'msg': 'Listing keys failed'}")
+  end
+
+  it "joins an explicit direct-cause chain's messages, outer first" do
+    # `raise MyErr('wrapped failure') from ValueError('inner')`: real
+    # ansible's msg joins the direct-cause chain with ": " - "wrapped
+    # failure: inner" - while the implicit-context chain below keeps only
+    # the final message (issue #523).
+    stderr = <<-STDERR
+      Traceback (most recent call last):
+        File "m.py", line 1, in <module>
+          int('x')
+      ValueError: invalid literal for int() with base 10: 'x'
+
+      The above exception was the direct cause of the following exception:
+
+      Traceback (most recent call last):
+        File "m.py", line 3, in <module>
+          raise MyErr('wrapped failure')
+      MyErr: wrapped failure
+      STDERR
+    Krikri::PythonModuleRunner.uncaught_exception_detail(stderr)
+      .must_equal("wrapped failure: invalid literal for int() with base 10: 'x'")
+  end
+
+  it "joins a cause constructed inline, which prints no traceback header" do
+    # `raise MyErr('wrapped failure') from ValueError("int('x')")`: the
+    # cause is CONSTRUCTED, never raised, so Python prints no
+    # "Traceback (most recent call last):" header for its section - just
+    # the bare message line before the direct-cause separator. Real
+    # ansible still joins it into the msg (issue #523).
+    stderr = <<-STDERR
+      ValueError: invalid literal for int() with base 10: 'x'
+
+      The above exception was the direct cause of the following exception:
+
+      Traceback (most recent call last):
+        File "m.py", line 2, in <module>
+          raise MyErr('wrapped failure') from ValueError("int('x')")
+      MyErr: wrapped failure
+      STDERR
+    Krikri::PythonModuleRunner.uncaught_exception_detail(stderr)
+      .must_equal("wrapped failure: invalid literal for int() with base 10: 'x'")
+  end
+
+  it "joins several direct causes with the outermost first, deepest last" do
+    stderr = <<-STDERR
+      Traceback (most recent call last):
+        File "m.py", line 1, in <module>
+          int('x')
+      ValueError: inner
+
+      The above exception was the direct cause of the following exception:
+
+      Traceback (most recent call last):
+        File "m.py", line 3, in <module>
+          raise MidErr('mid')
+      MidErr: mid
+
+      The above exception was the direct cause of the following exception:
+
+      Traceback (most recent call last):
+        File "m.py", line 5, in <module>
+          raise OuterErr('outer')
+      OuterErr: outer
+      STDERR
+    Krikri::PythonModuleRunner.uncaught_exception_detail(stderr)
+      .must_equal("outer: mid: inner")
+  end
+
+  it "stops the cause chain at an implicit-context link" do
+    # implicit context between the two deepest sections, direct cause
+    # between mid and outer: only the direct-cause pair joins.
+    stderr = <<-STDERR
+      Traceback (most recent call last):
+        File "m.py", line 1, in <module>
+          int('x')
+      ValueError: inner
+
+      During handling of the above exception, another exception occurred:
+
+      Traceback (most recent call last):
+        File "m.py", line 3, in <module>
+          raise MidErr('mid')
+      MidErr: mid
+
+      The above exception was the direct cause of the following exception:
+
+      Traceback (most recent call last):
+        File "m.py", line 5, in <module>
+          raise OuterErr('outer')
+      OuterErr: outer
+      STDERR
+    Krikri::PythonModuleRunner.uncaught_exception_detail(stderr)
+      .must_equal("outer: mid")
   end
 
   it "joins a multi-line exception message's non-indented continuation lines" do

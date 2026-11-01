@@ -958,30 +958,110 @@ module Krikri
     # KeyboardInterrupt and GeneratorExit pass through unhandled there,
     # so they return nil here too. "" means the exception had no
     # message (bare `raise SomeError()`, which Ansible spells
-    # "Module failed."), nil means no parseable traceback at all. The
-    # chained-exception case keeps only the FINAL traceback's message,
-    # the way Ansible reports it.
+    # "Module failed."), nil means no parseable traceback at all. An
+    # explicit cause chain (`raise X from Y`) joins each direct cause's
+    # message with ": ", outer first, deepest last - the way Ansible's
+    # msg renders the chain (issue #523); implicit context ("During
+    # handling of the above exception, another exception occurred")
+    # contributes nothing, keeping only the final traceback's message.
     def uncaught_exception_detail(stderr : String) : String?
       marker = "Traceback (most recent call last):"
-      idx = stderr.rindex(marker)
-      return nil unless idx
-      exc_lines = stderr[(idx + marker.size)..].lines.reject do |line|
-        line.empty? || line.starts_with?(' ') || line.starts_with?('\t')
+      final_idx = stderr.rindex(marker)
+      return nil unless final_idx
+      pair = traceback_message(stderr[(final_idx + marker.size)..])
+      return nil unless pair
+      detail, exc_class = pair
+      return nil if exc_class.in?("SystemExit", "KeyboardInterrupt", "GeneratorExit")
+      messages = [detail]
+      # Walk backwards across the direct-cause separators, keeping only
+      # explicit cause links: `raise X from Y` prints Y's section first, then
+      # the separator, then X's traceback. The separator must sit directly
+      # before the section it causes (blank lines only in between), and an
+      # unparseable cause ends the chain.
+      cursor = final_idx
+      loop do
+        break unless cursor > 0
+        sep_idx = stderr.rindex(DIRECT_CAUSE_SEPARATOR, cursor - 1)
+        break unless sep_idx
+        gap = stderr[(sep_idx + DIRECT_CAUSE_SEPARATOR.size)...cursor]
+        break unless gap.blank?
+        pair = cause_message(stderr[0...sep_idx])
+        break unless pair
+        messages << pair[0]
+        start = pair[1]
+        break unless start
+        cursor = start
       end
-      first = exc_lines.first?
+      messages.join(": ")
+    end
+
+    DIRECT_CAUSE_SEPARATOR = "The above exception was the direct cause of the following exception:"
+
+    # The cause section's message and the index of its own traceback header
+    # (nil for a cause constructed inline - `raise X from ValueError("msg")`
+    # was never raised, so Python prints no "Traceback" header for it and
+    # nothing can chain further back). nil when no parseable cause message
+    # precedes the separator.
+    private def cause_message(text : String) : {String, Int32?}?
+      marker = "Traceback (most recent call last):"
+      if idx = text.rindex(marker)
+        pair = traceback_message(text[(idx + marker.size)..]) || return nil
+        return {pair[0], idx}
+      end
+      lines = text.lines
+      i = lines.size - 1
+      while i >= 0 && lines[i].empty?
+        i -= 1
+      end
+      msg_lines = [] of String
+      while i >= 0
+        line = lines[i]
+        break if line.empty? || line.starts_with?(' ') || line.starts_with?('\t') ||
+                 line.starts_with?(marker) ||
+                 line.starts_with?("During handling of the above exception")
+        msg_lines << line
+        i -= 1
+      end
+      return nil if msg_lines.empty?
+      msg_lines.reverse!
+      first = msg_lines.first
+      match = first.match(/\A[A-Za-z_][\w.]*/) || return nil
+      rest = first[match[0].size..]
+      return nil unless rest.empty? || rest.starts_with?(": ")
+      detail = rest.empty? ? "" : rest[2..]
+      unless msg_lines.size == 1
+        detail = "#{detail}\n#{msg_lines[1..].join("\n")}"
+      end
+      {detail, nil}
+    end
+
+    # One traceback section's exception message (leading exception line plus
+    # any non-indented continuation lines) and its exception class name.
+    # Stops at the next traceback header or chained-exception separator, so
+    # an earlier section's parse never swallows the section boundary; nil
+    # when the section doesn't open with a parseable exception line.
+    private def traceback_message(section : String) : {String, String}?
+      msg_lines = [] of String
+      section.each_line do |line|
+        next if line.empty? || line.starts_with?(' ') || line.starts_with?('\t')
+        break if line.starts_with?("Traceback (most recent call last):") ||
+                 line.starts_with?("During handling of the above exception") ||
+                 line.starts_with?(DIRECT_CAUSE_SEPARATOR)
+        msg_lines << line
+      end
+      first = msg_lines.first?
       return nil unless first
       # An exception line starts with the class name (possibly dotted);
       # anything else means this isn't a parseable Python traceback.
       match = first.match(/\A[A-Za-z_][\w.]*/)
       return nil unless match
-      return nil if match[0].in?("SystemExit", "KeyboardInterrupt", "GeneratorExit")
       rest = first[match[0].size..]
       return nil unless rest.empty? || rest.starts_with?(": ")
       detail = rest.empty? ? "" : rest[2..]
-      if extra = exc_lines[1..]?
+      if extra = msg_lines[1..]?
         detail = "#{detail}\n#{extra.join("\n")}" unless extra.empty?
       end
-      detail
+      {detail, match[0]}
     end
   end
 end

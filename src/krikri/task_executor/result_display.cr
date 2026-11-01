@@ -1220,23 +1220,14 @@ module Krikri
         return
       end
       # An uncaught exception from a raw-run Python module (py_module's crash
-      # result): Ansible's module loader catches it and hands the exception to
-      # the task as a cause event, so the block keeps the "Module failed."
-      # segment and the "<<< caused by >>>" section rather than collapsing
-      # into one line the way a plain fail_json does (live-verified vs
-      # ansible-playbook 2.19 with linux-system-roles.nbde_server's
-      # TangAnsibleError, issue #555).
-      if result["_ansible_module_exception"]?.try(&.as_bool?) == true
-        root = ErrorBlock::Node.new("Task failed.", source_context: origin)
-        if msg.empty?
-          ErrorBlock.emit(root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new("Module failed.")))
-          return
-        end
-        module_failed = ErrorBlock::Node.new("Module failed.")
-          .with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(msg, events: [] of ErrorBlock::Node))
-        ErrorBlock.emit(root.with_chain(ErrorBlock::DIRECT_CAUSE, true, module_failed))
-        return
-      end
+      # result) renders through the generic chain below: real ansible's
+      # AnsiballZ loader catches the Exception and fails the task with the
+      # collapsed one-segment block ("Task failed: Module failed: <msg>" at
+      # the task's Origin, no "<<< caused by >>>" section and no second
+      # paragraph), the same shape a plain fail_json gets - live-verified vs
+      # ansible-playbook 2.19 (issue #523). The msg reaching the chain is the
+      # bare exception detail via _ansible_error_detail, so the generic
+      # "Module failed." middle segment reproduces the brief exactly.
       ErrorBlock.emit(task_error_chain(source_task.module_name, msg, origin))
     end
 
