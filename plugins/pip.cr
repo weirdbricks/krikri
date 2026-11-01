@@ -3,6 +3,7 @@
 require "json"
 require "../src/krikri/base_plugin"
 require "../src/krikri/plugin_helpers/run_command_failure"
+require "../src/krikri/plugin_helpers/python_lib_gate"
 
 module Krikri
   # Pip plugin - manages Python packages via pip. Compatible with (a
@@ -312,25 +313,38 @@ module Krikri
     end
 
     # One shell loop over the `-m pip` candidate interpreters (a single
-    # SSH round trip, not one per candidate): the host's
-    # ansible_python_interpreter when set (Ansible runs its pip
-    # module under that interpreter, so sys.executable is exactly it),
-    # then python3, then the versioned python3.N names interpreter
-    # discovery iterates, then a bare python, then the absolute
-    # /usr/bin and /usr/local/bin spellings of the same names. The
-    # absolute entries are for a task whose `environment:` PATH hides
-    # every bare name: Ansible's module runs under an absolute
-    # interpreter (ansible_python_interpreter / sys.executable) so it
-    # still finds pip there, and this probe must too. Returns the
-    # winning interpreter name (sanitized to a plain path token - this
-    # string is interpolated into later shell commands), or nil when no
-    # candidate could run pip as a module.
+    # SSH round trip, not one per candidate), in the order Ansible
+    # itself decides the module's interpreter: the host's
+    # ansible_python_interpreter when set (Ansible runs its pip module
+    # under that interpreter, so sys.executable is exactly it; "auto*"
+    # values are discovery directives, not names, and resolve to the
+    # discovered fact below), then discovered_interpreter_python when
+    # gathered (Ansible's sys.executable IS interpreter discovery's
+    # answer - on a Ubuntu 22.04 host that is the VERSIONED
+    # /usr/bin/python3.10, so reporting whatever bare `python3`
+    # resolves to diverged, issue #474), then Ansible's
+    # INTERPRETER_PYTHON_FALLBACK order (INTERPRETER_FALLBACK,
+    # python_lib_gate.cr's plugin-side copy of facts_gatherer.cr's
+    # list), then the remaining bare python3.N names and a bare
+    # python, then the absolute /usr/bin and /usr/local/bin spellings
+    # of the same names. The absolute entries are for a task whose
+    # `environment:` PATH hides every bare name: Ansible's module runs
+    # under an absolute interpreter (ansible_python_interpreter /
+    # sys.executable) so it still finds pip there, and this probe must
+    # too. Returns the winning interpreter name (sanitized to a plain
+    # path token - this string is interpolated into later shell
+    # commands), or nil when no candidate could run pip as a module.
     private def discover_pip_module_interpreter : String?
       candidates = [] of String
       if interp = @vars["ansible_python_interpreter"]?.try(&.as_s?)
         stripped = interp.strip
+        candidates << stripped unless stripped.empty? || stripped.starts_with?("auto")
+      end
+      if discovered = @vars["discovered_interpreter_python"]?.try(&.as_s?)
+        stripped = discovered.strip
         candidates << stripped unless stripped.empty?
       end
+      candidates.concat(INTERPRETER_FALLBACK)
       names = ["python3"] + (6..14).to_a.reverse.map { |minor| "python3.#{minor}" } + ["python"]
       candidates.concat(names)
       candidates.concat(names.flat_map { |name| ["/usr/bin/#{name}", "/usr/local/bin/#{name}"] })
