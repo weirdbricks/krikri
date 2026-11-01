@@ -2110,6 +2110,35 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
         evaluator.evaluate("host + null_var")
       end
     end
+    it "raises `UndefinedMarker` concat wording for a method call on a None-valued `+` operand" do
+      # Ansible 2.19 never runs a method on a None-valued variable - the
+      # call short-circuits to an UndefinedMarker, so the `+` names
+      # UndefinedMarker rather than NoneType (inofix.yapkg issue #531:
+      # `yapkg_names: '{{ yapkg__names | list +
+      # yapkg_list.rstrip(";").split(";") }}'` with `yapkg_list` rendered
+      # empty by a `{% for %}` over an empty list).
+      assert_raises_message(Krikri::PlusMinusOperandError,
+        %(can only concatenate list (not "UndefinedMarker") to list)) do
+        evaluator.evaluate("list1 + null_var.rstrip(';').split(';')")
+      end
+      assert_raises_message(Krikri::PlusMinusOperandError,
+        %(can only concatenate str (not "UndefinedMarker") to str)) do
+        evaluator.evaluate("host + null_var.rstrip(';')")
+      end
+      assert_raises_message(Krikri::PlusMinusOperandError,
+        "unsupported operand type(s) for -: 'UndefinedMarker' and 'int'") do
+        evaluator.evaluate("null_var.rstrip(';') - 1")
+      end
+    end
+
+    it "still reports a genuinely undefined HEAD of a method-call `+` operand as undefined" do
+      # The UndefinedMarker treatment only applies when the method-call
+      # chain's head variable IS defined (a None receiver) - a missing
+      # head keeps the plain strict-undefined failure.
+      assert_raises_message(Krikri::PlusMinusOperandError, "'undef_head' is undefined") do
+        evaluator.evaluate("list1 + undef_head.rstrip(';').split(';')")
+      end
+    end
   end
 
   # Filter precedence inside binary-operator operands: `|` binds TIGHTER

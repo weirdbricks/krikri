@@ -2053,6 +2053,22 @@ module Krikri
           raise PlusMinusOperandError.new(Krikri.strict_undefined_message(expr, @vars))
         end
 
+        if resolved.nil? && strict && (head = expr[/\A[A-Za-z_][A-Za-z0-9_]*/]) &&
+           expr.matches?(/\.[A-Za-z_][A-Za-z0-9_]*\(/)
+          # Ansible 2.19 never runs a method on a None-valued receiver -
+          # the call short-circuits to an UndefinedMarker, so the
+          # enclosing operator fails with `can only concatenate list (not
+          # "UndefinedMarker") to list` rather than naming NoneType (JSON
+          # null here, inofix.yapkg issue #531). Only a DEFINED head gets
+          # this: a genuinely undefined head keeps the "'x' is undefined"
+          # failure, and the head-keyed gate keeps lenient paths (`~`,
+          # mult/div, list elements) rendering null as before.
+          if @vars.has_key?(head)
+            return JSON::Any.new(UNDEFINED_MARKER_SENTINEL)
+          end
+          raise PlusMinusOperandError.new(Krikri.strict_undefined_message(head, @vars))
+        end
+
         resolved || JSON::Any.new(nil)
       end
 
@@ -2609,9 +2625,13 @@ module Krikri
       # by its class name `_OmitType` (`can only concatenate str (not
       # "_OmitType") to str`, `unsupported operand type(s) for +:
       # '_OmitType' and 'str'`), so the older plain-"omit" wording here
-      # was renamed to match.
+      # was renamed to match. The UNDEFINED_MARKER_SENTINEL string is the
+      # same encoding for Ansible 2.19's UndefinedMarker (a method call
+      # on a None-valued variable short-circuits to undefined, issue
+      # #531) - real Python names the class the same way.
       private def python_type_name(value : JSON::Any) : String
         return "_OmitType" if value.raw == OMIT_SENTINEL
+        return "UndefinedMarker" if value.raw == UNDEFINED_MARKER_SENTINEL
         case value.raw
         when Nil     then "NoneType"
         when Bool    then "bool"
@@ -2630,17 +2650,15 @@ module Krikri
         # Ansible fails the task on an omit operand (`_OmitType`).
         # Omit on the LEFT: every real Python class pair fails the same
         # way (`unsupported operand type(s) for +: '_OmitType' and 'str'`).
-        # Omit on the RIGHT is side-dependent - str/list left operands
-        # fail with the concat wording (`can only concatenate str (not
-        # "_OmitType") to str`, live-verified), everything else with the
-        # unsupported-operand wording - so it is left to the typed
-        # branches below, which the sentinel (a String) would otherwise
-        # silently concatenate into.
-        if a.raw == OMIT_SENTINEL
+        # The UNDEFINED_MARKER_SENTINEL is guarded identically: it is
+        # itself a String, so without the guard it would silently hit the
+        # {String, String} branch below, while Ansible 2.19 reports the
+        # operand as UndefinedMarker (issue #531).
+        if a.raw == OMIT_SENTINEL || a.raw == UNDEFINED_MARKER_SENTINEL
           raise PlusMinusOperandError.new(
             "unsupported operand type(s) for +: '#{python_type_name(a)}' and '#{python_type_name(b)}'")
         end
-        if b.raw == OMIT_SENTINEL
+        if b.raw == OMIT_SENTINEL || b.raw == UNDEFINED_MARKER_SENTINEL
           case a.raw
           when String
             raise PlusMinusOperandError.new(
@@ -2893,8 +2911,12 @@ module Krikri
 
         # Same omit-sentinel guard as #combine_plus - a sentinel String
         # would otherwise fall to the strict else branch anyway, but with
-        # the operand named "omit" instead of its type.
-        if a.raw == OMIT_SENTINEL || b.raw == OMIT_SENTINEL
+        # the operand named "omit" instead of its type. The
+        # UNDEFINED_MARKER_SENTINEL joins it for the same reason (issue
+        # #531): a method-call-on-None operand is UndefinedMarker, not
+        # NoneType, and must fail rather than silently subtract.
+        if a.raw == OMIT_SENTINEL || b.raw == OMIT_SENTINEL ||
+           a.raw == UNDEFINED_MARKER_SENTINEL || b.raw == UNDEFINED_MARKER_SENTINEL
           raise PlusMinusOperandError.new(
             "unsupported operand type(s) for -: '#{python_type_name(a)}' and '#{python_type_name(b)}'")
         end
