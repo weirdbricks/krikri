@@ -1,5 +1,6 @@
 require "json"
 require "./bigint_json"
+require "./spawn_error"
 
 # Runner for role-local CONTROLLER-side Python ACTION plugins - a role's
 # own `action_plugins/<name>.py` dispatched when a task names the
@@ -119,7 +120,14 @@ module Krikri
       # unparseable output) - the mechanism is unavailable, not the
       # plugin broken, same degradation as an unimportable `ansible`
       # package.
-      result = dispatcher ? run_wrapper_ipc(payload, dispatcher) : run_wrapper(payload)
+      result = begin
+        dispatcher ? run_wrapper_ipc(payload, dispatcher) : run_wrapper(payload)
+      rescue ex : SpawnError
+        # The wrapper never RAN - carry the spawn text into the error
+        # instead of only "is python3 available?".
+        raise ActionUnavailableError.new(UNAVAILABLE_KIND,
+          "action plugin wrapper failed to spawn: #{ex.message}")
+      end
       raise ActionUnavailableError.new(UNAVAILABLE_KIND,
         "action plugin wrapper produced no result (is python3 available?)") unless result
       if failure = interpretable_failure?(result)
@@ -181,33 +189,28 @@ module Krikri
     alias ModuleDispatcher = Proc(String, Hash(String, JSON::Any), JSON::Any)
 
     # Runs the wrapper script below against one request. Returns the
-    # parsed response JSON, or nil on ANY failure (no python3, nonzero
-    # exit, unparseable output) - callers treat nil as "not available".
+    # parsed response JSON, nil when the wrapper RAN but did not answer
+    # (nonzero exit, unparseable output, a post-spawn I/O failure), and
+    # raises Krikri::SpawnError only when python3 could not be spawned
+    # at all - LocalExecutor's #704 rule, so a wrapper that ran is never
+    # reclassified as a spawn failure.
     private def run_wrapper(payload : Hash(String, JSON::Any)) : JSON::Any?
       python = python_executable
       return nil unless python
-
-      stdout = IO::Memory.new
-      stderr = IO::Memory.new
-      # unquote_bigint_json, not payload.to_json verbatim: a task arg
-      # carrying a bigint marker (an integer wider than Int64 a module
-      # returned, carried as a marked string) must reach the plugin as a
-      # real Python int, the way Ansible passes its own int objects -
-      # unquote_bigint_json rewrites ONLY the exact marked string form,
-      # so a genuine user string is never altered.
-      status = Process.run(python, ["-c", WRAPPER],
-        input: IO::Memory.new(Krikri.unquote_bigint_json(payload.to_json)),
-        output: stdout, error: stderr)
-      return nil unless status.success?
+      # unquote_bigint_json: a bigint marker must reach the plugin as a
+      # real Python int, the way Ansible passes its own int objects.
+      captured = Krikri.run_captured_helper(python, ["-c", WRAPPER],
+        Krikri.unquote_bigint_json(payload.to_json))
+      return nil unless captured
+      return nil unless captured[:status].success?
 
       # BigJson, not JSON.parse: a plugin result with an integer wider
-      # than Int64 (Python ints are unbounded) made plain JSON.parse
-      # raise "Invalid Int64" and the whole result became nil.
-      parsed = (Krikri::BigJson.parse(stdout.to_s.lines.reject(&.blank?).last? || "") rescue nil)
+      # than Int64 made plain JSON.parse raise "Invalid Int64". Only the
+      # LAST line of stdout is parsed, so plugin noise cannot corrupt
+      # the protocol.
+      parsed = (Krikri::BigJson.parse(captured[:stdout].lines.reject(&.blank?).last? || "") rescue nil)
       return nil unless parsed && parsed.as_h?
       parsed
-    rescue
-      nil
     end
 
     # The interactive counterpart of run_wrapper: the wrapper stays
@@ -222,9 +225,20 @@ module Krikri
       python = python_executable
       return nil unless python
 
-      process = Process.new(python, ["-c", WRAPPER],
-        input: Process::Redirect::Pipe, output: Process::Redirect::Pipe,
-        error: Process::Redirect::Close)
+      # Same spawn classification as run_wrapper: only a PRE-spawn
+      # failure raises (run_action converts it); a bad executable keeps
+      # the silent nil. The spawn used to sit outside all handling and
+      # crash the run (#705).
+      process = begin
+        Krikri.simulated_python_spawn_failure
+        Process.new(python, ["-c", WRAPPER],
+          input: Process::Redirect::Pipe, output: Process::Redirect::Pipe,
+          error: Process::Redirect::Close)
+      rescue File::Error
+        return nil
+      rescue ex
+        raise SpawnError.new("Failed to spawn process: #{ex.message}")
+      end
       begin
         input = process.input.as(IO)
         # unquote_bigint_json, same rationale as run_wrapper: the task

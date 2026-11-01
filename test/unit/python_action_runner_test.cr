@@ -378,3 +378,63 @@ describe Krikri::PythonActionRunner do
     end
   end
 end
+
+# Issue #705: a spawn failure (fork/exec hiccup, fd exhaustion) is
+# distinguishable since #704 - the runner must carry its text into the
+# eventual failure instead of the bare-rescue nil that surfaced only as
+# "is python3 available?" (and the IPC path's spawn used to escape
+# run_action uncaught entirely). The KRIKRI_TEST_FORCE_PYTHON_SPAWN_FAILURE
+# hook names a counter file: while it holds a positive integer, each
+# python3 spawn attempt consumes one count and fails with a simulated
+# environment-level spawn error.
+describe "PythonActionRunner spawn failure reporting (#705)" do
+  exclusive! # ENV hook is process-wide
+
+  it "surfaces a plain-wrapper spawn failure as an unavailable action carrying the spawn text" do
+    dir = File.join(Dir.tempdir, "krikri-pyaction-spec-#{Random.rand(1_000_000)}")
+    path = write_action_plugin(dir, "myaction.py", "# test plugin")
+    counter = File.join(dir, "spawn-counter")
+    File.write(counter, "999")
+
+    ENV["KRIKRI_TEST_FORCE_PYTHON_SPAWN_FAILURE"] = counter
+    begin
+      ex = assert_raises(Krikri::PythonActionRunner::ActionUnavailableError) do
+        run_plugin(path)
+      end
+      # same unavailable-mechanism verdict as before - the caller keeps
+      # its "not supported by krikri" failure - only the text is now
+      # diagnosable
+      ex.unavailable?.must_equal(true)
+      ex.message.to_s.must_match(/Failed to spawn process/)
+      ex.message.to_s.must_match(/simulated spawn failure/)
+    ensure
+      ENV["KRIKRI_TEST_FORCE_PYTHON_SPAWN_FAILURE"] = nil
+      FileUtils.rm_r(dir)
+    end
+  end
+
+  it "surfaces an IPC-wrapper spawn failure the same way" do
+    dir = File.join(Dir.tempdir, "krikri-pyaction-spec-#{Random.rand(1_000_000)}")
+    path = write_action_plugin(dir, "ipcboom.py", "# never loaded - the spawn fails first")
+    counter = File.join(dir, "spawn-counter")
+    File.write(counter, "999")
+    dispatcher = Krikri::PythonActionRunner::ModuleDispatcher.new do |_mod, _args|
+      JSON::Any.new(nil)
+    end
+
+    ENV["KRIKRI_TEST_FORCE_PYTHON_SPAWN_FAILURE"] = counter
+    begin
+      ex = assert_raises(Krikri::PythonActionRunner::ActionUnavailableError) do
+        Krikri::PythonActionRunner.run_action(path, "ipcboom", Hash(String, JSON::Any).new,
+          "local", "localhost", nil, nil, false, nil, false,
+          Hash(String, JSON::Any).new, dispatcher)
+      end
+      ex.unavailable?.must_equal(true)
+      ex.message.to_s.must_match(/Failed to spawn process/)
+      ex.message.to_s.must_match(/simulated spawn failure/)
+    ensure
+      ENV["KRIKRI_TEST_FORCE_PYTHON_SPAWN_FAILURE"] = nil
+      FileUtils.rm_r(dir)
+    end
+  end
+end

@@ -796,6 +796,149 @@ describe "a wrapper-level introspection failure is not cached as an empty name s
 
     Krikri::PythonTestRunner.test_names([good]).includes?("is_even").must_equal(true)
   end
+
+  # Issue #705: the KRIKRI_TEST_FORCE_PYTHON_SPAWN_FAILURE hook names a
+  # counter file - while it holds a positive integer, each python3 spawn
+  # attempt consumes one count and fails with a simulated
+  # environment-level spawn error (Krikri::SpawnError), so the real
+  # transient fork/exec/OOM class (#675/#695) is forceable deterministically.
+
+  it "reports a wrapper-level spawn failure on stderr and does not cache it (filter runner)" do
+    root = PluginSpecHelper.tmp_path("filter-spawn-report")
+    Dir.mkdir_p(File.join(root, "filter_plugins"))
+    good = File.join(root, "filter_plugins", "good.py")
+    File.write(good, <<-PYTHON)
+      class FilterModule(object):
+          def filters(self):
+              return {"double": lambda x: x * 2}
+      PYTHON
+    counter = File.join(root, "spawn-counter")
+    File.write(counter, "999")
+
+    captured = IO::Memory.new
+    previous = Krikri::PythonFilterRunner.warning_sink
+    begin
+      Krikri::PythonFilterRunner.warning_sink = captured
+      ENV["KRIKRI_TEST_FORCE_PYTHON_SPAWN_FAILURE"] = counter
+      Krikri::PythonFilterRunner.filter_names([good]).includes?("double").must_equal(false)
+    ensure
+      ENV["KRIKRI_TEST_FORCE_PYTHON_SPAWN_FAILURE"] = nil
+      Krikri::PythonFilterRunner.warning_sink = previous
+    end
+
+    # the spawn failure's own text reaches stderr - the introspection
+    # path has no exception to carry it, so without this line the
+    # failure only ever surfaced as a misleading "No filter named"
+    warning = captured.to_s
+    warning.must_match(/\[WARNING\]: Filter plugin introspection failed/)
+    warning.must_match(/Failed to spawn process/)
+    warning.must_match(/simulated spawn failure/)
+    warning.must_match(/#{Regex.escape(File.expand_path(good))}/)
+
+    # and the failed introspection was not cached: with spawning working
+    # again the SAME process finds the filter (the #675 guarantee)
+    Krikri::PythonFilterRunner.filter_names([good]).includes?("double").must_equal(true)
+  ensure
+    FileUtils.rm_rf(root) if root
+  end
+
+  it "reports a wrapper-level spawn failure on stderr and does not cache it (test runner)" do
+    root = PluginSpecHelper.tmp_path("test-spawn-report")
+    Dir.mkdir_p(File.join(root, "test_plugins"))
+    good = File.join(root, "test_plugins", "good.py")
+    File.write(good, <<-PYTHON)
+      class TestModule(object):
+          def tests(self):
+              return {"is_even": lambda x: x % 2 == 0}
+      PYTHON
+    counter = File.join(root, "spawn-counter")
+    File.write(counter, "999")
+
+    captured = IO::Memory.new
+    previous = Krikri::PythonTestRunner.warning_sink
+    begin
+      Krikri::PythonTestRunner.warning_sink = captured
+      ENV["KRIKRI_TEST_FORCE_PYTHON_SPAWN_FAILURE"] = counter
+      Krikri::PythonTestRunner.test_names([good]).includes?("is_even").must_equal(false)
+    ensure
+      ENV["KRIKRI_TEST_FORCE_PYTHON_SPAWN_FAILURE"] = nil
+      Krikri::PythonTestRunner.warning_sink = previous
+    end
+
+    warning = captured.to_s
+    warning.must_match(/\[WARNING\]: Test plugin introspection failed/)
+    warning.must_match(/Failed to spawn process/)
+    warning.must_match(/simulated spawn failure/)
+
+    Krikri::PythonTestRunner.test_names([good]).includes?("is_even").must_equal(true)
+  ensure
+    FileUtils.rm_rf(root) if root
+  end
+
+  it "absorbs two transient spawn failures within one introspection and then succeeds" do
+    root = PluginSpecHelper.tmp_path("filter-spawn-retry")
+    Dir.mkdir_p(File.join(root, "filter_plugins"))
+    good = File.join(root, "filter_plugins", "good.py")
+    File.write(good, <<-PYTHON)
+      class FilterModule(object):
+          def filters(self):
+              return {"double": lambda x: x * 2}
+      PYTHON
+    counter = File.join(root, "spawn-counter")
+    File.write(counter, "2")
+
+    ENV["KRIKRI_TEST_FORCE_PYTHON_SPAWN_FAILURE"] = counter
+    begin
+      # the targeted spawn-only retry window (#695's 3-try shape) must
+      # absorb exactly the two forced failures and land the real spawn
+      Krikri::PythonFilterRunner.filter_names([good]).includes?("double").must_equal(true)
+      File.read(counter).strip.must_equal("0")
+    ensure
+      ENV["KRIKRI_TEST_FORCE_PYTHON_SPAWN_FAILURE"] = nil
+    end
+  ensure
+    FileUtils.rm_rf(root) if root
+  end
+
+  it "does not retry a wrapper that ran and failed, and does not cache it (filter runner)" do
+    root = PluginSpecHelper.tmp_path("filter-ran-and-failed")
+    Dir.mkdir_p(File.join(root, "filter_plugins"))
+    broken = File.join(root, "filter_plugins", "boom.py")
+    counter = File.join(root, "call-counter")
+    File.write(broken, <<-PYTHON)
+      import os
+      with open("#{counter}", "a") as handle:
+          handle.write("x\\n")
+      os._exit(1)
+      PYTHON
+
+    captured = IO::Memory.new
+    previous = Krikri::PythonFilterRunner.warning_sink
+    begin
+      Krikri::PythonFilterRunner.warning_sink = captured
+      Krikri::PythonFilterRunner.filter_names([broken]).empty?.must_equal(true)
+    ensure
+      Krikri::PythonFilterRunner.warning_sink = previous
+    end
+
+    # the wrapper RAN and died (os._exit(1)) - that is not a spawn
+    # failure, so no retry (exactly one attempt) and no spawn warning:
+    # reporting stays exactly as it was before #705
+    File.read(counter).lines.size.must_equal(1)
+    captured.to_s.must_equal("")
+
+    # and a ran-and-failed introspection is not cached either (#675):
+    # fixing the file and re-asking must actually re-introspect
+    File.write(broken, <<-PYTHON)
+      class FilterModule(object):
+          def filters(self):
+              return {"double": lambda x: x * 2}
+      PYTHON
+    Krikri::PythonFilterRunner.filter_names([broken]).includes?("double").must_equal(true)
+    File.read(counter).lines.size.must_equal(1)
+  ensure
+    FileUtils.rm_rf(root) if root
+  end
 end
 
 # Integers wider than Int64 (issue #695): a role-local filter returns
