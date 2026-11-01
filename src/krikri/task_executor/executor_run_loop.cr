@@ -2809,18 +2809,6 @@ module Krikri
       # whole budget again.
       dispatch_timeout = remaining_dispatch_timeout(task_deadline)
 
-      # Data-driven module argument validation against Ansible's own
-      # argument specs (see ArgspecValidator) - the same checks the real
-      # module's AnsibleModule init runs, controller-side, before the
-      # plugin is dispatched (so a typo'd option fails without any file
-      # access, exactly like real). Runs after the action-plugin stage:
-      # template's Jinja knobs are consumed there, and copy/template's
-      # source content is already inline for the failure dump's checksum.
-      # Action-level entries were already handled above.
-      if violation = argspec_validation_result(task, substituted_params, vars_context, action_level_only: false, check_mode: resolve_task_check_mode(task, vars_context))
-        return apply_changed_failed_when(task, violation, vars_context, host)
-      end
-
       # Same override execute_remote_plugin used to apply to the wire
       # payload only (never to vars_context itself, which stays the
       # controller's own view for when:/changed_when:/failed_when:
@@ -2839,7 +2827,9 @@ module Krikri
       # Resolved BEFORE build_plugin_config so the wire config's own
       # become: field (async:'s job file resolves it back out via
       # resolve_become) carries the same var-aware verdict the dispatch
-      # below uses.
+      # below uses. Hoisted ahead of the module-level argspec check too:
+      # the sudo skip decision below needs the resolved become, and the
+      # resolution does not depend on the argspec result.
       become = begin
         resolve_task_become(task, host, vars_context, substitutor)
       rescue ex : UndefinedVariableError
@@ -2858,6 +2848,40 @@ module Krikri
             "msg"     => "become_user #{become_user.inspect} is not a valid username",
           }.to_json)
           return apply_changed_failed_when(task, failed, vars_context, host)
+        end
+      end
+
+      # Data-driven module argument validation against Ansible's own
+      # argument specs (see ArgspecValidator) - the same checks the real
+      # module's AnsibleModule init runs, controller-side, before the
+      # plugin is dispatched (so a typo'd option fails without any file
+      # access, exactly like real). Runs after the action-plugin stage:
+      # template's Jinja knobs are consumed there, and copy/template's
+      # source content is already inline for the failure dump's checksum.
+      # Action-level entries were already handled above.
+      #
+      # Skipped when the local sudo dispatch is about to fail anyway
+      # (issue #498): ansible validates a module's own arguments INSIDE
+      # the module, i.e. only after the become escalation has succeeded,
+      # so on a controller whose sudo needs a password (and none is
+      # configured) a task with an unsupported parameter dies as sudo's
+      # "Premature end of stream waiting for become success" failure
+      # before any argument validation ever runs. The dispatch below then
+      # produces that real-shaped failure via
+      # PluginManager.become_premature_end_result. The `sudo -n` probe
+      # only runs once the cheaper arms have already singled out a local
+      # sudo dispatch with no configured become password.
+      goes_remote = PluginManager.remote_execution?(task.module_name, exec_host, dispatch_vars)
+      controller_only = PluginManager.controller_only?(task.module_name)
+      become_password = Passwords.become(dispatch_vars, host)
+      sudo_noninteractive = false
+      if !goes_remote && !controller_only && become && become_password.nil? &&
+         PluginManager.become_needed?(become, become_user, PluginManager.local_username)
+        sudo_noninteractive = become_user ? PluginManager.sudo_noninteractive?(become_user) : false
+      end
+      unless PluginManager.local_become_would_fail?(!(goes_remote || controller_only), become, become_user, become_password, sudo_noninteractive)
+        if violation = argspec_validation_result(task, substituted_params, vars_context, action_level_only: false, check_mode: resolve_task_check_mode(task, vars_context))
+          return apply_changed_failed_when(task, violation, vars_context, host)
         end
       end
 

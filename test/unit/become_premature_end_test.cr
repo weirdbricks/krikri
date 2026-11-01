@@ -80,3 +80,59 @@ describe "Krikri::PluginManager.execute_plugin local become early-exit (become_p
     become_epipe_assert_failure(become_epipe_local_become(%({"junk": "#{"x" * 262144}"})))
   end
 end
+
+# Issue #498: ansible validates a module's own arguments INSIDE the
+# module - after the become escalation - so a local `become:` task with
+# an unsupported parameter on a sudo-needs-a-password controller fails
+# as the premature-end become failure, never as "Unsupported
+# parameters". The executor skips its module-level argspec check exactly
+# when the dispatch is doomed to hit the refusing sudo; both runs here
+# go through the real binary end to end with a fake `sudo` earlier on
+# the child's PATH (passed via Process.run's env, never the suite
+# process's own ENV). The become_user is a name no suite host runs as,
+# so become_needed? holds even under a root suite.
+private def issue498_run_playbook(sudo_body : String) : String
+  fake_bin = PluginSpecHelper.tmp_path("issue498-fake-bin")
+  FileUtils.rm_rf(fake_bin)
+  FileUtils.mkdir_p(fake_bin)
+  sudo_path = File.join(fake_bin, "sudo")
+  File.write(sudo_path, "#!/bin/sh\n#{sudo_body}\n")
+  File.chmod(sudo_path, 0o755)
+  playbook = File.tempname("issue498", ".yml")
+  File.write(playbook, <<-YAML)
+    - hosts: localhost
+      gather_facts: false
+      become: true
+      become_user: krikri-issue498-other
+      tasks:
+        - name: unsupported param under local become
+          command:
+            _raw_params: rpm --version
+            warn: false
+          ignore_errors: true
+    YAML
+  output = IO::Memory.new
+  Process.run(
+    File.join(PluginSpecHelper::PROJECT_ROOT, "bin", "krikri-playbook"),
+    ["-i", File.join(PluginSpecHelper::PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini"), playbook],
+    output: output, error: output,
+    env: {"PATH" => "#{fake_bin}:#{ENV["PATH"]}"}
+  )
+  output.to_s
+ensure
+  File.delete(playbook) if playbook && File.exists?(playbook)
+end
+
+describe "executor module-argspec skip on a doomed local become (become_premature_end_test.cr)" do
+  it "reports sudo's premature-end failure, not the argspec message" do
+    out = issue498_run_playbook("echo 'sudo: a password is required' >&2\nexit 1")
+    out.must_include("Premature end of stream waiting for become success")
+    out.must_include("sudo: a password is required")
+    out.includes?("Unsupported parameters").must_equal(false)
+  end
+
+  it "keeps the Unsupported parameters message when sudo would succeed" do
+    out = issue498_run_playbook("exit 0")
+    out.must_include("Unsupported parameters for (ansible.legacy.command) module: warn.")
+  end
+end

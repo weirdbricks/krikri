@@ -1470,6 +1470,26 @@ module Krikri
 
     BECOME_PREMATURE_END = "Premature end of stream waiting for become success."
 
+    # Issue #498: ansible validates a module's own arguments INSIDE the
+    # module - after the become escalation - so on a controller whose
+    # sudo needs a password (with no become password configured) a task
+    # with an unsupported parameter fails as sudo's "Premature end of
+    # stream waiting for become success", never reaching an
+    # "Unsupported parameters" message. The executor consults this
+    # predicate to skip its controller-side module-level argspec check
+    # exactly when the local dispatch is about to fail that way, letting
+    # the normal dispatch produce the real-shaped failure. Pure: the
+    # caller passes the `sudo -n` probe's result in, so a local dispatch
+    # that would succeed (or never touches sudo) still gets the argspec
+    # check, and remote/controller-only tasks never pay for a probe.
+    def self.local_become_would_fail?(local_dispatch : Bool, become : Bool, become_user : String?, become_password : String?, sudo_noninteractive : Bool) : Bool
+      return false unless local_dispatch
+      return false unless become
+      return false unless become_needed?(become, become_user, local_username)
+      return false unless become_password.nil?
+      !sudo_noninteractive
+    end
+
     # become_loader's ValueError for a become METHOD that resolved to
     # None/empty (become is enabled, the var is present, the template
     # rendered to nothing): the task executor books it as this fatal
