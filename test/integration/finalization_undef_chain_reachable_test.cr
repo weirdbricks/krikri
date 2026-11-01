@@ -56,4 +56,41 @@ describe "task-arg undef-chain stanza with multiple failing vars" do
   ensure
     FileUtils.rm_rf(tempdir) if tempdir
   end
+
+  # Issue #500 - the missing-name gate matched the name as a bare
+  # SUBSTRING, so a candidate value that only names it inside a longer
+  # identifier (`key`'s value names `a_domains` while `domains` is the
+  # missing name) also counted as a defining site and made the origin
+  # ambiguous - real still follows the chain to the stanza.
+  it "emits the stanza when a sibling value only contains the missing name inside a longer identifier" do
+    tempdir = File.tempname("undef-chain-substr").tap { |dir| Dir.mkdir(dir) }
+    role = File.join(tempdir, "roles", "substrrole")
+    FileUtils.mkdir_p(File.join(role, "tasks"))
+    FileUtils.mkdir_p(File.join(role, "defaults"))
+    playbook = File.join(tempdir, "site.yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        gather_facts: false
+        roles:
+          - substrrole
+      YAML
+    defaults_file = File.join(role, "defaults", "main.yml")
+    File.write(defaults_file, <<-YAML)
+      a_domains: '{{ domains }}'
+      key: "{{ fallback | default(a_domains[0]) }}"
+      YAML
+    tasks_file = File.join(role, "tasks", "main.yml")
+    File.write(tasks_file, <<-YAML)
+      - ansible.builtin.debug:
+          msg: "{{ key }}"
+      YAML
+    output = IO::Memory.new
+    Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+    text = output.to_s
+
+    stanza = "'domains' is undefined\nOrigin: #{File.expand_path(defaults_file)}:1:12"
+    text.must_include(stanza)
+  ensure
+    FileUtils.rm_rf(tempdir) if tempdir
+  end
 end

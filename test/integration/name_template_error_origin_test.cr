@@ -56,6 +56,37 @@ describe "task name template error warning blocks" do
     FileUtils.rm_rf(src_dir) if src_dir
   end
 
+  # Issue #500 - when the failing value IS one bare reference (`lst:
+  # '{{ nosuch }}'`), a method-call span does not truncate the name the
+  # way an operator-combining span does: real splices the marker in and
+  # keeps rendering the rest of the name, with no "template potentially
+  # truncated" error added.
+  it "keeps rendering the name after a method-call span's bare-reference value fails" do
+    src_dir = File.tempname("name-warn-join-bare-value")
+    Dir.mkdir_p(src_dir)
+    File.write(File.join(src_dir, "pb.yml"), <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          lst: "{{ nosuch }}"
+        tasks:
+          - name: Test whether files for {{ ', '.join(lst) }} exist
+            ansible.builtin.debug:
+              msg: hi
+      YAML
+
+    output = IO::Memory.new
+    Process.run(BINARY, ["-i", INVENTORY, "pb.yml"], output: output, error: output, chdir: src_dir)
+
+    text = output.to_s
+    text.must_include("TASK [Test whether files for << error 1 - 'nosuch' is undefined >> exist]")
+    text.must_include("[WARNING]: Encountered 1 template error.")
+    text.wont_include("template potentially truncated")
+  ensure
+    FileUtils.rm_rf(src_dir) if src_dir
+  end
+
   it "points a role task's direct name error at the role tasks file" do
     src_dir = File.tempname("name-warn-role-task")
     Dir.mkdir_p(File.join(src_dir, "roles", "e2", "tasks"))

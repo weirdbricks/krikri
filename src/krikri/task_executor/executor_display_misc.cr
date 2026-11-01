@@ -346,8 +346,22 @@ module Krikri
           if inner.match(/\A[A-Za-z_][A-Za-z0-9_]*\z/)
             out = marker_render_chunks(raw, active_substitutor, span_vars, task, host, ctx, state, depth + 1, origin || error_origin)
             if out.includes?(state.placeholder_prefix)
-              abort = true
-              break
+              # Real only truncates the name run when the span COMBINES
+              # operands with a binary operator; a method-call/filter span
+              # (`', '.join(x)`) just splices the value's own error marker
+              # in and keeps rendering the rest of the name
+              # (felixfontein.acme_certificate: "... for domains
+              # << error 1 - 'domains' is undefined >> exist"). The strict
+              # re-substitute below would only push the same failure a
+              # second time, so the pre-rendered markers are final here.
+              if name_span_combines_operands?(span)
+                abort = true
+                break
+              end
+              markers = (err_start...ctx.errors.size).map do |i|
+                "#{state.placeholder_prefix}#{i}\uE001"
+              end.join
+              return {markers, false}
             end
             next
           end
