@@ -15,6 +15,34 @@ private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 
 describe "loop mixed literal-plus-expression source" do
+  it "iterates a filter-chain list source once per element" do
+    src_dir = PluginSpecHelper.tmp_path("loop-mixed-template", "filter-chain-list")
+    Dir.mkdir_p(src_dir)
+    playbook = File.join(src_dir, "pb.yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          docker_users: ['docker']
+        tasks:
+          - name: Show rendered item
+            ansible.builtin.debug:
+              msg: "{{ item }}"
+            with_items: "{{ docker_users or [] }}"
+      YAML
+
+    stdout = IO::Memory.new
+    Process.run(BINARY, ["-i", File.join(__DIR__, "..", "fixtures", "inventory-localhost-local.ini"), playbook], output: stdout, error: Process::Redirect::Inherit)
+    text = stdout.to_s
+
+    # Ansible converts the template-resolved Python list repr back into a
+    # real list and iterates its elements; the whole repr text as ONE item
+    # was issue #464.
+    text.must_include("\"msg\": \"docker\"")
+    text.must_include("failed=0")
+  end
+
   it "renders mixed with_items text and iterates the scalar once" do
     src_dir = PluginSpecHelper.tmp_path("loop-mixed-template", "ok")
     Dir.mkdir_p(src_dir)
