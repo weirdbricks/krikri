@@ -3454,7 +3454,11 @@ module Krikri
     # (see stash_finalization_error_block). Returns nil when the task's
     # source can't be located - no block either way, same as the emit-time
     # behavior this was split from.
-    private def finalization_error_block_text(task : Task, ex : UndefinedVariableError, host : Host) : String?
+    # VARS_CONTEXT: the failing task's own vars (the loop item included)
+    # when the caller has them in scope - a lookup('vars', EXPR) param's
+    # chain stanza needs them to evaluate EXPR the way the loop would
+    # (issue #505); nil keeps the text-only reachability seed.
+    private def finalization_error_block_text(task : Task, ex : UndefinedVariableError, host : Host, vars_context : Hash(String, JSON::Any)? = nil) : String?
       path = task.source_file || @playbook_file
       return nil unless path && File.file?(path)
 
@@ -3589,7 +3593,7 @@ module Krikri
       # When the fourth chained stanza is emitted, the third level's text
       # shortens to the prefix alone - the inner message moves entirely
       # into the chained stanza (live-verified p12 vs 2.19.11).
-      chain_stanza = chain_value_failure_stanza(task, msg, host)
+      chain_stanza = chain_value_failure_stanza(task, msg, host, vars_context)
       if chain_stanza && (cm = msg.match(/\A(Error while resolving value for '[^']+'): /))
         l3 = cm[1] + "."
       end
@@ -3764,7 +3768,7 @@ module Krikri
     # strictly fails WITH that name's message - anything ambiguous (or a
     # direct, non-chained undefined) keeps the three-stanza block, never
     # a mislabeled Origin.
-    private def chain_value_failure_stanza(task : Task, msg : String, host : Host) : String?
+    private def chain_value_failure_stanza(task : Task, msg : String, host : Host, vars_context : Hash(String, JSON::Any)? = nil) : String?
       m = msg.match(/\A(Error while resolving value for '([^']+)': )'([A-Za-z_][A-Za-z0-9_]*)' is undefined\z/)
       unless m
         # Same fourth stanza for an empty-key `groups[...]` miss inside the
@@ -3820,11 +3824,86 @@ module Krikri
       # failing arg (issue #36: other layers failing with the same
       # message but unreachable from this param don't suppress the
       # stanza) - pass the param's raw text as the reachability seed.
+      # A `lookup('vars', EXPR)` arg names its target only at RUNTIME
+      # (galaxyproject.galaxy's layout task, issue #505: the unrendered
+      # key `"{{ item }}"` holds `lookup('vars', '__' ~ item)`, text that
+      # never mentions `__galaxy_venv_dir`), so the text scan alone
+      # reached no var layer and dropped the fourth stanza real prints.
+      # Real evaluates the lookup expression against the task's own
+      # (loop item included) vars, so the seed grows by every rendered
+      # name - and HOST joins the origin scan, because the looked-up
+      # layer is the include_vars one, whose per-key origins the
+      # stanza's inner Origin points at.
       seed = task.params[m[2]]?
-      origin = undef_chain_var_origin(task, m[3], reachable_from: seed.is_a?(String) ? seed : nil)
+      seed_text = seed.is_a?(String) ? seed + lookup_vars_seed_suffix(seed, vars_context) : nil
+      origin = undef_chain_var_origin(task, m[3], reachable_from: seed_text, host: host)
       return nil unless origin
       "'#{m[3]}' is undefined\n" +
         origin_context_block(origin.path, File.read_lines(origin.path), origin.line, origin.column)
+    end
+
+    # The reachability-seed suffix a `lookup('vars', EXPR)`-shaped failing
+    # arg contributes: every name EXPR renders to against the task's own
+    # vars (the loop item included - real 2.19 evaluates the lookup's term
+    # per loop item, so the looked-up var is exactly what its chain
+    # follows, issue #505). The whole expansion is best-effort by design:
+    # an expression that fails to render (a nested undefined, a lookup
+    # that would need a real connection) simply names nothing, never
+    # widens the seed and never breaks the error display it runs on.
+    private def lookup_vars_seed_suffix(text : String, vars_context : Hash(String, JSON::Any)?) : String
+      return "" unless (ctx = vars_context)
+      suffix = ""
+      pos = 0
+      loop do
+        m = text.match(/(?:lookup|query)\(\s*(['"])vars\1\s*,/, pos)
+        break unless m
+        pos = m.end(0)
+        begin
+          rendered = VarSubstitutor.new(vars: ctx)
+            .substitute("{{ #{balanced_call_arg(text, pos)} }}", strict: false).strip
+          if rendered.starts_with?("[") && rendered.ends_with?("]")
+            names = JSON.parse(rendered).as_a?.try(&.compact_map(&.as_s?)) || [] of String
+          else
+            names = [rendered]
+          end
+          names.each do |name|
+            name = name.strip
+            suffix += " #{name}" unless name.empty?
+          end
+        rescue
+          next
+        end
+      end
+      suffix
+    end
+
+    # The comma-trailing argument text of a `lookup(`-style call whose
+    # open paren's text starts at *from*: everything up to the call's own
+    # closing paren, with quoted spans skipped so parens inside string
+    # literals never unbalance the count.
+    private def balanced_call_arg(text : String, from : Int32) : String
+      i = from
+      until i >= text.size || !text[i].whitespace?
+        i += 1
+      end
+      depth = 0
+      quote = nil
+      start = i
+      while i < text.size
+        char = text[i]
+        if quote
+          quote = nil if char == quote
+        elsif char == '('
+          depth += 1
+        elsif char == ')'
+          break if depth.zero?
+          depth -= 1
+        elsif char == '\'' || char == '"'
+          quote = char
+        end
+        i += 1
+      end
+      text[start...i]
     end
 
     # Stanza 3 and 4's Origins for an undefined failure under a
@@ -3851,7 +3930,10 @@ module Krikri
     # token position yet, so it keeps scanning); no such line keeps the
     # param's own position.
     private def mapping_value_failure_origin(lines : Array(String), from_idx : Int32, key : String, var : String) : ({ {Int32, Int32}, {Int32, Int32} } | Nil)
-      key_needle = /#{Regex.escape(key)}[ \t]*:/
+      # Same quoted-key tolerance locate_param_key_position applies - a
+      # `"{{ item }}":`-style block entry is still a real param entry
+      # whose block shape (or lack of one) decides the Origin.
+      key_needle = /(?:["']#{Regex.escape(key)}["']|#{Regex.escape(key)})[ \t]*:/
       key_indent = 0
       key_line_idx = nil
       idx = from_idx + 1
@@ -4665,7 +4747,10 @@ module Krikri
       return nil unless anchor_idx
       anchor_line = lines[anchor_idx]
       anchor_indent = anchor_line.size - anchor_line.lstrip.size
-      key_needle = /#{Regex.escape(key)}[ \t]*:/
+      # Same quoted-key tolerance locate_param_key_position applies - an
+      # anchor's entries may quote their keys the same way the task body
+      # does, and the Origin convention does not change with the quoting.
+      key_needle = /(?:["']#{Regex.escape(key)}["']|#{Regex.escape(key)})[ \t]*:/
       mapping_indent : Int32? = nil
       ((anchor_idx + 1)...lines.size).each do |idx|
         line = lines[idx]
@@ -4705,8 +4790,20 @@ module Krikri
       # (the `- ` list-marker case included): `client_id` is not the key
       # of an `xclient_id:` line, which would misplace the Origin onto a
       # longer identifier's match.
+      # A param key written QUOTED in the source (`"{{ item }}": value`,
+      # galaxyproject.galaxy's layout task) must still be found: real 2.19
+      # points the innermost Origin at that key's own value token, not at
+      # the module key. The quoted alternative joins the match with its
+      # begin at the OPENING quote - so the stand-alone check below still
+      # looks at start/whitespace BEFORE it - while the returned column
+      # stays the value token's first character, exactly the position an
+      # unquoted key's value reports. Both quotes are required together
+      # (no bare-open form): a `<key>:` sitting inside a value's own
+      # quoted text (`msg: "state: present"`) must keep failing the
+      # stand-alone check the way the unquoted needle always did, not
+      # hijack the Origin onto a position inside that string.
       module_line = lines[from_idx]
-      key_needle = /#{Regex.escape(key)}[ \t]*:/
+      key_needle = /(?:["']#{Regex.escape(key)}["']|#{Regex.escape(key)})[ \t]*:/
       # A param key that is the module's own name (`ovirt_auth:` under
       # `ovirt_auth:`, issue #599) matches this needle ON the module line
       # itself, but ansible-core 2.19.11 still points the innermost Origin
