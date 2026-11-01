@@ -462,6 +462,14 @@ module Krikri
     property until_condition : String?
     property retries : Int32
     property delay : Int32
+    # retries:/delay: given as Jinja templates (collivier.xtesting does
+    # retries: "{{ ((jenkins_wait | int) / 5) | int }}") cannot become a
+    # number at parse time: real ansible templates both per task against
+    # the task's own vars, so the raw string is kept for run_until_retries
+    # to resolve and the numeric properties above only hold the implicit
+    # defaults (3/5) for that case.
+    property retries_template : String?
+    property delay_template : String?
     # changed_when: / failed_when: - override the module's own changed/failed
     # verdict with a condition evaluated against the task's result (accessible
     # via its own register: name, same as any other post-task condition; a
@@ -4416,8 +4424,17 @@ module Krikri
       # result silently replaced attempt 1's real changed: true (round
       # 979035, buluma.moodle).
       task.until_condition = task_hash["until"]?.try { |v| condition_to_string(v) }
-      task.retries = task_hash["retries"]?.try { |v| safe_yaml_to_string(v).to_i? } || 3
-      task.delay = task_hash["delay"]?.try { |v| safe_yaml_to_string(v).to_i? } || 5
+      # retries:/delay: as Jinja templates (collivier.xtesting's
+      # jenkins-wait wrapper does retries: "{{ ((jenkins_wait | int) / 5)
+      # | int }}") are stored raw for the executor to render: turning the
+      # string into a number here would silently collapse to the implicit
+      # default. An int-valued string still parses here, same as a literal.
+      retries_raw = task_hash["retries"]?.try { |v| safe_yaml_to_string(v) }
+      task.retries = retries_raw.try(&.to_i?) || 3
+      task.retries_template = retries_raw unless retries_raw.nil? || retries_raw.to_i?
+      delay_raw = task_hash["delay"]?.try { |v| safe_yaml_to_string(v) }
+      task.delay = delay_raw.try(&.to_i?) || 5
+      task.delay_template = delay_raw unless delay_raw.nil? || delay_raw.to_i?
 
       # Parse changed_when / failed_when
       task.changed_when = task_hash["changed_when"]?.try { |v| condition_to_string(v) }
