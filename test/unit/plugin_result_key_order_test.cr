@@ -85,4 +85,25 @@ describe "PluginResult#key_order" do
     parsed.keys.must_equal(["diff", "msg", "changed"])
     parsed["msg"].as_i.must_equal(42)
   end
+
+  it "emits failed, changed, exception, msg for a crash-shaped failed result without key_order" do
+    # A module CRASH (AnsibleModule's top-level handler emits failed+
+    # exception, then the controller adds changed/msg) registers in a
+    # different order than a module's own fail_json - live-verified vs
+    # 2.19.11 (e.g. replace with an unknown encoding)
+    result = Krikri::PluginResult.new(
+      changed: false, failed: true,
+      msg: "Task failed: Module failed: unknown encoding: 20",
+    )
+    JSON.parse(result.to_json).as_h.keys.must_equal([
+      "failed", "changed", "exception", "msg",
+    ])
+  end
+
+  it "still emits failed, msg, changed, exception for a plain failed result without key_order" do
+    result = Krikri::PluginResult.new(changed: false, failed: true, msg: "boom")
+    JSON.parse(result.to_json).as_h.keys.must_equal([
+      "failed", "msg", "changed", "exception",
+    ])
+  end
 end
