@@ -7,6 +7,7 @@ require "openssl"
 # Uses native SSH command with ControlMaster for connection pooling
 require "./cli_options"
 require "./shell"
+require "./spawn_error"
 require "./timing_profile"
 require "./bigint_json"
 require "./plugin_daemon"
@@ -481,6 +482,7 @@ module Krikri
       identity_file : String? = nil,
       extra_args : Array(String) = [] of String,
       fresh_connection : Bool = false,
+      raise_spawn_errors : Bool = false,
     ) : NamedTuple(exit_code: Int32, stdout: String, stderr: String)
       init
       @@stats["commands_executed"] += 1
@@ -507,7 +509,13 @@ module Krikri
       stderr = IO::Memory.new
 
       TimingProfile.measure("transport.ssh_exec", "transport") do
+        # False until Process.new succeeds - see LocalExecutor.exec's twin
+        # comment for the spawn-vs-ran distinction (#704).
+        spawned = false
         begin
+          if ENV["KRIKRI_TEST_FORCE_SPAWN_FAILURE"]?
+            raise IO::Error.new("simulated spawn failure (KRIKRI_TEST_FORCE_SPAWN_FAILURE)")
+          end
           process = TimingProfile.measure("transport.ssh_spawn", "transport.spawn") do
             Process.new(
               ssh_cmd[0],
@@ -517,6 +525,7 @@ module Krikri
               error: stderr
             )
           end
+          spawned = true
 
           run_with_timeout(process, timeout) do |proc|
             status = proc.wait
@@ -527,6 +536,9 @@ module Krikri
             }
           end
         rescue ex
+          if raise_spawn_errors && !spawned
+            raise SpawnError.new("Failed to spawn process: #{ex.message}")
+          end
           {
             exit_code: 255,
             stdout:    "",
@@ -554,6 +566,7 @@ module Krikri
       timeout : Int32 = DEFAULT_EXEC_TIMEOUT_SECONDS,
       identity_file : String? = nil,
       extra_args : Array(String) = [] of String,
+      raise_spawn_errors : Bool = false,
     ) : NamedTuple(exit_code: Int32, stdout: String, stderr: String)
       init
       @@stats["commands_executed"] += 1
@@ -567,7 +580,13 @@ module Krikri
       stderr = IO::Memory.new
 
       TimingProfile.measure("transport.ssh_script", "transport") do
+        # False until Process.new succeeds - see LocalExecutor.exec's twin
+        # comment for the spawn-vs-ran distinction (#704).
+        spawned = false
         begin
+          if ENV["KRIKRI_TEST_FORCE_SPAWN_FAILURE"]?
+            raise IO::Error.new("simulated spawn failure (KRIKRI_TEST_FORCE_SPAWN_FAILURE)")
+          end
           process = TimingProfile.measure("transport.ssh_spawn", "transport.spawn") do
             Process.new(
               ssh_cmd[0],
@@ -578,6 +597,7 @@ module Krikri
               error: stderr
             )
           end
+          spawned = true
 
           run_with_timeout(process, timeout) do |proc|
             proc.input.print(script)
@@ -591,6 +611,9 @@ module Krikri
             }
           end
         rescue ex
+          if raise_spawn_errors && !spawned
+            raise SpawnError.new("Failed to spawn process: #{ex.message}")
+          end
           {
             exit_code: 255,
             stdout:    "",

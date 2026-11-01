@@ -1,6 +1,8 @@
 require "process"
 require "file_utils"
 
+require "./spawn_error"
+
 # Local Executor - Executes commands locally without SSH
 # Used when ansible_connection=local or host is localhost with local connection
 module Krikri
@@ -82,7 +84,7 @@ module Krikri
     # override must govern the lookup (the shell the child became resolves
     # with its own, overridden PATH - the same semantics the export prefix
     # had).
-    def self.exec(command : String, force_shell : Bool = false, env : Hash(String, String)? = nil) : NamedTuple(exit_code: Int32, stdout: String, stderr: String)
+    def self.exec(command : String, force_shell : Bool = false, env : Hash(String, String)? = nil, raise_spawn_errors : Bool = false) : NamedTuple(exit_code: Int32, stdout: String, stderr: String)
       # Passing argv directly (no shell: true) skips the extra sh -> bash
       # hop a shell-escaped string would need, and needs no quote-escaping
       # since the command travels as a single argv element, not a string
@@ -100,6 +102,16 @@ module Krikri
       # keeps the fast path - Ansible's command module genuinely
       # execs argv without a shell.
       #
+      # Test-only hook (issue #704): plugins run as separate subprocesses, so
+      # an in-process class override in a test can't reach their LocalExecutor -
+      # this env var reaches them through PluginSpecHelper's child `env:`.
+      # Read from the explicit `env:` too so an in-process direct call can
+      # trigger it without mutating process-wide ENV (parallel-safety rules in
+      # test/minitest_helper.cr).
+      if ENV["KRIKRI_TEST_FORCE_SPAWN_FAILURE"]? || env.try(&.["KRIKRI_TEST_FORCE_SPAWN_FAILURE"]?)
+        raise IO::Error.new("simulated spawn failure (KRIKRI_TEST_FORCE_SPAWN_FAILURE)")
+      end
+
       # The child gets OUR OWN pipe write ends (an IO::FileDescriptor
       # passed as output/error is inherited by the child directly - the
       # same mechanism a `File` redirect uses), and the drain fibers below
@@ -115,6 +127,12 @@ module Krikri
       # abandon in #await below.
       stdout_pipe, stdout_child_end = IO.pipe(write_blocking: true)
       stderr_pipe, stderr_child_end = IO.pipe(write_blocking: true)
+
+      # False until Process.new succeeds: everything that raises before it
+      # (pipe creation, argv parsing, Process.new itself) is a spawn/setup
+      # failure, while anything after means the child actually ran and must
+      # keep reporting its real fate. (Ameba can't see the rescue's read.)
+      spawned = false # ameba:disable Lint/UselessAssign
 
       begin
         process =
@@ -136,6 +154,7 @@ module Krikri
               error: stderr_child_end
             )
           end
+        spawned = true
 
         # The parent must not hold the write ends: EOF on a pipe - what the
         # drain fibers wait for - requires every write end to be closed,
@@ -177,6 +196,27 @@ module Krikri
         stderr_child_end.close
       end
     rescue ex
+      # #704: a caller that opted in gets the spawn/setup failure raised -
+      # a process that never ran must not be reported as one that ran and
+      # exited 1. Post-spawn failures (a child that ran, then an exception
+      # in drain/wait) keep the legacy fake-result shape for their other
+      # callers.
+      #
+      # A bad target executable is carved out even for opt-in callers:
+      # on the argv fast path Process.new raises File::Error for every
+      # "the executable itself is bad" case (File::NotFoundError for a
+      # missing binary, File::AccessDeniedError for a non-executable
+      # file, plain File::Error for ENOEXEC), but through a shell each
+      # of those is the shell's own nonzero exit ("command not found",
+      # "permission denied", "cannot execute binary") - Ansible only
+      # ever runs commands through a shell, so probe-style callers ("is
+      # `rpm`/`foo` installed?") read a nonzero rc as "binary absent"
+      # and must keep doing so. Only environment-level spawn failures
+      # (fd exhaustion, fork failure, pipe setup - IO::Error and kin)
+      # raise.
+      if raise_spawn_errors && !spawned && !ex.is_a?(File::Error)
+        raise SpawnError.new("Failed to spawn process: #{ex.message}")
+      end
       {
         exit_code: 1,
         stdout:    "",

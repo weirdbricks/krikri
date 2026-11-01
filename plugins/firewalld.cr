@@ -608,6 +608,10 @@ module Krikri
       end
 
       offline_default_zone
+    rescue ex : SpawnError
+      # #704: a spawn failure must not read as "zone unresolved" and
+      # silently fall back to the offline default - re-raise.
+      raise ex
     rescue
       nil
     end
@@ -635,6 +639,10 @@ module Krikri
     private def firewalld_running? : Bool
       result = remote_exec("firewall-cmd --state")
       result[:exit_code] == 0 && result[:stdout].strip == "running"
+    rescue ex : SpawnError
+      # #704: a spawn failure must not read as "firewalld not running"
+      # and silently switch to offline/permanent-only mode - re-raise.
+      raise ex
     rescue
       false
     end

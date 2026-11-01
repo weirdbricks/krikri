@@ -66,6 +66,10 @@ module Krikri
       return File.read(path) if local_connection? || File.exists?(path)
       result = remote_exec("cat '#{path}' 2>/dev/null")
       result[:exit_code] == 0 && !result[:stdout].empty? ? result[:stdout] : nil
+    rescue ex : SpawnError
+      # #704: not being able to spawn at all is not "file unreadable" -
+      # re-raise so the task fails instead of silently dropping the fact.
+      raise ex
     rescue
       nil
     end
