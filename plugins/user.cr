@@ -168,8 +168,31 @@ module Krikri
       %w[hidden password_lock]
     end
 
+    # user.py's check_password_encrypted() runs in main() before any state
+    # handling, so the warning is emitted on every path and precedes the
+    # append warning below.
+    def self.unhashed_password?(password : String) : Bool
+      return false if password.empty? || password.in?("*", "!", "*************")
+      invalid = password.each_char.any?(&.in?(':', '*', '!'))
+      return true if invalid || !password.includes?('$')
+      fields = password.split('$')
+      return true if fields.size < 3
+      last = fields.last
+      return true if last.matches?(/[^a-zA-Z0-9.\/=]/)
+      case fields[1]
+      when "1"      then last.size != 22
+      when "5", "y" then last.size != 43
+      when "6"      then last.size != 86
+      else               false
+      end
+    end
+
     def execute : PluginResult
       result = execute_inner
+      if (pw = @params["password"]?) && UserPlugin.unhashed_password?(pw.to_s)
+        existing = result.extra["warnings"]?.try(&.as_a?) || [] of JSON::Any
+        result.extra["warnings"] = JSON::Any.new([JSON::Any.new("The input password appears not to have been hashed. The 'password' argument must be encrypted for this module to work properly.")] + existing)
+      end
       # user.py warns (deprecation-style) when append is set without groups,
       # but real ansible-core 2.19 only does so when the groups: key is
       # absent entirely: buluma.vector passes
