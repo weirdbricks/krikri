@@ -142,6 +142,45 @@ describe "Krikri::VarSubstitutor (undefined_variable_error_test.cr)" do
       end
     end
 
+    it "words an empty dict member's mid-chain index 0 with the lazy list class (issue #515)" do
+      # A registered find result's `r.files` is empty, and the task arg
+      # keeps reading AFTER the index (`r.files[0].path`): real 2.19.11
+      # fails with the lazy template list's "no element 0" wording, not
+      # "'r' is undefined" - the wrapper owns the list, so the miss is
+      # the wrapper's element error, whoever indexed it.
+      vars = {"d" => JSON.parse(%({"files": []}))}
+      sub = Krikri::VarSubstitutor.new(vars: vars, host_name: "h1")
+      assert_raises_message(Krikri::UndefinedVariableError, /_AnsibleLazyTemplateList object has no element 0/) do
+        sub.substitute("{{ d.files[0].path }}", strict: true)
+      end
+    end
+
+    it "words an empty dict member's bracket-key mid-chain index 0 the same way (issue #515)" do
+      vars = {"d" => JSON.parse(%({"files": []}))}
+      sub = Krikri::VarSubstitutor.new(vars: vars, host_name: "h1")
+      assert_raises_message(Krikri::UndefinedVariableError, /_AnsibleLazyTemplateList object has no element 0/) do
+        sub.substitute("{{ d.files[0]['path'] }}", strict: true)
+      end
+    end
+
+    it "words an empty dict member's trailing index 0 with the lazy list class too (issue #515)" do
+      vars = {"d" => JSON.parse(%({"files": []}))}
+      sub = Krikri::VarSubstitutor.new(vars: vars, host_name: "h1")
+      assert_raises_message(Krikri::UndefinedVariableError, /_AnsibleLazyTemplateList object has no element 0/) do
+        sub.substitute("{{ d.files[0] }}", strict: true)
+      end
+    end
+
+    it "keeps a default() guard lenient over a mid-chain empty-list index 0 (issue #515)" do
+      # The `| default(...)` after the index is not part of the failing
+      # chain: ansible answers the guarded form leniently (the undefined
+      # index never reaches arg finalization), so this probe must not
+      # start failing guarded forms it never guarded before.
+      vars = {"d" => JSON.parse(%({"files": []}))}
+      sub = Krikri::VarSubstitutor.new(vars: vars, host_name: "h1")
+      sub.substitute("{{ d.files[0].path | default('x') }}", strict: true).must_equal("x")
+    end
+
     it "still extracts the captured group when the regex genuinely matches" do
       # This leading-paren shape delegates to Crinja internally
       # (`evaluate_leading_paren_crinja_first`), which re-encodes the
