@@ -6,6 +6,7 @@ require "../src/krikri/plugin_helpers/ansible_arg_validation"
 require "../src/krikri/plugin_helpers/ansible_splitlines"
 require "../src/krikri/plugin_helpers/apt_lock_retry"
 require "../src/krikri/plugin_helpers/apt_deb_install"
+require "../src/krikri/plugin_helpers/apt_locale"
 
 module Krikri
   # APT Plugin - Debian/Ubuntu package management
@@ -46,6 +47,7 @@ module Krikri
   class AptPlugin < BasePlugin
     include AptLockRetry
     include AptDebInstall
+    include AptLocale
     include PluginHelpers::AnsibleArgValidation
 
     # See AptDebInstall#deb_suppress_cache_backfill! - the apt plugin owns
@@ -160,6 +162,11 @@ module Krikri
     @install_recommends : Bool? = nil
     @policy_rc_d_restore_failed = false
 
+    # Real apt.py's module-wide run_command_environ_update (see the
+    # AptLocale helper): probed once per invocation like Ansible's
+    # get_best_parsable_locale, then reused by every apt command below.
+    @apt_env_prefix : String? = nil
+
     # Internal spec seam (same underscore-prefixed family as
     # `_environment`): the policy-rc.d path is hardcoded to
     # Ansible's own `/usr/sbin/policy-rc.d` for real playbooks, but the
@@ -173,6 +180,13 @@ module Krikri
       # exit_json, so its failure carries no cache_updated key
       result.extra["cache_updated"] = JSON.parse(@cache_updated.to_json) unless result.extra.has_key?("_ansible_error_detail") || @omit_cache_updated || result.msg.to_s.starts_with?("No package matching") || result.msg.to_s.starts_with?("No package(s) matching")
       result
+    end
+
+    private def apt_environment_prefix : String
+      prefix = @apt_env_prefix
+      prefix ||= apt_env_prefix { |cmd| remote_exec(cmd) }
+      @apt_env_prefix = prefix
+      prefix
     end
 
     def initialize(config : JSON::Any)
@@ -758,7 +772,7 @@ module Krikri
         # wrap with lock_timeout retry (same rationale as the
         # autoremove/autoclean wrap above), inside the same
         # policy-rc.d lifecycle Ansible's upgrade() uses.
-        result = with_policy_rc_d { apt_with_lock_retry("DEBIAN_FRONTEND=noninteractive #{cmd}", lock_timeout, ->remote_exec(String)) }
+        result = with_policy_rc_d { apt_with_lock_retry("#{apt_environment_prefix} #{cmd}", lock_timeout, ->remote_exec(String)) }
         if result[:exit_code] != 0
           # Real upgrade() failure: fail_json(msg="'%s %s' failed: %s"
           # % (apt_cmd, upgrade_command, err), stdout=out, rc=rc) - NO
@@ -1404,9 +1418,11 @@ module Krikri
         # run_command_environ_update, NOT in the command string - the
         # env prefix here is execution plumbing only and never reaches a
         # registered msg.
-        # Ansible's module runs apt with LANGUAGE/LC_ALL=C so numbers are
-        # unformatted ("7370 kB", not "7,370 kB").
-        exec_cmd = "DEBIAN_FRONTEND=noninteractive LANGUAGE=C LC_ALL=C #{install_cmd}"
+        # The locale is Ansible's get_best_parsable_locale result, not a
+        # hardcoded 'C': under C.UTF-8 the dpkg/systemd output this stdout
+        # captures (e.g. "Created symlink ... → ...") differs from the C
+        # locale's ASCII form (issue #449).
+        exec_cmd = "#{apt_environment_prefix} #{install_cmd}"
         # `apt-get install` of named packages contends for the dpkg lock
         # - wrap with lock_timeout retry, matching Ansible's
         # `apt` module behavior. Also wraps Ansible's implicit
@@ -1585,7 +1601,7 @@ module Krikri
         @allow_change_held_packages ? "--allow-change-held-packages" : "",
       ]
       remove_cmd = "#{apt_get_bin} -q -y #{flags.join(" ")} remove #{pkg_list}"
-      remove_result = with_policy_rc_d { apt_with_lock_retry("DEBIAN_FRONTEND=noninteractive LANGUAGE=C LC_ALL=C #{remove_cmd}", lock_timeout, ->remote_exec(String)) }
+      remove_result = with_policy_rc_d { apt_with_lock_retry("#{apt_environment_prefix} #{remove_cmd}", lock_timeout, ->remote_exec(String)) }
       if remove_result[:exit_code] != 0
         # Real remove() failure: fail_json(msg="'apt-get remove %s'
         # failed: %s" % (packages, err), stdout=out, stderr=err, rc=rc)
@@ -1642,7 +1658,7 @@ module Krikri
       cmd = "#{apt_get_bin} -y #{real_dpkg_options(lock_timeout)} #{@force ? "--force-yes" : ""} #{@fail_on_autoremove ? "--no-remove" : ""} #{@allow_unauthenticated ? "--allow-unauthenticated" : ""} #{@allow_downgrade ? "--allow-downgrades" : ""} #{@check_mode ? "--simulate" : ""} #{upgrade_command}"
       cmd += " -t #{naive_single_quote(@default_release.not_nil!)}" if @default_release
 
-      result = with_policy_rc_d { apt_with_lock_retry("DEBIAN_FRONTEND=noninteractive #{cmd}", lock_timeout, ->remote_exec(String)) }
+      result = with_policy_rc_d { apt_with_lock_retry("#{apt_environment_prefix} #{cmd}", lock_timeout, ->remote_exec(String)) }
       if result[:exit_code] != 0
         return PluginResult.new(
           changed: false,
