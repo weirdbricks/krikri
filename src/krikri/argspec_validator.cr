@@ -787,21 +787,30 @@ module Krikri
       # non-null defaults land in declaration order before the null ones, so
       # the result never reads in the spec table's own order.
       supplied = options.keys.select { |name| provided.has_key?(name) }
-      supplied.sort!
       unsupplied = options.keys - supplied
+      # AnsibleModule resolves an alias by adding the canonical key while the
+      # caller's own alias spelling stays in the params, so `dest:` on file:
+      # reports both `dest` and `path`.
+      alias_lookup = alias_map(options)
+      supplied.concat(spelled_alias_keys(params, options, alias_lookup, consumed_keys(entry)))
+      supplied.sort!
       defaulted = unsupplied.select { |name| !options[name]["default"]?.try(&.raw).nil? }
       nulls = unsupplied - defaulted
       (supplied + defaulted + nulls).each do |name|
-        spec = options[name]
-        if (raw = provided[name]?) && raw == Krikri::NONE_SENTINEL
-          result[name] = JSON::Any.new(nil)
-        elsif raw = provided[name]?
-          result[name] = convert_invocation_value(raw, spec["type"]?.try(&.as_s?) || "str")
-        else
-          result[name] = spec["default"]? || JSON::Any.new(nil)
-        end
+        canonical = options.has_key?(name) ? name : alias_lookup[name]
+        result[name] = invocation_value(options[canonical], provided[canonical]?)
       end
       result
+    end
+
+    private def spelled_alias_keys(params, options, alias_lookup, consumed) : Array(String)
+      params.keys.select { |key| alias_lookup.has_key?(key) && !options.has_key?(key) && !consumed.includes?(key) }
+    end
+
+    private def invocation_value(spec : JSON::Any, raw : String?) : JSON::Any
+      return spec["default"]? || JSON::Any.new(nil) unless raw
+      return JSON::Any.new(nil) if raw == Krikri::NONE_SENTINEL
+      convert_invocation_value(raw, spec["type"]?.try(&.as_s?) || "str")
     end
 
     private def convert_invocation_value(raw : String, type : String) : JSON::Any
