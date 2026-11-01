@@ -209,8 +209,41 @@ module Krikri
         # FQCN was used verbatim as a systemd service name/template
         # filename, which don't exist under that name.
         if top_level_plus_or_minus?(expr)
-          return KrikriJinja.evaluate_expression(expr, @vars || Hash(String, JSON::Any).new) ||
-            JSON::Any.new(nil)
+          # Through JinjaRenderer rather than KrikriJinja.evaluate_expression
+          # with raw @vars: ansible evaluates filter arguments eagerly, so a
+          # `+`-concatenation whose operand is itself an erroring `{{ }}`
+          # template (infrastructr.rancher_master's
+          # `ternary('--acme-domain ' + rancher_master_host, omit)`) must
+          # fail the task, not silently yield the unrendered literal text -
+          # evaluate_expression can't render that nested template at all,
+          # while JinjaRenderer's lazy JinjaVarResolver renders it and its
+          # error propagates like ansible's (issue #530).
+          vars = @vars || Hash(String, JSON::Any).new
+          begin
+            return JinjaRenderer.new(vars).evaluate_value!(expr) ||
+              JSON::Any.new(nil)
+          rescue e : KrikriJinja::TemplateError
+            # The demoted-undefined wording recovery the strict-span
+            # machinery already owns (see unresolvable_template? and
+            # #evaluate_stripped_span's probe): a lenient Undefined consumed
+            # by the `+` surfaces as the engine's operand wording, but real
+            # ansible blames the INNERMOST render failure of the value the
+            # operand holds ("object of type 'dict' has no attribute
+            # 'nogrp'"), so re-derive it strictly before giving up. A probe
+            # decline (a genuine type error the strict evaluation raises
+            # identically) keeps the engine's own error.
+            msg = Krikri.strict_undefined_probe_message(expr, vars)
+            raise UndefinedVariableError.new(msg) if msg
+            # The probe declines when the engine's own error is not an
+            # Undefined kind; the failing operand is then a templated var,
+            # whose innermost render failure is what ansible reports.
+            expr.gsub(/'[^']*'|"[^"]*"/, " ").scan(/[A-Za-z_][A-Za-z0-9_]*/).each do |ref|
+              raw = vars[ref[0]]?.try(&.as_s?)
+              next unless raw && raw.includes?("{{") && !raw.includes?("{%")
+              VarSubstitutor.new(vars: vars).substitute(raw, strict: true)
+            end
+            raise e
+          end
         end
 
         parts = self.class.split_chain(expr)
