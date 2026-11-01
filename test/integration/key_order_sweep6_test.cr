@@ -397,7 +397,9 @@ describe "get_certificate plugin result key order" do
       error: Process::Redirect::Close)
     begin
       ready = false
-      25.times do
+      # Up to 20s for python3 to bind: under the full suite's parallel load a
+      # 5s budget flaked. A ready server breaks out on the first connect.
+      100.times do
         begin
           TCPSocket.new("127.0.0.1", port).close
           ready = true

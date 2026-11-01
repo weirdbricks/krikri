@@ -152,25 +152,29 @@ describe Krikri::LocalExecutor do
       marker = File.tempname("local-executor-spec-daemon-marker")
 
       started = Time.instant
-      result = Krikri::LocalExecutor.exec("sleep 0.1 && (touch #{marker}; tail -f /dev/null) &")
+      result = Krikri::LocalExecutor.exec("sleep 0.1 && (touch #{marker}; tail -f /dev/null #{marker}) &")
       elapsed = Time.instant - started
 
       result[:exit_code].must_equal(0)
-      expect((elapsed.total_seconds) < (3.0)).must_equal(true)
+      # The bug hung forever, so a generous ceiling still catches it; 3s
+      # flaked under the full suite's parallel load.
+      expect((elapsed.total_seconds) < (20.0)).must_equal(true)
 
       # The backgrounded daemon should still actually be running - this
       # isn't testing that the command failed to start, only that waiting
       # for its own output doesn't block the caller.
-      # Polled for up to 5s: on a loaded machine (parallel test runs) the
+      # Polled for up to 20s: on a loaded machine (parallel test runs) the
       # backgrounded subshell can take well over half a second to get
       # scheduled, and a pass still returns as soon as the marker appears.
-      100.times do
+      400.times do
         break if File.exists?(marker)
         sleep 50.milliseconds
       end
       File.exists?(marker).must_equal(true)
     ensure
-      `pkill -f "tail -f /dev/null" 2>/dev/null`
+      # Scoped to this test's own marker path: a bare "tail -f /dev/null"
+      # pattern would kill any matching process on the machine.
+      `pkill -f #{Process.quote("tail -f /dev/null #{marker}")} 2>/dev/null` if marker
       File.delete(marker) if marker && File.exists?(marker)
     end
   end

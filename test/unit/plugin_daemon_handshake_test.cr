@@ -6,6 +6,12 @@ require "../../src/krikri/plugin_daemon"
 # never answers, so without this check the first request blocks until the
 # full request timeout. Every case here runs against a small local process,
 # so the wait is bounded without SSH.
+# Wall-clock ceiling for the "returns promptly, never hangs" checks. It sits
+# well above the 1s handshake timeout because the full suite runs these under
+# heavy parallel load (a 10s ceiling flaked there), but stays below
+# silent_process's 30s sleep, so a real hang still fails.
+HANG_BOUND_SECS = 25.0
+
 private def silent_process : Process
   Process.new("/bin/sh", ["-c", "sleep 30"],
     input: Process::Redirect::Pipe, output: Process::Redirect::Pipe, error: Process::Redirect::Close)
@@ -47,7 +53,7 @@ describe "PluginDaemon.await_ready" do
     assert_raises(IO::EOFError) do
       Krikri::PluginDaemon.await_ready(process.output, 60)
     end
-    ((Time.instant - started).total_seconds < 10.0).must_equal(true)
+    ((Time.instant - started).total_seconds < HANG_BOUND_SECS).must_equal(true)
   end
 
   it "fails at the handshake timeout when the process stays silent" do
@@ -58,7 +64,7 @@ describe "PluginDaemon.await_ready" do
         Krikri::PluginDaemon.await_ready(process.output, 1)
       end
       error.message.to_s.includes?("did not greet within 1s").must_equal(true)
-      ((Time.instant - started).total_seconds < 10.0).must_equal(true)
+      ((Time.instant - started).total_seconds < HANG_BOUND_SECS).must_equal(true)
     ensure
       process.terminate(graceful: false) unless process.terminated?
     end
