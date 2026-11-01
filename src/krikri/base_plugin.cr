@@ -208,6 +208,24 @@ module Krikri
     # cmd lead), which needs per-plugin key_order; the default here only
     # covers the plain shape.
     private def failed_default_order(result : Hash(String, JSON::Any::Type)) : Array(String)
+      # A module CRASH result (AnsibleModule's top-level handler emits
+      # failed+exception, then the controller adds changed/msg) registers
+      # failed, changed, exception, msg in real ansible 2.19.11, unlike a
+      # module's own fail_json (failed, msg, changed, exception) - the
+      # controller-side keys were never positioned by the module.
+      # Live-verified vs 2.19.11 (e.g. replace with an unknown encoding);
+      # loop items' item/ansible_loop_var come after msg, which the
+      # extras scan below keeps in place.
+      if @msg.starts_with?("Task failed: Module failed: ")
+        order = ["failed", "changed", "exception", "msg"]
+        result.each_key do |key|
+          next if key.in?("failed", "msg", "diff", "changed", "exception", "deprecations", "warnings")
+          order << key
+        end
+        order << "warnings" if result.has_key?("warnings")
+        order << "deprecations" if result.has_key?("deprecations")
+        return order
+      end
       order = ["failed", "msg", "diff"]
       result.each_key do |key|
         next if key.in?("failed", "msg", "diff", "changed", "exception", "deprecations", "warnings")
