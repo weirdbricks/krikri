@@ -738,19 +738,21 @@ module Krikri
         lookup_rendered = evaluate_lookup(expr[7..-2])
         # A scalar lookup() whose result ansible-core could not ",".join
         # (a non-string element - an int, or a BIGINT_SENTINEL_PREFIX-
-        # marked wide int) keeps the real LIST (issue #695), and inside
-        # rendered text a list must render the way Ansible renders one:
-        # Python repr ("X [1, 2] Y"), not this codebase's internal
-        # JSON-compact form. The list-kept decision comes from the
-        # dispatch itself (#evaluate_lookup's list_form branches set
-        # #lookup_list_form) - never from the returned text's shape, so
-        # a lookup('file') whose content merely looks like JSON keeps
-        # its verbatim text exactly as before (its result is a joined
-        # str, and joined results never set the flag).
+        # marked wide int) keeps the real LIST (issue #695), and since
+        # issue #698 a length-1 non-string result unwraps to its element
+        # outright. Inside rendered text both shapes must render the way
+        # Ansible renders the value: Python repr ("X [1, 2] Y" / a bare
+        # dict or int), not this codebase's internal JSON-compact form.
+        # The list-kept decision comes from the dispatch itself
+        # (#evaluate_lookup's list_form branches set #lookup_list_form) -
+        # never from the returned text's shape, so a lookup('file') whose
+        # content merely looks like JSON keeps its verbatim text exactly
+        # as before (its result is a joined str, and joined results never
+        # set the flag).
         if @lookup_list_form
           @lookup_list_form = false
           if result = (BigJson.parse(lookup_rendered) rescue nil)
-            return @lookup.format_value_output(result) if result.raw.is_a?(Array)
+            return @lookup.format_value_output(result) unless result.raw.is_a?(String)
           end
         end
         lookup_rendered

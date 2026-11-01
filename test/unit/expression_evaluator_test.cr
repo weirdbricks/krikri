@@ -885,6 +885,25 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
     result.as_a.map { |item| {item["key"].as_s, item["value"].as_i} }.must_equal([{"a", 1}, {"b", 2}])
   end
 
+  # ansible-core's _invoke_lookup does ",".join(result) and, on the
+  # TypeError that raises, unwraps a length-1 result - a plain lookup()
+  # (no wantlist=True) whose list result carries exactly ONE non-string
+  # element yields the element itself, not a one-element list (issue
+  # #698, verified live vs ansible 2.19.11).
+  it "unwraps a one-element non-string lookup() result like ansible (issue #698)" do
+    v = Hash(String, JSON::Any).new
+    v["one"] = JSON.parse(%({"a": 1}))
+    v["two"] = JSON.parse(%({"a": 1, "b": 2}))
+    v["five"] = JSON.parse(%([5]))
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
+    substitute = Krikri::VarSubstitutor.new(vars: v, host_name: "localhost")
+
+    evaluator.evaluate("lookup('dict', one)").must_equal("{'key': 'a', 'value': 1}")
+    substitute.substitute(%({{ lookup('items', five) + 1 }}), output: true).must_equal("6")
+    JSON.parse(evaluator.evaluate("lookup('dict', two)")).as_a.size.must_equal(2)
+    JSON.parse(evaluator.evaluate("query('dict', one)")).as_a.size.must_equal(1)
+  end
+
   it "evaluates lookup('list', ...) returning every term as a list" do
     v = Hash(String, JSON::Any).new
     v["a"] = JSON::Any.new(1_i64)

@@ -6,7 +6,7 @@ module Krikri
     # ini/csvfile parsers, shared path resolution) - extracted verbatim from
     # expression_evaluator.cr (lookup-dispatch split).
     class ExpressionEvaluator
-      private def evaluate_lookup_file(lookup_type : String?, parts : Array(String), kwargs : Array(String)) : String?
+      private def evaluate_lookup_file(lookup_type : String?, parts : Array(String), kwargs : Array(String), query_mode : Bool = false) : String?
         # SECURITY NOTE (deliberate, compatibility-preserving): file/pipe/
         # env lookups read controller files, EXECUTE controller commands,
         # and read controller env vars with no gating beyond playbook
@@ -36,7 +36,7 @@ module Krikri
           return "undefined" unless raw_arg
           evaluate_password_lookup(raw_arg)
         when "dict"
-          lookup_dict(parts)
+          lookup_dict(parts, kwargs, query_mode)
         end
       end
 
@@ -269,20 +269,25 @@ module Krikri
         )
       end
 
-      private def lookup_dict(parts : Array(String)) : String
+      private def lookup_dict(parts : Array(String), kwargs : Array(String), query_mode : Bool = false) : String
         # lookup('dict', {'a': 1, 'b': 2}) - Ansible's own dict
         # lookup plugin: one dict term in, a list of {key:, value:}
         # dicts out (one per top-level key) - identical shape to the
-        # dict2items filter. Always returns real JSON array text
-        # (not Ansible's own default comma-joined-scalar
-        # behavior) - these list-producing lookups are almost always
-        # consumed as a loop: source or piped through | list/|
+        # dict2items filter. Stays real JSON array text (not Ansible's
+        # own default comma-joined-scalar behavior) for every
+        # multi-key dict - these list-producing lookups are almost
+        # always consumed as a loop: source or piped through | list/|
         # flatten, both of which need a real array, not joined text.
+        # The single-key exception is #lookup_single_element_result:
+        # ansible's _invoke_lookup unwraps a length-1 non-string result
+        # even here (issue #698), and every {key:, value:} dict is
+        # non-string - so a plain lookup() of a one-key dict yields
+        # that one dict, exactly as Ansible does.
         source = parts[1]?.try { |part| evaluate(part.strip) }
         return "undefined" unless source
         dict = (JSON.parse(source) rescue nil).try(&.as_h?)
         return "undefined" unless dict
-        dict.map { |k, v| {"key" => JSON::Any.new(k), "value" => v} }.to_json
+        lookup_single_element_result(dict.map { |k, v| JSON::Any.new({"key" => JSON::Any.new(k), "value" => v}) }, kwargs, query_mode)
       end
 
       private def lookup_lines(parts : Array(String)) : String

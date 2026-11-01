@@ -1184,11 +1184,14 @@ describe Krikri::VariableSubstitutor::JinjaRenderer do
 
   it "renders lookup('dict'/'list'/'items'/'together'/'nested'/'indexed_items'/'random_choice', ...) in a real .j2 template" do
     v = Hash(String, JSON::Any).new
-    v["mydict"] = JSON.parse(%({"a": 1}))
+    v["mydict"] = JSON.parse(%({"a": 1, "b": 2}))
     v["l1"] = JSON.parse(%([1, 2]))
     v["l2"] = JSON.parse(%(["x", "y"]))
     renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
 
+    # mydict holds two keys, so the plain lookup() result stays the real
+    # list - a single-key dict would unwrap to the one {key, value} dict
+    # itself (issue #698), leaving no [0] to subscript.
     renderer.render(%({{ (lookup('dict', mydict))[0].key }})).must_equal("a")
     renderer.render(%({{ lookup('list', 1, 2) }})).must_equal("[1, 2]")
     renderer.render(%({{ lookup('items', l1, l2) }})).must_equal("[1, 2, 'x', 'y']")
@@ -1196,6 +1199,24 @@ describe Krikri::VariableSubstitutor::JinjaRenderer do
     renderer.render(%({{ lookup('nested', ['a'], [1, 2]) }})).must_equal("[['a', 1], ['a', 2]]")
     renderer.render(%({{ lookup('indexed_items', l2) }})).must_equal("[[0, 'x'], [1, 'y']]")
     renderer.render(%({{ lookup('random_choice', ['only']) }})).must_equal("only")
+  end
+
+  # ansible-core's _invoke_lookup does ",".join(result) and, on the
+  # TypeError that raises, unwraps a length-1 result - a plain lookup()
+  # (no wantlist=True) whose list result carries exactly ONE non-string
+  # element yields the element itself, not a one-element list (issue
+  # #698, verified live vs ansible 2.19.11).
+  it "unwraps a one-element non-string lookup() result like ansible (issue #698)" do
+    v = Hash(String, JSON::Any).new
+    v["one"] = JSON.parse(%({"a": 1}))
+    v["two"] = JSON.parse(%({"a": 1, "b": 2}))
+    v["five"] = JSON.parse(%([5]))
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
+
+    renderer.render(%({{ lookup('dict', one) }})).must_equal("{'key': 'a', 'value': 1}")
+    renderer.render(%({{ lookup('items', five) + 1 }})).must_equal("6")
+    renderer.render(%({{ lookup('dict', two) | length }})).must_equal("2")
+    renderer.render(%({{ query('dict', one) | length }})).must_equal("1")
   end
 
   it "renders lookup('lines'/'sequence'/'varnames', ...)" do
@@ -1212,7 +1233,10 @@ describe Krikri::VariableSubstitutor::JinjaRenderer do
     v = Hash(String, JSON::Any).new
     v["users"] = JSON.parse(%([{"name": "alice", "groups": ["a"]}]))
     renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
-    renderer.render(%({{ (lookup('subelements', users, 'groups'))[0][1] }})).must_equal("a")
+    # One source dict with one child group = one [parent, child] pair -
+    # a non-string element, so a plain lookup() unwraps to the pair
+    # itself (issue #698) and the child is pair[1], not pair[0][1].
+    renderer.render(%({{ lookup('subelements', users, 'groups')[1] }})).must_equal("a")
 
     csv_path = PluginSpecHelper.tmp_path("crinja_lookup_csvfile_test.csv")
     File.write(csv_path, "bob,designer\n")
