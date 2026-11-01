@@ -521,7 +521,10 @@ module Krikri
         end
         unless @check_mode
           if failure = apt_auto_install_python_apt(false, ->remote_exec(String))
-            return PluginResult.new(changed: false, failed: true, msg: "Failed to auto-install python3-apt: #{failure[:stderr]}")
+            # Raw fail_json shape (msg = stderr.rstrip, no prefix, no
+            # cache_updated key) plus the pre-failure warning - shared
+            # with apt.cr so the shape can't drift (issue #522).
+            return apt_auto_install_failure_result(failure)
           end
         end
       end
@@ -1319,7 +1322,10 @@ module Krikri
       unless @check_mode
         explicitly_no_cache = @params["update_cache"]? ? !true?(@params["update_cache"]?) : false
         if failure = apt_auto_install_python_apt(explicitly_no_cache, ->remote_exec(String), force_absent: true?(@params["_python_apt_absent"]?))
-          return PluginResult.new(changed: false, failed: true, msg: "Failed to auto-install python3-apt: #{failure[:stderr]}")
+          # Raw fail_json shape (msg = stderr.rstrip, no prefix, no
+          # cache_updated key) plus the pre-failure warning - shared
+          # with apt.cr so the shape can't drift (issue #522).
+          return apt_auto_install_failure_result(failure)
         end
       end
       # A `deb:` install (URL or local .deb) carries no name: - ansible's

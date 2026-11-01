@@ -388,8 +388,9 @@ module Krikri
     # `apt-get install -y python3-apt`, exactly the two commands
     # Ansible runs before respawning itself. Returns nil when the
     # bindings were already present (a no-op) or the install succeeded;
-    # returns the failed command result when either command failed,
-    # mirroring Ansible's check_rc=True hard failure.
+    # returns the failed stage's raw command result plus its reported cmd
+    # string when either command failed, mirroring Ansible's check_rc=True
+    # hard failure.
     #
     # This engine previously only emulated the FIRST invocation's
     # observable `changed` behavior (the round-30001 rule) without ever
@@ -408,19 +409,66 @@ module Krikri
     # short-circuits the live probe so a spec running on a dev box that really
     # has the bindings can still drive the absent path through the plugin's
     # own call site.
+    #
+    # A failed stage returns the raw command result PLUS the cmd string
+    # Ansible's own fail_json carries for that stage (issue #522): apt.py
+    # resolves apt-get via module.get_bin_path(..., required=True), so the
+    # reported cmd is the absolute /usr/bin/apt-get path even though this
+    # engine executes the bare name through PATH - the reported string only,
+    # what actually runs on the host is unchanged.
     def apt_auto_install_python_apt(skip_prefetch : Bool,
-                                    exec_remote : Proc(String, NamedTuple(exit_code: Int32, stdout: String, stderr: String)),
-                                    force_absent : Bool = false) : NamedTuple(exit_code: Int32, stdout: String, stderr: String)?
+                                    exec_remote : Proc(String, AptLockRetry::AptCmdResult),
+                                    force_absent : Bool = false) : NamedTuple(result: AptLockRetry::AptCmdResult, cmd: String)?
       return nil if !force_absent && apt_python_apt_present?(exec_remote)
 
       unless skip_prefetch
         result = exec_remote.call("apt-get update")
-        return result if result[:exit_code] != 0
+        return {result: result, cmd: APT_AUTO_INSTALL_UPDATE_CMD} if result[:exit_code] != 0
       end
 
       result = exec_remote.call("apt-get install -y python3-apt")
-      return result if result[:exit_code] != 0
+      return {result: result, cmd: APT_AUTO_INSTALL_INSTALL_CMD} if result[:exit_code] != 0
       nil
+    end
+
+    # Raw command-result shape every exec_remote in this module speaks.
+    alias AptCmdResult = NamedTuple(exit_code: Int32, stdout: String, stderr: String)
+
+    # The two reported cmd strings above (apt.py resolves the absolute
+    # /usr/bin/apt-get path for its fail_json, this engine runs the bare
+    # name through PATH), plus the warning apt.py emits BEFORE attempting
+    # the auto-install - module.warn("Updating cache and auto-installing
+    # missing dependency: python3-apt") - which shows up as the final
+    # "[WARNING]: ..." line after the PLAY RECAP when a stage fails.
+    APT_AUTO_INSTALL_UPDATE_CMD     = "/usr/bin/apt-get update"
+    APT_AUTO_INSTALL_INSTALL_CMD    = "/usr/bin/apt-get install --no-install-recommends python3-apt -y -q"
+    PYTHON_APT_AUTO_INSTALL_WARNING = "Updating cache and auto-installing missing dependency: python3-apt"
+
+    # Builds the PluginResult a failed auto-install stage reports, shared by
+    # apt.cr's and package.cr's three call sites so the shape can't drift.
+    # Shaped like Ansible's own fail_json for a check_rc=True run_command
+    # failure (issue #522, observed on the update stage): msg is the stderr with its
+    # trailing newline stripped - NO "Failed to auto-install" prefix - the
+    # keys dump in fail_json's sorted order, and there is NO cache_updated
+    # key (the module never got to touch the cache). The result.extra
+    # warnings carry the module's pre-failure warning so the final
+    # "[WARNING]: Updating cache and auto-installing missing dependency:
+    # python3-apt" line renders like real ansible's.
+    def apt_auto_install_failure_result(failure : NamedTuple(result: AptLockRetry::AptCmdResult, cmd: String)) : PluginResult
+      result = PluginResult.new(
+        changed: false,
+        failed: true,
+        msg: failure[:result][:stderr].rstrip,
+        cmd: failure[:cmd],
+        rc: failure[:result][:exit_code],
+        stdout: failure[:result][:stdout],
+        stderr: failure[:result][:stderr],
+        stdout_lines: failure[:result][:stdout].lines,
+        stderr_lines: failure[:result][:stderr].lines,
+        key_order: ["changed", "cmd", "msg", "rc", "stderr", "stderr_lines", "stdout", "stdout_lines"]
+      )
+      result.extra["warnings"] = JSON.parse([PYTHON_APT_AUTO_INSTALL_WARNING].to_json)
+      result
     end
 
     # Ansible's apt module cannot run at all in check mode when it
