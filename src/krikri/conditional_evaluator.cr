@@ -76,6 +76,104 @@ module Krikri
       @@compiled_regex_cache[key] ||= Regex.new(key)
     end
 
+    # Translate a Crystal/PCRE2 pattern-compile failure into the Python
+    # re.error wording Ansible's task result carries ("The test plugin
+    # 'ansible.builtin.<name>' failed: <re.error text>"). PCRE2's
+    # erroroffset is not always the character Python points at: for an
+    # unterminated character set and an unclosed group it reports the END
+    # of the pattern/parse instead of the offending `[`/`(` (Python
+    # reports the offending `[`, or the OUTERMOST unclosed `(`), so those
+    # two are relocated by scanning the pattern - escapes skipped, a `]`
+    # immediately after `[` a literal member (`[]]` is a class containing
+    # `]`), class contents ignored for the paren scan. The anchored `is
+    # match` cache key carries the `^(?:` wrap, so offsets taken from a
+    # wrap-only failure shift by 3.
+    private def self.raise_regex_test_error(test_name : String, pattern : String, wrapped_error : Exception, anchored : Bool) : NoReturn
+      error = begin
+        Regex.new(pattern)
+        wrapped_error
+      rescue e : Regex::Error | ArgumentError
+        e
+      end
+      raw = error.message || ""
+      msg = raw
+      offset = 0
+      if at = raw.rindex(" at ")
+        msg = raw[0...at]
+        offset = raw[(at + 4)..].to_i? || 0
+      end
+      offset -= 3 if anchored && error.same?(wrapped_error)
+      offset = 0 if offset < 0
+
+      if msg.includes?("missing terminating ]")
+        text = "unterminated character set"
+        pos = unterminated_char_set_index(pattern) || offset
+      elsif msg.includes?("missing closing parenthesis")
+        text = "missing ), unterminated subpattern"
+        pos = outermost_unclosed_paren_index(pattern) || offset
+      elsif msg.includes?("unmatched closing parenthesis")
+        text = "unbalanced parenthesis"
+        pos = offset
+      elsif msg.includes?("quantifier does not follow a repeatable item")
+        text = "nothing to repeat"
+        pos = offset
+      else
+        # Unknown PCRE2 wording: surface it raw rather than guess.
+        version_test_fail(test_name, raw)
+      end
+      version_test_fail(test_name, "#{text} at position #{pos}")
+    end
+
+    private def self.unterminated_char_set_index(pattern : String) : Int32?
+      in_class = false
+      class_start = 0
+      i = 0
+      while i < pattern.size
+        char = pattern[i]
+        if char == '\\'
+          i += 2
+          next
+        end
+        if in_class
+          in_class = false if char == ']' && i > class_start + 1
+        elsif char == '['
+          in_class = true
+          class_start = i
+        end
+        i += 1
+      end
+      in_class ? class_start : nil
+    end
+
+    private def self.outermost_unclosed_paren_index(pattern : String) : Int32?
+      depth = 0
+      outer_open : Int32? = nil
+      in_class = false
+      class_start = 0
+      i = 0
+      while i < pattern.size
+        char = pattern[i]
+        if char == '\\'
+          i += 2
+          next
+        end
+        if in_class
+          in_class = false if char == ']' && i > class_start + 1
+        elsif char == '['
+          in_class = true
+          class_start = i
+        elsif char == '('
+          depth += 1
+          outer_open = i if depth == 1
+        elsif char == ')'
+          depth -= 1
+          outer_open = nil if depth == 0
+        end
+        i += 1
+      end
+      depth > 0 ? outer_open : nil
+    end
+
     # Evaluate a when: condition against a variable context
     # Returns true if condition passes, false otherwise
     # Raised only from the `strict:` path (changed_when:/failed_when:) when
@@ -1027,17 +1125,35 @@ module Krikri
                   else             pv.to_s
                   end
 
-        # Ansible's regex test stringifies a non-string with to_text, so a
-        # null role default (`service_name:` in defaults/main.yml) is the
-        # text "None" and matches `[A-Za-z0-9._-]+` - chameleon.docker_service's
+        # Ansible's regex test stringifies a non-string with Python str(),
+        # so a null role default (`service_name:` in defaults/main.yml) is
+        # the text "None" and matches `[A-Za-z0-9._-]+` - chameleon.docker_service's
         # `service_name is not match(...)` validation is skipped there.
+        # A LIST left operand becomes Python's str(list) - repr items in
+        # SINGLE quotes (`['a', 'b']`), True/False bools - not Crystal's
+        # JSON-ish `["a", "b"]`/`true`/`false` to_s, so a real
+        # `when: reg.stdout_lines is not search(item)` with a single-char
+        # item matched in Ansible (the quote chars are in the stringified
+        # list) and silently missed here, skipping work Ansible ran.
         str_value = case value = evaluate_value(var_expr, vars)
                     when String then value
                     when Nil    then "None"
-                    else             value.to_s
+                    when Bool   then value ? "True" : "False"
+                    when Array(String)
+                      ResultDisplay.python_repr(JSON::Any.new(value.map { |item| JSON::Any.new(item) }))
+                    else value.to_s
                     end
 
-        matched = !!(str_value =~ cached_regex(pattern, anchored))
+        # A pattern that fails to COMPILE (`is search("[")` fed an
+        # unescaped loop item) is a task-failing test-plugin error in
+        # Ansible - Python's re.error wrapped as "The test plugin ...
+        # failed: ..." - not a silent non-match; PCRE2's own wording and
+        # offsets differ from Python's, so translate them.
+        matched = begin
+          !!(str_value =~ cached_regex(pattern, anchored))
+        rescue e : Regex::Error | ArgumentError
+          raise_regex_test_error(anchored ? "match" : "search", pattern, e, anchored)
+        end
         return negate ? !matched : matched
       end
 
