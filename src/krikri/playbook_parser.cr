@@ -1916,6 +1916,16 @@ module Krikri
       raise UnresolvedModuleError.new(message, render)
     end
 
+    # A BARE module name (no dots) the role's / playbook's own
+    # `library/<name>` source serves: ansible's observed behaviour
+    # (eagleusb.consul_acl, issue #724) resolves such a name to the
+    # library file BEFORE any collection lookup, so a collection
+    # tombstone is never consulted for it and the run proceeds.
+    private def self.bare_name_with_library_source?(module_name : String, role_path : String?, playbook_dir : String?) : Bool
+      !module_name.includes?('.') &&
+        CollectionIndex.library_module?(module_name, role_path, playbook_dir)
+    end
+
     # Ansible validates `register:`'s value as a variable-name
     # identifier at task-load time and refuses the whole run for anything
     # else - see InvalidRegisterError's own comment. The value is checked
@@ -3968,8 +3978,18 @@ module Krikri
         # Origin block on stderr. (Same story for a tombstoned action
         # plugin name - real resolves those through the same loader -
         # and it fires here before any native action/plugin handling.)
-        raise_unresolvable_module_error(module_name, resolved_module_name,
-          source_file, source_map, task_source_prefix(source_prefix, index))
+        # ansible's observed behaviour (eagleusb.consul_acl, issue #724):
+        # a BARE module name resolves to the role's / playbook's own
+        # `library/<name>` source BEFORE any collection lookup, so such a
+        # file shadows a collection tombstone entirely - the tombstone is
+        # never consulted and the run proceeds (the role's own tasks then
+        # decide the outcome). Only bare names get this escape: FQCN
+        # tombstones and bare names with no library/ source are refused
+        # exactly as before.
+        unless bare_name_with_library_source?(module_name, role_path, playbook_dir)
+          raise_unresolvable_module_error(module_name, resolved_module_name,
+            source_file, source_map, task_source_prefix(source_prefix, index))
+        end
 
         # Controller collection-set awareness: real refuses the WHOLE
         # playbook at load (rc=4, zero tasks run, the generic
@@ -4073,7 +4093,12 @@ module Krikri
           # the task's own when: would have let it run for at least one
           # host, and krikri-playbook still exit(4)s at the very end -
           # the exact mechanism the library/-module case already used.
-          raise_unresolvable_module_error(module_name)
+          # The same library/-shadows-tombstone escape as above: the
+          # tombstone table's bare spellings (e.g. `consul_acl` => nil)
+          # must not refuse a name the role's own library/ serves.
+          unless bare_name_with_library_source?(module_name, role_path, playbook_dir)
+            raise_unresolvable_module_error(module_name)
+          end
         end
       end
       module_name = resolved_module_name || module_name

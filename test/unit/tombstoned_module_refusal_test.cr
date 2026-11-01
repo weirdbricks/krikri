@@ -36,6 +36,25 @@ ensure
   File.delete(playbook) if playbook && File.exists?(playbook)
 end
 
+# A tmp role calling bare `consul_acl:` with NO library/ source - the
+# negative half of the library/-shadows-tombstone test.
+private def parse_bare_consul_acl_role : Krikri::Playbook
+  root = PluginSpecHelper.tmp_path("tombstone-library-shadow-bare")
+  FileUtils.mkdir_p(File.join(root, "roles", "consulrole", "tasks"))
+  File.write(File.join(root, "roles", "consulrole", "tasks", "main.yml"), <<-YAML
+    - name: bare consul_acl with no library source
+      consul_acl:
+        state: present
+    YAML
+  )
+  play_yaml = <<-YAML
+    - hosts: all
+      roles:
+        - consulrole
+    YAML
+  Krikri::PlaybookParser.parse_string(play_yaml, File.join(root, "site.yml"))
+end
+
 describe "parse-time tombstone refusal for collection-removed modules" do
   it "raises RemovedModuleError with community.windows.win_domain_user's exact removal message" do
     # community.windows 3.0.0 tombstoned the module in favor of
@@ -197,6 +216,62 @@ describe "parse-time tombstone refusal for collection-removed modules" do
                   repo_name: foo
           YAML
         )
+      end
+    end
+  end
+
+  it "lets a role's own library/consul_acl.py shadow the collection tombstone for bare consul_acl (issue #724)" do
+    # ansible's observed behaviour (eagleusb.consul_acl): the loader
+    # resolves a BARE module name against the role's / playbook's own
+    # `library/<name>` sources BEFORE any collection lookup, so such a
+    # file shadows community.general's tombstone entirely - the role's
+    # earlier assert task fails the run instead, and nothing is refused
+    # at parse. A bare name with no library/ source is still refused.
+    root = PluginSpecHelper.tmp_path("tombstone-library-shadow")
+    library_dir = File.join(root, "roles", "consulrole", "library")
+    FileUtils.mkdir_p(library_dir)
+    File.write(File.join(library_dir, "consul_acl.py"), "# fixture\n")
+    FileUtils.mkdir_p(File.join(root, "roles", "consulrole", "tasks"))
+    File.write(File.join(root, "roles", "consulrole", "tasks", "main.yml"), <<-YAML
+      - name: bare consul_acl served from the role's own library
+        consul_acl:
+          state: present
+      YAML
+    )
+    play_yaml = <<-YAML
+      - hosts: all
+        roles:
+          - consulrole
+      YAML
+    parsed = Krikri::PlaybookParser.parse_string(play_yaml, File.join(root, "site.yml"))
+    # The name flows through unresolved (the executor's module search
+    # finds the library/ source and runs it), keeping the as-written
+    # spelling.
+    parsed.plays[0].tasks[0].module_name.must_equal("consul_acl")
+    # Drop the role dir before the negative half: loading a role
+    # registers its library/ root in PythonFilterRunner's process-global
+    # registry, which would make the no-library case below "find" this
+    # file and skip its expected refusal.
+    FileUtils.rm_rf(root)
+
+    # The no-library half is controller-state-dependent, like the
+    # redirect-hop refusals below: with community.general installed the
+    # redirect chain dies in its tombstone (RemovedModuleError rc=1);
+    # without it the chain dies at the collection import and the generic
+    # couldn't-resolve refusal fires instead. Neither may be escaped by
+    # anything but a real library/ source.
+    if Krikri::CollectionIndex.installed?("community", "general")
+      assert_raises_message(Krikri::RemovedModuleError,
+        "The 'community.general.consul_acl' module has been removed. " \
+        "Use community.general.consul_token and/or community.general.consul_policy instead. " \
+        "This feature was removed from collection 'community.general' version 10.0.0.") do
+        parse_bare_consul_acl_role
+      end
+    else
+      assert_raises_message(Krikri::UnresolvedModuleError,
+        "couldn't resolve module/action 'consul_acl'. " \
+        "This often indicates a misspelling, missing collection, or incorrect module path.") do
+        parse_bare_consul_acl_role
       end
     end
   end

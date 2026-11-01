@@ -1005,6 +1005,18 @@ describe Krikri::ConditionalEvaluator do
       Krikri::ConditionalEvaluator.evaluate("a_string is not sequence", v).must_equal(true)
     end
 
+    it "treats an empty-call type test like 'is sequence()' as the bare test (issue #724)" do
+      # eagleusb.consul_acl asserts `consul_client_token is sequence()`
+      # on an empty list: Jinja2 accepts the empty call, so it is true.
+      v = Hash(String, JSON::Any).new
+      v["empty_list"] = JSON.parse(%([]))
+      v["a_dict"] = JSON.parse(%({"k": 1}))
+
+      Krikri::ConditionalEvaluator.evaluate("empty_list is sequence()", v).must_equal(true)
+      Krikri::ConditionalEvaluator.evaluate("a_dict is sequence()", v).must_equal(false)
+      Krikri::ConditionalEvaluator.evaluate("a_dict is not sequence()", v).must_equal(true)
+    end
+
     it "evaluates 'is boolean' / 'is number' / 'is string' / 'is integer' / 'is float' / 'is iterable', the rest of Jinja2's own type tests" do
       # Real bug found benchmarking robertdebock.bootstrap's own defaults-
       # sanity assert: `bootstrap_wait_for_host is defined and
