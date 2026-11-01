@@ -294,7 +294,7 @@ all 10:
 | `opsta.sensu` | ✅ Clean (round 5460041, 0.9.1628, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 6.66s vs cr 5.25s; warm py 3.93s vs cr 0.48s. |
 | `opstree_devops.linux_armour` | ubuntu | ❌ Divergent - issue #595 (round29884359, 0.9.1963 release). Times: cold py 21.42s vs cr 89.16s; warm py 695.83s vs cr 14.27s. |
 | `P4T12ICK.ludus_ar_linux` | ✅ Clean (round 5460166, 0.9.1628, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 900.0s vs cr 900.0s; warm py 0.59s vs cr 1.45s. |
-| `pacifica.ansible_certinfra` | ✅ Clean (round 5460089, 0.9.1628, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 55.0s vs cr 17.0s; warm py 43.2s vs cr 3.17s. |
+| `pacifica.ansible_certinfra` | ✅ Clean, bytes IDENTICAL cold and warm (round 29891697, 0.9.2172 debug build, Atlantic/Ubuntu). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 138.6s vs cr 35.9s; warm py 118.4s vs cr 13.0s. |
 | `pandemonium1986.ansible` | ✅ Clean (round 5460135, 0.9.1628, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 44.4s vs cr 31.8s; warm py 12.5s vs cr 1.11s. |
 | `pandemonium1986.helm` | ✅ Clean (round 5460076, 0.9.1628, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 11.4s vs cr 11.7s; warm py 9.32s vs cr 3.13s. |
 | `perimeterd.perimeterd` | ubuntu | ✅ Clean (round29884379, 0.9.1963 release). Times: cold py 36.76s vs cr 8.50s; warm py 40.69s vs cr 3.14s. |
