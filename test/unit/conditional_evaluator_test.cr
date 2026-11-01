@@ -1123,6 +1123,34 @@ describe Krikri::ConditionalEvaluator do
       Krikri::ConditionalEvaluator.evaluate(%(stdout is not search(target_version)), v).must_equal(false)
     end
 
+    it "stringifies a list left operand as Python's single-quoted str(list) for is search/match" do
+      # Real bug found via a `when: - reg.stdout_lines is not search(item)`
+      # loop with a single-char item: Ansible hands the regex test Python's
+      # str(list) - `['a', 'b']`, the QUOTE characters included - so
+      # `search("'")` finds the quotes; Crystal's Array#to_s produced
+      # JSON-ish `["a", "b"]` and the same search missed, skipping work
+      # Ansible ran.
+      v = Hash(String, JSON::Any).new
+      v["lst"] = JSON.parse(%(["hello"]))
+      Krikri::ConditionalEvaluator.evaluate(%(lst is search("'")), v).must_equal(true)
+      Krikri::ConditionalEvaluator.evaluate(%(lst is not search("'")), v).must_equal(false)
+    end
+
+    it "raises Ansible's test-plugin failure wording for a pattern that fails to compile" do
+      # `is search("[")` - an unescaped loop item as the pattern - is a
+      # task-failing re.error in Ansible, worded in Python's re module's
+      # own terms, not a silent non-match; before this surfaced PCRE2's
+      # raw "missing terminating ] for character class" wording instead.
+      v = Hash(String, JSON::Any).new
+      v["x"] = JSON::Any.new("abc")
+      assert_raises_message(
+        Krikri::TestPluginError,
+        "The test plugin 'ansible.builtin.search' failed: unterminated character set at position 0"
+      ) do
+        Krikri::ConditionalEvaluator.evaluate(%(x is search("[")), v)
+      end
+    end
+
     it "evaluates 'is subset(...)' / 'is superset(...)' / 'is contains(...)' (plus negations)" do
       v = Hash(String, JSON::Any).new
       v["small"] = JSON.parse(%(["a", "b"]))
