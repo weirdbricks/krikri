@@ -1513,6 +1513,60 @@ module Krikri
       }.to_json)
     end
 
+    @@chown_probe_cache = {} of String => Bool
+    @@chown_probe_mutex = Mutex.new
+
+    # Shell snippet for the probe: ansible's _fixup_perms2 chowns its temp
+    # files to the become user as the (root) connection user and fails the
+    # task when that is refused (e.g. a uid outside a rootless container's
+    # user-namespace map). krikri never chowns, so it asks the same
+    # question once per (host, become_user) instead.
+    def self.chown_probe_script(become_user : String) : String
+      q = Shell.quote_arg(become_user)
+      "t=$(mktemp) && chown #{q} \"$t\" 2>/dev/null; rc=$?; rm -f \"$t\"; exit $rc"
+    end
+
+    # nil when the escalation is fine (or the probe cannot run); the
+    # ansible-worded failure when root cannot chown to an existing
+    # become_user. A nonexistent user is left to sudo's own error path.
+    def self.become_chown_probe_failure(conn : ConnectionSettings, become : Bool, become_user : String?) : JSON::Any?
+      return nil unless become_user && !become_user.empty?
+      return nil unless conn.user == "root" && become_needed?(become, become_user, conn.user)
+      key = "#{conn.conn_host}|#{conn.port}|#{conn.user}|#{become_user}"
+      ok = @@chown_probe_mutex.synchronize { @@chown_probe_cache[key]? }
+      if ok.nil?
+        ok = begin
+          r = SSHManager.exec_script(conn.conn_host, conn.user, chown_probe_script(become_user), conn.port,
+            timeout: 60, identity_file: conn.identity_file, extra_args: conn.ssh_extra_options)
+          # Only a refused chown on a user that exists counts; 255 is ssh.
+          r[:exit_code] != 1 || !user_exists_remote?(conn, become_user)
+        rescue
+          true
+        end
+        @@chown_probe_mutex.synchronize { @@chown_probe_cache[key] = ok }
+      end
+      return nil if ok
+      become_chown_failure_json
+    end
+
+    # ansible raises this from _fixup_perms2 before the module runs, so
+    # failed_when:/changed_when: never get to see it; the marker keeps them
+    # from reinterpreting it (the display strips it).
+    private def self.become_chown_failure_json : JSON::Any
+      JSON.parse({
+        "changed"             => false,
+        "failed"              => true,
+        "msg"                 => "Task failed: #{BECOME_CHOWN_FAILURE}",
+        "_connection_failure" => true,
+      }.to_json)
+    end
+
+    private def self.user_exists_remote?(conn : ConnectionSettings, user : String) : Bool
+      r = SSHManager.exec_script(conn.conn_host, conn.user, "getent passwd #{Shell.quote_arg(user)} >/dev/null", conn.port,
+        timeout: 60, identity_file: conn.identity_file, extra_args: conn.ssh_extra_options)
+      r[:exit_code] == 0
+    end
+
     private def self.execute_local_plugin_impl(plugin_name : String, config : String, become : Bool, become_user : String?, become_password : String? = nil, task_timeout : Int64? = nil) : JSON::Any
       plugin_path = get_local_plugin_path(plugin_name)
       plugin_path = staged_local_plugin_path(plugin_name, plugin_path) if become && become_user
@@ -1892,6 +1946,10 @@ module Krikri
       extra_args = conn.ssh_extra_options
 
       ensure_uploaded(host, plugin_name, vars)
+
+      if failure = become_chown_probe_failure(conn, become, become_user)
+        return failure
+      end
 
       # The task's `timeout:` budget starts AFTER the plugin-binary
       # upload: real's alarm covers its module transfer, but that module
