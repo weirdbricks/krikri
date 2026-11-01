@@ -82,12 +82,12 @@ describe "Krikri::PluginManager (become_needed_test.cr)" do
 
     it "keeps it for a genuine escalation" do
       Krikri::PluginManager.remote_plugin_target("copy", true, "appuser", "root")
-        .must_equal("sudo -n -u appuser -- #{Krikri::PluginManager.remote_plugin_dir(nil)}/copy")
+        .must_equal("sudo -H -n -u appuser -- #{Krikri::PluginManager.remote_plugin_dir(nil)}/copy")
     end
 
     it "shell-quotes a hostile become_user as defense in depth" do
       target = Krikri::PluginManager.remote_plugin_target("copy", true, "root; rm -rf /", "deploy")
-      target.must_include("sudo -n -u 'root; rm -rf /' --")
+      target.must_include("sudo -H -n -u 'root; rm -rf /' --")
     end
   end
 end

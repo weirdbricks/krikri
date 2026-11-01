@@ -82,14 +82,14 @@ describe "LocalPluginDaemon argv construction" do
     argv.must_equal(["/opt/plugins/command", "--daemon"])
   end
 
-  it "wraps a become_user daemon in passwordless sudo -n, same flags as the one-shot local path" do
+  it "wraps a become_user daemon in passwordless sudo -H -n, same flags as the one-shot local path" do
     argv = Krikri::LocalPluginDaemon.local_daemon_argv("/opt/plugins/command", "deploy", interactive: false)
-    argv.must_equal(["-n", "-u", "deploy", "--", "/opt/plugins/command", "--daemon"])
+    argv.must_equal(["-H", "-n", "-u", "deploy", "--", "/opt/plugins/command", "--daemon"])
   end
 
-  it "uses sudo -S with an empty prompt when the escalation needs a password" do
+  it "uses sudo -H -S with an empty prompt when the escalation needs a password" do
     argv = Krikri::LocalPluginDaemon.local_daemon_argv("/opt/plugins/command", "deploy", interactive: true)
-    argv.must_equal(["-S", "-p", "", "-u", "deploy", "--", "/opt/plugins/command", "--daemon"])
+    argv.must_equal(["-H", "-S", "-p", "", "-u", "deploy", "--", "/opt/plugins/command", "--daemon"])
   end
 end
 

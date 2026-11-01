@@ -13,7 +13,7 @@ require "../../src/krikri/ssh_manager"
 # fallback path instead.
 #
 # The escalation itself is deliberately identical to the one-shot
-# path's - `sudo -n -u <become_user> --`, the same string
+# path's - `sudo -H -n -u <become_user> --`, the same string
 # #remote_plugin_target builds - so a host where one-shot become works
 # has a working daemon, and a host where it doesn't fails the same way
 # and falls back.
@@ -34,7 +34,7 @@ describe "daemon become eligibility" do
 
   it "keeps the become_user allow-list that guards the daemon command line" do
     # become_user is interpolated straight into the daemon's own ssh
-    # command line (`sudo -n -u <user> -- <binary> --daemon`), exactly
+    # command line (`sudo -H -n -u <user> -- <binary> --daemon`), exactly
     # as it is into the one-shot target string, so the same allow-list
     # is the security boundary for both.
     Krikri::PluginManager.valid_become_user?("deploy").must_equal(true)
@@ -44,7 +44,7 @@ describe "daemon become eligibility" do
 
   it "builds the same sudo wrapper for a become: target as the one-shot path" do
     Krikri::PluginManager.remote_plugin_target("command", true, "deploy")
-      .must_equal("sudo -n -u deploy -- #{Krikri::PluginManager.remote_plugin_dir(nil)}/command")
+      .must_equal("sudo -H -n -u deploy -- #{Krikri::PluginManager.remote_plugin_dir(nil)}/command")
     Krikri::PluginManager.remote_plugin_target("command", false, nil)
       .must_equal("#{Krikri::PluginManager.remote_plugin_dir(nil)}/command")
   end

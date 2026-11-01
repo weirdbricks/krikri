@@ -5,12 +5,12 @@ require "../../src/krikri/batch_script"
 
 # -K/--ask-become-pass/--become-password-file (and an inventory
 # ansible_become_password/ansible_become_pass) must change how sudo is
-# invoked: `sudo -n` stays the no-password behaviour, and with a
-# password set the target becomes the probe + `sudo -S -p ''` wrapper
-# that feeds the password on stdin - while a NOOPASSWD sudo (the common
-# -K-with-passwordless-sudo case) still resolves to plain `sudo -n`
-# with the config payload untouched. Pure command construction: no
-# sudo/ssh process is spawned here.
+# invoked: `sudo -H -n` stays the no-password behaviour, and with a
+# password set the target becomes the probe + `sudo -H -S -p ''`
+# wrapper that feeds the password on stdin - while a NOOPASSWD sudo
+# (the common -K-with-passwordless-sudo case) still resolves to plain
+# `sudo -H -n` with the config payload untouched. Pure command
+# construction: no sudo/ssh process is spawned here.
 describe "become password command construction (become_password_test.cr)" do
   describe "PluginManager.remote_plugin_target with a become password" do
     it "builds the probe + sudo -S wrapper instead of sudo -n" do
@@ -20,23 +20,31 @@ describe "become password command construction (become_password_test.cr)" do
       # NOOPASSWD probe: sudo -n, stderr discarded, so a passwordless
       # sudo takes this branch and stdin flows through untouched.
       target.includes?("if sudo -n -u appuser -- true 2>/dev/null; ").must_equal(true)
-      target.includes?("then sudo -n -u appuser -- #{dir}/copy; ").must_equal(true)
+      target.includes?("then sudo -H -n -u appuser -- #{dir}/copy; ").must_equal(true)
       # The password-required branch: sudo -S with an empty prompt, and
       # the password line prepended to the same stdin stream. The
       # feeder's stderr is silenced (EPIPE noise when the consumer exits
       # before reading stdin - see sudo_password_become_wrapper).
       target.includes?("printf '%s\\n' 'pw123' 2>/dev/null; cat 2>/dev/null; } | ").must_equal(true)
-      target.includes?("sudo -S -p '' -u appuser -- #{dir}/copy; fi").must_equal(true)
+      target.includes?("sudo -H -S -p '' -u appuser -- #{dir}/copy; fi").must_equal(true)
       # It is still ONE command fragment the usual pipe can target.
       target.starts_with?("if ").must_equal(true)
       target.ends_with?("fi").must_equal(true)
     end
 
-    it "keeps the historical sudo -n string when no password is set" do
+    it "uses sudo -H -n when no password is set" do
       Krikri::PluginManager.remote_plugin_target("copy", true, "appuser", "root")
-        .must_equal("sudo -n -u appuser -- #{Krikri::PluginManager.remote_plugin_dir(nil)}/copy")
+        .must_equal("sudo -H -n -u appuser -- #{Krikri::PluginManager.remote_plugin_dir(nil)}/copy")
       Krikri::PluginManager.remote_plugin_target("copy", true, "appuser", "root", nil)
-        .must_equal("sudo -n -u appuser -- #{Krikri::PluginManager.remote_plugin_dir(nil)}/copy")
+        .must_equal("sudo -H -n -u appuser -- #{Krikri::PluginManager.remote_plugin_dir(nil)}/copy")
+    end
+
+    it "prefixes execution sudo invocations with -H like ansible's become" do
+      # -H sets HOME to the become user's, so ~/.ansible/tmp - and
+      # ansible's unusable-tempdir warning when that home cannot be
+      # created (issue #536) - resolves the way it does under ansible.
+      target = Krikri::PluginManager.remote_plugin_target("copy", true, "appuser", "root")
+      target.includes?("sudo -H -n -u").must_equal(true)
     end
 
     it "needs no sudo at all when escalating to the user we already are" do
@@ -54,7 +62,7 @@ describe "become password command construction (become_password_test.cr)" do
     it "shell-quotes a hostile become_user in probe and both branches" do
       target = Krikri::PluginManager.remote_plugin_target("copy", true, "root; rm -rf /", "deploy", "pw")
       target.includes?("sudo -n -u 'root; rm -rf /' -- true 2>/dev/null").must_equal(true)
-      target.includes?("sudo -S -p '' -u 'root; rm -rf /' --").must_equal(true)
+      target.includes?("sudo -H -S -p '' -u 'root; rm -rf /' --").must_equal(true)
     end
 
     it "single-quotes a password containing quotes and metacharacters" do
@@ -69,9 +77,9 @@ describe "become password command construction (become_password_test.cr)" do
   describe "PluginManager local (ansible_connection=local) sudo argv/stdin" do
     it "uses sudo -S -p '' plus a prefixed stdin only when interactive" do
       Krikri::PluginManager.local_sudo_argv("appuser", "/p/copy", true)
-        .must_equal(["-S", "-p", "", "-u", "appuser", "--", "/p/copy"])
+        .must_equal(["-H", "-S", "-p", "", "-u", "appuser", "--", "/p/copy"])
       Krikri::PluginManager.local_sudo_argv("appuser", "/p/copy", false)
-        .must_equal(["-n", "-u", "appuser", "--", "/p/copy"])
+        .must_equal(["-H", "-n", "-u", "appuser", "--", "/p/copy"])
     end
 
     it "never puts the password in the sudo argv" do
