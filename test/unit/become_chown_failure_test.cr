@@ -24,6 +24,22 @@ describe "Krikri::PluginManager.become_chown_failure_result (become_chown_failur
     Krikri::PluginManager.become_chown_failure_result(0, "sudo: unknown user nosuchuser\n", "nosuchuser", "root").must_be_nil
   end
 
+  # ansible-core 2.19 attaches an ErrorSummary-derived `exception` to every
+  # controller-fatal task result - "(traceback unavailable)" with tracebacks
+  # disabled - which survives into registered vars (a debug: of the registered
+  # result prints it) while the fatal dump strips it (live-verified vs
+  # 2.19.11; issue #546, laniakea.galaxy_tools).
+  it "carries ansible's exception key on the chown failure result" do
+    result = Krikri::PluginManager.become_chown_failure_result(1, "sudo: unknown user nosuchuser\n", "nosuchuser", "root")
+    result.must_be_instance_of(JSON::Any)
+    result.as(JSON::Any)["exception"].as_s.must_equal("(traceback unavailable)")
+  end
+
+  it "carries the same exception key on the probe-detected chown failure result" do
+    plugin_source = File.read("src/krikri/plugin_manager.cr")
+    plugin_source.must_match(/"exception"\s+=> "\(traceback unavailable\)",\n\s+"_connection_failure" => true,\n\s+\}\.to_json\)\n\s+end\n\n\s+private def self\.user_exists_remote/)
+  end
+
   it "hides the probe failure's marker in the display but keeps it for failed_when" do
     source = File.read("src/krikri/task_executor/result_display.cr")
     source.must_match(/BECOME_CHOWN_FAILURE/)

@@ -1528,10 +1528,17 @@ module Krikri
       return nil unless remote_user == "root"
       return nil unless become_user && !become_user.empty?
       return nil unless stderr.lines.any? { |line| line.strip == "sudo: unknown user #{become_user}" }
+      # ansible-core 2.19 attaches an ErrorSummary-derived `exception` to
+      # every controller-fatal task result; with tracebacks disabled (the
+      # default) it projects into registered vars/debug output as the
+      # "(traceback unavailable)" placeholder, while the fatal dump strips
+      # the key (live-verified vs 2.19.11 - issue #546's
+      # laniakea.galaxy_tools debug-of-registered-result divergence).
       JSON.parse({
-        "changed" => false,
-        "failed"  => true,
-        "msg"     => "Task failed: #{BECOME_CHOWN_FAILURE}",
+        "changed"   => false,
+        "failed"    => true,
+        "msg"       => "Task failed: #{BECOME_CHOWN_FAILURE}",
+        "exception" => "(traceback unavailable)",
       }.to_json)
     end
 
@@ -1575,10 +1582,13 @@ module Krikri
     # failed_when:/changed_when: never get to see it; the marker keeps them
     # from reinterpreting it (the display strips it).
     private def self.become_chown_failure_json : JSON::Any
+      # Same 2.19 exception-key treatment as become_chown_failure_result
+      # above - the probe-detected shape is the same _fixup_perms2 fatal.
       JSON.parse({
         "changed"             => false,
         "failed"              => true,
         "msg"                 => "Task failed: #{BECOME_CHOWN_FAILURE}",
+        "exception"           => "(traceback unavailable)",
         "_connection_failure" => true,
       }.to_json)
     end
