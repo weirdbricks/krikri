@@ -974,6 +974,20 @@ module Krikri
         return result
       end
 
+      # Same keyword-first ordering as execute_task_once (issue #465):
+      # a templated become: renders before any module arg is finalized.
+      if handler.become_expr
+        begin
+          resolve_task_become_flag(handler, host, vars_context, substitutor)
+        rescue ex : UndefinedVariableError
+          result = keyword_failure_json(ex, handler)
+          if register_name = handler.register
+            register_result(host, register_name, result) unless register_name.empty?
+          end
+          return result
+        end
+      end
+
       # Same no_log keyword-templating probe as execute_task_once (issue
       # #317): a notified handler whose templated no_log: references an
       # undefined variable fails like any other task instead of running

@@ -1972,6 +1972,18 @@ module Krikri
         return keyword_failure_json(ex, task)
       end
 
+      # Ansible post-validates the become keyword before it finalizes the
+      # task args, so a templated become: that renders to a non-bool fails
+      # with its own keyword error even when an arg is also undefined
+      # (issue #465) - arg templating used to win with the wrong error.
+      if task.become_expr
+        begin
+          resolve_task_become_flag(task, host, vars_context, substitutor)
+        rescue ex : UndefinedVariableError
+          return keyword_failure_json(ex, task)
+        end
+      end
+
       # Same no_log keyword-templating probe as execute_task_once (issue
       # #317): the batched remote path must fail the task identically
       # instead of sending it to the remote code while masked.
@@ -2433,6 +2445,16 @@ module Krikri
         resolve_task_become_user(task, host, vars_context, substitutor)
       rescue ex : UndefinedVariableError
         return keyword_failure_json(ex, task)
+      end
+
+      # Same keyword-first ordering as prepare_batch_step (issue #465):
+      # a templated become: renders before any module arg is finalized.
+      if task.become_expr
+        begin
+          resolve_task_become_flag(task, host, vars_context, substitutor)
+        rescue ex : UndefinedVariableError
+          return keyword_failure_json(ex, task)
+        end
       end
 
       # The no_log keyword is strictly templated alongside become_user
