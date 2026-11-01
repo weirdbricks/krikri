@@ -450,6 +450,39 @@ describe "ignore_errors: on an ordinary (non-when-related) task failure" do
     File.delete(playbook) if playbook && File.exists?(playbook)
   end
 
+  it "labels a set_fact-wrapped vars-file conditional value with the vars file's position" do
+    vars_file = File.tempname("when-setfact-chain-vars", ".yml")
+    File.write(vars_file, "inner_flag: notbool\n")
+    playbook = File.tempname("when-setfact-chain", ".yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars_files:
+          - #{vars_file}
+        tasks:
+          - ansible.builtin.set_fact:
+              outer: "{{ inner_flag }}"
+          - name: set_fact chain conditional
+            ansible.builtin.debug:
+              msg: hi
+            when: outer | default(false)
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+
+    status.success?.must_equal(false)
+    # The set_fact's stored value is already rendered, but real's lineage
+    # follows the single-variable template to the INNERMOST source - the
+    # vars file's own value token (`inner_flag: notbool`, value at col 13) -
+    # not the set_fact value token (issue #508).
+    output.to_s.must_include("was derived from value of type 'str' at '#{File.expand_path(vars_file)}:1:13'", output.to_s)
+  ensure
+    File.delete(playbook) if playbook && File.exists?(playbook)
+    File.delete(vars_file) if vars_file && File.exists?(vars_file)
+  end
+
   it "labels a registered-result conditional value with the when: token position" do
     playbook = File.tempname("when-registered-origin", ".yml")
     File.write(playbook, <<-YAML)
