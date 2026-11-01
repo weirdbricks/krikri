@@ -828,7 +828,12 @@ module Krikri
         vars[key] = value
       end
 
-      vars["inventory_hostname"] = JSON::Any.new(@host.name)
+      # Real ansible's observed behaviour (issue #727): delegate_to
+      # re-points @host (and ansible_host/template_host) at the
+      # delegated-to machine, but inventory_hostname stays the play's
+      # own host - a template rendered on localhost for a remote host
+      # still sees the remote host's inventory name.
+      vars["inventory_hostname"] = JSON::Any.new(host_name)
       vars["ansible_host"] = JSON::Any.new(@host.name)
       vars["ansible_managed"] = JSON::Any.new("Ansible managed")
       vars["template_host"] = JSON::Any.new(@host.name)
