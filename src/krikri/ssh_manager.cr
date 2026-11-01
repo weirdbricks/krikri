@@ -1282,6 +1282,38 @@ module Krikri
       end
     end
 
+    # The argv for a batched plugin upload. --no-o/--no-g countermand
+    # -a's -o/-g: when the connecting user is root, rsync would otherwise
+    # recreate the CONTROLLER's uid/gid on the target, and that pair
+    # usually has no passwd/group entry there (issue #729:
+    # guidugli.fspart's `find -nouser`/`-nogroup` scans then reported
+    # krikri's own staged plugin binaries as unowned/ungrouped files,
+    # where the same role run under ansible-playbook reported nothing -
+    # ansible's module payloads go over SFTP, which can only ever be
+    # owned by the connecting user). Kept separate from the Process.run
+    # so command construction is testable without spawning rsync.
+    def self.rsync_upload_argv(
+      control_path : String,
+      identity_file : String?,
+      port : Int32?,
+      user : String,
+      host : String,
+      local_files : Array(String),
+      remote_dir : String,
+      password : String? = nil,
+      extra_args : Array(String) = [] of String,
+      mode : Int32 = 0o755,
+    ) : Array(String)
+      [
+        "rsync",
+        "-az",
+        "--no-o",
+        "--no-g",
+        "--chmod=#{mode.to_s(8)}",
+        "-e", rsync_ssh_command(control_path, identity_file, port, password, extra_args),
+      ] + local_files + ["#{user}@#{host}:#{remote_dir}/"]
+    end
+
     # Batch upload multiple files using rsync (most efficient)
     # Returns true if successful, false if rsync not available or failed
     def self.rsync_upload_batch(
@@ -1305,12 +1337,10 @@ module Krikri
       # rsync accepts multiple sources for one destination directory
       # natively - one process spawn (and one SSH session) for the whole
       # batch instead of one per file.
-      rsync_cmd = [
-        "rsync",
-        "-az",
-        "--chmod=#{mode.to_s(8)}",
-        "-e", rsync_ssh_command(control_path, identity_file, port, password, extra_args),
-      ] + local_files + ["#{user}@#{host}:#{remote_dir}/"]
+      rsync_cmd = rsync_upload_argv(
+        control_path, identity_file, port, user, host, local_files,
+        remote_dir, password: password, extra_args: extra_args, mode: mode
+      )
 
       result = TimingProfile.measure("transport.rsync", "transport") do
         Process.run(

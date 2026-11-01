@@ -86,6 +86,26 @@ describe "SSHManager sshpass wrapping (sshpass_wrapping_test.cr)" do
     end
   end
 
+  describe ".rsync_upload_argv" do
+    it "never preserves controller uid/gid on the target (--no-o --no-g)" do
+      argv = Krikri::SSHManager.rsync_upload_argv(
+        "/tmp/cp", nil, 22, "root", "192.0.2.1", ["/l/plugin"], "/var/tmp/d"
+      )
+      argv.first.must_equal("rsync")
+      argv.includes?("--no-o").must_equal(true)
+      argv.includes?("--no-g").must_equal(true)
+      argv.includes?("--chmod=755").must_equal(true)
+      argv.last.must_equal("root@192.0.2.1:/var/tmp/d/")
+    end
+
+    it "keeps the mode flag configurable" do
+      argv = Krikri::SSHManager.rsync_upload_argv(
+        "/tmp/cp", nil, nil, "root", "192.0.2.1", ["/l/plugin"], "/var/tmp/d", mode: 0o644
+      )
+      argv.includes?("--chmod=644").must_equal(true)
+    end
+  end
+
   describe ".rsync_ssh_command" do
     it "wraps the -e ssh command in sshpass -e when a password is set" do
       plain = Krikri::SSHManager.rsync_ssh_command("/tmp/cp", nil, nil)
