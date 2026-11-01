@@ -86,6 +86,39 @@ describe "strict missing-attribute matrix (ansible-core 2.19 semantics)" do
       "{{ false and d.missing == 'x' }}", strict: true).must_equal("False")
   end
 
+  # Issue #495 (live-verified vs real ansible-playbook 2.19): a variable
+  # whose own stored value is a template bottoming out at a name set
+  # nowhere (`user: "{{ app.value.django.user }}"`) is DEFINED - only its
+  # value fails - so an attribute/subscript read off it must behave the
+  # way ansible's lazy use-site render does: a tolerant consumer
+  # (`| default(...)`, incl. default(omit)) answers with its default,
+  # while a consuming read still fails with the INNERMOST missing name.
+  it "tolerates an attribute read off a failing templated root only for tolerant consumers" do
+    vars = Hash(String, JSON::Any).new
+    vars["user"] = JSON::Any.new("{{ app.value.django.user }}")
+
+    tolerated = {
+      "user.gid | default('dflt')"    => "dflt",
+      "user['gid'] | default('dflt')" => "dflt",
+      "user.gid | default(omit)"      => Krikri::OMIT_SENTINEL,
+    }
+    tolerated.each do |expr, value|
+      Krikri::VarSubstitutor.new(vars: vars).substitute("{{ #{expr} }}", strict: true).must_equal(
+        value, "expected {{ #{expr} }} to tolerate the failing root and render #{value.inspect}")
+    end
+
+    raising = {
+      "user.gid"                 => "'app' is undefined",
+      "user.group.split(',')[0]" => "'app' is undefined",
+    }
+    raising.each do |expr, message|
+      error = assert_raises(Krikri::UndefinedVariableError) do
+        Krikri::VarSubstitutor.new(vars: vars).substitute("{{ #{expr} }}", strict: true)
+      end
+      error.message.must_equal(message)
+    end
+  end
+
   # Live-verified vs 2.19.11: Ansible wraps each hostvars entry in its
   # HostVarsVars type, so a miss on the entry itself reports that wrapper -
   # while a dict nested inside the entry is still an ordinary 'dict'.

@@ -2309,6 +2309,32 @@ module Krikri
         self.class.enter_strict_span
         rendered = begin
           output ? evaluator.evaluate_output(stripped) : evaluator.evaluate(stripped)
+        rescue e : UndefinedVariableError
+          # A chain source whose own stored value is itself unrendered
+          # Jinja is rendered (strictly, under this active span) BEFORE
+          # the chain's first filter ever sees it - so the inner render's
+          # failure arrives here even for a span real ansible-core 2.19
+          # never fails: the templar renders a variable's value lazily AT
+          # ITS USE SITE (issue #495, live-verified vs 2.19: play var
+          # `user: "{{ app.value.django.user }}"` with `app` set nowhere
+          # renders `{{ user.gid|default('dflt') }}` to "dflt" and drops
+          # a `{{ user.gid|default(omit) }}` arg, while
+          # `{{ user.group.split(',')[0] }}` still fails with the
+          # innermost "'app' is undefined"). The failing root is defined
+          # - only its value bottoms out at a missing name - so the
+          # span-level probes above pass it by. When the span's own
+          # consumer is undefined-tolerant the same way those probes
+          # already honor (`default(...)` first, an `is defined` test),
+          # the engine's strict evaluation referees: the failing root
+          # reaches it as a chainable StrictUndefined, so the tolerant
+          # consumer answers and anything that CONSUMES the value still
+          # raises - with the innermost missing name, matching the
+          # non-tolerant raise this rescue re-throws.
+          if (fallback = tolerant_failing_base_render(stripped, e))
+            fallback
+          else
+            raise e
+          end
         ensure
           self.class.exit_strict_span
         end
@@ -2344,6 +2370,67 @@ module Krikri
       else
         output ? evaluator.evaluate_output(stripped) : evaluator.evaluate(stripped)
       end
+    end
+
+    # The tolerant referee for the failing-chain-source rescue in
+    # #evaluate_stripped_span (issue #495). Answers nil whenever the
+    # caught raise is NOT the failing-root shape or the span is not
+    # undefined-tolerant - the caller re-throws the original error and
+    # nothing changes - and otherwise the span's engine-strict rendering.
+    private def tolerant_failing_base_render(stripped : String, error : UndefinedVariableError) : String?
+      return nil unless failing_tolerant_root?(stripped, error.message.to_s)
+      value = VariableSubstitutor::JinjaRenderer.evaluate_structured(stripped, @vars, strict: true)
+      return nil unless value
+      VariableSubstitutor::VariableLookup.new(@vars).format_value(value)
+    rescue e : KrikriJinja::TemplateError
+      # The engine evaluation consumed the undefined somewhere the
+      # tolerance does not cover (e.g. a `~` concat on the failed chain
+      # past the tolerant filter) - the same consumption real fails with.
+      # Recover ansible's innermost-missing-name wording the way
+      # Krikri.strict_undefined_probe_message does for the engine's own
+      # wording, then fail the span with it.
+      raise error unless e.kind == KrikriJinja::ErrorKind::Undefined
+      msg = Krikri.chain_failure_message(e.raw_message, @vars) || e.raw_message
+      raise UndefinedVariableError.new(msg)
+    end
+
+    # Whether *stripped*'s raise of *message* is the issue-#495 shape:
+    # the span only TOLERATES an undefined value (a `default(...)`-first
+    # filter or an `is defined` test) and its chain source is a defined
+    # variable whose own stored value is unrendered Jinja bottoming out
+    # at a name set nowhere - so real ansible-core 2.19's lazy render
+    # lets the span's consumer decide instead of failing at the base.
+    private def failing_tolerant_root?(stripped : String, message : String) : Bool
+      m = message.match(/\A'([A-Za-z_][A-Za-z0-9_]*)' is undefined\z/)
+      return false unless m
+      # The innermost missing name a strict render reports is always one
+      # set nowhere in this scope; a message naming a present variable is
+      # a different failure class this guard must not swallow.
+      return false if @vars.has_key?(m[1])
+      return false unless undefined_tolerant_consumer?(stripped)
+      source = VariableSubstitutor::FilterEngine.split_chain(stripped)[0].strip
+      root = source[/\A[A-Za-z_][A-Za-z0-9_]*/]
+      return false unless root && !NON_VAR_ROOT_NAMES.includes?(root)
+      raw = @vars[root]?
+      return false unless raw && (text = raw.raw).is_a?(String) &&
+                          (text.includes?("{{") || text.includes?("{%") || text.includes?("{#"))
+      # An !unsafe-tagged value is verbatim content, definitionally
+      # defined; so is an execution-resolved one (registered result /
+      # set_fact / fact) - neither can be the failing template this
+      # guard exists for.
+      return false if UnsafeValues.unsafe_text?(text)
+      !VarSubstitutor.resolved_var_name?(@host_name, root)
+    end
+
+    # Whether *stripped* only TOLERATES an undefined value the way
+    # ansible-core 2.19's own strict templating does: a tolerant first
+    # filter (`| default(...)`/`| d(...)`/`| type_debug`, the same set
+    # undefined_tolerant_first_filter? honors at the span probes) or a
+    # trailing `is defined`/`is undefined` test on the chain - the test
+    # answers a boolean instead of consuming the value.
+    private def undefined_tolerant_consumer?(stripped : String) : Bool
+      return true if Krikri.undefined_tolerant_first_filter?(stripped)
+      stripped.matches?(/\A[A-Za-z_][A-Za-z0-9_]*(?:\.(?:[A-Za-z_][A-Za-z0-9_]*|\d+)|\[(?:-?\d+|'[^']*'|"[^"]*")\])*\s+is\s+(?:not\s+)?(?:defined|undefined)\z/)
     end
 
     private def render_block_tag_text(text : String, strict : Bool, renderer) : String
@@ -2519,7 +2606,23 @@ module Krikri
         #   HostvarsContext.origin_unsafe?): registered results/set_facts
         #   are execution data and pass through verbatim.
         origin = VariableSubstitutor::HostvarsContext.origin_host_and_key(@vars, stripped)
-        re_value = re_template_resolved_value(stripped)
+        begin
+          re_value = re_template_resolved_value(stripped)
+        rescue e : UndefinedVariableError
+          # The re-pass resolves the span's SOURCE chain strictly (the
+          # whole strict substitution holds its span active here), and a
+          # source whose own stored value bottoms out at a missing name
+          # raises there even though the span itself is undefined-tolerant
+          # (issue #495: `user.gid | default('dflt')` off
+          # `user: "{{ app.value.django.user }}"`). Real never fails that
+          # resolution - the re-pass only exists for spans that passed raw
+          # template text THROUGH, which a tolerant span's rendered
+          # default never is - so a failing-root raise off a tolerant span
+          # means the re-pass simply does not apply; anything else keeps
+          # the raise.
+          raise e unless failing_tolerant_root?(stripped, e.message.to_s)
+          nil
+        end
         re_templates = !re_value.nil?
         unsafe_derived =
           if re_templates
