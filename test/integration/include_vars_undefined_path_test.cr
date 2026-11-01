@@ -175,6 +175,38 @@ describe "include_vars: with a failing templated path" do
     output.must_include("from_debian_yml")
   end
 
+  # `include_vars: "{{ ansible_user_shell | basename }}.yml"` (issue #707):
+  # whitespace around the filter pipe is ordinary Jinja, so the filter name
+  # must never be scanned as an undefined variable reference - ansible
+  # succeeds there (live-verified with ansible_user_shell gathered as
+  # /bin/bash); krikri used to fatal with "'basename' is undefined" when
+  # the pipe had a space after it (only `x|basename` worked).
+  it "allows whitespace around a filter pipe in the include_vars path" do
+    status, output = run_in_role_tree(
+      <<-YAML,
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          shell_path: /bin/bash
+        roles:
+          - probe
+      YAML
+      tasks_yaml: <<-YAML,
+      ---
+      - name: load shell vars
+        include_vars: "{{ shell_path | basename }}.yml"
+      - name: show loaded var
+        ansible.builtin.debug:
+          msg: "{{ loaded_var }}"
+      YAML
+      extra_role_files: {"vars/bash.yml" => "loaded_var: from_bash_yml\n"},
+    )
+
+    status.success?.must_equal(true)
+    output.must_include("from_bash_yml")
+  end
+
   it "resolves an INLINE first_found dict literal whose files: value is a task-local variable" do
     # AerisCloud.vault's own idiom (round 83346) - the dict form passed
     # INLINE (not via a params variable), with the candidate list in a
