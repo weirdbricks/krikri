@@ -317,11 +317,6 @@ module Krikri
         crash = PluginResult.new(changed: false, failed: true,
           msg: detail.empty? ? "Task failed: Module failed." : "Task failed: Module failed: #{detail}",
           _ansible_error_detail: detail)
-        # The exception is a cause event in Ansible's error block, so the
-        # block splits into "Module failed." plus "<<< caused by >>>" instead
-        # of collapsing into the one segment a plain fail_json gets (a
-        # message-less exception has no cause segment to split out).
-        crash.extra["_ansible_module_exception"] = JSON::Any.new(true)
         return crash
       end
 
