@@ -3404,8 +3404,17 @@ module Krikri
         args = Hash(String, JSON::Any).new
         substituted_params.each do |key, value|
           next if key.in?("check_mode", "diff_mode", "_verbosity", "_environment")
+          # The typed-arg convention PythonModuleRunner.build_module_args
+          # already established: a parser-marked non-string literal decodes
+          # to its native JSON value, a comma-joined list with marked
+          # members back into a real array (issue #696 - a list arg with a
+          # templated element otherwise ships the sentinel text to the
+          # module), a whole-value container template back into a real
+          # container, everything else stays a string.
+          typed_text = bigint_typed_param_text(task, key, value, vars_context)
           args[key] = Krikri.non_string_scalar(value) ||
-                      PythonModuleRunner.typed_value(bigint_typed_param_text(task, key, value, vars_context))
+                      PythonModuleRunner.typed_member_list(typed_text) ||
+                      PythonModuleRunner.typed_value(typed_text)
         end
         # The effective connection the executor already resolved into the
         # magic var (inventory value, or this task's own connection:

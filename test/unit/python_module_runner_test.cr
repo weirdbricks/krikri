@@ -180,6 +180,39 @@ describe Krikri::PythonModuleRunner do
     argv.must_equal(["path=/tmp/x", "mode=0640", "_ansible_check_mode=false"])
   end
 
+  # Issue #696: a literal YAML list arg whose members include a
+  # templated element travels the parser's comma-joined wire with
+  # NON_STRING_MEMBER_PREFIX-marked non-string members. Real ansible
+  # (2.19.11) hands the module a real list with typed members
+  # (`r: ["{{ x }}", 1]` with an int x -> [5, 1]); the comma-joined text
+  # used to ship AS the string, sentinel and all.
+  it "reconstructs a comma-joined list arg with marked members as a typed array" do
+    args = JSON.parse(Krikri::PythonModuleRunner.build_module_args(
+      {"r"      => "5,#{Krikri::NON_STRING_MEMBER_PREFIX}1",
+       "single" => "#{Krikri::NON_STRING_MEMBER_PREFIX}7"},
+      check_mode: false, module_name: "argmod",
+    ))
+    args["r"].as_a.map(&.as_i?).must_equal([5, 1])
+    # A single-element list (`r: [7]`) rides the member prefix as its
+    # whole wire value and must still come back a list, not the scalar.
+    args["single"].as_a.map(&.as_i?).must_equal([7])
+  end
+
+  it "keeps a plain comma-joined string arg a string" do
+    args = JSON.parse(Krikri::PythonModuleRunner.build_module_args(
+      {"r" => "5,1"}, check_mode: false, module_name: "argmod"))
+    # No member marker -> indistinguishable on the strings-only wire
+    # from a genuine string containing a comma; ansible-core keeps it a
+    # str too (live-verified 2.19.11: `r: "5,1"` arrives "5,1").
+    args["r"].as_s.must_equal("5,1")
+  end
+
+  it "strips member markers from an old-style module's argv" do
+    argv = Krikri::PythonModuleRunner.build_kv_argv(
+      {"r" => "5,#{Krikri::NON_STRING_MEMBER_PREFIX}1"})
+    argv.must_equal(["r=5,1"])
+  end
+
   # Integers wider than Int64 (issue #695): a container arg holding a
   # wide int must keep it (as a bigint marker the args serialization
   # unquotes into bare digits), not degrade the whole arg to a string -
