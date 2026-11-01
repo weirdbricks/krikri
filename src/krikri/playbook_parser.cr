@@ -6501,9 +6501,19 @@ module Krikri
       task.include_role_collections = play.role_meta_collections || play.collections
       # The role-name value's own source position - the runtime
       # role-not-found failure's Origin points there (not at the task's
-      # first key), live-verified vs 2.19.11.
-      if source_map && (pos = source_map.at?("#{task_source_prefix(source_prefix, source_index)}/#{action}/#{role_args.has_key?("name") ? "name" : "role"}"))
-        task.include_role_name_origin = pos
+      # first key), live-verified vs 2.19.11. The source map only has a
+      # `name` entry for the mapping form - a k=v string form
+      # (`include_role: name=...`) has no `name` KEY at all, and real
+      # points at the k=v string's FIRST char there (install.yml:2:17 for
+      # `include_role: name=...`, still :17 for `tasks_from=x name=...`),
+      # so fall back to the value's own position when the name path is
+      # unmapped - same fallback the static import_role raise uses.
+      if source_map
+        directive_prefix = "#{task_source_prefix(source_prefix, source_index)}/#{action}"
+        name_path = "#{directive_prefix}/#{role_args.has_key?("name") ? "name" : "role"}"
+        if pos = source_map.at?(name_path) || source_map.at?(directive_prefix)
+          task.include_role_name_origin = pos
+        end
       end
 
       if vars_yaml = task_hash["vars"]?.try(&.as_h?)
