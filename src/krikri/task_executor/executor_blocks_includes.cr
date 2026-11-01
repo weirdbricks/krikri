@@ -1437,7 +1437,7 @@ module Krikri
         return
       end
 
-      ResultDisplay.display_result(host, result_json, @diff_mode, ignore_errors: task.ignore_errors?, module_name: task.module_name, delegate_target: delegate_display_target(task, host), source_task: task)
+      ResultDisplay.display_result(host, result_json, @diff_mode, ignore_errors: task.ignore_errors?, no_log: include_vars_no_log?(task, host), module_name: task.module_name, delegate_target: delegate_display_target(task, host), source_task: task)
       include_vars_failure_stats(task, host)
     end
 
@@ -1513,6 +1513,20 @@ module Krikri
       end
     end
 
+    # include_vars's display paths must honor no_log: like every other
+    # failure display. The vars context is rebuilt defensively because
+    # finish_include_vars_arg_failure reaches its display from its own
+    # rescue path - on any failure to build it, resolve_task_no_log's
+    # nil default keeps the (safe-hide) static keyword value.
+    private def include_vars_no_log?(task : Task, host : Host) : Bool
+      vars_context = begin
+        build_vars_context(task, host)
+      rescue
+        nil
+      end
+      resolve_task_no_log(task, vars_context)
+    end
+
     # include_vars failures through the standard result display (Ansible 2.19.11,
     # live-verified): a missing/unparsable file is the action's own failure -
     # {ansible_facts: {}, ansible_included_var_files: [], changed: false,
@@ -1586,7 +1600,7 @@ module Krikri
       if register_name = task.register
         register_result(host, register_name, result) unless register_name.empty?
       end
-      ResultDisplay.display_result(host, result, @diff_mode, ignore_errors: task.ignore_errors?, module_name: task.module_name, delegate_target: delegate_display_target(task, host), source_task: task)
+      ResultDisplay.display_result(host, result, @diff_mode, ignore_errors: task.ignore_errors?, no_log: include_vars_no_log?(task, host), module_name: task.module_name, delegate_target: delegate_display_target(task, host), source_task: task)
     end
 
     # A looped include_vars:'s per-item load failure (missing/unparsable
@@ -1610,7 +1624,7 @@ module Krikri
       h["msg"] = JSON::Any.new("Task failed: Action failed: Unknown error.")
       h["_ansible_action_level"] = JSON::Any.new(true)
       h["_ansible_error_detail"] = JSON::Any.new("Action failed: Unknown error.")
-      ResultDisplay.display_result(host, JSON::Any.new(h), @diff_mode, item_label: item_label, ignore_errors: task.ignore_errors?, module_name: task.module_name, delegate_target: delegate_display_target(task, host, item_context), source_task: task, loop_item: item, loop_var_name: task.loop_var)
+      ResultDisplay.display_result(host, JSON::Any.new(h), @diff_mode, item_label: item_label, ignore_errors: task.ignore_errors?, no_log: include_vars_no_log?(task, host), module_name: task.module_name, delegate_target: delegate_display_target(task, host, item_context), source_task: task, loop_item: item, loop_var_name: task.loop_var)
     end
 
     # The "Could not find or access '<file>'" message Ansible 2.19.11
