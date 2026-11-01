@@ -1,4 +1,5 @@
 require "../minitest_helper"
+require "file_utils"
 
 # The package plugin (ansible.builtin.package) dispatches to the host's
 # real package manager. check_mode keeps these side-effect-free.
@@ -120,6 +121,100 @@ describe "package plugin" do
       # False) with no msg at all (live-verified; see
       # key_order_sweep7_test.cr) - so the msg key may be absent entirely.
       (result["msg"]? || JSON::Any.new("")).as_s.wont_include("removed")
+    end
+  end
+end
+
+# Issue #732 (Rocky 9, moshloop.java): `package: name: curl` on a host
+# with curl-minimal installed must still reach the install batch, like
+# dnf.cr's own package_installed? since issue #280 - curl-minimal
+# Provides: the "curl" capability, so the --whatprovides fallback used
+# to classify curl as already installed and skip it, while real ansible
+# hands the name to python-dnf, resolves it to the repo package curl
+# and fails with dnf's own Depsolve Error (curl conflicts with
+# curl-minimal). dnf/rpm are not on the spec host, so the same fake
+# rpm/dnf pair dnf_param_coverage_test.cr uses builds the Rocky
+# resolution table by hand: plain `rpm -q` never matches, the
+# whatprovides lookup matches KRIKRI_FAKE_RPM_PROVIDES, the
+# availability probe matches KRIKRI_FAKE_DNF_AVAILABLE.
+private PACKAGE732_RPM = <<-'SH'
+#!/bin/sh
+[ "$2" = "--whatprovides" ] || exit 1
+for n in ${KRIKRI_FAKE_RPM_PROVIDES:-}; do
+  [ "$3" = "$n" ] && exit 0
+done
+exit 1
+SH
+
+private PACKAGE732_DNF = <<-'SH'
+#!/bin/sh
+printf '%s\n' "$*" >> "${KRIKRI_FAKE_DNF_LOG:?}"
+case "$2/$3" in
+  "list/--available")
+    for n in ${KRIKRI_FAKE_DNF_AVAILABLE:-}; do
+      [ "$4" = "$n" ] && exit 0
+    done
+    exit 1
+    ;;
+esac
+echo "Installed:"
+echo "  fake-pkg"
+exit 0
+SH
+
+private def with_package732_pkg_managers(provides : Array(String) = [] of String, available : Array(String) = [] of String, &)
+  PluginSpecHelper::ENV_MUTEX.synchronize do
+    bin_dir = File.tempname("krikri-package732-fakes")
+    Dir.mkdir_p(bin_dir)
+    rpm = File.join(bin_dir, "rpm")
+    File.write(rpm, PACKAGE732_RPM)
+    File.chmod(rpm, 0o755)
+    dnf = File.join(bin_dir, "dnf")
+    File.write(dnf, PACKAGE732_DNF)
+    File.chmod(dnf, 0o755)
+
+    log = File.tempname("krikri-package732-dnf-log")
+    previous_path = ENV["PATH"]?
+    previous_log = ENV["KRIKRI_FAKE_DNF_LOG"]?
+    previous_provides = ENV["KRIKRI_FAKE_RPM_PROVIDES"]?
+    previous_available = ENV["KRIKRI_FAKE_DNF_AVAILABLE"]?
+    ENV["PATH"] = "#{bin_dir}:#{ENV["PATH"]?}"
+    ENV["KRIKRI_FAKE_DNF_LOG"] = log
+    ENV["KRIKRI_FAKE_RPM_PROVIDES"] = provides.join(" ")
+    ENV["KRIKRI_FAKE_DNF_AVAILABLE"] = available.join(" ")
+    begin
+      yield log
+    ensure
+      previous_path ? (ENV["PATH"] = previous_path) : ENV.delete("PATH")
+      previous_log ? (ENV["KRIKRI_FAKE_DNF_LOG"] = previous_log) : ENV.delete("KRIKRI_FAKE_DNF_LOG")
+      previous_provides ? (ENV["KRIKRI_FAKE_RPM_PROVIDES"] = previous_provides) : ENV.delete("KRIKRI_FAKE_RPM_PROVIDES")
+      previous_available ? (ENV["KRIKRI_FAKE_DNF_AVAILABLE"] = previous_available) : ENV.delete("KRIKRI_FAKE_DNF_AVAILABLE")
+      FileUtils.rm_r(bin_dir)
+      File.delete(log) if File.exists?(log)
+    end
+  end
+end
+
+describe "package plugin - same-name repo package vs a Provides: match (issue 732)" do
+  it "sends an available-name package to the install batch despite a Provides: match" do
+    with_package732_pkg_managers(provides: ["curl"], available: ["curl"]) do |log|
+      result = PluginSpecHelper.run("package", {"name" => "curl", "state" => "present", "use" => "dnf"})
+      falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+      result["changed"].as_bool.must_equal(true)
+      File.read_lines(log).must_equal([
+        "-q list --available curl",
+        "install -y --setopt=localpkg_gpgcheck=1 curl",
+      ])
+    end
+  end
+
+  it "keeps a purely virtual name on the Provides: fallback (no repo row)" do
+    with_package732_pkg_managers(provides: ["php-json"], available: [] of String) do |log|
+      result = PluginSpecHelper.run("package", {"name" => "php-json", "state" => "present", "use" => "dnf"})
+      falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+      result["changed"].as_bool.must_equal(false)
+      result["msg"].as_s.must_equal("Package php-json already installed")
+      File.read_lines(log).must_equal(["-q list --available php-json"])
     end
   end
 end

@@ -791,8 +791,27 @@ module Krikri
           # dj-wasabi.telegraf's version-pinned case (round 158) - the
           # SAME bug class already independently present in dnf.cr's
           # and yum.cr's own copies of this exact check.
-          remote_exec("rpm -q #{shell_single_quote(pkg)}")[:exit_code] == 0 ||
+          #
+          # And never let a Provides: hit stand in for a name the repos
+          # carry themselves (same guard dnf.cr's package_installed?
+          # got for issue #280): Ansible hands `name:` to python-dnf
+          # untouched, which resolves it to the repo package of that
+          # exact name - on Rocky 9 `package: name: curl` on a host
+          # whose curl-minimal Provides: "curl" fails the task with a
+          # Depsolve Error (moshloop.java), NOT the already-installed
+          # no-op this fallback used to answer. A same-name repo row
+          # means not-installed so the install batch runs and dnf
+          # reports its own failure; a purely virtual name (php-json)
+          # has no repo row, this listing fails, and the fallback
+          # below keeps those.
+          has_glob = pkg.includes?('*') || pkg.includes?('?') || pkg.includes?('[')
+          if remote_exec("rpm -q #{shell_single_quote(pkg)}")[:exit_code] == 0
+            true
+          elsif !has_glob && remote_exec("dnf -q list --available #{shell_single_quote(pkg)} 2>/dev/null || yum -q list --available #{shell_single_quote(pkg)} 2>/dev/null")[:exit_code] == 0
+            false
+          else
             remote_exec("rpm -q --whatprovides #{shell_single_quote(pkg)}")[:exit_code] == 0
+          end
         end
       end
       shell_pkg = pkg_tokens
