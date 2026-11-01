@@ -625,14 +625,19 @@ describe "pip plugin" do
     # fell back to bare `pip3`, while ansible's _have_pip_module only
     # checks the pip package is importable and still runs
     # `[python, -m, pip, install ...]`, failing from that command. The
-    # shim python3 answers the presence-only import check but fails
-    # every `-m pip` invocation, and pip3 is absent from the shim PATH:
+    # shim answers the presence-only import check but fails every
+    # `-m pip` invocation, and pip3 is absent from the shim PATH:
     # getting past discovery to the install's own failure proves the
-    # probe no longer gates on pip's CLI.
+    # probe no longer gates on pip's CLI. The shim sits at python3.10
+    # rather than bare python3 because (issue #474) the fallback order
+    # candidates - versioned names, then absolute /usr/bin/python3 -
+    # are probed BEFORE bare python3, and the spec machine's real
+    # /usr/bin/python3 has a healthy pip that would win the probe and
+    # mask the broken-CLI shim entirely.
     it "selects an interpreter whose pip module is present but whose pip CLI is broken" do
       shim_dir = File.tempname(".krikri-spec-pip-bin")
       Dir.mkdir(shim_dir)
-      File.write(File.join(shim_dir, "python3"), <<-SH
+      File.write(File.join(shim_dir, "python3.10"), <<-SH
         #!/bin/sh
         if [ "$1" = "-c" ]; then
           exit 0
@@ -642,7 +647,7 @@ describe "pip plugin" do
         exit 1
         SH
       )
-      File.chmod(File.join(shim_dir, "python3"), 0o755)
+      File.chmod(File.join(shim_dir, "python3.10"), 0o755)
       File.symlink("/bin/sh", File.join(shim_dir, "sh"))
       begin
         result = PluginSpecHelper.run("pip", {
@@ -655,6 +660,59 @@ describe "pip plugin" do
         msg.must_include("stdout: krikri-fake-broken-pip stdout")
         msg.must_include("\n:stderr: krikri-fake-broken-pip stderr")
         msg.includes?("Failed to install").must_equal(false)
+      ensure
+        FileUtils.rm_rf(shim_dir)
+      end
+    end
+
+    # Issue #474: with no executable:, the module must run pip under
+    # the interpreter Ansible's interpreter discovery picked
+    # (sys.executable), not whatever bare `python3` resolves to. On a
+    # Ubuntu 22.04 host real reports
+    # ["/usr/bin/python3.10", "-m", "pip", ...] because discovery's
+    # fallback order tries the versioned names BEFORE python3, while
+    # krikri probed python3 first and reported /usr/bin/python3.
+    # Simulated with a shim PATH REPLACING the whole PATH (the
+    # established pattern above) where BOTH python3.10 and python3
+    # stubs pass the importable-pip probe: only the winner's `-m pip`
+    # invocation ever runs, so each stub brands its stderr and the
+    # failing uninstall names the interpreter that was picked.
+    # python3.13/python3.12/python3.11 are left unshimmed (absent from
+    # the shim PATH) so the probe cannot be hijacked by whichever
+    # newer interpreters the spec machine happens to have.
+    it "picks the versioned interpreter over bare python3 when both can import pip" do
+      shim_dir = File.tempname(".krikri-spec-pip-bin")
+      Dir.mkdir(shim_dir)
+      {
+        "python3.10" => "krikri-picked-python3.10",
+        "python3"    => "krikri-picked-bare-python3",
+      }.each do |name, marker|
+        File.write(File.join(shim_dir, name), <<-SH
+          #!/bin/sh
+          if [ "$1" = "-c" ]; then
+            exit 0
+          fi
+          echo "#{marker}" >&2
+          exit 1
+          SH
+        )
+        File.chmod(File.join(shim_dir, name), 0o755)
+      end
+      File.symlink("/bin/sh", File.join(shim_dir, "sh"))
+      begin
+        result = PluginSpecHelper.run("pip", {
+          "name"         => "definitely-not-a-real-package-xyz",
+          "state"        => "absent",
+          "_environment" => {"PATH" => shim_dir}.to_json,
+        })
+
+        # Got past discovery into the uninstall itself, and the
+        # interpreter that ran it is the versioned one, never bare
+        # python3.
+        result["failed"].as_bool.must_equal(true)
+        msg = result["msg"].as_s
+        msg.must_include("Failed to uninstall: krikri-picked-python3.10")
+        msg.wont_include("krikri-picked-bare-python3")
       ensure
         FileUtils.rm_rf(shim_dir)
       end
