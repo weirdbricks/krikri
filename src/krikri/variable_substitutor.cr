@@ -2689,13 +2689,22 @@ module Krikri
       end
     end
 
-    # A bare identifier immediately preceded by `|` is a filter invocation -
-    # the filter's own strictness handling decides whether undefined-source
-    # is fatal.
-    private def block_tag_ref_is_filter_call(cond_no_strings : String, ident : String) : Bool
-      idx = cond_no_strings.index(ident)
-      return false unless idx
-      idx > 0 && cond_no_strings[idx - 1] == '|'
+    # A bare identifier preceded (across whitespace) by a lone `|` is a filter
+    # invocation - the filter's own strictness handling decides whether
+    # undefined-source is fatal. Ansible tolerates spaces around the pipe
+    # (`{{ x | basename }}` is ordinary Jinja, live-verified - issue #707's
+    # `include_vars: "{{ ansible_user_shell | basename }}.yml"`), so the scan
+    # must walk back over that whitespace instead of requiring the pipe to
+    # touch the name; it also checks the occurrence AT the match, not the
+    # first textual occurrence of the name, and refuses `||` (an or-chain's
+    # right operand is a variable, not a filter).
+    private def block_tag_ref_is_filter_call(cond_no_strings : String, ident : String, match_start : Int32) : Bool
+      cursor = match_start
+      while cursor > 0 && cond_no_strings[cursor - 1].whitespace?
+        cursor -= 1
+      end
+      cursor > 0 && cond_no_strings[cursor - 1] == '|' &&
+        !(cursor > 1 && cond_no_strings[cursor - 2] == '|')
     end
 
     # An identifier immediately followed by `| default(...)` is never
@@ -2886,7 +2895,7 @@ module Krikri
       return true if block_tag_ref_is_kwarg_name(expr, match_end)
       return true if block_tag_ref_is_defaulted(expr, match_end)
       return true if block_tag_ref_is_defined_test(expr, match_end)
-      return true if block_tag_ref_is_filter_call(expr, ident)
+      return true if block_tag_ref_is_filter_call(expr, ident, match_end - ident.size)
       false
     end
 
