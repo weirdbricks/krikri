@@ -1,3 +1,5 @@
+require "./apt_repository_cache_retry"
+
 module Krikri
   # Helpers for the `apt` plugin's dpkg-lock-contention retry behavior
   # (SUGGESTED_PERFORMANCE_IMPROVEMENTS.md item #1 follow-on, 0.9.502).
@@ -302,8 +304,9 @@ module Krikri
         delay = 2.0 ** attempt + (rand(1000) / 1000.0)
         delay = retry_max_delay + (rand(1000) / 1000.0) if delay > retry_max_delay
         retry_sleep(delay)
-        # ansible formats the delay with %i, which truncates (1.7s -> "1")
-        warnings << "Sleeping for #{delay.to_i} seconds, before attempting to refresh the cache again"
+        # ansible formats the delay with int(round(delay)) (Python round,
+        # ties-to-even: 1.7s -> "2"), NOT %i truncation
+        warnings << "Sleeping for #{AptRepositoryCacheRetry.sleeping_seconds(delay)} seconds, before attempting to refresh the cache again"
         result = exec_remote.call("apt-get update")
         if result[:exit_code] == 0 && !apt_fetch_failed?(result)
           recovered = true
