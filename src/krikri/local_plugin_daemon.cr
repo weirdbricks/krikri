@@ -240,7 +240,9 @@ module Krikri
     # unit tests.
     def self.local_daemon_argv(plugin_path : String, become_user : String?, interactive : Bool) : Array(String)
       return [plugin_path, "--daemon"] unless become_user
-      base = interactive ? ["-S", "-p", "", "-u", become_user, "--"] : ["-n", "-u", become_user, "--"]
+      # -H mirrors ansible's sudo become (HOME = become user's), so
+      # ~/.ansible/tmp and its warning behave as ansible's (issue #536).
+      base = interactive ? ["-H", "-S", "-p", "", "-u", become_user, "--"] : ["-H", "-n", "-u", become_user, "--"]
       base + [plugin_path, "--daemon"]
     end
 

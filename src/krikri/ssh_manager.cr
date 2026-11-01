@@ -650,7 +650,7 @@ module Krikri
     # too, not just (host, user, port). A daemon is one resident process
     # running as one fixed user, so `become: true` tasks cannot share
     # the unprivileged host connection's daemon - but they can have
-    # their own, spawned as `sudo -n -u <become_user> -- <binary>
+    # their own, spawned as `sudo -H -n -u <become_user> -- <binary>
     # --daemon`. A play mixing privileged and unprivileged tasks holds
     # two resident daemons per host, which is fine. `nil` in the last
     # slot is the no-become daemon.
@@ -883,8 +883,9 @@ module Krikri
       raise ex
     end
 
-    # *become_user* non-nil spawns the daemon under `sudo -n -u <user>
-    # --`, the exact wrapper `PluginManager.remote_plugin_target`
+    # *become_user* non-nil spawns the daemon under `sudo -H -n -u <user>
+    # --` (the `-H` ansible's sudo become itself uses - issue #536), the
+    # same wrapper `PluginManager.remote_plugin_target`
     # already builds for the one-shot path - deliberately the same
     # escalation, so a host where the one-shot become path works has a
     # daemon that works too, and one where it doesn't fails the same

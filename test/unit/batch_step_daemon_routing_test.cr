@@ -14,19 +14,19 @@ require "../../src/krikri/batch_script"
 describe Krikri::BatchScript::Step do
   it "carries the daemon's dispatch name and user alongside the script target" do
     step = Krikri::BatchScript::Step.new(
-      "sudo -n -u deploy -- /var/tmp/.krikri-playbook/plugins/copy",
+      "sudo -H -n -u deploy -- /var/tmp/.krikri-playbook/plugins/copy",
       %({"params":{}}), false, "copy", "deploy")
 
     step.module_name.must_equal("copy")
     step.become_user.must_equal("deploy")
-    step.plugin_target.must_include("sudo -n -u deploy")
+    step.plugin_target.must_include("sudo -H -n -u deploy")
   end
 
   it "keeps no-become distinct from become_user root" do
     # These select DIFFERENT daemons, so conflating them would send a
     # task to a process running as the wrong user.
     unprivileged = Krikri::BatchScript::Step.new("/p/command", "{}", false, "command", nil)
-    as_root = Krikri::BatchScript::Step.new("sudo -n -u root -- /p/command", "{}", false, "command", "root")
+    as_root = Krikri::BatchScript::Step.new("sudo -H -n -u root -- /p/command", "{}", false, "command", "root")
 
     unprivileged.become_user.must_be_nil
     as_root.become_user.must_equal("root")

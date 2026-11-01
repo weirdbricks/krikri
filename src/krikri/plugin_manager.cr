@@ -1443,7 +1443,9 @@ module Krikri
     # stdin, so -K with passwordless sudo behaves exactly as before.
     # Public as a spec seam: pinned directly in the unit tests.
     def self.local_sudo_argv(sudo_user : String, plugin_path : String, interactive : Bool) : Array(String)
-      interactive ? ["-S", "-p", "", "-u", sudo_user, "--", plugin_path] : ["-n", "-u", sudo_user, "--", plugin_path]
+      # -H mirrors ansible's sudo become (HOME = become user's), so
+      # ~/.ansible/tmp and its warning behave as ansible's (issue #536).
+      interactive ? ["-H", "-S", "-p", "", "-u", sudo_user, "--", plugin_path] : ["-H", "-n", "-u", sudo_user, "--", plugin_path]
     end
 
     # What goes into the local plugin process's stdin: the config, or
@@ -2280,7 +2282,7 @@ module Krikri
     end
 
     # Resolves a plugin's remote path (`remote_plugin_dir/<simple name>`)
-    # and, if `become`, wraps it in `sudo -n -u <become_user> --`.
+    # and, if `become`, wraps it in `sudo -H -n -u <become_user> --`.
     # Shared by the normal one-task-at-a-time remote path above and by
     # TaskExecutor's batch script generation (batching, on by default),
     # so both ways of reaching a remote plugin resolve the exact same
@@ -2352,11 +2354,15 @@ module Krikri
       simple_name = simple_plugin_name(plugin_name)
       remote_plugin_path = "#{remote_plugin_dir(remote_user)}/#{simple_name}"
       return remote_plugin_path unless become_needed?(become, become_user, remote_user)
-      return "sudo -n -u #{Shell.quote_arg(become_user.to_s)} -- #{remote_plugin_path}" unless become_password
+      # -H matches ansible's sudo become plugin (sets HOME to the become
+      # user's), so ~/.ansible/tmp resolves like ansible's and its
+      # unusable-tempdir warning reproduces (issue #536; the daemon path
+      # already did this in ssh_manager since issue #629).
+      return "sudo -H -n -u #{Shell.quote_arg(become_user.to_s)} -- #{remote_plugin_path}" unless become_password
       sudo_password_become_wrapper(remote_plugin_path, become_user.to_s, become_password)
     end
 
-    # The become-password variant of the `sudo -n -u <user> -- <path>`
+    # The become-password variant of the `sudo -H -n -u <user> -- <path>`
     # wrapper, for when `ansible_become_password`/`ansible_become_pass`
     # is set (-K/--ask-become-pass, --become-password-file, or the
     # inventory var). It is ONE stdin-transparent command fragment, so
@@ -2370,9 +2376,9 @@ module Krikri
     #     a wrong password - that would feed PAM/faillock counters).
     #     Exit 0 means sudo needs no password here (NOOPASSWD - the -K
     #     with passwordless-sudo case), and the then-branch runs plain
-    #     `sudo -n` with stdin passed straight through, so the config
+    #     `sudo -H -n` with stdin passed straight through, so the config
     #     payload is byte-identical to a run without -K.
-    #   - Otherwise the else-branch runs `sudo -S -p ''` and prepends
+    #   - Otherwise the else-branch runs `sudo -H -S -p ''` and prepends
     #     `<password>\n` to the same stdin stream: sudo reads exactly
     #     that one line as the password and hands the rest (the config)
     #     on to the plugin. The password text lives in the script over
@@ -2400,10 +2406,13 @@ module Krikri
     # as java_cert_command's stdin feeder). sudo's own stderr still flows.
     def self.sudo_password_become_wrapper(plugin_path : String, become_user : String, become_password : String) : String
       q_user = Shell.quote_arg(become_user)
+      # -H (HOME = the become user's) matches ansible's sudo become
+      # plugin, so ~/.ansible/tmp and its warning behave as ansible's
+      # (issue #536) - same reason as ssh_manager's daemon command.
       "if sudo -n -u #{q_user} -- true 2>/dev/null; " \
-      "then sudo -n -u #{q_user} -- #{plugin_path}; " \
+      "then sudo -H -n -u #{q_user} -- #{plugin_path}; " \
       "else { printf '%s\\n' #{Shell.single_quote(become_password)} 2>/dev/null; cat 2>/dev/null; } | " \
-      "sudo -S -p '' -u #{q_user} -- #{plugin_path}; fi"
+      "sudo -H -S -p '' -u #{q_user} -- #{plugin_path}; fi"
     end
 
     # `ANSIBLE_BECOME_ALLOW_SAME_USER` - Ansible's own config knob,
