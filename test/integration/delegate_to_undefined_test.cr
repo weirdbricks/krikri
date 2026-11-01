@@ -160,6 +160,34 @@ describe "undefined delegate_to: variable" do
     output.must_include("failed=1")
   end
 
+  # Issue #513 (githubixx.kubernetes_ca): real templates delegate_to:
+  # BEFORE the loop source, so a looped task whose loop source cannot be
+  # evaluated fails on the delegate template ('item' unbound at that
+  # point) - the fatal label carries the raw delegate_to text and the
+  # loop source's own error never surfaces.
+  it "reports the delegate_to failure when a looped task's loop source cannot evaluate" do
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: looped delegate with failing loop source
+            ansible.builtin.debug:
+              msg: "SHOULD-NOT-PRINT"
+            delegate_to: "{{ item }}"
+            loop: "{{ groups['nope'] | union([]) }}"
+      YAML
+
+    status.exit_code.must_equal(2)
+    output.must_include("'item' is undefined")
+    output.must_include("fatal: [localhost -> {{ item }}]: FAILED!")
+    # Neither krikri's old dict-attribute wording nor the loop source's
+    # own undefined-name error may leak into the reported failure.
+    output.wont_include("has no attribute")
+    output.wont_include("'nope' is undefined")
+    output.must_include("failed=1")
+  end
+
   it "still delegates to a defined templated target" do
     status, output = run_playbook(<<-YAML)
       - hosts: localhost

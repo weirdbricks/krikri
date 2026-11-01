@@ -622,12 +622,7 @@ module Krikri
                         finish_single_task(task, host, loop_error_result(ex, task), vars_context: vars_context, exec_host: label_host)
                         return
                       end
-                      prefixed = ex.message.to_s.starts_with?("Task failed: ") ? ex.message.to_s : "Task failed: #{ex.message}"
-                      emit_delegate_error_chain(task, prefixed)
-                      # The fatal label carries the raw delegate_to: text, same
-                      # as the empty-delegate branch above.
-                      label_host = Host.new(task.delegate_to.to_s, ENV["USER"]? || "root", 22)
-                      finish_single_task(task, host, loop_error_result(WhenEvaluationError.new(prefixed), task), vars_context: vars_context, exec_host: label_host)
+                      finish_delegate_template_failure(task, host, ex, vars_context)
                       return
                     end
                   else
@@ -678,6 +673,25 @@ module Krikri
         finish_single_task(task, host, loop_source_error_result(ex), vars_context: vars_context, exec_host: exec_host.name == "undefined" ? nil : exec_host)
         return
       rescue ex : WhenEvaluationError
+        # Real templates delegate_to: BEFORE any loop item exists, so when
+        # the loop source itself cannot be evaluated the failure real
+        # reports is the delegate_to: template's own (e.g. `'item' is
+        # undefined`), not the loop-source error - issue #513,
+        # githubixx.kubernetes_ca, live-verified vs 2.19. Re-resolve
+        # strictly with `item` unbound; only a delegate template that
+        # actually fails diverts to the delegate-failure shape, everything
+        # else (delegate resolves fine, or an empty-delegate failure)
+        # keeps the loop-error behaviour below.
+        if task.delegate_to
+          begin
+            resolve_delegate_host(task, host, vars_context, shared: shared_sub, strict: true)
+          rescue err : WhenEvaluationError
+            unless err.is_a?(EmptyDelegateError)
+              finish_delegate_template_failure(task, host, err, vars_context)
+              return
+            end
+          end
+        end
         # Same shape execute_task_once's own WhenEvaluationError rescue
         # uses for a when: failure - a real `failed: true` result flowing
         # through finish_single_task (register/notify/display/stats/halt,
@@ -751,6 +765,19 @@ module Krikri
 
       fact_host = (task.delegate_facts? && task.delegate_to) ? exec_host : host
       finish_single_task(task, host, result, fact_host, vars_context: vars_context, exec_host: exec_host)
+    end
+
+    # The task-failure shape a failed delegate_to: template produces
+    # (live-verified vs 2.19, issues #661 and #513): the [ERROR] chain
+    # with the caused-by Origin on the delegate_to: value, and a fatal
+    # line whose `host -> target` label carries the raw delegate_to:
+    # text. Shared by the pre-loop strict resolution and the loop-source
+    # failure rescue, which both can surface this same shape.
+    private def finish_delegate_template_failure(task : Task, host : Host, ex : WhenEvaluationError, vars_context : Hash(String, JSON::Any)) : Nil
+      prefixed = ex.message.to_s.starts_with?("Task failed: ") ? ex.message.to_s : "Task failed: #{ex.message}"
+      emit_delegate_error_chain(task, prefixed)
+      label_host = Host.new(task.delegate_to.to_s, ENV["USER"]? || "root", 22)
+      finish_single_task(task, host, loop_error_result(WhenEvaluationError.new(prefixed), task), vars_context: vars_context, exec_host: label_host)
     end
 
     # Resolve delegate_to: to the Host whose connection the module should
