@@ -24,6 +24,17 @@ module Krikri
   # param hash) strips any key whose fully-substituted value equals it.
   OMIT_SENTINEL = "__crystal_ansible_omit__"
 
+  # Sentinel a strict `+`/`-` operand resolves to when Ansible 2.19
+  # would have produced an UndefinedMarker rather than a value: a
+  # method call on a None-valued variable (`nil_var.rstrip(';')` - the
+  # NoneType itself coming from a `{% for %}` over an empty list,
+  # inofix.yapkg issue #531) never runs, it short-circuits to
+  # undefined, so the enclosing operator fails with
+  # `can only concatenate list (not "UndefinedMarker") to list` instead
+  # of naming NoneType. Same role as OMIT_SENTINEL: a unique marker the
+  # combine step must fail on rather than silently string-concatenate.
+  UNDEFINED_MARKER_SENTINEL = "__crystal_ansible_undefined_marker__"
+
   # Marker a chain-undefined templated leaf rides inside the template
   # action plugin's variable scope ("'bind_addr' is undefined" wrapped in
   # private-use control characters, see JinjaRenderer#rerender_string_value).
