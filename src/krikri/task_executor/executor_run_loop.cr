@@ -2891,6 +2891,21 @@ module Krikri
         wire_vars["ansible_connection"] = JSON::Any.new("local")
       end
 
+      # Remote raw must look like real's `ssh -tt` capture: ONE stream
+      # carrying the command's stdout and stderr interleaved in execution
+      # order (issue #490). raw_remote_pty_shape cannot recover that
+      # order from the shell plugin's two separately captured pipes, so
+      # the merge has to happen at the source: this internal param makes
+      # plugins/shell.cr wrap the invocation in `{ ...; } 2>&1` (the same
+      # group the remote script run uses), leaving the plugin's stderr
+      # empty. Local raw keeps the captured streams - no pty exists
+      # there.
+      if RAW_MODULES.includes?(task.action_name || task.module_name) &&
+         PluginManager.remote_execution?("shell", exec_host, dispatch_vars)
+        substituted_params = substituted_params.dup
+        substituted_params["__raw_pty_merge"] = "1"
+      end
+
       config = build_plugin_config(task, exec_host, substituted_params, wire_vars, substituted_become_user, substituted_env, become_flag: become)
 
       # ansible resolves templated async:/poll: per host at execution
@@ -3032,7 +3047,36 @@ module Krikri
       hash.each do |key, value|
         shaped[key] = value unless shaped.has_key?(key) || dropped.includes?(key)
       end
+      # Real's remote raw result is what came off the ssh pty, not the
+      # pipes the shell plugin captured (see raw_remote_pty_shape).
+      TaskExecutor.raw_remote_pty_shape(shaped, remote, addr)
       JSON::Any.new(shaped)
+    end
+
+    # Real ansible runs raw over the connection with a pty (ssh -tt,
+    # because raw sends no stdin - issue #490's eendroroy.pyenv capture):
+    # the target's stdout and stderr arrive on the SAME pty, merged in
+    # execution order with ONLCR having turned every \n into \r\n, and
+    # the ssh client's own stderr holds only its mux close notice. The
+    # stream merge itself happens at the source - execute_task_once hands
+    # plugins/shell.cr an internal param that wraps the invocation in
+    # `{ ...; } 2>&1` (ScriptPtyCapture.pty_merged_command), so the
+    # plugin's stdout already carries both streams in order and its
+    # stderr is empty; appending the (empty) stderr here stays harmless
+    # and keeps results that reached this path without the marker shaped.
+    # What remains here is the pty OBSERVABLE SHAPE on that single
+    # merged stream - the same helpers the script action and
+    # raw_spawn_failure_shape already use. Local raw has no pty, so it
+    # keeps the captured streams untouched. Rewrites the hash in place
+    # to keep the shaped result's key order intact.
+    def self.raw_remote_pty_shape(hash : Hash(String, JSON::Any), remote : Bool, addr : String) : Nil
+      return unless remote
+      merged = (hash["stdout"]?.try(&.as_s?) || "") + (hash["stderr"]?.try(&.as_s?) || "")
+      hash["stdout"] = JSON::Any.new(PluginHelpers::ScriptPtyCapture.pty_stdout(merged))
+      hash["stdout_lines"] = JSON.parse(PluginHelpers::AnsibleSplitlines.split(merged).to_json)
+      closed = PluginHelpers::ScriptPtyCapture.connection_closed_stderr(addr)
+      hash["stderr"] = JSON::Any.new(closed)
+      hash["stderr_lines"] = JSON.parse([closed.rstrip("\r\n")].to_json)
     end
 
     # The shell plugin pre-checks the task's `executable:` locally and

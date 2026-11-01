@@ -43,6 +43,7 @@ module Krikri
       "__cleanup_after_copy", "__cleanup_after_copy_dir",
       "__cleanup_after_unarchive", "__cleanup_after_script",
       "__script_tmp_dir", "__script_ssh_addr",
+      "__raw_pty_merge",
       "__cleanup_after_assemble",
       "__precomputed_match", "__precomputed_checksum",
     ]

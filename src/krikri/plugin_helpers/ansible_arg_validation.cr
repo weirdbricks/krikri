@@ -138,7 +138,10 @@ module Krikri
         end
       end
 
-      private INTERNAL = {"_ansible_check_mode", "_ansible_diff", "_module_name", "_verbosity", "_environment"}
+      # __raw_pty_merge rides in with remote raw (which aliases to the
+      # shell plugin): without it here the plugin's own unsupported-param
+      # check would reject the executor's merge marker as a user param.
+      private INTERNAL = {"_ansible_check_mode", "_ansible_diff", "_module_name", "_verbosity", "_environment", "__raw_pty_merge"}
 
       # community.crypto's _time.py get_relative_time_option: a timespec
       # is either sshd_config(5)-relative (a leading +/-, then
