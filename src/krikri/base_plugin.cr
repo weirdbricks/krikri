@@ -641,6 +641,17 @@ module Krikri
       # missing_required_lib wording, the detail belongs in the [ERROR]
       # block only, like the OwnerLookupFailure reasoning above.
       attach_remote_tmp_warning(PluginResult.new(changed: false, failed: true, msg: ex.message || "", _ansible_error_detail: ex.detail), remote_tmp_warning).to_json
+    rescue ex : SpawnError
+      # #704: a process that could not be spawned at all (fd exhaustion,
+      # fork failure, pipe setup failure - a bad target executable stays a
+      # nonzero exit, see LocalExecutor.exec's carve-out) is not a command
+      # that ran and exited nonzero - remote_exec raises it here instead of
+      # handing the plugin a fake exit code its branching could misread
+      # (sysctl's "no live value" path reported success off a spawn
+      # failure). Echo to STDERR so a full-suite shard log shows the cause
+      # even when the result JSON is consumed silently.
+      STDERR.puts ex.message.to_s
+      attach_remote_tmp_warning(PluginResult.new(changed: false, failed: true, msg: ex.message || "Failed to spawn process"), remote_tmp_warning).to_json
     rescue ex : Exception
       # The engine-internal crash shape ("Plugin execution failed: ")
       # deliberately does NOT carry the init warning: real's module crash
@@ -722,8 +733,10 @@ module Krikri
     protected def remote_exec(command : String, timeout : Int32? = nil, force_shell : Bool = false) : NamedTuple(exit_code: Int32, stdout: String, stderr: String)
       env = task_environment
       if local_connection?
-        # Execute locally
-        LocalExecutor.exec(command, force_shell: force_shell, env: env)
+        # Execute locally. raise_spawn_errors: #704 - a spawn failure must
+        # reach #run_and_capture_result as a raised error, not as a fake
+        # exit code a plugin's own branching can misread as a real answer.
+        LocalExecutor.exec(command, force_shell: force_shell, env: env, raise_spawn_errors: true)
       else
         # Execute via SSH - use ansible_host if set
         conn = effective_connection
@@ -745,7 +758,8 @@ module Krikri
             conn.port,
             timeout: timeout || SSHManager::DEFAULT_EXEC_TIMEOUT_SECONDS,
             identity_file: get_identity_file,
-            extra_args: conn.ssh_extra_options
+            extra_args: conn.ssh_extra_options,
+            raise_spawn_errors: true
           )
         else
           SSHManager.exec(
@@ -755,7 +769,8 @@ module Krikri
             conn.port,
             timeout: timeout || SSHManager::DEFAULT_EXEC_TIMEOUT_SECONDS,
             identity_file: get_identity_file,
-            extra_args: conn.ssh_extra_options
+            extra_args: conn.ssh_extra_options,
+            raise_spawn_errors: true
           )
         end
       end

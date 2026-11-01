@@ -134,6 +134,10 @@ module Krikri
       fi
       SH
       result[:stdout].to_s.strip == "dnf5"
+    rescue ex : SpawnError
+      # #704: a spawn failure must not read as "not dnf5" and silently
+      # pick the wrong package-manager backend - re-raise.
+      raise ex
     rescue
       false
     end
