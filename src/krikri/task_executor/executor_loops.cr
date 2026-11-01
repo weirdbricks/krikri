@@ -2819,7 +2819,20 @@ module Krikri
                          !SCRIPT_MODULES.includes?(action_plugin_name) &&
                          !DICT_FAILURE_ACTION_PLUGINS.includes?(action_plugin_name)
           finalization = result_hash["_ansible_finalization_failure"]?.try(&.as_bool?) == true
-          if Krikri.result_failed_flag(result) && (action_level || finalization)
+          # A when:-EVALUATION error (broken strict conditional, unknown
+          # filter/test in a clause) is the third escape shape: real
+          # evaluates when: BEFORE the attempt loop even starts
+          # (task_executor.py's _execute_internal raises out of the
+          # conditional check at lines 397-419, the for-attempt loop
+          # begins at 530), so a when: failure on an until:/retries: task
+          # aborts on the first pass - no FAILED - RETRYING lines and no
+          # attempts key (issue #547, lean_delivery.gitlab_runner's
+          # "Register gitlab-runner" printed three retry lines real never
+          # does). execute_task_once converts the raise to a failed
+          # result, so the loop sees it as an ordinary failed attempt
+          # unless it is caught here.
+          when_error = result_hash["_ansible_when_error_emitted"]?.try(&.as_bool?) == true
+          if Krikri.result_failed_flag(result) && (action_level || finalization || when_error)
             if register_name && !register_name.empty?
               register_result(host, register_name, result)
               vars_context[register_name] = @registered_vars[host.name][register_name]

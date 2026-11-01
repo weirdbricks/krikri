@@ -5199,7 +5199,13 @@ module Krikri
         # expression itself, and real reports the when: value token's
         # position - the same position as the second Origin: block,
         # whatever the value's type (int, str, list, ... live-verified).
-        return msg unless (tok = when_token_position(task, clause_key, clause_raw))
+        # A when: LIST caller passes no clause_raw, so the locator must
+        # get the remembered FAILING clause's text: the joined
+        # when_condition string matches no list item, the locate fails,
+        # and the `at '...'` lineage clause silently drops out of the
+        # message (issue #547, lean_delivery.gitlab_runner's
+        # `gitlab_ci_token | length` clause).
+        return msg unless (tok = when_token_position(task, clause_key, clause_raw || raw))
         return with_origin_clause(msg, "'#{tok[0]}:#{tok[1]}:#{tok[2]}'")
       end
       if h = host
@@ -5273,8 +5279,11 @@ module Krikri
         when RuntimeVarOrigin
           # Registered result or gathered fact: real's lineage labels
           # the conditional's own when: token position (live-verified
-          # 2.19.11).
-          return msg unless (tok = when_token_position(task, clause_key, clause_raw))
+          # 2.19.11). Same failing-clause fallback as the compound branch
+          # above: a when: LIST caller passes no clause_raw, and the
+          # joined when_condition string matches no list item (issue
+          # #547).
+          return msg unless (tok = when_token_position(task, clause_key, clause_raw || raw))
           return msg.sub(/was derived from value of type '([a-zA-Z]+)'/) do
             "was derived from value of type '#{$1}' at '#{tok[0]}:#{tok[1]}:#{tok[2]}'"
           end
