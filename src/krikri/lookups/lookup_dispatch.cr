@@ -76,11 +76,11 @@ module Krikri
         JINJA_CONST_TEMPLATE_WARN_MUTEX.synchronize do
           return if @@jinja_const_template_warned.includes?(origin)
           @@jinja_const_template_warned << origin
-          STDERR.puts "[WARNING]: Jinja constant strings should not contain embedded templates. This feature will be disabled by default in ansible-core 2.23."
-          STDERR.puts origin
-          STDERR.puts
-          STDERR.puts "Use inline expressions, for example: `msg: \"{{ lookup('env', '{{ a_var }}') }}\"` becomes `msg: \"{{ lookup('env', a_var) }}\"`"
-          STDERR.puts
+          ResultDisplay.emit_warning_stderr "[WARNING]: Jinja constant strings should not contain embedded templates. This feature will be disabled by default in ansible-core 2.23."
+          ResultDisplay.emit_warning_stderr origin
+          ResultDisplay.emit_warning_stderr ""
+          ResultDisplay.emit_warning_stderr "Use inline expressions, for example: `msg: \"{{ lookup('env', '{{ a_var }}') }}\"` becomes `msg: \"{{ lookup('env', a_var) }}\"`"
+          ResultDisplay.emit_warning_stderr ""
         end
       end
 

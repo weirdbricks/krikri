@@ -161,8 +161,51 @@ module Krikri
     def self.emit_display_warning(text : String) : Nil
       line = "[WARNING]: #{text.strip}"
       return unless @@warned_texts.add?(line)
-      STDERR.puts line.colorize(:light_magenta)
-      STDERR.puts "" if text.strip.includes?('\n')
+      emit_warning_stderr(line.colorize(:light_magenta).to_s)
+      emit_warning_stderr("") if text.strip.includes?('\n')
+    end
+
+    # Fiber-scoped stack of active warning captures: real prints a
+    # task's warnings at display time, i.e. only when that task is
+    # actually reached, but krikri's batch-build prepares every group
+    # member up front - emitters that fire during that preparation
+    # (issue #489's authorized_key jinja-constant warning for a task an
+    # earlier member's failure keeps the play from ever reaching) would
+    # surface ahead of earlier members' output and for tasks that never
+    # run. Capturing during prepare_batch_step and re-emitting at
+    # consumption restores real's ordering. A stack, like the
+    # substitutor's fiber-scoped stacks, so a nested capture keeps its
+    # own text; with no capture active the write is byte-identical to a
+    # plain STDERR.puts.
+    @@stderr_warning_captures = {} of Fiber => Array(String::Builder)
+
+    # Shared stderr funnel for the warning emitters (display warnings
+    # and the jinja-constant block alike): appends the exact would-be
+    # stderr text, newlines included, to the innermost active capture
+    # instead of writing STDERR when one is active on the current fiber.
+    def self.emit_warning_stderr(text : String) : Nil
+      if frames = @@stderr_warning_captures[Fiber.current]?
+        frames.last << text << '\n'
+      else
+        STDERR.puts text
+      end
+    end
+
+    # Runs *block* with warning output captured on the current fiber and
+    # returns exactly what would have gone to STDERR (empty when nothing
+    # warned); the caller decides whether/when to print it.
+    def self.capture_stderr_warnings(&block : -> _) : String
+      builder = String::Builder.new
+      fiber = Fiber.current
+      (@@stderr_warning_captures[fiber] ||= Array(String::Builder).new) << builder
+      begin
+        block.call
+      ensure
+        frames = @@stderr_warning_captures[fiber]
+        frames.pop
+        @@stderr_warning_captures.delete(fiber) if frames.empty?
+      end
+      builder.to_s
     end
 
     # Core-emitted deprecation lines already printed this run (real
