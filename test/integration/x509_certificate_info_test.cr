@@ -597,6 +597,21 @@ describe "x509_certificate_info: valid_at invocation echo" do
     output.matches?(/\\"ok\\": \\"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{6})?(\+00:00)?\\", \\"int\\": 5/).must_equal(true, output)
   end
 
+  it "puts invocation after msg in a type-error failure's key order (#703)" do
+    output = run_echo_playbook(<<-TASKS)
+        - community.crypto.x509_certificate_info:
+            path: CERTPATH
+            valid_at: {"ok": "+1w", "int": 5}
+          loop: [0]
+          register: result
+          ignore_errors: true
+        - debug:
+            msg: "{{ result.results[0].keys() | list | to_json }}"
+    TASKS
+
+    output.must_include(%([\\"failed\\", \\"msg\\", \\"invocation\\", \\"changed\\", \\"exception\\", \\"item\\", \\"ansible_loop_var\\"]))
+  end
+
   it "fails an invalid timespec with the uncaught-exception shape and no invocation echo" do
     output = run_echo_playbook(<<-TASKS)
         - community.crypto.x509_certificate_info:
