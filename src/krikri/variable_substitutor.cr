@@ -895,6 +895,15 @@ module Krikri
         end
       end
     end
+    # Issue #515: the mid-chain empty-list index-0 shape reaches this
+    # message builder through the plain-chain probes above rather than
+    # the bracket-index call sites (whose own probe sees a chain with no
+    # TRAILING index), so give the walk the same lazy-list wording real
+    # 2.19.11 fails such an arg with before settling for the generic
+    # root name.
+    if msg = bracket_index_failure_message(expr, vars)
+      return msg
+    end
     # Real names the chain's ROOT variable, never the whole expression
     # ("'missing' is undefined", not "'missing['key']' is undefined" -
     # live-verified vs 2.19.11 for both dotted and bracket chains).
@@ -1003,6 +1012,21 @@ module Krikri
   # convention here; or a base containing a side-effecting lookup(...)/
   # query(...) call that must not run a second time).
   def self.bracket_index_failure_message(expr : String, vars : Hash(String, JSON::Any)) : String?
+    stripped = expr.strip
+    # Issue #515 (live-verified vs ansible-core 2.19.11): an index-0 miss
+    # on an EMPTY list reached mid-chain (`r.files[0].path`,
+    # `r.files[0]['path']`, bare-root `empty[0].path`) fails with the
+    # lazy template list's "no element 0" wording - the same wrapper owns
+    # that list as owns the bare-identifier one the trailing walk below
+    # answers, so the walk CONTINUING past the index changes nothing
+    # about who reports the miss. Only index 0 is live-verified (other
+    # out-of-range indexes keep the generic wording), and a missing dict
+    # key on the same shape stays lenient here - the dict-attribute
+    # walker owns that wording.
+    if stripped.matches?(PLAIN_CHAIN_SHAPE) &&
+       (msg = plain_chain_empty_list_index0_message(stripped, vars))
+      return msg
+    end
     indices = [] of Int32
     rest = expr.strip
     while (open = trailing_top_level_bracket_index(rest))
@@ -1036,16 +1060,59 @@ module Krikri
         return "None has no element #{index}"
       when Array
         in_range = index.negative? ? index >= -list.size : index < list.size
-        if !in_range && index == 0 && rest =~ /\A[A-Za-z_][A-Za-z0-9_]*\z/
-          # ansible's lazy list wrapper owns bare-identifier vars, so its
-          # index-0 miss surfaces with the lazy type name rather than
-          # "'list'" - the observable wording on 2.19.11 (issue #582).
+        if !in_range && index == 0 && rest.matches?(PLAIN_CHAIN_SHAPE)
+          # ansible's lazy list wrapper owns play/role/set_fact list
+          # VARIABLES however they are reached, so an index-0 miss on a
+          # chain like `r.files` carries the lazy type name just like the
+          # bare-identifier form did - the observable wording on 2.19.11
+          # (issues #582 and #515).
           return "#{LAZY_TEMPLATE_LIST_TYPE} object has no element 0"
         end
         return "object of type 'list' has no attribute #{index}" unless in_range
         current = list[index]
       else
         return nil
+      end
+    end
+    nil
+  end
+
+  # The chain walk behind bracket_index_failure_message's mid-chain
+  # empty-list index-0 check (issue #515): resolves the root with
+  # VariableLookup - the same Krikri-side resolution
+  # dict_attribute_miss_name walks with, deliberately not a second
+  # evaluation of the whole expression - then steps `.attr` / literal
+  # integer `[N]` / `['key']` one at a time. Returns the lazy-list
+  # message when a literal 0 lands out of range on an Array with steps
+  # still to come; nil for everything else this conservative walk can't
+  # pin down (undefined root, a step it doesn't parse, a missing dict
+  # key - lenient by the same convention the dict walker keeps - and a
+  # chain that ENDS at the out-of-range index, which the trailing walk
+  # owns).
+  private def self.plain_chain_empty_list_index0_message(expr : String, vars : Hash(String, JSON::Any)) : String?
+    base_end = expr.index(/\.|\[/) || expr.size
+    current = VariableSubstitutor::VariableLookup.new(vars).resolve(expr[0...base_end])
+    return nil unless current
+
+    steps = expr[base_end..].scan(/\.[A-Za-z_][A-Za-z0-9_]*|\[[^\[\]]+\]/)
+    last = steps.size - 1
+    steps.each_with_index do |match, i|
+      token = match[0]
+      if token.starts_with?('[')
+        idx = token[1..-2].strip.to_i32?
+        return nil unless idx
+        raw = current.raw
+        return nil unless raw.is_a?(Array)
+        in_range = idx.negative? ? idx >= -raw.size : idx < raw.size
+        if !in_range && idx == 0 && i < last
+          return "#{LAZY_TEMPLATE_LIST_TYPE} object has no element 0"
+        end
+        return nil unless in_range
+        current = raw[idx]
+      else
+        raw = current.raw
+        return nil unless raw.is_a?(Hash) && raw.has_key?(token[1..])
+        current = raw[token[1..]]
       end
     end
     nil
