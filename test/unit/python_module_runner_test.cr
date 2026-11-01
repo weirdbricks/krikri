@@ -180,6 +180,55 @@ describe Krikri::PythonModuleRunner do
     argv.must_equal(["path=/tmp/x", "mode=0640", "_ansible_check_mode=false"])
   end
 
+  # Integers wider than Int64 (issue #695): a container arg holding a
+  # wide int must keep it (as a bigint marker the args serialization
+  # unquotes into bare digits), not degrade the whole arg to a string -
+  # and a string that merely LOOKS like digits is never touched.
+  it "keeps a wide integer inside a container arg as a bigint" do
+    two_pow_200 = (BigInt.new(2) ** 200).to_s
+    wire = Krikri::PythonModuleRunner.build_module_args(
+      {"d" => %({"n": #{two_pow_200}, "s": "123456789012345678901234567890"})},
+      check_mode: false, module_name: "kk_touch",
+    )
+    # The serialized args the module receives carry the int as bare
+    # digits - and the lookalike string stays QUOTED.
+    wire.must_include(%("n":#{two_pow_200}))
+    wire.must_include(%("s":"123456789012345678901234567890"))
+  end
+
+  it "parses a module result carrying integers wider than Int64 as marked bigints" do
+    two_pow_200 = (BigInt.new(2) ** 200).to_s
+    parsed = Krikri::PythonModuleRunner.parse_module_output(
+      %({"changed": false, "wide": #{two_pow_200}, "neg": #{-(BigInt.new(2) ** 70)}, "s": "123456789012345678901234567890"}))
+    parsed.try { |node| Krikri.bigint_digits(node["wide"]) }.must_equal(two_pow_200)
+    parsed.try { |node| Krikri.bigint_digits(node["neg"]) }.must_equal((-(BigInt.new(2) ** 70)).to_s)
+    parsed.try(&.["s"]?.try(&.as_s?)).must_equal("123456789012345678901234567890")
+    parsed.try { |node| Krikri.bigint_digits(node["s"]) }.must_be_nil
+  end
+
+  # A BARE whole-span wide-int arg (`n: "{{ big_var }}"`) arrives here as
+  # the MARKED string the executor re-marked (bigint_typed_param_text:
+  # provenance from the span's structured evaluation - a marked string
+  # there IS a wide int) and ships as the marked string; the serialized
+  # args (and the action-plugin payload, which types its args the same
+  # way) unquote into a bare Python int - issue #695: the module saw a
+  # str where ansible passes an int. A LITERAL wide-digit string param -
+  # the same bytes on the wire, but no marker - stays a STRING, the way
+  # ansible-core keeps a quoted wide-digit YAML scalar a str.
+  it "ships a marked wide-int arg bare and keeps a literal wide-digit arg a string" do
+    two_pow_200 = (BigInt.new(2) ** 200).to_s
+    marked = Krikri::PythonModuleRunner.typed_value(Krikri.bigint_sentinel(two_pow_200))
+    Krikri.bigint_digits(marked).must_equal(two_pow_200)
+    wire = Krikri::PythonModuleRunner.build_module_args(
+      {"n" => Krikri.bigint_sentinel(two_pow_200)}, check_mode: false, module_name: "kk_touch")
+    wire.must_include(%("n":#{two_pow_200}))
+
+    # A literal wide-digit string param (and the small-int treatment):
+    # the digit text itself never promotes - only the marker does.
+    Krikri::PythonModuleRunner.typed_value(two_pow_200).as_s?.must_equal(two_pow_200)
+    Krikri::PythonModuleRunner.typed_value("5").as_i?.must_equal(5)
+  end
+
   # ---- result-JSON extraction ----
 
   it "parses a single-line result JSON" do

@@ -250,3 +250,69 @@ describe "role-local test_plugins file that fails to import" do
     )
   end
 end
+
+# Integers wider than Int64 (issue #695): a role-local TEST plugin must
+# see a wide int operand as a real Python int (the payload into the
+# wrapper is serialized with unquote_bigint_json, so json.loads yields
+# bare digits). Live-verified vs ansible-playbook 2.19.11: with `big` a
+# 2**200 int, `{{ big is is_big }}` is True and `{{ s is is_big }}` (s
+# the str "123456789012345678901234567890") is False.
+describe "role-local test plugins receiving integers wider than Int64" do
+  it "hands a wide int operand to the test as a real Python int (round-trip)" do
+    root = File.tempname("test-plugins-bigint")
+    Dir.mkdir_p(File.join(root, "roles", "myrole", "filter_plugins"))
+    Dir.mkdir_p(File.join(root, "roles", "myrole", "test_plugins"))
+    Dir.mkdir_p(File.join(root, "roles", "myrole", "tasks"))
+    File.write(File.join(root, "roles", "myrole", "filter_plugins", "bigint.py"), <<-PYTHON)
+      class FilterModule(object):
+          def filters(self):
+              return {"wide_num": self.wide_num, "wide_str": self.wide_str}
+
+          def wide_num(self, x):
+              return 2 ** 200
+
+          def wide_str(self, x):
+              return "123456789012345678901234567890"
+      PYTHON
+    File.write(File.join(root, "roles", "myrole", "test_plugins", "isbig.py"), <<-PYTHON)
+      class TestModule(object):
+          def tests(self):
+              return {"is_big": self.is_big}
+
+          def is_big(self, x):
+              return isinstance(x, int) and x > 2 ** 64
+      PYTHON
+    File.write(File.join(root, "roles", "myrole", "tasks", "main.yml"), <<-YAML)
+      - name: source the wide int and the lookalike string from custom filters
+        set_fact:
+          big: "{{ 0 | wide_num }}"
+          s: "{{ 0 | wide_str }}"
+      - name: the wide int passes the isinstance test
+        debug:
+          msg: "RUN {{ big is is_big }}"
+      - name: the lookalike string does not
+        debug:
+          msg: "RUN {{ s is is_big }}"
+      - name: "the wide int in a when test"
+        debug:
+          msg: "RUN when big is is_big"
+        when: "big is is_big"
+      YAML
+
+    status, output = run_playbook(root, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        roles:
+          - myrole
+      YAML
+
+    status.success?.must_equal(true, output)
+    output.includes?("\u{E000}").must_equal(false, "sentinel marker leaked into output:\n#{output}")
+    output.must_include(%("msg": "RUN True"))
+    output.must_include(%("msg": "RUN False"))
+    output.must_include("RUN when big is is_big")
+  ensure
+    FileUtils.rm_rf(root) if root
+  end
+end

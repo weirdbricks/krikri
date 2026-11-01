@@ -1,4 +1,5 @@
 require "json"
+require "./bigint_json"
 
 # Runner for role-local CONTROLLER-side Python ACTION plugins - a role's
 # own `action_plugins/<name>.py` dispatched when a task names the
@@ -188,12 +189,21 @@ module Krikri
 
       stdout = IO::Memory.new
       stderr = IO::Memory.new
+      # unquote_bigint_json, not payload.to_json verbatim: a task arg
+      # carrying a bigint marker (an integer wider than Int64 a module
+      # returned, carried as a marked string) must reach the plugin as a
+      # real Python int, the way Ansible passes its own int objects -
+      # unquote_bigint_json rewrites ONLY the exact marked string form,
+      # so a genuine user string is never altered.
       status = Process.run(python, ["-c", WRAPPER],
-        input: IO::Memory.new(payload.to_json),
+        input: IO::Memory.new(Krikri.unquote_bigint_json(payload.to_json)),
         output: stdout, error: stderr)
       return nil unless status.success?
 
-      parsed = (JSON.parse(stdout.to_s.lines.reject(&.blank?).last? || "") rescue nil)
+      # BigJson, not JSON.parse: a plugin result with an integer wider
+      # than Int64 (Python ints are unbounded) made plain JSON.parse
+      # raise "Invalid Int64" and the whole result became nil.
+      parsed = (Krikri::BigJson.parse(stdout.to_s.lines.reject(&.blank?).last? || "") rescue nil)
       return nil unless parsed && parsed.as_h?
       parsed
     rescue
@@ -217,10 +227,16 @@ module Krikri
         error: Process::Redirect::Close)
       begin
         input = process.input.as(IO)
-        input.puts(payload.to_json)
+        # unquote_bigint_json, same rationale as run_wrapper: the task
+        # args the plugin receives must carry real ints, not markers.
+        input.puts(Krikri.unquote_bigint_json(payload.to_json))
         input.flush
         while (line = process.output.gets)
-          parsed = (JSON.parse(line) rescue nil)
+          # BigJson, not JSON.parse: a protocol line carrying an integer
+          # wider than Int64 (a module result the plugin echoes) made
+          # plain JSON.parse raise "Invalid Int64" and the reply was
+          # silently dropped.
+          parsed = (Krikri::BigJson.parse(line) rescue nil)
           obj = parsed.try(&.as_h?)
           next unless obj && obj["__krikri__"]?.try(&.as_bool?) == true
           if obj["type"]?.try(&.as_s?) == "execute_module"
@@ -250,7 +266,10 @@ module Krikri
       rescue ex
         {"error" => JSON::Any.new(ex.message.to_s)}
       end
-      ({"__krikri__" => JSON::Any.new(true)}.merge(reply)).to_json
+      # unquote_bigint_json: the dispatched module's result (a JSON::Any
+      # tree that can carry bigint-marked strings from its own wide-int
+      # output) must reach the waiting plugin as real Python ints.
+      Krikri.unquote_bigint_json(({"__krikri__" => JSON::Any.new(true)}.merge(reply)).to_json)
     end
 
     # The controller-side wrapper: imports the plugin file, finds its

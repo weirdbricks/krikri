@@ -303,4 +303,78 @@ describe Krikri::PythonActionRunner do
       FileUtils.rm_r(dir)
     end
   end
+
+  # Integers wider than Int64 (issue #695): a task arg carrying a
+  # bigint-marked wide int must reach the plugin as a real Python int
+  # (the payload is serialized to the wrapper's stdin with
+  # unquote_bigint_json, so json.loads sees bare digits), and the wide
+  # ints in an _execute_module reply must flow back the same way, both
+  # directions over the IPC protocol.
+  it "round-trips wide integers through task args and the _execute_module IPC reply" do
+    dir = File.join(Dir.tempdir, "krikri-pyaction-spec-#{Random.rand(1_000_000)}")
+    path = write_action_plugin(dir, "myaction.py", <<-PYTHON)
+      from ansible.plugins.action import ActionBase
+
+      class ActionModule(ActionBase):
+          TRANSFERS_FILES = False
+
+          def run(self, tmp=None, task_vars=None):
+              result = super(ActionModule, self).run(tmp, task_vars)
+              del tmp
+              result['arg_type'] = type(self._task.args['big']).__name__
+              result['echoed'] = self._task.args['big'] + 1
+              result['str_arg'] = self._task.args['s']
+              inner = self._execute_module(
+                  'mod', module_args={'big': self._task.args['big']})
+              result['wide'] = inner['wide']
+              result['neg'] = inner['neg']
+              return result
+      PYTHON
+
+    big = BigInt.new(2) ** 200
+    wide_args = {
+      "big" => JSON::Any.new(Krikri.bigint_sentinel(big.to_s)),
+      "s"   => JSON::Any.new("1606938044258990275541962092341162602522202993782792835301376"),
+    } of String => JSON::Any
+
+    seen_digits = nil
+    dispatcher = Krikri::PythonActionRunner::ModuleDispatcher.new do |_mod, margs|
+      # The args the plugin forwarded arrive as JSON::Any parsed from the
+      # IPC request line - bigint-aware, so a real int arrives marked.
+      seen_digits = Krikri.bigint_digits(margs["big"])
+      JSON.parse({
+        "changed" => false,
+        "wide"    => Krikri.bigint_sentinel(big.to_s),
+        "neg"     => Krikri.bigint_sentinel((-(BigInt.new(2) ** 70)).to_s),
+      }.to_json)
+    end
+
+    begin
+      call = -> {
+        Krikri::PythonActionRunner.run_action(path, "myaction", wide_args,
+          "local", "localhost", nil, nil, false, nil, false,
+          Hash(String, JSON::Any).new, dispatcher)
+      }
+      if ansible_importable
+        result = call.call
+        # Inbound: the plugin saw a real Python int, not the marked string.
+        result.as_h["arg_type"].as_s.must_equal("int")
+        Krikri.bigint_digits(result.as_h["echoed"]).must_equal((big + 1).to_s)
+        # The module dispatch received the wide int (marked on the
+        # engine side after the bigint-aware parse of the request line).
+        seen_digits.must_equal(big.to_s)
+        # Outbound: the dispatcher's marked wide ints reached the plugin
+        # as ints and come back through the wrapper's json.dumps as bare
+        # digits, re-marked by the bigint-aware parse of the final line.
+        Krikri.bigint_digits(result.as_h["wide"]).must_equal(big.to_s)
+        Krikri.bigint_digits(result.as_h["neg"]).must_equal((-(BigInt.new(2) ** 70)).to_s)
+        # A genuine string that merely looks like digits is never altered.
+        result.as_h["str_arg"].as_s.must_equal("1606938044258990275541962092341162602522202993782792835301376")
+      else
+        assert_unavailable(call)
+      end
+    ensure
+      FileUtils.rm_r(dir)
+    end
+  end
 end

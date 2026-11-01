@@ -909,7 +909,12 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
     v["l2"] = JSON.parse(%(4))
     evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
 
-    evaluator.evaluate("lookup('flattened', l1, l2)").must_equal("1,2,3,4")
+    # Live-verified vs ansible-playbook 2.19: a lookup() result holding
+    # non-string elements keeps the real list (",".join raises TypeError
+    # there and the sequence is returned as-is); only all-string results
+    # comma-join. The rendered form is the list's Python repr, the way a
+    # list renders inside template text there.
+    evaluator.evaluate("lookup('flattened', l1, l2)").must_equal("[1, 2, 3, 4]")
     JSON.parse(evaluator.evaluate("lookup('flattened', l1, l2, wantlist=True)")).as_a.map(&.as_i).must_equal([1, 2, 3, 4])
   end
 
@@ -2308,6 +2313,151 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
       # never-fail carve-outs must not swallow the legitimate spellings
       # alongside the unknown ones.
       evaluator.evaluate("lookup('ansible.builtin.env', 'PATH')").wont_equal("undefined")
+    end
+  end
+
+  describe "lookup() with non-string results keeps the list (issue #695)" do
+    private def ansible_importable : Bool
+      python = Krikri::PythonLookupRunner.python_executable
+      return false unless python
+      status = Process.run(python, ["-c", "from ansible.plugins.lookup import LookupBase"],
+        output: Process::Redirect::Close, error: Process::Redirect::Close)
+      status.success?
+    end
+
+    private def plugin_dir_evaluator(dir : String)
+      Krikri::VariableSubstitutor::ExpressionEvaluator.new({
+        "role_path"    => JSON::Any.new(dir),
+        "playbook_dir" => JSON::Any.new(dir),
+      })
+    end
+
+    private def plugin_dir_renderer(dir : String)
+      Krikri::VariableSubstitutor::JinjaRenderer.new({
+        "role_path"    => JSON::Any.new(dir),
+        "playbook_dir" => JSON::Any.new(dir),
+      })
+    end
+
+    private def write_ints_lookup(dir : String, name : String, content : String) : Nil
+      Dir.mkdir_p(File.join(dir, "lookup_plugins"))
+      File.write(File.join(dir, "lookup_plugins", name), content)
+    end
+
+    # ansible-core's _invoke_lookup joins a wantlist=False result with
+    # ",".join and returns the sequence AS-IS when that raises TypeError -
+    # so one non-string element keeps the real list, and a
+    # BIGINT_SENTINEL_PREFIX-marked string (a wide int a plugin returned)
+    # is such an element: joining it used to leak the marker into the
+    # rendered text. Verified live vs ansible-playbook 2.19.11:
+    # lookup() of a plugin returning [2**150, 6] prints the LIST.
+    it "keeps a wide-int result a list on the hand-rolled path" do
+      return unless ansible_importable
+      dir = File.join(Dir.tempdir, "krikri-lookup-join-#{Random.rand(1_000_000)}")
+      Dir.mkdir_p(dir)
+      wide = (BigInt.new(2) ** 150).to_s
+      write_ints_lookup(dir, "bigintl.py", <<-PYTHON)
+        from ansible.plugins.lookup import LookupBase
+
+        class LookupModule(LookupBase):
+            def run(self, terms, variables=None, **kwargs):
+                return [2 ** 150, 6]
+        PYTHON
+      begin
+        result = plugin_dir_evaluator(dir).evaluate("lookup('bigintl', 3)")
+        parsed = Krikri::BigJson.parse(result)
+        Krikri.bigint_digits(parsed.as_a[0]).must_equal(wide)
+        parsed.as_a[1].as_i?.must_equal(6)
+      ensure
+        FileUtils.rm_r(dir)
+      end
+    end
+
+    it "keeps a small-int result a list on the hand-rolled path" do
+      return unless ansible_importable
+      dir = File.join(Dir.tempdir, "krikri-lookup-join-#{Random.rand(1_000_000)}")
+      Dir.mkdir_p(dir)
+      write_ints_lookup(dir, "smalll.py", <<-PYTHON)
+        from ansible.plugins.lookup import LookupBase
+
+        class LookupModule(LookupBase):
+            def run(self, terms, variables=None, **kwargs):
+                return [5, 6]
+        PYTHON
+      begin
+        # The kept list renders as Python repr (ansible's "X [5, 6] Y"
+        # inside mixed text), not the internal JSON-compact form.
+        plugin_dir_evaluator(dir).evaluate("lookup('smalll', 3)").must_equal("[5, 6]")
+      ensure
+        FileUtils.rm_r(dir)
+      end
+    end
+
+    it "still comma-joins an all-string result on the hand-rolled path" do
+      return unless ansible_importable
+      dir = File.join(Dir.tempdir, "krikri-lookup-join-#{Random.rand(1_000_000)}")
+      Dir.mkdir_p(dir)
+      write_ints_lookup(dir, "strl.py", <<-PYTHON)
+        from ansible.plugins.lookup import LookupBase
+
+        class LookupModule(LookupBase):
+            def run(self, terms, variables=None, **kwargs):
+                return ["bob", "alice"]
+        PYTHON
+      begin
+        plugin_dir_evaluator(dir).evaluate("lookup('strl', 3)").must_equal("bob,alice")
+      ensure
+        FileUtils.rm_r(dir)
+      end
+    end
+
+    it "keeps a wide-int result a list on the jinja engine path" do
+      return unless ansible_importable
+      dir = File.join(Dir.tempdir, "krikri-lookup-join-#{Random.rand(1_000_000)}")
+      Dir.mkdir_p(dir)
+      wide = (BigInt.new(2) ** 150).to_s
+      write_ints_lookup(dir, "bigintl.py", <<-PYTHON)
+        from ansible.plugins.lookup import LookupBase
+
+        class LookupModule(LookupBase):
+            def run(self, terms, variables=None, **kwargs):
+                return [2 ** 150, 6]
+        PYTHON
+      begin
+        rendered = plugin_dir_renderer(dir).render("{{ lookup('bigintl', 3) }}")
+        parsed = Krikri::BigJson.parse(rendered)
+        Krikri.bigint_digits(parsed.as_a[0]).must_equal(wide)
+        parsed.as_a[1].as_i?.must_equal(6)
+      ensure
+        FileUtils.rm_r(dir)
+      end
+    end
+
+    # The EMBEDDED form (mixed text around the span): a list-kept result
+    # renders the way a list renders inside a string in ansible - Python
+    # repr - never the internal JSON-compact form ("X [1,2] Y" was the
+    # round-2 divergence, live-verified: ansible prints "X [1, 2] Y").
+    # Verified against ansible-playbook 2.19.11.
+    it "renders an embedded list-kept lookup result as Python repr" do
+      evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(Hash(String, JSON::Any).new)
+      evaluator.evaluate("lookup('flattened', [1, 2])").must_equal("[1, 2]")
+      substitute = Krikri::VarSubstitutor.new(vars: Hash(String, JSON::Any).new, host_name: "localhost")
+      substitute.substitute(%(X {{ lookup('flattened', [1, 2]) }} Y), output: true).must_equal("X [1, 2] Y")
+    end
+
+    # The provenance rule: a lookup('file') whose CONTENT merely looks
+    # like a JSON array is a joined/str result - its text stays verbatim,
+    # never re-rendered as repr (ansible prints the file's exact bytes).
+    it "keeps a file lookup's JSON-looking content verbatim in embedded text" do
+      dir = Dir.tempdir
+      path = File.join(dir, "krikri-file-lookup-json-#{Random.rand(1_000_000)}.txt")
+      File.write(path, "[1,2]")
+      begin
+        evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(Hash(String, JSON::Any).new)
+        evaluator.evaluate("lookup('file', #{path.inspect})").must_equal("[1,2]")
+      ensure
+        File.delete(path) if File.exists?(path)
+      end
     end
   end
 end

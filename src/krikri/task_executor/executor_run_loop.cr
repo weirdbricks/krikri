@@ -3090,6 +3090,37 @@ module Krikri
       attach_invocation(task, params, result)
     end
 
+    # A whole-single-span `{{ expr }}` module/action arg whose structured
+    # value is a BIGINT_SENTINEL_PREFIX-marked wide int re-marks the
+    # substituted text with the sentinel, so PythonModuleRunner#typed_value
+    # keeps it intact and the payload serialization (unquote_bigint_json)
+    # hands the module/plugin a real Python int the way Ansible passes its
+    # own (issue #695). The substituted wire text is bare digits -
+    # indistinguishable from a LITERAL wide-digit string param, which
+    # ansible-core keeps a str - so provenance comes from re-evaluating
+    # the span STRUCTURALLY, the same seam substitute_task_params' None
+    # and "[]" checks use: only a span whose structured value is a marked
+    # string whose digits equal the rendered text re-marks. Side-effecting
+    # spans (a lookup-carrying variable value) never re-evaluate - they
+    # keep the plain digits text.
+    private def bigint_typed_param_text(task : Task, key : String, substituted : String,
+                                        vars : Hash(String, JSON::Any)) : String
+      stripped = substituted.strip
+      return substituted unless stripped.matches?(/\A-?(0|[1-9]\d*)\z/) && stripped.to_i64?.nil?
+      raw = task.params[key]?
+      return substituted unless raw && VarSubstitutor.single_top_level_span?(raw.strip)
+      return substituted if Krikri.probe_has_side_effecting_call?(raw)
+      structured = begin
+        VariableSubstitutor::ExpressionEvaluator.new(vars)
+          .evaluate_structured(raw.strip[2..-3].strip)
+      rescue
+        nil
+      end
+      return substituted unless structured && (digits = Krikri.bigint_digits(structured)) &&
+                                digits == stripped
+      structured.as_s
+    end
+
     # Dispatches an unavailable-module task that has a role-private
     # `library/<name>.py` source through the py_module plugin. The
     # source travels embedded in the plugin config (base64) so the
@@ -3130,7 +3161,8 @@ module Krikri
         args = Hash(String, JSON::Any).new
         substituted_params.each do |key, value|
           next if key.in?("check_mode", "diff_mode", "_verbosity", "_environment")
-          args[key] = Krikri.non_string_scalar(value) || PythonModuleRunner.typed_value(value)
+          args[key] = Krikri.non_string_scalar(value) ||
+                      PythonModuleRunner.typed_value(bigint_typed_param_text(task, key, value, vars_context))
         end
         # The effective connection the executor already resolved into the
         # magic var (inventory value, or this task's own connection:
@@ -3159,7 +3191,14 @@ module Krikri
         dispatcher = ->(inner_module : String, inner_args : Hash(String, JSON::Any)) : JSON::Any {
           inner_params = Hash(String, String).new
           inner_args.each do |key, value|
-            inner_params[key] = value.as_s? || value.to_json
+            # A bigint-marked string arg the plugin passes through to a
+            # native inner module demotes to its bare digits - the text
+            # every native plugin's param wire has always carried for a
+            # wide int (the marked form is the action-args convention
+            # only, unquoted at PythonActionRunner's own payload
+            # serialization).
+            inner_text = value.as_s?
+            inner_params[key] = inner_text && (digits = Krikri.bigint_digits(inner_text)) ? digits : (inner_text || value.to_json)
           end
           inner_task = Task.new(task.name, inner_module)
           inner_config = build_plugin_config(inner_task, exec_host, inner_params, wire_vars,
@@ -3217,7 +3256,15 @@ module Krikri
       py_params["new_style"] = new_style.to_s
       py_params["_ansible_check_mode"] = check_mode.to_s
       if new_style
-        py_params["module_args"] = PythonModuleRunner.build_module_args(substituted_params, check_mode, module_name)
+        # Each param rides through bigint_typed_param_text first: a
+        # whole-span `{{ big_var }}` arg re-marks to the sentinel so
+        # typed_value keeps it and the module_args JSON unquotes it into
+        # a real Python int (see that helper's comment).
+        typed_params = Hash(String, String).new
+        substituted_params.each do |key, value|
+          typed_params[key] = bigint_typed_param_text(task, key, value, vars_context)
+        end
+        py_params["module_args"] = PythonModuleRunner.build_module_args(typed_params, check_mode, module_name)
       else
         py_params["kv_argv"] = PythonModuleRunner.build_kv_argv(substituted_params).to_json
       end

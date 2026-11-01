@@ -797,3 +797,120 @@ describe "a wrapper-level introspection failure is not cached as an empty name s
     Krikri::PythonTestRunner.test_names([good]).includes?("is_even").must_equal(true)
   end
 end
+
+# Integers wider than Int64 (issue #695): a role-local filter returns
+# Python ints (unbounded) - the wrapper's stdout is parsed bigint-aware
+# and the serialized payload back INTO Python unquotes the marker, so
+# the filter round-trips a real int. Live-verified vs ansible-playbook
+# 2.19.11 with the same shape: `debug: var=big` prints `big:
+# 1606938044258990275541962092341162602522202993782792835301376`
+# (unquoted), `{{ big | type_debug }}` prints int, `{{ big | to_json }}`
+# embeds the bare digits, `big > 2**64` is true, and
+# `{{ big | plus_one }}` proves Python received an int (a str would
+# raise TypeError).
+describe "role-local filters carrying integers wider than Int64" do
+  it "carries a filter's wide int out, renders it unquoted, and round-trips it back into Python" do
+    root = File.tempname("filter-plugins-bigint")
+    Dir.mkdir_p(File.join(root, "roles", "myrole", "filter_plugins"))
+    Dir.mkdir_p(File.join(root, "roles", "myrole", "tasks"))
+    File.write(File.join(root, "roles", "myrole", "filter_plugins", "bigint.py"), <<-PYTHON)
+      class FilterModule(object):
+          def filters(self):
+              return {"wide_num": self.wide_num, "wide_neg": self.wide_neg,
+                      "wide_nested": self.wide_nested, "plus_one": self.plus_one}
+
+          def wide_num(self, x):
+              return 2 ** 200
+
+          def wide_neg(self, x):
+              return -(2 ** 70)
+
+          def wide_nested(self, x):
+              return {"n": 2 ** 100, "l": [2 ** 70], "s": "123456789012345678901234567890"}
+
+          def plus_one(self, x):
+              return x + 1
+      PYTHON
+    written = File.join(root, "dump.json")
+    File.write(File.join(root, "roles", "myrole", "tasks", "main.yml"), <<-YAML)
+      - name: source wide ints from the custom filters
+        set_fact:
+          big: "{{ 0 | wide_num }}"
+          neg: "{{ 0 | wide_neg }}"
+          nested: "{{ 0 | wide_nested }}"
+      - name: debug var prints the int unquoted
+        debug:
+          var: big
+      - name: neg via debug var
+        debug:
+          var: neg
+      - name: nested members via debug var
+        debug:
+          var: nested
+      - name: type_debug says int
+        debug:
+          msg: "{{ big | type_debug }}"
+      - name: comparison against a wider-than-Int64 literal
+        debug:
+          msg: "RUN {{ big > 18446744073709551616 }} neg {{ neg < 0 }}"
+      - name: "comparison in when"
+        debug:
+          msg: "RUN when big >= 18446744073709551616"
+        when: "big >= 18446744073709551616"
+      - name: round-trip back into Python
+        debug:
+          msg: "{{ big | plus_one }}"
+      - name: round-trip keeps it an int
+        debug:
+          msg: "{{ (big | plus_one) | type_debug }}"
+      - name: the round-tripped int compares exactly
+        debug:
+          msg: "RUN {{ (big | plus_one) > big }}"
+      - name: to_json embeds the digits unquoted
+        copy:
+          content: "{{ {'w': big, 'nested': nested} | to_json }}\\n"
+          dest: #{written}
+      YAML
+
+    status, output = run_playbook(root, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        roles:
+          - myrole
+      YAML
+
+    big = (BigInt.new(2) ** 200).to_s
+    big_plus = ((BigInt.new(2) ** 200) + 1).to_s
+    neg = (-(BigInt.new(2) ** 70)).to_s
+    two_pow_100 = (BigInt.new(2) ** 100).to_s
+    two_pow_70 = (BigInt.new(2) ** 70).to_s
+
+    status.success?.must_equal(true, output)
+    # The marker must never leak into any rendered output.
+    output.includes?("\u{E000}").must_equal(false, "sentinel marker leaked into output:\n#{output}")
+    # debug: var= prints Python's repr - unquoted digits.
+    output.must_include(%("big": #{big}))
+    output.must_include(%("neg": #{neg}))
+    output.must_include(%("n": #{two_pow_100}))
+    output.must_include(%("s": "123456789012345678901234567890"))
+    # type_debug says int.
+    output.must_include(%("msg": "int"))
+    # comparisons ran against the numbers.
+    output.must_include(%("msg": "RUN True neg True"))
+    output.must_include("RUN when big >= 18446744073709551616")
+    # round-trip: Python got a real int (plus_one returned big + 1).
+    output.must_include(%("msg": #{big_plus}))
+    output.must_include(%("msg": "int"))
+    output.must_include(%("msg": "RUN True"))
+    # to_json: bare digits for the ints, the lookalike string stays quoted.
+    dumped = File.read(written)
+    dumped.includes?("\u{E000}").must_equal(false, "sentinel marker leaked into to_json output")
+    dumped.must_include(%("w": #{big}))
+    dumped.must_include(%("n": #{two_pow_100}))
+    dumped.must_include(%("l": [#{two_pow_70}]))
+    dumped.must_include(%("s": "123456789012345678901234567890"))
+  ensure
+    FileUtils.rm_rf(root) if root
+  end
+end

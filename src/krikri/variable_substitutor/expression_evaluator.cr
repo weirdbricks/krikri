@@ -30,6 +30,15 @@ module Krikri
       @slicer : ArraySlicer
       @lookup : VariableLookup
       @jinja_renderer : VariableSubstitutor::JinjaRenderer?
+      # Set by #evaluate_lookup's dispatch when the result it returns kept
+      # its LIST form (ansible-core's ",".join raised TypeError and the
+      # sequence came back as-is) rather than comma-joining - the
+      # embedded-rendering decision in #evaluate_bare_lookup_call reads it
+      # straight after its own #evaluate_lookup call. Provenance from the
+      # dispatch, never from the returned text's shape: a lookup('file')
+      # whose content merely looks like a JSON array is a joined/str
+      # result and stays verbatim text (issue #695).
+      property? lookup_list_form : Bool
       # When true this evaluator resolves its Crinja-delegated operands
       # (method-call args like `.split('\n')`, `~` concat operands) against
       # the decoding environment instead of the inline verbatim one - set
@@ -41,6 +50,7 @@ module Krikri
         @filter = FilterEngine.new(@vars)
         @slicer = ArraySlicer.new(@vars)
         @lookup = VariableLookup.new(@vars)
+        @lookup_list_form = false
       end
 
       # Built lazily - most `{{ }}` spans never reach the boolean_logic?
@@ -724,8 +734,26 @@ module Krikri
       # lookup on the literal text "lookup('first_found', ffparams)",
       # always undefined.
       private def evaluate_bare_lookup_call(expr : String) : String?
-        return evaluate_lookup(expr[7..-2]) if bare_call?(expr, "lookup(")
-        nil
+        return nil unless bare_call?(expr, "lookup(")
+        lookup_rendered = evaluate_lookup(expr[7..-2])
+        # A scalar lookup() whose result ansible-core could not ",".join
+        # (a non-string element - an int, or a BIGINT_SENTINEL_PREFIX-
+        # marked wide int) keeps the real LIST (issue #695), and inside
+        # rendered text a list must render the way Ansible renders one:
+        # Python repr ("X [1, 2] Y"), not this codebase's internal
+        # JSON-compact form. The list-kept decision comes from the
+        # dispatch itself (#evaluate_lookup's list_form branches set
+        # #lookup_list_form) - never from the returned text's shape, so
+        # a lookup('file') whose content merely looks like JSON keeps
+        # its verbatim text exactly as before (its result is a joined
+        # str, and joined results never set the flag).
+        if @lookup_list_form
+          @lookup_list_form = false
+          if result = (BigJson.parse(lookup_rendered) rescue nil)
+            return @lookup.format_value_output(result) if result.raw.is_a?(Array)
+          end
+        end
+        lookup_rendered
       end
 
       # `lookup(...).method()` chained directly with no `|` filter at
