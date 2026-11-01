@@ -21,7 +21,7 @@ module Krikri
     # flush_pending_unreachable): run_task_batch books unreachable hosts
     # BEFORE its abort/halt decisions but must print the report under
     # the task banner, which is decided afterwards.
-    private def report_unreachable(task : Task?, host : Host, ssh_error : String? = nil, no_log : Bool = false, print : Bool = true, delegate_target : String? = nil, origin_local : Bool = false) : Nil
+    private def report_unreachable(task : Task?, host : Host, ssh_error : String? = nil, no_log : Bool = false, print : Bool = true, delegate_target : String? = nil) : Nil
       connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
       # Ansible embeds the transport's own error text in the msg
       # ("Task failed: Failed to connect to the host via ssh: ssh:
@@ -55,24 +55,19 @@ module Krikri
             origin = task.try { |failed_task| ResultDisplay.error_origin_context(failed_task) }
             # Ansible's UNREACHABLE error is one plain "Task failed: <ssh
             # error>" block with the Origin under it - no "Task failed." head
-            # and no "<<< caused by >>>" chain. Live-verified: an implicit
-            # Gathering Facts host that dies mid-run and a reboot handler
-            # whose post-timeout cleanup fails over ssh both print that
-            # shape (no Origin for the former, since it has no task).
-            # A DELEGATED task whose ORIGIN is local is the exception: ansible
-            # prints the "Task failed." head with the ssh error as its
-            # "<<< caused by >>>" link (live-verified vs 2.19.11 on a local
-            # origin, the same shape the looped path uses). An ssh origin - the
-            # round's real hosts, which gather facts before the delegate runs -
-            # keeps the plain block (live-verified vs 2.19.11 on the
-            # udelarinterior.proxmox_create_kvm round).
-            node = if delegate_target && origin_local
-                     ErrorBlock::Node.new("Task failed.", source_context: origin)
-                       .with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(inner, events: [] of ErrorBlock::Node))
-                   else
-                     ErrorBlock::Node.new(msg, source_context: origin)
-                   end
-            ErrorBlock.emit_to(io, node)
+            # and no "<<< caused by >>>" chain - for delegated tasks too,
+            # whatever the ORIGIN host's own connection is (issue #650,
+            # live-verified vs 2.19.11 on the udelarinterior.proxmox_create_kvm
+            # repro with both a local and an ssh origin). The two-segment shape
+            # a pipelined controller shows instead comes from the ssh failure
+            # surfacing inside interpreter-discovery handling, which only
+            # happens when ANSIBLE_PIPELINING is on (the role rounds run with
+            # every ANSIBLE_* env var stripped); this engine's upload-then-exec
+            # flow is the non-pipelined shape's analogue, so it keeps the plain
+            # block. Live-verified plain too: an implicit Gathering Facts host
+            # that dies mid-run and a reboot handler whose post-timeout cleanup
+            # fails over ssh (no Origin for the former, since it has no task).
+            ErrorBlock.emit_to(io, ErrorBlock::Node.new(msg, source_context: origin))
           end
           unreachable_host_label = delegate_target ? "#{host.name} -> #{delegate_target}" : host.name
           io << %(fatal: [#{unreachable_host_label}]: UNREACHABLE! => {"changed": false, "msg": #{msg.to_json}, "unreachable": true}).colorize(:red)
