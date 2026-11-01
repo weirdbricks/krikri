@@ -144,6 +144,37 @@ describe "strict boolean conditionals" do
     output.wont_include("\"msg\": \"TASK-RAN\"")
   end
 
+  # The third chain record is only for a missing name reached THROUGH a
+  # var value; when the undefined name appears as a whole identifier
+  # directly in the when: text (`nodejs_version_short` holds a template
+  # referencing `nodejs_version`, and the clause compares against it),
+  # real 2.19 fails on the direct reference and keeps the two-record
+  # block - the middle link stays the full conditional message and no
+  # var-definition cause stanza follows.
+  it "keeps the two-record chain when the missing name is a direct identifier in the when: clause" do
+    yaml = <<-YAML
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          _nodejs_version_short: '{{ nodejs_version | regex_search("^(\\d+)") }}'
+        tasks:
+          - name: gated
+            ansible.builtin.debug:
+              msg: "TASK-RAN"
+            when:
+              - nodejs_version == _nodejs_version_short
+      YAML
+
+    status, output = run_playbook(yaml)
+
+    status.exit_code.must_equal(2)
+    output.must_include("Error while evaluating conditional: 'nodejs_version' is undefined\nOrigin: ")
+    output.wont_include("Error while evaluating conditional.\n")
+    output.scan("'nodejs_version' is undefined\nOrigin: ").size.must_equal(1)
+    output.wont_include("\"msg\": \"TASK-RAN\"")
+  end
+
   it "accepts a genuine boolean" do
     status, output = run_playbook(playbook_for("real_bool"))
 
