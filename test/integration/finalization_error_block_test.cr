@@ -153,3 +153,67 @@ describe "task-arg finalization error block (free-form k=v folded past the modul
     File.delete(playbook) if playbook && File.exists?(playbook)
   end
 end
+
+describe "task-arg finalization error block (quoted templated set_fact key + lookup('vars'), issue #505)" do
+  it "chains the include_vars Origin through the quoted templated key and points stanza 3 at its value token" do
+    # galaxyproject.galaxy's layout task keys each fact with the
+    # unrendered `"{{ item }}"` and looks the default up as
+    # `lookup('vars', '__' ~ item)`: real 2.19 still prints the full
+    # chain - the quoted key's own value token for stanza 3 (line 9 col
+    # 19 here, the opening quote), and a fourth stanza whose Origin is
+    # the include_vars definition the runtime lookup actually reached.
+    dir = File.tempname("finalization-block-i505")
+    Dir.mkdir(dir)
+    playbook = File.join(dir, "pb.yml")
+    File.write(playbook, <<-YAML)
+      ---
+      - hosts: localhost
+        gather_facts: false
+        connection: local
+        tasks:
+          - include_vars: defaults.yml
+          - include_tasks: layout.yml
+      YAML
+    defaults = File.join(dir, "defaults.yml")
+    File.write(defaults, <<-YAML)
+      ---
+      # layout defaults
+      # padding
+      __x: "{{ undef_y }}/z"
+      YAML
+    layout = File.join(dir, "layout.yml")
+    File.write(layout, <<-YAML)
+      ---
+      # Configure any unset variables using layout defaults
+      # padded so the templated key sits on line 9
+      # padding
+      # padding
+      # padding
+      - name: Set any unset variables from layout defaults
+        set_fact:
+          "{{ item }}": "{{ lookup('vars', '__' ~ item) }}"
+        with_items:
+          - x
+          - y
+      YAML
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+    text = output.to_s
+
+    status.exit_code.must_equal(2)
+    # Item x: `__x` IS defined, so the failure is its own value's
+    # undefined reference - four stanzas, the fourth pointing at the
+    # include_vars layer the text scan alone could never reach.
+    text.must_include("[ERROR]: Task failed: Finalization of task args for 'ansible.builtin.set_fact' failed: Error while resolving value for '{{ item }}': 'undef_y' is undefined")
+    text.must_include("Error while resolving value for '{{ item }}'.\nOrigin: #{layout}:9:19")
+    text.must_include("9     \"{{ item }}\": \"{{ lookup('vars', '__' ~ item) }}\"\n                    ^ column 19\n")
+    text.must_include("'undef_y' is undefined\nOrigin: #{defaults}:4:6\n")
+    # Item y: `__y` does not exist at all - the lookup's own not-found
+    # message keeps the three-stanza shape, still at the quoted key's
+    # value token.
+    text.must_include("Error while resolving value for '{{ item }}': No variable named '__y' was found.\nOrigin: #{layout}:9:19")
+    text.scan("'undef_y' is undefined\nOrigin").size.must_equal(1)
+  ensure
+    FileUtils.rm_rf(dir) if dir && Dir.exists?(dir)
+  end
+end
