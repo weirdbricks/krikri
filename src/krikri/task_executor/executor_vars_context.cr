@@ -4036,7 +4036,7 @@ module Krikri
           # candidate from being mislabeled.
           next unless (raw.includes?("{{") || raw.includes?("{%") || raw.includes?("{#")) &&
                       !UnsafeValues.unsafe_text?(raw)
-          next if required_text && !raw.includes?(required_text)
+          next if required_text && !whole_identifier_text?(raw, required_text)
           next if raw.includes?("lookup(") || raw.includes?("query(")
           origin = origins[key]?
           next unless origin.is_a?(FileVarOrigin) && origin.column > 0 && File.file?(origin.path)
@@ -4118,7 +4118,7 @@ module Krikri
       when String
         return unless (raw.includes?("{{") || raw.includes?("{%") || raw.includes?("{#")) &&
                       !UnsafeValues.unsafe_text?(raw)
-        return if required_text && !raw.includes?(required_text)
+        return if required_text && !whole_identifier_text?(raw, required_text)
         return if raw.includes?("lookup(") || raw.includes?("query(")
         begin
           VarSubstitutor.new(vars: vars).substitute(raw, strict: true)
@@ -4128,6 +4128,20 @@ module Krikri
           nil
         end
       end
+    end
+
+    # Real's chain Origin stays unambiguous when a candidate value only
+    # mentions the missing name inside a LONGER identifier: with
+    # `acme_certificate_domains: '{{ domains }}'` missing `domains`,
+    # `acme_certificate_key_name`'s value (which names
+    # `acme_certificate_domains`) is not a second defining site the way
+    # a bare substring match would make it (issue #500) - real still
+    # reports the fourth chain stanza, so the scan must count the name
+    # as a whole identifier only.
+    private def whole_identifier_text?(raw : String, required_text : String?) : Bool
+      return true unless required_text
+      word = Regex.new("(?<![A-Za-z0-9_])#{Regex.escape(required_text)}(?![A-Za-z0-9_])")
+      raw.matches?(word)
     end
 
     # The unique var-layer DEFINITION whose raw value is an encrypted
