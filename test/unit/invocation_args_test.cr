@@ -28,6 +28,13 @@ describe Krikri::ArgspecValidator do
     args["force"].as_bool.must_equal(false)
   end
 
+  it "keeps the caller's alias spelling next to the canonical key (file dest: -> dest and path)" do
+    args = Krikri::ArgspecValidator.invocation_args("ansible.builtin.file", {"dest" => "/tmp/l", "src" => "/etc/hostname", "state" => "link"}).as(Hash(String, JSON::Any))
+    args["dest"].as_s.must_equal("/tmp/l")
+    args["path"].as_s.must_equal("/tmp/l")
+    args.keys.first(4).must_equal(%w[dest path src state])
+  end
+
   it "has no invocation for an unknown module" do
     Krikri::ArgspecValidator.invocation_args("ansible.builtin.nope", {} of String => String).must_be_nil
   end
