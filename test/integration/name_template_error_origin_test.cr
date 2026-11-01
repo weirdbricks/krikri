@@ -56,6 +56,37 @@ describe "task name template error warning blocks" do
     FileUtils.rm_rf(src_dir) if src_dir
   end
 
+  # Issue #710 - a name attribute-miss on a template-valued var is typed by
+  # what the var renders to (a list here), not by its rendered text ('str').
+  it "types an attribute miss on a template-valued variable by its rendered value" do
+    src_dir = File.tempname("name-warn-rendered-type")
+    Dir.mkdir_p(src_dir)
+    File.write(File.join(src_dir, "pb.yml"), <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          lnk: "{{ tbl['nope'] | default(tbl['default']) }}"
+          tbl:
+            default: []
+        tasks:
+          - name: Link {{ lnk.src }} to {{ lnk.dest }}
+            ansible.builtin.debug:
+              msg: hi
+            when: lnk.src is defined
+      YAML
+
+    output = IO::Memory.new
+    Process.run(BINARY, ["-i", INVENTORY, "pb.yml"], output: output, error: output, chdir: src_dir)
+
+    stdout = output.to_s
+    stdout.must_include("error 1 - object of type 'list' has no attribute 'src'")
+    stdout.must_include("error 2 - object of type 'list' has no attribute 'dest'")
+    stdout.wont_include("object of type 'str'")
+  ensure
+    FileUtils.rm_rf(src_dir) if src_dir
+  end
+
   # Issue #500 - when the failing value IS one bare reference (`lst:
   # '{{ nosuch }}'`), a method-call span does not truncate the name the
   # way an operator-combining span does: real splices the marker in and
