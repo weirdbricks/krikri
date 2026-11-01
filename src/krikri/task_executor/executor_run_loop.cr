@@ -3341,8 +3341,38 @@ module Krikri
     private def bigint_typed_param_text(task : Task, key : String, substituted : String,
                                         vars : Hash(String, JSON::Any)) : String
       stripped = substituted.strip
-      return substituted unless stripped.matches?(/\A-?(0|[1-9]\d*)\z/) && stripped.to_i64?.nil?
       raw = task.params[key]?
+      # A quoted literal ("5", "true", "null") stays a str in ansible-core,
+      # but typed_value re-infers int/bool/None from the bare text. A value
+      # with no template syntax and unchanged by substitution has no
+      # rendered-variable provenance, so ship it as a native JSON string.
+      if raw && raw == substituted && !raw.includes?("{{") && !raw.includes?("{%") &&
+         !raw.starts_with?(Krikri::NON_STRING_PARAM_PREFIX) &&
+         (stripped.in?("true", "True", "false", "False", "None", "null") || stripped.to_i64?)
+        return Krikri::NON_STRING_PARAM_PREFIX + substituted.to_json
+      end
+      # A templated arg only keeps a non-str type when the template is a
+      # single `{{ expr }}` span whose value is itself an int/bool/None;
+      # a str-valued variable ("5") or a multi-span/mixed template renders
+      # to a str in ansible-core.
+      if raw && (raw.includes?("{{") || raw.includes?("{%")) &&
+         !raw.starts_with?(Krikri::NON_STRING_PARAM_PREFIX) &&
+         (stripped.in?("true", "True", "false", "False", "None", "null") || stripped.to_i64?)
+        if !VarSubstitutor.single_top_level_span?(raw.strip)
+          return Krikri::NON_STRING_PARAM_PREFIX + substituted.to_json
+        elsif !Krikri.probe_has_side_effecting_call?(raw)
+          rendered = begin
+            VariableSubstitutor::ExpressionEvaluator.new(vars)
+              .evaluate_structured(raw.strip[2..-3].strip)
+          rescue
+            nil
+          end
+          if rendered && rendered.raw.is_a?(String)
+            return Krikri::NON_STRING_PARAM_PREFIX + substituted.to_json
+          end
+        end
+      end
+      return substituted unless stripped.matches?(/\A-?(0|[1-9]\d*)\z/) && stripped.to_i64?.nil?
       return substituted unless raw && VarSubstitutor.single_top_level_span?(raw.strip)
       return substituted if Krikri.probe_has_side_effecting_call?(raw)
       structured = begin
@@ -3404,7 +3434,7 @@ module Krikri
           # module), a whole-value container template back into a real
           # container, everything else stays a string.
           typed_text = bigint_typed_param_text(task, key, value, vars_context)
-          args[key] = Krikri.non_string_scalar(value) ||
+          args[key] = Krikri.non_string_scalar(value) || Krikri.non_string_scalar(typed_text) ||
                       PythonModuleRunner.typed_member_list(typed_text) ||
                       PythonModuleRunner.typed_value(typed_text)
         end

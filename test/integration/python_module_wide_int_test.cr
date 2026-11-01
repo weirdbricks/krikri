@@ -309,4 +309,65 @@ describe "role-private python module returning integers wider than Int64" do
   ensure
     FileUtils.rm_rf(root) if root
   end
+
+  # Issue #700, live-verified vs ansible-playbook 2.19.11: a QUOTED literal
+  # ("5", "true", "null") reaches a raw-typed module param as a str, while
+  # `{{ 5 }}` / `{{ x }}` with an int x stay int.
+  it "keeps quoted literal digit/bool/null strings a str while templated ints stay int" do
+    skip("python3 not available") unless File.exists?("/usr/bin/python3")
+    root = File.tempname("py-quoted-literal")
+    Dir.mkdir_p(File.join(root, "roles", "qlit", "library"))
+    Dir.mkdir_p(File.join(root, "roles", "qlit", "tasks"))
+
+    File.write(File.join(root, "roles", "qlit", "library", "argmod.py"), <<-PYTHON)
+      #!/usr/bin/python
+      from ansible.module_utils.basic import AnsibleModule
+
+      module = AnsibleModule(argument_spec={'r': {'type': 'raw'}})
+      module.exit_json(changed=False, r=module.params['r'],
+                       r_type=type(module.params['r']).__name__)
+      PYTHON
+    File.write(File.join(root, "roles", "qlit", "tasks", "main.yml"), <<-YAML)
+      - argmod:
+          r: "5"
+        register: lit_int
+      - argmod:
+          r: "true"
+        register: lit_bool
+      - argmod:
+          r: "null"
+        register: lit_null
+      - argmod:
+          r: "{{ x }}"
+        register: tmpl_var
+      - argmod:
+          r: "{{ 5 }}"
+        register: tmpl_expr
+      - argmod:
+          r: "{{ sv }}"
+        register: tmpl_strvar
+      - debug:
+          msg: "lit_int={{ lit_int.r_type }} lit_bool={{ lit_bool.r_type }} lit_null={{ lit_null.r_type }} tmpl_var={{ tmpl_var.r_type }} tmpl_expr={{ tmpl_expr.r_type }} tmpl_strvar={{ tmpl_strvar.r_type }}"
+      YAML
+    File.write(File.join(root, "pb.yml"), <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          x: 5
+          sv: "5"
+        roles:
+          - qlit
+      YAML
+
+    captured = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, "pb.yml"], output: captured, error: captured, chdir: root)
+    output = captured.to_s
+
+    status.success?.must_equal(true, output)
+    output.includes?("\u{E000}").must_equal(false, "sentinel marker leaked into output:\n#{output}")
+    output.must_include("lit_int=str lit_bool=str lit_null=str tmpl_var=int tmpl_expr=int tmpl_strvar=str")
+  ensure
+    FileUtils.rm_rf(root) if root
+  end
 end
