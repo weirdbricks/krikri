@@ -197,6 +197,15 @@ describe "Krikri::KrikriJinjaFilters Ansible tests and remaining filters" do
     end
   end
 
+  # Real Jinja2/Ansible: `first` on empty produces a chainable strict
+  # undefined, so `([] | first).name | default('NONE')` yields the default
+  # instead of failing (philnewm.blender, issue #726). The eager raise
+  # used to fire before the `default(...)` could rescue anything.
+  it "lets a chained default rescue first/last of an empty sequence" do
+    render("{{ ([] | first).name | default('NONE') }}").must_equal("NONE")
+    render("{{ ([] | last).name | default('NONE') }}").must_equal("NONE")
+  end
+
   it "maps items2dict's key_name field to the key" do
     render("{{ [{'k': 'a', 'v': 1}] | items2dict(key_name='k', value_name='v') }}").must_equal("{'a': 1}")
     assert_raises_message(KrikriJinja::TemplateError, "items2dict requires each dictionary in the list to contain the keys 'k' and 'v'") do

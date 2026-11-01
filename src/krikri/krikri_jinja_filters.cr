@@ -1134,11 +1134,13 @@ module Krikri
         end
       end
 
-      # Jinja2's `first`/`last` on an empty sequence produce an undefined
-      # that fails the moment anything touches it ("No first item, sequence
-      # was empty."); raising here gives the same task failure instead of a
-      # silently undefined value (`ansible_mounts | selectattr(...) | first`
-      # on no match, robertdebock.mount_options round 140).
+      # Jinja2's `first`/`last` on an empty sequence produce a STRICT
+      # undefined that fails only when it is USED, not when it is produced
+      # - so `([] | first).name | default('NONE')` yields the default
+      # instead of failing (philnewm.blender, issue #726). A chainable
+      # strict undefined keeps both halves of that: `{{ [] | first }}`
+      # still raises "No first item..." at render time, while a `.name`
+      # chain and a consuming `default(...)` stay lazy.
       {"first", "last"}.each do |filter_name|
         builtin = KrikriJinja.default_engine.filters[filter_name]
         KrikriJinja.register_default_filter(filter_name) do |value, args, kwargs, ctx|
@@ -1148,8 +1150,13 @@ module Krikri
                   when Hash   then raw.empty?
                   else             false
                   end
-          raise KrikriJinja::TemplateError.new("No #{filter_name} item, sequence was empty.", 0) if empty
-          builtin.call(value, args, kwargs, ctx)
+          if empty
+            undefined = KrikriJinja::StrictUndefined.new(nil, chainable: true)
+            undefined.hint = "No #{filter_name} item, sequence was empty."
+            KrikriJinja::AnyValue.new(undefined)
+          else
+            builtin.call(value, args, kwargs, ctx)
+          end
         end
       end
 
