@@ -599,6 +599,15 @@ module Krikri
       # MODULE_SEARCH_COLLECTIONS.
       "ansible.builtin.snap" => "community.general.snap",
       "ansible.legacy.snap"  => "community.general.snap",
+      # make was never in ansible-core, but its builtin runtime redirects
+      # the ansible.builtin./ansible.legacy. spellings onto
+      # community.general.make and resolves and runs the module (issue
+      # #708); krikri only registered community.general.make, so the task
+      # was skipped as an unavailable plugin. The bare spelling needs no
+      # entry here - community.general is already in
+      # MODULE_SEARCH_COLLECTIONS.
+      "ansible.builtin.make" => "community.general.make",
+      "ansible.legacy.make"  => "community.general.make",
       # virt_net's collection namespace (see its AVAILABLE_PLUGINS entry).
       "community.libvirt.virt_net" => "virt_net",
     }
