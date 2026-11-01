@@ -279,4 +279,62 @@ describe "role-private Python action plugin with an empty library placeholder (r
   ensure
     FileUtils.rm_rf(root) if root
   end
+
+  it "registers a dispatched plugin's result with the executor's failed/changed backfill (issue #697)" do
+    # Ansible's task executor backfills `failed` (and `changed`) onto every
+    # action-plugin result before register: sees it, APPENDED after the
+    # plugin's own keys - a plugin returning only {changed, hello} registers
+    # as {"changed": false, "hello": "world", "failed": false} on real
+    # 2.19.11, and a plugin returning neither key registers
+    # {big, v, failed, changed}. krikri used to register the plugin's raw
+    # dict, so `when: out.failed` and `out | to_json` diverged from real.
+    root = File.tempname("role-local-action-register")
+    Dir.mkdir_p(File.join(root, "roles", "myact", "action_plugins"))
+    Dir.mkdir_p(File.join(root, "roles", "myact", "tasks"))
+
+    File.write(File.join(root, "roles", "myact", "action_plugins", "myact.py"), <<-PYTHON)
+      from ansible.plugins.action import ActionBase
+
+      class ActionModule(ActionBase):
+          TRANSFERS_FILES = False
+
+          def run(self, tmp=None, task_vars=None):
+              r = super().run(tmp, task_vars)
+              r.update(changed=False, hello='world')
+              return r
+      PYTHON
+
+    File.write(File.join(root, "roles", "myact", "tasks", "main.yml"), <<-YAML)
+      - name: Run myact
+        myact:
+        register: out
+      - name: Json out
+        debug:
+          msg: '{{ out | to_json }}'
+      YAML
+
+    File.write(File.join(root, "pb.yml"), <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        roles:
+          - myact
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, "pb.yml"], output: output, error: output, chdir: root)
+
+    if ansible_importable
+      status.exit_code.must_equal(0, output.to_s)
+      # Key order is ansible's: the plugin's own keys first, `failed`
+      # appended last (json.dumps preserves the dict's insertion order).
+      output.to_s.must_include(
+        %("msg": "{\\"changed\\": false, \\"hello\\": \\"world\\", \\"failed\\": false}"),
+        output.to_s)
+    else
+      output.to_s.must_include("is not supported by krikri", output.to_s)
+    end
+  ensure
+    FileUtils.rm_rf(root) if root
+  end
 end

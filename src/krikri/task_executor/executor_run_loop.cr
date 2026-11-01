@@ -3462,6 +3462,17 @@ module Krikri
           result = PythonActionRunner.run_action(action_plugin, module_name, args, connection,
             exec_host.connection_host, port, remote_user, become, become_user,
             resolve_task_check_mode(task, wire_vars), vars_context, dispatcher)
+          # Ansible's task executor backfills `failed` (and `changed`) onto
+          # every action-plugin result before it is registered, APPENDED
+          # after the plugin's own keys - a dispatched plugin's dict carries
+          # neither unless it sets them (live-verified vs 2.19.11:
+          # `{big, v}` registers as {big, v, failed, changed}, issue #697).
+          # The module path gets the same backfill from
+          # PluginManager.normalize_module_result, which this branch bypasses.
+          if (result_hash = result.as_h?) && !result_hash.has_key?("failed")
+            result_hash["failed"] = JSON::Any.new(false)
+            result_hash["changed"] = JSON::Any.new(false) unless result_hash.has_key?("changed")
+          end
           # Ansible's task executor classifies EVERY dict the action layer
           # returns (AnsibleActionCapturedError.maybe_raise_on_result on
           # _execute's result): a failed dict WITHOUT an exception summary is
