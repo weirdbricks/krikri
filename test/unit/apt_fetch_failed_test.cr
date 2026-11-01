@@ -65,6 +65,8 @@ class FetchFailedHostClass
 end
 
 describe "apt fetch-failure detection and FetchFailedException retry loop (round 1100002)" do
+  serial!
+
   describe "#apt_fetch_failed?" do
     it "detects the jammy exit-0 W:-only partial-fetch failure" do
       FetchFailedHostClass.new.apt_fetch_failed?(APT_UPDATE_FETCH_FAILED).must_equal(true)
@@ -95,6 +97,16 @@ describe "apt fetch-failure detection and FetchFailedException retry loop (round
       outcome[:warnings][2].must_equal("Failed to update cache after 2 retries due to , retrying")
       outcome[:warnings][3].matches?(/^Sleeping for [12] seconds, before attempting to refresh the cache again$/).must_equal(true)
       stub.exec_count.must_equal(2)
+    end
+
+    it "shares one jitter across all attempts like apt.py's single randomize draw" do
+      stub = FetchFailedStubExec.new([APT_UPDATE_FETCH_FAILED])
+      ENV["KRIKRI_TEST_SLEEP_SCALE"] = "0.001"
+      outcome = FetchFailedHostClass.new.apt_fetch_failed_update_retry(5, 12, ->(c : String) { stub.call(c) }, jitter: 0.7)
+      secs = outcome[:warnings].select(&.starts_with?("Sleeping for ")).map(&.split(' ')[2])
+      secs.must_equal(["2", "3", "5", "9", "13"])
+    ensure
+      ENV.delete("KRIKRI_TEST_SLEEP_SCALE")
     end
 
     it "recovers (keeping the warn pairs so far) when a retry attempt succeeds" do

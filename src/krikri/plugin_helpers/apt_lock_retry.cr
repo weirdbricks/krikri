@@ -293,7 +293,8 @@ module Krikri
     # empty for the bare-exception class).
     def apt_fetch_failed_update_retry(retries : Int32, retry_max_delay : Int32,
                                       exec_remote : Proc(String, NamedTuple(exit_code: Int32, stdout: String, stderr: String)),
-                                      initial_reason : String = "", initial_signature_failed : Bool = false)
+                                      initial_reason : String = "", initial_signature_failed : Bool = false,
+                                      jitter : Float64 = rand(1000) / 1000.0)
       warnings = [] of String
       recovered = false
       signature_failed = initial_signature_failed
@@ -301,8 +302,10 @@ module Krikri
       warned_reason = initial_reason
       retries.times do |attempt|
         warnings << "Failed to update cache after #{attempt + 1} retries due to #{warned_reason}, retrying"
-        delay = 2.0 ** attempt + (rand(1000) / 1000.0)
-        delay = retry_max_delay + (rand(1000) / 1000.0) if delay > retry_max_delay
+        # apt.py draws `randomize` once before its loop, so every attempt
+        # shares the same fractional part (observed 2,3,5,9,13 in one run)
+        delay = 2.0 ** attempt + jitter
+        delay = retry_max_delay + jitter if delay > retry_max_delay
         retry_sleep(delay)
         # ansible formats the delay with int(round(delay)) (Python round,
         # ties-to-even: 1.7s -> "2"), NOT %i truncation
