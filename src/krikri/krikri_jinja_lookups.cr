@@ -30,13 +30,22 @@ module Krikri
             next unless (undefined = arg.raw.as?(KrikriJinja::Undefined))
             raise KrikriJinja::TemplateError.new(KrikriJinja.undefined_message(undefined), 0, kind: KrikriJinja::ErrorKind::Undefined)
           end
-          name = text(args[0]).sub(/^ansible\.(builtin|legacy)\./, "")
-          result = lookup(name, prepare_lookup_terms(args[1..], ctx), kwargs, ctx, query_mode)
-          if query_mode && !result.raw.is_a?(KrikriJinja::Undefined) && !result.raw.nil? && !result.raw.is_a?(Array)
-            AnyValue.new([result])
+          # ansible-core 2.19 poisons the whole lookup when an Undefined
+          # marker reaches it as a kwarg (guidugli.postfix's
+          # `lookup('ansible.builtin.vars', item, default=undef()) is
+          # defined` probe): the call returns that marker without running
+          # the plugin, so the is-defined guard answers False even for a
+          # variable that exists. A literal default='x' still finds the var.
+          if (poisoned = kwargs.values.find { |kwarg| kwarg.raw.is_a?(KrikriJinja::Undefined) })
+            result = poisoned
           else
-            result
+            name = text(args[0]).sub(/^ansible\.(builtin|legacy)\./, "")
+            result = lookup(name, prepare_lookup_terms(args[1..], ctx), kwargs, ctx, query_mode)
+            if query_mode && !result.raw.is_a?(KrikriJinja::Undefined) && !result.raw.nil? && !result.raw.is_a?(Array)
+              result = AnyValue.new([result])
+            end
           end
+          result
         end
       end
     end

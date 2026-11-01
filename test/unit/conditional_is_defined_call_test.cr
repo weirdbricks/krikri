@@ -30,4 +30,18 @@ describe "is defined on a call operand (conditional_is_defined_call_test.cr)" do
     Krikri::ConditionalEvaluator.evaluate("present is defined", vars).must_equal(true)
     Krikri::ConditionalEvaluator.evaluate("absent_var is defined", vars).must_equal(false)
   end
+
+  # ansible-core 2.19: an Undefined marker passed as a lookup kwarg
+  # (guidugli.postfix probes vars with
+  # `lookup('ansible.builtin.vars', item, default=undef()) is defined`)
+  # poisons the whole call - the lookup returns the marker itself instead
+  # of running, so the guard answers False even for a variable that
+  # exists. A literal default='x' still finds the variable.
+  it "answers False when default=undef() poisons an existing variable's lookup" do
+    Krikri::ConditionalEvaluator.evaluate("lookup('ansible.builtin.vars', 'present', default=undef()) is defined", vars).must_equal(false)
+  end
+
+  it "still answers True for a literal default on an existing variable's lookup" do
+    Krikri::ConditionalEvaluator.evaluate("lookup('vars', 'present', default='x') is defined", vars).must_equal(true)
+  end
 end
