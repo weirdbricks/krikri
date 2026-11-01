@@ -161,6 +161,15 @@ module Krikri
                             already_ran, second_pass)
       already_ran.add(rendered_name)
 
+      # ansible reaches VariableManager.get_vars for a handler only when
+      # a flush actually runs it, so its parse-time reserved-name warning
+      # prints here (issue #473) - once per Task object, never for a
+      # handler nothing notified.
+      if text = handler.pending_reserved_warning
+        handler.pending_reserved_warning = nil
+        STDERR.print text
+      end
+
       # Display-only role prefix (verified live against
       # ansible-core 2.19.12: "RUNNING HANDLER [myrole : my
       # handler]") - reads handler.role_name directly rather

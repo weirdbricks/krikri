@@ -194,6 +194,13 @@ module Krikri
     property source_file : String? = nil
     property source_line : Int32 = 0
     property source_col : Int32 = 0
+    # ansible emits a task-level reserved-name warning from
+    # VariableManager.get_vars - once the strategy actually reaches the
+    # task, not while the playbook loads (issue #473: a load-time print
+    # fires even for a task an earlier failure keeps from ever running).
+    # The parse-time scan parks the text here; the executor prints it
+    # just before the task's banner, or never when the play ends first.
+    property pending_reserved_warning : String? = nil
     # The file/line/col of an import_tasks: line's own `when:` VALUE token
     # that was statically ANDed onto this task - the position real 2.19
     # points the conditional-failure chain's "caused by" Origin at for an
@@ -2011,8 +2018,8 @@ module Krikri
       if pos = source_map.at?(task_source_prefix(source_prefix, index))
         task.source_line, task.source_col = pos
       end
-      warn_reserved_vars(task.vars.keys, task.source_file, task.source_line)
-      warn_reserved_register(task.register, task.source_file, task.source_line)
+      warn_reserved_vars(task.vars.keys, task.source_file, task.source_line, task)
+      warn_reserved_register(task.register, task.source_file, task.source_line, task)
 
       # The task's own `vars:` entries' defining positions - real points a
       # name-template error inside one at its `vars:` value (live-verified
@@ -4731,7 +4738,7 @@ module Krikri
       result
     end
 
-    private def self.warn_reserved_vars(keys : Array(String), source_file : String?, from_line : Int32) : Nil
+    private def self.warn_reserved_vars(keys : Array(String), source_file : String?, from_line : Int32, task : Task? = nil) : Nil
       return unless sf = source_file
       # Runs once per parsed task: the key check comes before any
       # filesystem work, so tasks without a reserved-name var (the
@@ -4743,16 +4750,23 @@ module Krikri
         next unless RESERVED_VAR_NAMES.includes?(key)
         found = locate_reserved_key(lines, key, from_line)
         next unless found
-        emit_reserved_warning(key, sf, lines, found)
+        emit_reserved_warning(key, sf, lines, found, task)
       end
     end
 
     # Shared emit for every task-parse-path reserved-name warning: the
     # Origin block already ends in a newline, so one more gives the blank
     # line ansible prints after it.
-    private def self.emit_reserved_warning(key : String, source_file : String, lines : Array(String), found : Tuple(Int32, Int32)) : Nil
+    private def self.emit_reserved_warning(key : String, source_file : String, lines : Array(String), found : Tuple(Int32, Int32), task : Task? = nil) : Nil
       text = "[WARNING]: Found variable using reserved name '#{key}'.\n" \
              "#{reserved_origin_block(source_file, lines, found[0], found[1])}\n"
+      # A task-level scan defers onto the Task object instead: ansible
+      # only reaches VariableManager.get_vars when the task actually
+      # runs, so a play aborted before it must stay silent (issue #473).
+      if task
+        task.pending_reserved_warning = "#{task.pending_reserved_warning}#{text}"
+        return
+      end
       if @@reserved_warning_buffers.empty?
         STDERR.print text
       else
@@ -4762,14 +4776,14 @@ module Krikri
 
     # ansible-core 2.19 warns for a task's `register:` name too (issue
     # #469) - same text, Origin pointing at the register VALUE token.
-    private def self.warn_reserved_register(register : String?, source_file : String?, from_line : Int32) : Nil
+    private def self.warn_reserved_register(register : String?, source_file : String?, from_line : Int32, task : Task? = nil) : Nil
       return unless register && RESERVED_VAR_NAMES.includes?(register)
       return unless sf = source_file
       return unless File.file?(sf)
       lines = source_lines(sf) || return
       found = locate_reserved_register(lines, from_line)
       return unless found
-      emit_reserved_warning(register, sf, lines, found)
+      emit_reserved_warning(register, sf, lines, found, task)
     end
 
     private def self.locate_reserved_register(lines : Array(String), from_line : Int32) : Tuple(Int32, Int32)?

@@ -155,6 +155,19 @@ module Krikri
       true
     end
 
+    # ansible warns a task's reserved-name vars/register from
+    # VariableManager.get_vars - once the strategy reaches the task, not
+    # during the load (issue #473). The parser parked the text on the
+    # Task; print it here, just before the task's own banner, and clear
+    # it so each Task object warns once no matter how many hosts iterate
+    # it. Called only after the halt/abort breaks: a task the play never
+    # reaches (an earlier failure ended it) stays silent, like real.
+    private def flush_pending_reserved_warning(task : Task) : Nil
+      return unless text = task.pending_reserved_warning
+      task.pending_reserved_warning = nil
+      STDERR.print text
+    end
+
     # Emits Ansible's UNREACHABLE! line for *host* and books it as
     # either ignored (ignore_unreachable:) or unreachable, halting the
     # host in the latter case.
@@ -217,6 +230,8 @@ module Krikri
         # (pending_unreachable non-empty) - ansible shows
         # "TASK [Gathering Facts]" + the fatal, not a bare fatal.
         break if halt_rejected.empty? && pending_unreachable.empty?
+
+        flush_pending_reserved_warning(task)
 
         # Same treatment role_ended's filter gets: a host whose per-host
         # dependency dedup already credits this identity to an earlier

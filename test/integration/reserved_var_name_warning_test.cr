@@ -1,11 +1,13 @@
 require "../minitest_helper"
 require "file_utils"
 
-# A play/task `vars:` entry using one of ansible-core's reserved variable
-# names warns at compile time: "[WARNING]: Found variable using reserved
-# name 'X'." + an Origin block naming the var key's own position, one
-# blank line after each block. Byte-for-byte vs ansible-playbook
-# 2.19.11 (pr.yml-shape probes via scripts/output_parity.sh).
+# A play-level `vars:` entry using one of ansible-core's reserved variable
+# names warns at load time; a TASK-level one warns lazily, when the
+# strategy actually reaches the task (ansible's VariableManager.get_vars):
+# "[WARNING]: Found variable using reserved name 'X'." + an Origin block
+# naming the var key's own position, one blank line after each block.
+# Byte-for-byte vs ansible-playbook 2.19.11 (pr.yml-shape probes via
+# scripts/output_parity.sh).
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
@@ -143,5 +145,55 @@ describe "reserved variable name warning" do
     output.to_s.must_include("Origin: #{playbook}:7:9")
   ensure
     FileUtils.rm_rf(dir) if dir
+  end
+
+  # issue #473 (danielmschmidt.ansible_docker_systemd_traefik_service):
+  # ansible warns a task's reserved-name vars from get_vars, i.e. only
+  # when the strategy reaches the task - an earlier failure that ends the
+  # play keeps the later task's warning from ever printing, where a
+  # load-time print fired before the PLAY banner was even out.
+  it "does not warn for a reserved task var on a task the play never reaches" do
+    playbook = File.tempname("reserved-var-unreached", ".yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        gather_facts: false
+        tasks:
+          - fail: msg=boom
+          - debug: msg="hi"
+            vars:
+              name: x
+      YAML
+    output = IO::Memory.new
+    Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+    text = output.to_s
+
+    text.must_include("fatal: [localhost]")
+    refute(text.includes?("Found variable using reserved name"))
+  ensure
+    File.delete(playbook) if playbook && File.exists?(playbook)
+  end
+
+  it "warns for a reserved task var only once the task actually runs" do
+    playbook = File.tempname("reserved-var-reached", ".yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        gather_facts: false
+        tasks:
+          - debug: msg="hi"
+            vars:
+              name: x
+      YAML
+    output = IO::Memory.new
+    Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+    text = output.to_s
+
+    text.must_include("[WARNING]: Found variable using reserved name 'name'.")
+    text.must_include("Origin: #{playbook}:6:9")
+    # the warning is a run-time event now: the PLAY banner is out first
+    play_at = text.index!("PLAY [")
+    warn_at = text.index!("[WARNING]: Found variable using reserved name")
+    (play_at < warn_at).must_equal(true)
+  ensure
+    File.delete(playbook) if playbook && File.exists?(playbook)
   end
 end
