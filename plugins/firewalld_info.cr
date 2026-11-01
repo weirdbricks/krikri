@@ -3,6 +3,7 @@
 require "json"
 require "file_utils"
 require "../src/krikri/base_plugin"
+require "../src/krikri/bigint_json"
 require "../src/krikri/plugin_helpers/python_lib_gate"
 
 module Krikri
@@ -114,7 +115,10 @@ module Krikri
         stdout = IO::Memory.new
         Process.run(python, {script_path, params_path}, output: stdout, error: Process::Redirect::Close)
 
-        data = JSON.parse(stdout.to_s)
+        # BigJson, not JSON.parse: the probe's stdout is Python result
+        # data (issue #695) - a wide int must arrive as the bigint
+        # marker instead of an "Invalid Int64" raise.
+        data = Krikri::BigJson.parse(stdout.to_s)
         unless data["ok"]?.try(&.as_bool?)
           return PluginResult.new(changed: false, failed: true, msg: data["msg"].as_s)
         end

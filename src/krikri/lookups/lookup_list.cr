@@ -32,7 +32,25 @@ module Krikri
           # fail with "No package matching 'undefined' is available".
           items = lookup_flatten(parts[1..].map { |part| evaluate_lookup_term(part.strip) })
           wantlist = kwargs.any? { |part| part.strip.downcase.starts_with?("wantlist=true") }
-          (query_mode || wantlist) ? items.to_json : items.map { |item| item.raw.is_a?(String) ? item.as_s : item.to_json }.join(",")
+          # ansible-core's _invoke_lookup joins with ",".join and returns
+          # the sequence AS-IS when that raises TypeError - only an
+          # all-string result comma-joins; one non-string element (an
+          # Int64, or a BIGINT_SENTINEL_PREFIX-marked string, which IS an
+          # integer too wide for Int64 - issue #695) keeps the real list.
+          # Joining a marked string used to leak the marker into the
+          # rendered text.
+          list_form = query_mode || wantlist || lookup_join_list_form?(items)
+          # Assigned on BOTH branches: a nested lookup evaluated on this
+          # evaluator must never leave a stale true behind a joined str.
+          @lookup_list_form = list_form
+          if list_form
+            # The embedded bare-call renderer (#evaluate_bare_lookup_call)
+            # must know this result kept its list - it renders Python repr
+            # for list-kept results, never for a joined str (issue #695).
+            items.to_json
+          else
+            items.map { |item| item.as_s }.join(",")
+          end
         when "together"
           evaluate_lookup_together(parts)
         when "nested"
@@ -150,6 +168,20 @@ module Krikri
 
       private def lookup_array(value : JSON::Any?) : Array(JSON::Any)
         value.try(&.as_a?) || [] of JSON::Any
+      end
+
+      # Whether a scalar lookup() result must keep its list form instead
+      # of comma-joining: ansible-core's _invoke_lookup joins with
+      # ",".join and returns the sequence AS-IS when that raises
+      # TypeError, so only an all-plain-string result joins - one
+      # non-string element (an Int64, or a BIGINT_SENTINEL_PREFIX-marked
+      # string, which IS an integer too wide for Int64 - issue #695)
+      # keeps the real list (joining a marked string leaked the marker
+      # into the rendered text).
+      private def lookup_join_list_form?(items : Array(JSON::Any)) : Bool
+        items.any? do |item|
+          !(raw = item.raw).is_a?(String) || !Krikri.bigint_digits(raw).nil?
+        end
       end
     end
   end

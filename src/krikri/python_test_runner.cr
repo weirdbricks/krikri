@@ -1,4 +1,5 @@
 require "json"
+require "./bigint_json"
 
 # Runner for role-local custom TEST plugins - a role's own
 # `test_plugins/*.py` (and the playbook-adjacent `test_plugins/`),
@@ -171,12 +172,21 @@ module Krikri
 
       stdout = IO::Memory.new
       stderr = IO::Memory.new
+      # unquote_bigint_json, not payload.to_json verbatim: an operand or
+      # argument carrying a bigint marker (an integer wider than Int64 a
+      # module returned, carried as a marked string) must reach the
+      # test as a real Python int, the way Ansible passes its own int
+      # objects - unquote_bigint_json rewrites ONLY the exact marked
+      # string form, so a genuine user string is never altered.
       status = Process.run(python, ["-c", WRAPPER],
-        input: IO::Memory.new(payload.to_json),
+        input: IO::Memory.new(Krikri.unquote_bigint_json(payload.to_json)),
         output: stdout, error: stderr)
       return nil unless status.success?
 
-      parsed = (JSON.parse(stdout.to_s) rescue nil)
+      # BigJson, not JSON.parse: a test result with an integer wider
+      # than Int64 (Python ints are unbounded) made plain JSON.parse
+      # raise "Invalid Int64" and the whole result became nil.
+      parsed = (Krikri::BigJson.parse(stdout.to_s) rescue nil)
       return nil unless parsed && parsed.as_h?
       parsed
     rescue

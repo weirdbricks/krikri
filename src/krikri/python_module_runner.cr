@@ -1,6 +1,7 @@
 require "json"
 require "base64"
 require "./collection_index"
+require "./bigint_json"
 
 # Runner for role-private custom modules - a role's own `library/*.py`,
 # outside the plugin set this engine ships as native binaries.
@@ -261,7 +262,11 @@ module Krikri
           args[key] = typed_value(value)
         end
       end
-      args.to_json
+      # A bigint marker inside the args (a container param carrying a
+      # wide int) must reach the module as a bare Python int, not the
+      # marked string - unquote_bigint_json rewrites ONLY the exact
+      # marked form, so a genuine user string is never altered.
+      Krikri.unquote_bigint_json(args.to_json)
     end
 
     # The old-style key=value argv line (one entry per param).
@@ -293,8 +298,11 @@ module Krikri
         # though - never a Python-repr repair pass: a value that merely
         # LOOKS like a container is a plain STRING in ansible-core
         # (live-verified, see apt.cr's parse_package_names).
+        # BigJson, not JSON.parse: a container holding an integer wider
+        # than Int64 must keep it (as a bigint marker) instead of the
+        # whole parse raising and the whole arg degrading to a string.
         parsed = begin
-          JSON.parse(stripped)
+          Krikri::BigJson.parse(stripped)
         rescue
           nil
         end
@@ -306,6 +314,17 @@ module Krikri
       if int = stripped.to_i64?
         return JSON::Any.new(int)
       end
+      # A BIGINT_SENTINEL_PREFIX-marked wide int (a whole-span
+      # `{{ big_var }}` arg the executor re-marked - see
+      # bigint_typed_param_text) falls through to the string branch below
+      # and ships AS the marked string: build_module_args and the action
+      # payload serialize through Krikri.unquote_bigint_json, so the
+      # module/plugin receives a bare Python int the way Ansible passes
+      # its own. There is deliberately NO bare-digits rule here: the
+      # substituted text of a wide-int span and a LITERAL wide-digit
+      # string param are the same bytes on this wire, and ansible-core
+      # keeps the literal a str - only the marker (provenance the
+      # executor carries) may promote to an int.
       JSON::Any.new(value)
     end
 
@@ -895,7 +914,13 @@ module Krikri
     def parse_module_output(stdout : String) : JSON::Any?
       idx = stdout.size
       while pos = stdout.rindex('{', idx - 1)
-        if parsed = (JSON.parse(stdout[pos..]) rescue nil)
+        # BigJson, not JSON.parse: a module can print an integer wider
+        # than Int64 (Python ints are unbounded), which plain JSON.parse
+        # turns into an "Invalid Int64" raise - the whole result silently
+        # became nil. The bigint-aware parse marks those literals instead
+        # (see Krikri::BigJson), and everything downstream already
+        # understands the marker.
+        if parsed = (Krikri::BigJson.parse(stdout[pos..]) rescue nil)
           return parsed if parsed.as_h?
         end
         idx = pos

@@ -207,8 +207,18 @@ module Krikri
         # result must stay the real flattened list (previously the
         # comma-joined STRING came back and the register wrapper wrapped
         # it into a one-element list - `query('flattened', pkg_list)`
-        # yielded `["a,b"]`).
-        (query_mode || truthy?(kwargs["wantlist"]?)) ? AnyValue.new(items) : AnyValue.new(items.map { |item| text(item) }.join(","))
+        # yielded `["a,b"]`). ansible-core's _invoke_lookup joins with
+        # ",".join and returns the sequence AS-IS when that raises
+        # TypeError - only an all-string result comma-joins; one
+        # non-string element (an Int64, or a BIGINT_SENTINEL_PREFIX-marked
+        # string, which IS an integer too wide for Int64 - issue #695)
+        # keeps the real list. Joining a marked string used to leak the
+        # marker into the rendered text.
+        list_form = query_mode || truthy?(kwargs["wantlist"]?) ||
+                    items.any? do |item|
+                      (raw = item.raw).is_a?(String) ? !Krikri.bigint_digits(raw).nil? : true
+                    end
+        list_form ? AnyValue.new(items) : AnyValue.new(items.map { |item| item.raw.as(String) }.join(","))
       when "together"
         arrays = terms.map { |term| list(term) }
         size = arrays.max_of?(&.size) || 0
@@ -565,7 +575,16 @@ module Krikri
       items = result.raw.as?(Array(AnyValue))
       return result unless items && !items.empty? &&
                            !(query_mode || truthy?(kwargs["wantlist"]?))
-      AnyValue.new(items.map { |item| (str = item.raw.as?(String)) ? str : text(item) }.join(","))
+      # ansible-core's _invoke_lookup joins with ",".join and returns the
+      # sequence AS-IS when that raises TypeError - only an all-string
+      # result comma-joins; one non-string element (an Int64, or a
+      # BIGINT_SENTINEL_PREFIX-marked string, which IS an integer too
+      # wide for Int64 - issue #695) keeps the real list. Joining a
+      # marked string used to leak the marker into the rendered text.
+      return result unless items.all? do |item|
+                             (raw = item.raw).is_a?(String) && Krikri.bigint_digits(raw).nil?
+                           end
+      AnyValue.new(items.map { |item| item.raw.as(String) }.join(","))
     end
   end
 end

@@ -213,4 +213,67 @@ describe Krikri::PythonLookupRunner do
     end
     FileUtils.rm_r(role)
   end
+
+  # Integers wider than Int64 (issue #695): the wrapper's stdout is
+  # parsed bigint-aware, so a lookup returning Python ints that do not
+  # fit Int64 arrives as BIGINT_SENTINEL_PREFIX-marked strings (the same
+  # carrier every renderer already prints unquoted) instead of the whole
+  # result silently becoming nil on JSON.parse's "Invalid Int64".
+  it "carries wide integers a lookup returns as marked bigints" do
+    return unless ansible_importable
+
+    role = File.join(Dir.tempdir, "krikri-pylookup-spec-#{Random.rand(1_000_000)}")
+    Dir.mkdir_p(role)
+    source = write_lookup_plugin(role, "bigint.py", <<-PYTHON)
+      from ansible.plugins.lookup import LookupBase
+
+      class LookupModule(LookupBase):
+          def run(self, terms, variables=None, **kwargs):
+              return [2 ** 200, {"neg": -(2 ** 70)}, "1606938044258990275541962092341162602522202993782792835301376"]
+      PYTHON
+
+    begin
+      result = Krikri::PythonLookupRunner.call_lookup("bigint", source, [] of JSON::Any,
+        empty_vars, empty_kwargs)
+      # The int: a marked string carrying the exact bare digits.
+      Krikri.bigint_digits(result.as_a[0]).must_equal((BigInt.new(2) ** 200).to_s)
+      # Nested inside a dict too.
+      Krikri.bigint_digits(result.as_a[1].as_h["neg"]).must_equal((-(BigInt.new(2) ** 70)).to_s)
+      # A genuine STRING that merely looks like digits stays a string,
+      # never promoted to a bigint.
+      result.as_a[2].as_s.must_equal("1606938044258990275541962092341162602522202993782792835301376")
+      Krikri.bigint_digits(result.as_a[2]).must_be_nil
+    rescue ex : Krikri::PythonLookupRunner::LookupUnavailableError
+      ex.unavailable?.must_equal(true)
+    end
+    FileUtils.rm_r(role)
+  end
+
+  # Round-trip: a marked wide int passed back as a lookup TERM must
+  # reach the plugin's run() as a real Python int - under ansible the
+  # term IS an int, and `terms[0] + 1` on a string would raise.
+  it "hands a marked wide integer term to the lookup as a real Python int" do
+    return unless ansible_importable
+
+    role = File.join(Dir.tempdir, "krikri-pylookup-spec-#{Random.rand(1_000_000)}")
+    Dir.mkdir_p(role)
+    source = write_lookup_plugin(role, "plusone.py", <<-PYTHON)
+      from ansible.plugins.lookup import LookupBase
+
+      class LookupModule(LookupBase):
+          def run(self, terms, variables=None, **kwargs):
+              return [terms[0] + 1, type(terms[0]).__name__]
+      PYTHON
+
+    begin
+      terms = [JSON::Any.new(Krikri.bigint_sentinel((BigInt.new(2) ** 200).to_s))]
+      result = Krikri::PythonLookupRunner.call_lookup("plusone", source, terms,
+        empty_vars, empty_kwargs)
+      Krikri.bigint_digits(result.as_a[0]).must_equal(((BigInt.new(2) ** 200) + 1).to_s)
+      result.as_a[1].as_s.must_equal("int")
+    rescue ex : Krikri::PythonLookupRunner::LookupUnavailableError
+      ex.unavailable?.must_equal(true)
+    end
+    FileUtils.rm_r(role)
+  end
 end

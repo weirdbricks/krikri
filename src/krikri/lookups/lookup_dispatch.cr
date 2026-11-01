@@ -176,6 +176,10 @@ module Krikri
       end
 
       private def evaluate_lookup(args : String, query_mode : Bool = false) : String
+        # Every dispatch branch below may leave the list-form flag set
+        # (its list_form branches mark it); reset here so the flag a read
+        # sees always belongs to THIS call, never a previous one.
+        @lookup_list_form = false
         raw_parts = split_top_level_commas(args)
         # The type as the raw split sees it, before the term rerender below
         # touches anything: the None-carry's file gate must know the dispatch
@@ -320,10 +324,30 @@ module Krikri
         # list-shaped result is comma-joined into a scalar only when
         # the caller asked for a scalar lookup() AND got something -
         # query()/wantlist=True/an empty result stay a real list.
+        # ansible-core's _invoke_lookup joins with ",".join and returns
+        # the sequence AS-IS when that raises TypeError - only an
+        # all-string result comma-joins; one non-string element (an
+        # Int64, or a BIGINT_SENTINEL_PREFIX-marked string, which IS an
+        # integer too wide for Int64 - issue #695) keeps the real list.
+        # Joining a marked string used to leak the marker into the
+        # rendered text.
         items = result.as_a?
         return result.to_json unless items
-        list_form = wantlist || query_mode || items.empty?
-        list_form ? items.to_json : items.map { |item| item.raw.is_a?(String) ? item.as_s : item.to_json }.join(",")
+        list_form = wantlist || query_mode || items.empty? ||
+                    items.any? do |item|
+                      !(raw = item.raw).is_a?(String) || !Krikri.bigint_digits(raw).nil?
+                    end
+        # Assigned on BOTH branches: a nested lookup evaluated on this
+        # evaluator must never leave a stale true behind a joined str.
+        @lookup_list_form = list_form
+        if list_form
+          # The embedded bare-call renderer (#evaluate_bare_lookup_call)
+          # must know this result kept its list - it renders Python repr
+          # for list-kept results, never for a joined str (issue #695).
+          items.to_json
+        else
+          items.map { |item| item.as_s }.join(",")
+        end
       end
 
       # amazon.aws.aws_secret (Secrets Manager) - natively implemented for
@@ -357,7 +381,15 @@ module Krikri
           raise PythonLookupRunner::LookupError.new("The lookup plugin '#{lookup_type}' failed: #{ex.message}")
         end
         list_form = query_mode || kwargs.any? { |kwarg| kwarg.strip.downcase.starts_with?("wantlist=true") } || result.empty?
-        list_form ? result.to_json : result.map { |item| item.raw.is_a?(String) ? item.as_s : item.to_json }.join(",")
+        # Assigned on BOTH branches: a nested lookup evaluated on this
+        # evaluator must never leave a stale true behind a joined str.
+        @lookup_list_form = list_form
+        if list_form
+          # Same list-form provenance flag the custom-python dispatch sets.
+          result.to_json
+        else
+          result.map { |item| item.raw.is_a?(String) ? item.as_s : item.to_json }.join(",")
+        end
       end
 
       # A lookup option/term arrives as a JSON::Any native value - strings
@@ -476,7 +508,36 @@ module Krikri
            (term_value = @vars[stripped]?) && term_value.raw.nil?
           return JSON::Any.new(nil)
         end
+        # A bare-name variable carrying a BIGINT_SENTINEL_PREFIX-marked
+        # wide int must reach the plugin AS the marked value: the rendered
+        # text is bare digits (the renderer strips the marker), which the
+        # literal re-type below would keep a STRING (it cannot parse
+        # digits wider than Int64) - ansible passes the int object
+        # (issue #695). The payload serialization unquotes the marker, so
+        # the plugin sees a real Python int.
+        if stripped.matches?(/\A[A-Za-z_][A-Za-z0-9_]*\z/) &&
+           (term_value = @vars[stripped]?) && Krikri.bigint_digits(term_value)
+          return term_value
+        end
         rendered = evaluate(part)
+        # A bare-name variable whose own TEMPLATE renders bare digits too
+        # wide for Int64 (its value is `{{ 0 | some_big_filter }}`, not a
+        # stored marked string) must reach the plugin AS the marked wide
+        # int the same way the stored-value check above provides: the
+        # rendered text is bare digits, which the literal re-type below
+        # would keep a STRING (it cannot parse digits wider than Int64) -
+        # ansible passes the int object (issue #695). Provenance comes
+        # from re-evaluating the name STRUCTURALLY (the same seam
+        # whole_span_structured uses): a marked string there is a real
+        # wide int; a plain digits-looking STRING variable stays a
+        # string. Guarded to the templated, non-side-effecting shapes so
+        # a lookup-carrying variable value is never evaluated twice.
+        if rendered.strip.matches?(/\A-?(0|[1-9]\d*)\z/) && rendered.strip.to_i64?.nil? &&
+           (stored = @vars[stripped]?) && (stored_text = stored.raw.as?(String)) &&
+           stored_text.includes?("{{") && !side_effecting_call?(stored_text)
+          structured = (evaluate_structured(stripped) rescue nil)
+          return structured if structured && Krikri.bigint_digits(structured)
+        end
         Krikri.parse_json_or_python_literal(rendered)
       end
     end

@@ -1,4 +1,5 @@
 require "json"
+require "./bigint_json"
 require "krikri-jinja/krikri_jinja"
 
 # Runner for role-local custom FILTER plugins - a role's own
@@ -611,8 +612,19 @@ module Krikri
     private def run_wrapper_retrying(payload) : JSON::Any?
       result = run_wrapper(payload)
       return result if result && result["ok"]?.try(&.as_bool?)
-      sleep 0.05
-      run_wrapper(payload)
+      # Three attempts with a growing gap: the transient spawn hiccup
+      # this retries (issue #675 - a python3 spawn failing under a
+      # heavily loaded controller) recurs under the test suite's own
+      # parallel subprocess load, where one 50ms retry still lost the
+      # race and the filter stayed unregistered ("No filter named").
+      # A spawn failure is never cached (see filter_names), so extra
+      # attempts only cost time on the genuinely broken cases.
+      {0.05, 0.2}.each do |gap|
+        sleep gap
+        result = run_wrapper(payload)
+        return result if result && result["ok"]?.try(&.as_bool?)
+      end
+      result
     end
 
     # The CONTROLLER's own python3 - the interpreter Ansible needs
@@ -732,12 +744,21 @@ module Krikri
 
       stdout = IO::Memory.new
       stderr = IO::Memory.new
+      # unquote_bigint_json, not payload.to_json verbatim: an operand or
+      # argument carrying a bigint marker (an integer wider than Int64 a
+      # module returned, carried as a marked string) must reach the
+      # filter as a real Python int, the way Ansible passes its own int
+      # objects - unquote_bigint_json rewrites ONLY the exact marked
+      # string form, so a genuine user string is never altered.
       status = Process.run(python, ["-c", WRAPPER],
-        input: IO::Memory.new(payload.to_json),
+        input: IO::Memory.new(Krikri.unquote_bigint_json(payload.to_json)),
         output: stdout, error: stderr)
       return nil unless status.success?
 
-      parsed = (JSON.parse(stdout.to_s) rescue nil)
+      # BigJson, not JSON.parse: a filter result with an integer wider
+      # than Int64 (Python ints are unbounded) made plain JSON.parse
+      # raise "Invalid Int64" and the whole result became nil.
+      parsed = (Krikri::BigJson.parse(stdout.to_s) rescue nil)
       return nil unless parsed && parsed.as_h?
       parsed
     rescue
