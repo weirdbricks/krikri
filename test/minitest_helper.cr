@@ -93,39 +93,40 @@ module PluginSpecHelper
   # interleaving). The busy-wait sleeps yield the fiber scheduler, and a
   # parallel test's worst-case tail is bounded by the plugin watchdog,
   # so the wait is bounded. Lock order is EXCL_MUTEX before
-  # STATE_MUTEX everywhere; neither is held while waiting on the other.
+  # STATE_MUTEX everywhere.
+  #
+  # EXCL_MUTEX is HELD ACROSS the whole exclusive window, not borrowed to
+  # flip a flag: an exclusive ticket granted while another exclusive test
+  # still held the window used to let the second test's body start AFTER
+  # the first had cleared the flag - so its blank window ran with parallel
+  # tests freely in flight (issue #706: two exclusive `it`s of one describe
+  # dispatched to two workers, the second blanked PATH with
+  # active_parallel already climbing from 1 to 3, and a parallel test read
+  # the blanked value and died on KeyError). Holding the lock itself makes
+  # the handoff real: the next exclusive waits on EXCL_MUTEX until the
+  # previous one unlocks in exit_exclusive, and enter_parallel/exit_parallel
+  # block on the same mutex instead of racing a flag.
   EXCL_MUTEX = Mutex.new
-  @@exclusive = false
   @@active_parallel = 0
 
+  # Returns with EXCL_MUTEX still held (exit_exclusive releases it).
   def self.enter_exclusive : Nil
     loop do
       EXCL_MUTEX.lock
-      if @@active_parallel == 0
-        @@exclusive = true
-        return EXCL_MUTEX.unlock
-      end
+      return if @@active_parallel == 0
       EXCL_MUTEX.unlock
       sleep 1.millisecond
     end
   end
 
   def self.exit_exclusive : Nil
-    EXCL_MUTEX.lock
-    @@exclusive = false
     EXCL_MUTEX.unlock
   end
 
   def self.enter_parallel : Nil
-    loop do
-      EXCL_MUTEX.lock
-      unless @@exclusive
-        @@active_parallel += 1
-        return EXCL_MUTEX.unlock
-      end
-      EXCL_MUTEX.unlock
-      sleep 1.millisecond
-    end
+    EXCL_MUTEX.lock
+    @@active_parallel += 1
+    EXCL_MUTEX.unlock
   end
 
   def self.exit_parallel : Nil
