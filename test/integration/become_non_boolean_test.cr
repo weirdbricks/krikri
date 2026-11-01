@@ -75,4 +75,35 @@ describe "a templated become: that renders to a non-boolean fails the task" do
   ensure
     FileUtils.rm_rf(root) if root
   end
+
+  # Issue #465: ansible post-validates the become keyword before it
+  # finalizes the task args, so a non-bool become: reports its own
+  # conversion error even when an arg is also undefined - arg templating
+  # used to win with the wrong "Finalization of task args" failure.
+  it "reports the become conversion error when an arg is undefined too" do
+    root = File.tempname("become-non-boolean-undefined-arg")
+    Dir.mkdir_p(root)
+
+    File.write(File.join(root, "pb.yml"), <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          user_name: labros
+        tasks:
+          - name: configuration data
+            become: "{{ user_name }}"
+            command: echo {{ undefined_thing }}
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, "pb.yml"], output: output, error: output, chdir: root)
+
+    status.success?.must_equal(false, output.to_s)
+    output_text = output.to_s
+    output_text.includes?("The value 'labros' could not be converted to 'bool'.").must_equal(true, output_text)
+    output_text.includes?("Finalization of task args").must_equal(false, output_text)
+  ensure
+    FileUtils.rm_rf(root) if root
+  end
 end
