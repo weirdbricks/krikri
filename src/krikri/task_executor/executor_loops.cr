@@ -2761,9 +2761,23 @@ module Krikri
       # the whole condition/retry block only engages when there is more
       # than one run), and an until task with retries unset runs 1 + 3
       # (Ansible's implicit default, kept here via the parser's 3).
-      total_runs = 1 + (task.retries < 0 ? 0 : task.retries)
+      # retries:/delay: given as templates (collivier.xtesting's
+      # jenkins-wait wrapper does retries: "{{ ((jenkins_wait | int) / 5)
+      # | int }}") render here against the task's own vars, the same spot
+      # real's task_executor templates them before the attempt loop; a
+      # template that fails to render or renders non-numerically keeps
+      # the parsed implicit default rather than failing the task.
+      retries_value = task.retries
+      delay_value = task.delay
+      if raw = task.retries_template
+        retries_value = templated_retry_int(raw, retries_value, host, vars_context)
+      end
+      if raw = task.delay_template
+        delay_value = templated_retry_int(raw, delay_value, host, vars_context)
+      end
+      total_runs = 1 + (retries_value < 0 ? 0 : retries_value)
       # Real clamps a negative delay to 1.
-      delay = task.delay < 0 ? 1 : task.delay
+      delay = delay_value < 0 ? 1 : delay_value
       result = nil
       attempt = 0
       condition_met = false
@@ -2895,6 +2909,19 @@ module Krikri
       end
 
       result
+    end
+
+    # Same int coercion real applies to a templated retries:/delay: value:
+    # int() of a rendered string accepts integers and floats ("2.0" -> 2),
+    # anything else keeps the implicit default instead of failing the task.
+    private def templated_retry_int(raw : String, fallback : Int32, host : Host, vars_context : Hash(String, JSON::Any)) : Int32
+      rendered = begin
+        VarSubstitutor.new(vars: vars_context, host_name: host.name).substitute(raw)
+      rescue
+        return fallback
+      end
+      stripped = rendered.strip
+      (stripped.to_i? || stripped.to_f?.try(&.to_i)) || fallback
     end
 
     private def execute_task_with_retries(

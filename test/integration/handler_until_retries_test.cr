@@ -100,4 +100,48 @@ describe "handler until/retries" do
   ensure
     FileUtils.rm_rf(tempdir) if tempdir
   end
+
+  it "renders templated retries and delay values per task" do
+    tempdir = File.tempname("handler-templated-retries").tap { |dir| Dir.mkdir(dir) }
+    playbook = File.join(tempdir, "site.yml")
+    File.write(playbook, <<-YAML)
+      ---
+      - hosts: localhost
+        gather_facts: false
+        vars:
+          retries_n: 4
+        tasks:
+          - name: trigger the handler
+            ansible.builtin.command:
+              cmd: /bin/true
+            changed_when: true
+            notify: Run flaky installer
+        handlers:
+          - name: Run flaky installer
+            ansible.builtin.command:
+              cmd: /bin/false
+            changed_when: true
+            register: result
+            until:
+              - result is not failed
+            retries: "{{ retries_n }}"
+            delay: "{{ 0 }}"
+      YAML
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+    text = output.to_s
+
+    # Real templates retries:/delay: per task before the attempt loop, so
+    # the templated 4 gives exactly four RETRYING lines (4..1 left) and
+    # the fatal result carries attempts: 4 (real 2.19.11 stamps the
+    # retries count on a never-passing until, not 1 + retries) - the
+    # pre-fix behavior silently fell back to the implicit 3 retries.
+    text.must_include("FAILED - RETRYING: [localhost]: Run flaky installer (4 retries left).")
+    text.must_include("FAILED - RETRYING: [localhost]: Run flaky installer (1 retries left).")
+    text.wont_include("(0 retries left)")
+    text.must_include("\"attempts\": 4")
+    status.exit_code.must_equal(2)
+  ensure
+    FileUtils.rm_rf(tempdir) if tempdir
+  end
 end
