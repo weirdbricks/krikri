@@ -243,48 +243,56 @@ echo ""
 # Check for required shards/dependencies
 echo -e "${YELLOW}🔍 Checking dependencies...${NC}"
 
-# Check if lib directory exists (created by shards install)
-if [ ! -d "lib" ]; then
-    echo -e "${RED}❌ Dependencies not installed!${NC}"
-    echo ""
-    echo -e "${BLUE}To install dependencies, run:${NC}"
-    echo -e "${GREEN}  shards install${NC}"
-    echo ""
-    echo -e "${YELLOW}Then run ./build.sh again${NC}"
-    exit 1
-fi
-
 # Check lib/ for staleness against shard.lock: pulling a commit that bumps a
-# shard's tag changes shard.lock but not lib/, and the existence check above
-# happily builds the new engine code against the OLD library (round 5466302:
-# the krikri-jinja v0.4.33 tag landed with its fix, but lib/ still held
-# v0.4.32, so the round's binary re-raised the "'missing' is undefined"
-# else-less-ternary bug the bump was supposed to fix).
-DRIFTED=""
-LOCK_NAME=""
-while IFS= read -r line; do
-    case "$line" in
-        "  "*:) LOCK_NAME="${line#  }"; LOCK_NAME="${LOCK_NAME%:}" ;;
-        "    version: "*)
-            if [ -n "$LOCK_NAME" ] && [ -f "lib/$LOCK_NAME/shard.yml" ]; then
-                LOCK_VER=$(echo "$line" | sed 's/^ *version: *//' | cut -d+ -f1)
-                LIB_VER=$(grep -m1 "^version:" "lib/$LOCK_NAME/shard.yml" | sed 's/^version: *//')
-                if [ -n "$LOCK_VER" ] && [ "$LOCK_VER" != "$LIB_VER" ]; then
-                    DRIFTED="$DRIFTED $LOCK_NAME(lock $LOCK_VER, lib $LIB_VER)"
+# shard's tag changes shard.lock but not lib/, and building anyway compiles the
+# new engine code against the OLD library (round 5466302: the krikri-jinja
+# v0.4.33 tag landed with its fix, but lib/ still held v0.4.32, so the round's
+# binary re-raised the "'missing' is undefined" else-less-ternary bug the bump
+# was supposed to fix).
+lib_drift() {
+    local drifted="" lock_name="" line lock_ver lib_ver
+    while IFS= read -r line; do
+        case "$line" in
+            "  "*:) lock_name="${line#  }"; lock_name="${lock_name%:}" ;;
+            "    version: "*)
+                if [ -n "$lock_name" ]; then
+                    lock_ver=$(echo "$line" | sed 's/^ *version: *//' | cut -d+ -f1)
+                    if [ ! -f "lib/$lock_name/shard.yml" ]; then
+                        drifted="$drifted $lock_name(lock $lock_ver, lib missing)"
+                    else
+                        lib_ver=$(grep -m1 "^version:" "lib/$lock_name/shard.yml" | sed 's/^version: *//')
+                        if [ -n "$lock_ver" ] && [ "$lock_ver" != "$lib_ver" ]; then
+                            drifted="$drifted $lock_name(lock $lock_ver, lib $lib_ver)"
+                        fi
+                    fi
                 fi
-            fi
-            ;;
-    esac
-done < shard.lock
+                ;;
+        esac
+    done < shard.lock
+    echo "$drifted"
+}
 
+# A missing or stale lib/ is refreshed here rather than failing the build:
+# unattended builders (krikri-loop's gates, krikri-role-tester's scheduler)
+# never run `shards install` themselves, so a shard bump used to fail every
+# build until someone ran it by hand. --frozen installs exactly shard.lock's
+# versions and never rewrites the lock. krikri-fix-issues worktrees symlink
+# lib/ to the main checkout's, so installs into it serialize on their own
+# flock - not the compile lock, which a gate already holds around this script.
+DRIFTED=$( [ -d lib ] && lib_drift || echo " lib/ missing")
 if [ -n "$DRIFTED" ]; then
-    echo -e "${RED}❌ Stale lib/ detected:$DRIFTED${NC}"
-    echo ""
-    echo -e "${BLUE}To refresh lib/ to shard.lock's versions, run:${NC}"
-    echo -e "${GREEN}  shards install${NC}"
-    echo ""
-    echo -e "${YELLOW}Then run ./build.sh again${NC}"
-    exit 1
+    echo -e "${YELLOW}🔄 lib/ out of date:$DRIFTED - running shards install --frozen${NC}"
+    shards_lock="${XDG_CACHE_HOME:-$HOME/.cache}/krikri-shards.lock"
+    mkdir -p "$(dirname "$shards_lock")"
+    if ! flock -w 600 "$shards_lock" shards install --frozen; then
+        echo -e "${RED}❌ shards install --frozen failed${NC}"
+        exit 1
+    fi
+    DRIFTED=$(lib_drift)
+    if [ -n "$DRIFTED" ]; then
+        echo -e "${RED}❌ lib/ still differs from shard.lock after shards install:$DRIFTED${NC}"
+        exit 1
+    fi
 fi
 
 echo -e "${GREEN}✅ All dependencies found${NC}"
