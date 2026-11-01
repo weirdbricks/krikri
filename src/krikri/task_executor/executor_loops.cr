@@ -2764,16 +2764,32 @@ module Krikri
       # retries:/delay: given as templates (collivier.xtesting's
       # jenkins-wait wrapper does retries: "{{ ((jenkins_wait | int) / 5)
       # | int }}") render here against the task's own vars, the same spot
-      # real's task_executor templates them before the attempt loop; a
-      # template that fails to render or renders non-numerically keeps
-      # the parsed implicit default rather than failing the task.
+      # real's task_executor templates them before the attempt loop. The
+      # templating is STRICT like become:/no_log:'s (issue #694): an
+      # undefined reference or a value int() refuses fails the whole task
+      # right here, BEFORE the module ever runs (live-verified vs
+      # 2.19.11: one [ERROR] keyword chain + fatal with no attempts key,
+      # the task registered, `...ignoring` under ignore_errors:) - the
+      # old lenient render silently substituted the implicit 3/5 default
+      # and ran the module real never performs. A template failing for
+      # any OTHER reason (unknown filter, syntax) keeps the lenient
+      # fallback default: failing those here would turn an evaluator
+      # coverage gap into a task failure real reports differently.
       retries_value = task.retries
       delay_value = task.delay
       if raw = task.retries_template
-        retries_value = templated_retry_int(raw, retries_value, host, vars_context)
+        begin
+          retries_value = templated_retry_int(raw, retries_value, "retries", host, vars_context)
+        rescue ex : UndefinedVariableError
+          return retry_keyword_failure_result(task, host, vars_context, ex)
+        end
       end
       if raw = task.delay_template
-        delay_value = templated_retry_int(raw, delay_value, host, vars_context)
+        begin
+          delay_value = templated_retry_int(raw, delay_value, "delay", host, vars_context)
+        rescue ex : UndefinedVariableError
+          return retry_keyword_failure_result(task, host, vars_context, ex)
+        end
       end
       total_runs = 1 + (retries_value < 0 ? 0 : retries_value)
       # Real clamps a negative delay to 1.
@@ -2925,16 +2941,42 @@ module Krikri
     end
 
     # Same int coercion real applies to a templated retries:/delay: value:
-    # int() of a rendered string accepts integers and floats ("2.0" -> 2),
-    # anything else keeps the implicit default instead of failing the task.
-    private def templated_retry_int(raw : String, fallback : Int32, host : Host, vars_context : Hash(String, JSON::Any)) : Int32
+    # int() of a rendered string accepts integers and floats ("2.0" -> 2).
+    # A value int() refuses, and an unresolvable reference inside the
+    # template, are KEYWORD failures like become:/no_log:'s (issue #694):
+    # real fails the task before the module runs, so the failure raises
+    # out of here (caught by the caller) instead of degrading to the
+    # implicit default. A template failing for any OTHER reason (unknown
+    # filter, syntax) keeps the parsed default: failing those here would
+    # turn an evaluator coverage gap into a task failure real reports
+    # differently.
+    private def templated_retry_int(raw : String, fallback : Int32, keyword : String, host : Host, vars_context : Hash(String, JSON::Any)) : Int32
       rendered = begin
-        VarSubstitutor.new(vars: vars_context, host_name: host.name).substitute(raw)
+        VarSubstitutor.new(vars: vars_context, host_name: host.name).substitute(raw, strict: true)
+      rescue e : UndefinedVariableError
+        raise UndefinedVariableError.new("Task failed: Error processing keyword '#{keyword}': #{e.message}")
       rescue
         return fallback
       end
       stripped = rendered.strip
-      (stripped.to_i? || stripped.to_f?.try(&.to_i)) || fallback
+      (stripped.to_i? || stripped.to_f?.try(&.to_i)) ||
+        raise KeywordIntError.new(keyword, stripped)
+    end
+
+    # The failed result for a retries:/delay: keyword-templating failure,
+    # registered the way the attempt loop's own escapes register their
+    # results - real books the keyword failure against the task's register
+    # too (live-verified vs 2.19.11: the follow-up task sees the var as
+    # defined).
+    private def retry_keyword_failure_result(task : Task, host : Host, vars_context : Hash(String, JSON::Any), ex : UndefinedVariableError) : JSON::Any
+      result = keyword_failure_json(ex, task)
+      if register_name = task.register
+        unless register_name.empty?
+          register_result(host, register_name, result)
+          vars_context[register_name] = @registered_vars[host.name][register_name]
+        end
+      end
+      result
     end
 
     private def execute_task_with_retries(
