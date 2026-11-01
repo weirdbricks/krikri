@@ -1721,6 +1721,16 @@ module Krikri
     # forfeited the other. The daemon transport is preferred now, and
     # the script remains the fallback for the cases it cannot serve.
     private def run_batch_steps(host : Host, conn : ConnectionSettings, steps : Array(BatchScript::Step), vars : Hash(String, JSON::Any)? = nil) : Hash(Int32, JSON::Any)
+      # ansible fails a become task whose temp files root cannot chown to
+      # the become user; steps from that one on never run (fail-fast).
+      steps.each_with_index do |step, bad|
+        failure = PluginManager.become_chown_probe_failure(conn, !step.become_user.nil?, step.become_user)
+        next unless failure
+        head = bad > 0 ? run_batch_steps(host, conn, steps[0, bad], vars) : Hash(Int32, JSON::Any).new
+        head[bad] = failure
+        return head
+      end
+
       if result = try_daemon_batch(host, conn, steps, vars)
         return result
       end

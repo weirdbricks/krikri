@@ -430,7 +430,8 @@ module Krikri
       # `_connection_failure` marker only exists to keep failed_when: from
       # reinterpreting it.
       if (top = result.as_h?) && top.has_key?("_connection_failure") &&
-         top["msg"]?.try(&.as_s?).to_s.starts_with?("Task failed: #{PluginManager::BECOME_PREMATURE_END}")
+         (top["msg"]?.try(&.as_s?).to_s.starts_with?("Task failed: #{PluginManager::BECOME_PREMATURE_END}") ||
+         top["msg"]?.try(&.as_s?) == "Task failed: #{PluginManager::BECOME_CHOWN_FAILURE}")
         result = JSON::Any.new(top.reject("_connection_failure"))
       end
       if Krikri::RunOptions.verbosity < 3 && (top = result.as_h?) && (top.has_key?("warnings") || top.has_key?("invocation") || top.has_key?("deprecations") || top.has_key?("_ansible_core_deprecations") || top.has_key?("_ansible_pause_console"))
