@@ -1920,9 +1920,38 @@ module Krikri
       # operand-class failure (Ansible fails the task, see
       # #python_type_name / CRINJA_PHASE2_REPORT.md's strictness section).
       private def evaluate_plus(segments : Array(String)) : String
-        values = segments.map { |seg| resolve_plus_operand(seg, strict: true) }
+        values = resolve_plus_segments_deferring_bare(segments)
         result = values.reduce { |acc, val| combine_plus(acc, val) }
         @lookup.format_value(result)
+      end
+
+      # Jinja/Python evaluates `+`/`-` operands left to right, but a
+      # bare-undefined operand only errors when the operator itself is
+      # applied - so a LATER operand whose own evaluation already fails
+      # raises first. Found via geerlingguy.moodle's
+      # `moodle_instance: "{{ moodle_web_domain + ('' if moodle_web_path
+      # == '' else '-' + moodle_web_path) }}"` with both vars undefined:
+      # Ansible fails with "'moodle_web_path' is undefined" while the
+      # old first-raise-wins map named `moodle_web_domain` (issue #512).
+      # Remember (first one only) a bare-reference operand's
+      # PlusMinusOperandError while the remaining operands still
+      # resolve; an eager failure from a non-bare operand propagates
+      # immediately, and once every operand has resolved the leftmost
+      # bare-undefined operand's error wins (two bare undefineds
+      # `a + b` report a, matching Python).
+      private def resolve_plus_segments_deferring_bare(segments : Array(String)) : Array(JSON::Any)
+        values = Array(JSON::Any).new(segments.size)
+        deferred : PlusMinusOperandError? = nil
+        segments.each do |seg|
+          begin
+            values << resolve_plus_operand(seg, strict: true)
+          rescue e : PlusMinusOperandError
+            raise e unless REGEX_BARE_VAR_REF.matches?(seg.strip)
+            deferred ||= e
+          end
+        end
+        raise deferred if deferred
+        values
       end
 
       # Strict `+` operand-class gate for the dispatch's Crinja-first
@@ -1935,7 +1964,7 @@ module Krikri
         return if expr.includes?("lookup(") || expr.includes?("query(")
 
         begin
-          values = segments.map { |seg| resolve_plus_operand(seg, strict: true) }
+          values = resolve_plus_segments_deferring_bare(segments)
           values.reduce { |acc, val| combine_plus(acc, val) }
         rescue e : PlusMinusOperandError
           raise e
