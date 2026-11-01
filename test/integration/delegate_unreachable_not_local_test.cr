@@ -59,11 +59,13 @@ describe "delegated task to a host not in the inventory (issue #102)" do
     output.must_match(/testhost\s*: ok=0\s+changed=0\s+unreachable=1\s+failed=0/)
   end
 
-  it "prints the Task failed. chain with the ssh error as its caused-by link" do
-    # Ansible-core 2.19.11 shows a delegated task's unreachable from a LOCAL
-    # origin as the "Task failed." head with the Origin under it and the ssh
-    # error after "<<< caused by >>>" - not the plain single "Task failed:
-    # <ssh error>" block an ssh origin gets (see report_unreachable).
+  it "keeps the plain Task failed: block for a delegated unreachable, no caused-by chain" do
+    # Ansible-core 2.19.11 shows a delegated task's unreachable as ONE plain
+    # collapsed "Task failed: <ssh error>" segment with the Origin under it,
+    # whatever the ORIGIN host's own connection is (issue #650: verified with
+    # both a local and an ssh origin on the udelarinterior.proxmox_create_kvm
+    # repro) - no "Task failed." head and no "<<< caused by >>>" link (see
+    # report_unreachable).
     status, output = run_playbook(
       "testhost ansible_connection=local\n",
       <<-YAML
@@ -77,8 +79,52 @@ describe "delegated task to a host not in the inventory (issue #102)" do
     )
 
     status.exit_code.must_equal(4)
-    output.must_match(/\[ERROR\]: Task failed: Failed to connect to the host via ssh: ssh: Could not resolve hostname mynode\.mycluster\.invalid.*\n\nTask failed\.\nOrigin: .*\n\n.*<<< caused by >>>\n\nFailed to connect to the host via ssh: ssh: Could not resolve hostname mynode\.mycluster\.invalid/m)
+    output.must_match(/\[ERROR\]: Task failed: Failed to connect to the host via ssh: ssh: Could not resolve hostname mynode\.mycluster\.invalid.*\nOrigin: /m)
+    output.wont_match(/(^|\n)Task failed\.\n/)
+    output.wont_match(/<<< caused by >>>/)
     output.must_match(/fatal: \[testhost -> mynode\.mycluster\.invalid\]: UNREACHABLE!/)
+  end
+
+  it "keeps the plain unreachable block for the udelarinterior.proxmox_create_kvm role repro (issue #650)" do
+    # The round's exact shape: a role's include_tasks'd dependencies.yml runs
+    # apt with a TEMPLATED delegate_to resolved from a play var - the block
+    # stays the plain collapsed "Task failed: <ssh error>" one, with the
+    # fatal line's `host -> delegate` label, and the host halts unreachable.
+    dir = PluginSpecHelper.tmp_path("issue-650")
+    FileUtils.mkdir_p(File.join(dir, "roles", "k650", "tasks"))
+    File.write(File.join(dir, "inv.ini"), "testhost ansible_connection=local\n")
+    File.write(File.join(dir, "roles", "k650", "tasks", "main.yml"), <<-YAML)
+      ---
+      - include_tasks: dependencies.yml
+      YAML
+    File.write(File.join(dir, "roles", "k650", "tasks", "dependencies.yml"), <<-YAML)
+      ---
+
+      # Verificar si python-pip está instalado en el nodo Proxmox
+      - name: Verify that python-pip is installed in the Proxmox node
+        ansible.builtin.apt:
+          name: python3-pip
+          state: present
+        delegate_to: "{{ pve_api_host }}"
+      YAML
+    File.write(File.join(dir, "pb.yml"), <<-YAML)
+      - hosts: testhost
+        gather_facts: false
+        vars:
+          pve_api_host: mynode.mycluster.invalid
+        roles:
+          - k650
+      YAML
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", File.join(dir, "inv.ini"), File.join(dir, "pb.yml")], output: output, error: output, chdir: dir)
+
+    status.exit_code.must_equal(4)
+    text = output.to_s
+    text.must_match(/\[ERROR\]: Task failed: Failed to connect to the host via ssh: ssh: Could not resolve hostname mynode\.mycluster\.invalid.*\nOrigin: .*dependencies\.yml:4:3\n/m)
+    text.wont_match(/(^|\n)Task failed\.\n/)
+    text.wont_match(/<<< caused by >>>/)
+    text.must_match(/fatal: \[testhost -> mynode\.mycluster\.invalid\]: UNREACHABLE!/)
+    text.must_match(/testhost\s*: ok=1\s+changed=0\s+unreachable=1\s+failed=0/)
   end
 
   it "still runs delegated localhost tasks locally" do
