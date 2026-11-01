@@ -47,6 +47,21 @@ describe Krikri::VariableSubstitutor::FilterEngine do
     scoped_engine.apply(JSON::Any.new(nil), %(default(users_home ~ '/' ~ username))).as_s.must_equal("/home/alice")
   end
 
+  it "ternary('lit ' + templated_var, ...) fails like ansible when the templated var's own template errors" do
+    # infrastructr.rancher_master: ansible evaluates filter args eagerly,
+    # so the erroring `rancher_master_host` template fails the task rather
+    # than yielding the unrendered text (issue #530).
+    vars = Hash(String, JSON::Any).new
+    vars["grp"] = JSON::Any.new("paas_master")
+    vars["groups"] = JSON.parse(%({"all": ["h"]}))
+    vars["host"] = JSON::Any.new("{{ groups[grp][0] }}")
+    scoped_engine = Krikri::VariableSubstitutor::FilterEngine.new(vars)
+
+    assert_raises(Krikri::UndefinedVariableError) do
+      scoped_engine.apply(JSON::Any.new(false), %(ternary('--acme-domain ' + host, omit)))
+    end
+  end
+
   it "default(fallback, true) also replaces a real, defined-but-falsy value" do
     # Real bug found benchmarking geerlingguy.php: `pm.max_requests = {{
     # item.pool_pm_max_requests | default(500, true) }}` where the real
