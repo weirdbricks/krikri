@@ -3049,10 +3049,34 @@ module Krikri
                     # a bare name resolves through the collection search path
                     INVOCATION_FQCNS.find { |name| name == fqcn || name.ends_with?(".#{fqcn}") }
                   end
-      return result unless spec_name
       hash = result.as_h? || return result
+      # A native plugin that mutates its params the way the real module
+      # does (community.crypto's in-place valid_at datetime resolution)
+      # hands the echoed module_args its resolved values through this
+      # private marker - stripped here, before the echo is built, so it
+      # never reaches the registered var (register strips _ansible_*
+      # anyway) or a -v dump.
+      echo_override = hash["_ansible_invocation_module_args"]?.try(&.as_h?)
+      if echo_override || hash.has_key?("_ansible_invocation_module_args")
+        hash = hash.dup
+        hash.delete("_ansible_invocation_module_args")
+        result = JSON::Any.new(hash)
+      end
+      return result unless spec_name
       return result if hash.has_key?("invocation")
+      # Real's module-crash output (an exception escaping the module -
+      # AnsibleModule's top-level handler emits {"failed", "exception"}
+      # and nothing else) carries NO invocation at all; a fail_json
+      # failure - even one raised inside an active exception - keeps the
+      # full shape with invocation (live-verified vs 2.19.11: x509_
+      # certificate_info's invalid valid_at spec vs slurp's missing
+      # source). krikri spells the crash shape with the controller's
+      # "Task failed: Module failed: " msg prefix.
+      return result if hash["msg"]?.try(&.as_s?).try(&.starts_with?("Task failed: Module failed: "))
       args = ArgspecValidator.invocation_args(spec_name, params) || return result
+      if echo_override
+        echo_override.each { |key, value| args[key] = value }
+      end
       args["_uses_shell"] = JSON::Any.new(true) if short == "shell"
       if free_form_raw_command?(task) && args["cmd"]?.try(&.raw.is_a?(String))
         args["_raw_params"] = args["cmd"]

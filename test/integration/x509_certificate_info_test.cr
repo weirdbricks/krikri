@@ -494,3 +494,140 @@ describe "x509_certificate_info: wide integers" do
     File.delete(playbook) if playbook && File.exists?(playbook)
   end
 end
+
+# Issue #701 (pacifica.ansible_certinfra, round 29891662): the module
+# MUTATES module.params["valid_at"] in place while resolving each probe,
+# so the echoed invocation.module_args.valid_at holds the RESOLVED
+# datetimes, not the raw timespecs (live-verified vs ansible-core
+# 2.19.11 / community.crypto 3.1.1; the +00:00 suffix rides the target's
+# cryptography >= 42, hence the optional group in the regexes). The
+# invocation echo only survives register inside a LOOP's per-item
+# results, so these run through the role-shaped loop the way the real
+# role reads them.
+describe "x509_certificate_info: valid_at invocation echo" do
+  private def run_echo_playbook(tasks : String) : String
+    path = cert_path("echo.pem")
+    `openssl req -x509 -newkey rsa:2048 -keyout #{cert_path("echo.key")} -out #{path} -days 30 -nodes -subj "/CN=echo.example.com" 2>/dev/null`
+    playbook = File.tempname("x509-valid-at-echo", ".yml")
+    File.write(playbook, <<-YAML + "\n" + tasks.gsub("CERTPATH", path))
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+    YAML
+    captured = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: captured, error: captured)
+    output = captured.to_s
+    status.success?.must_equal(true, "playbook failed: #{output}")
+    output
+  ensure
+    File.delete(playbook) if playbook && File.exists?(playbook)
+  end
+
+  it "echoes a relative timespec resolved to the absolute datetime it was evaluated against" do
+    output = run_echo_playbook(<<-TASKS)
+        - community.crypto.x509_certificate_info:
+            path: CERTPATH
+            valid_at: {"one_week": "+1w"}
+          loop: [0]
+          register: result
+        - debug:
+            msg: "{{ result.results[0].invocation.module_args.valid_at | to_json }}"
+    TASKS
+
+    # %Y-%m-%dT%H:%M:%S + microseconds when nonzero (Python's isoformat),
+    # +00:00 only when the target's cryptography is timezone-aware.
+    output.matches?(/\\"one_week\\": \\"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{6})?(\+00:00)?\\"/).must_equal(true,
+      "expected the resolved datetime echo, got: #{output}")
+  end
+
+  it "echoes an absolute timespec normalized (offset spelling added, microseconds omitted at 0)" do
+    output = run_echo_playbook(<<-TASKS)
+        - community.crypto.x509_certificate_info:
+            path: CERTPATH
+            valid_at: {"abs": "20370101000000Z"}
+          loop: [0]
+          register: result
+        - debug:
+            msg: "{{ result.results[0].invocation.module_args.valid_at | to_json }}"
+    TASKS
+
+    # The raw "20370101000000Z" must not survive into the echo, and the
+    # zero-microsecond datetime must NOT carry a fraction (Python's
+    # isoformat omits .000000).
+    output.wont_include("20370101000000Z")
+    output.matches?(/\\"abs\\": \\"2037-01-01T00:00:00(\+00:00)?\\"/).must_equal(true,
+      "expected the normalized zero-microsecond echo, got: #{output}")
+  end
+
+  it "echoes every key of a multi-probe valid_at resolved, booleans unchanged" do
+    output = run_echo_playbook(<<-TASKS)
+        - community.crypto.x509_certificate_info:
+            path: CERTPATH
+            valid_at: {"one_week": "+1w", "ago": "-2d3h", "abs": "20370101000000Z"}
+          loop: [0]
+          register: result
+        - debug:
+            msg: "{{ result.results[0].invocation.module_args.valid_at | to_json }} BOOLS {{ result.results[0].valid_at | to_json }}"
+    TASKS
+
+    output.matches?(/\\"one_week\\": \\"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{6})?(\+00:00)?\\"/).must_equal(true, output)
+    output.matches?(/\\"ago\\": \\"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{6})?(\+00:00)?\\"/).must_equal(true, output)
+    output.matches?(/\\"abs\\": \\"2037-01-01T00:00:00(\+00:00)?\\"/).must_equal(true, output)
+    # The probe booleans ride beside the echo, unchanged: +1w inside the
+    # 30-day validity, -2d3h before not_before (the cert was just
+    # minted), 2037 far past not_after.
+    output.matches?(/BOOLS \{\\"one_week\\": true, \\"ago\\": false, \\"abs\\": false\}/).must_equal(true, output)
+  end
+
+  it "keeps a type-error failure's echo with earlier keys resolved and the failing key raw" do
+    output = run_echo_playbook(<<-TASKS)
+        - community.crypto.x509_certificate_info:
+            path: CERTPATH
+            valid_at: {"ok": "+1w", "int": 5}
+          loop: [0]
+          register: result
+          ignore_errors: true
+        - debug:
+            msg: "{{ result.results[0] | to_json }}"
+    TASKS
+
+    output.must_include(%(The value for valid_at.int must be of type string (got <class 'int'>)))
+    # fail_json's echo: the resolved key stays resolved, the failing one raw.
+    output.matches?(/\\"ok\\": \\"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{6})?(\+00:00)?\\", \\"int\\": 5/).must_equal(true, output)
+  end
+
+  it "fails an invalid timespec with the uncaught-exception shape and no invocation echo" do
+    output = run_echo_playbook(<<-TASKS)
+        - community.crypto.x509_certificate_info:
+            path: CERTPATH
+            valid_at: {"bad": "not-a-time"}
+          loop: [0]
+          register: result
+          ignore_errors: true
+        - debug:
+            msg: "{{ result.results[0] | to_json }}"
+    TASKS
+
+    # The valid_at loop sits OUTSIDE the module's try block: the raise is
+    # uncaught, the controller wraps it ("Task failed: Module failed: "),
+    # and the module output carries no invocation at all.
+    output.must_include(%(Task failed: Module failed: The time spec "not-a-time" for valid_at.bad is invalid))
+    output.wont_include("invocation")
+  end
+
+  it "uses the relative timespec wording for a lone + spec" do
+    output = run_echo_playbook(<<-TASKS)
+        - community.crypto.x509_certificate_info:
+            path: CERTPATH
+            valid_at: {"plus": "+"}
+          loop: [0]
+          register: result
+          ignore_errors: true
+        - debug:
+            msg: "{{ result.results[0].msg }}"
+    TASKS
+
+    output.must_include(%(Task failed: Module failed: The timespec "+" for valid_at.plus is invalid))
+  end
+end
