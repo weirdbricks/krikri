@@ -495,12 +495,17 @@ describe Krikri::VariableSubstitutor::FilterEngine do
     # confusing message - ansible-playbook hard-fails immediately
     # at the source with "No first item, sequence was empty."
     empty = JSON.parse("[]")
-    assert_raises_message(Exception, "No first item, sequence was empty.") { engine.apply(empty, "first") }
-    assert_raises_message(Exception, "No last item, sequence was empty.") { engine.apply(empty, "last") }
+    # FilterFailureError (not a bare Exception): the filter was found and
+    # ran, it failed - the typed class is what routes the failure through
+    # Ansible's own wording channels (task-arg finalization chain,
+    # when:/loop clean task failure) instead of an untyped crash (issue
+    # #548, lean_delivery.jmeter).
+    assert_raises_message(Krikri::VariableSubstitutor::FilterEngine::FilterFailureError, "No first item, sequence was empty.") { engine.apply(empty, "first") }
+    assert_raises_message(Krikri::VariableSubstitutor::FilterEngine::FilterFailureError, "No last item, sequence was empty.") { engine.apply(empty, "last") }
 
     # An empty STRING (also a valid Jinja2 sequence) raises the same way.
-    assert_raises_message(Exception, "No first item, sequence was empty.") { engine.apply(s(""), "first") }
-    assert_raises_message(Exception, "No last item, sequence was empty.") { engine.apply(s(""), "last") }
+    assert_raises_message(Krikri::VariableSubstitutor::FilterEngine::FilterFailureError, "No first item, sequence was empty.") { engine.apply(s(""), "first") }
+    assert_raises_message(Krikri::VariableSubstitutor::FilterEngine::FilterFailureError, "No last item, sequence was empty.") { engine.apply(s(""), "last") }
   end
 
   it "strips the last path component with dirname, and keeps only it with basename" do
