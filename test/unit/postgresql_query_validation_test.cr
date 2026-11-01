@@ -1,4 +1,6 @@
 require "../minitest_helper"
+require "pg"
+require "../../src/krikri/plugin_helpers/postgresql_connection"
 
 # Pins plugins/postgresql_query.cr's argument-validation surface
 # against real community.postgresql.postgresql_query 4.2.0
@@ -115,5 +117,85 @@ describe "postgresql_query plugin argument validation" do
 
     result["failed"].as_bool.must_equal(true)
     result["msg"].as_s.must_equal("Using autocommit is mutually exclusive with check_mode")
+  end
+end
+
+# Issue #467 (consensys.web3signer): real community.postgresql's shared
+# ensure_required_libs() fails the task with Ansible's missing_required_lib
+# wording when the target's Python cannot import psycopg2 - after the
+# argspec checks, before get_conn_params() and the connect. krikri's plugin
+# talks the wire protocol through crystal-pg, needs no psycopg2, and used
+# to carry on to its own "unable to connect to database: ... Connection
+# refused" failure instead. The expectation depends on what the test host
+# actually has, so the live-shape test probes the interpreter first; the
+# helper test below is deterministic through a shimmed interpreter.
+describe "postgresql_query psycopg2 library gate" do
+  serial!
+
+  def missing_library_message(library : String, python : String) : String
+    "Failed to import the required Python library (#{library}) on #{System.hostname}'s Python #{python}. " \
+    "Please read the module documentation and install it in the appropriate location. " \
+    "If the required library is installed, but Ansible is using the wrong Python interpreter, " \
+    "please consult the documentation on ansible_python_interpreter"
+  end
+
+  it "fails with Ansible's missing_required_lib wording when python cannot import psycopg2" do
+    python = Krikri.discovered_target_python
+    skip "host has no python in Ansible's fallback list" unless python
+
+    probe = Process.run(python, {"-c", "import psycopg2"}, error: Process::Redirect::Close)
+    skip "host has psycopg2 installed" if probe.success?
+
+    result = PluginSpecHelper.run("postgresql_query", {
+      "query"      => "SELECT 1",
+      "login_host" => "127.0.0.1",
+      "login_port" => "59999",
+    })
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal(missing_library_message("psycopg2", Krikri.target_python_executable || python))
+    result["warnings"]?.must_be_nil
+  end
+
+  it "keeps argument-validation errors ahead of the psycopg2 gate" do
+    result = PluginSpecHelper.run("postgresql_query", {
+      "query"           => "SELECT 1",
+      "positional_args" => "[1]",
+      "named_args"      => "{\"krikri\": 1}",
+    })
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("parameters are mutually exclusive: positional_args|named_args")
+  end
+
+  it "builds the exact failed PluginResult for an interpreter missing psycopg2" do
+    dir = PluginSpecHelper.tmp_path("psycopg2-gate-shim")
+    FileUtils.rm_rf(dir)
+    FileUtils.mkdir_p(dir)
+    interpreter = File.join(dir, Krikri::INTERPRETER_FALLBACK.first)
+    File.write(interpreter, <<-SHIM)
+      #!/bin/sh
+      case "$*" in
+        *"print(sys.executable)"*) echo "/opt/krikri-absent/bin/python3.13" ;;
+        *"import psycopg2"*)
+          echo "ModuleNotFoundError: No module named 'psycopg2'" >&2
+          exit 1 ;;
+        *) exit 0 ;;
+      esac
+      SHIM
+    File.chmod(interpreter, 0o755)
+
+    original_path = ENV["PATH"]?
+    ENV["PATH"] = "#{dir}:#{original_path}"
+    begin
+      gate = Krikri::PluginHelpers::PostgresqlConnection.psycopg2_gate
+      flunk "psycopg2_gate returned nil" unless gate
+      gate.changed?.must_equal(false)
+      gate.failed?.must_equal(true)
+      gate.msg.must_equal(missing_library_message("psycopg2", "/opt/krikri-absent/bin/python3.13"))
+    ensure
+      ENV["PATH"] = original_path if original_path
+      FileUtils.rm_rf(dir) if dir && Dir.exists?(dir)
+    end
   end
 end

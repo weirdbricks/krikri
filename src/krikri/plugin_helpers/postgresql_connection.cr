@@ -22,6 +22,8 @@ require "socket"
 {% end %}
 
 require "json"
+require "../base_plugin"
+require "./python_lib_gate"
 
 module Krikri
   module PluginHelpers
@@ -29,6 +31,30 @@ module Krikri
     # connection URI from Ansible-style login_* params. No I/O -
     # postgresql_db.cr/postgresql_user.cr do the actual DB.open.
     module PostgresqlConnection
+      # community.postgresql's shared ensure_required_libs() (module_utils/
+      # postgres.py, 4.2.0) fails the task with Ansible's missing_required_lib
+      # wording when the target's Python cannot import psycopg2 - after the
+      # argspec checks but before get_conn_params() and the connect attempt.
+      # krikri's postgresql_* plugins talk the wire protocol through
+      # crystal-pg and need no psycopg2, so they used to carry on past the
+      # point real stops and report their own downstream connect failure
+      # instead (consensys.web3signer's postgresql_query task, issue #467:
+      # "unable to connect to database: ... Connection refused" where real
+      # failed with "Failed to import the required Python library
+      # (psycopg2) ..."). The dependency still decides the outcome, so it
+      # is reproduced here - same message, same ordering - like the passlib
+      # gate in htpasswd and the pexpect gate in expect. Real passes no
+      # exception= to fail_json here, so the [ERROR] block carries the msg
+      # alone, unlike expect/deb822_repository.
+      #
+      # nil when the target's Python imports psycopg2 cleanly - the module
+      # connects, exactly as real's does.
+      def self.psycopg2_gate : PluginResult?
+        return nil unless gate = Krikri.missing_python_library("psycopg2", "psycopg2")
+
+        PluginResult.new(changed: false, failed: true, msg: gate[:msg])
+      end
+
       # libpq's wording for a connection the server accepted and then
       # dropped before/during startup packet exchange (both a clean
       # close and an RST - live-verified against ansible-core 2.19.11 +

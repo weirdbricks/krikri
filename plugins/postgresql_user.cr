@@ -82,6 +82,14 @@ module Krikri
 
       desired_flags = @params["role_attr_flags"]?.try { |spec| PluginHelpers::PostgresqlRoleFlags.parse(spec) }
 
+      # Real's main() runs ensure_required_libs() before connecting, so a
+      # target without psycopg2 fails the task with Ansible's
+      # missing_required_lib wording instead of krikri's own connect error
+      # (crystal-pg needs no psycopg2, issue #467).
+      if gate = PluginHelpers::PostgresqlConnection.psycopg2_gate
+        return gate
+      end
+
       # Ansible's `login_db:` param has a deprecated `aliases:
       # [db]` - same bug class as this file's own `user:`/`name:` fix
       # above. robertdebock.postgres's own "Create postgres users" task
