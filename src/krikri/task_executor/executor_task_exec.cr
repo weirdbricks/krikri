@@ -906,6 +906,19 @@ module Krikri
       return nil if result.empty?
       text = result.strip
       parsed = JSON.parse(text) rescue nil
+      unless parsed
+        # The ExpressionEvaluator stringifies list values as a Python repr
+        # (single-quoted strings, "['docker']"), which JSON.parse rejects -
+        # so a filter chain like `x or []` over a list var fell through to
+        # with_items' scalar-wrapping and iterated once with the WHOLE repr
+        # text as item. Ansible converts a template-resolved string that
+        # looks like a Python list literal back into a real list and
+        # iterates its elements (live-verified vs 2.19: item=docker), so
+        # recover the list the same way. Only attempted for bracket-shaped
+        # text: a genuine string value starting with '[' that is not a
+        # literal stays a scalar (the repair fails and the text is kept).
+        parsed = Krikri.parse_json_or_python_literal(text) if text.starts_with?('[')
+      end
       return nil unless parsed
       parsed.as_a?
     end
