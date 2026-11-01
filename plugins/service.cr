@@ -377,6 +377,22 @@ module Krikri
       @svc_cmd = cmd
       @enable_cmd = cmd
 
+      # Ansible's service action plugin dispatches to the systemd module,
+      # whose run() performs daemon-reload BEFORE its first `systemctl
+      # show` and any enable/start - so a stale unit file's "Run
+      # 'systemctl daemon-reload'" warning is absorbed by the reload
+      # call itself instead of riding along on the start/stop stderr and
+      # polluting the "Unable to start service ..." failure message
+      # (evrardjp.keepalived round). Never sets changed - same reasoning
+      # as plugins/systemd.cr: Ansible has no notion of daemon-reload
+      # "changedness".
+      if true?(@params["daemon_reload"]? || @params["daemon-reload"]?) && !@check_mode
+        reload_result = remote_exec("#{cmd} daemon-reload")
+        if reload_result[:exit_code] != 0
+          return "failure #{reload_result[:exit_code]} during daemon-reload: #{reload_result[:stderr]}"
+        end
+      end
+
       # One full `systemctl show` - Ansible's systemd module reads
       # the whole property dict once (its `result['status']`), and this
       # plugin reuses the same output for both the enabled:/state:

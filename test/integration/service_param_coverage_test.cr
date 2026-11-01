@@ -193,6 +193,54 @@ describe "service plugin - parameter coverage" do
         result.as_h.has_key?("warnings").must_equal(false)
       end
     end
+
+    # daemon_reload is not a documented `service:` option, but real
+    # Ansible accepts it: the action plugin dispatches to the systemd
+    # module, whose run() runs `systemctl daemon-reload` FIRST - before
+    # its `systemctl show` and any enable/start - and it neither warns
+    # nor counts as changed (evrardjp.keepalived's "Ensuring keepalived
+    # is enabled and started").
+    it "runs daemon-reload before the status probe and start, with no warning and changed: false" do
+      with_service_shims("loaded", "inactive") do |env, log|
+        result = PluginSpecHelper.run("service", {
+          "name"          => "krikri-fake-svc",
+          "state"         => "started",
+          "daemon_reload" => "true",
+          "use"           => "systemd",
+          "_environment"  => env,
+        })
+
+        falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+        result.as_h.has_key?("warnings").must_equal(false)
+
+        calls = read_calls(log)
+        reload = calls.index { |call| call.starts_with?("daemon-reload") }
+        show = calls.index { |call| call.starts_with?("show krikri-fake-svc") }
+        start = calls.index { |call| call.starts_with?("start krikri-fake-svc") }
+        reload.wont_be_nil
+        show.wont_be_nil
+        start.wont_be_nil
+        (reload.not_nil! < show.not_nil!).must_equal(true)
+        (show.not_nil! < start.not_nil!).must_equal(true)
+      end
+    end
+
+    it "reports changed: false when the service is already started (daemon-reload alone never changes)" do
+      with_service_shims("loaded", "active") do |env, log|
+        result = PluginSpecHelper.run("service", {
+          "name"          => "krikri-fake-svc",
+          "state"         => "started",
+          "daemon_reload" => "true",
+          "use"           => "systemd",
+          "_environment"  => env,
+        })
+
+        falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+        result["changed"].as_bool.must_equal(false)
+        result.as_h.has_key?("warnings").must_equal(false)
+        read_calls(log).join("\n").must_include("daemon-reload")
+      end
+    end
   end
 
   describe "non-systemd managers (Ansible gives the params real effect there)" do
