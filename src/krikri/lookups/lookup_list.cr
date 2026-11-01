@@ -12,12 +12,12 @@ module Krikri
           # returns every term given, as a real list (mainly exists so
           # a caller can always treat the result as a list regardless
           # of how many terms were given).
-          parts[1..].map { |part| evaluate_lookup_term(part.strip) }.to_json
+          lookup_single_element_result(parts[1..].map { |part| evaluate_lookup_term(part.strip) }, kwargs, query_mode)
         when "items"
           # lookup('items', list1, list2, ...) - Ansible's own
           # items lookup: flattens the given list terms one level
           # (itertools.chain, not a deep flatten).
-          parts[1..].flat_map { |part| lookup_array(evaluate_lookup_term(part.strip)) }.to_json
+          lookup_single_element_result(parts[1..].flat_map { |part| lookup_array(evaluate_lookup_term(part.strip)) }, kwargs, query_mode)
         when "flattened"
           # lookup('flattened', t1, t2, ...) - Ansible's own flattened
           # lookup: deep-flattens every term (nested lists flattened
@@ -46,13 +46,14 @@ module Krikri
           if list_form
             # The embedded bare-call renderer (#evaluate_bare_lookup_call)
             # must know this result kept its list - it renders Python repr
-            # for list-kept results, never for a joined str (issue #695).
-            items.to_json
+            # for list-kept results (and, since issue #698, for an unwrapped
+            # single element), never for a joined str (issue #695).
+            lookup_single_element_result(items, kwargs, query_mode)
           else
             items.map { |item| item.as_s }.join(",")
           end
         when "together"
-          evaluate_lookup_together(parts)
+          evaluate_lookup_together(parts, kwargs, query_mode)
         when "nested"
           # lookup('nested', list1, list2, ...) - Ansible's own
           # nested lookup: a nested-loop Cartesian product of the given
@@ -61,7 +62,7 @@ module Krikri
           # source.
           lists = parts[1..].map { |part| lookup_array(evaluate_lookup_term(part.strip)) }
           result = lists.reduce([[] of JSON::Any]) { |acc, list| acc.flat_map { |row| list.map { |item| row + [item] } } }
-          result.to_json
+          lookup_single_element_result(result.map { |row| JSON::Any.new(row) }, kwargs, query_mode)
         when "lines"
           lookup_lines(parts)
         when "varnames"
@@ -78,10 +79,10 @@ module Krikri
       # Pulled out of #evaluate_lookup_list's own case dispatch to keep
       # that method's cyclomatic complexity under the repo's threshold -
       # purely a split, no behavior change.
-      private def evaluate_lookup_together(parts : Array(String)) : String
+      private def evaluate_lookup_together(parts : Array(String), kwargs : Array(String), query_mode : Bool = false) : String
         lists = parts[1..].map { |part| lookup_array(evaluate_lookup_term(part.strip)) }
         size = lists.max_of?(&.size) || 0
-        (0...size).map { |i| lists.map { |list| list[i]? || JSON::Any.new(nil) } }.to_json
+        lookup_single_element_result((0...size).map { |i| lists.map { |list| list[i]? || JSON::Any.new(nil) } }.map { |row| JSON::Any.new(row) }, kwargs, query_mode)
       end
 
       # Ansible's own flattened lookup runs every term through
@@ -168,6 +169,27 @@ module Krikri
 
       private def lookup_array(value : JSON::Any?) : Array(JSON::Any)
         value.try(&.as_a?) || [] of JSON::Any
+      end
+
+      # A plain lookup() whose list result holds EXACTLY ONE non-string
+      # element returns the element itself, not a one-element list:
+      # ansible-core's _invoke_lookup does ",".join(result) and, on the
+      # TypeError that raises, unwraps a length-1 result (issue #698). A
+      # BIGINT_SENTINEL_PREFIX-marked string IS that element's integer
+      # too. Empty and multi-element results keep the list, as does any
+      # query()/wantlist=True call; all-string results are decided by the
+      # caller (they still comma-join).
+      private def lookup_single_element_result(items : Array(JSON::Any), kwargs : Array(String), query_mode : Bool) : String
+        if !query_mode &&
+           !kwargs.any? { |part| part.strip.downcase.starts_with?("wantlist=true") } &&
+           items.size == 1 && lookup_join_list_form?(items)
+          # The embedded bare-call renderer (#evaluate_bare_lookup_call)
+          # must repr the unwrapped element the same way it reprs a kept
+          # list (it reads #lookup_list_form, never the text's shape).
+          @lookup_list_form = true
+          return items[0].to_json
+        end
+        items.to_json
       end
 
       # Whether a scalar lookup() result must keep its list form instead

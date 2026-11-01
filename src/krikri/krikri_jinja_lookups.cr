@@ -41,6 +41,23 @@ module Krikri
           else
             name = text(args[0]).sub(/^ansible\.(builtin|legacy)\./, "")
             result = lookup(name, prepare_lookup_terms(args[1..], ctx), kwargs, ctx, query_mode)
+            # ansible-core's _invoke_lookup does ",".join(result) and, on
+            # the TypeError that a non-string element raises, returns the
+            # result's single element when it holds exactly one - so a
+            # plain lookup() (not query(), no wantlist=True) whose list
+            # result carries exactly ONE non-string element yields the
+            # element itself, not a one-element list (issue #698). A
+            # BIGINT_SENTINEL_PREFIX-marked string IS that element's
+            # integer too. All-string results still comma-join in the
+            # plugin branches above; query()/wantlist keep the list.
+            # vars/config/template hand back the VALUE itself (ansible wraps
+            # it in a list first), so a one-element list value there must
+            # not be unwrapped a second time.
+            if !query_mode && !truthy?(kwargs["wantlist"]?) && !name.in?("vars", "config", "template") &&
+               (raw = result.raw).is_a?(Array(AnyValue)) && raw.size == 1 &&
+               (!(element = raw[0].raw).is_a?(String) || !Krikri.bigint_digits(element).nil?)
+              result = raw[0]
+            end
             if query_mode && !result.raw.is_a?(KrikriJinja::Undefined) && !result.raw.nil? && !result.raw.is_a?(Array)
               result = AnyValue.new([result])
             end

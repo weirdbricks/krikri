@@ -7,7 +7,7 @@ module Krikri
     # subelements, password, csvfile, ini) - extracted verbatim from
     # expression_evaluator.cr (lookup-dispatch split).
     class ExpressionEvaluator
-      private def evaluate_lookup_misc(lookup_type : String?, parts : Array(String), kwargs : Array(String)) : String?
+      private def evaluate_lookup_misc(lookup_type : String?, parts : Array(String), kwargs : Array(String), query_mode : Bool = false) : String?
         case lookup_type
         when "sequence"
           # lookup('sequence', 'start=1 end=5 stride=1 format=web%02d')
@@ -24,7 +24,7 @@ module Krikri
           # enumerate()), the classic with_indexed_items: source.
           source = parts[1]?.try { |part| evaluate_lookup_term(part.strip) }
           return "undefined" unless source
-          lookup_array(source).map_with_index { |item, i| [JSON::Any.new(i.to_i64), item] }.to_json
+          lookup_single_element_result(lookup_array(source).map_with_index { |item, i| JSON::Any.new([JSON::Any.new(i.to_i64), item]) }, kwargs, query_mode)
         when "random_choice"
           # lookup('random_choice', list1, list2, ...) - Ansible's
           # own random_choice lookup: every given term concatenated into
@@ -38,7 +38,7 @@ module Krikri
           return "undefined" if items.empty?
           @lookup.format_value(items.sample)
         when "subelements"
-          lookup_subelements(parts)
+          lookup_subelements(parts, kwargs, query_mode)
         when "random_string"
           lookup_random_string(parts, kwargs)
         when "merge_variables"
@@ -237,7 +237,7 @@ module Krikri
         value
       end
 
-      private def lookup_subelements(parts : Array(String)) : String
+      private def lookup_subelements(parts : Array(String), kwargs : Array(String), query_mode : Bool = false) : String
         # lookup('subelements', list_of_dicts, 'subkey', {
         # skip_missing: true}) - Ansible's own subelements
         # lookup: for each dict, yields [parent_dict, child_item] for
@@ -258,7 +258,11 @@ module Krikri
           end
           lookup_array(children).each { |child| result << JSON::Any.new([parent, child]) }
         end
-        result.to_json
+        # One source dict with one child yields exactly one [parent,
+        # child] row - a non-string element, so ansible's _invoke_lookup
+        # unwraps it to the row itself (issue #698), not a one-element
+        # list of it.
+        lookup_single_element_result(result, kwargs, query_mode)
       end
 
       # Keyword arguments (`file='x.csv', field=1, default='MISSING'`)
