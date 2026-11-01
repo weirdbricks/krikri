@@ -32,6 +32,17 @@ module Krikri
       delay
     end
 
+    # The "Sleeping for N seconds" warning's integer. Ansible does NOT
+    # truncate the float delay (%i would give 1.7s -> "1"): both its
+    # callers (apt_repository.py:746, apt.py:1426, ansible-core 2.19.11)
+    # format `int(round(delay))`, and Python round is ties-to-even, so
+    # 1.7 -> "2", 2.5 -> "2", 3.5 -> "4". Truncating instead changes N
+    # whenever the jitter lands in [0.5, 1.0), which changes how repeated
+    # warnings dedupe across loop items.
+    def self.sleeping_seconds(delay : Float64) : Int32
+      delay.round_even.to_i
+    end
+
     # Runs `apt-get update`, retrying on non-zero exit up to *retries*
     # total attempts (Ansible's `range(update_cache_retries)` bound)
     # with the exponential-backoff-with-jitter delay between attempts.

@@ -46,6 +46,20 @@ describe Krikri::AptRepositoryCacheRetry do
     end
   end
 
+  describe ".sleeping_seconds" do
+    # The "Sleeping for N seconds" warning integer: ansible formats
+    # int(round(delay)) - Python round, ties-to-even - so a jitter >= 0.5
+    # rounds UP (1.7 -> "2"), while %i truncation printed "1" and changed
+    # how repeated warnings dedupe across loop items.
+    it "rounds the delay ties-to-even like Python's round()" do
+      Krikri::AptRepositoryCacheRetry.sleeping_seconds(1.7).must_equal(2)
+      Krikri::AptRepositoryCacheRetry.sleeping_seconds(2.3).must_equal(2)
+      Krikri::AptRepositoryCacheRetry.sleeping_seconds(2.5).must_equal(2)
+      Krikri::AptRepositoryCacheRetry.sleeping_seconds(3.5).must_equal(4)
+      Krikri::AptRepositoryCacheRetry.sleeping_seconds(1.2).must_equal(1)
+    end
+  end
+
   describe "#apt_repository_cache_update_with_retry" do
     it "retries a failing update up to update_cache_retries total attempts" do
       harness = RetryHarness.new
