@@ -98,4 +98,35 @@ describe "changed_when:/failed_when: evaluation errors keep the module's own msg
     output.must_include(%("msg": "Task failed: Action failed: Unknown error."))
     output.wont_include("Task failed: Module failed.")
   end
+
+  it "stores an unknown filter as a syntax error in changed_when_result/failed_when_result" do
+    _status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: unknown filter in changed_when
+            ansible.builtin.debug:
+              msg: hello
+            changed_when: "'foo' | search('bar')"
+            register: cw
+            ignore_errors: true
+          - name: unknown filter in failed_when
+            ansible.builtin.debug:
+              msg: hello
+            failed_when: "'foo' | search('bar')"
+            register: fw
+            ignore_errors: true
+          - name: surface the stored texts
+            ansible.builtin.debug:
+              msg: "{{ [cw.changed_when_result, fw.failed_when_result] }}"
+      YAML
+
+    # search is a TEST, not a filter (issue #533): ansible's template
+    # parse fails at compile time, so the stored text is the bare
+    # syntax-error shape, not the "Error while evaluating conditional:"
+    # trap wording. (The console fatal block doesn't display the
+    # *_when_result fields, so the follow-up debug surfaces them.)
+    output.scan(%(Syntax error in expression: No filter named 'search'.)).size.must_equal 2
+  end
 end
