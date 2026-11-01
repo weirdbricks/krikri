@@ -41,6 +41,39 @@ describe "Krikri::PluginManager (become_needed_test.cr)" do
     end
   end
 
+  describe ".local_become_would_fail?" do
+    it "is false unless the dispatch stays on the controller" do
+      Krikri::PluginManager.local_become_would_fail?(false, true, "krikri-spec-other-user", nil, false).must_equal(false)
+    end
+
+    it "is false whenever become is off" do
+      Krikri::PluginManager.local_become_would_fail?(true, false, nil, nil, false).must_equal(false)
+    end
+
+    it "is true for a local sudo dispatch with no password and a refusing sudo" do
+      # Issue #498's live shape: sudo needs a password, none is
+      # configured, so the escalation dies before the module - and its
+      # own argument validation - can ever run.
+      Krikri::PluginManager.local_become_would_fail?(true, true, "krikri-spec-other-user", nil, false).must_equal(true)
+    end
+
+    it "is false when a become password is configured (sudo -S gets its try)" do
+      Krikri::PluginManager.local_become_would_fail?(true, true, "krikri-spec-other-user", "hunter2", false).must_equal(false)
+    end
+
+    it "is false when sudo escalates non-interactively (NOPASSWD)" do
+      Krikri::PluginManager.local_become_would_fail?(true, true, "krikri-spec-other-user", nil, true).must_equal(false)
+    end
+
+    it "is false when the escalation is a same-user no-op" do
+      # become_needed?'s own gate: escalating to the user we already are
+      # wraps nothing in sudo, so the argspec check keeps running. The
+      # probe result is irrelevant here, passed false to prove it.
+      user = Krikri::PluginManager.local_username
+      Krikri::PluginManager.local_become_would_fail?(true, true, user, nil, false).must_equal(false)
+    end
+  end
+
   describe ".remote_plugin_target" do
     it "omits the sudo wrapper for a same-user become" do
       Krikri::PluginManager.remote_plugin_target("copy", true, "root", "root")
