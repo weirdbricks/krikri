@@ -31,14 +31,18 @@ def with_fake_pkg_manager(name : String, output : String, &block)
   script = File.join(bin_dir, name)
   File.write(script, "#!/bin/sh\nprintf '%s' \"#{output}\"")
   File.chmod(script, 0o755)
-  previous = ENV["PATH"]?
-  ENV["PATH"] = "#{bin_dir}:#{ENV["PATH"]?}"
-  begin
-    block.call
-  ensure
-    previous ? (ENV["PATH"] = previous) : ENV.delete("PATH")
-    FileUtils.rm_r(bin_dir)
+  # ENV is process-global, so the whole block holds ENV_MUTEX like every
+  # other PATH-shimming helper (with_recording_pkg_managers, with_rpm_key_shims, ...).
+  PluginSpecHelper::ENV_MUTEX.synchronize do
+    previous = ENV["PATH"]?
+    ENV["PATH"] = "#{bin_dir}:#{ENV["PATH"]?}"
+    begin
+      block.call
+    ensure
+      previous ? (ENV["PATH"] = previous) : ENV.delete("PATH")
+    end
   end
+  FileUtils.rm_r(bin_dir)
 end
 
 describe "dnf/yum list: query mode" do
