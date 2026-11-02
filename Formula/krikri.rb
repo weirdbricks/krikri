@@ -7,10 +7,10 @@ class Krikri < Formula
   on_macos do
     if Hardware::CPU.arm?
       url "https://github.com/weirdbricks/krikri/releases/download/v0.9.2254/krikri-v0.9.2254-darwin-arm64.tar.gz"
-      sha256 "b064f60df31bec00003b149abb1820169236130b1a56d97e3e5ba7e146dfddb8"
+      sha256 "243c29e1e17b4e3257ea877df810904d41a84386b5f56d270ef1d914abf35b7e"
     else
       url "https://github.com/weirdbricks/krikri/releases/download/v0.9.2254/krikri-v0.9.2254-darwin-x86_64.tar.gz"
-      sha256 "b5a19e0c6129dffd8d7530fc4c8c74616b7e5e0467f6dc5cbd9d6c0c0e1f4809"
+      sha256 "608fa82107d55a99fb4bcce862c33cc10323ca89131c47e02818c01b02bc9afc"
     end
 
     # Unlike the Linux binaries (fully static musl builds, zero runtime
@@ -31,10 +31,10 @@ class Krikri < Formula
   on_linux do
     if Hardware::CPU.arm?
       url "https://github.com/weirdbricks/krikri/releases/download/v0.9.2254/krikri-v0.9.2254-linux-arm64.tar.gz"
-      sha256 "2452a81af3a6e3a85ed5305867afae3aaa2de697c464a9aa6035f8948c445a3f"
+      sha256 "e73f4f90916ce32e8ee0431e13eedd676ff71ac878216f9e305d25598a4c96f2"
     else
       url "https://github.com/weirdbricks/krikri/releases/download/v0.9.2254/krikri-v0.9.2254-linux-x86_64.tar.gz"
-      sha256 "2d5541a4c3e92b86c520976787a285806a32bf20fab11c92eef85e9c92ccc0b8"
+      sha256 "0504f9d7d9a18bcd3f78b65d9e4325395771d013767678e47017803ffc17645d"
     end
   end
 
