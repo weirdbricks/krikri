@@ -10086,7 +10086,7 @@ tomcat handler). No fix dispatched; no confirm round run.
 | `fubarhouse.yarn` | ubuntu | ✅ clean. Times: cold py 9.58s vs cr 6.03s; warm py 8.06s vs cr 0.56s. |
 | `grofers.barman` | rocky | ✅ clean. Times: cold py 0.47s vs cr 0.01s; warm py 0.47s vs cr 0.01s. |
 | `spk83.gitlab-config` | ubuntu | ✅ clean. Times: cold py 41.18s vs cr 22.27s; warm py 24.44s vs cr 1.52s. |
-| `martin-micimo.haproxy` | ubuntu | ❌ Divergent - issue #566 (round29884190, 0.9.1963 release). Times: cold py 129.16s vs cr 4.26s; warm py 71.50s vs cr 0.47s. |
+| `martin-micimo.haproxy` | ubuntu | ✅ Clean (round29893157, 0.9.2252 debug, Atlantic/Ubuntu). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 184.79s vs cr 37.97s; warm py 112.78s vs cr 11.10s. |
 | `pluggero.tool_installer` | ubuntu | ❌ Divergent - issue #604 (round29884401, 0.9.1963 release). Times: cold py 2.51s vs cr 0.66s; warm py 2.00s vs cr 0.07s. |
 | `indigo-dc_marathon-lb` | ubuntu | ❌ BLOCKED: GALAXY_MISSING |
 | `ANXS.python` | ubuntu | ✅ clean. Times: cold py 79.12s vs cr 53.81s; warm py 15.20s vs cr 3.67s. |
