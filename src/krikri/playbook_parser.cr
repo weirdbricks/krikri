@@ -2545,11 +2545,7 @@ module Krikri
       # scalar here); only reading the list form silently dropped a scalar
       # play tag, so `--tags that-tag` selection missed it.
       if tags_yaml = yaml["tags"]?
-        if tags_arr = tags_yaml.as_a?
-          play.tags = tags_arr.map(&.as_s)
-        else
-          play.tags = [safe_yaml_to_string(tags_yaml)]
-        end
+        play.tags = flatten_tag_list(tags_yaml)
       end
 
       # pre_tasks:/post_tasks: - Ansible's execution order is
@@ -3088,13 +3084,7 @@ module Krikri
       # tags the imported task tree with it either way; only reading the
       # list form silently dropped a scalar, so a `tags: never` import ran
       # on an ordinary no-`--tags` invocation where real Ansible skips it.
-      import_tags = hash["tags"]?.try do |tags_yaml|
-        if tags_arr = tags_yaml.as_a?
-          tags_arr.map(&.as_s)
-        else
-          [safe_yaml_to_string(tags_yaml)]
-        end
-      end || [] of String
+      import_tags = hash["tags"]?.try { |tags_yaml| flatten_tag_list(tags_yaml) } || [] of String
       # A `notify:` on the import_tasks: line itself - like when:/tags:
       # just below, Ansible propagates it onto every task the
       # import statically inlines, so each one independently notifies
@@ -5053,7 +5043,7 @@ module Krikri
       task.module_defaults = parse_module_defaults(task_hash["module_defaults"]?)
 
       if tags_yaml = task_hash["tags"]?
-        task.tags = tags_yaml.as_a?.try(&.map(&.as_s)) || [safe_yaml_to_string(tags_yaml)]
+        task.tags = flatten_tag_list(tags_yaml)
       end
 
       if vars_yaml = task_hash["vars"]?.try(&.as_h?)
@@ -5268,7 +5258,7 @@ module Krikri
       end
 
       if tags_yaml = task_hash["tags"]?
-        task.tags = tags_yaml.as_a?.try(&.map(&.as_s)) || [tags_yaml.as_s]
+        task.tags = flatten_tag_list(tags_yaml)
       end
 
       # with_first_found: is the loop form this module is almost always
@@ -6229,7 +6219,7 @@ module Krikri
       task.include_apply_when = args["when"]?.try { |v| condition_to_string(v) }
       task.include_apply_when_list = args["when"]?.try { |v| condition_to_list(v) }
       if tags_yaml = args["tags"]?
-        task.include_apply_tags = tags_yaml.as_a?.try(&.map(&.as_s)) || [safe_yaml_to_string(tags_yaml)]
+        task.include_apply_tags = flatten_tag_list(tags_yaml)
       end
     end
 
@@ -7954,6 +7944,20 @@ module Krikri
         return {nil, expr}
       end
       {safe_yaml_to_string(yaml).strip.to_i64?, nil}
+    end
+
+    # Ansible flattens nested tag lists (`tags: [[a, b], c]` -> a, b, c),
+    # so a tag value may be an arbitrarily nested array; mapping the
+    # top-level entries with `.as_s` raised on the nested form and the
+    # whole task was skipped ("Cast from Array(YAML::Any) to String
+    # failed"). Public so RoleLoader's role-tag parse shares it.
+    def self.flatten_tag_list(yaml : YAML::Any) : Array(String)
+      case yaml.raw
+      when Array
+        yaml.as_a.flat_map { |entry| flatten_tag_list(entry) }
+      else
+        [safe_yaml_to_string(yaml)]
+      end
     end
 
     private def self.safe_yaml_to_string(yaml : YAML::Any) : String

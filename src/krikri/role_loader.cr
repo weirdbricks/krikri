@@ -322,13 +322,7 @@ module Krikri
       # silently dropped (only the list form was read), so the dependency
       # role's whole task tree RAN where real Ansible skips it entirely -
       # without even skip banners (tag-excluded tasks print nothing).
-      tags = hash["tags"]?.try do |tags_yaml|
-        if tags_arr = tags_yaml.as_a?
-          tags_arr.map(&.as_s)
-        else
-          [tags_yaml.as_s? || tags_yaml.to_s]
-        end
-      end || [] of String
+      tags = hash["tags"]?.try { |tags_yaml| PlaybookParser.flatten_tag_list(tags_yaml) } || [] of String
 
       # `when:` on a roles: entry or a meta/main.yml dependency is
       # Ansible's own RoleRequirement field - it does NOT gate the role
