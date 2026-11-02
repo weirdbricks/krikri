@@ -530,7 +530,12 @@ module Krikri
 
     private def do_clone(dest : String, single_branch : Bool) : PluginResult?
       parent = File.dirname(dest)
-      Dir.mkdir_p(parent) unless Dir.exists?(parent)
+      # ansible never pre-creates the parent; git clone does and its own
+      # "could not create leading directories" failure is what users see.
+      begin
+        Dir.mkdir_p(parent) unless Dir.exists?(parent)
+      rescue File::Error
+      end
 
       argv = ["clone"]
       argv << "--bare" if @bare
@@ -972,8 +977,21 @@ module Krikri
     private def repo_path_of(dest : String) : String?
       return dest if @bare
       dotgit = File.join(dest, ".git")
-      return dotgit if Dir.exists?(dotgit)
-      if File.file?(dotgit)
+      # An unreadable parent makes Crystal's stat helpers raise; ansible's
+      # os.path.exists just says no and lets `git clone` report the
+      # permission failure.
+      is_dir = begin
+        Dir.exists?(dotgit)
+      rescue File::Error
+        return nil
+      end
+      return dotgit if is_dir
+      is_file = begin
+        File.file?(dotgit)
+      rescue File::Error
+        false
+      end
+      if is_file
         data = File.read(dotgit).strip
         return nil unless data.starts_with?("gitdir: ")
         gitdir = data[8..].strip
