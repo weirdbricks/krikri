@@ -41,4 +41,39 @@ describe "dnf plugin remote rpm URL fetch (issue 217)" do
       result.as_h.has_key?("failures").must_equal(false)
     end
   end
+
+  # Issue 754: real fetch_url downloads through urllib's default
+  # ProxyHandler, which reads http_proxy/https_proxy/no_proxy from the
+  # module process env - the env Ansible populates from the task's
+  # environment: keyword. So a dead proxy listed there is USED: the
+  # connect to it is refused and the failure is urllib's URLError text,
+  # not the direct download's HTTP status.
+  it "routes the rpm URL through the task environment http_proxy" do
+    with_local_rpm_server(404) do |url|
+      result = PluginSpecHelper.run("dnf",
+        {"name" => url, "state" => "present",
+         "_environment" => {"http_proxy" => "http://127.0.0.1:1"}.to_json},
+        vars: {"ansible_pkg_mgr" => "dnf"})
+
+      result["failed"].as_bool.must_equal(true)
+      result["changed"].as_bool.must_equal(false)
+      result["msg"].as_s.must_equal(
+        "Failure downloading #{url}, Request failed: <urlopen error [Errno 111] Connection refused>")
+    end
+  end
+
+  # urllib's proxy_bypass_environment: a no_proxy host-suffix match sends
+  # the request direct even with a proxy set, so the origin's own error
+  # (the 404) is what surfaces again.
+  it "bypasses the proxy for a no_proxy host match" do
+    with_local_rpm_server(404) do |url|
+      result = PluginSpecHelper.run("dnf",
+        {"name" => url, "state" => "present",
+         "_environment" => {"http_proxy" => "http://127.0.0.1:1", "no_proxy" => "127.0.0.1"}.to_json},
+        vars: {"ansible_pkg_mgr" => "dnf"})
+
+      result["failed"].as_bool.must_equal(true)
+      result["msg"].as_s.must_equal("Failure downloading #{url}, HTTP Error 404: Not Found")
+    end
+  end
 end

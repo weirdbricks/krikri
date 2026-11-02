@@ -39,7 +39,18 @@ module Krikri
         client_cert : String? = nil,
         client_key : String? = nil,
         ciphers : String? = nil,
-        unredirected_headers : Array(String) = [] of String
+        unredirected_headers : Array(String) = [] of String,
+        # Real fetch_url downloads through urllib's default ProxyHandler,
+        # which routes each request through the http_proxy/https_proxy env
+        # vars (no_proxy bypass included) of the module process - the very
+        # env Ansible populates from the task's environment: keyword. The
+        # caller picks the values out of its own env sources (task overlay
+        # over ENV) since this helper never sees the task environment;
+        # empty means "no proxy for that scheme", exactly like
+        # getproxies_environment treats an unset var.
+        http_proxy : String? = nil,
+        https_proxy : String? = nil,
+        no_proxy : String? = nil
 
       # What the FINAL response of a redirect-following download looked
       # like: Ansible's get_url derives a directory-dest download's
@@ -146,11 +157,13 @@ module Krikri
         # Ansible's message and names no offending character.
         reject_control_chars(uri.request_target)
 
-        client = build_client(uri, options)
+        proxy = effective_proxy(uri, options)
+        client, request_target, host_header = client_and_target(uri, options, proxy)
         headers = request_headers(options, auth_attempted)
+        headers = proxied_request_headers(headers, host_header, proxy)
 
         begin
-          client.get(uri.request_target, headers: headers) do |response|
+          client.get(request_target, headers: headers) do |response|
             if hop = redirect_hop(client, uri, response, url, dest, options, redirects_left, auth_attempted)
               return hop
             end
@@ -190,6 +203,184 @@ module Krikri
         end
       ensure
         client.try(&.close)
+      end
+
+      # Host names the ORIGIN, not the proxy hop the request travels over
+      # - the client's own default would name the io socket's host (the
+      # proxy). Returned as a copy, never mutated in place:
+      # request_headers hands back the caller's own headers object, and a
+      # redirect hop would otherwise inherit the previous origin's Host.
+      # urllib's ProxyHandler also sends Proxy-Authorization on the
+      # proxied request when the proxy URL itself carries credentials.
+      private def self.proxied_request_headers(headers : HTTP::Headers, host_header : String, proxy : URI?) : HTTP::Headers
+        return headers unless proxy
+
+        headers = headers.dup
+        headers["Host"] = host_header unless headers.has_key?("Host")
+        if (user = proxy.user) && !user.empty?
+          password = proxy.password || ""
+          headers["Proxy-Authorization"] = "Basic #{Base64.strict_encode("#{user}:#{password}")}"
+        end
+        headers
+      end
+
+      # urllib's ProxyHandler request dispatch: pick the per-scheme proxy
+      # setting, then drop it when the request host is bypassed via
+      # no_proxy. Called per hop, so a redirect to another host is
+      # re-evaluated exactly like urllib re-dispatches each redirect.
+      private def self.effective_proxy(uri : URI, options : Options) : URI?
+        return nil unless uri.host
+
+        raw = case uri.scheme.to_s
+              when "https" then options.https_proxy
+              else              options.http_proxy
+              end
+        raw = raw.to_s.strip
+        return nil if raw.empty?
+        return nil if proxy_bypass?(uri.host, options.no_proxy)
+
+        URI.parse(raw)
+      end
+
+      # urllib's proxy_bypass_environment: no_proxy is a comma-separated
+      # host-suffix list, a bare '*' bypasses everything, and each entry
+      # matches the request host as a suffix once its leading dots are
+      # stripped (".example.com" and "example.com" both match
+      # "host.example.com").
+      private def self.proxy_bypass?(host : String?, no_proxy : String?) : Bool
+        return false unless no_proxy && !no_proxy.strip.empty?
+
+        entries = no_proxy.split(',')
+        return true if entries.includes?("*")
+
+        hostname = (host || "localhost").downcase
+        entries.any? do |entry|
+          entry = entry.strip.downcase.lstrip('.')
+          !entry.empty? && hostname.ends_with?(entry)
+        end
+      end
+
+      # The stdlib HTTP::Client has no proxy support, so the proxy hop is
+      # hand-run here and the client is pointed at the socket this code
+      # opened. A plain-http request goes to the proxy as an absolute-form
+      # request target (RFC 7230 5.3.2); an https one is tunneled with
+      # CONNECT and the client runs over the tunnel's TLS, SNI included.
+      # The proxy connection itself is always plaintext, matching
+      # urllib/http.client, which never TLS-wraps the proxy hop even when
+      # the proxy URL says https:.
+      private def self.client_and_target(uri : URI, options : Options, proxy : URI?) : Tuple(HTTP::Client, String, String)
+        return build_client(uri, options), uri.request_target, "" unless proxy
+
+        scheme_is_https = uri.scheme == "https"
+        origin_host = uri.host || ""
+        origin_port = uri.port || (scheme_is_https ? 443 : 80)
+        proxy_host = proxy.host || ""
+        proxy_port = proxy.port || 80
+
+        socket = proxy_socket(proxy_host, proxy_port, options.connect_timeout)
+
+        if scheme_is_https
+          connect_tunnel(socket, origin_host, origin_port, proxy, options.read_timeout)
+          # Same SNI + trailing-dot strip the stdlib client applies on its
+          # own direct connect.
+          io : IO = OpenSSL::SSL::Socket::Client.new(socket, context: tls_context(options), sync_close: true, hostname: origin_host.rchop('.'))
+        else
+          io = socket
+        end
+        socket.read_timeout = options.read_timeout
+        socket.write_timeout = options.read_timeout
+
+        # The host/port args only shape the Host header - the request goes
+        # over the socket we opened, the header names the origin, with the
+        # default port omitted the way the client's own host_header does.
+        host_header = origin_port == (scheme_is_https ? 443 : 80) ? origin_host : "#{origin_host}:#{origin_port}"
+        target = scheme_is_https ? uri.request_target : url_target(uri)
+        {HTTP::Client.new(io, origin_host, origin_port), target, host_header}
+      end
+
+      # The TLS context a tunneled https request runs over, carrying the
+      # same customization build_client applies on a direct connect.
+      private def self.tls_context(options : Options) : OpenSSL::SSL::Context::Client
+        tls = OpenSSL::SSL::Context::Client.new
+        tls.verify_mode = OpenSSL::SSL::VerifyMode::NONE unless options.verify_tls
+        if cert = options.client_cert
+          tls.certificate_chain = cert
+        end
+        if key = options.client_key
+          tls.private_key = key
+        end
+        if ciphers = options.ciphers
+          tls.ciphers = ciphers
+        end
+        tls
+      end
+
+      # The absolute-form request target a plain-http request needs when
+      # the hop goes through a proxy.
+      private def self.url_target(uri : URI) : String
+        URI.new(uri.scheme, uri.host, uri.port, uri.request_target).to_s
+      end
+
+      # SocketConnect.open, not TCPSocket.new, for the same reason the
+      # non-proxied path re-probes after a failure (see SocketConnect): a
+      # refused proxy connect must carry the REAL errno so the URLError
+      # text reads like Python's.
+      private def self.proxy_socket(host : String, port : Int32, connect_timeout : Time::Span) : ::Socket
+        SocketConnect.open(host, port, connect_timeout)
+      rescue ex : Socket::Addrinfo::Error
+        text = SocketConnect.urlopen_dns_error_text(ex) ||
+               "<urlopen error #{ex.message || ex.class.name}>"
+        raise FetchError.new(FetchError::Kind::UrlError, "Request failed: #{text}")
+      rescue ex : Socket::ConnectError
+        text = SocketConnect.urlopen_error_text(host, port, ex) ||
+               "<urlopen error #{ex.message || ex.class.name}>"
+        raise FetchError.new(FetchError::Kind::UrlError, "Request failed: #{text}")
+      rescue IO::TimeoutError
+        raise FetchError.new(FetchError::Kind::UrlError, "Request failed: <urlopen error timed out>")
+      end
+
+      # The HTTP CONNECT hop that turns the proxy connection into a tunnel
+      # for https. On anything but a 200, python's http.client fails the
+      # tunnel with "tunnel connection failed: <status line>" inside the
+      # same URLError shape as any other proxy failure.
+      private def self.connect_tunnel(socket : ::Socket, host : String, port : Int32, proxy : URI, timeout : Time::Span) : Nil
+        request = String.build do |io|
+          io << "CONNECT #{host}:#{port} HTTP/1.1\r\n"
+          io << "Host: #{host}:#{port}\r\n"
+          if (user = proxy.user) && !user.empty?
+            password = proxy.password || ""
+            io << "Proxy-Authorization: Basic #{Base64.strict_encode("#{user}:#{password}")}\r\n"
+          end
+          io << "\r\n"
+        end
+        socket.write_timeout = timeout
+        socket.read_timeout = timeout
+        socket.write(request.to_slice)
+
+        head = read_connect_response_head(socket)
+        parts = head.lines.first?.try(&.split) || [] of String
+        unless parts.size >= 2 && parts[1] == "200"
+          raise FetchError.new(FetchError::Kind::UrlError,
+            "Request failed: <urlopen error tunnel connection failed: #{parts[1..].join(" ")}>")
+        end
+      rescue IO::TimeoutError
+        raise FetchError.new(FetchError::Kind::UrlError, "Request failed: <urlopen error timed out>")
+      end
+
+      # Reads the CONNECT response head byte-wise up to its \r\n\r\n end,
+      # so the TLS handshake that follows starts on clean response bytes.
+      # A CONNECT head is tiny; the bound only stops a rogue proxy from
+      # feeding bytes forever.
+      private def self.read_connect_response_head(socket : ::Socket) : String
+        head = IO::Memory.new
+        buffer = Bytes.new(1)
+        while head.size < 16_384
+          got = socket.read(buffer)
+          raise IO::EOFError.new("EOF while reading the CONNECT response") if got == 0
+          head.write(buffer)
+          break if head.to_s.ends_with?("\r\n\r\n")
+        end
+        head.to_s
       end
 
       # urllib sends SNI on every TLS request, so certificate-vhosting servers
@@ -413,6 +604,10 @@ module Krikri
           client_key: options.client_key,
           ciphers: options.ciphers,
           unredirected_headers: options.unredirected_headers,
+          # urllib re-applies the proxy per redirected request too
+          http_proxy: options.http_proxy,
+          https_proxy: options.https_proxy,
+          no_proxy: options.no_proxy,
         )
       end
 

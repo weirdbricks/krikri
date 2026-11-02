@@ -647,13 +647,47 @@ module Krikri
 
       # ansible's fetch_url defaults (15s connect / 30s read, 5 redirects,
       # the ansible-httpget User-Agent), as in apt_deb_install.cr and unarchive.cr.
+      # The proxy settings come from remote_rpm_proxy_env: fetch_url's
+      # download goes through urllib's default ProxyHandler, which routes
+      # through the module process's http_proxy/https_proxy env vars - the
+      # env Ansible populates from the task's environment: keyword. Without
+      # them a URL reachable only via a proxy fails the way issue #754 saw:
+      # krikri downloads direct and dies on the origin's own error while
+      # ansible fails (or succeeds) on the proxy's.
       private def remote_rpm_download_options : PluginHelpers::HTTPDownload::Options
         PluginHelpers::HTTPDownload::Options.new(
           connect_timeout: 15.seconds,
           read_timeout: 30.seconds,
           max_redirects: 5,
           headers: HTTP::Headers{"User-Agent" => "ansible-httpget"},
+          http_proxy: remote_rpm_proxy_env("http_proxy"),
+          https_proxy: remote_rpm_proxy_env("https_proxy"),
+          no_proxy: remote_rpm_proxy_env("no_proxy"),
         )
+      end
+
+      # The module process's env as urllib's getproxies_environment sees
+      # it: the ambient env, with the task's environment: overlay merged
+      # on top (Ansible applies the overlay to the module process; the
+      # overlay wins). Krikri's plugin process does not receive the
+      # overlay in its own env (see LocalPluginDaemon's doc comment), so
+      # it is read explicitly and layered over ENV. urllib lower-cases
+      # every env name ending in _proxy, so the upper-case spellings count
+      # on posix too.
+      private def remote_rpm_proxy_env(key : String) : String?
+        overlay = remote_rpm_env_overlay
+        overlay[key]? || overlay[key.upcase]? || ENV[key]? || ENV[key.upcase]?
+      end
+
+      # The task's environment: overlay as a plain hash (empty when the
+      # task set none or the blob is malformed - only specific keys are
+      # read, so no key validation, unlike BasePlugin#task_environment).
+      private def remote_rpm_env_overlay : Hash(String, String)
+        raw = @params["_environment"]?
+        return {} of String => String unless raw
+        Hash(String, String).from_json(raw)
+      rescue
+        {} of String => String
       end
 
       # fetch_file interpolates fetch_url's info['msg'] verbatim, which is the
