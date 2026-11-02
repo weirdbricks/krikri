@@ -679,7 +679,7 @@ module Krikri
       algorithm, _, value = checksum_param.partition(":")
       algorithm = algorithm.downcase
 
-      if value.starts_with?("http://") || value.starts_with?("https://") || value.starts_with?("file:")
+      if value.starts_with?("http://") || value.starts_with?("https://") || value.starts_with?("ftp://") || value.starts_with?("file:")
         # Ansible's own is_url() gate is scheme-based too (http,
         # https, ftp, file), so a "gopher://"-style value is just a
         # (nonsense) literal hash here rather than a second fetch.
@@ -794,6 +794,17 @@ module Krikri
         return PluginHelpers::HTTPDownload::Result.new(final_url: url, headers: file_headers)
       end
 
+      # ftp:// is urllib's FTPHandler, which does a genuine FTP transfer
+      # (USER/PASS, PASV, RETR) - Crystal's HTTP::Client rejects any
+      # non-http(s) scheme, so without this branch a real ansible task
+      # that fetches from an FTP server fails here with "Unsupported
+      # scheme: ftp". Everything below mirrors the file:// branch: stage
+      # the bytes through the same tmp_path so checksum verification,
+      # changed-comparison and the atomic move stay shared.
+      if ftp = ftp_url_parts(url)
+        return ftp_download(ftp, url, tmp_path, download_options(force, last_mod_time))
+      end
+
       PluginHelpers::HTTPDownload.download_with_info(url, tmp_path, download_options(force, last_mod_time))
     end
 
@@ -826,6 +837,242 @@ module Krikri
       false
     rescue
       false
+    end
+
+    private record FtpTarget, host : String, port : Int32, path : String, user : String?, password : String?
+
+    # ftp:// URL to its pieces: nil for a non-ftp URL (let it fall through
+    # to the HTTP helper). The path is kept percent-encoded here and
+    # decoded at RETR time, exactly the split urllib uses (Request carries
+    # the raw selector, ftp_open's url2request unquotes it).
+    private def ftp_url_parts(url : String) : FtpTarget?
+      return nil unless url.starts_with?("ftp:")
+      uri = URI.parse(url)
+      return nil unless uri.scheme == "ftp"
+      # getaddrinfo on an empty host fails with EAI_NONAME on glibc, and
+      # python's create_connection turns that into exactly the gaierror
+      # repr the DNS-failure branch below produces - so an ftp:// URL
+      # without a host reports the same thing, not a Crystal-only shape.
+      FtpTarget.new(
+        host: uri.host || "",
+        port: uri.port || 21,
+        path: uri.path || "",
+        user: uri.user,
+        password: uri.password,
+      )
+    end
+
+    private def ftp_download(target : FtpTarget, url : String, tmp_path : String, options : PluginHelpers::HTTPDownload::Options) : PluginHelpers::HTTPDownload::Result
+      control : Socket? = nil
+      begin
+        control = ftp_connect(target.host, target.port, options.connect_timeout)
+        control.read_timeout = options.read_timeout
+        control.write_timeout = options.read_timeout
+        ftp_transfer(control, target, tmp_path, options.connect_timeout)
+      rescue ex
+        control.try(&.close)
+        # Only the failures urllib itself wraps into "ftp error: %r"
+        # (ftplib.all_errors: socket errors, timeouts, EOF) get the python
+        # shape; anything else (a staging write failure, say) is not an
+        # ftplib error and keeps its own exception.
+        if repr = ftp_exception_repr(ex, target)
+          raise ftp_fetch_error(repr)
+        end
+        raise ex
+      end
+      control.try(&.close)
+
+      # Same Content-Length contract as the file:// branch above: the
+      # success msg is built from that header ("OK (<n> bytes)"), and a
+      # FTP transfer has no HTTP response to take it from.
+      file_headers = HTTP::Headers.new
+      file_headers["Content-Length"] = File.size(tmp_path).to_s
+      PluginHelpers::HTTPDownload::Result.new(final_url: url, headers: file_headers)
+    end
+
+    private def ftp_transfer(control : Socket, target : FtpTarget, tmp_path : String, connect_timeout : Time::Span) : Nil
+      code, text = ftp_reply(control)
+      ftp_check_reply(code, text)
+
+      user = target.user || "anonymous"
+      # ftplib's login defaults: anonymous / 'anonymous@' - the fake
+      # address is the historical convention for anonymous FTP passwords.
+      password = target.password || (target.user ? "" : "anonymous@")
+      ftp_send(control, "USER #{user}")
+      code, text = ftp_reply(control)
+      if code >= 400
+        ftp_reply_error(code, text)
+      elsif code >= 300
+        # 331 means "need password"; 332 (ACCT) and friends are not
+        # supported, same as urllib's plain login sequence.
+        ftp_send(control, "PASS #{password}")
+        code, text = ftp_reply(control)
+        ftp_check_reply(code, text)
+      end
+
+      ftp_send(control, "TYPE I")
+      code, text = ftp_reply(control)
+      ftp_check_reply(code, text)
+
+      ftp_send(control, "PASV")
+      code, text = ftp_reply(control)
+      ftp_check_reply(code, text)
+      pasv_port = ftp_pasv_port(text)
+
+      # ftplib trusts the control connection's own peer address for the
+      # data connection (trust_server_pasv_ipv4_address is false by
+      # default), not the IP the server echoed inside 227.
+      data = ftp_connect(target.host, pasv_port, connect_timeout)
+      begin
+        data.read_timeout = control.read_timeout
+        ftp_send(control, "RETR #{URI.decode(target.path)}")
+        code, text = ftp_reply(control)
+        if code >= 400
+          # The 550/425 arrives on the control channel before any data is
+          # copied; the data socket has not been read yet, so closing it
+          # here mirrors ftplib's error path.
+          data.close
+          ftp_reply_error(code, text)
+        end
+        # Stage through a fresh 0666 open so the staged file carries the
+        # HTTP path's perms (0666 & ~umask), like the file:// branch does
+        # rather than inheriting anything server-related.
+        File.open(tmp_path, "w", 0o666) { |staged| IO.copy(data, staged) }
+      ensure
+        data.close
+      end
+
+      code, text = ftp_reply(control)
+      ftp_check_reply(code, text)
+      ftp_send(control, "QUIT")
+    end
+
+    private def ftp_connect(host : String, port : Int32, connect_timeout : Time::Span) : Socket
+      PluginHelpers::SocketConnect.open(host, port, connect_timeout)
+    rescue IO::TimeoutError
+      # python's connect timeout surfaces as socket.timeout, whose repr is
+      # the bare "timeout('timed out')" - not TimeoutError, even though
+      # 3.10+ aliases them (observed on rocky python 3.9).
+      raise ftp_fetch_error("timeout('timed out')")
+    rescue ex : Socket::Addrinfo::Error
+      raise ftp_fetch_error(ftp_gaierror_repr(ex) || "OSError('#{ex.message}')")
+    rescue ex : Socket::ConnectError
+      errno = ex.os_error.as?(Errno) || PluginHelpers::SocketConnect.probe_errno(host, port)
+      raise ftp_fetch_error(errno ? ftp_oserror_repr(errno) : "OSError('#{ex.message}')")
+    end
+
+    # repr() of the python exception a given failure becomes inside
+    # FTPHandler's "ftp error: %r" wrapping: ConnectionRefusedError(111,
+    # 'Connection refused') for a refused connect, timeout('timed out')
+    # for a timeout, gaierror(-2, ...) for a name-resolution failure.
+    # Nil when the exception is not one urllib would have wrapped, so the
+    # caller keeps the original.
+    private def ftp_exception_repr(ex : Exception, target : FtpTarget) : String?
+      case ex
+      when PluginHelpers::HTTPDownload::FetchError
+        nil
+      when IO::TimeoutError
+        "timeout('timed out')"
+      when Socket::Addrinfo::Error
+        ftp_gaierror_repr(ex) || "OSError('#{ex.message}')"
+      when Socket::ConnectError
+        errno = ex.os_error.as?(Errno) || PluginHelpers::SocketConnect.probe_errno(target.host, target.port)
+        errno ? ftp_oserror_repr(errno) : "OSError('#{ex.message}')"
+      when Socket::Error
+        # A read/write failure on an established control or data socket
+        # (reset, broken pipe): ftplib.all_errors includes OSError, so
+        # urllib wraps these exactly like a connect failure.
+        ex.os_error.as?(Errno).try { |errno| ftp_oserror_repr(errno) }
+      end
+    end
+
+    private def ftp_gaierror_repr(ex : Socket::Addrinfo::Error) : String?
+      code = ex.os_error.as?(Errno).try(&.value.to_i32)
+      return nil if code.nil? || code >= 0
+      "gaierror(#{code}, '#{String.new(LibC.gai_strerror(code))}')"
+    rescue
+      nil
+    end
+
+    private def ftp_oserror_repr(errno : Errno) : String
+      # An ETIMEDOUT errno on the socket layer is what python surfaces as
+      # socket.timeout ("timeout('timed out')") - urllib's own timeout
+      # fires first, so the errno form never makes it out.
+      return "timeout('timed out')" if errno.etimedout?
+      "#{ftp_oserror_class(errno)}(#{errno.value}, '#{errno.message}')"
+    end
+
+    # python's OSError subclass for an errno - only a few errnos get a
+    # dedicated class at all; EHOSTUNREACH and friends stay plain OSError
+    # (unlike the str()-form helper in PluginHelpers::SocketConnect, whose class name is
+    # never part of the message it builds).
+    private def ftp_oserror_class(errno : Errno) : String
+      case errno
+      when .econnrefused? then "ConnectionRefusedError"
+      when .econnreset?   then "ConnectionResetError"
+      when .epipe?        then "BrokenPipeError"
+      when .eacces?       then "PermissionError"
+      else                     "OSError"
+      end
+    end
+
+    private def ftp_fetch_error(reason : String) : PluginHelpers::HTTPDownload::FetchError
+      PluginHelpers::HTTPDownload::FetchError.new(
+        PluginHelpers::HTTPDownload::FetchError::Kind::UrlError,
+        "Request failed: <urlopen error ftp error: #{reason}>"
+      )
+    end
+
+    private def ftp_send(io : IO, command : String) : Nil
+      io << command << "\r\n"
+    end
+
+    # Reads one FTP reply line ("NNN text"); nil at EOF (a control
+    # connection that closed under us - ftplib's own EOFError case).
+    private def ftp_read_line(io : IO) : String?
+      line = io.gets('\n')
+      return nil unless line
+      line.chomp
+    end
+
+    # Reads a complete reply, absorbing multiline responses ("NNN-..."
+    # continuations until the "NNN " terminator), and returns code + text.
+    private def ftp_reply(io : IO) : {Int32, String}
+      line = ftp_read_line(io) || raise ftp_fetch_error("EOFError()")
+      raise ftp_fetch_error("error_proto('#{ftp_repr_escape(line)}')") unless line.matches?(/\A\d{3}[ -]/)
+      code = line[0..2].to_i
+      while line[3] == '-'
+        line = ftp_read_line(io) || raise ftp_fetch_error("EOFError()")
+      end
+      text = line.size > 4 ? line[4..] : ""
+      {code, text}
+    end
+
+    private def ftp_check_reply(code : Int32, text : String) : Nil
+      ftp_reply_error(code, text) if code >= 400
+    end
+
+    # ftplib's getresp maps the reply's leading digit to its error class:
+    # 4xx -> error_temp, 5xx -> error_perm, with the full reply line as
+    # the message - so the repr carries "550 ..." inside the quotes.
+    private def ftp_reply_error(code : Int32, text : String) : NoReturn
+      cls = code >= 500 ? "error_perm" : "error_temp"
+      raise ftp_fetch_error("#{cls}('#{code} #{ftp_repr_escape(text)}')")
+    end
+
+    # python repr's single-quote escaping of the text inside the error
+    # reprs; the block form avoids gsub's backreference processing of the
+    # replacement string.
+    private def ftp_repr_escape(text : String) : String
+      text.gsub("'") { "\\'" }
+    end
+
+    # parse227's "(h1,h2,h3,h4,p1,p2)" form; anything else is
+    # error_proto in ftplib, kept here for the same reason.
+    private def ftp_pasv_port(text : String) : Int32
+      m = text.match(/\((\d+),(\d+),(\d+),(\d+),(\d+),(\d+)\)/) ||
+          raise ftp_fetch_error("error_proto('#{ftp_repr_escape(text)}')")
+      m[5].to_i * 256 + m[6].to_i
     end
 
     private def download_options(force = false, last_mod_time : Time? = nil) : PluginHelpers::HTTPDownload::Options
