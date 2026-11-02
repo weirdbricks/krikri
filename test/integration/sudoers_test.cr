@@ -121,6 +121,25 @@ describe "sudoers plugin" do
     File.exists?(File.join(dir, "bad-rule")).must_equal(false)
   end
 
+  # Real fail_json passes the raw visudo streams as kwargs (stdout=, stderr=)
+  # and the action plugin appends the derived *_lines pair, so a
+  # validation-failure result carries all four keys - not just msg (issue
+  # #747's missing "stderr").
+  it "carries stdout/stderr and their *_lines on a visudo validation failure" do
+    dir = tmp_path("sudoers-validate-stderr")
+    `rm -rf #{dir}`
+
+    result = PluginSpecHelper.run("sudoers", {"name" => "jalhdl", "user" => "cekunf", "runas" => "jnpbht", "setenv" => "true", "commands" => %(["kmbvep", "asoftz"]), "sudoers_path" => dir})
+
+    result["failed"].as_bool.must_equal(true)
+    result["stdout"].as_s.must_equal("")
+    result["stdout_lines"].as_a.must_equal([] of JSON::Any)
+    stderr = result["stderr"].as_s
+    (stderr.size > 0).must_equal(true)
+    result["stderr_lines"].as_a.map(&.as_s).must_equal(stderr.split("\n").reject(&.empty?))
+    result["msg"].as_s.must_equal("Failed to validate sudoers rule:\n#{stderr}")
+  end
+
   it "fails when commands is missing for state: present" do
     dir = tmp_path("sudoers-missing-commands")
     `rm -rf #{dir}`
