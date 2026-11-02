@@ -174,6 +174,16 @@ module Krikri
       # Can be a string, array (via list parameter), or comma-separated
       names = parse_package_names
 
+      # `autoremove: true` with no `name:` runs the autoremove transaction on
+      # real ansible - a `yum:` task is a redirect to the dnf action plugin,
+      # and dnf.py short-circuits to base.autoremove() when there are no
+      # names and autoremove is set (live-verified: `yum: {autoremove: true}`
+      # reports ok on a Rocky 9 target where this engine failed with
+      # "Missing required parameter: name"; tychobrouwer.upgrade_packages'
+      # "Autoremove packages" task, issue #743). dnf.cr/dnf5.cr already
+      # implement the same short-circuit.
+      return handle_autoremove if true?(@params["autoremove"]?) && names.empty?
+
       # `name:` isn't required when `update_cache: true` is given with
       # nothing else - Ansible's own yum: module allows a cache-
       # refresh-only invocation (robertdebock.rpmfusion's own "Yum

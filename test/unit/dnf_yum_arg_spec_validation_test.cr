@@ -143,6 +143,25 @@ describe "yum: argument-spec validation" do
   end
 end
 
+# Issue #743: `yum: {autoremove: true}` with no `name:` is dnf.py's own
+# documented nameless-autoremove usage (a yum: task redirects to the dnf
+# action plugin) - real ansible runs the transaction (ok/changed on Rocky 9,
+# live-verified) while this engine failed with "Missing required parameter:
+# name" before the dnf.cr/dnf5.cr-shaped short-circuit was added.
+describe "yum: nameless autoremove" do
+  it "runs the autoremove transaction instead of a missing-name error (state omitted)" do
+    result = run_yum_raw({"autoremove" => "true"}.to_json)
+    msg = result["msg"]?.try(&.as_s) || ""
+    refute(msg.includes?("Missing required parameter: name"))
+  end
+
+  it "runs the autoremove transaction instead of a missing-name error (state absent)" do
+    result = run_yum_raw({"autoremove" => "true", "state" => "absent"}.to_json)
+    msg = result["msg"]?.try(&.as_s) || ""
+    refute(msg.includes?("Missing required parameter: name"))
+  end
+end
+
 describe "dnf: yumdnf mutual exclusion + autoremove sanity" do
   it "rejects name together with list (presence-based, even for empty-string list)" do
     result = run_dnf({"name" => "gzip", "list" => ""})
