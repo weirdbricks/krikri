@@ -237,12 +237,17 @@ jobs:
               # /opt/homebrew/opt/{bdw-gc,pcre2}, -lssl/-lcrypto to openssl@3) -
               # without them declared here, a fresh \`brew install\` never pulls
               # them in and krikri-playbook fails at dyld load time (confirmed
-              # live: "Library not loaded: .../bdw-gc/lib/libgc.1.dylib"). libz/
-              # libbz2/liblzma/libiconv/libutil are all system-provided on macOS,
-              # no formula needed for those.
+              # live: "Library not loaded: .../bdw-gc/lib/libgc.1.dylib").
+              # gmp/libyaml are linked by the main binaries and xz's liblzma by
+              # the plugin binaries; libz/libbz2/liblzma-the-lib/libiconv/
+              # libutil are all system-provided on macOS, no formula needed
+              # for those.
               depends_on "openssl@3"
               depends_on "pcre2"
               depends_on "bdw-gc"
+              depends_on "gmp"
+              depends_on "libyaml"
+              depends_on "xz"
             end
 
             on_linux do
@@ -259,10 +264,11 @@ jobs:
             # src/krikri/plugin_manager.cr#get_local_plugin_path by resolving a
             # "plugins" directory next to krikri-playbook's own (symlink-resolved)
             # executable path - so plugins/ must land in the same Cellar bin/ dir
-            # as the two top-level binaries, not the usual libexec/share split.
+            # as the three top-level binaries, not the usual libexec/share split.
             def install
               bin.install "krikri-playbook"
               bin.install "krikri"
+              bin.install "krikri-lint"
               bin.install "plugins"
             end
 

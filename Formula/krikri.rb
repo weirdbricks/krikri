@@ -20,12 +20,22 @@ class Krikri < Formula
     # /opt/homebrew/opt/{bdw-gc,pcre2}, -lssl/-lcrypto to openssl@3) -
     # without them declared here, a fresh `brew install` never pulls
     # them in and krikri-playbook fails at dyld load time (confirmed
-    # live: "Library not loaded: .../bdw-gc/lib/libgc.1.dylib"). libz/
-    # libbz2/liblzma/libiconv/libutil are all system-provided on macOS,
-    # no formula needed for those.
+    # live: "Library not loaded: .../bdw-gc/lib/libgc.1.dylib").
+    # The declared set must cover every Homebrew library the shipped
+    # Mach-O binaries link at their /opt/homebrew (or /usr/local) paths -
+    # verified against the release binaries' Mach-O load commands, the
+    # main binaries additionally link gmp and libyaml, and the plugin
+    # binaries also link xz's liblzma - a fresh `brew install` on a
+    # machine that has none of them never pulls them in and the binary
+    # dies at dyld load time. libz/libbz2/liblzma-the-lib/libiconv/
+    # libutil are all system-provided on macOS, no formula needed for
+    # those.
     depends_on "openssl@3"
     depends_on "pcre2"
     depends_on "bdw-gc"
+    depends_on "gmp"
+    depends_on "libyaml"
+    depends_on "xz"
   end
 
   on_linux do
@@ -42,10 +52,11 @@ class Krikri < Formula
   # src/krikri/plugin_manager.cr#get_local_plugin_path by resolving a
   # "plugins" directory next to krikri-playbook's own (symlink-resolved)
   # executable path - so plugins/ must land in the same Cellar bin/ dir
-  # as the two top-level binaries, not the usual libexec/share split.
+  # as the three top-level binaries, not the usual libexec/share split.
   def install
     bin.install "krikri-playbook"
     bin.install "krikri"
+    bin.install "krikri-lint"
     bin.install "plugins"
   end
 

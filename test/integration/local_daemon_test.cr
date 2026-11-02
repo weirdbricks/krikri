@@ -81,7 +81,12 @@ describe "local plugin daemon (ansible_connection=local)" do
   end
 
   it "runs a become_user task through the daemon when the escalation is a no-op (become_user == invoking user)" do
-    user = ENV["USER"]? || "root"
+    # The invoking user from the REAL uid, not ENV["USER"]: serial! tests
+    # legitimately mutate ENV["USER"] (mysql_connection_test's specuser
+    # windows), and a non-serial test running concurrently reads it
+    # mid-mutation - found live in CI, where sudo then failed with
+    # "user 'specuser' not found".
+    user = `id -un`.strip
     status, stdout, stderr = run_playbook(<<-YAML)
       - hosts: localhost
         connection: local
