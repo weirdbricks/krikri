@@ -95,6 +95,32 @@ module Krikri
     # fails `use: homebrew`.
     PACKAGE_BACKEND_MODULES = ["apt", "dnf", "yum"]
 
+    # The dnf4 module's registered response-dict key order - msg, changed,
+    # results, rc, with the controller-appended `failed` last (the same
+    # order plugins/dnf.cr's RpmPackage#transaction_result emits, see
+    # DNF_TRANSACTION_ORDER there).
+    DNF_RESPONSE_ORDER = %w[msg changed results rc failed]
+
+    # rpm's queryformat spelling of the full NEVRA the dnf module's own
+    # results entries carry ("Installed: tar-2:1.34-13.el9_8.x86_64") -
+    # the epoch included, which rpm -q's default output omits.
+    DNF_NEVRA_QF = "%{NAME}-%|EPOCH?{%{EPOCH}:}|%{VERSION}-%{RELEASE}.%{ARCH}"
+
+    # The dnf module's check-mode msg (dnf.py's own wording, live-verified
+    # vs ansible-core 2.19.11 on Rocky 9).
+    DNF_CHECK_MODE_MSG = "Check mode: No changes made, but would have if not in check mode"
+
+    # How a requested `name:` spec resolved against the host, per dnf's
+    # own view: an RPM the database names (:installed), a name the repos
+    # carry (:available), a purely virtual Provides: match (:virtual -
+    # satisfied but not owned), or nothing anywhere (:missing).
+    private enum DnfSpecResolution
+      Installed
+      Available
+      Virtual
+      Missing
+    end
+
     def initialize(config : JSON::Any)
       super(config)
       @check_mode = true?(@params["_ansible_check_mode"]?)
@@ -436,12 +462,6 @@ module Krikri
       statuses
     end
 
-    # True only if *every* parsed name element is installed, not merely
-    # one of them.
-    private def all_packages_installed?(names : Array(String), & : String -> Bool) : Bool
-      names.all? { |pkg| yield pkg }
-    end
-
     # A `@Group Name` spec (dnf's own comps-group syntax, e.g. RHEL's
     # `@Server with GUI`) is not an RPM package at all - `rpm -q` can
     # never match it (it queries individual RPM packages by name, with
@@ -740,6 +760,186 @@ module Krikri
       )
     end
 
+    # Per-name resolution of the requested specs against the host (the
+    # probe chain the pre-install "already installed?" check has always
+    # run, now captured instead of reduced to one aggregate boolean):
+    #
+    # - Try a plain `rpm -q <name>` first - correctly matches both a bare
+    #   name and a NEVRA-style "name-version" specifier (e.g.
+    #   dj-wasabi.telegraf's own `telegraf-{{ telegraf_agent_version }}`
+    #   pin), queried in the full-NEVRA queryformat so the result carries
+    #   the epoch the dnf module's own results entries spell
+    #   ("Removed: tar-2:1.34-11.el9.x86_64"). Only fall back to
+    #   `--whatprovides` (a Provides:/capability lookup) for a VIRTUAL
+    #   package name (a real RPM's `Provides:`, not a package of its own
+    #   - e.g. RHEL 9's `php-json`, bundled into `php-common` since PHP
+    #   8.0), which a bare `rpm -q <name>` never has an entry of its own
+    #   to find even though it's genuinely satisfied. `--whatprovides`
+    #   ALONE regresses the NEVRA case (`rpm -q --whatprovides
+    #   telegraf-1.18.2` fails even when that exact NEVRA is installed,
+    #   verified live) - both checks, in this order, are needed. Found
+    #   benchmarking buluma.mediawiki's own `package: name: [php-intl,
+    #   php-json, ...]` (the virtual-package case) and
+    #   dj-wasabi.telegraf's version-pinned case (round 158) - the SAME
+    #   bug class already independently present in dnf.cr's and yum.cr's
+    #   own copies of this exact check.
+    # - And never let a Provides: hit stand in for a name the repos carry
+    #   themselves (same guard dnf.cr's package_installed? got for issue
+    #   #280): Ansible hands `name:` to python-dnf untouched, which
+    #   resolves it to the repo package of that exact name - on Rocky 9
+    #   `package: name: curl` on a host whose curl-minimal Provides:
+    #   "curl" fails the task with a Depsolve Error (moshloop.java), NOT
+    #   the already-installed no-op this fallback used to answer. A
+    #   same-name repo row means not-installed so the install batch runs
+    #   and dnf reports its own failure; a purely virtual name (php-json)
+    #   has no repo row, this listing fails, and the fallback keeps
+    #   those.
+    #
+    # A URL/local-path spec is never looked up this way (`rpm -q
+    # <url-or-path>` treats the argument as a package FILE to query, not
+    # a name - see handle_dnf's comment) and always proceeds to the
+    # transaction, like a group the comps metadata can't confirm.
+    private def classify_dnf_names(names : Array(String)) : NamedTuple(statuses: Hash(String, DnfSpecResolution), installed: Hash(String, String), available: Hash(String, String))
+      statuses = Hash(String, DnfSpecResolution).new
+      installed = Hash(String, String).new
+      available = Hash(String, String).new
+      names.each do |pkg|
+        if url_or_file?(pkg)
+          statuses[pkg] = DnfSpecResolution::Available
+          available[pkg] = pkg
+        elsif pkg.starts_with?('@')
+          if dnf_group_installed?(pkg)
+            statuses[pkg] = DnfSpecResolution::Installed
+            installed[pkg] = pkg
+          else
+            statuses[pkg] = DnfSpecResolution::Available
+            available[pkg] = pkg
+          end
+        else
+          has_glob = pkg.includes?('*') || pkg.includes?('?') || pkg.includes?('[')
+          rpm_probe = remote_exec("rpm -q --qf '#{DNF_NEVRA_QF}' #{shell_single_quote(pkg)}")
+          if rpm_probe[:exit_code] == 0
+            statuses[pkg] = DnfSpecResolution::Installed
+            # A glob spec can name several installed RPMs at once; only a
+            # single-line answer is one package's NEVRA.
+            nevra = rpm_probe[:stdout].strip
+            installed[pkg] = nevra if !nevra.empty? && !nevra.includes?('\n')
+          else
+            # A glob spec skips the repo-row probe, exactly as this check
+            # always did (`dnf list --available '*'` would list every
+            # package in the archive) - an unmatched glob keeps the
+            # transaction proceeding (the real install either matches or
+            # fails on its own) instead of a missing-spec failure no
+            # plain name is involved in.
+            if !has_glob
+              available_probe = remote_exec("dnf -q list --available #{shell_single_quote(pkg)} 2>/dev/null || yum -q list --available #{shell_single_quote(pkg)} 2>/dev/null")
+              row = dnf_check_update_rows(available_probe[:stdout]).first?
+              if available_probe[:exit_code] == 0
+                statuses[pkg] = DnfSpecResolution::Available
+                available[pkg] = row ? row[1] : pkg
+                next
+              end
+            end
+            if remote_exec("rpm -q --whatprovides #{shell_single_quote(pkg)}")[:exit_code] == 0
+              statuses[pkg] = DnfSpecResolution::Virtual
+            elsif has_glob
+              statuses[pkg] = DnfSpecResolution::Available
+              available[pkg] = pkg
+            else
+              statuses[pkg] = DnfSpecResolution::Missing
+            end
+          end
+        end
+      end
+      {statuses: statuses, installed: installed, available: available}
+    end
+
+    # The installed NEVRA rpm names for one package, epoch included (see
+    # DNF_NEVRA_QF). Falls back to the spec when rpm cannot name it.
+    private def dnf_installed_nevra(pkg : String) : String
+      result = remote_exec("rpm -q --qf '#{DNF_NEVRA_QF}' #{shell_single_quote(pkg)}")
+      out = result[:stdout].strip
+      result[:exit_code] == 0 && !out.empty? && !out.includes?('\n') ? out : pkg
+    end
+
+    # A `dnf list`/`dnf check-update` package row ("tar.x86_64
+    # 2:1.34-13.el9_8 baseos", aligned columns or single spaces) parsed
+    # into {name, nevra} - the NEVRA spelling the dnf module's own
+    # results entries carry, epoch included. Section headers
+    # ("Available Packages") and cache-timestamp notices never
+    # shape-match and are skipped.
+    private def dnf_list_row(line : String) : {String, String}?
+      tokens = line.strip.split
+      return nil unless tokens.size >= 2
+      name_arch = tokens[0]
+      dot_index = name_arch.rindex('.') || return nil
+      name = name_arch[0...dot_index]
+      arch = name_arch[(dot_index + 1)..]
+      return nil if name.empty? || arch.empty? || !arch.matches?(/\A[A-Za-z0-9_]+\z/)
+      evr = tokens[1]
+      return nil unless evr.matches?(/\A(\d+:)?\d[^\s]*-[^\s]+\z/)
+      # Some listings put the epoch in the name column (`1:foo.x86_64`).
+      if (colon = name.index(':')) && !name[0...colon].empty? && name[0...colon].chars.all?(&.ascii_number?)
+        name = name[(colon + 1)..]
+      end
+      {name, "#{name}-#{evr}.#{arch}"}
+    end
+
+    private def dnf_check_update_rows(output : String) : Array({String, String})
+      output.each_line.compact_map { |line| dnf_list_row(line) }.to_a
+    end
+
+    # A requested spec matches a check-update row when both name the same
+    # package - exact for a plain spec, fnmatch for a glob spec (dnf's
+    # own shell-glob semantics for package arguments).
+    private def dnf_spec_matches?(spec : String, row_name : String) : Bool
+      if spec.includes?('*') || spec.includes?('?') || spec.includes?('[')
+        pattern = Regex.escape(spec).gsub("\\*", ".*").gsub("\\?", ".")
+        Regex.new("\\A#{pattern}\\z").matches?(row_name)
+      else
+        spec == row_name
+      end
+    end
+
+    # The dnf module's check-mode result shape (live-verified vs
+    # ansible-core 2.19.11 on Rocky 9): the response dict carries rc 0
+    # and `results` naming every RPM the transaction WOULD have touched
+    # ("Installed: <nevra>" / "Removed: <nevra>" entries), with msg
+    # "Check mode: No changes made, but would have if not in check
+    # mode" - or, when nothing would change, the ordinary no-op shape
+    # (msg "Nothing to do"). The package plugin used to report its own
+    # invented "Would install/remove ... (check mode)" msgs with no
+    # results/rc keys at all, so playbooks reading result.results
+    # (issue #753) died with "dict has no attribute 'results'".
+    private def dnf_check_mode_transaction_result(changed : Bool, results : Array(String)) : PluginResult
+      PluginResult.new(
+        changed: changed,
+        failed: false,
+        msg: changed ? DNF_CHECK_MODE_MSG : "Nothing to do",
+        results: results,
+        rc: 0,
+        key_order: DNF_RESPONSE_ORDER
+      )
+    end
+
+    # The failure shape real's dnf module reports when a requested spec
+    # resolves to nothing - in CHECK mode too, where the transaction
+    # resolution fails the task exactly like the real install would
+    # (live-verified vs ansible-core 2.19.11 on Rocky 9). Same per-spec
+    # canned wording and key order dnf_install_failure_result emits.
+    private def dnf_missing_spec_failure(missing : Array(String)) : PluginResult
+      PluginResult.new(
+        changed: false,
+        failed: true,
+        msg: "Failed to install some of the specified packages",
+        include_empty_msg: true,
+        failures: missing.map { |pkg| "No package #{pkg} available." },
+        results: [] of String,
+        rc: 1,
+        key_order: PluginHelpers::DnfInstallFailures::DNF_INSTALL_FAILURE_ORDER
+      )
+    end
+
     # Handle DNF/YUM package management
     # See #execute's `names`/`pkg_tokens` comment: commands are built
     # from the parsed elements (each atomically quoted), messages keep
@@ -767,57 +967,41 @@ module Krikri
       # remote RPM's metadata) and silently skip the real `dnf install`
       # entirely. Matches `dnf.cr`'s own `url_or_file?`-gated "always
       # try to install" handling for the identical case.
-      is_installed = all_packages_installed?(names) do |pkg|
-        if url_or_file?(pkg)
-          false
-        elsif pkg.starts_with?('@')
-          dnf_group_installed?(pkg)
-        else
-          # Try a plain `rpm -q <name>` first - correctly matches both
-          # a bare name and a NEVRA-style "name-version" specifier
-          # (e.g. dj-wasabi.telegraf's own `telegraf-{{
-          # telegraf_agent_version }}` pin). Only fall back to
-          # `--whatprovides` (a Provides:/capability lookup) for a
-          # VIRTUAL package name (a real RPM's `Provides:`, not a
-          # package of its own - e.g. RHEL 9's `php-json`, bundled
-          # into `php-common` since PHP 8.0), which a bare `rpm -q
-          # <name>` never has an entry of its own to find even though
-          # it's genuinely satisfied. `--whatprovides` ALONE regresses
-          # the NEVRA case (`rpm -q --whatprovides telegraf-1.18.2`
-          # fails even when that exact NEVRA is installed, verified
-          # live) - both checks, in this order, are needed. Found
-          # benchmarking buluma.mediawiki's own `package: name:
-          # [php-intl, php-json, ...]` (the virtual-package case) and
-          # dj-wasabi.telegraf's version-pinned case (round 158) - the
-          # SAME bug class already independently present in dnf.cr's
-          # and yum.cr's own copies of this exact check.
-          #
-          # And never let a Provides: hit stand in for a name the repos
-          # carry themselves (same guard dnf.cr's package_installed?
-          # got for issue #280): Ansible hands `name:` to python-dnf
-          # untouched, which resolves it to the repo package of that
-          # exact name - on Rocky 9 `package: name: curl` on a host
-          # whose curl-minimal Provides: "curl" fails the task with a
-          # Depsolve Error (moshloop.java), NOT the already-installed
-          # no-op this fallback used to answer. A same-name repo row
-          # means not-installed so the install batch runs and dnf
-          # reports its own failure; a purely virtual name (php-json)
-          # has no repo row, this listing fails, and the fallback
-          # below keeps those.
-          has_glob = pkg.includes?('*') || pkg.includes?('?') || pkg.includes?('[')
-          if remote_exec("rpm -q #{shell_single_quote(pkg)}")[:exit_code] == 0
-            true
-          elsif !has_glob && remote_exec("dnf -q list --available #{shell_single_quote(pkg)} 2>/dev/null || yum -q list --available #{shell_single_quote(pkg)} 2>/dev/null")[:exit_code] == 0
-            false
-          else
-            remote_exec("rpm -q --whatprovides #{shell_single_quote(pkg)}")[:exit_code] == 0
-          end
-        end
+      # The probe chain per name is the classification the pre-install
+      # "already installed?" check has always run - it is captured into a
+      # per-name map now so the check-mode result builders below can
+      # build real's `results` entries (which need each spec's resolved
+      # NEVRA and installed-vs-available verdict) from the same probes
+      # instead of re-running them.
+      dnf_resolution = classify_dnf_names(names)
+      installed_status = dnf_resolution[:statuses]
+      installed_nevras = dnf_resolution[:installed]
+      available_nevras = dnf_resolution[:available]
+      is_installed = names.all? do |pkg|
+        status = installed_status[pkg]?
+        status == DnfSpecResolution::Installed || status == DnfSpecResolution::Virtual
       end
       shell_pkg = pkg_tokens
 
       case state
       when "present"
+        if @check_mode
+          # Real's check-mode result carries the dnf module's own response
+          # shape - rc 0 and `results` naming every RPM the transaction
+          # WOULD have installed ("Installed: <nevra>"), or the ordinary
+          # "Nothing to do" no-op when every spec is already satisfied
+          # (issue #753: this used to report an invented "Would install
+          # ... (check mode)" msg with no results/rc keys at all, so
+          # playbooks reading result.results died with "dict has no
+          # attribute 'results'"). An unresolvable spec fails the task in
+          # check mode exactly like the real install does - the module's
+          # transaction resolution runs before any check-mode stop.
+          missing = names.select { |pkg| installed_status[pkg]? == DnfSpecResolution::Missing }
+          return dnf_missing_spec_failure(missing) unless missing.empty?
+          results = names.select { |pkg| installed_status[pkg]? == DnfSpecResolution::Available }
+            .map { |pkg| "Installed: #{available_nevras[pkg]? || pkg}" }.sort!
+          return dnf_check_mode_transaction_result(!results.empty?, results)
+        end
         if is_installed
           PluginResult.new(
             changed: false,
@@ -871,6 +1055,19 @@ module Krikri
           end
         end
       when "absent"
+        if @check_mode
+          # Real's check-mode result (issue #753): "Removed: <installed
+          # nevra>" entries for every owned RPM, "No match for argument:
+          # <spec>" lines for everything else - dnf's own arg-parse
+          # misses lead the transaction's removals in the `results` list,
+          # and the msg is the ordinary "Nothing to do" no-op when
+          # nothing was owned.
+          removed = names.select { |pkg| installed_status[pkg]? == DnfSpecResolution::Installed }
+            .map { |pkg| "Removed: #{installed_nevras[pkg]? || pkg}" }.sort!
+          no_match = names.reject { |pkg| installed_status[pkg]? == DnfSpecResolution::Installed }
+            .map { |pkg| "No match for argument: #{pkg}" }
+          return dnf_check_mode_transaction_result(!removed.empty?, no_match + removed)
+        end
         if !is_installed
           PluginResult.new(
             changed: false,
@@ -878,14 +1075,6 @@ module Krikri
             msg: "Package #{name} not installed"
           )
         else
-          if @check_mode
-            return PluginResult.new(
-              changed: true,
-              failed: false,
-              msg: "Would remove #{name} (check mode)"
-            )
-          end
-
           remove_result = remote_exec("dnf remove -y #{shell_pkg} || yum remove -y #{shell_pkg}")
           if remove_result[:exit_code] == 0
             PluginResult.new(
@@ -908,6 +1097,17 @@ module Krikri
         # named spec keeps its own.
         check_arg = wildcard_latest ? "" : " #{shell_pkg}"
         if @check_mode
+          # Real's check-mode result (issue #753): the check-update rows
+          # name each pending upgrade's new NEVRA, and the transaction
+          # would also REMOVE the installed one being replaced - real
+          # reports every "Installed: <new nevra>" first (alphabetical,
+          # like dnf's own transaction iteration), then every
+          # "Removed: <old nevra>". An installed spec with no pending
+          # row contributes nothing, so an all-current request collapses
+          # to the ordinary "Nothing to do" no-op. Unresolvable specs
+          # fail like the real install does (see the present branch).
+          missing = names.select { |pkg| installed_status[pkg]? == DnfSpecResolution::Missing }
+          return dnf_missing_spec_failure(missing) unless missing.empty?
           # check-update returns 100 if updates are available. The old
           # `dnf check-update X || yum check-update X` swallowed dnf's
           # exit-100 (non-zero runs the yum fallback, whose own exit code
@@ -920,19 +1120,29 @@ module Krikri
             "if [ $rc -eq 100 ]; then exit 100; fi; " \
             "if [ $rc -ne 0 ]; then yum check-update#{check_arg} || exit $?; fi"
           )
-          if check_update[:exit_code] == 100
-            return PluginResult.new(
-              changed: true,
-              failed: false,
-              msg: "Would update #{name} to latest (check mode)"
-            )
+          pending = dnf_check_update_rows(check_update[:stdout])
+          installs = [] of String
+          removals = [] of String
+          if wildcard_latest
+            pending.each do |row_name, new_nevra|
+              installs << "Installed: #{new_nevra}"
+              removals << "Removed: #{dnf_installed_nevra(row_name)}"
+            end
           else
-            return PluginResult.new(
-              changed: false,
-              failed: false,
-              msg: "Package #{name} already at latest version (check mode)"
-            )
+            names.each do |pkg|
+              case installed_status[pkg]?
+              when DnfSpecResolution::Available
+                installs << "Installed: #{available_nevras[pkg]? || pkg}"
+              when DnfSpecResolution::Installed
+                if row = pending.find { |row_name, _| dnf_spec_matches?(pkg, row_name) }
+                  installs << "Installed: #{row[1]}"
+                  removals << "Removed: #{installed_nevras[pkg]? || pkg}"
+                end
+              end
+            end
           end
+          results = installs.sort + removals.sort
+          return dnf_check_mode_transaction_result(!results.empty?, results)
         end
 
         # Ansible's `package:` module delegates straight to

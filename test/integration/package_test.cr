@@ -53,14 +53,16 @@ describe "package plugin" do
     # a fallback: live-verified `use: dnf` on this apt host still ran
     # the dnf module (which then failed on-target for lack of dnf).
     # Here the override picks the dnf backend, whose rpm-based
-    # installed-check can't see the dpkg-installed package, so
-    # check-mode reports "would install" - where the apt backend (the
-    # auto-detected one on this host) reports "already installed".
+    # installed-check can't see the dpkg-installed package and whose
+    # repo probes come up empty on this host, so the dnf module's own
+    # unresolvable-spec failure shape comes back - not the apt
+    # backend's already-installed no-op.
     result = PluginSpecHelper.run("package",
       {"name" => "bash", "state" => "present", "_ansible_check_mode" => "true", "use" => "dnf"})
 
-    result["changed"].as_bool.must_equal(true)
-    result["msg"].as_s.must_include("Would install")
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("Failed to install some of the specified packages")
+    result["failures"].as_a.map(&.as_s).must_equal(["No package bash available."])
   end
 
   it "use: apt selects the apt backend explicitly" do
@@ -82,7 +84,12 @@ describe "package plugin" do
     with_var = PluginSpecHelper.run("package",
       {"name" => "bash", "state" => "present", "_ansible_check_mode" => "true"},
       {"ansible_package_use" => "dnf"})
-    with_var["changed"].as_bool.must_equal(true)
+    # The dnf backend ran (issue #753 shape: on this rpm/dnf-less host
+    # its repo probes come up empty and the dnf module's own
+    # unresolvable-spec failure comes back) - not the apt backend the
+    # auto-detection would have picked.
+    with_var["failed"].as_bool.must_equal(true)
+    with_var["msg"].as_s.must_equal("Failed to install some of the specified packages")
 
     with_both = PluginSpecHelper.run("package",
       {"name" => "bash", "state" => "present", "_ansible_check_mode" => "true", "use" => "apt"},
