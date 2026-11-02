@@ -89,6 +89,21 @@ module Krikri
       end
     end
 
+    # community.crypto's consistency check
+    # (module_utils/_crypto/module_backends/privatekey_info.py) is a
+    # sign/verify round trip for DSA/ECC/Ed25519/Ed448, but for RSA it
+    # only worked through the `key._backend` hook cryptography removed in
+    # 42.0.0, so on any current cryptography an RSA key falls through to
+    # warn_func("Cannot determine consistency for key of type {type(key)}")
+    # with key_is_consistent None - observed live: <class
+    # 'cryptography.hazmat.bindings._rust.openssl.rsa.RSAPrivateKey'>.
+    # X25519/X448/ML-DSA have no test either, but krikri classifies their
+    # private keys as "unknown" (openssl's text output has no
+    # "Public-Key" header to match), so only RSA is reachable here.
+    CONSISTENCY_WARN_CLASS = {
+      "RSA" => "cryptography.hazmat.bindings._rust.openssl.rsa.RSAPrivateKey",
+    }
+
     private def probe_key(key_file : String) : PluginResult
       args = ["pkey", "-in", key_file]
       args.concat(["-passin", "pass:#{@params["passphrase"]}"]) if @params["passphrase"]?
@@ -119,6 +134,11 @@ module Krikri
       res.extra["type"] = JSON::Any.new(key_type)
       res.extra["public_data"] = JSON::Any.new(public_data.to_h { |k, v| {k, v} })
       res.extra["private_data"] = JSON::Any.new(private_data.to_h { |k, v| {k, v} }) if true?(@params["return_private_key_data"]?)
+      if true?(@params["check_consistency"]?)
+        if warning = CONSISTENCY_WARN_CLASS[key_type]?
+          res.extra["warnings"] = JSON.parse(["Cannot determine consistency for key of type <class '#{warning}'>"].to_json)
+        end
+      end
       res
     end
 
