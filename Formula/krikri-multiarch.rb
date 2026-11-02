@@ -42,6 +42,10 @@ class KrikriMultiarch < Formula
 
     bin.install "#{arch}/krikri-playbook"
     bin.install "#{arch}/krikri"
+    # krikri-lint ships in every arch dir of the bundle; Homebrew installs
+    # only what is listed here, so omitting it silently leaves `krikri-lint`
+    # unavailable after brew install (issue #758, same gap as #678).
+    bin.install "#{arch}/krikri-lint"
     bin.install "#{arch}/plugins"
     bin.install "darwin-#{other}/plugins" => "plugins-#{other}"
     bin.install "plugins-linux-x86_64"
