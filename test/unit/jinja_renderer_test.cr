@@ -1839,4 +1839,78 @@ describe "JinjaRenderer.rerender_nested_templates chain-undefined leaf marking (
 
     renderer.render("echo {{ p }}\n{% if q %}x{% endif %}\n").must_equal("echo 1\nx\n")
   end
+
+  it "renders a key access past an untouched undefined sibling leaf (issue #422)" do
+    # ansibleguy.linux_bootstrap's own defaults shape, live-verified vs
+    # 2.19.11: the role computes `BOOTSTRAP` by combine-ing a defaults
+    # dict that carries an UNTOUCHED sibling leaf `ssh.port:
+    # "{{ ansible_port }}"` bottoming out at a name set nowhere (the
+    # role expects the caller to pass -e ansible_port=22, which the
+    # bare role test doesn't). Ansible templates a container variable's
+    # values per-access even under STRICT module-arg finalization, so
+    # the hostname task
+    # `{{ BOOTSTRAP.hostname | default(inventory_hostname) }}` renders
+    # the default, while krikri's eager whole-container scope walk
+    # failed it with the sibling's 'ansible_port' is undefined (rc 2,
+    # 8 blocks vs 37). The strict flag is what module-arg finalization
+    # passes; the sibling must survive untouched.
+    vars = {
+      "defaults_bo"        => JSON.parse(%({"configure_users": true, "ssh": {"port": "{{ ansible_port }}"}})),
+      "bootstrap"          => JSON.parse(%({})),
+      "BOOTSTRAP"          => JSON::Any.new("{{ defaults_bo | combine(booty | default(bootstrap), recursive=true) }}"),
+      "inventory_hostname" => JSON::Any.new("testhost"),
+    }
+    sub = Krikri::VarSubstitutor.new(vars: vars)
+
+    sub.substitute(%({{ BOOTSTRAP.hostname | default(inventory_hostname) }}), strict: true)
+      .must_equal("testhost")
+  end
+
+  it "still fails a strict read of the undefined sibling leaf itself (issue #422)" do
+    # The other half of the laziness matrix: the SAME leaf, actually
+    # ACCESSED under strict finalization, still hard-fails with the
+    # innermost missing name - fail-on-access, not fail-on-prepare.
+    vars = {
+      "defaults_bo" => JSON.parse(%({"configure_users": true, "ssh": {"port": "{{ ansible_port }}"}})),
+      "bootstrap"   => JSON.parse(%({})),
+      "BOOTSTRAP"   => JSON::Any.new("{{ defaults_bo | combine(booty | default(bootstrap), recursive=true) }}"),
+    }
+    sub = Krikri::VarSubstitutor.new(vars: vars)
+
+    assert_raises_message(Krikri::UndefinedVariableError, /'ansible_port' is undefined/) do
+      sub.substitute(%({{ BOOTSTRAP.ssh.port }}), strict: true)
+    end
+  end
+
+  it "renders a block-tag task arg whose is-defined guard reaches only into a sibling key (issue #422)" do
+    # The second live ansibleguy.linux_bootstrap failure, the
+    # `Set localhost name resolution` lineinfile `line:` arg: a value
+    # with `{% if BOOTSTRAP.hostname is defined %}` guards. Resolving
+    # BOOTSTRAP for the guard runs it through the unresolvable_template?
+    # verdict probe, and the probe's own final strict render re-scanned
+    # the container scope preparation had just DEFERRED - raising on the
+    # untouched `ssh.port` sibling and demoting the whole BOOTSTRAP to
+    # undefined, so the strict render died with "'BOOTSTRAP' is
+    # undefined" where ansible-core (live-verified vs 2.19.11) simply
+    # answers the is-defined question False and renders the line.
+    vars = {
+      "defaults_bo"        => JSON.parse(%({"ssh": {"port": "{{ ansible_port }}"}})),
+      "bootstrap"          => JSON.parse(%({})),
+      "BOOTSTRAP"          => JSON::Any.new("{{ defaults_bo | combine(booty | default(bootstrap), recursive=true) }}"),
+      "inventory_hostname" => JSON::Any.new("testhost"),
+    }
+    sub = Krikri::VarSubstitutor.new(vars: vars)
+
+    # The verdict probe itself: asking whether BOOTSTRAP bottoms out
+    # must not answer "yes" because of a leaf the guard never reaches.
+    sub.unresolvable_template?(%({{ defaults_bo | combine(booty | default(bootstrap), recursive=true) }})).must_equal(false)
+
+    rendered = sub.substitute(
+      "127.0.1.1 {{ inventory_hostname }}\n{% if BOOTSTRAP.hostname is defined %}{{ BOOTSTRAP.hostname }}{% endif %}",
+      strict: true
+    )
+    rendered.must_include("127.0.1.1 testhost")
+    rendered.wont_include("{{")
+    rendered.wont_include("undefined")
+  end
 end

@@ -32,6 +32,16 @@ end
 
 private EMPTY_VARS = Hash(String, JSON::Any).new
 
+# ansibleguy.linux_bootstrap's own defaults shape (issue #422): a role
+# default that computes a dict from another default, carrying a nested
+# leaf whose name the caller is expected to pass on the command line.
+private def lazy_bootstrap_vars : Hash(String, JSON::Any)
+  v = Hash(String, JSON::Any).new
+  v["defaults_bo"] = JSON.parse(%({"install_tools": true, "ssh": {"configure": true, "port": "{{ ansible_port }}"}}))
+  v["BOOTSTRAP"] = JSON::Any.new("{{ defaults_bo | combine({}, recursive=true) }}")
+  v
+end
+
 describe Krikri::ConditionalEvaluator do
   serial! # mutates process-global state (ENV / engine settings)
 
@@ -2338,6 +2348,48 @@ describe Krikri::ConditionalEvaluator do
       Krikri::ConditionalEvaluator.evaluate(
         "site_errorlog | length > 0", v
       ).must_equal(false)
+    end
+  end
+
+  # ansibleguy.linux_bootstrap (issue #422) gates its tasks on keys of a
+  # role default that is itself a template computing a dict
+  # (`BOOTSTRAP: "{{ defaults_bo | combine(...) }}"`, whose nested
+  # `ssh.port: "{{ ansible_port }}"` leaf names a variable the caller is
+  # expected to pass with -e). Live-verified against ansible-core 2.19.11:
+  # a `when:` reads ONE key of that lazy container, so an UNTOUCHED
+  # sibling's undefined reference never surfaces - while the condition
+  # that DOES read the sibling, and the one that serializes the whole
+  # container, both fail with the innermost missing name.
+  describe "untouched undefined sibling leaf under a when: (issue #422)" do
+    it "evaluates a key access without failing on the untouched sibling" do
+      Krikri::ConditionalEvaluator.evaluate(
+        "BOOTSTRAP.install_tools", lazy_bootstrap_vars, strict: true, raise_undefined: true
+      ).must_equal(true)
+    end
+
+    it "evaluates a nested key access without failing on the untouched sibling" do
+      Krikri::ConditionalEvaluator.evaluate(
+        "BOOTSTRAP.ssh.configure", lazy_bootstrap_vars, strict: true, raise_undefined: true
+      ).must_equal(true)
+    end
+
+    it "raises with the innermost name when the condition reads the leaf" do
+      # The raise arrives from the shared templating error (the leaf's own
+      # strict render at its access point), which evaluate_when wraps in
+      # "Task failed: Error while evaluating conditional: ...".
+      assert_raises_message(Krikri::UndefinedVariableError, /'ansible_port' is undefined/) do
+        Krikri::ConditionalEvaluator.evaluate(
+          "BOOTSTRAP.ssh.port | int > 0", lazy_bootstrap_vars, strict: true, raise_undefined: true
+        )
+      end
+    end
+
+    it "raises when the condition serializes the whole container" do
+      assert_raises_message(Krikri::UndefinedVariableError, /'ansible_port' is undefined/) do
+        Krikri::ConditionalEvaluator.evaluate(
+          "BOOTSTRAP | to_json | length > 0", lazy_bootstrap_vars, strict: true, raise_undefined: true
+        )
+      end
     end
   end
 
