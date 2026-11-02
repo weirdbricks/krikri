@@ -253,6 +253,18 @@ describe Krikri::AptLockRetry do
     end
   end
 
+  describe "#apt_fetch_reason_refused_repo? clearsigned" do
+    it "keeps the flag down for an invalid clearsigned InRelease reason" do
+      probe = Krikri::AptLockRetryTestProbe.new
+      reason = "E:Failed to fetch https://repo.example.org/debian/dists/jammy/InRelease  Clearsigned file isn't valid, got 'NOSPLIT' (does the network require authentication?), E:The repository 'https://repo.example.org/debian jammy InRelease' is not signed."
+
+      outcome = probe.apt_fetch_attempt_reason(reason, false)
+      outcome[0].must_equal(reason)
+      outcome[1].must_equal(false)
+      probe.apt_fetch_attempt_reason(reason, outcome[1])[0].must_equal(reason)
+    end
+  end
+
   describe "#apt_fetch_failed_update_retry" do
     it "quotes the failed attempt's exception text in the warnings and final reason" do
       harness = FetchRetryHarness.new

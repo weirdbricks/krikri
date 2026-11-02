@@ -259,6 +259,13 @@ module Krikri
     # arrives marker-space-stripped from apt_fetch_failure_reason
     # ("E: The" -> "E:The"), which is why the probe has no space.
     def apt_fetch_reason_refused_repo?(reason : String) : Bool
+      # An InRelease that fetched but is not a valid clearsigned file
+      # ("E:Failed to fetch .../InRelease  Clearsigned file isn't valid,
+      # got 'NOSPLIT'", e.g. an HTML login/error page served in its place)
+      # never marks the repo untrusted even though the "is not signed" E:
+      # line follows: real ansible quotes it bare on all five attempts and
+      # in the final msg (issue #712, hax0rbana_adam.apt_repo).
+      return false if reason.includes?("Clearsigned file isn't valid")
       reason.includes?("E:The repository '")
     end
 
