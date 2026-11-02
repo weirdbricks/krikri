@@ -18,11 +18,11 @@ require "../../src/krikri/ssh_manager"
 # task host (verified live, ansible-core 2.19 + ansible.posix: the task
 # host's own ansible_connection=local does NOT suppress the
 # qualification).
-private def run_delegate_sync(task_host_name : String, params : Hash(String, String), vars = Hash(String, JSON::Any).new) : Krikri::ActionResult
+private def run_delegate_sync(task_host_name : String, params : Hash(String, String), vars = Hash(String, JSON::Any).new, action_name : String? = nil) : Krikri::ActionResult
   delegate = Krikri::Host.new("localhost")
   delegate.vars["ansible_connection"] = JSON::Any.new("local")
   task_host = Krikri::Host.new(task_host_name)
-  plugin = Krikri::SynchronizeActionPlugin.new(params, vars, delegate, nil, task_host)
+  plugin = Krikri::SynchronizeActionPlugin.new(params, vars, delegate, nil, task_host, nil, action_name)
   plugin.execute
 end
 
@@ -80,6 +80,98 @@ describe "SynchronizeActionPlugin argument validation" do
     json.as_h["failed"].as_bool.must_equal(true)
     json.as_h["msg"].as_s.must_equal("synchronize requires both src and dest parameters are set")
     json.as_h.has_key?("cmd").must_equal(false)
+  end
+
+  # Live-verified against ansible-core 2.19.11 + ansible.posix 2.1.0
+  # (issue #744): the Unsupported-parameters check is module setup's
+  # LAST check, so it only fires once the bool/mode conversions above
+  # have passed, and the supported list is the spec's own option names
+  # sorted with no alias parenthetical (synchronize's spec declares
+  # none).
+  it "fails bogus option names with the module's Unsupported-parameters message" do
+    result = run_delegate_sync("localhost", {
+      "src"                          => "/tmp/sync-spec-src/",
+      "dest"                         => "/tmp/sync-spec-dest/",
+      "_substitute_controller_bogus" => "false",
+      "checksum_bogus"               => "true",
+      "existin_gonly"                => "false",
+      "moed"                         => "0600",
+    })
+
+    json = result.final_result || raise "expected a final result"
+    json.as_h["failed"].as_bool.must_equal(true)
+    json.as_h["changed"].as_bool.must_equal(false)
+    json.as_h["msg"].as_s.must_equal(
+      "Unsupported parameters for (ansible.posix.synchronize) module: " \
+      "_substitute_controller_bogus, checksum_bogus, existin_gonly, moed. " \
+      "Supported parameters include: _local_rsync_password, _local_rsync_path, _ssh_args, " \
+      "_substitute_controller, archive, checksum, compress, copy_links, delay_updates, delete, " \
+      "dest, dest_port, dirs, existing_only, group, link_dest, links, mode, owner, partial, " \
+      "perms, private_key, recursive, rsync_opts, rsync_path, rsync_timeout, set_remote_user, " \
+      "src, ssh_connection_multiplexing, times, use_ssh_args, verify_host.")
+    json.as_h.has_key?("cmd").must_equal(false)
+    json.as_h.keys.first(3).must_equal(["failed", "msg", "changed"])
+  end
+
+  # The message names the module AS WRITTEN in the task, like real (a
+  # bare `synchronize:` does not dress up as the resolved FQCN).
+  it "prints the as-written module spelling in the Unsupported-parameters message" do
+    result = run_delegate_sync("localhost", {
+      "src"            => "/tmp/sync-spec-src/",
+      "dest"           => "/tmp/sync-spec-dest/",
+      "checksum_bogus" => "true",
+    }, action_name: "synchronize")
+
+    json = result.final_result || raise "expected a final result"
+    json.as_h["msg"].as_s.must_match(/\AUnsupported parameters for \(synchronize\) module: checksum_bogus\./)
+  end
+
+  it "reports the bool and mode failures ahead of the unsupported-parameter check" do
+    bool_first = run_delegate_sync("localhost", {
+      "src"            => "/tmp/sync-spec-src/",
+      "dest"           => "/tmp/sync-spec-dest/",
+      "dirs"           => "ylazyy",
+      "checksum_bogus" => "true",
+    })
+    bool_first.final_result.try(&.as_h["msg"].as_s).must_match(/\Aargument 'dirs' is of type str/)
+
+    mode_first = run_delegate_sync("localhost", {
+      "src"            => "/tmp/sync-spec-src/",
+      "dest"           => "/tmp/sync-spec-dest/",
+      "mode"           => "PUSH",
+      "checksum_bogus" => "true",
+    })
+    mode_first.final_result.try(&.as_h["msg"].as_s).must_equal("value of mode must be one of: pull, push, got: PUSH")
+  end
+
+  # A literal YAML null mode stringifies to an EMPTY tail in real's
+  # choices message ("got: " with nothing after it, live-verified vs
+  # 2.19.11) - not the wire's null sentinel text.
+  it "reports a null mode with the empty got: tail" do
+    result = run_delegate_sync("localhost", {
+      "src"  => "/tmp/sync-spec-src/",
+      "dest" => "/tmp/sync-spec-dest/",
+      "mode" => Krikri::NONE_SENTINEL,
+    })
+
+    json = result.final_result || raise "expected a final result"
+    json.as_h["msg"].as_s.must_equal("value of mode must be one of: pull, push, got: ")
+  end
+
+  # A literal YAML null src rides the wire as NONE_SENTINEL, and real's
+  # guard (`src is None or dest is None`) still fires for it - the
+  # action-plugin check precedes the module's own missing-required
+  # check, so the guard's message (and its Action-failed chain) wins
+  # over the unsupported-parameter one.
+  it "reports the src/dest guard, not unsupported parameters, for a null src" do
+    result = run_delegate_sync("localhost", {
+      "src"            => Krikri::NONE_SENTINEL,
+      "dest"           => "/tmp/sync-spec-dest/",
+      "checksum_bogus" => "true",
+    })
+
+    json = result.final_result || raise "expected a final result"
+    json.as_h["msg"].as_s.must_equal("synchronize requires both src and dest parameters are set")
   end
 end
 
