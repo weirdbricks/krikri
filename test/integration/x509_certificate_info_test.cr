@@ -95,6 +95,23 @@ describe "x509_certificate_info plugin" do
     result["failed"].as_bool.must_equal(true)
   end
 
+  # The module opens the file bare and fail_jsons with str(OSError)
+  # (community.crypto 3.1.1) - no readability precheck - so issue #749's
+  # kpg chaos playbook (path: 30) pins the errno wording, not a probe
+  # verdict. The directory case is EISDIR from open() itself, filename
+  # attached, the same for root and non-root.
+  it "reports the Python OSError wording for a missing or directory path" do
+    result = PluginSpecHelper.run("x509_certificate_info", {"path" => cert_path("nope.pem")})
+    result["msg"].as_s.must_equal(
+      "Error while reading certificate file from disk: [Errno 2] No such file or directory: '#{cert_path("nope.pem")}'")
+
+    dir = cert_path("adir")
+    Dir.mkdir(dir)
+    result = PluginSpecHelper.run("x509_certificate_info", {"path" => dir})
+    result["msg"].as_s.must_equal(
+      "Error while reading certificate file from disk: [Errno 21] Is a directory: '#{dir}'")
+  end
+
   # community.crypto's x509_certificate_info.py: result["valid_at"] is
   # ALWAYS present ({} when the option is absent), each probe a boolean
   # from not_before <= point <= not_after with the probe resolved via
