@@ -460,12 +460,14 @@ module Krikri
       end
 
       if @check_mode
-        return PluginResult.new(
+        result = PluginResult.new(
           changed: true,
           failed: false,
           msg: "",
           key_order: SUCCESS_KEY_ORDER
         )
+        attach_unknown_owner_group_warnings(result)
+        return result
       end
 
       create_directory(path)
@@ -1795,6 +1797,24 @@ module Krikri
     # syscall ever runs.
     private def oserror_text(errno : Int32 | UInt16 | UInt32, path : String) : String
       "[Errno #{errno}] #{String.new(LibC.strerror(errno))}: b'#{path}'"
+    end
+
+    # Ansible's check mode still resolves owner:/group: via getpwnam/getgrnam
+    # and, instead of failing as a real run does, warns that the name is
+    # unknown (a role may create the user later in the real play).
+    private def attach_unknown_owner_group_warnings(result : PluginResult) : Nil
+      warnings = [] of JSON::Any
+      if owner = requested_attr("owner")
+        if System::User.find_by?(name: owner).nil? && !owner.matches?(/\A\d+\z/)
+          warnings << JSON::Any.new("failed to look up user #{owner}. Create user up to this point in real play")
+        end
+      end
+      if group = requested_attr("group")
+        if System::Group.find_by?(name: group).nil? && !group.matches?(/\A\d+\z/)
+          warnings << JSON::Any.new("failed to look up group #{group}. Create group up to this point in real play")
+        end
+      end
+      result.extra["warnings"] = JSON::Any.new(warnings) unless warnings.empty?
     end
 
     private def resolve_uid(owner : String) : Int32
