@@ -908,13 +908,19 @@ describe "file plugin" do
       path = tmp_path("diff-mode-owner-change.txt")
       File.write(path, "x")
       File.chmod(path, 0o664)
-      own_uid = File.info(path, follow_symlinks: false).owner_id
+      # File::Info#owner_id/#group_id return the numeric id as a STRING
+      # (st_uid.to_s), so parse it - a string-vs-int `== 0` is always
+      # false and the request would never differ from the current owner.
+      own_uid = File.info(path, follow_symlinks: false).owner_id.to_i
+      # CI runs as root, where a requested owner "0" already matches and
+      # contributes no diff at all - always request an owner that differs.
+      other_uid = own_uid == 0 ? 1 : 0
 
-      result = PluginSpecHelper.run("file", {"path" => path, "owner" => "0", "_ansible_check_mode" => "true", "_ansible_diff" => "true"})
+      result = PluginSpecHelper.run("file", {"path" => path, "owner" => other_uid.to_s, "_ansible_check_mode" => "true", "_ansible_diff" => "true"})
 
       result["changed"].as_bool.must_equal(true)
       result["diff"]["before"]["owner"].as_i.must_equal(own_uid.to_i)
-      result["diff"]["after"]["owner"].as_i.must_equal(0)
+      result["diff"]["after"]["owner"].as_i.must_equal(other_uid)
       result["diff"]["before"].as_h.keys.must_equal(["path", "owner"])
     end
   end

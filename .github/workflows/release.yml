@@ -117,7 +117,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: macos-14
+          # macos-14 is being retired (GitHub scheduled brownouts through
+          # Nov 2, 2026 - its runner image rejects jobs outright, which
+          # cancelled the whole release run before Publish could run);
+          # macos-15 is the same arm64 hardware.
+          - runner: macos-15
             arch: arm64
           - runner: macos-15-intel
             arch: x86_64
