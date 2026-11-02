@@ -194,6 +194,35 @@ module Krikri
         nil
       end
 
+      # Whether *keyword* (" or "/" and ") occurs outside any bracket/
+      # paren/quote nesting in *expr* - the same depth-aware scan
+      # #top_level_char_index does for a single char, generalized to a
+      # word (mirroring ExpressionEvaluator's own private
+      # #top_level_keyword_index). A naive `includes?` would fire on an
+      # operator nested inside a quoted literal or a bracketed operand,
+      # routing the whole key into boolean evaluation when only part of
+      # it is one.
+      private def top_level_keyword_index(expr : String, keyword : String) : Int32?
+        depth = 0
+        quote : Char? = nil
+
+        expr.each_char.with_index do |itm, i|
+          if q = quote
+            quote = nil if itm == q
+          elsif itm == '\'' || itm == '"'
+            quote = itm
+          elsif depth == 0 && expr[i, keyword.size]? == keyword
+            return i
+          elsif "([{".includes?(itm)
+            depth += 1
+          elsif ")]}".includes?(itm)
+            depth -= 1
+          end
+        end
+
+        nil
+      end
+
       # Finds the `]` matching the `[` at *open_pos*, respecting nested
       # `([{`/`)]}` and quoted strings - a plain `suffix.index(']', pos)`
       # (the previous implementation) stops at the FIRST `]`, which for a
@@ -1050,9 +1079,8 @@ module Krikri
           return key
         end
 
-        if index_expr.includes?('|')
-          rendered = ExpressionEvaluator.new(@vars).evaluate(index_expr)
-          return rendered.to_i? || rendered
+        if key = resolve_expression_index_key(index_expr)
+          return key
         end
 
         # The index itself can be bracket-indexed
@@ -1110,6 +1138,35 @@ module Krikri
         when Float64 then raw
         else              index_expr
         end
+      end
+
+      # An index key that is itself a boolean VALUE expression
+      # (`haproxy_versions[ansible_distribution][ansible_distribution_
+      # release or ansible_distribution_major_version]`,
+      # martin-micimo.haproxy's own prepare.yml): Jinja2's `or`/`and`
+      # are value-selectors, not pure booleans - the result is the
+      # first truthy operand's own value ("noble"), falling through to
+      # the last operand when none are, never the literal text
+      # "True"/"False". Ansible evaluates the operator inside a
+      # subscript as a normal boolean expression, so routing the whole
+      # key through ExpressionEvaluator#evaluate (whose
+      # #evaluate_value_or_and already implements that selector
+      # semantics for `{{ }}` spans) is the same route the `|`-filter
+      # branch of this method takes. The detection is depth-aware so an
+      # `or` nested inside a quoted or bracketed operand does not
+      # trigger it.
+      private def resolve_expression_index_key(index_expr : String) : String | Int32 | Float64 | Nil
+        if top_level_keyword_index(index_expr, " or ") || top_level_keyword_index(index_expr, " and ")
+          rendered = ExpressionEvaluator.new(@vars).evaluate(index_expr)
+          return rendered.to_i? || rendered
+        end
+
+        if index_expr.includes?('|')
+          rendered = ExpressionEvaluator.new(@vars).evaluate(index_expr)
+          return rendered.to_i? || rendered
+        end
+
+        nil
       end
 
       # A computed index expression resolves to the key ansible itself

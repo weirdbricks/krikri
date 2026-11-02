@@ -2393,7 +2393,7 @@ module Krikri
           # stash_finalization_error_block) - print it in iteration order,
           # just before this item's failed line, where Ansible puts it.
           TaskExecutor.flush_deferred_finalization_error_block(result)
-          ResultDisplay.display_result(host, result, @diff_mode, item_label: item_label, ignore_errors: resolve_task_ignore_errors(task, base_vars_context), no_log: resolve_task_no_log(task, base_vars_context), module_name: task.module_name, delegate_target: delegate_target, source_task: task, loop_item: item, loop_var_name: task.loop_var)
+          ResultDisplay.display_result(host, result, resolve_task_diff_mode(task, base_vars_context), item_label: item_label, ignore_errors: resolve_task_ignore_errors(task, base_vars_context), no_log: resolve_task_no_log(task, base_vars_context), module_name: task.module_name, delegate_target: delegate_target, source_task: task, loop_item: item, loop_var_name: task.loop_var)
         end
 
         result_hash = result.as_h.dup
@@ -2565,7 +2565,7 @@ module Krikri
           else
             # The single per-host aggregate line (the real oneline
             # callback's only rendering of a looped task).
-            ResultDisplay.display_result(host, JSON::Any.new(aggregate), @diff_mode, module_name: task.module_name, source_task: task)
+            ResultDisplay.display_result(host, JSON::Any.new(aggregate), resolve_task_diff_mode(task, base_vars_context), module_name: task.module_name, source_task: task)
           end
         end
       end
@@ -3013,7 +3013,7 @@ module Krikri
         # localhost]` (dockpack.base_goss's own "Get goss binary" -
         # delegate_to: localhost plus until: network_access is success,
         # round 1500188).
-        ResultDisplay.display_result(host, result, @diff_mode, ignore_errors: resolve_task_ignore_errors(task, vars_context), no_log: resolve_task_no_log(task, vars_context), source_task: task, module_name: task.module_name, delegate_target: exec_host && exec_host != host ? exec_host.name : nil)
+        ResultDisplay.display_result(host, result, resolve_task_diff_mode(task, vars_context), ignore_errors: resolve_task_ignore_errors(task, vars_context), no_log: resolve_task_no_log(task, vars_context), source_task: task, module_name: task.module_name, delegate_target: exec_host && exec_host != host ? exec_host.name : nil)
       end
       ResultDisplay.update_stats(@results[host.name], result, resolve_task_ignore_errors(task, vars_context))
       # Same run-time-dedup credit as the plain path (issue #320): an

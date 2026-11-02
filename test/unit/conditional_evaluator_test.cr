@@ -562,6 +562,35 @@ describe Krikri::ConditionalEvaluator do
       Krikri::ConditionalEvaluator.evaluate(%(true in [1]), v).must_equal(true)
     end
 
+    it "resolves a boolean-operator subscript key to its truthy operand's value" do
+      # Ansible evaluates `or` inside a subscript as a normal boolean
+      # expression whose result is the first truthy operand's own VALUE
+      # (`... [ansible_distribution_release or
+      # ansible_distribution_major_version] ...` picks the "noble" key
+      # in martin-micimo.haproxy's prepare.yml) - the evaluator used to
+      # split the whole condition on that ` or `, losing the operand and
+      # reporting the lookup as undefined.
+      v = Hash(String, JSON::Any).new
+      v["vs"] = JSON.parse(%({"Ubuntu": {"noble": {"3-2": {"method": "repo"}}}}))
+      v["ansible_distribution"] = JSON.parse(%("Ubuntu"))
+      v["ansible_distribution_release"] = JSON.parse(%("noble"))
+      v["ansible_distribution_major_version"] = JSON.parse(%("24"))
+      condition = "vs[ansible_distribution][ansible_distribution_release or ansible_distribution_major_version][slug] is defined"
+
+      v["slug"] = JSON.parse(%("3-2"))
+      Krikri::ConditionalEvaluator.evaluate(condition, v).must_equal(true)
+
+      v["slug"] = JSON.parse(%("9-9"))
+      Krikri::ConditionalEvaluator.evaluate(condition, v).must_equal(false)
+
+      # An empty release string is falsy, so the `or` falls through to
+      # the major version key.
+      v["vs"] = JSON.parse(%({"Ubuntu": {"24": {"3-2": {"method": "repo"}}}}))
+      v["ansible_distribution_release"] = JSON.parse(%(""))
+      v["slug"] = JSON.parse(%("3-2"))
+      Krikri::ConditionalEvaluator.evaluate(condition, v).must_equal(true)
+    end
+
     it "checks membership against a METHOD CALL (not just a bare variable or filter)" do
       # Real bug found benchmarking robertdebock.squid (round 48,
       # krikri-playbook 0.9.389): its own assert.yml has

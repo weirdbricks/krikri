@@ -120,3 +120,80 @@ describe "ansible_diff_mode magic var" do
     File.delete(dest) if dest && File.exists?(dest)
   end
 end
+
+# martin-micimo.haproxy's template/copy tasks all carry
+# `diff: "{{ haproxy_show_template_diffs }}"` (defaults to true): a
+# TEMPLATED diff: keyword. Parse-time it is not a literal boolean, so the
+# parsed task left diff_mode nil and every display site fell back to the
+# CLI --diff flag - the role's template tasks printed no diff block on a
+# plain run where ansible prints one (issue #566). The keyword now
+# resolves against live vars at execution time, exactly like the
+# deferred check_mode: handling above.
+describe "templated diff: keyword" do
+  it "shows the template diff on a plain run when the templated value is true" do
+    playbook = File.tempname("task-diff-tpl-on", ".yml")
+    src = PluginSpecHelper.tmp_path("task-diff-tpl.j2")
+    dest = PluginSpecHelper.tmp_path("task-diff-tpl-out.txt")
+    FileUtils.mkdir_p(File.dirname(src))
+    FileUtils.mkdir_p(File.dirname(dest))
+    File.write(src, "hello from template\n")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          show_template_diffs: true
+        tasks:
+          - name: Templated diff without --diff
+            ansible.builtin.template:
+              src: #{src}
+              dest: #{dest}
+            diff: "{{ show_template_diffs }}"
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-c", "local", "-i", INVENTORY, playbook], output: output, error: output)
+
+    status.success?.must_equal(true)
+    output.to_s.must_include("--- before")
+    output.to_s.must_include("+hello from template")
+    output.to_s.must_match(/changed=1\b/)
+  ensure
+    File.delete(playbook) if playbook && File.exists?(playbook)
+    File.delete(src) if src && File.exists?(src)
+    File.delete(dest) if dest && File.exists?(dest)
+  end
+
+  it "suppresses the diff under --diff when the templated value is false" do
+    playbook = File.tempname("task-diff-tpl-off", ".yml")
+    src = PluginSpecHelper.tmp_path("task-diff-tpl-off.j2")
+    dest = PluginSpecHelper.tmp_path("task-diff-tpl-off-out.txt")
+    FileUtils.mkdir_p(File.dirname(src))
+    FileUtils.mkdir_p(File.dirname(dest))
+    File.write(src, "hello from template\n")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          show_template_diffs: false
+        tasks:
+          - name: Templated diff false under --diff
+            ansible.builtin.template:
+              src: #{src}
+              dest: #{dest}
+            diff: "{{ show_template_diffs }}"
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["--diff", "-c", "local", "-i", INVENTORY, playbook], output: output, error: output)
+
+    status.success?.must_equal(true)
+    output.to_s.must_include("changed: [localhost]")
+    output.to_s.wont_include("--- before")
+  ensure
+    File.delete(playbook) if playbook && File.exists?(playbook)
+    File.delete(src) if src && File.exists?(src)
+    File.delete(dest) if dest && File.exists?(dest)
+  end
+end

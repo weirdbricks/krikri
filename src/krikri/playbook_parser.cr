@@ -278,6 +278,15 @@ module Krikri
     # resolve_task_check_mode against live vars.
     property check_mode_expr : String?
     property? diff_mode : Bool?
+    # Raw `{{ ... }}` text when diff: is a templated expression rather
+    # than a literal boolean - same deferred-evaluation shape
+    # check_mode_expr uses, resolved against live vars at execution time
+    # (TaskExecutor#resolve_task_diff_mode). martin-micimo.haproxy's
+    # `diff: "{{ haproxy_show_template_diffs }}"` used to leave
+    # diff_mode nil, so the plugin got the CLI --diff fallback (off in
+    # the role-tester runs) and its template tasks printed no diff
+    # block where ansible prints one.
+    property diff_mode_expr : String?
     property? become : Bool
     # Raw `{{ ... }}` text when become: is a templated expression rather
     # than a literal boolean (ansible-community.ansible-vault's own
@@ -4193,6 +4202,7 @@ module Krikri
         task.check_mode_expr = own_check_mode_expr
       end
       task.diff_mode = parse_optional_bool_or_template(task_hash["diff"]?)
+      task.diff_mode_expr = template_expression(task_hash["diff"]?)
       task.become = resolve_become(task_hash, play)
       task.become_expr = become_expr(task_hash)
       task.become_user = task_hash["become_user"]?.try { |v| safe_yaml_to_string(v) } || play.become_user

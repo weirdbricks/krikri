@@ -2007,6 +2007,29 @@ module Krikri
       value.nil? ? @check_mode : value
     end
 
+    # Runtime resolution of a task's effective diff mode, the same
+    # deferred-evaluation shape resolve_task_check_mode uses: a templated
+    # `diff:` keyword (`diff: "{{ haproxy_show_template_diffs }}"`,
+    # martin-micimo.haproxy) re-renders against live vars instead of
+    # falling back to the CLI --diff flag, which the parse-time nil
+    # otherwise kept - and ansible prints the task's diff block with the
+    # flag off. A render that fails falls back to the CLI flag, the same
+    # neutral degradation resolve_task_check_mode applies.
+    private def resolve_task_diff_mode(task : Task, vars_context : Hash(String, JSON::Any)? = nil) : Bool
+      if (expr = task.diff_mode_expr) && (vars = vars_context)
+        substitutor = VarSubstitutor.new(vars: vars)
+        rendered = substitutor.substitute(expr)
+        begin
+          return ConditionalEvaluator.evaluate(rendered, {} of String => JSON::Any)
+        rescue
+          return @diff_mode
+        end
+      end
+
+      value = task.diff_mode?
+      value.nil? ? @diff_mode : value
+    end
+
     # Runtime resolution of a task's effective become: value. Mirrors
     # ansible-core's TaskExecutor._set_become_plugin: an `ansible_become`
     # var present in the task's vars context (inventory host vars
