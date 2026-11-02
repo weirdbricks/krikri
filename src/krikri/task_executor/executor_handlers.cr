@@ -997,6 +997,16 @@ module Krikri
         end
       end
 
+      # Issue #735: same diff:/check_mode: keyword post-validation as
+      # execute_task_once/prepare_batch_step.
+      if error = boolean_keyword_invalid_error(handler, vars_context)
+        result = keyword_failure_json(error, handler)
+        if register_name = handler.register
+          register_result(host, register_name, result) unless register_name.empty?
+        end
+        return result
+      end
+
       # Same no_log keyword-templating probe as execute_task_once (issue
       # #317): a notified handler whose templated no_log: references an
       # undefined variable fails like any other task instead of running

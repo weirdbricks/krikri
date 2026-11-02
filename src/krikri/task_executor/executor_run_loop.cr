@@ -2094,6 +2094,13 @@ module Krikri
         end
       end
 
+      # Issue #735: ansible post-validates the diff:/check_mode: bool
+      # keywords the same way, so a value boolean() refuses fails the
+      # task with its own keyword error before any arg templating.
+      if error = boolean_keyword_invalid_error(task, vars_context)
+        return keyword_failure_json(error, task)
+      end
+
       # Same no_log keyword-templating probe as execute_task_once (issue
       # #317): the batched remote path must fail the task identically
       # instead of sending it to the remote code while masked.
@@ -2565,6 +2572,12 @@ module Krikri
         rescue ex : UndefinedVariableError
           return keyword_failure_json(ex, task)
         end
+      end
+
+      # Issue #735: same diff:/check_mode: keyword post-validation as
+      # prepare_batch_step.
+      if error = boolean_keyword_invalid_error(task, vars_context)
+        return keyword_failure_json(error, task)
       end
 
       # The no_log keyword is strictly templated alongside become_user
