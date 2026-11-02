@@ -37,6 +37,25 @@ describe "openssl_privatekey_info plugin" do
     fingerprints["md5"].as_s.must_match(/^(..:){15}..$/)
   end
 
+  it "warns 'Cannot determine consistency' with key_is_consistent nil for check_consistency on an RSA key" do
+    path = PluginSpecHelper.tmp_path("rsa-consistency.key")
+    `openssl genrsa -out #{path} 2048 2>/dev/null`
+
+    result = PluginSpecHelper.run("openssl_privatekey_info",
+      {"path" => path, "check_consistency" => "true"})
+
+    falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+    # cryptography >= 42 dropped key._backend, so community.crypto cannot
+    # run its RSA_check_key consistency check for RSA and warns instead
+    # of returning a verdict (DSA/ECC/Ed25519/Ed448 sign-verify silently).
+    result["key_is_consistent"].as_s?.must_be_nil
+    warnings = result["warnings"]?.try(&.as_a?) || [] of JSON::Any
+    warnings.size.must_equal(1)
+    warnings[0].as_s.must_equal(
+      "Cannot determine consistency for key of type " \
+      "<class 'cryptography.hazmat.bindings._rust.openssl.rsa.RSAPrivateKey'>")
+  end
+
   it "reports ECC facts: curve, exponent_size, decimal x/y coordinates" do
     path = PluginSpecHelper.tmp_path("ec.key")
     `openssl ecparam -genkey -name prime256v1 -out #{path} 2>/dev/null`
