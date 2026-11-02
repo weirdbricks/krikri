@@ -411,6 +411,22 @@ module Krikri
           return msg
 
 
+      # Real basic.py re-exports env_fallback from common.parameters beside
+      # AnsibleModule, and modules import both names in one line to declare
+      # argument-spec fallbacks (fallback=(env_fallback, ['MY_REGION'])) -
+      # custom modules that declare env-var fallbacks the way the Ansible
+      # docs teach fail at this very import otherwise (issue #752).
+      class AnsibleFallbackNotFound(Exception):
+          pass
+
+      def env_fallback(*args, **kwargs):
+          """Load value from environment variable"""
+
+          for arg in args:
+              if arg in os.environ:
+                  return os.environ[arg]
+          raise AnsibleFallbackNotFound
+
       class AnsibleModule(object):
           def __init__(self, argument_spec=None, bypass_checks=False, no_log=False,
                        supports_check_mode=False, **kwargs):
@@ -512,6 +528,33 @@ module Krikri
                   for alias in spec.get('aliases', []) or []:
                       if alias in raw_args and key not in raw_args:
                           raw_args[key] = raw_args[alias]
+              # Real validates args through ModuleArgumentSpecValidator,
+              # which runs set_fallbacks (common/parameters.py) BEFORE
+              # _set_defaults: a param the caller did not pass gets its
+              # fallback strategy's value (env_fallback reads the named
+              # env vars), a not-found fallback leaves the param to the
+              # default/None path, and an explicitly passed value never
+              # consults the fallback at all - so basic.py's own
+              # unsafe_writes takes ANSIBLE_UNSAFE_WRITES over its
+              # default=False only when the env var is set (issue #752).
+              for key, spec in self.argument_spec.items():
+                  if key in raw_args or 'fallback' not in spec:
+                      continue
+                  fallback = spec['fallback']
+                  if not fallback:
+                      continue
+                  fallback_args = []
+                  fallback_kwargs = {}
+                  for item in fallback[1:]:
+                      if isinstance(item, dict):
+                          fallback_kwargs = item
+                      else:
+                          fallback_args = item
+                  try:
+                      fallback_value = fallback[0](*fallback_args, **fallback_kwargs)
+                  except AnsibleFallbackNotFound:
+                      continue
+                  raw_args[key] = fallback_value
               missing = []
               for key, spec in self.argument_spec.items():
                   if key in raw_args:
