@@ -127,6 +127,35 @@ BLOCK
     stderr_text.must_include("[WARNING]: Encountered 1 template error.\nerror 1 - 'nope_zzz' is undefined\nOrigin: PB:5:14")
   end
 
+  it "keeps the loop var item key in a looped var: form dump" do
+    stdout_text, _ = run_krikri(<<-YAML)
+      - hosts: localhost
+        gather_facts: false
+        vars: {rbenv: {repo: x}}
+        tasks:
+          - ansible.builtin.debug:
+              var: "{{ item }}"
+            loop:
+              - rbenv.repo
+      YAML
+    stdout_text.must_include(%("item": "rbenv.repo"))
+    stdout_text.must_include(%("rbenv.repo": "x"))
+    stdout_text.wont_include("ansible_loop_var")
+  end
+
+  it "points a looped var: template-error warning at the loop item's own line" do
+    _stdout_text, stderr_text = run_krikri(<<-YAML)
+      - hosts: localhost
+        gather_facts: false
+        tasks:
+          - ansible.builtin.debug:
+              var: "{{ item }}"
+            loop:
+              - nope_zzz
+      YAML
+    stderr_text.must_include("[WARNING]: Encountered 1 template error.\nerror 1 - 'nope_zzz' is undefined\nOrigin: PB:7:11")
+  end
+
   it "fails include_vars with Ansible's result keys and action-level block" do
     stdout_text, _ = run_krikri(<<-YAML)
       - hosts: localhost
