@@ -1146,7 +1146,8 @@ module Krikri
             @inventory,
             handler.delegate_to ? host : nil,
             resolve_task_check_mode(handler, vars_context),
-            handler_deadline
+            handler_deadline,
+            handler.action_name
           )
         end
         # The deadline expired during the action stage itself - same

@@ -93,6 +93,10 @@ module Krikri
     # it (only pause: reads it today; the executor additionally guards
     # the whole dispatch itself, see
     # TaskExecutor#execute_action_with_deadline).
+    # `action_name` is the module spelling AS WRITTEN in the task - the
+    # modules that validate their own args against the real spec
+    # (synchronize) print it in the Unsupported-parameters message like
+    # real does; nil only from contexts without a task (tests).
     def self.execute_action(
       module_name : String,
       params : Hash(String, String),
@@ -102,6 +106,7 @@ module Krikri
       task_host : Host? = nil,
       check_mode : Bool = false,
       deadline : Time::Instant? = nil,
+      action_name : String? = nil,
     ) : ActionResult
       # Get action plugin class
       plugin_class = ACTION_PLUGINS[module_name]?
@@ -161,7 +166,7 @@ module Krikri
       params["_ansible_check_mode"] = check_mode.to_s
 
       # Create and execute action plugin
-      action_plugin = plugin_class.new(params, vars, host, inventory, task_host, deadline)
+      action_plugin = plugin_class.new(params, vars, host, inventory, task_host, deadline, action_name)
 
       # Check if should run
       unless action_plugin.should_run?

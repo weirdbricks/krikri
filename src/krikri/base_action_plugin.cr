@@ -75,7 +75,13 @@ module Krikri
     # result, see PauseActionPlugin).
     getter deadline : Time::Instant?
 
-    def initialize(@params : Hash(String, String), @vars : Hash(String, JSON::Any), @host : Host, @inventory : Inventory? = nil, @task_host : Host? = nil, @deadline : Time::Instant? = nil)
+    # The module spelling AS WRITTEN in the task - the ArgspecValidator
+    # prints it in the Unsupported-parameters message exactly like real
+    # (a bare `synchronize:` must not dress up as the resolved FQCN);
+    # nil only for direct test construction.
+    getter action_name : String?
+
+    def initialize(@params : Hash(String, String), @vars : Hash(String, JSON::Any), @host : Host, @inventory : Inventory? = nil, @task_host : Host? = nil, @deadline : Time::Instant? = nil, @action_name : String? = nil)
     end
 
     # Execute action on controller

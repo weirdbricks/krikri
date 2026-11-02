@@ -2230,7 +2230,7 @@ module Krikri
         # round 2300304: "mkdir /home/labros/... failed: No such file or
         # directory"). Batchable tasks never carry delegate_to:, so this is
         # nil in practice here.
-        action_result = ActionPluginManager.execute_action(task.module_name, substituted_params, vars_context, host, @inventory, task.delegate_to ? host : nil, resolve_task_check_mode(task, vars_context))
+        action_result = ActionPluginManager.execute_action(task.module_name, substituted_params, vars_context, host, @inventory, task.delegate_to ? host : nil, resolve_task_check_mode(task, vars_context), nil, task.action_name)
         emit_assert_that_deprecations(task, substituted_params, action_result, vars_context)
 
         unless action_result.success?
@@ -2824,7 +2824,8 @@ module Krikri
             @inventory,
             task.delegate_to ? host : nil,
             resolve_task_check_mode(task, vars_context),
-            task_deadline
+            task_deadline,
+            task.action_name
           )
         end
         # The deadline expired during the action stage itself (real's

@@ -1,5 +1,6 @@
 require "json"
 require "../base_action_plugin"
+require "../argspec_validator"
 require "../cli_options"
 require "../connection_settings"
 require "../param_sentinels"
@@ -133,8 +134,18 @@ module Krikri
     # validation follows in execute, matching real's
     # action-plugin-before-module ordering.
     private def invalid_params_result(src_param, dest_param) : ActionResult?
+      # Real's guard is `src is None or dest is None`, so a null or absent
+      # src/dest fails HERE (the action plugin, before the module is ever
+      # invoked), not at AnsibleModule's later missing-required check -
+      # the same ordering the argspec validation below depends on
+      # (issue #744). A literal null rides the parser's
+      # NON_STRING_PARAM_PREFIX marker on this plugin's params (they keep
+      # the markers - see munging_literal_type_failure); a null that
+      # arrived through the executor's param finalization instead rides
+      # the bare NONE_SENTINEL the wire uses for a natively-None value.
       if !src_param || !dest_param || src_param.empty? || dest_param.empty? ||
-         marked_null_param?(src_param) || marked_null_param?(dest_param)
+         marked_null_param?(src_param) || marked_null_param?(dest_param) ||
+         src_param == Krikri::NONE_SENTINEL || dest_param == Krikri::NONE_SENTINEL
         return ActionResult.final(Krikri.mark_failed_key_order(ActionResult.plugin_result_json(
           false, true, "synchronize requires both src and dest parameters are set",
           key_order: PARAM_FAILURE_KEY_ORDER
@@ -165,11 +176,30 @@ module Krikri
 
       # mode's choices validation (parameters.py _validate_argument_values)
       # is case-sensitive and reports the RAW value; the downcase for the
-      # actual transport behavior happens only after it passes.
+      # actual transport behavior happens only after it passes. A literal
+      # YAML null rides the wire as NONE_SENTINEL: real stringifies the
+      # None to an empty tail ("got: " with nothing after it, live-verified
+      # vs 2.19.11), not the sentinel text.
       raw_mode = @params["mode"]?
       if raw_mode && !%w[pull push].includes?(raw_mode)
+        reported_mode = raw_mode == Krikri::NONE_SENTINEL ? "" : raw_mode
         return ActionResult.final(Krikri.mark_failed_key_order(ActionResult.plugin_result_json(
-          false, true, "value of mode must be one of: pull, push, got: #{raw_mode}",
+          false, true, "value of mode must be one of: pull, push, got: #{reported_mode}",
+          key_order: PARAM_FAILURE_KEY_ORDER
+        ), PARAM_FAILURE_KEY_ORDER))
+      end
+
+      # The unsupported-parameter check is the module setup's LAST check
+      # (arg_spec.py appends UnsupportedError after the type/choices walk),
+      # so a typo'd option name only fails once the bool/mode conversions
+      # above have passed. Found by the kpg chaos round: bogus siblings of
+      # real option names (_substitute_controller_bogus, checksum_bogus,
+      # existin_gonly, moed) ran the whole rsync on this engine while real
+      # failed the task in module setup (issue #744).
+      if failure = ArgspecValidator.validate(@action_name || "ansible.posix.synchronize",
+           "ansible.posix.synchronize", @params, @vars)
+        return ActionResult.final(Krikri.mark_failed_key_order(ActionResult.plugin_result_json(
+          false, true, failure.msg,
           key_order: PARAM_FAILURE_KEY_ORDER
         ), PARAM_FAILURE_KEY_ORDER))
       end
