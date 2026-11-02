@@ -1,3 +1,5 @@
+require "./ansible_splitlines"
+
 module Krikri
   module PluginHelpers
     # AnsibleModule.run_command's two failure shapes, for plugins
@@ -49,12 +51,17 @@ module Krikri
       end
 
       # Non-zero exit under check_rc=True (the sanitized stderr becomes
-      # the msg).
+      # the msg). basic.py's _return_formatted derives stdout_lines/
+      # stderr_lines from the raw output for every fail_json that
+      # carries stdout/stderr - and krikri's fatal dump shows the
+      # plugin's raw result, so the helper derives them here (Python
+      # str.splitlines semantics, empty output -> []).
       def nonzero_exit(cmd : String, rc : Int32, stdout : String, stderr : String) : Krikri::PluginResult
         Krikri::PluginResult.new(
           changed: false, failed: true, msg: stderr.rstrip,
           cmd: cmd, rc: rc, stdout: stdout, stderr: stderr,
-          stdout_lines: [] of String, stderr_lines: [] of String,
+          stdout_lines: AnsibleSplitlines.split(stdout),
+          stderr_lines: AnsibleSplitlines.split(stderr),
         )
       end
 
