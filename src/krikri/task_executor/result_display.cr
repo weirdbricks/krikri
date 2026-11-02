@@ -5,6 +5,7 @@ require "../timing_profile"
 require "../oneline_output"
 require "../variable_substitutor/filter_core"
 require "../argspec_validator"
+require "../difflib"
 require "./error_block"
 
 module Krikri
@@ -2194,37 +2195,28 @@ module Krikri
       end
     end
 
-    # Show unified diff using system diff command
+    # Show the body of a content diff, built by the same algorithm ansible's
+    # callback uses (difflib, not the system `diff` command): the two pick
+    # different matching blocks for some inputs, so only difflib's hunk
+    # layout matches ansible's stdout byte for byte (issue #736 -
+    # martin-micimo.haproxy's haproxy.cfg was the first role where the same
+    # 34->35 line pair rendered differently).
     def self.show_unified_diff(before : String, after : String) : Nil
-      # Create temp files for diff
-      before_file = "/tmp/krikri-playbook-before-#{Random::Secure.hex(4)}"
-      after_file = "/tmp/krikri-playbook-after-#{Random::Secure.hex(4)}"
-
-      File.write(before_file, before)
-      File.write(after_file, after)
-
-      # Run diff command
-      diff_output = `diff -u #{before_file} #{after_file} 2>/dev/null`
-
-      # Cleanup
-      File.delete(before_file) if File.exists?(before_file)
-      File.delete(after_file) if File.exists?(after_file)
-
-      # Skip first two lines (--- and +++ headers, we show our own)
-      lines = diff_output.lines
+      lines = Difflib.unified_diff(Difflib.match_lines(before), Difflib.match_lines(after))
+      # The two ---/+++ headers are printed by the callers themselves.
       return if lines.size < 3
 
-      # Colorize and display
-      lines[2..-1].each do |line|
-        colored = case line[0]?
+      lines[2..].each do |line|
+        text = line.chomp
+        colored = case text[0]?
                   when '-'
-                    line.colorize(:red)
+                    text.colorize(:red)
                   when '+'
-                    line.colorize(:green)
+                    text.colorize(:green)
                   when '@'
-                    line.colorize(:cyan).bold
+                    text.colorize(:cyan).bold
                   else
-                    line
+                    text
                   end
         puts colored
       end
