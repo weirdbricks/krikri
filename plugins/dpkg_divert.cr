@@ -3,6 +3,8 @@
 require "json"
 require "../src/krikri/base_plugin"
 require "../src/krikri/plugin_helpers/dpkg_divert_command"
+require "../src/krikri/plugin_helpers/run_command_failure"
+require "../src/krikri/plugin_helpers/get_bin_path"
 
 module Krikri
   # dpkg_divert plugin - manages Debian dpkg file diversions via the
@@ -45,7 +47,17 @@ module Krikri
       holder = @params["holder"]?
       divert_param = @params["divert"]?
 
-      version_result = remote_exec(PluginHelpers::DpkgDivertCommand.version_command)
+      # Real resolves dpkg-divert through get_bin_path(required=True) at
+      # the top of main(), before anything shells out - a host without
+      # the binary fails there, not with the version probe's wording.
+      # The resolved path is also what the real module records: the
+      # `commands` result carries it, and a run_command(check_rc=True)
+      # failure reports it in cmd.
+      dpkg_divert = find_required_binary("dpkg-divert")
+      return PluginResult.new(changed: false, failed: true,
+        msg: PluginHelpers::GetBinPath.missing_executable_error("dpkg-divert", @bin_searched_paths)) unless dpkg_divert
+
+      version_result = remote_exec(PluginHelpers::DpkgDivertCommand.version_command(dpkg_divert))
       unless version_result[:exit_code] == 0
         return PluginResult.new(changed: false, failed: true,
           msg: "Unsupported dpkg version (<1.15.0).")
@@ -53,13 +65,14 @@ module Krikri
 
       path_exists = remote_file_exists?(path)
 
-      diversion_before = diversion_state(path)
+      diversion_before = diversion_state(path, dpkg_divert)
+      return diversion_before if diversion_before.is_a?(PluginResult)
       truename_exists = diversion_before["divert"] ? remote_file_exists?(diversion_before["divert"].not_nil!) : false
 
       options = PluginHelpers::DpkgDivertCommand::Options.new(
         state: state, holder: holder, divert: divert_param, rename: rename, force: force
       )
-      main_command = PluginHelpers::DpkgDivertCommand.main_command(options, path)
+      main_command = PluginHelpers::DpkgDivertCommand.main_command(options, dpkg_divert, path)
 
       diversion_wanted : Hash(String, String?) = {
         "path" => path, "state" => state, "divert" => nil, "holder" => nil,
@@ -107,7 +120,7 @@ module Krikri
         else
           # updating holder/divert of an existing diversion: dpkg-divert
           # cannot do that in place - remove, then re-add
-          rm_command = PluginHelpers::DpkgDivertCommand.remove_command(path)
+          rm_command = PluginHelpers::DpkgDivertCommand.remove_command(dpkg_divert, path)
           rm_command = PluginHelpers::DpkgDivertCommand.with_test(rm_command) if check_mode
           rm_result = remote_exec(rm_command)
           return failed_result("dpkg-divert failed: #{rm_result[:stderr]}") if rm_result[:exit_code] != 0
@@ -129,7 +142,8 @@ module Krikri
         end
       end
 
-      diversion_after = check_mode ? diversion_wanted : diversion_state(path)
+      diversion_after = check_mode ? diversion_wanted : diversion_state(path, dpkg_divert)
+      return diversion_after if diversion_after.is_a?(PluginResult)
       changed = diversion_after != diversion_before
 
       if diversion_after == diversion_wanted
@@ -148,18 +162,37 @@ module Krikri
     end
 
     # {"path" => ..., "state" => ..., "holder" => ...?, "divert" => ...?}
-    private def diversion_state(path : String) : Hash(String, String?)
+    # A PluginResult return is the real module's diversion_state lookup
+    # failing under run_command(check_rc=True): a non-zero --listpackage
+    # or --truename exit (dpkg-divert's own usage error, e.g. a relative
+    # path like `80`) fails the module RIGHT THERE with run_command's
+    # failure shape - msg is the bare stderr, cmd names the resolved
+    # binary - and the main command below never runs. Swallowing the
+    # failure here (the old behavior) sent a non-absolute path into the
+    # main command's "Unexpected error while changing state of the
+    # diversion." branch instead (issue #748).
+    private def diversion_state(path : String, dpkg_divert : String) : Hash(String, String?) | PluginResult
       diversion : Hash(String, String?) = {
         "path" => path, "state" => "absent", "divert" => nil, "holder" => nil,
       }
 
-      list_result = remote_exec(PluginHelpers::DpkgDivertCommand.listpackage_command(path))
-      holder = list_result[:exit_code] == 0 ? list_result[:stdout].strip : ""
+      list_command = PluginHelpers::DpkgDivertCommand.listpackage_command(dpkg_divert, path)
+      list_result = remote_exec(list_command)
+      unless list_result[:exit_code] == 0
+        return PluginHelpers::RunCommandFailure.nonzero_exit(
+          list_command, list_result[:exit_code], list_result[:stdout], list_result[:stderr])
+      end
+      holder = list_result[:stdout].strip
       unless holder.empty?
         diversion["state"] = "present"
         diversion["holder"] = holder
-        truename = remote_exec(PluginHelpers::DpkgDivertCommand.truename_command(path))
-        diversion["divert"] = truename[:exit_code] == 0 ? truename[:stdout].strip : nil
+        truename_command = PluginHelpers::DpkgDivertCommand.truename_command(dpkg_divert, path)
+        truename = remote_exec(truename_command)
+        unless truename[:exit_code] == 0
+          return PluginHelpers::RunCommandFailure.nonzero_exit(
+            truename_command, truename[:exit_code], truename[:stdout], truename[:stderr])
+        end
+        diversion["divert"] = truename[:stdout].strip
       end
       diversion
     end
