@@ -935,8 +935,15 @@ module Krikri
       private def self.mark_deferred_undefined_leaf(e : Krikri::UndefinedVariableError, raw : String,
                                                     value : JSON::Any,
                                                     deferred_leaves : Hash(String, String)?) : JSON::Any
-        return value unless deferred_leaves
         message = e.message || "undefined variable"
+        unless deferred_leaves
+          # No collecting walk: leave the raw template text so an access
+          # that never reads this leaf succeeds (issue #422), and record
+          # it so a strict span that DOES see the text in its output can
+          # fail on the read (VarSubstitutor#deferred_leaf_leak).
+          VarSubstitutor.record_deferred_leaf(raw, message)
+          return value
+        end
         deferred_leaves[raw] = message
         JSON::Any.new(UNDEFINED_LEAF_MARKER_OPEN + message + UNDEFINED_LEAF_MARKER_CLOSE)
       end

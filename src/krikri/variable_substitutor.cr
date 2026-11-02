@@ -1871,6 +1871,62 @@ module Krikri
       (@@deferred_walk_depth[Fiber.current]? || 0) > 0
     end
 
+    # Fiber-scoped stack of the leaves a strict span's variable-scope
+    # preparation DEFERRED (a nested container value whose template
+    # bottoms out at a name set nowhere, left in its raw form so an
+    # untouched sibling never fails an access that does not read it -
+    # issue #422). Recording the raw text and its message lets
+    # #evaluate_stripped_span notice when the deferred text actually
+    # LEAKED into the span's rendered output: that means the span did
+    # read the leaf, and ansible-core renders it strictly at that read
+    # (`{{ n.a ~ 'x' }}` and `{{ n.a | default('x') }}` both fail on
+    # `n: {a: "{{ nosuch }}"}`), while a span that never reads it
+    # (`{{ n.ok }}` next to the undefined `a`) stays raw-text-free and
+    # succeeds. One scope layer per strict span / structured evaluation.
+    @@deferred_leaf_scopes = {} of Fiber => Array(Hash(String, String))
+
+    def self.enter_deferred_leaf_scope : Nil
+      fiber = Fiber.current
+      (@@deferred_leaf_scopes[fiber] ||= Array(Hash(String, String)).new) << Hash(String, String).new
+    end
+
+    def self.exit_deferred_leaf_scope : Nil
+      fiber = Fiber.current
+      if stack = @@deferred_leaf_scopes[fiber]?
+        stack.pop?
+        @@deferred_leaf_scopes.delete(fiber) if stack.empty?
+      end
+    end
+
+    def self.record_deferred_leaf(raw : String, message : String) : Nil
+      return unless stack = @@deferred_leaf_scopes[Fiber.current]?
+      stack.last[raw] = message
+    end
+
+    # The message of the first deferred leaf whose raw template text is
+    # still present in *rendered*, or nil when the span never consumed
+    # one. See #enter_deferred_leaf_scope. An occurrence that is still
+    # quoted - a dict/list serialization holding the raw leaf as one of
+    # its own values - is NOT a read: the container passed through
+    # untouched (the `BOOTSTRAP` dict that the when: merely indexes into,
+    # issue #422), and only an UNQUOTED occurrence means the leaf's text
+    # was combined into a scalar result.
+    def self.deferred_leaf_leak(rendered : String) : String?
+      return nil unless stack = @@deferred_leaf_scopes[Fiber.current]?
+      return nil unless rendered.includes?("{{") || rendered.includes?("{%") || rendered.includes?("{#")
+      stack.last.each do |raw, message|
+        search_from = 0
+        while idx = rendered.index(raw, search_from)
+          before = idx > 0 ? rendered[idx - 1] : nil
+          after = rendered[idx + raw.size]?
+          quoted = (before == '"' || before == '\'') && (after == '"' || after == '\'')
+          return message unless quoted
+          search_from = idx + raw.size
+        end
+      end
+      nil
+    end
+
     # Fiber-scoped stack of "the task param value this fiber is templating
     # right now" - pushed by TaskExecutor exactly around the substitution
     # of ONE param during module-arg finalization and popped in an ensure.
@@ -2236,6 +2292,7 @@ module Krikri
     def evaluate_structured_strict(expr : String) : JSON::Any?
       signal_before = KrikriJinja.miss_count
       self.class.enter_strict_span
+      self.class.enter_deferred_leaf_scope
       value = begin
         VariableSubstitutor::ExpressionEvaluator.new(@vars).evaluate_structured(expr)
       ensure
@@ -2246,7 +2303,17 @@ module Krikri
          (msg = Krikri.strict_undefined_probe_message(expr, @vars))
         raise UndefinedVariableError.new(msg)
       end
+      # A strict whole-expression evaluation that read a DEFERRED container
+      # leaf carries the leaf's raw template text into its result, which is
+      # ansible-core's render-on-access (issue #422: `{{ n.a ~ 'x' }}` on
+      # `n: {a: "{{ nosuch }}"}` fails with 'nosuch' is undefined, while
+      # `{{ n.ok }}` next to it succeeds).
+      if (leak = self.class.deferred_leaf_leak(value.try(&.to_s) || ""))
+        raise UndefinedVariableError.new(leak)
+      end
       value
+    ensure
+      self.class.exit_deferred_leaf_scope
     end
 
     private def evaluator : VariableSubstitutor::ExpressionEvaluator
@@ -2454,78 +2521,93 @@ module Krikri
       if native && (nv = native_scalar(stripped, evaluator))
         nv
       elsif strict
-        # Strict span (module-arg finalization, `when:`, set_fact, loop
-        # sources, ...): the lenient evaluation below is UNCHANGED - its
-        # output, its fallbacks, all of it. What is new is the strict-
-        # undefined PROBE afterwards, run only when the evaluation
-        # actually produced an undefined value somewhere (the miss-signal
-        # delta), so clean spans pay nothing. See
-        # Krikri.strict_undefined_probe_message for why the probe itself -
-        # not the lenient pipeline - decides whether a missing-attribute
-        # read was consumed (and therefore raises, like ansible-core
-        # 2.19) or tolerated.
-        signal_before = KrikriJinja.miss_count
-        self.class.enter_strict_span
-        rendered = begin
-          output ? evaluator.evaluate_output(stripped) : evaluator.evaluate(stripped)
-        rescue e : UndefinedVariableError
-          # A chain source whose own stored value is itself unrendered
-          # Jinja is rendered (strictly, under this active span) BEFORE
-          # the chain's first filter ever sees it - so the inner render's
-          # failure arrives here even for a span real ansible-core 2.19
-          # never fails: the templar renders a variable's value lazily AT
-          # ITS USE SITE (issue #495, live-verified vs 2.19: play var
-          # `user: "{{ app.value.django.user }}"` with `app` set nowhere
-          # renders `{{ user.gid|default('dflt') }}` to "dflt" and drops
-          # a `{{ user.gid|default(omit) }}` arg, while
-          # `{{ user.group.split(',')[0] }}` still fails with the
-          # innermost "'app' is undefined"). The failing root is defined
-          # - only its value bottoms out at a missing name - so the
-          # span-level probes above pass it by. When the span's own
-          # consumer is undefined-tolerant the same way those probes
-          # already honor (`default(...)` first, an `is defined` test),
-          # the engine's strict evaluation referees: the failing root
-          # reaches it as a chainable StrictUndefined, so the tolerant
-          # consumer answers and anything that CONSUMES the value still
-          # raises - with the innermost missing name, matching the
-          # non-tolerant raise this rescue re-throws.
-          if (fallback = tolerant_failing_base_render(stripped, e))
-            fallback
-          else
-            raise e
-          end
-        ensure
-          self.class.exit_strict_span
-        end
-        if (KrikriJinja.miss_count > signal_before || Krikri.strict_probe_candidate?(stripped, @vars)) &&
-           !Krikri.probe_has_side_effecting_call?(stripped) &&
-           (msg = Krikri.strict_undefined_probe_message(stripped, @vars))
-          raise UndefinedVariableError.new(msg)
-        end
-        if rendered == "undefined" &&
-           stripped.gsub(/'[^']*'|"[^"]*"/, " ").matches?(/\.(index|count|extend|insert|pop|remove|reverse|sort)\s*\(/)
-          # A Python list-method call the lenient evaluator swallowed into
-          # the undefined sentinel (the method's own TemplateError - "'z'
-          # is not in list", "pop from empty list" - never moves the
-          # undefined miss-signal, so the probe above passes it by). Real
-          # 2.19.11 fails these: the when:-side registers "Task failed:
-          # Error rendering expression: 'z' is not in list", the task-NAME
-          # marker shows the bare message (both probed 2026-10-10,
-          # bilalcaliksan.zookeeper's follow-up). Re-evaluate through the
-          # raising path and surface its message.
-          begin
-            VariableSubstitutor::JinjaRenderer.evaluate_structured(stripped, @vars, strict: true)
-          rescue e : KrikriJinja::TemplateError
-            # raw_message: e.message carries the engine's "line N: " prefix,
-            # which real's marker/wording does not carry for this class.
-            raise RenderExpressionError.new(e.raw_message)
+        self.class.enter_deferred_leaf_scope
+        begin
+          # Strict span (module-arg finalization, `when:`, set_fact, loop
+          # sources, ...): the lenient evaluation below is UNCHANGED - its
+          # output, its fallbacks, all of it. What is new is the strict-
+          # undefined PROBE afterwards, run only when the evaluation
+          # actually produced an undefined value somewhere (the miss-signal
+          # delta), so clean spans pay nothing. See
+          # Krikri.strict_undefined_probe_message for why the probe itself -
+          # not the lenient pipeline - decides whether a missing-attribute
+          # read was consumed (and therefore raises, like ansible-core
+          # 2.19) or tolerated.
+          signal_before = KrikriJinja.miss_count
+          self.class.enter_strict_span
+          rendered = begin
+            output ? evaluator.evaluate_output(stripped) : evaluator.evaluate(stripped)
           rescue e : UndefinedVariableError
-            raise e
-          rescue e
-            raise RenderExpressionError.new(e.message || "expression failed")
+            # A chain source whose own stored value is itself unrendered
+            # Jinja is rendered (strictly, under this active span) BEFORE
+            # the chain's first filter ever sees it - so the inner render's
+            # failure arrives here even for a span real ansible-core 2.19
+            # never fails: the templar renders a variable's value lazily AT
+            # ITS USE SITE (issue #495, live-verified vs 2.19: play var
+            # `user: "{{ app.value.django.user }}"` with `app` set nowhere
+            # renders `{{ user.gid|default('dflt') }}` to "dflt" and drops
+            # a `{{ user.gid|default(omit) }}` arg, while
+            # `{{ user.group.split(',')[0] }}` still fails with the
+            # innermost "'app' is undefined"). The failing root is defined
+            # - only its value bottoms out at a missing name - so the
+            # span-level probes above pass it by. When the span's own
+            # consumer is undefined-tolerant the same way those probes
+            # already honor (`default(...)` first, an `is defined` test),
+            # the engine's strict evaluation referees: the failing root
+            # reaches it as a chainable StrictUndefined, so the tolerant
+            # consumer answers and anything that CONSUMES the value still
+            # raises - with the innermost missing name, matching the
+            # non-tolerant raise this rescue re-throws.
+            if (fallback = tolerant_failing_base_render(stripped, e))
+              fallback
+            else
+              raise e
+            end
+          ensure
+            self.class.exit_strict_span
           end
+          if (KrikriJinja.miss_count > signal_before || Krikri.strict_probe_candidate?(stripped, @vars)) &&
+             !Krikri.probe_has_side_effecting_call?(stripped) &&
+             (msg = Krikri.strict_undefined_probe_message(stripped, @vars))
+            raise UndefinedVariableError.new(msg)
+          end
+          if rendered == "undefined" &&
+             stripped.gsub(/'[^']*'|"[^"]*"/, " ").matches?(/\.(index|count|extend|insert|pop|remove|reverse|sort)\s*\(/)
+            # A Python list-method call the lenient evaluator swallowed into
+            # the undefined sentinel (the method's own TemplateError - "'z'
+            # is not in list", "pop from empty list" - never moves the
+            # undefined miss-signal, so the probe above passes it by). Real
+            # 2.19.11 fails these: the when:-side registers "Task failed:
+            # Error rendering expression: 'z' is not in list", the task-NAME
+            # marker shows the bare message (both probed 2026-10-10,
+            # bilalcaliksan.zookeeper's follow-up). Re-evaluate through the
+            # raising path and surface its message.
+            begin
+              VariableSubstitutor::JinjaRenderer.evaluate_structured(stripped, @vars, strict: true)
+            rescue e : KrikriJinja::TemplateError
+              # raw_message: e.message carries the engine's "line N: " prefix,
+              # which real's marker/wording does not carry for this class.
+              raise RenderExpressionError.new(e.raw_message)
+            rescue e : UndefinedVariableError
+              raise e
+            rescue e
+              raise RenderExpressionError.new(e.message || "expression failed")
+            end
+          end
+          if (leak = self.class.deferred_leaf_leak(rendered))
+            # The span read a deferred container leaf: its raw template text
+            # came through into the output, so ansible-core renders it
+            # strictly at that read and fails with the innermost missing
+            # name (`{{ n.a ~ 'x' }}`, `{{ n.a | default('x') }}` on
+            # `n: {a: "{{ nosuch }}"}` - live-verified vs 2.19.11, issue
+            # #422). A span that never reads the leaf produces no raw text
+            # and keeps succeeding.
+            raise UndefinedVariableError.new(leak)
+          end
+          rendered
+        ensure
+          self.class.exit_deferred_leaf_scope
         end
-        rendered
       else
         output ? evaluator.evaluate_output(stripped) : evaluator.evaluate(stripped)
       end
