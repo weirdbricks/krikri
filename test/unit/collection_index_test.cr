@@ -33,6 +33,11 @@ describe Krikri::CollectionIndex do
     @fixture_root = PluginSpecHelper.tmp_path("collection-index-fixture")
     FileUtils.mkdir_p(File.join(@fixture_root, "ansible_collections", "testns", "prov", "plugins", "modules"))
     File.write(File.join(@fixture_root, "ansible_collections", "testns", "prov", "plugins", "modules", "thing.py"), "# fixture module\n")
+    # A bare lookup name's installed-collection scan (lookup and filter
+    # names search EVERY installed collection, unlike modules/actions)
+    # must find this file.
+    FileUtils.mkdir_p(File.join(@fixture_root, "ansible_collections", "testns", "prov", "plugins", "lookup"))
+    File.write(File.join(@fixture_root, "ansible_collections", "testns", "prov", "plugins", "lookup", "thing_lookup.py"), "# fixture lookup\n")
     # A collection whose runtime.yml redirects another leaf onto prov's
     # module - the redirect must count as "provides".
     FileUtils.mkdir_p(File.join(@fixture_root, "ansible_collections", "testns", "chain", "meta"))
@@ -42,6 +47,9 @@ describe Krikri::CollectionIndex do
           modules:
             other:
               redirect: testns.prov.thing
+          lookup:
+            other_lookup:
+              redirect: testns.prov.thing_lookup
         YAML
     )
     # Real collection/module shapes the redirect-following specs below
@@ -103,6 +111,31 @@ describe Krikri::CollectionIndex do
   it "refuses a bare name the keyword collections cannot provide either" do
     result = Krikri::CollectionIndex.controller_resolves?("nosuchthing", ["testns.prov"])
     result[:resolves].must_equal(false)
+  end
+
+  it "resolves a bare lookup name an installed collection's plugins/lookup ships (issue #751)" do
+    # Bare lookup names (unlike bare module names) are scanned across
+    # EVERY installed collection - real runs community.general's own
+    # `dig` with no `collections:` keyword anywhere (live-verified vs
+    # 2.19.11) - so the fixture's plugin file must count as provided.
+    Krikri::CollectionIndex.bare_lookup_resolves?("thing_lookup").must_equal(true)
+  end
+
+  it "follows a collection's lookup-kind runtime redirect for a bare lookup name" do
+    # The builtin runtime is not the only redirect source: a
+    # collection's own meta/runtime.yml plugin_routing.lookup table
+    # participates the same way it does for modules.
+    Krikri::CollectionIndex.bare_lookup_resolves?("other_lookup").must_equal(true)
+  end
+
+  it "refuses a bare lookup name neither ansible-core nor any collection provides" do
+    # The definite negative is what the lookup dispatch's not-found
+    # gate (issue #751) refuses on: ansible-core's own plugins/lookup
+    # tree, its builtin-runtime lookup redirects and every installed
+    # collection's plugins/lookup all miss. ansible-core must be
+    # discoverable here (same assumption the bare module refusal above
+    # makes) - without it the answer is the permissive nil.
+    Krikri::CollectionIndex.bare_lookup_resolves?("nope_nope_bare_missing").must_equal(false)
   end
 
   it "resolves an installed collection's real module even when krikri has not implemented it" do

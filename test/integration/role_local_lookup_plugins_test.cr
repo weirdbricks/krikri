@@ -188,7 +188,7 @@ describe "role-local lookup_plugins/*.py custom lookups" do
     FileUtils.rm_rf(root) if root
   end
 
-  it "degrades an unknown lookup name to the previous undefined/[] behavior" do
+  it "fails an unknown lookup name like ansible instead of a silent empty list (issue #751)" do
     root = File.tempname("lookup-plugins-none")
     Dir.mkdir_p(File.join(root, "roles", "myrole", "tasks"))
     File.write(File.join(root, "roles", "myrole", "tasks", "main.yml"), <<-YAML)
@@ -207,10 +207,13 @@ describe "role-local lookup_plugins/*.py custom lookups" do
           - myrole
       YAML
 
-    # Same shape as before the custom-lookup support existed: query()
-    # collapses the unknown lookup to an empty list, the run proceeds.
-    status.success?.must_equal(true, output)
-    output.must_include("\"missing\": []", output)
+    # Originally pinned the pre-custom-lookup-support degradation (query()
+    # collapsing the unknown lookup to an empty list, the run proceeding);
+    # real ansible-core 2.19 task-fails the name that exists nowhere with
+    # its own not-found message (issue #751, live-verified), so the run
+    # must fail the same way.
+    status.success?.must_equal(false, output)
+    output.must_include("The lookup plugin 'no_such_lookup_xyz' was not found.", output)
   ensure
     FileUtils.rm_rf(root) if root
   end

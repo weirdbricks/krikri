@@ -545,21 +545,23 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
     evaluator.evaluate("query('first_found', params)").must_equal("[]")
   end
 
-  it "query('<unimplemented lookup type>', ...) returns an empty list, not [\"undefined\"]" do
-    # Real bug found in a 150-role overnight round (manala.cron): its
-    # own `loop: "{{ query('manala_cron_files_env', manala_cron_files)
-    # }}"` uses a role-local CUSTOM Python lookup plugin (a real,
-    # understood scope limit - krikri can't execute one). #evaluate_lookup
-    # falls back to the literal string "undefined" for any lookup type
-    # it doesn't implement; the generic (non-first_found) branch of
-    # #evaluate_query then wrapped that AS DATA into a one-element
-    # ["undefined"] array instead of treating it as "nothing resolved"
-    # the way the first_found branch above already does - the loop ran
-    # ONCE with a bogus string `item` instead of skipping (Ansible
-    # skips: manala_cron_files is empty by default, so the role's own
-    # lookup plugin - which krikri can't run - would itself return []).
+  it "query('<lookup type that exists nowhere>', ...) fails the task like ansible (issue #751)" do
+    # Originally pinned the opposite behavior (found in a 150-role
+    # overnight round, manala.cron): an unimplemented lookup type fell
+    # back to the literal "undefined" sentinel, which #evaluate_query
+    # wrapped AS DATA into a one-element ["undefined"] array, so the
+    # loop ran once with a bogus item. Two things changed since: the
+    # manala.cron scenario itself now RUNS the role's real custom
+    # lookup plugin through the custom-python dispatch, and - issue
+    # #751, live-verified vs ansible-core 2.19 - a name that exists
+    # NOWHERE (no native handler, no custom lookup_plugins/<name>.py,
+    # no installed collection's plugins/lookup) is task-fatal in real,
+    # not an empty list.
     evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(Hash(String, JSON::Any).new)
-    evaluator.evaluate("query('totally_custom_unimplemented_lookup', [])").must_equal("[]")
+    ex = assert_raises(Krikri::PythonLookupRunner::LookupError) do
+      evaluator.evaluate("query('totally_custom_unimplemented_lookup', [])")
+    end
+    ex.message.must_equal("The lookup plugin 'totally_custom_unimplemented_lookup' was not found.")
   end
 
   it "resolves a first_found paths: entry relative to the role's tasks/ dir, not just role_path itself" do
@@ -2355,21 +2357,51 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
       captured.to_s.must_include("[WARNING]: Error loading plugin 'nope.nope.jinja_lookup': No module named 'ansible_collections.nope'")
     end
 
-    it "stays silent for a bare lookup name that cannot be found" do
-      # Real only warns when the name resolves into a collection that
-      # cannot be imported; a bare unknown lookup type gets no loader
-      # warning (it never reaches the collection loader) and keeps the
-      # "undefined" fallback.
+    it "fails a bare lookup name that cannot be found, with Ansible's not-found message (issue #751)" do
+      # Real ansible-core 2.19 (verified against the issue's own
+      # query('nonexistent_lookup', 'a') repro): task-fatal
+      # "The lookup plugin 'nonexistent_lookup' was not found." - the
+      # "undefined" sentinel the dispatch used to fall back to let
+      # query() collapse it to an empty list and a typo'd lookup name
+      # silently emptied its consumer. Real also prints NO loader
+      # warning for a bare unknown name (it never resolves into a
+      # collection the loader would import-fail on), unlike the FQCN
+      # case above.
+      return unless Krikri::CollectionIndex.bare_lookup_resolves?("nonexistent_lookup") == false
       captured = IO::Memory.new
       previous = Krikri::CollectionIndex.missing_lookup_warning_sink
       begin
         Krikri::CollectionIndex.missing_lookup_warning_sink = captured
-        evaluator.evaluate("lookup('nope_nope_bare_missing', moodle_version='4.5')").must_equal("undefined")
+        ex = assert_raises(Krikri::PythonLookupRunner::LookupError) do
+          evaluator.evaluate("lookup('nonexistent_lookup', moodle_version='4.5')")
+        end
+        ex.message.must_equal("The lookup plugin 'nonexistent_lookup' was not found.")
       ensure
         Krikri::CollectionIndex.missing_lookup_warning_sink = previous
       end
-
       captured.to_s.must_be_empty
+    end
+
+    it "fails an ansible.builtin-prefixed unknown lookup with the name as spelled (issue #751)" do
+      # Real (live-verified vs 2.19.11) words the same failure for the
+      # fully-qualified spelling with the FQCN the task wrote, not the
+      # stripped bare form the dispatch normalized to.
+      return unless Krikri::CollectionIndex.bare_lookup_resolves?("nonexistent_lookup") == false
+      ex = assert_raises(Krikri::PythonLookupRunner::LookupError) do
+        evaluator.evaluate("lookup('ansible.builtin.nonexistent_lookup', moodle_version='4.5')")
+      end
+      ex.message.must_equal("The lookup plugin 'ansible.builtin.nonexistent_lookup' was not found.")
+    end
+
+    it "keeps the undefined degradation for a bare name an installed collection provides" do
+      # Bare lookup names are scanned across EVERY installed collection
+      # (live-verified vs 2.19.11: bare `dig` runs community.general's
+      # plugin with no `collections:` keyword anywhere) - a name the
+      # scan resolves must keep the pre-#751 "undefined" degradation,
+      # since real would run that collection's own plugin where krikri
+      # has no implementation.
+      return unless Krikri::CollectionIndex.bare_lookup_resolves?("dig") == true
+      evaluator.evaluate("lookup('dig', 'localhost')").must_equal("undefined")
     end
 
     it "still resolves a known fully-qualified builtin lookup" do

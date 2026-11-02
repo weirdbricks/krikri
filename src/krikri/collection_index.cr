@@ -50,6 +50,8 @@ module Krikri
     @@builtin_redirects_loaded = false
     @@builtin_action_redirects : Hash(String, String)? = nil
     @@builtin_action_redirects_loaded = false
+    @@builtin_lookup_redirects : Hash(String, String)? = nil
+    @@builtin_lookup_redirects_loaded = false
     @@collection_redirects = Hash(String, Hash(String, String)?).new
     @@role_meta_collections = Hash(String, Array(String)).new
 
@@ -66,6 +68,8 @@ module Krikri
       @@builtin_redirects_loaded = false
       @@builtin_action_redirects = nil
       @@builtin_action_redirects_loaded = false
+      @@builtin_lookup_redirects = nil
+      @@builtin_lookup_redirects_loaded = false
       @@collection_redirects.clear
     end
 
@@ -209,6 +213,76 @@ module Krikri
       collection_dirs.has_key?("#{namespace}.#{collection}")
     end
 
+    # Could real's plugin loader resolve a BARE lookup plugin name
+    # (`query('dig', ...)`)? Unlike modules/actions - whose bare names
+    # search only ansible.legacy, ansible.builtin and the task's listed
+    # collections - lookup (and filter) names are scanned across EVERY
+    # installed collection (live-verified vs 2.19.11: bare `dig`/
+    # `dnstxt` run community.general's own plugins with no `collections:`
+    # keyword anywhere). The builtin runtime's plugin_routing.lookup
+    # redirect table participates first (`redis` -> community.general),
+    # so an ansible-core present but redirect-target collection absent
+    # is a definite false, not unsure. nil = unsure (no ansible-core
+    # installation discoverable) - the caller must not refuse on nil.
+    def self.bare_lookup_resolves?(name : String) : Bool?
+      return nil if name.empty? || name.includes?(".")
+      case builtin_target?("lookup", name)
+      when true
+        return true
+      when nil
+        # No ansible-core installation discoverable: the installed-
+        # collection scan is still a definite positive when it hits,
+        # but everything else stays unsure - inventing a refusal
+        # without the runtime data would be the dangerous direction.
+        return true if collection_provides_lookup?(name)
+        return nil
+      end
+
+      # The builtin runtime's lookup redirect table (`redis` ->
+      # community.general.redis): the hop real's loader takes a bare
+      # name through before the installed-collection scan. A chain that
+      # dies on an absent collection is NOT returned directly - the
+      # installed-collection scan below still gets its say (a bare name
+      # can also resolve as a plain file elsewhere), and only a scan
+      # miss makes the negative definite.
+      if redirects = builtin_redirects("lookup")
+        if target = redirects[name]?
+          result = chain_resolves?("lookup", target, Set(String).new)
+          return true if result[:resolves] == true
+          return nil if result[:resolves].nil?
+        end
+      else
+        return nil
+      end
+
+      collection_provides_lookup?(name) ? true : false
+    end
+
+    # Does any INSTALLED collection provide the bare lookup name - a
+    # plugins/lookup/<name>.py file, or a meta/runtime.yml
+    # plugin_routing.lookup redirect whose target resolves? Bare lookup
+    # (and filter) names are scanned across EVERY installed collection
+    # - not just the task's listed ones - and each collection's own
+    # redirect table participates in its scan the same way it does for
+    # an FQCN.
+    private def self.collection_provides_lookup?(name : String) : Bool
+      collection_dirs.each_value do |dirs|
+        dirs.each do |dir|
+          return true if File.file?(File.join(dir, "plugins", "lookup", "#{name}.py"))
+          cache_key = "#{dir}\0lookup"
+          redirects = @@collection_redirects[cache_key]?
+          if redirects.nil? && !@@collection_redirects.has_key?(cache_key)
+            redirects = collection_redirects_uncached(dir, "lookup")
+            @@collection_redirects[cache_key] = redirects
+          end
+          next unless redirects && (target = redirects[name]?)
+          result = chain_resolves?("lookup", target, Set(String).new)
+          return true if result[:resolves] == true
+        end
+      end
+      false
+    end
+
     # The ansible-core package directories (dirs containing an `ansible/`
     # package with a modules/ or config/ tree). Empty when no python
     # ansible installation is discoverable - every builtin-dependent
@@ -280,20 +354,27 @@ module Krikri
     # not be parsed (no ansible-core discoverable) - the caller must not
     # treat "no redirect" as proof of anything then.
     private def self.builtin_redirects(kind : String) : Hash(String, String)?
-      cache = kind == "modules" ? @@builtin_redirects : @@builtin_action_redirects
-      loaded = kind == "modules" ? @@builtin_redirects_loaded : @@builtin_action_redirects_loaded
+      cache, loaded = case kind
+                      when "modules" then {@@builtin_redirects, @@builtin_redirects_loaded}
+                      when "action"  then {@@builtin_action_redirects, @@builtin_action_redirects_loaded}
+                      else                {@@builtin_lookup_redirects, @@builtin_lookup_redirects_loaded}
+                      end
       return cache if loaded
 
       ansible_pkg_dirs.each do |pkg|
         path = File.join(pkg, "config", "ansible_builtin_runtime.yml")
         next unless File.file?(path)
         table = parse_runtime_redirects(path, kind)
-        if kind == "modules"
+        case kind
+        when "modules"
           @@builtin_redirects = table
           @@builtin_redirects_loaded = true
-        else
+        when "action"
           @@builtin_action_redirects = table
           @@builtin_action_redirects_loaded = true
+        else
+          @@builtin_lookup_redirects = table
+          @@builtin_lookup_redirects_loaded = true
         end
         return table
       end
@@ -308,11 +389,16 @@ module Krikri
         @@builtin_redirects = baked_modules
         @@builtin_redirects_loaded = true
         return baked_modules
-      else
+      elsif kind == "action"
         @@builtin_action_redirects = baked_action
         @@builtin_action_redirects_loaded = true
         return baked_action
       end
+      # The lookup kind has no baked table: without a discoverable
+      # ansible-core the caller must treat the answer as unsure (the
+      # bare-name lookup not-found gate only refuses on a definite
+      # negative).
+      nil
     end
 
     # A bare module name's ansible_builtin_runtime.yml redirect target
@@ -670,6 +756,12 @@ module Krikri
     # installation discoverable, unsure.
     private def self.builtin_target?(kind : String, leaf : String) : Bool?
       return builtin_module?(leaf) if kind == "modules"
+      if kind == "lookup"
+        # A lookup plugin's file under ansible-core's own plugins/lookup/
+        # - no module-file fallback (a module never serves a lookup name).
+        return nil if ansible_pkg_dirs.empty?
+        return ansible_pkg_dirs.any? { |pkg| File.file?(File.join(pkg, "plugins", "lookup", "#{leaf}.py")) }
+      end
       case builtin_action_file?(leaf)
       when true
         return true
@@ -718,6 +810,11 @@ module Krikri
     end
 
     private def self.collection_leaf_file?(kind : String, dir : String, leaf : String) : Bool
+      # The lookup kind checks ONLY the lookup plugin directory - a
+      # collection that ships a module named X does not provide a lookup
+      # named X, and treating it as one would keep the bare-name
+      # not-found gate from firing on real's own not-found error.
+      return File.exists?(File.join(dir, "plugins", "lookup", "#{leaf}.py")) if kind == "lookup"
       return true if File.exists?(File.join(dir, "plugins", "modules", "#{leaf}.py"))
       kind == "action" && File.exists?(File.join(dir, "plugins", "action", "#{leaf}.py"))
     end

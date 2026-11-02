@@ -261,6 +261,7 @@ module Krikri
           evaluate_lookup_aws_secret(lookup_type, parts, kwargs, query_mode) ||
           hashi_vault_lookup_failure(original_lookup_type) ||
           unknown_fqcn_lookup_failure(original_lookup_type, lookup_type) ||
+          unknown_bare_lookup_failure(original_lookup_type, lookup_type) ||
           "undefined"
       end
 
@@ -294,6 +295,31 @@ module Krikri
         # Real prints the loader's ImportError as a [WARNING] the moment
         # it tries to load the plugin, ahead of the hard not-found failure.
         Krikri::CollectionIndex.warn_missing_lookup_plugin(name)
+        raise PythonLookupRunner::LookupError.new("The lookup plugin '#{original}' was not found.")
+      end
+
+      # Same not-found failure for a BARE name that cannot be found
+      # anywhere ("The lookup plugin 'nonexistent_lookup' was not
+      # found." - task-fatal, issue #751): the dispatch used to fall
+      # through to the "undefined" sentinel, which a query() collapses
+      # to an empty list and a plain lookup() to the literal text, so a
+      # typo'd lookup name silently emptied its consumer. Real's loader
+      # resolves a bare lookup name through ansible.builtin, the builtin
+      # runtime's lookup redirects and EVERY installed collection's
+      # plugins/lookup (live-verified vs 2.19.11: bare `dig` runs
+      # community.general's plugin), so the raise only fires when the
+      # name is definitely absent from all of them - a name an installed
+      # collection provides (or an ansible-core lookup file this
+      # evaluator does not natively implement) keeps the "undefined"
+      # degradation, and a playbook-adjacent/role-local custom
+      # lookup_plugins/<name>.py source keeps running the real plugin
+      # through the custom-python dispatch above.
+      private def unknown_bare_lookup_failure(original : String?, stripped : String?) : Nil
+        return unless name = stripped
+        return unless name.matches?(/\A\w+\z/)
+        return if PythonLookupRunner.find_source(name,
+                    @vars["role_path"]?.try(&.as_s?), @vars["playbook_dir"]?.try(&.as_s?))
+        return unless CollectionIndex.bare_lookup_resolves?(name) == false
         raise PythonLookupRunner::LookupError.new("The lookup plugin '#{original}' was not found.")
       end
 
