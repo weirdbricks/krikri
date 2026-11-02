@@ -1056,6 +1056,72 @@ describe Krikri::PythonModuleRunner do
     parsed["roundtrip"].as_s.must_equal("café")
   end
 
+  it "shim exports env_fallback and applies an argument-spec env fallback" do
+    skip("python3 not available") unless File.exists?("/usr/bin/python3")
+    # The exact shape that hard-failed issue #752: a custom module imports
+    # env_fallback in the same line as AnsibleModule and declares
+    # fallback=(env_fallback, ['MY_REGION']) - real ansible's bundled
+    # basic.py re-exports env_fallback and its validator applies the
+    # fallback when the param wasn't passed (live-verified: MY_REGION set
+    # prints r.region "us-east-1", unset prints null), while the shim
+    # bundle had neither the name nor the fallback application, so the
+    # import itself raised ImportError before any result JSON. The bundle
+    # is written into the module's own directory and the script dir is
+    # sys.path[0], so the shim resolves the imports even on a host WITH
+    # ansible-core installed - the test exercises the shim path
+    # deterministically either way.
+    work_dir = File.join(Dir.tempdir, "krikri-shim-spec-#{Random.rand(1_000_000)}")
+    Dir.mkdir_p(work_dir)
+    Krikri::PythonModuleRunner.write_module_utils_bundle(work_dir)
+    module_path = File.join(work_dir, "envfb_spec.py")
+    File.write(module_path, "from ansible.module_utils.basic import AnsibleModule, env_fallback\n" \
+                            "module = AnsibleModule(argument_spec={'region': {'type': 'str',\n" \
+                            "  'fallback': (env_fallback, ['MY_REGION'])}}, supports_check_mode=True)\n" \
+                            "module.exit_json(changed=False, region=module.params['region'])\n")
+    stdout_io = IO::Memory.new
+    err = IO::Memory.new
+    env = ENV.to_h.to_a.reject { |(key, _)| key == "MY_REGION" }.to_h
+    status = Process.run("/usr/bin/python3", [module_path],
+      input: IO::Memory.new(%({"ANSIBLE_MODULE_ARGS": {}})),
+      env: env.merge({"MY_REGION" => "us-east-1"}),
+      output: stdout_io, error: err)
+    FileUtils.rm_r(work_dir)
+    status.success?.must_equal(true)
+    err.to_s.wont_include("ImportError")
+    parsed = Krikri::PythonModuleRunner.parse_module_output(stdout_io.to_s).not_nil!
+    parsed["region"].as_s.must_equal("us-east-1")
+  end
+
+  it "shim leaves a not-found env fallback to the default and skips it for a passed param" do
+    skip("python3 not available") unless File.exists?("/usr/bin/python3")
+    # Real runs set_fallbacks (common/parameters.py) BEFORE _set_defaults
+    # inside ModuleArgumentSpecValidator: a fallback strategy that raises
+    # AnsibleFallbackNotFound leaves the param to the default path
+    # (live-verified: env unset prints r.region null), while an
+    # explicitly passed value never consults the fallback at all - the
+    # same precedence basic.py's own unsafe_writes spec relies on.
+    work_dir = File.join(Dir.tempdir, "krikri-shim-spec-#{Random.rand(1_000_000)}")
+    Dir.mkdir_p(work_dir)
+    Krikri::PythonModuleRunner.write_module_utils_bundle(work_dir)
+    module_path = File.join(work_dir, "envfb_default_spec.py")
+    File.write(module_path, "from ansible.module_utils.basic import AnsibleModule, env_fallback\n" \
+                            "module = AnsibleModule(argument_spec={'region': {'type': 'str',\n" \
+                            "  'default': 'spec-default', 'fallback': (env_fallback, ['MY_REGION'])}},\n" \
+                            "  supports_check_mode=True)\n" \
+                            "module.exit_json(changed=False, region=module.params['region'])\n")
+    stdout_io = IO::Memory.new
+    err = IO::Memory.new
+    env = ENV.to_h.to_a.reject { |(key, _)| key == "MY_REGION" }.to_h
+    status = Process.run("/usr/bin/python3", [module_path],
+      input: IO::Memory.new(%({"ANSIBLE_MODULE_ARGS": {}})),
+      env: env,
+      output: stdout_io, error: err)
+    FileUtils.rm_r(work_dir)
+    status.success?.must_equal(true)
+    parsed = Krikri::PythonModuleRunner.parse_module_output(stdout_io.to_s).not_nil!
+    parsed["region"].as_s.must_equal("spec-default")
+  end
+
   # ---- collection imports on the module's PYTHONPATH (issue #692) ----
 
   it "maps collection roots to PYTHONPATH entries that expose ansible_collections" do
