@@ -1729,6 +1729,18 @@ module Krikri
         else
           root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new("Module failed.").with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(msg)))
         end
+      when "synchronize"
+        # ansible.posix.synchronize's src/dest guard is the ACTION plugin's
+        # own AnsibleActionFail, raised before the module (and its argspec
+        # validation) ever runs, so real renders the action-level
+        # "Action failed." middle segment (live-verified vs 2.19.11, issue
+        # #746) - while the module's own AnsibleModule-setup failures (the
+        # bool conversion) keep the generic "Module failed." chain.
+        if msg == "synchronize requires both src and dest parameters are set"
+          root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new("Action failed.").with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(msg)))
+        else
+          root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new("Module failed.").with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(msg)))
+        end
       when "fail", "assert", "debug"
         # debug's failed_when rejection is an ACTION-level failure in real
         # ("Task failed: Action failed: fw", live-verified vs 2.19.11) -
