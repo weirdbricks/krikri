@@ -45,6 +45,20 @@ describe "file plugin" do
       Dir.exists?(path).must_equal(false)
     end
 
+    it "warns instead of failing in check mode when owner:/group: name an unknown user/group" do
+      # ansible-core 2.19 check mode resolves the names and warns
+      # "failed to look up user X. Create user up to this point in real play".
+      path = tmp_path("checkmode-unknown-owner")
+      result = PluginSpecHelper.run("file", {"path" => path, "state" => "directory", "owner" => "nosuchuser734", "group" => "nosuchgroup734", "_ansible_check_mode" => "true"})
+
+      result["changed"].as_bool.must_equal(true)
+      result["warnings"].as_a.map(&.as_s).must_equal([
+        "failed to look up user nosuchuser734. Create user up to this point in real play",
+        "failed to look up group nosuchgroup734. Create group up to this point in real play",
+      ])
+      Dir.exists?(path).must_equal(false)
+    end
+
     it "carries no msg when the directory's attributes already match (round900902 juju4.adduser)" do
       # Ansible's file module result on an unchanged directory has
       # NO msg key at all - just the stat fields; this engine used to
