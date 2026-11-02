@@ -346,6 +346,16 @@ module Krikri
       new_section = section.gsub(regex, replace)
       changed = match_count > 0 && new_section != section
 
+      # Ansible's diff shows the WHOLE file (replace.py stitches the
+      # substituted subsection back into the original contents), with the
+      # path as both headers - and it is built in the module result
+      # regardless of check mode, which is what makes --check --diff print
+      # the hunk. Real's callback then prefixes each header with
+      # "before: "/"after: " at display time, so the prefix rides along here
+      # like lineinfile's content diff already does.
+      new_content = content.byte_slice(0, section_start) + new_section + content.byte_slice(section_end)
+      diff = generate_unified_diff(content, new_content, "before: #{path}", "after: #{path}") if changed && @diff_mode
+
       backup_file = ""
       if changed && !@check_mode
         # Ansible's backup_local runs before write_changes, so the
@@ -385,7 +395,8 @@ module Krikri
         msg: msg,
         include_empty_msg: true,
         rc: 0,
-        key_order: SUCCESS_KEY_ORDER
+        diff: diff,
+        key_order: diff ? DIFF_SUCCESS_KEY_ORDER : SUCCESS_KEY_ORDER
       )
       result.extra["backup_file"] = JSON::Any.new(backup_file) unless backup_file.empty?
       result
@@ -399,6 +410,12 @@ module Krikri
     # check-mode runs; no diff key outside --diff mode, no path echo, no
     # stat fields.
     private SUCCESS_KEY_ORDER = %w[rc backup_file msg changed failed]
+
+    # With a diff in play, replace.py's res_args dict gains the diff entry
+    # BEFORE the backup one (the diff is set in the changed-detection block,
+    # backup_file only inside the non-check-mode write block), so the
+    # registered order becomes rc, diff, backup_file, msg, changed.
+    private DIFF_SUCCESS_KEY_ORDER = %w[rc diff backup_file msg changed failed]
 
     # The module-crash wrapper: Ansible's executor renders an exception that
     # escapes the module (a bad re.compile of regexp:/after:/before:, an

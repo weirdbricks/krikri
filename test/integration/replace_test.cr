@@ -75,6 +75,43 @@ describe "replace plugin" do
     result["changed"].as_bool.must_equal(false)
   end
 
+  it "carries a whole-file diff in check mode under diff mode (issue #756)" do
+    # Live-verified vs ansible-core 2.19.11 (--check --diff): replace.py
+    # builds the diff in the module result REGARDLESS of check mode, from
+    # the whole before file and the whole stitched-after file, so --check
+    # --diff still prints the hunk while leaving the file untouched.
+    content = "[a]\nname = x\ngpgcheck = 0\npriority = 10\n"
+    path = fresh_file("diffcheck.repo", content)
+
+    result = PluginSpecHelper.run("replace", {"path" => path, "regexp" => "^\\s*gpgcheck.*", "replace" => "gpgcheck=1", "_ansible_check_mode" => "true", "_ansible_diff" => "true"})
+
+    result["changed"].as_bool.must_equal(true)
+    File.read(path).must_equal(content)
+    diff = result["diff"].as_h
+    diff["before_header"].as_s.must_equal("before: #{path}")
+    diff["after_header"].as_s.must_equal("after: #{path}")
+    diff["before"].as_s.must_equal(content)
+    diff["after"].as_s.must_equal("[a]\nname = x\ngpgcheck=1\npriority = 10\n")
+  end
+
+  it "carries the same diff on a real (non-check) diff-mode run" do
+    path = fresh_file("diffreal.conf", "gpgcheck = 0\n")
+
+    result = PluginSpecHelper.run("replace", {"path" => path, "regexp" => "^\\s*gpgcheck.*", "replace" => "gpgcheck=1", "_ansible_diff" => "true"})
+
+    result["changed"].as_bool.must_equal(true)
+    result["diff"].as_h["after"].as_s.must_equal("gpgcheck=1\n")
+  end
+
+  it "carries no diff key outside diff mode" do
+    path = fresh_file("nodiff.conf", "gpgcheck = 0\n")
+
+    result = PluginSpecHelper.run("replace", {"path" => path, "regexp" => "^\\s*gpgcheck.*", "replace" => "gpgcheck=1", "_ansible_check_mode" => "true"})
+
+    result["changed"].as_bool.must_equal(true)
+    result["diff"]?.must_be_nil
+  end
+
   it "anchors ^ and $ at line boundaries (Ansible's re.MULTILINE)" do
     # The inmotionhosting.wordpress round-82013 divergence: Ansible's
     # replace.py compiles with re.MULTILINE, so "Listen 443$" matches the
