@@ -3,6 +3,7 @@
 require "json"
 require "../src/krikri/base_plugin"
 require "../src/krikri/plugin_helpers/ansible_arg_validation"
+require "../src/krikri/plugin_helpers/ansible_splitlines"
 
 module Krikri
   # sudoers plugin - manages /etc/sudoers.d/-style rule files.
@@ -215,13 +216,22 @@ module Krikri
       process = Process.new(visudo, ["-c", "-f", "-"], input: Process::Redirect::Pipe, output: Process::Redirect::Pipe, error: Process::Redirect::Pipe)
       process.input.print(content)
       process.input.close
-      out = process.output.gets_to_end
+      stdout_out = process.output.gets_to_end
       err = process.error.gets_to_end
       status = process.wait
 
       return nil if status.success?
 
-      PluginResult.new(changed: false, failed: true, msg: "Failed to validate sudoers rule:\n#{out.empty? ? err : out}")
+      # Real fail_json passes the raw visudo streams as kwargs
+      # (fail_json(msg=..., stdout=stdout, stderr=stderr)), and the action
+      # plugin then appends the derived *_lines pair - so the registered
+      # result and the sorted fatal dump carry all four keys (issue #747),
+      # not just msg.
+      PluginResult.new(changed: false, failed: true,
+        msg: "Failed to validate sudoers rule:\n#{stdout_out.empty? ? err : stdout_out}",
+        stdout: stdout_out, stderr: err,
+        stdout_lines: PluginHelpers::AnsibleSplitlines.split(stdout_out),
+        stderr_lines: PluginHelpers::AnsibleSplitlines.split(err))
     end
 
     private def find_visudo : String?
