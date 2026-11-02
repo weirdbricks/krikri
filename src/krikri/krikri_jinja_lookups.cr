@@ -160,6 +160,22 @@ module Krikri
         # (no task context, no warning), and before the render, matching
         # where _trust_jinja_constants warns.
         VariableSubstitutor::ExpressionEvaluator.emit_jinja_const_template_warning if raw.includes?("{{")
+        # Ansible re-renders the constant under its strict-undefined
+        # environment, so an undefined variable inside the term fails the
+        # templating ("'ssh_key' is undefined" -> wrapped by the task-arg
+        # finalization with the param it failed on) instead of the term
+        # degrading to ""/the raw literal and the lookup plugin receiving
+        # an empty argument. The lenient render_nested below cannot detect
+        # this, so the same strict-undefined probe the hand-rolled lookup
+        # dispatch runs for its own re-render answers it - nil when the
+        # constant consumes no undefined value (a defined variable, a
+        # `| default(...)` guard). Skipped when the constant itself carries
+        # a lookup/query call: the probe's strict render would EXECUTE it
+        # and the real render below would execute it again.
+        if !raw.includes?("lookup(") && !raw.includes?("query(") &&
+           (message = VariableSubstitutor::JinjaRenderer.strict_render_undefined_message(raw, term_probe_vars(ctx)))
+          raise KrikriJinja::TemplateError.new(message, 0, kind: KrikriJinja::ErrorKind::Undefined)
+        end
         rendered = begin
           render_nested(ctx, raw)
         rescue
@@ -167,6 +183,22 @@ module Krikri
         end
         KrikriJinja.from_json_any(Krikri.parse_json_or_python_literal(rendered))
       end
+    end
+
+    # The strict-undefined probe's variable scope for a lookup-term
+    # constant: the calling template's own local scopes layered over the
+    # host's whole variable scope - the same order render_nested resolves
+    # names in, so a local scope shadowing a host variable is not
+    # misreported as undefined.
+    private def self.term_probe_vars(ctx : KrikriJinja::Context) : Hash(String, JSON::Any)
+      vars = {} of String => JSON::Any
+      if host = ctx.host_context.as?(JinjaHostContext)
+        vars.merge!(host.vars)
+      end
+      ctx.scopes.each do |scope|
+        scope.each { |key, value| vars[key] = KrikriJinja.to_json_any(value) }
+      end
+      vars
     end
 
     private def self.lookup(name : String, terms : Array(AnyValue), kwargs : Hash(String, AnyValue),
