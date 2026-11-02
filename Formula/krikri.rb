@@ -1,16 +1,16 @@
 class Krikri < Formula
   desc "Ansible-compatible automation tool, written in Crystal"
   homepage "https://github.com/weirdbricks/krikri"
-  version "0.9.2254"
+  version "0.9.2270"
   license "GPL-3.0-or-later"
 
   on_macos do
     if Hardware::CPU.arm?
-      url "https://github.com/weirdbricks/krikri/releases/download/v0.9.2254/krikri-v0.9.2254-darwin-arm64.tar.gz"
-      sha256 "243c29e1e17b4e3257ea877df810904d41a84386b5f56d270ef1d914abf35b7e"
+      url "https://github.com/weirdbricks/krikri/releases/download/v0.9.2270/krikri-v0.9.2270-darwin-arm64.tar.gz"
+      sha256 "08b9f8b5467a97673bb756cc693d357dbcaaac7f91b2152c3672e57372ab7f0e"
     else
-      url "https://github.com/weirdbricks/krikri/releases/download/v0.9.2254/krikri-v0.9.2254-darwin-x86_64.tar.gz"
-      sha256 "608fa82107d55a99fb4bcce862c33cc10323ca89131c47e02818c01b02bc9afc"
+      url "https://github.com/weirdbricks/krikri/releases/download/v0.9.2270/krikri-v0.9.2270-darwin-x86_64.tar.gz"
+      sha256 "1e5cecc52f1666cfb3e599982c7ac1c1f8d6c886371854fa1ce2326328e84305"
     end
 
     # Unlike the Linux binaries (fully static musl builds, zero runtime
@@ -21,15 +21,10 @@ class Krikri < Formula
     # without them declared here, a fresh `brew install` never pulls
     # them in and krikri-playbook fails at dyld load time (confirmed
     # live: "Library not loaded: .../bdw-gc/lib/libgc.1.dylib").
-    # The declared set must cover every Homebrew library the shipped
-    # Mach-O binaries link at their /opt/homebrew (or /usr/local) paths -
-    # verified against the release binaries' Mach-O load commands, the
-    # main binaries additionally link gmp and libyaml, and the plugin
-    # binaries also link xz's liblzma - a fresh `brew install` on a
-    # machine that has none of them never pulls them in and the binary
-    # dies at dyld load time. libz/libbz2/liblzma-the-lib/libiconv/
-    # libutil are all system-provided on macOS, no formula needed for
-    # those.
+    # gmp/libyaml are linked by the main binaries and xz's liblzma by
+    # the plugin binaries; libz/libbz2/liblzma-the-lib/libiconv/
+    # libutil are all system-provided on macOS, no formula needed
+    # for those.
     depends_on "openssl@3"
     depends_on "pcre2"
     depends_on "bdw-gc"
@@ -40,11 +35,11 @@ class Krikri < Formula
 
   on_linux do
     if Hardware::CPU.arm?
-      url "https://github.com/weirdbricks/krikri/releases/download/v0.9.2254/krikri-v0.9.2254-linux-arm64.tar.gz"
-      sha256 "e73f4f90916ce32e8ee0431e13eedd676ff71ac878216f9e305d25598a4c96f2"
+      url "https://github.com/weirdbricks/krikri/releases/download/v0.9.2270/krikri-v0.9.2270-linux-arm64.tar.gz"
+      sha256 "d2d1d76d5cbcda9aa0dff4dd7ee8c0442c299ca6f59462aa641cb5060bf80260"
     else
-      url "https://github.com/weirdbricks/krikri/releases/download/v0.9.2254/krikri-v0.9.2254-linux-x86_64.tar.gz"
-      sha256 "0504f9d7d9a18bcd3f78b65d9e4325395771d013767678e47017803ffc17645d"
+      url "https://github.com/weirdbricks/krikri/releases/download/v0.9.2270/krikri-v0.9.2270-linux-x86_64.tar.gz"
+      sha256 "2e43d34cc103ccbfc921837a01445ee8b0add3bb83f0daf7a07a604ae79317bf"
     end
   end
 
