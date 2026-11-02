@@ -771,6 +771,19 @@ module Krikri
     current = VariableSubstitutor::VariableLookup.new(vars).resolve(expr[0...base_end])
     return nil unless current
 
+    # A var whose raw value is itself a template string (`q: "{{ d.x |
+    # default([]) }}"`) is typed by what it renders to, not by the source
+    # text: ansible reports "object of type 'list' has no attribute 'src'"
+    # where the raw string would give 'str' (live-verified vs 2.19).
+    if (raw_str = current.raw.as?(String)) && raw_str.includes?("{{")
+      begin
+        if (structured = VariableSubstitutor::JinjaRenderer.new(vars).evaluate_value!(expr[0...base_end]))
+          current = structured
+        end
+      rescue
+      end
+    end
+
     # Ansible wraps every hostvars entry in its own HostVarsVars type, so a
     # miss on the entry itself names that wrapper rather than 'dict'
     # (live-verified vs 2.19.11). Identity with the hostvars root marks the

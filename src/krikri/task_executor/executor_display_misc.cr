@@ -384,6 +384,11 @@ module Krikri
           end
           return {first_marker[0], false}
         end
+        # A single-expression value that rendered cleanly stays the raw
+        # template: ansible types it by what it renders to, so `q.src` on a
+        # `q` that renders to a list reports "object of type 'list'", where
+        # the rendered text swapped in below would be typed 'str'.
+        next if state.counter == counter_before && single_span_template?(raw)
         span_vars = span_vars.dup
         span_vars[ident] = JSON::Any.new(finalized)
         active_substitutor = VarSubstitutor.new(vars: span_vars, host_name: host.name)
