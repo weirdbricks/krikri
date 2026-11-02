@@ -2142,6 +2142,28 @@ module Krikri
       end
     end
 
+    # The effective become_flags, with the same var-over-keyword origin
+    # order resolve_task_become_user applies: an `ansible_become_flags`
+    # var outranks a `become_flags:` keyword, nil when neither is set.
+    # Ansible hands the resolved flags to the become plugin verbatim
+    # (the sudo plugin appends them to its fixed `-H -S -n` set), so
+    # only the resolution precedence is mirrored here - the flags text
+    # is interpreted by the sudo wrappers that build the command.
+    private def resolve_task_become_flags(task : Task, host : Host, vars_context : Hash(String, JSON::Any), substitutor : VarSubstitutor) : String?
+      if raw = vars_context["ansible_become_flags"]?
+        if flags = ansible_become_var_string(raw, substitutor)
+          return flags
+        end
+      end
+      task.become_flags.try do |raw_flags|
+        begin
+          become_keyword_substitutor(task, host, vars_context, substitutor).substitute(raw_flags, strict: true)
+        rescue e : UndefinedVariableError
+          raise UndefinedVariableError.new("Task failed: Error processing keyword 'become_flags': #{e.message}")
+        end
+      end
+    end
+
     # ansible boolean()'s accepted forms (convert_bool.BOOLEANS_TRUE /
     # BOOLEANS_FALSE), case-insensitive; nil for anything else so the
     # caller falls back to the keyword ladder instead of guessing.

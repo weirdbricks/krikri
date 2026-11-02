@@ -2788,6 +2788,7 @@ module Krikri
       become_user : String? = task.become_user,
       substituted_env : Hash(String, String)? = nil,
       become_flag : Bool? = nil,
+      become_flags : String? = task.become_flags,
     ) : String
       # Add check_mode and diff_mode to params
       final_params = params.dup
@@ -2893,6 +2894,11 @@ module Krikri
         # same config) without __async_run needing any extra plumbing.
         "become"      => (become_flag.nil? ? task.become? : become_flag).to_s,
         "become_user" => become_user,
+        # Same audience as become/become_user above (PluginManager, not the
+        # plugin binary) - carried so the async job-file path (__async_run
+        # reads become back out of the serialized config) can also resolve
+        # the become_flags the sudo wrapper needs (issue #716).
+        "become_flags" => become_flags,
       }
 
       # The per-host unsafe-name registry, serialized only for the plugins

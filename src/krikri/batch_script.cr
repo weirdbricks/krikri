@@ -119,6 +119,11 @@ module Krikri
       # fixed user, so only steps agreeing on this value can share one
       # daemon batch request - see TaskExecutor#run_batch_steps.
       getter become_user : String?
+      # The step's resolved become_flags, or nil for none. Carried so the
+      # batch DAEMON transport can refuse a group whose steps need a
+      # login-shell escalation (only the script transport's per-step sudo
+      # wrapper honours those) - see TaskExecutor#try_daemon_batch.
+      getter become_flags : String?
       # The step's fully-substituted module params, carried so the batch
       # consumers can attach the same `invocation.module_args` block to the
       # interpreted result the non-batched path does (attach_invocation
@@ -128,7 +133,7 @@ module Krikri
 
       def initialize(@plugin_target : String, @config_json : String, @ignore_errors : Bool,
                      @module_name : String = "", @become_user : String? = nil,
-                     @params : Hash(String, String)? = nil)
+                     @params : Hash(String, String)? = nil, @become_flags : String? = nil)
       end
     end
 

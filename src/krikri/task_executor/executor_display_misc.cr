@@ -1000,7 +1000,8 @@ module Krikri
       end
       become_pw = Passwords.become(vars, exec_host)
       conn = ConnectionSettings.resolve(exec_host, vars)
-      target = PluginManager.remote_plugin_target(task.module_name, become, become_user, conn.user, become_pw)
+      substituted_become_flags = resolve_task_become_flags(task, exec_host, vars, substitutor)
+      target = PluginManager.remote_plugin_target(task.module_name, become, become_user, conn.user, become_pw, substituted_become_flags)
       # With a become password the target is the probe+sudo -S wrapper,
       # which is full of single quotes - it cannot live inside the
       # `sh -c '<...>'` argv string below (the quotes would terminate

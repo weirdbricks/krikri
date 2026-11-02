@@ -1934,6 +1934,10 @@ module Krikri
 
       become_user = steps.first.become_user
       return nil unless steps.all? { |step| step.become_user == become_user }
+      # A login-shell escalation only the script transport's per-step sudo
+      # wrapper honours (the daemon spawns once under plain `sudo -n -u`,
+      # with no become_flags ever reaching sudo) must not take the daemon.
+      return nil if steps.any? { |step| PluginManager.become_login_shell?(step.become_flags) }
       return nil if steps.any?(&.module_name.empty?)
 
       ssh_user = conn.user
@@ -2069,6 +2073,11 @@ module Krikri
       # an arg is undefined too.
       substituted_become_user = begin
         resolve_task_become_user(task, host, vars_context, substitutor)
+      rescue ex : UndefinedVariableError
+        return keyword_failure_json(ex, task)
+      end
+      substituted_become_flags = begin
+        resolve_task_become_flags(task, host, vars_context, substitutor)
       rescue ex : UndefinedVariableError
         return keyword_failure_json(ex, task)
       end
@@ -2320,7 +2329,7 @@ module Krikri
         }.to_json)
       end
       step_conn = ConnectionSettings.resolve(host, vars_context)
-      plugin_target = PluginManager.remote_plugin_target(task.module_name, become, become_user, step_conn.user, Passwords.become(vars_context, host))
+      plugin_target = PluginManager.remote_plugin_target(task.module_name, become, become_user, step_conn.user, Passwords.become(vars_context, host), substituted_become_flags)
 
       # The daemon transport (item 3) dispatches by module NAME inside an
       # already-running process, and takes its privilege from which
@@ -2337,7 +2346,7 @@ module Krikri
       BatchScript::Step.new(plugin_target, config_json, resolve_task_ignore_errors(task, vars_context),
         PluginManager.simple_plugin_name(task.module_name),
         PluginManager.become_needed?(become, become_user, step_conn.user) ? become_user : nil,
-        substituted_params)
+        substituted_params, substituted_become_flags)
     end
 
     # Run one attempt of a task (when: check + param substitution + action
@@ -2902,6 +2911,11 @@ module Krikri
           return apply_changed_failed_when(task, failed, vars_context, host)
         end
       end
+      substituted_become_flags = begin
+        resolve_task_become_flags(task, host, vars_context, substitutor)
+      rescue ex : UndefinedVariableError
+        return keyword_failure_json(ex, task)
+      end
 
       # Data-driven module argument validation against Ansible's own
       # argument specs (see ArgspecValidator) - the same checks the real
@@ -2958,7 +2972,7 @@ module Krikri
         substituted_params["__raw_pty_merge"] = "1"
       end
 
-      config = build_plugin_config(task, exec_host, substituted_params, wire_vars, substituted_become_user, substituted_env, become_flag: become)
+      config = build_plugin_config(task, exec_host, substituted_params, wire_vars, substituted_become_user, substituted_env, become_flag: become, become_flags: substituted_become_flags)
 
       # ansible resolves templated async:/poll: per host at execution
       # time, so the parser leaves those as raw text; without resolving
@@ -3024,7 +3038,7 @@ module Krikri
       # when_passes? let it through (see its own comment), so a python
       # module behind a false when: still skips normally.
       if task.unavailable_module && (py_source = python_module_source_for(task))
-        result = execute_python_module(task, py_source, substituted_params, exec_host, dispatch_vars, wire_vars, become, become_user, substituted_become_user, substituted_env, dispatch_timeout)
+        result = execute_python_module(task, py_source, substituted_params, exec_host, dispatch_vars, wire_vars, become, become_user, substituted_become_user, substituted_env, dispatch_timeout, substituted_become_flags)
         if period = marker_task_timeout(result)
           return task_timeout_result(period)
         end
@@ -3038,7 +3052,8 @@ module Krikri
         dispatch_vars,
         become,
         become_user,
-        dispatch_timeout
+        dispatch_timeout,
+        substituted_become_flags
       )
 
       if period = marker_task_timeout(result)
@@ -3405,7 +3420,7 @@ module Krikri
     # hosts; the module's argument dict mirrors Ansible's typed
     # JSON args for new-style modules (the params the parser already
     # JSON-encoded come back as real arrays/dicts for the module).
-    private def execute_python_module(task : Task, source_path : String, substituted_params : Hash(String, String), exec_host : Host, vars_context : Hash(String, JSON::Any), wire_vars : Hash(String, JSON::Any), become : Bool, become_user : String?, substituted_become_user : String?, substituted_env : Hash(String, String)? = nil, task_timeout : Int64? = nil) : JSON::Any
+    private def execute_python_module(task : Task, source_path : String, substituted_params : Hash(String, String), exec_host : Host, vars_context : Hash(String, JSON::Any), wire_vars : Hash(String, JSON::Any), become : Bool, become_user : String?, substituted_become_user : String?, substituted_env : Hash(String, String)? = nil, task_timeout : Int64? = nil, become_flags : String? = nil) : JSON::Any
       module_name = PythonModuleRunner.short_name(task.unavailable_module || task.module_name)
       source_text = File.read(source_path)
       # Ansible's modularizer rewrites the legacy boilerplate marker
@@ -3490,7 +3505,7 @@ module Krikri
           inner_config = build_plugin_config(inner_task, exec_host, inner_params, wire_vars,
             substituted_become_user, substituted_env, become_flag: become)
           PluginManager.execute_plugin(inner_module, inner_config, exec_host, vars_context,
-            become, become_user, task_timeout)
+            become, become_user, task_timeout, become_flags)
         }
         begin
           result = PythonActionRunner.run_action(action_plugin, module_name, args, connection,
@@ -4251,6 +4266,7 @@ module Krikri
         inherited.become = task.become?
       end
       inherited.become_user = task.include_apply_become_user || task.become_user
+      inherited.become_flags = task.include_apply_become_flags || task.become_flags
       inherited.check_mode = task.include_apply_check_mode
       inherited.check_mode_expr = task.include_apply_check_mode_expr
       inherited
