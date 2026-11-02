@@ -520,7 +520,7 @@ module Krikri
             puts "...ignoring".colorize(:red) if ignore_errors
             return
           end
-          emit_task_error_block(source_task, result, msg) if no_log_error_block_allowed?(module_name, msg, source_task)
+          emit_task_error_block(source_task, result, msg, loop_item) if no_log_error_block_allowed?(module_name, msg, source_task)
           puts "fatal: [#{host_label}]: FAILED! => {\"censored\": \"the output has been hidden due to the fact that 'no_log: true' was specified for this result\", \"changed\": #{changed}}".colorize(:red)
           puts "...ignoring".colorize(:red) if ignore_errors
           return
@@ -541,7 +541,7 @@ module Krikri
           # Real prints the error block BEFORE those per-item lines too (the
           # same gate as the solo branch above); ErrorBlock dedups the
           # identical repeats into the one block real shows.
-          emit_task_error_block(source_task, result, msg) if no_log_error_block_allowed?(module_name, msg, source_task)
+          emit_task_error_block(source_task, result, msg, loop_item) if no_log_error_block_allowed?(module_name, msg, source_task)
           puts "failed: [#{host_label}] (item=(censored due to no_log)) => {\"censored\": \"the output has been hidden due to the fact that 'no_log: true' was specified for this result\", \"changed\": #{changed}}".colorize(:red)
           return
         end
@@ -581,7 +581,7 @@ module Krikri
         # Ansible's stdout callbacks strip failed/skipped/_ansible_* before
         # dumping (as_callback_task_result), so the FAILED! dump carries
         # neither "failed": true nor any _ansible_* key.
-        emit_task_error_block(source_task, result, msg)
+        emit_task_error_block(source_task, result, msg, loop_item)
         # Ansible 2.19.11's fatal dump has three shapes:
         # - a task-level when:/loop-source failure is MODULE-KEYED: a
         #   debug: task is tagged msg-only and dumps ONLY the msg
@@ -634,7 +634,7 @@ module Krikri
         # real prints only the failed line (full result JSON) - no error
         # block (round 5250000, veselahouba.openvpn).
         unless result["_ansible_loop_label_failed"]?.try(&.as_bool) == true
-          emit_task_error_block(source_task, result, msg)
+          emit_task_error_block(source_task, result, msg, loop_item)
         end
         if result["_ansible_loop_label_failed"]?.try(&.as_bool) == true
           # Real's label-failure shapes, keyed like every other dump on
@@ -905,7 +905,7 @@ module Krikri
     # fixed required-argument texts, debconf's get_bin_path miss,
     # command/shell's non-zero return code), the classes whose
     # uncensored block carries no secret (see above).
-    private def self.emit_task_error_block(source_task : Task?, result : JSON::Any, msg : String) : Nil
+    private def self.emit_task_error_block(source_task : Task?, result : JSON::Any, msg : String, loop_item : JSON::Any? = nil) : Nil
       return unless source_task
       # no_log's block suppression is lifted only for the messages
       # no_log_error_block_allowed? clears (copy's fixed controller-side
@@ -1092,7 +1092,7 @@ module Krikri
          msg.starts_with?("Task failed: The test plugin ") ||
          msg.starts_with?("Task failed: The filter plugin ") ||
          msg.starts_with?("Task failed: Conditional result"))
-        if emit_assert_that_chain(source_task, msg["Task failed: ".size..], idx.to_i) &&
+        if emit_assert_that_chain(source_task, msg["Task failed: ".size..], idx.to_i, loop_item) &&
            msg.starts_with?("Task failed: Conditional result")
           puts "Broken conditionals can be temporarily allowed with the `ALLOW_BROKEN_CONDITIONALS` configuration option."
           puts ""
@@ -1301,14 +1301,130 @@ module Krikri
         .with_chain(ErrorBlock::DIRECT_CAUSE, true, cause))
     end
 
-    private def self.emit_assert_that_chain(task : Task, inner : String, index : Int32) : Bool
+    private def self.emit_assert_that_chain(task : Task, inner : String, index : Int32, loop_item : JSON::Any? = nil) : Bool
       task_origin = error_origin_context(task)
       item_origin = assert_that_origin(task, index)
       return false unless task_origin && item_origin
 
+      # A missing name the condition's own source text does NOT spell out
+      # was reached through a failing VALUE (bcoca.tidy's `that:
+      # "{{item}}"` reading a literal with_items entry, probe-verified vs
+      # 2.19.11): real 2.19's chain gains a third record - the middle link
+      # collapses to the bare period form at the failing that: item and
+      # the bare missing-name cause follows at the value's defining site,
+      # the same "reached through a var value" shape the when: chain
+      # prints. A name the condition itself references keeps the
+      # two-record chain (live-verified: `that: "(x|length) > 0"`, looped
+      # or not).
+      mid_msg = inner
+      leaf = nil
+      if (m = inner.match(/\AError while evaluating conditional: '([A-Za-z_][A-Za-z0-9_]*)' is undefined\z/)) &&
+         (raw_that = assert_that_raw_text(task, index)) &&
+         !raw_that.match(/\b#{Regex.escape(m[1])}\b/) &&
+         (leaf_origin = failing_loop_item_origin(task, m[1], loop_item))
+        mid_msg = "Error while evaluating conditional."
+        leaf = ErrorBlock::Node.new("'#{m[1]}' is undefined", source_context: leaf_origin)
+      end
+
       root = ErrorBlock::Node.new("Task failed.", source_context: task_origin)
-      cause = ErrorBlock::Node.new(inner, source_context: item_origin)
+      cause = ErrorBlock::Node.new(mid_msg, source_context: item_origin)
+      cause.with_chain(ErrorBlock::DIRECT_CAUSE, true, leaf) if leaf
       ErrorBlock.emit(root.with_chain(ErrorBlock::DIRECT_CAUSE, true, cause))
+    end
+
+    # The failing that: item's raw source text, from the position
+    # assert_that_origin locates to the end of its line: the gate for the
+    # third chain record - a missing name spelled out in the condition's
+    # own source is a direct reference, one that only arrives through the
+    # rendered value (a loop item, `that: "{{item}}"`) is a value-lineage
+    # failure.
+    private def self.assert_that_raw_text(task : Task, index : Int32) : String?
+      path = task.source_file
+      return nil unless path && task.source_line > 0 && File.file?(path)
+
+      lines = File.read_lines(path)
+      if pos = assert_that_position(lines, task.source_line - 1, index)
+        lines[pos[0] - 1][(pos[1] - 1)..]
+      end
+    end
+
+    # The failing loop item's own position in the task's literal inline
+    # loop list - the defining site of the value the templated `that:`
+    # read, where real 2.19 pins the assert-that chain's third record
+    # (live-verified vs 2.19.11 on bcoca.tidy's with_items preflight:
+    # `that: "{{item}}"` failing on `'(tidy_expected|length) > 0'` points
+    # the cause at that item's own line/column). The failing item is
+    # matched by VALUE first - the missing name often appears in several
+    # items (bcoca.tidy's own `'tidy_expected is defined'` and
+    # `'(tidy_expected|length) > 0'`) and only the failing ITERATION's
+    # line is real's Origin - falling back to the first item spelling the
+    # name. Best-effort like the other locators: a templated loop source,
+    # a flow list, or a flattening with_items returns nil and the chain
+    # keeps its two-record shape rather than guessing.
+    private def self.failing_loop_item_origin(task : Task, missing : String, loop_item : JSON::Any?) : String?
+      kind = task.loop_literal_kind || return nil
+      return nil unless kind == "loop" || kind == "with_items"
+      items = task.loop
+      return nil unless items && !items.empty?
+      return nil if kind == "with_items" && items.any?(&.as_a?)
+      item_index = if loop_item && (text = loop_item.as_s?)
+                     items.index { |item| item.as_s? == text }
+                   end
+      item_index ||= items.index { |item| (text = item.as_s?) && text.match(/\b#{Regex.escape(missing)}\b/) }
+      return nil unless item_index
+
+      path = task.source_file
+      return nil unless path && task.source_line > 0 && File.file?(path)
+      lines = File.read_lines(path)
+      if pos = literal_loop_item_position(lines, task.source_line - 1, kind, item_index)
+        ErrorBlock.origin_context(path, pos[0], pos[1])
+      end
+    end
+
+    # Position (1-based line, 1-based column) of a literal inline loop
+    # list's item number `item_index` (0-based): the `loop:`/`with_items:`
+    # key line at the task's own indent, then that index'th "- " entry at
+    # a uniform deeper indent, its value's first character (the same
+    # column the assert that: item scan pins - real's caret lands on the
+    # item's opening quote). Same scan shape as the executor's
+    # loop_item_value_position minus the mapping-key narrowing.
+    private def self.literal_loop_item_position(lines : Array(String), start_idx : Int32, kind : String, item_index : Int32) : {Int32, Int32}?
+      anchor = lines[start_idx]
+      anchor_indent = anchor.size - anchor.lstrip.size
+      task_key_indent = anchor.strip.starts_with?("- ") ? anchor_indent + 2 : anchor_indent
+      loop_idx = nil
+      ((start_idx + 1)...lines.size).each do |idx|
+        line = lines[idx]
+        stripped = line.strip
+        break if stripped.starts_with?("- ") && (line.size - line.lstrip.size) <= task_key_indent - 2
+        next unless stripped.starts_with?("#{kind}:") &&
+                    (line.size - line.lstrip.size) == task_key_indent
+        loop_idx = idx
+        break
+      end
+      return nil unless loop_idx
+
+      loop_indent = lines[loop_idx].size - lines[loop_idx].lstrip.size
+      item_indent = nil
+      item_seen = 0
+      ((loop_idx + 1)...lines.size).each do |idx|
+        line = lines[idx]
+        stripped = line.strip
+        next if stripped.empty? || stripped.starts_with?('#')
+        indent = line.size - line.lstrip.size
+        break if indent <= loop_indent
+        next unless stripped.starts_with?("- ")
+        next if item_indent && indent != item_indent
+        item_indent ||= indent
+        if item_seen == item_index
+          dash = line.index!("- ")
+          item_rest = line[(dash + 2)..]
+          column = dash + 2 + (item_rest.size - item_rest.lstrip.size) + 1
+          return {idx + 1, column}
+        end
+        item_seen += 1
+      end
+      nil
     end
 
     # Origin context of assert's that: item number `index` (0-based): the
