@@ -63,6 +63,24 @@ private def build_submodule_fixture(main_path : String, sub_path : String) : Nil
 end
 
 describe "git plugin" do
+  it "reports git's own failure when dest sits under an unreadable directory" do
+    repo = tmp_path("git-fixture-unreadable")
+    build_fixture_repo(repo)
+    locked = tmp_path("git-locked-parent")
+    Dir.mkdir_p(locked)
+    File.chmod(locked, 0o000)
+    begin
+      if LibC.getuid != 0
+        result = PluginSpecHelper.run("git", {"repo" => repo, "dest" => File.join(locked, "sub", "dest")})
+        result["failed"].as_bool.must_equal(true)
+        result["msg"].as_s.includes?("could not create leading directories").must_equal(true)
+        result["msg"].as_s.includes?("Unable to get file info").must_equal(false)
+      end
+    ensure
+      File.chmod(locked, 0o755)
+    end
+  end
+
   it "clones a fresh repository" do
     repo = tmp_path("git-fixture-clone")
     build_fixture_repo(repo)
