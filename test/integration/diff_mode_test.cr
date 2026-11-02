@@ -197,3 +197,128 @@ describe "templated diff: keyword" do
     File.delete(dest) if dest && File.exists?(dest)
   end
 end
+
+# Issue #735: ansible post-validates the diff:/check_mode: keywords with
+# its strict boolean() - a literal it can't convert (`diff: banana`) or a
+# template that renders to one fails the task with "Error processing
+# keyword 'diff': The value 'banana' could not be converted to 'bool'."
+# at keyword-validation time, and `diff: 1` is a valid boolean spelling
+# the old parse silently dropped.
+describe "diff:/check_mode: keyword post-validation" do
+  it "fails a task with a non-boolean diff: literal instead of running it" do
+    playbook = File.tempname("diff-invalid", ".yml")
+    dest = PluginSpecHelper.tmp_path("diff-invalid-out.txt")
+    FileUtils.mkdir_p(File.dirname(dest))
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: Invalid diff keyword
+            ansible.builtin.copy:
+              content: "hello\\n"
+              dest: #{dest}
+            diff: banana
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-c", "local", "-i", INVENTORY, playbook], output: output, error: output)
+
+    output_text = output.to_s
+    status.success?.must_equal(false, output_text)
+    output_text.includes?("Error processing keyword 'diff': The value 'banana' could not be converted to 'bool'.").must_equal(true, output_text)
+    File.exists?(dest).must_equal(false)
+  ensure
+    File.delete(playbook) if playbook && File.exists?(playbook)
+    File.delete(dest) if dest && File.exists?(dest)
+  end
+
+  it "fails a task with a non-boolean check_mode: literal instead of running it" do
+    playbook = File.tempname("check-mode-invalid", ".yml")
+    dest = PluginSpecHelper.tmp_path("check-mode-invalid-out.txt")
+    FileUtils.mkdir_p(File.dirname(dest))
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: Invalid check_mode keyword
+            ansible.builtin.copy:
+              content: "hello\\n"
+              dest: #{dest}
+            check_mode: banana
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-c", "local", "-i", INVENTORY, playbook], output: output, error: output)
+
+    output_text = output.to_s
+    status.success?.must_equal(false, output_text)
+    output_text.includes?("Error processing keyword 'check_mode': The value 'banana' could not be converted to 'bool'.").must_equal(true, output_text)
+    File.exists?(dest).must_equal(false)
+  ensure
+    File.delete(playbook) if playbook && File.exists?(playbook)
+    File.delete(dest) if dest && File.exists?(dest)
+  end
+
+  it "honors diff: 1 as a boolean spelling on a plain run" do
+    playbook = File.tempname("diff-numeric", ".yml")
+    src = PluginSpecHelper.tmp_path("diff-numeric.j2")
+    dest = PluginSpecHelper.tmp_path("diff-numeric-out.txt")
+    FileUtils.mkdir_p(File.dirname(src))
+    FileUtils.mkdir_p(File.dirname(dest))
+    File.write(src, "hello from template\n")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: Numeric diff spelling
+            ansible.builtin.template:
+              src: #{src}
+              dest: #{dest}
+            diff: 1
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-c", "local", "-i", INVENTORY, playbook], output: output, error: output)
+
+    status.success?.must_equal(true, output.to_s)
+    output.to_s.must_include("--- before")
+    output.to_s.must_include("+hello from template")
+  ensure
+    File.delete(playbook) if playbook && File.exists?(playbook)
+    File.delete(src) if src && File.exists?(src)
+    File.delete(dest) if dest && File.exists?(dest)
+  end
+
+  it "fails a templated diff: that renders to a non-boolean value" do
+    playbook = File.tempname("diff-tpl-invalid", ".yml")
+    dest = PluginSpecHelper.tmp_path("diff-tpl-invalid-out.txt")
+    FileUtils.mkdir_p(File.dirname(dest))
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          diff_setting: banana
+        tasks:
+          - name: Templated invalid diff keyword
+            ansible.builtin.copy:
+              content: "hello\\n"
+              dest: #{dest}
+            diff: "{{ diff_setting }}"
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-c", "local", "-i", INVENTORY, playbook], output: output, error: output)
+
+    output_text = output.to_s
+    status.success?.must_equal(false, output_text)
+    output_text.includes?("Error processing keyword 'diff': The value 'banana' could not be converted to 'bool'.").must_equal(true, output_text)
+    File.exists?(dest).must_equal(false)
+  ensure
+    File.delete(playbook) if playbook && File.exists?(playbook)
+    File.delete(dest) if dest && File.exists?(dest)
+  end
+end

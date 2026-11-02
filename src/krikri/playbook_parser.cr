@@ -287,6 +287,18 @@ module Krikri
     # the role-tester runs) and its template tasks printed no diff
     # block where ansible prints one.
     property diff_mode_expr : String?
+    # Raw text of a task-level `check_mode:`/`diff:` literal that ansible's
+    # boolean() post-validation refuses (issue #735: `diff: banana`,
+    # `diff: 2`). Real fails the TASK with "Error processing keyword
+    # 'diff': The value 'banana' could not be converted to 'bool'." at
+    # keyword-validation time; krikri's parse previously read both as nil
+    # ("unset") and silently ran the task. Recorded here instead of
+    # raising at parse time so play/block/include-apply scopes (where the
+    # parse result only seeds an inheritable default) keep their lenient
+    # behavior, and the executor can fail the task with the same
+    # keyword-failure shape become:'s non-bool error uses.
+    property check_mode_invalid : String?
+    property diff_mode_invalid : String?
     property? become : Bool
     # Raw `{{ ... }}` text when become: is a templated expression rather
     # than a literal boolean (ansible-community.ansible-vault's own
@@ -4203,6 +4215,8 @@ module Krikri
       end
       task.diff_mode = parse_optional_bool_or_template(task_hash["diff"]?)
       task.diff_mode_expr = template_expression(task_hash["diff"]?)
+      task.check_mode_invalid = invalid_bool_keyword_text(task_hash["check_mode"]?)
+      task.diff_mode_invalid = invalid_bool_keyword_text(task_hash["diff"]?)
       task.become = resolve_become(task_hash, play)
       task.become_expr = become_expr(task_hash)
       task.become_user = task_hash["become_user"]?.try { |v| safe_yaml_to_string(v) } || play.become_user
@@ -7836,13 +7850,63 @@ module Krikri
       case yaml.raw
       when Bool
         yaml.as_bool
+        # Ansible's boolean() converts the scalar through str() before
+        # matching its boolean tables, so the integer/float spellings 1, 0,
+        # 1.0 and 0.0 are accepted bool keyword values too (issue #735) -
+        # `diff: 1` used to parse to nil here and the task silently lost
+        # its diff setting.
+      when Int
+        case yaml.raw
+        when 1 then true
+        when 0 then false
+        end
+      when Float
+        case yaml.raw
+        when 1.0 then true
+        when 0.0 then false
+        end
       when String
         case yaml.as_s.strip.downcase
-        when "true", "yes", "on"
+        when "true", "yes", "on", "1", "t", "y"
           true
-        when "false", "no", "off"
+        when "false", "no", "off", "0", "f", "n"
           false
         end
+      end
+    end
+
+    # The one-letter/numeric string forms of ansible's boolean() tables
+    # (BOOLEANS_TRUE/BOOLEANS_FALSE), alongside the true/yes/on and
+    # false/no/off spellings parse_optional_bool_or_template has always
+    # accepted.
+    private def self.valid_bool_string?(value : String) : Bool
+      case value.strip.downcase
+      when "true", "yes", "on", "false", "no", "off", "1", "0", "t", "f", "y", "n"
+        true
+      else
+        false
+      end
+    end
+
+    # The raw text of a task-level diff:/check_mode: value that is a
+    # literal (not a template) but not a boolean() boolean - the value the
+    # executor turns into ansible's "could not be converted to 'bool'"
+    # keyword failure (issue #735). nil for every valid or templated
+    # value; non-scalar YAML (a mapping/list where a bool was expected)
+    # stays with the old lenient parse rather than inventing a conversion
+    # error ansible reports differently.
+    private def self.invalid_bool_keyword_text(yaml : YAML::Any?) : String?
+      return nil unless yaml
+      return nil if template_expression(yaml)
+      case raw = yaml.raw
+      when Bool
+        nil
+      when Int
+        (raw == 1 || raw == 0) ? nil : raw.to_s
+      when Float
+        (raw == 1.0 || raw == 0.0) ? nil : raw.to_s
+      when String
+        valid_bool_string?(raw) ? nil : raw
       end
     end
 

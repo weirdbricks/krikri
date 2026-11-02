@@ -1994,13 +1994,20 @@ module Krikri
     # before 40671ba).
     private def resolve_task_check_mode(task : Task, vars_context : Hash(String, JSON::Any)? = nil) : Bool
       if (expr = task.check_mode_expr) && (vars = vars_context)
-        substitutor = VarSubstitutor.new(vars: vars)
-        rendered = substitutor.substitute(expr)
-        begin
-          return ConditionalEvaluator.evaluate(rendered, {} of String => JSON::Any)
+        rendered = begin
+          VarSubstitutor.new(vars: vars).substitute(expr)
         rescue
           return @check_mode
         end
+        # Same strict boolean() conversion real applies to the rendered
+        # keyword (issue #735): a rendered "1"/"0"/"t"/"f" now decides
+        # where ConditionalEvaluator's leniency used to guess, and a
+        # rendered non-bool falls back to the CLI flag (the pre-execution
+        # boolean_keyword_invalid_error probe fails the task first on the
+        # paths that carry the task's real vars context).
+        decided = ansible_become_string_boolean(rendered)
+        return decided unless decided.nil?
+        return @check_mode
       end
 
       value = task.check_mode?
@@ -2017,17 +2024,64 @@ module Krikri
     # neutral degradation resolve_task_check_mode applies.
     private def resolve_task_diff_mode(task : Task, vars_context : Hash(String, JSON::Any)? = nil) : Bool
       if (expr = task.diff_mode_expr) && (vars = vars_context)
-        substitutor = VarSubstitutor.new(vars: vars)
-        rendered = substitutor.substitute(expr)
-        begin
-          return ConditionalEvaluator.evaluate(rendered, {} of String => JSON::Any)
+        rendered = begin
+          VarSubstitutor.new(vars: vars).substitute(expr)
         rescue
           return @diff_mode
         end
+        # Same strict boolean() conversion resolve_task_check_mode now
+        # applies (issue #735): a rendered "1"/"0"/"t"/"f" decides, a
+        # rendered non-bool falls back to the CLI flag.
+        decided = ansible_become_string_boolean(rendered)
+        return decided unless decided.nil?
+        return @diff_mode
       end
 
       value = task.diff_mode?
       value.nil? ? @diff_mode : value
+    end
+
+    # Issue #735: ansible post-validates the diff:/check_mode: keywords
+    # with the same strict boolean() every bool keyword goes through, so
+    # a task whose keyword value is not a boolean - a literal
+    # (`diff: banana`, `diff: 2`, recorded at parse time in
+    # Task#diff_mode_invalid/Task#check_mode_invalid) or a template that
+    # RENDERS to a non-bool (`diff: "{{ x }}"` with x=banana) - fails the
+    # task with its own "Error processing keyword 'diff'" conversion
+    # error instead of running. nil when both keywords are valid; a
+    # template whose render itself fails keeps the lenient CLI-flag
+    # fallback the deferred resolvers above apply, rather than turning an
+    # evaluator limitation into a conversion error real reports
+    # differently.
+    private def boolean_keyword_invalid_error(task : Task, vars_context : Hash(String, JSON::Any)) : KeywordBooleanError?
+      if raw = task.diff_mode_invalid
+        return KeywordBooleanError.new("diff", raw)
+      end
+      if raw = task.check_mode_invalid
+        return KeywordBooleanError.new("check_mode", raw)
+      end
+      if (expr = task.diff_mode_expr) && (error = templated_bool_keyword_error("diff", expr, vars_context))
+        return error
+      end
+      if (expr = task.check_mode_expr) && (error = templated_bool_keyword_error("check_mode", expr, vars_context))
+        return error
+      end
+      nil
+    end
+
+    private def templated_bool_keyword_error(keyword : String, expr : String, vars_context : Hash(String, JSON::Any)) : KeywordBooleanError?
+      rendered = begin
+        VarSubstitutor.new(vars: vars_context).substitute(expr, strict: true)
+      rescue
+        return nil
+      end
+      # The lenient "undefined" sentinel (a non-bare reference to an
+      # unresolvable name) is not a real rendered value - degrading to the
+      # CLI flag beats failing on a string the task never actually had.
+      return nil if rendered == "undefined"
+      decided = ansible_become_string_boolean(rendered)
+      return nil unless decided.nil?
+      KeywordBooleanError.new(keyword, rendered)
     end
 
     # Runtime resolution of a task's effective become: value. Mirrors
