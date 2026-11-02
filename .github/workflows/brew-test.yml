@@ -51,10 +51,20 @@ jobs:
       # The multiarch bundle is a macOS controller build (its Mach-O
       # binaries cannot run on the Linux runners, and a Linux controller
       # has no use for its extra Linux plugin sets anyway).
+      #
+      # It is an ALTERNATIVE to the default formula, not a co-install:
+      # both ship the same bin/krikri and bin/krikri-playbook names, so
+      # installing it while `krikri` is still linked fails `brew link`
+      # ("Target /opt/homebrew/bin/krikri is a symlink belonging to
+      # krikri") - found live on the first run of these steps, which
+      # had never completed before (the Oct 31 runs were cancelled
+      # alongside the red CI). Unlink the default formula first; the
+      # sanity check below then exercises the multiarch binary itself.
       - name: Tap this checkout and install the multiarch bundle (macOS only)
         if: runner.os == 'macOS'
         run: |
           brew tap weirdbricks/krikri "$GITHUB_WORKSPACE"
+          brew unlink krikri
           brew install weirdbricks/krikri/krikri-multiarch
 
       - name: brew test (multiarch)
