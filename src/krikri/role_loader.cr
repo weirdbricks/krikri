@@ -140,7 +140,7 @@ module Krikri
     # and the parsed tasks are discarded, so runtime behaviour is
     # unchanged. A role not found on disk pre-loads nothing - the runtime
     # load reports that failure exactly as before.
-    def self.preload_static_import_role(name : String, play : Play, playbook_dir : String, tasks_from : String?) : Nil
+    def self.preload_static_import_role(name : String, play : Play, playbook_dir : String, tasks_from : String?, vars_from : String? = nil) : Nil
       role_dir = resolve_role_dir(name, playbook_dir)
       return unless role_dir
       # import_role: is static for Ansible too (its callback_plugins
@@ -148,6 +148,21 @@ module Krikri
       # splices it through include_role's RUNTIME path - the parse-time
       # preload below is the only static hook, so the warning fires here.
       PythonFilterRunner.warn_unloadable_role_callback_plugins(role_dir, ansible_collection_name_for(name))
+      # Real compiles the static import's Role (including its vars_from:
+      # vars file) into the play's per-role vars cache at playbook load,
+      # BEFORE any task runs - so another load of the same role in the
+      # same play, notably its meta/main.yml dependency run, evaluates
+      # against those vars too (issue #742: sgaunet.devbox's meta
+      # dependency on sgaunet.gh_role_installer ran before the parent's
+      # own `import_role: {vars_from: devbox}` was ever reached, and real
+      # still had `gh_role_installer_release_is_archive` defined for the
+      # dependency's `when:` - live-verified vs 2.19: the dependency's
+      # conditional error Origin pointed INTO the vars_from file). Only
+      # the vars-file layer leaks - the import's own `vars:` did NOT
+      # reach the dependency run (live-verified: undefined there).
+      own_vars, own_var_origins = load_role_own_vars(role_dir, vars_from)
+      own_vars.each { |key, value| play.all_role_vars[key] = value }
+      own_var_origins.each { |key, origin| play.all_role_var_origins[key] = origin }
       chain = play.static_preload_chain
       return if chain.includes?(role_dir)
       chain.add(role_dir)
