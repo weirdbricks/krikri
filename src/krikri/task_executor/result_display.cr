@@ -434,7 +434,7 @@ module Krikri
         end
         result = JSON::Any.new(top.reject("_ansible_discovery_warning"))
       end
-      emit_debug_template_error_warning(source_task, result)
+      emit_debug_template_error_warning(source_task, result, loop_item)
 
       # Console lines a controller-side action plugin produced ITSELF
       # rather than through the result (pause's "Pausing for N seconds"
@@ -728,7 +728,12 @@ module Krikri
         if item = loop_item
           var_name = loop_var_name.try { |name| !name.empty? ? name : nil } || "item"
           if module_name.try(&.ends_with?("debug"))
-            if result["msg"]? && var_name.starts_with?('_')
+            # A var:-form debug task carries no msg key, and its dump keeps
+            # the loop var under ANY name - including the default "item" -
+            # while the msg:-form survives only under underscore names
+            # (live-verified vs 2.19: a looped var: "{{ item }}" dumps
+            # {"item": ..., "<var>": ...} with no ansible_loop_var).
+            if !result["msg"]? || var_name.starts_with?('_')
               h = cleaned.as_h.try(&.dup) || Hash(String, JSON::Any).new
               h[var_name] = item
               cleaned = JSON::Any.new(h)
@@ -1246,7 +1251,11 @@ module Krikri
     # >>", see DebugActionPlugin) and real ALSO prints a "[WARNING]:
     # Encountered 1 template error." block on stderr naming the var: value's
     # Origin (live-verified 2.19.11); deduped like every Display.warning.
-    private def self.emit_debug_template_error_warning(task : Task?, result : JSON::Any) : Nil
+    # When the failing value is a loop item, real points the Origin at the
+    # item's own YAML list element - the var: keyword is only the render
+    # site, the undefined name is the item literal itself - falling back to
+    # the var: line only when no matching element line exists.
+    private def self.emit_debug_template_error_warning(task : Task?, result : JSON::Any, loop_item : JSON::Any? = nil) : Nil
       return unless task && (hash = result.as_h?)
       hash.each_value do |value|
         next unless (text = value.as_s?) && (m = text.match(/\A<< error (\d+) - (.*) >>\z/))
@@ -1254,17 +1263,43 @@ module Krikri
         next unless path && task.source_line > 0 && File.file?(path)
         lines = File.read_lines(path)
         origin = nil
-        ((task.source_line - 1)...Math.min(lines.size, task.source_line + 40)).each do |idx|
-          line = lines[idx]
-          next unless (at = line.index(/\bvar:\s*/))
-          rest = line[(at + 4)..]
-          origin = ErrorBlock.origin_context(path, idx + 1, at + 4 + (rest.size - rest.lstrip.size) + 1)
-          break
+        if item_text = loop_item.try(&.as_s?)
+          origin = loop_item_origin(path, lines, task.source_line - 1, item_text)
+        end
+        unless origin
+          ((task.source_line - 1)...Math.min(lines.size, task.source_line + 40)).each do |idx|
+            line = lines[idx]
+            next unless (at = line.index(/\bvar:\s*/))
+            rest = line[(at + 4)..]
+            origin = ErrorBlock.origin_context(path, idx + 1, at + 4 + (rest.size - rest.lstrip.size) + 1)
+            break
+          end
         end
         next unless origin
         warning = "[WARNING]: Encountered #{m[1]} template error.\nerror #{m[1]} - #{m[2]}\n#{origin}\n\n"
         STDERR.puts warning if @@warned_texts.add?(warning)
       end
+    end
+
+    # Origin context of a looped debug var: error: the loop item's own list
+    # element line, found by scanning forward from the task for a loop:/
+    # with_*: key and the first element line whose text is the item
+    # (optionally quoted); the parser tracks per-task, not per-list-item,
+    # positions. Column is the 1-based index of the item text.
+    private def self.loop_item_origin(path : String, lines : Array(String), start_idx : Int32, item_text : String) : String?
+      seen_loop_key = false
+      (start_idx...Math.min(lines.size, start_idx + 41)).each do |idx|
+        line = lines[idx]
+        seen_loop_key = true if line.match(/^\s*(?:loop|with_\w+):/)
+        next unless seen_loop_key && (m = line.match(/^\s*-\s+(\S.*)$/))
+        body = m[1]
+        if body.size >= 2 && ((body.starts_with?('"') && body.ends_with?('"')) || (body.starts_with?('\'') && body.ends_with?('\'')))
+          body = body[1..-2]
+        end
+        next unless body == item_text && (at = line.index(item_text))
+        return ErrorBlock.origin_context(path, idx + 1, at + 1)
+      end
+      nil
     end
 
     # A templated no_log: whose variable is undefined (issue #317):
