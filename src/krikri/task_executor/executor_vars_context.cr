@@ -4974,11 +4974,38 @@ module Krikri
     @@finalization_error_chain_seen = Set(String).new
     @@loop_error_chain_seen = Set(String).new
 
+    DELIMITERS_DEPRECATION_HEADER = "[DEPRECATION WARNING]: Conditionals should not be surrounded by templating delimiters such as {{ }} or {% %}. This feature will be removed from ansible-core version 2.23.\n"
+    # Real 2.19's constant-template warning on conditionals is a plain
+    # [WARNING], not a deprecation: no disable-hint line, and after the
+    # Origin block it carries an inline-expression hint and a trailing
+    # blank line (byte-compared vs 2.19.11, issue #722).
+    JINJA_CONST_TEMPLATE_WARNING_HEADER = "[WARNING]: Jinja constant strings should not contain embedded templates. This feature will be disabled by default in ansible-core 2.23.\n"
+    JINJA_CONST_TEMPLATE_WARNING_FOOTER = "\nUse inline expressions, for example: `when: \"{{ a_var }}\" == 42` becomes `when: a_var == 42`\n\n"
+
     private def maybe_conditional_delimiters_deprecation(task : Task, raw : String, key : String, vars_context : Hash(String, JSON::Any), that_index : Int32? = nil) : Nil
       conditional = raw.strip
-      return unless conditional.size > 4 &&
-                    conditional.starts_with?("{{") && conditional.ends_with?("}}") &&
-                    !conditional[2...-2].includes?("{{")
+      # Real 2.19 renders a conditional as a template before compiling it
+      # as an expression, and its constant detection runs on that render:
+      # a quoted string literal whose own value embeds `{{ }}` warns here
+      # (`when: out.stdout.strip() == "{{ fp }}"`), a shape the whole-span
+      # delimiters deprecation below never sees because the delimiters sit
+      # inside a string literal, not at the conditional's edges. Real fires
+      # it wherever the conditional is evaluated - when:, until:,
+      # changed_when:/failed_when: and each evaluated assert `that:` item -
+      # with the same Origin the delimiters deprecation uses, lookup
+      # arguments included (the warning's Origin is the conditional's own
+      # position, not the lookup's).
+      whole_delimiters_span = conditional.size > 4 &&
+                              conditional.starts_with?("{{") && conditional.ends_with?("}}") &&
+                              !conditional[2...-2].includes?("{{")
+      if !whole_delimiters_span && conditional_quoted_template_const?(conditional)
+        text = conditional_deprecation_text(task, key, raw, that_index,
+          header: JINJA_CONST_TEMPLATE_WARNING_HEADER, footer: JINJA_CONST_TEMPLATE_WARNING_FOOTER)
+        return if text.empty?
+        return unless @@conditional_deprecation_seen.add?(text)
+        STDERR.puts text
+      end
+      return unless whole_delimiters_span
       inner = conditional[2...-2].strip
       # The value probe re-evaluates the expression a second time; skip
       # side-effectful lookups so they never run twice.
@@ -5013,7 +5040,7 @@ module Krikri
       end
     end
 
-    private def conditional_deprecation_text(task : Task, key : String, raw : String, that_index : Int32? = nil) : String
+    private def conditional_deprecation_text(task : Task, key : String, raw : String, that_index : Int32? = nil, header : String = DELIMITERS_DEPRECATION_HEADER, footer : String = "") : String
       path = task.source_file || @playbook_file
       return "" unless path && File.file?(path)
 
@@ -5048,10 +5075,43 @@ module Krikri
       key_idx, column = located_key
 
       String.build do |io|
-        io << "[DEPRECATION WARNING]: Conditionals should not be surrounded by templating delimiters such as {{ }} or {% %}. This feature will be removed from ansible-core version 2.23.\n"
+        io << header
         io << origin_context_block(path, lines, key_idx + 1, column)
-        io << "\n"
+        io << footer
       end
+    end
+
+    # Whether *conditional* carries a quoted string literal ('...' or
+    # "...") whose own value contains a complete `{{ }}` span. Only spans
+    # fully inside one quoted region count: a `{{` at the conditional's
+    # edges is the whole-span form, and an unterminated `{{` inside a
+    # string (a literal brace pair, not a template) is not a span at all.
+    private def conditional_quoted_template_const?(conditional : String) : Bool
+      quote : Char? = nil
+      open_template = false
+      idx = 0
+      while idx < conditional.size
+        ch = conditional[idx]
+        if quote
+          if ch == '\\' && quote == '"'
+            idx += 2
+            next
+          end
+          if ch == quote
+            quote = nil
+            open_template = false
+          elsif ch == '{' && conditional[idx + 1]? == '{'
+            open_template = true
+            idx += 1
+          elsif open_template && ch == '}' && conditional[idx + 1]? == '}'
+            return true
+          end
+        elsif ch == '\'' || ch == '"'
+          quote = ch
+        end
+        idx += 1
+      end
+      false
     end
 
     # The conditional's own YAML origin: the `key:` line's value token
