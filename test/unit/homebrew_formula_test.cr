@@ -38,6 +38,17 @@ describe "homebrew formulas" do
     end
   end
 
+  it "install krikri-lint in both formulas" do
+    # The binary ships in every release tarball but Homebrew installs only
+    # what the install block lists, so the two formulas can drift apart
+    # silently (krikri.rb got it in #678, krikri-multiarch did not until
+    # #758) - pin each to its own install form of the same binary.
+    File.read(FORMULAS["krikri"]).includes?("bin.install \"krikri-lint\"")
+      .must_equal(true, "krikri formula does not install krikri-lint")
+    File.read(FORMULAS["krikri-multiarch"]).includes?("bin.install \"\#{arch}/krikri-lint\"")
+      .must_equal(true, "krikri-multiarch formula does not install krikri-lint")
+  end
+
   it "install the Linux plugin sets a Mac controller needs for Linux targets" do
     # plugin_manager looks up cross-OS targets as plugins-<os>-<arch>/
     # next to the executable, so the multiarch formula must land both
