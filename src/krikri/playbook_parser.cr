@@ -3533,7 +3533,7 @@ module Krikri
 
       if include_role_value = directive(task_hash, "include_role")
         include_role_args = normalize_include_role_args(include_role_value, source_file, source_map, source_prefix, index)
-        include_role_task = parse_include_role(name, task_hash, written_directive_key(task_hash, "include_role"), include_role_args, play, file_dir, source_file: source_file, source_map: source_map, source_prefix: source_prefix, source_index: index)
+        include_role_task = parse_include_role(name, task_hash, written_directive_key(task_hash, "include_role"), include_role_args, play, file_dir, source_file: source_file, source_map: source_map, source_prefix: source_prefix, source_index: index, playbook_dir: playbook_dir)
         return include_role_task
       end
 
@@ -3625,7 +3625,17 @@ module Krikri
             # reference like this run 5 of the IMPORTING role's own
             # tasks before failing) so it's caught at the same static
             # parse time Ansible catches it at.
-            unless RoleLoader.role_exists?(role_name_raw, file_dir)
+            # A static import_role: inside a ROLE's own tasks file names
+            # roles relative to the PLAYBOOK (issue #742: sgaunet.devbox's
+            # `import_role: {name: sgaunet.gh_role_installer, vars_from:
+            # devbox}` sits in the devbox role's tasks) - resolving only
+            # from the parsed file's dir declared the role "not found",
+            # aborted this task's parse, and the enclosing preload's
+            # blanket rescue then swallowed the error, silently disabling
+            # the whole parse-time static chain for role-file imports.
+            role_found = RoleLoader.role_exists?(role_name_raw, file_dir)
+            role_found ||= playbook_dir ? RoleLoader.role_exists?(role_name_raw, playbook_dir) : false
+            unless role_found
               # The search-path DISPLAY follows the playbook dir, not the
               # including file's own directory - Ansible's loader reports
               # the standard playbook-basedir list no matter how deep in
@@ -3652,7 +3662,7 @@ module Krikri
           end
         end
 
-        return parse_include_role(name, task_hash, written_directive_key(task_hash, "import_role"), import_role_args, play, file_dir, is_static: true, source_file: source_file, source_map: source_map, source_prefix: source_prefix, source_index: index)
+        return parse_include_role(name, task_hash, written_directive_key(task_hash, "import_role"), import_role_args, play, file_dir, is_static: true, source_file: source_file, source_map: source_map, source_prefix: source_prefix, source_index: index, playbook_dir: playbook_dir)
       end
 
       if meta_yaml = directive(task_hash, "meta")
@@ -6466,7 +6476,7 @@ module Krikri
       role_name
     end
 
-    private def self.parse_include_role(name : String?, task_hash : Hash(YAML::Any, YAML::Any), action : String, role_args : Hash(YAML::Any, YAML::Any), play : Play, file_dir : String, is_static : Bool = false, source_file : String? = nil, source_map : YamlSourceMap? = nil, source_prefix : String = "", source_index : Int32 = 0) : Task
+    private def self.parse_include_role(name : String?, task_hash : Hash(YAML::Any, YAML::Any), action : String, role_args : Hash(YAML::Any, YAML::Any), play : Play, file_dir : String, is_static : Bool = false, source_file : String? = nil, source_map : YamlSourceMap? = nil, source_prefix : String = "", source_index : Int32 = 0, playbook_dir : String? = nil) : Task
       # See parse_include_tasks above for the rationale; import_role:
       # (the is_static branch, also called from this same function) is
       # intentionally NOT validate_include_keys'd, mirroring Ansible's
@@ -6488,16 +6498,31 @@ module Krikri
       if is_static
         static_tasks_from = role_args["tasks_from"]?.try(&.as_s)
         if static_tasks_from && !static_tasks_from.includes?("{{")
-          if RoleLoader.role_tasks_file_missing?(role_name, file_dir, static_tasks_from)
+          # The file has to be missing under EVERY root the role itself
+          # resolves from before real refuses the run - the role-relative
+          # check alone would falsely refuse a role-file import whose
+          # target only resolves from the playbook dir (issue #742's
+          # shape, with an explicit tasks_from: added).
+          tasks_file_missing = RoleLoader.role_tasks_file_missing?(role_name, file_dir, static_tasks_from)
+          tasks_file_missing &&= playbook_dir.nil? || RoleLoader.role_tasks_file_missing?(role_name, playbook_dir, static_tasks_from)
+          if tasks_file_missing
             raise RoleTasksFromFileError.new("Could not find specified file in role: tasks/#{static_tasks_from}")
           end
           # Real compiles the whole static import tree at playbook-load
           # time, ignoring when:, so a removed `include:` in the role (or
           # in anything it statically imports) refuses the run here, not
-          # at runtime - see preload_static_import_role.
-          RoleLoader.preload_static_import_role(role_name, play, file_dir, static_tasks_from)
+          # at runtime - see preload_static_import_role. The search uses
+          # the PLAYBOOK dir, not the parsed file's dir: an import_role:
+          # inside a role's own tasks file names roles relative to the
+          # playbook (issue #742's sgaunet.devbox -> sgaunet.gh_role_
+          # installer chain), and resolving against the tasks dir found
+          # nothing, which silently disabled the whole preload for it.
+          # vars_from: travels so the preload sees exactly the vars file
+          # the import names (see its own comment for why that matters
+          # beyond the refusal check).
+          RoleLoader.preload_static_import_role(role_name, play, playbook_dir || file_dir, static_tasks_from, role_args["vars_from"]?.try(&.as_s))
         elsif static_tasks_from.nil?
-          RoleLoader.preload_static_import_role(role_name, play, file_dir, nil)
+          RoleLoader.preload_static_import_role(role_name, play, playbook_dir || file_dir, nil, role_args["vars_from"]?.try(&.as_s))
         end
       end
 

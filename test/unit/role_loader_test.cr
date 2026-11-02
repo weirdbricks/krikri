@@ -885,6 +885,111 @@ describe Krikri::RoleLoader do
     tasks[0].role_vars.as(Hash(String, JSON::Any))["krikri_flag"].as_s.must_equal("default-value")
   end
 
+  it "a static import_role's vars_from vars reach the play-wide role-vars layer at parse time" do
+    # Real compiles a static import_role's Role - vars_from: file included -
+    # into the play's per-role vars cache at playbook load, BEFORE any task
+    # runs. So a role that both meta-depends on X and statically import_roles
+    # X with vars_from: has its dependency's `when:` evaluate against the
+    # vars_from values even though the dependency's tasks run first (issue
+    # #742: sgaunet.devbox's meta dependency on sgaunet.gh_role_installer
+    # fatally failed `'gh_role_installer_release_is_archive' is undefined`
+    # in krikri where real ran the task). Krikri resolves the static chain
+    # at parse time, so the preload is where that cache fill belongs; the
+    # runtime load path sees a throwaway play and cannot reach the layer.
+    build_role("dep_inner") do |role|
+      role.tasks(<<-YAML)
+        - name: t
+          ansible.builtin.debug:
+            msg: hi
+          when: krikri_dep_flag
+        YAML
+      role.vars("krikri_dep_flag: \"from-vars-main\"\n")
+      write(File.join(roles_root, "roles", "dep_inner", "vars", "alt.yml"), "krikri_dep_flag: \"from-vars-alt\"\n")
+    end
+    build_role("dep_parent") do |role|
+      role.meta("dependencies:\n  - role: dep_inner\n")
+      role.tasks(<<-YAML)
+        - name: import inner
+          import_role:
+            name: dep_inner
+            vars_from: alt
+        YAML
+    end
+
+    playbook = <<-YAML
+      - hosts: all
+        gather_facts: false
+        tasks:
+          - name: import outer
+            import_role:
+              name: dep_parent
+      YAML
+    play = Krikri::PlaybookParser.parse_string(playbook, File.join(roles_root, "site.yml")).plays[0]
+
+    play.all_role_vars["krikri_dep_flag"].as_s.must_equal("from-vars-alt")
+  end
+
+  it "a task-file import_role with tasks_from does not falsely refuse when the role only resolves from the playbook dir" do
+    # The playbook-dir fallback that fixed #742's vars_from preload opens
+    # a false-refusal window for an explicit tasks_from:: the parse-time
+    # missing-file check must only fire when the tasks file is missing
+    # under EVERY root the role resolves from, not just the parsed file's
+    # own directory. Play-level task files are where this raise actually
+    # surfaces (nested role-file imports are swallowed by the preload's
+    # blanket rescue and left to the runtime load).
+    build_role("tf_inner") do |role|
+      role.tasks(<<-YAML)
+        - name: t
+          ansible.builtin.debug:
+            msg: hi
+        YAML
+    end
+    write(File.join(roles_root, "sub", "inner.yml"), <<-YAML)
+      - name: import inner
+        import_role:
+          name: tf_inner
+          tasks_from: main
+      YAML
+
+    playbook = <<-YAML
+      - hosts: all
+        gather_facts: false
+        tasks:
+          - name: import tasks file
+            import_tasks: sub/inner.yml
+      YAML
+    play = Krikri::PlaybookParser.parse_string(playbook, File.join(roles_root, "site.yml")).plays[0]
+
+    play.tasks.empty?.must_equal(false)
+  end
+
+  it "a task-file import_role with a bogus tasks_from still refuses when only the playbook dir resolves the role" do
+    build_role("btf_inner") do |role|
+      role.tasks(<<-YAML)
+        - name: t
+          ansible.builtin.debug:
+            msg: hi
+        YAML
+    end
+    write(File.join(roles_root, "sub", "inner.yml"), <<-YAML)
+      - name: import inner
+        import_role:
+          name: btf_inner
+          tasks_from: nope
+      YAML
+
+    playbook = <<-YAML
+      - hosts: all
+        gather_facts: false
+        tasks:
+          - name: import tasks file
+            import_tasks: sub/inner.yml
+      YAML
+    assert_raises(Krikri::RoleTasksFromFileError) do
+      Krikri::PlaybookParser.parse_string(playbook, File.join(roles_root, "site.yml"))
+    end
+  end
+
   it "sets role_parent_names from load_single_role's own parent_names argument" do
     # ansible_parent_role_names - the ancestor role-name chain leading to
     # an include_role: call. Several real collections (prometheus.
