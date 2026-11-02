@@ -230,4 +230,42 @@ describe "unknown filter/test in conditionals: Syntax error in expression" do
     origins.map { |match| {match[1].to_i, match[2].to_i} }.must_equal(
       [{10, 13}, {11, 13}, {12, 13}, {18, 13}, {19, 13}, {27, 13}], output)
   end
+
+  # Real 2.19's constant detection runs on the conditional's rendered
+  # template, so a QUOTED string literal whose own value embeds `{{ }}`
+  # warns wherever the conditional is evaluated - a plain [WARNING] with
+  # the same Origin the delimiters deprecation uses plus an
+  # inline-expression hint - a shape the whole-span delimiters form never
+  # covers, because there the delimiters sit at the conditional's edges,
+  # not inside a string literal (issue #722, byte-compared vs 2.19.11).
+  it "warns for quoted template constants in when: and that: items, not for plain conditionals" do
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          fp: abc
+          out:
+            stdout: " abc "
+        tasks:
+          - name: Quoted template in that
+            ansible.builtin.assert:
+              that:
+                - out.stdout.strip() == "{{ fp }}"
+          - name: Quoted template in when
+            ansible.builtin.debug:
+              msg: hi
+            when: out.stdout.strip() == "{{ fp }}"
+          - name: Plain conditional
+            ansible.builtin.debug:
+              msg: hi
+            when: out.stdout.strip() == "abc"
+      YAML
+    status.exit_code.must_equal(0)
+    warning = "[WARNING]: Jinja constant strings should not contain embedded templates. This feature will be disabled by default in ansible-core 2.23."
+    output.scan(warning).size.must_equal(2, output)
+    origins = output.scan(/\[WARNING\][^\n]*\nOrigin: [^\n]*\.yml:(\d+):(\d+)/)
+    origins.map { |match| {match[1].to_i, match[2].to_i} }.must_equal([{12, 13}, {16, 13}], output)
+    output.must_include("Use inline expressions, for example: `when: \"{{ a_var }}\" == 42` becomes `when: a_var == 42`")
+  end
 end
