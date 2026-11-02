@@ -130,7 +130,7 @@ end
 # above, with dnf and yum both shimmed by the same script: each records
 # its argv ($* per line) and echoes the canned outputs, and dnf exiting 0
 # never even reaches the `|| yum` fallback.
-private def with_dnf_wildcard_shim(out_content : String, err_content : String = "", exit_code : Int32 = 0, &)
+private def with_dnf_wildcard_shim(out_content : String, err_content : String = "", exit_code : Int32 = 0, rpm_qf_out : String? = nil, &)
   bin_dir = File.join(Dir.tempdir, "krikri-pkg-wildcard-dnf-#{Random.rand(1_000_000)}")
   log = File.join(bin_dir, "calls.log")
   FileUtils.mkdir_p(bin_dir)
@@ -146,19 +146,21 @@ private def with_dnf_wildcard_shim(out_content : String, err_content : String = 
   File.chmod(File.join(bin_dir, "dnf"), 0o755)
   File.chmod(File.join(bin_dir, "yum"), 0o755)
   # `rpm` is shimmed to plain failure (any real one is absent on the spec
-  # host anyway): dnf.py's upgrade_all() never consults the rpm db for a
+  # host anyway) unless KRIKRI_RPM_QF_OUT names a NEVRA to answer with -
+  # dnf.py's upgrade_all() never consults the rpm db for a
   # whole-inventory upgrade, so the "installed?" pre-check toggling can't
   # change what the branch is expected to run.
   rpm = File.join(bin_dir, "rpm")
-  File.write(rpm, "#!/bin/sh\nexit 1\n")
+  File.write(rpm, "#!/bin/sh\n[ -n \"${KRIKRI_RPM_QF_OUT:-}\" ] && { printf '%b' \"${KRIKRI_RPM_QF_OUT}\"; exit 0; }\nexit 1\n")
   File.chmod(rpm, 0o755)
   env = {
-    "PATH"             => "#{bin_dir}:/usr/bin:/bin",
-    "KRIKRI_DNF_CALLS" => log,
-    "KRIKRI_DNF_OUT"   => out_content,
-    "KRIKRI_DNF_ERR"   => err_content,
-    "KRIKRI_DNF_EXIT"  => exit_code.to_s,
-  }.to_json
+    "PATH"              => "#{bin_dir}:/usr/bin:/bin",
+    "KRIKRI_DNF_CALLS"  => log,
+    "KRIKRI_DNF_OUT"    => out_content,
+    "KRIKRI_DNF_ERR"    => err_content,
+    "KRIKRI_DNF_EXIT"   => exit_code.to_s,
+    "KRIKRI_RPM_QF_OUT" => rpm_qf_out,
+  }.compact.to_json
   yield env, log
 ensure
   FileUtils.rm_rf(bin_dir) if bin_dir
@@ -243,7 +245,13 @@ describe "package plugin name:* state: latest (dnf host, issue 299)" do
   end
 
   it "check mode runs the whole-inventory check-update without the '*' arg" do
-    with_dnf_wildcard_shim(dnf_wildcard_noop_output, "", 100) do |env, log|
+    # Real's check-mode shape (issue #753, live-verified vs 2.19.11 on
+    # Rocky 9): the check-update rows become "Installed: <new nevra>" /
+    # "Removed: <old nevra>" entries, msg "Check mode: No changes made,
+    # but would have if not in check mode", rc 0.
+    check_update_out = "Last metadata expiration check: 0:00:17 ago on Mon Nov  2 20:06:44 2026.\n" \
+                       "tar.x86_64                    2:1.34-13.el9_8              baseos\n"
+    with_dnf_wildcard_shim(check_update_out, "", 100, rpm_qf_out: "tar-2:1.34-11.el9.x86_64\n") do |env, log|
       result = PluginSpecHelper.run("package", {
         "name"                => "*",
         "state"               => "latest",
@@ -253,8 +261,15 @@ describe "package plugin name:* state: latest (dnf host, issue 299)" do
       })
 
       result["changed"].as_bool.must_equal(true)
-      result["msg"].as_s.must_equal("Would update * to latest (check mode)")
-      # One invocation, and no literal '*' name spec reaches check-update.
+      result["msg"].as_s.must_equal("Check mode: No changes made, but would have if not in check mode")
+      result["results"].as_a.map(&.as_s).must_equal([
+        "Installed: tar-2:1.34-13.el9_8.x86_64",
+        "Removed: tar-2:1.34-11.el9.x86_64",
+      ])
+      result["rc"].as_i.must_equal(0)
+      # The shimmed rpm answers the installed-probe, so the only dnf
+      # invocation is the check-update itself - and no literal '*' name
+      # spec reaches it.
       File.read_lines(log).must_equal(["check-update"])
     end
   end
