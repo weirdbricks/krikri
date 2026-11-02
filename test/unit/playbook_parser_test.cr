@@ -76,6 +76,30 @@ describe Krikri::PlaybookParser do
       task.tags.must_equal(["demo"])
     end
 
+    it "flattens a task tags: value with nested lists instead of dropping the task" do
+      # Real Ansible flattens nested tag lists (tags: [[never, debug],
+      # create_pdandsp] -> never, debug, create_pdandsp); casting the
+      # top-level entries straight to String raised and the whole task
+      # was skipped with "Cast from Array(YAML::Any) to String failed".
+      playbook = Krikri::PlaybookParser.parse_string(<<-YAML)
+        - hosts: all
+          gather_facts: false
+          tasks:
+            - name: first
+              ansible.builtin.debug:
+                msg: one
+              tags:
+                - [never, debug]
+                - create_pdandsp
+            - name: second
+              ansible.builtin.debug:
+                msg: two
+        YAML
+
+      playbook.plays[0].tasks.size.must_equal(2)
+      playbook.plays[0].tasks[0].tags.must_equal(["never", "debug", "create_pdandsp"])
+    end
+
     it "falls back to the hosts: value as the play name, not a generic 'Play N' placeholder" do
       # ansible-playbook displays a nameless play's PLAY banner as
       # its hosts: value (`PLAY [all]`), never a generic placeholder -
