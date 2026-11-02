@@ -200,3 +200,104 @@ describe "SynchronizeActionPlugin delegate_to localhost munging" do
     end
   end
 end
+
+describe "SynchronizeActionPlugin non-string literal src/dest" do
+  # Real's action plugin crashes in its path munging when a non-string
+  # YAML literal src/dest reaches it (the parser marks those;
+  # NON_STRING_PARAM_PREFIX): _get_absolute_path's `':' in <int>` raises
+  # the TypeError, the remote-qualified end's startswith('rsync://') the
+  # AttributeError (live-verified vs 2.19.11 across the push/pull x
+  # src/dest x local/ssh matrix). The params here carry the marker the
+  # way execute_action hands them over - synchronize opts out of the
+  # strip for exactly this probe.
+  it "crashes with _get_absolute_path's TypeError on a local connection, like real" do
+    host = Krikri::Host.new("localhost")
+    host.vars["ansible_connection"] = JSON::Any.new("local")
+    result = Krikri::SynchronizeActionPlugin.new({
+      "src"  => "/tmp/sync-spec-src/",
+      "dest" => "#{Krikri::NON_STRING_PARAM_PREFIX}25",
+    }, Hash(String, JSON::Any).new, host).execute
+
+    result.success?.must_equal(false)
+    result.error_detail?.must_equal("argument of type '_AnsibleTaggedInt' is not iterable")
+    result.error_message.must_equal("Task failed: argument of type '_AnsibleTaggedInt' is not iterable")
+  end
+
+  it "reports bools as plain 'bool', like Python's own TypeError wording" do
+    host = Krikri::Host.new("localhost")
+    host.vars["ansible_connection"] = JSON::Any.new("local")
+    result = Krikri::SynchronizeActionPlugin.new({
+      "src"  => "#{Krikri::NON_STRING_PARAM_PREFIX}true",
+      "dest" => "/tmp/sync-spec-dest/",
+    }, Hash(String, JSON::Any).new, host).execute
+
+    result.error_detail?.must_equal("argument of type 'bool' is not iterable")
+  end
+
+  it "reports floats as _AnsibleTaggedFloat" do
+    host = Krikri::Host.new("localhost")
+    host.vars["ansible_connection"] = JSON::Any.new("local")
+    result = Krikri::SynchronizeActionPlugin.new({
+      "src"  => "/tmp/sync-spec-src/",
+      "dest" => "#{Krikri::NON_STRING_PARAM_PREFIX}2.5",
+    }, Hash(String, JSON::Any).new, host).execute
+
+    result.error_detail?.must_equal("argument of type '_AnsibleTaggedFloat' is not iterable")
+  end
+
+  it "crashes with format_rsync_rsh_target's startswith AttributeError on a remote-qualified push dest" do
+    result = Krikri::SynchronizeActionPlugin.new({
+      "src"  => "/tmp/sync-spec-src/",
+      "dest" => "#{Krikri::NON_STRING_PARAM_PREFIX}25",
+    }, Hash(String, JSON::Any).new, Krikri::Host.new("unresolvable-sync-spec-host")).execute
+
+    result.error_detail?.must_equal("'_AnsibleTaggedInt' object has no attribute 'startswith'")
+  end
+
+  it "remote-qualifies pull's SRC end, so a literal src crashes with the AttributeError there" do
+    result = Krikri::SynchronizeActionPlugin.new({
+      "src"  => "#{Krikri::NON_STRING_PARAM_PREFIX}25",
+      "dest" => "/tmp/sync-spec-dest/",
+      "mode" => "pull",
+    }, Hash(String, JSON::Any).new, Krikri::Host.new("unresolvable-sync-spec-host")).execute
+
+    result.error_detail?.must_equal("'_AnsibleTaggedInt' object has no attribute 'startswith'")
+  end
+
+  it "keeps pull's dest controller-local, so a literal dest crashes with the TypeError there" do
+    result = Krikri::SynchronizeActionPlugin.new({
+      "src"  => "/tmp/sync-spec-src/",
+      "dest" => "#{Krikri::NON_STRING_PARAM_PREFIX}25",
+      "mode" => "pull",
+    }, Hash(String, JSON::Any).new, Krikri::Host.new("unresolvable-sync-spec-host")).execute
+
+    result.error_detail?.must_equal("argument of type '_AnsibleTaggedInt' is not iterable")
+  end
+
+  # Real's ordering: the munging crash happens in the ACTION plugin,
+  # before AnsibleModule setup (bool conversion) ever runs - so a bad
+  # bool param loses to a non-string dest, both live-verified shapes.
+  it "reports the literal crash ahead of a bad bool param, like real's ordering" do
+    host = Krikri::Host.new("localhost")
+    host.vars["ansible_connection"] = JSON::Any.new("local")
+    result = Krikri::SynchronizeActionPlugin.new({
+      "src"  => "/tmp/sync-spec-src/",
+      "dest" => "#{Krikri::NON_STRING_PARAM_PREFIX}25",
+      "dirs" => "ylazyy",
+    }, Hash(String, JSON::Any).new, host).execute
+
+    result.error_detail?.must_equal("argument of type '_AnsibleTaggedInt' is not iterable")
+  end
+
+  it "fails a literal null dest with the missing-parameter message, like real's None check" do
+    host = Krikri::Host.new("localhost")
+    host.vars["ansible_connection"] = JSON::Any.new("local")
+    result = Krikri::SynchronizeActionPlugin.new({
+      "src"  => "/tmp/sync-spec-src/",
+      "dest" => "#{Krikri::NON_STRING_PARAM_PREFIX}null",
+    }, Hash(String, JSON::Any).new, host).execute
+
+    json = result.final_result || raise "expected a final result"
+    json.as_h["msg"].as_s.must_equal("synchronize requires both src and dest parameters are set")
+  end
+end

@@ -2,6 +2,7 @@ require "json"
 require "../base_action_plugin"
 require "../cli_options"
 require "../connection_settings"
+require "../param_sentinels"
 require "../plugin_helpers/synchronize_rsync"
 require "../plugin_helpers/strict_bool_params"
 require "../passwords"
@@ -83,19 +84,67 @@ module Krikri
     # controller's changed/exception backfill.
     PARAM_FAILURE_KEY_ORDER = ["failed", "msg", "changed"]
 
+    # Real's action-plugin path munging crashes on a non-string YAML
+    # literal src/dest (the parser marks those; see NON_STRING_PARAM_PREFIX):
+    # _get_absolute_path's `':' in path` raises TypeError ("argument of
+    # type '_AnsibleTaggedInt' is not iterable") on the controller-local
+    # end, while _format_rsync_rsh_target's `path.startswith('rsync://')`
+    # raises AttributeError ("'_AnsibleTaggedInt' object has no attribute
+    # 'startswith'") on the remote-qualified end. Which end takes which
+    # call follows the same dest_is_local/mode split as the munging itself
+    # (live-verified vs 2.19.11 across the push/pull x src/dest x
+    # local/ssh matrix): dest_is_local munges BOTH ends through
+    # _get_absolute_path (always the TypeError), push remote-qualifies
+    # dest and pull src. The crash precedes AnsibleModule setup, so it
+    # beats a bad bool/mode param too - exactly real's ordering.
+    private def munging_literal_type_failure : ActionResult?
+      src_native = Krikri.non_string_scalar(@params["src"]?)
+      dest_native = Krikri.non_string_scalar(@params["dest"]?)
+      dest_is_local = local_connection? ||
+                      ((task_host = @task_host) && !local_connection? && task_host.name == @host.name)
+      # Real's munging reads the RAW mode (`get('mode', 'push') == 'pull'`,
+      # case-sensitive) before the module's choices validation ever runs.
+      mode = @params["mode"]? || "push"
+      if src_native
+        return literal_munging_crash(src_native, remote_qualified: !dest_is_local && mode == "pull")
+      end
+      if dest_native
+        return literal_munging_crash(dest_native, remote_qualified: !dest_is_local && mode != "pull")
+      end
+      nil
+    end
+
+    private def literal_munging_crash(native : JSON::Any, remote_qualified : Bool) : ActionResult
+      bare = if remote_qualified
+               "'#{Krikri.python_scalar_type_name(native)}' object has no attribute 'startswith'"
+             else
+               "argument of type '#{Krikri.python_scalar_type_name(native)}' is not iterable"
+             end
+      ActionResult.crash_failure(bare)
+    end
+
     # Ansible's up-front parameter check (both ends set, `is None` in the
     # action plugin), as a final failed result; nil when the params are
-    # valid. AnsibleModule setup (bool conversion, then mode's choices)
+    # valid. A literal null (`dest:` with no value) rides the parser's
+    # NON_STRING_PARAM_PREFIX marker on this plugin's params (they keep
+    # the markers - see munging_literal_type_failure); real's `dest is
+    # None` sees the None, so it fails here exactly like an absent one.
+    # AnsibleModule setup (bool conversion, then mode's choices)
     # validation follows in execute, matching real's
     # action-plugin-before-module ordering.
     private def invalid_params_result(src_param, dest_param) : ActionResult?
-      if !src_param || !dest_param || src_param.empty? || dest_param.empty?
+      if !src_param || !dest_param || src_param.empty? || dest_param.empty? ||
+         marked_null_param?(src_param) || marked_null_param?(dest_param)
         return ActionResult.final(Krikri.mark_failed_key_order(ActionResult.plugin_result_json(
           false, true, "synchronize requires both src and dest parameters are set",
           key_order: PARAM_FAILURE_KEY_ORDER
         ), PARAM_FAILURE_KEY_ORDER))
       end
       nil
+    end
+
+    private def marked_null_param?(param : String?) : Bool
+      ((native = Krikri.non_string_scalar(param)) && native.raw.nil?) == true
     end
 
     # AnsibleModule setup validation (bool type conversion in declaration
@@ -130,14 +179,25 @@ module Krikri
     def execute : ActionResult
       # Real's ordering, live-verified against ansible-core 2.19.11 +
       # ansible.posix 2.1.0: the ACTION plugin's src/dest check runs
-      # first (synchronize.py's `src is None or dest is None` return,
-      # before the module is ever invoked), then AnsibleModule setup
-      # (bool conversion, then mode's choices).
+      # first (synchronize.py's `src is None or dest is None` return),
+      # then the path-munging whose _get_absolute_path /
+      # _format_rsync_rsh_target touches crash on a non-string literal
+      # src/dest (see munging_literal_type_failure), then AnsibleModule
+      # setup (bool conversion, then mode's choices).
       src_param = @params["src"]?
       dest_param = @params["dest"]?
       if invalid = invalid_params_result(src_param, dest_param)
         return invalid
       end
+      if failure = munging_literal_type_failure
+        return failure
+      end
+      # The native-type probes above are the only readers of the parser's
+      # non-string-literal markers on this plugin (they reach it because
+      # execute_action opts synchronize out of the strip); demote so every
+      # downstream reader - bool validation, argv building, module
+      # dispatch - sees the plain strings it always did.
+      @params = Krikri.strip_non_string_param_markers(@params)
       if invalid = module_setup_validation_result
         return invalid
       end

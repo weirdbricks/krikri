@@ -131,7 +131,13 @@ module Krikri
       # 2.19.11) and a float truncates (int(1.9) == 1). The demoted text
       # alone makes "true" an unparseable string, so the native type has
       # to survive the trip to the plugin.
-      unless module_name == "ansible.builtin.template" || module_name == "ansible.builtin.fail" || module_name == "ansible.builtin.pause"
+      # synchronize: opts out for the src/dest native type only - its
+      # action plugin mirrors the real action's path-munging crashes on a
+      # non-string YAML literal (see
+      # SynchronizeActionPlugin#munging_literal_type_failure) and demotes
+      # the markers itself once those probes are done.
+      unless module_name == "ansible.builtin.template" || module_name == "ansible.builtin.fail" || module_name == "ansible.builtin.pause" ||
+             module_name == "ansible.posix.synchronize" || module_name == "synchronize"
         params = Krikri.strip_non_string_param_markers(params)
       end
 

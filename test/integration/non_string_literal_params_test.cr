@@ -128,6 +128,34 @@ describe "non-string YAML literal module args (copy/fetch/template)" do
     output.must_include(%("msg": "Task failed: '_AnsibleTaggedInt' object has no attribute 'endswith'"))
   end
 
+  # Real's synchronize action plugin crashes in its path munging
+  # (_get_absolute_path's `':' in <int>`), live-verified vs 2.19.11 for
+  # the local-connection matrix - src and dest both go through
+  # _get_absolute_path there, so a literal on EITHER end is the same
+  # TypeError, and the rsync that would have written the literal-named
+  # dest file never runs.
+  it "synchronize crashes on a non-string src or dest with the TypeError, before rsync runs" do
+    output, scratch = run_playbook(<<-YAML)
+          - synchronize:
+              src: #{__DIR__}/../minitest_helper.cr
+              dest: 25
+            ignore_errors: true
+          - synchronize:
+              src: 25
+              dest: out-int
+            ignore_errors: true
+          - synchronize:
+              src: #{__DIR__}/../minitest_helper.cr
+              dest: true
+            ignore_errors: true
+    YAML
+
+    output.must_include("[ERROR]: Task failed: argument of type '_AnsibleTaggedInt' is not iterable")
+    output.must_include(%("msg": "Task failed: argument of type '_AnsibleTaggedInt' is not iterable"))
+    output.must_include(%("msg": "Task failed: argument of type 'bool' is not iterable"))
+    Dir.children(scratch).reject { |file| file == "play.yml" }.must_equal([] of String)
+  end
+
   it "copy treats falsy non-string literals as not provided, like Ansible's truthiness checks" do
     output, scratch = run_playbook(<<-YAML)
           - copy:
