@@ -62,11 +62,11 @@ module Krikri
         return failure("parameters are mutually exclusive: path|content")
       end
 
+      raw = content || ""
       if path
-        return failure("Unable to read the file #{path}") unless File::Info.readable?(path)
-        raw = File.read(path)
-      else
-        raw = content || ""
+        read = read_certificate_file(path)
+        return read unless read.is_a?(String)
+        raw = read
       end
 
       # The Ansible module resolves valid_at AFTER reading the file and
@@ -184,6 +184,41 @@ module Krikri
       else
         %(The time spec "#{spec}" for valid_at.#{key} is invalid)
       end
+    end
+
+    # Real opens the file bare and fail_jsons with str(OSError) once the
+    # open/read raises - there is no readability precheck in
+    # community.crypto's module - so a missing path surfaces as
+    # "[Errno 2] No such file or directory: '30'", not a probe verdict.
+    private def read_certificate_file(path : String) : String | PluginResult
+      # Python's open() itself raises EISDIR (with the filename attached)
+      # before any read happens; Crystal only trips EISDIR on the read,
+      # so classify the directory case up front.
+      return failure(read_cert_oserror(21, "Is a directory", path)) if File.directory?(path)
+      begin
+        File.read(path)
+      rescue ex : File::Error
+        errno = ex.os_error
+        if errno
+          failure(read_cert_oserror(errno.value, errno.message, path))
+        else
+          failure(read_cert_oserror(*fallback_oserror(path), path))
+        end
+      end
+    end
+
+    # Python's str(OSError) shape: "[Errno N] <strerror>: '<path>'" when
+    # the exception carries a filename.
+    private def read_cert_oserror(code : Int32 | UInt16 | UInt32, strerror : String, path : String) : String
+      "Error while reading certificate file from disk: [Errno #{code}] #{strerror}: '#{path}'"
+    end
+
+    # The same exists/directory classification url_preflight uses, for a
+    # File::Error that lost its errno.
+    private def fallback_oserror(path : String) : {Int32, String}
+      return {21, "Is a directory"} if File.directory?(path)
+      return {13, "Permission denied"} if File.exists?(path)
+      {2, "No such file or directory"}
     end
 
     # fail_json's own msg - no "Task failed: Module failed:" wrapper, the
