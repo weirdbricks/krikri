@@ -16,6 +16,7 @@ private PROJECT_ROOT                 = File.expand_path("../..", __DIR__)
 private BINARY                       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY                    = File.join(__DIR__, "..", "fixtures", "inventory.ini")
 private EXPLICIT_LOCALHOST_INVENTORY = File.join(__DIR__, "..", "fixtures", "inventory-explicit-localhost.ini")
+private LOCALHOST_LOCAL_INVENTORY    = File.join(__DIR__, "..", "fixtures", "inventory-localhost-local.ini")
 private TWO_LOCAL_HOSTS_INVENTORY    = File.join(__DIR__, "..", "fixtures", "inventory-two-local-hosts.ini")
 private FIXTURES_DIR                 = File.join(PROJECT_ROOT, "testing")
 
@@ -54,6 +55,14 @@ private def write_notify_playbook(name : String, body : String) : String
   path = spec_tmp_path(name)
   File.write(path, body)
   path
+end
+
+# The trailing-slash copy regression asserts dest never accumulates the
+# directory-staging scratch subdirs copy: creates when it loses the
+# user's trailing "/" (dest/<scratch-basename> per run) - count them, so
+# a bug shows up as a nonzero count on either the cold or the warm run.
+private def krikri_scratch_dir_count(dest : String) : Int32
+  Dir.children(dest).count(&.starts_with?(".krikri-"))
 end
 
 # Fixture playbooks act on FIXED host resources (/tmp paths, Docker
@@ -3176,6 +3185,75 @@ describe "an unarchive with a bare relative src" do
 
     status.success?.must_equal(true)
     output.must_include("changed=True failed=False")
+  end
+end
+
+describe "a role-relative copy: src: with a trailing slash" do
+  # Regression (bertvv.mailserver, round round29893353, issue #739): the
+  # trailing "/" on `src: files/` is Ansible's directory-copy signal -
+  # the directory's CONTENTS land directly in dest (verified against
+  # ansible-playbook on a real Rocky target: warm run ok, files directly
+  # in dest). The role-relative src resolver used to strip that slash
+  # with its unfrackpath normalization, so the staged scratch path lost
+  # the signal too and the copy module laid the tree out under
+  # dest/<scratch-basename> - a FRESH random-named subdir on every run,
+  # which made the task report changed forever on the warm run where
+  # ansible-playbook reported ok, and left dest littered with hidden
+  # .krikri-* subdirs. Runs WITHOUT --check (a real copy), twice, and
+  # asserts both the verdict flip (changed then ok) and the dest layout
+  # ansible produces.
+  it "copies the contents into dest itself and reports ok on the warm run" do
+    tmp = spec_tmp_path("copy-dir-trailing-slash")
+    FileUtils.rm_rf(tmp)
+    role = File.join(tmp, "roles", "copy_dir_trailing_slash")
+    Dir.mkdir_p(File.join(role, "tasks"))
+    Dir.mkdir_p(File.join(role, "files"))
+    File.write(File.join(role, "files", "server.conf"), "server test config\n")
+    File.write(File.join(role, "files", "server.key"), "fake key bytes\n")
+    dest = File.join(tmp, "ssl")
+    File.write(File.join(role, "tasks", "main.yml"), <<-YAML)
+      ---
+      - name: Make SSL directory
+        ansible.builtin.file:
+          path: #{dest}
+          state: directory
+          mode: "0755"
+
+      - name: Copy SSL key to directory
+        ansible.builtin.copy:
+          src: files/
+          dest: #{dest}
+      YAML
+    playbook = File.join(tmp, "play.yml")
+    File.write(playbook, <<-YAML)
+      ---
+      - hosts: localhost
+        gather_facts: false
+        roles:
+          - copy_dir_trailing_slash
+      YAML
+
+    status, output = run_playbook(playbook, [] of String, inventory: LOCALHOST_LOCAL_INVENTORY)
+    status.success?.must_equal(true)
+    task_line = output.lines.index { |line| line.includes?("Copy SSL key to directory") }
+    task_line.wont_be_nil
+    output.lines[(task_line.as(Int32) + 1)..].join("\n").must_include("changed: [localhost]")
+
+    # The contents land directly in dest - never under a nested subdir,
+    # and never under a staging scratch directory.
+    File.exists?(File.join(dest, "server.conf")).must_equal(true)
+    File.exists?(File.join(dest, "server.key")).must_equal(true)
+    krikri_scratch_dir_count(dest).must_equal(0)
+    Dir.exists?(File.join(dest, "files")).must_equal(false)
+
+    # Idempotent like ansible-playbook: the second (warm) run reports ok.
+    warm_status, warm_output = run_playbook(playbook, [] of String, inventory: LOCALHOST_LOCAL_INVENTORY)
+    warm_status.success?.must_equal(true)
+    warm_task = warm_output.lines.index { |line| line.includes?("Copy SSL key to directory") }
+    warm_task.wont_be_nil
+    warm_output.lines[(warm_task.as(Int32) + 1)..].join("\n").wont_include("changed: [localhost]")
+    warm_output.lines[(warm_task.as(Int32) + 1)..].join("\n").must_include("ok: [localhost]")
+    krikri_scratch_dir_count(dest).must_equal(0)
   end
 end
 

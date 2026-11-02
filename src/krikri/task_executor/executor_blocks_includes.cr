@@ -3329,7 +3329,21 @@ module Krikri
       # File.expand_path keeps the separator, so the slash survived into the
       # loader's error text. Never strip past the filesystem root itself.
       expanded = File.expand_path(candidate)
-      resolved["src"] = expanded == "/" ? expanded : expanded.rstrip('/')
+      # A trailing "/" on a copy: src: is Ansible's directory-copy SIGNAL
+      # (rsync's convention: contents land directly in dest) - real's dwim
+      # keeps it because os.path.join preserves the user's trailing
+      # separator, and copy's _copy_directory reads it to pick the dest
+      # layout. Stripping it here (as the unfrackpath normalization above
+      # does) made stage_directory_copy_source stage the tree under a
+      # slash-less scratch path, so the copy module then copied the whole
+      # tree into dest/<scratch-basename> - a FRESH random-named subdir on
+      # EVERY run: bertvv.mailserver's "Copy SSL key to directory" reported
+      # changed on the warm run where ansible-playbook reported ok, and
+      # dest accumulated a new hidden .krikri-* subdir per run (issue #739).
+      # Re-append the user's own trailing separator so the signal survives
+      # into the src the plugin (and its directory-copy dispatch) sees.
+      expanded = expanded == "/" ? expanded : expanded.rstrip('/')
+      resolved["src"] = src.ends_with?('/') && !expanded.ends_with?('/') ? expanded + "/" : expanded
       resolved
     end
 
