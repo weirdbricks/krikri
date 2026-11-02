@@ -66,8 +66,8 @@ private GET_URL_TEST_SERVER = HTTP::Server.new do |context|
     context.response.status_code = 308
     context.response.headers["Location"] = "/file.txt"
   when "/redirect-308-noloc.txt"
-    # fetch_url only follows a redirect whose Location header is present
-    # and non-empty; a bare 308 is reported as the failure itself.
+    # urllib only follows 301/302/303/307; a 308 is reported as the
+    # failure itself, with or without a Location header (issue #737).
     context.response.status_code = 308
   when "/sha256sums.txt"
     context.response.status_code = 200
@@ -1098,22 +1098,33 @@ describe "get_url plugin" do
     File.delete(dest) if dest && File.exists?(dest)
   end
 
-  it "follows a 308 redirect that carries a Location" do
-    # ansible's fetch_url follows any 3xx with a non-empty Location,
-    # 308 included - verified against ansible-core 2.19.11 (issue #656).
+  it "fails on a 308 redirect even when it carries a Location" do
+    # get_url's fetch_url runs with follow_redirects='urllib2', so redirects
+    # follow urllib's own 301/302/303/307 set for GET and a 308 - not added
+    # to that set until Python 3.11, the version the benchmark hosts' module
+    # Pythons are below - raises HTTPError instead: ansible reports
+    # "Request failed", status_code 308, with the server's reason phrase as
+    # the response (issues #737 and #656, verified against ansible-core
+    # 2.19.11 + ansible's own <=3.10 http_error_308 shim in urls.py).
     dest = File.tempname("get-url-spec")
 
     result = PluginSpecHelper.run("get_url", {"url" => "#{GET_URL_TEST_BASE}/redirect-308.txt", "dest" => dest})
 
-    result["changed"].as_bool.must_equal(true)
-    File.read(dest).must_equal(FILE_CONTENT)
+    result["failed"].as_bool.must_equal(true)
+    result["changed"].as_bool.must_equal(false)
+    result["msg"].as_s.must_equal("Request failed")
+    result["status_code"].as_i.must_equal(308)
+    result["response"].as_s.must_equal("HTTP Error 308: Permanent Redirect")
+    result["url"].as_s.must_equal("#{GET_URL_TEST_BASE}/redirect-308.txt")
+    result["dest"].as_s.must_equal(dest)
+    File.exists?(dest).must_equal(false)
   ensure
     File.delete(dest) if dest && File.exists?(dest)
   end
 
   it "fails on a 308 redirect with no Location" do
-    # Without a Location header there is no hop to follow, so the 308 itself
-    # is the failure - ansible reports "HTTP Error 308" here (issue #656).
+    # Same failure shape as a Location-carrying 308: the code is outside
+    # urllib's followed set, so the 308 itself is the failure (issue #737).
     dest = File.tempname("get-url-spec")
 
     result = PluginSpecHelper.run("get_url", {"url" => "#{GET_URL_TEST_BASE}/redirect-308-noloc.txt", "dest" => dest})

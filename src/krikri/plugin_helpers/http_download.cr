@@ -315,10 +315,16 @@ module Krikri
           return download_with_info(url, dest, options, redirects_left, auth_attempted: true)
         end
 
-        # ansible's fetch_url follows any 3xx whose Location header is
-        # present and non-empty; a 3xx with an empty or missing Location
-        # is NOT followed and fails as "Request failed" (issue #656).
-        if response.status.redirection? &&
+        # urllib's HTTPRedirectHandler follows exactly 301/302/303/307 for
+        # GET; any other 3xx falls through to the default error handler and
+        # raises HTTPError("<code>: <reason>"). 308 is the case that bites:
+        # urllib only learned it in Python 3.11, and the Pythons (<= 3.10)
+        # that run ansible's modules on the benchmark hosts fail the task
+        # with "Request failed", status_code 308 (issues #737 and #656, same
+        # root cause as apt_key's #427, whose download_key_url mirrors this
+        # same set). A non-empty Location does NOT bring a code into the
+        # followed set - only the 30x dispatch table decides that.
+        if {301, 302, 303, 307}.includes?(response.status_code) &&
            (location = response.headers["Location"]?) && !location.empty?
           client.close
           return download_with_info(resolve_redirect(uri, location), dest, redirect_options(options), redirects_left - 1)
