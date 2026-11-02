@@ -161,6 +161,63 @@ def sha1_of(content : String) : String
   OpenSSL::Digest.new("SHA1").update(content).final.hexstring
 end
 
+# A minimal in-process FTP server standing in for the real one the
+# ovh-kernel round hit (ftp.ovh.net): USER/PASS/TYPE/PASV/RETR/QUIT is
+# the whole command surface get_url's FTP path drives, so the specs
+# below can cover the happy path and the 530/550 failure shapes without
+# an external server. Answers every PASV with a loopback data listener,
+# mirroring what the real server's passive mode does on the same host.
+private def start_ftp_server(login_ok : Bool = true, serve_path : String = "/file.txt",
+                             content : String = FILE_CONTENT) : Int32
+  control = TCPServer.new("127.0.0.1", 0)
+  port = control.local_address.port
+  spawn do
+    begin
+      client = control.accept
+      client.print("220 mini ftp ready\r\n")
+      data_server : TCPServer? = nil
+      while line = client.gets('\n')
+        parts = line.chomp.split(" ", 2)
+        command = parts[0]
+        arg = parts[1]?
+        case command
+        when "USER"
+          client.print(login_ok ? "331 Password required\r\n" : "530 Login incorrect\r\n")
+        when "PASS"
+          client.print("230 Login successful\r\n")
+        when "TYPE"
+          client.print("200 Type set to I\r\n")
+        when "PASV"
+          data_server = TCPServer.new("127.0.0.1", 0)
+          dport = data_server.local_address.port
+          client.print("227 Entering Passive Mode (127,0,0,1,#{dport // 256},#{dport % 256})\r\n")
+        when "RETR"
+          if arg == serve_path && (data = data_server.try(&.accept))
+            client.print("150 Opening BINARY mode data connection\r\n")
+            data.print(content)
+            data.close
+            client.print("226 Transfer complete\r\n")
+          else
+            data_server.try(&.accept).try(&.close)
+            client.print("550 Failed to open file.\r\n")
+          end
+        when "QUIT"
+          client.print("221 Goodbye\r\n")
+          break
+        else
+          client.print("502 Command not implemented\r\n")
+        end
+      end
+      client.close
+    rescue
+      # the plugin hung up mid-session; the spec asserts on its result
+    end
+    control.close
+  end
+  Fiber.yield
+  port
+end
+
 describe "get_url plugin" do
   it "downloads a new file" do
     dest = File.tempname("get-url-spec")
@@ -1759,5 +1816,69 @@ describe "get_url plugin" do
     ensure
       File.delete(dest) if dest && File.exists?(dest)
     end
+  end
+end
+
+# Issue 733 (webofmars.ovh-kernel): the role's get_url task points at
+# ftp://ftp.ovh.net/..., which krikri used to reject with "Unsupported
+# scheme: ftp" where urllib's FTPHandler performs a genuine FTP transfer -
+# and, when the server hangs, fails with "ftp error: timeout('timed out')".
+describe "get_url plugin ftp://" do
+  it "downloads over ftp:// through a passive-mode transfer" do
+    port = start_ftp_server
+    dest = File.tempname("get-url-spec")
+
+    result = PluginSpecHelper.run("get_url", {"url" => "ftp://127.0.0.1:#{port}/file.txt", "dest" => dest})
+
+    falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+    result["changed"].as_bool.must_equal(true)
+    File.read(dest).must_equal(FILE_CONTENT)
+    assert_fast_elapsed(result)
+  ensure
+    File.delete(dest) if dest && File.exists?(dest)
+  end
+
+  it "reports a refused control connect as urllib's ftp error wrapping" do
+    closed_server = TCPServer.new("127.0.0.1", 0)
+    closed_port = closed_server.local_address.port
+    closed_server.close
+
+    dest = File.tempname("get-url-spec")
+    result = PluginSpecHelper.run("get_url", {"url" => "ftp://127.0.0.1:#{closed_port}/file.txt", "dest" => dest})
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("Request failed: <urlopen error ftp error: ConnectionRefusedError(111, 'Connection refused')>")
+    result["url"].as_s.must_equal("ftp://127.0.0.1:#{closed_port}/file.txt")
+    result["dest"].as_s.must_equal(dest)
+    assert_fast_elapsed(result)
+    File.exists?(dest).must_equal(false)
+  ensure
+    File.delete(dest) if dest && File.exists?(dest)
+  end
+
+  it "reports a 530 login failure as ftplib's error_perm shape" do
+    port = start_ftp_server(login_ok: false)
+    dest = File.tempname("get-url-spec")
+
+    result = PluginSpecHelper.run("get_url", {"url" => "ftp://127.0.0.1:#{port}/file.txt", "dest" => dest})
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("Request failed: <urlopen error ftp error: error_perm('530 Login incorrect')>")
+    File.exists?(dest).must_equal(false)
+  ensure
+    File.delete(dest) if dest && File.exists?(dest)
+  end
+
+  it "reports a 550 missing-file failure as ftplib's error_perm shape" do
+    port = start_ftp_server(serve_path: "/elsewhere.txt")
+    dest = File.tempname("get-url-spec")
+
+    result = PluginSpecHelper.run("get_url", {"url" => "ftp://127.0.0.1:#{port}/file.txt", "dest" => dest})
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("Request failed: <urlopen error ftp error: error_perm('550 Failed to open file.')>")
+    File.exists?(dest).must_equal(false)
+  ensure
+    File.delete(dest) if dest && File.exists?(dest)
   end
 end
