@@ -175,6 +175,31 @@ describe "strict boolean conditionals" do
     output.wont_include("\"msg\": \"TASK-RAN\"")
   end
 
+  # Issue #728 (bcoca.tidy): `assert: that: "{{item}}"` over literal
+  # with_items entries. The missing name lives only in the failing item's
+  # value, so real's chain gains a third record at that item's own line.
+  it "gives assert that: \"{{item}}\" a third chain record at the failing loop item" do
+    yaml = <<-YAML
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: Verify
+            ansible.builtin.assert:
+              that: "{{item}}"
+            with_items:
+              - 'tidy_path is defined'
+              - '(tidy_expected|length) > 0'
+      YAML
+
+    status, output = run_playbook(yaml)
+
+    status.exit_code.must_equal(2)
+    output.must_include("Error while evaluating conditional.\nOrigin: ")
+    output.must_include("'tidy_expected' is undefined\nOrigin: ")
+    output.must_include("\n10         - '(tidy_expected|length) > 0'\n")
+  end
+
   it "accepts a genuine boolean" do
     status, output = run_playbook(playbook_for("real_bool"))
 
