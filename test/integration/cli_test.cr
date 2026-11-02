@@ -2447,6 +2447,24 @@ describe "krikri-playbook CLI (--check mode)" do
     output.must_include("implicit localhost hostvars smoke test complete!")
   end
 
+  it "serves a delegate_to: localhost delegate_facts: fact through the implicit hostvars['localhost'] entry" do
+    # Issue #755: the implicit-localhost entry was synthesized with only
+    # its static magic vars, so a fact written onto it via
+    # delegate_to: localhost + delegate_facts: true + run_once (the
+    # "compute once, stash on localhost" idiom) was invisible through
+    # hostvars['localhost'] on the very next task - real Ansible
+    # (2.20.1, live-verified) prints the stashed value.
+    status, output = run_playbook(
+      "test-implicit-localhost-delegate-facts-quick.yml",
+      [] of String,
+      inventory: hostvars_inventory_file
+    )
+
+    status.success?.must_equal(true)
+    output.must_include(%("msg": "hello"))
+    output.must_include("implicit localhost delegated facts smoke test complete!")
+  end
+
   it "keeps an explicitly inventory-defined localhost's real vars over the implicit entry" do
     # The other half of Ansible's implicit-localhost contract: when the
     # inventory DOES define localhost, its real entry wins and the

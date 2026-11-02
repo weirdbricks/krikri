@@ -1,0 +1,29 @@
+# Issue #755 regression: a fact stashed with delegate_to: localhost +
+# delegate_facts: true + run_once (Ansible's "compute once, stash on
+# localhost" idiom) must come straight back through
+# hostvars['localhost'] from the play's own hosts - real Ansible
+# (2.20.1, live-verified) prints "hello" for the exact playbook below.
+# The inventory (inventory-hostvars-local.ini, passed by the spec)
+# defines NO localhost, so the entry here is the synthesized implicit
+# one - which is exactly the path the delegated fact used to miss.
+- name: implicit localhost delegated-fact visibility smoke test
+  hosts: h1
+  gather_facts: false
+  vars:
+    ca: "{{ hostvars['localhost']['_ca'] }}"
+
+  tasks:
+    - name: stash a computed value on implicit localhost
+      ansible.builtin.set_fact:
+        _ca: hello
+      run_once: true
+      delegate_to: localhost
+      delegate_facts: true
+
+    - name: read it back through hostvars['localhost']
+      ansible.builtin.debug:
+        msg: "{{ ca }}"
+
+    - name: SUCCESS
+      ansible.builtin.debug:
+        msg: "implicit localhost delegated facts smoke test complete!"

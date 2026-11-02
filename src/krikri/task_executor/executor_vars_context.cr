@@ -1140,6 +1140,16 @@ module Krikri
         implicit["group_names"] = JSON::Any.new(Array(JSON::Any).new)
         implicit["ansible_host"] = JSON::Any.new("localhost")
         implicit["ansible_connection"] = JSON::Any.new("local")
+        # The implicit entry is not one of the loop's inventory hosts, so it
+        # missed the facts/registered/set_facts merge those entries get - but
+        # `delegate_to: localhost` + `delegate_facts: true` (Ansible's
+        # run_once stash idiom, issue #755) writes exactly those stores under
+        # "localhost", and real Ansible serves them straight back through
+        # hostvars['localhost'] (verified live vs 2.20.1). Same precedence
+        # order as the inventory-host entries above: set_facts last.
+        @facts["localhost"]?.try(&.each { |key, value| implicit[key] = value })
+        @registered_vars["localhost"]?.try(&.each { |key, value| implicit[key] = value })
+        @set_facts["localhost"]?.try(&.each { |key, value| implicit[key] = value })
         result["localhost"] = JSON::Any.new(implicit)
       end
       @hostvars_cache = result
