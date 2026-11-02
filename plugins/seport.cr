@@ -91,20 +91,67 @@ module Krikri
         return PluginResult.new(changed: false, failed: true, msg: "Failed to list SELinux port mappings: #{listing[:stderr]}")
       end
 
+      # Real seport.py (supports_check_mode=True) answers "changed" from
+      # read-only libsemanage queries alone and skips add/modify/delete in
+      # check mode - the mutation commands must never run under --check.
+      # This plugin shells out to `semanage`, so check mode has to be
+      # honored here explicitly: otherwise a --check run both mutates the
+      # host and hits the mutation paths' own failure modes (issue #757).
+      check_mode = true?(@params["_ansible_check_mode"]?)
+
+      # Real seport's queries work on (setype, proto) record lists whose
+      # entries are ports or ranges ("22", "1024-32767"): state=present is
+      # changed when the requested port/range is NOT fully covered by an
+      # entry of the TARGET type (_port_is_covered over
+      # get_all_by_type(setype, proto)), and state=absent is changed only
+      # when the port is an exact entry of the target type. The old
+      # containment-based "current type" lookup took the FIRST listing
+      # line whose range contained the port - on modern EL hosts
+      # reserved_port_t's 1-511 range sorts before ssh_port_t's exact
+      # "22", so an already-mapped port 22 took the modify path (a
+      # same-type semanage no-op that still reported changed), and a port
+      # with no exact record but inside another type's range (4999 inside
+      # unreserved_port_t's 1024-32767) took the modify path real semanage
+      # rejects with "ValueError: Port tcp/4999 is not defined".
+      records = parse_port_records(listing[:stdout])
+      target_records = records.select do |record|
+        record[:proto] == proto && record[:setype] == setype
+      end
+
       changed = false
       ports.each do |port|
-        current_type = current_type_for(listing[:stdout], port, proto)
+        request = parse_port_range(port)
+        unless request
+          # Real seport's _parse_port_range int() failure, wrapped by
+          # fail_json's "ExceptionClass: message" prefix.
+          return PluginResult.new(changed: changed, failed: true,
+            msg: "ValueError: invalid literal for int() with base 10: '#{port}'\n")
+        end
 
         if state == "absent"
-          next if current_type.nil? || current_type != setype
+          next unless target_records.any? { |record| record[:entry] == port }
+          if check_mode
+            changed = true
+            next
+          end
           result = remote_exec("semanage port -d -t #{shell_single_quote(setype)} -p #{shell_single_quote(proto)} #{shell_single_quote(port)}")
           unless result[:exit_code] == 0
             return PluginResult.new(changed: changed, failed: true, msg: "Failed to remove port #{port}/#{proto} from #{setype}: #{result[:stderr]}")
           end
           changed = true
         else
-          next if current_type == setype
-          flag = current_type.nil? ? "-a" : "-m"
+          next if target_records.any? { |record| record[:lo] <= request[:lo] && request[:hi] <= record[:hi] }
+          if check_mode
+            changed = true
+            next
+          end
+          # Real seport picks add vs modify from an EXACT (low, high,
+          # proto) record lookup (semanage_port_get_type), never from
+          # range containment: a port with no exact record takes the add
+          # path, which real semanage accepts even for ports an existing
+          # policy range covers.
+          exact = records.find { |record| record[:proto] == proto && record[:lo] == request[:lo] && record[:hi] == request[:hi] }
+          flag = exact ? "-m" : "-a"
           result = remote_exec("semanage port #{flag} -t #{shell_single_quote(setype)} -p #{shell_single_quote(proto)} #{shell_single_quote(port)}")
           unless result[:exit_code] == 0
             return PluginResult.new(changed: changed, failed: true, msg: "Failed to set port #{port}/#{proto} to #{setype}: #{result[:stderr]}")
@@ -118,25 +165,35 @@ module Krikri
 
     # `semanage port -l` prints one type per line, e.g.
     # "http_port_t     tcp      80, 81, 443, 488, 1988, 8008, 8009, 8443, 9000"
-    # Returns the SELinux type currently owning *port* for *proto*, or
-    # nil if it isn't mapped anywhere yet.
-    private def current_type_for(listing : String, port : String, proto : String) : String?
+    # - one record per port/range entry, with the entry kept verbatim for
+    # real seport's exact-string absent comparison.
+    private def parse_port_records(listing : String) : Array(NamedTuple(setype: String, proto: String, entry: String, lo: Int32, hi: Int32))
+      records = [] of NamedTuple(setype: String, proto: String, entry: String, lo: Int32, hi: Int32)
       listing.each_line do |line|
         parts = line.split(/\s+/, 3)
         next if parts.size < 3
         setype, line_proto, port_list = parts[0], parts[1], parts[2]
-        next unless line_proto.downcase == proto.downcase
-        matches = port_list.split(',').map(&.strip).any? do |entry|
-          if entry.includes?('-')
-            lo, hi = entry.split('-', 2).map(&.to_i?)
-            lo && hi && port.to_i? && lo <= port.to_i && port.to_i <= hi
-          else
-            entry == port
-          end
+        port_list.split(',').each do |entry|
+          entry = entry.strip
+          next if entry.empty?
+          range = parse_port_range(entry)
+          next unless range
+          records << {setype: setype, proto: line_proto.downcase, entry: entry,
+                      lo: range[:lo], hi: range[:hi]}
         end
-        return setype if matches
       end
-      nil
+      records
+    end
+
+    # Real seport's _parse_port_range: a port or "low-high" range string
+    # as (low, high); nil for anything int() would reject.
+    private def parse_port_range(port : String) : NamedTuple(lo: Int32, hi: Int32)?
+      parts = port.split("-", 2)
+      lo = parts[0].to_i?
+      return nil unless lo
+      hi = parts.size == 2 ? parts[1].to_i? : lo
+      return nil unless hi
+      {lo: lo, hi: hi}
     end
   end
 end
