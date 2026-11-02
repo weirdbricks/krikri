@@ -129,6 +129,24 @@ module Krikri
         if null_carry_file_lookup && sole_span_none_value?(literal)
           return LOOKUP_NONE_TERM
         end
+        # Ansible re-renders a double-templated lookup-term constant under
+        # its strict-undefined environment, so an undefined variable inside
+        # the term fails the templating there ("Error while resolving value
+        # for 'msg': 'ssh_key' is undefined") instead of silently degrading
+        # the term to '' and feeding the lookup plugin an empty argument.
+        # The lenient #render! below cannot detect this (it renders a
+        # missing name to "" and moves on), so the strict-undefined probe
+        # answers it - nil when the term consumes no undefined value (a
+        # defined variable, a `| default(...)` guard) and the old behavior
+        # stands. Skipped when the constant itself carries a lookup/query
+        # call: the probe's strict render would EXECUTE it, and the real
+        # render below would execute it again (the no-double-execute
+        # convention the strict probes everywhere else in this evaluator
+        # follow).
+        if !Krikri.probe_has_side_effecting_call?(literal) &&
+           (message = JinjaRenderer.strict_render_undefined_message(literal, @vars))
+          raise UndefinedVariableError.new(message)
+        end
         rendered = jinja_renderer.render!(literal)
         # A render that comes back CONTAINER-shaped (the term named a list
         # or dict variable, so the render emits its Python repr or JSON
@@ -145,6 +163,12 @@ module Krikri
         # container's native type.
         return part if rerender_container_shaped?(rendered)
         "#{quote}#{rendered}#{quote}"
+      rescue e : UndefinedVariableError
+        # The strict-undefined raise above must reach the task-arg
+        # finalization that words ansible's failure message - swallowing it
+        # back into the lenient `part` here is the exact bug this probe
+        # exists to fix.
+        raise e
       rescue
         part
       end
