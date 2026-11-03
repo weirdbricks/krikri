@@ -57,10 +57,9 @@ module Krikri
   #   (`--ignore-dependencies`) when explicitly set false; true adds
   #   nothing (modern rubygems installs dependencies by default with no
   #   flag needed)
-  # - norc: `--norc` - Ansible gates this on the installed rubygems
-  #   version being >= 2.5.2; not replicated here (a rubygems that old
-  #   predates any real playbook this project has benchmarked against by
-  #   a decade-plus) - always added when requested
+  # - norc: `--norc` - Ansible's param defaults to True and is gated on
+  #   the RubyGems version (>= 2.5.2, unparseable probe output
+  #   disables); mirrored here, default True included
   #
   # Verified against real community.general gem.py's own `install`/
   # `uninstall`/`common_opts` source directly (flag order included), via
@@ -159,6 +158,7 @@ module Krikri
         end
         result = remote_exec(cmd)
         return PluginHelpers::RunCommandFailure.nonzero_exit(cmd, result[:exit_code], result[:stdout], result[:stderr]) unless result[:exit_code] == 0
+        parse_rubygems_version(result[:stdout])
         nil
       else
         found = find_binary("gem")
@@ -167,6 +167,7 @@ module Krikri
         @gem_path = found
         result = remote_exec("#{found} --version")
         return PluginHelpers::RunCommandFailure.nonzero_exit("#{found} --version", result[:exit_code], result[:stdout], result[:stderr]) unless result[:exit_code] == 0
+        parse_rubygems_version(result[:stdout])
         nil
       end
     end
@@ -174,6 +175,32 @@ module Krikri
     EXTRA_BIN_DIRS = %w[/sbin /usr/sbin /usr/local/sbin]
     @searched_paths = ""
     @gem_path = "gem"
+    @rubygems_version : {Int32, Int32, Int32}?
+
+    # Real get_rubygems_version: RE_VERSION = ^\d+\.\d+\.\d+ matched at
+    # the START of `gem --version`'s output (a bare "3.3.5" - any
+    # non-numeric prefix makes the match fail, and ver None disables
+    # --norc everywhere below). The parsed tuple gates --norc.
+    private def parse_rubygems_version(output : String) : Nil
+      if match = output.match(/^(\d+)\.(\d+)\.(\d+)/)
+        @rubygems_version = {match[1].to_i, match[2].to_i, match[3].to_i}
+      end
+    end
+
+    # Real norc handling: the module param defaults to True and is
+    # ANDed with the RubyGems version gate (ver >= 2.5.2, ver None
+    # disables) - make_runner picks the fmt once from the probe result.
+    # krikri previously defaulted the param to False and never gated,
+    # so a default-param install/uninstall/list never carried --norc
+    # where real's every command did.
+    private def effective_norc : Bool
+      (@params["norc"]?.nil? || true?(@params["norc"]?)) && rubygems_at_least(2, 5, 2)
+    end
+
+    private def rubygems_at_least(major : Int32, minor : Int32, patch : Int32) : Bool
+      ver = @rubygems_version
+      !ver.nil? && ver >= {major, minor, patch}
+    end
 
     # get_bin_path on the target: opt_dirs (none here) + $PATH + the sbin
     # dirs real appends when missing from PATH. Returns the first
@@ -204,7 +231,10 @@ module Krikri
     # suffixes (everything after the first token) stripped - and then an
     # exact-string membership test for the version param.
     private def list_versions(executable : String?, name : String, remote : Bool) : Array(String)
-      cmd = %Q(#{gem_binary(executable)} list --norc #{remote ? "--remote " : ""}"^#{name}$")
+      # Real list args_order: list, norc, [--remote], [repository],
+      # ^name$ - the name pattern is an argv element, so the joined cmd
+      # shows it unquoted.
+      cmd = "#{gem_binary(executable)} list#{effective_norc ? " --norc" : ""} #{remote ? "--remote " : ""}^#{name}$"
       result = remote_exec(cmd)
       PluginHelpers::GemCommand.parse_list_versions(result[:stdout])
     end
@@ -225,12 +255,18 @@ module Krikri
 
       cmd = PluginHelpers::GemCommand.install_command(
         gem_binary(executable), name, version, user_install, bindir,
-        @params["repository"]?, include_dependencies, true?(@params["norc"]?)
+        @params["repository"]?, include_dependencies, effective_norc
       )
 
       result = remote_exec(cmd)
       unless result[:exit_code] == 0
-        return PluginResult.new(changed: false, failed: true, msg: "Failed to install gem: #{result[:stderr]}", stdout: result[:stdout], stderr: result[:stderr])
+        # Ansible's gem module runs every gem command through
+        # AnsibleModule.run_command(check_rc=True), so an install failure
+        # surfaces basic.py's own payload shape - msg is stderr.rstrip()
+        # (no "Failed to install gem:" wrapper, trailing newline dropped)
+        # plus the cmd/rc/stdout/stderr keys and the display's *_lines
+        # splits - not a module-composed message.
+        return PluginHelpers::RunCommandFailure.nonzero_exit(cmd, result[:exit_code], result[:stdout], result[:stderr])
       end
 
       gem_success(true, name, version)
@@ -239,10 +275,13 @@ module Krikri
     private def remove(executable : String?, name : String, version : String?) : PluginResult
       return gem_success(false, name, version) unless installed?(executable, name, version)
 
-      result = remote_exec(PluginHelpers::GemCommand.uninstall_command(gem_binary(executable), name, version, true?(@params["norc"]?)))
+      cmd = PluginHelpers::GemCommand.uninstall_command(gem_binary(executable), name, version, effective_norc)
+      result = remote_exec(cmd)
 
       unless result[:exit_code] == 0
-        return PluginResult.new(changed: false, failed: true, msg: "Failed to uninstall gem: #{result[:stderr]}")
+        # Same run_command(check_rc=True) failure shape as install -
+        # ansible's uninstall path fails through the very same helper.
+        return PluginHelpers::RunCommandFailure.nonzero_exit(cmd, result[:exit_code], result[:stdout], result[:stderr])
       end
 
       gem_success(true, name, version)

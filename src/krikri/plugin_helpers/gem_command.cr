@@ -2,9 +2,14 @@ module Krikri
   module PluginHelpers
     # GemCommand - pure logic for building `gem install`/`gem uninstall`
     # command lines. No I/O here - the plugin itself runs the resulting
-    # commands. Verified against real community.general gem.py's own
-    # `install`/`uninstall`/`common_opts` source directly (flag order
-    # included), not assumed from ansible-doc.
+    # commands. Verified against real community.general gem.py's CmdRunner
+    # arg_formats/args_order (flag order included), and against the argv a
+    # logging shim observed real ansible-playbook feed `gem` (the *joined*
+    # argv is what a run_command failure reports as its `cmd` - krikri
+    # shells these through bash, so the strings here must both work as
+    # shell and READ like ansible's space-joined argv, hence the unquoted
+    # `--version`/name pattern: gem versions and names carry no shell
+    # metacharacters).
     module GemCommand
       def self.install_command(
         executable : String, name : String, version : String?,
@@ -14,7 +19,7 @@ module Krikri
         String.build do |io|
           io << executable << " install"
           io << " --norc" if norc
-          io << " -v \"" << version << "\"" if version
+          io << " --version " << version if version
           io << " --source \"" << repository << "\"" if repository
           io << " --ignore-dependencies" unless include_dependencies
           io << (user_install ? " --user-install" : " --no-user-install")
@@ -25,11 +30,20 @@ module Krikri
       end
 
       def self.uninstall_command(executable : String, name : String, version : String?, norc : Bool) : String
+        # Real uninstall's args_order: subcmd, norc, install_dir, bindir,
+        # version (--version X, or --all when no version), --executable
+        # (as_fixed - always emitted), force (only when the force param is
+        # set - krikri's remove() has no force), name.
         String.build do |io|
           io << executable << " uninstall"
           io << " --norc" if norc
-          io << " " << name << " --executables --force"
-          io << " -v \"" << version << "\"" if version
+          if version
+            io << " --version " << version
+          else
+            io << " --all"
+          end
+          io << " --executable"
+          io << " " << name
         end
       end
 
