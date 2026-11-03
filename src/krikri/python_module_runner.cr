@@ -744,6 +744,11 @@ module Krikri
       File.write(common_init, "")
       File.write(text_init, "")
       File.write(File.join(work_dir, "ansible", "module_utils", "common", "text", "converters.py"), CONVERTERS_PY_SHIM)
+      File.write(File.join(work_dir, "ansible", "module_utils", "common", "dict_transformations.py"), DICT_TRANSFORMATIONS_PY_SHIM)
+      parsing_init = File.join(work_dir, "ansible", "module_utils", "parsing", "__init__.py")
+      Dir.mkdir_p(File.dirname(parsing_init))
+      File.write(parsing_init, "")
+      File.write(File.join(work_dir, "ansible", "module_utils", "parsing", "convert_bool.py"), CONVERT_BOOL_PY_SHIM)
     end
 
     # ansible-core vendors the python-distro project inside module_utils
@@ -977,6 +982,169 @@ module Krikri
 
       def to_basestring(value):
           return to_text(value)
+      PYTHON
+
+    # The dict-conversion helpers ansible-core ships at
+    # ansible/module_utils/common/dict_transformations - the camel/snake
+    # dict converters most amazon.aws-style modules run their facts
+    # through. A custom module importing it at top level (issue #779)
+    # died with ModuleNotFoundError: No module named
+    # 'ansible.module_utils.common.dict_transformations' on a target
+    # where the shim bundle stood in for ansible-core, while Ansible -
+    # which bundles every module_utils import into the AnsiballZ
+    # payload - ran the module fine. Adopted from ansible-core's own
+    # file (same GPL-3.0 family) so the conversion semantics - the
+    # ARNs-pluralization case in _camel_to_snake, the reversible flag,
+    # recursive_diff's TypeError shape - match exactly rather than
+    # approximately.
+    DICT_TRANSFORMATIONS_PY_SHIM = <<-PYTHON
+      import re
+      from collections.abc import MutableMapping
+      from copy import deepcopy
+
+
+      def camel_dict_to_snake_dict(camel_dict, reversible=False, ignore_list=()):
+          def value_is_list(camel_list):
+              checked_list = []
+              for item in camel_list:
+                  if isinstance(item, dict):
+                      checked_list.append(camel_dict_to_snake_dict(item, reversible))
+                  elif isinstance(item, list):
+                      checked_list.append(value_is_list(item))
+                  else:
+                      checked_list.append(item)
+              return checked_list
+
+          snake_dict = {}
+          for k, v in camel_dict.items():
+              if isinstance(v, dict) and k not in ignore_list:
+                  snake_dict[_camel_to_snake(k, reversible=reversible)] = camel_dict_to_snake_dict(v, reversible)
+              elif isinstance(v, list) and k not in ignore_list:
+                  snake_dict[_camel_to_snake(k, reversible=reversible)] = value_is_list(v)
+              else:
+                  snake_dict[_camel_to_snake(k, reversible=reversible)] = v
+          return snake_dict
+
+
+      def snake_dict_to_camel_dict(snake_dict, capitalize_first=False):
+          def camelize(complex_type, capitalize_first=False):
+              if complex_type is None:
+                  return
+              new_type = type(complex_type)()
+              if isinstance(complex_type, dict):
+                  for key in complex_type:
+                      new_type[_snake_to_camel(key, capitalize_first)] = camelize(complex_type[key], capitalize_first)
+              elif isinstance(complex_type, list):
+                  for i in range(len(complex_type)):
+                      new_type.append(camelize(complex_type[i], capitalize_first))
+              else:
+                  return complex_type
+              return new_type
+
+          return camelize(snake_dict, capitalize_first)
+
+
+      def _snake_to_camel(snake, capitalize_first=False):
+          if capitalize_first:
+              return ''.join(x.capitalize() or '_' for x in snake.split('_'))
+          else:
+              return snake.split('_')[0] + ''.join(x.capitalize() or '_' for x in snake.split('_')[1:])
+
+
+      def _camel_to_snake(name, reversible=False):
+          def prepend_underscore_and_lower(m):
+              return '_' + m.group(0).lower()
+
+          if reversible:
+              upper_pattern = r'[A-Z]'
+          else:
+              # Cope with pluralized abbreviations such as TargetGroupARNs
+              # that would otherwise be rendered target_group_ar_ns
+              upper_pattern = r'[A-Z]{3,}s$'
+
+          s1 = re.sub(upper_pattern, prepend_underscore_and_lower, name)
+          # Handle when there was nothing before the plural_pattern
+          if s1.startswith("_") and not name.startswith("_"):
+              s1 = s1[1:]
+          if reversible:
+              return s1
+
+          first_cap_pattern = r'(.)([A-Z][a-z]+)'
+          all_cap_pattern = r'([a-z0-9])([A-Z]+)'
+          s2 = re.sub(first_cap_pattern, r'\\1_\\2', s1)
+          return re.sub(all_cap_pattern, r'\\1_\\2', s2).lower()
+
+
+      def dict_merge(a, b):
+          if not isinstance(b, dict):
+              return b
+          result = deepcopy(a)
+          for k, v in b.items():
+              if k in result and isinstance(result[k], dict):
+                  result[k] = dict_merge(result[k], v)
+              else:
+                  result[k] = deepcopy(v)
+          return result
+
+
+      def recursive_diff(dict1, dict2):
+          if not all((isinstance(item, MutableMapping) for item in (dict1, dict2))):
+              raise TypeError("Unable to diff 'dict1' %s and 'dict2' %s. "
+                              "Both must be a dictionary." % (type(dict1), type(dict2)))
+
+          left = dict((k, v) for (k, v) in dict1.items() if k not in dict2)
+          right = dict((k, v) for (k, v) in dict2.items() if k not in dict1)
+          for k in (set(dict1.keys()) & set(dict2.keys())):
+              if isinstance(dict1[k], dict) and isinstance(dict2[k], dict):
+                  result = recursive_diff(dict1[k], dict2[k])
+                  if result:
+                      left[k] = result[0]
+                      right[k] = result[1]
+              elif dict1[k] != dict2[k]:
+                  left[k] = dict1[k]
+                  right[k] = dict2[k]
+          if left or right:
+              return left, right
+          return None
+      PYTHON
+
+    # ansible.module_utils.parsing.convert_bool - the BOOLEANS_TRUE/
+    # BOOLEANS_FALSE tables and boolean() converter, which custom modules
+    # import directly when they parse a loose boolean themselves (the
+    # same tables this engine's own argspec validator emulates). Surveyed
+    # beside issue #779 as the other small pure module_utils file a
+    # role-private module most often imports that the shim bundle lacked;
+    # adopted from ansible-core's own file minus the _no_six deprecation
+    # hook (a py2-compat remnant no py3 module path exercises).
+    CONVERT_BOOL_PY_SHIM = <<-PYTHON
+      import collections.abc
+
+      from ansible.module_utils.common.text.converters import to_text
+
+
+      BOOLEANS_TRUE = frozenset(('y', 'yes', 'on', '1', 'true', 't', 1, 1.0, True))
+      BOOLEANS_FALSE = frozenset(('n', 'no', 'off', '0', 'false', 'f', 0, 0.0, False))
+      BOOLEANS = BOOLEANS_TRUE.union(BOOLEANS_FALSE)
+
+
+      def boolean(value, strict=True):
+          if isinstance(value, bool):
+              return value
+
+          normalized_value = value
+
+          if isinstance(value, (str, bytes)):
+              normalized_value = to_text(value, errors='surrogate_or_strict').lower().strip()
+
+          if not isinstance(value, collections.abc.Hashable):
+              normalized_value = None
+
+          if normalized_value in BOOLEANS_TRUE:
+              return True
+          elif normalized_value in BOOLEANS_FALSE or not strict:
+              return False
+
+          raise TypeError("The value '%s' is not a valid boolean. Valid booleans include: %s" % (to_text(value), ', '.join(repr(i) for i in BOOLEANS)))
       PYTHON
 
     # Parses the module's stdout into its result JSON: Ansible modules

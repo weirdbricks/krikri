@@ -1122,6 +1122,86 @@ describe Krikri::PythonModuleRunner do
     parsed["region"].as_s.must_equal("spec-default")
   end
 
+  it "shim provides ansible.module_utils.common.dict_transformations for modules importing camel_dict_to_snake_dict" do
+    skip("python3 not available") unless File.exists?("/usr/bin/python3")
+    # The exact shape that hard-failed issue #779: a custom module imports
+    # camel_dict_to_snake_dict from
+    # ansible.module_utils.common.dict_transformations at top level and
+    # the shim bundle stood in for ansible-core - real ansible bundles
+    # the file into the AnsiballZ payload and runs the module fine
+    # (live-verified vs ansible-playbook), while the module died with
+    # ModuleNotFoundError: No module named
+    # 'ansible.module_utils.common.dict_transformations' before any
+    # result JSON. The camel/snake round trip and the ARNs
+    # pluralization case below are the semantics real's own
+    # dict_transformations.py ships.
+    work_dir = File.join(Dir.tempdir, "krikri-shim-spec-#{Random.rand(1_000_000)}")
+    Dir.mkdir_p(work_dir)
+    Krikri::PythonModuleRunner.write_module_utils_bundle(work_dir)
+    module_path = File.join(work_dir, "dict_trans_spec.py")
+    File.write(module_path, "from ansible.module_utils.basic import AnsibleModule\n" \
+                            "from ansible.module_utils.common.dict_transformations import camel_dict_to_snake_dict, snake_dict_to_camel_dict, dict_merge, recursive_diff\n" \
+                            "snake = camel_dict_to_snake_dict({'FooBar': 1, 'TargetGroupARNs': [2], 'Sub': {'BazQux': 3}})\n" \
+                            "camel = snake_dict_to_camel_dict({'foo_bar': 1}, capitalize_first=True)\n" \
+                            "merged = dict_merge({'a': {'x': 1}}, {'a': {'y': 2}, 'b': 3})\n" \
+                            "diffed = recursive_diff({'a': 1, 'b': 1}, {'b': 2, 'c': 3})\n" \
+                            "module = AnsibleModule(argument_spec={})\n" \
+                            "module.exit_json(changed=False, snake=snake, camel=camel, merged=merged, diffed=diffed)\n")
+    stdout_io = IO::Memory.new
+    err = IO::Memory.new
+    status = Process.run("/usr/bin/python3", [module_path],
+      input: IO::Memory.new(%({"ANSIBLE_MODULE_ARGS": {}})),
+      output: stdout_io, error: err)
+    FileUtils.rm_r(work_dir)
+    status.success?.must_equal(true)
+    err.to_s.wont_include("ModuleNotFoundError")
+    parsed = Krikri::PythonModuleRunner.parse_module_output(stdout_io.to_s).not_nil!
+    parsed["snake"].as_h["foo_bar"].as_i.must_equal(1)
+    parsed["snake"].as_h["sub"].as_h["baz_qux"].as_i.must_equal(3)
+    parsed["snake"].as_h["target_group_arns"].as_a.size.must_equal(1)
+    parsed["camel"].as_h["FooBar"].as_i.must_equal(1)
+    parsed["merged"].as_h["a"].as_h["y"].as_i.must_equal(2)
+    parsed["merged"].as_h["b"].as_i.must_equal(3)
+    parsed["diffed"].as_a[0].as_h["a"].as_i.must_equal(1)
+    parsed["diffed"].as_a[1].as_h["b"].as_i.must_equal(2)
+    parsed["diffed"].as_a[1].as_h["c"].as_i.must_equal(3)
+  end
+
+  it "shim provides ansible.module_utils.parsing.convert_bool for modules importing boolean" do
+    skip("python3 not available") unless File.exists?("/usr/bin/python3")
+    # Surveyed beside issue #779 (dict_transformations) as the other
+    # small pure module_utils file a role-private module imports
+    # directly that the shim bundle lacked: real ansible ships
+    # BOOLEANS_TRUE/BOOLEANS_FALSE and boolean() in every payload, so a
+    # module doing `from ansible.module_utils.parsing.convert_bool
+    # import boolean` runs fine there and died with ModuleNotFoundError
+    # here. strict=False falls back to False for an unrecognized value
+    # the way real's converter does.
+    work_dir = File.join(Dir.tempdir, "krikri-shim-spec-#{Random.rand(1_000_000)}")
+    Dir.mkdir_p(work_dir)
+    Krikri::PythonModuleRunner.write_module_utils_bundle(work_dir)
+    module_path = File.join(work_dir, "convert_bool_spec.py")
+    File.write(module_path, "from ansible.module_utils.basic import AnsibleModule\n" \
+                            "from ansible.module_utils.parsing.convert_bool import BOOLEANS_TRUE, boolean\n" \
+                            "module = AnsibleModule(argument_spec={})\n" \
+                            "module.exit_json(changed=False, yes=boolean('YES'), one=boolean(1),\n" \
+                            "                 lenient=boolean('maybe', strict=False),\n" \
+                            "                 truthy='y' in BOOLEANS_TRUE)\n")
+    stdout_io = IO::Memory.new
+    err = IO::Memory.new
+    status = Process.run("/usr/bin/python3", [module_path],
+      input: IO::Memory.new(%({"ANSIBLE_MODULE_ARGS": {}})),
+      output: stdout_io, error: err)
+    FileUtils.rm_r(work_dir)
+    status.success?.must_equal(true)
+    err.to_s.wont_include("ModuleNotFoundError")
+    parsed = Krikri::PythonModuleRunner.parse_module_output(stdout_io.to_s).not_nil!
+    parsed["yes"].as_bool.must_equal(true)
+    parsed["one"].as_bool.must_equal(true)
+    parsed["lenient"].as_bool.must_equal(false)
+    parsed["truthy"].as_bool.must_equal(true)
+  end
+
   # ---- collection imports on the module's PYTHONPATH (issue #692) ----
 
   it "maps collection roots to PYTHONPATH entries that expose ansible_collections" do
