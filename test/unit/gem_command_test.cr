@@ -28,24 +28,29 @@ describe Krikri::PluginHelpers::GemCommand do
       cmd.must_equal(%(gem install --norc --user-install --no-document rake))
     end
 
-    it "matches Ansible's gem module's own flag order: install, [--norc], [-v], [--source], [--ignore-dependencies], [user-install], [--bindir], --no-document, name" do
+    it "matches Ansible's gem module's own flag order: install, [--norc], [--version], [--source], [--ignore-dependencies], [user-install], [--bindir], --no-document, name" do
       cmd = Krikri::PluginHelpers::GemCommand.install_command(
         "gem", "rake", "13.0.6", false, "/opt/bin", "https://example.com", false, true
       )
-      cmd.must_equal(%(gem install --norc -v "13.0.6" --source "https://example.com" --ignore-dependencies --no-user-install --bindir "/opt/bin" --no-document rake))
+      cmd.must_equal(%(gem install --norc --version 13.0.6 --source "https://example.com" --ignore-dependencies --no-user-install --bindir "/opt/bin" --no-document rake))
     end
   end
 
   describe ".uninstall_command" do
+    # Real uninstall's CmdRunner args_order: subcmd, norc, install_dir,
+    # bindir, version (--version X, or --all without), --executable
+    # (always), force (only when the module's force param is set), name.
+    # Shim-logged against real ansible-playbook 2.17 + latest
+    # community.general (the argv real fed `gem`).
     it "builds the base uninstall command" do
       Krikri::PluginHelpers::GemCommand.uninstall_command("gem", "rake", nil, false).must_equal(
-        "gem uninstall rake --executables --force"
+        "gem uninstall --all --executable rake"
       )
     end
 
-    it "adds --norc and -v" do
+    it "adds --norc and --version" do
       Krikri::PluginHelpers::GemCommand.uninstall_command("gem", "rake", "13.0.6", true).must_equal(
-        %(gem uninstall --norc rake --executables --force -v "13.0.6")
+        "gem uninstall --norc --version 13.0.6 --executable rake"
       )
     end
   end
