@@ -155,6 +155,22 @@ module Krikri
       entry["action_level"]?.try(&.as_bool?) ? :action : :module
     end
 
+    # The declared type of one module option from the argspec table
+    # ("raw", "str", "list", ... - AnsibleModule's implicit default is
+    # str), or nil when the module or option is unknown to the table.
+    # Lets non-validation callers (the parser's mode-octal rescue) ask
+    # how the real module would interpret a value without duplicating
+    # the table.
+    def option_type(module_name : String, option : String) : String?
+      entry = table[module_name]?
+      return nil unless entry
+      options = entry["options"]?.try(&.as_h?)
+      return nil unless options
+      spec = options[option]?
+      return nil unless spec
+      spec["type"]?.try(&.as_s?) || "str"
+    end
+
     # The action-plugin-level failures whose text is not a spec-check
     # message (Ansible's action plugins check these before the module's own
     # AnsibleModule init runs), keyed by module; every one of these

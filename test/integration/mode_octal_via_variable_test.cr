@@ -201,4 +201,41 @@ describe "mode: piped through a variable that's itself an unquoted-octal YAML li
     File.delete(playbook) if playbook && File.exists?(playbook)
     Dir.delete(dir) if dir && Dir.exists?(dir)
   end
+
+  it "keeps a non-permission async_status mode's decimal text, literal and templated" do
+    # The octal rescue is scoped to the permission-style modules by the
+    # real argspec: async_status's `mode` is a str-typed choices param
+    # (status/cleanup), so real ansible-playbook fails
+    # `async_status: mode: 36` with "got: 36" (live-verified vs 2.19.11)
+    # - not the octal reformat "got: 044" krikri used to print, for the
+    # literal AND the bare-`{{ }}` templated int (issue #759).
+    playbook = File.tempname("async-status-mode", ".yml")
+    File.write(playbook, <<-YAML)
+      - name: repro
+        hosts: localhost
+        gather_facts: false
+        vars:
+          m: 36
+        tasks:
+          - name: literal int mode
+            ansible.builtin.async_status:
+              jid: unxbnm
+              mode: 36
+            ignore_errors: true
+          - name: templated int mode
+            ansible.builtin.async_status:
+              jid: unxbnm
+              mode: "{{ m }}"
+            ignore_errors: true
+    YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+    status.success?.must_equal(true)
+    text = output.to_s
+    text.must_include("value of mode must be one of: status, cleanup, got: 36")
+    text.wont_include("got: 044")
+  ensure
+    File.delete(playbook) if playbook && File.exists?(playbook)
+  end
 end

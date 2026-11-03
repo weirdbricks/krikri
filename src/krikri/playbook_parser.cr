@@ -8,6 +8,7 @@ require "./module_registry"
 require "./loop_resolver"
 require "./python_module_runner"
 require "./role_loader"
+require "./argspec_validator"
 require "./role_bool_keywords"
 require "./task_executor/error_block"
 require "./vault"
@@ -6740,6 +6741,24 @@ module Krikri
     # is meaningful there - see #parse_module_params.
     DOCKER_CONTAINER_LIST_PARAMS = {"community.docker.docker_container", "docker_container"}
 
+    # Whether the YAML-octal rescue for an integer mode:/directory_mode:
+    # literal should fire for this module. The rescue exists for the
+    # permission-style modules whose argspec declares the option
+    # `type: raw` (file/copy/template...) - those reinterpret the int
+    # through `'%04o'` as a permission. A module whose `mode` is an
+    # ordinary typed option must keep the int's DECIMAL text instead:
+    # async_status's `mode` is a str-typed choices param (status/cleanup),
+    # and real ansible-playbook's invalid-choice error for
+    # `async_status: mode: 36` echoes "got: 36" - the unconditioned octal
+    # wire made krikri report "got: 044" there (issue #759). A module the
+    # argspec table doesn't know keeps the old always-convert behavior, so
+    # a table coverage gap can't newly corrupt a real permission mode.
+    private def self.mode_octal_rescue_applies?(module_name : String, option : String) : Bool
+      spec_type = ArgspecValidator.option_type(module_name, option)
+      return true unless spec_type
+      spec_type == "raw"
+    end
+
     private def self.parse_module_params(yaml : YAML::Any, module_name : String) : Hash(String, String)
       params = Hash(String, String).new
 
@@ -6975,7 +6994,7 @@ module Krikri
             # comma-join invariant) and keeps its native type there;
             # dict members do the same.
             params[key.to_s] = list.map { |item| marked_list_member(item) }.join(",")
-          elsif key.to_s.in?({"mode", "directory_mode"}) && (raw = value.raw).is_a?(Int64 | Int32)
+          elsif key.to_s.in?({"mode", "directory_mode"}) && (raw = value.raw).is_a?(Int64 | Int32) && mode_octal_rescue_applies?(module_name, key.to_s)
             # `mode: 0770` (unquoted, no string quotes - the way most
             # real playbooks write it) is genuinely ambiguous YAML: 1.1's
             # spec treats a leading-zero unquoted scalar as octal
