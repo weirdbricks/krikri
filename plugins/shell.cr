@@ -4,6 +4,7 @@ require "json"
 require "../src/krikri/base_plugin"
 require "../src/krikri/plugin_helpers/ansible_arg_validation"
 require "../src/krikri/plugin_helpers/script_pty_capture"
+require "../src/krikri/plugin_helpers/pty_command_runner"
 
 module Krikri
   # Shell Plugin - Execute shell commands with full shell features
@@ -426,13 +427,34 @@ module Krikri
         remote_command, pty_merge
       )
 
+      # Under that merge the capture should also be a REAL pty, the way
+      # real's `ssh -tt` session is: a pty changes how isatty-sensitive
+      # programs behave, not just how their two streams interleave - apt
+      # switches to its colored progress meter and drops the "does not
+      # have a stable CLI interface" warning only when stdout is a tty
+      # (issue #775), and no post-hoc shaping can reproduce either side
+      # of that from a pipe capture. The runner allocates the pty on the
+      # target (this process runs there), returns the merged master-side
+      # capture with an empty stderr, and marks the result so the
+      # executor's raw_remote_pty_shape keeps the already-ONLCR'd stdout
+      # instead of re-applying the emulation; it returns nil - before
+      # anything is spawned - on a pty-less target, where the 2>&1
+      # emulation below stays the capture.
+      pty_result = nil
+      if pty_merge
+        pty_result = PluginHelpers::PtyCommandRunner.exec(
+          remote_command, env: task_environment
+        )
+      end
+
       # force_shell: the shell module's string is ALWAYS interpreted by
       # the shell on the target, even when it has no metacharacters -
       # without this, a builtin-only command like `command -v foo`
       # would be argv-split and direct-exec'd (and fail: there is no
       # `command` binary), where Ansible's shell module always
       # runs it through /bin/sh.
-      result = remote_exec(remote_command, force_shell: true)
+      result = pty_result || remote_exec(remote_command, force_shell: true)
+      real_pty = !pty_result.nil?
 
       # Build diff data if diff mode enabled
       diff_data = nil
@@ -475,7 +497,7 @@ module Krikri
       final_stdout = strip_empty_ends ? result[:stdout].rstrip("\r\n") : result[:stdout]
       final_stderr = strip_empty_ends ? result[:stderr].rstrip("\r\n") : result[:stderr]
 
-      PluginResult.new(
+      raw_result = PluginResult.new(
         changed: true,
         failed: result[:exit_code] != 0,
         msg: result[:exit_code] == 0 ? "" : "non-zero return code",
@@ -495,6 +517,12 @@ module Krikri
         # FAILED_KEY_ORDER (Ansible's separate failure shape).
         key_order: result[:exit_code] == 0 ? SUCCESS_KEY_ORDER : FAILED_KEY_ORDER
       )
+      # Internal marker for the executor's raw_remote_pty_shape: a real-pty
+      # capture's stdout is already the merged, ONLCR'd stream, so the
+      # shaping must keep it verbatim (and strip this key back off) rather
+      # than re-applying the pipe-capture emulation.
+      raw_result.extra["_krikri_real_pty"] = JSON::Any.new(true) if real_pty
+      raw_result
     end
 
     # Parses `argv:`'s JSON-array text into its literal argument list -
