@@ -73,6 +73,37 @@ describe "yum_repository plugin" do
     File.exists?(repo_path("myrepo")).must_equal(false)
   end
 
+  # Python's os.path.join drops everything before an absolute component, so
+  # an absolute `file:` is used as-is (plus .repo) and reposdir is discarded
+  # entirely - Crystal's File.join concatenates instead, which doubled the
+  # reposdir onto the already-absolute path (issue #782).
+  it "uses an absolute file: as-is instead of joining reposdir onto it" do
+    abs_file = File.join(repo_dir, "absfile")
+
+    PluginSpecHelper.run("yum_repository", {
+      "name" => "absrepo", "description" => "d", "baseurl" => "https://example.com",
+      "file" => abs_file, "reposdir" => repo_dir,
+    })
+
+    File.exists?("#{abs_file}.repo").must_equal(true)
+    File.exists?(repo_path("absrepo")).must_equal(false)
+  end
+
+  # The module's diff dict always carries before_header/after_header keys,
+  # and Ansible's callback prefixes every header carried under such a key
+  # with "before: "/"after: " (CallbackBase._get_diff) - so the displayed
+  # header is `--- before: <path>`, not a bare path (issue #782).
+  it "carries before:/after: prefixes on the diff headers" do
+    result = PluginSpecHelper.run("yum_repository", {
+      "name" => "hdrtest", "description" => "d", "baseurl" => "https://example.com", "reposdir" => repo_dir,
+    })
+
+    expected_before = "before: #{repo_path("hdrtest")}"
+    expected_after = "after: #{repo_path("hdrtest")}"
+    result["diff"].as_h["before_header"].as_s.must_equal(expected_before)
+    result["diff"].as_h["after_header"].as_s.must_equal(expected_after)
+  end
+
   it "removes the file on state: absent" do
     PluginSpecHelper.run("yum_repository", {
       "name" => "toremove", "description" => "d", "baseurl" => "https://example.com", "reposdir" => repo_dir,
