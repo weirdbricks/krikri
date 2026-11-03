@@ -3,6 +3,7 @@
 require "json"
 require "../src/krikri/base_plugin"
 require "../src/krikri/plugin_helpers/rpm_package"
+require "../src/krikri/plugin_helpers/run_command_failure"
 
 module Krikri
   # DNF5 plugin - manages packages with the dnf5 package manager.
@@ -121,6 +122,22 @@ module Krikri
       # (which stays correct for the state-absent/omitted case).
       if rejection = yumdnf_autoremove_rejection
         return rejection
+      end
+
+      # dnf5.py's _ensure_dnf runs in Dnf5Module.__init__ - before run()'s
+      # body and every early exit below (list: queries included): the module
+      # cannot even start without the libdnf5 python bindings, and with
+      # auto_install_module_deps at its argspec default (true) it first
+      # tries to INSTALL them ("dnf install -y python3-libdnf5" through
+      # check_rc=True run_command - a raw failure whose cmd/stdout/stderr/rc
+      # shape IS the task's whole result). Rocky 10's repos carry no
+      # python3-libdnf5, so every dnf5 task on one dies right here (issue
+      # #767: this engine's native plugin skipped the bootstrap entirely and
+      # reported ok where real failed). Same bug class as apt's python3-apt
+      # module-start auto-install (apt_lock_retry.cr, issue #522): a real,
+      # persistent host mutation, so check mode refuses it instead.
+      if gate = libdnf5_import_gate
+        return gate
       end
 
       if list_result = list_query_result
@@ -248,6 +265,134 @@ module Krikri
       existing = @params["update_cache"]?
       @params["update_cache"] = ec if existing.nil? || existing.strip.empty?
     end
+
+    # ----- libdnf5 python-bindings bootstrap (dnf5.py's _ensure_dnf) -----
+
+    # The import probe _ensure_dnf performs: the module's own interpreter
+    # first, then the three system interpreters probe_interpreters_for_module
+    # walks, respawning under the first one that can import the bindings.
+    # One combined shell probe over those absolute paths answers the same
+    # question in a single round trip (same shape as apt's python3-apt
+    # probe in apt_lock_retry.cr).
+    LIBDNF5_PROBE_CMD = "/usr/libexec/platform-python -c 'import libdnf5' 2>/dev/null || " \
+                        "/usr/bin/python3 -c 'import libdnf5' 2>/dev/null || " \
+                        "/usr/bin/python -c 'import libdnf5' 2>/dev/null"
+
+    # The bootstrap command itself. dnf5.py passes the bare "dnf" name to
+    # run_command - NOT this module's own dnf5 binary - so a failure's
+    # reported cmd is exactly this space-joined string with no absolute
+    # path, and the OSError case reports b'dnf'.
+    LIBDNF5_AUTO_INSTALL_CMD = "dnf install -y python3-libdnf5"
+
+    CHECK_MODE_NO_LIBDNF5_MSG = "python3-libdnf5 must be installed to use check mode. " \
+                                "If run normally this module can auto-install it, " \
+                                "see the auto_install_module_deps option."
+
+    # fail_json's sorted dump order for both bootstrap failure shapes (the
+    # raw run_command result carries cmd/rc/stdout/stderr around the msg) -
+    # the same alphabetical order apt's python3-apt auto-install failure
+    # dumps in (apt_lock_retry.cr, issue #522).
+    LIBDNF5_BOOTSTRAP_FAILURE_ORDER = %w[changed cmd msg rc stderr stderr_lines stdout stdout_lines]
+
+    # _libdnf5_probe is a spec seam only (never set by real playbooks): the
+    # import probe uses absolute interpreter paths, unshimmable via PATH, so
+    # a spec forces the probe's answer instead - "present" (bindings there,
+    # bootstrap skipped), "absent" (every probe fails) or
+    # "absent-then-present" (attempt 1 fails, the post-install re-probe
+    # succeeds, mirroring a host the auto-install genuinely fixed).
+    private def libdnf5_probe_says_present?(attempt : Int32) : Bool
+      case @params["_libdnf5_probe"]?
+      when "present"             then true
+      when "absent"              then false
+      when "absent-then-present" then attempt >= 2
+      else                            remote_exec(LIBDNF5_PROBE_CMD)[:exit_code] == 0
+      end
+    end
+
+    # auto_install_module_deps defaults to true in dnf5's argspec.
+    private def auto_install_module_deps? : Bool
+      true?(@params["auto_install_module_deps"]?, true)
+    end
+
+    # Returns the PluginResult the task fails with when the libdnf5 bindings
+    # cannot be made importable, or nil when the module may proceed (the
+    # bindings were already there, or the auto-install just put them there
+    # and real's respawn would find them). Mirrors _ensure_dnf's two
+    # attempts: probe, then (check mode refusal | auto-install | give up),
+    # then a final probe before the could-not-import failure.
+    private def libdnf5_import_gate : PluginResult?
+      return nil if libdnf5_probe_says_present?(1)
+
+      if check_mode?
+        return PluginResult.new(changed: false, failed: true, msg: CHECK_MODE_NO_LIBDNF5_MSG)
+      end
+
+      if auto_install_module_deps?
+        if failure = PluginHelpers::RunCommandFailure.exec_check("dnf")
+          return libdnf5_bootstrap_enoent_result(failure[0], failure[1])
+        end
+        result = remote_exec(LIBDNF5_AUTO_INSTALL_CMD)
+        unless result[:exit_code] == 0
+          failed = PluginHelpers::RunCommandFailure.nonzero_exit(LIBDNF5_AUTO_INSTALL_CMD, result[:exit_code], result[:stdout], result[:stderr])
+          failed.key_order = LIBDNF5_BOOTSTRAP_FAILURE_ORDER
+          return failed
+        end
+        return nil if libdnf5_probe_says_present?(2)
+      end
+
+      could_not_import_libdnf5_result
+    end
+
+    # The never-started-exec shape: run_command's Popen raised OSError
+    # (no `dnf` binary anywhere on the target - a Debian-family container
+    # carrying no dnf at all), so fail_json reports rc=errno, EMPTY
+    # stdout/stderr(+_lines) and the bare "Error executing command." msg
+    # while the [ERROR] block renders the Errno text from the exception
+    # field - here carried as _ansible_error_detail like apt's identical
+    # auto-install ENOENT (live-verified: "Task failed: Module failed:
+    # Error executing command: [Errno 2] No such file or directory:
+    # b'dnf'").
+    private def libdnf5_bootstrap_enoent_result(errno : Int32, reason : String) : PluginResult
+      PluginResult.new(
+        changed: false,
+        failed: true,
+        msg: "Error executing command.",
+        cmd: LIBDNF5_AUTO_INSTALL_CMD,
+        rc: errno,
+        stdout: "",
+        stderr: "",
+        stdout_lines: [] of String,
+        stderr_lines: [] of String,
+        key_order: LIBDNF5_BOOTSTRAP_FAILURE_ORDER,
+        _ansible_error_detail: "Error executing command: [Errno #{errno}] #{reason}: b'dnf'"
+      )
+    end
+
+    # _ensure_dnf's terminal failure (auto_install_module_deps: false, or
+    # the bindings still unimportable after a successful install): the
+    # module names the interpreter it ran under plus that interpreter's
+    # own sys.version. The probe asks the first system interpreter that
+    # exists for exactly those two values - os.path.realpath(sys.executable)
+    # because discovery resolves the unversioned python3 symlink to the
+    # versioned binary it reports (e.g. /usr/bin/python3.12).
+    private def could_not_import_libdnf5_result : PluginResult
+      raw = remote_exec(LIBDNF5_INTERPRETER_PROBE_CMD)[:stdout].strip
+      exe, version = if idx = raw.index(" (")
+                       {raw[0...idx], raw[(idx + 2)..].rstrip(")")}
+                     else
+                       {"/usr/bin/python3", ""}
+                     end
+      PluginResult.new(
+        changed: false,
+        failed: true,
+        msg: "Could not import the libdnf5 python module using #{exe} (#{version}). " \
+             "Ensure python3-libdnf5 package is installed (either manually or via the auto_install_module_deps option) " \
+             "or that you have specified the correct ansible_python_interpreter. " \
+             "(attempted ['/usr/libexec/platform-python', '/usr/bin/python3', '/usr/bin/python'])."
+      )
+    end
+
+    LIBDNF5_INTERPRETER_PROBE_CMD = %{for py in /usr/libexec/platform-python /usr/bin/python3 /usr/bin/python; do [ -x "$py" ] && exec "$py" -c 'import sys, os; sys.stdout.write(os.path.realpath(sys.executable) + " (" + sys.version.replace(chr(10), "") + ")")'; done}
 
     private def dispatch_state(names : Array(String), state : String) : PluginResult
       options = build_dnf_options
