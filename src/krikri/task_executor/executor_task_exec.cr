@@ -188,6 +188,16 @@ module Krikri
       options = task.validate_argument_spec_options || Hash(String, JSON::Any).new
       substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
 
+      # Real's action plugin rejects a non-mapping argument_spec with its
+      # own AnsibleActionFail BEFORE any option validation runs (issue
+      # #764, live-verified vs 2.19.11) - the collapsed one-segment [ERROR]
+      # chain at the task's own Origin, fatal msg "Task failed: <msg>".
+      # The parser captures the literal-value shapes' class name; the
+      # string shapes are decided here.
+      if inline_type = task.validate_argument_spec_non_dict_type
+        return validate_args_spec_type_failure(task, host, inline_type)
+      end
+
       # The inline (user-written) form's `argument_spec:` may itself be a
       # Jinja STRING - the real-world idiom
       # `"{{ (lookup('ansible.builtin.file', role_path ~
@@ -197,9 +207,23 @@ module Krikri
       # the action plugin ever runs.)
       if raw_spec = task.validate_argument_spec_raw_options
         begin
+          # A plain string without template markers rides real's chain
+          # templar UNCHANGED - it is never re-parsed as JSON/YAML, so even
+          # a JSON-shaped one (`'{"a": {...}}'`) stays a tagged str and
+          # fails the dict check (live-verified vs 2.19.11).
+          unless raw_spec.includes?("{{") || raw_spec.includes?("{%")
+            return validate_args_spec_type_failure(task, host, "ansible.module_utils._internal._datatag._AnsibleTaggedStr")
+          end
           rendered = substitutor.substitute(raw_spec, strict: true)
           parsed = Krikri.parse_json_or_python_literal(rendered)
-          options = parsed.as_h? || options
+          if spec_hash = parsed.as_h?
+            options = spec_hash
+          else
+            # The template resolved to a non-mapping value; the reported
+            # class follows the RESOLVED type (a `{{ spec }}` resolving to
+            # a string fails as _AnsibleTaggedStr, live-verified).
+            return validate_args_spec_type_failure(task, host, datatag_class_name(parsed))
+          end
         rescue ex : UndefinedVariableError
           return validate_args_templating_failure(task, host, ex.message || "", options)
         end
@@ -512,6 +536,44 @@ module Krikri
       ResultDisplay.display_result(host, result, @diff_mode, ignore_errors: ignore_errors, module_name: task.module_name, delegate_target: delegate_display_target(task, host), source_task: task)
       ResultDisplay.update_stats(@results[host.name], result, ignore_errors)
       @halted_hosts.add(host.name) unless ignore_errors
+    end
+
+    # Real's validate_argument_spec action plugin rejects a non-mapping
+    # argument_spec with its own AnsibleActionFail before any option
+    # validation runs (issue #764, live-verified vs 2.19.11): the collapsed
+    # one-segment [ERROR] chain at the task's own Origin (the
+    # _ansible_action_level route in ResultDisplay) and the "Task failed: "
+    # brief in the fatal msg - no argument_errors/argument_spec_data keys,
+    # unlike the spec-validation failure shape.
+    private def validate_args_spec_type_failure(task : Task, host : Host, type_name : String) : Nil
+      message = "Incorrect type for argument_spec, expected dict and got <class '#{type_name}'>"
+      result = JSON::Any.new({
+        "changed"               => JSON::Any.new(false),
+        "failed"                => JSON::Any.new(true),
+        "msg"                   => JSON::Any.new("Task failed: #{message}"),
+        "_ansible_action_level" => JSON::Any.new(true),
+        "_ansible_error_detail" => JSON::Any.new(message),
+      } of String => JSON::Any)
+      ignore_errors = resolve_task_ignore_errors(task, host: host)
+      ResultDisplay.display_result(host, result, @diff_mode, ignore_errors: ignore_errors, module_name: task.module_name, delegate_target: delegate_display_target(task, host), source_task: task)
+      ResultDisplay.update_stats(@results[host.name], result, ignore_errors)
+      @halted_hosts.add(host.name) unless ignore_errors
+    end
+
+    # The Python class name real 2.19.11's datatag layer reports for a
+    # RESOLVED value in "expected dict and got <class '...'>" (live-verified
+    # vs 2.19.11 on the issue #764 matrix: strings/integers/lists ride the
+    # tagged subclasses, bools stay plain and null is NoneType; floats
+    # follow the same datatag rule).
+    private def datatag_class_name(value : JSON::Any) : String
+      case value.raw
+      when Nil              then "NoneType"
+      when Bool             then "bool"
+      when Int64            then "ansible.module_utils._internal._datatag._AnsibleTaggedInt"
+      when Float64          then "ansible.module_utils._internal._datatag._AnsibleTaggedFloat"
+      when Array(JSON::Any) then "ansible.module_utils._internal._datatag._AnsibleTaggedList"
+      else                       "ansible.module_utils._internal._datatag._AnsibleTaggedStr"
+      end
     end
 
     # The failure for a REACHED mapping-form `action:`/`local_action:`

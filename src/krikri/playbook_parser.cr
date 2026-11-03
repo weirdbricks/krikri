@@ -895,6 +895,17 @@ module Krikri
     # literal dict is pre-parsed into validate_argument_spec_options
     # instead and this stays nil.
     property validate_argument_spec_raw_options : String?
+    # Inline-only: the Python class name Ansible's datatag layer reports
+    # for an `argument_spec:` that is neither a mapping nor a string.
+    # Captured at parse time because the executor cannot recover it: a
+    # literal dict is pre-parsed into validate_argument_spec_options and
+    # both an explicit YAML null and an absent key read as nil there, and
+    # the name follows the VALUE's type, not its content - real 2.19.11
+    # fails the task with the value's own class (live-verified: bools ride
+    # untagged `<class 'bool'>`, an explicit null is `<class 'NoneType'>`,
+    # ints/lists the _AnsibleTagged* subclasses, floats the same rule)
+    # BEFORE any option validation runs.
+    property validate_argument_spec_non_dict_type : String?
     # Inline-only: the task's own `provided_arguments:` dict (literal
     # form). These override same-named vars in the vars context
     # (combine_vars order) and are templated at execution time.
@@ -984,6 +995,7 @@ module Krikri
       @validate_argument_spec_inline = false
       @validate_argument_spec_raw_options = nil
       @validate_argument_spec_provided = nil
+      @validate_argument_spec_non_dict_type = nil
     end
 
     def block? : Bool
@@ -5172,6 +5184,13 @@ module Krikri
           task.validate_argument_spec_options = options
         elsif spec_raw = spec.try(&.as_s?)
           task.validate_argument_spec_raw_options = spec_raw
+        elsif spec
+          # Neither mapping nor string: real's action plugin fails the task
+          # with the value's own Python class before any validation runs
+          # (issue #764), and that name follows the YAML VALUE's type -
+          # capture it here, where the executor can no longer tell an
+          # explicit null from an absent key.
+          task.validate_argument_spec_non_dict_type = include_arg_type_name(spec)
         end
         if provided_hash = hash["provided_arguments"]?.try(&.as_h?)
           provided = Hash(String, JSON::Any).new

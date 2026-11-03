@@ -152,4 +152,43 @@ describe "validate_argument_spec output parity" do
     status.exit_code.must_equal(0)
     output.must_include("failed=0")
   end
+
+  it "fails a plain-string argument_spec with the action's Incorrect type brief (issue #764)" do
+    status, output = run_playbook("pb.yml", {
+      "pb.yml" => "- hosts: all\n  gather_facts: false\n  tasks:\n    - name: 'validate_argument_spec #0'\n      ansible.builtin.validate_argument_spec:\n        argument_spec: ojgkdl\n      ignore_errors: true\n",
+    })
+
+    # Real 2.19.11: the action plugin's own AnsibleActionFail renders the
+    # collapsed one-segment [ERROR] chain at the task's Origin, the
+    # "Task failed: " brief in the fatal msg, then "...ignoring" - the
+    # recap's ignored=1 (not ok) is what the generator's recap comparison
+    # caught. A plain string rides real's chain templar unchanged, so even
+    # a JSON-shaped one stays a tagged str.
+    status.exit_code.must_equal(0)
+    output.must_include("[ERROR]: Task failed: Incorrect type for argument_spec, expected dict and got <class 'ansible.module_utils._internal._datatag._AnsibleTaggedStr'>")
+    output.must_include("pb.yml:4:7")
+    output.must_include("^ column 7")
+    output.must_include("fatal: [localhost]: FAILED! => {\"changed\": false, \"msg\": \"Task failed: Incorrect type for argument_spec, expected dict and got <class 'ansible.module_utils._internal._datatag._AnsibleTaggedStr'>\"}")
+    output.must_include("...ignoring")
+    output.must_include("ignored=1")
+    output.wont_include("ok: [localhost]")
+  end
+
+  it "names the resolved value's own class for each non-mapping argument_spec shape (issue #764)" do
+    status, output = run_playbook("pb.yml", {
+      "pb.yml" => "- hosts: all\n  gather_facts: false\n  vars:\n    spec_str: ojgkdl\n  tasks:\n    - name: list spec\n      ansible.builtin.validate_argument_spec:\n        argument_spec: [a, b]\n      ignore_errors: true\n    - name: int spec\n      ansible.builtin.validate_argument_spec:\n        argument_spec: 3\n      ignore_errors: true\n    - name: bool spec\n      ansible.builtin.validate_argument_spec:\n        argument_spec: true\n      ignore_errors: true\n    - name: none spec\n      ansible.builtin.validate_argument_spec:\n        argument_spec: null\n      ignore_errors: true\n    - name: jinja resolving to string\n      ansible.builtin.validate_argument_spec:\n        argument_spec: \"{{ spec_str }}\"\n      ignore_errors: true\n",
+    })
+
+    # The class name follows the VALUE's type, not its content: bools ride
+    # untagged, an explicit null is NoneType, ints/lists the tagged
+    # subclasses, and a template resolving to a string fails as a tagged
+    # str (live-verified vs 2.19.11).
+    status.exit_code.must_equal(0)
+    output.must_include("<class 'ansible.module_utils._internal._datatag._AnsibleTaggedList'>")
+    output.must_include("<class 'ansible.module_utils._internal._datatag._AnsibleTaggedInt'>")
+    output.must_include("<class 'bool'>")
+    output.must_include("<class 'NoneType'>")
+    output.wont_include("ok: [localhost]")
+    output.must_include("ignored=5")
+  end
 end
