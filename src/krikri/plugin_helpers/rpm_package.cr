@@ -254,6 +254,44 @@ module Krikri
         "Failed to update package cache: #{stderr}"
       end
 
+      # dnf.py's transaction tail (the big try wrapping resolve(),
+      # download_packages() and the rpm transaction) ends in a generic
+      # handler: any dnf.exceptions.Error that is neither a DepsolveError
+      # nor a DownloadError becomes msg "Unknown Error occurred: {e}" with
+      # failure_response's otherwise-empty failures/results. The one that
+      # reaches it in practice is download-time cache verification under
+      # cacheonly: base.download_packages() first verifies every
+      # transaction package against its cached copy, and a cache missing
+      # (or corrupting) an rpm raises a PLAIN dnf.exceptions.Error - not a
+      # DownloadError - so the dedicated "Failed to download packages"
+      # catch never sees it and it lands in the generic handler
+      # (dnf/base.py _select_remote_pkgs). failure_response only ever
+      # collects missing-spec entries during install marking, so
+      # `failures` stays empty, and `results` stays empty even though
+      # resolve() had already succeeded (results go to the success
+      # response, never to failure_response). The CLI prints the same
+      # error as log lines - the "Package ... has incorrect checksum"
+      # criticals and a final "Error: ..." - which are never module JSON,
+      # so shelling the CLI must repack the failure into the module's
+      # shape instead of dumping the raw lines (issue #769).
+      private CACHEONLY_INVALID_CACHE_TEXT = "Some packages have invalid cache, but cannot be downloaded due to \"--cacheonly\" option"
+
+      private def unknown_error_failure(result : NamedTuple(exit_code: Int32, stdout: String, stderr: String)) : PluginResult?
+        combined = result[:stdout] + "\n" + result[:stderr]
+        idx = combined.index(CACHEONLY_INVALID_CACHE_TEXT) || return nil
+        line = combined[idx..].lines.first.strip
+        PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: "Unknown Error occurred: #{line}",
+          include_empty_msg: true,
+          failures: [] of String,
+          results: [] of String,
+          rc: result[:exit_code],
+          key_order: DNF_FAILURE_ORDER
+        )
+      end
+
       private def early_result_for_empty_names(names : Array(String)) : PluginResult?
         return nil unless names.empty?
 
@@ -999,6 +1037,9 @@ module Krikri
             end
             return {changed: false, message: nil, output: result[:stdout], failure: failure_result("Failed to install some of the specified packages", failures, result[:exit_code])}
           end
+          if failure = unknown_error_failure(result)
+            return {changed: false, message: nil, output: result[:stdout], failure: failure}
+          end
           return {changed: false, message: nil, output: result[:stdout], failure: failure_result("Failed to install packages", error_lines(result), result[:exit_code])}
         end
 
@@ -1098,6 +1139,9 @@ module Krikri
         result = remote_exec_tolerating_unknown_repo(cmd)
 
         if result[:exit_code] != 0
+          if failure = unknown_error_failure(result)
+            return {changed: false, message: nil, output: result[:stdout], failure: failure}
+          end
           return {changed: false, message: nil, output: result[:stdout], failure: failure_result("Failed to update packages", error_lines(result), result[:exit_code])}
         end
 
@@ -1266,7 +1310,11 @@ module Krikri
                     result[:stdout].includes?("Installed:")
           transaction_result(changed, upgrade_results(result[:stdout]))
         else
-          failure_result("Failed to upgrade system", error_lines(result), result[:exit_code])
+          # Same dnf.exceptions.Error wrap as the install/update batches
+          # above: cacheonly's download-time cache verification failure is
+          # the generic "Unknown Error occurred" shape, not the raw dump.
+          unknown_error_failure(result) ||
+            failure_result("Failed to upgrade system", error_lines(result), result[:exit_code])
         end
       end
 

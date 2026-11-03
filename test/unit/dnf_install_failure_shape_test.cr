@@ -484,3 +484,87 @@ describe "DnfInstallFailures missing-spec stripping (issue 321)" do
     harness.specs_without_missing(["libcurl"], [] of String).must_equal(["libcurl"])
   end
 end
+
+# Issue #769 (Rocky 10, `cacheonly: true` + stale package cache): dnf.py's
+# transaction tail wraps the download-time cache-verification failure as
+# "Unknown Error occurred: ..." with EMPTY failures and results. The
+# transaction resolves fine, then base.download_packages()' cache
+# verification (dnf/base.py _select_remote_pkgs) raises a plain
+# dnf.exceptions.Error - not a DownloadError - which skips the "Failed to
+# download packages" catch and lands in the generic dnf.exceptions.Error
+# handler; failure_response only ever collected missing-spec entries, so
+# both lists stay empty. The CLI prints the same failure as log lines -
+# captured live from rockylinux:10's `dnf -y update --cacheonly ... gzip`:
+CACHEONLY_INVALID_CACHE_STDERR = "Error opening /var/cache/dnf/baseos-5b8a90704d474d3e/packages/gzip-1.13-4.el10_2.x86_64.rpm: No such file or directory\n" \
+                                 "Package \"gzip-1.13-4.el10_2.x86_64\" from repository \"baseos\" has incorrect checksum\n" \
+                                 "Error: Some packages have invalid cache, but cannot be downloaded due to \"--cacheonly\" option\n"
+CACHEONLY_INVALID_CACHE_MSG = "Unknown Error occurred: Some packages have invalid cache, but cannot be downloaded due to \"--cacheonly\" option"
+
+# An args-aware shim pair: the `rpm` script answers the installed?-
+# precheck (argv0 is rpm itself, so no name check), the `dnf` script's
+# `--available` branch answers the not-installed fallback probe, and the
+# actual transaction replays the captured failure.
+private def with_cacheonly_dnf_shim(installed : Bool, &)
+  shim_dir = PluginSpecHelper.tmp_path("fake-dnf-cacheonly")
+  Dir.mkdir_p(shim_dir)
+  rpm_script = "#!/bin/sh\n"
+  rpm_script += "case \"$*\" in *--whatprovides*) exit 1;; esac\n"
+  rpm_script += installed ? "exit 0\n" : "exit 1\n"
+  File.write("#{shim_dir}/rpm", rpm_script)
+  File.chmod("#{shim_dir}/rpm", 0o755)
+  dnf_script = "#!/bin/sh\ncase \"$*\" in\n  *--available*) exit 0;;\n  *list*) exit 1;;\nesac\n"
+  dnf_script += dnf_shim_stage_lines("", CACHEONLY_INVALID_CACHE_STDERR)
+  dnf_script += "exit 1\n"
+  File.write("#{shim_dir}/dnf", dnf_script)
+  File.chmod("#{shim_dir}/dnf", 0o755)
+  PluginSpecHelper::ENV_MUTEX.synchronize do
+    old_path = ENV["PATH"]?
+    ENV["PATH"] = "#{shim_dir}:#{old_path}"
+    begin
+      yield
+    ensure
+      old_path ? (ENV["PATH"] = old_path) : (ENV.delete("PATH"))
+    end
+  end
+ensure
+  FileUtils.rm_r(shim_dir) if shim_dir
+end
+
+describe "dnf cacheonly download failure - ansible's Unknown Error shape (issue 769)" do
+  serial!
+
+  it "reports Unknown Error occurred with empty failures for an update_only transaction" do
+    with_cacheonly_dnf_shim(installed: true) do
+      result = PluginSpecHelper.run("dnf",
+        {"name" => "gzip", "state" => "present", "update_only" => "true", "cacheonly" => "true",
+         "exclude" => "[\"hodypf\", \"ziqoek\", \"zycppc\"]", "security" => "false"},
+        vars: {"ansible_pkg_mgr" => "dnf"})
+
+      result["failed"].as_bool.must_equal(true)
+      result["changed"].as_bool.must_equal(false)
+      result["msg"].as_s.must_equal(CACHEONLY_INVALID_CACHE_MSG)
+      result["failures"].as_a.map(&.as_s).must_equal([] of String)
+      result["results"].as_a.must_equal([] of JSON::Any)
+      result["rc"].as_i.must_equal(1)
+      result.as_h.has_key?("stderr").must_equal(false)
+      result.as_h.keys.first(5).must_equal(["msg", "failures", "results", "rc", "failed"])
+    end
+  end
+
+  it "reports the same shape from the install batch (package not in cache)" do
+    with_cacheonly_dnf_shim(installed: false) do
+      result = PluginSpecHelper.run("dnf",
+        {"name" => "gzip", "state" => "present", "cacheonly" => "true"},
+        vars: {"ansible_pkg_mgr" => "dnf"})
+
+      result["failed"].as_bool.must_equal(true)
+      result["changed"].as_bool.must_equal(false)
+      result["msg"].as_s.must_equal(CACHEONLY_INVALID_CACHE_MSG)
+      result["failures"].as_a.map(&.as_s).must_equal([] of String)
+      result["results"].as_a.must_equal([] of JSON::Any)
+      result["rc"].as_i.must_equal(1)
+      result.as_h.has_key?("stderr").must_equal(false)
+      result.as_h.keys.first(5).must_equal(["msg", "failures", "results", "rc", "failed"])
+    end
+  end
+end
