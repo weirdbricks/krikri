@@ -1072,6 +1072,31 @@ describe Krikri::VariableSubstitutor::JinjaRenderer do
     end
   end
 
+  it "dict.pop removes the key for the rest of the render" do
+    # mila.syslog_ng's sources.conf.j2 strips comment fields with
+    # `{% set _ = dic.pop('comment') %}` before its items() loop
+    # (krikri issue #791): real ansible's dicts are dict subclasses, so
+    # the call succeeds there and the removed key is gone from the
+    # later iteration - the engine previously answered the attribute
+    # with an undefined and failed the whole render.
+    v = Hash(String, JSON::Any).new
+    v["sources"] = JSON.parse(%({"net": [{"file": "/var/log/x", "comment": "hello"}]}))
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
+    renderer.render!(%({% set _ = sources.net[0].pop('comment') %}{{ sources.net[0].keys() | join(',') }})).must_equal("file")
+  end
+
+  it "dict.pop of a missing key with no default fails with Python's KeyError text" do
+    # Verified against ansible-core 2.19.11 + Jinja2 3.1.6: the task
+    # fails with "Error rendering template: 'missing'" - KeyError's
+    # str() is just the key's repr, not a "KeyError:" prefix.
+    v = Hash(String, JSON::Any).new
+    v["d"] = JSON.parse(%({"a": 1}))
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
+    assert_raises_message(Exception, "'missing'") do
+      renderer.render!(%({{ d.pop('missing') }}))
+    end
+  end
+
   it "extract walks into lists and strings and indexes negatively (shared core)" do
     # Phase-3 slice 4 regression pins, live-verified against
     # ansible-core 2.19.11: the morekeys walk is the same getitem step
