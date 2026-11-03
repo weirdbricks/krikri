@@ -156,6 +156,18 @@ describe "dnf: argument-spec validation" do
     result["failed"].as_bool.must_equal(true)
     result["msg"].as_s.wont_include("NoneType")
   end
+
+  # Issue #776: the dnf5-backend branch used to return before the shared
+  # checks, so a use_backend: dnf5 task skipped the explicit-null list
+  # validation and ran the transaction on the empty-string name. dnf5.py
+  # shares yumdnf's argument_spec with dnf.py, so real fails it with the
+  # same NoneType message (live-verified vs 2.19.11).
+  it "rejects an explicit null name under use_backend dnf5 too" do
+    result = run_dnf_raw({"state" => "present", "use_backend" => "dnf5"}.to_json.sub("}", ", \"name\":null}"))
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("argument 'name' is of type NoneType and we were unable to convert to list: " \
+                                  "<class 'NoneType'> cannot be converted to a list")
+  end
 end
 
 describe "yum: argument-spec validation" do
