@@ -68,5 +68,25 @@ module Krikri::Lint
       v = lint_yaml(rule, "---\n- hosts: all\n  tasks:\n    - name: A\n      command: echo {{ some_undefined_var }}\n", FileType::PLAYBOOK)
       v.must_be_empty
     end
+
+    # ansible-lint treats {% raw %} text as literal: the `{{x}}` there is
+    # what the target command actually receives (e.g. docker's --format),
+    # so respacing it would change behavior, not just formatting.
+    it "does not flag spacing inside raw blocks" do
+      v = lint_yaml(rule, "---\n- hosts: all\n  tasks:\n    - name: A\n      command: echo '{% raw %}{{.Names}}{% endraw %}'\n", FileType::PLAYBOOK)
+      v.must_be_empty
+    end
+
+    it "fixes spacing outside raw blocks while leaving raw text verbatim" do
+      v = lint_yaml(rule, "---\n- hosts: all\n  tasks:\n    - name: A\n      command: echo {{x}} '{% raw %}{{.Names}}{% endraw %}'\n", FileType::PLAYBOOK)
+      v.size.must_equal(1)
+      v.first.rule_id.must_equal("jinja[spacing]")
+      v.first.message.must_include("echo {{x}} '{% raw %}{{.Names}}{% endraw %}' -> echo {{ x }} '{% raw %}{{.Names}}{% endraw %}'")
+    end
+
+    it "does not flag spacing inside raw blocks with whitespace-control tags" do
+      v = lint_yaml(rule, "---\n- hosts: all\n  tasks:\n    - name: A\n      command: echo '{%- raw -%}{{.Names}}{%- endraw -%}'\n", FileType::PLAYBOOK)
+      v.must_be_empty
+    end
   end
 end
