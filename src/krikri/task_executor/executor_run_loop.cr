@@ -3027,7 +3027,12 @@ module Krikri
       # plugins/shell.cr wrap the invocation in `{ ...; } 2>&1` (the same
       # group the remote script run uses), leaving the plugin's stderr
       # empty. Local raw keeps the captured streams - no pty exists
-      # there.
+      # there. When the plugin could allocate a real target-side pty
+      # (PtyCommandRunner) the capture is already the sshd-shaped pty
+      # stream - isatty-sensitive programs like apt behave differently on
+      # a pty than on a pipe (issue #775) - and the plugin's
+      # _krikri_real_pty result marker tells raw_remote_pty_shape to keep
+      # that stdout verbatim.
       if RAW_MODULES.includes?(task.action_name || task.module_name) &&
          PluginManager.remote_execution?("shell", exec_host, dispatch_vars)
         substituted_params = substituted_params.dup
@@ -3253,20 +3258,35 @@ module Krikri
     # because raw sends no stdin - issue #490's eendroroy.pyenv capture):
     # the target's stdout and stderr arrive on the SAME pty, merged in
     # execution order with ONLCR having turned every \n into \r\n, and
-    # the ssh client's own stderr holds only its mux close notice. The
-    # stream merge itself happens at the source - execute_task_once hands
-    # plugins/shell.cr an internal param that wraps the invocation in
-    # `{ ...; } 2>&1` (ScriptPtyCapture.pty_merged_command), so the
-    # plugin's stdout already carries both streams in order and its
-    # stderr is empty; appending the (empty) stderr here stays harmless
-    # and keeps results that reached this path without the marker shaped.
-    # What remains here is the pty OBSERVABLE SHAPE on that single
-    # merged stream - the same helpers the script action and
-    # raw_spawn_failure_shape already use. Local raw has no pty, so it
-    # keeps the captured streams untouched. Rewrites the hash in place
-    # to keep the shaped result's key order intact.
+    # the ssh client's own stderr holds only its mux close notice. Two
+    # capture shapes reach this:
+    #
+    # - The plugin captured the command on a REAL target-side pty
+    #   (PtyCommandRunner - needed because a pty changes how
+    #   isatty-sensitive programs like apt behave, issue #775). Its
+    #   _krikri_real_pty marker says the stdout already IS that pty
+    #   stream: nothing to merge or re-translate, and the marker comes
+    #   back off the result here. The ssh client's close notice is
+    #   synthesized the same way as for the emulated capture.
+    # - The pipe emulation (`{ ...; } 2>&1`, ScriptPtyCapture's
+    #   pty_merged_command - the fallback for pty-less targets): the
+    #   plugin's stdout carries both streams in order but still plain
+    #   \n, and ONLCR gets re-applied here. (The stream merge happens at
+    #   the source so the plugin's stderr is empty; appending the
+    #   (empty) stderr stays harmless and keeps results that reached
+    #   this path without the marker shaped.)
+    #
+    # Local raw has no pty, so it keeps the captured streams untouched.
+    # Rewrites the hash in place to keep the shaped result's key order
+    # intact.
     def self.raw_remote_pty_shape(hash : Hash(String, JSON::Any), remote : Bool, addr : String) : Nil
       return unless remote
+      if hash.delete("_krikri_real_pty").try(&.as_bool?)
+        closed = PluginHelpers::ScriptPtyCapture.connection_closed_stderr(addr)
+        hash["stderr"] = JSON::Any.new(closed)
+        hash["stderr_lines"] = JSON.parse([closed.rstrip("\r\n")].to_json)
+        return
+      end
       merged = (hash["stdout"]?.try(&.as_s?) || "") + (hash["stderr"]?.try(&.as_s?) || "")
       hash["stdout"] = JSON::Any.new(PluginHelpers::ScriptPtyCapture.pty_stdout(merged))
       hash["stdout_lines"] = JSON.parse(PluginHelpers::AnsibleSplitlines.split(merged).to_json)

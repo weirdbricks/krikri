@@ -1,6 +1,7 @@
 require "../minitest_helper"
 require "../../src/krikri/task_executor/executor_run_loop"
 require "../../src/krikri/plugin_helpers/script_pty_capture"
+require "../../src/krikri/plugin_helpers/pty_command_runner"
 
 # Issue #490 (eendroroy.pyenv): real ansible runs a remote `raw:` through
 # `ssh -tt` (raw sends no stdin), so the target's stdout and stderr arrive
@@ -89,6 +90,90 @@ describe Krikri::TaskExecutor do
       Krikri::TaskExecutor.raw_remote_pty_shape(hash, true, "203.0.113.9")
       hash["stdout"].as_s.must_equal("out1\r\nout2\r\n")
       hash["stdout_lines"].as_a.map(&.as_s).must_equal(["out1", "out2"])
+    end
+
+    # Issue #775: when the shell plugin captured the command on a REAL
+    # target-side pty, its stdout already IS the sshd-shaped pty stream -
+    # re-applying the pipe emulation's ONLCR pass would double every \r.
+    it "keeps a real-pty-marked stdout verbatim, swaps stderr for the close notice and strips the marker" do
+      hash = JSON.parse({
+        "rc"               => 1,
+        "stdout"           => "out1\r\nerr1\r\n",
+        "stdout_lines"     => ["out1", "err1"],
+        "stderr"           => "",
+        "stderr_lines"     => [] of String,
+        "changed"          => true,
+        "failed"           => true,
+        "msg"              => "non-zero return code",
+        "_krikri_real_pty" => true,
+      }.to_json).as_h
+      Krikri::TaskExecutor.raw_remote_pty_shape(hash, true, "203.0.113.9")
+      hash["stdout"].as_s.must_equal("out1\r\nerr1\r\n")
+      hash["stdout_lines"].as_a.map(&.as_s).must_equal(["out1", "err1"])
+      hash["stderr"].as_s
+        .must_equal("Shared connection to 203.0.113.9 closed.\r\n")
+      hash["stderr_lines"].as_a.map(&.as_s)
+        .must_equal(["Shared connection to 203.0.113.9 closed."])
+      hash.has_key?("_krikri_real_pty").must_equal(false)
+    end
+
+    # The emulation path must keep working for a result whose plugin could
+    # not allocate a pty - a marker absent from the wire keeps the old
+    # merge-and-translate behavior byte for byte.
+    it "still applies the pipe-emulation shaping when no real-pty marker rode the result" do
+      hash = merged_raw_hash
+      Krikri::TaskExecutor.raw_remote_pty_shape(hash, true, "203.0.113.9")
+      hash["stdout"].as_s
+        .must_equal("out1\r\nout2\r\nperl: warning: Setting locale failed.\r\n")
+    end
+  end
+
+  describe ".exec via PluginHelpers::PtyCommandRunner" do
+    # nil here means "no pty could be allocated" - a capability every
+    # Linux test host has, so treat its absence as the spec's own failure.
+    def pty_exec(command : String)
+      PluginHelpers::PtyCommandRunner.exec(command) || raise "pty allocation failed"
+    end
+
+    it "gives the command a real tty on stdout, like real's ssh -tt session" do
+      pty_exec("if [ -t 1 ]; then echo tty; else echo pipe; fi")[:stdout].must_equal("tty\r\n")
+    end
+
+    it "captures stdout and stderr merged in execution order with ONLCR newlines and empty stderr" do
+      result = pty_exec("echo out1; echo err1 >&2; echo out2")
+      result[:stdout].must_equal("out1\r\nerr1\r\nout2\r\n")
+      result[:stderr].must_equal("")
+    end
+
+    it "propagates the command's own exit code through the pty session" do
+      pty_exec("echo boom >&2; exit 3")[:exit_code].must_equal(3)
+    end
+
+    it "round-trips a literal CRLF through the pty's ONLCR without doubling the CR" do
+      # A command that writes "\r\n" itself must come back "\r\r\n" off a
+      # real pty (kernel ONLCR), not "\r\n" - the exact bytes real's
+      # capture carries.
+      pty_exec("printf 'a\\r\\nb\\n'")[:stdout].must_equal("a\r\r\nb\r\n")
+    end
+  end
+
+  describe "shell plugin __raw_pty_merge capture" do
+    it "captures a merge-marked command on a real pty, with CRLF stdout, empty stderr and the real-pty marker" do
+      result = PluginSpecHelper.run("shell", {
+        "cmd"             => "echo out1; echo err1 >&2",
+        "__raw_pty_merge" => "1",
+      })
+      result["stdout"].as_s.must_equal("out1\r\nerr1\r\n")
+      result["stderr"].as_s.must_equal("")
+      result["_krikri_real_pty"].as_bool?.must_equal(true)
+      result["rc"].as_i.must_equal(0)
+    end
+
+    it "keeps the plain two-stream capture for a shell run without the merge marker" do
+      result = PluginSpecHelper.run("shell", {"cmd" => "echo out1; echo err1 >&2"})
+      result["stdout"].as_s.must_equal("out1")
+      result["stderr"].as_s.must_equal("err1")
+      result["_krikri_real_pty"]?.must_be_nil
     end
   end
 
