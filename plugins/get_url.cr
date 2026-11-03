@@ -5,6 +5,7 @@ require "http/client"
 require "uri"
 require "socket"
 require "../src/krikri/base_plugin"
+require "../src/krikri/python_literal"
 require "../src/krikri/plugin_helpers/http_download"
 require "../src/krikri/plugin_helpers/url_preflight"
 
@@ -49,6 +50,17 @@ module Krikri
       dest = @params["dest"]?
       return PluginResult.new(changed: false, failed: true, msg: "missing required argument: url") unless url
       return PluginResult.new(changed: false, failed: true, msg: "missing required argument: dest") unless dest
+
+      # Real get_url types headers: as a dict, so a plain string goes through
+      # Ansible's check_type_dict during arg-spec validation, before the module
+      # body - and thus before every check below. A failed conversion kills the
+      # task right there (live-verified vs 2.19.11, including the order: the
+      # "unable to convert to dict" error only fires once url:/dest: are
+      # present, since Ansible reports missing required arguments first).
+      user_headers, headers_error = converted_headers
+      if err = headers_error
+        return PluginResult.new(changed: false, failed: true, msg: err)
+      end
 
       # Real get_url strips surrounding whitespace (including newlines) off
       # the url before doing anything with it - urllib's Request rejects the
@@ -138,8 +150,8 @@ module Krikri
         return preflight_failure_result(failure, url, dest)
       end
 
-      if bad = invalid_header_name
-        return PluginResult.new(changed: false, failed: true, msg: "Invalid header name #{python_bytes_repr(bad)}", url: url, status: -1)
+      if bad = invalid_header_name(user_headers)
+        return PluginResult.new(changed: false, failed: true, msg: "Invalid header name #{python_bytes_repr(python_title(bad))}", url: url, status: -1)
       end
 
       if true?(@params["_ansible_check_mode"]?)
@@ -1095,16 +1107,156 @@ module Krikri
       )
     end
 
-    # http.client.putheader rejects a dict key containing ':' (or CR/LF,
-    # empty, or leading whitespace) before any connection is made, and
+    # http.client.putheader rejects a name whose first char is ':' or
+    # whitespace, or which contains ':', CR or LF (http/client.py's
+    # rb'[^:\s][^:\r\n]*' fullmatch), before any connection is made, and
     # fetch_url folds that ValueError into status -1 with the bare message.
-    private def invalid_header_name : String?
-      raw = @params["headers"]? || return nil
-      dict = (JSON.parse(raw).as_h? rescue nil) || return nil
-      dict.each_key do |key|
+    # urllib's do_open .title()-cases every header name before putheader, so
+    # the name in the message is the TITLE-CASED form ("Cookie:oraclelicense"
+    # -> b'Cookie:Oraclelicense', KAMI911.java_oracle_jdk11's Oracle cookie
+    # trick).
+    private def invalid_header_name(headers : Hash(String, String)?) : String?
+      return nil if headers.nil?
+      headers.each_key do |key|
         return key if key.empty? || key[0] == ':' || key[0].whitespace? || key.includes?(':') || key.includes?('\r') || key.includes?('\n')
       end
       nil
+    end
+
+    # Python str.title(): uppercase each letter that follows a non-letter
+    # (or nothing), lowercase the rest. NOT Crystal's titleize, which leaves
+    # later words untouched ("cookie:oraclelicense".titleize keeps
+    # "oraclelicense" lowercase where Python's .title() gives
+    # "Oraclelicense").
+    private def python_title(name : String) : String
+      String.build do |builder|
+        prev_alpha = false
+        name.each_char do |char|
+          if char.letter?
+            builder << (prev_alpha ? char.downcase : char.upcase)
+            prev_alpha = true
+          else
+            builder << char
+            prev_alpha = false
+          end
+        end
+      end
+    end
+
+    # Real get_url's headers: is a dict param, so a plain string is converted
+    # by Ansible's check_type_dict (ansible/module_utils/common/validation.py)
+    # at arg-spec validation, BEFORE the module body: a "{"-prefixed string
+    # must parse as a dict (JSON first, then Python's literal_eval), a string
+    # containing "=" is parsed as comma/space-separated key=value fields, and
+    # anything else fails validation with "argument 'headers' is of type str
+    # and we were unable to convert to dict: ...". That conversion is what
+    # makes the classic Oracle cookie trick
+    # `headers: Cookie:oraclelicense=accept-securebackup-cookie`
+    # (KAMI911.java_oracle_jdk11) land as the single key "Cookie:oraclelicense"
+    # (split on the first "="), which urllib then rejects with "Invalid header
+    # name b'Cookie:Oraclelicense'" before any request is made. Krikri used to
+    # split such strings on ":" instead ("Cookie" / "oraclelicense=..."),
+    # producing a perfectly legal request - and a completely different
+    # failure (the dead URL's 404) where Ansible never requests at all.
+    #
+    # Returns {dict, nil} when the param converts, {nil, msg} when the
+    # conversion itself fails, {nil, nil} when headers is absent.
+    private def converted_headers : {Hash(String, String)?, String?}
+      raw = @params["headers"]?
+      return {nil, nil} unless raw
+
+      # A dict param value arrives here as its JSON text (module-arg
+      # finalization stringifies every param into this plugin's
+      # Hash(String, String) @params) - real bug found benchmarking
+      # caddy_ansible.caddy_ansible: `headers: '{{ caddy_github_headers }}'`
+      # (a real dict, `{}` by default) must be passed through as a dict, not
+      # split on "," into a header literally NAMED "{}".
+      parsed = JSON.parse(raw) rescue nil
+      if parsed
+        if dict = parsed.as_h?
+          headers = {} of String => String
+          dict.each do |key, value|
+            headers[key] = value.as_s? || value.to_s
+          end
+          return {headers, nil}
+        end
+        # A JSON-parsable STRING is just a string whose text happens to look
+        # like JSON (e.g. a `| to_json` result): real check_type_dict sees a
+        # plain python str and runs the string branches below on it verbatim.
+        # Any other JSON type means the YAML value itself wasn't a string or
+        # dict (a list, number, bool...): check_type_dict rejects those types
+        # outright.
+        unless parsed.as_s?
+          pytype = case parsed.raw
+                   when Array(JSON::Any) then "list"
+                   when Int64            then "int"
+                   when Float64          then "float"
+                   when Bool             then "bool"
+                   else                       "NoneType"
+                   end
+          return {nil, "argument 'headers' is of type #{pytype} and we were unable to convert to dict: <class '#{pytype}'> cannot be converted to a dict"}
+        end
+      end
+
+      if raw.starts_with?('{')
+        # JSON failed but the string looks like an object: real ansible falls
+        # back to Python's ast.literal_eval, which accepts the single-quoted
+        # Python dict literal form ("{'a': 'b'}").
+        if dict = PythonLiteral.dict_json(raw).try(&.as_h?)
+          headers = {} of String => String
+          dict.each do |key, value|
+            headers[key] = value.as_s? || value.to_s
+          end
+          return {headers, nil}
+        end
+        return {nil, "argument 'headers' is of type str and we were unable to convert to dict: unable to evaluate string as dictionary"}
+      end
+
+      if raw.includes?('=')
+        if dict = parse_kv_dict(raw)
+          return {dict, nil}
+        end
+        return {nil, "argument 'headers' is of type str and we were unable to convert to dict: unable to evaluate string in the \"key=value\" format as dictionary"}
+      end
+
+      {nil, "argument 'headers' is of type str and we were unable to convert to dict: dictionary requested, could not parse JSON or key=value"}
+    end
+
+    # The "k=v,k2=v2" half of check_type_dict (validation.py): fields split on
+    # unquoted commas and spaces (quote- and backslash-aware, like the Python
+    # state machine), each field then split on the first "=" - a field without
+    # one fails the whole conversion.
+    private def parse_kv_dict(raw : String) : Hash(String, String)?
+      fields = [] of String
+      buffer = ""
+      in_quote = nil.as(Char?)
+      in_escape = false
+      raw.strip.each_char do |char|
+        if in_escape
+          buffer += char.to_s
+          in_escape = false
+        elsif char == '\\'
+          in_escape = true
+        elsif in_quote.nil? && (char == '\'' || char == '"')
+          in_quote = char
+        elsif in_quote == char
+          in_quote = nil
+        elsif in_quote.nil? && (char == ',' || char == ' ')
+          fields << buffer unless buffer.empty?
+          buffer = ""
+        else
+          buffer += char.to_s
+        end
+      end
+      fields << buffer unless buffer.empty?
+
+      dict = {} of String => String
+      fields.each do |field|
+        return nil unless field.includes?('=')
+        key, _, value = field.partition('=')
+        dict[key] = value
+      end
+      dict
     end
 
     private def python_bytes_repr(name : String) : String
@@ -1167,31 +1319,12 @@ module Krikri
         headers["Accept-Encoding"] = "identity"
       end
 
-      if headers_param = @params["headers"]?
-        # headers: Ansible documents (and accepts) this as a real
-        # DICT, not just the comma-separated "key:value,key2:value2"
-        # string this plugin originally only supported. A dict param
-        # value arrives here as its JSON text (module-arg finalization
-        # stringifies every param into this plugin's Hash(String,
-        # String) @params) - real bug found benchmarking caddy_ansible.
-        # caddy_ansible's own `headers: '{{ caddy_github_headers }}'`
-        # (caddy_github_headers a real dict, `{}` by default, built via
-        # `| combine(...)` when a token is set): the literal 2-character
-        # text "{}" was split on "," (["{}"]  ) then partitioned on ":"
-        # (key="{}", value=""), setting an HTTP header literally NAMED
-        # "{}" with an empty value - GitHub's API rejected the request
-        # outright with 400 Bad Request instead of the header-less
-        # request Ansible actually sends for an empty dict.
-        parsed_dict = (JSON.parse(headers_param).as_h? rescue nil)
-        if parsed_dict
-          parsed_dict.each do |key, value|
-            headers[key] = value.as_s? || value.to_s
-          end
-        else
-          headers_param.split(",").each do |pair|
-            key, _, value = pair.partition(":")
-            headers[key.strip] = value.strip unless key.blank?
-          end
+      # The headers param was already converted (or rejected) by
+      # converted_headers during execute - see it for the check_type_dict
+      # semantics; a failed conversion never reaches a request.
+      if user_headers = converted_headers[0]
+        user_headers.each do |key, value|
+          headers[key] = value
         end
       end
 
