@@ -243,7 +243,14 @@ describe "core plugins' documented bool params (table sweep)" do
       it {{ cname }} do
         base = CONTEXT[{{plugin}}]? || {} of String => String
         run_params = base.merge({ {{param}} => "krikri-not-a-bool" })
-        result = PluginSpecHelper.run({{plugin}}, run_params)
+        # The dnf action-level backend resolution needs the pkg_mgr fact;
+        # without it a non-dnf dev host fails the task there instead of
+        # reaching the bool validation this sweep tests.
+        {% if plugin == "dnf" %}
+          result = PluginSpecHelper.run({{plugin}}, run_params, vars: {"ansible_pkg_mgr" => "dnf"})
+        {% else %}
+          result = PluginSpecHelper.run({{plugin}}, run_params)
+        {% end %}
         result["failed"].as_bool.must_equal(true)
         result["msg"].as_s.must_equal(bool_error({{param}}, "str", "krikri-not-a-bool"))
       end
@@ -256,7 +263,7 @@ describe "core plugins' documented bool params (table sweep)" do
   end
 
   it "dnf: expire-cache alias fails under the canonical update_cache name" do
-    result = PluginSpecHelper.run("dnf", {"name" => "bash", "expire-cache" => "blah"})
+    result = PluginSpecHelper.run("dnf", {"name" => "bash", "expire-cache" => "blah"}, vars: {"ansible_pkg_mgr" => "dnf"})
     result["msg"].as_s.must_equal(bool_error("update_cache", "str", "blah"))
   end
 

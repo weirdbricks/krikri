@@ -51,7 +51,7 @@ describe "dnf/yum list: query mode" do
       result = PluginSpecHelper.run("dnf", {
         "list"  => "updates",
         "state" => "present",
-      })
+      }, vars: {"ansible_pkg_mgr" => "dnf"})
 
       result["changed"].as_bool.must_equal(false)
       falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
@@ -83,7 +83,7 @@ describe "dnf/yum list: query mode" do
       result = PluginSpecHelper.run("yum", {
         "list"  => "updates",
         "state" => "present",
-      })
+      }, vars: {"ansible_pkg_mgr" => "dnf"})
 
       falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
       result["results"].as_a.size.must_equal(3)
@@ -96,7 +96,7 @@ describe "dnf/yum list: query mode" do
       result = PluginSpecHelper.run("dnf", {
         "list"  => "updates",
         "state" => "present",
-      })
+      }, vars: {"ansible_pkg_mgr" => "dnf"})
 
       falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
       result["results"].as_a.size.must_equal(0)

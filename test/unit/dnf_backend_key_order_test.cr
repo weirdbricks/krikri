@@ -72,17 +72,11 @@ describe "dnf plugin - per-backend registered key order (round994003)" do
     end
   end
 
-  # The no-fact fallback probes what /usr/bin/dnf symlinks to (real
-  # pkg_mgr.py's _check_rh_versions); only meaningful on a host without
-  # a dnf5-style symlink.
-  it "falls back to the dnf4 order when no pkg_mgr fact exists and the host has no dnf" do
-    skip "host has /usr/bin/dnf or /usr/bin/microdnf - the probe would resolve them" if File.exists?("/usr/bin/dnf") || File.exists?("/usr/bin/microdnf")
-    with_fake_dnf do
-      result = PluginSpecHelper.run("dnf", {"name" => "@Development tools", "state" => "present"})
-
-      result.as_h.keys.must_equal(["msg", "changed", "results", "rc"])
-    end
-  end
+  # The fact-less fallback (what /usr/bin/dnf symlinks to, real pkg_mgr.py's
+  # own _check_rh_versions disambiguation) lives in RpmPackage's on-demand
+  # pkg_mgr detection now (see dnf_backend_resolution_failure_test) - on a
+  # host without dnf binaries that resolution FAILS the task instead of
+  # picking an order, so there is no fact-less key-order case left to pin.
 
   it "emits the real transaction shape (empty msg kept) on a real install" do
     with_fake_dnf do

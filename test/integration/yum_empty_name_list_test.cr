@@ -11,14 +11,14 @@ require "../minitest_helper"
 # bug class (round 84000, see apt_cache_updated_spec.cr).
 describe "yum: empty name: list (name: key present, resolves to [])" do
   it "is a no-op, not a missing-parameter failure" do
-    result = PluginSpecHelper.run("yum", {"name" => "[]"})
+    result = PluginSpecHelper.run("yum", {"name" => "[]"}, vars: {"ansible_pkg_mgr" => "dnf"})
 
     falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
     result["changed"].as_bool.must_equal(false)
   end
 
   it "still fails when name:/pkg: is missing entirely" do
-    result = PluginSpecHelper.run("yum", {"state" => "present"})
+    result = PluginSpecHelper.run("yum", {"state" => "present"}, vars: {"ansible_pkg_mgr" => "dnf"})
 
     result["failed"].as_bool.must_equal(true)
   end

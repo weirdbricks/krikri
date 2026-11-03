@@ -89,7 +89,7 @@ end
 describe "dnf plugin - parameter coverage (CLI-invocation shape)" do
   it "builds the documented baseline when none of the new params are set" do
     with_recording_pkg_managers do |log|
-      result = PluginSpecHelper.run("dnf", {"name" => "fake-pkg", "state" => "present"})
+      result = PluginSpecHelper.run("dnf", {"name" => "fake-pkg", "state" => "present"}, vars: {"ansible_pkg_mgr" => "dnf"})
       falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
       recorded_install_command(log).must_equal("install #{BASELINE_OPTIONS} fake-pkg")
     end
@@ -103,7 +103,7 @@ describe "dnf plugin - parameter coverage (CLI-invocation shape)" do
         "name"         => "fake-pkg",
         "state"        => "present",
         "allowerasing" => "true",
-      })
+      }, vars: {"ansible_pkg_mgr" => "dnf"})
       falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
       recorded_install_command(log).must_equal("install #{BASELINE_OPTIONS} --allowerasing fake-pkg")
     end
@@ -122,7 +122,7 @@ describe "dnf plugin - parameter coverage (CLI-invocation shape)" do
         "name"   => "fake-pkg",
         "state"  => "present",
         "nobest" => "true",
-      })
+      }, vars: {"ansible_pkg_mgr" => "dnf"})
       falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
       recorded_install_command(log).must_equal("install -y --setopt=localpkg_gpgcheck=1 --nobest fake-pkg")
     end
@@ -134,7 +134,7 @@ describe "dnf plugin - parameter coverage (CLI-invocation shape)" do
         "name"   => "fake-pkg",
         "state"  => "present",
         "nobest" => "false",
-      })
+      }, vars: {"ansible_pkg_mgr" => "dnf"})
       falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
       recorded_install_command(log).must_equal("install #{BASELINE_OPTIONS} fake-pkg")
     end
@@ -147,7 +147,7 @@ describe "dnf plugin - parameter coverage (CLI-invocation shape)" do
         "name"      => "fake-pkg",
         "state"     => "present",
         "cacheonly" => "true",
-      })
+      }, vars: {"ansible_pkg_mgr" => "dnf"})
       falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
       recorded_install_command(log).must_equal("install #{BASELINE_OPTIONS} --cacheonly fake-pkg")
     end
@@ -161,7 +161,7 @@ describe "dnf plugin - parameter coverage (CLI-invocation shape)" do
         "name"      => "fake-pkg",
         "state"     => "present",
         "conf_file" => "/etc/dnf/other.conf",
-      })
+      }, vars: {"ansible_pkg_mgr" => "dnf"})
       falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
       recorded_install_command(log).must_equal("install #{BASELINE_OPTIONS} --config=/etc/dnf/other.conf fake-pkg")
     end
@@ -175,7 +175,7 @@ describe "dnf plugin - parameter coverage (CLI-invocation shape)" do
         "name"             => "fake-pkg",
         "state"            => "present",
         "disable_excludes" => "main",
-      })
+      }, vars: {"ansible_pkg_mgr" => "dnf"})
       falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
       recorded_install_command(log).must_equal("install #{BASELINE_OPTIONS} --disableexcludes=main fake-pkg")
     end
@@ -193,7 +193,7 @@ describe "dnf plugin - parameter coverage (CLI-invocation shape)" do
         "state"          => "present",
         "enable_plugin"  => %(["versionlock", "supspeed"]),
         "disable_plugin" => %(["fastestmirror"]),
-      })
+      }, vars: {"ansible_pkg_mgr" => "dnf"})
       falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
       recorded_install_command(log).must_equal(
         "install #{BASELINE_OPTIONS} --enableplugin=versionlock --enableplugin=supspeed --disableplugin=fastestmirror fake-pkg")
@@ -207,7 +207,7 @@ describe "dnf plugin - parameter coverage (CLI-invocation shape)" do
         "state"          => "present",
         "enable_plugin"  => "versionlock,supspeed",
         "disable_plugin" => "fastestmirror",
-      })
+      }, vars: {"ansible_pkg_mgr" => "dnf"})
       falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
       recorded_install_command(log).must_equal(
         "install #{BASELINE_OPTIONS} --enableplugin=versionlock --enableplugin=supspeed --disableplugin=fastestmirror fake-pkg")
@@ -222,7 +222,7 @@ describe "dnf plugin - parameter coverage (CLI-invocation shape)" do
         "name"    => "fake-pkg",
         "state"   => "present",
         "exclude" => %(["kernel*", "vim*"]),
-      })
+      }, vars: {"ansible_pkg_mgr" => "dnf"})
       falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
       recorded_install_command(log).must_equal(
         "install #{BASELINE_OPTIONS} --exclude=kernel* --exclude=vim* fake-pkg")
@@ -235,7 +235,7 @@ describe "dnf plugin - parameter coverage (CLI-invocation shape)" do
         "name"    => "fake-pkg",
         "state"   => "present",
         "exclude" => "kernel*, vim*",
-      })
+      }, vars: {"ansible_pkg_mgr" => "dnf"})
       falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
       recorded_install_command(log).must_equal(
         "install #{BASELINE_OPTIONS} --exclude=kernel* --exclude=vim* fake-pkg")
@@ -250,7 +250,7 @@ describe "dnf plugin - parameter coverage (CLI-invocation shape)" do
         "name"        => "fake-pkg",
         "state"       => "present",
         "installroot" => "/mnt/sysimage",
-      })
+      }, vars: {"ansible_pkg_mgr" => "dnf"})
       falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
       recorded_install_command(log).must_equal(
         "install #{BASELINE_OPTIONS} --installroot=/mnt/sysimage fake-pkg")
@@ -259,7 +259,7 @@ describe "dnf plugin - parameter coverage (CLI-invocation shape)" do
         "name"        => "fake-pkg",
         "state"       => "present",
         "installroot" => "/",
-      })
+      }, vars: {"ansible_pkg_mgr" => "dnf"})
       falsey?(result2["failed"]?.try(&.as_bool)).must_equal(true)
       recorded_install_command(log, 2).must_equal("install #{BASELINE_OPTIONS} fake-pkg")
     end
@@ -273,7 +273,7 @@ describe "dnf plugin - parameter coverage (CLI-invocation shape)" do
         "name"       => "fake-pkg",
         "state"      => "present",
         "releasever" => "9",
-      })
+      }, vars: {"ansible_pkg_mgr" => "dnf"})
       falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
       recorded_install_command(log).must_equal(
         "install #{BASELINE_OPTIONS} --releasever=9 fake-pkg")
@@ -288,7 +288,7 @@ describe "dnf plugin - parameter coverage (CLI-invocation shape)" do
         "name"      => "fake-pkg",
         "state"     => "present",
         "sslverify" => "false",
-      })
+      }, vars: {"ansible_pkg_mgr" => "dnf"})
       falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
       recorded_install_command(log).must_equal(
         "install -y --setopt=localpkg_gpgcheck=1 --best --setopt=sslverify=False fake-pkg")
@@ -305,7 +305,7 @@ describe "dnf plugin - parameter coverage (CLI-invocation shape)" do
         "state"         => "present",
         "download_only" => "true",
         "download_dir"  => "/tmp/rpms",
-      })
+      }, vars: {"ansible_pkg_mgr" => "dnf"})
       falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
       recorded_install_command(log).must_equal(
         "install #{BASELINE_OPTIONS} --downloadonly --downloaddir=/tmp/rpms fake-pkg")
@@ -316,7 +316,7 @@ describe "dnf plugin - parameter coverage (CLI-invocation shape)" do
         "name"         => "fake-pkg",
         "state"        => "present",
         "download_dir" => "/tmp/rpms",
-      })
+      }, vars: {"ansible_pkg_mgr" => "dnf"})
       falsey?(result2["failed"]?.try(&.as_bool)).must_equal(true)
       recorded_install_command(log, 2).must_equal("install #{BASELINE_OPTIONS} fake-pkg")
     end
@@ -342,7 +342,7 @@ describe "dnf plugin - parameter coverage (CLI-invocation shape)" do
         "install_repoquery" => "false",
         "validate_certs"    => "false",
         "lock_timeout"      => "90",
-      })
+      }, vars: {"ansible_pkg_mgr" => "dnf"})
       falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
       recorded_install_command(log).must_equal("install #{BASELINE_OPTIONS} fake-pkg")
     end
@@ -359,7 +359,7 @@ describe "dnf plugin - parameter coverage (CLI-invocation shape)" do
         "name"        => "fake-pkg",
         "state"       => "present",
         "use_backend" => "dnf5",
-      })
+      }, vars: {"ansible_pkg_mgr" => "dnf"})
       falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
       recorded_install_command(log).must_equal("install #{BASELINE_OPTIONS} fake-pkg")
 
@@ -367,7 +367,7 @@ describe "dnf plugin - parameter coverage (CLI-invocation shape)" do
         "name"        => "fake-pkg",
         "state"       => "present",
         "use_backend" => "portage",
-      })
+      }, vars: {"ansible_pkg_mgr" => "dnf"})
       bad["failed"].as_bool.must_equal(true)
       bad["msg"].as_s.must_equal(
         "value of use_backend must be one of: auto, dnf, yum, yum4, dnf4, dnf5, got: portage")
@@ -489,7 +489,7 @@ end
 describe "dnf plugin - same-name repo package vs a Provides: match (issue 280)" do
   it "sends an available-name package to the install batch despite a Provides: match" do
     with_issue280_pkg_managers(provides: ["curl"], available: ["curl"]) do |log|
-      result = PluginSpecHelper.run("dnf", {"name" => "curl", "state" => "present"})
+      result = PluginSpecHelper.run("dnf", {"name" => "curl", "state" => "present"}, vars: {"ansible_pkg_mgr" => "dnf"})
       falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
       File.read_lines(log).must_equal([
         "-q list --available curl",
@@ -500,7 +500,7 @@ describe "dnf plugin - same-name repo package vs a Provides: match (issue 280)" 
 
   it "keeps a purely virtual name on the Provides: fallback (no repo row)" do
     with_issue280_pkg_managers(provides: ["php-json"], available: [] of String) do |log|
-      result = PluginSpecHelper.run("dnf", {"name" => "php-json", "state" => "present"})
+      result = PluginSpecHelper.run("dnf", {"name" => "php-json", "state" => "present"}, vars: {"ansible_pkg_mgr" => "dnf"})
       falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
       result["changed"].as_bool.must_equal(false)
       result["msg"].as_s.must_equal("Nothing to do")
@@ -512,7 +512,7 @@ describe "dnf plugin - same-name repo package vs a Provides: match (issue 280)" 
 
   it "fails the [curl, gcc] batch with dnf's own depsolve error, like real dnf" do
     with_issue280_pkg_managers(provides: ["curl"], available: ["curl", "gcc"], depsolve: true) do |log|
-      result = PluginSpecHelper.run("dnf", {"name" => %(["curl", "gcc"]), "state" => "present"})
+      result = PluginSpecHelper.run("dnf", {"name" => %(["curl", "gcc"]), "state" => "present"}, vars: {"ansible_pkg_mgr" => "dnf"})
       result["failed"].as_bool.must_equal(true)
       result["changed"].as_bool.must_equal(false)
       result["msg"].as_s.must_equal(ISSUE280_DEPSOLVE_MSG)
@@ -552,7 +552,7 @@ describe "dnf plugin - '*' upgrade-all best handling (issue 299)" do
   # per-package baseline keeps --best.
   it "pins --nobest on the upgrade verb for name: '*'" do
     with_recording_pkg_managers do |log|
-      result = PluginSpecHelper.run("dnf", {"name" => "*", "state" => "latest"})
+      result = PluginSpecHelper.run("dnf", {"name" => "*", "state" => "latest"}, vars: {"ansible_pkg_mgr" => "dnf"})
       falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
       recorded_install_command(log).must_equal("upgrade -y --setopt=localpkg_gpgcheck=1 --nobest")
     end
@@ -568,7 +568,7 @@ describe "dnf plugin - '*' upgrade-all best handling (issue 299)" do
         "name"   => "*",
         "state"  => "latest",
         "nobest" => "true",
-      })
+      }, vars: {"ansible_pkg_mgr" => "dnf"})
       falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
       recorded_install_command(log).must_equal("upgrade -y --setopt=localpkg_gpgcheck=1 --nobest")
     end
@@ -586,7 +586,7 @@ describe "dnf plugin - '*' upgrade-all best handling (issue 299)" do
         "name"   => "*",
         "state"  => "latest",
         "nobest" => "false",
-      })
+      }, vars: {"ansible_pkg_mgr" => "dnf"})
       falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
       recorded_install_command(log).must_equal("upgrade -y --setopt=localpkg_gpgcheck=1 --nobest")
     end
@@ -599,7 +599,7 @@ describe "dnf plugin - '*' upgrade-all best handling (issue 299)" do
   # keeps the --best baseline rather than this path's --nobest pin.
   it "keeps --best on the per-package path for a specific package at state: latest" do
     with_recording_pkg_managers do |log|
-      result = PluginSpecHelper.run("dnf", {"name" => "fake-pkg", "state" => "latest"})
+      result = PluginSpecHelper.run("dnf", {"name" => "fake-pkg", "state" => "latest"}, vars: {"ansible_pkg_mgr" => "dnf"})
       falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
       recorded_install_command(log).must_equal("install #{BASELINE_OPTIONS} fake-pkg")
     end
