@@ -325,13 +325,60 @@ describe "get_url plugin" do
     File.delete(dest) if dest && File.exists?(dest)
   end
 
-  it "still supports the comma-separated string form (key:value,key2:value2)" do
+  it "converts a k=v string to a dict like real ansible's type='dict' check_type_dict" do
+    # Real get_url types headers: as a dict; a string goes through
+    # check_type_dict's key=value parsing, NOT the comma-separated
+    # "key:value" split this plugin used to do.
     dest = File.tempname("get-url-spec")
-    result = PluginSpecHelper.run("get_url", {"url" => "#{GET_URL_TEST_BASE}/echo-headers.txt", "dest" => dest, "headers" => "X-Custom:legacy-form"})
+    result = PluginSpecHelper.run("get_url", {"url" => "#{GET_URL_TEST_BASE}/echo-headers.txt", "dest" => dest, "headers" => "X-Custom=legacy-form"})
 
     result["changed"].as_bool.must_equal(true)
     falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
     File.read(dest).must_equal("legacy-form")
+  ensure
+    File.delete(dest) if dest && File.exists?(dest)
+  end
+
+  it "converts a single-quoted Python dict literal like check_type_dict's literal_eval fallback" do
+    dest = File.tempname("get-url-spec")
+    result = PluginSpecHelper.run("get_url", {"url" => "#{GET_URL_TEST_BASE}/echo-headers.txt", "dest" => dest, "headers" => "{'X-Custom': 'literal-form'}"})
+
+    result["changed"].as_bool.must_equal(true)
+    falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+    File.read(dest).must_equal("literal-form")
+  ensure
+    File.delete(dest) if dest && File.exists?(dest)
+  end
+
+  it "fails arg-spec conversion for a string without '=' like real ansible" do
+    # Live-verified vs 2.19.11: `headers: X-Custom:legacy-form` (no "=") is
+    # not parseable as a dict at all; AnsibleModule kills the task at
+    # arg-spec validation with this exact message - no request is made.
+    dest = File.tempname("get-url-spec")
+    result = PluginSpecHelper.run("get_url", {"url" => "#{GET_URL_TEST_BASE}/echo-headers.txt", "dest" => dest, "headers" => "X-Custom:legacy-form"})
+
+    result["failed"].as_bool.must_equal(true)
+    result["changed"].as_bool.must_equal(false)
+    result["msg"].as_s.must_equal("argument 'headers' is of type str and we were unable to convert to dict: dictionary requested, could not parse JSON or key=value")
+  ensure
+    File.delete(dest) if dest && File.exists?(dest)
+  end
+
+  it "rejects an illegal dict key like urllib does, with the title-cased bytes repr" do
+    # KAMI911.java_oracle_jdk11, issue #772: `headers:
+    # Cookie:oraclelicense=accept-securebackup-cookie` converts (split on
+    # the first "=") to the single key "Cookie:oraclelicense", which
+    # urllib's do_open .title()-cases to "Cookie:Oraclelicense" and
+    # http.client rejects before any request - status -1, no dest/elapsed
+    # fields, exactly like real ansible.
+    dest = File.tempname("get-url-spec")
+    result = PluginSpecHelper.run("get_url", {"url" => "#{GET_URL_TEST_BASE}/echo-headers.txt", "dest" => dest, "headers" => "Cookie:oraclelicense=accept-securebackup-cookie"})
+
+    result["failed"].as_bool.must_equal(true)
+    result["changed"].as_bool.must_equal(false)
+    result["msg"].as_s.must_equal("Invalid header name b'Cookie:Oraclelicense'")
+    result["status"].as_i.must_equal(-1)
+    result["url"].as_s.must_equal("#{GET_URL_TEST_BASE}/echo-headers.txt")
   ensure
     File.delete(dest) if dest && File.exists?(dest)
   end

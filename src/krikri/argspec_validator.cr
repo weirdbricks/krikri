@@ -2,6 +2,7 @@ require "json"
 require "digest/sha1"
 require "big"
 require "./param_sentinels"
+require "./python_literal"
 
 # Data-driven module argument validation, matching ansible-core's
 # AnsibleModule argument-spec checks word-for-word.
@@ -1258,6 +1259,10 @@ module Krikri
       if raw.strip.starts_with?("{")
         json = JSON.parse(raw) rescue nil
         return nil if json && json.as_h?
+        # check_type_dict's literal_eval fallback: a single-quoted Python
+        # dict literal like "{'a': 'b'}" is a real dict to Ansible, so the
+        # rewrite-and-JSON-parse approximation accepts it too.
+        return nil if PythonLiteral.dict_json(raw).try(&.as_h?)
         return "unable to evaluate string as dictionary"
       end
       return kv_parse_error(raw) if raw.includes?("=")
@@ -1309,6 +1314,8 @@ module Krikri
       if raw.strip.starts_with?("{")
         json = JSON.parse(raw) rescue nil
         return json if json && json.as_h?
+        literal = PythonLiteral.dict_json(raw)
+        return literal if literal && literal.as_h?
         return nil
       end
       fields = kv_fields(raw)
@@ -1513,15 +1520,12 @@ module Krikri
         nil
       when :str
         # check_type_dict: JSON object, then literal_eval, then the
-        # k1=v1,k2=v2 fallback - each failure has its own wording.
-        if raw.strip.starts_with?("{")
-          "argument '#{name}' is of type str and we were unable to convert to dict: " \
-          "unable to evaluate string as dictionary"
-        elsif raw.includes?("=")
-          nil
-        else
-          "argument '#{name}' is of type str and we were unable to convert to dict: " \
-          "dictionary requested, could not parse JSON or key=value"
+        # k1=v1,k2=v2 fallback - each failure has its own wording. Delegating
+        # to check_type_dict_error keeps this in lockstep with the no_log
+        # walk's use of the same conversion (including the k=value shape
+        # check: "a=b, c" fails the field split just like real check_type_dict).
+        if msg = check_type_dict_error(raw)
+          "argument '#{name}' is of type str and we were unable to convert to dict: #{msg}"
         end
       else
         "argument '#{name}' is of type #{kind} and we were unable to convert to dict: " \

@@ -434,6 +434,27 @@ describe Krikri::ArgspecValidator do
     failure.as(Failure).msg.must_equal("parameters are required together: authority_cert_issuer, authority_cert_serial_number")
   end
 
+  it "accepts a single-quoted Python dict literal like check_type_dict's literal_eval fallback" do
+    # check_type_dict falls back to ast.literal_eval when the "{"-prefixed
+    # string isn't JSON; a literal like `headers: "{'X-Custom': 'v'}"` is a
+    # real dict to Ansible (2.19.11 live-verified: the task proceeds to the
+    # request), so validation must accept it too instead of failing with
+    # "unable to evaluate string as dictionary".
+    failure = Krikri::ArgspecValidator.validate(
+      "get_url", "ansible.builtin.get_url",
+      {"url" => "http://x/", "dest" => "/tmp/x", "headers" => "{'X-Custom': 'v'}"}, vars)
+    failure.must_be_nil
+  end
+
+  it "fails a key=value dict string with a field missing '='" do
+    failure = Krikri::ArgspecValidator.validate(
+      "get_url", "ansible.builtin.get_url",
+      {"url" => "http://x/", "dest" => "/tmp/x", "headers" => "a=b, c"}, vars)
+    failure.as(Failure).msg.must_equal(
+      "argument 'headers' is of type str and we were unable to convert to dict: " \
+      "unable to evaluate string in the \"key=value\" format as dictionary")
+  end
+
   it "fails assemble's missing src/dest at the action level, not the module spec" do
     # Ansible's assemble action plugin checks src/dest presence before the
     # remote_src staging and before the module validates anything
