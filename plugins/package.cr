@@ -1345,16 +1345,19 @@ module Krikri
     # apt.py resolves the name itself before apt-get runs: for a missing
     # cache[X] it calls get_providing_packages(name) with
     # candidate_only=True, and when that comes back empty it fails with
-    # its own "No package matching 'X' is available". The E: line already
-    # implies no candidate for X or any provider (apt would otherwise
-    # have installed the provider), so the provider listing on stdout is
-    # not a valid gate - a provider without a repo candidate must not
-    # send the task back to the raw result. One case must NOT map: a
-    # name with a dpkg status record that carries a Version but no repo
-    # candidate (a config-files "rc" remnant) prints the same E: line,
-    # but python-apt's cache lookup succeeds for it and real ansible
-    # says "no available installation candidate for X" instead - the
-    # call sites keep that case on the raw result with a
+    # its own "No package matching 'X' is available". A non-empty provider
+    # list makes it pass the name through instead (version_installable=True,
+    # "let apt-get sort it out"), so the E: line does NOT imply the provider
+    # side is exhausted - apt-get never auto-selects a provider, and with
+    # several candidates (apache2/lighttpd/nginx for Debian's httpd) it
+    # fails rc 100 with this exact line while real ansible shows the raw
+    # "'cmd' failed" result (issue #790, jesperberth.el_httpd). The provider
+    # gate below only answers the empty side of that check. One case must
+    # NOT map: a name with a dpkg status record that carries a Version but
+    # no repo candidate (a config-files "rc" remnant) prints the same E:
+    # line, but python-apt's cache lookup succeeds for it and real ansible
+    # says "no available installation candidate for X" instead - the call
+    # sites keep that case on the raw result with a
     # dpkg-record-has-a-version guard. Issue #195, live-verified against
     # ansible-playbook 2.19 and real apt.
     private def apt_no_candidate_name(stderr : String, names : Array(String)) : String?
@@ -1363,6 +1366,48 @@ module Krikri
         return base_name if stderr.includes?("E: Package '#{base_name}' has no installation candidate")
       end
       nil
+    end
+
+    # True when python-apt's get_providing_packages(name) (candidate_only
+    # default True, as apt.py calls it) would come back non-empty: some
+    # provider's REVERSE-PROVIDES VERSION is that provider's own candidate
+    # version. A non-empty list makes apt.py's package_status return
+    # version_installable=True and let apt-get deal with the name, so the
+    # rc-100 "has no installation candidate" failure is the real result
+    # (issue #790); an empty one is the pre-apt-get "No package matching"
+    # failure (issue #195). apt-cache showpkg's Reverse Provides lines
+    # carry the providing version ("apache2:amd64 2.4.62-1 (= )"), and
+    # candidate_only needs it: a provider whose candidate version no
+    # longer provides the name is not a match, exactly like python-apt's
+    # `version == get_candidate_ver(rawpkg)` test.
+    private def apt_virtual_provider_with_candidate?(base_name : String) : Bool
+      show = remote_exec("apt-cache showpkg #{shell_single_quote(base_name)} 2>/dev/null")
+      providers = {} of String => Array(String)
+      in_reverse = false
+      show[:stdout].each_line do |line|
+        stripped = line.strip
+        if stripped == "Reverse Provides:"
+          in_reverse = true
+        elsif in_reverse
+          if stripped.empty?
+            in_reverse = false
+          else
+            tokens = stripped.split
+            provider = tokens[0]?.try(&.split(":").first)
+            version = tokens[1]?
+            if provider && version
+              arr = providers[provider]?
+              arr ? arr << version : (providers[provider] = [version])
+            end
+          end
+        end
+      end
+      return false if providers.empty?
+      candidates = apt_candidates_batch(providers.keys)
+      providers.any? do |provider, versions|
+        candidate = candidates[provider]?.try(&.[1])
+        candidate ? versions.includes?(candidate) : false
+      end
     end
 
     # apt.py resolves names in LIST order and fails the first one it can't
@@ -1374,14 +1419,19 @@ module Krikri
     # later freeipa-server-dns), so each requested name gets both checks
     # before the walk moves on. The dpkg-record-has-a-version guard stops
     # the walk and hands back nil so the caller keeps the raw result, same
-    # as the two-step lookup it replaced.
+    # as the two-step lookup it replaced. A no-candidate name that still
+    # has a provider candidate (issue #790) is not a miss at all - real
+    # apt.py passes it through and pre-checks the REMAINING names - so the
+    # walk continues past it instead of mapping or stopping.
     private def apt_first_missing_name(stderr : String, names : Array(String)) : String?
       names.each do |requested|
         if missing = apt_unlocatable_name(stderr, [requested])
           return missing
         end
         if missing = apt_no_candidate_name(stderr, [requested])
-          return apt_dpkg_has_version?(missing) ? nil : missing
+          return nil if apt_dpkg_has_version?(missing)
+          next if apt_virtual_provider_with_candidate?(missing)
+          return missing
         end
       end
       nil

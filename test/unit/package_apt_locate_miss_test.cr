@@ -53,7 +53,7 @@ APT_STUB_THEN_LOCATE_MISS_STDERR = "E: Package 'krikri-stub-pkg-647' has no inst
 # carrying its resolved candidate pin.
 APT_FAIL_INSTALL_CMD_TAIL = " -y -o \"Dpkg::Options::=--force-confdef\" -o \"Dpkg::Options::=--force-confold\" -o DPkg::Lock::Timeout=60       install "
 
-private def with_failing_apt_get_shim(stderr : String, stdout : String = "", dpkg_version : String? = nil, apt_cache_candidate : String? = nil, &)
+private def with_failing_apt_get_shim(stderr : String, stdout : String = "", dpkg_version : String? = nil, apt_cache_candidate : String? = nil, apt_cache_script : String? = nil, &)
   shim_dir = PluginSpecHelper.tmp_path("fake-apt-get-fail")
   Dir.mkdir_p(shim_dir)
   # The stdout heredoc's terminator must sit on its own line: the <<- literals
@@ -75,12 +75,14 @@ private def with_failing_apt_get_shim(stderr : String, stdout : String = "", dpk
     File.write("#{shim_dir}/dpkg-query", dq_script)
     File.chmod("#{shim_dir}/dpkg-query", 0o755)
   end
-  if apt_cache_candidate
+  if apt_cache_candidate || apt_cache_script
     # Shims apt-cache policy with a resolvable candidate, so the
     # install-failure msg's package list carries the resolved candidate
     # pin apt.py puts on every plain name (`install 'pkg=1.2.3-1'`) -
     # the probe's marker/parse protocol is apt_candidates_batch's.
-    ac_script = <<-SH
+    # apt_cache_script replaces the whole shim instead, for probes that
+    # must answer differently per name or cover showpkg too.
+    ac_script = apt_cache_script || <<-SH
       #!/bin/sh
       printf '%s:\n  Installed: (none)\n  Candidate: #{apt_cache_candidate}\n' "$2"
       SH
@@ -276,6 +278,86 @@ describe "package:/apt locate-miss failure shape (issues 194 and 195)" do
       result["rc"].as_i.must_equal(100)
       result["msg"].as_s.must_match(/\A'[^']*apt-get#{Regex.escape(APT_FAIL_INSTALL_CMD_TAIL)}'krikri-virtual-pkg-195=1\.2\.3-1'' failed: #{Regex.escape(APT_NO_CANDIDATE_STDERR)}\z/)
       result.as_h.has_key?("stderr").must_equal(true)
+    end
+  end
+end
+
+# Issue #790 (jesperberth.el_httpd, `package: {name: httpd, state:
+# latest}`): "E: Package 'httpd' has no installation candidate" used to
+# map onto "No package matching 'httpd' is available" whenever no dpkg
+# record carried a version, but apt-get emits that line for a purely
+# virtual name with provider candidates too (it never auto-selects a
+# provider), and real ansible's package_status passes such a name
+# through (get_providing_packages non-empty -> version_installable=True)
+# so the task fails with the raw rc-100 "'cmd' failed" shape.
+APT_VIRTUAL_790_STDERR = "E: Package 'krikri-virtual-pkg-790' has no installation candidate\n"
+APT_790_PROVIDER_NAME  = "krikri-fake-provider-790"
+
+# Issue #790's apt-cache shim: `policy` answers "(none)" for the virtual
+# name and a real candidate for the provider; `showpkg` lists the
+# provider with the version that provides the name. `provider_candidate`
+# and `providing_version` are separate so the candidate_only semantics
+# (providing version == candidate version) can be tested with a stale
+# provide too.
+private def apt_790_cache_script(provider_candidate : String, providing_version : String) : String
+  <<-SH
+    #!/bin/sh
+    if [ "$1" = "showpkg" ]; then
+      printf 'Package: krikri-virtual-pkg-790\nVersions: \n\nReverse Provides: \n#{APT_790_PROVIDER_NAME}:amd64 #{providing_version} (= )\n'
+    else
+      case "$2" in
+        krikri-virtual-pkg-790) printf '%s:\n  Installed: (none)\n  Candidate: (none)\n' "$2";;
+        #{APT_790_PROVIDER_NAME}) printf '%s:\n  Installed: (none)\n  Candidate: #{provider_candidate}\n' "$2";;
+      esac
+    fi
+    SH
+end
+
+describe "package:/apt provider-bearing virtual names keep apt-get's own failure (issue 790)" do
+  serial!
+
+  it "keeps the raw rc-100 failure when a provider's providing version is its candidate (latest)" do
+    with_failing_apt_get_shim(APT_VIRTUAL_790_STDERR, "", apt_cache_script: apt_790_cache_script("2.0-1", "2.0-1")) do
+      result = PluginSpecHelper.run("package",
+        {"name" => "krikri-virtual-pkg-790", "state" => "latest", "use" => "apt"})
+
+      result["failed"].as_bool.must_equal(true)
+      result["changed"].as_bool.must_equal(false)
+      result["rc"].as_i.must_equal(100)
+      # The virtual name stays BARE in the msg's package list - apt.py's
+      # version_installable=True path never pins a resolved candidate.
+      result["msg"].as_s.must_match(/\A'[^']*apt-get#{Regex.escape(APT_FAIL_INSTALL_CMD_TAIL)}'krikri-virtual-pkg-790'' failed: #{Regex.escape(APT_VIRTUAL_790_STDERR)}\z/)
+      result["stderr"].as_s.must_equal(APT_VIRTUAL_790_STDERR)
+      result["stderr_lines"].as_a.must_equal([APT_VIRTUAL_790_STDERR.chomp])
+      result["cache_updated"].as_bool.must_equal(false)
+      result.as_h.has_key?("cache_update_time").must_equal(true)
+    end
+  end
+
+  it "keeps the raw rc-100 failure for state: present too" do
+    with_failing_apt_get_shim(APT_VIRTUAL_790_STDERR, "", apt_cache_script: apt_790_cache_script("2.0-1", "2.0-1")) do
+      result = PluginSpecHelper.run("package",
+        {"name" => "krikri-virtual-pkg-790", "state" => "present", "use" => "apt"})
+
+      result["failed"].as_bool.must_equal(true)
+      result["rc"].as_i.must_equal(100)
+      result["msg"].as_s.must_match(/\A'[^']*apt-get#{Regex.escape(APT_FAIL_INSTALL_CMD_TAIL)}'krikri-virtual-pkg-790'' failed: #{Regex.escape(APT_VIRTUAL_790_STDERR)}\z/)
+      result.as_h.has_key?("stderr").must_equal(true)
+    end
+  end
+
+  it "still maps the E: line when the only provider's providing version is not its candidate" do
+    # python-apt's candidate_only check compares the PROVIDING version
+    # with the provider's candidate version - a provider whose candidate
+    # dropped the Provides no longer satisfies the name.
+    with_failing_apt_get_shim(APT_VIRTUAL_790_STDERR, "", apt_cache_script: apt_790_cache_script("3.0-1", "2.0-1")) do
+      result = PluginSpecHelper.run("package",
+        {"name" => "krikri-virtual-pkg-790", "state" => "latest", "use" => "apt"})
+
+      result["failed"].as_bool.must_equal(true)
+      result["changed"].as_bool.must_equal(false)
+      result["msg"].as_s.must_equal("No package matching 'krikri-virtual-pkg-790' is available")
+      result.as_h.has_key?("stderr").must_equal(false)
     end
   end
 end
