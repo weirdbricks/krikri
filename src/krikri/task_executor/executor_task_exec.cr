@@ -2168,6 +2168,11 @@ module Krikri
         resolved.delete("src")
         resolved["content"] = decrypted
         resolved["__original_src_basename"] = File.basename(src)
+        # The controller src path rides along so copy.cr's --diff payload
+        # can header the after side with it - Ansible's copy ACTION plugin
+        # headers the after side of the diff with the controller src path
+        # for a src: file (_get_diff_data's after_header = source branch).
+        resolved["__original_src_path"] = src
         return resolved
       end
 
@@ -2204,6 +2209,10 @@ module Krikri
       # right basename when dest: is an existing directory - see that
       # call site's own comment for the full "Is a directory" story.
       resolved["__original_src_basename"] = File.basename(src)
+      # Same controller-path passthrough as the vault branch above: the
+      # wire no longer carries src, so the module could not otherwise
+      # reproduce Ansible's src-path diff header.
+      resolved["__original_src_path"] = src
       resolved
     end
 
@@ -2286,6 +2295,10 @@ module Krikri
       # "/usr/local/bin/vault". Real bug found immediately after adding
       # the staging path above, benchmarking the same ansible-vault role.
       resolved["__original_src_basename"] = File.basename(src)
+      # Same controller-path passthrough as the inline branch: the staged
+      # scratch path must never leak into the diff header - Ansible's
+      # action plugin headers the after side with the controller src path.
+      resolved["__original_src_path"] = src
       resolved
     end
 

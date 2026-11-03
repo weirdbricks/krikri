@@ -422,13 +422,16 @@ module Krikri
       if @diff_mode
         # Real copy's diff headers (live-verified vs 2.19.11): the before
         # side is `before: <dest>` when the dest file already exists and
-        # bare `before` when it does not; the after side is always
-        # `after: <dest>`.
+        # bare `before` when it does not. The after side is the dest path
+        # for inline content: but the CONTROLLER src path for a src: file
+        # (the action plugin's _get_diff_data sets after_header = source
+        # there) - __original_src_path, set by the controller when it
+        # inlined a src: file, distinguishes the two on the wire.
         diff_data = generate_unified_diff(
           existing_content,
           content,
           File.exists?(dest) ? "before: #{dest}" : "before",
-          "after: #{dest}"
+          "after: #{@params["__original_src_path"]?.presence || dest}"
         )
       end
 
@@ -683,12 +686,41 @@ module Krikri
         end
       end
 
+      # Ansible's copy diff is built by the ACTION plugin on every
+      # connection type - including local, where krikri's controller-side
+      # inlining never rewrites src and this src-path branch is the one
+      # that runs. The payload must reproduce _get_diff_data's shape:
+      # before_header is the dest path when the dest exists (bare
+      # "before" when it does not) and after_header is the source path -
+      # the controller's own src:, which __original_src_path carries when
+      # the controller staged this file under a scratch name. remote_src
+      # is excluded: real's module-side copy result carries no diff (the
+      # action returns early for remote_src and never calls
+      # _get_diff_data), and the module never builds one itself.
+      diff_data = nil
+      if @diff_mode && !true?(@params["remote_src"]?)
+        existing_content = ""
+        begin
+          existing_content = File.read(dest) if File.exists?(dest)
+        rescue
+          # Unreadable dest: diff from an empty before side, like the
+          # content path does
+        end
+        diff_data = generate_unified_diff(
+          existing_content,
+          File.read(src),
+          File.exists?(dest) ? "before: #{dest}" : "before",
+          "after: #{@params["__original_src_path"]?.presence || src}"
+        )
+      end
+
       # CHECK MODE: Report what would change
       if @check_mode
         result = PluginResult.new(
           changed: changed,
           failed: false,
           msg: "",
+          diff: diff_data,
           # A would-CHANGE check result is Ansible's copy ACTION
           # PLUGIN's own bare `changed: true` (no dest, no stat fields).
           # A would-NOT-change one falls through to the file module (the
@@ -796,6 +828,7 @@ module Krikri
       result = PluginResult.new(
         changed: true,
         failed: false,
+        diff: diff_data,
         dest: dest,
         # Ansible's src here is the action's staged .source.txt tempfile
         # path (live-verified) - krikri echoes the source path it
