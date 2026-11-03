@@ -1619,13 +1619,14 @@ module Krikri
     def self.task_error_chain(module_name : String?, msg : String, origin : String) : ErrorBlock::Node
       root = ErrorBlock::Node.new("Task failed.", source_context: origin)
 
-      # set_fact's strict cacheable: conversion failure (a plain
-      # convert_bool TypeError - no result contribution, no handling
-      # chain): the fatal msg is the whole collapsed-chain brief and the
-      # block is the single collapsed segment carrying the raw error.
+      # set_fact's strict cacheable: and gather_facts' strict parallel:
+      # conversion failure (a plain convert_bool TypeError raised inside the
+      # action plugin - no result contribution, no handling chain): the
+      # fatal msg is the whole collapsed-chain brief and the block is the
+      # single collapsed segment carrying the raw error.
       if msg.starts_with?("Task failed: The value '") &&
          msg.includes?(" is not a valid boolean. Valid booleans include: ") &&
-         module_name.try { |name| name.split(".").last } == "set_fact"
+         module_name.try { |name| ["set_fact", "gather_facts"].includes?(name.split(".").last) }
         return root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(msg["Task failed: ".size..]))
       end
 

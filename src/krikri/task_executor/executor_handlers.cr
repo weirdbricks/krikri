@@ -1129,6 +1129,17 @@ module Krikri
       # at all and failed outright - not a silent divergence, every
       # template:/copy:-with-role-src:/etc. handler in a real playbook
       # would hit this identically.
+      # The gather_facts action's own `parallel:` conversion runs inside the
+      # action plugin, before any fact module - see
+      # gather_facts_parallel_failure (executor_task_exec.cr).
+      if violation = gather_facts_parallel_failure(handler, substituted_params, vars_context)
+        result = apply_changed_failed_when(handler, violation, vars_context, host)
+        if register_name = handler.register
+          register_result(host, register_name, result) unless register_name.empty?
+        end
+        return result
+      end
+
       if ActionPluginManager.has_action_plugin?(handler.module_name)
         # task_host is the TASK's own host, passed only when delegate_to: is
         # in play - same rule as the regular-task call sites in
