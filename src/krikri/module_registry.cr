@@ -241,6 +241,16 @@ module Krikri
       # above - timezone moved to community.general years ago and
       # ansible-core still redirects the old core spelling to it.
       "ansible.builtin.timezone",
+      # ansible.builtin.homebrew (issue #777, rooland-provisioning.git-gpg):
+      # ansible-core's own builtin runtime redirects the builtin spelling to
+      # community.general.homebrew and RUNS it (live-verified vs 2.19.11), so
+      # the graceful unavailable-module skip diverged - real fails the task
+      # with get_bin_path's "Failed to find required executable \"brew\""
+      # and stops the play (rc=2) where krikri skipped and moved on (rc=4).
+      # plugins/homebrew.cr ports that module. The community.general.homebrew
+      # FQCN spelling stays deliberately unregistered (KNOWN_MISSING.md's
+      # macOS-first limit for the linuxbrew roles).
+      "ansible.builtin.homebrew",
       "community.general.npm",
       "community.general.alternatives",
       # ansible.builtin.alternatives (round 601430, T2L.php): same
