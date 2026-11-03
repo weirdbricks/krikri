@@ -186,7 +186,7 @@ module Krikri
       state = @params["state"]? || "present"
       reposdir = @params["reposdir"]? || "/etc/yum.repos.d"
       file = @params["file"]? || name
-      path = File.join(reposdir, "#{file}.repo")
+      path = resolve_repo_path(reposdir, file)
 
       if state == "absent"
         # Ansible's reposdir check fires for state=absent too, not
@@ -225,6 +225,15 @@ module Krikri
       write_repo(name, description, path, check_mode)
     end
 
+    # Python's os.path.join drops every component before an absolute
+    # one, so an absolute `file:` is used as-is (plus .repo) and the
+    # reposdir prefix is discarded entirely - Crystal's File.join
+    # concatenates instead, which doubled the reposdir onto the
+    # already-absolute path (issue #782).
+    private def resolve_repo_path(reposdir : String, file : String) : String
+      file.starts_with?("/") ? "#{file}.repo" : File.join(reposdir, "#{file}.repo")
+    end
+
     private def read_current(path : String) : String
       File.exists?(path) ? File.read(path) : ""
     end
@@ -243,12 +252,12 @@ module Krikri
       current = read_current(path)
       unless current.includes?("[#{name}]")
         return PluginResult.new(changed: false, failed: false, repo: name, state: "absent",
-          diff: generate_unified_diff(current, "", path, path), key_order: YUM_REPO_ORDER)
+          diff: generate_unified_diff(current, "", "before: #{path}", "after: #{path}"), key_order: YUM_REPO_ORDER)
       end
 
       File.delete?(path) unless check_mode
       PluginResult.new(changed: true, failed: false, repo: name, state: "absent",
-        diff: generate_unified_diff(current, "", path, path), key_order: YUM_REPO_ORDER)
+        diff: generate_unified_diff(current, "", "before: #{path}", "after: #{path}"), key_order: YUM_REPO_ORDER)
     end
 
     private def write_repo(name : String, description : String, path : String, check_mode : Bool) : PluginResult
@@ -268,8 +277,12 @@ module Krikri
         apply_owner_group_mode(path, @params["owner"]?, @params["group"]?, @params["mode"]?)
       end
 
+      # The module's diff dict always carries before_header/after_header
+      # keys (set to dest), and Ansible's callback prefixes every header
+      # carried under such a key with "before: "/"after: " - same
+      # convention copy.cr already uses for its own headers.
       PluginResult.new(changed: changed, failed: false, repo: name, state: "present",
-        diff: generate_unified_diff(current, merged, path, path), key_order: YUM_REPO_ORDER)
+        diff: generate_unified_diff(current, merged, "before: #{path}", "after: #{path}"), key_order: YUM_REPO_ORDER)
     end
 
     # Ansible's own yum_repository runs Python's configparser over
