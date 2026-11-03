@@ -3356,6 +3356,27 @@ describe Krikri::PlaybookParser do
 
       task.params["mode"].must_equal("0770")
     end
+
+    it "does not octal-reformat a mode: int whose module argspec types it str (async_status)" do
+      # The YAML-octal rescue exists for the permission-style modules
+      # (file/copy/template - their argspec declares mode: type raw, and
+      # the module reformats the int through '%04o' itself). async_status's
+      # `mode` is an ordinary str-typed choices param (status/cleanup), so
+      # real ansible-playbook passes the int's DECIMAL text through and its
+      # invalid-choice error for `async_status: mode: 36` reads
+      # "value of mode must be one of: status, cleanup, got: 36"
+      # (live-verified vs 2.19.11). The unconditioned rescue turned that
+      # into "got: 044" (issue #759). The int keeps its native-typed
+      # literal marker so plugins that type-check still see the int.
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.async_status:
+            jid: unxbnm
+            mode: 36
+        YAML
+
+      task.params["mode"].must_equal(Krikri::NON_STRING_PARAM_PREFIX + "36")
+    end
   end
 
   describe "legacy inline key=value module args" do

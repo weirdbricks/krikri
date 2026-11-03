@@ -2624,6 +2624,18 @@ module Krikri
       end
     end
 
+    # See the parse-time mode_octal_rescue_applies? in PlaybookParser for
+    # the rationale; the module name here may still be as-written or nil,
+    # so it resolves through the same loader the raw-command check above
+    # uses before consulting the argspec table.
+    private def templated_mode_octal_rescue_applies?(module_name : String?) : Bool
+      return true unless module_name
+      resolved = PlaybookParser.resolve_module_name(module_name) || module_name
+      spec_type = ArgspecValidator.option_type(resolved, "mode")
+      return true unless spec_type
+      spec_type == "raw"
+    end
+
     private def substitute_task_params(
       params : Hash(String, String),
       substitutor : VarSubstitutor,
@@ -3016,7 +3028,14 @@ module Krikri
         # keeps a string-sourced fact a string), so every Int64 arriving
         # here is a genuine YAML-octal-derived int and to_s(8) always
         # round-trips the original octal digits.
-        if key == "mode"
+        # Same argspec gate as the parse-time rescue: only a raw-typed
+        # (permission-style) `mode:` option gets the octal reformat -
+        # async_status's str-typed choices `mode` keeps the int's decimal
+        # text, matching real ansible's invalid-choice message
+        # ("got: 36", issue #759). A task with no resolvable module name
+        # (or a module the argspec table doesn't know) keeps the old
+        # always-convert behavior.
+        if key == "mode" && templated_mode_octal_rescue_applies?(module_name)
           stripped = value.strip
           if stripped.starts_with?("{{") && stripped.ends_with?("}}") && stripped.scan("{{").size == 1
             # The structured (memoized) whole-span evaluation first: with
