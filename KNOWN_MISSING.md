@@ -329,11 +329,22 @@ krikri aims for byte-for-byte identical stdout/stderr/exit code to `ansible-play
   (`PythonLookupRunner`): `lookup('name', ...)`/`query('name', ...)` for a plugin the role ships in
   its own `lookup_plugins/` (or the playbook-adjacent one) dispatches to the controller's own python3
   and runs the plugin's `LookupModule.run(terms, variables, **kwargs)`; a lookup plugin's name IS its
-  file name, so no introspection pass is needed. Wired into BOTH templating engines separately: the
-  hand-rolled `{{ }}` evaluator's `evaluate_custom_python_lookup` and the krikri-jinja side
-  (`krikri_jinja_lookups.cr`, which also serves `query()`/`q()`). Unhelpable cases (no python3,
-  `ansible` not importable, no `LookupModule` class) degrade to undefined/`[]`; a plugin that RAN
-  and raised fails the task with its own error, like real.
+  file name, so no introspection pass is needed. Search roots follow Ansible's loader: the role's own
+  directory, the playbook-adjacent one, every role LOADED this run, then the CONFIGURED paths -
+  `ANSIBLE_LOOKUP_PLUGINS` when set (it REPLACES the defaults, and `~` is expanded) and otherwise
+  `~/.ansible/plugins/lookup` + `/usr/share/ansible/plugins/lookup`. The interpreter is that same
+  python3, retried once under the interpreter `ansible-playbook` itself runs under when the PATH one
+  cannot import `ansible` (the pipx/Homebrew layout). Wired into BOTH templating engines separately:
+  the hand-rolled `{{ }}` evaluator's `evaluate_custom_python_lookup` and the krikri-jinja side
+  (`krikri_jinja_lookups.cr`, which also serves `query()`/`q()`). Unhelpable cases (no python3 at all,
+  `ansible` importable by none of the candidate interpreters, no `LookupModule` class) degrade to
+  undefined/`[]`; a plugin that RAN and raised fails the task with its own error, like real. Two
+  pieces of Ansible's environment are reproduced because real plugins use them: `self._loader` is a
+  real `DataLoader` (so `find_file_in_search_path` resolves through `ansible_search_path`), and
+  `self.set_options()`/`self.get_option()` work off the plugin's own `DOCUMENTATION`. The one piece
+  that cannot be is a `Templar`: `self._templar` stays `None`, so a plugin that templates through it
+  fails instead of resolving (ansible-core 2.19 refuses to render strings it did not mark itself, so a
+  stand-in would silently return unrendered text).
 - **Arbitrary-Python-module support is scoped to role-private `library/*.py` sources** (plus the
   playbook-adjacent `library/`): a module with a resolvable source RUNS on the target with the
   target's own python3 through the py_module plugin. Still cut: a module reference with NO library

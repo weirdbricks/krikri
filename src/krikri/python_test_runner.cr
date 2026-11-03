@@ -1,6 +1,7 @@
 require "json"
 require "./bigint_json"
 require "./spawn_error"
+require "./controller_python"
 
 # Runner for role-local custom TEST plugins - a role's own
 # `test_plugins/*.py` (and the playbook-adjacent `test_plugins/`),
@@ -188,11 +189,12 @@ module Krikri
     # at all - LocalExecutor's #704 rule, so a wrapper that ran is never
     # reclassified as a spawn failure.
     private def run_wrapper(payload) : JSON::Any?
-      python = PythonFilterRunner.python_executable
-      return nil unless python
       # unquote_bigint_json: a bigint marker must reach the test as a
       # real Python int, the way Ansible passes its own int objects.
-      captured = Krikri.run_captured_helper(python, ["-c", WRAPPER],
+      # ControllerPython retries an interpreter that answered "ansible is
+      # not importable" under the one ansible-playbook itself runs under
+      # (issue #778: the plain python3 on PATH need not have ansible).
+      captured = ControllerPython.run_wrapper(PythonFilterRunner.python_executable, WRAPPER,
         Krikri.unquote_bigint_json(payload.to_json))
       return nil unless captured
       return nil unless captured[:status].success?

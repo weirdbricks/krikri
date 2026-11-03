@@ -1,6 +1,7 @@
 require "json"
 require "./bigint_json"
 require "./spawn_error"
+require "./controller_python"
 
 # Runner for role-local CONTROLLER-side Python ACTION plugins - a role's
 # own `action_plugins/<name>.py` dispatched when a task names the
@@ -90,7 +91,7 @@ module Krikri
     # the controller anyway (same detection pattern as
     # PythonLookupRunner#python_executable).
     def python_executable : String?
-      Process.find_executable("python3") || Process.find_executable("python")
+      ControllerPython.executable
     end
 
     # Invokes the `ActionModule` from *source* with the substituted
@@ -195,11 +196,12 @@ module Krikri
     # at all - LocalExecutor's #704 rule, so a wrapper that ran is never
     # reclassified as a spawn failure.
     private def run_wrapper(payload : Hash(String, JSON::Any)) : JSON::Any?
-      python = python_executable
-      return nil unless python
       # unquote_bigint_json: a bigint marker must reach the plugin as a
       # real Python int, the way Ansible passes its own int objects.
-      captured = Krikri.run_captured_helper(python, ["-c", WRAPPER],
+      # ControllerPython retries an interpreter that answered "ansible is
+      # not importable" under the one ansible-playbook itself runs under
+      # (issue #778: the plain python3 on PATH need not have ansible).
+      captured = ControllerPython.run_wrapper(python_executable, WRAPPER,
         Krikri.unquote_bigint_json(payload.to_json))
       return nil unless captured
       return nil unless captured[:status].success?
@@ -221,10 +223,21 @@ module Krikri
     # loop. STDERR is closed rather than buffered: the wrapper reports
     # every outcome through the protocol, and an unread pipe could
     # otherwise deadlock a chatty plugin.
+    #
+    # An interpreter that answered "ansible is not importable" gets the
+    # same one-shot retry run_wrapper gives it (issue #778): the wrapper
+    # says so before any plugin code runs, so replaying the request under
+    # the interpreter `ansible-playbook` itself runs under is safe.
     private def run_wrapper_ipc(payload : Hash(String, JSON::Any), dispatcher : ModuleDispatcher) : JSON::Any?
       python = python_executable
       return nil unless python
+      answer = run_ipc(python, payload, dispatcher)
+      return answer unless ControllerPython.ansible_unavailable?(answer)
+      alternative = ControllerPython.ansible_capable(python) || return answer
+      run_ipc(alternative, payload, dispatcher)
+    end
 
+    private def run_ipc(python : String, payload : Hash(String, JSON::Any), dispatcher : ModuleDispatcher) : JSON::Any?
       # Same spawn classification as run_wrapper: only a PRE-spawn
       # failure raises (run_action converts it); a bad executable keeps
       # the silent nil. The spawn used to sit outside all handling and

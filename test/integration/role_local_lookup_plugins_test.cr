@@ -31,10 +31,12 @@ private def write_role_with_lookup(root : String) : Nil
     PYTHON
 end
 
-private def run_playbook(root : String, playbook_body : String) : {Process::Status, String}
+private def run_playbook(root : String, playbook_body : String,
+                         env : Hash(String, String)? = nil) : {Process::Status, String}
   File.write(File.join(root, "pb.yml"), playbook_body)
   output = IO::Memory.new
-  status = Process.run(BINARY, ["-i", INVENTORY, "pb.yml"], output: output, error: output, chdir: root)
+  status = Process.run(BINARY, ["-i", INVENTORY, "pb.yml"],
+    output: output, error: output, chdir: root, env: env)
   {status, output.to_s}
 end
 
@@ -214,6 +216,90 @@ describe "role-local lookup_plugins/*.py custom lookups" do
     # must fail the same way.
     status.success?.must_equal(false, output)
     output.must_include("The lookup plugin 'no_such_lookup_xyz' was not found.", output)
+  ensure
+    FileUtils.rm_rf(root) if root
+  end
+end
+
+# Issue #778: the same custom-lookup mechanism for a `lookup_plugins/
+# directory NEXT TO THE PLAYBOOK (the reproduction in the issue) rather
+# than inside a role, plus the two configured search roots Ansible's own
+# PluginLoader also honours: `ANSIBLE_LOOKUP_PLUGINS` and the default
+# `~/.ansible/plugins/lookup`. All three were reported as "The lookup
+# plugin 'X' was not found." (env/user dir) or silently null before.
+private ISSUE_778_PLAYBOOK = <<-YAML
+  - hosts: localhost
+    connection: local
+    gather_facts: false
+    tasks:
+      - ansible.builtin.set_fact:
+          pk: "{{ query('mylist') }}"
+      - ansible.builtin.debug:
+          var: pk
+      - ansible.builtin.debug:
+          msg: "{{ query('mylist') | length }}"
+  YAML
+
+private def write_playbook_adjacent_lookup(root : String) : Nil
+  Dir.mkdir_p(File.join(root, "lookup_plugins"))
+  File.write(File.join(root, "lookup_plugins", "mylist.py"), <<-PYTHON)
+    from ansible.plugins.lookup import LookupBase
+
+    class LookupModule(LookupBase):
+        def run(self, terms, variables=None, **kwargs):
+            return ["alpha", "beta"]
+    PYTHON
+end
+
+describe "playbook-adjacent lookup_plugins/*.py custom lookups (issue #778)" do
+  it "resolves the issue's own query()/set_fact/debug repro" do
+    root = File.tempname("lookup-plugins-playbook-adjacent")
+    write_playbook_adjacent_lookup(root)
+    status, output = run_playbook(root, ISSUE_778_PLAYBOOK)
+
+    status.success?.must_equal(true, output)
+    output.must_include("\"alpha\"", output)
+    output.must_include("\"beta\"", output)
+    output.must_include("\"msg\": 2", output)
+  ensure
+    FileUtils.rm_rf(root) if root
+  end
+
+  it "resolves a plugin from a directory named by ANSIBLE_LOOKUP_PLUGINS" do
+    root = File.tempname("lookup-plugins-env-root")
+    plugin_dir = File.join(root, "elsewhere", "lookups")
+    Dir.mkdir_p(plugin_dir)
+    File.write(File.join(plugin_dir, "mylist.py"), <<-PYTHON)
+      from ansible.plugins.lookup import LookupBase
+
+      class LookupModule(LookupBase):
+          def run(self, terms, variables=None, **kwargs):
+              return ["gamma"]
+      PYTHON
+
+    status, output = run_playbook(root, ISSUE_778_PLAYBOOK,
+      {"ANSIBLE_LOOKUP_PLUGINS" => plugin_dir})
+    status.success?.must_equal(true, output)
+    output.must_include("\"gamma\"", output)
+  ensure
+    FileUtils.rm_rf(root) if root
+  end
+
+  it "resolves a plugin from the default ~/.ansible/plugins/lookup directory" do
+    root = File.tempname("lookup-plugins-user-dir")
+    home = File.join(root, "home")
+    Dir.mkdir_p(File.join(home, ".ansible", "plugins", "lookup"))
+    File.write(File.join(home, ".ansible", "plugins", "lookup", "mylist.py"), <<-PYTHON)
+      from ansible.plugins.lookup import LookupBase
+
+      class LookupModule(LookupBase):
+          def run(self, terms, variables=None, **kwargs):
+              return ["delta"]
+      PYTHON
+
+    status, output = run_playbook(root, ISSUE_778_PLAYBOOK, {"HOME" => home})
+    status.success?.must_equal(true, output)
+    output.must_include("\"delta\"", output)
   ensure
     FileUtils.rm_rf(root) if root
   end

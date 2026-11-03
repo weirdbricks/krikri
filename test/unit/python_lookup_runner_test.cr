@@ -332,3 +332,146 @@ describe "PythonLookupRunner spawn failure reporting (#705)" do
     captured.to_s.must_match(/simulated spawn failure/)
   end
 end
+
+# Issue #778: the search trees Ansible's own PluginLoader consults after
+# the role/playbook directories - `ANSIBLE_LOOKUP_PLUGINS` (which
+# REPLACES the defaults, live-verified vs ansible-playbook 2.19.11) and
+# the default `~/.ansible/plugins/lookup` + `/usr/share/ansible/plugins/
+# lookup` pair. Ignoring them made real ansible find a plugin krikri
+# reported as "The lookup plugin 'X' was not found.".
+describe "PythonLookupRunner configured lookup plugin roots (#778)" do
+  serial! # ENV["ANSIBLE_LOOKUP_PLUGINS"]/["HOME"] are process-wide
+
+  it "finds a plugin under a directory named by ANSIBLE_LOOKUP_PLUGINS" do
+    root = PluginSpecHelper.tmp_path("pylookup-env-root")
+    path = write_lookup_plugin(File.join(root, "custom_lookups"), "envlookup.py",
+      "# env-configured plugin")
+    plugin_dir = File.dirname(path)
+    previous = ENV["ANSIBLE_LOOKUP_PLUGINS"]?
+    begin
+      ENV["ANSIBLE_LOOKUP_PLUGINS"] = plugin_dir
+      Krikri::PythonLookupRunner.find_source("envlookup", nil, nil).must_equal(path)
+    ensure
+      previous ? (ENV["ANSIBLE_LOOKUP_PLUGINS"] = previous) : ENV.delete("ANSIBLE_LOOKUP_PLUGINS")
+      FileUtils.rm_r(root)
+    end
+  end
+
+  it "treats ANSIBLE_LOOKUP_PLUGINS as a PATH-style list and replaces the defaults" do
+    root = PluginSpecHelper.tmp_path("pylookup-env-list")
+    first = File.join(root, "one")
+    second_path = write_lookup_plugin(File.join(root, "two"), "secondlookup.py",
+      "# second entry")
+    second = File.dirname(second_path)
+    home = File.join(root, "home")
+    write_lookup_plugin(File.join(home, ".ansible", "plugins", "lookup"),
+      "homelookup.py", "# user dir plugin")
+    previous_env = ENV["ANSIBLE_LOOKUP_PLUGINS"]?
+    previous_home = ENV["HOME"]?
+    begin
+      ENV["ANSIBLE_LOOKUP_PLUGINS"] = "#{first}:#{second}"
+      ENV["HOME"] = home
+      # both list entries are searched...
+      Krikri::PythonLookupRunner.find_source("secondlookup", nil, nil).must_equal(second_path)
+      # ...and the env var REPLACES ~/.ansible/plugins/lookup, as in ansible
+      Krikri::PythonLookupRunner.find_source("homelookup", nil, nil).must_be_nil
+    ensure
+      previous_env ? (ENV["ANSIBLE_LOOKUP_PLUGINS"] = previous_env) : ENV.delete("ANSIBLE_LOOKUP_PLUGINS")
+      previous_home ? (ENV["HOME"] = previous_home) : ENV.delete("HOME")
+      FileUtils.rm_r(root)
+    end
+  end
+
+  it "expands a ~ entry in ANSIBLE_LOOKUP_PLUGINS like ansible's pathlist settings" do
+    root = PluginSpecHelper.tmp_path("pylookup-env-tilde")
+    home = File.join(root, "home")
+    path = write_lookup_plugin(File.join(home, "mylookups"), "tildelookup.py", "# tilde entry")
+    previous_env = ENV["ANSIBLE_LOOKUP_PLUGINS"]?
+    previous_home = ENV["HOME"]?
+    begin
+      ENV["HOME"] = home
+      ENV["ANSIBLE_LOOKUP_PLUGINS"] = "~/mylookups/#{File.basename(File.dirname(path))}"
+      Krikri::PythonLookupRunner.find_source("tildelookup", nil, nil).must_equal(path)
+    ensure
+      previous_env ? (ENV["ANSIBLE_LOOKUP_PLUGINS"] = previous_env) : ENV.delete("ANSIBLE_LOOKUP_PLUGINS")
+      previous_home ? (ENV["HOME"] = previous_home) : ENV.delete("HOME")
+      FileUtils.rm_r(root)
+    end
+  end
+
+  it "falls back to ~/.ansible/plugins/lookup and the system dir when unset" do
+    previous = ENV["ANSIBLE_LOOKUP_PLUGINS"]?
+    begin
+      ENV.delete("ANSIBLE_LOOKUP_PLUGINS")
+      roots = Krikri::PythonLookupRunner.configured_roots
+      home = ENV["HOME"]? || ENV["USERPROFILE"]?
+      roots.includes?(File.join(home, ".ansible", "plugins", "lookup")).must_equal(true) if home
+      roots.includes?("/usr/share/ansible/plugins/lookup").must_equal(true)
+    ensure
+      ENV["ANSIBLE_LOOKUP_PLUGINS"] = previous if previous
+    end
+  end
+end
+
+# Ansible's own plugin loader registers a plugin's DOCUMENTATION options
+# with its config manager and sets `_load_name`, and hands the plugin a
+# real DataLoader. Custom lookups use both (`self.set_options(...)` /
+# `self.get_option(...)` is the standard way to read a plugin option;
+# `self._loader.path_dwim_relative` backs find_file_in_search_path), so
+# the wrapper reproduces them - without it a perfectly ordinary custom
+# lookup failed with `KeyError: ` (issue #778's follow-up sweep).
+describe "PythonLookupRunner plugin loader fidelity (#778)" do
+  it "supports set_options()/get_option() driven by the plugin's DOCUMENTATION" do
+    return unless ansible_importable
+
+    root = PluginSpecHelper.tmp_path("pylookup-set-options")
+    source = write_lookup_plugin(root, "opts.py", <<-PYTHON)
+      from ansible.plugins.lookup import LookupBase
+
+      DOCUMENTATION = """
+      name: opts
+      short_description: reads an option through ansible's config manager
+      options:
+        prefix:
+          description: prefix
+          default: "P-"
+      """
+
+      class LookupModule(LookupBase):
+          def run(self, terms, variables=None, **kwargs):
+              self.set_options(var_options=variables, direct=kwargs)
+              prefix = self.get_option("prefix")
+              return [prefix + str(t) for t in terms]
+      PYTHON
+
+    empty = {} of String => JSON::Any
+    result = Krikri::PythonLookupRunner.call_lookup("opts", source,
+      [JSON::Any.new("a"), JSON::Any.new("b")], empty, empty)
+    result.as_a.map(&.as_s).must_equal(["P-a", "P-b"])
+
+    # a `direct=` override still wins, exactly like ansible's precedence
+    result = Krikri::PythonLookupRunner.call_lookup("opts", source,
+      [JSON::Any.new("a")], empty, {"prefix" => JSON::Any.new("x-")})
+    result.as_a.map(&.as_s).must_equal(["x-a"])
+    FileUtils.rm_r(root)
+  end
+
+  it "hands the plugin a real DataLoader for self._loader" do
+    return unless ansible_importable
+
+    root = PluginSpecHelper.tmp_path("pylookup-dataloader")
+    source = write_lookup_plugin(root, "ldr.py", <<-PYTHON)
+      from ansible.plugins.lookup import LookupBase
+
+      class LookupModule(LookupBase):
+          def run(self, terms, variables=None, **kwargs):
+              return [type(self._loader).__name__]
+      PYTHON
+
+    empty = {} of String => JSON::Any
+    result = Krikri::PythonLookupRunner.call_lookup("ldr", source,
+      [] of JSON::Any, empty, empty)
+    result.as_a.map(&.as_s).must_equal(["DataLoader"])
+    FileUtils.rm_r(root)
+  end
+end

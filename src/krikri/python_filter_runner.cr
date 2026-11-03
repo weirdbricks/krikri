@@ -1,6 +1,7 @@
 require "json"
 require "./bigint_json"
 require "./spawn_error"
+require "./controller_python"
 require "krikri-jinja/krikri_jinja"
 
 # Runner for role-local custom FILTER plugins - a role's own
@@ -630,7 +631,7 @@ module Krikri
     # on the controller anyway (same detection pattern facts_gatherer
     # uses for its controller-side needs).
     def python_executable : String?
-      Process.find_executable("python3") || Process.find_executable("python")
+      ControllerPython.executable
     end
 
     # Whether *name* is exposed by any of *sources*' FilterModule
@@ -758,11 +759,12 @@ module Krikri
     # at all - LocalExecutor's #704 rule, so a wrapper that ran is never
     # reclassified as a spawn failure.
     private def run_wrapper(payload) : JSON::Any?
-      python = python_executable
-      return nil unless python
       # unquote_bigint_json: a bigint marker must reach the filter as a
       # real Python int, the way Ansible passes its own int objects.
-      captured = Krikri.run_captured_helper(python, ["-c", WRAPPER],
+      # ControllerPython retries an interpreter that answered "ansible is
+      # not importable" under the one ansible-playbook itself runs under
+      # (issue #778: the plain python3 on PATH need not have ansible).
+      captured = ControllerPython.run_wrapper(python_executable, WRAPPER,
         Krikri.unquote_bigint_json(payload.to_json))
       return nil unless captured
       return nil unless captured[:status].success?

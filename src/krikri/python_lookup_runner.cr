@@ -1,6 +1,7 @@
 require "json"
 require "./bigint_json"
 require "./spawn_error"
+require "./controller_python"
 
 # Runner for role-local custom LOOKUP plugins - a role's own
 # `lookup_plugins/*.py` (and the playbook-adjacent `lookup_plugins/`),
@@ -73,12 +74,14 @@ module Krikri
     # lookup plugin stays reachable from the depending role's own
     # tasks, which is how gzm55.local_id_plugin's `id` served
     # gzm55.local_ssh_known_hosts, issue #519; same nearest-first
-    # convention as PythonFilterRunner#find_sources). Unlike filters -
-    # whose names come from each FilterModule's `filters()` dict -
-    # Ansible's plugin loader derives a lookup plugin's name from its
-    # FILE NAME, so no Python introspection (and no mtime cache) is
-    # needed here: `lookup_plugins/manala_environment_files.py` IS the
-    # `manala_environment_files` lookup, whatever class it declares.
+    # convention as PythonFilterRunner#find_sources), and finally
+    # Ansible's CONFIGURED lookup directories (see configured_roots).
+    # Unlike filters - whose names come from each FilterModule's
+    # `filters()` dict - Ansible's plugin loader derives a lookup
+    # plugin's name from its FILE NAME, so no Python introspection (and
+    # no mtime cache) is needed here: `lookup_plugins/
+    # manala_environment_files.py` IS the `manala_environment_files`
+    # lookup, whatever class it declares.
     def find_source(name : String, role_path : String?, playbook_dir : String?) : String?
       [role_path, playbook_dir].each do |root|
         next unless root && !root.empty?
@@ -89,14 +92,53 @@ module Krikri
         path = File.join(root, "#{name}.py")
         return path if File.file?(path)
       end
+      configured_roots.each do |root|
+        path = File.join(root, "#{name}.py")
+        return path if File.file?(path)
+      end
       nil
+    end
+
+    # Ansible's configured lookup plugin directories, searched LAST (its
+    # loader puts the role/playbook `_extra_dirs` ahead of the configured
+    # paths). `ANSIBLE_LOOKUP_PLUGINS` - a PATH-separated list - REPLACES
+    # the defaults exactly as it does in ansible (the defaults being
+    # `~/.ansible/plugins/lookup` and `/usr/share/ansible/plugins/
+    # lookup`), live-verified against ansible-playbook 2.19.11. krikri
+    # has no ansible.cfg INI parser (see krikri-playbook.cr), so the ini
+    # key `lookup_plugins =` stays unsupported - env only, like the other
+    # ANSIBLE_* settings krikri reads.
+    def configured_roots : Array(String)
+      if custom = ENV["ANSIBLE_LOOKUP_PLUGINS"]?
+        return custom.split(':').map(&.strip).reject(&.empty?).map { |entry| expand_home(entry) }
+      end
+      roots = [] of String
+      if home = home_dir
+        roots << File.join(home, ".ansible", "plugins", "lookup")
+      end
+      roots << "/usr/share/ansible/plugins/lookup"
+      roots
+    end
+
+    private def home_dir : String?
+      ENV["HOME"]? || ENV["USERPROFILE"]?
+    end
+
+    # ansible resolves `~` in its pathlist settings (ConfigManager's
+    # resolve_path); a `~/lookups` entry would otherwise never match.
+    private def expand_home(entry : String) : String
+      home = home_dir
+      return entry unless home
+      return home if entry == "~"
+      return File.join(home, entry[2..]) if entry.starts_with?("~/")
+      entry
     end
 
     # The CONTROLLER's own python3 - the interpreter Ansible needs
     # on the controller anyway (same detection pattern as
     # PythonFilterRunner#python_executable).
     def python_executable : String?
-      Process.find_executable("python3") || Process.find_executable("python")
+      ControllerPython.executable
     end
 
     # Where the spawn-failure warning goes - STDERR in production,
@@ -213,11 +255,12 @@ module Krikri
     # at all - LocalExecutor's #704 rule, so a wrapper that ran is never
     # reclassified as a spawn failure.
     private def run_wrapper(payload) : JSON::Any?
-      python = python_executable
-      return nil unless python
       # unquote_bigint_json: a bigint marker must reach the lookup as a
       # real Python int, the way Ansible passes its own int objects.
-      captured = Krikri.run_captured_helper(python, ["-c", WRAPPER],
+      # ControllerPython retries an interpreter that answered "ansible is
+      # not importable" under the one ansible-playbook itself runs under
+      # (issue #778: the plain python3 on PATH need not have ansible).
+      captured = ControllerPython.run_wrapper(python_executable, WRAPPER,
         Krikri.unquote_bigint_json(payload.to_json))
       return nil unless captured
       return nil unless captured[:status].success?
@@ -232,18 +275,31 @@ module Krikri
     # The controller-side wrapper: imports the plugin file, finds its
     # `LookupModule` class (required to subclass the real
     # `ansible.plugins.lookup.LookupBase`, exactly like Ansible's
-    # own loader check), instantiates it with the base class's own
-    # defaults, and calls `run(terms, variables=..., **kwargs)`,
-    # printing the JSON-encoded result. Always responds with a
-    # single-line JSON object ({"ok": true, ...} / {"ok": false, kind,
+    # own loader check), instantiates it with the loader/name Ansible's
+    # own loader would give it, and calls `run(terms, variables=...,
+    # **kwargs)`, printing the JSON-encoded result. Always responds with
+    # a single-line JSON object ({"ok": true, ...} / {"ok": false, kind,
     # error}), so a plugin that prints its own noise cannot corrupt the
     # protocol - only the LAST line of stdout is parsed. An `ansible`
     # package the controller python3 cannot import reports kind
     # "unavailable" (the whole mechanism degrades; the plugin file
     # could not have imported its own base class either).
+    #
+    # Two pieces of Ansible's loader are reproduced here because real
+    # plugins depend on them: the plugin's DOCUMENTATION options get
+    # registered with ansible's config manager and its `_load_name` set
+    # (PluginLoader._load_config_defs + the loader's own name), without
+    # which `self.set_options()`/`self.get_option()` raises KeyError -
+    # a very common plugin idiom; and the constructor receives a real
+    # DataLoader, so `self._loader.path_dwim_relative(...)` (what
+    # `find_file_in_search_path` is built on) works instead of dying on
+    # `None`. `_templar` stays None, the one piece this wrapper cannot
+    # fake. Both are best-effort: any failure leaves the plugin
+    # instantiated exactly as before.
     WRAPPER = <<-PYTHON
       import importlib.util
       import json
+      import os
       import sys
 
 
@@ -262,6 +318,33 @@ module Krikri
           module = importlib.util.module_from_spec(spec)
           spec.loader.exec_module(module)
           return module
+
+
+      def _register_config(module, name):
+          doc = getattr(module, "DOCUMENTATION", None)
+          if not doc:
+              return
+          try:
+              import yaml
+              from ansible import constants as C
+              from ansible.parsing.yaml.loader import AnsibleLoader
+              parsed = yaml.load(doc, Loader=AnsibleLoader)
+              if isinstance(parsed, dict) and isinstance(parsed.get("options"), dict):
+                  C.config.initialize_plugin_configuration_definitions(
+                      "lookup", name, parsed["options"])
+          except Exception:
+              pass
+
+
+      def _instantiate(module, plugin_class, name):
+          _register_config(module, name)
+          try:
+              from ansible.parsing.dataloader import DataLoader
+              instance = plugin_class(loader=DataLoader())
+          except Exception:
+              instance = plugin_class()
+          instance._load_name = name
+          return instance
 
 
       def _serialize(value):
@@ -294,7 +377,8 @@ module Krikri
                    "error": "no LookupModule subclass of LookupBase in %s"
                             % payload.get("path")}))
               return
-          instance = plugin_class()
+          instance = _instantiate(module, plugin_class,
+                                  os.path.basename(payload.get("path")).rsplit(".", 1)[0])
           result = instance.run(payload.get("terms") or [],
                                 variables=payload.get("variables") or {},
                                 **(payload.get("kwargs") or {}))
