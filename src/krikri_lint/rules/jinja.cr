@@ -111,11 +111,79 @@ module Krikri
       # one expression contains a newline and then returns the original
       # text unchanged, so nothing is reported - not even for the
       # single-line blocks sitting next to it.
+      # ansible-lint's jinja scanner treats {% raw %}...{% endraw %} text
+      # as literal, not templated: a `{{x}}` inside it is what the target
+      # command actually receives, so respacing it would change behavior
+      # (e.g. docker's `--format '{{.Names}}'`). We therefore fix spacing
+      # only in the non-raw segments and pass raw text through verbatim.
       private def spacing_fix(value : String) : String?
         return nil unless value.includes?("{{")
-        return nil if multiline_block?(value)
-        fixed = pad_blocks(value)
-        fixed == value ? nil : fixed
+        if (raws = raw_spans(value)).empty?
+          return nil if multiline_block?(value)
+          fixed = pad_blocks(value)
+          fixed == value ? nil : fixed
+        else
+          fix_around_raw(value, raws)
+        end
+      end
+
+      private def fix_segment(segment : String) : String?
+        return nil if segment.empty?
+        return nil unless segment.includes?("{{")
+        return nil if multiline_block?(segment)
+        fixed = pad_blocks(segment)
+        fixed == segment ? nil : fixed
+      end
+
+      # Fix each non-raw segment independently and splice the raw text
+      # back unchanged. The multiline bail-out is per segment too: raw
+      # text is not an expression, so a newline inside it must not
+      # suppress the check for real blocks elsewhere in the value.
+      private def fix_around_raw(value : String, raws : Array({Int32, Int32})) : String?
+        result = String::Builder.new
+        changed = false
+        cursor = 0
+        raws.each do |(raw_start, raw_end)|
+          segment = value[cursor...raw_start]
+          if (fixed = fix_segment(segment))
+            changed = true
+            result << fixed
+          else
+            result << segment
+          end
+          result << value[raw_start...raw_end]
+          cursor = raw_end
+        end
+        tail = value[cursor..]
+        if (fixed = fix_segment(tail))
+          changed = true
+          result << fixed
+        else
+          result << tail
+        end
+        changed ? result.to_s : nil
+      end
+
+      # Byte-index spans of the literal text of every {% raw %} section.
+      # An unterminated {% raw %} makes the whole remainder literal (that
+      # is how the Jinja lexer consumes it, up to the syntax error it
+      # then raises - which jinja[invalid] reports separately).
+      private def raw_spans(value : String) : Array({Int32, Int32})
+        spans = [] of {Int32, Int32}
+        pos = 0
+        while (open_at = value.index(RAW_OPEN, pos))
+          body_start = value.index!("%}", open_at) + 2
+          end_at = value.index(RAW_CLOSE, body_start)
+          if end_at
+            raw_end = value.index!("%}", end_at) + 2
+          else
+            raw_end = value.size
+          end
+          spans << {open_at, raw_end}
+          pos = raw_end
+          break if end_at.nil?
+        end
+        spans
       end
 
       # Rewrite the inner padding of every {{ }} block in turn, skipping
@@ -197,6 +265,11 @@ module Krikri
         return " " if stripped.empty?
         leading + stripped + " "
       end
+
+      # The raw/endraw tags may carry whitespace-control modifiers
+      # ({%- raw -%}); either spelling still opens/closes the literal span.
+      private RAW_OPEN  = /\{%[-+]?\s*raw\s*[-+]?%\}/
+      private RAW_CLOSE = /\{%[-+]?\s*endraw\s*[-+]?%\}/
 
       # True when any {{ }} block in the value has a line break between
       # its delimiters.
