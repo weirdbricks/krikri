@@ -7,6 +7,13 @@ require "../variable_substitutor/filter_core"
 require "../argspec_validator"
 require "../difflib"
 require "./error_block"
+# The become-failure key-rejection below reads PluginManager's become
+# message constants; without this require the reference only resolves in
+# compiles that pull plugin_manager in through some other path (the main
+# binary, most suite shards), while the standalone single-file and
+# smaller-shard compiles of specs that exercise display_result die on
+# "undefined constant" (issue #763's driver run).
+require "../plugin_manager"
 
 module Krikri
   # A module result's "failed" flag read the way Ansible's Python

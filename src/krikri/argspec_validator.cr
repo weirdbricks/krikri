@@ -184,6 +184,15 @@ module Krikri
         msg.starts_with?("Could not find a matching action for the")
       when "ansible.builtin.unarchive"
         {"parameters are mutually exclusive: ('copy', 'remote_src')", "src (or content) and dest are required"}.includes?(msg)
+      when "ansible.builtin.uri"
+        # form-multipart's body guard is uri's action plugin's own
+        # AnsibleActionFail, raised before the module (and its argspec
+        # validation) ever runs, so real renders the collapsed action-level
+        # chain, not the generic "Module failed." one (live-verified vs
+        # 2.19.11). The module's own copy of the check (truthy remote_src)
+        # words it differently ("failed to parse body as form-multipart:
+        # Mapping is required, ..."), so the prefix match cannot swallow it.
+        msg.starts_with?("body must be mapping, cannot be type ")
       else
         false
       end
