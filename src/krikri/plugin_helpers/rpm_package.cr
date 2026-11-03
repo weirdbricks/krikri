@@ -1,6 +1,7 @@
 require "json"
 require "./dnf_install_failures"
 require "./http_download"
+require "./facts_gatherer"
 require "../base_plugin"
 
 module Krikri
@@ -214,13 +215,20 @@ module Krikri
       private def dnf_backend_resolution_failure : PluginResult?
         backend = @params["use_backend"]? || "auto"
         return nil unless backend.in?("auto", "yum")
-        # The resolution only runs from a GATHERED fact here: real falls back
-        # to an on-demand `setup` fact fetch when the fact is missing, which
-        # a remote module binary cannot perform, so a fact-less host keeps
-        # the plugins' previous behavior (dnf.cr's symlink probe, yum.cr's
-        # blind binary call) - a deliberate gap.
+        # Real resolves a MISSING pkg_mgr fact on demand here: the action
+        # plugin runs `setup` with filter=ansible_pkg_mgr (gather_subset
+        # "!all") on the target and uses whatever that reports - so a
+        # `gather_facts: false` host still gets a pkg_mgr verdict, and on
+        # a non-dnf host (Debian's apt) the action fails with the tuple
+        # below CARRYING that fact in ansible_facts (issue #768's
+        # fact-less kpg chaos runs). krikri's plugin binary cannot invoke
+        # setup, so it re-uses the facts gatherer's own pkg_mgr detection,
+        # which probes the same candidate binaries on the machine this
+        # plugin executes on.
         fact = @vars["ansible_pkg_mgr"]?.try(&.as_s?)
-        return nil if fact.nil? || fact.empty? || fact == "auto"
+        if fact.nil? || fact.empty? || fact == "auto"
+          fact = FactsGatherer.detect_pkg_mgr
+        end
         return nil if VALID_ACTION_BACKENDS.includes?(fact)
         msg1 = "Could not detect which major revision of dnf is in use, " \
                "which is required to determine module backend."

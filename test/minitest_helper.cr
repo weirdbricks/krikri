@@ -215,9 +215,17 @@ module PluginSpecHelper
   # {host, params, vars} config shape BasePlugin expects. Defaults to a
   # localhost host so plugins that check ansible_connection/host.name treat
   # this as a local, non-SSH execution.
+  #
+  # dnf/yum specs default to a resolved dnf backend (vars
+  # ansible_pkg_mgr: dnf): real never runs those MODULES without the dnf
+  # ACTION plugin having resolved a backend first - an explicit
+  # use_backend or the pkg_mgr fact, which real fetches on demand with a
+  # filtered setup run when missing (issue #768). A spec wanting the
+  # fact-less wire shape passes "ansible_pkg_mgr" => "" explicitly.
   def self.run(name : String, params : Hash(String, String), vars : Hash(String, String) = {} of String => String, host_name : String = "localhost",
                chdir : String? = nil, before_input : Proc(Nil)? = nil,
                umask : Int32? = nil, env : Hash(String, String)? = nil) : JSON::Any
+    vars = with_rpm_backend_default(name, vars)
     binary = File.join(PLUGINS_DIR, name)
     raise "Plugin binary not found: #{binary} (run ./build.sh first)" unless File.exists?(binary)
 
@@ -249,6 +257,7 @@ module PluginSpecHelper
   def self.run_raw(name : String, params : Hash(String, JSON::Any), vars : Hash(String, String) = {} of String => String, host_name : String = "localhost",
                    chdir : String? = nil, before_input : Proc(Nil)? = nil,
                    umask : Int32? = nil, env : Hash(String, String)? = nil) : JSON::Any
+    vars = with_rpm_backend_default(name, vars)
     binary = File.join(PLUGINS_DIR, name)
     raise "Plugin binary not found: #{binary} (run ./build.sh first)" unless File.exists?(binary)
 
@@ -266,6 +275,15 @@ module PluginSpecHelper
     run_plugin_with_timeout(binary, config.to_json, output, chdir, before_input, umask, env)
 
     Krikri::BigJson.parse(output.to_s)
+  end
+
+  # The dnf/yum specs' default vars (see #run's comment): a resolved dnf
+  # backend unless the spec pinned ansible_pkg_mgr itself (an explicit ""
+  # means the fact-less wire shape).
+  def self.with_rpm_backend_default(name : String, vars : Hash(String, String)) : Hash(String, String)
+    return vars if vars.has_key?("ansible_pkg_mgr")
+    return vars unless name.in?("dnf", "yum")
+    vars.merge({"ansible_pkg_mgr" => "dnf"})
   end
 
   # Whether the filesystem holding `dir` (default: the spec tempdir)

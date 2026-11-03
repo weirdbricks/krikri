@@ -643,6 +643,10 @@ describe "dnf registered shape (round994003 dnf4 backend)" do
           ansible.builtin.dnf:
             name: "@Development tools"
             state: present
+            # An explicit backend: real's action plugin resolves auto/yum via
+            # the pkg_mgr fact (fetched on demand when missing), which this
+            # non-dnf test host cannot truthfully provide - issue #768.
+            use_backend: dnf4
           register: r
     #{dump_task("dnf-noop", work)}
     YAML

@@ -66,7 +66,7 @@ end
 describe "yum: package-group install idempotency" do
   it "reports changed: false for an already-installed group (empty Transaction Summary)" do
     with_fake_yum(NOOP_GROUP_OUTPUT) do
-      result = PluginSpecHelper.run("yum", {"name" => "@Development tools", "state" => "present"})
+      result = PluginSpecHelper.run("yum", {"name" => "@Development tools", "state" => "present"}, vars: {"ansible_pkg_mgr" => "dnf"})
       result["failed"]?.must_be_nil
       result["changed"].as_bool.must_equal(false)
       # Ansible's no-op shape (dnf/yum exit_json(**response) with nothing
@@ -79,7 +79,7 @@ describe "yum: package-group install idempotency" do
 
   it "still reports changed: true for a group with real Install/Upgrade counts" do
     with_fake_yum(ACTUAL_GROUP_OUTPUT) do
-      result = PluginSpecHelper.run("yum", {"name" => "@Development tools", "state" => "present"})
+      result = PluginSpecHelper.run("yum", {"name" => "@Development tools", "state" => "present"}, vars: {"ansible_pkg_mgr" => "dnf"})
       result["failed"]?.must_be_nil
       result["changed"].as_bool.must_equal(true)
       # A group has no NEVRA of its own, so real-shaped `results` names

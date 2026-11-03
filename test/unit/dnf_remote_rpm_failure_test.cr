@@ -15,7 +15,7 @@ describe "dnf local-rpm remote-rpm failure shape" do
     result = PluginSpecHelper.run("dnf", {
       "name"  => "/tmp/krikri-definitely-missing-atom.x86_64.rpm",
       "state" => "present",
-    })
+    }, vars: {"ansible_pkg_mgr" => "dnf"})
     result["failed"].as_bool.must_equal(true)
     result["changed"].as_bool.must_equal(false)
     result["rc"].as_i.must_equal(1)
@@ -33,7 +33,7 @@ describe "dnf local-rpm remote-rpm failure shape" do
     result = PluginSpecHelper.run("dnf", {
       "name"  => "file://#{path}",
       "state" => "present",
-    })
+    }, vars: {"ansible_pkg_mgr" => "dnf"})
     (result["msg"]?.try(&.as_s?) || "").includes?("Could not open").must_equal(false)
   end
 end
