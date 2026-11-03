@@ -1,5 +1,6 @@
 require "../minitest_helper"
 require "json"
+require "../../src/krikri/plugin_helpers/facts_gatherer"
 
 # Regression for the podman-diff dnf_edge_cases N2/N6 findings:
 # ansible-core's dnf module rejects parameters outside its argument_spec
@@ -7,10 +8,16 @@ require "json"
 # fails bool-typed params on non-boolean strings, before any module
 # code runs. This engine silently ignored unknown keys and accepted
 # any string as a bool, proceeding to the backend.
+#
+# The harness pins ansible_pkg_mgr: dnf in vars - real never runs the
+# dnf MODULE without the action plugin having resolved a backend first
+# (explicit use_backend or the pkg_mgr fact, fetched on demand when
+# missing), so every test here simulates the post-resolution context
+# of a dnf host. The fact-LESS path has its own test below.
 private def run_dnf(params : Hash(String, String)) : JSON::Any
   config = {
     "params" => params,
-    "vars"   => Hash(String, JSON::Any).new,
+    "vars"   => {"ansible_pkg_mgr" => JSON::Any.new("dnf")},
     "host"   => {"name" => "localhost", "vars" => Hash(String, JSON::Any).new},
   }.to_json
   stdout = IO::Memory.new
@@ -24,7 +31,7 @@ end
 private def run_dnf_raw(params_json : String) : JSON::Any
   config = {
     "params" => JSON.parse(params_json),
-    "vars"   => Hash(String, JSON::Any).new,
+    "vars"   => {"ansible_pkg_mgr" => JSON::Any.new("dnf")},
     "host"   => {"name" => "localhost", "vars" => Hash(String, JSON::Any).new},
   }.to_json
   stdout = IO::Memory.new
@@ -35,7 +42,7 @@ end
 private def run_yum_raw(params_json : String) : JSON::Any
   config = {
     "params" => JSON.parse(params_json),
-    "vars"   => Hash(String, JSON::Any).new,
+    "vars"   => {"ansible_pkg_mgr" => JSON::Any.new("dnf")},
     "host"   => {"name" => "localhost", "vars" => Hash(String, JSON::Any).new},
   }.to_json
   stdout = IO::Memory.new
@@ -44,11 +51,70 @@ private def run_yum_raw(params_json : String) : JSON::Any
 end
 
 describe "dnf: argument-spec validation" do
+  # The message's module name is the BACKEND module's, not the task's:
+  # real's dnf ACTION plugin rewrites the delegation target to
+  # 'ansible.legacy.' + backend (plugins/action/dnf.py) before executing
+  # it, so the argspec error names ansible.legacy.dnf no matter how the
+  # task spelled `dnf:` (live-verified vs 2.19.11: bare,
+  # ansible.builtin.- and ansible.legacy.-qualified spellings all print
+  # ansible.legacy.dnf). Found by kpg:dnf chaos round #768, where the
+  # hardcoded ansible.builtin.dnf diverged from real on podman.
   it "rejects an out-of-spec parameter with Ansible's message" do
     result = run_dnf({"name" => "bash", "state" => "present", "krikri_not_a_dnf_param" => "true"})
     result["failed"].as_bool.must_equal(true)
-    result["msg"].as_s.must_include("Unsupported parameters for (ansible.builtin.dnf) module: krikri_not_a_dnf_param")
+    result["msg"].as_s.must_include("Unsupported parameters for (ansible.legacy.dnf) module: krikri_not_a_dnf_param")
     result["msg"].as_s.must_include("(expire-cache, pkg)")
+  end
+
+  # 2.19.11's dnf backend module accepts use_backend in its own spec, so
+  # the supported-params list carries it (between update_only and
+  # validate_certs) - the pre-fix list omitted it and diverged from real
+  # byte for byte even with the module name corrected.
+  it "lists use_backend among the supported parameters" do
+    result = run_dnf({"name" => "bash", "state" => "present", "use_backend" => "dnf4", "krikri_bogus" => "true"})
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_include("Unsupported parameters for (ansible.legacy.dnf) module: krikri_bogus")
+    result["msg"].as_s.must_include("update_only, use_backend, validate_certs (expire-cache, pkg).")
+  end
+
+  # Under use_backend: dnf5 the action plugin delegates to the dnf5
+  # module with use_backend stripped, so the error names
+  # (ansible.legacy.dnf5) with dnf5's own list (auto_install_module_deps
+  # in, use_backend out) - live-verified vs 2.19.11.
+  it "reports the dnf5 backend's own name and list under use_backend dnf5" do
+    result = run_dnf({"name" => "bash", "state" => "present", "use_backend" => "dnf5", "krikri_bogus" => "true"})
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_include("Unsupported parameters for (ansible.legacy.dnf5) module: krikri_bogus")
+    result["msg"].as_s.must_include("auto_install_module_deps")
+    result["msg"].as_s.wont_include("use_backend")
+  end
+
+  # A fact-less host still gets a pkg_mgr verdict: real's action plugin
+  # runs `setup` on demand (filter=ansible_pkg_mgr) and a non-dnf verdict
+  # fails with the backend-detection tuple CARRYING ansible_facts
+  # (gather_facts: false Debian container, issue #768 - real fatal:
+  # {"ansible_facts": {"pkg_mgr": "apt"}, "msg": [...]}). krikri re-uses
+  # the facts gatherer's detection, so the expected shape follows THIS
+  # machine's own package manager.
+  it "resolves a missing pkg_mgr fact on demand like real's action plugin" do
+    detected = Krikri::FactsGatherer.detect_pkg_mgr
+    config = {
+      "params" => {"name" => "bash", "state" => "present", "krikri_bogus" => "true"},
+      "vars"   => Hash(String, JSON::Any).new,
+      "host"   => {"name" => "localhost", "vars" => Hash(String, JSON::Any).new},
+    }.to_json
+    stdout = IO::Memory.new
+    Process.run("bin/plugins/dnf", input: IO::Memory.new(config), output: stdout, error: stdout)
+    result = JSON.parse(stdout.to_s)
+    if {"dnf", "dnf4", "dnf5", "yum", "yum4"}.includes?(detected)
+      result["msg"].as_s.must_include("krikri_bogus")
+      result["msg"].as_s.must_include("Unsupported parameters")
+    else
+      result["failed"].as_bool.must_equal(true)
+      result["ansible_facts"]["pkg_mgr"].as_s.must_equal(detected)
+      result["msg"].as_a.size.must_equal(2)
+      result["msg"][0].as_s.must_include("Could not detect which major revision of dnf is in use")
+    end
   end
 
   it "rejects a non-boolean value for a bool-typed param" do
@@ -92,7 +158,7 @@ describe "yum: argument-spec validation" do
   it "rejects an out-of-spec parameter" do
     config = {
       "params" => {"name" => "bash", "state" => "present", "krikri_not_a_yum_param" => "true"},
-      "vars"   => Hash(String, JSON::Any).new,
+      "vars"   => {"ansible_pkg_mgr" => JSON::Any.new("dnf")},
       "host"   => {"name" => "localhost", "vars" => Hash(String, JSON::Any).new},
     }.to_json
     stdout = IO::Memory.new
@@ -105,7 +171,7 @@ describe "yum: argument-spec validation" do
   it "rejects a non-boolean value for a bool-typed param" do
     config = {
       "params" => {"name" => "bash", "state" => "present", "disable_gpg_check" => "sometimes"},
-      "vars"   => Hash(String, JSON::Any).new,
+      "vars"   => {"ansible_pkg_mgr" => JSON::Any.new("dnf")},
       "host"   => {"name" => "localhost", "vars" => Hash(String, JSON::Any).new},
     }.to_json
     stdout = IO::Memory.new
@@ -132,7 +198,7 @@ describe "yum: argument-spec validation" do
   it "does not reject an empty-string list param (real argspec coerces it to an empty list)" do
     config = {
       "params" => {"name" => "bash", "state" => "present", "enablerepo" => ""},
-      "vars"   => Hash(String, JSON::Any).new,
+      "vars"   => {"ansible_pkg_mgr" => JSON::Any.new("dnf")},
       "host"   => {"name" => "localhost", "vars" => Hash(String, JSON::Any).new},
     }.to_json
     stdout = IO::Memory.new

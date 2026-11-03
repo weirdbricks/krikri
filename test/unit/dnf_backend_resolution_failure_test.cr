@@ -1,6 +1,7 @@
 require "../minitest_helper"
 require "file_utils"
 require "json"
+require "../../src/krikri/plugin_helpers/facts_gatherer"
 
 # Real's dnf ACTION plugin (which every `dnf:` task and every `yum:` task -
 # a deprecated redirect to the dnf module since ansible-core 2.19.11's
@@ -94,16 +95,30 @@ describe "dnf/yum backend resolution failure (round 5310001)" do
     end
   end
 
-  # Real falls back to an on-demand setup fact fetch for a fact-less host,
-  # which a remote module binary cannot perform - the probe-based previous
-  # behavior is a deliberate gap (see RpmPackage's comment).
-  it "keeps the previous no-fact probe behavior" do
+  # Real resolves a fact-less host's pkg_mgr on demand: the action plugin
+  # runs `setup` with filter=ansible_pkg_mgr before deciding (issue #768's
+  # fact-less kpg chaos runs exposed the old deliberate gap - real failed
+  # with the tuple carrying ansible_facts on a Debian container while
+  # krikri probed onward to the module). krikri now re-uses the facts
+  # gatherer's detection, so the verdict follows the machine this plugin
+  # runs on and the test branches on it.
+  it "resolves a fact-less host's pkg_mgr on demand like real's action plugin" do
+    detected = Krikri::FactsGatherer.detect_pkg_mgr
     with_fake_pkg_shim("dnf") do
       result = PluginSpecHelper.run("dnf",
-        {"name" => "fake-pkg", "state" => "present"})
+        {"name" => "fake-pkg", "state" => "present"},
+        vars: {"ansible_pkg_mgr" => ""})
 
-      result["failed"]?.must_be_nil
-      result["_ansible_error_detail"]?.must_be_nil
+      if {"dnf", "dnf4", "dnf5", "yum", "yum4"}.includes?(detected)
+        result["failed"]?.must_be_nil
+        result["_ansible_error_detail"]?.must_be_nil
+      else
+        result["failed"]?.try(&.as_bool?).must_equal(true)
+        result["msg"].as_a.map(&.as_s).must_equal(TUPLE_MSGS)
+        result["ansible_facts"].as_h["pkg_mgr"].as_s.must_equal(detected)
+        result["_ansible_action_level"].as_bool.must_equal(true)
+        result["_ansible_error_detail"].as_s.must_equal(TUPLE_DETAIL)
+      end
     end
   end
 end

@@ -123,6 +123,20 @@ module Krikri
                       end
     end
 
+    # The module name the backend's own argument-spec error carries. Real's
+    # dnf ACTION plugin rewrites the delegation target to
+    # 'ansible.legacy.' + backend before _execute_module
+    # (plugins/action/dnf.py: "eliminate collisions with collections search
+    # while still allowing local override"), so the module's argspec error
+    # names ansible.legacy.dnf (or ansible.legacy.dnf5) no matter how the
+    # task spelled `dnf:` - live-verified vs 2.19.11: the bare,
+    # ansible.builtin.- and ansible.legacy.-qualified spellings all print
+    # (ansible.legacy.dnf), and use_backend: dnf5 prints
+    # (ansible.legacy.dnf5).
+    private def backend_module_name : String
+      @dnf5_backend ? "ansible.legacy.dnf5" : "ansible.legacy.dnf"
+    end
+
     private def probe_pkg_mgr_dnf5? : Bool
       result = remote_exec(<<-SH)
       if [ -e /usr/bin/dnf ]; then
@@ -156,13 +170,12 @@ module Krikri
     # dnf_edge_cases N2 harness case (ansible-core rejected
     # krikri_not_a_dnf_param with the message below while this engine
     # silently ignored the unknown key and proceeded to the backend
-    # failure). Message live-verified against bookworm's
-    # ansible-core 2.14. check_mode/diff_mode/_verbosity/_environment
-    # are engine-internal keys injected by the executor, not part of
-    # Ansible's argument_spec, so they are not rejected. (use_backend
-    # is in upstream's dnf argument_spec per dnf.py, so it stays
-    # accepted here; bookworm's 2.14 rejects it live - a known
-    # version difference, left matching upstream's spec.)
+    # failure). Message live-verified against ansible-core 2.19.11.
+    # check_mode/diff_mode/_verbosity/_environment are engine-internal
+    # keys injected by the executor, not part of Ansible's
+    # argument_spec, so they are not rejected. use_backend is in the
+    # dnf backend module's own argument_spec per dnf.py (2.19.11 lists
+    # it in the supported-params message live) and stays accepted here.
     private def arg_spec_rejection : PluginResult?
       # Real's backend resolution runs before the module's own argument
       # validation (in real it IS the surrounding code - the dnf ACTION
@@ -180,19 +193,51 @@ module Krikri
                        "sslverify", "state", "update_cache", "update_only",
                        "validate_certs", "use_backend", "expire-cache", "pkg"}
       dnf_internal = {"_ansible_check_mode", "_ansible_diff", "_module_name", "_verbosity", "_environment"}
+      if @dnf5_backend
+        # Under the dnf5 backend the message is the dnf5 MODULE's own
+        # argspec check, not dnf's: the action plugin strips use_backend
+        # before delegating (it never reaches the backend module) and
+        # dnf5's spec adds auto_install_module_deps - live-verified vs
+        # 2.19.11 (`dnf: {use_backend: dnf5, <bogus>}` reports
+        # (ansible.legacy.dnf5) with dnf5's list).
+        dnf5_supported = {"allow_downgrade", "allowerasing", "auto_install_module_deps",
+                          "autoremove", "best", "bugfix", "cacheonly", "conf_file",
+                          "disable_excludes", "disable_gpg_check", "disable_plugin",
+                          "disablerepo", "download_dir", "download_only", "enable_plugin",
+                          "enablerepo", "exclude", "install_repoquery", "install_weak_deps",
+                          "installroot", "list", "lock_timeout", "name", "nobest",
+                          "releasever", "security", "skip_broken", "sslverify", "state",
+                          "update_cache", "update_only", "validate_certs", "expire-cache", "pkg"}
+        unsupported = @params.keys.reject { |k| dnf5_supported.includes?(k) || dnf_internal.includes?(k) || k.starts_with?("_") || k == "use_backend" }
+        unless unsupported.empty?
+          return PluginResult.new(
+            changed: false,
+            failed: true,
+            msg: "Unsupported parameters for (#{backend_module_name}) module: #{unsupported.sort.join(", ")}. " \
+                 "Supported parameters include: " \
+                 "allow_downgrade, allowerasing, auto_install_module_deps, autoremove, best, bugfix, " \
+                 "cacheonly, conf_file, disable_excludes, disable_gpg_check, disable_plugin, disablerepo, " \
+                 "download_dir, download_only, enable_plugin, enablerepo, exclude, install_repoquery, " \
+                 "install_weak_deps, installroot, list, lock_timeout, name, nobest, releasever, security, " \
+                 "skip_broken, sslverify, state, update_cache, update_only, validate_certs (expire-cache, pkg)."
+          )
+        end
+        return nil
+      end
+
       unsupported = @params.keys.reject { |k| dnf_supported.includes?(k) || dnf_internal.includes?(k) || k.starts_with?("_") }
       unless unsupported.empty?
         unsupported_sorted = unsupported.sort
         return PluginResult.new(
           changed: false,
           failed: true,
-          msg: "Unsupported parameters for (ansible.builtin.dnf) module: #{unsupported_sorted.join(", ")}. " \
+          msg: "Unsupported parameters for (#{backend_module_name}) module: #{unsupported_sorted.join(", ")}. " \
                "Supported parameters include: " \
                "allow_downgrade, allowerasing, autoremove, best, bugfix, cacheonly, conf_file, disable_excludes, " \
                "disable_gpg_check, disable_plugin, disablerepo, download_dir, download_only, enable_plugin, " \
                "enablerepo, exclude, install_repoquery, install_weak_deps, installroot, list, lock_timeout, " \
                "name, nobest, releasever, security, skip_broken, sslverify, state, update_cache, update_only, " \
-               "validate_certs (expire-cache, pkg)."
+               "use_backend, validate_certs (expire-cache, pkg)."
         )
       end
 
