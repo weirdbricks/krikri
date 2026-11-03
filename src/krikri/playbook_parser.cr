@@ -3864,12 +3864,20 @@ module Krikri
       # plain skip behind `when: false` (rc=0), "Cannot resolve '...'
       # to an action or module." on a reached task (rc=2).
       action_mapping = false
+      # Any form of an old-style `action:`/`local_action:` directive
+      # (string, mapping or templated). Real parses these through
+      # mod_args' _normalize_old_style_args, which never emits the legacy
+      # k=v merge deprecation - only the plain module-key string form
+      # (_normalize_new_style_args) does - so the flag excludes them from
+      # the warning below.
+      action_directive_form = false
       # The mapping's own `module:` VALUE token (1-based line, column) -
       # the runtime failure chain's "caused by" Origin (see Task#
       # unresolvable_mapping_origin).
       mapping_module_origin = nil.as({Int32, Int32}?)
       templated_action_string = nil.as(String?)
       if (directive_key = module_name) && ACTION_DIRECTIVE_KEYS.includes?(directive_key)
+        action_directive_form = true
         is_local_action = module_name.includes?("local_action")
         if (mp = module_params) && (s = mp.as_s?)
           tokens = s.strip.split(/\s+/, 2)
@@ -4253,6 +4261,17 @@ module Krikri
       # never being read.
       if args_yaml = task_hash["args"]?.try(&.as_h?)
         parse_module_params(YAML::Any.new(args_yaml), module_name).each { |key, value| task.params[key] = value }
+      end
+
+      # The legacy k=v merge deprecation (issue #792): keyed off the
+      # AS-WRITTEN module key (both the source-map path and real's
+      # check_raw set membership use the spelling as written) and the
+      # bare presence of an `args:` keyword - real warns for an `args:`
+      # of any shape, null included.
+      unless action_directive_form
+        warn_legacy_kv_args_deprecation(source_file, source_map,
+          "#{task_source_prefix(source_prefix, index)}/#{as_written_module_name}",
+          as_written_module_name, module_params, task_hash.has_key?("args"))
       end
 
       # Parse task-level settings - FIXED to handle boolean values safely
@@ -4828,6 +4847,96 @@ module Krikri
       ACTION_DEPRECATION_MUTEX.synchronize do
         return if @@action_mapping_deprecations.includes?(text)
         @@action_mapping_deprecations << text
+        Krikri::DeprecationHint.print_hint_once
+      end
+      STDERR.puts text
+    end
+
+    # Real 2.19's legacy k=v merge deprecation (mod_args.py's
+    # _normalize_new_style_args, live-verified vs 2.19.11, issue #792 -
+    # stancel.git_deploy_setup's `shell: git init --bare chdir={{ ... }}`
+    # beside an `args:` mapping): a task whose module value is a
+    # free-form STRING whose parse_kv split yields keys, written beside
+    # an `args:` keyword, warns at task load - even behind `when: false`
+    # that never runs, and for an `args:` of ANY shape (real only
+    # excludes the keyword's absence; a null `args:` additionally warns
+    # its own separate "Ignoring empty task `args` keyword." - that one
+    # is not mirrored here). The keys named are parse_kv's result minus
+    # _raw_params, sorted: for the free-form command family
+    # (check_raw=True) only the eight command specials become keys -
+    # any other `=`-bearing token stays command text - while every other
+    # module keeps every k=v token's key. The parse runs on the value AS
+    # WRITTEN (before any templating), same as real's load-time
+    # normalization. The Origin is the module key's VALUE node start
+    # (line:column of the first value character, quote or fold indicator
+    # included - libyaml's scalar start mark, what the source map
+    # records). Old-style `action:`/`local_action:` directives take
+    # real's _normalize_old_style_args path and never warn here (see
+    # action_directive_form). Deduped by full text exactly like the
+    # mapping-form deprecation above (a looped task warns once; two
+    # same-text tasks with different origins each warn).
+    @@legacy_kv_merge_deprecations = Set(String).new
+    LEGACY_KV_MERGE_DEPRECATION_MUTEX = Mutex.new
+
+    private def self.warn_legacy_kv_args_deprecation(source_file : String?, source_map : YamlSourceMap?, prefix : String, module_name : String, module_params : YAML::Any?, has_args_keyword : Bool) : Nil
+      return unless has_args_keyword
+      return unless (mp = module_params) && (s = mp.as_s?)
+
+      # The k=v keys real's parse_kv would keep, rebuilt from the same
+      # primitives parse_inline_kv_params uses (its stripped-key result
+      # cannot express parse_kv's check on the UNSTRIPPED key text:
+      # `chdir =/x` tokenizes as separate `chdir`/`=` tokens and never
+      # becomes a key, and the pos>0 floor rejects a token that is only
+      # `=`). Escaped `\=` tokens keep raw_params status (no key), the
+      # same escaped-equals fallback parse_kv applies.
+      keys = Array(String).new
+      split_shell_like(strip_line_continuation_tokens(s)).each do |token, _|
+        decoded = decode_kv_escapes(token)
+        eq = find_unescaped_kv_separator(decoded)
+        next if eq.nil?
+        dchars = decoded.chars
+        raw_key = dchars[0, eq].join
+        # check_raw=True (the free-form command family) only promotes
+        # the command specials to options; every other token stays
+        # command text and never names a key.
+        next if RAW_COMMAND_MODULES.includes?(module_name) && !PARSE_KV_COMMAND_SPECIALS.includes?(raw_key)
+        keys << raw_key.strip
+      end
+      return if keys.empty?
+      # Duplicates collapse like parse_kv's options dict (last value
+      # wins, one key in the set) before the sorted repr join.
+      kv_args = keys.uniq.sort!.map { |key| "'#{key}'" }.join(", ")
+
+      text = String.build do |io|
+        io << "[DEPRECATION WARNING]: Merging legacy k=v args (" << kv_args << ") into task args. This feature will be removed from ansible-core version 2.23.\n"
+        pos = source_map.try(&.at?(prefix))
+        if sf = source_file
+          if pos && (line = pos[0]) > 0 && File.file?(sf) && (lines = source_lines(sf))
+            col = pos[1]
+            io << "Origin: " << File.expand_path(sf) << ":" << line << ":" << col << "\n"
+            io << "\n"
+            label_width = line.to_s.size
+            max_src_line_len = 120 - label_width - 1
+            start_idx = Math.max(0, (line - 1) - 2)
+            (start_idx..(line - 1)).each do |idx|
+              src = lines[idx].chomp.gsub('\t', ' ')
+              src = src.size > max_src_line_len ? src[0...max_src_line_len - 3] + "..." : src
+              io << (idx + 1).to_s.rjust(label_width) << (src.empty? ? "" : " ") << src << "\n"
+            end
+            io << " " * label_width << " " << " " * (col - 1) << "^ column " << col << "\n"
+            # ansible separates the excerpt from the hint with a blank line
+            io << "\n"
+          end
+        end
+        io << "Include all task args in the task `args` mapping.\n"
+        io << "\n"
+      end
+      # The runtime include_tasks parse path runs inside concurrent
+      # per-host fibers, so the dedup set needs the same mutex treatment
+      # as the action-mapping one above.
+      LEGACY_KV_MERGE_DEPRECATION_MUTEX.synchronize do
+        return if @@legacy_kv_merge_deprecations.includes?(text)
+        @@legacy_kv_merge_deprecations << text
         Krikri::DeprecationHint.print_hint_once
       end
       STDERR.puts text
@@ -7607,6 +7716,11 @@ module Krikri
     # text (ansible.parsing.splitter.parse_kv with check_raw=True - the
     # exact set mod_args.py's parsing hands to the module).
     SPECIAL_COMMAND_PARAM_RE = /\A(creates|removes|chdir|executable|warn|stdin|stdin_add_newline|strip_empty_ends)=(.*)\z/m
+
+    # The same whitelist spelled out for the legacy k=v merge deprecation:
+    # parse_kv's check_raw=True branch tests the token's key text against
+    # this list BEFORE stripping (see warn_legacy_kv_args_deprecation).
+    PARSE_KV_COMMAND_SPECIALS = %w[creates removes chdir executable warn stdin stdin_add_newline strip_empty_ends]
 
     # Strips " key=value" tokens (key one of command:/shell:'s own
     # recognized special params - SPECIAL_COMMAND_PARAM_RE, any position
