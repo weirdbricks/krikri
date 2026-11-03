@@ -1,3 +1,4 @@
+require "digest/sha1"
 require "file_utils"
 require "../minitest_helper"
 
@@ -191,6 +192,11 @@ describe "template: with validate:" do
 
     status.success?.must_equal(false)
     output.to_s.must_include("validate must contain %s")
+    # The template action delegates to the copy action, whose checksum
+    # fill-in adds local_checksum (the rendered content's sha1) to failed
+    # module results too - the displayed fatal carries it (live-verified
+    # vs 2.19.11).
+    output.to_s.must_include("\"checksum\": \"#{Digest::SHA1.hexdigest("hello world\n")}\"")
     File.exists?(dest).must_equal(false)
   ensure
     File.delete(playbook) if playbook && File.exists?(playbook)

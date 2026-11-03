@@ -522,12 +522,19 @@ module Krikri
           # fail_json(msg="validate must contain %s: <cmd>") when the
           # command has no %s to substitute the temp path into (same
           # wording this engine's assemble/blockinfile/lineinfile/replace
-          # plugins already carry).
+          # plugins already carry). The checksum rides because the
+          # template action delegates to the copy action, whose
+          # `if not module_return.get('checksum')` fills local_checksum
+          # (the rendered content's sha1) into any result lacking one,
+          # failed ones included - same shape as the "failed to
+          # validate" result below (live-verified vs 2.19.11).
           unless validate_cmd.includes?("%s")
             return PluginResult.new(
               changed: false,
               failed: true,
-              msg: "validate must contain %s: #{validate_cmd}"
+              msg: "validate must contain %s: #{validate_cmd}",
+              checksum: content_sha1,
+              key_order: ["diff", "failed", "msg", "checksum"]
             )
           end
           validation = validate_file(temp_file, validate_cmd)
