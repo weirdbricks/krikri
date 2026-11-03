@@ -2585,6 +2585,38 @@ module Krikri
       halt_if_failed(task, host, true, force_halt: true)
     end
 
+    # A DYNAMIC include_role: whose name/role: value is present but not a
+    # string dies INSIDE Ansible's role resolution - RoleInclude.load's
+    # "Invalid role definition." (role/include.py), the same check the
+    # static import_role: form refuses the whole playbook at load time
+    # for (issue #761, live-verified vs 2.19.11). The exception escapes
+    # the task executor entirely, so NOTHING prints after the task
+    # banner - no fatal: line, no recap, ignore_errors: never applies
+    # (the task never produces a result) - and the run exits 4. The
+    # Origin points at the name VALUE like the role-not-found block
+    # above; a bool value is untagged in real (no source position),
+    # rendering "Origin: <unknown>" plus the value's Python repr
+    # ("True"), while every tagged value (int/float/list) renders the
+    # Origin block at its own source position.
+    private def fail_include_role_invalid_definition(task : Task, raw_name : JSON::Any) : Nil
+      unknown_context = "Origin: <unknown>\n\n#{python_repr(raw_name)}"
+      source_context = if raw_name.raw.is_a?(Bool)
+                         unknown_context
+                       elsif (origin_pos = task.include_role_name_origin) && (source_file = task.source_file)
+                         ErrorBlock.origin_context(source_file, origin_pos[0], origin_pos[1])
+                       else
+                         unknown_context
+                       end
+      ErrorBlock.emit_stderr(ErrorBlock::Node.new("Invalid role definition.", source_context: source_context))
+      # Same Process.exit reasoning as the invalid-host-name abort
+      # (executor_task_exec.cr): this runs inside the executor's per-task
+      # paths, which swallow `exit`'s ExitException; both streams are
+      # flushed explicitly first.
+      STDOUT.flush
+      STDERR.flush
+      Process.exit(4)
+    end
+
     # A tombstone-removed module reached at RUN time through include_tasks:/
     # include_role: is the include task's own fatal failure in Ansible
     # (live-verified vs 2.19.x): the [ERROR]+Origin block goes to STDERR
@@ -2939,6 +2971,16 @@ module Krikri
       # like every other task-body failure.
       if (bool_failure = task.include_role_bool_failure)
         fail_include_role_bool_keyword(task, host, bool_failure, item_label)
+        return
+      end
+
+      # A non-string name/role: value (present but not a string - real's
+      # IncludeRole.load accepts it) dies inside the role resolution
+      # itself, before the name would even be substituted. Checked here,
+      # after the when: verdict and the boolean keywords, exactly like
+      # real's order (see fail_include_role_invalid_definition).
+      if raw_name = task.include_role_nonstring_name
+        fail_include_role_invalid_definition(task, raw_name)
         return
       end
 
