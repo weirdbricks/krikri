@@ -529,6 +529,18 @@ describe Krikri::ArgspecValidator do
     Krikri::ArgspecValidator.failure_kind?(
       "ansible.builtin.fail", "Invalid options for fail: zz"
     ).must_equal(:action)
+    # uri's form-multipart body guard is the ACTION plugin's own
+    # AnsibleActionFail (issue #763): real collapses the chain to the bare
+    # "Task failed: <msg>" brief, with no "Module failed." middle segment.
+    Krikri::ArgspecValidator.failure_kind?(
+      "ansible.builtin.uri", "body must be mapping, cannot be type _AnsibleTaggedStr"
+    ).must_equal(:action)
+    # The module's own copy of the same check (truthy remote_src) words it
+    # differently and stays a module-level failure.
+    Krikri::ArgspecValidator.failure_kind?(
+      "ansible.builtin.uri",
+      "failed to parse body as form-multipart: Mapping is required, cannot be type _AnsibleTaggedStr"
+    ).must_be_nil
     # Not one of our validation messages, or no table entry: no override.
     Krikri::ArgspecValidator.failure_kind?(
       "ansible.builtin.template", "Could not find or access 'x' on the Ansible Controller."
@@ -536,6 +548,18 @@ describe Krikri::ArgspecValidator do
     Krikri::ArgspecValidator.failure_kind?(
       "some_library_module", "Unsupported parameters for (some_library_module) module: x."
     ).must_be_nil
+  end
+
+  it "renders uri's multipart body guard as the collapsed action-level chain" do
+    chain = Krikri::ResultDisplay.task_error_chain(
+      "ansible.builtin.uri", "body must be mapping, cannot be type _AnsibleTaggedStr", "Origin: /pb.yml:6")
+
+    chain.msg.must_equal("Task failed.")
+    cause = chain.chain.as(Krikri::ErrorBlock::Node)
+    cause.msg.must_equal("body must be mapping, cannot be type _AnsibleTaggedStr")
+    cause.chain.must_be_nil
+    Krikri::ErrorBlock.brief_message(chain).must_equal(
+      "Task failed: body must be mapping, cannot be type _AnsibleTaggedStr")
   end
 
   it "reports type errors in the module's own argument_spec order, not alphabetically" do
