@@ -15702,3 +15702,103 @@ Local probe roles, not Galaxy roles: each probed task registers its result and d
 | `wtanaka.pip` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29893319, 0.9.2254 debug). |
 | `wtanaka.python_tk` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29893295, 0.9.2254 debug). |
 | `wtanaka.screen` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29893320, 0.9.2254 debug). |
+| `Anthony25.distcc` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29895326, 0.9.2285 debug). |
+| `Azulinho.azulinho-python27` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29895335, 0.9.2285 debug). |
+| `CyVerse-Ansible.samtools` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29895309, 0.9.2285 debug). |
+| `ElaoInfra.influxdb` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29895247, 0.9.2285 debug). |
+| `GR360RY.nzbtomedia` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29895294, 0.9.2285 debug). |
+| `JoergFiedler.freebsd-jail-host` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29895277, 0.9.2285 debug). |
+| `KAMI911.java_oracle_jdk11` | ubuntu | ❌ Divergent - issue #772 (round29895260, 0.9.2285 debug). |
+| `Oefenweb.nagios_server` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29895325, 0.9.2285 debug). |
+| `Oefenweb.virtualenv` | ubuntu | ✅ Clean (round29895340, 0.9.2285 debug). |
+| `ROCK5GmbH.milter` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29895336, 0.9.2285 debug). |
+| `RedHatGov.rhsm` | rocky | ⚠ only a community module krikri does not track differs (round29895307, 0.9.2285 debug). |
+| `TOOCS.asdf` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29895271, 0.9.2285 debug). |
+| `ZeroDowntime.selinux_tools` | ubuntu | ✅ Clean (round29895266, 0.9.2285 debug). |
+| `ZeroDowntime.timezone` | rocky | ✅ Clean (round29895265, 0.9.2285 debug). |
+| `aboveops.ct_postgres` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29895298, 0.9.2285 debug). |
+| `acropia.docker` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29895297, 0.9.2285 debug). |
+| `aem_design.aem` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29895316, 0.9.2285 debug). |
+| `andrewrothstein.dumb_init` | ubuntu | ✅ Clean (round29895292, 0.9.2285 debug). |
+| `antoniobarbaro.ntp` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29895299, 0.9.2285 debug). |
+| `aprt5pr.ocserv` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29895331, 0.9.2285 debug). |
+| `bambocher.bootstrap` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29895334, 0.9.2285 debug). |
+| `brentwg.google-chrome` | rocky | ✅ Clean (round29895311, 0.9.2285 debug). |
+| `buluma.keyboard` | rocky | ✅ Clean (round29895249, 0.9.2285 debug). |
+| `ccdc.expand_proget_archives` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29895332, 0.9.2285 debug). |
+| `ckaserer.gitlab_runner` | ubuntu | ✅ Clean (round29895328, 0.9.2285 debug). |
+| `conrad784.ansible-teamspeak` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29895324, 0.9.2285 debug). |
+| `cyberitas.nodelts` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29895250, 0.9.2285 debug). |
+| `davidalger.users` | ubuntu | ✅ Clean (round29895252, 0.9.2285 debug). |
+| `derbunman.debuild_rofi` | ubuntu | ❌ Divergent - issue #773 (round29895304, 0.9.2285 debug). |
+| `dilerous.vxflex_createcluster` | ubuntu | ❌ Divergent - issue #774 (round29895256, 0.9.2285 debug). |
+| `dockpack.base_gradle` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29895293, 0.9.2285 debug). |
+| `dustinrue.xenial-bootstrap` | ubuntu | ❌ Divergent - issue #775 (round29895286, 0.9.2285 debug). |
+| `egdoc.vscode` | rocky | ✅ Clean (round29895267, 0.9.2285 debug). |
+| `etam.ipfs` | rocky | ❌ Divergent - issue #776 (round29895333, 0.9.2285 debug). |
+| `fzsys.glusterfs` | rocky | ✅ Clean (round29895275, 0.9.2285 debug). |
+| `govcloud.gtk-theme` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29895261, 0.9.2285 debug). |
+| `haad.tinyproxy` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29895283, 0.9.2285 debug). |
+| `hax0rbana_adam.bitcoind` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29895323, 0.9.2285 debug). |
+| `hax0rbana_adam.gitlab_runner` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29895319, 0.9.2285 debug). |
+| `hax0rbana_adam.lnd` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29895322, 0.9.2285 debug). |
+| `hemanth22.createuser` | ubuntu | ✅ Clean (round29895290, 0.9.2285 debug). |
+| `ibm.infosvr-import-export` | ubuntu | ✅ Clean (round29895282, 0.9.2285 debug). |
+| `idiv_biodiversity.locale` | ubuntu | ✅ Clean (round29895254, 0.9.2285 debug). |
+| `infra_monkey.cloud_init` | rocky | ✅ Clean (round29895329, 0.9.2285 debug). |
+| `infra_monkey.zabbix_agent` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29895330, 0.9.2285 debug). |
+| `inhumantsar.artifactory_swarm` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29895274, 0.9.2285 debug). |
+| `insight_icon.icon_prep` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29895317, 0.9.2285 debug). |
+| `issmirnov.zap` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29895300, 0.9.2285 debug). |
+| `jacob-hudson.ansible-role-firebase-tools` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29895341, 0.9.2285 debug). |
+| `jeffhung.localrepo` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29895273, 0.9.2285 debug). |
+| `justin_p.chisel` | ubuntu | ✅ Clean (round29895248, 0.9.2285 debug). |
+| `kurrier.cisco_backup` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29895276, 0.9.2285 debug). |
+| `kurron.sql-developer` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29895259, 0.9.2285 debug). |
+| `lean_delivery.metricbeat` | rocky | ✅ Clean (round29895251, 0.9.2285 debug). |
+| `lotusnoir.apps_alerta` | ubuntu | ✅ Clean (round29895272, 0.9.2285 debug). |
+| `m31271n.yarn` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29895312, 0.9.2285 debug). |
+| `mamercad.icinga2-server` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29895302, 0.9.2285 debug). |
+| `marverix.vagrant` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29895318, 0.9.2285 debug). |
+| `matthiaslohr.hvswitch_k8s` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29895315, 0.9.2285 debug). |
+| `meierw.jenkins_config` | ubuntu | ✅ Clean (round29895268, 0.9.2285 debug). |
+| `mila.containers` | ubuntu | ✅ Clean (round29895320, 0.9.2285 debug). |
+| `mmul.kubelab` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29895253, 0.9.2285 debug). |
+| `mondoolabs.mondoo` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29895262, 0.9.2285 debug). |
+| `msltwtf.nat-gateway` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29895255, 0.9.2285 debug). |
+| `msltwtf.networking` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29895296, 0.9.2285 debug). |
+| `mtlynch.keymimepi` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29895301, 0.9.2285 debug). |
+| `net2grid.platform_populate` | ubuntu | ✅ Clean (round29895288, 0.9.2285 debug). |
+| `nycrecords.elasticsearch` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29895287, 0.9.2285 debug). |
+| `osxc.packages` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29895263, 0.9.2285 debug). |
+| `peaceman.docker` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29895306, 0.9.2285 debug). |
+| `peaceman.elk` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29895339, 0.9.2285 debug). |
+| `pgkehle.pm2` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29895338, 0.9.2285 debug). |
+| `pmikus.nomad` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29895285, 0.9.2285 debug). |
+| `raben2.postgres` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29895337, 0.9.2285 debug). |
+| `rgibert.openjdk_jdk` | rocky | ✅ Clean (round29895269, 0.9.2285 debug). |
+| `rhaamo.librenms_agent` | ubuntu | ✅ Clean (round29895308, 0.9.2285 debug). |
+| `rm-software.virtualenv` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29895310, 0.9.2285 debug). |
+| `rooland-provisioning.git-gpg` | rocky | ❌ Divergent - issue #777 (round29895295, 0.9.2285 debug). |
+| `s2ansible.yumrepo_remi` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29895279, 0.9.2285 debug). |
+| `s2ansible.yumrepo_zabbix30` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29895264, 0.9.2285 debug). |
+| `shomatan.ufw` | ubuntu | ✅ Clean (round29895278, 0.9.2285 debug). |
+| `softasap.sa-postgres` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29895321, 0.9.2285 debug). |
+| `ssummer3.osquery` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29895345, 0.9.2285 debug). |
+| `stacktonic.ruby` | rocky | ✅ Clean (round29895257, 0.9.2285 debug). |
+| `t1.jee_app_server` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29895284, 0.9.2285 debug). |
+| `tumbumer.grub` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29895270, 0.9.2285 debug). |
+| `tychobrouwer.portainer` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29895291, 0.9.2285 debug). |
+| `vahubert.php` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29895327, 0.9.2285 debug). |
+| `webbylab.php` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29895303, 0.9.2285 debug). |
+| `wtanaka.cabal` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29895313, 0.9.2285 debug). |
+| `wtanaka.ghc` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29895280, 0.9.2285 debug). |
+| `wtanaka.gnome-raw-thumbnailer` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29895281, 0.9.2285 debug). |
+| `wtanaka.newrelic_php` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29895246, 0.9.2285 debug). |
+| `wtanaka.numpy` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29895344, 0.9.2285 debug). |
+| `wtanaka.pbuilder` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29895314, 0.9.2285 debug). |
+| `wtanaka.scipy` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29895342, 0.9.2285 debug). |
+| `wtanaka.xz` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29895289, 0.9.2285 debug). |
+| `xanmanning.github_downloader` | rocky | ✅ Clean (round29895305, 0.9.2285 debug). |
+| `xtream1101.mattermost` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29895343, 0.9.2285 debug). |
+| `zaxos.clamav-ansible-role` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29895258, 0.9.2285 debug). |
