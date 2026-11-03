@@ -385,10 +385,15 @@ module Krikri
       PluginResult.new(
         changed: false,
         failed: true,
+        # dnf5.py's terminal _ensure_dnf fail_json passes failures=[] (its
+        # dnf-compat transaction-failure list, empty here because the module
+        # never got as far as a transaction) - omitting it leaves the key out
+        # of both the fatal line and any registered result (issue #770).
         msg: "Could not import the libdnf5 python module using #{exe} (#{version}). " \
              "Ensure python3-libdnf5 package is installed (either manually or via the auto_install_module_deps option) " \
              "or that you have specified the correct ansible_python_interpreter. " \
-             "(attempted ['/usr/libexec/platform-python', '/usr/bin/python3', '/usr/bin/python'])."
+             "(attempted ['/usr/libexec/platform-python', '/usr/bin/python3', '/usr/bin/python']).",
+        failures: [] of String
       )
     end
 

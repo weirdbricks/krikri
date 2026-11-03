@@ -172,6 +172,19 @@ describe "dnf5: libdnf5 python-bindings bootstrap (issue #767)" do
       "(attempted ['/usr/libexec/platform-python', '/usr/bin/python3', '/usr/bin/python']).")
   end
 
+  it "carries the empty failures list real's _ensure_dnf fail_json passes" do
+    result = PluginSpecHelper.run("dnf5",
+      {"name"                     => "sed",
+       "state"                    => "present",
+       "auto_install_module_deps" => "false",
+       "_libdnf5_probe"           => "absent"})
+
+    # dnf5.py's terminal fail_json(msg=..., failures=[]) keeps its dnf-compat
+    # transaction-failures key (empty - no transaction ever ran) in the result
+    # dict, so it shows in the fatal line and any registered variable.
+    result["failures"].as_a.must_equal([] of JSON::Any)
+  end
+
   it "skips the bootstrap entirely when the bindings import" do
     shim_dir = PluginSpecHelper.tmp_path("fake-libdnf5-present")
     Dir.mkdir_p(shim_dir)
