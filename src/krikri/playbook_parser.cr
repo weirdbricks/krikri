@@ -856,6 +856,16 @@ module Krikri
     # templated) value, and always nil for a static import_role:, where
     # the same failure is a playbook-load abort instead.
     property include_role_bool_failure : RoleBoolKeywords::Failure?
+    # A DYNAMIC include_role: whose name/role: value is present but NOT a
+    # string - real's IncludeRole.load only requires the KEY to exist, the
+    # type check happens later in RoleInclude.load ("Invalid role
+    # definition."), which for the dynamic form runs at RUN time, after the
+    # task banner has printed (issue #761). Holds the raw value (as JSON)
+    # so the executor can abort the run the way real's escaped exception
+    # does; a static import_role:'s same value refuses the whole playbook
+    # at parse time instead (see parse_include_role) and never reaches the
+    # executor.
+    property include_role_nonstring_name : JSON::Any?
     # Synthesized by RoleLoader when a role ships argument specs
     # (meta/argument_specs.yml/.yaml/.json, or the meta main file's
     # argument_specs: key) -
@@ -1531,6 +1541,10 @@ module Krikri
   #     engine emits the playbook's own key order)
   #   - include_role/import_role without `name`/`role`:
   #     "'name' is a required field for <action>."
+  #   - a non-string name/role: value on a STATIC import_role:
+  #     ("Invalid role definition." with the value's own Origin - the
+  #     dynamic include_role:'s same value aborts at RUN time instead,
+  #     see the executor's fail_include_role_invalid_definition)
   #   - a non-string tasks_from/vars_from/defaults_from/handlers_from:
   #     "Expected a string for <key> but got <class ...> instead"
   #   - a non-dict `apply:` ("Expected a dict for apply but got <class
@@ -6439,8 +6453,9 @@ module Krikri
     # then apply: (live-verified vs 2.19.11 - including that the
     # FROM_ARGS raise carries no obj=data and therefore renders WITHOUT
     # an Origin block). Returns the role name as a string, or nil for a
-    # non-string name (which Ansible only trips over later, at role
-    # resolution - unmirrored here).
+    # non-string name - which real only trips over later, at role
+    # resolution (RoleInclude.load's "Invalid role definition.",
+    # mirrored by parse_include_role / the executor's dynamic abort).
     private def self.validate_include_role_args(action : String, role_args : Hash(YAML::Any, YAML::Any), source_file : String?, source_map : YamlSourceMap?, source_prefix : String, source_index : Int32) : String?
       # 1. name/role is required (real: ir._role_name = args.get('name',
       #    args.get('role')) - an explicit null counts as missing, and an
@@ -6496,6 +6511,25 @@ module Krikri
       role_name
     end
 
+    # Python repr() of a non-string include_role name value - the
+    # "<action> : <name>" display name of an unnamed task whose name: is
+    # not a string (real's IncludeRole.get_name renders the value with
+    # %s, and str() of a list/dict IS repr()). Scalars render bare
+    # (str(50) -> "50", str(True) -> "True"), members keep repr's
+    # quoting.
+    private def self.include_role_bad_name_repr(yaml : YAML::Any?) : String
+      return "" unless yaml
+      case raw = yaml.raw
+      when nil              then "None"
+      when Int64, Float64   then raw.to_s
+      when Bool             then raw ? "True" : "False"
+      when String           then "'#{raw}'"
+      when Array(YAML::Any) then "[" + raw.map { |item| include_role_bad_name_repr(item) }.join(", ") + "]"
+      else
+        "{" + yaml.as_h.map { |key, value| "#{include_role_bad_name_repr(key)}: #{include_role_bad_name_repr(value)}" }.join(", ") + "}"
+      end
+    end
+
     private def self.parse_include_role(name : String?, task_hash : Hash(YAML::Any, YAML::Any), action : String, role_args : Hash(YAML::Any, YAML::Any), play : Play, file_dir : String, is_static : Bool = false, source_file : String? = nil, source_map : YamlSourceMap? = nil, source_prefix : String = "", source_index : Int32 = 0, playbook_dir : String? = nil) : Task
       # See parse_include_tasks above for the rationale; import_role:
       # (the is_static branch, also called from this same function) is
@@ -6505,7 +6539,35 @@ module Krikri
       validate_include_keys(task_hash, "IncludeRole", "include_role", source_file, source_map, task_source_prefix(source_prefix, source_index)) unless is_static
 
       role_name = validate_include_role_args(action, role_args, source_file, source_map, source_prefix, source_index)
-      raise "include_role: missing required 'name'" unless role_name
+      bad_name_yaml = role_name ? nil : (role_args["name"]? || role_args["role"]?)
+      if bad_name_yaml && bad_name_yaml.as_h?
+        # A DICT name is real's dict role-definition form: role/include.py
+        # hands it to RoleDefinition, which resolves a role:/name: KEY
+        # inside the mapping (and the rest as role params) - a separate
+        # feature this fix does not implement. Keeps the historical
+        # missing-name skip for it, unchanged.
+        raise "include_role: missing required 'name'"
+      end
+      if bad_name_yaml
+        # name/role is present but NOT a string (an absent or null value
+        # raised inside validate_include_role_args already): real's
+        # IncludeRole.load only requires the KEY to exist - the type check
+        # happens later, in RoleInclude.load's "Invalid role definition.",
+        # with the VALUE's own Origin (issue #761, live-verified vs
+        # 2.19.11). A STATIC import_role: resolves the role during
+        # playbook load, so the refusal is the usual load-time abort here
+        # (rc=4, no play banner); a dynamic include_role: only reaches
+        # RoleInclude.load at RUN time - after its task banner has printed
+        # - so the task is built with the raw value (see
+        # include_role_nonstring_name) and the executor aborts the run
+        # there, the way real's escaped exception does.
+        name_key = role_args.has_key?("name") ? "name" : "role"
+        directive_prefix = "#{task_source_prefix(source_prefix, source_index)}/#{action}"
+        if is_static
+          bad_name_pos = source_map.try(&.at?("#{directive_prefix}/#{name_key}")) || source_map.try(&.at?(directive_prefix))
+          raise IncludeDirectiveError.new(origin_error_render_at("Invalid role definition.", source_file, source_map, bad_name_pos))
+        end
+      end
 
       # A STATIC import_role:'s tasks_from: is resolved at parse time -
       # a file that does not exist refuses the WHOLE playbook the way
@@ -6516,6 +6578,9 @@ module Krikri
       # runtime load (real resolves it against the import's static vars;
       # a value that templates to nothing fails there, not here).
       if is_static
+        # A static import with a non-string name raised above, so the
+        # name here is always a real string.
+        static_role_name = role_name.as(String)
         static_tasks_from = role_args["tasks_from"]?.try(&.as_s)
         if static_tasks_from && !static_tasks_from.includes?("{{")
           # The file has to be missing under EVERY root the role itself
@@ -6523,8 +6588,8 @@ module Krikri
           # check alone would falsely refuse a role-file import whose
           # target only resolves from the playbook dir (issue #742's
           # shape, with an explicit tasks_from: added).
-          tasks_file_missing = RoleLoader.role_tasks_file_missing?(role_name, file_dir, static_tasks_from)
-          tasks_file_missing &&= playbook_dir.nil? || RoleLoader.role_tasks_file_missing?(role_name, playbook_dir, static_tasks_from)
+          tasks_file_missing = RoleLoader.role_tasks_file_missing?(static_role_name, file_dir, static_tasks_from)
+          tasks_file_missing &&= playbook_dir.nil? || RoleLoader.role_tasks_file_missing?(static_role_name, playbook_dir, static_tasks_from)
           if tasks_file_missing
             raise RoleTasksFromFileError.new("Could not find specified file in role: tasks/#{static_tasks_from}")
           end
@@ -6540,9 +6605,9 @@ module Krikri
           # vars_from: travels so the preload sees exactly the vars file
           # the import names (see its own comment for why that matters
           # beyond the refusal check).
-          RoleLoader.preload_static_import_role(role_name, play, playbook_dir || file_dir, static_tasks_from, role_args["vars_from"]?.try(&.as_s))
+          RoleLoader.preload_static_import_role(static_role_name, play, playbook_dir || file_dir, static_tasks_from, role_args["vars_from"]?.try(&.as_s))
         elsif static_tasks_from.nil?
-          RoleLoader.preload_static_import_role(role_name, play, playbook_dir || file_dir, nil, role_args["vars_from"]?.try(&.as_s))
+          RoleLoader.preload_static_import_role(static_role_name, play, playbook_dir || file_dir, nil, role_args["vars_from"]?.try(&.as_s))
         end
       end
 
@@ -6563,14 +6628,17 @@ module Krikri
       # displayed as "<action> : <role name>" - with the action AS
       # WRITTEN (live-verified vs 2.19.11: `ansible.builtin.include_role:`
       # with no name: shows "TASK [ansible.builtin.include_role : ic]",
-      # not the bare "include_role").
-      display_name = name || "#{action} : #{role_name}"
+      # not the bare "include_role"). A non-string name still renders its
+      # value the way Python's %s would (get_name runs before the
+      # role-definition refusal - the banner prints first).
+      display_name = name || "#{action} : #{role_name || include_role_bad_name_repr(bad_name_yaml)}"
       task = Task.new(display_name, "_include_role")
       task.is_static_import = is_static
       task.has_explicit_name = !name.nil?
       task.written_action = action
       task.include_role_bool_failure = bool_failure
       task.include_role_name = role_name
+      task.include_role_nonstring_name = bad_name_yaml ? Vault.yaml_value_to_json(bad_name_yaml) : nil
       task.include_role_dir = file_dir
       task.include_role_tasks_from = role_args["tasks_from"]?.try(&.as_s)
       task.include_role_vars_from = role_args["vars_from"]?.try(&.as_s)

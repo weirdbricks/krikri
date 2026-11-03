@@ -3152,6 +3152,40 @@ describe Krikri::PlaybookParser do
       end
     end
 
+    it "keeps a non-string name: value for the RUN-time abort (real only requires the key at load)" do
+      # Real's IncludeRole.load only requires the name/role KEY to exist
+      # (role_include.py); the type check happens later, in RoleInclude.
+      # load's "Invalid role definition." - which for the dynamic form
+      # runs at RUN time, after the task banner has printed (issue #761,
+      # live-verified vs 2.19.11). So parsing must NOT refuse the
+      # playbook here; the executor aborts instead.
+      task = single_task(<<-YAML)
+        - include_role:
+            name: 50
+        YAML
+
+      task.include_role?.must_equal(true)
+      task.include_role_name.must_be_nil
+      task.include_role_nonstring_name.try(&.as_i).must_equal(50)
+    end
+
+    it "refuses the whole playbook (Ansible's RoleInclude.load, rc=4) for a static import_role: with a non-string name:" do
+      # A static import_role: resolves the role during playbook load, so
+      # real's RoleInclude.load "Invalid role definition." fires at load
+      # time there - no play banner (issue #761, live-verified vs
+      # 2.19.11, rc=4).
+      assert_raises_message(Krikri::IncludeDirectiveError,
+        "Invalid role definition.") do
+        Krikri::PlaybookParser.parse_string(<<-YAML)
+          - name: play
+            hosts: all
+            tasks:
+              - ansible.builtin.import_role:
+                  name: 50
+          YAML
+      end
+    end
+
     it "treats vars: as a sibling task keyword, not nested inside include_role: (per ansible-doc)" do
       task = single_task(<<-YAML)
         - include_role:
