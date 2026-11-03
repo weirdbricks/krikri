@@ -56,6 +56,25 @@ module Krikri
     # robertdebock.jenkins (zypper_repository, SUSE-only, out of this
     # project's scope).
     property unavailable_module : String?
+    # Ansible-core ships `import_playbook` as a doc-only stub module
+    # (lib/ansible/modules/import_playbook.py: DOCUMENTATION and EXAMPLES
+    # only, no code, no shebang). It is a play-level keyword only; a TASK
+    # whose action is one of these spellings still RESOLVES as a module on
+    # the controller (the loader finds the stub file), and the base action
+    # plugin's _execute_module then dies on its shebang check - a per-task
+    # failure "Task failed: module (X) is missing interpreter line" that
+    # honors ignore_errors:, NOT the graceful unported-module skip the
+    # rest of the unavailable_module flow gives (live-verified vs 2.19.11,
+    # issue #762).
+    IMPORT_PLAYBOOK_SPELLINGS = ["import_playbook", "ansible.builtin.import_playbook", "ansible.legacy.import_playbook"]
+
+    # True when this task's unavailable module is an import_playbook
+    # spelling: the executor fails it like Ansible's stub-module shebang
+    # check instead of skipping it (see IMPORT_PLAYBOOK_SPELLINGS above).
+    def unavailable_import_playbook? : Bool
+      unavailable_module.try { |name| IMPORT_PLAYBOOK_SPELLINGS.includes?(name) } || false
+    end
+
     # A legacy `action:`/`local_action:` free-form directive whose module
     # name is itself a `{{ }}` template (`action: "{{ ansible_pkg_mgr }}
     # state=present name={{ item }}"`, jdauphant.intellij) can't resolve
