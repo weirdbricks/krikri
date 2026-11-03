@@ -93,6 +93,16 @@ module Krikri
     # changed-stripping) run later against that original and need the
     # resolved spelling; they read it back off the task's result.
     property resolved_templated_name : String?
+    # Whether the task's module argument was written as a bare STRING
+    # (`raw: echo hi`) rather than a mapping (`raw: {cmd: echo hi}`): the
+    # two end up with identical `params` (the string lands under `cmd` for
+    # the command-style modules), but Ansible routes them differently -
+    # a bare string always becomes the free-form module's `_raw_params`,
+    # while a mapping only carries the keys it names. The executor's raw:
+    # gate (see TaskExecutor#raw_missing_raw_params_failure) needs the
+    # distinction: real's raw action reads ONLY `_raw_params`, so a
+    # mapping-form raw without one crashes where the bare string runs.
+    property? module_args_string_form : Bool = false
     # A MAPPING-form legacy `action:`/`local_action:` whose module name is
     # DEFINITIVELY unresolvable on the controller (CollectionIndex#
     # controller_resolves? verdict resolves: false - no collection ships
@@ -4204,6 +4214,7 @@ module Krikri
         # name is templated), so it can still be shaped at parse time; the
         # string form's params only exist once the module name resolves.
         task.params = (mp3 = module_params) && mp3.as_h? ? parse_module_params(mp3, module_name) : Hash(String, String).new
+        task.module_args_string_form = true if module_params.try(&.as_s?)
       else
         task.unavailable_module = unavailable_module_name
         # The definitively-unresolvable mapping name rides the lazy
@@ -4224,6 +4235,7 @@ module Krikri
         # dict IS these params - previously they were dropped here, so
         # the module always ran with empty args.
         task.params = parse_module_params((module_params || raise "BUG: module_params missing"), module_name)
+        task.module_args_string_form = true if module_params.try(&.as_s?)
       end
 
       # args: - a sibling keyword (not nested inside the module's own

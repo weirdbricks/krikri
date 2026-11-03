@@ -2281,7 +2281,13 @@ module Krikri
 
       # Same argspec-validation gates as execute_task_once (see there) -
       # batched tasks must fail on a typo'd option exactly like
-      # non-batched ones.
+      # non-batched ones. raw: with no `_raw_params` never reaches them:
+      # real's raw action crashes/skips before any module-side validation
+      # would run (see the helper's own comment).
+      if raw_failure = raw_missing_raw_params_failure(task, substituted_params, resolve_task_check_mode(task, vars_context))
+        return apply_changed_failed_when(task, raw_failure, vars_context, host) if raw_failure["skipped"]?
+        return raw_failure
+      end
       if violation = argspec_validation_result(task, substituted_params, vars_context, action_level_only: false, check_mode: resolve_task_check_mode(task, vars_context))
         return apply_changed_failed_when(task, violation, vars_context, host)
       end
@@ -2960,6 +2966,17 @@ module Krikri
         return keyword_failure_json(ex, task)
       end
 
+      # raw: with no `_raw_params` never reaches the aliased shell plugin's
+      # argument spec at all - real's raw action crashes/skips before any
+      # module-side validation would run (see the helper's own comment).
+      if raw_failure = raw_missing_raw_params_failure(task, substituted_params, resolve_task_check_mode(task, vars_context))
+        # The check-mode skip rides the same pipeline a plugin-produced skip
+        # does; the crash escapes before the changed_when/failed_when pass
+        # runs in real, so it must bypass it here too.
+        return apply_changed_failed_when(task, raw_failure, vars_context, host) if raw_failure["skipped"]?
+        return raw_failure
+      end
+
       # Data-driven module argument validation against Ansible's own
       # argument specs (see ArgspecValidator) - the same checks the real
       # module's AnsibleModule init runs, controller-side, before the
@@ -3111,6 +3128,45 @@ module Krikri
     end
 
     RAW_MODULES = {"raw", "ansible.builtin.raw", "ansible.legacy.raw"}
+
+    # raw:'s action plugin reads ONLY `_raw_params`
+    # (ansible/plugins/action/raw.py hands `self._task.args.get('_raw_params')`
+    # straight to _low_level_execute_command): `free_form:`/`cmd:`/`argv:` are
+    # params it never consults, and raw has no Ansible-module side to reject
+    # them either (there is no raw.py module - the action plugin talks to the
+    # connection directly). A raw task whose finalized args leave
+    # `_raw_params` unset therefore hands None into the connection and dies
+    # on Python's "'NoneType' object is not iterable" INSIDE the action - the
+    # task executor's uncaught-exception wrapper words the result
+    # "Task failed: <exception>" (live-verified vs 2.19.11), and failed_when:
+    # never applies (the exception escapes _execute_internal before the
+    # changed_when/failed_when pass runs, live-verified). krikri aliases raw:
+    # onto the shell plugin, whose required_one_of accepts cmd:/argv: and
+    # words the empty case "one of the following is required: _raw_params,
+    # cmd, argv" - none of which real does. Check mode diverges the same way:
+    # real's action plugin returns the bare skip shape BEFORE reading any
+    # args, while the aliased module-side spec check fails the task.
+    private def raw_missing_raw_params_failure(task : Task, params : Hash(String, String), check_mode : Bool) : JSON::Any?
+      return nil unless RAW_MODULES.includes?(task.action_name || task.module_name)
+      return nil if params.has_key?("_raw_params")
+      # A bare-string raw (`raw: echo hi`) is real's _raw_params shape:
+      # krikri stores the same command under `cmd` for the aliased shell
+      # plugin, and it must keep running - only the MAPPING form can leave
+      # `_raw_params` unset (see Task#module_args_string_form).
+      return nil if task.module_args_string_form?
+      if check_mode
+        return JSON.parse({"skipped" => true, "failed" => false, "changed" => false}.to_json)
+      end
+      result_json = JSON.parse({
+        "changed"               => false,
+        "failed"                => true,
+        "msg"                   => "Task failed: 'NoneType' object is not iterable",
+        "_ansible_action_level" => true,
+        "_ansible_error_detail" => "'NoneType' object is not iterable",
+      }.to_json)
+      Krikri.mark_failed_key_order(result_json, FAILED_KEY_ORDER_MSG_FIRST)
+      result_json
+    end
 
     # raw: is aliased to the shell plugin binary, whose result carries
     # command-style keys (cmd/start/end/delta, an empty msg) Ansible's raw
