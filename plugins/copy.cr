@@ -857,7 +857,16 @@ module Krikri
     end
 
     private def handle_directory_copy(src : String, dest : String) : PluginResult
-      dest_root = src.ends_with?('/') ? dest : File.join(dest, File.basename(src.rstrip('/')))
+      # __original_src_basename - set by TaskExecutor#stage_directory_copy_
+      # source when src is a random-named remote scratch path it SCP'd the
+      # directory tree to; the staged dir IS the user's source directory
+      # (its contents sit directly under the scratch name), so the
+      # dest/<basename> subdir must keep the user's basename, not the
+      # scratch hex name (derbunman.debuild_rofi: `copy: src: debian`
+      # landed as dest/.krikri-playbook-copy-dir-<hex>/ and the role's
+      # next task failed its own `test -d debian` where Ansible succeeds).
+      basename = @params["__original_src_basename"]?.presence || File.basename(src.rstrip('/'))
+      dest_root = src.ends_with?('/') ? dest : File.join(dest, basename)
 
       dest_root_preexisted = Dir.exists?(dest_root) rescue false
       begin
