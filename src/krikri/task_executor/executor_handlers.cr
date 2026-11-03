@@ -841,6 +841,13 @@ module Krikri
         if reached && handler.unresolvable_mapping_module?
           return unresolvable_mapping_module_failure(handler)
         end
+        # Same for an import_playbook handler (issue #762): the doc-only
+        # stub module resolves and dies on the shebang check - a failed
+        # handler, not the skip below, and not the exit-4 accounting
+        # either.
+        if reached && handler.unavailable_import_playbook? && python_module_source_for(handler).nil?
+          return import_playbook_missing_interpreter_failure(handler)
+        end
         reachable_unavailable_modules << module_name if reached
         connection_host = host.name
         suffix = (item = vars_context["item"]?) ? " => (item=#{include_item_display_label(handler, item, vars_context, host)}) " : ""

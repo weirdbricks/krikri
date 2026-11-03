@@ -546,6 +546,29 @@ module Krikri
       }.to_json)
     end
 
+    # The failure a reached task-level (or handler-level) import_playbook
+    # produces (issue #762): ansible-core's module loader RESOLVES the
+    # action to the doc-only stub (lib/ansible/modules/import_playbook.py)
+    # and the base action plugin's _execute_module dies on its shebang
+    # check, raising a controller-side AnsibleError. The fatal msg carries
+    # the "Task failed: " brief, the [ERROR] block collapses to one
+    # segment carrying the bare message with the task's own Origin (the
+    # _ansible_action_level + _ansible_error_detail pair the action-plugin
+    # exception path uses), and the registered result keeps failed: true,
+    # changed: false (live-verified vs 2.19.11). The module name in the
+    # message is the AS-WRITTEN spelling.
+    private def import_playbook_missing_interpreter_failure(task : Task) : JSON::Any
+      name = task.unavailable_module || task.module_name
+      detail = "module (#{name}) is missing interpreter line"
+      JSON.parse({
+        "changed"               => false,
+        "failed"                => true,
+        "msg"                   => "Task failed: #{detail}",
+        "_ansible_error_detail" => detail,
+        "_ansible_action_level" => true,
+      }.to_json)
+    end
+
     private def emit_unresolvable_mapping_error_block(task : Task, message : String) : Nil
       path = task.source_file || @playbook_file
       return unless path && File.file?(path)

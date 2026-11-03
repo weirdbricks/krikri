@@ -2667,6 +2667,21 @@ module Krikri
         return result
       end
 
+      # A reached task-level import_playbook (issue #762) fails here
+      # instead of skipping below: ansible-core's module loader RESOLVES
+      # the action to the doc-only stub (lib/ansible/modules/
+      # import_playbook.py) and the base action plugin's _execute_module
+      # dies on its shebang check, raising a controller-side AnsibleError
+      # - a per-task failure honoring ignore_errors:, not the graceful
+      # skip other unported modules take. Like them it fails only AFTER
+      # arg finalization (real resolves the module after the args
+      # finalize), and it never registers in reachable_unavailable_
+      # modules - the failure is the task's own, not the engine-limit
+      # exit-4 accounting.
+      if task.unavailable_import_playbook? && python_module_source_for(task).nil?
+        return import_playbook_missing_interpreter_failure(task)
+      end
+
       # A genuinely-reached unavailable module whose when: passed and whose
       # arg finalization was clean skips HERE, not inside when_passes? -
       # ansible's order is when: -> arg finalization -> module resolution
