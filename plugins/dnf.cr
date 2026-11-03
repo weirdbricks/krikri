@@ -201,23 +201,28 @@ module Krikri
                  "skip_broken, sslverify, state, update_cache, update_only, validate_certs (expire-cache, pkg)."
           )
         end
-        return nil
-      end
-
-      unsupported = @params.keys.reject { |k| dnf_supported.includes?(k) || dnf_internal.includes?(k) || k.starts_with?("_") }
-      unless unsupported.empty?
-        unsupported_sorted = unsupported.sort
-        return PluginResult.new(
-          changed: false,
-          failed: true,
-          msg: "Unsupported parameters for (#{backend_module_name}) module: #{unsupported_sorted.join(", ")}. " \
-               "Supported parameters include: " \
-               "allow_downgrade, allowerasing, autoremove, best, bugfix, cacheonly, conf_file, disable_excludes, " \
-               "disable_gpg_check, disable_plugin, disablerepo, download_dir, download_only, enable_plugin, " \
-               "enablerepo, exclude, install_repoquery, install_weak_deps, installroot, list, lock_timeout, " \
-               "name, nobest, releasever, security, skip_broken, sslverify, state, update_cache, update_only, " \
-               "use_backend, validate_certs (expire-cache, pkg)."
-        )
+        # fall through to the SHARED checks below (mutual exclusion, bool
+        # conversion, the explicit-null list check): dnf5.py shares
+        # yumdnf's argument_spec with dnf.py (live-verified vs 2.19.11),
+        # so a use_backend: dnf5 task still fails an explicit-null
+        # `name:` with the same NoneType message (etam.ipfs round
+        # 29895333) instead of skipping validation to the backend run.
+      else
+        unsupported = @params.keys.reject { |k| dnf_supported.includes?(k) || dnf_internal.includes?(k) || k.starts_with?("_") }
+        unless unsupported.empty?
+          unsupported_sorted = unsupported.sort
+          return PluginResult.new(
+            changed: false,
+            failed: true,
+            msg: "Unsupported parameters for (#{backend_module_name}) module: #{unsupported_sorted.join(", ")}. " \
+                 "Supported parameters include: " \
+                 "allow_downgrade, allowerasing, autoremove, best, bugfix, cacheonly, conf_file, disable_excludes, " \
+                 "disable_gpg_check, disable_plugin, disablerepo, download_dir, download_only, enable_plugin, " \
+                 "enablerepo, exclude, install_repoquery, install_weak_deps, installroot, list, lock_timeout, " \
+                 "name, nobest, releasever, security, skip_broken, sslverify, state, update_cache, update_only, " \
+                 "use_backend, validate_certs (expire-cache, pkg)."
+          )
+        end
       end
 
       if rejection = yumdnf_mutual_exclusion_rejection

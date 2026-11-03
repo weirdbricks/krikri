@@ -164,8 +164,37 @@ module Krikri
       # relied on exactly that: no `name:` key at all, and Ansible
       # ran it ok. A cache-refresh-only invocation still runs the
       # update_cache path below.
-      name = @params["name"]? || @params["pkg"]?
+      name : String? = @params["name"]? || @params["pkg"]?
       update_cache = true?(@params["update_cache"]?)
+      # An EXPLICIT None name (a whole-span `{{ template }}` arg whose
+      # native result is Python None - etam.ipfs's `name:
+      # "{{ ipfs_dep_python3_yaml }}"` whose `{%- if -%}` chain matches no
+      # os_family on RedHat - rides the wire as NONE_SENTINEL, exactly
+      # like a literal `name:` with no value) is backend-specific at the
+      # BACKEND MODULE's own argspec: apt's `package` param is neither
+      # required nor defaulted, so _validate_argument_types skips the
+      # None (ansible/module_utils/common/parameters.py's "value is None
+      # and not required and default is None" gate) and the module runs
+      # nameless (ok, changed: false - live-verified vs 2.19.11), while
+      # dnf/yum's `name` has default=[], so the None reaches
+      # check_type_list and fails the task with the generic NoneType
+      # list-conversion message (live-verified vs 2.19.11 with
+      # use_backend forced on a Debian host to reach module argspec
+      # validation). The demoted @params text is "" for both the null and
+      # the genuinely-empty-string shape, so this must consult the null
+      # bookkeeping, not the text.
+      if name && (explicit_null_param?("name") || explicit_null_param?("pkg"))
+        backend = requested_package_manager || detect_package_manager()
+        if backend != "apt"
+          return PluginResult.new(
+            changed: false,
+            failed: true,
+            msg: "argument 'name' is of type NoneType and we were unable to convert to list: " \
+                 "<class 'NoneType'> cannot be converted to a list"
+          )
+        end
+        name = nil
+      end
       unless name
         # A `deb:` install (URL or local .deb) carries no name: - ansible's
         # package action plugin forwards deb: verbatim to the apt module,
