@@ -102,6 +102,36 @@ describe "make plugin" do
     result["msg"].as_s.must_include("Error 2")
   end
 
+  it "expands a ~-led chdir against HOME before the isdir check (issue #789)" do
+    home = PluginSpecHelper.tmp_path("make_tilde_home")
+    Dir.mkdir_p(File.join(home, "proj"))
+    File.write(File.join(home, "proj", "Makefile"), "boom:\n\t@echo tilde-marker >&2\n\t@exit 3\n")
+
+    result = PluginSpecHelper.run("make", {"chdir" => "~/proj", "target" => "boom"}, env: {"HOME" => home})
+
+    result["failed"].as_bool.must_equal(true)
+    # The marker proves make reached the repo's own Makefile: unexpanded,
+    # the literal "~/proj" isdir check fails and make runs in the engine's
+    # cwd, failing with "No rule to make target 'boom'" instead.
+    result["msg"].as_s.must_include("tilde-marker")
+  end
+
+  it "carries cmd plus raw stdout/stderr and their *_lines in a check_rc failure (issue #789)" do
+    Dir.mkdir_p(PluginSpecHelper.tmp_path("make_fail_shape"))
+    File.write(File.join(PluginSpecHelper.tmp_path("make_fail_shape"), "Makefile"), "boom:\n\t@echo about-to-fail >&2\n\t@exit 2\n")
+
+    result = PluginSpecHelper.run("make", {"chdir" => PluginSpecHelper.tmp_path("make_fail_shape"), "target" => "boom"})
+
+    result["failed"].as_bool.must_equal(true)
+    result["cmd"].as_s.must_equal("/usr/bin/gmake boom")
+    # fail_json gets run_command's RAW stdout/stderr - stderr keeps its
+    # trailing newline while msg (stderr rstripped) loses it.
+    result["stderr"].as_s.must_match(/about-to-fail\n.*Error 2\n\z/m)
+    result["msg"].as_s.must_equal(result["stderr"].as_s.rstrip)
+    result["stdout_lines"].as_a.size.must_equal(0)
+    result["stderr_lines"].as_a.size.must_equal(2)
+  end
+
   it "check mode reports changed from the -q probe with no msg" do
     Dir.mkdir_p(PluginSpecHelper.tmp_path("make"))
     File.write(File.join(PluginSpecHelper.tmp_path("make"), "Makefile"), "all:\n\t@echo built-all\n")

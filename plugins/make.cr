@@ -109,12 +109,18 @@ module Krikri
           exception: "[Errno 2] No such file or directory: b'#{make_bin}'")
       end
 
-      # Real run_command(cwd=chdir) drops an invalid cwd entirely
-      # (ignore_invalid_cwd=True default: only a real directory is
-      # passed to the subprocess) - the command then runs in the
-      # current directory instead of failing like this plugin's old
-      # `cd <chdir> && ...` shell wrapper did.
-      chdir_part = Dir.exists?(chdir) ? "cd #{shell_quote(chdir)} && " : ""
+      # Real run_command(cwd=chdir) normalizes the directory with
+      # abspath(expanduser(cwd)) BEFORE its isdir check (ignore_invalid_cwd
+      # True default: only a real directory reaches the subprocess) - the
+      # command then runs in the current directory instead of failing like
+      # this plugin's old `cd <chdir> && ...` shell wrapper did. The
+      # expanduser half matters: a `~`-led chdir (`~/awx-operator`) checked
+      # as the literal string never exists, so make ran in the engine's own
+      # cwd and failed with "No rule to make target '<target>'" where real
+      # ansible reached the repo's Makefile (issue #789,
+      # jesperberth.awx_k8s_install's "Make deploy").
+      chdir_expanded = expand_tilde(chdir)
+      chdir_part = Dir.exists?(chdir_expanded) ? "cd #{shell_quote(chdir_expanded)} && " : ""
 
       query_result = remote_exec("#{chdir_part}#{full_command} -q")
       needs_rebuild = query_result[:exit_code] != 0
@@ -140,9 +146,25 @@ module Krikri
 
       result = remote_exec("#{chdir_part}#{full_command}")
       unless result[:exit_code] == 0
-        # real run_command(check_rc=True): fail_json(rc, stdout, stderr,
-        # msg=the sanitized stderr itself - no "make failed:" prefix).
-        return PluginResult.new(changed: false, failed: true, msg: sanitize(result[:stderr]), stdout: sanitize(result[:stdout]), stderr: sanitize(result[:stderr]), rc: result[:exit_code])
+        # Real run_command(check_rc=True) fails with fail_json(cmd=<the
+        # shlex-quoted failing command>, rc, stdout, stderr, msg=<stderr
+        # rstripped of ALL trailing whitespace - no "make failed:" prefix>).
+        # The stdout/stderr here are run_command's RAW values (the module's
+        # own sanitize_output return never happens - fail_json raises), and
+        # the action layer derives *_lines from those raw values
+        # (action/__init__.py), so stderr keeps its trailing newline while
+        # msg loses it. The old shape carried none of cmd/*_lines
+        # (issue #789: the fatal dump was missing "cmd", "stderr_lines" and
+        # "stdout_lines").
+        return PluginResult.new(changed: false, failed: true,
+          msg: result[:stderr].rstrip,
+          cmd: full_command,
+          rc: result[:exit_code],
+          stdout: result[:stdout],
+          stderr: result[:stderr],
+          stdout_lines: PluginHelpers::AnsibleSplitlines.split(result[:stdout]),
+          stderr_lines: PluginHelpers::AnsibleSplitlines.split(result[:stderr]),
+          key_order: ["changed", "cmd", "msg", "rc", "stderr", "stderr_lines", "stdout", "stdout_lines"])
       end
 
       PluginResult.new(changed: true, failed: false, stdout: sanitize(result[:stdout]), stderr: sanitize(result[:stderr]), command: full_command,
