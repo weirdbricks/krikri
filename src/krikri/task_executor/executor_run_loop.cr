@@ -2221,6 +2221,13 @@ module Krikri
         return keyword_failure_json(ex, task)
       end
 
+      # The gather_facts action's own `parallel:` conversion runs inside the
+      # action plugin, i.e. after the become: keyword check and before any
+      # fact module - see gather_facts_parallel_failure.
+      if violation = gather_facts_parallel_failure(task, substituted_params, vars_context)
+        return apply_changed_failed_when(task, violation, vars_context, host)
+      end
+
       if ActionPluginManager.has_action_plugin?(task.module_name)
         # task_host is the TASK's own host, passed only when delegate_to: is
         # in play - synchronize's dest_is_local branch (delegate_to naming
@@ -2805,6 +2812,13 @@ module Krikri
         resolve_task_become(task, host, vars_context, substitutor)
       rescue ex : UndefinedVariableError
         return keyword_failure_json(ex, task)
+      end
+
+      # The gather_facts action's own `parallel:` conversion runs inside the
+      # action plugin, i.e. after the become: keyword check and before any
+      # fact module - see gather_facts_parallel_failure.
+      if violation = gather_facts_parallel_failure(task, substituted_params, vars_context)
+        return apply_changed_failed_when(task, violation, vars_context, host)
       end
 
       if ActionPluginManager.has_action_plugin?(task.module_name)

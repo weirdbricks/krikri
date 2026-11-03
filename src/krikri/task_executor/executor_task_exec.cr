@@ -3270,6 +3270,113 @@ module Krikri
       nil
     end
 
+    # Ansible's gather_facts ACTION plugin (2.13's `parallel:` option) pops
+    # the option off the task args - `task_vars.pop('ansible_facts_parallel',
+    # self._task.args.pop('parallel', None))`, so the var wins over the task
+    # arg when both exist - and runs the survivor through
+    # convert_bool.boolean() with its strict=True default BEFORE any fact
+    # module runs. A value outside Ansible's BOOLEANS set raises the plain
+    # TypeError "The value '<x>' is not a valid boolean. Valid booleans
+    # include: ..." which fails the whole task (live-verified vs 2.19.11:
+    # 'gedqpg' and the int 5 fail with that message, while the float 1.0 and
+    # an explicit YAML null pass - null hits the `parallel is None` branch
+    # and takes the module-count default without converting). The failure's
+    # [ERROR] block is the same single collapsed segment set_fact's
+    # `cacheable:` TypeError produces (see ResultDisplay#task_error_chain).
+    # krikri's gather_facts plugin binary never saw the option, so the task
+    # ran ok where real failed (issue #760).
+    private def gather_facts_parallel_failure(task : Task, params : Hash(String, String), vars_context : Hash(String, JSON::Any)) : JSON::Any?
+      return nil unless task.module_name.split(".").last == "gather_facts"
+      native = if var = vars_context["ansible_facts_parallel"]?
+                 var
+               else
+                 parallel_arg_native(params)
+               end
+      # Neither set, or an explicit Python None (YAML `parallel:`, a
+      # templated null): the action's `parallel is None` branch picks the
+      # module-count default and never reaches the conversion.
+      return nil if native.nil? || native.raw.nil?
+      return nil unless error = strict_boolean_error(native)
+      Krikri.mark_failed_key_order(JSON.parse({
+        "changed" => false,
+        "failed"  => true,
+        "msg"     => "Task failed: #{error}",
+      }.to_json), FAILED_KEY_ORDER_EXCEPTION_FIRST)
+    end
+
+    # The `parallel` value's native JSON::Any, decoded from the strings-only
+    # param wire exactly like SetFactActionPlugin#cacheable_native does for
+    # `cacheable:` (same three wire shapes: the literal-null sentinel, the
+    # parser's non-string-literal marker, and the whole-span templated
+    # expression's native-type prefix). nil when the task arg is absent.
+    private def parallel_arg_native(params : Hash(String, String)) : JSON::Any?
+      raw = params["parallel"]? || return nil
+      if raw == Krikri::NONE_SENTINEL
+        JSON::Any.new(nil)
+      elsif raw.starts_with?(Krikri::NATIVE_TYPED_PREFIX)
+        begin
+          JSON.parse(raw[Krikri::NATIVE_TYPED_PREFIX.size..])
+        rescue JSON::ParseException
+          JSON::Any.new(raw)
+        end
+      elsif native = Krikri.non_string_scalar(raw)
+        native
+      else
+        JSON::Any.new(raw)
+      end
+    end
+
+    # convert_bool.boolean(strict=True) over the value's native type - the
+    # same matrix Ansible's gather_facts `parallel:` conversion runs, kept
+    # in step with SetFactActionPlugin#strict_boolean_error (mirrored rather
+    # than shared because the two live in different binaries).
+    private def strict_boolean_error(native : JSON::Any) : String?
+      case raw = native.raw
+      when Bool
+        nil
+      when Int64
+        return nil if raw == 1 || raw == 0
+        boolean_value_error(native)
+      when Float64
+        return nil if raw == 1.0 || raw == 0.0
+        boolean_value_error(native)
+      when String
+        normalized = raw.downcase.strip
+        return nil if ArgspecValidator::REAL_TRUE.includes?(normalized)
+        return nil if ArgspecValidator::REAL_FALSE.includes?(normalized)
+        boolean_value_error(native)
+      else
+        boolean_value_error(native)
+      end
+    end
+
+    private def boolean_value_error(native : JSON::Any) : String
+      "The value '#{python_value_text(native)}' is not a valid boolean. Valid booleans include: #{ArgspecValidator::BOOLEANS_REPR.join(", ")}"
+    end
+
+    # to_text(value) for the error message: scalars match Ansible's str()
+    # directly; JSON-shaped containers get Ansible's Python str() spacing
+    # (", " between items) - mirrored from SetFactActionPlugin.
+    private def python_value_text(native : JSON::Any) : String
+      case raw = native.raw
+      when Nil            then "None"
+      when Bool           then raw ? "True" : "False"
+      when Int64, Float64 then raw.to_s
+      when Array          then "[" + native.as_a.map { |item| python_scalar_repr(item) }.join(", ") + "]"
+      when Hash           then "{" + native.as_h.map { |key, value| "'#{key}': #{python_scalar_repr(value)}" }.join(", ") + "}"
+      else                     native.as_s
+      end
+    end
+
+    private def python_scalar_repr(value : JSON::Any) : String
+      case raw = value.raw
+      when Bool   then raw ? "True" : "False"
+      when String then "'#{raw}'"
+      when Nil    then "None"
+      else             value.to_s
+      end
+    end
+
     # Ansible's group_by/add_host action plugins iterate a YAML list arg's
     # members with plain string ops (group_by's
     # `[name.replace(' ', '-') for name in parent_groups]`, add_host's
