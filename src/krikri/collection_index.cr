@@ -852,8 +852,10 @@ module Krikri
     # bare action name to a role's (or the playbook's) own
     # `action_plugins/<short>.py` at load time (issue #517:
     # gwerlas.libvirt's `warn:` handler), so the name counts as resolved
-    # whenever such a file exists. Only `.py` files count here - unlike
-    # `library/`, action plugins cannot be extensionless shell scripts.
+    # whenever such a file exists. Ansible's configured action dirs come
+    # after every extra dir in that search (issue #793). Only `.py` files
+    # count here - unlike `library/`, action plugins cannot be extensionless
+    # shell scripts.
     private def self.local_action_plugin?(name : String, role_path : String?, playbook_dir : String?) : Bool
       short = name.rpartition('.')[2]
       return false if short.empty?
@@ -862,6 +864,7 @@ module Krikri
       roots << File.join(role_path, "action_plugins") if role_path && !role_path.empty?
       roots.concat(PythonFilterRunner.loaded_role_roots("action_plugins"))
       roots << File.join(playbook_dir, "action_plugins") if playbook_dir && !playbook_dir.empty?
+      roots.concat(PythonFilterRunner.configured_roots("action", "ANSIBLE_ACTION_PLUGINS"))
 
       roots.any? { |root| File.file?(File.join(root, "#{short}.py")) }
     end

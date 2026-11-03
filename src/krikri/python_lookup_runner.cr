@@ -101,37 +101,10 @@ module Krikri
 
     # Ansible's configured lookup plugin directories, searched LAST (its
     # loader puts the role/playbook `_extra_dirs` ahead of the configured
-    # paths). `ANSIBLE_LOOKUP_PLUGINS` - a PATH-separated list - REPLACES
-    # the defaults exactly as it does in ansible (the defaults being
-    # `~/.ansible/plugins/lookup` and `/usr/share/ansible/plugins/
-    # lookup`), live-verified against ansible-playbook 2.19.11. krikri
-    # has no ansible.cfg INI parser (see krikri-playbook.cr), so the ini
-    # key `lookup_plugins =` stays unsupported - env only, like the other
-    # ANSIBLE_* settings krikri reads.
+    # paths). See PythonFilterRunner#configured_roots for the shared
+    # ANSIBLE_<TYPE>_PLUGINS / ANSIBLE_HOME rules.
     def configured_roots : Array(String)
-      if custom = ENV["ANSIBLE_LOOKUP_PLUGINS"]?
-        return custom.split(':').map(&.strip).reject(&.empty?).map { |entry| expand_home(entry) }
-      end
-      roots = [] of String
-      if home = home_dir
-        roots << File.join(home, ".ansible", "plugins", "lookup")
-      end
-      roots << "/usr/share/ansible/plugins/lookup"
-      roots
-    end
-
-    private def home_dir : String?
-      ENV["HOME"]? || ENV["USERPROFILE"]?
-    end
-
-    # ansible resolves `~` in its pathlist settings (ConfigManager's
-    # resolve_path); a `~/lookups` entry would otherwise never match.
-    private def expand_home(entry : String) : String
-      home = home_dir
-      return entry unless home
-      return home if entry == "~"
-      return File.join(home, entry[2..]) if entry.starts_with?("~/")
-      entry
+      PythonFilterRunner.configured_roots("lookup", "ANSIBLE_LOOKUP_PLUGINS")
     end
 
     # The CONTROLLER's own python3 - the interpreter Ansible needs

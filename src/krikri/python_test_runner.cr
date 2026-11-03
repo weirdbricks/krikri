@@ -44,12 +44,15 @@ module Krikri
 
     # Finds every `.py` file under the role's own `test_plugins/`, the
     # `test_plugins/` of every role LOADED so far this run (same
-    # loaded-role registry as PythonFilterRunner#find_sources), and the
-    # playbook-adjacent `test_plugins/` (nearest-first order; Ansible
-    # loads ALL files in a plugin directory, not name-matched ones).
+    # loaded-role registry as PythonFilterRunner#find_sources), the
+    # playbook-adjacent `test_plugins/`, plus Ansible's configured test
+    # dirs (PythonFilterRunner#configured_roots, issue #793; searched last
+    # there, which is why they lead this last-import-wins list). Ansible
+    # loads ALL files in a plugin directory, not name-matched ones.
     # Empty when no root exists - the overwhelmingly common case.
     def find_sources(role_path : String?, playbook_dir : String?) : Array(String)
       roots = [] of String
+      roots.concat(PythonFilterRunner.configured_roots("test", "ANSIBLE_TEST_PLUGINS"))
       roots << File.join(role_path, "test_plugins") if role_path && !role_path.empty?
       roots.concat(PythonFilterRunner.loaded_role_roots("test_plugins"))
       roots << File.join(playbook_dir, "test_plugins") if playbook_dir && !playbook_dir.empty?

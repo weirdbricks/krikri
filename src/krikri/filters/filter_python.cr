@@ -19,7 +19,6 @@ module Krikri
         return nil unless vars
         role_path = vars["role_path"]?.try(&.as_s?)
         playbook_dir = vars["playbook_dir"]?.try(&.as_s?)
-        return nil unless role_path || playbook_dir
 
         sources = PythonFilterRunner.find_sources(role_path, playbook_dir)
         return nil if sources.empty?

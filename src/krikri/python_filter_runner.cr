@@ -125,10 +125,13 @@ module Krikri
         # The playbook-adjacent directory warns FIRST, before the loaded
         # roles' directories, matching the observed ansible-playbook
         # warning order (live-verified vs 2.19.11) - find_sources' own
-        # resolution precedence (roles first) is untouched by this.
+        # resolution precedence (roles first) is untouched by this. The
+        # configured filter dirs warn after both, the same extra-dirs-first
+        # order the loader searches in (issue #793).
         roots = [] of String
         roots << File.join(playbook_dir, "filter_plugins") if playbook_dir && !playbook_dir.empty?
         roots.concat(loaded_role_roots("filter_plugins"))
+        roots.concat(configured_roots("filter", "ANSIBLE_FILTER_PLUGINS"))
         roots.each do |dir|
           next if @@scanned_filter_dirs.includes?(dir)
           @@scanned_filter_dirs << dir
@@ -579,18 +582,72 @@ module Krikri
       end
     end
 
+    # Ansible's configured plugin directories for *subdir*, the trees its
+    # PluginLoader consults AFTER the role/playbook extra dirs (loader.py's
+    # _get_paths_with_context puts `_extra_dirs` ahead of the config paths).
+    # ANSIBLE_<TYPE>_PLUGINS is a PATH-separated list that REPLACES the
+    # defaults (config type pathspec, live-verified against
+    # ansible-playbook 2.19.11, issue #793); when unset the defaults are
+    # $ANSIBLE_HOME/plugins/<subdir> and /usr/share/ansible/plugins/<subdir>,
+    # ANSIBLE_HOME itself defaulting to `~/.ansible`. krikri has no ansible.cfg
+    # INI parser (see krikri-playbook.cr), so the ini keys (`filter_plugins =`)
+    # stay unsupported - env only, like the other ANSIBLE_* settings krikri
+    # reads.
+    def configured_roots(subdir : String, env_var : String) : Array(String)
+      if custom = ENV[env_var]?
+        return custom.split(':').map(&.strip).reject(&.empty?).map { |entry| expand_home(entry) }
+      end
+      roots = [] of String
+      if home = ansible_home
+        roots << File.join(home, "plugins", subdir)
+      end
+      roots << "/usr/share/ansible/plugins/#{subdir}"
+      roots
+    end
+
+    # ANSIBLE_HOME's own default is `~/.ansible`; a `~`-relative override is
+    # expanded the way ansible's path-typed setting does.
+    def ansible_home : String?
+      if custom = ENV["ANSIBLE_HOME"]?
+        return expand_home(custom)
+      end
+      home = home_dir || return nil
+      File.join(home, ".ansible")
+    end
+
+    def home_dir : String?
+      ENV["HOME"]? || ENV["USERPROFILE"]?
+    end
+
+    # ansible resolves `~` in its pathlist settings (ConfigManager's
+    # resolve_path); a `~/filters` entry would otherwise never match.
+    def expand_home(entry : String) : String
+      home = home_dir
+      return entry unless home
+      return home if entry == "~"
+      return File.join(home, entry[2..]) if entry.starts_with?("~/")
+      entry
+    end
+
     # Finds every `.py` file under the role's own `filter_plugins/`, the
     # `filter_plugins/` of every role LOADED so far this run (Ansible's
     # add_all_plugin_dirs at Role.load - a meta dependency's filters stay
     # reachable from every later task, which is how nephelaiio.plugins'
     # `sorted_get` served nephelaiio.i3's own defaults, round 5250000),
-    # and the playbook-adjacent `filter_plugins/` (nearest-first order;
-    # Ansible loads ALL files in a plugin directory, not name-matched
-    # ones, so there is no per-filter filename check here the way a
-    # module's `library/<name>.py` lookup has). Empty when no root exists
-    # - the overwhelmingly common case.
+    # the playbook-adjacent `filter_plugins/`, plus Ansible's configured
+    # filter dirs (see configured_roots - issue #793; searched last there,
+    # which is why they lead this last-import-wins list). Ansible loads ALL
+    # files in a plugin directory, not name-matched ones, so there is no
+    # per-filter filename check here the way a module's `library/<name>.py`
+    # lookup has. Empty when no root exists - the overwhelmingly common
+    # case.
     def find_sources(role_path : String?, playbook_dir : String?) : Array(String)
       roots = [] of String
+      # The configured dirs come LAST in ansible's search order, and this
+      # list is consumed by the wrapper's last-import-wins name dict, so
+      # they go first here: a filter a role/playbook also defines keeps
+      # winning (live-verified vs 2.19.11, issue #793).
+      roots.concat(configured_roots("filter", "ANSIBLE_FILTER_PLUGINS"))
       roots << File.join(role_path, "filter_plugins") if role_path && !role_path.empty?
       roots.concat(loaded_role_roots("filter_plugins"))
       roots << File.join(playbook_dir, "filter_plugins") if playbook_dir && !playbook_dir.empty?

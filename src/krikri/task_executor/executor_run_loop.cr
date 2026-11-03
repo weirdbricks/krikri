@@ -3848,7 +3848,8 @@ module Krikri
     # only in a META DEPENDENCY role's action_plugins/ resolves through
     # the loaded-role registry (ansible's add_all_plugin_dirs puts every
     # loaded role's action_plugins/ on the search path in load order);
-    # then the playbook's own action_plugins/ dir.
+    # then the playbook's own action_plugins/ dir, and finally Ansible's
+    # configured action dirs (search-order-last there, issue #793).
     private def action_plugin_source_for(task : Task) : String?
       module_name = PythonModuleRunner.short_name(task.unavailable_module || task.module_name)
       if (rp = task.role_path) && !rp.empty?
@@ -3862,6 +3863,10 @@ module Krikri
       unless @playbook_dir.empty?
         pb_plugin = File.join(@playbook_dir, "action_plugins", "#{module_name}.py")
         return pb_plugin if File.file?(pb_plugin)
+      end
+      PythonFilterRunner.configured_roots("action", "ANSIBLE_ACTION_PLUGINS").each do |root|
+        configured = File.join(root, "#{module_name}.py")
+        return configured if File.file?(configured)
       end
       nil
     end

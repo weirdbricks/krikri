@@ -81,7 +81,6 @@ module Krikri
                                   engine : KrikriJinja::Engine) : Bool
       role_path = vars["role_path"]?.try(&.as_s?)
       playbook_dir = vars["playbook_dir"]?.try(&.as_s?)
-      return false unless role_path || playbook_dir
       return false unless PythonFilterRunner.defines_filter?(name, PythonFilterRunner.find_sources(role_path, playbook_dir))
 
       engine.register_json_filter(name) do |value, args, kwargs|
@@ -105,7 +104,6 @@ module Krikri
                                 engine : KrikriJinja::Engine) : Bool
       role_path = vars["role_path"]?.try(&.as_s?)
       playbook_dir = vars["playbook_dir"]?.try(&.as_s?)
-      return false unless role_path || playbook_dir
       return false unless PythonTestRunner.defines_test?(name, PythonTestRunner.find_sources(role_path, playbook_dir))
 
       engine.register_json_test(name) do |value, args, kwargs|
@@ -148,7 +146,6 @@ module Krikri
     def self.ensure_shared_python_filter(name : String, vars : Hash(String, JSON::Any)) : Bool
       role_path = vars["role_path"]?.try(&.as_s?)
       playbook_dir = vars["playbook_dir"]?.try(&.as_s?)
-      return false unless role_path || playbook_dir
       return false unless PythonFilterRunner.defines_filter?(name, PythonFilterRunner.find_sources(role_path, playbook_dir))
 
       KrikriJinja.register_default_filter(name) do |value, args, kwargs, ctx|
@@ -193,7 +190,6 @@ module Krikri
     def self.ensure_shared_python_test(name : String, vars : Hash(String, JSON::Any)) : Bool
       role_path = vars["role_path"]?.try(&.as_s?)
       playbook_dir = vars["playbook_dir"]?.try(&.as_s?)
-      return false unless role_path || playbook_dir
       return false unless PythonTestRunner.defines_test?(name, PythonTestRunner.find_sources(role_path, playbook_dir))
 
       KrikriJinja.register_default_test(name) do |value, args, kwargs, ctx|
