@@ -1254,6 +1254,18 @@ describe Krikri::VariableSubstitutor::JinjaRenderer do
     end
   end
 
+  # Same missing-file contract as the hand-rolled evaluator's ini lookup
+  # (issue #774): the engine-side arm must fail too, not answer nil - the
+  # engine wraps the plugin's own error into a Runtime TemplateError that
+  # keeps the message.
+  it "fails the engine's lookup('ini', ...) on a missing file" do
+    v = Hash(String, JSON::Any).new
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
+    assert_raises_message(KrikriJinja::TemplateError, "Invalid filename None.") do
+      renderer.evaluate_value!("query('ini', 'k type=properties file=#{PluginSpecHelper.tmp_path("no_such_ini_774.conf")}')")
+    end
+  end
+
   it "type_debug returns Python's own type name" do
     # Real bug found benchmarking robertdebock.httpd's own assert.yml:
     # `httpd_additionnal_modules | type_debug == "list"` - entirely

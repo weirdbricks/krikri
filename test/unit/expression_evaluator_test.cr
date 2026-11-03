@@ -1218,6 +1218,19 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
     File.delete(path)
   end
 
+  # Ansible's ini lookup hard-fails a file it cannot find in any search
+  # path ("Invalid filename None." - the None filename find_file_in_
+  # search_path answered), never degrading to a default/empty result
+  # (live-verified vs 2.19.11, issue #774); krikri used to answer the
+  # "undefined" sentinel here.
+  it "fails lookup('ini', ...) on a missing file instead of answering undefined" do
+    v = Hash(String, JSON::Any).new
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
+    assert_raises_message(Krikri::PythonLookupRunner::LookupError, "Invalid filename None.") do
+      evaluator.evaluate("lookup('ini', 'k type=properties file=#{PluginSpecHelper.tmp_path("no_such_ini_774.conf")}')")
+    end
+  end
+
   it "evaluates lookup('unvault', ...) decrypting a file with the session's vault password" do
     with_vault do
       path = PluginSpecHelper.tmp_path("lookup_unvault_test.txt")

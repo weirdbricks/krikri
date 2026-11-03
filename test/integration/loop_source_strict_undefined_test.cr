@@ -417,6 +417,67 @@ describe "undefined loop: source is strict" do
     output.must_include("failed=0")
   end
 
+  # Issue #774 (dilerous.vxflex_createcluster): a with_<lookup>: keyword's
+  # lookup plugin that RUNS and FAILS (a missing file for ini) is a task
+  # failure even behind a false when: - real evaluates the loop source's
+  # lookup before any conditional (live-verified vs 2.19.11: the bodyless
+  # Origin: <unknown> + invoke_lookup() [ERROR] block and a bare msg-only
+  # fatal), where an UNDEFINED term variable under the same false when:
+  # still skips (shape A above). Only a lookup FAILURE may cross the
+  # when-gate; the bodyless block shape is what the with_ keyword
+  # machinery prints, never the generic Task-failed chain.
+  it "fails a failing with_ini: lookup even behind a false when: (issue #774)" do
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: t
+            ansible.builtin.debug:
+              msg: "ran {{ item }}"
+            with_ini:
+              - "k type=properties file=/nonexistent-krikri-774/conf.txt"
+            when: false
+          - name: sentinel
+            ansible.builtin.debug:
+              msg: "SENTINEL-774"
+      YAML
+
+    status.exit_code.must_equal(2)
+    output.must_include("[ERROR]: The lookup plugin 'ini' failed: Invalid filename None.")
+    output.must_include("Origin: <unknown>")
+    output.must_include("invoke_lookup()")
+    output.must_include(%(fatal: [localhost]: FAILED! => {"msg": "The lookup plugin 'ini' failed: Invalid filename None."}))
+    output.wont_include("SENTINEL-774")
+    output.must_include("failed=1")
+  end
+
+  # Same ordering for a lookup failing INSIDE the loop source's own
+  # template: real pins the fatal's Origin at the loop keyword's VALUE
+  # token (no invoke_lookup() frame - live-verified vs 2.19.11).
+  it "fails an in-template query() lookup behind a false when: with the loop-value Origin (issue #774)" do
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: t
+            ansible.builtin.debug:
+              msg: "ran {{ item }}"
+            loop: "{{ query('ini', 'k type=properties file=/nonexistent-krikri-774/conf.txt') }}"
+            when: false
+          - name: sentinel
+            ansible.builtin.debug:
+              msg: "SENTINEL-774Q"
+      YAML
+
+    status.exit_code.must_equal(2)
+    output.must_include("The lookup plugin 'ini' failed: Invalid filename None.")
+    output.wont_include("invoke_lookup()")
+    output.wont_include("SENTINEL-774Q")
+    output.must_include("failed=1")
+  end
+
   it "fails with the LOOP's error when the when: references an unrelated undefined variable (B)" do
     status, output = run_playbook(<<-YAML)
       - hosts: localhost
