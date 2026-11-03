@@ -2411,6 +2411,15 @@ module Krikri
       # it (Ansible's own convention) to decide whether src's
       # contents land directly in dest or as a dest/<basename> subdir.
       resolved["src"] = src.ends_with?('/') ? "#{remote_tmp}/" : remote_tmp
+      # copy.cr's directory-copy path derives the dest/<basename> subdir
+      # from File.basename(src) - on the target that is now the random
+      # scratch name, so the tree landed at dest/<hex>/ instead of
+      # dest/<real basename>/ (derbunman.debuild_rofi's `copy: src: debian`
+      # created rofi/.krikri-playbook-copy-dir-<hex>/ and the role's
+      # following `test -d debian` check failed where Ansible succeeds).
+      # Hand the plugin the real basename, the same convention
+      # stage_large_copy_source already uses for the file case.
+      resolved["__original_src_basename"] = File.basename(src.rstrip('/'))
       resolved["__cleanup_after_copy_dir"] = "true"
       resolved
     end

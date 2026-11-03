@@ -38,6 +38,32 @@ describe "copy plugin - directory src" do
     File.read(File.join(dest, basename, "c.txt")).must_equal("file c\n")
   end
 
+  it "keeps the user's src basename when src is a staged scratch dir" do
+    # After TaskExecutor#stage_directory_copy_source SCPs a directory tree
+    # to the target, the plugin's src is a random-named scratch dir whose
+    # CONTENTS are the user's directory (scp -r debian host:scratch makes
+    # scratch itself a copy of debian) - so the dest/<basename> subdir
+    # must come from __original_src_basename, not File.basename(src).
+    # Found live via derbunman.debuild_rofi's `copy: src: debian`, which
+    # landed as dest/.krikri-playbook-copy-dir-<hex>/ and made the role's
+    # following `test -d debian` command fail where Ansible succeeds.
+    scratch = File.tempname("krikri-playbook-copy-dir")
+    Dir.mkdir_p(scratch)
+    File.write(File.join(scratch, "control"), "Package: rofi\n")
+
+    dest = File.tempname("copy-dir-spec-dest4")
+    Dir.mkdir_p(dest)
+    result = PluginSpecHelper.run("copy", {
+      "src"                     => scratch,
+      "dest"                    => dest,
+      "__original_src_basename" => "debian",
+    })
+
+    result["changed"].as_bool.must_equal(true)
+    File.read(File.join(dest, "debian", "control")).must_equal("Package: rofi\n")
+    Dir.exists?(File.join(dest, File.basename(scratch))).must_equal(false)
+  end
+
   it "is idempotent on a second run with unchanged content" do
     src = File.tempname("copy-dir-spec-src3")
     Dir.mkdir_p(src)
