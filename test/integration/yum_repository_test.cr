@@ -326,6 +326,55 @@ describe "yum_repository plugin" do
     content.wont_include("canonical-pkg")
   end
 
+  # Real ansible's yum_repository supports check mode: it reports the
+  # same changed/diff result but never touches the target file (issue
+  # #780 - krikri used to write the .repo file straight out under
+  # --check because the plugin never read _ansible_check_mode).
+  it "leaves the target file untouched in check mode while reporting changed: true" do
+    result = PluginSpecHelper.run("yum_repository", {
+      "name"                => "checkmode",
+      "description"         => "d",
+      "baseurl"             => "https://example.com",
+      "reposdir"            => repo_dir,
+      "_ansible_check_mode" => "true",
+    })
+
+    result["changed"].as_bool.must_equal(true)
+    File.exists?(repo_path("checkmode")).must_equal(false)
+  end
+
+  it "leaves the target file untouched in check mode on state: absent too" do
+    PluginSpecHelper.run("yum_repository", {
+      "name" => "checkabsent", "description" => "d", "baseurl" => "https://example.com", "reposdir" => repo_dir,
+    })
+
+    result = PluginSpecHelper.run("yum_repository", {
+      "name"                => "checkabsent",
+      "state"               => "absent",
+      "reposdir"            => repo_dir,
+      "_ansible_check_mode" => "true",
+    })
+
+    result["changed"].as_bool.must_equal(true)
+    File.exists?(repo_path("checkabsent")).must_equal(true)
+  end
+
+  it "reports changed: false in check mode when the file already matches" do
+    PluginSpecHelper.run("yum_repository", {
+      "name" => "checkidem", "description" => "d", "baseurl" => "https://example.com", "reposdir" => repo_dir,
+    })
+
+    result = PluginSpecHelper.run("yum_repository", {
+      "name"                => "checkidem",
+      "description"         => "d",
+      "baseurl"             => "https://example.com",
+      "reposdir"            => repo_dir,
+      "_ansible_check_mode" => "true",
+    })
+
+    result["changed"].as_bool.must_equal(false)
+  end
+
   # yum_repository goes through BasePlugin#apply_owner_group_mode - the
   # SHARED owner/group helper - so it is the direct regression target for
   # the helper itself, distinct from copy/get_url's inline attribute code.

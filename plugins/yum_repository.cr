@@ -174,6 +174,10 @@ module Krikri
 
     def execute : PluginResult
       validate_bool_params!
+      # Real ansible's yum_repository supports check mode and reports the
+      # same changed/diff result without touching the target file - the
+      # write below must not happen at all under --check.
+      check_mode = true?(@params["_ansible_check_mode"]?)
       name = @params["name"]?
       unless name
         return PluginResult.new(changed: false, failed: true, msg: "missing required argument: name")
@@ -194,7 +198,7 @@ module Krikri
         unless Dir.exists?(reposdir)
           return PluginResult.new(changed: false, failed: true, msg: "Repo directory '#{reposdir}' does not exist.")
         end
-        return remove_repo(name, path)
+        return remove_repo(name, path, check_mode)
       end
 
       description = @params["description"]?
@@ -218,7 +222,7 @@ module Krikri
         return PluginResult.new(changed: false, failed: true, msg: "Repo directory '#{reposdir}' does not exist.")
       end
 
-      write_repo(name, description, path)
+      write_repo(name, description, path, check_mode)
     end
 
     private def read_current(path : String) : String
@@ -235,19 +239,19 @@ module Krikri
     # krikri's own; an exit_json never carries one).
     private YUM_REPO_ORDER = %w[changed repo state diff]
 
-    private def remove_repo(name : String, path : String) : PluginResult
+    private def remove_repo(name : String, path : String, check_mode : Bool) : PluginResult
       current = read_current(path)
       unless current.includes?("[#{name}]")
         return PluginResult.new(changed: false, failed: false, repo: name, state: "absent",
           diff: generate_unified_diff(current, "", path, path), key_order: YUM_REPO_ORDER)
       end
 
-      File.delete?(path)
+      File.delete?(path) unless check_mode
       PluginResult.new(changed: true, failed: false, repo: name, state: "absent",
         diff: generate_unified_diff(current, "", path, path), key_order: YUM_REPO_ORDER)
     end
 
-    private def write_repo(name : String, description : String, path : String) : PluginResult
+    private def write_repo(name : String, description : String, path : String, check_mode : Bool) : PluginResult
       desired = render_section(name, description)
       current = read_current(path)
       merged = merge_section(current, name, desired)
@@ -256,7 +260,9 @@ module Krikri
       # whole-file-vs-single-section comparison could never converge.
       changed = merged != current
 
-      if changed
+      # Check mode only predicts: real ansible reports the same
+      # changed/diff result while leaving the .repo file untouched.
+      if changed && !check_mode
         Dir.mkdir_p(File.dirname(path))
         write_file(path, merged)
         apply_owner_group_mode(path, @params["owner"]?, @params["group"]?, @params["mode"]?)
