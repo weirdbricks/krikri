@@ -231,6 +231,28 @@ describe "unknown filter/test in conditionals: Syntax error in expression" do
       [{10, 13}, {11, 13}, {12, 13}, {18, 13}, {19, 13}, {27, 13}], output)
   end
 
+  # Real 2.19's delimiters deprecation ends with a blank line after the
+  # Origin block's caret line (byte-compared vs 2.19.11) - antmelekhin.
+  # mysqld_exporter's 1-byte PLAY RECAP diff (issue #786) was exactly this
+  # missing blank, since the warning block is the run's final output.
+  it "ends the delimiters deprecation with a blank line after the Origin caret" do
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          mysqld_exporter_mysqld_user: ''
+        tasks:
+          - name: Check that mysqld_exporter_mysqld_user variable value are not empty
+            ansible.builtin.assert:
+              that: '{{ mysqld_exporter_mysqld_user | length > 0 }}'
+              fail_msg: 'mysqld_exporter_mysqld_user needs to be set for the role to work'
+      YAML
+    status.exit_code.must_equal(2)
+    output.must_include("[DEPRECATION WARNING]: Conditionals should not be surrounded by templating delimiters")
+    output.must_match(/that: '\{\{ mysqld_exporter_mysqld_user \| length > 0 \}\}'\n\s+\^ column 15\n\n/)
+  end
+
   # Real 2.19's constant detection runs on the conditional's rendered
   # template, so a QUOTED string literal whose own value embeds `{{ }}`
   # warns wherever the conditional is evaluated - a plain [WARNING] with

@@ -5081,6 +5081,12 @@ module Krikri
     @@loop_error_chain_seen = Set(String).new
 
     DELIMITERS_DEPRECATION_HEADER = "[DEPRECATION WARNING]: Conditionals should not be surrounded by templating delimiters such as {{ }} or {% %}. This feature will be removed from ansible-core version 2.23.\n"
+    # Real 2.19's delimiters deprecation ends with a blank line after the
+    # Origin block's caret line, the same trailing-blank shape the #722
+    # constant-template warning's footer carries (byte-compared vs
+    # 2.19.11, issue #786 - antmelekhin.mysqld_exporter's 1-byte recap
+    # diff).
+    DELIMITERS_DEPRECATION_FOOTER = "\n"
     # Real 2.19's constant-template warning on conditionals is a plain
     # [WARNING], not a deprecation: no disable-hint line, and after the
     # Origin block it carries an inline-expression hint and a trailing
@@ -5120,7 +5126,8 @@ module Krikri
       return unless value
       return if value.as_s?
 
-      text = conditional_deprecation_text(task, key, raw, that_index)
+      text = conditional_deprecation_text(task, key, raw, that_index,
+        footer: DELIMITERS_DEPRECATION_FOOTER)
       return if text.empty?
       return unless @@conditional_deprecation_seen.add?(text)
       DeprecationHint.print_hint_once
