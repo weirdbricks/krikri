@@ -2284,6 +2284,7 @@ module Krikri
       # non-batched ones. raw: with no `_raw_params` never reaches them:
       # real's raw action crashes/skips before any module-side validation
       # would run (see the helper's own comment).
+      substituted_params = raw_missing_command_params(task, substituted_params)
       if raw_failure = raw_missing_raw_params_failure(task, substituted_params, resolve_task_check_mode(task, vars_context))
         return apply_changed_failed_when(task, raw_failure, vars_context, host) if raw_failure["skipped"]?
         return raw_failure
@@ -2969,6 +2970,7 @@ module Krikri
       # raw: with no `_raw_params` never reaches the aliased shell plugin's
       # argument spec at all - real's raw action crashes/skips before any
       # module-side validation would run (see the helper's own comment).
+      substituted_params = raw_missing_command_params(task, substituted_params)
       if raw_failure = raw_missing_raw_params_failure(task, substituted_params, resolve_task_check_mode(task, vars_context))
         # The check-mode skip rides the same pipeline a plugin-produced skip
         # does; the crash escapes before the changed_when/failed_when pass
@@ -3128,6 +3130,34 @@ module Krikri
     end
 
     RAW_MODULES = {"raw", "ansible.builtin.raw", "ansible.legacy.raw"}
+
+    # The executable-present half of raw:'s missing-`_raw_params` behavior:
+    # real's raw action reads ONLY `_raw_params` and `executable` off the
+    # task args and silently ignores every other parameter - `free_form:`
+    # (the docs' documented option name), `cmd:` and `argv:` alike - and
+    # with `executable:` set even a NO-command-source raw task still RUNS:
+    # the empty command `<executable> -c ''` exits 0 and reports plain
+    # changed (live-verified vs 2.19.11). krikri executes raw through the
+    # shell plugin, whose spec DOES require a command and DOES reject
+    # unknown params, so params falling out of real's two reads must be
+    # reduced to exactly what the action plugin would forward - with an
+    # empty `_raw_params` standing in for real's defaulted-to-empty one.
+    # Runs BEFORE raw_missing_raw_params_failure below: this fills the
+    # `_raw_params` the crash gate checks, so the gate keeps failing only
+    # the executable-less cases real crashes on (issue #765) and never the
+    # executable-present ones this helper converts into the empty run
+    # (issue #766). Without `executable:` real fails the task
+    # controller-side instead (connection.exec_command(None) crashes) -
+    # that shape is the crash gate's, not this helper's.
+    private def raw_missing_command_params(task : Task, params : Hash(String, String)) : Hash(String, String)
+      return params unless RAW_MODULES.includes?(task.action_name || task.module_name)
+      return params if task.module_args_string_form?
+      return params if params.has_key?("_raw_params")
+      return params unless (executable = params["executable"]?) && !executable.empty?
+      kept = params.select { |key, _| key == "executable" || key.starts_with?("_ansible_") || key.starts_with?("__") }
+      kept["_raw_params"] = ""
+      kept
+    end
 
     # raw:'s action plugin reads ONLY `_raw_params`
     # (ansible/plugins/action/raw.py hands `self._task.args.get('_raw_params')`
