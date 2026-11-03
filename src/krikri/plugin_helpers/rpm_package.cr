@@ -160,6 +160,28 @@ module Krikri
         row && row["nevra"].as_s? ? row["nevra"].as_s : pkg
       end
 
+      # An rpm FILE (a fetched URL or a local path) whose own NEVRA is
+      # already installed is a NO-OP, not an install: real feeds the file
+      # to base.package_install and dnf resolves an identical installed
+      # package to an empty transaction - "Nothing to do", changed: false,
+      # in check mode too (issue #781: real ansible --check said ok where
+      # this engine classified the file as "would install" and said
+      # changed). Plain `rpm -q <path>` cannot do this lookup: rpm answers
+      # a path argument straight from the file's own header (rc 0 whether
+      # installed or not), so read the header with -qp first and look the
+      # NEVRA up in the database. A header-read failure (unreadable or
+      # corrupt file) keeps the install classification - the batch's own
+      # failure shapes carry the module's error text.
+      private def rpm_file_already_installed?(pkg : String) : Bool
+        # A file:// URL is dnf's own local-path spelling (real fetch_file
+        # copies it) - rpm wants the bare path.
+        path = pkg.strip.lchop("file://")
+        header = remote_exec("rpm -qp --qf '%{NAME}-%{VERSION}-%{RELEASE}.%{ARCH}' #{shell_single_quote(path)} 2>/dev/null")
+        nevra = header[:stdout].strip
+        return false if header[:exit_code] != 0 || nevra.empty?
+        remote_exec("rpm -q #{shell_single_quote(nevra)} 2>/dev/null")[:exit_code] == 0
+      end
+
       # The check-mode twin of #transaction_result: same keys and order,
       # but the "would have" msg and, crucially, no host mutation.
       private def check_mode_transaction_result(changed : Bool, results : Array(String) = [] of String) : PluginResult
@@ -995,8 +1017,15 @@ module Krikri
             # For groups, always try to install (dnf handles idempotency)
             to_install << pkg
           elsif url_or_file?(pkg)
-            # For URLs/files, always try to install
-            to_install << pkg
+            # An rpm file already installed at the very NEVRA its header
+            # carries resolves to dnf's empty transaction (see
+            # rpm_file_already_installed?) - not an install.
+            if rpm_file_already_installed?(pkg)
+              already_installed << pkg
+            else
+              # For URLs/files, always try to install
+              to_install << pkg
+            end
           else
             # Check if package is installed
             if package_installed?(pkg)
@@ -1097,8 +1126,16 @@ module Krikri
         to_update = [] of String
 
         names.each do |pkg|
-          if package_group?(pkg) || url_or_file?(pkg)
+          if package_group?(pkg)
             to_install << pkg
+          elsif url_or_file?(pkg)
+            # `latest` is "same as installed" for filenames in real's dnf.py:
+            # the identical already-installed NEVRA still resolves to dnf's
+            # empty transaction, so it is a no-op - not queued for either
+            # batch (issue #781).
+            unless rpm_file_already_installed?(pkg)
+              to_install << pkg
+            end
           elsif package_installed?(pkg)
             to_update << pkg
           else
