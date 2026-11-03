@@ -320,12 +320,30 @@ module Krikri
 
         file = opts["file"]?
         return "undefined" unless file
+        resolved = resolve_lookup_path(file)
+        unless File.exists?(resolved)
+          # Ansible's ini lookup fails the task when the file cannot be
+          # found in any search path - find_file_in_search_path answers
+          # None and the plugin raises on it, never falling back to the
+          # default or an empty result (live-verified vs 2.19.11: even a
+          # `default=` option does not rescue the missing file). It warns
+          # with the term as written first. dilerous.vxflex_createcluster
+          # drives a with_ini: loop over exactly this missing-file shape,
+          # and the failure must reach the task even behind a false when:
+          # (the loop source is evaluated before any conditional).
+          ResultDisplay.emit_display_warning(
+            "Unable to find '#{file}' in expected paths (use -vvvvv to see paths)"
+          )
+          raise PythonLookupRunner::LookupError.new(
+            "The lookup plugin 'ini' failed: Invalid filename None."
+          )
+        end
         wanted_section = opts["section"]? || "DEFAULT"
         default = opts["default"]?
 
         begin
           current_section = "DEFAULT"
-          File.each_line(resolve_lookup_path(file)) do |raw_line|
+          File.each_line(resolved) do |raw_line|
             line = raw_line.strip
             next if line.empty? || line.starts_with?(';') || line.starts_with?('#')
             if line.starts_with?('[') && line.ends_with?(']')

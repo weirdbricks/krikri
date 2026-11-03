@@ -335,7 +335,7 @@ module Krikri
       when "csvfile"
         AnyValue.new(LookupPlugins.csvfile_lookup(text(first)))
       when "ini"
-        AnyValue.new(LookupPlugins.ini_lookup(text(first)))
+        AnyValue.new(LookupPlugins.ini_lookup(text(first), role_path))
       when "inventory_hostnames"
         # inventory_hostnames over the `groups` magic var - the same
         # throwaway-InventoryManager plugin the hand-rolled evaluator

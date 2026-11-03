@@ -246,7 +246,7 @@ module Krikri
 
     # lookup('ini', 'value section=section1 file=file.ini') - same logic
     # as ExpressionEvaluator's own #evaluate_ini_lookup.
-    def self.ini_lookup(raw_arg : String) : String?
+    def self.ini_lookup(raw_arg : String, role_path : String? = nil) : String?
       tokens = raw_arg.strip.split(/\s+/)
       value_key = tokens[0]?
       return nil unless value_key
@@ -259,11 +259,26 @@ module Krikri
 
       file = opts["file"]?
       return nil unless file
+      resolved = resolve_lookup_path(file, role_path)
+      unless File.exists?(resolved)
+        # Same missing-file contract as ExpressionEvaluator's own
+        # #evaluate_ini_lookup: ansible's ini lookup warns and then
+        # raises on the None filename instead of degrading to nil, so
+        # this engine-side arm must fail the task the same way. The
+        # warning carries the term as written (real's find_file_in_
+        # search_path warns before the raise).
+        ResultDisplay.emit_display_warning(
+          "Unable to find '#{file}' in expected paths (use -vvvvv to see paths)"
+        )
+        raise PythonLookupRunner::LookupError.new(
+          "The lookup plugin 'ini' failed: Invalid filename None."
+        )
+      end
       wanted_section = opts["section"]? || "DEFAULT"
 
       begin
         current_section = "DEFAULT"
-        File.each_line(file) do |raw_line|
+        File.each_line(resolved) do |raw_line|
           line = raw_line.strip
           next if line.empty? || line.starts_with?(';') || line.starts_with?('#')
           if line.starts_with?('[') && line.ends_with?(']')

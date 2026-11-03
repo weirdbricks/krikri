@@ -559,6 +559,31 @@ module Krikri
             .evaluate_structured("query('#{plugin}', #{LOOP_LOOKUP_TERM_VAR}, wantlist=true)")
         rescue ex : UndefinedVariableError
           raise ex
+        rescue ex : PythonLookupRunner::LookupError
+          # A lookup plugin's own failure (unreadable file, HTTP error)
+          # fails the TASK like Ansible - and unlike an undefined TERM
+          # variable it is never when:-shielded: real runs the with_
+          # keyword's lookup before any conditional, so a failing lookup
+          # fatals even behind a false when: (live-verified vs 2.19.11,
+          # dilerous.vxflex_createcluster's with_ini: over a missing
+          # conf.txt). LoopLookupError (not UndefinedVariableError) keeps
+          # the failure out of resolve_loop_items_or_raise's undefined-
+          # loop-source when-gate and rides the bodyless Origin: <unknown>
+          # + invoke_lookup() [ERROR] block the with_<lookup>: machinery
+          # prints.
+          raise LoopLookupError.new(ex.message || "The lookup plugin '#{plugin}' failed")
+        rescue ex : KrikriJinja::TemplateError
+          # The engine wraps a lookup plugin's own failure (raised inside
+          # its registered lookup/query function) into a Runtime
+          # TemplateError that keeps the plugin's message, so the typed
+          # rescue above never sees it - re-classify by raw message so the
+          # failure still fails the task behind a false when: (issue #774).
+          # Any other engine failure keeps the generic conversion below.
+          msg = ex.raw_message
+          if msg.starts_with?("The lookup plugin '")
+            raise LoopLookupError.new(msg)
+          end
+          raise UndefinedVariableError.new(msg.empty? ? "The lookup plugin '#{plugin}' failed" : msg)
         rescue ex
           # A lookup plugin's own failure (unreadable file, HTTP error)
           # fails the TASK, like Ansible - it must never escape as an
@@ -1047,6 +1072,15 @@ module Krikri
       # [ERROR] block's Origin points at the loop keyword's VALUE token
       # (origin_known: true - live-verified vs 2.19.11, issue #12), unlike
       # the with_first_found: keyword's bodyless Origin: <unknown> shape.
+      raise LoopLookupError.new(ex.message || "lookup failed", origin_known: true)
+    rescue ex : PythonLookupRunner::LookupError
+      # Any OTHER lookup plugin failing inside the loop source's own
+      # template (`loop: "{{ query('ini', 'k file=/missing.ini') }}"`)
+      # fails the task the same way, also never when:-shielded - real
+      # runs the loop source's lookup before any conditional (live-
+      # verified vs 2.19.11: the fatal's Origin pins the loop keyword's
+      # VALUE token, no invoke_lookup() frame - dilerous.vxflex_
+      # createcluster's missing conf.txt, issue #774).
       raise LoopLookupError.new(ex.message || "lookup failed", origin_known: true)
     rescue ex : UndefinedVariableError
       if when_condition = task.when_condition
