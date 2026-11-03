@@ -1023,8 +1023,16 @@ module Krikri
       # substitute the temp path into (same wording this engine's
       # assemble/blockinfile/lineinfile/replace plugins already carry;
       # template.cr's copy-module path carries the same check).
+      # The checksum rides because this failure is a MODULE result the
+      # copy ACTION plugin post-processes: its `if not
+      # module_return.get('checksum')` fills local_checksum (the source
+      # file's sha1) into any result lacking one, failed ones included,
+      # and the template action delegates to the same copy action - the
+      # displayed fatal is {"changed": false, "checksum": "<sha1>",
+      # "msg": ...} (live-verified vs 2.19.11, kpg playbook
+      # 000021-copy-chaos).
       unless validate_cmd.includes?("%s")
-        return {failure: PluginResult.new(changed: false, failed: true, msg: "validate must contain %s: #{validate_cmd}"), staged: nil}
+        return {failure: PluginResult.new(changed: false, failed: true, msg: "validate must contain %s: #{validate_cmd}", checksum: content_sha1, key_order: ["diff", "failed", "msg", "checksum"]), staged: nil}
       end
 
       temp_file = File.join(Dir.tempdir, ".krikri-playbook-copy-#{Random::Secure.hex(8)}.tmp")

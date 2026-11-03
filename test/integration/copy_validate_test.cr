@@ -1,3 +1,4 @@
+require "digest/sha1"
 require "file_utils"
 require "../minitest_helper"
 
@@ -81,6 +82,38 @@ describe "copy: with validate:" do
     File.delete(playbook) if playbook && File.exists?(playbook)
     File.delete(dest) if dest && File.exists?(dest)
     FileUtils.rm_rf(stage) if stage && Dir.exists?(stage)
+  end
+
+  it "carries the source sha1 as checksum on the no-%s validate failure" do
+    dest = File.tempname("copy-validate-nos-dest")
+    playbook = File.tempname("copy-validate-nos", ".yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: copy
+            ansible.builtin.copy:
+              content: "hello world\\n"
+              dest: #{dest}
+              validate: "24"
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+
+    status.success?.must_equal(false)
+    # The gate failure is a MODULE result the copy ACTION plugin
+    # post-processes: its checksum fill-in adds local_checksum (the source
+    # sha1) to failed results too, so the displayed fatal carries it
+    # (live-verified vs 2.19.11: {"changed": false, "checksum":
+    # "<sha1>", "msg": "validate must contain %s: 24"}).
+    output.to_s.must_include("validate must contain %s: 24")
+    output.to_s.must_include("\"checksum\": \"#{Digest::SHA1.hexdigest("hello world\n")}\"")
+    File.exists?(dest).must_equal(false)
+  ensure
+    File.delete(playbook) if playbook && File.exists?(playbook)
+    File.delete(dest) if dest && File.exists?(dest)
   end
 
   it "handles a %s path containing shell metacharacters (spaces)" do
