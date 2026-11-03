@@ -1,7 +1,6 @@
 require "json"
 require "./dnf_install_failures"
 require "./http_download"
-require "./facts_gatherer"
 require "../base_plugin"
 
 module Krikri
@@ -201,13 +200,17 @@ module Krikri
 
       # Real's dnf ACTION plugin resolves which backend module to dispatch to
       # from an explicit use_backend, falling back to the host's pkg_mgr fact
-      # for auto/yum (2.19.11 round 5310001, kyleabenson.mssql's "Install the
-      # EPEL repo rpm" yum: task on an Ubuntu 22.04 target). When the fact is
-      # not a dnf-family backend (pkg_mgr: apt there), it returns a failed
-      # result carrying its TWO-ELEMENT tuple msg and never dispatches the
-      # module: krikri shelled the yum binary instead and failed differently
-      # ("Failed to install packages", a module-level failure). The tuple
-      # words (including the stray `})` inside the second element - upstream
+      # for auto/yum. The fact comes from the hostvars when it was gathered;
+      # on a fact-less host (gather_facts: false) the action plugin fetches it
+      # ON DEMAND - `setup` with filter=ansible_pkg_mgr - before deciding
+      # (ansible-core 2.19.11's plugins/action/dnf.py). When the resolved
+      # value is not a dnf-family backend (pkg_mgr: apt on an Ubuntu 22.04
+      # target, round 5310001, kyleabenson.mssql's "Install the EPEL repo
+      # rpm" yum: task), it returns a failed result carrying its
+      # TWO-ELEMENT tuple msg and never dispatches the module: krikri used
+      # to shell the yum binary instead and fail differently ("Failed to
+      # install packages", a module-level failure). The tuple words
+      # (including the stray `})` inside the second element - upstream
       # source's own typo, live-captured) render as the action-level
       # "Task failed: Action failed: (...)" [ERROR] block via
       # _ansible_error_detail, while the wire msg keeps the tuple's JSON
@@ -216,19 +219,15 @@ module Krikri
         backend = @params["use_backend"]? || "auto"
         return nil unless backend.in?("auto", "yum")
         # Real resolves a MISSING pkg_mgr fact on demand here: the action
-        # plugin runs `setup` with filter=ansible_pkg_mgr (gather_subset
-        # "!all") on the target and uses whatever that reports - so a
-        # `gather_facts: false` host still gets a pkg_mgr verdict, and on
-        # a non-dnf host (Debian's apt) the action fails with the tuple
-        # below CARRYING that fact in ansible_facts (issue #768's
-        # fact-less kpg chaos runs). krikri's plugin binary cannot invoke
-        # setup, so it re-uses the facts gatherer's own pkg_mgr detection,
-        # which probes the same candidate binaries on the machine this
-        # plugin executes on.
-        fact = @vars["ansible_pkg_mgr"]?.try(&.as_s?)
-        if fact.nil? || fact.empty? || fact == "auto"
-          fact = FactsGatherer.detect_pkg_mgr
-        end
+        # plugin runs `setup` with filter=ansible_pkg_mgr on the target and
+        # uses whatever that reports - so a `gather_facts: false` host still
+        # gets a pkg_mgr verdict, and on a non-dnf host (Debian's apt) the
+        # action fails with the tuple below CARRYING that fact in
+        # ansible_facts (issue #768's fact-less kpg chaos runs). A remote
+        # module binary cannot invoke setup, but it RUNS ON the target, so
+        # pkg_mgr_fact below computes the same pkg_mgr.py collector decision
+        # on the machine this plugin executes on.
+        fact = pkg_mgr_fact
         return nil if VALID_ACTION_BACKENDS.includes?(fact)
         msg1 = "Could not detect which major revision of dnf is in use, " \
                "which is required to determine module backend."
@@ -242,6 +241,162 @@ module Krikri
           _ansible_action_level: true,
           _ansible_error_detail: "Action failed: ('#{msg1}', '#{msg2}')"
         )
+      end
+
+      # The pkg_mgr fact the backend resolution dispatches on: the gathered
+      # `ansible_pkg_mgr` when the play collected facts, otherwise the
+      # on-demand value real's action plugin fetches with its `setup` call.
+      # A remote module binary cannot run setup, but it RUNS ON the target,
+      # so the detection below reproduces pkg_mgr.py's collector decision
+      # directly. Memoized per plugin process - one task, one probe round
+      # trip, shared by the failure verdict above and dnf.cr's dnf5-vs-dnf4
+      # backend pick (so a fact-less dnf5 host keeps the dnf5 result shapes
+      # the old symlink probe produced).
+      @pkg_mgr_fact : String? = nil
+
+      protected def pkg_mgr_fact : String
+        @pkg_mgr_fact ||= begin
+          fact = @vars["ansible_pkg_mgr"]?.try(&.as_s?)
+          fact.nil? || fact.empty? || fact == "auto" ? detect_pkg_mgr_fact : fact
+        end
+      end
+
+      # pkg_mgr.py's PKG_MGRS scan list (absolute paths only, which is why
+      # `which`-style probes diverged from the fact elsewhere - see
+      # package.cr's own detection note) - LAST existing entry wins, the
+      # collector loop keeps overwriting.
+      PKG_MGR_SCAN_PATHS = {
+        "/usr/bin/rpm-ostree"    => "atomic_container",
+        "/usr/bin/yum"           => "dnf",
+        "/usr/bin/dnf-3"         => "dnf",
+        "/usr/bin/dnf5"          => "dnf5",
+        "/usr/bin/apt-get"       => "apt",
+        "/usr/bin/zypper"        => "zypper",
+        "/usr/sbin/urpmi"        => "urpmi",
+        "/usr/bin/pacman"        => "pacman",
+        "/bin/opkg"              => "opkg",
+        "/usr/pkg/bin/pkgin"     => "pkgin",
+        "/opt/local/bin/pkgin"   => "pkgin",
+        "/opt/tools/bin/pkgin"   => "pkgin",
+        "/opt/local/bin/port"    => "macports",
+        "/usr/local/bin/brew"    => "homebrew",
+        "/opt/homebrew/bin/brew" => "homebrew",
+        "/sbin/apk"              => "apk",
+        "/usr/sbin/pkg"          => "pkgng",
+        "/usr/sbin/swlist"       => "swdepot",
+        "/usr/bin/emerge"        => "portage",
+        "/usr/sbin/pkgadd"       => "svr4pkg",
+        "/usr/bin/pkg"           => "pkg5",
+        "/usr/bin/xbps-install"  => "xbps",
+        "/usr/local/sbin/pkg"    => "pkgng",
+        "/usr/bin/swupd"         => "swupd",
+        "/usr/sbin/sorcery"      => "sorcery",
+        "/usr/bin/installp"      => "installp",
+      }
+
+      # os-release IDs Ansible's distribution facts map to the Debian family
+      # (the only family whose pkg_mgr override the dnf action's fetch can
+      # hit in practice, besides RedHat's own _check_rh_versions below).
+      DEBIAN_FAMILY_IDS = {"debian", "ubuntu", "linuxmint", "kali", "devuan",
+                           "raspbian", "pop", "deepin", "uos", "parrot",
+                           "elementary", "zorin", "neon", "mx", "antix"}
+
+      REDHAT_FAMILY_IDS = {"rhel", "centos", "rocky", "almalinux", "ol",
+                           "fedora", "amzn", "openEuler", "alinux",
+                           "tencentos", "cloudlinux", "virtuozzo", "rosa"}
+
+      private def detect_pkg_mgr_fact : String
+        result = remote_exec(<<-SH)
+          if [ -e /run/ostree-booted ]; then
+            echo "fact:atomic_container"
+          elif [ -e /usr/bin/dnf ] || [ -e /usr/bin/microdnf ]; then
+            if [ -e /usr/bin/dnf ]; then bin=/usr/bin/dnf; else bin=/usr/bin/microdnf; fi
+            if [ "$(readlink -f "$bin")" = "/usr/bin/dnf5" ]; then echo "fact:dnf5"; else echo "fact:dnf"; fi
+          else
+            echo "fact:probe"
+            . /etc/os-release 2>/dev/null
+            echo "id:${ID:-}"
+            echo "like:${ID_LIKE:-}"
+            for p in #{PKG_MGR_SCAN_PATHS.keys.join(" ")}; do
+              [ -e "$p" ] && echo "path:$p"
+            done
+            if [ -e /usr/bin/rpm ] && rpm -q --whatprovides /usr/bin/apt-get >/dev/null 2>&1; then
+              echo "apt_rpm"
+            fi
+          fi
+          SH
+        parse_pkg_mgr_probe(result[:stdout].to_s)
+      rescue ex : SpawnError
+        # #704: a spawn failure must not read as "not dnf5" and silently
+        # pick the wrong package-manager backend - re-raise.
+        raise ex
+      rescue
+        "unknown"
+      end
+
+      private def parse_pkg_mgr_probe(output : String) : String
+        fact_line = output.lines.map(&.strip).find { |line| line.starts_with?("fact:") }
+        return "unknown" unless fact_line
+        fact = fact_line.lchop("fact:")
+        return fact unless fact == "probe"
+
+        id = ""
+        id_like = ""
+        paths = [] of String
+        apt_rpm = false
+        output.each_line do |line|
+          line = line.strip
+          when_id = line.lchop("id:")
+          if when_id != line
+            id = when_id
+            next
+          end
+          when_like = line.lchop("like:")
+          if when_like != line
+            id_like = when_like
+            next
+          end
+          when_path = line.lchop("path:")
+          if when_path != line
+            paths << when_path
+            next
+          end
+          apt_rpm = true if line == "apt_rpm"
+        end
+
+        # The family overrides, in pkg_mgr.py collect()'s order: RedHat's
+        # _check_rh_versions only ever reads the dnf/microdnf symlinks (the
+        # branches above), so a RedHat-family host without either reports
+        # "unknown" even when /usr/bin/yum exists; Debian forces "apt"
+        # regardless of what the scan found (upgraded to apt_rpm only when
+        # rpm itself owns /usr/bin/apt-get); Altlinux turns its apt into
+        # apt_rpm. Everything else keeps the scan's last-match value.
+        return "unknown" if redhat_family?(id, id_like)
+        if debian_family?(id, id_like)
+          return apt_rpm ? "apt_rpm" : "apt"
+        end
+        return "apt_rpm" if altlinux_family?(id, id_like) && paths.includes?("/usr/bin/apt-get")
+
+        name = "unknown"
+        PKG_MGR_SCAN_PATHS.each do |path, mgr|
+          name = mgr if paths.includes?(path)
+        end
+        name
+      end
+
+      private def debian_family?(id : String, id_like : String) : Bool
+        return true if DEBIAN_FAMILY_IDS.includes?(id)
+        id_like.split(/[ ,]+/).includes?("debian")
+      end
+
+      private def redhat_family?(id : String, id_like : String) : Bool
+        return true if REDHAT_FAMILY_IDS.includes?(id)
+        like = id_like.split(/[ ,]+/)
+        like.includes?("rhel") || like.includes?("fedora") || like.includes?("centos")
+      end
+
+      private def altlinux_family?(id : String, id_like : String) : Bool
+        id == "altlinux" || id_like.split(/[ ,]+/).includes?("altlinux")
       end
 
       # Ansible's dnf module surfaces libdnf's own repo error text

@@ -17,8 +17,12 @@ require "../../src/krikri/plugin_helpers/facts_gatherer"
 private def run_dnf(params : Hash(String, String)) : JSON::Any
   config = {
     "params" => params,
-    "vars"   => {"ansible_pkg_mgr" => JSON::Any.new("dnf")},
-    "host"   => {"name" => "localhost", "vars" => Hash(String, JSON::Any).new},
+    # The pkg_mgr fact is pinned so the dnf ACTION plugin's backend
+    # resolution passes and the arg-spec validation - this file's actual
+    # subject - is what the plugin reports (on a non-dnf dev host a
+    # fact-less run now fails at the resolution first, like real).
+    "vars" => {"ansible_pkg_mgr" => JSON::Any.new("dnf")} of String => JSON::Any,
+    "host" => {"name" => "localhost", "vars" => Hash(String, JSON::Any).new},
   }.to_json
   stdout = IO::Memory.new
   Process.run("bin/plugins/dnf", input: IO::Memory.new(config), output: stdout, error: stdout)
@@ -31,7 +35,7 @@ end
 private def run_dnf_raw(params_json : String) : JSON::Any
   config = {
     "params" => JSON.parse(params_json),
-    "vars"   => {"ansible_pkg_mgr" => JSON::Any.new("dnf")},
+    "vars"   => {"ansible_pkg_mgr" => JSON::Any.new("dnf")} of String => JSON::Any,
     "host"   => {"name" => "localhost", "vars" => Hash(String, JSON::Any).new},
   }.to_json
   stdout = IO::Memory.new
@@ -42,7 +46,7 @@ end
 private def run_yum_raw(params_json : String) : JSON::Any
   config = {
     "params" => JSON.parse(params_json),
-    "vars"   => {"ansible_pkg_mgr" => JSON::Any.new("dnf")},
+    "vars"   => {"ansible_pkg_mgr" => JSON::Any.new("dnf")} of String => JSON::Any,
     "host"   => {"name" => "localhost", "vars" => Hash(String, JSON::Any).new},
   }.to_json
   stdout = IO::Memory.new
@@ -158,7 +162,7 @@ describe "yum: argument-spec validation" do
   it "rejects an out-of-spec parameter" do
     config = {
       "params" => {"name" => "bash", "state" => "present", "krikri_not_a_yum_param" => "true"},
-      "vars"   => {"ansible_pkg_mgr" => JSON::Any.new("dnf")},
+      "vars"   => {"ansible_pkg_mgr" => JSON::Any.new("dnf")} of String => JSON::Any,
       "host"   => {"name" => "localhost", "vars" => Hash(String, JSON::Any).new},
     }.to_json
     stdout = IO::Memory.new
@@ -171,7 +175,7 @@ describe "yum: argument-spec validation" do
   it "rejects a non-boolean value for a bool-typed param" do
     config = {
       "params" => {"name" => "bash", "state" => "present", "disable_gpg_check" => "sometimes"},
-      "vars"   => {"ansible_pkg_mgr" => JSON::Any.new("dnf")},
+      "vars"   => {"ansible_pkg_mgr" => JSON::Any.new("dnf")} of String => JSON::Any,
       "host"   => {"name" => "localhost", "vars" => Hash(String, JSON::Any).new},
     }.to_json
     stdout = IO::Memory.new
@@ -198,7 +202,7 @@ describe "yum: argument-spec validation" do
   it "does not reject an empty-string list param (real argspec coerces it to an empty list)" do
     config = {
       "params" => {"name" => "bash", "state" => "present", "enablerepo" => ""},
-      "vars"   => {"ansible_pkg_mgr" => JSON::Any.new("dnf")},
+      "vars"   => {"ansible_pkg_mgr" => JSON::Any.new("dnf")} of String => JSON::Any,
       "host"   => {"name" => "localhost", "vars" => Hash(String, JSON::Any).new},
     }.to_json
     stdout = IO::Memory.new

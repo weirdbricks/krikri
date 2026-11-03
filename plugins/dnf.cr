@@ -110,14 +110,12 @@ module Krikri
                       when "dnf5"
                         true
                       when "auto", "yum", "yum4"
-                        fact = @vars["ansible_pkg_mgr"]?.try(&.as_s?)
-                        case fact
-                        when "dnf5" then true
-                        when nil, "", "auto"
-                          probe_pkg_mgr_dnf5?
-                        else
-                          false
-                        end
+                        # Same pkg_mgr fact the action-level resolution above
+                        # dispatches on (RpmPackage#pkg_mgr_fact): the gathered
+                        # fact, or the on-demand detection when the play never
+                        # gathered - so a fact-less dnf5 host keeps the dnf5
+                        # result shapes the old standalone symlink probe produced.
+                        pkg_mgr_fact == "dnf5"
                       else
                         false
                       end
@@ -135,25 +133,6 @@ module Krikri
     # (ansible.legacy.dnf5).
     private def backend_module_name : String
       @dnf5_backend ? "ansible.legacy.dnf5" : "ansible.legacy.dnf"
-    end
-
-    private def probe_pkg_mgr_dnf5? : Bool
-      result = remote_exec(<<-SH)
-      if [ -e /usr/bin/dnf ]; then
-        [ "$(readlink -f /usr/bin/dnf)" = /usr/bin/dnf5 ] && echo dnf5 || echo dnf
-      elif [ -e /usr/bin/microdnf ]; then
-        [ "$(readlink -f /usr/bin/microdnf)" = /usr/bin/dnf5 ] && echo dnf5 || echo dnf
-      else
-        echo unknown
-      fi
-      SH
-      result[:stdout].to_s.strip == "dnf5"
-    rescue ex : SpawnError
-      # #704: a spawn failure must not read as "not dnf5" and silently
-      # pick the wrong package-manager backend - re-raise.
-      raise ex
-    rescue
-      false
     end
 
     private def transaction_key_order : Array(String)
