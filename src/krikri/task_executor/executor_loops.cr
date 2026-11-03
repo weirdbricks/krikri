@@ -74,7 +74,15 @@ module Krikri
       end
 
       paths.map do |path|
-        resolved = path.starts_with?('/') || !role_path ? path : File.join(role_path, "files", path)
+        # Ansible's `file` lookup expands a `~`-prefixed term against the
+        # controller user's home BEFORE the search-path walk (issue #52:
+        # lookup('file', ...) got this already); the with_file: loop resolves
+        # the same terms through the same lookup, so gurkalov.deploy_user's
+        # `with_file: "{{ public_keys }}"` with the lnovara.deploy-user
+        # default `~/.ssh/id_rsa.pub` must not fall through to a
+        # role-relative `files/~/.ssh/...` join.
+        expanded = LookupPlugins.expand_home(path)
+        resolved = expanded.starts_with?('/') || !role_path ? expanded : File.join(role_path, "files", expanded)
         begin
           JSON::Any.new(File.read(resolved).chomp)
         rescue

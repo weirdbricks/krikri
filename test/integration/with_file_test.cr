@@ -60,6 +60,58 @@ describe "with_file:" do
     File.delete(playbook) if playbook && File.exists?(playbook)
   end
 
+  # Real bug found benchmarking gurkalov.deploy_user (issue #787): its
+  # dependency lnovara.deploy-user defaults `public_keys: [~/.ssh/id_rsa.pub]`
+  # and feeds it to `with_file:`. Ansible's file lookup expands the term
+  # against the controller user's home BEFORE the role-relative search
+  # (same rule issue #52 already fixed for lookup('file', ...)), while
+  # resolve_with_file joined `files/~/.ssh/id_rsa.pub` under the role and
+  # failed the whole task. HOME is passed through the child's env, not
+  # mutated here, so no serial! opt-in is needed.
+  it "resolves a ~/ term against the controller user's HOME, not the role's files/ dir" do
+    fake_home = File.join(PROJECT_ROOT, "test", "tmp", "with_file_home_spec")
+    FileUtils.rm_rf(fake_home)
+    Dir.mkdir_p(File.join(fake_home, ".ssh"))
+    File.write(File.join(fake_home, ".ssh", "testkey.pub"), "ssh-rsa AAAAHOMEKEY home@host.local\n")
+    role_dir = File.join(PROJECT_ROOT, "test", "tmp", "with_file_role_tilde_spec")
+    FileUtils.rm_rf(role_dir)
+    Dir.mkdir_p(File.join(role_dir, "files"))
+    Dir.mkdir_p(File.join(role_dir, "tasks"))
+    File.write(File.join(role_dir, "tasks", "main.yml"), <<-YAML)
+      - name: read the home key
+        ansible.builtin.debug:
+          msg: "{{ item }}"
+        with_file: "{{ public_keys }}"
+        register: result
+      - name: assert the home file's content was bound to item
+        ansible.builtin.assert:
+          that:
+            - result.results[0].item == "ssh-rsa AAAAHOMEKEY home@host.local"
+      YAML
+
+    playbook = File.tempname("with-file-tilde-spec-playbook", ".yml")
+    File.write(playbook, <<-YAML)
+      - name: repro
+        hosts: localhost
+        gather_facts: false
+        vars:
+          public_keys: ["~/.ssh/testkey.pub"]
+        roles:
+          - #{role_dir}
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output,
+      env: {"HOME" => fake_home})
+
+    status.success?.must_equal(true)
+    output.to_s.wont_include("Unable to access the file")
+  ensure
+    FileUtils.rm_rf(fake_home) if fake_home
+    FileUtils.rm_rf(role_dir) if role_dir
+    File.delete(playbook) if playbook && File.exists?(playbook)
+  end
+
   it "fails the task clearly when a listed file doesn't exist, instead of leaving item undefined" do
     playbook = File.tempname("with-file-missing-spec-playbook", ".yml")
     File.write(playbook, <<-YAML)
