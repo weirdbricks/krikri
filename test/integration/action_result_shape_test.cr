@@ -114,6 +114,50 @@ describe "raw result shape" do
     result["failed"].as_bool.must_equal(true)
   end
 
+  # Real raw validates nothing: `free_form:` (the docs' documented option
+  # name) is not a parameter its action plugin reads, and a raw task whose
+  # args carry no command source at all still RUNS when `executable:` is
+  # set - the empty command `<executable> -c ''` exits 0 and reports plain
+  # changed (live-verified vs 2.19.11), where the shell spec krikri used to
+  # validate raw against fails "one of the following is required" (issue
+  # #766's kpg raw-happy family).
+  it "runs an executable-only raw task with no command source as the empty command" do
+    result = registered_dump(<<-T)
+      - ansible.builtin.raw:
+          executable: /bin/sh
+          free_form: kdlthg
+        register: r
+        ignore_errors: true
+      T
+    result.as_h.keys.must_equal(%w[rc stdout stdout_lines stderr stderr_lines changed failed])
+    result["rc"].as_i.must_equal(0)
+    result["stdout"].as_s.must_equal("")
+    result["stderr"].as_s.must_equal("")
+    result["changed"].as_bool.must_equal(true)
+    result["failed"].as_bool.must_equal(false)
+  end
+
+  # The empty-command run reaches the existing spawn-failure rewrite when the
+  # `executable:` itself is missing from the target: real's raw action hands
+  # `<executable> -c ''` to the connection's login shell, which reports the
+  # not-found exit - same shape as the `_raw_params`-carrying case above.
+  it "reports the login-shell 127 for a command-less raw task's bad executable too" do
+    result = registered_dump(<<-T)
+      - ansible.builtin.raw:
+          executable: /nonexistent-krikri-766/sh
+          free_form: kdlthg
+        register: r
+        ignore_errors: true
+      T
+    result.as_h.keys.must_equal(%w[rc stdout stdout_lines stderr stderr_lines changed failed msg])
+    result["rc"].as_i.must_equal(127)
+    result["msg"].as_s.must_equal("non-zero return code")
+    result["stdout"].as_s.must_equal("")
+    result["stderr"].as_s.must_equal("/bin/sh: 1: /nonexistent-krikri-766/sh: not found\n")
+    result["changed"].as_bool.must_equal(true)
+    result["failed"].as_bool.must_equal(true)
+  end
+
   it "skips under check mode with the bare skipped, failed, changed shape" do
     result = registered_dump(<<-T)
       - ansible.builtin.raw: echo hi
