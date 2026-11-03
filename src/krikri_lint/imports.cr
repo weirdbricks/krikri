@@ -32,13 +32,15 @@ module Krikri
       # Upstream walks a role's well-known subdirectories only.
       ROLE_SUBDIRS = %w[tasks meta handlers vars defaults]
 
-      private def self.home_dir : String
-        ENV["HOME"]? || Dir.current
-      end
-
       # Same candidate list as upstream's HandleChildren#_rolepath, in
       # order: relative to the including file first, then the standard
-      # roles directories.
+      # roles directories - minus the user-level `~/.ansible/roles`
+      # entry. That directory holds roles installed by `ansible-galaxy
+      # role install`, i.e. third-party content, and ansible-lint only
+      # lints files from the project it was pointed at (its runner drops
+      # any non-explicit lintable outside the project directory), so a
+      # playbook referencing an installed role must not pull its files
+      # into the lint set (#784).
       private def self.role_candidates(basedir : String, role : String) : Array(String)
         [
           File.join(basedir, "roles", role),
@@ -47,7 +49,6 @@ module Krikri
           File.join(basedir, "..", "..", role),
           File.join(basedir, "..", role),
           File.join("roles", role),
-          File.join(home_dir, ".ansible", "roles", role),
           File.join("/etc", "ansible", "roles", role),
         ]
       end

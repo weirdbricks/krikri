@@ -7,6 +7,8 @@ module Krikri::Lint
   # walks: a playbook pulls in its imported task files, imported playbooks
   # and role content, transitively.
   describe Imports do
+    serial!
+
     private def write(root : String, path : String, content : String) : String
       full = File.join(root, path)
       Dir.mkdir_p(File.dirname(full))
@@ -128,6 +130,34 @@ module Krikri::Lint
       begin
         Imports.children(File.join(root, "handlers/main.yml")).must_be_empty
       ensure
+        FileUtils.rm_rf(root)
+      end
+    end
+
+    it "does not lint a role installed under ~/.ansible/roles" do
+      # ansible-galaxy's default install location is third-party content,
+      # not the project being linted: upstream resolves it (its _rolepath
+      # searches the default roles path) but its runner drops lintables
+      # outside the project, so an installed role's files never get
+      # linted or counted. HOME is pointed at a scratch tree so the
+      # candidate really exists, making the skip observable.
+      root = File.tempname("lintimports")
+      fake_home = File.join(root, "home")
+      write(fake_home, ".ansible/roles/installedrole/tasks/main.yml",
+        "---\n- name: R\n  ansible.builtin.command: echo r\n")
+      write(root, "play.yml", "---\n- name: P\n  hosts: all\n  tasks:\n" \
+                              "    - ansible.builtin.include_role:\n        name: installedrole\n")
+      previous = ENV["HOME"]?
+      begin
+        ENV["HOME"] = fake_home
+        Imports.expand([File.join(root, "play.yml")]).map { |path| path.sub(root + "/", "") }
+          .must_equal(["play.yml"])
+      ensure
+        if previous
+          ENV["HOME"] = previous
+        else
+          ENV.delete("HOME")
+        end
         FileUtils.rm_rf(root)
       end
     end
