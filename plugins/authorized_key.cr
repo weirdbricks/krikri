@@ -398,10 +398,10 @@ module Krikri
     private def atomic_move_write(path : String, new_content : String) : PluginResult?
       begin
         tmp_path = python_mkstemp(python_tempfile_dir, "tmp", "")
-      rescue mk : MkstempFailure
+      rescue ex : MkstempFailure
         # tempfile.mkstemp() itself failing is an uncaught OSError in real
         # - the crash brief is the bare Python error text.
-        return atomic_move_crash("", mk.cause_text)
+        return atomic_move_crash("", ex.cause_text)
       end
       begin
         File.write(tmp_path, new_content, perm: 0o600)
@@ -485,51 +485,16 @@ module Krikri
         # keep_dest_attrs: the source inherits the existing dest's
         # ownership and mode, then its times are stamped to now (real's
         # chown + copystat + utime-to-now trio); only EPERM is swallowed.
-        begin
-          File.chown(src, uid: info.owner_id.to_i, gid: info.group_id.to_i)
-          File.chmod(src, info.permissions)
-          File.utime(Time.local, Time.local, src)
-        rescue ex : File::Error
-          unless ex.os_error.try(&.value) == 1
-            return atomic_move_crash("", python_os_error_text(ex, src))
-          end
+        if failure = inherit_dest_attrs(src, info)
+          return failure
         end
       end
 
       begin
         File.rename(src, dest)
       rescue ex : File::Error
-        errno = ex.os_error.try(&.value)
-        unless errno && ATOMIC_MOVE_WORKAROUND_ERRNOS.includes?(errno)
-          return atomic_move_crash("Could not replace '#{dest}' with '#{src}'.",
-            python_os_error_text(ex, src, dest))
-        end
-
-        stage = File.join(python_dirname(dest),
-          ".ansible_tmp#{python_tmp_random(8)}#{File.basename(dest)}")
-        begin
-          python_mkstemp_dir(stage)
-        rescue mk : MkstempFailure
-          return atomic_move_crash(
-            "The destination directory '#{python_dirname(dest)}' is not writable by the current user.",
-            mk.cause_text)
-        end
-
-        begin
-          move_source_into_stage(src, stage, dest_info)
-        rescue ex3 : File::Error
-          File.delete(stage) if File.exists?(stage)
-          return atomic_move_crash("Failed to replace '#{dest}' with '#{src}'.",
-            python_os_error_text(ex3, src, stage))
-        end
-
-        begin
-          File.rename(stage, dest)
-        rescue ex4 : File::Error
-          File.delete(stage) if File.exists?(stage)
-          return atomic_move_crash(
-            "Unable to make '#{src}' into to '#{dest}', failed final rename from '#{stage}'.",
-            python_os_error_text(ex4, stage, dest))
+        if failure = atomic_move_workaround(src, dest, dest_info, ex)
+          return failure
         end
       end
 
@@ -549,6 +514,65 @@ module Krikri
     # The errnos atomic_move works around before staging next to dest
     # (basic.py's own tuple: EPERM, EXDEV, EACCES, ETXTBSY, EBUSY).
     ATOMIC_MOVE_WORKAROUND_ERRNOS = [1, 13, 16, 18, 26]
+
+    # atomic_move's keep_dest_attrs prelude (the chown + copystat +
+    # utime-to-now trio), split out of the ladder: only EPERM is swallowed,
+    # any other errno is real's own uncaught-OSError crash (bare Python
+    # error text, no wrapper message around it).
+    private def inherit_dest_attrs(src : String, info : File::Info) : PluginResult?
+      begin
+        File.chown(src, uid: info.owner_id.to_i, gid: info.group_id.to_i)
+        File.chmod(src, info.permissions)
+        File.utime(Time.local, Time.local, src)
+      rescue ex : File::Error
+        unless ex.os_error.try(&.value) == 1
+          return atomic_move_crash("", python_os_error_text(ex, src))
+        end
+      end
+      nil
+    end
+
+    # atomic_move's rename-failure ladder (basic.py's EPERM/EXDEV/EACCES/
+    # ETXTBSY/EBUSY branch): a mkstemp stage next to dest, the source's
+    # move into it, the final rename - each step's failure carrying real's
+    # own crash text. Any other first-rename errno fails immediately, as
+    # real's "Could not replace" does. Returns nil when the workaround
+    # landed dest.
+    private def atomic_move_workaround(src : String, dest : String, dest_info : File::Info?, ex : File::Error) : PluginResult?
+      errno = ex.os_error.try(&.value)
+      unless errno && ATOMIC_MOVE_WORKAROUND_ERRNOS.includes?(errno)
+        return atomic_move_crash("Could not replace '#{dest}' with '#{src}'.",
+          python_os_error_text(ex, src, dest))
+      end
+
+      stage = File.join(python_dirname(dest),
+        ".ansible_tmp#{python_tmp_random(8)}#{File.basename(dest)}")
+      begin
+        python_mkstemp_dir(stage)
+      rescue ex : MkstempFailure
+        return atomic_move_crash(
+          "The destination directory '#{python_dirname(dest)}' is not writable by the current user.",
+          ex.cause_text)
+      end
+
+      begin
+        move_source_into_stage(src, stage, dest_info)
+      rescue ex : File::Error
+        File.delete(stage) if File.exists?(stage)
+        return atomic_move_crash("Failed to replace '#{dest}' with '#{src}'.",
+          python_os_error_text(ex, src, stage))
+      end
+
+      begin
+        File.rename(stage, dest)
+      rescue ex : File::Error
+        File.delete(stage) if File.exists?(stage)
+        return atomic_move_crash(
+          "Unable to make '#{src}' into to '#{dest}', failed final rename from '#{stage}'.",
+          python_os_error_text(ex, stage, dest))
+      end
+      nil
+    end
 
     # The mkstemp half split out of python_mkstemp so the ladder can name
     # the exact candidate path it failed on.
