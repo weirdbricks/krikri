@@ -2896,22 +2896,6 @@ module Krikri
         end
       end
 
-      # ansible-core resolves each task's module at task-load time
-      # (ModuleArgsParser.parse -> _get_action_context -> the plugin
-      # loader's record_deprecation), which is where a collection
-      # redirect's own deprecation warning prints: for every parsed task
-      # - handlers and role tasks included, when:-gated or not - once per
-      # distinct message per run (the Display dedups), and it prints
-      # under --list-tasks too (live-verified vs 2.19.11). Hooked here,
-      # the one entry every task-list parse flows through (plays,
-      # pre/post_tasks, handlers, blocks, imports, roles, and the
-      # run-time include_tasks parses), instead of in the play loop,
-      # so lazily-parsed includes warn at their inclusion point the way
-      # Ansible's per-task post_validate does.
-      tasks.each do |task|
-        ResultDisplay.emit_module_redirect_deprecation(task.module_name)
-      end
-
       tasks
     end
 
@@ -4081,6 +4065,26 @@ module Krikri
           origin_error_render(
             removed_message, source_file, source_map,
             task_source_prefix(source_prefix, index)))
+      end
+
+      # ansible-core resolves each task's module at task-load time
+      # (ModuleArgsParser.parse -> _get_action_context -> the plugin
+      # loader's record_deprecation), which is where a collection
+      # redirect's own deprecation warning prints: per parsed task, once
+      # per distinct message per run (the Display dedups), handlers and
+      # role tasks included, when:-gated or not, and under --list-tasks
+      # too (live-verified vs 2.19.11). Hooked INSIDE parse_task - the
+      # one entry every task parse flows through (plays, pre/post_tasks,
+      # handlers, blocks, imports, roles, and the run-time include_tasks
+      # parses) - rather than after a whole task list parses, because a
+      # LATER task's load-time refusal (a removed `include:`) aborts the
+      # whole list's parse: hakamine.c6-zabbix uses community.mysql.mysql_db
+      # a few tasks ahead of a bare `include:`, and real prints the
+      # mysql_db [DEPRECATION WARNING] before that task's [ERROR] while a
+      # list-end hook lost every warning that preceded the aborting task
+      # (issue #863).
+      if module_name
+        ResultDisplay.emit_module_redirect_deprecation(module_name)
       end
 
       # A `static:` beside a NON-include action is ansible-core's own
