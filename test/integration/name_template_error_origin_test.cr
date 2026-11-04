@@ -502,6 +502,54 @@ describe "task name template error warning blocks" do
     FileUtils.rm_rf(src_dir) if src_dir
   end
 
+  it "keeps an unnamed include_role's banner role name RAW, never rendered" do
+    # Real's IncludeRole#get_name prints "%s : %s" % (action, raw role
+    # arg) - the role-name argument is never rendered in the banner
+    # (live-verified vs 2.19.11: `include_role: name: "{{ rname }}"`
+    # banners `TASK [ansible.builtin.include_role : {{ rname }}]`, even
+    # when the include succeeds - and identically when it is when:-
+    # skipped). krikri used to feed the banner through the task-name
+    # templating path and printed the RESOLVED role name (issue #828,
+    # nabello.big_bang). An explicit task-level `name:` still renders,
+    # like real's own named-task banner.
+    src_dir = File.tempname("name-raw-include-role-banner")
+    Dir.mkdir_p(File.join(src_dir, "roles", "ic", "tasks"))
+    File.write(File.join(src_dir, "roles", "ic", "tasks", "main.yml"), <<-YAML)
+      - name: ic task
+        ansible.builtin.debug:
+          msg: hi
+      YAML
+    File.write(File.join(src_dir, "pb.yml"), <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          rname: ic
+        tasks:
+          - ansible.builtin.include_role:
+              name: "{{ rname }}"
+          - name: named wrapper for {{ rname }}
+            ansible.builtin.include_role:
+              name: "{{ rname }}"
+          - ansible.builtin.include_role:
+              name: "{{ nope_rname }}"
+            when: false
+      YAML
+    output = IO::Memory.new
+    Process.run(BINARY, ["-i", INVENTORY, "pb.yml"], output: output, error: output, chdir: src_dir)
+
+    text = output.to_s
+    text.must_include("TASK [ansible.builtin.include_role : {{ rname }}] ", text)
+    text.wont_include("TASK [ansible.builtin.include_role : ic]", text)
+    # The named include_role's own `name:` still renders like real.
+    text.must_include("TASK [named wrapper for ic] ", text)
+    # A when:-skipped unnamed include_role keeps the raw banner too.
+    text.must_include("TASK [ansible.builtin.include_role : {{ nope_rname }}] ", text)
+    text.must_include("skipping: [localhost]", text)
+  ensure
+    FileUtils.rm_rf(src_dir) if src_dir
+  end
+
   it "points an import_role vars error at the playbook's vars entry" do
     src_dir = File.tempname("name-warn-import-role-vars")
     Dir.mkdir_p(File.join(src_dir, "roles", "ir", "tasks"))

@@ -191,6 +191,13 @@ module Krikri
       # prints `TASK [{{ pm }}]` for `action: "{{ pm }} ..."`, it never
       # renders the module-name template into the banner.
       return task.name if task.templated_action && !task.has_explicit_name?
+      # Real's IncludeRole#get_name prints the include_role:/import_role:
+      # directive's role-name argument RAW ("action : <raw role arg>") -
+      # the banner is never rendered, unlike a task's own `name:`
+      # (nabello.big_bang: `include_role: name: "{{ install_gnu_role_name
+      # }}"` banners the literal template, live-verified vs 2.19.11).
+      # Only an explicit task-level `name:` renders.
+      return task.name if task.include_role? && !task.has_explicit_name?
       return lenient_task_name(task, host) if task.name.includes?("{%") || task.name.includes?("{#")
 
       # Name templating, like loop-source resolution, runs before Ansible's
