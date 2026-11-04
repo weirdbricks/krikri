@@ -5899,7 +5899,17 @@ module Krikri
         # > 0)` with a first_found no-match None): the two-level [ERROR]
         # chain block and the "Task failed: "-prefixed {"msg": ...}
         # fatal JSON, exactly like the wording classes above.
-        inner.starts_with?("The filter plugin ") || inner.starts_with?("The test plugin ")
+        inner.starts_with?("The filter plugin ") || inner.starts_with?("The test plugin ") ||
+        # A runtime expression failure inside the conditional (an int-vs-str
+        # ordering comparison, a list method's own error) is the same
+        # conditional-failure display class in real 2.19.11 - the two-level
+        # [ERROR] chain with the "caused by" Origin at the when: token and
+        # the "Task failed: "-prefixed fatal msg (issue #799,
+        # ontic.redis's `when: '...stdout | int < redis_tcp_backlog'` where
+        # the backlog default is a quoted string). Left unrecognized, the
+        # failure fell through to the generic module-failure chain instead:
+        # a bogus "Module failed: " middle segment and no caused-by block.
+        inner.starts_with?("Error rendering expression:")
     end
 
     # Real prints the ALLOW_BROKEN_CONDITIONALS hint after a conditional
@@ -5910,7 +5920,11 @@ module Krikri
         inner.starts_with?("Syntax error in expression:") ||
         inner.starts_with?("Syntax error in expression.") ||
         inner.starts_with?("The filter plugin ") ||
-        inner.starts_with?("The test plugin ")
+        inner.starts_with?("The test plugin ") ||
+        # The runtime-expression class ends the block at the Origin too
+        # (live-verified vs 2.19.11, issue #799: no hint after the
+        # caused-by chain for the int-vs-str comparison failure).
+        inner.starts_with?("Error rendering expression:")
     end
 
     # The two-level [ERROR] chain Ansible prints on stdout BEFORE the fatal
