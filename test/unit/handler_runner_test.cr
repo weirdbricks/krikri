@@ -140,6 +140,40 @@ describe Krikri::HandlerRunner do
     order.must_equal(["first", "second"])
   end
 
+  it "attaches a notification to the LAST copy of a same-named handler, not the first" do
+    # Ansible resolves a flush-time notification against the handler list
+    # REVERSED ("last handler loaded with the same name wins"), so when a
+    # role's handlers exist twice - loaded statically as a dependency and
+    # again through a later include_role: - the notification executes the
+    # include_role copy, at its position AFTER the dependent role's own
+    # handlers. Matching the first (static dependency) copy instead made
+    # the notified handler run at that early position: issue #804,
+    # 0x0i.geth ran "Reload systemd units" (static dependency copy)
+    # before "Restart Geth service" where ansible ran "Restart Geth
+    # service" first, then the include_role copy of "Reload systemd
+    # units". The listen: rule behaves the same way - among same-named
+    # copies only the last definition is notified.
+    host = make_host
+    static_reload = make_handler("Reload units")
+    static_reload.listen = ["reload"]
+    restart = make_handler("Restart svc")
+    restart.listen = ["restart"]
+    dynamic_reload = make_handler("Reload units")
+    dynamic_reload.listen = ["reload"]
+    runner = Krikri::HandlerRunner.new([static_reload, restart, dynamic_reload], [host])
+    runner.notify(host, "restart")
+    runner.notify(host, "reload")
+
+    order = [] of Krikri::Task
+    callback = ->(handler : Krikri::Task, _host : Krikri::Host) {
+      order << handler
+      JSON.parse({"changed" => true, "failed" => false}.to_json)
+    }
+    runner.run(callback, fresh_results(host), false)
+
+    order.must_equal([restart, dynamic_reload])
+  end
+
   it "second-pass backward notification matches the earlier handler's RENDERED name" do
     # Regression: a handler re-notifying an EARLIER handler by the name
     # that name_resolver renders it to (the entire reason the resolver

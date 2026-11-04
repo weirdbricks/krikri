@@ -377,9 +377,9 @@ module Krikri
       # Ansible runs "Load rules" within the SAME flush_handlers pass,
       # since HandlerRunner#run's @handlers.each iterates in definition
       # order and "Load rules" is defined after "Run augenrules" - by
-      # the time the loop reaches it, this notify call has already
-      # landed in @notified_handlers and should_run_handler? picks it
-      # up naturally, no restructuring of #run needed. Previously
+      # the time the loop reaches it, the notification has already
+      # been attached to that copy by HandlerRunner#notify's flush-time
+      # attachment, no restructuring of #run needed. Previously
       # entirely unhandled - only a regular TASK's own notify: was ever
       # forwarded to HandlerRunner, so a handler-to-handler notify
       # silently dropped the second handler ("Load rules" never ran,

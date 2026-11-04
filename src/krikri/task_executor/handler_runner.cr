@@ -20,6 +20,17 @@ module Krikri
     # for regular-task results).
     @in_flush = false
 
+    # Flush-time state used to attach notifications raised WHILE the
+    # flush is running (a handler notifying another handler) to the
+    # handler copy they execute on - see #attachments_for_notification.
+    # Per host, the precomputed per-handler rendered names (empty for an
+    # unusable handler - its name must never even be resolved, see
+    # TaskExecutor#run_handlers).
+    @flush_attachments : Hash(String, Set(Int32))? = nil
+    @flush_rendered_names : Hash(String, Array(String))? = nil
+    @flush_name_resolver : Proc(Task, Host, String)? = nil
+    @flush_unusable_handlers : Set(Task)? = nil
+
     def initialize(@handlers : Array(Task), @hosts : Array(Host))
       @notified_handlers = Hash(String, Set(String)).new
 
@@ -37,6 +48,15 @@ module Krikri
       # phase itself, where the notification applies immediately instead.
       if !@in_flush && Krikri::RunOptions.verbosity >= 2
         puts "Notification for handler #{handler_name} has been saved."
+      elsif @in_flush && (attachments = @flush_attachments) && (rendered_names = @flush_rendered_names) && (resolver = @flush_name_resolver)
+        # A notification raised by a handler DURING the flush attaches
+        # immediately to the copy it will run on (Ansible's strategy
+        # processes notifications in the HANDLERS state the same way) -
+        # without this, a handler notifying one still AHEAD in definition
+        # order would never become eligible and its target would only
+        # ever run through the backward-notification second pass.
+        attachments[host.name].concat(
+          attachments_for_notification(host, handler_name, rendered_names[host.name], resolver, @flush_unusable_handlers))
       end
     end
 
@@ -96,6 +116,43 @@ module Krikri
       bannered = Set(Int32).new
       @in_flush = true
 
+      # Attach every pending notification to the handler COPY it will
+      # actually run on, resolved the way Ansible resolves notifications
+      # at flush time (search_handlers_by_notification): execution is
+      # still forward definition order, but a notification attaches to
+      # the LAST handler matching its name ("last handler loaded with
+      # the same name wins"), and, via the separate listen: loop, to the
+      # last definition of each distinct handler name whose listen:
+      # covers it. Matching the FIRST copy instead made the wrong copy
+      # run whenever a role's handlers exist twice - loaded statically
+      # as a dependency AND again through a later include_role: (issue
+      # #804, 0x0i.geth: the dependency copy of "Reload systemd units"
+      # sits before geth's own "Restart Geth service" in the handler
+      # list while the include_role copy lands after it, so matching the
+      # first copy ran "Reload systemd units" before "Restart Geth
+      # service" where ansible ran them the other way around).
+      attachments = Hash(String, Set(Int32)).new
+      rendered_names = Hash(String, Array(String)).new
+      @hosts.each do |host|
+        targets = Set(Int32).new
+        per_host_names = @handlers.map do |handler|
+          if unusable_handlers.try(&.includes?(handler))
+            ""
+          else
+            name_resolver.try(&.call(handler, host)) || handler.name
+          end
+        end
+        rendered_names[host.name] = per_host_names
+        @notified_handlers[host.name].each do |notification|
+          targets.concat(attachments_for_notification(host, notification, per_host_names, name_resolver, unusable_handlers))
+        end
+        attachments[host.name] = targets
+      end
+      @flush_attachments = attachments
+      @flush_rendered_names = rendered_names
+      @flush_name_resolver = name_resolver
+      @flush_unusable_handlers = unusable_handlers
+
       # A handler runs at most once per host, no matter how many times
       # it was notified - and, since include_role: (possibly looped) can
       # dynamically add further Task objects that happen to share a name
@@ -126,7 +183,7 @@ module Krikri
           @hosts.each do |host|
             run_handler_on_host(handler, handler_index, host, pass,
               execute_callback, results, diff_mode, name_resolver, halted_hosts,
-              already_ran[host.name], second_pass[host.name], bannered)
+              attachments[host.name], already_ran[host.name], second_pass[host.name], bannered)
           end
         end
 
@@ -137,6 +194,10 @@ module Krikri
       end
 
       @in_flush = false
+      @flush_attachments = nil
+      @flush_rendered_names = nil
+      @flush_name_resolver = nil
+      @flush_unusable_handlers = nil
       clear_notified!
     end
 
@@ -150,6 +211,7 @@ module Krikri
                                     diff_mode : Bool,
                                     name_resolver : Proc(Task, Host, String)?,
                                     halted_hosts : Set(String)?,
+                                    attached : Set(Int32),
                                     already_ran : Set(String),
                                     second_pass : Set(String),
                                     bannered : Set(Int32)) : Bool
@@ -157,8 +219,8 @@ module Krikri
 
       rendered_name = name_resolver.try(&.call(handler, host)) || handler.name
 
-      return false unless eligible_this_pass?(pass, handler, host, rendered_name,
-                            already_ran, second_pass)
+      return false unless eligible_this_pass?(pass, handler_index, rendered_name,
+                            attached, already_ran, second_pass)
       already_ran.add(rendered_name)
 
       # ansible reaches VariableManager.get_vars for a handler only when
@@ -248,17 +310,19 @@ module Krikri
     end
 
     # Whether *handler* runs for *host* on this pass. Pass one is the
-    # ordinary definition-order sweep; pass two runs only what a handler
+    # ordinary definition-order sweep, restricted to the handler copies
+    # the pending notifications actually attach to (see
+    # #attachments_for_notification); pass two runs only what a handler
     # re-notified from BEHIND it, regardless of having already run -
     # which is how a self-notifying handler ends up running twice.
-    private def eligible_this_pass?(pass : Int32, handler : Task, host : Host,
+    private def eligible_this_pass?(pass : Int32, handler_index : Int32,
                                     rendered_name : String,
+                                    attached : Set(Int32),
                                     already_ran : Set(String),
                                     second_pass : Set(String)) : Bool
       return second_pass.includes?(rendered_name) unless pass == 0
 
-      !already_ran.includes?(rendered_name) &&
-        should_run_handler?(handler, host, rendered_name)
+      !already_ran.includes?(rendered_name) && attached.includes?(handler_index)
     end
 
     # Records one handler result: a when:-skipped handler, a looped
@@ -305,43 +369,70 @@ module Krikri
       end
     end
 
-    # Check if a handler should run for a host
-    # Handler runs if notified by name (rendered or raw) or by listen topic
-    private def should_run_handler?(handler : Task, host : Host, rendered_name : String) : Bool
-      notified = @notified_handlers[host.name]
+    # Which handler indices (copies) a single notification attaches to,
+    # mirroring Ansible's search_handlers_by_notification: the name pass
+    # iterates the handler list REVERSED and stops at the first match -
+    # i.e. the LAST handler answering to the notification runs, none of
+    # the earlier same-named copies - and the listen pass then attaches
+    # every handler whose listen: covers the notification, again
+    # reversed and deduped by handler name so that among same-named
+    # copies only the last definition is notified.
+    private def attachments_for_notification(host : Host, notification : String,
+                                             rendered_names : Array(String),
+                                             name_resolver : Proc(Task, Host, String)?,
+                                             unusable_handlers : Set(Task)?) : Array(Int32)
+      targets = [] of Int32
 
-      # Check by handler name - both the rendered (real) name and the
-      # raw one (in case a caller notified using the literal template
-      # text, or name_resolver wasn't supplied at all).
-      return true if notified.includes?(rendered_name) || notified.includes?(handler.name)
+      # Rendered names are precomputed per flush for the handlers known
+      # then; a handler appended DURING the flush (a handler's own
+      # include_role:) sits beyond the array and is rendered on demand
+      # here.
+      rendered_at = ->(index : Int32) : String {
+        if index < rendered_names.size
+          rendered_names[index]
+        else
+          handler = @handlers[index]
+          if unusable_handlers.try(&.includes?(handler))
+            ""
+          else
+            name_resolver.try(&.call(handler, host)) || handler.name
+          end
+        end
+      }
 
-      # Check by listen topic - a handler's listen: may itself be a list
-      # of topics (Ansible; CVi.thanos round 811339), and any of
-      # them matching the notified set runs it.
-      (handler.listen || [] of String).each do |listen_topic|
-        return true if notified.includes?(listen_topic)
+      last_name_match : Int32? = nil
+      @handlers.each_with_index do |handler, index|
+        next if unusable_handlers.try(&.includes?(handler))
+        last_name_match = index if name_matches_notification?(handler, rendered_at.call(index), notification)
+      end
+      if match = last_name_match
+        targets << match
       end
 
-      # Role-qualified notify: form ("<anything> : <handler name>") -
-      # Ansible auto-namespaces a role-loaded handler with a
-      # qualifier (the FQCN of whichever role the handler's own
-      # inclusion chain traces back to - not always the role that
-      # literally defines handlers/main.yml, e.g. `prometheus.
-      # prometheus`'s own `_common` role's handlers get qualified with
-      # the CALLING role's name, not `_common`'s own) and matches on
-      # that exact computed qualifier. Replicating that formula exactly
-      # is real, non-trivial work; this instead matches ANY "X : name"
-      # shaped notify string against the handler's own bare rendered
-      # name, ignoring what X actually is - a handler name legitimately
-      # containing " : " as part of its own literal text is exceedingly
-      # rare, and this covers every qualifier value without needing to
-      # compute the one true correct one. Found live via
-      # prometheus.prometheus.pushgateway's own `_common`-defined
-      # handler (round 28's continuation) - notify: "{{
-      # ansible_parent_role_names | first }} : Restart {{
-      # _common_service_name }}" never matched "Restart pushgateway"
-      # (the handler's own bare rendered name) at all before this.
-      notified.any? { |nval| (idx = nval.rindex(" : ")) && nval[(idx + 3)..] == rendered_name }
+      seen_names = Set(String).new
+      (@handlers.size - 1).downto(0) do |index|
+        handler = @handlers[index]
+        next if unusable_handlers.try(&.includes?(handler))
+        next unless (handler.listen || [] of String).includes?(notification)
+        rendered = rendered_at.call(index)
+        next if !rendered.empty? && seen_names.includes?(rendered)
+        seen_names << rendered
+        targets << index
+      end
+
+      targets
+    end
+
+    # The name-attachment predicate shared by every flush-time resolution
+    # path: the notification answers to the handler's rendered name, its
+    # raw one, or the role-qualified "<qualifier> : <name>" form.
+    private def name_matches_notification?(handler : Task, rendered_name : String, notification : String) : Bool
+      return true if rendered_name == notification || handler.name == notification
+
+      if idx = notification.rindex(" : ")
+        return notification[(idx + 3)..] == rendered_name
+      end
+      false
     end
   end
 end
