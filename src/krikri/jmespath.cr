@@ -421,7 +421,26 @@ module Krikri
               node = parse_multiselect_list(node)
             else
               token = expect_ident_or_string("field name after '.'")
-              node = SubExpression.new(node, Field.new(token.text))
+              if token.kind == TokenKind::Identifier && peek.kind == TokenKind::LParen
+                # jmespath.py parses `expr.join('/', @)` as a chained
+                # function call: the '(' after a plain identifier turns
+                # it into a function name, and the left expression only
+                # supplies the value the function's `@` sees (ansible's
+                # json_query accepts this form; the JMESPath spec does
+                # not cover it).
+                advance
+                args = [] of Node
+                unless peek.kind == TokenKind::RParen
+                  args << parse_expression
+                  while accept(TokenKind::Comma)
+                    args << parse_expression
+                  end
+                end
+                expect(TokenKind::RParen, "')'")
+                node = SubExpression.new(node, FunctionCall.new(token.text, args))
+              else
+                node = SubExpression.new(node, Field.new(token.text))
+              end
             end
           elsif peek.kind == TokenKind::LBracket
             node = parse_bracket(node)
