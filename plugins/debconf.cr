@@ -29,6 +29,10 @@ module Krikri
   # value only feeds the comparison - it reaches no msg/stdout/stderr,
   # which is why Ansible's docs recommend `no_log: true` for these tasks.
   class DebconfPlugin < BasePlugin
+    # Probe-output markers for #get_selections (see #show_selections_script).
+    SHOW_FOUND_MARK    = "__KRIKRI_DEBCONF_SHOW_FOUND__"
+    SHOW_SEARCHED_MARK = "__KRIKRI_DEBCONF_SHOW_SEARCHED__"
+
     # ansible.builtin.debconf's `type: bool` options, in the real argument-spec
     # declaration order (ansible-doc -j ansible.builtin.debconf). Validated at
     # module setup by BasePlugin#validate_bool_params! - see its block
@@ -77,7 +81,15 @@ module Krikri
     # #selection_type_failure), so an unchanged value and a --check run
     # both report changed without ever getting there.
     private def apply_selection(pkg : String, question : String, vtype : String, value : String, unseen : Bool) : PluginResult
+      # debconf.py's main() calls get_selections(module, pkg) FIRST - so
+      # on a host without the debconf tools (any RHEL-family image, round
+      # round29896651 / ryezone_labs.domain_controller_slapd) real fails
+      # here with get_bin_path's bare "Failed to find required executable
+      # ..." msg and never reaches debconf-set-selections. Falling through
+      # to the echo|debconf-set-selections pipeline instead surfaced
+      # bash's own "command not found" stderr as the msg (issue #840).
       prev = get_selections(pkg)
+      return prev if prev.is_a?(PluginResult)
 
       # Ansible's `if vtype is None or value is None` guard (debconf.py:210)
       # sits AFTER get_selections (a debconf-show failure is reported
@@ -342,15 +354,57 @@ module Krikri
     # `debconf-show <pkg>` prints one `[*] question: value` line per
     # known question (`*` marks it "seen") - strip the leading `*`/
     # whitespace off the key, same as Ansible's own `get_selections`.
-    private def get_selections(pkg : String) : Hash(String, String)
-      result = remote_exec("debconf-show #{shell_single_quote(pkg)} 2>/dev/null")
+    # The probe resolution rides the same shell invocation as the read
+    # itself (one SSH round trip): debconf.py's get_selections calls
+    # module.get_bin_path('debconf-show', True) before anything else, and
+    # a miss fails the module with fail_json's bare
+    # "Failed to find required executable ... in paths: <paths>" msg -
+    # the paths list being $PATH with the three sbin dirs appended when
+    # they exist and are not already listed (module_utils/common/
+    # process.py). The two marker lines head the output; debconf-show's
+    # own `key: value` lines never match them.
+    private def get_selections(pkg : String) : Hash(String, String) | PluginResult
+      result = remote_exec(show_selections_script(pkg))
+      head = result[:stdout].split("\n", 3)
+      found = head.size > 0 && head[0].starts_with?(SHOW_FOUND_MARK) ? head[0][SHOW_FOUND_MARK.size..] : ""
+      searched = head.size > 1 && head[1].starts_with?(SHOW_SEARCHED_MARK) ? head[1][SHOW_SEARCHED_MARK.size..] : ""
+
+      if found.empty?
+        return PluginResult.new(changed: false, failed: true,
+          msg: %(Failed to find required executable "debconf-show" in paths: #{searched}))
+      end
+
       selections = Hash(String, String).new
-      result[:stdout].each_line do |line|
+      (head.size > 2 ? head[2] : "").each_line do |line|
         key, sep, val = line.partition(':')
         next if sep.empty?
         selections[key.strip('*').strip] = val.strip
       end
       selections
+    end
+
+    private def show_selections_script(pkg : String) : String
+      <<-SH
+        searched="$PATH"
+        for d in /sbin /usr/sbin /usr/local/sbin; do
+          case ":$searched:" in *":$d:"*) ;; *) [ -e "$d" ] && searched="$searched:$d" ;; esac
+        done
+        found=""
+        oldIFS=$IFS
+        IFS=:
+        for d in $searched; do
+          [ -n "$d" ] || continue
+          if [ -z "$found" ] && [ -f "$d/debconf-show" ] && [ -x "$d/debconf-show" ]; then
+            found="$d/debconf-show"
+          fi
+        done
+        IFS=$oldIFS
+        printf '#{SHOW_FOUND_MARK}%s\n' "$found"
+        printf '#{SHOW_SEARCHED_MARK}%s\n' "$searched"
+        if [ -n "$found" ]; then
+          "$found" #{shell_single_quote(pkg)} 2>/dev/null
+        fi
+        SH
     end
 
     private def set_selection(pkg : String, question : String, vtype : String, value : String, unseen : Bool) : NamedTuple(exit_code: Int32, stdout: String, stderr: String)
