@@ -1037,6 +1037,16 @@ module Krikri
       "community.windows.win_domain_object_info"                   => "The 'community.windows.win_domain_object_info' module has been removed. Use microsoft.ad.object_info instead. This feature was removed from collection 'community.windows' version 3.0.0.",
       "community.windows.win_domain_ou"                            => "The 'community.windows.win_domain_ou' module has been removed. Use microsoft.ad.ou instead. This feature was removed from collection 'community.windows' version 3.0.0.",
       "community.windows.win_domain_user"                          => "The 'community.windows.win_domain_user' module has been removed. Use microsoft.ad.user instead. This feature was removed from collection 'community.windows' version 3.0.0.",
+      # kubernetes.core 2.0.0 tombstoned k8s_facts in favor of k8s_info
+      # (its meta/runtime.yml plugin_routing.modules tombstone; live
+      # probed - afonsog.k8s_jenkins, issue #847, writes the BARE name).
+      # Real resolves the bare spelling through ansible_builtin_runtime.yml's
+      # redirect onto kubernetes.core.k8s_facts and refuses with THIS
+      # message and rc=1; a controller without the collection installed
+      # falls back to the generic couldn't-resolve rc=4, which the bare
+      # spelling's absence here leaves untouched (same split as
+      # docker_service above).
+      "kubernetes.core.k8s_facts" => "The 'kubernetes.core.k8s_facts' module has been removed. Use kubernetes.core.k8s_info instead. This feature was removed from collection 'kubernetes.core' version 2.0.0.",
     }
   end
 end
