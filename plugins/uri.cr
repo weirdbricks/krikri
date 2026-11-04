@@ -455,6 +455,17 @@ module Krikri
       raise "too many redirects" if redirects_left < 0
 
       uri = URI.parse(url)
+      # urllib's http.client raises InvalidURL("no host given") for an
+      # http(s):// URL with no host, which fetch_url reports as
+      # "<urlopen error no host given>"; Crystal's HTTP::Client would instead
+      # raise its own "Request URI must have host (URI is: ...)" wording
+      # (live-verified vs 2.19.11, Actifio.appaware_mount issue #846).
+      # unix_socket: bypasses host resolution entirely, so the URL's host
+      # being absent is not an error there.
+      socket_path = @params["unix_socket"]?
+      if !(socket_path && !socket_path.empty?) && (uri.host.nil? || uri.host.try(&.empty?)) && ["http", "https"].includes?((uri.scheme || "").downcase)
+        raise Exception.new("<urlopen error no host given>")
+      end
       client = build_client(uri)
       headers, body = request_headers_and_body(src_body, redirected, last_mod_time)
 
