@@ -5044,6 +5044,28 @@ module Krikri
         if (m = key_needle.match(line)) && (key_idx = m.begin(0)) && (key_idx == 0 || line[key_idx - 1].whitespace?)
           rest = line[m.end(0)..]
           column = m.end(0) + (rest.size - rest.lstrip.size) + 1
+          stripped = rest.strip
+          # A block-form value starts on a later line (nothing or a comment
+          # after the colon; a `|`/`>` indicator already sits inline where
+          # the formula above lands): ansible's observed behaviour (issue
+          # #798, lean_delivery.solr_slave, live-captured vs 2.19.11) points
+          # the innermost Origin at the VALUE NODE's own position - the
+          # first non-space character of the next deeper content line, with
+          # blank and comment-only lines skipped - not at the key's colon.
+          if stripped.empty? || stripped.starts_with?('#')
+            key_indent = line.size - line.lstrip.size
+            nidx = idx + 1
+            while nidx < lines.size
+              nline = lines[nidx]
+              break if next_task_marker?(lines, from_idx, nline)
+              if nline.strip.empty? || nline.lstrip.starts_with?('#')
+                nidx += 1
+                next
+              end
+              break unless (nline.size - nline.lstrip.size) > key_indent
+              return {nidx, (nline.size - nline.lstrip.size) + 1}
+            end
+          end
           return {idx, column}
         end
       end
