@@ -276,6 +276,28 @@ describe "lineinfile plugin" do
     content.wont_include("remove me")
   end
 
+  it "accepts `regex` as Ansible's argument-spec alias for `regexp` (state=absent)" do
+    # Real Ansible declares regexp=dict(type='str', aliases=['regex']) for
+    # lineinfile. Found via ryezone_labs.sssd: its "remove mkhomedir from
+    # /var/lib/pam/seen" task passes `regex:` with state=absent - Ansible
+    # removes the line, while ignoring the alias here made the task fail
+    # with "one of line, search_string, or regexp is required with
+    # state=absent".
+    path = PluginSpecHelper.tmp_path("lineinfile-regex-alias.txt")
+    File.write(path, "keep me\nremove me\n")
+
+    result = PluginSpecHelper.run("lineinfile", {
+      "path"  => path,
+      "regex" => "remove me",
+      "state" => "absent",
+    })
+
+    result["changed"].as_bool.must_equal(true)
+    content = File.read(path)
+    content.must_include("keep me")
+    content.wont_include("remove me")
+  end
+
   it "does not write to disk in check mode" do
     path = PluginSpecHelper.tmp_path("lineinfile-check-mode.txt")
     File.write(path, "original\n")
