@@ -153,6 +153,43 @@ describe "environment: keyword strict-undefined" do
     output.to_s.must_include("hello-from-env")
   end
 
+  # sigma.coreos-bootstrap (issue #831): the role's
+  # `environment: "{{bootstrap_environment}}"` points at a dict whose
+  # VALUES are themselves templates (`PKG_HOME: "{{coreos_pkg_home}}"`).
+  # ansible-playbook renders those nested templates before the script
+  # runs; krikri passed them through raw, so the script's own `set -x`
+  # trace showed `'{{coreos_pkg_home}}'` and curl got a malformed
+  # `{{coreos_pypy_url}}/...` URL (exit 3) where ansible failed later,
+  # at the sha256 check (rc 1).
+  it "renders nested templates inside a string-form environment's values" do
+    playbook = File.tempname("environment-nested-values", ".yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          bootstrap_home: /tmp/krikri-env-nested
+          bootstrap_environment:
+            PKG_HOME: "{{bootstrap_home}}"
+            NESTED_URL: "{{bootstrap_home}}/download"
+        tasks:
+          - name: shell reads the env vars
+            ansible.builtin.shell: echo "$PKG_HOME $NESTED_URL"
+            environment: "{{ bootstrap_environment }}"
+            register: probe
+          - name: show it
+            ansible.builtin.debug:
+              var: probe.stdout
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+
+    status.success?.must_equal(true)
+    output.to_s.must_include("/tmp/krikri-env-nested /tmp/krikri-env-nested/download")
+    output.to_s.wont_include("{{bootstrap_home}}")
+  end
+
   it "treats a non-dict environment value (e.g. an empty list) as no environment, not a task failure" do
     # ryandaniels.connectivity_test (round 601446): a role default like
     # `proxy_env: []`, meant to be overridden by the caller with a real

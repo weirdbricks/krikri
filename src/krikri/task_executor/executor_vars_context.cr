@@ -6960,8 +6960,24 @@ module Krikri
         resolved_object = object
       end
 
+      # Ansible renders a string-form environment one level deeper than a
+      # bare variable read: the resolved dict's keys and values go through
+      # the template engine again before reaching the task, so a role
+      # variable like bootstrap_environment whose VALUES are themselves
+      # templates (`PKG_HOME: "{{coreos_pkg_home}}"`,
+      # sigma.coreos-bootstrap issue #831) reaches the script fully
+      # rendered. Passing the raw nested templates through instead made
+      # the traced script see `stat -c %U '{{coreos_pkg_home}}'` and curl
+      # a malformed `{{coreos_pypy_url}}/...` URL (curl exit 3) where
+      # ansible failed later at the checksum step (rc 1) with different
+      # output. Strict, like the dict form above: an undefined nested
+      # name fails the task through the same environment-keyword error
+      # wrapping in substitute_task_environment.
       stringified = Hash(String, String).new
-      resolved_object.each { |key, value| stringified[key] = value.as_s? ? value.as_s : value.to_s }
+      resolved_object.each do |key, value|
+        raw_value = value.as_s? ? value.as_s : value.to_s
+        stringified[substitutor.substitute(key, strict: true)] = substitutor.substitute(raw_value, strict: true)
+      end
       stringified
     end
 
