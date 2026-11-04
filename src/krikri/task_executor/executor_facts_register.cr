@@ -183,6 +183,15 @@ module Krikri
             ErrorBlock.emit(ErrorBlock::Node.new("Task failed.")
               .with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(PluginManager::BECOME_METHOD_EMPTY)))
             puts "fatal: [#{host.name}]: FAILED! => {\"changed\": false, \"msg\": \"Task failed: #{PluginManager::BECOME_METHOD_EMPTY}\"}".colorize(:red)
+          elsif error_message && connection_not_found_gather_message?(error_message)
+            # Ansible's gather-time connection-resolution failure is a
+            # plain one-line [ERROR] with no Origin and no cause chain,
+            # then the standard fatal line (live-verified vs 2.19.11 for
+            # an inventory-set ansible_connection, a play `connection:`
+            # keyword and a leaked role default alike) - not the generic
+            # "failed: / Error gathering facts:" pair.
+            ErrorBlock.emit(ErrorBlock::Node.new(error_message))
+            puts "fatal: [#{host.name}]: FAILED! => {\"changed\": false, \"msg\": \"#{error_message}\"}".colorize(:red)
           else
             puts "failed: [#{host.name}]".colorize(:red)
             puts "  Error gathering facts: #{error_message}".colorize(:red)
@@ -209,15 +218,25 @@ module Krikri
       end
     end
 
-    # The failure message for a host whose ansible_connection names no
-    # connection plugin (see PluginManager.connection_plugin_not_found?),
-    # or nil when the connection resolves (including "unset", which the
-    # executor's own local/ssh default covers).
-    private def unresolvable_connection_message(host : Host) : String?
-      conn_type = host.vars["ansible_connection"]?.try(&.as_s?)
+    # The failure message for a host whose effective ansible_connection
+    # (the host's own var, a play's leaked role defaults, or the play's
+    # `connection:` keyword - the same merged context the implicit gather
+    # runs under) names no connection plugin (see
+    # PluginManager.connection_plugin_not_found?), or nil when the
+    # connection resolves (including "unset", which the executor's own
+    # local/ssh default covers).
+    private def unresolvable_connection_message(host : Host, vars_context : Hash(String, JSON::Any)) : String?
+      conn_type = vars_context["ansible_connection"]?.try(&.as_s?)
       return nil unless conn_type && PluginManager.connection_plugin_not_found?(conn_type)
 
       "Task failed: the connection plugin '#{conn_type}' was not found"
+    end
+
+    # Whether *message* is the gather failure unresolvable_connection_message
+    # produced - its exact shape is
+    # "Task failed: the connection plugin 'X' was not found".
+    private def connection_not_found_gather_message?(message : String) : Bool
+      message.starts_with?("Task failed: the connection plugin '") && message.ends_with?(" was not found")
     end
 
     # The effective ansible_python_interpreter for the implicit setup
@@ -293,6 +312,20 @@ module Krikri
       vars_context = Hash(String, JSON::Any).new
       host.vars.each { |key, value| vars_context[key] = value }
 
+      # Role defaults are visible play-wide in Ansible - the play's static
+      # roles are compiled (and their defaults merged into the play's var
+      # stack) before ANY task runs, the implicit setup task included.
+      # Lowest var layer: below the host's own inventory vars, above the
+      # play's `connection:` keyword (vars always beat keywords).
+      # vinealvees.general_configs (issue #811) lives entirely on this:
+      # its defaults set `ansible_connection: network_cli` +
+      # `ansible_network_os: ios`, Ansible's smart gather therefore
+      # resolves the ios facts module over the network connection and
+      # fails Gathering Facts fatally, while this engine's gather - which
+      # used to see only the host's own vars - happily ssh'd out, booked
+      # ok=1 and ran role tasks Ansible never reached.
+      @all_role_defaults.each { |key, value| vars_context[key] ||= value }
+
       # The implicit setup task runs under the play's connection too: the
       # play-level `connection:` keyword fills in only where no
       # ansible_connection var (the host's own, here) already does -
@@ -309,7 +342,7 @@ module Krikri
       # Facts with "the connection plugin 'X' was not found" instead of
       # attempting SSH (the silent fallback below reported a bogus
       # UNREACHABLE for what Ansible reports as a plain failure).
-      if (conn_msg = unresolvable_connection_message(host))
+      if (conn_msg = unresolvable_connection_message(host, vars_context))
         return {false, conn_msg, false}
       end
 

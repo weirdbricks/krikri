@@ -171,3 +171,81 @@ describe "unresolvable connection type fails the task like Ansible" do
     output.wont_include("was not found", output)
   end
 end
+
+# Ansible compiles a play's static roles (and merges their
+# defaults/main.yml into the play's var stack) before ANY task runs, the
+# implicit Gathering Facts task included. Network roles live on this:
+# vinealvees.general_configs (issue #811) sets
+# `ansible_connection: network_cli` + `ansible_network_os: ios` in its
+# own defaults, so Ansible's smart gather resolves the ios facts module
+# over the network connection and fails Gathering Facts fatally - the
+# play stops, no role task ever runs. This engine's gather used to see
+# only the host's own vars: it ssh'd out, booked ok=1, and then ran the
+# role's first task (failing there with the same not-found message), so
+# a task ran on krikri that Ansible never reached.
+describe "role-default connection leak reaches the implicit gather" do
+  # A fresh root per call: the suite's worker fibers run sibling tests
+  # concurrently, and the role's defaults file differs per test.
+  private def run_leak_play(playbook : String, defaults : String = "---\nansible_connection: network_cli\nansible_network_os: ios\n") : {Process::Status, String}
+    root = File.tempname("connleak")
+    Dir.mkdir_p(root)
+    role = File.join(root, "roles", "leaky")
+    Dir.mkdir_p(File.join(role, "defaults"))
+    Dir.mkdir_p(File.join(role, "tasks"))
+    File.write(File.join(role, "defaults", "main.yml"), defaults)
+    File.write(File.join(role, "tasks", "main.yml"),
+      "---\n- name: never reached\n  ansible.builtin.debug:\n    msg: hi\n")
+    File.write(File.join(root, "inv.ini"), "target ansible_host=127.0.0.1 ansible_port=2299\n")
+    File.write(File.join(root, "pb.yml"), playbook)
+    captured = IO::Memory.new
+    status = Process.run(BINARY, ["-i", "inv.ini", "pb.yml"], output: captured, error: captured, chdir: root)
+    {status, captured.to_s}
+  ensure
+    FileUtils.rm_rf(root) if root && Dir.exists?(root)
+  end
+
+  it "fails Gathering Facts (fatal, play stops) when a role default leaks network_cli" do
+    status, output = run_leak_play(<<-YAML)
+      - hosts: target
+        become: true
+        gather_facts: true
+        roles:
+          - leaky
+      YAML
+    status.success?.must_equal(false, output)
+    output.must_include("TASK [Gathering Facts]", output)
+    output.must_include("the connection plugin 'network_cli' was not found", output)
+    output.must_include("failed=1", output)
+    output.wont_include("ok=1", output)
+    output.wont_include("never reached", output)
+  end
+
+  it "fails Gathering Facts for the play's own connection: keyword too" do
+    status, output = run_leak_play(<<-YAML)
+      - hosts: target
+        gather_facts: true
+        connection: boguskeyword
+        tasks:
+          - name: never reached
+            ansible.builtin.debug:
+              msg: hi
+      YAML
+    status.success?.must_equal(false, output)
+    output.must_include("TASK [Gathering Facts]", output)
+    output.must_include("the connection plugin 'boguskeyword' was not found", output)
+    output.must_include("failed=1", output)
+    output.wont_include("never reached", output)
+  end
+
+  it "still gathers normally when a role default leaks a resolvable connection (local)" do
+    status, output = run_leak_play(<<-YAML, defaults: "---\nansible_connection: local\n")
+      - hosts: target
+        gather_facts: true
+        roles:
+          - leaky
+      YAML
+    status.success?.must_equal(true, output)
+    output.must_include("never reached", output)
+    output.wont_include("was not found", output)
+  end
+end

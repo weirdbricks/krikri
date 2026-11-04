@@ -537,6 +537,18 @@ module Krikri
                   !host.vars.has_key?("ansible_connection") &&
                   !play.vars.has_key?("ansible_connection")
 
+          # Role defaults are visible play-wide in Ansible (compiled
+          # before any task runs) and sit below the host's own inventory
+          # vars, so a leaked `ansible_connection: local` routes the
+          # whole play - the implicit gather included - through the
+          # controller exactly like the play keyword above. Without this
+          # the eager upload still ssh'd out for such a host and could
+          # pre-mark it unreachable before the (local) gather ever ran -
+          # found as the resolvable twin of issue #811's network_cli
+          # case while testing that fix.
+          next if !host.vars.has_key?("ansible_connection") &&
+                  play.all_role_defaults["ansible_connection"]?.try(&.as_s?) == "local"
+
           # A host whose ansible_connection resolves to no connection
           # plugin (Ansible would fail every task with "the
           # connection plugin 'X' was not found") must NOT enter this
@@ -547,8 +559,21 @@ module Krikri
           # entirely. Skipped here, so execution reaches the per-task
           # check (execute_task_once) and fails tasks the way
           # Ansible does.
-          next if (conn_type = host.vars["ansible_connection"]?.try(&.as_s?)) &&
-                  connection_plugin_not_found?(conn_type)
+          #
+          # Role defaults are visible play-wide in Ansible (compiled
+          # before any task runs, the implicit gather included) and sit
+          # below the host's own inventory vars but above the play's
+          # `connection:` keyword - the same layered effective
+          # connection the implicit gather resolves (see
+          # TaskExecutor#gather_facts_for_host_measured). Without the
+          # middle layer here, vinealvees.general_configs (issue #811,
+          # defaults set ansible_connection: network_cli) had its eager
+          # upload ssh out as the controller's own user (no askpass
+          # helper) and pre-mark the host unreachable before the gather
+          # could fail with the connection-resolution error.
+          next if [host.vars["ansible_connection"]?.try(&.as_s?),
+                   play.all_role_defaults["ansible_connection"]?.try(&.as_s?),
+                   play.connection].compact.any? { |conn_type| connection_plugin_not_found?(conn_type) }
 
           # Deduplicate by connection details - the PLAY's effective
           # spec (play vars win over inventory host vars for the
