@@ -737,6 +737,7 @@ module Krikri
       File.write(basic_py, BASIC_PY_SHIM)
       File.write(File.join(work_dir, "ansible", "module_utils", "distro.py"), DISTRO_PY_SHIM)
       File.write(File.join(work_dir, "ansible", "module_utils", "_text.py"), TEXT_PY_SHIM)
+      File.write(File.join(work_dir, "ansible", "module_utils", "urls.py"), URLS_PY_SHIM)
       common_init = File.join(work_dir, "ansible", "module_utils", "common", "__init__.py")
       text_init = File.join(work_dir, "ansible", "module_utils", "common", "text", "__init__.py")
       Dir.mkdir_p(File.dirname(common_init))
@@ -935,6 +936,44 @@ module Krikri
 
       def to_basestring(value):
           return to_text(value)
+      PYTHON
+
+    # `ansible.module_utils.urls` - role-private modules fetch URLs with
+    # `open_url` (kazoo-ansible.common's own library/publicip.py does
+    # `from ansible.module_utils.urls import *` and then open_url, issue
+    # #826: on a target without ansible-core the import died with
+    # "No module named 'ansible.module_utils.urls'", hard-failing the
+    # task where ansible - whose AnsiballZ payload bundles the real
+    # urls.py - ran the same module past the import, into its own
+    # bytes-JSON failure). Only the open_url surface such modules call
+    # is covered, over python's own urllib: the real call signature and
+    # defaults (timeout=10, validate_certs=True), a .read() that returns
+    # bytes like the real response, and 'urllib2' redirect semantics
+    # that are urllib's own. Client certificates, cookies and
+    # unix-socket transports stay uncovered - no probed module uses
+    # them, and a wrong guess would mask real behavior.
+    URLS_PY_SHIM = <<-PYTHON
+      import urllib.request as _urllib_request
+      import ssl as _ssl
+
+
+      def open_url(url, data=None, headers=None, method=None, use_proxy=True,
+                   force=False, timeout=10, validate_certs=True,
+                   url_username=None, url_password=None, http_agent=None,
+                   force_basic_auth=False, follow_redirects='urllib2',
+                   client_cert=None, client_key=None, cookies=None,
+                   unix_socket=None, ca_path=None, unredirected_headers=None,
+                   **kwargs):
+          req = _urllib_request.Request(url, data=data, headers=headers or {}, method=method)
+          if http_agent:
+              req.add_header('User-agent', http_agent)
+          context = None
+          if url.lower().startswith('https'):
+              context = _ssl.create_default_context(cafile=ca_path)
+              if not validate_certs:
+                  context.check_hostname = False
+                  context.verify_mode = _ssl.CERT_NONE
+          return _urllib_request.urlopen(req, timeout=timeout, context=context)
       PYTHON
 
     # In modern ansible-core the real text-conversion implementation

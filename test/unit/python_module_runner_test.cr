@@ -1,5 +1,6 @@
 require "../minitest_helper"
 require "file_utils"
+require "http/server"
 require "../../src/krikri/python_module_runner"
 # Single-file mode needs the runner's own dependencies spelled out
 # (PythonFilterRunner, commit 1803a3e9; Krikri.non_string_scalar in
@@ -767,6 +768,54 @@ describe Krikri::PythonModuleRunner do
     parsed["named"].as_a.size.must_equal(3)
     parsed["named"][0].as_s.must_equal(os_release_field.call("NAME", false))
     parsed["named"][0].as_s.wont_match(/\d/)
+  end
+
+  it "shims ansible.module_utils.urls for role modules that import open_url" do
+    skip("python3 not available") unless File.exists?("/usr/bin/python3")
+    # The exact shape that hard-failed kazoo-ansible.common's first task
+    # (issue #826): its own library/publicip.py does
+    # `from ansible.module_utils.urls import *` and calls open_url, and
+    # died with "No module named 'ansible.module_utils.urls'" on a
+    # target without ansible-core, while ansible - whose AnsiballZ
+    # payload bundles the real urls.py - ran the same module past the
+    # import. The bundle is written into the module's own directory and
+    # the script dir is sys.path[0], so the shim shadows any installed
+    # ansible-core - the test exercises the shim path deterministically
+    # even on a host that has ansible-core. Served over a loopback HTTP
+    # server so the test needs no outside network; open_url's .read()
+    # must yield the body the way the real response does.
+    work_dir = File.join(Dir.tempdir, "krikri-shim-urls-spec-#{Random.rand(1_000_000)}")
+    Dir.mkdir_p(work_dir)
+    Krikri::PythonModuleRunner.write_module_utils_bundle(work_dir)
+    server = HTTP::Server.new do |ctx|
+      ctx.response.print("1.2.3.4")
+    end
+    address = server.bind_tcp("127.0.0.1", 0)
+    server_done = Channel(Nil).new
+    spawn do
+      server.listen
+      server_done.send(nil)
+    end
+    begin
+      module_path = File.join(work_dir, "publicip_spec.py")
+      File.write(module_path, "import json\n" \
+                              "from ansible.module_utils.urls import open_url\n" \
+                              "response = open_url('http://127.0.0.1:#{address.port}/',\n" \
+                              "  headers={'Metadata-Flavor': 'Google'}, timeout=5)\n" \
+                              "body = response.read()\n" \
+                              "print(json.dumps({'body': body.decode(), 'is_bytes': isinstance(body, bytes)}))\n")
+      stdout_io = IO::Memory.new
+      status = Process.run("/usr/bin/python3", [module_path],
+        input: Process::Redirect::Close, output: stdout_io, error: Process::Redirect::Close)
+      status.success?.must_equal(true)
+      parsed = JSON.parse(stdout_io.to_s)
+      parsed["body"].as_s.must_equal("1.2.3.4")
+      parsed["is_bytes"].as_bool.must_equal(true)
+    ensure
+      server.close
+      server_done.receive
+    end
+    FileUtils.rm_r(work_dir)
   end
 
   it "shims ansible.module_utils.basic for a new-style module on a target without ansible-core" do
