@@ -1,5 +1,6 @@
 require "../run_options"
 require "../deprecation_hint"
+require "../value_origin_chain"
 require "./executor"
 require "krikri-jinja/krikri_jinja"
 require "../jinja_host_context"
@@ -101,6 +102,79 @@ module Krikri
       end
 
       have ? winner : nil
+    end
+
+    # The file position real attributes a TEMPLATED include_role role-name
+    # to: ansible-core 2.19 tags every YAML-sourced scalar with its
+    # defining position and the tag SURVIVES plain container access, so a
+    # name that is a pure variable-access chain (`{{ lib_map[role] }}`)
+    # fails role resolution with the FINAL accessed scalar's own Origin -
+    # the mapped value's position in the defining file, not the include
+    # task's (live-verified vs 2.19.11, vbotka.rsnapshot's
+    # `{{ rsnapshot_ansible_lib[ansible_role_name] }}`). A name whose
+    # value a filter or operator DERIVED (`{{ lib_name | upper }}`) drops
+    # the tag, and real falls back to the name value's own task-file
+    # position - which is what this engine already prints, so every shape
+    # this cannot attribute (non-chain expression, a base variable with no
+    # file origin, a chain that does not reproduce the rendered name)
+    # returns nil and the caller keeps that fallback. Never raises.
+    private def templated_value_lineage_origin(task : Task, host : Host, raw_name : String, rendered_name : String, vars_context : Hash(String, JSON::Any), substitutor : VarSubstitutor) : {String, Int32, Int32}?
+      return nil unless (match = raw_name.match(/\A\{\{(.*)\}\}\z/m))
+      chain = ValueOriginChain.parse?(match[1]) || return nil
+
+      base_origin = var_origin_for(task, host, chain.base)
+      return nil unless base_origin.is_a?(FileVarOrigin) && base_origin.column > 0
+      value = vars_context[chain.base]? || return nil
+
+      # Resolve every dynamic subscript first - the value walk and the
+      # source-map descent must agree on one component sequence.
+      components = [] of String
+      chain.steps.each do |step|
+        case step.kind
+        when :dynamic
+          rendered = substitutor.substitute("{{ #{step.text} }}")
+          return nil if rendered.includes?("{{") || rendered.strip == "undefined"
+          components << rendered.strip
+        else
+          components << step.text
+        end
+      end
+
+      # Walk the merged value along the chain; a step that is neither a
+      # mapping key nor an in-range sequence index means the rendered
+      # name did not come from this shape - unattributable.
+      components.each do |component|
+        if (hash = value.as_h?) && (next_value = hash[component]?)
+          value = next_value
+        elsif (array = value.as_a?) && component =~ /\A\d+\z/ && (position = component.to_i?) && position < array.size
+          value = array[position]
+        else
+          return nil
+        end
+      end
+      return nil unless value.as_s? == rendered_name
+
+      # The base origin's position locates the base value node in its own
+      # file's source map; the chain then descends key-by-key to the
+      # final scalar's own position.
+      begin
+        map = YamlSourceMap.scan(File.read(base_origin.path))
+      rescue
+        return nil
+      end
+      current = map.path_at?(base_origin.line, base_origin.column) || return nil
+      components.each do |component|
+        next_path = "#{current}/#{component}"
+        return nil unless map.at?(next_path)
+        current = next_path
+      end
+      pos = map.at?(current) || return nil
+      {base_origin.path, pos[0], pos[1]}
+    rescue
+      # An origin label must never turn a role-not-found failure into a
+      # crash - any surprise (templating quirk, unexpected value shape)
+      # just leaves the caller on its existing fallback.
+      nil
     end
 
     # The PLAY-LEVEL variable layers only - Ansible's

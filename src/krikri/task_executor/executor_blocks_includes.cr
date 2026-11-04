@@ -2579,7 +2579,7 @@ module Krikri
     # item's own YAML position when the name is exactly the loop
     # variable - the failed count and the unconditional halt are the
     # same as the single-role case below.
-    private def fail_include_role_not_found(task : Task, host : Host, message : String, loop_index : Int32? = nil) : Nil
+    private def fail_include_role_not_found(task : Task, host : Host, message : String, loop_index : Int32? = nil, lineage_origin : {String, Int32, Int32}? = nil) : Nil
       connection_host = host.name
       # Real points the looped case's Origin at the failing ITEM's own
       # position - but only when the role name is exactly the loop
@@ -2591,9 +2591,22 @@ module Krikri
           loop_item_origin = task.include_role_loop_item_origins.try(&.[idx]?)
         end
       end
-      node = if (origin_pos = loop_item_origin || task.include_role_name_origin) && (source_file = task.source_file)
+      # A TEMPLATED non-loop name resolved through a pure variable-access
+      # chain keeps real's value lineage (see
+      # templated_value_lineage_origin): the Origin points at the resolved
+      # value's own defining position, in ITS file - not at the include
+      # task's name value. nil lineage (literal name, tag-destroying
+      # expression, unattributable chain) keeps the name-value Origin.
+      if loop_item_origin
+        origin_pos, origin_file = loop_item_origin, task.source_file
+      elsif lineage_origin
+        origin_pos, origin_file = {lineage_origin[1], lineage_origin[2]}, lineage_origin[0]
+      else
+        origin_pos, origin_file = task.include_role_name_origin, task.source_file
+      end
+      node = if origin_pos && origin_file
                ErrorBlock::Node.new(message,
-                 source_context: ErrorBlock.origin_context(source_file, origin_pos[0], origin_pos[1]))
+                 source_context: ErrorBlock.origin_context(origin_file, origin_pos[0], origin_pos[1]))
              else
                ErrorBlock::Node.new(message)
              end
@@ -3098,7 +3111,15 @@ module Krikri
         # the play HALTS for that host unconditionally - ignore_errors:
         # does NOT apply (live-verified: `failed=1 ignored=0`, the next
         # task never runs, rc=2), unlike every ordinary module failure.
-        fail_include_role_not_found(task, host, ex.message || "role not found", loop_index)
+        # A TEMPLATED name adds real's value lineage on top: the templated
+        # result keeps its source value's origin tag, so a name resolved
+        # through a variable-access chain points the Origin at the
+        # defining file's value position (issue #810) - the looped case
+        # keeps its own per-item Origin rule.
+        lineage_origin = if loop_index.nil? && (raw_name = task.include_role_name) && raw_name.includes?("{{")
+                           templated_value_lineage_origin(task, host, raw_name, role_name, vars_context, substitutor)
+                         end
+        fail_include_role_not_found(task, host, ex.message || "role not found", loop_index, lineage_origin)
         return
       rescue ex
         fail_include(task, host, "Failed to load role '#{role_name}': #{ex.message}")

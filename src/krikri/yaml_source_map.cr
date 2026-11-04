@@ -51,6 +51,18 @@ module Krikri
       @positions[path]?
     end
 
+    # The first (document-order) source-map path whose recorded position
+    # equals (line, column) - for recovering the PATH of a node whose
+    # position is already known (a VarOrigin's value token), so a chain of
+    # container accesses can descend from it to the nested node's own
+    # position. nil when no node starts exactly there.
+    def path_at?(line : Int32, column : Int32) : String?
+      @positions.each do |path, pos|
+        return path if pos[0] == line && pos[1] == column
+      end
+      nil
+    end
+
     # The first (document-order) position whose path ends with *suffix* -
     # for locating a nested var's value inside a file whose top-level
     # wrapping differs by source kind ("0/vars/n/a" in a playbook vs
