@@ -502,6 +502,76 @@ describe "pip plugin" do
         FileUtils.rm_rf(venv)
       end
     end
+
+    # Ansible's _get_pip, in the virtualenv branch, tries the venv's own
+    # pip3 FIRST and only falls back to pip ('pip3', 'pip'). CoffeeITWorks.
+    # ansible_burpui_server (issue #794) recorded cmd
+    # ["/venv_apps/bui/bin/pip3", ...] where krikri ran .../bin/pip - which
+    # also changed pip's own "To update, run: ..." stderr notice wording,
+    # since pip prints the -m form when it was not invoked through the
+    # pip3-style entry point.
+    it "prefers the virtualenv's own pip3 like Ansible's _get_pip" do
+      venv = File.join(Dir.tempdir, "krikri-pip-spec-venv-#{Random::Secure.hex(8)}")
+      pip3_marker = File.join(Dir.tempdir, "krikri-pip3-marker-#{Random::Secure.hex(8)}")
+      pip_marker = File.join(Dir.tempdir, "krikri-pip-marker-#{Random::Secure.hex(8)}")
+      begin
+        FileUtils.cp_r(pip_venv_skeleton, venv)
+        File.write(File.join(venv, "bin", "pip3"), <<-SH
+          #!/bin/sh
+          printf '%s\\n' "$0 $*" >> #{pip3_marker}
+          exit 0
+          SH
+        )
+        File.chmod(File.join(venv, "bin", "pip3"), 0o755)
+        File.write(File.join(venv, "bin", "pip"), <<-SH
+          #!/bin/sh
+          printf '%s\\n' "$0 $*" >> #{pip_marker}
+          exit 1
+          SH
+        )
+        File.chmod(File.join(venv, "bin", "pip"), 0o755)
+
+        result = PluginSpecHelper.run("pip", {
+          "name"       => "pip",
+          "virtualenv" => venv,
+        })
+
+        result["failed"]?.try(&.as_bool).wont_equal(true)
+        File.read(pip3_marker).must_include("bin/pip3")
+        File.exists?(pip_marker).must_equal(false)
+      ensure
+        FileUtils.rm_rf(venv)
+        FileUtils.rm_rf(pip3_marker)
+        FileUtils.rm_rf(pip_marker)
+      end
+    end
+
+    it "falls back to the virtualenv's own pip when pip3 is absent" do
+      venv = File.join(Dir.tempdir, "krikri-pip-spec-venv-#{Random::Secure.hex(8)}")
+      pip_marker = File.join(Dir.tempdir, "krikri-pip-marker-#{Random::Secure.hex(8)}")
+      begin
+        FileUtils.cp_r(pip_venv_skeleton, venv)
+        Dir.glob(File.join(venv, "bin", "pip3*")).each { |script| File.delete(script) }
+        File.write(File.join(venv, "bin", "pip"), <<-SH
+          #!/bin/sh
+          printf '%s\\n' "$0 $*" >> #{pip_marker}
+          exit 0
+          SH
+        )
+        File.chmod(File.join(venv, "bin", "pip"), 0o755)
+
+        result = PluginSpecHelper.run("pip", {
+          "name"       => "pip",
+          "virtualenv" => venv,
+        })
+
+        result["failed"]?.try(&.as_bool).wont_equal(true)
+        File.read(pip_marker).must_include("bin/pip")
+      ensure
+        FileUtils.rm_rf(venv)
+        FileUtils.rm_rf(pip_marker)
+      end
+    end
   end
 
   describe "umask:" do
@@ -1082,6 +1152,144 @@ describe "pip plugin" do
       result["changed"].as_bool.must_equal(true)
     ensure
       FileUtils.rm_rf(shim_dir)
+    end
+  end
+
+  # --- check_mode ------------------------------------------------------
+  #
+  # pip.py's setup_virtualenv opens with `if module.check_mode:
+  # module.exit_json(changed=True)` BEFORE creating anything, and its
+  # check_mode block decides the rest from `pip list --format=freeze`
+  # presence. CoffeeITWorks.ansible_burpui_server (issue #794) leans on
+  # both: its `check_mode: yes` "check only if burpui is installed" task
+  # runs right before `update pip`, so on a cold host Ansible's
+  # update-pip task creates the venv itself and reports changed
+  # (venv_created counts as a change), while a plugin that ignores check
+  # mode runs the probe for real - creating the venv and its package
+  # state early - and then reports ok on the already-existing venv.
+  describe "check_mode" do
+    it "reports changed without creating a missing virtualenv" do
+      venv = File.join(Dir.tempdir, "krikri-pip-spec-venv-#{Random::Secure.hex(8)}")
+      begin
+        result = PluginSpecHelper.run("pip", {
+          "name"                => "pip>=20",
+          "state"               => "present",
+          "virtualenv"          => venv,
+          "virtualenv_command"  => "python3 -m venv",
+          "_ansible_check_mode" => "true",
+        })
+
+        result["failed"]?.try(&.as_bool).wont_equal(true)
+        result["changed"].as_bool.must_equal(true)
+        File.exists?(File.join(venv, "bin", "activate")).must_equal(false)
+      ensure
+        FileUtils.rm_rf(venv)
+      end
+    end
+
+    it "reports ok for a satisfied bare name in an existing virtualenv" do
+      venv = File.join(Dir.tempdir, "krikri-pip-spec-venv-#{Random::Secure.hex(8)}")
+      begin
+        FileUtils.cp_r(pip_venv_skeleton, venv)
+        result = PluginSpecHelper.run("pip", {
+          "name"                => "pip",
+          "virtualenv"          => venv,
+          "_ansible_check_mode" => "true",
+        })
+
+        result["failed"]?.try(&.as_bool).wont_equal(true)
+        result["changed"].as_bool.must_equal(false)
+      ensure
+        FileUtils.rm_rf(venv)
+      end
+    end
+
+    it "reports changed for an unsatisfied version pin in an existing virtualenv" do
+      venv = File.join(Dir.tempdir, "krikri-pip-spec-venv-#{Random::Secure.hex(8)}")
+      begin
+        FileUtils.cp_r(pip_venv_skeleton, venv)
+        result = PluginSpecHelper.run("pip", {
+          "name"                => "pip==0.0.1",
+          "virtualenv"          => venv,
+          "_ansible_check_mode" => "true",
+        })
+
+        result["failed"]?.try(&.as_bool).wont_equal(true)
+        result["changed"].as_bool.must_equal(true)
+      ensure
+        FileUtils.rm_rf(venv)
+      end
+    end
+
+    it "reports changed for state: absent when the package IS present" do
+      venv = File.join(Dir.tempdir, "krikri-pip-spec-venv-#{Random::Secure.hex(8)}")
+      begin
+        FileUtils.cp_r(pip_venv_skeleton, venv)
+        result = PluginSpecHelper.run("pip", {
+          "name"                => "pip",
+          "state"               => "absent",
+          "virtualenv"          => venv,
+          "_ansible_check_mode" => "true",
+        })
+
+        result["failed"]?.try(&.as_bool).wont_equal(true)
+        result["changed"].as_bool.must_equal(true)
+      ensure
+        FileUtils.rm_rf(venv)
+      end
+    end
+
+    it "reports ok for state: absent when the package is missing" do
+      venv = File.join(Dir.tempdir, "krikri-pip-spec-venv-#{Random::Secure.hex(8)}")
+      begin
+        FileUtils.cp_r(pip_venv_skeleton, venv)
+        result = PluginSpecHelper.run("pip", {
+          "name"                => "definitely-not-a-real-package-xyz",
+          "state"               => "absent",
+          "virtualenv"          => venv,
+          "_ansible_check_mode" => "true",
+        })
+
+        result["failed"]?.try(&.as_bool).wont_equal(true)
+        result["changed"].as_bool.must_equal(false)
+      ensure
+        FileUtils.rm_rf(venv)
+      end
+    end
+
+    it "reports changed outright for requirements:, like pip.py's check_mode block" do
+      venv = File.join(Dir.tempdir, "krikri-pip-spec-venv-#{Random::Secure.hex(8)}")
+      begin
+        FileUtils.cp_r(pip_venv_skeleton, venv)
+        result = PluginSpecHelper.run("pip", {
+          "requirements"        => "/tmp/krikri-pip-spec-requirements-does-not-exist.txt",
+          "virtualenv"          => venv,
+          "_ansible_check_mode" => "true",
+        })
+
+        result["failed"]?.try(&.as_bool).wont_equal(true)
+        result["changed"].as_bool.must_equal(true)
+      ensure
+        FileUtils.rm_rf(venv)
+      end
+    end
+
+    it "reports changed outright for state: latest in an existing virtualenv" do
+      venv = File.join(Dir.tempdir, "krikri-pip-spec-venv-#{Random::Secure.hex(8)}")
+      begin
+        FileUtils.cp_r(pip_venv_skeleton, venv)
+        result = PluginSpecHelper.run("pip", {
+          "name"                => "pip",
+          "state"               => "latest",
+          "virtualenv"          => venv,
+          "_ansible_check_mode" => "true",
+        })
+
+        result["failed"]?.try(&.as_bool).wont_equal(true)
+        result["changed"].as_bool.must_equal(true)
+      ensure
+        FileUtils.rm_rf(venv)
+      end
     end
   end
 end
