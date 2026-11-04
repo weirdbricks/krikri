@@ -1,4 +1,5 @@
 require "../minitest_helper"
+require "../../src/krikri/plugin_helpers/pty_command_runner"
 
 # The remote script run's result shaping (issue #298): on a real remote
 # host ansible's script action runs the staged file through a `ssh -tt`
@@ -87,5 +88,65 @@ describe "script plugin remote-pty simulation (issue #298)" do
     result["stderr"].as_s.must_equal("err-one\n")
     result["stdout_lines"].as_a.map(&.as_s).must_equal(["out-one"])
     File.exists?(script).must_equal(true)
+  end
+
+  # Issue #862 (dockpack.base_nodejs): the nodesource setup scripts gate
+  # their color-setup block on `if test -t 1` - under real's `ssh -tt`
+  # session the branch RUNS (and its failing `which tput` lands in the
+  # merged capture), under the old `{ ...; } 2>&1` pipe emulation the
+  # script saw no tty and skipped it silently. The emulation cannot be
+  # patched into producing this: the script has to actually run on a pty.
+  it "runs isatty-gated script branches on a REAL pty, merging stderr in execution order" do
+    skip("no pty could be allocated on this target") unless Krikri::PluginHelpers::PtyCommandRunner.available?
+    script = PluginSpecHelper.tmp_path("pty_isatty.sh")
+    # Line numbers are part of the expectation: bash's "command not
+    # found" error quotes the script's own $0 and the failing line.
+    File.write(script, "#!/bin/bash\nif test -t 1; then # if terminal\n    ncolors=$(missing-command-862 > /dev/null && tput colors) # supports color\nfi\n\necho\necho \"## Installing the NodeSource Node.js v8.x LTS Carbon repo...\"\n")
+    File.chmod(script, 0o755)
+
+    result = PluginSpecHelper.run("script", {"cmd" => script, "__script_ssh_addr" => "203.0.113.9"})
+
+    result["stdout"].as_s.must_equal(
+      "#{script}: line 3: missing-command-862: command not found\r\n" +
+      "\r\n## Installing the NodeSource Node.js v8.x LTS Carbon repo...\r\n"
+    )
+    result["stderr"].as_s.must_equal("Shared connection to 203.0.113.9 closed.\r\n")
+    result["stdout_lines"].as_a.map(&.as_s).must_equal([
+      "#{script}: line 3: missing-command-862: command not found",
+      "",
+      "## Installing the NodeSource Node.js v8.x LTS Carbon repo...",
+    ])
+    result["rc"].as_i.must_equal(0)
+  ensure
+    File.delete(script) if script && File.exists?(script)
+  end
+
+  # Real's script command runs inside the `ssh -tt` session, whose TERM
+  # is the ssh client's (the controller's own, which sshd installs on the
+  # pty) - terminfo-driven script code renders differently without it.
+  # A task `environment:` TERM must still win, matching real's env
+  # prefix (`env K=V ... <script>`) that applies ON TOP of the session.
+  it "forwards the controller TERM into the pty session unless the task environment sets one" do
+    skip("no pty could be allocated on this target") unless Krikri::PluginHelpers::PtyCommandRunner.available?
+    script = PluginSpecHelper.tmp_path("pty_term.sh")
+    File.write(script, "#!/bin/bash\necho TERM=$TERM\n")
+    File.chmod(script, 0o755)
+
+    result = PluginSpecHelper.run("script", {
+      "cmd"               => script,
+      "__script_ssh_addr" => "203.0.113.9",
+      "__script_pty_term" => "xterm-256color",
+    })
+    result["stdout"].as_s.must_equal("TERM=xterm-256color\r\n")
+
+    env_result = PluginSpecHelper.run("script", {
+      "cmd"               => script,
+      "__script_ssh_addr" => "203.0.113.9",
+      "__script_pty_term" => "xterm-256color",
+      "_environment"      => "{\"TERM\": \"dumb\"}",
+    })
+    env_result["stdout"].as_s.must_equal("TERM=dumb\r\n")
+  ensure
+    File.delete(script) if script && File.exists?(script)
   end
 end
