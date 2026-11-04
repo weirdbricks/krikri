@@ -2,6 +2,7 @@ require "http/client"
 require "uri"
 require "base64"
 require "./socket_connect"
+require "./cookie_jar"
 
 module Krikri
   module PluginHelpers
@@ -142,8 +143,12 @@ module Krikri
         options : Options = Options.new,
         redirects_left : Int32 = options.max_redirects,
         auth_attempted : Bool = false,
+        cookie_jar : CookieJar? = nil,
       ) : Result
         raise "too many redirects" if redirects_left < 0
+        # fetch_url creates a fresh jar per call (urls.py), so a nil jar
+        # here is always the top-level entry; every hop reuses the one jar
+        jar = cookie_jar || CookieJar.new
 
         uri = URI.parse(url)
 
@@ -160,49 +165,85 @@ module Krikri
         proxy = effective_proxy(uri, options)
         client, request_target, host_header = client_and_target(uri, options, proxy)
         headers = request_headers(options, auth_attempted)
+        headers = with_jar_cookies(headers, uri, jar)
         headers = proxied_request_headers(headers, host_header, proxy)
-
-        begin
-          client.get(request_target, headers: headers) do |response|
-            if hop = redirect_hop(client, uri, response, url, dest, options, redirects_left, auth_attempted)
-              return hop
-            end
-
-            # Real url_get accepts ONLY 200: anything else (304 included -
-            # Ansible handles that one a branch higher up, in url_get itself)
-            # is urllib's HTTPError, whose str() is "HTTP Error <code>:
-            # <reason>" with the reason phrase the SERVER sent.
-            raise http_error(response) unless response.status_code == 200
-
-            write_body(response, dest, uri.scheme.to_s)
-            Result.new(final_url: url, headers: response.headers)
-          end
-        rescue ex : FetchError
-          raise ex
-        rescue ex : IO::TimeoutError
-          raise timeout_failure(ex)
-        rescue Socket::Addrinfo::Error
-          # getaddrinfo EAI_NONAME surfaces in urllib as socket.gaierror -2.
-          raise FetchError.new(FetchError::Kind::UrlError, "Request failed: <urlopen error [Errno -2] Name or service not known>")
-        rescue ex : Socket::ConnectError
-          # real fetch_url's failure msg is urllib's own URLError text
-          # ("Request failed: <urlopen error [Errno 111] Connection
-          # refused>"); Crystal's connect reports the wrong errno for a
-          # refused connect, so rebuild it from a re-probe (see
-          # SocketConnect) and only fall back to Crystal's wording when
-          # even that cannot name the error.
-          text = SocketConnect.urlopen_error_text(uri, ex) ||
-                 "<urlopen error #{ex.message || ex.class.name}>"
-          raise FetchError.new(FetchError::Kind::UrlError, "Request failed: #{text}")
-        rescue ex : OpenSSL::SSL::Error
-          reason = hostname_mismatch_reason(uri)
-          if reason
-            raise FetchError.new(FetchError::Kind::UrlError, "Request failed: <urlopen error [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: #{reason} (_ssl.c:1147)>")
-          end
-          raise ex
-        end
+        hop_response(client, uri, request_target, headers, url, dest, options, redirects_left, auth_attempted, jar)
       ensure
         client.try(&.close)
+      end
+
+      # Ansible's HTTPCookieProcessor adds the jar's matching cookies to
+      # every request, redirect hops included; a user-supplied Cookie
+      # header wins and the processor stays out (python's
+      # add_cookie_header skips when the request already carries one).
+      # Dup before adding: options.headers belongs to the caller and is
+      # re-derived on every hop, where a different host needs different
+      # cookies.
+      private def self.with_jar_cookies(headers : HTTP::Headers, uri : URI, jar : CookieJar) : HTTP::Headers
+        cookie_header = jar.cookie_header(uri)
+        return headers if cookie_header.nil? || headers.has_key?("Cookie")
+
+        headers = headers.dup
+        headers["Cookie"] = cookie_header
+        headers
+      end
+
+      # One hop's request and response handling, with fetch_url's
+      # exception-to-failure-kind mapping around it.
+      private def self.hop_response(
+        client : HTTP::Client,
+        uri : URI,
+        request_target : String,
+        headers : HTTP::Headers,
+        url : String,
+        dest : String,
+        options : Options,
+        redirects_left : Int32,
+        auth_attempted : Bool,
+        jar : CookieJar,
+      ) : Result
+        client.get(request_target, headers: headers) do |response|
+          # The processor harvests each response's Set-Cookie into the
+          # one jar BEFORE the redirect/auth decisions, so the next
+          # request - whichever branch takes it - already carries them.
+          jar.store(uri, response.headers)
+
+          if hop = redirect_hop(client, uri, response, url, dest, options, redirects_left, auth_attempted, jar)
+            return hop
+          end
+
+          # Real url_get accepts ONLY 200: anything else (304 included -
+          # Ansible handles that one a branch higher up, in url_get itself)
+          # is urllib's HTTPError, whose str() is "HTTP Error <code>:
+          # <reason>" with the reason phrase the SERVER sent.
+          raise http_error(response) unless response.status_code == 200
+
+          write_body(response, dest, uri.scheme.to_s)
+          Result.new(final_url: url, headers: response.headers)
+        end
+      rescue ex : FetchError
+        raise ex
+      rescue ex : IO::TimeoutError
+        raise timeout_failure(ex)
+      rescue Socket::Addrinfo::Error
+        # getaddrinfo EAI_NONAME surfaces in urllib as socket.gaierror -2.
+        raise FetchError.new(FetchError::Kind::UrlError, "Request failed: <urlopen error [Errno -2] Name or service not known>")
+      rescue ex : Socket::ConnectError
+        # real fetch_url's failure msg is urllib's own URLError text
+        # ("Request failed: <urlopen error [Errno 111] Connection
+        # refused>"); Crystal's connect reports the wrong errno for a
+        # refused connect, so rebuild it from a re-probe (see
+        # SocketConnect) and only fall back to Crystal's wording when
+        # even that cannot name the error.
+        text = SocketConnect.urlopen_error_text(uri, ex) ||
+               "<urlopen error #{ex.message || ex.class.name}>"
+        raise FetchError.new(FetchError::Kind::UrlError, "Request failed: #{text}")
+      rescue ex : OpenSSL::SSL::Error
+        reason = hostname_mismatch_reason(uri)
+        if reason
+          raise FetchError.new(FetchError::Kind::UrlError, "Request failed: <urlopen error [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: #{reason} (_ssl.c:1147)>")
+        end
+        raise ex
       end
 
       # Host names the ORIGIN, not the proxy hop the request travels over
@@ -498,12 +539,13 @@ module Krikri
         options : Options,
         redirects_left : Int32,
         auth_attempted : Bool,
+        cookie_jar : CookieJar,
       ) : Result?
         challenge_relevant = !auth_attempted && !options.force_basic_auth
         if challenge_relevant && response.status_code == 401 &&
            options.username && options.password
           client.close
-          return download_with_info(url, dest, options, redirects_left, auth_attempted: true)
+          return download_with_info(url, dest, options, redirects_left, auth_attempted: true, cookie_jar: cookie_jar)
         end
 
         # urllib's HTTPRedirectHandler follows exactly 301/302/303/307 for
@@ -518,7 +560,7 @@ module Krikri
         if {301, 302, 303, 307}.includes?(response.status_code) &&
            (location = response.headers["Location"]?) && !location.empty?
           client.close
-          return download_with_info(resolve_redirect(uri, location), dest, redirect_options(options), redirects_left - 1)
+          return download_with_info(resolve_redirect(uri, location), dest, redirect_options(options), redirects_left - 1, cookie_jar: cookie_jar)
         end
 
         nil

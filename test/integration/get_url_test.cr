@@ -69,6 +69,48 @@ private GET_URL_TEST_SERVER = HTTP::Server.new do |context|
     # urllib only follows 301/302/303/307; a 308 is reported as the
     # failure itself, with or without a Location header (issue #737).
     context.response.status_code = 308
+  when "/cookie-set-echo.txt"
+    # Sets one cookie, then bounces to the echo route: proves the cookie
+    # comes back on the very next hop (ansible's HTTPCookieProcessor
+    # behaviour that xilonz.trellis_nixstats' auth-flow download needed).
+    context.response.status_code = 302
+    context.response.headers["Set-Cookie"] = "nixflow=step1; path=/"
+    context.response.headers["Location"] = "/cookie-echo.txt"
+  when "/cookie-flow-start.txt"
+    # The issue #868 shape: an auth-flow chain that only converges once
+    # the flow's own cookie travels with the hops - a cookie-less client
+    # is bounced to the gate again (each redirect minting a fresh URL, so
+    # python's same-URL loop detector never fires) until the redirect
+    # budget dies with "too many redirects".
+    context.response.status_code = 302
+    context.response.headers["Set-Cookie"] = "nixflow=step1; path=/"
+    context.response.headers["Location"] = "/cookie-flow-gate.txt"
+  when "/cookie-flow-gate.txt"
+    if context.request.headers["Cookie"]?
+      context.response.status_code = 200
+      context.response.headers["Content-Length"] = FILE_CONTENT.bytesize.to_s
+      context.response.print(FILE_CONTENT)
+    else
+      context.response.status_code = 302
+      context.response.headers["Location"] = "/cookie-flow-gate.txt"
+    end
+  when "/cookie-echo.txt"
+    # Echoes the request's Cookie header verbatim ("none" when absent).
+    context.response.status_code = 200
+    body = context.request.headers["Cookie"]? || "none"
+    context.response.headers["Content-Length"] = body.bytesize.to_s
+    context.response.print(body)
+  when "/cookie-host-hop.txt"
+    # Sets a host-only cookie (no Domain attribute) on the request's own
+    # host, then bounces to the OTHER loopback spelling: python's jar
+    # scopes such a cookie to the setting host only, so the bounce must
+    # carry nothing.
+    host_header = context.request.headers["Host"]
+    host, _, port = host_header.rpartition(':')
+    other = host == "127.0.0.1" ? "localhost" : "127.0.0.1"
+    context.response.status_code = 302
+    context.response.headers["Set-Cookie"] = "hostonly=yes; path=/"
+    context.response.headers["Location"] = "http://#{other}:#{port}/cookie-echo.txt"
   when "/sha256sums.txt"
     context.response.status_code = 200
     context.response.print("#{FILE_CHECKSUM}  file.txt\n0000000000000000000000000000000000000000000000000000000000000000  other.txt\n")
@@ -1191,6 +1233,58 @@ describe "get_url plugin" do
 
     result["changed"].as_bool.must_equal(true)
     File.read(dest).must_equal(FILE_CONTENT)
+  ensure
+    File.delete(dest) if dest && File.exists?(dest)
+  end
+
+  it "sends a Set-Cookie response's cookie back on the next redirect hop" do
+    # Ansible's fetch_url ALWAYS attaches a CookieJar + HTTPCookieProcessor
+    # (urls.py), so each response's Set-Cookie feeds the jar and the next
+    # request - every redirect hop included - carries the matching cookies
+    # back. get_url used to send nothing, which made auth-flow redirect
+    # chains diverge: xilonz.trellis_nixstats' agent download only
+    # converges (to the login page ansible then happily saves) once the
+    # flow's csrf/session cookies travel with the hops; a cookie-less
+    # client is redirected forever and dies on the redirect budget with
+    # "too many redirects" (issue #868).
+    dest = File.tempname("get-url-spec")
+
+    result = PluginSpecHelper.run("get_url", {"url" => "#{GET_URL_TEST_BASE}/cookie-set-echo.txt", "dest" => dest})
+
+    result["changed"].as_bool.must_equal(true)
+    File.read(dest).must_equal("nixflow=step1")
+  ensure
+    File.delete(dest) if dest && File.exists?(dest)
+  end
+
+  it "converges a cookie-gated redirect chain instead of exhausting the redirect budget" do
+    # The issue #868 shape itself: the gate keeps bouncing a cookie-less
+    # client to itself (fresh URL each time, like the webpros login flow's
+    # fresh flow ids) until "too many redirects"; with the cookie the
+    # chain lands on a 200 and the download succeeds.
+    dest = File.tempname("get-url-spec")
+
+    result = PluginSpecHelper.run("get_url", {"url" => "#{GET_URL_TEST_BASE}/cookie-flow-start.txt", "dest" => dest})
+
+    result["changed"].as_bool.must_equal(true)
+    File.read(dest).must_equal(FILE_CONTENT)
+  ensure
+    File.delete(dest) if dest && File.exists?(dest)
+  end
+
+  it "keeps a host-only Set-Cookie scoped to the setting host across a cross-host redirect" do
+    # A Set-Cookie without a Domain attribute is host-only (python's jar
+    # stores it under the request host, ".local"-suffixed when dot-less),
+    # so bouncing from 127.0.0.1 to localhost must NOT carry it - ansible
+    # sends nothing where a whole-jar-everywhere implementation would leak
+    # it to the redirect target.
+    port = GET_URL_TEST_ADDRESS.port
+    dest = File.tempname("get-url-spec")
+
+    result = PluginSpecHelper.run("get_url", {"url" => "http://127.0.0.1:#{port}/cookie-host-hop.txt", "dest" => dest})
+
+    result["changed"].as_bool.must_equal(true)
+    File.read(dest).must_equal("none")
   ensure
     File.delete(dest) if dest && File.exists?(dest)
   end
