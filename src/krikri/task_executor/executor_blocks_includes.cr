@@ -328,6 +328,14 @@ module Krikri
           # it. Round 2100407, oVirt.image-template's
           # qcow2_image.yml:173.
           raise ex
+        rescue ex : PlaybookParser::NonDictVarsError
+          # Same bypass - a runtime-loaded file's own non-mapping
+          # `vars:` is ansible-core's whole-run Base._load_vars
+          # refusal (rc=4, no recap, live-verified vs 2.19.11 for an
+          # include_tasks:-loaded file), not a per-task failure. The
+          # exception carries the [ERROR] render; the play-loop rescue
+          # in krikri-playbook.cr prints it (issue #815).
+          raise ex
         rescue ex
           group_hosts.each { |host| fail_include(task, host, "Failed to load included tasks: #{ex.message}") }
         end
@@ -2482,6 +2490,11 @@ module Krikri
     rescue ex : PlaybookParser::InvalidIncludeAttributeError
       # Same bypass as the batched include path above - see there.
       raise ex
+    rescue ex : PlaybookParser::NonDictVarsError
+      # Same bypass as the batched include path above - a runtime-loaded
+      # file's own non-mapping `vars:` is the whole-run rc=4 refusal
+      # (issue #815), not a per-task failure.
+      raise ex
     rescue ex
       fail_include(task, host, "Failed to load included tasks: #{ex.message}")
       :ok
@@ -3121,6 +3134,15 @@ module Krikri
                          end
         fail_include_role_not_found(task, host, ex.message || "role not found", loop_index, lineage_origin)
         return
+      rescue ex : PlaybookParser::NonDictVarsError
+        # Same bypass as UnresolvedModuleError's above: an include_role:'d
+        # role whose own tasks carry a non-mapping `vars:` aborts the
+        # whole run in Ansible (Base._load_vars load refusal, rc=4, no
+        # recap, live-verified vs 2.19.11), not a per-task "Failed to
+        # load role" failure. The exception carries the [ERROR] render;
+        # the play-loop rescue in krikri-playbook.cr prints it (issue
+        # #815).
+        raise ex
       rescue ex
         fail_include(task, host, "Failed to load role '#{role_name}': #{ex.message}")
         return

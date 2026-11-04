@@ -876,6 +876,15 @@ rescue ex : Krikri::InvalidTaskAttributeError
     STDERR.puts "[ERROR]: #{ex.message}".colorize(:red)
   end
   exit 4
+rescue ex : Krikri::PlaybookParser::NonDictVarsError
+  # A non-mapping `vars:` on a task, handler, block, play, roles: entry
+  # or include/import line is ansible-core's own Base._load_vars
+  # whole-run load refusal (rc=4, no play banner - live-verified vs
+  # 2.19.11 for every one of those classes). The [ERROR] + Origin block
+  # was rendered at the raise site, where the source map lives
+  # (issue #815, lullis.certbot_nginx).
+  STDERR.print ex.render
+  exit 4
 rescue ex : Krikri::RoleNotFoundError
   # A `roles:` entry (play-level or a role's own meta/main.yml
   # dependency) naming a role not found on disk is Ansible's own
@@ -1519,6 +1528,14 @@ playbook.plays.each_with_index do |play, _play_index|
       else
         STDERR.puts "[ERROR]: #{ex.message}".colorize(:red)
       end
+      exit 4
+    rescue ex : Krikri::PlaybookParser::NonDictVarsError
+      # Same whole-run abort discovered by a runtime-loaded file's own
+      # non-mapping `vars:` - ansible-core's Base._load_vars refusal
+      # (rc=4, no recap, live-verified vs 2.19.11 for an
+      # include_tasks:-loaded file's bad vars). The render was built at
+      # the raise site (issue #815).
+      STDERR.print ex.render
       exit 4
     end
     unavailable_modules_found.concat(executor.reachable_unavailable_modules)

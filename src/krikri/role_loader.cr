@@ -168,8 +168,13 @@ module Krikri
       chain.add(role_dir)
       begin
         load_tasks_file(resolve_role_tasks_path(role_dir, tasks_from), play, nil, role_dir, playbook_dir)
-        load_tasks_file(find_main_file(File.join(role_dir, "handlers")) || File.join(role_dir, "handlers", "main.yml"), play, nil, role_dir, playbook_dir)
+        load_tasks_file(find_main_file(File.join(role_dir, "handlers")) || File.join(role_dir, "handlers", "main.yml"), play, nil, role_dir, playbook_dir, handler: true)
       rescue e : RemovedActionError
+        raise e
+      rescue e : PlaybookParser::NonDictVarsError
+        # A non-mapping `vars:` is Ansible's own load refusal (rc=4,
+        # issue #815) - the preload must not swallow it into silence; the
+        # real role load below re-raises the same error to the play loop.
         raise e
       rescue
       ensure
@@ -296,6 +301,12 @@ module Krikri
       raise "Role entry missing 'role' or 'name'" unless name
 
       vars = Hash(String, JSON::Any).new
+      # A non-mapping `vars:` on a roles: entry (or a meta/main.yml
+      # dependency - both load through here) is ansible-core's own
+      # playbook-load refusal: "Vars in a RoleInclude must be specified
+      # as a dictionary.", rc=4, before any play banner, live-verified vs
+      # 2.19.11 for both shapes (issue #815).
+      refuse_non_dict_entry_vars(hash, origin_file, source_map, path_prefix)
       if vars_yaml = hash["vars"]?.try(&.as_h?)
         vars_yaml.each do |key, value|
           key_str = key.to_s
@@ -363,6 +374,23 @@ module Krikri
       role_timeout = PlaybookParser.parse_timeout_value(hash["timeout"]?)
 
       {name, version, vars, tags, role_when, origins, role_timeout}
+    end
+
+    # Refuses a non-mapping `vars:` on a roles:/dependency entry the way
+    # ansible-core's RoleInclude field load does (issue #815): extracted
+    # from parse_role_entry to keep that method's cyclomatic complexity
+    # within ameba's limit.
+    private def self.refuse_non_dict_entry_vars(hash : Hash(YAML::Any, YAML::Any), origin_file : String?, source_map : YamlSourceMap?, path_prefix : String?) : Nil
+      return unless (entry_vars_raw = hash["vars"]?) && !entry_vars_raw.raw.nil? && entry_vars_raw.as_h?.nil?
+
+      message = "Vars in a RoleInclude must be specified as a dictionary."
+      pos = source_map.try(&.at?("#{path_prefix}/vars")) if path_prefix
+      render = if pos && origin_file
+                 PlaybookParser.origin_error_render_at(message, origin_file, source_map, pos)
+               else
+                 "[ERROR]: #{message}\n\n"
+               end
+      raise PlaybookParser::NonDictVarsError.new(render)
     end
 
     # One roles:/dependency entry var's defining position - nil when no
@@ -654,7 +682,7 @@ module Krikri
       play.task_timeout_expr = role_timeout[1] if role_timeout[1]
       begin
         role_tasks = load_tasks_file(tasks_path, play, known_vars, role_dir, playbook_dir)
-        role_handlers = load_tasks_file(find_main_file(File.join(role_dir, "handlers")) || File.join(role_dir, "handlers", "main.yml"), play, known_vars, role_dir, playbook_dir)
+        role_handlers = load_tasks_file(find_main_file(File.join(role_dir, "handlers")) || File.join(role_dir, "handlers", "main.yml"), play, known_vars, role_dir, playbook_dir, handler: true)
       ensure
         play.task_timeout = saved_task_timeout
         play.task_timeout_expr = saved_task_timeout_expr
@@ -1585,7 +1613,7 @@ module Krikri
       task
     end
 
-    private def self.load_tasks_file(path : String, play : Play, known_vars : Hash(String, JSON::Any)? = nil, role_dir : String? = nil, playbook_dir : String? = nil) : Array(Task)
+    private def self.load_tasks_file(path : String, play : Play, known_vars : Hash(String, JSON::Any)? = nil, role_dir : String? = nil, playbook_dir : String? = nil, handler : Bool = false) : Array(Task)
       return [] of Task unless File.exists?(path)
 
       yaml = cached_yaml(path)
@@ -1600,7 +1628,7 @@ module Krikri
       saved = play.role_meta_collections
       play.role_meta_collections = role_meta_collections(role_dir) if role_dir
       begin
-        PlaybookParser.parse_tasks(yaml.as_a, play, "task in #{path}", File.dirname(path), known_vars, role_dir, playbook_dir, path, cached_source_map(path))
+        PlaybookParser.parse_tasks(yaml.as_a, play, "task in #{path}", File.dirname(path), known_vars, role_dir, playbook_dir, path, cached_source_map(path), handler: handler)
       ensure
         play.role_meta_collections = saved
       end

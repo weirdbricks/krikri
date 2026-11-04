@@ -2193,6 +2193,14 @@ module Krikri
 
       yaml.as_a.each_with_index do |play_yaml, index|
         if import_path = extract_import_playbook(play_yaml)
+          # PlaybookInclude's own `vars:` field load refuses a non-mapping
+          # value on the import_playbook: line itself at load time (rc=4,
+          # live-verified vs 2.19.11: "Vars in a PlaybookInclude must be
+          # specified as a dictionary.") - checked before the imported
+          # file even parses, matching real's load order (issue #815).
+          if (imp_pb_vars_raw = play_yaml["vars"]?) && !imp_pb_vars_raw.raw.nil? && imp_pb_vars_raw.as_h?.nil?
+            raise_non_dict_vars("PlaybookInclude", File.expand_path(path), source_map, index.to_s)
+          end
           begin
             imported = parse(File.expand_path(import_path, playbook_dir))
             playbook.plays.concat(imported.plays)
@@ -2233,6 +2241,11 @@ module Krikri
           rescue ex : IncludeDirectiveError
             # Same bypass - bad include/include-role directive arguments
             # are Ansible's own playbook-load refusal (rc=4).
+            raise ex
+          rescue ex : NonDictVarsError
+            # Same bypass - a non-mapping `vars:` on the imported play or
+            # the import line itself is Ansible's own load refusal (rc=4,
+            # issue #815).
             raise ex
           rescue ex
             puts "Warning: Failed to import playbook '#{import_path}': #{ex.message}".colorize(:yellow)
@@ -2330,6 +2343,12 @@ module Krikri
           # directive are Ansible's own playbook-load refusal
           # (TaskInclude.check_options / IncludeRole.load run at load
           # time, rc=4, see that class's own comment).
+          raise ex
+        rescue ex : NonDictVarsError
+          # Same bypass - a non-mapping `vars:` on the play, a task, a
+          # block, a handler or a roles: entry is Ansible's own
+          # playbook-load refusal (rc=4, issue #815), not a per-play
+          # soft-skip.
           raise ex
         rescue ex
           puts "Warning: Failed to parse play #{index + 1}: #{ex.message}".colorize(:yellow)
@@ -2603,6 +2622,12 @@ module Krikri
       end
 
       # Parse play-level vars
+      # A non-mapping play `vars:` is ansible-core's own playbook-load
+      # refusal - Base._load_vars with the Play class name, rc=4, before
+      # any play banner (issue #815).
+      if (play_vars_raw = yaml["vars"]?) && !play_vars_raw.raw.nil? && play_vars_raw.as_h?.nil?
+        raise_non_dict_vars("Play", source_file, source_map, index.to_s)
+      end
       if vars_yaml = yaml["vars"]?.try(&.as_h?)
         vars_yaml.each do |key, value|
           play.vars[key.to_s] = Vault.maybe_decrypt_json(Vault.yaml_value_to_json(value))
@@ -2687,7 +2712,7 @@ module Krikri
       # Parse handlers
       own_handlers = [] of Task
       if handlers_yaml = yaml["handlers"]?.try(&.as_a?)
-        own_handlers = parse_tasks(handlers_yaml, play, "handler", playbook_dir, playbook_dir: playbook_dir, source_file: source_file, source_map: source_map, source_prefix: "#{index}/handlers")
+        own_handlers = parse_tasks(handlers_yaml, play, "handler", playbook_dir, playbook_dir: playbook_dir, source_file: source_file, source_map: source_map, source_prefix: "#{index}/handlers", handler: true)
       end
       play.handlers = role_handlers + own_handlers
 
@@ -2735,21 +2760,21 @@ module Krikri
     # loads go through here too, and a load Ansible refuses (a removed
     # bare `include:` aborts before its task vars are ever evaluated)
     # must not emit the reserved-name warnings it already scanned.
-    def self.parse_tasks(tasks_yaml : Array(YAML::Any), play : Play, context : String, file_dir : String, known_vars : Hash(String, JSON::Any)? = nil, role_path : String? = nil, playbook_dir : String? = nil, source_file : String? = nil, source_map : YamlSourceMap? = nil, source_prefix : String = "") : Array(Task)
+    def self.parse_tasks(tasks_yaml : Array(YAML::Any), play : Play, context : String, file_dir : String, known_vars : Hash(String, JSON::Any)? = nil, role_path : String? = nil, playbook_dir : String? = nil, source_file : String? = nil, source_map : YamlSourceMap? = nil, source_prefix : String = "", handler : Bool = false) : Array(Task)
       collecting_reserved_warnings do
-        parse_tasks_uncollected(tasks_yaml, play, context, file_dir, known_vars, role_path, playbook_dir, source_file, source_map, source_prefix)
+        parse_tasks_uncollected(tasks_yaml, play, context, file_dir, known_vars, role_path, playbook_dir, source_file, source_map, source_prefix, handler)
       end
     end
 
-    private def self.parse_tasks_uncollected(tasks_yaml : Array(YAML::Any), play : Play, context : String, file_dir : String, known_vars : Hash(String, JSON::Any)? = nil, role_path : String? = nil, playbook_dir : String? = nil, source_file : String? = nil, source_map : YamlSourceMap? = nil, source_prefix : String = "") : Array(Task)
+    private def self.parse_tasks_uncollected(tasks_yaml : Array(YAML::Any), play : Play, context : String, file_dir : String, known_vars : Hash(String, JSON::Any)? = nil, role_path : String? = nil, playbook_dir : String? = nil, source_file : String? = nil, source_map : YamlSourceMap? = nil, source_prefix : String = "", handler : Bool = false) : Array(Task)
       tasks = [] of Task
 
       tasks_yaml.each_with_index do |task_yaml, index|
         begin
-          if imported = try_parse_import_tasks(task_yaml, play, file_dir, known_vars, role_path, playbook_dir, source_file, source_map, source_prefix, index)
+          if imported = try_parse_import_tasks(task_yaml, play, file_dir, known_vars, role_path, playbook_dir, source_file, source_map, source_prefix, index, handler)
             tasks.concat(imported)
           else
-            task = parse_task(task_yaml, index, play, file_dir, known_vars, role_path, playbook_dir, source_file, source_map, source_prefix)
+            task = parse_task(task_yaml, index, play, file_dir, known_vars, role_path, playbook_dir, source_file, source_map, source_prefix, handler)
             stamp_task_source(task, source_file, source_map, source_prefix, index)
             tasks << task
           end
@@ -2825,6 +2850,11 @@ module Krikri
           # (TaskInclude.check_options / IncludeRole.load run at load
           # time, rc=4, see that class's own comment), not a per-task
           # graceful skip.
+          raise ex
+        rescue ex : NonDictVarsError
+          # Same bypass - a non-mapping `vars:` is ansible-core's
+          # Base._load_vars playbook-load refusal (rc=4, issue #815),
+          # not a per-task graceful skip.
           raise ex
         rescue ex
           puts "Warning: Skipping #{context} #{index + 1}: #{ex.message}".colorize(:yellow)
@@ -2955,7 +2985,7 @@ module Krikri
       parts[0...tasks_index].join(File::SEPARATOR)
     end
 
-    private def self.try_parse_import_tasks(yaml : YAML::Any, play : Play, file_dir : String, known_vars : Hash(String, JSON::Any)? = nil, role_path : String? = nil, playbook_dir : String? = nil, source_file : String? = nil, source_map : YamlSourceMap? = nil, source_prefix : String = "", source_index : Int32 = 0) : Array(Task)?
+    private def self.try_parse_import_tasks(yaml : YAML::Any, play : Play, file_dir : String, known_vars : Hash(String, JSON::Any)? = nil, role_path : String? = nil, playbook_dir : String? = nil, source_file : String? = nil, source_map : YamlSourceMap? = nil, source_prefix : String = "", source_index : Int32 = 0, handler : Bool = false) : Array(Task)?
       hash = yaml.as_h?
       return nil unless hash
 
@@ -2980,6 +3010,14 @@ module Krikri
       if hash["static"]?
         raise InvalidIncludeAttributeError.new("static", "TaskInclude",
           include_attribute_render("static", "TaskInclude", source_file, source_map, task_source_prefix(source_prefix, source_index)))
+      end
+
+      # The import_tasks: line's own `vars:` (inherited by every task the
+      # import inlines) must be a mapping - TaskInclude's field load
+      # refuses anything else at playbook-load time (HandlerTaskInclude's
+      # own wording inside a handler, live-verified vs 2.19.11).
+      if (import_vars_raw = hash["vars"]?) && !import_vars_raw.raw.nil? && import_vars_raw.as_h?.nil?
+        raise_non_dict_vars(handler ? "HandlerTaskInclude" : "TaskInclude", source_file, source_map, task_source_prefix(source_prefix, source_index))
       end
 
       # Ansible's TaskInclude.check_options runs at PLAYBOOK-LOAD
@@ -3543,7 +3581,7 @@ module Krikri
     end
 
     # Parse a single task
-    private def self.parse_task(yaml : YAML::Any, index : Int32, play : Play, file_dir : String, known_vars : Hash(String, JSON::Any)? = nil, role_path : String? = nil, playbook_dir : String? = nil, source_file : String? = nil, source_map : YamlSourceMap? = nil, source_prefix : String = "") : Task
+    private def self.parse_task(yaml : YAML::Any, index : Int32, play : Play, file_dir : String, known_vars : Hash(String, JSON::Any)? = nil, role_path : String? = nil, playbook_dir : String? = nil, source_file : String? = nil, source_map : YamlSourceMap? = nil, source_prefix : String = "", handler : Bool = false) : Task
       unless yaml.as_h?
         raise "Task must be a YAML mapping (hash)"
       end
@@ -3566,7 +3604,7 @@ module Krikri
       name = task_hash["name"]?.try(&.as_s?)
 
       if block_yaml = task_hash["block"]?.try(&.as_a?)
-        return parse_block_task(name || "block", task_hash, block_yaml, play, file_dir, known_vars, role_path, playbook_dir, source_file, source_map, source_prefix, index)
+        return parse_block_task(name || "block", task_hash, block_yaml, play, file_dir, known_vars, role_path, playbook_dir, source_file, source_map, source_prefix, index, handler)
       end
 
       # include_tasks: - Ansible's TaskInclude.check_options runs at
@@ -3581,7 +3619,7 @@ module Krikri
           source_file, source_map, source_prefix, index)
         raise "include_tasks: missing a file path" unless include_tasks_file
         include_tasks_task = parse_include_tasks(name || include_tasks_written, task_hash, include_tasks_file, play, file_dir,
-          include_file_native_value(include_tasks_value), source_file, source_map, source_prefix, index)
+          include_file_native_value(include_tasks_value), source_file, source_map, source_prefix, index, handler)
         include_tasks_task.has_explicit_name = !name.nil?
         include_tasks_task.written_action = include_tasks_written
         return include_tasks_task
@@ -3726,7 +3764,7 @@ module Krikri
         # short) - real (2.20.1) prints `TASK [ansible.builtin.meta]` for
         # an unnamed `ansible.builtin.meta:` task, same echo-the-source-
         # spelling rule as every other unnamed task (issue #685).
-        meta_task = parse_meta_task(name || written_directive_key(task_hash, "meta"), task_hash, meta_yaml, source_file, source_map, source_prefix, index)
+        meta_task = parse_meta_task(name || written_directive_key(task_hash, "meta"), task_hash, meta_yaml, source_file, source_map, source_prefix, index, handler)
         meta_task.has_explicit_name = !name.nil?
         return meta_task
       end
@@ -3734,7 +3772,7 @@ module Krikri
       if include_vars_yaml = directive(task_hash, "include_vars")
         # An unnamed task's banner is the action AS WRITTEN (FQCN or short)
         written = ["include_vars", "ansible.builtin.include_vars", "ansible.legacy.include_vars"].find { |key| task_hash.has_key?(key) } || "include_vars"
-        include_vars_task = parse_include_vars_task(name || written, task_hash, include_vars_yaml, source_file, source_map, source_prefix, index, play)
+        include_vars_task = parse_include_vars_task(name || written, task_hash, include_vars_yaml, source_file, source_map, source_prefix, index, play, handler)
         include_vars_task.has_explicit_name = !name.nil?
         return include_vars_task
       end
@@ -3749,7 +3787,7 @@ module Krikri
       if va_spec_yaml = directive(task_hash, "validate_argument_spec")
         # An unnamed task's banner is the action AS WRITTEN (FQCN or short)
         written = ["validate_argument_spec", "ansible.builtin.validate_argument_spec", "ansible.legacy.validate_argument_spec"].find { |key| task_hash.has_key?(key) } || "validate_argument_spec"
-        va_spec_task = parse_validate_argument_spec_task(name || written, task_hash, va_spec_yaml, play)
+        va_spec_task = parse_validate_argument_spec_task(name || written, task_hash, va_spec_yaml, play, handler, source_file, source_map, source_prefix, index)
         va_spec_task.has_explicit_name = !name.nil?
         return va_spec_task
       end
@@ -4275,7 +4313,7 @@ module Krikri
       end
 
       # Parse task-level settings - FIXED to handle boolean values safely
-      parse_common_task_attributes(task, task_hash, play)
+      parse_common_task_attributes(task, task_hash, play, handler ? "Handler" : "Task", source_file, source_map, source_prefix, index)
       task.register = task_hash["register"]?.try do |v|
         register_value = safe_yaml_to_string(v)
         validate_register_name(register_value, source_file, source_map, task_source_prefix(source_prefix, index))
@@ -5202,7 +5240,7 @@ module Krikri
       end
     end
 
-    private def self.parse_common_task_attributes(task : Task, task_hash : Hash(YAML::Any, YAML::Any), play : Play? = nil) : Nil
+    private def self.parse_common_task_attributes(task : Task, task_hash : Hash(YAML::Any, YAML::Any), play : Play? = nil, vars_kind : String = "Task", source_file : String? = nil, source_map : YamlSourceMap? = nil, source_prefix : String = "", source_index : Int32 = 0) : Nil
       task.when_condition = task_hash["when"]?.try { |v| condition_to_string(v) }
       task.when_condition_list = task_hash["when"]?.try { |v| condition_to_list(v) }
       # A templated ignore_errors: keeps its parse-time guess in
@@ -5247,6 +5285,14 @@ module Krikri
         task.tags = flatten_tag_list(tags_yaml)
       end
 
+      # A non-mapping `vars:` (a sequence of single-key mappings is the
+      # shape real roles ship) is ansible-core's own playbook-load refusal
+      # - Base._load_vars, rc=4, before any play banner - never a silently
+      # dropped keyword (issue #815, lullis.certbot_nginx's "install
+      # vhosts" task). An explicit null `vars:` stays legal.
+      if (vars_raw = task_hash["vars"]?) && !vars_raw.raw.nil? && vars_raw.as_h?.nil?
+        raise_non_dict_vars(vars_kind, source_file, source_map, task_source_prefix(source_prefix, source_index))
+      end
       if vars_yaml = task_hash["vars"]?.try(&.as_h?)
         vars = Hash(String, JSON::Any).new
         vars_yaml.each { |key, value| vars[key.to_s] = Vault.maybe_decrypt_json(Vault.yaml_value_to_json(value)) }
@@ -5293,7 +5339,7 @@ module Krikri
     # (when:/ignore_errors:/tags:/vars:/register:/notify:) goes through
     # the shared parse_common_task_attributes like every other
     # controller-side pseudo-module.
-    private def self.parse_validate_argument_spec_task(name : String, task_hash : Hash(YAML::Any, YAML::Any), value : YAML::Any, play : Play? = nil) : Task
+    private def self.parse_validate_argument_spec_task(name : String, task_hash : Hash(YAML::Any, YAML::Any), value : YAML::Any, play : Play? = nil, handler : Bool = false, source_file : String? = nil, source_map : YamlSourceMap? = nil, source_prefix : String = "", source_index : Int32 = 0) : Task
       task = Task.new(name, "_validate_argument_spec")
       task.validate_argument_spec_inline = true
 
@@ -5320,11 +5366,11 @@ module Krikri
         end
       end
 
-      parse_common_task_attributes(task, task_hash, play)
+      parse_common_task_attributes(task, task_hash, play, handler ? "Handler" : "Task", source_file, source_map, source_prefix, source_index)
       task
     end
 
-    private def self.parse_include_vars_task(name : String, task_hash : Hash(YAML::Any, YAML::Any), value : YAML::Any, source_file : String? = nil, source_map : YamlSourceMap? = nil, source_prefix : String = "", source_index : Int32 = 0, play : Play? = nil) : Task
+    private def self.parse_include_vars_task(name : String, task_hash : Hash(YAML::Any, YAML::Any), value : YAML::Any, source_file : String? = nil, source_map : YamlSourceMap? = nil, source_prefix : String = "", source_index : Int32 = 0, play : Play? = nil, handler : Bool = false) : Task
       task = Task.new(name, "_include_vars")
 
       if hash = value.as_h?
@@ -5425,7 +5471,7 @@ module Krikri
         task.include_vars_file = value.as_s?
       end
 
-      parse_common_task_attributes(task, task_hash, play)
+      parse_common_task_attributes(task, task_hash, play, handler ? "Handler" : "Task", source_file, source_map, source_prefix, source_index)
 
       # changed_when:/failed_when: live outside parse_common_task_
       # attributes (only the generic #parse_task path sets them), so this
@@ -5595,7 +5641,7 @@ module Krikri
     # connection state (daemons + ssh ControlMaster sockets).
     SUPPORTED_META_ACTIONS = Set{"clear_facts", "flush_handlers", "end_host", "end_play", "clear_host_errors", "noop", "refresh_inventory", "end_batch", "end_role", "reset_connection"}
 
-    private def self.parse_meta_task(name : String, task_hash : Hash(YAML::Any, YAML::Any), meta_yaml : YAML::Any, source_file : String? = nil, source_map : YamlSourceMap? = nil, source_prefix : String = "", index : Int32 = 0) : Task
+    private def self.parse_meta_task(name : String, task_hash : Hash(YAML::Any, YAML::Any), meta_yaml : YAML::Any, source_file : String? = nil, source_map : YamlSourceMap? = nil, source_prefix : String = "", index : Int32 = 0, handler : Bool = false) : Task
       task = Task.new(name, "_meta")
 
       # Ansible reads the meta action from the task args' `_raw_params`
@@ -5649,6 +5695,13 @@ module Krikri
       # parse shape as parse_common_task_attributes's own vars block -
       # raw JSON::Any values, rendered lazily at evaluation time by
       # ConditionalEvaluator's recursive re-templating.
+      # A non-mapping `vars:` here is the same Base._load_vars load-time
+      # refusal as anywhere else - the meta: path parses its own vars
+      # block (it never calls parse_common_task_attributes), so the check
+      # rides along with it (issue #815).
+      if (meta_vars_raw = task_hash["vars"]?) && !meta_vars_raw.raw.nil? && meta_vars_raw.as_h?.nil?
+        raise_non_dict_vars(handler ? "Handler" : "Task", source_file, source_map, task_source_prefix(source_prefix, index))
+      end
       if vars_yaml = task_hash["vars"]?.try(&.as_h?)
         vars = Hash(String, JSON::Any).new
         vars_yaml.each { |key, value| vars[key.to_s] = Vault.maybe_decrypt_json(Vault.yaml_value_to_json(value)) }
@@ -5935,6 +5988,21 @@ module Krikri
       end
     end
 
+    # ansible-core's Base._load_vars refuses a non-mapping (non-null)
+    # `vars:` on ANY playbook object at load time - the class name in the
+    # message is the loading object's own ("Vars in a Task must be
+    # specified as a dictionary."), the Origin points at the `vars:` key's
+    # VALUE node (the first `-` for a sequence, the scalar start for a
+    # scalar), live-verified vs 2.19.11. The source map records value
+    # positions, so the direct at? lookup needs no key walk-back; without
+    # a mapped position the Origin block is simply omitted.
+    private def self.raise_non_dict_vars(kind : String, source_file : String?, source_map : YamlSourceMap?, prefix : String) : Nil
+      pos = source_map.try(&.at?("#{prefix}/vars"))
+      message = "Vars in a #{kind} must be specified as a dictionary."
+      render = pos ? origin_error_render_at(message, source_file, source_map, pos) : "[ERROR]: #{message}\n\n"
+      raise NonDictVarsError.new(render)
+    end
+
     # The [ERROR] block for a key not on the include-family attribute
     # allowlist (TaskInclude/IncludeRole validation): the message, the
     # invalid_task_attribute_failed suppression line, and an Origin at
@@ -6011,7 +6079,7 @@ module Krikri
       end
     end
 
-    private def self.parse_block_task(name : String, task_hash : Hash(YAML::Any, YAML::Any), block_yaml : Array(YAML::Any), play : Play, file_dir : String, known_vars : Hash(String, JSON::Any)? = nil, role_path : String? = nil, playbook_dir : String? = nil, source_file : String? = nil, source_map : YamlSourceMap? = nil, source_prefix : String = "", source_index : Int32 = 0) : Task
+    private def self.parse_block_task(name : String, task_hash : Hash(YAML::Any, YAML::Any), block_yaml : Array(YAML::Any), play : Play, file_dir : String, known_vars : Hash(String, JSON::Any)? = nil, role_path : String? = nil, playbook_dir : String? = nil, source_file : String? = nil, source_map : YamlSourceMap? = nil, source_prefix : String = "", source_index : Int32 = 0, handler : Bool = false) : Task
       # ansible-core 2.19's Block class declares no `listen` attribute
       # (only Handler does, ansible/playbook/handler.py), and
       # Base._validate_attributes refuses any key without one - so a
@@ -6128,14 +6196,14 @@ module Krikri
         # inside `- block:` die at parse with "'role_path' is undefined"
         # even though role_loader put role_path in known_vars for exactly
         # this purpose (andock-ci.build, round 2300468).
-        task.block_tasks = parse_tasks(block_yaml, play, "task in block '#{name}'", file_dir, known_vars, role_path: role_path, playbook_dir: playbook_dir, source_file: source_file, source_map: source_map, source_prefix: block_prefix)
+        task.block_tasks = parse_tasks(block_yaml, play, "task in block '#{name}'", file_dir, known_vars, role_path: role_path, playbook_dir: playbook_dir, source_file: source_file, source_map: source_map, source_prefix: block_prefix, handler: handler)
 
         if rescue_yaml = task_hash["rescue"]?.try(&.as_a?)
-          task.rescue_tasks = parse_tasks(rescue_yaml, play, "task in rescue of block '#{name}'", file_dir, known_vars, role_path: role_path, playbook_dir: playbook_dir, source_file: source_file, source_map: source_map, source_prefix: "#{task_source_prefix(source_prefix, source_index)}/rescue")
+          task.rescue_tasks = parse_tasks(rescue_yaml, play, "task in rescue of block '#{name}'", file_dir, known_vars, role_path: role_path, playbook_dir: playbook_dir, source_file: source_file, source_map: source_map, source_prefix: "#{task_source_prefix(source_prefix, source_index)}/rescue", handler: handler)
         end
 
         if always_yaml = task_hash["always"]?.try(&.as_a?)
-          task.always_tasks = parse_tasks(always_yaml, play, "task in always of block '#{name}'", file_dir, known_vars, role_path: role_path, playbook_dir: playbook_dir, source_file: source_file, source_map: source_map, source_prefix: "#{task_source_prefix(source_prefix, source_index)}/always")
+          task.always_tasks = parse_tasks(always_yaml, play, "task in always of block '#{name}'", file_dir, known_vars, role_path: role_path, playbook_dir: playbook_dir, source_file: source_file, source_map: source_map, source_prefix: "#{task_source_prefix(source_prefix, source_index)}/always", handler: handler)
         end
       ensure
         play.become = saved_become
@@ -6201,7 +6269,7 @@ module Krikri
 
       # Block-level settings gate/apply to the block as a whole; each
       # nested task still evaluates its own when:/tags:/etc in addition.
-      parse_common_task_attributes(task, task_hash, play)
+      parse_common_task_attributes(task, task_hash, play, "Block", source_file, source_map, source_prefix, source_index)
       # A block's ignore_errors: is inherited by every task inside block:,
       # rescue: and always: (real resolves it through the parent chain), so a
       # failing rescue task under `ignore_errors: true` is ignored too.
@@ -6357,6 +6425,32 @@ module Krikri
       end
     end
 
+    # A task/handler/block/play/roles-entry `vars:` whose value is not a
+    # mapping (`vars:` as a YAML sequence of single-key mappings is the
+    # shape real roles keep shipping - lullis.certbot_nginx's
+    # "install vhosts" task). ansible-core's Base._load_vars refuses the
+    # WHOLE playbook at load time (rc=4, no play banner, before any task
+    # runs) with "Vars in a <class> must be specified as a dictionary."
+    # where <class> is the loading object's own Python class name -
+    # Task, Handler, Block, Play, RoleInclude (playbook `roles:` entries
+    # and meta/main.yml dependencies alike), TaskInclude /
+    # HandlerTaskInclude (include_tasks:/import_tasks: lines), IncludeRole
+    # (include_role:/import_role: lines) or PlaybookInclude
+    # (import_playbook: lines) - live-verified vs 2.19.11 for every one.
+    # The Origin points at the `vars:` VALUE's start (the first `-` of a
+    # sequence, the scalar's first char of a scalar), not at the `vars:`
+    # key. krikri used to skip the key entirely via the as_h? read
+    # (silently running a playbook Ansible refuses - the round-298963492
+    # exit-code divergence on lullis.certbot_nginx). Carries the rendered
+    # stderr block for krikri-playbook.cr to print verbatim.
+    class NonDictVarsError < Exception
+      getter render : String
+
+      def initialize(@render : String)
+        super(render.lines.first?.try(&.lchop("[ERROR]: ")) || "vars must be a dictionary")
+      end
+    end
+
     # Validates that every key in a task_hash for an include_tasks:/
     # include_role: directive is on the allowlist above (or is the
     # include directive key itself - the task's "action", not a
@@ -6466,7 +6560,7 @@ module Krikri
       end
     end
 
-    private def self.parse_include_tasks(name : String, task_hash : Hash(YAML::Any, YAML::Any), file_rel : String, play : Play, file_dir : String, include_file_native : JSON::Any? = nil, source_file : String? = nil, source_map : YamlSourceMap? = nil, source_prefix : String = "", source_index : Int32 = 0) : Task
+    private def self.parse_include_tasks(name : String, task_hash : Hash(YAML::Any, YAML::Any), file_rel : String, play : Play, file_dir : String, include_file_native : JSON::Any? = nil, source_file : String? = nil, source_map : YamlSourceMap? = nil, source_prefix : String = "", source_index : Int32 = 0, handler : Bool = false) : Task
       validate_include_keys(task_hash, "TaskInclude", "include_tasks", source_file, source_map, task_source_prefix(source_prefix, source_index))
 
       task = Task.new(name, "_include_tasks")
@@ -6475,7 +6569,7 @@ module Krikri
       task.include_file_dir = file_dir
       parse_include_apply(task, directive(task_hash, "include_tasks").try(&.as_h?).try(&.["apply"]?))
 
-      parse_common_task_attributes(task, task_hash, play)
+      parse_common_task_attributes(task, task_hash, play, handler ? "HandlerTaskInclude" : "TaskInclude", source_file, source_map, source_prefix, source_index)
       task.become = resolve_become(task_hash, play)
       task.become_expr = become_expr(task_hash)
       task.become_user = task_hash["become_user"]?.try { |v| safe_yaml_to_string(v) } || play.become_user
@@ -6842,7 +6936,7 @@ module Krikri
       end
       parse_include_apply(task, role_args["apply"]?)
 
-      parse_common_task_attributes(task, task_hash, play)
+      parse_common_task_attributes(task, task_hash, play, "IncludeRole", source_file, source_map, source_prefix, source_index)
       task.become = resolve_become(task_hash, play)
       task.become_expr = become_expr(task_hash)
       task.become_user = task_hash["become_user"]?.try { |v| safe_yaml_to_string(v) } || play.become_user
