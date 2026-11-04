@@ -252,3 +252,31 @@ describe "dnf plugin - an already-installed rpm file still runs the dnf transact
     end
   end
 end
+
+# Issue #857 (tvandeveire.ekstack_metricbeat_packetbeat): `state: latest` on
+# a PLAIN package name that is already installed routes through the update
+# batch, which never got the repo-metadata failure handler the install
+# batches have had since issue #267 - the broken-repo fatal came out as the
+# canned "Failed to update packages" + stderr/stdout dump (with a failures
+# list) instead of ansible's bare metadata msg, rc 1, results [] and no
+# failures key (live-reproduced in a Rocky 9 container against
+# ansible-core 2.19.11 with the role's own broken baseurl repo file).
+describe "dnf plugin - the update batch reports ansible's repo-metadata failure shape (issue 857)" do
+  it "state latest on an already-installed plain package name fails with the bare metadata msg" do
+    with_dnf813_shims do |env|
+      result = PluginSpecHelper.run("dnf", {
+        "name"              => "tree",
+        "state"             => "latest",
+        "disable_gpg_check" => "true",
+        "_environment"      => env,
+      })
+      result["failed"].as_bool.must_equal(true)
+      result["changed"].as_bool.must_equal(false)
+      result["rc"].as_i.must_equal(1)
+      result.as_h.has_key?("failures").must_equal(false)
+      result["msg"].as_s.must_equal(
+        "Failed to download metadata for repo 'badrepo': Cannot download repomd.xml: Cannot download repodata/repomd.xml: All mirrors were tried")
+      result["results"].as_a.must_equal([] of JSON::Any)
+    end
+  end
+end
