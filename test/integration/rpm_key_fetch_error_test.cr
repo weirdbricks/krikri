@@ -43,11 +43,13 @@ describe "rpm_key URL fetch failure message (issue #339)" do
     end
   end
 
-  it "keeps curl's own stderr wording for a non-HTTP-status failure" do
-    # Nothing ever listens on this bound-then-closed port; curl fails with
-    # its own "Connection refused" (exit 7), which fetch_url covers
-    # separately from the HTTPError branch and which curl's stderr still
-    # describes - the branch mapped above is exit 22 (HTTP >= 400) only.
+  it "reports a refused connect in fetch_url's URLError wording" do
+    # Nothing ever listens on this bound-then-closed port; fetch_url covers
+    # a connect failure in its URLError branch, whose msg is urllib's
+    # "<urlopen error [Errno 111] Connection refused>" (issue #821,
+    # alvistack.mitmproxy) - not the text of whatever curl printed, whose
+    # wording varies by curl version and never carries the errno. The
+    # branch mapped above is exit 22 (HTTP >= 400) only.
     socket = TCPServer.new("127.0.0.1", 0)
     port = socket.local_address.port
     socket.close
@@ -59,11 +61,36 @@ describe "rpm_key URL fetch failure message (issue #339)" do
     File.chmod(rpm, 0o755)
 
     begin
+      url = "http://127.0.0.1:#{port}/closed.key"
       result = PluginSpecHelper.run("rpm_key",
-        {"key" => "http://127.0.0.1:#{port}/closed.key", "state" => "present"},
+        {"key" => url, "state" => "present"},
         env: {"PATH" => "#{shim}:#{ENV["PATH"]?}"})
       result["failed"].as_bool.must_equal(true)
-      result["msg"].as_s.must_match(/\Afailed to fetch key at .+ , error was: curl: \(\d+\) /)
+      result["msg"].as_s.must_equal("failed to fetch key at #{url} , error was: Request failed: <urlopen error [Errno 111] Connection refused>")
+    ensure
+      FileUtils.rm_r(shim)
+    end
+  end
+
+  it "reports an unresolvable key hostname in fetch_url's gaierror wording" do
+    # Same URLError branch, DNS side: getaddrinfo's EAI_* pseudo-errno and
+    # gai_strerror text ride inside "<urlopen error ...>" (live-verified vs
+    # ansible-core 2.19.11: "[Errno -2] Name or service not known"). The
+    # .invalid TLD never resolves, but which EAI code a resolver-less
+    # environment reports differs, so only the shape is asserted.
+    shim = PluginSpecHelper.tmp_path("rpm-key-fetch-shim3-#{Random::Secure.hex(4)}")
+    FileUtils.mkdir_p(shim)
+    rpm = File.join(shim, "rpm")
+    File.write(rpm, "#!/bin/sh\nexit 0\n")
+    File.chmod(rpm, 0o755)
+
+    begin
+      url = "http://nonexistent-krikri-issue-821.invalid/no.key"
+      result = PluginSpecHelper.run("rpm_key",
+        {"key" => url, "state" => "present"},
+        env: {"PATH" => "#{shim}:#{ENV["PATH"]?}"})
+      result["failed"].as_bool.must_equal(true)
+      result["msg"].as_s.must_match(/\Afailed to fetch key at #{Regex.escape(url)} , error was: Request failed: <urlopen error \[Errno -\d+\] .+>\z/)
     ensure
       FileUtils.rm_r(shim)
     end
