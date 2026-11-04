@@ -1,3 +1,4 @@
+require "./templated_origin_span"
 require "../timing_profile"
 require "../unsafe_values"
 require "json"
@@ -18,6 +19,7 @@ module Krikri
     # sunfoxcz.dkim's own `dkim_domains is not list` - there is a `list`
     # FILTER and an `is iterable` test, but no `is list` TEST).
     class UnknownTestError < Exception
+      include TemplatedOriginSpan
     end
 
     # Renders and evaluates task-param Jinja (`{{ }}` and `{% %}`) on the

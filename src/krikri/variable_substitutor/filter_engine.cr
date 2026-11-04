@@ -1,4 +1,5 @@
 require "json"
+require "./templated_origin_span"
 require "../unsafe_values"
 require "krikri-jinja/krikri_jinja"
 require "../krikri_jinja_filters"
@@ -44,6 +45,7 @@ module Krikri
       # No filter named 'x'." (verified against ansible-core 2.19),
       # which fails the task.
       class UnknownFilterError < Exception
+        include TemplatedOriginSpan
       end
 
       # Raised when a role-local `filter_plugins/*.py` filter WAS found

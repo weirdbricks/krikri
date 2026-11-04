@@ -2459,7 +2459,15 @@ module Krikri
       # evaluate_structured is lenient about undefined names
       # (`undefined_var['key'] | list` yields []), so the strict check
       # #substitute would have run happens here first - and raises.
-      substitutor.check_strict_undefined(expr)
+      # Attach the span: this path bypasses #expand_mustache_spans, and
+      # the container finalization chain needs it to point its fourth
+      # stanza at the failing entry (issue #803).
+      begin
+        substitutor.check_strict_undefined(expr)
+      rescue e : UndefinedVariableError
+        e.span ||= expr
+        raise e
+      end
       native_value = begin
         # Strict-undefined-aware structured evaluation (see
         # VarSubstitutor#evaluate_structured_strict): a whole-span bool/
@@ -2634,6 +2642,26 @@ module Krikri
       spec_type = ArgspecValidator.option_type(resolved, "mode")
       return true unless spec_type
       spec_type == "raw"
+    end
+
+    # The param-level wrapper for a substitution failure, carrying the
+    # failing span when (and only when) ansible's own finalization chain
+    # descends an extra level for it: a failure with a template origin
+    # (undefined name, attribute miss, unknown filter/test, template
+    # syntax, operator/rendering TypeError - issues #265/#323/#803). A
+    # lookup or filter-plugin RUNTIME failure keeps the three-stanza
+    # block in real 2.19.11 (live-captured), and FilterFailureError
+    # subclasses UnknownFilterError despite that, so it is excluded here;
+    # the span record is what a block container's fourth stanza points
+    # its Origin at.
+    private def resolving_value_error(key : String, detail : String, cause : Exception) : UndefinedVariableError
+      err = UndefinedVariableError.new("Error while resolving value for '#{key}': #{detail}")
+      split = !cause.is_a?(VariableSubstitutor::FilterEngine::FilterFailureError) &&
+              (cause.is_a?(TemplatedOriginSpan) || cause.is_a?(KrikriJinja::TemplateError))
+      if split
+        err.span = (cause.is_a?(TemplatedOriginSpan) ? cause.span : nil) || VarSubstitutor.failing_span
+      end
+      err
     end
 
     private def substitute_task_params(
@@ -2854,7 +2882,7 @@ module Krikri
           # but leaves an undefined name bare - the exception type carries
           # the distinction, not the call path.
           detail = e.is_a?(PlusMinusOperandError) ? e.template_text : e.message.to_s
-          raise UndefinedVariableError.new("Error while resolving value for '#{key}': #{detail}")
+          raise resolving_value_error(key, detail, e)
         rescue e : VariableSubstitutor::FilterEngine::FilterFailureError
           # The filter was FOUND and dispatched - ansible-core 2.19 only
           # words the failure "Syntax error in template: No filter named
@@ -2863,13 +2891,13 @@ module Krikri
           # prefix ("Error while resolving value for 'xrt_package_path':
           # The filter plugin 'xrt_latest' failed: No XRT version found
           # for this OS", live-verified vs 2.19, Accelize.aws_fpga).
-          raise UndefinedVariableError.new("Error while resolving value for '#{key}': #{e.message}")
+          raise resolving_value_error(key, e.message.to_s, e)
         rescue e : VariableSubstitutor::FilterEngine::UnknownFilterError
-          raise UndefinedVariableError.new("Error while resolving value for '#{key}': Syntax error in template: #{e.message}")
+          raise resolving_value_error(key, "Syntax error in template: #{e.message}", e)
         rescue e : VariableSubstitutor::UnknownTestError
-          raise UndefinedVariableError.new("Error while resolving value for '#{key}': Syntax error in template: #{e.message}")
+          raise resolving_value_error(key, "Syntax error in template: #{e.message}", e)
         rescue e : VariableSubstitutor::TemplateSyntaxError
-          raise UndefinedVariableError.new("Error while resolving value for '#{key}': #{e.message}")
+          raise resolving_value_error(key, e.message.to_s, e)
         rescue e : Krikri::PipeLookupError | Krikri::FirstFoundLookupError | Krikri::PythonLookupRunner::LookupError | FilterPluginError | TestPluginError
           # Lookup/filter/test-plugin failures ride the same finalization
           # chain - Ansible 2.19.11 fails the task with "Task failed:
@@ -2877,13 +2905,13 @@ module Krikri
           # resolving value for 'KEY': <plugin error>" (live-verified
           # for each shape), never the bare "Action failed" chain a
           # non-wrapped raise fell into.
-          raise UndefinedVariableError.new("Error while resolving value for '#{key}': #{e.message}")
+          raise resolving_value_error(key, e.message.to_s, e)
         rescue e : VarSubstitutor::UndecryptableVaultError
           # An undecryptable vault reference fails the same finalization
           # chain, and real 2.19 wraps the failed template itself as
           # "Error rendering template:" regardless of whether the arg is
           # a scalar or a container (live-verified 2.19.11, both shapes).
-          raise UndefinedVariableError.new("Error while resolving value for '#{key}': Error rendering template: #{e.message}")
+          raise resolving_value_error(key, "Error rendering template: #{e.message}", e)
         rescue e : KrikriJinja::TemplateError
           # A `+`/`-` TypeError that fell through to krikri-jinja's own
           # evaluator (e.g. inside a dict literal passed to combine())
@@ -2892,7 +2920,7 @@ module Krikri
           # when the operand shape is recognized, else keep the engine's
           # own text.
           if py = PlusMinusOperandError.from_engine_message(e.raw_message)
-            raise UndefinedVariableError.new("Error while resolving value for '#{key}': #{py.template_text}")
+            raise resolving_value_error(key, py.template_text, e)
           end
           raise e
         rescue e : Exception
@@ -2901,7 +2929,7 @@ module Krikri
           # else keeps its own shape. MUST stay last: a generic rescue
           # above this line would swallow the plugin-error classes'
           # own routing.
-          raise UndefinedVariableError.new("Error while resolving value for '#{key}': #{e.message}") if e.message.try(&.starts_with?("The lookup plugin '"))
+          raise resolving_value_error(key, e.message.to_s, e) if e.message.try(&.starts_with?("The lookup plugin '"))
           raise e
         ensure
           VarSubstitutor.pop_current_task_param if task
@@ -3725,24 +3753,57 @@ module Krikri
       # the params stanza shortens to "Error while resolving value for
       # 'K'." with Origin at the block's FIRST entry line (a mapping key
       # or a list's dash, column = indent+1), and a fourth stanza holds
-      # the plain "'V' is undefined" with Origin at the failing value
-      # token's first character (quote included). Only the
-      # plain-undefined message on a genuinely block-style param takes
-      # this turn: a flow value (text after `K:`) and a block whose
-      # entries never name V inside a `{{ }}` span keep the param's own
-      # origin and the three-stanza block. The var-definition chain above
-      # stays ahead: a var whose own definition bottoms out at the same
-      # message is ansible's OTHER fourth-stanza shape (issue #36) - when
-      # that stanza applies, this one does not.
+      # the inner failure message with Origin at the failing value
+      # token's first character (quote included). A block param whose
+      # entries never carry the failing `{{ }}` span keeps the param's
+      # own origin and the three-stanza block; a flow container takes
+      # the adjacent branch below. The var-definition chain above stays
+      # ahead: a var whose
+      # own definition bottoms out at the same message is ansible's
+      # OTHER fourth-stanza shape (issue #36) - when that stanza applies,
+      # this one does not.
+      #
+      # Any failure carrying a template origin splits the same way, not
+      # just the plain-undefined message (issue #803, live-captured
+      # 2.19.11: an attribute miss, "Syntax error in template: ..." and
+      # "Error rendering template: ..." all shorten the params stanza and
+      # append the inner message as a fourth link). What DOESN'T split
+      # keeps the three-stanza block: a lookup or filter-plugin RUNTIME
+      # failure has no template origin in ansible's chain, so
+      # resolving_value_error attaches no span for it and the gate below
+      # declines. For the split shapes the failing entry is located by
+      # the span text the substitutor recorded (#expand_mustache_spans),
+      # which the message alone cannot always name.
       mapping_key_pos : {Int32, Int32}? = nil
       mapping_val_stanza : String? = nil
       if chain_stanza.nil? &&
-         (mm = msg.match(/\AError while resolving value for '([^']+)': '([A-Za-z_][A-Za-z0-9_]*)' is undefined\z/)) &&
-         (mp = mapping_value_failure_origin(lines, module_idx, mm[1], mm[2]))
-        l3 = "Error while resolving value for '#{mm[1]}'."
-        mapping_key_pos = mp[0]
-        mapping_val_stanza = "'#{mm[2]}' is undefined\n" +
-                             origin_context_block(path, lines, mp[1][0] + 1, mp[1][1])
+         (pm = msg.match(/\AError while resolving value for '([^']+)': (.*)\z/m))
+        param_key = pm[1]
+        inner_msg = pm[2]
+        undefined_var = inner_msg.match(/\A'([A-Za-z_][A-Za-z0-9_]*)' is undefined\z/).try(&.[1])
+        # When the substitutor could not record a span (a `{% %}` block
+        # tag renders the whole param at once, so there is no single
+        # `{{ }}` text to record), a message that NAMES the failing
+        # member still locates an unambiguous entry: the name must match
+        # exactly one entry's template text, else this declines rather
+        # than guessing (issue #803).
+        named_fallback = ex.span ? nil : failing_name_from_message(inner_msg)
+        if (undefined_var || ex.span || named_fallback) &&
+           (mp = mapping_value_failure_origin(lines, module_idx, param_key, undefined_var || named_fallback, ex.span, require_unique: named_fallback != nil))
+          l3 = "Error while resolving value for '#{param_key}'."
+          mapping_key_pos = mp[0]
+          mapping_val_stanza = inner_msg + "\n" +
+                               origin_context_block(path, lines, mp[1][0] + 1, mp[1][1])
+        elsif ex.span &&
+              (fp = flow_container_value_failure_origin(lines, module_idx, param_key, ex.span))
+          # A FLOW-style container splits the same way, but stanza 3
+          # keeps the flow value's own position (already param_idx/
+          # param_col) and only the fourth link is new (live-captured
+          # 2.19.11).
+          l3 = "Error while resolving value for '#{param_key}'."
+          mapping_val_stanza = inner_msg + "\n" +
+                               origin_context_block(path, lines, fp[0] + 1, fp[1])
+        end
       end
 
       text = String.build do |io|
@@ -4026,7 +4087,7 @@ module Krikri
       text[start...i]
     end
 
-    # Stanza 3 and 4's Origins for an undefined failure under a
+    # Stanza 3 and 4's Origins for a template-origin failure under a
     # block-style MAPPING or LIST param: stanza 3's Origin is the block's
     # FIRST entry line, column = indent+1 (a mapping's first key -
     # ansible-core 2.19.11 live-captured on issue #265's failing
@@ -4035,21 +4096,19 @@ module Krikri
     # failing value token's first character (quote included - the column
     # formula locate_param_key_position applies, so aligning whitespace
     # before the value is skipped like issue #241's). For a mapping
-    # entry the token follows the entry's key+colon; for a list item it
-    # follows the "- " marker itself (issue #323: `- "{{ var }}"` ->
-    # column 11, the quote). Returns nil - and the previous three-stanza
-    # block - unless every gate the behaviour depends on matches: the
-    # `K:` line carries nothing after its colon (whitespace or a comment
-    # only - a flow value keeps the param's own value position), the
-    # next non-blank line is deeper than the key (a `- ` first entry
-    # makes it a LIST param - the list is ansible's param level, never
-    # mapping keys nested under it), and inside the block (entries until
-    # indentation returns to the key's level) the first line whose
-    # `{{ }}` span references V locates its token (a list item's own
-    # dash line only - deeper structure under an item has no live-captured
-    # token position yet, so it keeps scanning); no such line keeps the
-    # param's own position.
-    private def mapping_value_failure_origin(lines : Array(String), from_idx : Int32, key : String, var : String) : ({ {Int32, Int32}, {Int32, Int32} } | Nil)
+    # entry the token follows the entry's key+colon; for a plain scalar
+    # list item it follows the "- " marker itself (issue #323:
+    # `- "{{ var }}"` -> column 11, the quote). Returns nil - and the
+    # previous three-stanza block - unless every gate the behaviour
+    # depends on matches: the `K:` line carries nothing after its colon
+    # (whitespace or a comment only - a flow value keeps the param's own
+    # value position), the next non-blank line is deeper than the key, and
+    # inside the block (entries until indentation returns to the key's
+    # level) some line's value carries the failing `{{ }}` span - named by
+    # `var` for the plain-undefined message, or matched from the
+    # substitutor's recorded `span` text for every other template-origin
+    # failure (issue #803); no such line keeps the param's own position.
+    private def mapping_value_failure_origin(lines : Array(String), from_idx : Int32, key : String, var : String?, span : String? = nil, require_unique : Bool = false) : ({ {Int32, Int32}, {Int32, Int32} } | Nil)
       # Same quoted-key tolerance locate_param_key_position applies - a
       # `"{{ item }}":`-style block entry is still a real param entry
       # whose block shape (or lack of one) decides the Origin.
@@ -4072,7 +4131,6 @@ module Krikri
       end
 
       first_entry_idx = nil
-      list_param = false
       if kl = key_line_idx
         eidx = kl + 1
         while eidx < lines.size
@@ -4082,7 +4140,6 @@ module Krikri
             next
           end
           break unless (line.size - line.lstrip.size) > key_indent
-          list_param = line.lstrip.starts_with?("- ")
           first_entry_idx = eidx
           break
         end
@@ -4092,6 +4149,7 @@ module Krikri
       entry_line = lines[first_entry_idx]
       key_origin : {Int32, Int32} = {first_entry_idx, (entry_line.size - entry_line.lstrip.size) + 1}
 
+      unique_match : { {Int32, Int32}, {Int32, Int32} }? = nil
       eidx = first_entry_idx
       while eidx < lines.size
         line = lines[eidx]
@@ -4103,43 +4161,221 @@ module Krikri
         # `K:` key's level - anything at or above it belongs to the task
         # (the module's next param, ignore_errors, the next task).
         return nil unless (line.size - line.lstrip.size) > key_indent
-        if template_span_refs_var?(line, var)
-          if list_param && line.lstrip.starts_with?("- ")
-            # The list item's own value token follows the "- " marker
-            # itself (issue #323: the quote at main.yml:11:11); aligning
-            # whitespace after the dash is skipped like a mapping
-            # entry's alignment before its value.
-            item_indent = line.size - line.lstrip.size
-            content = line.lstrip[2..]
-            value_col = item_indent + 2 + (content.size - content.lstrip.size) + 1
-            return {key_origin, {eidx, value_col}}
-          elsif !list_param && (colon = line.index(':'))
-            # The mapping-entry value token's first character after the
-            # entry's key+colon (quote included); deeper list-item
-            # entries carry no key and no token position to report, so
-            # they keep scanning.
-            value = line[(colon + 1)..]
-            return {key_origin, {eidx, colon + 1 + ((value.size - value.lstrip.size) + 1)}}
+        indent = line.size - line.lstrip.size
+        dash_item = line.lstrip.starts_with?("- ")
+        # A mapping entry's value token follows its key colon; a plain
+        # scalar list item's follows the "- " marker itself (issue #323:
+        # the quote at main.yml:11:11, aligning whitespace skipped like a
+        # mapping entry's). A dash item that is itself a mapping
+        # (`- key: "{{ x }}"`) takes its own key's colon, and the same
+        # rule applies to entries nested deeper under a mapping key or a
+        # list item - exactly where ansible-core 2.19.11 puts the
+        # fourth-stanza Origin for a nested container (live-captured).
+        colon = entry_value_colon(line, dash_item ? indent + 1 : 0)
+        value_start = colon ? colon + 1 : (dash_item ? indent + 2 : nil)
+        if vs = value_start
+          value = line[vs..]
+          matched = span ? span_text_matches?(value, span) : (var ? template_span_refs_var?(line, var) : false)
+          if matched
+            found = {key_origin, {eidx, vs + (value.size - value.lstrip.size) + 1}}
+            return found unless require_unique
+            # A message-derived name is only a hint: one match is the
+            # failing entry, two or more leave it ambiguous and keep the
+            # three-stanza block rather than mislabel an Origin.
+            return nil if unique_match
+            unique_match = found
           end
         end
         eidx += 1
       end
+      unique_match
+    end
+
+    # The colon that separates a block entry's own key from its value:
+    # the first one outside `{{ }}`/`{% %}` spans, quoted strings and
+    # flow collections, followed by whitespace or end-of-line the way
+    # YAML's own scanner requires. A plain scalar list item
+    # (`- "{{ x['a:b'] }}"`) has none, so its value token follows the
+    # dash instead.
+    private def entry_value_colon(line : String, start : Int32) : Int32?
+      depth = 0
+      quote = nil
+      i = start
+      while i < line.size
+        char = line[i]
+        if q = quote
+          if char == '\\'
+            i += 2
+            next
+          elsif char == q
+            quote = nil
+          end
+        elsif char == '\'' || char == '"'
+          quote = char
+        elsif char == '{'
+          depth += 1
+        elsif char == '}'
+          depth -= 1 if depth > 0
+        elsif char == ':' && depth == 0 && (i + 1 >= line.size || line[i + 1].whitespace?)
+          return i
+        end
+        i += 1
+      end
       nil
     end
 
-    # Whether any `{{ ... }}` span in *line* names *var* as a whole
-    # identifier: substring neighbours must not count (a failing
-    # MYSQL_PASSWORD value shapes the Origin, a neighbouring
-    # MYSQL_PASSWORDS line must not take its place).
+    # Whether *value* (one block entry's text after its key colon or
+    # list dash) carries the failing span the substitutor recorded. The
+    # span travels through the container's JSON wire, where a double
+    # quote inside the expression is backslash-escaped, and the source
+    # may lay the same expression out with different whitespace - both
+    # forms are compared, plus a whitespace-insensitive fallback.
+    private def span_text_matches?(value : String, span : String) : Bool
+      needle = span.strip
+      return false if needle.empty?
+      return true if value.includes?(needle)
+      unescaped = needle.gsub("\\\"", "\"")
+      return true if unescaped != needle && value.includes?(unescaped)
+      compact = value.gsub(/\s+/, "")
+      compact.includes?(needle.gsub(/\s+/, "")) ||
+        (unescaped != needle && compact.includes?(unescaped.gsub(/\s+/, "")))
+    end
+
+    # The failing member a template-origin message names, when it names
+    # one at all: a dict/list attribute miss or a compile-time unknown
+    # filter/test. Used only when the substitutor could not record the
+    # failing span, always with the unique-match requirement.
+    private def failing_name_from_message(inner_msg : String) : String?
+      if m = inner_msg.match(/has no attribute '([^']+)'\z/)
+        return nil if m[1].empty?
+        return m[1]
+      end
+      if m = inner_msg.match(/No (?:filter|test) named '([^']+)'\.?\z/)
+        return m[1]
+      end
+      nil
+    end
+
+    # Stanza 4's Origin for a FLOW-style container param (`K: { ... }` /
+    # `K: [ ... ]`, single-line or YAML multi-line): ansible-core
+    # 2.19.11 splits these into the same four links (live-captured;
+    # issue #803's block shape is only the common case), with stanza 3
+    # keeping the flow value's own first character (the param's own
+    # position) and stanza 4 at the failing element's value token - the
+    # first non-space character after that element's preceding separator
+    # (a key colon, a comma, or the opening bracket). Returns nil when
+    # the param isn't a flow container or no line carries the failing
+    # span, which keeps the previous three-stanza block.
+    private def flow_container_value_failure_origin(lines : Array(String), from_idx : Int32, key : String, span : String?) : {Int32, Int32}?
+      return nil unless span
+      key_needle = /(?:["']#{Regex.escape(key)}["']|#{Regex.escape(key)})[ \t]*:/
+      key_line_idx = nil
+      value_start = nil
+      key_indent = 0
+      idx = from_idx + 1
+      while idx < lines.size
+        line = lines[idx]
+        break if next_task_marker?(lines, from_idx, line)
+        if (m = key_needle.match(line)) && (key_idx = m.begin(0)) && (key_idx == 0 || line[key_idx - 1].whitespace?)
+          rest = line[m.end(0)..]
+          stripped = rest.strip
+          if stripped.starts_with?('{') || stripped.starts_with?('[')
+            key_line_idx = idx
+            key_indent = line.size - line.lstrip.size
+            value_start = m.end(0) + (rest.size - rest.lstrip.size)
+            break
+          end
+        end
+        idx += 1
+      end
+      return nil unless key_line_idx && value_start
+
+      lidx = key_line_idx
+      start = value_start
+      while lidx < lines.size
+        line = lines[lidx]
+        if lidx > key_line_idx
+          break if line.strip.empty?
+          break unless (line.size - line.lstrip.size) > key_indent
+        end
+        if match_idx = span_match_index(line, span, start)
+          return {lidx, flow_element_token_col(line, start, match_idx) + 1}
+        end
+        lidx += 1
+        start = 0
+      end
+      nil
+    end
+
+    # The first index in *line* (at or after *from*) where the failing
+    # span's own text occurs. The container's JSON wire backslash-escapes
+    # double quotes inside expressions, so the unescaped form is tried
+    # too.
+    private def span_match_index(line : String, span : String, from : Int32) : Int32?
+      needle = span.strip
+      return nil if needle.empty?
+      search = line[from..]?
+      return nil unless search
+      if idx = search.index(needle)
+        return from + idx
+      end
+      unescaped = needle.gsub("\\\"", "\"")
+      if unescaped != needle && (idx = search.index(unescaped))
+        return from + idx
+      end
+      nil
+    end
+
+    # The first non-space character after the separator that opens the
+    # failing element: a key's colon, a comma, or the container's own
+    # opening bracket. The scan stops at the span's own start so the
+    # element's braces/quotes never count as separators.
+    private def flow_element_token_col(line : String, start : Int32, match_idx : Int32) : Int32
+      last_sep = start - 1
+      quote = nil
+      i = start
+      while i < match_idx && i < line.size
+        char = line[i]
+        if q = quote
+          if char == '\\'
+            i += 2
+            next
+          elsif char == q
+            quote = nil
+          end
+        elsif char == '\'' || char == '"'
+          quote = char
+        elsif char == ':' || char == ',' || char == '[' || char == '{'
+          last_sep = i
+        end
+        i += 1
+      end
+      tok = last_sep + 1
+      while tok < line.size && line[tok].whitespace?
+        tok += 1
+      end
+      tok
+    end
+
+    # Whether any `{{ ... }}` expression or `{% ... %}` block tag in
+    # *line* names *var* as a whole identifier: substring neighbours
+    # must not count (a failing MYSQL_PASSWORD value shapes the Origin, a
+    # neighbouring MYSQL_PASSWORDS line must not take its place). Block
+    # tags matter for a container entry like `b: "{% if var %}x{% endif
+    # %}"`, whose undefined failure ansible also chains one level deeper
+    # with the value token's Origin (live-captured 2.19.11).
     private def template_span_refs_var?(line : String, var : String) : Bool
-      return false unless line.includes?("{{")
+      return false unless line.includes?("{{") || line.includes?("{%")
       word = /\b#{Regex.escape(var)}\b/
-      pos = 0
-      while start = line.index("{{", pos)
-        close = line.index("}}", start + 2)
-        break unless close
-        return true if line[(start + 2)...close].match(word)
-        pos = close + 2
+      { {"{{", "}}"}, {"{%", "%}"} }.each do |delimiters|
+        open, close = delimiters
+        pos = 0
+        while start = line.index(open, pos)
+          stop = line.index(close, start + 2)
+          break unless stop
+          return true if line[(start + 2)...stop].match(word)
+          pos = stop + 2
+        end
       end
       false
     end

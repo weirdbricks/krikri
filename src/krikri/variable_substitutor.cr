@@ -1,4 +1,5 @@
 require "json"
+require "./variable_substitutor/templated_origin_span"
 require "./unsafe_values"
 require "./param_sentinels"
 require "./template_do_scanner"
@@ -73,6 +74,7 @@ module Krikri
   # with the variable genuinely being undefined, and conflating the two
   # would turn an evaluator limitation into a spurious task failure.
   class UndefinedVariableError < Exception
+    include TemplatedOriginSpan
   end
 
   # A task KEYWORD's rendered value that ansible's boolean() refuses
@@ -1391,6 +1393,7 @@ module Krikri
     # 'end of print statement'."), where this engine's scanner used to
     # copy the malformed text through verbatim and keep playing on.
     class TemplateSyntaxError < Exception
+      include TemplatedOriginSpan
     end
 
     # The ONE shared dotted-path walker for plain hash navigation
@@ -2451,7 +2454,34 @@ module Krikri
     # sweep) and Python-repr text is not valid JSON. See
     # JinjaRenderer#evaluate_value!'s comment for the same trap found
     # from the other side.
+    # Fiber-scoped failing-span record: the inner text of the `{{ }}` span
+    # whose expansion raised, kept for the display layer that builds
+    # ansible's four-stanza finalization chain for a container param
+    # (issue #803). Recorded in #expand_mustache_spans's rescue so the
+    # OUTERMOST substitution wins as the exception unwinds (a nested
+    # variable re-render's span belongs to the var's defining file, not
+    # the task), and cleared on every substitute() entry so a later
+    # unrelated failure never inherits a stale span. The exception
+    # classes that carry ansible's template origin also get the span
+    # directly (TemplatedOriginSpan); this record is the fallback for
+    # engine exceptions (KrikriJinja::TemplateError) this repo does not
+    # own.
+    @@failing_span = {} of Fiber => String
+
+    def self.reset_failing_span : Nil
+      @@failing_span.delete(Fiber.current)
+    end
+
+    def self.record_failing_span(span : String) : Nil
+      @@failing_span[Fiber.current] = span
+    end
+
+    def self.failing_span : String?
+      @@failing_span[Fiber.current]?
+    end
+
     def substitute(text : String, strict : Bool = false, output : Bool = false, native : Bool = false) : String
+      self.class.reset_failing_span
       # Whole-span structured evaluations are memoized for the duration of
       # ONE top-level substitute() operation (per fiber - substitution never
       # yields, see the re-templating guard's own reasoning).
@@ -4053,7 +4083,17 @@ module Krikri
             # URL, breaking the download outright.
             result = trim_builder_tail(result) if lstrip_marker
 
-            rendered = yield inner
+            begin
+              rendered = yield inner
+            rescue e
+              # Provenance for ansible's nested finalization stanza: the
+              # container-level "caused by" link points at the failing
+              # entry's value token, which this text locates in the
+              # task's own source (issue #803).
+              self.class.record_failing_span(inner)
+              e.span = inner if e.is_a?(TemplatedOriginSpan)
+              raise e
+            end
             result << rendered
 
             # `{{ expr -}}`: skip leading whitespace (through the next

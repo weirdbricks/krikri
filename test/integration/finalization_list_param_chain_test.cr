@@ -10,8 +10,9 @@ require "file_utils"
 # stanza with Origin at the failing item's value token right after the
 # "- " marker (quote included) - byte-for-byte live-captured from real
 # 2.19.11 on the s2ansible.zabbix_host task. A flow-style list value on
-# the `K:` line itself is NOT that shape and must keep the scalar-param
-# three-stanza block with Origin at the param's value position.
+# the `K:` line itself splits the same way (live-captured 2.19.11);
+# only stanza 3 keeps the flow value's own position instead of the
+# list's first dash.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")

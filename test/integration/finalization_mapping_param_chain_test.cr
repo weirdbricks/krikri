@@ -9,8 +9,8 @@ require "file_utils"
 # stanza with Origin at that value token's first character (quote
 # included) - byte-for-byte live-captured from real 2.19.11 on the
 # opichon.mysql-backup task. A flow-style mapping value on the `K:` line
-# itself is NOT that shape and must keep the scalar-param three-stanza
-# block with Origin at the param's value position.
+# splits the same way (live-captured 2.19.11); only stanza 3 keeps the
+# flow value's own position instead of the block's first entry.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
@@ -96,13 +96,21 @@ describe "task-arg finalization error block (block-style mapping param)" do
     Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
     text = output.to_s
 
-    text.must_include("<<< caused by >>>\n\nError while resolving value for 'env': 'flow_undefined' is undefined\nOrigin: #{playbook}:8:14\n\n" \
+    # A FLOW-style container splits the same way (live-captured
+    # 2.19.11): stanza 3 shortens to the prefix and keeps the flow
+    # value's own position, stanza 4 carries the failing element's
+    # value token (the quote after `"MYSQL_PASSWORD": `).
+    text.must_include("<<< caused by >>>\n\nError while resolving value for 'env'.\nOrigin: #{playbook}:8:14\n\n" \
                       "6     - name: Inline env\n" \
                       "7       ansible.builtin.set_fact:\n" \
                       "8         env: {\"MULTI_FILES\": \"{{ flow_x1 }}\", \"MYSQL_PASSWORD\": \"{{ flow_undefined }}\"}\n" \
-                      "               ^ column 14\n")
-    # flow values are not the block-mapping shape: no fourth stanza
-    text.wont_include("<<< caused by >>>\n\n'flow_undefined' is undefined\nOrigin: ")
+                      "               ^ column 14\n\n" \
+                      "<<< caused by >>>\n\n" \
+                      "'flow_undefined' is undefined\nOrigin: #{playbook}:8:65\n\n" \
+                      "6     - name: Inline env\n" \
+                      "7       ansible.builtin.set_fact:\n" \
+                      "8         env: {\"MULTI_FILES\": \"{{ flow_x1 }}\", \"MYSQL_PASSWORD\": \"{{ flow_undefined }}\"}\n" \
+                      "#{" " * 66}^ column 65\n")
   ensure
     File.delete(playbook) if playbook && File.exists?(playbook)
   end
