@@ -86,6 +86,38 @@ describe "ansible_play_hosts / ansible_play_hosts_all magic vars" do
     File.delete(playbook) if playbook && File.exists?(playbook)
   end
 
+  it "resolves ansible_play_batch to the same host list (no serial modeled)" do
+    # Real bug found benchmarking anylinq.systemupdates (issue #807):
+    # ansible_play_batch was never registered at all, so the role's own
+    # first task (`when: (ansible_play_batch | length) > 1`) hard-failed
+    # with "'ansible_play_batch' is undefined" where ansible-playbook
+    # skips the task on a single-host play (batch length 1). The batch
+    # equals the whole play host list whenever serial: isn't in play -
+    # the only mode this engine models - the same value
+    # ansible_play_hosts carries (live-verified vs 2.19.11:
+    # batch=hosts=all on a serial-less play).
+    playbook = File.tempname("play-batch", ".yml")
+
+    File.write(playbook, <<-YAML)
+      - name: repro
+        hosts: all
+        gather_facts: false
+        tasks:
+          - name: render_batch
+            ansible.builtin.debug:
+              msg: "{{ ansible_play_batch | length }}:{{ ansible_play_batch | join(',') }}"
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+
+    status.success?.must_equal(true)
+    rendered = output.to_s
+    rendered.must_include("2:hostone,hosttwo")
+  ensure
+    File.delete(playbook) if playbook && File.exists?(playbook)
+  end
+
   it "prints the play_hosts read deprecation with the template path as Origin" do
     # ansible-core 2.19.11 emits the play_hosts deprecation block on each
     # read of the magic variable, deduplicated per distinct Origin per
