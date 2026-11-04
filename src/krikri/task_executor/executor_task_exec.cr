@@ -2684,6 +2684,16 @@ module Krikri
           resolved["__cleanup_after_script"] = "true"
           resolved["__script_tmp_dir"] = made
           resolved["__script_ssh_addr"] = conn.conn_host
+          # The controller's own TERM rides along with the address marker:
+          # real's script command runs inside the `ssh -tt` pty session,
+          # whose TERM is the ssh client's (the controller's) - the
+          # target-side plugin process env carries none, and
+          # terminfo-driven script code (`tput colors`, the nodesource
+          # setup scripts' color block) renders differently without it
+          # (issue #862, the script-side twin of raw's __raw_pty_term).
+          if (term = ENV["TERM"]?) && !term.empty?
+            resolved["__script_pty_term"] = term
+          end
           return resolved
         rescue
           # An upload through a freshly created per-task dir that never

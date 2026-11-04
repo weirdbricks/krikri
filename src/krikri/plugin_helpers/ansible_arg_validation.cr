@@ -139,10 +139,11 @@ module Krikri
       end
 
       # __raw_pty_merge/__raw_pty_term ride in with remote raw (which
-      # aliases to the shell plugin): without them here the plugin's own
+      # aliases to the shell plugin) and __script_pty_term with remote
+      # script (issue #862): without them here the plugin's own
       # unsupported-param check would reject the executor's pty markers
       # as user params.
-      private INTERNAL = {"_ansible_check_mode", "_ansible_diff", "_module_name", "_verbosity", "_environment", "__raw_pty_merge", "__raw_pty_term"}
+      private INTERNAL = {"_ansible_check_mode", "_ansible_diff", "_module_name", "_verbosity", "_environment", "__raw_pty_merge", "__raw_pty_term", "__script_pty_term"}
 
       # community.crypto's _time.py get_relative_time_option: a timespec
       # is either sshd_config(5)-relative (a leading +/-, then

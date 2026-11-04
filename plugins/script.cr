@@ -30,6 +30,7 @@ require "json"
 require "../src/krikri/base_plugin"
 require "../src/krikri/plugin_helpers/ansible_splitlines"
 require "../src/krikri/plugin_helpers/script_pty_capture"
+require "../src/krikri/plugin_helpers/pty_command_runner"
 
 module Krikri
   class ScriptPlugin < BasePlugin
@@ -96,22 +97,48 @@ module Krikri
       # ssh -tt session: real's script action runs the staged file via
       # _low_level_execute_command with in_data=nil, so its ssh plugin
       # requests `-tt` (ssh.py: `if not in_data and sudoable and
-      # use_tty: args = ('-tt', ...)`) and the remote shell gets ONE pty
-      # on stdout AND stderr. Wrapping the invocation so one pipe carries
-      # both streams reproduces that merge in true execution order; the
-      # \n->\r\n translation and the client's own close notice are
-      # applied to the capture below (ScriptPtyCapture's header carries
-      # the live-verified evidence). A locally-run script takes neither:
-      # real's LOCAL connection never forces a tty, capturing the two
-      # streams separately - which the markerless path already does.
-      # .presence (not truthiness): a blank marker must behave as "no
-      # marker exists" rather than a pty merge against an empty address.
+      # use_tty: args = ('-tt', ...)`, use_tty defaulting to true) and
+      # the remote shell gets ONE pty on stdout AND stderr. A pty is not
+      # just a stream shape: it changes how isatty-sensitive code in the
+      # script BEHAVES, and no `{ ...; } 2>&1` pipe emulation can
+      # reproduce that - dockpack.base_nodejs's nodesource setup scripts
+      # gate their whole color-setup block on `if test -t 1`, so under
+      # real the block runs (and its failing `which tput` lands in the
+      # merged capture, issue #862) while a pipe run skips it silently.
+      # The runner therefore gives the script a REAL target-side pty,
+      # whose capture is already merged and ONLCR'd; the 2>&1 group
+      # below is only the fallback for a pty-less target. A
+      # non-local-context plugin process (running controller-side and
+      # dialing out over ssh) must not "allocate the pty on the target"
+      # by running the script on the controller - it keeps the ssh
+      # emulation, whose capture is then shaped without the
+      # already-ONLCR'd shortcut. `.presence` (not truthiness): a blank
+      # marker must behave as "no marker exists" rather than a pty merge
+      # against an empty address.
       remote_addr = @params["__script_ssh_addr"]?.presence
+      pty_result = nil
       if remote_addr
-        invocation = "{ #{invocation}; } 2>&1"
+        # Real's script command runs inside the `ssh -tt` session's
+        # environment, so it sees a TERM (the ssh client forwards the
+        # controller's own to sshd, which installs it on the pty) -
+        # terminfo-driven code in the script (`tput colors`, the same
+        # setup scripts' color setup) renders like real only with it.
+        # The task's own `environment:` wins over the session TERM,
+        # matching real's env_string prefix (script.py builds
+        # `env K=V ... <script>` ahead of the command): an environment
+        # TERM is applied ON TOP of the session, not instead of it.
+        if local_connection?
+          pty_env = task_environment || Hash(String, String).new
+          if (pty_term = @params["__script_pty_term"]?.presence) && pty_env["TERM"]?.nil?
+            pty_env = pty_env.dup
+            pty_env["TERM"] = pty_term
+          end
+          pty_result = PluginHelpers::PtyCommandRunner.exec(invocation, env: pty_env)
+        end
+        invocation = "{ #{invocation}; } 2>&1" if pty_result.nil?
       end
 
-      result = remote_exec(invocation)
+      result = pty_result || remote_exec(invocation)
       cleanup
 
       # Real's script ACTION returns the module capture untouched - no
@@ -128,9 +155,21 @@ module Krikri
       # stdout); its only lines entry drops the attached "\r\n" the way
       # str.splitlines would.
       if remote_addr
-        stdout = PluginHelpers::ScriptPtyCapture.pty_stdout(result[:stdout])
+        # A REAL-pty capture is already the sshd-shaped stream (merged,
+        # ONLCR'd, trailing "\r\n" intact) - re-applying the \n->\r\n
+        # emulation on it would turn every \r\n into \r\r\n. Its
+        # stdout_lines split straight off the CRLF text (str.splitlines
+        # treats "\r\n" as one break, same as the raw capture split the
+        # emulation derives them from). The emulated 2>&1 capture is
+        # still plain-\n and takes the emulation.
+        if pty_result
+          stdout = result[:stdout]
+          stdout_lines = PluginHelpers::AnsibleSplitlines.split(stdout)
+        else
+          stdout = PluginHelpers::ScriptPtyCapture.pty_stdout(result[:stdout])
+          stdout_lines = PluginHelpers::AnsibleSplitlines.split(result[:stdout])
+        end
         stderr = PluginHelpers::ScriptPtyCapture.connection_closed_stderr(remote_addr)
-        stdout_lines = PluginHelpers::AnsibleSplitlines.split(result[:stdout])
         stderr_lines = [stderr.rstrip("\r\n")]
       else
         stdout = result[:stdout]
