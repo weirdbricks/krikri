@@ -1,7 +1,7 @@
 class KrikriMultiarch < Formula
   desc "Ansible-compatible automation tool (macOS controller bundle with Linux plugins)"
   homepage "https://github.com/weirdbricks/krikri"
-  version "0.9.2344"
+  version "0.9.2356"
   license "GPL-3.0-or-later"
 
   # The bundle is a macOS controller build plus Linux plugin sets; on a
@@ -9,7 +9,7 @@ class KrikriMultiarch < Formula
   # matching its own platform, so there is nothing extra to install here.
   depends_on :macos
 
-  url "https://github.com/weirdbricks/krikri/releases/download/v0.9.2344/krikri-v0.9.2344-darwin-with-linux-multiarch.tar.gz"
+  url "https://github.com/weirdbricks/krikri/releases/download/v0.9.2356/krikri-v0.9.2356-darwin-with-linux-multiarch.tar.gz"
   sha256 ""
 
   # Same dynamically-linked macOS binaries as the default `krikri` formula.
