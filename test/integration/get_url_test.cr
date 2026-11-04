@@ -438,6 +438,56 @@ describe "get_url plugin" do
     File.delete(dest) if dest && File.exists?(dest)
   end
 
+  it "accepts a checksum rendered from a regex_search backref list (brackets stripped like Ansible)" do
+    # Issue #858, SweBarre.opkssh's "Download opkssh" task: Ansible's
+    # regex_search(pattern, '\\1') returns a ONE-ELEMENT LIST, and
+    # embedding that list in the checksum string renders Python's list
+    # repr, so the module receives checksum: "sha256:['<hash>']". Real
+    # get_url strips every non-word character out of the value
+    # (get_url.py's `re.sub(r'\W+', '', checksum).lower()`) before
+    # comparing, so the download succeeds; krikri used to compare
+    # against the bracketed repr verbatim and failed every run.
+    dest = File.tempname("get-url-spec")
+    result = PluginSpecHelper.run("get_url", {
+      "url" => "#{GET_URL_TEST_BASE}/file.txt", "dest" => dest, "checksum" => "sha256:['#{FILE_CHECKSUM}']",
+    })
+
+    result["changed"].as_bool.must_equal(true)
+    falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+    File.read(dest).must_equal(FILE_CONTENT)
+
+    # The same strip feeds the mismatch message: real reports the
+    # STRIPPED checksum in "did not match %s", not the raw repr.
+    wrong = "e" * 64
+    mismatch = PluginSpecHelper.run("get_url", {
+      "url" => "#{GET_URL_TEST_BASE}/file.txt", "dest" => "#{dest}.2", "checksum" => "sha256:['#{wrong}']",
+    })
+    mismatch["msg"].as_s.must_equal("The checksum for #{mismatch["src"].as_s} did not match #{wrong}; it was #{FILE_CHECKSUM}.")
+  ensure
+    File.delete(dest) if dest && File.exists?(dest)
+    File.delete("#{dest}.2") if dest && File.exists?("#{dest}.2")
+  end
+
+  it "rejects a checksum whose stripped value is not a hexdigest, like Ansible's format check" do
+    # get_url.py's `int(checksum, 16)` check after the \W strip: anything
+    # left that is not a hexdigest fails up front with "The checksum
+    # format is invalid" (no download attempted), carrying the module's
+    # initial result dict shape. Live-verified against ansible-core
+    # 2.19.11 with checksum: "sha256:[zz]".
+    dest = File.tempname("get-url-spec")
+    result = PluginSpecHelper.run("get_url", {
+      "url" => "#{GET_URL_TEST_BASE}/file.txt", "dest" => dest, "checksum" => "sha256:[zz]",
+    })
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("The checksum format is invalid")
+    result["checksum_dest"]?.must_be_nil
+    result["checksum_src"]?.must_be_nil
+    File.exists?(dest).must_equal(false)
+  ensure
+    File.delete(dest) if dest && File.exists?(dest)
+  end
+
   it "is idempotent when dest exists and checksum matches" do
     dest = File.tempname("get-url-spec")
     File.write(dest, FILE_CONTENT)
