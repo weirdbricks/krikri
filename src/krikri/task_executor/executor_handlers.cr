@@ -593,7 +593,7 @@ module Krikri
       # task list - the include statement itself still displays its
       # `included:` line (live-verified vs 2.19.11), only its task list
       # is empty.
-      included_tasks = PlaybookParser.parse_tasks(yaml.as_a, inherited, "task in included #{resolved_path}", File.dirname(resolved_path), role_path: handler.role_path, playbook_dir: @playbook_dir, source_file: File.expand_path(resolved_path), source_map: YamlSourceMap.scan(text))
+      included_tasks = PlaybookParser.parse_tasks(yaml.as_a, inherited, "task in included #{resolved_path}", File.dirname(resolved_path), role_path: handler.role_path, playbook_dir: @playbook_dir, source_file: File.expand_path(resolved_path), source_map: YamlSourceMap.scan(text), handler: true)
       # Handlers - and everything a handler pulls in - are exempt from
       # tag selection (Ansible runs a notified `never`-tagged handler
       # under a plain invocation, and a never task inside a handler's
