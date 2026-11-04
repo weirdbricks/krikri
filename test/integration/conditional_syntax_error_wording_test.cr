@@ -157,6 +157,60 @@ describe "unknown filter/test in conditionals: Syntax error in expression" do
     output.must_include("ALLOW_BROKEN_CONDITIONALS")
   end
 
+  # The `{{ }}`-wrapped when: form compiles its filter/test names during
+  # the RENDER, so the wording is the rendered-template one ("Syntax error
+  # in template: ...", issue #335) - but real 2.19.11 still displays it as
+  # the same conditional-failure class as the unbraced form's wording: the
+  # two-level [ERROR] chain with the caused-by Origin at the when: token,
+  # no hint, and NO "Module failed:"/"Action failed:" middle segment
+  # (live-verified vs 2.19.11, issue #827, mats116.php5-fpm's
+  # `when: "{{ php_version | version_compare('5.6', '==') }}"`).
+  it "fails a braced when: with an unknown filter through the conditional chain, no module wrap" do
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          php_version: "5.5"
+        tasks:
+          - name: modify repository php5.6
+            debug: msg="x"
+            when: "{{ php_version | version_compare('5.6', '==') }}"
+      YAML
+    status.exit_code.must_equal(2)
+    output.must_include("[ERROR]: Task failed: Syntax error in template: No filter named 'version_compare'.")
+    output.must_include("Task failed.")
+    output.must_include("<<< caused by >>>")
+    # The cause stanza's Origin sits at the when: VALUE token (the opening
+    # quote, column 13), like the unbraced form's.
+    output.must_include("when: \"{{ php_version | version_compare('5.6', '==') }}\"\n" + " " * 14 + "^ column 13")
+    output.must_include("fatal: [localhost]: FAILED! => {\"msg\": \"Task failed: Syntax error in template: No filter named 'version_compare'.\"}")
+    output.wont_include("Module failed")
+    output.wont_include("Action failed")
+    output.wont_include("ALLOW_BROKEN_CONDITIONALS")
+    output.wont_include("Unhandled exception")
+  end
+
+  it "fails a braced when: with an unknown test through the conditional chain too" do
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          php_version: "5.5"
+        tasks:
+          - debug: msg="x"
+            when: "{{ php_version is bogustest }}"
+      YAML
+    status.exit_code.must_equal(2)
+    output.must_include("[ERROR]: Task failed: Syntax error in template: No test named 'bogustest'.")
+    output.must_include("<<< caused by >>>")
+    output.must_include("fatal: [localhost]: FAILED! => {\"msg\": \"Task failed: Syntax error in template: No test named 'bogustest'.\"}")
+    output.wont_include("Module failed")
+    output.wont_include("Action failed")
+    output.wont_include("Unhandled exception")
+  end
+
   # Ansible compiles conditionals as raw expressions - it never renders
   # `{{ }}` out of them - so a delimiter-bearing conditional outside any
   # string literal is its "Template delimiters are not supported in
