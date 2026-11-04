@@ -139,6 +139,42 @@ describe "Krikri::PlaybookParser.check_template_quoting (template_quoting_error_
     )
   end
 
+  it "applies the colon heuristic to a block-collection error on a mis-indented key line" do
+    # rothgar.tomcat_and_java's tasks/main.yml:10 (issue #816): the task's
+    # key lands at column 1 (its single-quoted wget value spans the
+    # following lines), so libyaml reports its block-collection error at
+    # 3:1 - nowhere near the `Cookie: ` colon ansible-core's error layer
+    # finds on that line and reports instead, with the Origin and caret
+    # re-pointed at the colon itself.
+    content = "# Full URLs can be found here https://ivan-site.com/2012/05/download-oracle-java-jre-jdk-using-a-script/\n" \
+              "- name: Download Java {{ java_version }}\n" \
+              "shell: 'wget -q --no-cookies --no-check-certificate --header \"Cookie: oraclelicense=accept-securebackup-cookie\"\n" \
+              "    \"http://download.oracle.com/otn-pub/java/jdk/\"\n" \
+              "    -O /tmp/java.tgz'\n" \
+              "  register: jdk_downloaded\n"
+    ex = Krikri::YamlSyntaxError.new("pb.yml", content,
+      YAML::ParseException.new("did not find expected '-' indicator at line 3, column 1, while parsing a block collection at line 2, column 1", 3, 1, nil))
+    ex.render.must_equal(
+      "[ERROR]: YAML parsing failed: Colons in unquoted values must be followed by a non-space character.\n" \
+      "Origin: #{File.expand_path("pb.yml")}:3:69\n" \
+      "\n" \
+      "1 # Full URLs can be found here https://ivan-site.com/2012/05/download-oracle-java-jre-jdk-using-a-script/\n" \
+      "2 - name: Download Java {{ java_version }}\n" \
+      "3 shell: 'wget -q --no-cookies --no-check-certificate --header \"Cookie: oraclelicense=accept-securebackup-cookie\"\n" \
+      "#{" " * 70}^ column 69\n" \
+      "\n" \
+      "\n" \
+      "For example:\n" \
+      "\n" \
+      "    raw: echo 'name: ansible'\n" \
+      "\n" \
+      "Should be:\n" \
+      "\n" \
+      "    raw: \"echo 'name: ansible'\"\n" \
+      "\n"
+    )
+  end
+
   it "keeps the colon error's worked example byte-identical" do
     ex = Krikri::YamlSyntaxError.new("pb.yml", "this: is: bad: [\n",
       YAML::ParseException.new("mapping values are not allowed in this context", 1, 9, nil))
