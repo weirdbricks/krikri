@@ -1257,24 +1257,37 @@ module Krikri
       "None"
     end
 
-    private def included_line_item_label(task : Task, item_label : String?, label_value : JSON::Any? = nil) : String?
-      return nil unless item_label
-      # The `included:` line follows a different rule than the `skipping:`
-      # one: ansible's include callback reads the RAW no_log keyword, so
-      # ANY templated no_log censors the item (even when the template
-      # resolves false, or its variable is undefined), while a literal
-      # `no_log: false` shows it. The `skipping:` line keeps the resolved
-      # rule (include_item_display_label above) - live-verified vs 2.19.
-      return "(censored due to no_log)" if task.no_log_expr || task.no_log?
-      # Ansible's v2_playbook_on_include then adds ` => (item=...)` only
-      # `if label:` - the PYTHON truthiness of the label OBJECT, so a
-      # falsy loop item ({}, [], "", 0, false, None) prints the included:
-      # line bare (live-verified vs 2.19.11 on T2L.php's `included:
-      # tasks/configure_php.yml for testhost` with item {}). The
-      # `skipping:`/`ok:` per-item lines have no such gate.
-      gated = task.loop_label ? JSON::Any.new(item_label) : label_value
-      return nil if gated && Krikri.python_falsy?(gated)
-      item_label
+    private def included_line_item_label(task : Task, item_label : String?, label_value : JSON::Any? = nil, vars_context : Hash(String, JSON::Any)? = nil) : String?
+      if item_label
+        # A LOOPED include's label censors on the raw no_log keyword (any
+        # templated value, even one resolving false) - the per-iteration
+        # task copy ansible builds for each loop item never gets no_log
+        # post-validated, so IncludedFile.process_include_results sees the
+        # raw truthy template string (issue #613, live-verified vs 2.19).
+        return "(censored due to no_log)" if task.no_log_expr || task.no_log?
+        # Ansible's v2_playbook_on_include then adds ` => (item=...)` only
+        # `if label:` - the PYTHON truthiness of the label OBJECT, so a
+        # falsy loop item ({}, [], "", 0, false, None) prints the included:
+        # line bare (live-verified vs 2.19.11 on T2L.php's `included:
+        # tasks/configure_php.yml for testhost` with item {}). The
+        # `skipping:`/`ok:` per-item lines have no such gate.
+        gated = task.loop_label ? JSON::Any.new(item_label) : label_value
+        return nil if gated && Krikri.python_falsy?(gated)
+        return item_label
+      end
+      # A NON-looped no_log include has no loop item, yet its included:
+      # line still prints ` => (item=(censored due to no_log))`: ansible
+      # stuffs _ansible_no_log into the IncludedFile's special vars for ANY
+      # no_log include (loop or not), and the callback's _get_item_label
+      # returns the censored string from it - truthy on its own, so the
+      # suffix prints even though no loop item exists (issue #805,
+      # Temelio.secrets' no_log include_tasks: statements). The non-looped
+      # rule is the RESOLVED no_log, unlike the looped one above: without a
+      # per-iteration copy, ansible post-validates no_log on the original
+      # task, so a templated value resolving false shows the line bare
+      # (live-verified vs 2.19.11).
+      return "(censored due to no_log)" if resolve_task_no_log(task, vars_context)
+      nil
     end
 
     # The looped include's label object for the included: line's

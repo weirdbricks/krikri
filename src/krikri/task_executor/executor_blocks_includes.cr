@@ -131,6 +131,12 @@ module Krikri
 
       run_groups = Hash(String, Array(Host)).new { |hash, key| hash[key] = [] of Host }
       include_names = {} of String => String
+      # Per-host resolved no_log for the included: line's censored-item
+      # suffix - the suffix appears for ANY no_log include, looped or not
+      # (issue #805), so the batched path needs each host's resolution
+      # before its group's line prints (see the suffix at both print sites
+      # below).
+      no_log_by_host = {} of String => Bool
       run_hosts.each do |host|
         begin
           vars_context = build_vars_context(task, host)
@@ -148,6 +154,7 @@ module Krikri
           next
         end
         substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
+        no_log_by_host[host.name] = resolve_task_no_log(task, vars_context)
         file_rel = begin
           substitutor.substitute(task.include_file.as(String), strict: true)
         rescue ex : UndefinedVariableError
@@ -204,7 +211,14 @@ module Krikri
             # so the `included:` line prints here exactly like it does
             # after a successful parse below.
             connection_names = group_hosts.map { |host| host.name }
-            puts "included: #{resolved_path} for #{connection_names.join(", ")}".colorize(:cyan)
+            # The no_log include's included: line carries the censored-item
+            # suffix even with no loop item (issue #805) - resolved per the
+            # group's first host (ansible groups IncludedFiles by their
+            # special vars, so a per-host templated no_log split would be
+            # separate lines; krikri's path grouping keeps one line).
+            included_label = no_log_by_host[group_hosts.first.name]? ? "(censored due to no_log)" : nil
+            suffix = included_label ? " => (item=#{included_label})" : ""
+            puts "included: #{resolved_path} for #{connection_names.join(", ")}#{suffix}".colorize(:cyan)
             next
           end
           unless yaml.as_a?
@@ -255,7 +269,11 @@ module Krikri
           group_hosts.each { |host| mark_role_dep_ran(task, host) }
 
           connection_names = group_hosts.map { |host| host.name }
-          puts "included: #{resolved_path} for #{connection_names.join(", ")}".colorize(:cyan)
+          # Same no_log censored-item suffix as the zero-task branch above
+          # (issue #805).
+          included_label = no_log_by_host[group_hosts.first.name]? ? "(censored due to no_log)" : nil
+          suffix = included_label ? " => (item=#{included_label})" : ""
+          puts "included: #{resolved_path} for #{connection_names.join(", ")}#{suffix}".colorize(:cyan)
 
           run_task_batch(included_tasks, group_hosts)
         rescue ex : HandlerNotFoundError
@@ -2308,8 +2326,9 @@ module Krikri
         # parse below. A looped caller has nothing to defer here, so it
         # just gets :ok back.
         # The included: line censors on the raw no_log keyword (any
-        # templated value), not the resolved one - included_line_item_label.
-        included_label = included_line_item_label(task, item_label, included_line_label_value(task, item_label, vars_context))
+        # templated value) for a looped iteration, and on the resolved one
+        # even with no loop item at all - included_line_item_label.
+        included_label = included_line_item_label(task, item_label, included_line_label_value(task, item_label, vars_context), vars_context)
         suffix = included_label ? " => (item=#{included_label})" : ""
         puts "included: #{resolved_path} for #{host.name}#{suffix}".colorize(:cyan)
         return :ok
@@ -2432,7 +2451,7 @@ module Krikri
       # <host>` (plus ` => (item=...)` for a looped include). Printed
       # after the load succeeds, before any included task runs.
       connection_names = [host.name]
-      included_label = included_line_item_label(task, item_label, included_line_label_value(task, item_label, vars_context))
+      included_label = included_line_item_label(task, item_label, included_line_label_value(task, item_label, vars_context), vars_context)
       suffix = included_label ? " => (item=#{included_label})" : ""
       puts "included: #{resolved_path} for #{connection_names.join(", ")}#{suffix}".colorize(:cyan)
 
