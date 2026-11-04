@@ -5714,6 +5714,44 @@ module Krikri
             column = dash_idx + 2 + (item_rest.size - item_rest.lstrip.size) + 1
             return {item_idx, column}
           end
+          # A `when:` value can also be a multi-line PLAIN scalar
+          # ("need_update.changed\nor need_update | failed", AAbouZaid.yourls
+          # issue #817): no "- " item lines exist, so the item scan above
+          # returns without a match and the whole [ERROR] chain used to be
+          # silently skipped. Real 2.19.11 still prints the chain there,
+          # pinning the caused-by Origin on the scalar's FIRST line at its
+          # own indent (the folded expression's start column), so collect
+          # the continuation lines (deeper than the key, still inside this
+          # task), fold them the way YAML does and only label on an exact
+          # match - an unmatched scan stays silent like every other
+          # locator miss here.
+          key_line_indent = line.size - line.lstrip.size
+          cont_idx = idx + 1
+          pieces = [] of String
+          first_cont : {Int32, Int32}? = nil
+          while cont_idx < lines.size
+            cont_line = lines[cont_idx]
+            cont_indent = cont_line.size - cont_line.lstrip.size
+            break unless cont_indent > key_line_indent
+            cont_stripped = cont_line.strip
+            break if cont_stripped.starts_with?("- ") && cont_indent <= task_key_indent - 2
+            unless cont_stripped.empty?
+              first_cont ||= {cont_idx, cont_indent + 1}
+              pieces << cont_stripped
+            end
+            cont_idx += 1
+          end
+          if first = first_cont
+            folded = pieces.join(" ")
+            # A quoted multi-line scalar keeps its quote characters in the
+            # source lines while the parsed clause has none - the same
+            # single-matching-quote-pair tolerance the item branch above
+            # applies.
+            quoted = folded.size >= 2 &&
+                     (folded.starts_with?('"') && folded.ends_with?('"') ||
+                      folded.starts_with?('\'') && folded.ends_with?('\''))
+            return first if folded == raw.strip || (quoted && folded[1..-2] == raw.strip)
+          end
           return nil
         end
         column = line.size - line.lstrip.size + key.size + 1 + (rest.size - rest.lstrip.size) + 1
