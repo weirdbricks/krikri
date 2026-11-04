@@ -556,6 +556,69 @@ describe "undefined loop: source is strict" do
     output.must_include("failed=1")
   end
 
+  # Issue #808 (reddec.tinc_boot): a looped task whose when: is itself a
+  # BROKEN conditional (ansible-core 2.19's non-boolean result refusal -
+  # `when: "x | length"` over an empty string resolves to an int) and
+  # whose loop source is ALSO undefined must fail with the LOOP source's
+  # error. Real 2.19.11 (live-verified) swallows any pre-loop
+  # conditional-evaluation error - only a cleanly-False verdict
+  # short-circuits the task - and proceeds to the loop source, so the
+  # loop's own error wins; probing the when: non-strictly turned the
+  # broken conditional into a clean False, the task was treated as
+  # skippable, and the failure surfaced as the conditional error instead.
+  it "fails with the loop's error when the when: is a broken non-boolean conditional" do
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        gather_facts: false
+        vars:
+          entry_group: ''
+        tasks:
+          - name: t
+            ansible.builtin.debug:
+              msg: "ran {{ item }}"
+            with_items: "{{ no_such_list }}"
+            when: "entry_group | length"
+          - name: sentinel
+            ansible.builtin.debug:
+              msg: "SENTINEL-808"
+      YAML
+
+    status.exit_code.must_equal(2)
+    output.must_include("'no_such_list' is undefined")
+    output.wont_include("Conditionals must have a boolean result")
+    output.wont_include("SENTINEL-808")
+    output.must_include("failed=1")
+  end
+
+  # The role's own shape: the undefined loop source is a `groups[<var>]`
+  # subscript whose key variable defaults to an empty string, so the
+  # templated subscript itself raises (ansible's lazy groups dict reports
+  # it as an attribute error on '') - the loop error must still win over
+  # the broken `when: "tinc_boot_entry_group | length"`.
+  it "fails with the groups[] subscript error when the entry-group key is empty" do
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        gather_facts: false
+        vars:
+          tinc_boot_entry_group: ''
+        tasks:
+          - name: t
+            ansible.builtin.debug:
+              msg: "ran {{ item }}"
+            with_items: "{{ groups[tinc_boot_entry_group] }}"
+            when: "tinc_boot_entry_group | length"
+          - name: sentinel
+            ansible.builtin.debug:
+              msg: "SENTINEL-808G"
+      YAML
+
+    status.exit_code.must_equal(2)
+    output.must_include("has no attribute ''")
+    output.wont_include("Conditionals must have a boolean result")
+    output.wont_include("SENTINEL-808G")
+    output.must_include("failed=1")
+  end
+
   # Scenario 11b - a DEFINED empty list still skips, it is not an error.
   it "skips a defined empty list" do
     status, output = run_playbook(<<-YAML)

@@ -1158,7 +1158,21 @@ module Krikri
         # `item_count` is a different variable, not the loop item.
         substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
         skippable = begin
-          !ConditionalEvaluator.evaluate(substitutor.substitute(when_condition), vars_context, raise_undefined: true)
+          # strict: true - the probe must judge the conditional the same
+          # way the real when: evaluation does. Evaluated non-strictly, a
+          # BROKEN conditional (ansible-core 2.19's non-boolean result
+          # refusal - `when: "x | length"` over an empty string, a bare
+          # str/list var) collapses to a clean False here, the looped
+          # task was treated as skippable, and the failure surfaced later
+          # as the conditional error instead of the loop-source error.
+          # Real 2.19 swallows any pre-loop conditional-evaluation error
+          # (only a cleanly-False verdict short-circuits) and proceeds to
+          # the loop source, so the loop's own error wins - live-verified
+          # vs 2.19.11: `with_items: "{{ groups[''] }}"` +
+          # `when: "tinc_boot_entry_group | length"` (reddec.tinc_boot,
+          # issue #808) and `with_items: "{{ no_such_list }}"` +
+          # `when: "x | length"` both report the loop error.
+          !ConditionalEvaluator.evaluate(substitutor.substitute(when_condition), vars_context, strict: true, raise_undefined: true)
         rescue err : ConditionalEvaluator::UndefinedVariableError | UndefinedVariableError
           when_undefined_name_is_loop_var?(err.message) && when_tolerates_undefined?(when_condition)
         rescue

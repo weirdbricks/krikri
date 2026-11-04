@@ -6564,6 +6564,17 @@ module Krikri
         # the cause stanza at that variable's defining value, not at the
         # loop keyword (live-verified, issue #319).
         cause_context = origin_context_block(origin.path, File.read_lines(origin.path), origin.line, origin.column)
+      elsif inner.to_s.starts_with?("'#{Krikri::LAZY_TEMPLATE_DICT_TYPE} object' has no attribute") &&
+            task_has_loop_source?(task) &&
+            (pos = locate_loop_source_line(lines, task))
+        # An empty-string subscript key evaluated DIRECTLY inside the loop
+        # source (`with_items: "{{ groups[tinc_boot_entry_group] }}"` with
+        # the group-name var defaulting to '' - reddec.tinc_boot, issue
+        # #808) has no defining var for value_failure_var_origin to find,
+        # so the #319 branch above declines; real 2.19.11 then pins the
+        # cause stanza at the loop keyword's VALUE token like any other
+        # unresolvable loop source (live-verified vs 2.19.11).
+        cause_context = origin_context_block(path, lines, pos[0] + 1, pos[1])
       elsif (inner.to_s.matches?(/\Aobject of type '[^']+' has no attribute .+\z/) ||
             inner.to_s.matches?(/\A(#{Regex.escape(Krikri::LAZY_TEMPLATE_DICT_TYPE)}|#{Regex.escape(Krikri::LAZY_TEMPLATE_LIST_TYPE)}) object has no element .+\z/)) &&
             task_has_loop_source?(task) &&
