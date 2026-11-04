@@ -2380,7 +2380,19 @@ module Krikri
                    KrikriJinjaFilters.ensure_shared_python_filter(name, vars)
               raise VariableSubstitutor::FilterEngine::UnknownFilterError.new("No filter named '#{name}'.")
             end
-            i = after
+            # Resume ON the byte after the name, not one past it: when a
+            # chain's filter takes no arguments the name is followed
+            # DIRECTLY by the next `|` (`x|join|search(...)`), and jumping
+            # past it let the loop's own `i += 1` swallow that pipe, so
+            # every later link in the chain escaped this validation. Real
+            # Jinja compiles the WHOLE chain and rejects every name in it
+            # (vrischmann.java issue #867: `java_versions is defined and
+            # ... java_versions|join|search("oracle")` with java_versions
+            # undefined - the False `is defined` clause short-circuits
+            # before `|search` is ever evaluated, yet ansible-core 2.19
+            # still hard-fails "Syntax error in expression: No filter
+            # named 'search'." while this engine silently skipped).
+            i = after - 1
           end
         end
         i += 1

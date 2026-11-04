@@ -74,6 +74,25 @@ describe "ConditionalEvaluator compile-time filter-name validation" do
       Krikri::ConditionalEvaluator.evaluate("(false and (Y|d(1))) or (Y|success)", v)
     end
   end
+
+  it "validates a chained no-argument filter after another filter (issue #867)" do
+    # vrischmann.java's `when: java_versions is defined and java_versions
+    # is sequence and java_versions|join|search("oracle")` - the scan used
+    # to jump past `join` and swallow the directly-following `|`, so
+    # `search` (a real-Ansible TEST, not a filter) escaped validation and
+    # the task silently skipped where ansible-core 2.19 hard-fails
+    # "Syntax error in expression: No filter named 'search'." on the
+    # short-circuited `is defined` clause.
+    v = vars({"Y" => "yes", "java_versions" => [JSON::Any.new("oracle-8")]})
+    assert_raises_message(Krikri::VariableSubstitutor::FilterEngine::UnknownFilterError, "No filter named 'search'") do
+      Krikri::ConditionalEvaluator.evaluate("java_versions is defined and java_versions is sequence and java_versions|join|search(\"oracle\")", v)
+    end
+  end
+
+  it "still short-circuits a False clause when later chained filters are all known" do
+    v = vars({"flag" => false, "java_versions" => [JSON::Any.new("openjdk-17")]})
+    Krikri::ConditionalEvaluator.evaluate("flag and java_versions|join|d('x')", v).must_equal(false)
+  end
 end
 
 describe "FilterEngine::KNOWN_FILTER_NAMES registry" do
