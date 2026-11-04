@@ -349,14 +349,16 @@ module Krikri
             out = marker_render_chunks(raw, active_substitutor, span_vars, task, host, ctx, state, depth + 1, origin || error_origin)
             if out.includes?(state.placeholder_prefix)
               # Real only truncates the name run when the span COMBINES
-              # operands with a binary operator; a method-call/filter span
+              # operands with a binary operator, or the failed reference is
+              # an inline-conditional CONDITION (truthiness on the failure
+              # raises mid-stream); a method-call/filter span
               # (`', '.join(x)`) just splices the value's own error marker
               # in and keeps rendering the rest of the name
               # (felixfontein.acme_certificate: "... for domains
               # << error 1 - 'domains' is undefined >> exist"). The strict
               # re-substitute below would only push the same failure a
               # second time, so the pre-rendered markers are final here.
-              if name_span_combines_operands?(span)
+              if name_span_combines_operands?(span) || conditional_condition_references?(span, ident)
                 abort = true
                 break
               end
@@ -409,6 +411,10 @@ module Krikri
           # 'z' is not in list", probed 2026-10-10) - no "Error rendering
           # template:" prefix for this class.
           ctx.push(e.message.to_s, error_origin || ctx.origin)
+          # A condition-evaluation failure truncates the run like any other
+          # mid-stream exception (clusterfrak.bind's `if is_aws` condition
+          # attribute/undefined misses; live-probed vs 2.19.11).
+          abort = true if conditional_condition_failure?(span, e.message.to_s)
         rescue e : UndefinedVariableError
           msg = e.message.to_s
           # Real 2.19.11 prefixes an operator TypeError with "Error
@@ -416,6 +422,7 @@ module Krikri
           # undefined name bare - the raw message stays the dotted-leaf
           # comparison key either way.
           display = e.is_a?(PlusMinusOperandError) ? e.template_text : msg
+          cond_failure = conditional_condition_failure?(span, msg)
           # Live-verified vs 2.19.11 (q-probes): whether the span's failure
           # truncates the template run depends on the span's SHAPE, not just
           # the failure:
@@ -438,8 +445,8 @@ module Krikri
           #   like a pre-rendered bare-ident value's error does.
           if (leaf = dotted_leaf_failure(span, span_vars, msg, task, host))
             ctx.push(display, leaf || error_origin || ctx.origin)
-            abort = true if name_span_combines_operands?(span)
-          elsif name_span_combines_operands?(span)
+            abort = true if name_span_combines_operands?(span) || cond_failure
+          elsif name_span_combines_operands?(span) || cond_failure
             ctx.push(display, error_origin || ctx.origin)
             abort = true
           else
@@ -488,6 +495,52 @@ module Krikri
       return true if scan_text.matches?(/(^|[\s(])(-)(\s|\d)/)
       return true if scan_text.matches?(/(^|\s)(and|or)(\s|$)/)
       false
+    end
+
+    # The condition segments of an inline-conditional span (`a if c else
+    # b`) - the text of each top-level `if`...`else` gap, with quoted
+    # literals stripped; empty when the span is not a conditional
+    # expression (a `... else b if c2 else d` chain yields both `c` and
+    # `c2`, since either condition's failure truncates).
+    private def conditional_condition_segments(span : String) : Array(String)
+      stripped = span.gsub(/'[^']*'/, " ").gsub(/"[^"]*"/, " ")
+      segments = [] of String
+      while (m = stripped.match(/(^|\s)if\s/))
+        rest = stripped[m.end(0)..]
+        cond = (em = rest.match(/(^|\s)else(\s|$)/)) ? rest[0...em.begin(0)] : rest
+        segments << cond
+        stripped = rest
+      end
+      segments
+    end
+
+    # An inline conditional whose CONDITION evaluation fails aborts the
+    # whole template in ansible-core 2.19: raising mid-stream appends one
+    # "template potentially truncated" marker after the error markers
+    # (live-probed vs 2.19.11: `{{ 'A' if u else 'B' }}`, `{{ 'A' if u }}`,
+    # `{{ 'A' if u|bool else 'B' }}`, `{{ ('A' if u else 'B') }}`, a
+    # condition attribute miss, a failing pre-rendered condition value and
+    # a nested `else 'B' if u2 else 'C'` chain all truncate; the blamed
+    # names are matched against the condition segments). The same failure
+    # in the NOT-TAKEN else branch becomes the template's value marker
+    # without truncation (`{{ 'A' if false else u }}`), and `u is defined`
+    # conditions fail nothing at all.
+    private def conditional_condition_failure?(span : String, msg : String) : Bool
+      blamed = msg.scan(/'([^']*)'/).map(&.[1])
+      return false if blamed.empty?
+      conditional_condition_segments(span).any? do |cond|
+        blamed.any? { |token| cond.matches?(/\b#{Regex.escape(token)}\b/) }
+      end
+    end
+
+    # A pre-rendered variable value that failed while its reference sits
+    # in a span's condition segment: the condition's truthiness check on
+    # the marker raises, truncating the run exactly like a direct
+    # condition failure (clusterfrak.bind shape, live-probed vs 2.19.11).
+    private def conditional_condition_references?(span : String, ident : String) : Bool
+      conditional_condition_segments(span).any? do |cond|
+        cond.matches?(/\b#{Regex.escape(ident)}\b/)
+      end
     end
 
     # The failing undefined value behind a dotted path in a failed span:
