@@ -100,6 +100,20 @@ describe "sudoers plugin" do
     result["failed"].as_bool.must_equal(true)
   end
 
+  # community.general's sudoers has no required user/group check: with
+  # neither set, its content() dereferences an unbound Python local
+  # (live-verified against ansible-core 2.19.11 + community.general), so
+  # the failure message is the crash text, not a validation error.
+  it "matches ansible's unbound-owner crash when neither user nor group is given" do
+    dir = tmp_path("sudoers-unbound-owner")
+    `rm -rf #{dir}`
+
+    result = PluginSpecHelper.run("sudoers", {"name" => "allow-backup", "commands" => "/usr/local/bin/backup", "sudoers_path" => dir, "validation" => "absent"})
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("cannot access local variable 'owner' where it is not associated with a value")
+  end
+
   it "validates the generated rule via visudo when validation: detect (the default)" do
     dir = tmp_path("sudoers-validate")
     `rm -rf #{dir}`

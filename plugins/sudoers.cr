@@ -153,7 +153,13 @@ module Krikri
       user = @params["user"]?
       group = @params["group"]?
       if !user && !group
-        return {nil, PluginResult.new(changed: false, failed: true, msg: "one of the following is required: user, group")}
+        # community.general's Sudoers#content() only assigns `owner` under
+        # if user / elif group, with no else branch, so with neither param
+        # set the module doesn't fail validation - it crashes on the
+        # unbound local at the first content() call (live-verified:
+        # "Module failed: cannot access local variable 'owner' ...").
+        return {nil, PluginResult.new(changed: false, failed: true,
+          msg: "cannot access local variable 'owner' where it is not associated with a value")}
       end
 
       content = build_content(user, group, parse_list_param("commands"))
