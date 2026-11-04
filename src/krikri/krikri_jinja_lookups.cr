@@ -227,8 +227,48 @@ module Krikri
         var_name = text(first)
         var_name.empty? ? AnyValue.new(nil) : ctx[var_name]
       when "file"
-        path = LookupPlugins.resolve_lookup_path(text(first), role_path)
-        File.exists?(path) ? AnyValue.new(File.read(path).chomp) : AnyValue.new(nil)
+        # Ansible's file lookup RAISES when the file cannot be found or
+        # read ("Unable to access the file '<path>': File not found. Use
+        # -vvvvv to see paths searched."), failing the task's arg
+        # finalization - the hand-rolled evaluator's own lookup_file
+        # (lookups/lookup_file.cr) has raised that way since its
+        # "undefined"-sentinel regression (issue #294), but this
+        # engine-side copy silently returned None, and a var whose value
+        # is itself a template reaches ONLY this copy (recursive
+        # re-templating), so russia9.initial_server_setup's
+        # `key: "{{ ssh_key }}"` with ssh_key holding
+        # `lookup('file', ...id_ecdsa.pub)` of a file the controller
+        # lacks rendered null and the task SUCCEEDED where real ansible
+        # fails the play (issue #829). Under the generic errors= option,
+        # warn warns and carries on and ignore just carries on, both
+        # returning None (live-verified 2.19.11); only strict, the
+        # default, fails - the same split the template lookup below
+        # makes. The message keeps the term AS GIVEN (ansible prints the
+        # un-expanded '~/.ssh/id_ecdsa.pub' shape), like the template
+        # raise below.
+        if first.raw.nil?
+          ResultDisplay.emit_display_warning(
+            "Invalid request to find a file that matches a \"null\" value"
+          )
+          raise Krikri::PythonLookupRunner::LookupError.new(
+            "The lookup plugin 'file' failed: Unable to access the file None: File not found. Use -vvvvv to see paths searched."
+          )
+        end
+        path = text(first)
+        resolved = LookupPlugins.resolve_lookup_path(path, role_path)
+        content = (File.read(resolved).chomp rescue nil)
+        return AnyValue.new(content) if content
+        errors_option = kwargs["errors"]?.try { |value| text(value).strip.downcase }
+        if errors_option == "warn"
+          ResultDisplay.emit_display_warning(
+            "An error occurred while running the lookup plugin 'file': Unable to access the file '#{path}': File not found. Use -vvvvv to see paths searched."
+          )
+          return truthy?(kwargs["wantlist"]?) ? AnyValue.new([] of AnyValue) : AnyValue.new(nil)
+        end
+        return truthy?(kwargs["wantlist"]?) ? AnyValue.new([] of AnyValue) : AnyValue.new(nil) if errors_option == "ignore"
+        raise Krikri::PythonLookupRunner::LookupError.new(
+          "The lookup plugin 'file' failed: Unable to access the file '#{path}': File not found. Use -vvvvv to see paths searched."
+        )
       when "pipe", "lines"
         output = IO::Memory.new
         status = Process.run("/bin/sh", ["-c", text(first)], output: output, error: Process::Redirect::Close) rescue nil
