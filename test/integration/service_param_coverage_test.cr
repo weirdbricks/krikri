@@ -32,7 +32,7 @@ require "file_utils"
 # `_environment` blob plus the log path. The shim dir comes first on
 # PATH, ahead of the plugin's own extra bin dirs, so detection and
 # dispatch both pick the shims up.
-private def with_service_shims(load_state : String, active_state : String, &)
+private def with_service_shims(load_state : String, active_state : String, actions_exit : Int32 = 0, actions_stderr : String = "", &)
   dir = File.join(Dir.tempdir, "krikri-service-param-#{Random.rand(1_000_000)}")
   log = File.join(dir, "calls.log")
   FileUtils.mkdir_p(dir)
@@ -45,7 +45,8 @@ private def with_service_shims(load_state : String, active_state : String, &)
         printf 'LoadState=%s\nActiveState=%s\n' "$KRIKRI_LOAD_STATE" "$KRIKRI_ACTIVE_STATE"
         ;;
       *)
-        exit 0
+        [ -n "$KRIKRI_ACTION_STDERR" ] && printf '%s\n' "$KRIKRI_ACTION_STDERR" >&2
+        exit $KRIKRI_ACTION_EXIT
         ;;
     esac
   SHIM
@@ -78,10 +79,12 @@ private def with_service_shims(load_state : String, active_state : String, &)
   end
 
   env = {
-    "PATH"                => "#{dir}:/usr/bin:/bin",
-    "KRIKRI_SVC_CALLS"    => log,
-    "KRIKRI_LOAD_STATE"   => load_state,
-    "KRIKRI_ACTIVE_STATE" => active_state,
+    "PATH"                 => "#{dir}:/usr/bin:/bin",
+    "KRIKRI_SVC_CALLS"     => log,
+    "KRIKRI_LOAD_STATE"    => load_state,
+    "KRIKRI_ACTIVE_STATE"  => active_state,
+    "KRIKRI_ACTION_EXIT"   => actions_exit.to_s,
+    "KRIKRI_ACTION_STDERR" => actions_stderr,
   }.to_json
   yield env, log
 ensure
@@ -90,6 +93,20 @@ end
 
 private def read_calls(log : String) : Array(String)
   File.exists?(log) ? File.read_lines(log) : [] of String
+end
+
+# The plugin's init-script probe tests the REAL /etc/init.d (real's
+# sysv_exists does os.access X_OK on /etc/init.d/<unit>), so the positive
+# cases need a name that is an executable init script on this host.
+# console-setup.sh / keyboard-setup.sh are the Debian-family init scripts
+# systemd typically has no unit for (LoadState=not-found); the shim
+# decides the LoadState the plugin sees, so only the file's existence is
+# host-dependent.
+private def init_script_only_service : String?
+  %w[console-setup.sh keyboard-setup.sh].each do |name|
+    return name if File::Info.executable?(File.join("/etc/init.d", name))
+  end
+  nil
 end
 
 # Same shim layout as with_service_shims, but the systemctl UNIT
@@ -359,6 +376,76 @@ describe "service plugin - parameter coverage" do
         result["msg"].as_s.must_equal(
           "Unable to enable service krikri-fake-svc: Job for krikri-fake-svc.service failed because the control process exited with error code.\n"
         )
+      end
+    end
+  end
+
+  # The systemd module warns (module.warn) for EVERY task carrying a name
+  # that resolves only as a SysV init script while systemd has no loadable
+  # unit for it (its `is_initd and not is_systemd` check, before any
+  # enabled/state handling and check mode included). netzwirt.nexus-oss
+  # trips it for real: the role plants /etc/init.d/nexus with plain cp and
+  # its start handler then prints this warning and fails - the warning line
+  # was the whole byte diff between the engines' outputs (issue #851).
+  describe "init-script-only service (systemd module's is_initd warning)" do
+    it "warns when the unit resolves only as an init script, and still starts it" do
+      name = init_script_only_service
+      skip "no init-script-only service on this host" unless name
+      with_service_shims("not-found", "inactive") do |env, log|
+        result = PluginSpecHelper.run("service", {
+          "name"         => name,
+          "state"        => "started",
+          "use"          => "systemd",
+          "_environment" => env,
+        })
+
+        falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+        result["changed"].as_bool.must_equal(true)
+        result["warnings"].as_a.map(&.as_s).must_equal([
+          "The service (#{name}) is actually an init script but the system is managed by systemd",
+        ])
+        read_calls(log).must_include("start #{name}")
+      end
+    end
+
+    it "does not warn when systemd knows the unit alongside the init script" do
+      name = init_script_only_service
+      skip "no init-script-only service on this host" unless name
+      with_service_shims("loaded", "active") do |env, _log|
+        result = PluginSpecHelper.run("service", {
+          "name"         => name,
+          "state"        => "started",
+          "use"          => "systemd",
+          "_environment" => env,
+        })
+
+        falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+        result.as_h.has_key?("warnings").must_equal(false)
+      end
+    end
+
+    # module.warn() precedes whatever exit the module takes, so the
+    # warning rides a failing start as well - and after the action
+    # plugin's controller-side "Ignoring ..." warnings, which real prints
+    # while the module runs, before the module's own warn surfaces.
+    it "carries the warning on a failed start, after the unused-param warnings" do
+      name = init_script_only_service
+      skip "no init-script-only service on this host" unless name
+      with_service_shims("not-found", "inactive", actions_exit: 1, actions_stderr: "start failed") do |env, _log|
+        result = PluginSpecHelper.run("service", {
+          "name"         => name,
+          "state"        => "started",
+          "sleep"        => "5",
+          "use"          => "systemd",
+          "_environment" => env,
+        })
+
+        result["failed"].as_bool.must_equal(true)
+        result["msg"].as_s.must_equal("Unable to start service #{name}: start failed\n")
+        result["warnings"].as_a.map(&.as_s).must_equal([
+          SYSTEMD_SLEEP_WARNING,
+          "The service (#{name}) is actually an init script but the system is managed by systemd",
+        ])
       end
     end
   end

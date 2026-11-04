@@ -121,6 +121,12 @@ module Krikri
     # own values), populated on the systemd path only.
     @result_enabled : Bool? = nil
     @result_state : String? = nil
+    # The systemd module's "is actually an init script" warn text, set
+    # on the systemd dispatch path when the unit resolves only as a SysV
+    # init script (see #use_systemd) and attached to every result -
+    # module.warn() precedes whatever exit_json/fail_json the module
+    # takes, so it rides failures too.
+    @systemd_init_script_warning : String? = nil
 
     def initialize(config : JSON::Any)
       super(config)
@@ -145,16 +151,19 @@ module Krikri
       warnings.empty? ? nil : warnings
     end
 
-    # Attaches #systemd_unused_param_warnings to a result using the same
-    # extra["warnings"] convention command.cr's executable: warning uses.
-    # Ansible emits these from the action plugin BEFORE the module
-    # runs, so they surface on failure results too (a systemd unit that
+    # Attaches the systemd-path warnings to a result using the same
+    # extra["warnings"] convention command.cr's executable: warning uses:
+    # the action plugin's "Ignoring ..." texts (emitted BEFORE the module
+    # runs, so they surface on failure results too - a systemd unit that
     # doesn't exist still carries the warning alongside "Could not find
-    # the requested service").
-    private def with_unused_param_warnings(result : PluginResult) : PluginResult
-      if warnings = systemd_unused_param_warnings
-        result.extra["warnings"] = JSON.parse(warnings.to_json)
+    # the requested service") and the module's own init-script warn, which
+    # real prints at result-display time - after the controller-side ones.
+    private def with_systemd_warnings(result : PluginResult) : PluginResult
+      warnings = systemd_unused_param_warnings || [] of String
+      if warning = @systemd_init_script_warning
+        warnings = warnings + [warning]
       end
+      result.extra["warnings"] = JSON.parse(warnings.to_json) unless warnings.empty?
       result
     end
 
@@ -201,7 +210,7 @@ module Krikri
       end
 
       if error = detect_service_tools(name)
-        return with_unused_param_warnings(PluginResult.new(changed: false, failed: true, msg: error))
+        return with_systemd_warnings(PluginResult.new(changed: false, failed: true, msg: error))
       end
 
       changed = false
@@ -211,7 +220,7 @@ module Krikri
       if enabled
         result = set_enabled(name, true?(enabled))
         if failure = result[:failure]
-          return with_unused_param_warnings(failure)
+          return with_systemd_warnings(failure)
         end
         changed ||= result[:changed]
         messages << result[:message] unless result[:message].empty?
@@ -226,7 +235,7 @@ module Krikri
       if state
         result = set_state(name, state)
         if failure = result[:failure]
-          return with_unused_param_warnings(failure)
+          return with_systemd_warnings(failure)
         end
         changed ||= result[:changed]
         messages << result[:message] unless result[:message].empty?
@@ -266,13 +275,13 @@ module Krikri
         )
         result.extra["enabled"] = JSON.parse(@result_enabled.to_json) unless @result_enabled.nil?
         result.extra["state"] = JSON.parse(@result_state.to_json) unless @result_state.nil?
-        return with_unused_param_warnings(result)
+        return with_systemd_warnings(result)
       end
 
       # Non-systemd managers keep the historical shape (Ansible's generic
       # service module result differs per init system and is not pinned
       # by any live capture yet).
-      with_unused_param_warnings(PluginResult.new(
+      with_systemd_warnings(PluginResult.new(
         changed: changed,
         failed: false,
         msg: msg,
@@ -416,6 +425,20 @@ module Krikri
       # a typo'd service name reads the same either side of the
       # init-system split.
       is_systemd_unit = !@systemd_load_state.empty? && @systemd_load_state != "not-found"
+      # systemd_service.py's module-level warn: the unit resolves only as
+      # a SysV init script (its sysv_exists tests os.access X_OK on
+      # /etc/init.d/<unit>, the same check as the probe's -x) while
+      # systemd has no loadable unit for it (LoadState missing or
+      # not-found). It fires BEFORE any enabled/state handling - check
+      # mode included - and module.warn() rides whatever exit follows, so
+      # a failing start keeps the warning (netzwirt.nexus-oss: the role
+      # plants /etc/init.d/nexus with plain cp and its start handler
+      # prints exactly this line and fails, no daemon-reload in between
+      # for systemd to learn the unit). No warning when systemd DOES know
+      # the unit, even with an init script alongside it.
+      if !is_systemd_unit && @svc_initscript
+        @systemd_init_script_warning = "The service (#{name}) is actually an init script but the system is managed by systemd"
+      end
       if !is_systemd_unit && @svc_initscript.nil?
         return "Could not find the requested service #{name}: host"
       end
