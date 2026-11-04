@@ -54,7 +54,14 @@ module Krikri
       # legitimate (empty) line. Restoring nil makes the validate checks
       # above fire the same way Ansible's module does.
       line = nil if explicit_null_param?("line")
-      regexp = @params["regexp"]?
+      # `regex` is Ansible's own argument-spec alias for `regexp`
+      # (ansible-core lineinfile: regexp=dict(type='str', aliases=['regex'])).
+      # Found via ryezone_labs.sssd: its "remove mkhomedir from
+      # /var/lib/pam/seen" task passes `regex:` with state=absent - real
+      # Ansible accepts it and removes the lines; without the alias here the
+      # alias-suffixed param was silently ignored and the task failed with
+      # "one of line, search_string, or regexp is required with state=absent".
+      regexp = @params["regexp"]? || @params["regex"]?
       search_string = @params["search_string"]?
       firstmatch = true?(@params["firstmatch"]?)
       backrefs = true?(@params["backrefs"]?)
