@@ -623,4 +623,57 @@ describe "ignore_errors: on an ordinary (non-when-related) task failure" do
   ensure
     FileUtils.rm_rf(dir) if dir && Dir.exists?(dir)
   end
+
+  # An assert:'s folded that: list whose EARLIER items are wrapped YAML
+  # scalars (a multi-line `in [...]` membership test) used to end the
+  # Origin locator's item scan at the first continuation line, so a
+  # later failing item got no ` at '...'` lineage clause at all - real
+  # 2.19 labels each item's failure with that item's own "- " line
+  # (Turgon37.apcupsd's `apcupsd__polltime|int` behind wrapped
+  # `apcupsd__upscable in [...]` items, init.yml:15:9).
+  it "labels a that: item after a wrapped multi-line item with its own line" do
+    dir = File.tempname("assert-that-wrapped-item-origin", ".d")
+    Dir.mkdir(dir)
+    Dir.mkdir_p(File.join(dir, "roles", "testrole", "defaults"))
+    Dir.mkdir_p(File.join(dir, "roles", "testrole", "tasks"))
+    File.write(File.join(dir, "roles", "testrole", "defaults", "main.yml"), <<-YAML)
+      testrole__cable: usb
+      testrole__polltime: 60
+      YAML
+    File.write(File.join(dir, "roles", "testrole", "tasks", "init.yml"), <<-YAML)
+      ---
+      - name: Assert required variables
+        assert:
+          that:
+            - testrole__cable in ['simple', 'smart', 'ether', 'usb',
+              '940-0127A', '940-0128A']
+            - testrole__polltime|int
+      YAML
+    File.write(File.join(dir, "roles", "testrole", "tasks", "main.yml"), <<-YAML)
+      ---
+      - name: Import init tasks
+        ansible.builtin.import_tasks: init.yml
+      YAML
+    playbook = File.join(dir, "site.yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        roles:
+          - testrole
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+
+    status.success?.must_equal(false)
+    status.exit_code.must_equal(2)
+    # The failing item's own dash line: line 7, column 9 - the wrapped
+    # item above it (lines 5-6) must not end the item scan early.
+    init_file = File.join(dir, "roles", "testrole", "tasks", "init.yml")
+    output.to_s.must_include("was derived from value of type 'int' at '#{init_file}:7:9'", output.to_s)
+    output.to_s.must_include(%({"changed": false, "msg": "Task failed: Conditional result (True) was derived from value of type 'int' at '#{init_file}:7:9'. Conditionals must have a boolean result."}), output.to_s)
+  ensure
+    FileUtils.rm_rf(dir) if dir && Dir.exists?(dir)
+  end
 end

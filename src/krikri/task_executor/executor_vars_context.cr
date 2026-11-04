@@ -5612,10 +5612,30 @@ module Krikri
         rest = line[line.index!("#{key}:") + key.size + 1..]
         if rest.lstrip.empty?
           # Folded list form: scan the item lines for the raw conditional.
+          item_dash_indent : Int32? = nil
           ((idx + 1)...lines.size).each do |item_idx|
             item_line = lines[item_idx]
             item_stripped = item_line.strip
-            break unless item_stripped.starts_with?("- ")
+            item_indent = item_line.size - item_line.lstrip.size
+            unless item_stripped.starts_with?("- ")
+              # A wrapped YAML scalar continues the PREVIOUS item one
+              # indent deeper than that item's own dash and stays part
+              # of the same list: skipping it keeps the scan running to
+              # the later items. Ending the scan there (the old
+              # break-on-any-non-item-line) silently dropped the whole
+              # ` at '...'` lineage clause for every item after the
+              # first wrapped one - Turgon37.apcupsd's multi-line
+              # `apcupsd__upscable in [...]` list before the failing
+              # bare `apcupsd__polltime|int` item: real 2.19 labels the
+              # int failure with the item's own line (init.yml:15:9)
+              # while this engine printed no location at all. Only a
+              # line indented DEEPER than the current item's dash is a
+              # continuation; anything at or above the dash indent ends
+              # the list (the next task, or the enclosing mapping).
+              break unless item_dash_indent && item_indent > item_dash_indent
+              next
+            end
+            item_dash_indent ||= item_indent
             item = item_stripped[2..].strip
             # ansible pins the Origin on the clause's own text, and a
             # clause can legitimately END in a quote character (e.g.
