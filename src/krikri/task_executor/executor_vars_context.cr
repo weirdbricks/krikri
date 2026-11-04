@@ -6379,7 +6379,18 @@ module Krikri
         # the backlog default is a quoted string). Left unrecognized, the
         # failure fell through to the generic module-failure chain instead:
         # a bogus "Module failed: " middle segment and no caused-by block.
-        inner.starts_with?("Error rendering expression:")
+        inner.starts_with?("Error rendering expression:") ||
+        # The `{{ }}`-wrapped when: form's compile-time filter/test-name
+        # failure surfaces with the rendered-template wording (see the
+        # raise site in evaluate_when_clause, issue #335) - real 2.19.11
+        # treats it as the same conditional-failure display class as the
+        # unbraced form's "Syntax error in expression:" (live-verified vs
+        # 2.19.11, issue #827, mats116.php5-fpm's braced
+        # `when: "{{ php_version | version_compare(...) }}"`). Left
+        # unrecognized, the failure fell through to the generic
+        # module-failure chain: a bogus "Module failed:"/"Action failed:"
+        # middle segment and no caused-by block.
+        inner.starts_with?("Syntax error in template:")
     end
 
     # Real prints the ALLOW_BROKEN_CONDITIONALS hint after a conditional
@@ -6394,7 +6405,11 @@ module Krikri
         # The runtime-expression class ends the block at the Origin too
         # (live-verified vs 2.19.11, issue #799: no hint after the
         # caused-by chain for the int-vs-str comparison failure).
-        inner.starts_with?("Error rendering expression:")
+        inner.starts_with?("Error rendering expression:") ||
+        # Same for the braced when:'s rendered-template wording class
+        # (live-verified vs 2.19.11, issue #827: the block ends at the
+        # when: token's Origin, no hint).
+        inner.starts_with?("Syntax error in template:")
     end
 
     # The two-level [ERROR] chain Ansible prints on stdout BEFORE the fatal
