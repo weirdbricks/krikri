@@ -812,12 +812,13 @@ module Krikri
           path = resolve_include_vars_path(task, candidate)
 
           unless path
+            falsy_candidate = include_vars_falsy_native?(substitutor, task.include_vars_file || "")
             # A missing per-item file fails THAT item the way every action
             # failure reads in real's loop output: the [ERROR] block over
             # the task's own source position, then the failed dump
             # (live-verified vs 2.19.11, issue #264) - not a one-line
             # status + Message pair.
-            display_include_vars_item_failure(task, host, item_context, item, item_label, "include_vars: file not found: #{candidate}")
+            display_include_vars_item_failure(task, host, item_context, item, item_label, "include_vars: #{falsy_candidate ? "falsy " : ""}file not found: #{candidate}")
             failed = true
             item_results << JSON::Any.new({"item" => item, "changed" => JSON::Any.new(false), "failed" => JSON::Any.new(true), "ansible_facts" => include_vars_failure_facts(name_key)} of String => JSON::Any)
             next
@@ -1057,7 +1058,8 @@ module Krikri
       path = resolve_include_vars_path(task, candidate)
 
       unless path
-        finish_include_vars_failure(task, host, "include_vars: file not found: #{candidate}")
+        falsy_candidate = include_vars_falsy_native?(substitutor, task.include_vars_file || "")
+        finish_include_vars_failure(task, host, "include_vars: #{falsy_candidate ? "falsy " : ""}file not found: #{candidate}")
         return
       end
 
@@ -1478,6 +1480,8 @@ module Krikri
     private def include_vars_failure_detail(task : Task, message : String) : String?
       if message.starts_with?("include_vars: file not found: ")
         include_vars_file_not_found_message(task, message.sub("include_vars: file not found: ", ""))
+      elsif message.starts_with?("include_vars: falsy file not found: ")
+        include_vars_file_not_found_message(task, message.sub("include_vars: falsy file not found: ", ""), falsy_native: true)
       elsif message.ends_with?(" directory does not exist")
         message
       elsif message.starts_with?("include_vars: not a dictionary: ")
@@ -1593,7 +1597,7 @@ module Krikri
         h["warnings"] = JSON::Any.new(["Invalid request to find a file that matches a \"null\" value"].map { |text| JSON::Any.new(text) })
         Krikri.mark_failed_key_order(JSON::Any.new(h), FAILED_KEY_ORDER_INCLUDE_VARS)
         result = JSON::Any.new(h)
-      elsif message.starts_with?("include_vars: file not found: ") || message.starts_with?("include_vars: could not parse ") || message.starts_with?("include_vars: not a dictionary: ") || message.ends_with?(" directory does not exist")
+      elsif message.starts_with?("include_vars: file not found: ") || message.starts_with?("include_vars: falsy file not found: ") || message.starts_with?("include_vars: could not parse ") || message.starts_with?("include_vars: not a dictionary: ") || message.ends_with?(" directory does not exist")
         detail = include_vars_failure_detail(task, message) || message
         h["ansible_facts"] = include_vars_wrapped_facts(name_key, Hash(String, JSON::Any).new)
         h["ansible_included_var_files"] = JSON::Any.new([] of JSON::Any)
@@ -1673,9 +1677,25 @@ module Krikri
     # (whichever applies), and finally the loader basedir. A play-level
     # task in a play dir therefore repeats the play-dir pair twice,
     # exactly as Ansible does (live-verified vs 2.19.11).
-    private def include_vars_file_not_found_message(task : Task, file : String) : String
+    # Ansible's AnsibleFileNotFound builds its head text from the file
+    # name VALUE ITSELF, not from a generic template: only a TRUTHY
+    # name renders "Could not find or access '<X>'" - a falsy one (a
+    # native [] / {} / false / 0, e.g. bodsch.mpd's `include_vars:
+    # "{{ lookup('first_found', params) }}"` with skip: true and no
+    # candidate on Rocky 9, issue #850) falls back to the bare "Could
+    # not find file", while the "Searched in:" list is built from the
+    # value's str() ("[]", "False", ...) so it reads identically either
+    # way. This engine's string substitution flattens a whole-expression
+    # value to that str() form first, which used to make the falsy head
+    # unreachable ("Could not find or access '[]'"). A falsy native
+    # STRING ("") is deliberately not probed here: real's falsy-string
+    # search also hits different candidate paths (the "vars/"-suffixed
+    # joins), a resolution-shape gap of its own, so changing only the
+    # head would half-fix it.
+    private def include_vars_file_not_found_message(task : Task, file : String, falsy_native : Bool = false) : String
       tail = " on the Ansible Controller.\nIf you are using a module and expect the file to exist on the remote, see the remote_src option"
-      return "Could not find or access '#{file}'#{tail}" if file.starts_with?("/")
+      head = falsy_native ? "Could not find file" : "Could not find or access '#{file}'"
+      return "#{head}#{tail}" if file.starts_with?("/")
       bases = [] of String
       bases << (task.role_path || Dir.current)
       task.role_parent_paths.try(&.reverse.each { |path| bases << path })
@@ -1684,7 +1704,36 @@ module Krikri
       searched = bases.flat_map do |base|
         [File.join(base, "vars", file), File.join(base, file)]
       end
-      "Could not find or access '#{file}'\nSearched in:\n\t#{searched.join("\n\t")}#{tail}"
+      "#{head}\nSearched in:\n\t#{searched.join("\n\t")}#{tail}"
+    end
+
+    # Whether the include_vars file argument resolves to a FALSY
+    # non-string native value - the case AnsibleFileNotFound renders
+    # with the bare "Could not find file" head (see
+    # include_vars_file_not_found_message). Only a whole-span `{{ }}`
+    # value is probed natively (anything else is a string concat whose
+    # result is a string in real too, so its truthiness matches the
+    # substituted candidate's); a probe failure falls back to the
+    # ordinary quoted-name head rather than inventing a failure the
+    # strict substitute did not raise.
+    private def include_vars_falsy_native?(substitutor : VarSubstitutor, raw : String) : Bool
+      return false unless (raw.split("{{").size - 1) == 1 && (raw.split("}}").size - 1) == 1
+      stripped = raw.strip
+      return false unless stripped.starts_with?("{{") && stripped.ends_with?("}}")
+      value = begin
+        substitutor.evaluate_structured_strict(stripped[2..-3].strip)
+      rescue
+        return false
+      end
+      return false unless value
+      case native = value.raw
+      when Bool                    then native == false
+      when Int64                   then native == 0
+      when Float64                 then native == 0.0
+      when Array(JSON::Any)        then native.empty?
+      when Hash(String, JSON::Any) then native.empty?
+      else                              false
+      end
     end
 
     # RoleLoader's auto-synthesized "Validating arguments against arg
