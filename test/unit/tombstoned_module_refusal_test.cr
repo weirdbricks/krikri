@@ -523,3 +523,89 @@ describe "redirect-target and builtin-runtime tombstone refusals (issue #8)" do
     stdout.wont_include("PLAY RECAP")
   end
 end
+
+describe "kubernetes.core.k8s_facts tombstone (issue #847)" do
+  # afonsog.k8s_jenkins writes the BARE `k8s_facts:` name: real resolves
+  # it through ansible_builtin_runtime.yml's redirect onto
+  # kubernetes.core.k8s_facts and then hits that collection's
+  # meta/runtime.yml tombstone (2.0.0, use k8s_info) - rc=1 whole-load
+  # refusal with the collection's own removal message, not the generic
+  # couldn't-resolve rc=4 this engine used to print (live-probed against
+  # real with the role's own tasks/main.yml:10 task).
+  it "refuses the FQCN spelling with the collection's exact removal message" do
+    assert_raises_message(Krikri::RemovedModuleError,
+      "The 'kubernetes.core.k8s_facts' module has been removed. " \
+      "Use kubernetes.core.k8s_info instead. This feature was removed " \
+      "from collection 'kubernetes.core' version 2.0.0.") do
+      Krikri::PlaybookParser.parse_string(<<-YAML
+        - hosts: all
+          tasks:
+            - name: removed module
+              kubernetes.core.k8s_facts:
+                api_version: v1
+                kind: Namespace
+        YAML
+      )
+    end
+  end
+
+  it "refuses the bare spelling through the redirect hop when kubernetes.core is installed" do
+    if Krikri::CollectionIndex.installed?("kubernetes", "core")
+      assert_raises_message(Krikri::RemovedModuleError,
+        "The 'kubernetes.core.k8s_facts' module has been removed. " \
+        "Use kubernetes.core.k8s_info instead. This feature was removed " \
+        "from collection 'kubernetes.core' version 2.0.0.") do
+        Krikri::PlaybookParser.parse_string(<<-YAML
+          - hosts: all
+            tasks:
+              - name: removed module, bare spelling
+                k8s_facts:
+                  api_version: v1
+                  kind: Namespace
+          YAML
+        )
+      end
+    else
+      # Without the collection real's redirect chain dies at the
+      # collection import and the generic couldn't-resolve refusal
+      # fires - which the bare spelling's absence from the table
+      # preserves.
+      assert_raises_message(Krikri::UnresolvedModuleError,
+        "couldn't resolve module/action 'k8s_facts'. " \
+        "This often indicates a misspelling, missing collection, or incorrect module path.") do
+        Krikri::PlaybookParser.parse_string(<<-YAML
+          - hosts: all
+            tasks:
+              - name: removed module, bare spelling
+                k8s_facts:
+                  api_version: v1
+                  kind: Namespace
+          YAML
+        )
+      end
+    end
+  end
+
+  it "rc=1 with the [ERROR] + Origin block on stderr and zero tasks run for bare k8s_facts" do
+    return unless Krikri::CollectionIndex.installed?("kubernetes", "core")
+    status, stdout, stderr = run_playbook_binary(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: removed module
+            k8s_facts:
+              api_version: v1
+              kind: Namespace
+          - name: would-be-next
+            ansible.builtin.debug: msg=hi
+      YAML
+    status.exit_code.must_equal(1, "stdout:\n#{stdout}\nstderr:\n#{stderr}")
+    stderr.must_include("[ERROR]: The 'kubernetes.core.k8s_facts' module has been removed. Use kubernetes.core.k8s_info instead. This feature was removed from collection 'kubernetes.core' version 2.0.0.")
+    stderr.must_include("Origin: ")
+    stderr.must_include("^ column ")
+    stderr.wont_include("couldn't resolve module/action")
+    stdout.wont_include("TASK [")
+    stdout.wont_include("PLAY RECAP")
+  end
+end
