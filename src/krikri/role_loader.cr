@@ -962,6 +962,15 @@ module Krikri
       return collected unless File.exists?(meta_path)
 
       meta_yaml = cached_yaml(meta_path)
+      # Ansible's DataLoader warns on duplicate mapping keys the moment it
+      # LOADS a file, meta/main.yml included - a duplicate in galaxy_info
+      # (mmagonde.ansible_jenkins_swarm_agent's double `license:`, issue
+      # #838) warns even when the meta has no unknown keys and no
+      # `dependencies:` at all, so the scan can't stay deferred to the
+      # dependency loop below (the only other cached_source_map caller for
+      # this file). Warns before the metadata-key validation below for the
+      # same reason: the load-time warning precedes any load-time error.
+      cached_source_map(meta_path)
       # Ansible validates the role's metadata (RoleMetadata's
       # _validate_attributes) BEFORE its dependencies load, so this runs
       # ahead of the dependency loop and raises on the first unknown key
