@@ -121,4 +121,59 @@ describe "removed module reached at run time through a dynamic include" do
     fatal_lines.size.must_equal(1, output)
     fatal_lines.first.wont_include("\"include\"", output)
   end
+
+  # A LOOPED include_tasks: whose item file carries a removed module fails
+  # at the item's task load: Ansible prints only the wrapped [ERROR]+Origin
+  # STDERR block - NO per-item fatal: line (unlike the non-looped shapes
+  # above), the earlier items stay credited ok, the failing item recaps
+  # failed=1 and the play halts for the host (live-verified vs 2.19.11,
+  # fdupont_redhat.ims_premigration_rhel, issue #837).
+  it "prints no per-item fatal line when a looped include's item file carries a removed module" do
+    status, output = run_removed_include_playbook({
+      "pb.yml" => <<-YAML,
+        - hosts: localhost
+          connection: local
+          gather_facts: false
+          tasks:
+            - include_tasks: "{{ item }}"
+              with_items:
+                - "first.yml"
+                - "install.yml"
+        YAML
+      "first.yml"   => "---\n- command: \"true\"\n  changed_when: false\n",
+      "install.yml" => REMOVED_TASKS,
+    })
+    status.success?.must_equal(false, output)
+    status.exit_code.must_equal(2, output)
+    output.must_include("included: ", output)
+    output.must_include("<<< caused by >>>", output)
+    output.must_include("Origin:", output)
+    output.must_include("install.yml:1:3", output)
+    output.wont_include("Failed to load", output)
+    output.wont_include("fatal: [localhost]", output)
+    recap = output.lines.reverse!.find(&.includes?("localhost"))
+    recap.to_s.must_match(/ok=1\s+changed=0\s+unreachable=0\s+failed=1/, output)
+  end
+
+  it "prints no per-item fatal line when a looped include's item file uses the removed bare include:" do
+    status, output = run_removed_include_playbook({
+      "pb.yml" => <<-YAML,
+        - hosts: localhost
+          connection: local
+          gather_facts: false
+          tasks:
+            - include_tasks: "{{ item }}"
+              with_items:
+                - "mount.yml"
+        YAML
+      "mount.yml" => "---\n- include: \"lookup.yml\"\n",
+    })
+    status.exit_code.must_equal(2, output)
+    output.must_include("<<< caused by >>>", output)
+    output.must_include("mount.yml:2:3", output)
+    output.wont_include("Failed to load", output)
+    output.wont_include("fatal: [localhost]", output)
+    recap = output.lines.reverse!.find(&.includes?("localhost"))
+    recap.to_s.must_match(/ok=0\s+changed=0\s+unreachable=0\s+failed=1/, output)
+  end
 end

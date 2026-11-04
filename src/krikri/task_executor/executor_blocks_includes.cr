@@ -2473,9 +2473,29 @@ module Krikri
     rescue ex : HandlerNotFoundError
       # Same as the batched include path above - see there.
       raise ex
+    rescue ex : RemovedModuleError
+      # Same as the batched include path's removed-module rescue above -
+      # a tombstone-removed module reached at RUN time through the
+      # included file is the include task's own fatal failure in Ansible
+      # (wrapped STDERR block, failed=1, play halts for the host, rc=2),
+      # not a "Failed to load included tasks" degradation. This path only
+      # ever serves LOOPED includes (the no-loop case dispatches to
+      # execute_include_tasks_multi before any host runs), and a looped
+      # include's load failure prints just the STDERR block in Ansible -
+      # no per-item fatal: line (live-verified vs 2.19.11, issue #837) -
+      # so keep the same looped rule fail_include_not_found applies.
+      emit_include_removed_module_block(ex)
+      emit_include_fatal_lines(task, [host], ex.message || "", include_name: file_rel, print_lines: !task_has_loop?(task))
+      :ok
     rescue ex : RemovedActionError
-      # Same as the batched include path's removed-`include:` rescue.
-      fail_include_removed_module(task, [host], ex, file_rel)
+      # Same as the batched include path's removed-`include:` rescue - the
+      # include task's own fatal failure in Ansible (wrapped STDERR block
+      # + two-key fatal dump), not a "Failed to load included tasks"
+      # degradation. Same looped rule as the RemovedModuleError rescue
+      # above: this path only serves looped includes, and a looped
+      # include's load failure prints no per-item fatal: line.
+      emit_include_removed_module_block(ex)
+      emit_include_fatal_lines(task, [host], ex.message || "", include_name: file_rel, print_lines: !task_has_loop?(task))
       :ok
     rescue ex : RoleNotFoundError
       # Same include-task-fatal shape as the batched include path's
