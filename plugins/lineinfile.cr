@@ -97,8 +97,15 @@ module Krikri
       # reporting changed/ok. The compile sits AFTER the destination
       # checks, so a missing dest without create: still fails with
       # "Destination ... does not exist !" and absent: on a missing file
-      # still no-ops with "file not present".
+      # still no-ops with "file not present". Also issue #869:
+      # RedHatGov.content's `regexp: "^{{ content_public_ip }}"` with its
+      # own empty-list default, the same "^[]" shape.
       if detail = regex_compile_error(state, regexp, @params["insertafter"]?, @params["insertbefore"]?)
+        # Real present() compiles only after the missing-dest checks but
+        # before ANY write (the create:true file materializes in
+        # write_changes at the very end), so a crash there leaves no file
+        # behind - undo the eager creation here for the same side effects.
+        File.delete(path) if being_created && !check_mode && File.exists?(path)
         return PluginResult.new(changed: false, failed: true, msg: "Task failed: Module failed: #{detail}",
           _ansible_error_detail: detail)
       end
@@ -124,15 +131,8 @@ module Krikri
       end
 
       patterns.each do |pattern|
-        scan = PythonPattern.scan(pattern)
-        return scan.error if scan.error
-        begin
-          Regex.new(scan.translated)
-        rescue ex
-          # Regex::Error always carries a message; "" only if some
-          # future Crystal stopped providing one.
-          detail = ex.message || ""
-          return PythonPattern.python_pcre_error(detail, scan)
+        if detail = PythonPattern.python_error(pattern)
+          return detail
         end
       end
       nil

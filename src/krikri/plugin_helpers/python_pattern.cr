@@ -389,6 +389,22 @@ module Krikri
       j >= 0 && seen_digit && chars[j] == '{' && !(j > 0 && chars[j - 1] == '\\')
     end
 
+    # Full "compile it the way Python would" check: nil when the pattern
+    # is valid under Python's own parser AND PCRE2, otherwise the
+    # re.error text Python's executor would wrap. Lets a plugin express
+    # the scan + compile + translate pipeline as one question instead of
+    # repeating its three steps.
+    def self.python_error(pattern : String) : String?
+      scan = scan(pattern)
+      return scan.error if scan.error
+      begin
+        Regex.new(scan.translated)
+        nil
+      rescue ex : Regex::Error | ArgumentError
+        python_pcre_error(ex.message || "", scan)
+      end
+    end
+
     # Translates a PCRE2 compile error (Crystal's wording, " at <byte
     # offset>" suffix) into the re.error text Python's own parser raises
     # for the same pattern, wherever the mapping is exact. PCRE2's

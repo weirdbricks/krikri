@@ -993,4 +993,22 @@ describe "lineinfile plugin - explicit null line" do
     present["failed"].as_bool.must_equal(true)
     present["msg"].as_s.must_equal("Task failed: Module failed: missing ), unterminated subpattern at position 10")
   end
+
+  # The absent() side of issue #869: real compiles the regexp there too,
+  # right after its own file-not-present exit, so a bad pattern crashes
+  # state=absent exactly like state=present.
+  it "compiles the regexp in state=absent too, right after the file-not-present exit" do
+    path = PluginSpecHelper.tmp_path("lineinfile-bad-regexp-absent.txt")
+    File.write(path, "127.0.0.1 localhost\n")
+
+    result = PluginSpecHelper.run("lineinfile", {
+      "path"   => path,
+      "regexp" => "^[]",
+      "state"  => "absent",
+    })
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("Task failed: Module failed: unterminated character set at position 1")
+    File.read(path).must_equal("127.0.0.1 localhost\n")
+  end
 end
