@@ -251,6 +251,20 @@ describe "uri plugin" do
       /\AStatus code was -1 and not \[200\]: Request failed: <urlopen error \[Errno -\d+\] .+>\z/)
   end
 
+  it "names a hostless URL with urllib's no-host text" do
+    # Live-verified against ansible-core 2.19.11 (Actifio.appaware_mount,
+    # issue #846): an http(s):// URL with no host ("https:///path") fails
+    # with "<urlopen error no host given>" - http.client's InvalidURL
+    # wrapped by fetch_url. krikri used to leak Crystal's own
+    # "Request URI must have host (URI is: ...)" wording here.
+    result = PluginSpecHelper.run("uri", {"url" => "https:///actifio/api/login?name=admin&password=password"})
+
+    result["failed"].as_bool.must_equal(true)
+    result["status"].as_i.must_equal(-1)
+    result["msg"].as_s.must_equal(
+      "Status code was -1 and not [200]: Request failed: <urlopen error no host given>")
+  end
+
   it "accepts a custom status_code list" do
     result = PluginSpecHelper.run("uri", {"url" => "#{URI_BASE}/notfound", "status_code" => "404,410"})
     falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
