@@ -46,9 +46,17 @@ module Krikri
     # hash insert, no yield point).
     @@parsed_yaml_cache = Hash(String, YAML::Any).new
 
+    private def self.role_file_text(path : String) : String
+      Vault.maybe_decrypt(File.read(path))
+    rescue Vault::NoSecretsError
+      raise VaultFileError.new(path, "Attempting to decrypt but no vault secrets found.")
+    rescue Vault::Error
+      raise VaultFileError.new(path, "Decryption failed (no vault secrets were found that could decrypt).")
+    end
+
     private def self.cached_yaml(path : String) : YAML::Any
       @@parsed_yaml_cache.fetch(path) do
-        text = Vault.maybe_decrypt(File.read(path))
+        text = role_file_text(path)
         UnsafeValues.mark_yaml_text(text)
         # Ansible's DataLoader refuses every file it reads (tasks, vars,
         # meta, ...) whose unquoted template parses as a collection key,
@@ -81,7 +89,7 @@ module Krikri
     # <role>/tasks/main.yml:<line>:<col> of the name value).
     private def self.cached_source_map(path : String) : YamlSourceMap
       @@source_map_cache.fetch(path) do
-        map = YamlSourceMap.scan(Vault.maybe_decrypt(File.read(path)))
+        map = YamlSourceMap.scan(role_file_text(path))
         # Inside the fetch block: the cache makes each file warn (and
         # scan) at most once per run, the way Ansible's DataLoader file
         # cache keeps its own duplicate-key warnings single-shot.
