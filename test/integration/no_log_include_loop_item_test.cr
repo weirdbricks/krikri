@@ -121,3 +121,45 @@ describe "no_log censoring on looped include item labels" do
     output.wont_include("censored due to no_log")
   end
 end
+
+# Regression spec for issue #805 (Temelio.secrets): a NON-looped
+# include_tasks with no_log prints `included: <path> for <host> =>
+# (item=(censored due to no_log))` in real ansible - the callback's
+# _get_item_label reads _ansible_no_log off the IncludedFile's special
+# vars, which process_include_results sets for ANY no_log include, loop
+# or not - so the censored label is truthy on its own even though no loop
+# item exists. Krikri used to print the included: line bare.
+describe "no_log include_tasks without a loop" do
+  it "prints the censored item suffix on a non-looped no_log include" do
+    _status, output = run_include_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: no_log include without loop
+            include_tasks: "{{ INCLUDE_PATH }}"
+            no_log: True
+      YAML
+
+    included_line = output.lines.find!(&.starts_with?("included: "))
+    included_line.must_match(%r{^included: \S+ for localhost => \(item=\(censored due to no_log\)\)$})
+  end
+
+  it "prints the included line bare for a templated no_log resolving false" do
+    _status, output = run_include_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          secret_flag: false
+        tasks:
+          - name: templated-false include without loop
+            include_tasks: "{{ INCLUDE_PATH }}"
+            no_log: "{{ secret_flag | default(false) }}"
+      YAML
+
+    included_line = output.lines.find!(&.starts_with?("included: "))
+    included_line.must_match(%r{^included: \S+ for localhost$})
+    output.wont_include("censored due to no_log")
+  end
+end
