@@ -746,6 +746,119 @@ describe "task name template error warning blocks" do
     FileUtils.rm_rf(src_dir) if src_dir
   end
 
+  # Issue #836 (clusterfrak.bind) - a name shaped as an inline conditional
+  # whose undefined reference is the CONDITION (`{{ 'A' if is_aws else
+  # 'B' }}`): evaluating an undefined condition raises mid-stream, which
+  # appends one "template potentially truncated" error after the error
+  # marker - both in the banner and in one same-origin warning block.
+  it "truncates an inline-conditional name whose undefined condition aborts the run" do
+    src_dir = File.tempname("name-warn-cond-undef")
+    Dir.mkdir_p(src_dir)
+    File.write(File.join(src_dir, "pb.yml"), <<-YAML)
+      ---
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: "{{ 'AWS' if is_aws else 'Non-AWS' }}"
+            ansible.builtin.debug:
+              msg: hi
+      YAML
+
+    output = IO::Memory.new
+    Process.run(BINARY, ["-i", INVENTORY, "pb.yml"], output: output, error: output, chdir: src_dir)
+
+    text = output.to_s
+    text.must_include("[WARNING]: Encountered 2 template errors.\nerror 1 - 'is_aws' is undefined\nerror 2 - template potentially truncated\nOrigin: #{File.expand_path(File.join(src_dir, "pb.yml"))}:6:13")
+    text.must_include("TASK [<< error 1 - 'is_aws' is undefined >><< error 2 - template potentially truncated >>]")
+  ensure
+    FileUtils.rm_rf(src_dir) if src_dir
+  end
+
+  # The not-taken else branch never evaluates in real, so its failure
+  # becomes the template's single value marker WITHOUT a truncation error.
+  it "does not truncate an inline-conditional name failing in the not-taken else branch" do
+    src_dir = File.tempname("name-warn-cond-else")
+    Dir.mkdir_p(src_dir)
+    File.write(File.join(src_dir, "pb.yml"), <<-YAML)
+      ---
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: "{{ 'AWS' if false else is_aws }}"
+            ansible.builtin.debug:
+              msg: hi
+      YAML
+
+    output = IO::Memory.new
+    Process.run(BINARY, ["-i", INVENTORY, "pb.yml"], output: output, error: output, chdir: src_dir)
+
+    text = output.to_s
+    text.must_include("[WARNING]: Encountered 1 template error.\nerror 1 - 'is_aws' is undefined\nOrigin: #{File.expand_path(File.join(src_dir, "pb.yml"))}:6:13")
+    text.must_include("TASK [<< error 1 - 'is_aws' is undefined >>]")
+    text.includes?("template potentially truncated").must_equal false
+  ensure
+    FileUtils.rm_rf(src_dir) if src_dir
+  end
+
+  # A nested else-chain condition (`... else 'B' if u2 else 'C'`) fails in
+  # the second condition once the first is False - still a mid-stream
+  # condition raise, still truncated.
+  it "truncates a failing nested else-chain condition in a name" do
+    src_dir = File.tempname("name-warn-cond-chain")
+    Dir.mkdir_p(src_dir)
+    File.write(File.join(src_dir, "pb.yml"), <<-YAML)
+      ---
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: "{{ 'A' if false else 'B' if u2 else 'C' }}"
+            ansible.builtin.debug:
+              msg: hi
+      YAML
+
+    output = IO::Memory.new
+    Process.run(BINARY, ["-i", INVENTORY, "pb.yml"], output: output, error: output, chdir: src_dir)
+
+    text = output.to_s
+    text.must_include("TASK [<< error 1 - 'u2' is undefined >><< error 2 - template potentially truncated >>]")
+  ensure
+    FileUtils.rm_rf(src_dir) if src_dir
+  end
+
+  # A condition whose reference's OWN value is a failing template aborts
+  # too: the value's error keeps the value's defining origin while the
+  # truncation error lands at the name's own site - two warning blocks.
+  it "truncates an inline-conditional name whose condition value itself fails" do
+    src_dir = File.tempname("name-warn-cond-value")
+    Dir.mkdir_p(src_dir)
+    File.write(File.join(src_dir, "pb.yml"), <<-YAML)
+      ---
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          cond: "{{ nosuch }}"
+        tasks:
+          - name: "{{ 'A' if cond else 'B' }}"
+            ansible.builtin.debug:
+              msg: hi
+      YAML
+
+    output = IO::Memory.new
+    Process.run(BINARY, ["-i", INVENTORY, "pb.yml"], output: output, error: output, chdir: src_dir)
+
+    text = output.to_s
+    pb = File.expand_path(File.join(src_dir, "pb.yml"))
+    text.must_include("[WARNING]: Encountered 1 template error.\nerror 1 - 'nosuch' is undefined\nOrigin: #{pb}:6:11")
+    text.must_include("[WARNING]: Encountered 1 template error.\nerror 2 - template potentially truncated\nOrigin: #{pb}:8:13")
+    text.must_include("TASK [<< error 1 - 'nosuch' is undefined >><< error 2 - template potentially truncated >>]")
+  ensure
+    FileUtils.rm_rf(src_dir) if src_dir
+  end
+
   it "keeps output rendered before an aborting span and skips the rest" do
     src_dir = File.tempname("name-warn-abort-order")
     Dir.mkdir_p(src_dir)
