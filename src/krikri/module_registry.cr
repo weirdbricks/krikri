@@ -660,7 +660,10 @@ module Krikri
     # every task result the module actually produced carries the
     # `deprecations` entry (TaskExecutor's DeferredWarningContext). The
     # bare (non-FQCN) spellings resolve through MODULE_SEARCH_COLLECTIONS
-    # and warn with the RESOLVED FQCN.
+    # and warn with the RESOLVED FQCN (amazon.aws's bare spellings
+    # excepted - that collection is not in MODULE_SEARCH_COLLECTIONS, so
+    # its bare names qualify through redirect_deprecation_lookup's own
+    # explicit prefix).
     #
     # Only deprecations observable in krikri's own runs belong here,
     # whatever the module's support state: the community.mysql entries
@@ -692,6 +695,12 @@ module Krikri
       # Windows-only module, never executed on a Linux target; the
       # load-time warning still prints (MindPointGroup.windows22_stig round).
       "community.windows.win_audit_policy_system" => {warning_text: "win_audit_policy_system will be removed in a future release of this collection. Use ansible.windows.win_audit_policy_system instead.", collection: "community.windows", version: "4.0.0"},
+      # amazon.aws's own rename deprecation (meta/runtime.yml
+      # plugin_routing, amazon.aws 10.x): the bare spelling is how roles
+      # write it (mateothegreat.aws_vpc_create, issue #865) - see
+      # redirect_deprecation_lookup for why the bare qualification cannot
+      # go through MODULE_SEARCH_COLLECTIONS.
+      "amazon.aws.ec2_vpc_peer" => {warning_text: "ec2_vpc_peer has been renamed to ec2_vpc_peering. Please update your tasks.", collection: "amazon.aws", version: "13.0.0"},
     }
 
     # The table entry for a module name, together with the FQCN the
@@ -716,6 +725,17 @@ module Krikri
         if entry = REDIRECT_DEPRECATIONS[qualified]?
           return {qualified, entry}
         end
+      end
+      # amazon.aws is deliberately not in MODULE_SEARCH_COLLECTIONS (its
+      # bare names resolve through AVAILABLE_PLUGINS' own short-name
+      # entries instead - see that constant's comment), so a bare AWS
+      # module name only reaches the deprecation table through this
+      # explicit prefix (the mateothegreat.aws_vpc_create round, issue
+      # #865: real's loader resolves the bare `ec2_vpc_peer:` spelling to
+      # amazon.aws.ec2_vpc_peer and the console line echoes that FQCN).
+      qualified = "amazon.aws.#{name}"
+      if entry = REDIRECT_DEPRECATIONS[qualified]?
+        return {qualified, entry}
       end
       nil
     end
