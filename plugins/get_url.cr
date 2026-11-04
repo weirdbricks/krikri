@@ -697,10 +697,33 @@ module Krikri
         # (nonsense) literal hash here rather than a second fetch.
         resolved = resolve_checksum_url(value, url, dest)
         return resolved if resolved.is_a?(PluginResult)
-        {algorithm, resolved.as(String)}
-      else
-        {algorithm, value.downcase}
+        value = resolved.as(String)
       end
+
+      # get_url.py, right after URL resolution: `checksum =
+      # re.sub(r'\W+', '', checksum).lower()` strips EVERY non-word
+      # character (anything outside [a-zA-Z0-9_]) out of the expected
+      # value, then `int(checksum, 16)` rejects whatever is left that is
+      # not a hexdigest ("The checksum format is invalid"). The strip is
+      # what makes a checksum templated from Ansible's own regex_search
+      # backref work at all: regex_search(pattern, '\1') returns a
+      # ONE-ELEMENT LIST, and embedding that list in a larger string
+      # renders Python's list repr, so SweBarre.opkssh's "Download
+      # opkssh" task reaches the module with checksum
+      # "sha256:['<hash>']" and real get_url succeeds by stripping the
+      # brackets and quotes back out (issue #858: krikri compared the
+      # download against the repr verbatim and failed every run). The
+      # same stripped value is what the mismatch message reports.
+      value = value.gsub(/\W/, "").downcase
+      unless value.matches?(/\A[0-9a-f]+\z/)
+        result = PluginResult.new(changed: false, failed: true,
+          msg: "The checksum format is invalid",
+          checksum_dest: nil, checksum_src: nil,
+          dest: dest, elapsed: 0, url: url)
+        add_path_info(result, dest)
+        return result
+      end
+      {algorithm, value}
     end
 
     private def resolve_checksum_url(checksum_url : String, target_url : String, dest : String) : String | PluginResult
