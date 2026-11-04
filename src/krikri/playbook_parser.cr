@@ -6012,6 +6012,41 @@ module Krikri
     end
 
     private def self.parse_block_task(name : String, task_hash : Hash(YAML::Any, YAML::Any), block_yaml : Array(YAML::Any), play : Play, file_dir : String, known_vars : Hash(String, JSON::Any)? = nil, role_path : String? = nil, playbook_dir : String? = nil, source_file : String? = nil, source_map : YamlSourceMap? = nil, source_prefix : String = "", source_index : Int32 = 0) : Task
+      # ansible-core 2.19's Block class declares no `listen` attribute
+      # (only Handler does, ansible/playbook/handler.py), and
+      # Base._validate_attributes refuses any key without one - so a
+      # `listen:` on the block:/rescue:/always: WRAPPER itself (a
+      # handlers/main.yml entry like
+      #   - name: Check and notify for reboot
+      #     listen: "Check if reboot is required"
+      #     block: ...
+      # anylinq.systemupdates, issue #807) is a fatal playbook-load
+      # refusal: "'listen' is not a valid attribute for a Block", rc=4,
+      # before any play banner (live-verified vs 2.19.11 for both a
+      # handler block and a tasks: block; the Origin points at the
+      # `listen:` KEY, unlike the include-family refusals which point at
+      # the task's mapping start). Krikri accepted the key and ran the
+      # play (rc=2, dying later on a downstream undefined var), a
+      # completely different failure. A PLAIN handler entry's listen:
+      # stays valid - parsed by parse_common_task_attributes on the
+      # non-block path below - only the block wrapper form is refused
+      # here. Same typed fatal bypass InvalidIncludeAttributeError uses
+      # for the include family.
+      if task_hash["listen"]?
+        render = nil
+        if source_map && (pos = source_map.at?(task_source_prefix(source_prefix, source_index) + "/listen"))
+          if (line = pos[0]) > 0 && source_file && File.file?(source_file)
+            src_line = File.read_lines(source_file)[line - 1]?
+            key_idx = src_line.try(&.index("listen:"))
+            pos = {line, key_idx + 1} if key_idx
+          end
+          render = origin_error_render_at(
+            "'listen' is not a valid attribute for a Block",
+            source_file, source_map, pos)
+        end
+        raise InvalidIncludeAttributeError.new("listen", "Block", render)
+      end
+
       task = Task.new(name, "_block")
 
       # Resolve this block's own become:/become_user: FIRST, then

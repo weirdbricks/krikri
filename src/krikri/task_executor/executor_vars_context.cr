@@ -345,6 +345,16 @@ module Krikri
       play_host_names = @hosts.map { |hval| JSON::Any.new(hval.name) }
       vars_context["ansible_play_hosts_all"] = JSON::Any.new(play_host_names)
       vars_context["ansible_play_hosts"] = JSON::Any.new(play_host_names)
+      # ansible_play_batch - Ansible magic var for the CURRENT serial:
+      # batch, the subset of the play's hosts running in this batch.
+      # Without serial: (the only mode this engine models) the batch IS
+      # the whole play host list, the same value ansible_play_hosts
+      # carries. Was never registered at all: anylinq.systemupdates's
+      # own first task (`when: (ansible_play_batch | length) > 1`,
+      # issue #807) hard-failed with "'ansible_play_batch' is
+      # undefined" where ansible-playbook skips the task on a
+      # single-host play (batch length 1).
+      vars_context["ansible_play_batch"] = JSON::Any.new(play_host_names)
       # play_hosts - Ansible's deprecated-but-still-supported alias
       # for ansible_play_hosts, still resolved today (deprecation warning
       # only, slated for removal in ansible-core 2.23). Same value, same
@@ -1082,7 +1092,8 @@ module Krikri
         # ansible_version, ansible_check_mode/diff_mode, ansible_forks,
         # ansible_play_name, ansible_inventory_sources, ansible_run_tags,
         # ansible_skip_tags, ansible_verbosity, ansible_play_hosts_all/
-        # ansible_play_hosts/play_hosts alongside its own vars). This
+        # ansible_play_hosts/play_hosts/ansible_play_batch alongside its
+        # own vars). This
         # engine's entries historically carried only inventory_hostname +
         # the host's own vars - reads through hostvars fell back to the
         # READING host's scope for everything else (HostvarsContext), so a
@@ -1191,6 +1202,7 @@ module Krikri
       play_host_names = @hosts.map { |hval| JSON::Any.new(hval.name) }
       entry["ansible_play_hosts_all"] = JSON::Any.new(play_host_names)
       entry["ansible_play_hosts"] = JSON::Any.new(play_host_names)
+      entry["ansible_play_batch"] = JSON::Any.new(play_host_names)
       entry["play_hosts"] = JSON::Any.new(play_host_names)
     end
 

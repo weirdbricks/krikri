@@ -180,4 +180,108 @@ describe "Krikri::PlaybookParser (playbook_parser_include_strict_test.cr)" do
       render.wont_include("This error can be suppressed")
     end
   end
+
+  describe "listen: on a block wrapper is refused (issue #807)" do
+    include RaisesAssertion
+    it "rejects listen: on a handlers block like Ansible (Block has no listen attribute)" do
+      # Real bug found benchmarking anylinq.systemupdates (issue #807):
+      # the role's handlers/main.yml puts `listen:` on the block
+      # wrapper itself
+      #   - name: Check and notify for reboot
+      #     listen: "Check if reboot is required"
+      #     block: ...
+      # which ansible-core 2.19 refuses at LOAD time - Block declares
+      # no listen attribute (only Handler does), so Base's attribute
+      # validation fatally rejects the whole run ("'listen' is not a
+      # valid attribute for a Block", rc=4, before any play banner,
+      # live-verified vs 2.19.11 for both a handler block and a tasks:
+      # block). Krikri accepted the key and ran the play (rc=2, dying
+      # later on a downstream undefined variable), a completely
+      # different failure. Unlike the include-family refusals above,
+      # the Origin points at the `listen:` KEY's own column
+      # (live-verified), so the render here pins line 7 column 7.
+      root = PluginSpecHelper.tmp_path("block_listen_origin")
+      FileUtils.rm_rf(root) if Dir.exists?(root)
+      Dir.mkdir_p(root)
+      path = File.join(root, "site.yml")
+      File.write(path, <<-YAML)
+        ---
+        - name: t
+          hosts: all
+          gather_facts: false
+          handlers:
+            - name: Check and notify for reboot
+              listen: "Check if reboot is required"
+              block:
+                - name: inner
+                  ansible.builtin.debug:
+                    msg: hi
+          tasks:
+            - name: t1
+              ansible.builtin.debug:
+                msg: hi
+        YAML
+
+      ex = assert_raises(Krikri::PlaybookParser::InvalidIncludeAttributeError) do
+        Krikri::PlaybookParser.parse(File.expand_path(path))
+      end
+      ex.message.must_equal("'listen' is not a valid attribute for a Block")
+      render = ex.render.as(String)
+      render.must_include("[ERROR]: 'listen' is not a valid attribute for a Block\n")
+      render.must_include("Origin: #{File.expand_path(path)}:7:7\n")
+      render.must_include("^ column 7\n")
+      render.wont_include("This error can be suppressed")
+    end
+
+    it "rejects listen: on a tasks block with the same Block error" do
+      # Same refusal outside handlers - Block itself has no listen
+      # attribute anywhere (live-verified vs 2.19.11: a tasks: block
+      # with `listen: foo` fails with the identical rc=4 error).
+      ex = assert_raises(Krikri::PlaybookParser::InvalidIncludeAttributeError) do
+        Krikri::PlaybookParser.parse_string(<<-YAML)
+          - name: t
+            hosts: all
+            gather_facts: false
+            tasks:
+              - name: block with listen
+                listen: foo
+                block:
+                  - name: hello
+                    ansible.builtin.debug:
+                      msg: hi
+          YAML
+      end
+      ex.message.must_equal("'listen' is not a valid attribute for a Block")
+    end
+
+    it "still accepts listen: on a PLAIN handler and on a block without listen" do
+      # Negative cases the refusal must not break: a plain handler
+      # entry's listen: is Handler's OWN attribute (fully valid - this
+      # is the common notify-topic idiom), and a block-wrapped handler
+      # WITHOUT listen: (robertdebock.rsyslog's rescue-wrapped handler)
+      # keeps parsing exactly as before - only the wrapper-level
+      # listen: is refused.
+      pb = Krikri::PlaybookParser.parse_string(<<-YAML)
+        - name: t
+          hosts: all
+          gather_facts: false
+          handlers:
+            - name: plain handler
+              listen: topic one
+              ansible.builtin.debug:
+                msg: hi
+            - name: block handler
+              block:
+                - name: inner handler
+                  ansible.builtin.debug:
+                    msg: hi
+          tasks:
+            - name: t1
+              ansible.builtin.debug:
+                msg: hi
+        YAML
+      pb.plays[0].handlers[0].listen.must_equal(["topic one"])
+      pb.plays[0].handlers[1].block_tasks.try(&.size).must_equal(1)
+    end
+  end
 end
