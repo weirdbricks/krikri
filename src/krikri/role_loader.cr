@@ -1618,6 +1618,10 @@ module Krikri
       # entry carries the "role : " prefix like every sibling task - mark
       # it explicit or --list-tasks prints the bare name unprefixed.
       task.has_explicit_name = true
+      # Real banners this task's name verbatim (never templated - the name
+      # is built in Python, not YAML, so 2.19 never trusts it as a
+      # template; see Task#validate_argument_spec_auto_name).
+      task.validate_argument_spec_auto_name = true
       task.validate_argument_spec_options = options
       task
     end

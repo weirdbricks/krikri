@@ -886,6 +886,16 @@ module Krikri
     # TaskExecutor#execute_validate_argument_spec to check the effective
     # vars against.
     property validate_argument_spec_options : Hash(String, JSON::Any)?
+    # True only on the role-synthesized validate_argument_spec task. Real
+    # never templates that task's banner name: its `name` is built in
+    # Python (Role._create_validation_task), not read from YAML, so under
+    # 2.19's template-trust model it is never trusted as a template -
+    # a short_description containing `{{ role_name }}` (trallnag.endlessh,
+    # issue #856) or even the always-defined `{{ inventory_hostname }}`
+    # banners RAW, with no `<< error >>` marker rewriting or warning. A
+    # user-written validate_argument_spec task's `name:` comes from YAML
+    # and templates normally, so this must only ride the synthesized one.
+    property? validate_argument_spec_auto_name : Bool = false
 
     # True for a USER-written `validate_argument_spec:` task (any spelling),
     # false for the role-synthesized one. The inline form validates against
