@@ -138,6 +138,22 @@ describe Krikri::JMESPath do
   end
 
   describe "functions" do
+    it "chains a function call after an expression" do
+      # ansible's json_query sees `x.join(sep, @)` as a function call
+      # whose `@` receives the chained left result - the shape
+      # brainstone.user_management's defaults use to build
+      # `network/netmask` strings from interface facts.
+      data = j(<<-JSON
+        [
+          {"key": "eth0", "value": {"ipv4": {"network": "192.168.1.0", "netmask": "255.255.255.0"}}},
+          {"key": "eth1", "value": {"ipv4": {"network": "10.0.0.0", "netmask": "255.0.0.0"}}}
+        ]
+        JSON
+      )
+      result = Krikri::JMESPath.evaluate("[].value.ipv4.[network, netmask].join(`/`, @)", data)
+      result.as_a.map(&.as_s).must_equal(["192.168.1.0/255.255.255.0", "10.0.0.0/255.0.0.0"])
+    end
+
     it "length/keys/values/type" do
       data = j(%({"a": 1, "b": 2}))
       Krikri::JMESPath.evaluate("keys(@)", data).as_a.map(&.as_s).sort!.must_equal(["a", "b"])
