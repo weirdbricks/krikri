@@ -204,6 +204,7 @@ module Krikri
         # (its list_form branches mark it); reset here so the flag a read
         # sees always belongs to THIS call, never a previous one.
         @lookup_list_form = false
+        @lookup_undef_default = nil
         raw_parts = split_top_level_commas(args)
         # The type as the raw split sees it, before the term rerender below
         # touches anything: the None-carry's file gate must know the dispatch

@@ -39,6 +39,16 @@ module Krikri
       # whose content merely looks like a JSON array is a joined/str
       # result and stays verbatim text (issue #695).
       property? lookup_list_form : Bool
+      # Set by the env lookup's dispatch when a missing env variable's
+      # `default=` option ITSELF evaluated to the "undefined" sentinel (the
+      # `default=undef()` shape): the lookup's real value is ansible's
+      # undefined marker, not the sentinel as an ordinary degraded result.
+      # The strict consumers raise with the plugin's own hint (see
+      # evaluate_bare_lookup_call); a lenient consumer (`| default(...)`)
+      # keeps consuming the sentinel, which the filter engine's undefined?
+      # already treats as a miss. Reset at every #evaluate_lookup entry,
+      # like #lookup_list_form.
+      property lookup_undef_default : String?
       # When true this evaluator resolves its Crinja-delegated operands
       # (method-call args like `.split('\n')`, `~` concat operands) against
       # the decoding environment instead of the inline verbatim one - set
@@ -51,6 +61,7 @@ module Krikri
         @slicer = ArraySlicer.new(@vars)
         @lookup = VariableLookup.new(@vars)
         @lookup_list_form = false
+        @lookup_undef_default = nil
       end
 
       # Built lazily - most `{{ }}` spans never reach the boolean_logic?
@@ -736,6 +747,25 @@ module Krikri
       private def evaluate_bare_lookup_call(expr : String) : String?
         return nil unless bare_call?(expr, "lookup(")
         lookup_rendered = evaluate_lookup(expr[7..-2])
+        # A `default=undef()` env lookup on a missing variable is
+        # genuinely undefined in ansible-core, with the plugin's own hint
+        # as the failure message ("The environment variable 'X' is not
+        # set.", live-verified vs 2.19.11): a strict consumer must fail
+        # the task and an `is defined` guard must answer False (the
+        # guard's unresolvable-template probe renders this same span
+        # strictly and turns the raise into the False verdict), never
+        # sail on with an empty-string value the way the lenient sentinel
+        # alone reads. A bare call has no downstream filter to tolerate
+        # the undefined, so the raise is unconditional under an active
+        # strict span - the `| default(...)`-guarded shape is decided at
+        # #evaluate_with_filter_fallback instead, where the consuming
+        # filter is visible.
+        if undef_var = @lookup_undef_default
+          @lookup_undef_default = nil
+          if VarSubstitutor.strict_span_active?
+            raise UndefinedVariableError.new("The environment variable '#{undef_var}' is not set.")
+          end
+        end
         # A scalar lookup() whose result ansible-core could not ",".join
         # (a non-string element - an int, or a BIGINT_SENTINEL_PREFIX-
         # marked wide int) keeps the real LIST (issue #695), and since
@@ -783,6 +813,15 @@ module Krikri
         return nil unless suffix.lstrip.starts_with?('.')
 
         lookup_rendered = evaluate_lookup(expr[7...close_idx])
+        # Same strict-undefined raise as the bare call above: a chained
+        # `.method()` call consumes the value just as strictly in ansible
+        # (an attribute/method access on an undefined value raises there).
+        if undef_var = @lookup_undef_default
+          @lookup_undef_default = nil
+          if VarSubstitutor.strict_span_active?
+            raise UndefinedVariableError.new("The environment variable '#{undef_var}' is not set.")
+          end
+        end
         result = (BigJson.parse(lookup_rendered) rescue JSON::Any.new(lookup_rendered))
         result = @lookup.apply_method_suffix(result, suffix) || result
         result.raw.is_a?(String) ? result.as_s : result.to_json
@@ -807,7 +846,13 @@ module Krikri
       # real candidate (`ubuntu-22.04.yml`) and continued; crystal
       # failed at the very first real task.
       private def evaluate_bare_query_call(expr : String) : String?
-        return evaluate_query(expr[6..-2]) if bare_call?(expr, "query(")
+        # The query()/q() path can leave the same provenance flag behind
+        # (evaluate_query delegates to evaluate_lookup for non-first_found
+        # types); drop it after the call so a list-form result never
+        # leaves a stale marker for a LATER filter chain in the same
+        # evaluator to trip over - the query form's own strict-undefined
+        # handling is a separate, older surface this fix deliberately
+        # does not retread.
         # `q(...)` - Ansible's documented short alias for `query(...)`
         # (same lookup-plugin dispatch, always the list form). Previously
         # unrecognized - this fell through to a plain variable-name lookup
@@ -816,8 +861,13 @@ module Krikri
         # No prefix collision with `query(` itself ("query(" does not start
         # with "q(") nor with any other builtin (`quote(` etc. lack the
         # paren right after the q).
-        return evaluate_query(expr[2..-2]) if bare_call?(expr, "q(")
-        nil
+        result = if bare_call?(expr, "query(")
+                   evaluate_query(expr[6..-2])
+                 elsif bare_call?(expr, "q(")
+                   evaluate_query(expr[2..-2])
+                 end
+        @lookup_undef_default = nil
+        result
       end
 
       # `range(...)` - Jinja2/Python's function-call range syntax,
@@ -3079,6 +3129,25 @@ module Krikri
         var_expr = segments[0]
 
         value = filter_chain_head_value(var_expr)
+
+        # The `| default(...)`-guarded counterpart of the bare-call raise
+        # (see evaluate_bare_lookup_call): the head lookup's `default=
+        # undef()` provenance only fails a strict consumer when the chain
+        # that follows it does not tolerate an undefined input - a
+        # leading default()/d() (or an is-defined test) consumes the
+        # sentinel exactly like ansible's undefined marker and renders
+        # the fallback instead, so the sentinel keeps flowing there.
+        if undef_var = @lookup_undef_default
+          @lookup_undef_default = nil
+          first_filter = segments[1]?.try(&.strip)
+          filter_name = first_filter.try(&.split('(').first).try(&.strip.downcase)
+          tolerant = !first_filter.nil? &&
+                     (filter_name.in?("default", "d", "type_debug") ||
+                      first_filter.matches?(/\Ais\s+(not\s+)?defined\b/))
+          if VarSubstitutor.strict_span_active? && !tolerant
+            raise UndefinedVariableError.new("The environment variable '#{undef_var}' is not set.")
+          end
+        end
 
         root = VarSubstitutor.expression_root(var_expr)
         result = segments[1..].reduce(value) { |acc, filter_expr| @filter.apply(acc, filter_expr, root) }

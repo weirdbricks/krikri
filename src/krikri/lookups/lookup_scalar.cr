@@ -24,22 +24,7 @@ module Krikri
             raise ex
           end
         when "env"
-          # lookup('env', 'VAR_NAME') - Ansible's own env lookup
-          # plugin, reads an environment variable from the CONTROLLER
-          # (not the target - this always runs on the controller side,
-          # same as first_found above). Entirely unimplemented before -
-          # fell through to the `unless lookup_type == "first_found"`
-          # guard, always "undefined" regardless of the real env var.
-          # Found via ansible-community.ansible-vault's own `vault_
-          # version: "{{ lookup('env', 'VAULT_VERSION') | default(
-          # '2.0.3', true) }}"` - Ansible's own env lookup returns
-          # an empty string for an unset var (not an error), which is
-          # what makes the `default(..., true)` fallback actually kick
-          # in; "undefined" is a non-empty string, so default() never
-          # replaced it, leaving the literal text "undefined" as the
-          # real Vault version used to build the download URL.
-          var_name = parts[1]?.try { |part| resolve_plus_operand(part.strip) }.try(&.as_s?)
-          var_name ? (ENV[var_name]? || "") : "undefined"
+          lookup_env(parts, kwargs)
         when "config"
           lookup_config(parts, kwargs)
         when "inventory_hostnames"
@@ -48,6 +33,49 @@ module Krikri
           lookup_url(parts, kwargs)
         when "vars"
           lookup_vars(parts, kwargs)
+        end
+      end
+
+      # lookup('env', 'VAR_NAME') - Ansible's own env lookup
+      # plugin, reads an environment variable from the CONTROLLER
+      # (not the target - this always runs on the controller side,
+      # same as first_found above). Entirely unimplemented before -
+      # fell through to the `unless lookup_type == "first_found"`
+      # guard, always "undefined" regardless of the real env var.
+      # Found via ansible-community.ansible-vault's own `vault_
+      # version: "{{ lookup('env', 'VAULT_VERSION') | default(
+      # '2.0.3', true) }}"` - Ansible's own env lookup returns
+      # an empty string for an unset var (not an error), which is
+      # what makes the `default(..., true)` fallback actually kick
+      # in; "undefined" is a non-empty string, so default() never
+      # replaced it, leaving the literal text "undefined" as the
+      # real Vault version used to build the download URL.
+      private def lookup_env(parts : Array(String), kwargs : Array(String)) : String
+        var_name = parts[1]?.try { |part| resolve_plus_operand(part.strip) }.try(&.as_s?)
+        if var_name.nil?
+          "undefined"
+        elsif (value = ENV[var_name]?)
+          value
+        elsif default_kwarg = kwargs.find(&.strip.downcase.starts_with?("default="))
+          # Ansible's env lookup falls back to its `default=` option for a
+          # missing variable, and the option value is TEMPLATED like the
+          # vars lookup's (`lookup('env', 'X', default='fallback')`
+          # renders "fallback", live-verified vs 2.19.11). The
+          # `default=undef()` shape evaluates to ansible's undefined
+          # marker with the plugin's own hint ("The environment variable
+          # 'X' is not set."): a strict consumer fails the task with it
+          # and `is defined` answers False - philnewm.houdini probes its
+          # download credentials with `lookup('env', 'SIDEFX_CLIENT_ID',
+          # default=undef()) is defined` and must fail the play when the
+          # env vars are absent. The lenient "undefined" sentinel alone
+          # cannot express the strict side, so the provenance rides in
+          # @lookup_undef_default for the bare-call renderers to raise
+          # with (see evaluate_bare_lookup_call).
+          evaluated = evaluate(default_kwarg.split("=", 2)[1].strip)
+          @lookup_undef_default = var_name if evaluated == "undefined"
+          evaluated
+        else
+          ""
         end
       end
 

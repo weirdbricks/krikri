@@ -962,6 +962,27 @@ describe Krikri::ConditionalEvaluator do
       ENV.delete("CRYSTAL_ANSIBLE_SPEC_COND_ENV_TEST")
     end
 
+    it "answers `is defined` False for a var whose poisoned env lookup left it undefined" do
+      # philnewm.houdini (issue #853): the role's credentials probe is
+      # `sidefx_client_id is defined` against a defaults/main.yml value
+      # of `{{ lookup('env', 'SIDEFX_CLIENT_ID', default=undef()) }}` -
+      # ansible-core 2.19 makes the lookup's `default=undef()` option a
+      # genuine undefined marker, so the assert FAILS the play when the
+      # env vars are absent. The var's key exists in the scope either
+      # way, so only the unresolvable-template probe (the strict render
+      # of the var's own value) can tell the two apart; previously the
+      # env lookup's ignored `default=` kwarg rendered "" and the guard
+      # answered True, letting the role sail past the check ansible
+      # dies on.
+      v = Hash(String, JSON::Any).new
+      v["sidefx_client_id"] = JSON::Any.new(%({{ lookup('env', 'CRYSTAL_ANSIBLE_SPEC_ENV_UNDEF_DEFAULT_2', default=undef()) }}))
+      Krikri::ConditionalEvaluator.evaluate("sidefx_client_id is defined", v).must_equal(false)
+
+      ENV["CRYSTAL_ANSIBLE_SPEC_ENV_UNDEF_DEFAULT_2"] = "set"
+      Krikri::ConditionalEvaluator.evaluate("sidefx_client_id is defined", v).must_equal(true)
+      ENV.delete("CRYSTAL_ANSIBLE_SPEC_ENV_UNDEF_DEFAULT_2")
+    end
+
     it "re-templates a bare variable used as a `+`-operand inside an `in` check" do
       # Real bug found benchmarking cloudalchemy.prometheus's own
       # `go_arch: "{{ go_arch_map[ansible_architecture] | default(

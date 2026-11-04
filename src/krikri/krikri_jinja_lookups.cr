@@ -208,7 +208,19 @@ module Krikri
       case name
       when "env"
         var_name = text(first)
-        AnyValue.new(var_name.empty? ? "" : (ENV[var_name]? || ""))
+        if var_name.empty?
+          AnyValue.new("")
+        elsif (value = ENV[var_name]?)
+          AnyValue.new(value)
+        else
+          # ansible's env lookup falls back to its `default=` option for a
+          # missing variable (`lookup('env', 'X', default='fallback')`
+          # renders "fallback", live-verified vs 2.19.11); the
+          # `default=undef()` shape never reaches here - the poisoned-kwarg
+          # check above already turned the whole lookup undefined.
+          default = kwargs["default"]?
+          default && !default.raw.nil? ? default : AnyValue.new("")
+        end
       when "config"
         names = terms.map { |term| text(term) }.reject { |term| term.empty? || term.downcase.starts_with?("wantlist=") }
         # The `key=value` kwargs (plugin_type/plugin_name for the config
