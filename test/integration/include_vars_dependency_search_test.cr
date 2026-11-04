@@ -118,4 +118,47 @@ describe "include_vars search list from a meta dependency declares the declaring
   ensure
     FileUtils.rm_rf(src_dir) if src_dir
   end
+
+  it "does not search the role's defaults/ dir for a plain include_vars: file" do
+    # Real divergence benchmarking hammadrauf.sudousers (issue #796): the
+    # role ships its secrets file as defaults/secrets.yml and include_vars:'es
+    # a bare "secrets.yml". ansible-playbook FAILS the task ("Could not find
+    # or access 'secrets.yml'", its Searched in: list covers only the role's
+    # vars/, the role root, the including file's dir pairs and the play-dir
+    # pairs - never defaults/), krikri's search stack added the role's
+    # defaults/ as a root since the first include_vars: implementation, so
+    # the missing file loaded silently and every later task the fatal should
+    # have stopped ran anyway.
+    src_dir = File.tempname("include-vars-no-defaults-root")
+    Dir.mkdir_p(File.join(src_dir, "roles", "myrole", "vars"))
+    Dir.mkdir_p(File.join(src_dir, "roles", "myrole", "tasks"))
+    Dir.mkdir_p(File.join(src_dir, "roles", "myrole", "defaults"))
+    File.write(File.join(src_dir, "roles", "myrole", "vars", "os.yml"), "os_var: V\n")
+    File.write(File.join(src_dir, "roles", "myrole", "defaults", "secrets.yml"), "secret: LEAKED\n")
+    File.write(File.join(src_dir, "roles", "myrole", "tasks", "main.yml"), <<-YAML)
+      - name: iv
+        ansible.builtin.include_vars: secrets.yml
+      - name: show
+        debug:
+          msg: "{{ secret }}"
+      YAML
+    File.write(File.join(src_dir, "pb.yml"), <<-YAML)
+      - hosts: localhost
+        gather_facts: false
+        connection: local
+        roles:
+          - myrole
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, File.join(src_dir, "pb.yml")], output: output, error: output, input: IO::Memory.new, chdir: src_dir)
+    status.success?.must_equal(false)
+    message = failed_include_vars_message(output.to_s)
+    message.must_match(/\ACould not find or access 'secrets\.yml'/)
+    defaults_dir = File.join(src_dir, "roles", "myrole", "defaults")
+    output.to_s.wont_include(defaults_dir)
+    output.to_s.wont_include("LEAKED")
+  ensure
+    FileUtils.rm_rf(src_dir) if src_dir
+  end
 end
