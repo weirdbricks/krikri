@@ -1354,6 +1354,17 @@ module Krikri
         result = remote_exec_tolerating_unknown_repo(cmd)
 
         if result[:exit_code] != 0
+          # A repo-metadata download failure reaches the update batch the
+          # same way it reaches the install one (issue #857:
+          # tvandeveire.ekstack_metricbeat_packetbeat's `state: latest` on
+          # an already-installed jre): ansible's module loads every
+          # enabled repo's metadata before resolving either transaction,
+          # so its fatal carries just libdnf's "Failed to download
+          # metadata for repo ..." text with no failures key - the same
+          # shape run_install_batch already reports for this (issue #267).
+          if metadata_msg = repo_metadata_failure_msg(result[:stdout] + "\n" + result[:stderr])
+            return {changed: false, message: nil, output: result[:stdout], failure: PluginResult.new(changed: false, failed: true, msg: metadata_msg, results: [] of String, rc: result[:exit_code], key_order: PluginHelpers::DnfInstallFailures::DNF_METADATA_FAILURE_ORDER)}
+          end
           if failure = unknown_error_failure(result)
             return {changed: false, message: nil, output: result[:stdout], failure: failure}
           end
