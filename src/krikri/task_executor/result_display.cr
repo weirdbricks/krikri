@@ -1786,10 +1786,14 @@ module Krikri
     # Returns {segment sans errno, errno text}; nil when msg is not this
     # shape (including a detail whose errno could not be derived, which
     # renders plain - the same split would be a no-op anyway).
+    # Both src spellings ride real's atomic_move: the copy module's crash
+    # echoes its staged source as Python bytes (b'...'), while authorized_key
+    # echoes its /tmp mkstemp source as a plain repr ('...' - issue #819).
     # Public only so the unit suite can pin the split directly, the same
     # reason task_error_chain is.
     def self.failed_final_rename_split(msg : String) : {String, String}?
-      return nil unless msg.starts_with?("Unable to make b'") && msg.includes?("failed final rename from '")
+      return nil unless msg.starts_with?("Unable to make b'") || msg.starts_with?("Unable to make '")
+      return nil unless msg.includes?("failed final rename from '")
       idx = msg.rindex(": [Errno ")
       return nil unless idx
       {msg[0...idx].rstrip(". "), msg[(idx + 2)..]}

@@ -372,7 +372,9 @@ module Krikri
           return failure
         end
       end
-      File.write(path, new_content)
+      if failure = atomic_move_write(path, new_content)
+        return failure
+      end
       # keyfile()'s tail: chown(keysfile) wrapped in except OSError: pass,
       # then chmod 0600.
       begin
@@ -382,6 +384,226 @@ module Krikri
       end
       File.chmod(path, 0o600)
       nil
+    end
+
+    # ansible.posix.authorized_key's writefile(): the new content goes to
+    # a Python tempfile.mkstemp() temp under the default temp dir, then
+    # AnsibleModule.atomic_move moves it into place. A direct File.write of
+    # dest here diverges from real on every dest the rename ladder cannot
+    # land - issue #819: a bind-mounted authorized_keys makes real's final
+    # rename fail EBUSY with its "Unable to make ... failed final rename"
+    # crash, while a direct open-for-write reports a different errno from a
+    # different syscall entirely. Returns nil on success, or the failed
+    # PluginResult carrying real's exact crash text.
+    private def atomic_move_write(path : String, new_content : String) : PluginResult?
+      begin
+        tmp_path = python_mkstemp(python_tempfile_dir, "tmp", "")
+      rescue mk : MkstempFailure
+        # tempfile.mkstemp() itself failing is an uncaught OSError in real
+        # - the crash brief is the bare Python error text.
+        return atomic_move_crash("", mk.cause_text)
+      end
+      begin
+        File.write(tmp_path, new_content, perm: 0o600)
+      rescue ex : File::Error
+        File.delete(tmp_path) if File.exists?(tmp_path)
+        return PluginResult.new(changed: false, failed: true,
+          msg: "Failed to write to file #{tmp_path}: #{python_os_error_text(ex, tmp_path, bytes_repr: false)}")
+      end
+      result = atomic_move_ladder(tmp_path, path)
+      File.delete(tmp_path) if File.exists?(tmp_path)
+      result
+    end
+
+    # Python's tempfile.gettempdir(): TMPDIR/TEMP/TMP, else /tmp.
+    private def python_tempfile_dir : String
+      ENV["TMPDIR"]? || ENV["TEMP"]? || ENV["TMP"]? || "/tmp"
+    end
+
+    # Python's tempfile.mkstemp(): an exclusively created 0600 temp named
+    # <prefix><8 random><suffix> under dir. Raises MkstempFailure carrying
+    # the Python-str(OSError) text so the ladder can embed it in real's
+    # crash text the way the exception chain does in real.
+    private def python_mkstemp(dir : String, prefix : String, suffix : String) : String
+      path = File.join(dir, "#{prefix}#{python_tmp_random(8)}#{suffix}")
+      file = File.new(path, "w", perm: 0o600)
+      file.close
+      path
+    rescue ex : File::Error
+      raise MkstempFailure.new(python_os_error_text(ex, path))
+    end
+
+    # Python's _RandomNameSequence characters - what real's mkstemp names
+    # draw their random part from (same alphabet the copy module's stage
+    # names use).
+    private TMP_RANDOM_CHARS = "abcdefghijklmnopqrstuvwxyz0123456789_"
+
+    private def python_tmp_random(count : Int) : String
+      String.build(count) do |io|
+        count.times { io << TMP_RANDOM_CHARS[Random::Secure.rand(TMP_RANDOM_CHARS.size)] }
+      end
+    end
+
+    private class MkstempFailure < Exception
+      getter cause_text : String
+
+      def initialize(@cause_text : String)
+        super(cause_text)
+      end
+    end
+
+    # The [Errno N] text the way Python's str(OSError) renders it, from the
+    # failing syscall's own errno - never spelled out: the wording the
+    # kernel hands back is what real echoed (same reasoning as the copy
+    # module's rename_errno_text). Ansible calls these syscalls with BYTES
+    # paths, so the reprs are Python bytes form (b'...'); the one str-path
+    # caller (writefile's own open, whose tmp_path is a str) opts out.
+    private def python_os_error_text(ex : File::Error, path : String? = nil, path2 : String? = nil, bytes_repr : Bool = true) : String
+      errno = ex.os_error
+      base = errno.is_a?(Errno) ? "[Errno #{errno.value}] #{errno.message}" : ex.message.to_s
+      return base unless path
+      return "#{base}: '#{path}'" unless bytes_repr
+      return "#{base}: b'#{path}' -> b'#{path2}'" if path2
+      "#{base}: b'#{path}'"
+    end
+
+    # AnsibleModule.atomic_move (ansible-core 2.19.11,
+    # module_utils/basic.py), minus the selinux branches: an optimistic
+    # rename, then for the errnos real works around (EPERM/EXDEV/EACCES/
+    # ETXTBSY/EBUSY - EBUSY is the bind-mounted-dest case of issue #819) a
+    # mkstemp stage NEXT TO dest, the source's move into it, and the final
+    # rename whose failure carries real's "Unable to make ... failed final
+    # rename" crash; any other errno fails immediately, as real's "Could
+    # not replace" does. Returns nil on success, or the failed PluginResult
+    # whose msg is the collapsed exception-chain brief real's module crash
+    # produces (outer message ": "-joined to the underlying OSError, with
+    # the trailing period of the outer message stripped by the same join).
+    private def atomic_move_ladder(src : String, dest : String) : PluginResult?
+      dest_info = File.info?(dest)
+      creating = dest_info.nil?
+      if info = dest_info
+        # keep_dest_attrs: the source inherits the existing dest's
+        # ownership and mode, then its times are stamped to now (real's
+        # chown + copystat + utime-to-now trio); only EPERM is swallowed.
+        begin
+          File.chown(src, uid: info.owner_id.to_i, gid: info.group_id.to_i)
+          File.chmod(src, info.permissions)
+          File.utime(Time.local, Time.local, src)
+        rescue ex : File::Error
+          unless ex.os_error.try(&.value) == 1
+            return atomic_move_crash("", python_os_error_text(ex, src))
+          end
+        end
+      end
+
+      begin
+        File.rename(src, dest)
+      rescue ex : File::Error
+        errno = ex.os_error.try(&.value)
+        unless errno && ATOMIC_MOVE_WORKAROUND_ERRNOS.includes?(errno)
+          return atomic_move_crash("Could not replace '#{dest}' with '#{src}'.",
+            python_os_error_text(ex, src, dest))
+        end
+
+        stage = File.join(python_dirname(dest),
+          ".ansible_tmp#{python_tmp_random(8)}#{File.basename(dest)}")
+        begin
+          python_mkstemp_dir(stage)
+        rescue mk : MkstempFailure
+          return atomic_move_crash(
+            "The destination directory '#{python_dirname(dest)}' is not writable by the current user.",
+            mk.cause_text)
+        end
+
+        begin
+          move_source_into_stage(src, stage, dest_info)
+        rescue ex3 : File::Error
+          File.delete(stage) if File.exists?(stage)
+          return atomic_move_crash("Failed to replace '#{dest}' with '#{src}'.",
+            python_os_error_text(ex3, src, stage))
+        end
+
+        begin
+          File.rename(stage, dest)
+        rescue ex4 : File::Error
+          File.delete(stage) if File.exists?(stage)
+          return atomic_move_crash(
+            "Unable to make '#{src}' into to '#{dest}', failed final rename from '#{stage}'.",
+            python_os_error_text(ex4, stage, dest))
+        end
+      end
+
+      if creating
+        # real's post-rename branch for a newly created dest: mode from the
+        # current umask, ownership from euid (or the parent dir's group
+        # under setgid) best-effort. Unreachable through authorized_key -
+        # keyfile() pre-touches a missing keysfile - but the ladder stays
+        # faithful to the shared atomic_move it mirrors. The chown half is
+        # skipped: it needs geteuid/getegid this module never reaches this
+        # branch with (see above).
+        File.chmod(dest, 0o666 & ~creation_umask)
+      end
+      nil
+    end
+
+    # The errnos atomic_move works around before staging next to dest
+    # (basic.py's own tuple: EPERM, EXDEV, EACCES, ETXTBSY, EBUSY).
+    ATOMIC_MOVE_WORKAROUND_ERRNOS = [1, 13, 16, 18, 26]
+
+    # The mkstemp half split out of python_mkstemp so the ladder can name
+    # the exact candidate path it failed on.
+    private def python_mkstemp_dir(path : String) : Nil
+      file = File.new(path, "w", perm: 0o600)
+      file.close
+    rescue ex : File::Error
+      raise MkstempFailure.new(python_os_error_text(ex, path))
+    end
+
+    # shutil.move(b_src, b_tmp_dest_name, copy_function=shutil.copy): a
+    # same-filesystem rename, else a copy (shutil.copy carries the source's
+    # mode) + unlink of the source; then the dest-attrs reconciliation
+    # (chown to the existing dest's owner/group when it differs, times to
+    # now) with the same EPERM-only swallow real wraps this block in.
+    private def move_source_into_stage(src : String, stage : String, dest_info : File::Info?) : Nil
+      begin
+        File.rename(src, stage)
+      rescue ex : File::Error
+        unless ex.os_error.try(&.value) == Errno::EXDEV.value
+          raise ex
+        end
+        src_info = File.info(src, follow_symlinks: false)
+        bytes = File.read(src)
+        File.write(stage, bytes)
+        File.chmod(stage, src_info.permissions)
+        File.delete(src)
+      end
+      if info = dest_info
+        begin
+          stage_info = File.info(stage, follow_symlinks: false)
+          if stage_info.owner_id != info.owner_id || stage_info.group_id != info.group_id
+            File.chown(stage, uid: info.owner_id.to_i, gid: info.group_id.to_i)
+          end
+          File.utime(Time.local, Time.local, stage)
+        rescue ex : File::Error
+          unless ex.os_error.try(&.value) == 1
+            raise ex
+          end
+        end
+      end
+    end
+
+    # The crash shape for an atomic_move failure: real's module crash
+    # wrapper collapses the raise's exception chain into one brief joined
+    # with _text_utils.concat_message's ": " join (the outer message's
+    # trailing period stripped), which is what the fatal msg echoes; the
+    # [ERROR] block splits the pair back out under "<<< caused by >>>" via
+    # ResultDisplay.failed_final_rename_split - the same shapes copy.cr's
+    # final_rename_crash_result rides for its own rename ladder.
+    private def atomic_move_crash(detail : String, cause_text : String?) : PluginResult
+      joined = detail.empty? ? cause_text.to_s : "#{detail.rstrip(". ")}: #{cause_text}"
+      PluginResult.new(changed: false, failed: true,
+        msg: "Task failed: Module failed: #{joined}",
+        _ansible_error_detail: joined)
     end
 
     # keyfile()'s manage_dir branch: os.mkdir (a single level) when
