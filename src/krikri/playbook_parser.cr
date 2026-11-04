@@ -2339,6 +2339,16 @@ module Krikri
           # it into "Warning: Failed to parse play N" with the Origin
           # block lost.
           raise ex
+        rescue ex : VaultFileError
+          # Same bypass - a vault-encrypted role file (fogartyp.oraswdb-
+          # install's own vault-encrypted vars/main.yml, issue #873) that
+          # no supplied vault secret can open is Ansible's DataLoader
+          # AnsibleVaultError: the whole run refuses with the [ERROR] +
+          # Origin block on STDERR and rc=1 before any play output, not a
+          # per-play soft-skip into "Warning: Failed to parse play N" +
+          # "No valid plays found in playbook" (rc=4). See VaultFileError's
+          # own comment.
+          raise ex
         rescue ex : InvalidRegisterError
           # Same bypass - Ansible refuses the whole run for an
           # invalid register: at load time. See that class's own comment.

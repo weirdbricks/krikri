@@ -923,6 +923,16 @@ rescue ex : Krikri::StaticImportMissingFileError
   # trailing blank).
   STDERR.print ex.render
   exit 1
+rescue ex : Krikri::VaultFileError
+  # A vault-encrypted file a play loads (a role's vars/main.yml, ...)
+  # that no supplied vault secret can open is Ansible's DataLoader
+  # AnsibleVaultError, NOT a parser error: the [ERROR] + Origin block
+  # (path only) on STDERR and rc=1, before any play output (verified
+  # vs 2.19.11 with fogartyp.oraswdb-install's own vault-encrypted
+  # vars/main.yml, issue #873). The render was built at the raise
+  # site; print it verbatim.
+  STDERR.print ex.render
+  exit 1
 rescue ex : Krikri::YamlSyntaxError
   # Rendered the way ansible-playbook renders a YAML syntax error -
   # [ERROR]: line, Origin: path:line:col, then the offending source line

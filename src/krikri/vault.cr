@@ -31,6 +31,16 @@ module Krikri
     class Error < Exception
     end
 
+    # maybe_decrypt's "no vault secret is configured at all" case,
+    # distinguished from "secrets exist but none of them fit" - ansible's
+    # VaultLib.decrypt branches on exactly this and words the two
+    # AnsibleVaultErrors differently ("Attempting to decrypt but no vault
+    # secrets found." vs "Decryption failed (no vault secrets were found
+    # that could decrypt)."), so a whole-file load refusal needs to know
+    # which one it is (VaultFileError's render).
+    class NoSecretsError < Error
+    end
+
     # The vault password for this run, set once from --vault-password-file
     # or --ask-vault-pass before any playbook/role/task/vars file is read.
     # A single session-wide password (rather than threading one through
@@ -98,7 +108,7 @@ module Krikri
 
       candidates = candidate_passwords(content)
       if candidates.empty?
-        raise Error.new("This content is vault-encrypted, but no vault password was provided (use --vault-password-file, --vault-id or --ask-vault-pass)")
+        raise NoSecretsError.new("This content is vault-encrypted, but no vault password was provided (use --vault-password-file, --vault-id or --ask-vault-pass)")
       end
 
       last_error = nil
@@ -295,6 +305,32 @@ module Krikri
       result = 0
       a.each_byte.zip(b.each_byte) { |x, y| result |= (x ^ y) }
       result == 0
+    end
+  end
+
+  # A vault-encrypted FILE a play loads (a role's vars/main.yml, its
+  # defaults/main.yml, its tasks/main.yml, ...) that no supplied vault
+  # secret can open. ansible-core's DataLoader raises AnsibleVaultError
+  # there and ansible-playbook refuses the WHOLE run before any play
+  # output: "[ERROR]: <vault message>" plus the file's Origin block (path
+  # only - no line/column, no source excerpt) on STDERR, rc=1 (verified
+  # against 2.19.11 with fogartyp.oraswdb-install's own vault-encrypted
+  # vars/main.yml, issue #873: with no secrets configured it prints
+  # "Attempting to decrypt but no vault secrets found.", with secrets that
+  # all fail it prints "Decryption failed (no vault secrets were found
+  # that could decrypt)." - both rc=1). Not the parser-error rc=4, and
+  # not the per-play soft-skip ("Warning: Failed to parse play N" -> "No
+  # valid plays found in playbook", rc=4) this engine used to degrade
+  # into when the raw Vault::Error reached the per-play rescue.
+  class VaultFileError < Exception
+    getter path : String
+
+    def initialize(@path : String, message : String)
+      super(message)
+    end
+
+    def render : String
+      "[ERROR]: #{message}\nOrigin: #{File.expand_path(@path)}\n\n"
     end
   end
 end
