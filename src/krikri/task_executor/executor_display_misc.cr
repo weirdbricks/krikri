@@ -186,6 +186,15 @@ module Krikri
     end
 
     private def untrimmed_task_name_for_display(task : Task, host : Host) : String
+      # Real never templates the role-synthesized arg-spec validation
+      # task's name (its `name` is built in Python, so 2.19's
+      # template-trust model never treats it as a template): a
+      # short_description containing `{{ role_name }}` (trallnag.endlessh,
+      # issue #856) or even the always-defined `{{ inventory_hostname }}`
+      # banners RAW, with no marker rewriting or warning - while a regular
+      # task's `name:` from YAML templates normally. Must also skip the
+      # lenient `{%`/`{#` path below.
+      return task.name if task.validate_argument_spec_auto_name?
       return task.name unless task.name.includes?("{{")
       # An unnamed task's header is its action spelling verbatim: real
       # prints `TASK [{{ pm }}]` for `action: "{{ pm }} ..."`, it never

@@ -119,4 +119,25 @@ describe "role argument_specs.yaml" do
 
     output.must_include("argument_specs.yaml")
   end
+
+  it "banners the synthesized validation task's name raw, without templating" do
+    # Real builds the auto-inserted validation task's name in Python, so
+    # 2.19's template-trust model never treats it as a template: a
+    # short_description referencing `{{ role_name }}` (trallnag.endlessh,
+    # issue #856) or even the always-defined `{{ inventory_hostname }}`
+    # banners verbatim, while the same template in the role's own task
+    # `name:` renders normally.
+    files = role_files
+    files["roles/r1/meta/argument_specs.yaml"] = ARGUMENT_SPECS_YAML.gsub(
+      "short_description: Manage SSH CA",
+      "short_description: The main entry point for the \"{{ role_name }}\" role on {{ inventory_hostname }}."
+    )
+    files["roles/r1/tasks/main.yml"] = "---\n- name: role task on {{ role_name }}\n  ansible.builtin.debug:\n    msg: hi\n"
+    files["play.yml"] = "- hosts: all\n  gather_facts: false\n  vars:\n    sshca_key: provided\n  roles:\n    - r1\n"
+    _, output = run_playbook(files)
+
+    output.must_include("TASK [r1 : Validating arguments against arg spec 'main' - The main entry point for the \"{{ role_name }}\" role on {{ inventory_hostname }}.]")
+    output.must_include("TASK [r1 : role task on r1]")
+    output.wont_include("role on r1.]")
+  end
 end
