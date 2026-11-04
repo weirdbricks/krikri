@@ -3573,7 +3573,7 @@ module Krikri
     # text, krikri's parser calls it `cmd`.
     private def free_form_raw_command?(task : Task) : Bool
       return false unless PlaybookParser::RAW_COMMAND_MODULES.includes?(task.module_name)
-      free_form_call?(task)
+      free_form_call?(task) || free_form_directive_call?(task)
     end
 
     # Free-form include_vars carries its path as Ansible's `_raw_params` too
@@ -3591,6 +3591,28 @@ module Krikri
     # `key: value` mapping.
     private def free_form_call?(task : Task) : Bool
       free_form_value_in_source?(task, task.module_name.split(".").last)
+    end
+
+    # A legacy free-form `action:`/`local_action: <module> <args>` directive
+    # names its module INLINE, so the bare `shell:`/`command:` key
+    # free_form_call? looks for never appears in the source (deveth0.pct's
+    # `local_action: shell ssh ...`, issue #814). Ansible resolves such a
+    # value through _normalize_old_style_args, which stores the argument
+    # string under `_raw_params` exactly like a plain free-form call, so the
+    # undefined-variable wording must rename `cmd` the same way.
+    private def free_form_directive_call?(task : Task) : Bool
+      short = task.module_name.split(".").last
+      path = task.source_file
+      return false unless path && task.source_line > 0 && File.file?(path)
+      lines = File.read_lines(path)
+      matcher = /\A(?:ansible\.(?:builtin|legacy)\.)?(?:action|local_action)[ \t]*:[ \t]*(?:ansible\.(?:builtin|legacy)\.)?#{Regex.escape(short)}(?:\s|\z)/
+      ((task.source_line - 1)...Math.min(lines.size, task.source_line + 40)).each do |idx|
+        line = lines[idx]
+        break if idx > task.source_line - 1 && next_task_marker?(lines, task.source_line - 1, line)
+        stripped = line.strip.lchop("- ").strip
+        return true if stripped.matches?(matcher)
+      end
+      false
     end
 
     private def free_form_value_in_source?(task : Task, short_name : String) : Bool
@@ -3699,6 +3721,7 @@ module Krikri
       lines = File.read_lines(path)
       msg = ex.message || ""
       free_form = free_form_raw_command?(task)
+      free_form_directive = free_form && free_form_directive_call?(task)
       free_form_include_vars = free_form_include_vars?(task)
       msg = msg.sub("Error while resolving value for 'cmd':", "Error while resolving value for '_raw_params':") if free_form
       msg = msg.sub("Error while resolving value for 'file':", "Error while resolving value for '_raw_params':") if free_form_include_vars
@@ -3714,7 +3737,13 @@ module Krikri
         return environment_keyword_undefined_block(task, env_name, path, lines)
       end
       l3 = msg
-      l2 = "Finalization of task args for '#{finalization_module_name(task)}' failed."
+      # A free-form directive's middle stanza keeps the FULL message: its
+      # value is templated as one string to split the module name off, so
+      # ansible's chain has no separate per-key cause level to shorten it
+      # to "failed." (deveth0.pct, live-captured 2.19.11, issue #814) -
+      # unlike a plain free-form call, where the failing key's own
+      # resolution is a distinct level.
+      l2 = free_form_directive ? "Finalization of task args for '#{finalization_module_name(task)}' failed: #{msg}" : "Finalization of task args for '#{finalization_module_name(task)}' failed."
       l1 = "Task failed: Finalization of task args for '#{finalization_module_name(task)}' failed: #{msg}"
 
       # A test-plugin failure carries one MORE cause level: Ansible's chain
@@ -3770,7 +3799,8 @@ module Krikri
         # a bare-name line.
         module_line = locate_module_key_line(lines, name_idx, task.module_name) ||
                       locate_module_key_line(lines, name_idx, finalization_module_name(task)) ||
-                      directive_mapping_module_position(lines, name_idx)
+                      directive_mapping_module_position(lines, name_idx) ||
+                      (free_form_directive ? directive_free_form_module_position(lines, name_idx, task.module_name.split(".").last) : nil)
         return unless module_line
         module_idx, module_col = module_line
         two_level = false
@@ -3822,7 +3852,11 @@ module Krikri
       raw_params_failure = dict_args_failure ||
                            (free_form && (err_key.nil? || err_key == "_raw_params" || err_key == "cmd")) ||
                            (free_form_include_vars && (err_key.nil? || err_key.in?("file", "_raw_params")))
-      param_idx, param_col = raw_params_failure ? free_form_value_position(lines, module_idx, task.module_name) : (locate_param_value_line(lines, module_idx, msg) || (include_tasks ? ((msg.starts_with?("Error while resolving value for '_raw_params':") ? locate_param_key_position(lines, module_idx, "file") : nil) || free_form_value_position(lines, module_idx, finalization_module_name(task))) : {module_idx, module_col}))
+      # A free-form directive's whole value is templated as one string to
+      # split the module name off, so the failure's span starts at the
+      # value's first character - the module token itself, the same
+      # position the middle stanza already carries.
+      param_idx, param_col = raw_params_failure ? (free_form_directive ? {module_idx, module_col} : free_form_value_position(lines, module_idx, task.module_name)) : (locate_param_value_line(lines, module_idx, msg) || (include_tasks ? ((msg.starts_with?("Error while resolving value for '_raw_params':") ? locate_param_key_position(lines, module_idx, "file") : nil) || free_form_value_position(lines, module_idx, finalization_module_name(task))) : {module_idx, module_col}))
 
       # When the fourth chained stanza is emitted, the third level's text
       # shortens to the prefix alone - the inner message moves entirely
@@ -3904,10 +3938,15 @@ module Krikri
           io << l2 << "\n"
           io << origin_context_block(path, lines, module_idx + 1, module_col)
         end
-        io << "\n<<< caused by >>>\n\n"
-        io << l3 << "\n"
-        stanza3_pos = mapping_key_pos || {param_idx, param_col}
-        io << origin_context_block(path, lines, stanza3_pos[0] + 1, stanza3_pos[1])
+        # A free-form directive's middle stanza already carries the full
+        # message, so ansible's chain ends there - no third level at all
+        # (deveth0.pct, live-captured 2.19.11, issue #814).
+        unless free_form_directive
+          io << "\n<<< caused by >>>\n\n"
+          io << l3 << "\n"
+          stanza3_pos = mapping_key_pos || {param_idx, param_col}
+          io << origin_context_block(path, lines, stanza3_pos[0] + 1, stanza3_pos[1])
+        end
         if mapping_val_stanza
           io << "\n<<< caused by >>>\n\n"
           io << mapping_val_stanza
@@ -5179,8 +5218,8 @@ module Krikri
     # locate_param_key_position already returns for a block-style param.
     # Only a directive key standing alone is the mapping form; a free-form
     # value names the module inline, where Ansible's own finalization never
-    # reads a `module:` key out of the string, so those keep the previous
-    # no-block behaviour.
+    # reads a `module:` key out of the string - those fall through to
+    # directive_free_form_module_position instead.
     private def directive_mapping_module_position(lines : Array(String), from_idx : Int32) : {Int32, Int32}?
       directive_needle = /\A(?:ansible\.(?:builtin|legacy)\.)?(?:action|local_action)[ \t]*:/
       ((from_idx + 1)...lines.size).each do |idx|
@@ -5190,6 +5229,28 @@ module Krikri
         next unless (m = directive_needle.match(stripped))
         return nil unless stripped[m.end(0)..].strip.empty?
         return locate_param_key_position(lines, idx, "module")
+      end
+      nil
+    end
+
+    # A free-form `action:`/`local_action: <module> <args>` directive has no
+    # module-key line of its own: the module name opens the directive's
+    # value. Ansible's chain still prints for this shape and points BOTH
+    # the middle and the innermost Origin at that module token (deveth0.pct's
+    # `local_action: shell ssh ...`, tasks/main.yml:4:17, live-captured
+    # 2.19.11, issue #814).
+    private def directive_free_form_module_position(lines : Array(String), from_idx : Int32, short : String) : {Int32, Int32}?
+      directive_needle = /\A(?:ansible\.(?:builtin|legacy)\.)?(?:action|local_action)[ \t]*:[ \t]*/
+      module_needle = /\A(?:ansible\.(?:builtin|legacy)\.)?#{Regex.escape(short)}(?:\s|\z)/
+      ((from_idx + 1)...lines.size).each do |idx|
+        line = lines[idx]
+        stripped = line.strip
+        break if next_task_marker?(lines, from_idx, line)
+        next unless (dm = directive_needle.match(stripped))
+        value = stripped[dm.end(0)..]
+        next unless (mm = module_needle.match(value))
+        col = (line.size - line.lstrip.size) + dm.end(0) + mm.begin(0) + 1
+        return {idx, col}
       end
       nil
     end
