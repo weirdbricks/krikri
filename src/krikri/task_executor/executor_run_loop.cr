@@ -2056,6 +2056,12 @@ module Krikri
       # all, which execute_batch_group's contract reads as "skipped",
       # silently NOT running tasks the playbook asked for.
       BatchScript.stamp_missing_on_transport_death(parsed, raw[:exit_code], raw[:stderr], steps.size)
+      # The transport-death stamping only answers ssh's own 255; the
+      # script's OWN pre-step aborts (the staging-safety refusals' exit
+      # 75, a full disk failing the batch dir's mkdir) leave every step
+      # resultless too, and would silently skip the whole group - see
+      # stamp_missing_on_nonzero_exit for the round that exposed it.
+      BatchScript.stamp_missing_on_nonzero_exit(parsed, raw[:exit_code], raw[:stderr], steps.size)
 
       parsed
     end
