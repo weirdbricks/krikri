@@ -477,8 +477,13 @@ module Krikri
 
       roots = [] of String
       if vars_dir = task.role_vars_dir
+        # Ansible's include_vars search stack (its "Searched in:" list,
+        # issue #796) covers the role's vars/ dir, the role root, the
+        # including file's own dir (+ its vars/) and the play dir - the
+        # role's defaults/ is NOT in it: a defaults/secrets.yml must
+        # leave a plain `include_vars: secrets.yml` failing, exactly
+        # like ansible-playbook.
         roots << vars_dir
-        roots << File.join(File.dirname(vars_dir), "defaults")
       end
       task.include_file_dir.try { |dir| roots << dir }
       # The ROLE ROOT itself - heytrav.influxdb's own tasks/debian.yml
