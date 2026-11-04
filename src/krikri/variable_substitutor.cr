@@ -1963,6 +1963,38 @@ module Krikri
       @@templated_task_param[Fiber.current]?.try(&.last?)
     end
 
+    # Fiber-scoped stack of the `when:` clause this fiber is evaluating
+    # right now, pushed by TaskExecutor#evaluate_when around each clause's
+    # substitution and conditional evaluation and popped in an ensure.
+    # ansible-core 2.19 attributes a magic-variable read deprecation raised
+    # while evaluating a conditional to the when: clause's own source
+    # position (bloxberg.corosync_pacemaker's `when: >- inventory_hostname
+    # == play_hosts[0] ...` printed the warning with the Origin at
+    # tasks/auth/main.yml:7:9 - the import line's folded scalar token -
+    # issue #835), so the origin resolution needs the evaluating task's
+    # position even though the conditional is NOT a templated task param.
+    # exact_col is the when: VALUE token's own 1-based column when the
+    # parser recorded one (import-merged clauses: imported_when_origins /
+    # inherited_when_origin); 0 falls back to scanning the task's own file
+    # for the "when:" key, the same locate param_value_origin performs.
+    record WhenOriginSite, source_file : String?, source_line : Int32, exact_col : Int32
+    @@current_when_site = {} of Fiber => Array(WhenOriginSite)
+
+    def self.set_current_when_site(source_file : String?, source_line : Int32, exact_col : Int32) : Nil
+      (@@current_when_site[Fiber.current] ||= Array(WhenOriginSite).new).push(WhenOriginSite.new(source_file, source_line, exact_col))
+    end
+
+    def self.pop_current_when_site : Nil
+      fiber = Fiber.current
+      return unless stack = @@current_when_site[fiber]?
+      stack.pop
+      @@current_when_site.delete(fiber) if stack.empty?
+    end
+
+    def self.current_when_site : WhenOriginSite?
+      @@current_when_site[Fiber.current]?.try(&.last?)
+    end
+
     # Fiber-scoped stack of the template FILE a render is currently
     # reading variables out of (a `template:` task's src, a
     # `lookup('template', ...)` term) - ansible-core 2.19.11 attributes a
@@ -1990,13 +2022,22 @@ module Krikri
 
     # The formatted Origin block for a play_hosts read deprecation: a
     # template-file render in progress wins (the read belongs to the
-    # file), then the templated task param being finalized; nil when
-    # neither applies - reads whose Origin krikri does not reproduce (a
-    # vars file, a when:) stay silent rather than mis-attribute the
-    # warning.
+    # file), then the when: clause being evaluated, then the templated
+    # task param being finalized; nil when none applies - reads whose
+    # Origin krikri does not reproduce (a vars file) stay silent rather
+    # than mis-attribute the warning.
     def self.play_hosts_read_origin : String?
       if path = current_template_file
         return ErrorBlock.origin_context(File.expand_path(path), 0, nil, show_content: false)
+      end
+      if site = current_when_site
+        if site.exact_col > 0 && (path = site.source_file)
+          # Import-merged clauses carry the import line's when: VALUE token
+          # position outright (the parse-time source map) - the child's own
+          # file has no "when:" text to scan for.
+          return ErrorBlock.origin_context(path, site.source_line, site.exact_col)
+        end
+        return ResultDisplay.param_value_origin(site.source_file, site.source_line, "when")
       end
       return unless site = current_task_param
       ResultDisplay.param_value_origin(site.source_file, site.source_line, site.key)

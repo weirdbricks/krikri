@@ -452,6 +452,12 @@ module Krikri
           if value.raw.nil? || value.as_s? == NONE_SENTINEL
             @null_params << key
             @params[key] = ""
+          elsif (text = value.as_s?) && text.starts_with?(BINARY_WIRE_PREFIX)
+            # A binary (invalid-UTF-8) param value the executor base64-wrapped
+            # under BINARY_WIRE_PREFIX before the config JSON was built: the
+            # JSON round trip is only lossless for the ASCII-encoded form, so
+            # the bytes are restored HERE, at the first parse after the wire.
+            @params[key] = Krikri.decode_binary_wire_value(text)
           elsif (native = Krikri.non_string_scalar(value.as_s?))
             # A parser-marked non-string YAML literal: demote to the same
             # plain string stringify_value always produced (no plugin that

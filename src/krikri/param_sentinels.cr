@@ -5,6 +5,8 @@
 # sentinel constant lives here, in the one file both sides can require
 # without dragging the whole substitutor (Crinja and all) into every
 # plugin binary or base_plugin into the main executable.
+require "base64"
+
 module Krikri
   # The null/None counterpart to OMIT_SENTINEL (variable_substitutor.cr).
   # The param wire between the executor and a plugin binary is
@@ -75,6 +77,39 @@ module Krikri
   # only the executor-side hooks mirroring Ansible's member-iterating action
   # plugins (group_by/add_host) tell them apart.
   NON_STRING_MEMBER_PREFIX = "\u{E000}nonmember:"
+
+  # Prefix marking a param value whose bytes are NOT valid UTF-8 - binary
+  # module-arg data such as a slurp+b64decode'd corosync authkey passed as
+  # `copy: content:` (bloxberg.corosync_pacemaker, issue #835). The plugin
+  # wire is JSON, and a Crystal JSON round trip mangles invalid-UTF-8
+  # strings (observed: 32 random authkey bytes became 52 bytes sprinkled
+  # with U+FFFD sequences), so real ansible's "content equals what the
+  # file already holds -> ok" idempotency check failed here and every run
+  # rewrote the file as changed. The executor base64-encodes any param
+  # string that fails `valid_encoding?` under this prefix before the
+  # config JSON is built (base64 output is pure ASCII, so every later JSON
+  # encode/parse round trip - including the remote transport's own - is
+  # lossless), and BasePlugin demotes it back to the exact original bytes
+  # when the plugin process parses its config. Like the other prefixes,
+  # the leading private-use control character makes a false positive on
+  # real user data effectively impossible.
+  BINARY_WIRE_PREFIX = "\u{E000}binary:"
+
+  # Executor-side encode: passes valid-UTF-8 text through untouched (the
+  # common case - no behavior change), base64-wraps everything else.
+  def self.encode_binary_wire_value(value : String) : String
+    return value if value.valid_encoding?
+    BINARY_WIRE_PREFIX + Base64.strict_encode(value)
+  end
+
+  # Plugin-side decode: restores the exact original bytes behind an
+  # encoded value; anything not carrying the prefix is returned as-is.
+  def self.decode_binary_wire_value(value : String) : String
+    return value unless value.starts_with?(BINARY_WIRE_PREFIX)
+    Base64.decode_string(value[BINARY_WIRE_PREFIX.size..])
+  rescue
+    value
+  end
 
   # Decodes a NON_STRING_PARAM_PREFIX-prefixed param value back into the
   # native YAML scalar (JSON::Any wrapping Int64/Float64/Bool), or nil when
