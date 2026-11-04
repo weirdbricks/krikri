@@ -365,6 +365,32 @@ describe "apt plugin deb: URL download-then-install" do
     end
   end
 
+  it "carries stdout_lines/stderr_lines on the dpkg failure result like Ansible's fail_json" do
+    # basic.py's _return_formatted derives the <key>_lines companions for
+    # every fail_json that carries stdout/stderr, so real ansible's fatal
+    # dump for a failing `dpkg -i` shows them (dimMaryanto93.opensearch,
+    # issue #861: krikri's fatal line lacked both keys entirely - the
+    # registered var was fine, the fatal dump renders the raw result).
+    with_deb_fixture_shims(dpkg_install_exit: 1) do |env, fixture, _, _|
+      result = PluginSpecHelper.run("apt", {
+        "deb"               => fixture,
+        "state"             => "present",
+        "_environment"      => env,
+        "_policy_rc_d_path" => File.join(File.dirname(fixture), "policy-rc.d"),
+      })
+
+      result["failed"].as_bool.must_equal(true)
+      result["stdout_lines"].as_a.map(&.as_s).must_equal([
+        "Selecting previously unselected package krikri-spec-deb.",
+        "(Reading database ... 1 files and directories currently installed.)",
+        "Preparing to unpack .../krikri-spec-deb_1.0_all.deb ...",
+        "Unpacking krikri-spec-deb (1.0) ...",
+        "Setting up krikri-spec-deb (1.0) ...",
+      ])
+      result["stderr_lines"].as_a.map(&.as_s).must_equal([] of String)
+    end
+  end
+
   it "registers Ansible's DebPackage-construction failure wording for a missing deb file" do
     result = PluginSpecHelper.run("apt", {
       "deb"   => "/tmp/krikri-spec-nosuch.deb",
@@ -624,6 +650,9 @@ describe "apt plugin deb: dependency pre-install" do
       result["msg"].as_s.must_include("' failed: E: Unable to locate package dep-a")
       result["msg"].as_s.must_include("install 'dep-a=1.0'")
       result["rc"].as_i.must_equal(100)
+      # The re-failed retvals carry the _lines companions too (issue #861).
+      result["stdout_lines"]?.try(&.as_a).wont_be_nil
+      result["stderr_lines"]?.try(&.as_a).wont_be_nil
       # The dpkg run never happened - the deps install short-circuits it.
       dpkg_calls = File.exists?(dpkg_log) ? File.read_lines(dpkg_log) : [] of String
       dpkg_calls.select(&.includes?(" -i ")).empty?.must_equal(true)
