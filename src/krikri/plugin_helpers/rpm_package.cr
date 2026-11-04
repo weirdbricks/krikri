@@ -1,6 +1,9 @@
 require "json"
+require "uri"
 require "./dnf_install_failures"
 require "./http_download"
+require "./fetch_tempfile"
+require "./multiext_split"
 require "../base_plugin"
 
 module Krikri
@@ -859,10 +862,17 @@ module Krikri
       # Fetch a remote RPM through the same HTTPDownload helper unarchive and
       # the apt deb: path use. The `.rpm` suffix matters: the local-file
       # branches of handle_install_local key off the name ending in `.rpm`.
+      #
+      # The staged name follows ansible's fetch_file
+      # (module_utils/urls.py): prefix/suffix from
+      # _split_multiext(basename(url), count=2) around an 8-character
+      # random middle (tempfile.NamedTemporaryFile). The basename is what
+      # dnf echoes back - issue #818's GPG failure surfaced ansible's
+      # "Public key for epel-release-latest-9.noarch<rand8>.rpm" against
+      # krikri's opaque ".krikri-playbook-rpm-<rand8>.rpm".
       private def stage_remote_rpm(url : String, staged : Array(String)) : String
-        tmp = File.tempfile(".krikri-playbook-rpm-", ".rpm")
-        path = tmp.path
-        tmp.close
+        stem, ext = PluginHelpers::MultiextSplit.split(File.basename(URI.parse(url).path))
+        path = PluginHelpers::FetchTempfile.create(stem, ext)
         staged << path
         PluginHelpers::HTTPDownload.download(url, path, remote_rpm_download_options)
         path
