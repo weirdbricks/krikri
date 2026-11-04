@@ -298,4 +298,46 @@ describe Krikri::BatchScript do
     results[0]?.wont_be_nil
     results[0].stdout.must_equal("0027\n")
   end
+
+  it "stamp_missing_on_nonzero_exit stamps every step of a refused (exit 75, zero-result) script" do
+    # Issue #834, round 29896654: the batch script's staging-safety
+    # refusals exit 75 BEFORE any step runs, so parse recovers nothing -
+    # and unlabeled, every group member used to print bare `skipping:`
+    # while the run exited 0. The refusal's own evidence must stamp the
+    # never-ran steps instead.
+    parsed = Krikri::BatchScript.parse("")
+    result = Krikri::BatchScript.stamp_missing_on_nonzero_exit(parsed, 75, "krikri batch dir parent is not a directory", 3)
+
+    result.size.must_equal(3)
+    3.times do |idx|
+      result[idx].exit_code.must_equal(75)
+      result[idx].stderr.must_equal("krikri batch dir parent is not a directory")
+      result[idx].stdout.must_equal("")
+    end
+  end
+
+  it "stamp_missing_on_nonzero_exit keeps completed steps and stamps only the ones that never ran" do
+    # A mid-script death ssh reports with a non-255 status (the bash that
+    # runs the steps can be OOM-killed on the target) still leaves the
+    # steps that streamed before the death intact - exactly like the
+    # transport-death stamp's partial-recovery contract.
+    good = Base64.strict_encode(%({"changed":false,"failed":false,"msg":"hi"}))
+    parsed = Krikri::BatchScript.parse("OUT 0 0 #{good}\nERR 0 0\n")
+    result = Krikri::BatchScript.stamp_missing_on_nonzero_exit(parsed, 137, "Killed", 2)
+
+    result[0].exit_code.must_equal(0)
+    result[0].stdout.must_equal(%({"changed":false,"failed":false,"msg":"hi"}))
+    result[1].exit_code.must_equal(137)
+    result[1].stderr.must_equal("Killed")
+  end
+
+  it "stamp_missing_on_nonzero_exit leaves a completed (exit 0) script untouched" do
+    # A script that completed normally (including its fail-fast dumps)
+    # always exits 0, and there its missing steps are the FAILING
+    # member's later neighbors - correctly absent (the host halts at the
+    # failed member), never stamped.
+    parsed = Krikri::BatchScript.parse("")
+    result = Krikri::BatchScript.stamp_missing_on_nonzero_exit(parsed, 0, "", 2)
+    result.size.must_equal(0)
+  end
 end

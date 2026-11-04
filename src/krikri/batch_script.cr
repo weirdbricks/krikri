@@ -346,5 +346,44 @@ module Krikri
       end
       parsed
     end
+
+    # Stamps the steps a batch script that exited NONZERO never produced
+    # results for, once the transport-death stamping above has had its
+    # turn - the script's own pre-step aborts are the case it exists for,
+    # the staging-safety refusals (exit 75: a batch directory that is a
+    # file, a symlink or foreign-owned, or one a full disk simply failed
+    # to create) above all. The script refuses BEFORE any step runs, so
+    # #parse recovers nothing; unlabeled, every member of the group then
+    # falls through execute_batch_group's "no entry = skipped" contract.
+    # Atlantic round 29896654 (0xRedpoll.ludus_mythic_teamserver, issue
+    # #834) turned exactly that into the worst possible report: seventeen
+    # consecutive tasks printed `skipping:` and the run exited 0 while
+    # real Ansible - one ssh round trip per task - fails the task in
+    # flight (its own temporary-directory creation fails the same way on
+    # a full disk) and halts the host. The stamped steps carry the
+    # script's own evidence; interpret_remote_result books them as failed
+    # tasks (the refusal stderr names krikri's batch dir, never the ssh
+    # transport), the first member's failure halts the host, and the
+    # members after it stay silent exactly like real's post-failure
+    # tasks.
+    #
+    # A completed script always exits 0 (a failing step dumps and exits
+    # 0), so any nonzero exit leaves at least one step without a result
+    # of its own making - including a mid-script death ssh reports with a
+    # non-255 status (the transport-death stamp only answers 255). Steps
+    # whose results DID arrive (streamed before the death, or a fail-fast
+    # dump - though a fail-fast always exits 0) are left untouched.
+    #
+    # Public (spec seam) like stamp_missing_on_transport_death, for the
+    # same reason.
+    def self.stamp_missing_on_nonzero_exit(parsed : Hash(Int32, StepResult), exit_code : Int32, stderr : String, step_count : Int32) : Hash(Int32, StepResult)
+      return parsed if exit_code == 0
+      (0...step_count).each do |idx|
+        unless parsed.has_key?(idx)
+          parsed[idx] = StepResult.new(exit_code, "", stderr)
+        end
+      end
+      parsed
+    end
   end
 end
