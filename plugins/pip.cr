@@ -92,12 +92,12 @@ module Krikri
   #   invocation either wraps) - fails clearly on an invalid (non-octal)
   #   value, matching Ansible's own validation message
   #
-  # Not implemented: `extra_args:`/`requirements:`'s own check_mode-
-  # specific idempotency short-circuit (Ansible's check_mode always
-  # reports changed: true when either is given, rather than attempting
-  # an idempotency check it can't reliably make) - moot here, this
-  # plugin doesn't implement check_mode at all yet, a separate and much
-  # larger pre-existing gap not touched in this pass. Per-package
+  # check_mode IS implemented now (issue #794): pip.py's setup_virtualenv
+  # exits changed before creating anything, and its check_mode block
+  # reports changed outright for what it can't probe idempotently
+  # (`extra_args:`/`requirements:`/state=latest) and decides the rest from
+  # `pip list --format=freeze` presence. NOT implemented: `--check`-driven
+  # diff output, a separate pre-existing gap. Per-package
   # `state: absent` version pinning (uninstall doesn't take a version).
   class PipPlugin < BasePlugin
     # ansible.builtin.pip's `type: bool` options, in the real argument-spec
@@ -140,6 +140,23 @@ module Krikri
         return preflight
       end
 
+      check_mode = true?(@params["_ansible_check_mode"]?)
+
+      # pip.py's setup_virtualenv opens with `if module.check_mode:
+      # module.exit_json(changed=True)` BEFORE creating anything, so a
+      # check-mode pip task never leaves a virtualenv behind - even though
+      # it still reports changed. CoffeeITWorks.ansible_burpui_server's own
+      # `check_mode: yes` "check only if burpui is installed" task runs
+      # right before `update pip` on a cold host: with the venv still
+      # absent, Ansible's update-pip task creates the venv itself and
+      # reports changed (pip.py counts venv_created as a change of its
+      # own), while a plugin that ignores check mode runs the probe for
+      # real, creates the venv there, and the update-pip task then finds
+      # the venv already present and reports ok (issue #794).
+      if check_mode && check_mode_venv_missing?
+        return PluginResult.new(changed: true, failed: false)
+      end
+
       pip_bin = resolve_pip_binary
       return pip_bin if pip_bin.is_a?(PluginResult)
 
@@ -151,19 +168,37 @@ module Krikri
                "Please specify version restrictions next to each package in 'name' argument.")
       end
 
-      result = case state
-               when "absent"
-                 remove(pip_bin, name || raise "pip: name is required with state=absent")
-               when "latest"
-                 install(pip_bin, target_spec(name, nil), upgrade: true)
-               when "forcereinstall"
-                 install(pip_bin, target_spec(name, @params["version"]?), upgrade: true,
-                   force_reinstall: true, requirements: requirements)
-               else
-                 install(pip_bin, target_spec(name, @params["version"]?), upgrade: false, requirements: requirements)
-               end
+      # pip.py's own check_mode block sits after the virtualenv/pip
+      # resolution AND the version: validation (both can still fail hard
+      # in check mode), right before the real install would run.
+      return check_mode_result(pip_bin, state, name, requirements) if check_mode
 
+      result = run_state_action(pip_bin, state, name, requirements)
       overlay_venv_creation_change(result)
+    end
+
+    # Whether the target virtualenv still needs creating (check mode must
+    # exit before it would be, see the caller's comment).
+    private def check_mode_venv_missing? : Bool
+      venv = @params["virtualenv"]?
+      return false unless venv
+      !remote_file_exists?("#{venv}/bin/activate")
+    end
+
+    # The per-state action pip.py dispatches through its state_map, after
+    # every validation and any check-mode exit has run.
+    private def run_state_action(pip_bin : String, state : String, name : String?, requirements : String?) : PluginResult
+      case state
+      when "absent"
+        remove(pip_bin, name || raise "pip: name is required with state=absent")
+      when "latest"
+        install(pip_bin, target_spec(name, nil), upgrade: true)
+      when "forcereinstall"
+        install(pip_bin, target_spec(name, @params["version"]?), upgrade: true,
+          force_reinstall: true, requirements: requirements)
+      else
+        install(pip_bin, target_spec(name, @params["version"]?), upgrade: false, requirements: requirements)
+      end
     end
 
     # The three checks pip.py makes before it installs anything, in its
@@ -237,6 +272,207 @@ module Krikri
     private def overlay_venv_creation_change(result : PluginResult) : PluginResult
       result.changed = true if @created_virtualenv && !result.failed?
       result
+    end
+
+    # pip.py's own check_mode block (which sits after the virtualenv/pip
+    # resolution and the version: validation, both of which can still fail
+    # hard in check mode): requirements:/extra_args:/state=latest (and an
+    # empty name list) cannot be probed idempotently, so it reports changed
+    # outright; anything else runs `pip list --format=freeze` (falling back
+    # to `pip freeze` on old pips) and decides per requirement whether the
+    # installed version satisfies it - state=present changes when a
+    # requirement is missing or unsatisfied, state=absent when it IS
+    # present. state=forcereinstall has no check-mode special case and
+    # follows the present rule.
+    private def check_mode_result(pip_bin : String, state : String, name : String?, requirements : String?) : PluginResult
+      # Python truthiness on both strings: pip.py's `if extra_args or
+      # requirements or state == 'latest' or not name` treats an empty
+      # string as absent, so an empty extra_args:/requirements: does not
+      # short-circuit here.
+      extra = @params["extra_args"]?
+      if (extra && !extra.empty?) || (requirements && !requirements.empty?) || state == "latest" || name.nil? || name.strip.empty?
+        return PluginResult.new(changed: true, failed: false)
+      end
+
+      list_cmd, probe_out, probe_err = list_packages(pip_bin)
+      unless list_cmd
+        argv = pip_bin.split(' ').reject(&.empty?) + ["list", "--format=freeze"]
+        return PluginResult.new(changed: false, failed: true,
+          msg: pip_failure_msg(probe_out, probe_err), include_empty_msg: true, cmd: argv)
+      end
+
+      # pip.py's loop with its early break: state=present changes when ANY
+      # requirement is missing/unsatisfied, state=absent when ANY is present.
+      changed = if state == "absent"
+                  split_requirements(name).any? { |package| requirement_present?(package, probe_out) }
+                else
+                  split_requirements(name).any? { |package| !requirement_present?(package, probe_out) }
+                end
+
+      # exit_json(changed=..., cmd=pkg_cmd, stdout=..., stderr=...): the
+      # probe command and its output ride the result like an install's do.
+      PluginResult.new(changed: changed, failed: false, stdout: probe_out,
+        key_order: ["changed", "stdout"])
+    end
+
+    # pip.py's _get_packages: `pip list --format=freeze` first, `pip freeze`
+    # when the pip is too old for the --format flag; the returned command
+    # is the joined shell string (' '.join(command)), nil here on the
+    # _fail path (both probes failed).
+    private def list_packages(pip_bin : String) : {String?, String, String}
+      result = remote_exec("#{quoted_command(pip_bin)} list --format=freeze")
+      if result[:exit_code] == 0
+        return {"#{pip_bin} list --format=freeze", result[:stdout], result[:stderr]}
+      end
+
+      fallback = remote_exec("#{quoted_command(pip_bin)} freeze")
+      if fallback[:exit_code] == 0
+        return {"#{pip_bin} freeze", fallback[:stdout], fallback[:stderr]}
+      end
+
+      {nil, fallback[:stdout], fallback[:stderr]}
+    end
+
+    # pip.py's _is_present: scan the freeze lines for the canonical name
+    # and require every version specifier to hold (a bare name - no
+    # specifier - is satisfied by any installed version). An
+    # unparseable requirement piece is "not present", which makes the
+    # check-mode task report changed, exactly like pip.py's
+    # is_satisfied_by returning False for a Package that failed to parse.
+    private def requirement_present?(package : String, freeze_out : String) : Bool
+      canonical = canonical_pip_name(distribution_name(package))
+      specs = requirement_specs(package)
+
+      freeze_out.each_line do |line|
+        sep = line.index("==")
+        next unless sep
+        installed_name = canonical_pip_name(line[0...sep].strip)
+        next unless installed_name == canonical
+        installed_version = line[sep + 2..].strip
+        return true if specs.all? { |op, want| specifier_satisfied?(op, want, installed_version) }
+      end
+      false
+    end
+
+    # PEP 503 name canonicalization (pip.py's Package.canonicalize_name).
+    private def canonical_pip_name(name : String) : String
+      name.gsub(/[-_.]+/, "-").downcase
+    end
+
+    # The (operator, version) pairs of a requirement piece, e.g.
+    # "cryptography<39,>=38.0.0" -> [("<", "39"), (">=", "38.0.0")]. The
+    # alternation lists the multi-char operators first so "===" is not
+    # read as "==" plus a stray "=".
+    private def requirement_specs(package : String) : Array(Tuple(String, String))
+      package.scan(/(===|==|!=|<=|>=|~=|<|>)\s*([^\s,;]+)/).map do |match|
+        {match[1], match[2]}
+      end
+    end
+
+    private def specifier_satisfied?(op : String, want : String, have : String) : Bool
+      case op
+      when "==="      then have == want
+      when "==", "!=" then equality_satisfied?(op, want, have)
+      when ">="       then pip_version_cmp(have, want) >= 0
+      when "<="       then pip_version_cmp(have, want) <= 0
+      when ">"        then pip_version_cmp(have, want) > 0
+      when "<"        then pip_version_cmp(have, want) < 0
+      when "~="       then compatible_release_satisfied?(want, have)
+      else                 true
+      end
+    end
+
+    # `==` and `!=` share pip's one exclusion: an `x.*` wildcard operand
+    # matches by leading components, anything else by version equality.
+    private def equality_satisfied?(op : String, want : String, have : String) : Bool
+      satisfied = want.ends_with?(".*") ? wildcard_version_match?(want, have) : pip_version_cmp(have, want) == 0
+      op == "==" ? satisfied : !satisfied
+    end
+
+    # `~=X.Y` is `>=X.Y, ==X.Y.*` - the lower bound holds and the version
+    # stays under the compatible-release ceiling.
+    private def compatible_release_satisfied?(want : String, have : String) : Bool
+      ceiling = compatible_release_ceiling(want)
+      pip_version_cmp(have, want) >= 0 && (!ceiling || pip_version_cmp(have, ceiling) < 0)
+    end
+
+    # `==1.4.*` matches any version whose leading numeric components are
+    # exactly 1.4 (1.4.3 yes, 1.40 no).
+    private def wildcard_version_match?(want : String, have : String) : Bool
+      prefix = version_tokens(want.chomp(".*"))
+      have_t = version_tokens(have)
+      return false if have_t.size < prefix.size
+
+      prefix.each_with_index.all? do |token, i|
+        candidate = have_t[i]
+        if token.matches?(/\A\d+\z/) && candidate.matches?(/\A\d+\z/)
+          token.to_i64 == candidate.to_i64
+        else
+          token == candidate
+        end
+      end
+    end
+
+    # `~=X.Y.Z` is `>=X.Y.Z, ==X.Y.*` - the ceiling is the same version
+    # with its second-to-last component incremented (~=2.2 -> <3,
+    # ~=1.4.5 -> <1.5). A single-component version has no valid ceiling.
+    private def compatible_release_ceiling(want : String) : String?
+      parts = want.split('.').select(&.matches?(/\A\d+\z/))
+      return nil if parts.size < 2
+
+      bumped = parts[0...-1]
+      bumped[-1] = (bumped[-1].to_i64 + 1).to_s
+      bumped.join('.')
+    end
+
+    # Loose PEP 440-flavoured version comparison for the check-mode
+    # presence probe - the shapes real roles pin (== pins, >= floors,
+    # compatible release), decided the way pip's SpecifierSet does:
+    # dot-separated components compare numerically (1.10 > 1.9), a
+    # missing component reads as 0 (1.0 == 1.0.0), and a non-numeric
+    # suffix (1.0rc1) sorts below the bare release it attaches to
+    # (pip's pre-release ordering). Epochs (1!2.0) and local segments
+    # (2.0+abc) are outside the shapes roles pin in practice.
+    private def pip_version_cmp(a : String, b : String) : Int32
+      a_tokens = version_tokens(a)
+      b_tokens = version_tokens(b)
+
+      [a_tokens.size, b_tokens.size].max.times do |i|
+        x = a_tokens[i]?
+        y = b_tokens[i]?
+        return 0 if x.nil? && y.nil?
+
+        cmp = token_pair_cmp(x, y)
+        return cmp unless cmp == 0
+      end
+      0
+    end
+
+    # One component position of the comparison, with pip's tie-breaking:
+    # a missing component reads as numeric 0 (1.0 == 1.0.0), a present
+    # non-numeric component where the other side ran out is a
+    # pre-release-style suffix sorting BELOW the bare release
+    # (1.0rc1 < 1.0), two numerics compare numerically, and a mixed
+    # numeric/alpha pair falls back to a string compare.
+    private def token_pair_cmp(x : String?, y : String?) : Int32
+      x_num = numeric_token(x)
+      y_num = numeric_token(y)
+
+      if x.nil? || y.nil?
+        return (x_num || 0i64) <=> (y_num || 0i64) if x_num || y_num
+        return x.nil? ? 1 : -1
+      end
+
+      return x_num <=> y_num if x_num && y_num
+      x.to_s <=> y.to_s
+    end
+
+    private def numeric_token(token : String?) : Int64?
+      token && token.matches?(/\A\d+\z/) ? token.to_i64 : nil
+    end
+
+    private def version_tokens(version : String) : Array(String)
+      version.scan(/\d+|[A-Za-z]+/).map(&.[0])
     end
 
     # Verify pip is usable on the target (skipped for a virtualenv:
@@ -517,7 +753,6 @@ module Krikri
     # error), so callers can `return pip_bin if pip_bin.is_a?(PluginResult)`.
     private def resolve_pip_binary : String | PluginResult
       if venv = @params["virtualenv"]?
-        pip_path = "#{venv}/bin/pip"
         # Ansible keys venv creation on bin/activate, not the directory: a
         # pre-created empty dir (file: state=directory) still runs
         # virtualenv_command, which fails on a host lacking it.
@@ -527,7 +762,20 @@ module Krikri
           end
           @created_virtualenv = true
         end
-        pip_path
+        # Ansible's _get_pip, in the virtualenv branch, tries the venv's
+        # own pip3 FIRST and only falls back to pip: candidate_pip_basenames
+        # starts as ('pip3',) and the env branch extends it to ('pip3',
+        # 'pip'), taking the first candidate that exists and is executable.
+        # A pip-bootstrapped venv virtually always has pip3, so Ansible
+        # runs pip3 there - CoffeeITWorks.ansible_burpui_server's failing
+        # task recorded cmd ["/venv_apps/bui/bin/pip3", ...] where krikri
+        # ran .../bin/pip, which also changed pip's own "To update, run:
+        # ..." stderr notice wording (issue #794).
+        if remote_file_exists?("#{venv}/bin/pip3")
+          "#{venv}/bin/pip3"
+        else
+          "#{venv}/bin/pip"
+        end
       else
         discover_system_pip
       end
