@@ -138,6 +138,45 @@ describe "debconf plugin - required_together (question/vtype/value)" do
   end
 end
 
+# On a host without the debconf tools (any RHEL-family image - round
+# round29896651, ryezone_labs.domain_controller_slapd) real fails the
+# module in get_selections' module.get_bin_path('debconf-show', True)
+# with fail_json's bare msg, BEFORE debconf-set-selections is ever
+# reached - falling through to the echo|debconf-set-selections pipeline
+# instead surfaces bash's own "command not found" stderr as the msg
+# (issue #840).
+describe "debconf plugin - missing debconf-show (Ansible's get_bin_path check)" do
+  it "fails with the bare get_bin_path msg and never reaches debconf-set-selections" do
+    dir, log = debconf_shim_dir("no-debconf-show")
+    File.delete(File.join(dir, "debconf-show"))
+    # The shim dir alone is the whole PATH (like pip_test's shim-only
+    # cases) - with /usr/bin listed, this machine's own real
+    # debconf-show would be found and the miss never reproduced.
+    env = {
+      "PATH"                => dir,
+      "KRIKRI_DEBCONF_SHOW" => File.join(dir, "show.txt"),
+      "KRIKRI_DEBCONF_LOG"  => log,
+    }.to_json
+    result = PluginSpecHelper.run("debconf", {
+      "name"         => "spec.pkg",
+      "question"     => "spec.pkg/keyboard-layout",
+      "vtype"        => "string",
+      "value"        => "de",
+      "_environment" => env,
+    })
+
+    searched = dir
+    %w[/sbin /usr/sbin /usr/local/sbin].each do |sbin|
+      searched = "#{searched}:#{sbin}" if File.exists?(sbin)
+    end
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal(%(Failed to find required executable "debconf-show" in paths: #{searched}))
+    File.exists?(log).must_equal(false)
+  ensure
+    FileUtils.rm_rf(dir) if dir
+  end
+end
+
 # Non-string `value:` literals: Ansible's debconf.py builds the
 # debconf-set-selections line with a Python `' '.join([pkg, question,
 # vtype, value])` (debconf.py:179), and `value:` is the module's only
