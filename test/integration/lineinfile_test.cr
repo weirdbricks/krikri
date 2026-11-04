@@ -955,4 +955,42 @@ describe "lineinfile plugin - explicit null line" do
     output.must_include("changed: [localhost]")
     File.read(path).must_equal("\n")
   end
+
+  it "fails the task like a module crash when regexp: is not a valid Python regex (real lineinfile.py compiles it with a bare re.compile no except clause catches - RedHatGov.director's `regexp: \"^{{ director_public_ip }}\"` with its list-typed default `director_public_ip: []` renders to \"^[]\" and crashed there while this engine silently matched nothing and reported changed)" do
+    path = PluginSpecHelper.tmp_path("lineinfile-bad-regexp.txt")
+    File.write(path, "existing\n")
+
+    result = PluginSpecHelper.run("lineinfile", {
+      "path"   => path,
+      "line"   => "x",
+      "regexp" => "^[]",
+      "state"  => "present",
+    })
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("Task failed: Module failed: unterminated character set at position 1")
+    File.read(path).must_equal("existing\n")
+  end
+
+  it "crashes on a bad insertafter: anchor only for state=present (real absent() never compiles the anchor)" do
+    path = PluginSpecHelper.tmp_path("lineinfile-bad-anchor.txt")
+    File.write(path, "existing\n")
+
+    absent = PluginSpecHelper.run("lineinfile", {
+      "path"        => path,
+      "line"        => "no such line",
+      "insertafter" => "unmatched (",
+      "state"       => "absent",
+    })
+    falsey?(absent["failed"]?.try(&.as_bool)).must_equal(true)
+
+    present = PluginSpecHelper.run("lineinfile", {
+      "path"        => path,
+      "line"        => "y",
+      "insertafter" => "unmatched (",
+      "state"       => "present",
+    })
+    present["failed"].as_bool.must_equal(true)
+    present["msg"].as_s.must_equal("Task failed: Module failed: missing ), unterminated subpattern at position 10")
+  end
 end

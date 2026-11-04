@@ -6,6 +6,7 @@ require "system/user"
 require "system/group"
 require "../src/krikri/base_plugin"
 require "../src/krikri/plugin_helpers/line_editor"
+require "../src/krikri/plugin_helpers/python_pattern"
 
 module Krikri
   # Lineinfile plugin - manages a single line in a text file
@@ -86,7 +87,55 @@ module Krikri
       being_created, error = ensure_file_exists(path, true?(@params["create"]?), check_mode)
       return error if error
 
+      # Real lineinfile.py compiles regexp: - and, for state=present, a
+      # non-literal insertafter:/insertbefore: anchor - with a bare
+      # re.compile that no except clause catches, so an invalid pattern
+      # crashes the module ("Task failed: Module failed: unterminated
+      # character set at position 1", RedHatGov.director's
+      # `regexp: "^{{ director_public_ip }}"` with its list-typed default
+      # rendering to "[]") instead of silently matching nothing and
+      # reporting changed/ok. The compile sits AFTER the destination
+      # checks, so a missing dest without create: still fails with
+      # "Destination ... does not exist !" and absent: on a missing file
+      # still no-ops with "file not present".
+      if detail = regex_compile_error(state, regexp, @params["insertafter"]?, @params["insertbefore"]?)
+        return PluginResult.new(changed: false, failed: true, msg: "Task failed: Module failed: #{detail}",
+          _ansible_error_detail: detail)
+      end
+
       apply(path, state, line, regexp, search_string, firstmatch, being_created, check_mode)
+    end
+
+    # nil when every pattern real Ansible's lineinfile would re.compile
+    # accepts (and compiles), otherwise the re.error detail text the
+    # module crash carries. Order mirrors real check_present(): the
+    # bare re.compile calls run regexp first, then the anchor - so when
+    # both are invalid the regexp's error is the one reported.
+    private def regex_compile_error(state : String, regexp : String?, insertafter : String?, insertbefore : String?) : String?
+      patterns = [] of String
+      patterns << regexp if regexp
+      # Real compiles the anchor only in check_present (state=present;
+      # absent never touches insertafter/insertbefore) and only when it
+      # is a real pattern: BOF/EOF spellings for insertafter and BOF for
+      # insertbefore are literals, everything else is re.compile'd.
+      if state == "present"
+        patterns << insertafter if insertafter && insertafter != "BOF" && insertafter != "EOF"
+        patterns << insertbefore if insertbefore && insertbefore != "BOF"
+      end
+
+      patterns.each do |pattern|
+        scan = PythonPattern.scan(pattern)
+        return scan.error if scan.error
+        begin
+          Regex.new(scan.translated)
+        rescue ex
+          # Regex::Error always carries a message; "" only if some
+          # future Crystal stopped providing one.
+          detail = ex.message || ""
+          return PythonPattern.python_pcre_error(detail, scan)
+        end
+      end
+      nil
     end
 
     # Parameter validation shared by both states. Also enforces the
