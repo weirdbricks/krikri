@@ -52,7 +52,7 @@ module Krikri
           result = lists.reduce([[] of JSON::Any]) { |acc, list| acc.flat_map { |row| list.map { |item| row + [item] } } }
           lookup_single_element_result(result.map { |row| JSON::Any.new(row) }, kwargs, query_mode)
         when "lines"
-          lookup_lines(parts)
+          lookup_lines(parts, kwargs)
         when "varnames"
           evaluate_lookup_varnames(parts)
         when "fileglob"
