@@ -2,7 +2,10 @@
 
 require "json"
 require "http/status"
+require "socket"
+require "uri"
 require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/socket_connect"
 
 module Krikri
   # Rpm_key plugin - imports/removes a GPG key into the target's RPM
@@ -175,13 +178,69 @@ module Krikri
       # urllib's "HTTP Error <code>: <reason phrase>" - NOT curl's own stderr
       # text, which is what a bare `curl: (22) The requested URL returned
       # error: 404` gave this message. -w '%{http_code}' recovers codes curl
-      # exits 22 for (the same trick apt_key.cr's url branch uses); DNS/
-      # connect failures keep curl's stderr, still a worthwhile error there.
+      # exits 22 for (the same trick apt_key.cr's url branch uses).
       if result[:exit_code] == 22 && (code = result[:stdout].strip.to_i?) && code >= 400
         return "failed to fetch key at #{key} , error was: HTTP Error #{code}: #{HTTP::Status.new(code).description}"
       end
-      "failed to fetch key at #{key} , error was: #{result[:stderr]}"
+      # Transport-level failures (unresolvable name, refused/unreachable
+      # connect) are fetch_url's separate URLError branch, formatted as
+      # "Request failed: <urlopen error ...>" with Python's str(OSError)
+      # inside - not curl's stderr, whose wording varies by curl version
+      # ("port 80: Connection refused" vs "after 0 ms: Could not connect to
+      # server") and whose text never carries the errno itself
+      # (alvistack.mitmproxy, issue #821). The plugin binary runs target-side,
+      # the same place ansible's urllib runs, so the failed step is re-done
+      # in-process to read the kernel's real errno; apt_key.cr's static map
+      # is the fallback when the probe cannot reproduce the failure.
+      if detail = urllib_failure_detail(result[:exit_code], key)
+        return "failed to fetch key at #{key} , error was: Request failed: #{detail}"
+      end
+      "failed to fetch key at #{key} , error was: #{result[:stderr].strip}"
     end
+
+    # Python's str() of the exception fetch_url's URLError branch stringifies,
+    # for the curl exit codes that mean "the transport never got anywhere" -
+    # nil for anything else, so the caller keeps curl's own stderr. The
+    # returned text is the full urlopen-error segment including urllib's own
+    # "<urlopen error ...>" wrapping (urlopen_dns_error_text ships it that
+    # way). Exit 28 never fires under this plugin's timeout-less curl, but
+    # urllib's socket.timeout has no errno, so its text is the constant
+    # "timed out".
+    private def urllib_failure_detail(exit_code : Int32, key : String) : String?
+      return nil unless {6, 7, 28}.includes?(exit_code)
+      uri = URI.parse(key)
+      host = uri.host
+      return nil unless host
+      port = uri.port || (uri.scheme == "https" ? 443 : 80)
+      case exit_code
+      when 6
+        begin
+          Socket::Addrinfo.resolve(host, port, Socket::Family::UNSPEC, Socket::Type::STREAM, Socket::Protocol::TCP)
+          nil
+        rescue ex : Socket::Addrinfo::Error
+          PluginHelpers::SocketConnect.urlopen_dns_error_text(ex)
+        rescue
+          nil
+        end
+      when 7
+        if errno = PluginHelpers::SocketConnect.probe_errno(host, port)
+          "<urlopen error #{PluginHelpers::SocketConnect.python_error_text(errno)}>"
+        else
+          URLOPEN_FALLBACK_TEXT[exit_code]?
+        end
+      else
+        URLOPEN_FALLBACK_TEXT[28]?
+      end
+    end
+
+    # The errno text apt_key.cr's url branch assumes for the same curl exit
+    # codes - the fallback when the in-process probe cannot reproduce the
+    # original failure (e.g. the port came back up between attempts).
+    URLOPEN_FALLBACK_TEXT = {
+       6 => "<urlopen error [Errno -2] Name or service not known>",
+       7 => "<urlopen error [Errno 111] Connection refused>",
+      28 => "<urlopen error timed out>",
+    }
 
     # fingerprint: is a documented LIST param (Ansible's own
     # argument_spec types it as list) - a real YAML list arrives here as
