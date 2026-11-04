@@ -564,6 +564,24 @@ describe Krikri::VariableSubstitutor::JinjaRenderer do
     renderer.render(%({{ lookup('file', '#{path}') }})).must_equal("secret-content")
   end
 
+  it "raises on lookup('file', path) for a missing file, and renders None under errors=ignore" do
+    # Real ansible's file lookup fails the task's arg finalization when
+    # the file cannot be read ("The lookup plugin 'file' failed: Unable
+    # to access ..."), for every path reaching the engine - including a
+    # var whose value is itself a template (russia9.initial_server_
+    # setup's `key: "{{ ssh_key }}"`, issue #829), which used to render
+    # null and succeed the task here. The generic errors='ignore' mode
+    # carries on with None instead (live-verified vs 2.19.11).
+    v = Hash(String, JSON::Any).new
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
+    missing = PluginSpecHelper.tmp_path("crinja_lookup_file_missing_spec.pub")
+
+    assert_raises_message(Krikri::PythonLookupRunner::LookupError, "The lookup plugin 'file' failed: Unable to access the file '#{missing}': File not found. Use -vvvvv to see paths searched.") do
+      renderer.render(%({{ lookup('file', '#{missing}') }}))
+    end
+    renderer.render(%({{ lookup('file', '#{missing}', errors='ignore') }})).must_equal("")
+  end
+
   it "renders lookup('pipe', command) running a local shell command" do
     v = Hash(String, JSON::Any).new
     renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
