@@ -3033,10 +3033,27 @@ module Krikri
       # a pty than on a pipe (issue #775) - and the plugin's
       # _krikri_real_pty result marker tells raw_remote_pty_shape to keep
       # that stdout verbatim.
+      #
+      # __raw_pty_term rides along with the merge marker: real's raw
+      # command always sees a TERM (the ssh session's - the client's
+      # effective TERM, which sshd installs for the pty session), and
+      # terminfo-driven programs colour and size their output from it:
+      # dnf emits its \e[1m\e[32m package highlights and abbreviates its
+      # table headers ("Arch"/"Repo") only when terminfo resolves, so a
+      # TERM-less pty child renders the same run plain-text and
+      # wide-columned (issue #820, abn.managed-node-bootstrap's
+      # bootstrap raw task). The controller's own TERM is the value real
+      # ends up with (the ssh client takes it from there), the same
+      # source the become-daemon TERM forwarder (issue #606) already
+      # uses; the target's plugin process env carries no usable TERM at
+      # all, which is not what real's pty session has.
       if RAW_MODULES.includes?(task.action_name || task.module_name) &&
          PluginManager.remote_execution?("shell", exec_host, dispatch_vars)
         substituted_params = substituted_params.dup
         substituted_params["__raw_pty_merge"] = "1"
+        if (term = ENV["TERM"]?) && !term.empty?
+          substituted_params["__raw_pty_term"] = term
+        end
       end
 
       config = build_plugin_config(task, exec_host, substituted_params, wire_vars, substituted_become_user, substituted_env, become_flag: become, become_flags: substituted_become_flags)
