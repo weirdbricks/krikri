@@ -139,6 +139,18 @@ module Krikri
       template = task.loop_template
       return nil unless kind && template
 
+      # with_items:'s implicit one-level flatten must splice a nested-list
+      # ELEMENT, but the raw source list's elements can still be unrendered
+      # `{{ ... }}` template strings here (ypid.wine's
+      # `wine__base_packages: ["{{ [] if not debian }}", "winetricks"]`) -
+      # flattening them NOW would splice nothing and hand back one "[]"
+      # item per empty element where Ansible iterates only the real
+      # packages. Flag the task instead: every consumer of this resolver
+      # renders its items first (each with its own established
+      # strictness), then applies flatten_with_items_one_level on the
+      # rendered values.
+      task.loop_items_needs_flatten = true if kind == "with_items"
+
       # A BARE (no {{ }}) scalar loop: source is LITERAL text to real's
       # templar (no templating markers -> no evaluation -> "strongswan"
       # itself), and the typing check then fails it:
@@ -369,8 +381,12 @@ module Krikri
         # Only applies when the resolution is an actual array - the
         # scalar-wrapping fallback stays untouched (a scalar
         # `with_items: "{{ myscalar }}"` still iterates once as-is).
+        # The flatten itself happens at the call sites, AFTER each item
+        # is rendered (see the loop_items_needs_flatten flag set above) -
+        # splicing here would see raw `{{ ... }}` strings, not the lists
+        # they resolve to.
         if list = value.as_a?
-          flatten_with_items_one_level(list)
+          list
         else
           [value]
         end
@@ -698,14 +714,27 @@ module Krikri
 
     # with_community.general.flattened: resolve each raw source string
     # (normally `{{ some_list_var }}`) against the variable context, collect
-    # the resulting lists, and flatten them into one loop-item list in
-    # source order. A source that resolves to a non-list (e.g. an undefined
-    # var) yields no items, matching the collection's tolerance for optional
-    # source lists. Returns the flattened items, or nil when the task has no
-    # flattened source at all.
+    # the resulting lists into one loop-item list in source order. A source
+    # that resolves to a non-list (e.g. an undefined var) yields no items,
+    # matching the collection's tolerance for optional source lists. The
+    # one-level flatten itself happens at the call sites, after the items
+    # are rendered (see the loop_items_needs_flatten flag set below).
+    # Returns the collected items, or nil when the task has no flattened
+    # source at all.
     private def resolve_loop_flattened(task : Task, vars_context : Hash(String, JSON::Any), host_name : String = "localhost") : Array(JSON::Any)?
       sources = task.loop_flattened
       return nil unless sources
+
+      # Flatten one level at the CALL SITES, after each item is rendered -
+      # the raw source list's elements can still be unrendered `{{ ... }}`
+      # template strings here (ypid.wine's `wine__base_packages:
+      # ["{{ [] if not debian }}", ..., "winetricks"]`), and splicing them
+      # now would splice nothing and hand back one "[]" item per empty
+      # element where Ansible iterates only the real packages. Every
+      # consumer of this resolver renders its items first (each with its
+      # own established strictness), then applies
+      # flatten_with_items_one_level on the rendered values.
+      task.loop_items_needs_flatten = true
 
       substitutor = VarSubstitutor.new(vars: vars_context, host_name: host_name)
       result = [] of JSON::Any
@@ -771,15 +800,12 @@ module Krikri
 
         if value
           if value.raw.is_a?(Array)
-            value.as_a.each do |item|
-              # Flatten one level of board nesting, matching the
-              # collection's flattened semantics for a list-of-lists source.
-              if item.raw.is_a?(Array)
-                item.as_a.each { |leaf| result << leaf }
-              else
-                result << item
-              end
-            end
+            # Elements are pushed as-is here, including nested lists and
+            # still-unrendered template strings - the call sites' post-
+            # render one-level flatten splices whatever an element turns
+            # out to be a list (see the loop_items_needs_flatten flag set
+            # above).
+            value.as_a.each { |item| result << item }
           else
             result << value
           end

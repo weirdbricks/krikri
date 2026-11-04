@@ -140,6 +140,46 @@ describe "with_community.general.flattened:" do
     output.must_include("All assertions passed")
   end
 
+  it "splices an element that is itself a template resolving to an empty list" do
+    # Real bug found benchmarking ypid.wine (issue #801): its
+    # `wine__base_packages` default is a list whose first two elements are
+    # whole-element templates (`'{{ [ "wine32" ] if (ansible_distribution
+    # == "Debian") else [] }}'`) that resolve to EMPTY LISTS off Debian.
+    # Ansible templates the resolved source list's elements to their
+    # native types BEFORE the flattened lookup's one-level flatten, so the
+    # empty lists splice away and only the real packages iterate. Splicing
+    # the still-unrendered `{{ ... }}` strings instead handed back one
+    # bogus `item=[]` iteration per empty element (cold phase:
+    # ansible=[changed,changed,changed] vs krikri=[ok,ok,changed,...]).
+    status, output = run_playbook(<<-YAML)
+      - name: repro
+        hosts: localhost
+        gather_facts: false
+        vars:
+          ansible_distribution: "Ubuntu"
+          wine__base_packages:
+            - '{{ [ "wine32" ] if (ansible_distribution == "Debian") else [] }}'
+            - '{{ [ "libwine-print:i386" ] if (ansible_distribution == "Debian") else [] }}'
+            - 'winetricks'
+            - 'cups-bsd'
+        tasks:
+          - name: flattened loop over templated-element list
+            ansible.builtin.debug:
+              msg: "{{ item }}"
+            with_flattened: '{{ wine__base_packages }}'
+            register: result
+          - name: assert
+            ansible.builtin.assert:
+              that:
+                - result.results | length == 2
+                - result.results[0].msg == "winetricks"
+                - result.results[1].msg == "cups-bsd"
+      YAML
+
+    status.success?.must_equal(true)
+    output.must_include("All assertions passed")
+  end
+
   it "still flattens a non-empty templated list source into the result (no regression)" do
     status, output = run_playbook(<<-YAML)
       - name: repro
