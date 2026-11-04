@@ -3,6 +3,8 @@
 require "json"
 require "http/status"
 require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/ansible_splitlines"
+require "../src/krikri/plugin_helpers/apt_locale"
 
 module Krikri
   # Apt_key plugin - imports/removes a GPG key into apt's legacy trusted
@@ -74,6 +76,13 @@ module Krikri
   #   verify after every add (url:/data:/file:/keyserver:) with its
   #   exact failure message.
   class AptKeyPlugin < BasePlugin
+    include AptLocale
+    # ansible.builtin.apt_key's import_key composes its fail_json `cmd`
+    # from the get_bin_path-resolved FULL binary path - `/usr/bin/apt-key
+    # adv ...`, not the bare name - so the resolved path has to survive
+    # from execute()'s binary check to the keyserver failure result.
+    @apt_key_bin = "apt-key"
+
     # ansible.builtin.apt_key's `type: bool` options, in the real argument-spec
     # declaration order (ansible-doc -j ansible.builtin.apt_key). Validated at
     # module setup by BasePlugin#validate_bool_params! - see its block
@@ -114,7 +123,11 @@ module Krikri
       # Ansible does. Verified against ansible-playbook 2.19.11 for the
       # url: shape and for state: absent with file:/id:.
       %w[apt-key gpg].each do |binary|
-        next if remote_exec("command -v #{binary} >/dev/null 2>&1")[:exit_code] == 0
+        probe = remote_exec("command -v #{binary}")
+        # The probe's stdout is the resolved path import_key's cmd string
+        # is built from.
+        @apt_key_bin = probe[:stdout].strip if binary == "apt-key"
+        next if probe[:exit_code] == 0
         return PluginResult.new(changed: false, failed: true, msg: missing_executable_message(binary))
       end
 
@@ -193,9 +206,8 @@ module Krikri
 
         unless key_id_in_keys?(parsed, before_keys)
           if keyserver
-            result = remote_exec("apt-key #{keyring_flag}adv --no-tty --keyserver #{shell_single_quote(keyserver)} --recv #{shell_single_quote(parsed[:key_id])}")
-            unless result[:exit_code] == 0
-              return PluginResult.new(changed: false, failed: true, msg: "Error fetching key #{key_id} from keyserver: #{result[:stderr]}")
+            if failure = import_key_from_keyserver(keyserver, parsed[:key_id])
+              return failure
             end
           else
             return missing_material unless has_material
@@ -265,6 +277,89 @@ module Krikri
       result.extra["after"] = JSON.parse(after_keys.to_json) if after_keys
       result
     end
+
+    # ansible.builtin.apt_key's import_key, mirrored: `apt-key adv
+    # --no-tty --keyserver <keyserver> --recv <key_id>`, retried up to
+    # five times (its `for retry in range(5)` loop breaks on the first
+    # rc 0 - keyserver flakes are common enough that a single attempt
+    # diverges from Ansible on every transient failure), every attempt
+    # under lang_env's four locale vars (run_command's environ_update).
+    # Returns nil once an attempt succeeds; on exhaustion it fails with
+    # import_key's fail_json shape, which is what the round-29896430
+    # webarchitect609.dropbox divergence was about: the msg carries the
+    # KEYSERVER NAME ("...from keyserver: %s" % keyserver) - never the
+    # child's stderr, which this engine used to append (ansible's gpg
+    # stderr rides out in the `stderr`/`stderr_lines` keys instead) - and
+    # the result carries the whole run_command context: cmd (composed
+    # from the get_bin_path-resolved binary path, a raw unquoted keyring:
+    # and keyserver exactly like ansible's own string), the
+    # forced_environment dict lang_env built, rc/stdout/stderr, and the
+    # stdout_lines/stderr_lines splits _return_formatted derives from the
+    # raw output. The one special case its loop exit takes: rc 2 with
+    # "not found on keyserver" in the child's stdout fails with only
+    # cmd/msg/forced_environment (no rc/stdout/stderr at all).
+    private def import_key_from_keyserver(keyserver : String, key_id : String) : PluginResult?
+      # ansible composes the cmd string WITHOUT shell quoting (run_command
+      # shlex-splits it); the exec form quotes the same pieces for the
+      # shell remote_exec runs through - well-formed values stay
+      # byte-identical, hostile ones only stay safe.
+      keyring = @params["keyring"]?
+      cmd = if keyring
+              "#{@apt_key_bin} --keyring #{keyring} adv --no-tty --keyserver #{keyserver}"
+            else
+              "#{@apt_key_bin} adv --no-tty --keyserver #{keyserver}"
+            end
+      cmd_exec = if keyring
+                   "#{@apt_key_bin} --keyring #{Shell.quote_if_needed(keyring)} adv --no-tty --keyserver #{Shell.quote_if_needed(keyserver)}"
+                 else
+                   "#{@apt_key_bin} adv --no-tty --keyserver #{Shell.quote_if_needed(keyserver)}"
+                 end
+
+      # add_http_proxy: os.environ's first non-empty proxy var in
+      # HTTPS_PROXY/https_proxy/HTTP_PROXY/http_proxy order rides in the
+      # command string itself, probed on the side the command runs on.
+      if proxy = remote_exec(PROXY_ENV_PROBE)[:stdout].presence
+        cmd += " --keyserver-options http-proxy=#{proxy}"
+        cmd_exec += " --keyserver-options #{Shell.quote_arg("http-proxy=#{proxy}")}"
+      end
+      cmd += " --recv #{key_id}"
+      cmd_exec += " --recv #{key_id}"
+
+      locale = best_parsable_locale { |command| remote_exec(command) }
+      # lang_env's dict, in its construction order - every dump sorts.
+      forced_environment = {"LANG" => locale, "LC_ALL" => locale, "LC_MESSAGES" => locale, "LANGUAGE" => locale}
+      env_prefix = "LANG=#{locale} LC_ALL=#{locale} LC_MESSAGES=#{locale} LANGUAGE=#{locale} "
+
+      rc = -1
+      stdout = ""
+      stderr = ""
+      5.times do
+        result = remote_exec("#{env_prefix}#{cmd_exec}")
+        rc = result[:exit_code]
+        stdout = result[:stdout]
+        stderr = result[:stderr]
+        break if rc == 0
+      end
+      return nil if rc == 0
+
+      if rc == 2 && stdout.includes?("not found on keyserver")
+        return PluginResult.new(changed: false, failed: true,
+          msg: "Key #{key_id} not found on keyserver #{keyserver}",
+          cmd: cmd, forced_environment: forced_environment)
+      end
+
+      PluginResult.new(changed: false, failed: true,
+        msg: "Error fetching key #{key_id} from keyserver: #{keyserver}",
+        cmd: cmd, forced_environment: forced_environment,
+        rc: rc, stdout: stdout, stderr: stderr,
+        stdout_lines: PluginHelpers::AnsibleSplitlines.split(stdout),
+        stderr_lines: PluginHelpers::AnsibleSplitlines.split(stderr))
+    end
+
+    # add_http_proxy's env scan as one exec: the first non-empty of
+    # HTTPS_PROXY/https_proxy/HTTP_PROXY/http_proxy in the executing
+    # shell's environment, printed bare (empty output = none set).
+    private PROXY_ENV_PROBE = "for v in HTTPS_PROXY https_proxy HTTP_PROXY http_proxy; do eval \"v=\\${$v}\"; if [ -n \"$v\" ]; then printf '%s' \"$v\"; break; fi; done"
 
     # Stage the key material (from url:/data:/file:) into tmp_path.
     # Returns the failure result when fetching/reading fails, nil on

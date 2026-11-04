@@ -110,6 +110,61 @@ ensure
   Dir.delete(shim_dir.not_nil!) rescue nil
 end
 
+# The issue-833 recv failure shape, pinned byte for byte to what the
+# round-29896430 host's real apt-key printed for a failed
+# pool.sks-keyservers.net fetch: an "Executing:" line on stdout, the
+# deprecation warning + gpg failure on stderr, exit 2.
+private APT_KEY_RECV_FAIL_SHIM = <<-'SH'
+#!/bin/bash
+STATE="${KRIKRI_APT_KEY_STATE:?}"
+args=("$@")
+for i in "${!args[@]}"; do
+  case "${args[$i]}" in
+    adv)
+      rest=("${args[@]:$((i+1))}")
+      if [[ "${rest[*]}" == *--list-public-keys* ]]; then
+        [ -f "$STATE" ] && cat "$STATE"
+        exit 0
+      fi
+      if [[ "${rest[*]}" == *--recv* ]]; then
+        echo attempt >> "${KRIKRI_APT_KEY_ATTEMPTS:?}"
+        echo "Executing: /tmp/apt-key-gpghome.wxdEHDAZLE/gpg.1.sh --no-tty --keyserver pool.sks-keyservers.net --recv 1C61A2656FB57B7E4DE0F4C1FC918B335044912E"
+        echo "Warning: apt-key is deprecated. Manage keyring files in trusted.gpg.d instead (see apt-key(8))." >&2
+        echo "gpg: keyserver receive failed: Server indicated a failure" >&2
+        exit 2
+      fi
+      ;;
+  esac
+done
+exit 1
+SH
+
+# Installs an arbitrary apt-key double at the front of PATH for the
+# block's duration and yields the shim's own path (the resolved binary
+# path the plugin's failure `cmd` is built from). ENV is process-global,
+# so the whole block holds ENV_MUTEX.
+private def with_apt_key_shim_body(shim_body : String, state_file : String, &)
+  shim_dir = File.tempname(".krikri-spec-aptkey-shim")
+  shim = File.join(shim_dir, "apt-key")
+  Dir.mkdir(shim_dir)
+  File.write(shim, shim_body)
+  File.chmod(shim, 0o755)
+  PluginSpecHelper::ENV_MUTEX.synchronize do
+    old_path = ENV["PATH"]?
+    ENV["PATH"] = "#{shim_dir}:#{old_path}"
+    ENV["KRIKRI_APT_KEY_STATE"] = state_file
+    begin
+      yield shim
+    ensure
+      ENV["PATH"] = old_path if old_path
+      ENV.delete("KRIKRI_APT_KEY_STATE")
+    end
+  end
+ensure
+  File.delete(shim.not_nil!) rescue nil
+  Dir.delete(shim_dir.not_nil!) rescue nil
+end
+
 # The mirror image of with_apt_key_shim: a PATH with no apt-key
 # anywhere on it, which is the state of every current Debian/Ubuntu
 # host (apt-key was dropped in Debian 12 / Ubuntu 22.04+) and the state
@@ -384,6 +439,47 @@ describe "apt_key plugin" do
       result["msg"].as_s.must_include("Error fetching key")
     end
     File.delete(state) rescue nil
+  end
+
+  it "reports a keyserver fetch failure in Ansible's import_key fail_json shape (issue #833)" do
+    # webarchitect609.dropbox round 29896430: the divergence was the
+    # failure result's SHAPE. Real import_key's msg carries the
+    # KEYSERVER NAME - never the child's stderr, which krikri used to
+    # append - and its fail_json rides out the whole run_command context
+    # (cmd with the resolved binary path, forced_environment, rc,
+    # stdout/stderr and the _lines splits), so the fatal dump carries
+    # them all. The shim's fixed output pins each key's value.
+    state = apt_key_spec_state_file
+    attempts = File.tempname(".krikri-spec-aptkey-attempts")
+    with_apt_key_shim_body(APT_KEY_RECV_FAIL_SHIM, state) do |shim_path|
+      ENV["KRIKRI_APT_KEY_ATTEMPTS"] = attempts
+      begin
+        result = PluginSpecHelper.run("apt_key", {"state" => "present", "keyserver" => "pool.sks-keyservers.net", "id" => FAKE_KEY_ID})
+      ensure
+        ENV.delete("KRIKRI_APT_KEY_ATTEMPTS")
+      end
+
+      result["failed"].as_bool.must_equal(true)
+      result["msg"].as_s.must_equal("Error fetching key #{FAKE_KEY_ID} from keyserver: pool.sks-keyservers.net")
+      result["msg"].as_s.wont_include("apt-key is deprecated")
+      result["cmd"].as_s.must_equal("#{shim_path} adv --no-tty --keyserver pool.sks-keyservers.net --recv #{FAKE_KEY_ID}")
+      result["rc"].as_i.must_equal(2)
+      result["stdout"].as_s.must_equal("Executing: /tmp/apt-key-gpghome.wxdEHDAZLE/gpg.1.sh --no-tty --keyserver pool.sks-keyservers.net --recv 1C61A2656FB57B7E4DE0F4C1FC918B335044912E\n")
+      result["stdout_lines"].as_a.must_equal(["Executing: /tmp/apt-key-gpghome.wxdEHDAZLE/gpg.1.sh --no-tty --keyserver pool.sks-keyservers.net --recv 1C61A2656FB57B7E4DE0F4C1FC918B335044912E"])
+      result["stderr"].as_s.must_equal("Warning: apt-key is deprecated. Manage keyring files in trusted.gpg.d instead (see apt-key(8)).\ngpg: keyserver receive failed: Server indicated a failure\n")
+      result["stderr_lines"].as_a.must_equal(["Warning: apt-key is deprecated. Manage keyring files in trusted.gpg.d instead (see apt-key(8)).", "gpg: keyserver receive failed: Server indicated a failure"])
+      forced = result["forced_environment"].as_h
+      forced.size.must_equal(4)
+      %w[LANG LC_ALL LC_MESSAGES LANGUAGE].each do |key|
+        forced[key].as_s.must_equal(forced["LANG"].as_s)
+      end
+      forced["LANG"].as_s.must_match(/\A(C\.utf8|C\.UTF-8|en_US\.utf8|en_US\.UTF-8|C|POSIX)\z/)
+      # import_key's `for retry in range(5)` - five recv attempts before
+      # the failure surfaces, not one.
+      File.read(attempts).lines.size.must_equal(5)
+    end
+    File.delete(state) rescue nil
+    File.delete(attempts) rescue nil
   end
 
   it "requires no key material when keyserver: + id: are given (url/data/file are alternatives, not prerequisites)" do
