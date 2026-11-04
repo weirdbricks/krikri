@@ -413,6 +413,82 @@ module Krikri
       builtin_redirects("modules").try(&.[name]?)
     end
 
+    # One collection directory's meta/runtime.yml redirect table for a
+    # routing kind, memoized per directory (the same cache
+    # installed_collection_resolution fills inline).
+    private def self.collection_redirects(dir : String, kind : String) : Hash(String, String)?
+      cache_key = "#{dir}\0#{kind}"
+      redirects = @@collection_redirects[cache_key]?
+      if redirects.nil? && !@@collection_redirects.has_key?(cache_key)
+        redirects = collection_redirects_uncached(dir, kind)
+        @@collection_redirects[cache_key] = redirects
+      end
+      redirects
+    end
+
+    # The module name real's loader reports after chasing the FULL
+    # redirect chain: ansible_builtin_runtime.yml hops (for a bare name
+    # or an ansible.builtin./ansible.legacy. leaf) and then every target
+    # collection's own meta/runtime.yml plugin_routing.modules redirect,
+    # until no entry matches (cycle-limited like the resolution paths).
+    # The two sources chain: ansible-core's builtin runtime still
+    # redirects the legacy bare `hcloud_ssh_key` spelling onto
+    # hetzner.hcloud.hcloud_ssh_key, while hetzner.hcloud 7.x's own
+    # runtime.yml renames that FQCN onto the unprefixed module file
+    # `hetzner.hcloud.ssh_key` - and the name real reports in the
+    # task-args finalization error is the chain END, not the first hop
+    # (issue #800: 'hetzner.hcloud.ssh_key', not the intermediate FQCN,
+    # live-verified vs 2.19.11 for both the bare and the FQCN spelling).
+    # A name with no redirect entry comes back unchanged; a collection
+    # that is not installed ends the chain (no runtime.yml to consult),
+    # exactly where real's loader stops chasing.
+    def self.module_redirect_chain(name : String) : String
+      current = name
+      seen = Set(String).new
+      seen << current
+      while seen.size <= MAX_REDIRECT_HOPS
+        target = redirect_target(current) || break
+        break if seen.includes?(target)
+        seen << target
+        current = target
+      end
+      current
+    end
+
+    # One hop of the chain for `current`: the redirect entry that matches
+    # it, or nil at the chain end (no entry anywhere). Mirrors the split
+    # real's loader makes: a bare name and an ansible.builtin./
+    # ansible.legacy. leaf hop through ansible_builtin_runtime.yml, a
+    # collection FQCN's leaf through the collection's own runtime.yml.
+    private def self.redirect_target(current : String) : String?
+      parts = current.split('.')
+      if parts.size == 1
+        builtin_module_redirect(current)
+      elsif parts[0] == "ansible" && (parts[1] == "builtin" || parts[1] == "legacy")
+        leaf = parts[2..].join('.')
+        leaf.empty? ? nil : builtin_module_redirect(leaf)
+      else
+        leaf = parts[2..].join('.')
+        return nil if leaf.empty?
+        collection_redirect_target("#{parts[0]}.#{parts[1]}", leaf)
+      end
+    end
+
+    # The first installed copy's meta/runtime.yml redirect for `leaf`, or
+    # nil when the collection is not installed or carries no redirect
+    # entry for it - both are chain ends for the reported name.
+    private def self.collection_redirect_target(collection_fq : String, leaf : String) : String?
+      dirs = collection_dirs[collection_fq]? || return nil
+      dirs.each do |dir|
+        if redirects = collection_redirects(dir, "modules")
+          if found = redirects[leaf]?
+            return found
+          end
+        end
+      end
+      nil
+    end
+
     # One collection's meta/runtime.yml redirect table for a routing
     # kind, lazily read and memoized per collection directory. nil = no
     # redirects (file missing, no plugin_routing.<kind> section,
@@ -787,12 +863,7 @@ module Krikri
         return {resolves: true, warning: nil} if collection_leaf_file?(kind, dir, leaf)
       end
       dirs.each do |dir|
-        cache_key = "#{dir}\0#{kind}"
-        redirects = @@collection_redirects[cache_key]?
-        if redirects.nil? && !@@collection_redirects.has_key?(cache_key)
-          redirects = collection_redirects_uncached(dir, kind)
-          @@collection_redirects[cache_key] = redirects
-        end
+        redirects = collection_redirects(dir, kind)
         if redirects && (target = redirects[leaf]?)
           result = chain_resolves?(kind, target, seen)
           return result unless result[:resolves].nil?

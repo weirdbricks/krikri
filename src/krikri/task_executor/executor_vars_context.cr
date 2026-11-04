@@ -3512,11 +3512,13 @@ module Krikri
       # 2.19.x: both `authorized_key:` and `ansible.builtin.authorized_key:`
       # report 'ansible.posix.authorized_key', bare `mount:` reports
       # 'ansible.posix.mount'). Dispatch still uses the builtin FQCN; only
-      # the reported name follows the redirect.
-      if name.starts_with?("ansible.builtin.") &&
-         (redirected = CollectionIndex.builtin_module_redirect(name.lchop("ansible.builtin.")))
-        return redirected
-      end
+      # the reported name follows the redirect. The builtin hop is only
+      # the FIRST hop: the target collection's own meta/runtime.yml may
+      # rename the leaf again (hetzner.hcloud 7.x renames its legacy
+      # hcloud_* FQCNs onto unprefixed module files), and the name real
+      # reports is the end of that full chain - so chase it here too
+      # (issue #800).
+      name = CollectionIndex.module_redirect_chain(name)
       # engine-internal pseudo modules (_include_vars, ...) are real actions
       name = "ansible.builtin.#{name.lchop('_')}" if name.starts_with?('_')
       name
