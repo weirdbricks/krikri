@@ -1240,15 +1240,13 @@ module Krikri
     getter detail : String
 
     # libyaml's own wording for the single most common playbook YAML
-    # mistake (an unquoted value containing ": "), mapped to
-    # Ansible's phrasing and its worked-example hint. Any other error
-    # keeps our YAML library's own message - Ansible's prose for
-    # those comes from ITS parser and cannot be reproduced verbatim.
-    COLON_DETAIL         = "mapping values are not allowed in this context"
-    COLON_MESSAGE        = "Colons in unquoted values must be followed by a non-space character."
-    MISSING_COLON_DETAIL = "could not find expected ':'"
-    TAB_DETAIL           = "found a tab character"
-    TAB_MESSAGE          = "Tabs are usually invalid in YAML."
+    # mistake (an unquoted value containing ": "), kept as the fallback
+    # for when ansible's colon heuristic (below) does not fire on the
+    # offending line.
+    COLON_DETAIL  = "mapping values are not allowed in this context"
+    COLON_MESSAGE = "Colons in unquoted values must be followed by a non-space character."
+    TAB_DETAIL    = "found a tab character"
+    TAB_MESSAGE   = "Tabs are usually invalid in YAML."
     # ansible-core's loader refuses a collection used as a mapping key
     # with its own wording (not libyaml's - libyaml parses `key: {{ x }}`
     # happily as a flow-mapping key); verified against 2.19: rc=4, this
@@ -1256,6 +1254,22 @@ module Krikri
     # appends, with a template-shaped example instead.
     QUOTING_MESSAGE = "This may be an issue with missing quotes around a template block."
     TRUNCATED_NOTE  = "(source not shown: file truncated)"
+
+    # ansible-core's error layer (lib/ansible/_internal/_yaml/_errors.py)
+    # runs one regex heuristic over the offending SOURCE line for EVERY
+    # libyaml parse error, whatever libyaml's own complaint was: the
+    # "value" left after the line's `- ` list and `key: ` preamble is
+    # blanked out when it is a single-line quoted scalar, and any colon
+    # still followed by a space or end-of-line is reported as
+    # "Colons in unquoted values..." with the Origin re-pointed at that
+    # colon. libyaml's own position is often nowhere near the colon - a
+    # task key landing at column 1 after a mis-indented multi-line scalar
+    # (rothgar.tomcat_and_java's tasks/main.yml:10, issue #816) reports
+    # the block-collection error there - so both message and column come
+    # from the heuristic, not from libyaml.
+    VALUE_LINE_RE     = /\A\s*(?:-\s+)*(?:[\w\s\[\]{}]+:\s+)?(?<value>.*)\z/
+    QUOTED_VALUE_RE   = /\A\s*('[^']*'|"[^"]*")\s*\z/
+    UNQUOTED_COLON_RE = /:(\z| )/
 
     # Crystal's YAML::ParseException message inlines the position and puts
     # libyaml's CONTEXT last:
@@ -1305,21 +1319,27 @@ module Krikri
       line.chomp.gsub('\t', ' ')
     end
 
-    # Ansible only rewrites libyaml's colon error (and appends the
-    # worked example) when the offending line already holds an earlier
-    # colon, i.e. `raw: echo 'name: ansible'`. A lone `key:` landing in a
-    # multi-line plain scalar (over-indented mapping under `- name: x`)
-    # keeps libyaml's wording, capitalized, with no hint.
+    # The column ansible's colon heuristic reports for this error's own
+    # source line, or nil when the heuristic does not fire (line past
+    # EOF, a line holding only whitespace and a colon, a fully quoted
+    # single-line value, or no space-or-EOL colon left once quoting is
+    # accounted for).
+    private def unquoted_colon_column : Int32?
+      target_line = @content.lines[@line - 1]?
+      return nil unless target_line
+      return nil if target_line.lstrip.starts_with?(':')
+      value_match = target_line.match(VALUE_LINE_RE)
+      return nil unless value_match
+      value = value_match["value"]
+      fragment = value.match(QUOTED_VALUE_RE).try { |quoted| "." * quoted[0].size } || value
+      return nil if fragment.empty?
+      colon = fragment.match(UNQUOTED_COLON_RE)
+      return nil unless colon
+      value_match.begin(1) + colon.begin(0) + 1
+    end
+
     def colon_error? : Bool
-      # A multi-line plain scalar whose next line is a bare `key:` (jbertozzi
-      # .cis_rhel8's section_1.yml:75) reaches libyaml as "could not find
-      # expected ':'" and ansible-core gives it the same colon message and
-      # worked example, at the colon itself - so no earlier-colon check.
-      return true if detail.downcase.includes?(MISSING_COLON_DETAIL)
-      return false unless detail.downcase.includes?(COLON_DETAIL)
-      src = @content.lines[@line - 1]?
-      return true unless src
-      src.byte_slice(0, Math.max(@column - 1, 0)).includes?(':')
+      !!unquoted_colon_column
     end
 
     private def bare_colon_error? : Bool
@@ -1344,7 +1364,9 @@ module Krikri
     #               ^ column 9
     #
     def render : String
-      message = if colon_error?
+      colon_column = unquoted_colon_column
+
+      message = if colon_column
                   COLON_MESSAGE
                 elsif tab_error?
                   TAB_MESSAGE
@@ -1355,12 +1377,15 @@ module Krikri
                 else
                   detail
                 end
+      # The heuristic re-points the Origin (and caret) at the colon it
+      # found; every other error keeps libyaml's own position.
+      column = colon_column || @column
 
       lines = @content.lines
 
       String.build do |io|
         io << "[ERROR]: YAML parsing failed: " << message << "\n"
-        io << "Origin: " << File.expand_path(@path) << ":" << @line << ":" << @column << "\n"
+        io << "Origin: " << File.expand_path(@path) << ":" << @line << ":" << column << "\n"
         io << "\n"
 
         if @line > lines.size
@@ -1387,14 +1412,14 @@ module Krikri
 
           prefix = "#{@line} ".rjust(gutter + 1)
           io << prefix << echo(lines[@line - 1]) << "\n"
-          io << " " * (prefix.size + @column - 1) << "^ column " << @column << "\n"
+          io << " " * (prefix.size + column - 1) << "^ column " << column << "\n"
         end
 
         # The quoting refusal reuses the colon error's whole worked-example
         # layout (same blank lines, same Should be: structure) with a
         # template-shaped example instead.
         example, fixed =
-          if colon_error?
+          if colon_column
             {"    raw: echo 'name: ansible'", "    raw: \"echo 'name: ansible'\""}
           elsif quoting_error?
             {"    raw: {{ some_var }}", "    raw: \"{{ some_var }}\""}
@@ -1402,7 +1427,7 @@ module Krikri
             {nil, nil}
           end
 
-        unless colon_error? || quoting_error?
+        unless colon_column || quoting_error?
           # Ansible closes the block with a blank line. The colon
           # case below has its own trailing newline after the hint.
           io << "\n"
