@@ -1,3 +1,4 @@
+require "./ansible_splitlines"
 require "./http_download"
 
 module Krikri
@@ -443,13 +444,25 @@ module Krikri
       unless deps_to_install.empty?
         deps_result = handle_install(deps_to_install, messages, changed, lock_timeout, deb_deps: true)
         if deps_result.failed?
+          # basic.py's _return_formatted derives the <key>_lines companions
+          # for every fail_json carrying stdout/stderr, so real ansible's
+          # fatal dump for a failed deps install shows them too
+          # (dimMaryanto93.opensearch, issue #861: the fatal line lacked
+          # both keys entirely). The engine's register augmentation
+          # backfills them for the registered var only - the fatal dump
+          # renders the plugin's raw result, so failure results must
+          # carry them themselves (same reason RunCommandFailure does).
+          deps_stdout = deps_result.extra["stdout"]?.try(&.as_s) || ""
+          deps_stderr = deps_result.extra["stderr"]?.try(&.as_s) || ""
           return PluginResult.new(
             changed: false,
             failed: true,
             msg: deps_result.msg,
-            stdout: deps_result.extra["stdout"]?.try(&.as_s) || "",
-            stderr: deps_result.extra["stderr"]?.try(&.as_s) || "",
+            stdout: deps_stdout,
+            stderr: deps_stderr,
             rc: deps_result.extra["rc"]?.try(&.as_i) || 1,
+            stdout_lines: PluginHelpers::AnsibleSplitlines.split(deps_stdout),
+            stderr_lines: PluginHelpers::AnsibleSplitlines.split(deps_stderr),
             key_order: ["stdout", "stderr", "rc", "failed", "msg", "stdout_lines", "stderr_lines"]
           )
         end
@@ -492,6 +505,8 @@ module Krikri
             msg: "#{dpkg_cmd} failed",
             stdout: deps_stdout + deb_result[:stdout],
             stderr: deps_stderr + deb_result[:stderr],
+            stdout_lines: PluginHelpers::AnsibleSplitlines.split(deps_stdout + deb_result[:stdout]),
+            stderr_lines: PluginHelpers::AnsibleSplitlines.split(deps_stderr + deb_result[:stderr]),
             key_order: ["stdout", "stderr", "failed", "msg", "stdout_lines", "stderr_lines"]
           )
         end
@@ -524,13 +539,19 @@ module Krikri
 
       # dpkg failed after the deps install succeeded (or with no deps at
       # all, e.g. a failing preinst script): Ansible's "<cmd> failed"
-      # shape over the same merged stdout/stderr.
+      # shape over the same merged stdout/stderr - with the _lines
+      # companions basic.py's _return_formatted derives for every
+      # fail_json carrying stdout/stderr (dimMaryanto93.opensearch,
+      # issue #861: the fatal dump renders the plugin's raw result, so
+      # they must ride the result itself, not the register augmentation).
       PluginResult.new(
         changed: false,
         failed: true,
         msg: "#{dpkg_cmd} failed",
         stdout: deps_stdout + deb_result[:stdout],
         stderr: deps_stderr + deb_result[:stderr],
+        stdout_lines: PluginHelpers::AnsibleSplitlines.split(deps_stdout + deb_result[:stdout]),
+        stderr_lines: PluginHelpers::AnsibleSplitlines.split(deps_stderr + deb_result[:stderr]),
         key_order: ["stdout", "stderr", "failed", "msg", "stdout_lines", "stderr_lines"]
       )
     end
