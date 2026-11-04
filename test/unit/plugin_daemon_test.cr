@@ -1,5 +1,6 @@
 require "../minitest_helper"
 require "../../src/krikri/plugin_daemon"
+require "../../src/krikri/plugin_helpers/pty_command_runner"
 
 # Perf items 1-3 - drives the REAL
 # compiled `.fat-plugin --daemon` binary as a local subprocess (no SSH
@@ -340,5 +341,62 @@ describe "fat plugin binary --daemon mode" do
     process.input.close
     status = process.wait
     status.exit_code.must_equal(0)
+  end
+
+  # Issue #875 (t-woerner.ipaclient): a remote `script:` task killed the
+  # whole resident daemon. The daemon is a session leader with NO
+  # controlling terminal (sshd runs its no-pty command detached), and
+  # PtyCommandRunner opened the script pty's slave WITHOUT O_NOCTTY - a
+  # session leader's first tty open without that flag makes the tty the
+  # session's controlling one, so the script pty belonged to the DAEMON's
+  # session; closing the pty master at the end of the (otherwise
+  # successful) run then SIGHUP'd the session's foreground process group -
+  # the daemon itself - and the controller's next read saw EOF, which the
+  # transport layer books as UNREACHABLE ("daemon request for 'script' was
+  # sent but its response was lost (IO::EOFError)"). One-shot plugin
+  # processes never steal the tty (they are never session leaders), so this
+  # only ever bit the --persistent-daemon path. The spawn here goes through
+  # `setsid` to reproduce the daemon's detached-session shape faithfully.
+  it "survives a script task's pty run as a detached session leader and reports its real rc" do
+    skip "fat plugin binary not built (run ./build.sh first)" unless File.exists?(daemon_binary)
+    skip "setsid(1) not available" unless File.exists?("/usr/bin/setsid")
+    skip "no pty could be allocated on this target" unless Krikri::PluginHelpers::PtyCommandRunner.available?
+
+    script = PluginSpecHelper.tmp_path("daemon_pty_exit.sh")
+    File.write(script, "#!/bin/bash\necho daemon-pty-out\nexit 7\n")
+    File.chmod(script, 0o755)
+
+    process = Process.new("/usr/bin/setsid", [daemon_binary, "--daemon"],
+      input: Process::Redirect::Pipe, output: Process::Redirect::Pipe, error: Process::Redirect::Close)
+    Krikri::PluginDaemon.await_ready(process.output)
+
+    begin
+      script_config = {
+        "host"   => {"name" => "localhost", "user" => ENV["USER"]? || "root", "port" => 22},
+        "vars"   => {"ansible_connection" => "local"},
+        "params" => {
+          "cmd"                 => script,
+          "__script_ssh_addr"   => "203.0.113.9",
+          "_ansible_check_mode" => "false",
+        },
+      }
+      result = daemon_send(process, "script", script_config)
+      # The real exit code, not a masked/lost one - the round's cold phase
+      # also hinged on which registered rc the set_fact conditionals saw.
+      result["rc"].as_i.must_equal(7)
+      result["failed"].as_bool.must_equal(true)
+      result["stdout"].as_s.must_include("daemon-pty-out")
+
+      # The SIGHUP (pre-fix) killed the daemon at the pty's master close,
+      # INSIDE the request - the response never came back and every later
+      # task for the host was UNREACHABLE. The same process must answer a
+      # follow-up request.
+      ok = daemon_send(process, "command", {"host" => {"name" => "localhost", "user" => ENV["USER"]? || "root", "port" => 22}, "vars" => {"ansible_connection" => "local"}, "params" => {"_raw_params" => "echo daemon-survived"}})
+      ok["stdout"]?.try(&.as_s).must_equal("daemon-survived")
+    ensure
+      process.input.close rescue nil
+      process.wait rescue nil
+      File.delete(script) if script && File.exists?(script)
+    end
   end
 end
