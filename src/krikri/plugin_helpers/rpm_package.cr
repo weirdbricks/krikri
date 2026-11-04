@@ -1019,8 +1019,18 @@ module Krikri
           elsif url_or_file?(pkg)
             # An rpm file already installed at the very NEVRA its header
             # carries resolves to dnf's empty transaction (see
-            # rpm_file_already_installed?) - not an install.
-            if rpm_file_already_installed?(pkg)
+            # rpm_file_already_installed?) - but that empty transaction
+            # still has to RUN through dnf in a real run: ansible's module
+            # feeds the file to base.package_install unconditionally, and
+            # dnf loads every enabled repo's metadata before resolving, so
+            # a repo whose repodata fails to download fails the task even
+            # though the file itself is a no-op (issue #813:
+            # ahu-services.postgresql, pgdg-common repomd 404 - real
+            # ansible fatal'd, this engine said ok). Only check mode
+            # classifies it out: real --check reports the empty
+            # transaction as ok (issue #781), and this engine has no repo
+            # state to model a metadata failure inside its would-be plan.
+            if rpm_file_already_installed?(pkg) && check_mode?
               already_installed << pkg
             else
               # For URLs/files, always try to install
@@ -1131,9 +1141,12 @@ module Krikri
           elsif url_or_file?(pkg)
             # `latest` is "same as installed" for filenames in real's dnf.py:
             # the identical already-installed NEVRA still resolves to dnf's
-            # empty transaction, so it is a no-op - not queued for either
-            # batch (issue #781).
-            unless rpm_file_already_installed?(pkg)
+            # empty transaction - but like the present path above, that
+            # empty transaction still has to run through dnf in a real
+            # run, where a failing repo-metadata download fails the task
+            # instead of reading as a no-op ok (issue #813). Check mode
+            # keeps the no-op classification (issue #781).
+            unless rpm_file_already_installed?(pkg) && check_mode?
               to_install << pkg
             end
           elsif package_installed?(pkg)
