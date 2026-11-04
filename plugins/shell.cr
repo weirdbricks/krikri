@@ -440,10 +440,28 @@ module Krikri
       # instead of re-applying the emulation; it returns nil - before
       # anything is spawned - on a pty-less target, where the 2>&1
       # emulation below stays the capture.
+      #
+      # The pty child also needs the session's TERM: real's raw command
+      # always runs with the ssh session's TERM (the client's effective
+      # TERM, which sshd installs for the pty session), and
+      # terminfo-driven programs read it - dnf emits its \e[1m\e[32m
+      # package highlights and abbreviates its table headers only when
+      # terminfo resolves, so without TERM the same run renders plain and
+      # wide-columned (issue #820). The executor forwards the controller's
+      # TERM under __raw_pty_term; it wins over any task `environment:`
+      # TERM because real never applies the environment: keyword to a raw
+      # command at all - the command sees the ssh session's env, not a
+      # module's. Without the marker (no controller TERM) the task's own
+      # environment stands, as before.
       pty_result = nil
       if pty_merge
+        pty_env = task_environment || Hash(String, String).new
+        if (pty_term = @params["__raw_pty_term"]?) && !pty_term.empty?
+          pty_env = pty_env.dup
+          pty_env["TERM"] = pty_term
+        end
         pty_result = PluginHelpers::PtyCommandRunner.exec(
-          remote_command, env: task_environment
+          remote_command, env: pty_env
         )
       end
 

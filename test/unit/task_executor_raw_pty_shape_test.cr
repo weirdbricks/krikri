@@ -175,6 +175,49 @@ describe Krikri::TaskExecutor do
       result["stderr"].as_s.must_equal("err1")
       result["_krikri_real_pty"]?.must_be_nil
     end
+
+    # Issue #820 (abn.managed-node-bootstrap): real's raw command always
+    # sees the ssh session's TERM (the client's effective TERM, installed
+    # by sshd for the pty session), and terminfo-driven programs colour
+    # and size their output from it - dnf emitted its \e[1m\e[32m package
+    # highlights and abbreviated table headers under real while the same
+    # run rendered plain and wide-columned here, because the pty child's
+    # environment carried no TERM at all (the plugin process's own env
+    # has none, and that is not what real's ssh -tt session provides).
+    it "puts the forwarded __raw_pty_term in the pty child's environment" do
+      result = PluginSpecHelper.run("shell", {
+        "cmd"             => "echo TERM=[$TERM]",
+        "__raw_pty_merge" => "1",
+        "__raw_pty_term"  => "vt100-issue820",
+      })
+      result["stdout"].as_s.must_equal("TERM=[vt100-issue820]\r\n")
+      result["_krikri_real_pty"].as_bool?.must_equal(true)
+    end
+
+    # Real never applies the task's `environment:` keyword to a raw
+    # command at all (there is no module process to hand it to - the
+    # command sees the ssh session's env), so the session TERM wins over
+    # a task-supplied one rather than the other way round.
+    it "lets __raw_pty_term win over a task environment TERM in the pty child" do
+      result = PluginSpecHelper.run("shell", {
+        "cmd"             => "echo TERM=[$TERM]",
+        "__raw_pty_merge" => "1",
+        "__raw_pty_term"  => "vt100-issue820",
+        "_environment"    => JSON.parse({"TERM" => "taskenv-term"}.to_json).to_json,
+      })
+      result["stdout"].as_s.must_equal("TERM=[vt100-issue820]\r\n")
+    end
+
+    # No controller TERM -> no marker -> the task's own environment (or
+    # the inherited env) stands, exactly the pre-#820 behavior.
+    it "leaves the pty child's environment alone without a __raw_pty_term marker" do
+      result = PluginSpecHelper.run("shell", {
+        "cmd"             => "echo TERM=[$TERM]",
+        "__raw_pty_merge" => "1",
+        "_environment"    => JSON.parse({"TERM" => "taskenv-term"}.to_json).to_json,
+      })
+      result["stdout"].as_s.must_equal("TERM=[taskenv-term]\r\n")
+    end
   end
 
   describe ".strip_trailing_newlines? via ScriptPtyCapture" do
