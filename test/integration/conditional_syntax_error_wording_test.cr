@@ -89,6 +89,39 @@ describe "unknown filter/test in conditionals: Syntax error in expression" do
     output.must_include("7 " + " " * 6 + "when:\n8 " + " " * 8 + "- x is not variable_empty\n" + " " * 12 + "^ column 11")
   end
 
+  # A `when:` written as a multi-line PLAIN scalar folds to one clause
+  # string spanning several source lines (AAbouZaid.yourls issue #817:
+  # `when: need_update.changed\nor need_update | failed`). Real 2.19.11
+  # still prints the two-level [ERROR] chain there and pins the
+  # caused-by Origin on the scalar's FIRST line at its own indent; when
+  # the locator missed the folded value the whole chain used to be
+  # silently skipped and only the fatal line printed.
+  it "pins a multi-line scalar when:'s unknown-filter chain at the scalar's first line" do
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: Prime register
+            command: /bin/true
+            register: need_update
+
+          - name: Download Yourls.
+            debug: msg="x"
+            when:
+              need_update.changed
+              or need_update | failed
+      YAML
+    status.exit_code.must_equal(2)
+    output.must_include("[ERROR]: Task failed: Syntax error in expression: No filter named 'failed'.")
+    output.must_include("fatal: [localhost]: FAILED! => {\"msg\": \"Task failed: Syntax error in expression: No filter named 'failed'.\"}")
+    output.must_include("<<< caused by >>>")
+    # The cause stanza's Origin sits on the folded scalar's first line
+    # (playbook line 12, indent 8 -> column 9), caret under the clause text.
+    output.must_include("10 " + " " * 6 + "debug: msg=\"x\"\n11 " + " " * 6 + "when:\n12 " + " " * 8 + "need_update.changed\n" + " " * 11 + "^ column 9")
+    output.wont_include("Unhandled exception")
+  end
+
   it "fails an assert: with an unknown filter instead of crashing" do
     status, output = run_playbook(<<-YAML)
       - hosts: localhost
