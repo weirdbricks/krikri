@@ -51,7 +51,14 @@ module Krikri
       end
 
       host = inventory.hosts[name]? || Host.new(name)
-      host.from_add_host = true
+      # Only a NEWLY CREATED host counts as dynamically added: real
+      # add_dynamic_host re-adds an existing host WITHOUT touching the
+      # 'all' group (no add_host call for a known name), so re-running
+      # add_host: on an inventory host must not move it in groups['all'] -
+      # the flag is what the groups magic var's ordering keys off.
+      unless inventory.hosts[name]?
+        host.from_add_host = true
+      end
       @params.each do |key, value|
         next if SPECIAL_PARAMS.includes?(key)
         # The executor injects control params (_verbosity, _ansible_*) into

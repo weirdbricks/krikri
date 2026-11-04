@@ -2943,6 +2943,22 @@ module Krikri
       # than needing separate wiring per plugin.
       final_params["_environment"] = substituted_env.to_json if substituted_env
 
+      # Binary (invalid-UTF-8) param values - a slurp+b64decode'd authkey
+      # templated into `copy: content:` (bloxberg.corosync_pacemaker, issue
+      # #835) - cannot ride the JSON wire raw: the plugin process's
+      # JSON.parse mangles invalid byte sequences into U+FFFD-substituted
+      # text, so the plugin's own content-vs-dest checksum comparison saw
+      # different bytes than the file held and every run reported changed.
+      # Base64-wrapping the affected values under BINARY_WIRE_PREFIX keeps
+      # the wire pure ASCII (lossless through this config's own to_json,
+      # the unsafe-registry re-serialization below, the remote transport's
+      # base64 envelope, AND the plugin-side parse); BasePlugin demotes
+      # them back to the exact original bytes. Valid-UTF-8 values - the
+      # overwhelming majority - pass through untouched.
+      final_params.transform_values! do |value|
+        Krikri.encode_binary_wire_value(value)
+      end
+
       # Only debug:/assert: actually read the vars context inside the
       # plugin process (BasePlugin itself only ever pulls the connection
       # keys out of it - see PluginManager::WIRE_VAR_KEYS, which is also

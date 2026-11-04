@@ -99,3 +99,62 @@ describe "add_host hostvars magic variables" do
     entry.has_key?("ansible_config_file").must_equal(false)
   end
 end
+
+# groups['all'] ordering once a play has add_host'ed hosts (issue #835,
+# bloxberg.corosync_pacemaker's `query('inventory_hostnames', 'all')` loop
+# printed its skipping lines in the opposite item order). Real
+# add_dynamic_host adds the new host DIRECTLY to the 'all' group while
+# inventory-parsed hosts live in 'ungrouped', and the 'all' group's host
+# enumeration lists its direct members before its children's - so the magic
+# var reads [added hosts in add order, then the inventory's own hosts]
+# (live-verified vs ansible-core 2.19.11: two inventory hosts plus two
+# add_host calls read all=[zeta, alpha, zhost, ahost] while ungrouped stayed
+# [zhost, ahost, zeta, alpha]; re-adding an EXISTING host name does not move
+# it, add_dynamic_host only adds a missing name to 'all').
+describe "add_host groups['all'] ordering" do
+  it "lists dynamically added hosts before the inventory's own hosts" do
+    inventory = PluginSpecHelper.tmp_path("addhost-group-order.inv")
+    File.write(inventory, "zhost ansible_connection=local\nahost ansible_connection=local\n")
+    playbook = PluginSpecHelper.tmp_path("addhost-group-order.yml")
+    dump = PluginSpecHelper.tmp_path("addhost-group-order.json")
+    File.write(playbook, <<-YAML)
+      - hosts: zhost
+        gather_facts: false
+        connection: local
+        tasks:
+          - ansible.builtin.add_host:
+              name: zeta
+          - ansible.builtin.add_host:
+              name: alpha
+              groups: web
+          - ansible.builtin.add_host:
+              name: zhost
+
+      - hosts: zhost
+        gather_facts: false
+        connection: local
+        tasks:
+          - name: dump
+            ansible.builtin.copy:
+              content: |
+                all={{ groups['all'] }}
+                ungrouped={{ groups['ungrouped'] }}
+                query={{ query('inventory_hostnames', 'all') }}
+              dest: #{dump}
+      YAML
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", inventory, playbook], output: output, error: output)
+    unless status.success?
+      raise "krikri-playbook failed: #{output}"
+    end
+    dumped = File.read(dump)
+
+    dumped.must_equal("all=['zeta', 'alpha', 'zhost', 'ahost']\n" +
+                      "ungrouped=['zhost', 'ahost', 'zeta']\n" +
+                      "query=['zeta', 'alpha', 'zhost', 'ahost']\n")
+  ensure
+    File.delete(inventory) if inventory && File.exists?(inventory)
+    File.delete(playbook) if playbook && File.exists?(playbook)
+    File.delete(dump) if dump && File.exists?(dump)
+  end
+end

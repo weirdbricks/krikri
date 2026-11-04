@@ -1024,7 +1024,34 @@ module Krikri
           # came back as [] for every such group.
           result[name] = JSON::Any.new(inventory.hosts_in_group(name).map { |host| JSON::Any.new(host.name) })
         end
-        result["all"] = JSON::Any.new(inventory.hosts.keys.map { |hostname| JSON::Any.new(hostname) })
+        # Ansible's groups['all'] ordering once a play has add_host'ed a
+        # host: add_dynamic_host adds the new host DIRECTLY to the 'all'
+        # group (inventory-parsed hosts live in 'ungrouped'), and the 'all'
+        # group's own host enumeration (get_descendants include_self)
+        # lists its direct members BEFORE the child groups' hosts - so the
+        # magic var reads [added hosts in add order, then the inventory's
+        # own hosts] (live-verified vs 2.19.11: two inventory hosts plus
+        # two add_host calls read all=[zeta, alpha, zhost, ahost] while
+        # ungrouped stayed [zhost, ahost, zeta, alpha]). bloxberg.coro_
+        # sync_pacemaker's hosts.yml loops `query('inventory_hostnames',
+        # 'all')` after add_host'ing the _authkey_dummy holder, so the
+        # plain inventory order here printed the loop's skipping lines in
+        # the opposite item order (issue #835). Hosts never added
+        # dynamically keep the plain inventory order - the flag is false
+        # across the board and the two partitions concatenate to the
+        # original keys list.
+        added_hosts = [] of String
+        static_hosts = [] of String
+        inventory.hosts.each_value do |host|
+          if host.from_add_host?
+            added_hosts << host.name
+          else
+            static_hosts << host.name
+          end
+        end
+        result["all"] = JSON::Any.new(
+          (added_hosts + static_hosts).map { |hostname| JSON::Any.new(hostname) }
+        )
         # ungrouped - Ansible's own groups magic var always carries
         # it (every host not in any named group), and lookup('inventory_
         # hostnames', 'ungrouped') matches against it like any other
