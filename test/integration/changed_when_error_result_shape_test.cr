@@ -129,4 +129,35 @@ describe "changed_when:/failed_when: evaluation errors keep the module's own msg
     # *_when_result fields, so the follow-up debug surfaces them.)
     output.scan(%(Syntax error in expression: No filter named 'search'.)).size.must_equal 2
   end
+
+  it "stores a braced form's unknown filter with the rendered-template wording" do
+    _status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: unknown filter in braced changed_when
+            ansible.builtin.command: /bin/true
+            changed_when: "{{ 1 | nosuchfilterx }}"
+            register: cw
+            ignore_errors: true
+          - name: unknown filter in braced failed_when
+            ansible.builtin.command: /bin/true
+            failed_when: "{{ 1 | nosuchfilterx }}"
+            register: fw
+            ignore_errors: true
+          - name: surface the stored texts
+            ansible.builtin.debug:
+              msg: "{{ [cw.changed_when_result, fw.failed_when_result] }}"
+      YAML
+
+    # The {{ }}-wrapped form compiles its filter names during the RENDER,
+    # so real words the stored text with the rendered-template wording
+    # (issue #871, Wtower.python-latest's version_compare failed_when,
+    # live-verified vs 2.19) - not the unbraced form's "Syntax error in
+    # expression:" wording the test above asserts. Four occurrences: the
+    # two fatal JSON lines (command results carry the *_when_result field
+    # in the dumped shape) plus the two entries in the surfacing debug.
+    output.scan(%(Syntax error in template: No filter named 'nosuchfilterx'.)).size.must_equal 4
+  end
 end
