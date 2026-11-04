@@ -3957,6 +3957,34 @@ module Krikri
       JSON::Any.new(hash)
     end
 
+    # A {{ }}-wrapped changed_when:/failed_when:'s render-phase unknown
+    # filter: carries the already-worded "Syntax error in template: ..."
+    # text (see substitute_conditional_rendering_errors) so the shared
+    # conditional rescue can store it verbatim instead of re-wrapping it
+    # with the unbraced form's "Syntax error in expression:" wording.
+    class ChangedFailedWhenRenderSyntaxError < Exception
+    end
+
+    # The {{ }}-wrapped form of a changed_when:/failed_when: compiles its
+    # filter names during the RENDER (VarSubstitutor#substitute), before
+    # the unbraced expression form's own compile gate inside
+    # ConditionalEvaluator ever runs - and real words the two failure
+    # classes differently (issue #871, Wtower.python-latest's
+    # `failed_when: "{{ ... | version_compare(...) }}"` stores
+    # "Syntax error in template: No filter named 'version_compare'."
+    # in failed_when_result, live-verified vs 2.19, where the unbraced
+    # form's compile keeps the "Syntax error in expression:" wording).
+    # The same split the when: paths already make (when_passes?'s
+    # braced-render rescue) - tagging the render-phase raise lets the
+    # shared rescue word each phase like real does.
+    private def substitute_conditional_rendering_errors(substitutor : VarSubstitutor, clause : String) : String
+      begin
+        substitutor.substitute(clause)
+      rescue e : VariableSubstitutor::FilterEngine::UnknownFilterError
+        raise ChangedFailedWhenRenderSyntaxError.new("Syntax error in template: #{e.message}")
+      end
+    end
+
     # The *_when_result text for a changed_when:/failed_when: evaluation
     # that RAISED. ansible-core 2.19's strict conditional-type error
     # ("Conditional result (...) was derived from value of type 'int'.
@@ -3972,6 +4000,12 @@ module Krikri
     # wording never covers.
     private def changed_failed_when_error_text(task : Task, key : String, raw : String?, host : Host, exc : Exception) : String
       message = exc.message || ""
+      # A braced form's render-phase unknown filter arrives pre-worded
+      # ("Syntax error in template: ...", substitute_conditional_rendering
+      # _errors) - stored verbatim, like the when:-braced path's wording.
+      if exc.is_a?(ChangedFailedWhenRenderSyntaxError)
+        return message
+      end
       # An unknown filter/test (`search` is a TEST, not a filter - issue
       # #533) is a Jinja COMPILE-time syntax error for ansible: the
       # template parse fails before any conditional evaluation begins,
@@ -4131,9 +4165,9 @@ module Krikri
         begin
           if changed_when
             maybe_conditional_delimiters_deprecation(task, changed_when, "changed_when", eval_context)
-            hash["changed"] = JSON::Any.new(ConditionalEvaluator.evaluate(substitutor.substitute(changed_when), eval_context, strict: true, raise_undefined: true))
+            hash["changed"] = JSON::Any.new(ConditionalEvaluator.evaluate(substitute_conditional_rendering_errors(substitutor, changed_when), eval_context, strict: true, raise_undefined: true))
           end
-        rescue e : ConditionalEvaluator::ConditionalBooleanError | ConditionalEvaluator::UndefinedVariableError | VariableSubstitutor::FilterEngine::UnknownFilterError
+        rescue e : ConditionalEvaluator::ConditionalBooleanError | ConditionalEvaluator::UndefinedVariableError | VariableSubstitutor::FilterEngine::UnknownFilterError | ChangedFailedWhenRenderSyntaxError
           hash["failed"] = JSON::Any.new(true)
           hash["changed_when_result"] = JSON::Any.new(changed_failed_when_error_text(task, "changed_when", changed_when, host, e))
           if !module_failed && !hash.has_key?("msg")
@@ -4146,7 +4180,7 @@ module Krikri
         begin
           if failed_when
             maybe_conditional_delimiters_deprecation(task, failed_when, "failed_when", eval_context)
-            failed_when_result = ConditionalEvaluator.evaluate(substitutor.substitute(failed_when), eval_context, strict: true, raise_undefined: true)
+            failed_when_result = ConditionalEvaluator.evaluate(substitute_conditional_rendering_errors(substitutor, failed_when), eval_context, strict: true, raise_undefined: true)
             hash["failed"] = JSON::Any.new(failed_when_result)
             # TaskExecutor: result['failed_when_result'] = <verdict> whenever failed_when: is set
             hash["failed_when_result"] = JSON::Any.new(failed_when_result)
@@ -4167,7 +4201,7 @@ module Krikri
               hash["_ansible_error_detail"] = JSON::Any.new("Action failed: Unknown error.")
             end
           end
-        rescue e : ConditionalEvaluator::ConditionalBooleanError | ConditionalEvaluator::UndefinedVariableError | VariableSubstitutor::FilterEngine::UnknownFilterError
+        rescue e : ConditionalEvaluator::ConditionalBooleanError | ConditionalEvaluator::UndefinedVariableError | VariableSubstitutor::FilterEngine::UnknownFilterError | ChangedFailedWhenRenderSyntaxError
           hash["failed"] = JSON::Any.new(true)
           hash["failed_when_result"] = JSON::Any.new(changed_failed_when_error_text(task, "failed_when", failed_when, host, e))
           # On a result the module did NOT already fail, a RAISING failed_when:
