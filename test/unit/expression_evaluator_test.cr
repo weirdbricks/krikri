@@ -600,6 +600,43 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
     evaluator.evaluate("lookup('env', 'CRYSTAL_ANSIBLE_SPEC_ENV_LOOKUP_TEST')").must_equal("")
   end
 
+  it "honors lookup('env', 'VAR', default=...) for a missing environment variable" do
+    # Ansible's env lookup templates its `default=` option and uses it for
+    # a missing variable (live-verified vs 2.19.11:
+    # `lookup('env', 'X', default='fallback')` renders "fallback"); the
+    # `default=undef()` shape makes the lookup's value genuinely
+    # undefined, which is what philnewm.houdini's credentials probe
+    # (`lookup('env', 'SIDEFX_CLIENT_ID', default=undef()) is defined`)
+    # relies on to fail the play when the env vars are absent. The
+    # lenient evaluator carries the undefined shape as its "undefined"
+    # sentinel; the strict raise is covered by the substitutor-level
+    # test below.
+    v = Hash(String, JSON::Any).new
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
+
+    evaluator.evaluate("lookup('env', 'CRYSTAL_ANSIBLE_SPEC_ENV_UNDEF_DEFAULT', default='fallback')").must_equal("fallback")
+    evaluator.evaluate("lookup('env', 'CRYSTAL_ANSIBLE_SPEC_ENV_UNDEF_DEFAULT', default=undef())").must_equal("undefined")
+  end
+
+  it "fails a strict consumer of lookup('env', 'VAR', default=undef()) with the plugin's own hint" do
+    # ansible-core 2.19.11 (live-verified): rendering
+    # `{{ lookup('env', 'X', default=undef()) }}` in a module arg fails
+    # with "The environment variable 'X' is not set." - the undefined
+    # marker is consumed strictly, exactly like a missing variable would
+    # be - while `| default('fb')` still catches it ("fb") and an
+    # `is defined` guard answers False.
+    v = Hash(String, JSON::Any).new
+    sub = Krikri::VarSubstitutor.new(vars: v)
+
+    e = assert_raises(Krikri::UndefinedVariableError) do
+      sub.substitute("value={{ lookup('env', 'CRYSTAL_ANSIBLE_SPEC_ENV_UNDEF_DEFAULT', default=undef()) }}", strict: true)
+    end
+    e.message.must_equal("The environment variable 'CRYSTAL_ANSIBLE_SPEC_ENV_UNDEF_DEFAULT' is not set.")
+
+    sub.substitute("value={{ lookup('env', 'CRYSTAL_ANSIBLE_SPEC_ENV_UNDEF_DEFAULT', default=undef()) | default('fb') }}", strict: true)
+      .must_equal("value=fb")
+  end
+
   it "renders a nested {{ }} span inside a lookup() string argument before using it" do
     # Ansible supports (with a deprecation warning) a lookup plugin
     # argument that is itself a quoted string CONTAINING a `{{ }}` span,
