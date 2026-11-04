@@ -155,6 +155,32 @@ describe "community.mysql redirect deprecation" do
     output.includes?("skipping: [localhost]").must_equal(true)
   end
 
+  it "warns for tasks parsed before a later task's load-time refusal aborts the run" do
+    # hakamine.c6-zabbix (issue 863): the role's tasks/main.yml uses
+    # mysql_db a few tasks ahead of a removed bare `include:`. Real
+    # resolves each task's module AS it loads the list, so the mysql_db
+    # deprecation (and the once-per-run hint) print before the include
+    # tombstone aborts the run - emitting only after the whole list
+    # parsed lost every warning that preceded the aborting task.
+    success, output = run_play([
+      "    - name: db",
+      "      community.mysql.mysql_db:",
+      "        name: zabbix",
+      "        state: present",
+      "    - name: legacy include",
+      "      include: tasks/foo.yml",
+    ])
+    success.must_equal(false, output)
+    output.includes?(TRAILER_LINE).must_equal(true, output)
+    output.includes?(deprecation_line("mysql_db")).must_equal(true, output)
+    output.includes?("[ERROR]: The 'ansible.builtin.include' action plugin has been removed.").must_equal(true, output)
+    # The deprecation line lands before the refusal, matching Ansible's
+    # per-task load order.
+    deprecation_idx = output.index!(deprecation_line("mysql_db"))
+    error_idx = output.index!("[ERROR]: The 'ansible.builtin.include'")
+    (deprecation_idx < error_idx).must_equal(true, output)
+  end
+
   it "attaches the deprecations entry to an executed result but not a skipped one" do
     success, output = run_play([
       "    - name: skipped info",
