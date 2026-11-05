@@ -1888,7 +1888,13 @@ module Krikri
       JSON.parse({"changed" => false, "failed" => true, "msg" => ex.message.to_s}.to_json)
     rescue ex
       raise ex unless SSHManager.connection_level_exception?(ex)
-      detail = ex.message.to_s.lines.first?.to_s
+      # The FULL transport error, not just its first line: ansible's
+      # unreachable msg embeds the ssh client's whole stderr block (the
+      # known-hosts warning line AND the `user@host: Permission denied`
+      # line, live-verified vs 2.19.11 - the issue-#887 role's rejected
+      # ansible_ssh_user shows exactly that shape), and the report layer
+      # strips this engine's own "Failed to upload ...: " framing from it.
+      detail = ex.message.to_s.strip
       JSON.parse({
         "changed"     => false,
         "msg"         => "Failed to connect to the host via ssh: #{detail}",

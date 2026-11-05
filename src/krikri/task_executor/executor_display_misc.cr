@@ -107,12 +107,27 @@ module Krikri
     # message ("Failed to upload <local> to <remote>: ssh: connect to
     # host ...: Connection refused"): ansible's unreachable msg embeds
     # only that part, never this engine's upload framing. Falls back to
-    # the first line when the text carries no `ssh: ` segment (a silent
-    # mid-execution drop's "Connection closed by ...", say).
+    # the text past a leading "Failed to connect..." wrap when the text
+    # carries no `ssh: ` segment - a silent mid-execution drop's
+    # "Connection closed by ...", say, or an auth failure whose stderr is
+    # the ssh client's own multi-line block (the known-hosts warning line
+    # plus the `user@host: Permission denied (...)` line BOTH ride
+    # ansible's unreachable msg, live-verified vs 2.19.11 - the issue-#887
+    # role's rejected `ansible_ssh_user: core` default shows exactly that
+    # two-line stderr).
     private def ssh_transport_detail(message : String) : String
       stripped = message.strip
-      stripped[/\bssh: .*$/]?.try(&.strip.lines.first?) ||
-        stripped.lines.first? || ""
+      # This engine's own framings never reach ansible's msg: the
+      # connection-failure wrap the dispatch rescues add, and the
+      # "Failed to upload <local> to <remote>: " prefix the upload
+      # machinery raises with.
+      stripped = stripped.sub(/\AFailed to connect to the host via ssh: /, "")
+      stripped = stripped.sub(/\AFailed to upload \S+ to \S+: /, "")
+      # scp's own session-close line trails the auth failure on this
+      # engine's scp transfer; ansible's ssh connection plugin has no scp
+      # session of its own, so its stderr never carries one.
+      stripped = stripped.gsub(/\n?scp: Connection closed\z/, "")
+      stripped[/\bssh: .*$/m]?.try(&.strip) || stripped.chomp
     end
 
     def show_recap : Nil

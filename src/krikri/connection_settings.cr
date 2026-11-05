@@ -26,12 +26,20 @@ module Krikri
   # copy staging, async launch, reboot) resolves through this struct so
   # a task never silently runs over the inventory user's connection.
   #
-  # Within one vars hash the *_ssh_user/_ssh_port/_ssh_host spellings are
-  # the deprecated-but-honored aliases (build_vars_context already
-  # synthesizes each alias from the other, but an explicitly-set alias
-  # must still win when the canonical name is absent); the canonical
-  # name is checked first, matching ansible-core's own option-var
-  # aliasing order.
+  # The deprecated `ansible_ssh_*` spellings outrank the canonical names
+  # wherever BOTH are present, regardless of which precedence tier each
+  # came from: ansible-core resolves each connection option through
+  # `ConfigManager._loop_entries` over the plugin's flat `vars:` name list
+  # (ssh.py: user [ansible_user, ansible_ssh_user], host, port - same for
+  # the become plugin's password chain), and that loop keeps the LAST
+  # entry found in the one merged task-vars dict, so a role default's
+  # `ansible_ssh_user: core` beats an inventory `ansible_user: root`
+  # (tyranron.coreos_bootstrap, issue #887: ansible dialed core@ - the
+  # role is CoreOS-only - and went UNREACHABLE while this engine dialed
+  # the inventory user and got further). So every lookup here tries the
+  # legacy spelling across BOTH tiers before the canonical one. Within
+  # one name the vars context (already merged by build_vars_context)
+  # outranks the host's raw inventory vars, ansible's own order.
   struct ConnectionSettings
     getter conn_host : String
     getter user : String
@@ -70,10 +78,17 @@ module Krikri
       # plugin-binary configs whose wire vars are pruned still see the
       # inventory's ansible_host/ansible_port/... exactly like the old
       # per-site reads did.
-      user = tiered_var(vars, host, "ansible_user", "ansible_ssh_user") ||
+      # Legacy spelling first across both tiers, then the canonical one -
+      # see the deprecated-alias comment on the struct for why (ansible's
+      # last-entry-wins var chain, issue #887).
+      user = tiered_var(vars, host, "ansible_ssh_user") ||
+             tiered_var(vars, host, "ansible_user") ||
              host.user || default_connection_user
-      port = port_var(vars) || port_var(host.vars) || host.port
-      conn_host = tiered_var(vars, host, "ansible_host", "ansible_ssh_host") ||
+      port = port_var(vars, "ansible_ssh_port") || port_var(host.vars, "ansible_ssh_port") ||
+             port_var(vars, "ansible_port") || port_var(host.vars, "ansible_port") ||
+             host.port
+      conn_host = tiered_var(vars, host, "ansible_ssh_host") ||
+                  tiered_var(vars, host, "ansible_host") ||
                   host.name
       identity_file = tiered_var(vars, host, "ansible_ssh_private_key_file").presence
       password = Passwords.connection(vars, host)
@@ -181,8 +196,8 @@ module Krikri
       text
     end
 
-    private def self.port_var(vars : Hash(String, JSON::Any)?) : Int32?
-      value = vars.try(&.["ansible_port"]?) || vars.try(&.["ansible_ssh_port"]?)
+    private def self.port_var(vars : Hash(String, JSON::Any)?, key : String) : Int32?
+      value = vars.try(&.[key]?)
       return nil unless value
       return nil if (value.as_s?.try { |candidate| candidate.includes?("{{") || candidate.includes?("{%") })
       value.as_i? || value.as_s?.try(&.to_i?)
