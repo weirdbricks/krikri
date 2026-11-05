@@ -222,7 +222,7 @@ describe "storage plugin registered key order (round 992003 kop_storage)" do
     keys["changed"].as_bool.must_equal(false)
   end
 
-  it "mount success registers [..., fstype, failed, deprecations] - deprecations AFTER the backfilled failed" do
+  it "mount success registers [..., fstype, failed] - no deprecations key (ansible.posix 2.2.0 dropped the warnings kwarg)" do
     fstab = PluginSpecHelper.tmp_path("mount-keyorder.fstab")
 
     keys = run_registered_dump12(<<-YAML)
@@ -246,14 +246,13 @@ describe "storage plugin registered key order (round 992003 kop_storage)" do
 
     keys.as_h.keys.must_equal([
       "changed", "name", "opts", "dump", "passno", "fstab", "boot",
-      "backup_file", "src", "fstype", "failed", "deprecations",
+      "backup_file", "src", "fstype", "failed",
     ])
     keys["changed"].as_bool.must_equal(true)
-    keys["deprecations"].as_a[0]["msg"].as_s.must_equal(
-      "Passing `warnings` to `exit_json` or `fail_json` is deprecated.")
+    keys["deprecations"]?.must_be_nil
   end
 
-  it "mount unmounted registers [..., backup_file, failed, deprecations] (no src/fstype, deprecations last)" do
+  it "mount unmounted registers [..., backup_file, failed] (no src/fstype, no deprecations key)" do
     fstab = PluginSpecHelper.tmp_path("mount-unmounted-keyorder.fstab")
     File.write(fstab, "tmpfs /var/tmp/kop-mnt-keyorder2 tmpfs defaults 0 0\n")
 
@@ -275,7 +274,7 @@ describe "storage plugin registered key order (round 992003 kop_storage)" do
 
     keys.as_h.keys.must_equal([
       "changed", "name", "opts", "dump", "passno", "fstab", "boot",
-      "backup_file", "failed", "deprecations",
+      "backup_file", "failed",
     ])
     # An unmounted against a path that is not mounted (all this sandbox
     # can do) is the round's mount_unmounted_again capture: changed
