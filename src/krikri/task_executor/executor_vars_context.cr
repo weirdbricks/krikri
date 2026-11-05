@@ -3508,7 +3508,9 @@ module Krikri
     # finalization_failure_json's shape plus the marker the display path
     # needs to render Ansible's three-link [ERROR] chain ("Task failed."
     # / "Error processing keyword 'become'." / the conversion message,
-    # the last two both Origin'd at the become: value - live-captured).
+    # the last two Origin'd at the become: value and (when the rendered
+    # value's lineage reaches a file definition - see
+    # bool_keyword_lineage_origin) the value's defining site).
     # Without the marker the generic display path misroutes the brief
     # through debug:'s action-level "Action failed." shape - a segment
     # real never prints for a keyword failure, which is not an
@@ -3516,9 +3518,10 @@ module Krikri
     private def become_conversion_failure_json(ex : KeywordBooleanError, task : Task) : JSON::Any
       result = finalization_failure_json(ex, task)
       result.as_h["_ansible_keyword_conversion"] = JSON.parse({
-        "keyword"    => ex.keyword,
-        "conversion" => "The value '#{ex.rendered}' could not be converted to 'bool'.",
-        "origin"     => keyword_value_origin(task, ex.keyword),
+        "keyword"           => ex.keyword,
+        "conversion"        => "The value '#{ex.rendered}' could not be converted to 'bool'.",
+        "origin"            => keyword_value_origin(task, ex.keyword),
+        "conversion_origin" => bool_keyword_lineage_origin(task, ex.keyword, ex.rendered),
       }.to_json)
       result
     end
@@ -3591,6 +3594,61 @@ module Krikri
           return nil
         end
         return ErrorBlock.origin_context(path, idx + 1, col + 1)
+      end
+      nil
+    end
+
+    # The conversion link's origin for a BOOL keyword whose template is a
+    # bare variable reference: ansible-core 2.19 follows the rendered
+    # value's data lineage, so "The value 'vagrant' could not be
+    # converted to 'bool'." is Origin'd at where that variable was
+    # DEFINED, not at the keyword's own value token (issue #881,
+    # danbohea.platformsh-setup: `become: "{{ platformsh_user }}"` behind
+    # the role default `platformsh_user: vagrant` - real 2.19.11 printed
+    # defaults/main.yml:31:18, we printed the become value's own
+    # tasks/main.yml:8:11). The lineage follows a stored value that is
+    # itself a single-variable template to its innermost source
+    # (live-verified vs 2.19.11: `user_ref: "{{ user_name }}"` behind
+    # `become: "{{ user_ref }}"` labels user_name's own line), while a
+    # value the expression DERIVED (`{{ user_name | upper }}`) has no
+    # lineage and stays at the keyword token (also live-verified). The
+    # host-free layer scan mirrors var_origin_for's precedence over the
+    # layers that carry file origins (lowest applied first); host-keyed
+    # layers (inventory vars, vars_files, registered results, facts,
+    # set_fact) have no host here and are simply absent - a name they
+    # alone supply then returns nil. A name the scan can't place, or
+    # whose winning raw value is not exactly the rendered string, also
+    # returns nil and the keyword value's own origin stays in charge
+    # rather than guessing.
+    private def bool_keyword_lineage_origin(task : Task, keyword : String, rendered : String) : String?
+      expr = {"become"     => task.become_expr,
+              "diff"       => task.diff_mode_expr,
+              "check_mode" => task.check_mode_expr}[keyword]?
+      return nil unless expr
+      first = expr.match(/\A\s*\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}\s*\z/)
+      return nil unless first
+
+      merged = {} of String => JSON::Any
+      origins = {} of String => VarOrigin
+      merge_var_layer(merged, origins, @all_role_defaults, @all_role_default_origins)
+      merge_var_layer(merged, origins, task.role_defaults, task.role_default_origins)
+      merge_var_layer(merged, origins, @play_vars, @play_var_origins)
+      merge_var_layer(merged, origins, task.role_vars, task.role_var_origins)
+      merge_var_layer(merged, origins, @all_role_vars, @all_role_var_origins)
+      merge_var_layer(merged, origins, task.vars, task.vars_origins)
+      merge_var_layer(merged, origins, @extra_vars, @extra_var_origins)
+
+      name = first[1]
+      10.times do
+        origin = origins[name]?
+        return nil unless origin.is_a?(FileVarOrigin) && origin.column > 0 && File.file?(origin.path)
+        value = merged[name]?.try(&.raw)
+        return nil unless value.is_a?(String)
+        if inner = value.match(/\A\s*\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}\s*\z/)
+          name = inner[1]
+          next
+        end
+        return value == rendered ? ErrorBlock.origin_context(origin.path, origin.line, origin.column) : nil
       end
       nil
     end
