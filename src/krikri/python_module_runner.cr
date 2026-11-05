@@ -579,6 +579,15 @@ module Krikri
                       continue
                   self.params[key] = value
 
+          def _pull_global_warnings(self):
+              try:
+                  from ansible.module_utils.common.warnings import get_warning_messages
+                  for text in get_warning_messages():
+                      if str(text) not in self._warnings:
+                          self._warnings.append(str(text))
+              except Exception:
+                  pass
+
           def warn(self, message):
               self._warnings.append(str(message))
 
@@ -675,6 +684,7 @@ module Krikri
               raise ValueError(msg)
 
           def exit_json(self, **kwargs):
+              self._pull_global_warnings()
               result = dict(kwargs)
               result.setdefault('changed', False)
               # Real _return_formatted adds the <key>_lines companions for
@@ -691,6 +701,7 @@ module Krikri
               sys.exit(0)
 
           def fail_json(self, msg='Module failed', **kwargs):
+              self._pull_global_warnings()
               # Real fail_json accepts an exception kwarg (run_command's
               # Popen OSError, issue #384): ansible-core 2.19 composes the
               # task error header as "<msg>: <exception str>" from the
@@ -750,6 +761,7 @@ module Krikri
       File.write(six_init, SIX_PY_SHIM)
       File.write(File.join(work_dir, "ansible", "module_utils", "common", "text", "converters.py"), CONVERTERS_PY_SHIM)
       File.write(File.join(work_dir, "ansible", "module_utils", "common", "dict_transformations.py"), DICT_TRANSFORMATIONS_PY_SHIM)
+      File.write(File.join(work_dir, "ansible", "module_utils", "common", "warnings.py"), WARNINGS_PY_SHIM)
       parsing_init = File.join(work_dir, "ansible", "module_utils", "parsing", "__init__.py")
       Dir.mkdir_p(File.dirname(parsing_init))
       File.write(parsing_init, "")
@@ -1568,6 +1580,60 @@ module Krikri
       __author__ = 'Ansible, Inc.'
       __codename__ = 'What Is and What Should Never Be'
       python
+
+    # ansible.module_utils.common.warnings - the global warning and
+    # deprecation accumulators real basic.py merges into the module result
+    # (kwargs['warnings'] = get_warnings()). Modules importing warn or
+    # deprecate directly (issue #908: a custom module importing warn, the
+    # same import amazon.aws' AnsibleAWSModule tree uses) died with
+    # ModuleNotFoundError under the shim bundle, which lacked the file,
+    # while ansible-playbook's AnsiballZ payload ran it. The shim carries
+    # the same warn/deprecate/get_warning_messages/get_deprecation_messages/
+    # get_warnings/get_deprecations/error_as_warning surface and tracks
+    # messages as plain strings so the shim's basic.py pulls them into
+    # result['warnings'] the way real does.
+    WARNINGS_PY_SHIM = <<-PYTHON
+      _global_warnings = {}
+      _global_deprecations = {}
+
+
+      def _record_warning(message):
+          _global_warnings[str(message)] = None
+
+
+      def warn(warning, *, help_text=None, obj=None):
+          _record_warning(warning)
+
+
+      def error_as_warning(msg, exception, *, help_text=None, obj=None):
+          _record_warning(msg or str(exception))
+
+
+      def deprecate(msg, version=None, date=None, collection_name=None, *, deprecator=None, help_text=None, obj=None):
+          if version:
+              text = '%s (version %s)' % (msg, version)
+          elif date:
+              text = '%s (removed in %s)' % (msg, date)
+          else:
+              text = 'DEPRECATED: %s' % msg
+          _global_deprecations[text] = None
+
+
+      def get_warning_messages():
+          return tuple(_global_warnings)
+
+
+      def get_deprecation_messages():
+          return tuple({'msg': text, 'collection_name': None, 'version': None} for text in _global_deprecations)
+
+
+      def get_warnings():
+          return list(_global_warnings)
+
+
+      def get_deprecations():
+          return list(_global_deprecations)
+      PYTHON
 
     # Parses the module's stdout into its result JSON: Ansible modules
     # print a JSON object (pretty or single-line), possibly preceded by

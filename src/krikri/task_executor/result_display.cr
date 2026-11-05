@@ -428,7 +428,16 @@ module Krikri
       # ansible's Display.warning dedups on the message (live-verified vs
       # 2.19.11 with find's "Skipped '<path>' path due to this access issue").
       result["warnings"]?.try(&.as_a?).try &.each do |warning|
+        # ansible-core 2.20's warnings wire form is a WarningSummary event
+        # tree ({"event": {"msg": "hello"}, "__ansible_type": "WarningSummary"}),
+        # which Display formats to the bare message via
+        # format_event_brief_message; a plain string stays itself.
         text = warning.as_s? || warning.to_s
+        if (h = warning.as_h?) && h.has_key?("event")
+          if (eh = h["event"].as_h?)
+            text = eh["msg"]?.try(&.as_s?) || text
+          end
+        end
         emit_display_warning(text)
       end
       # The facts gatherer's interpreter-DISCOVERY warnings (controller-side
