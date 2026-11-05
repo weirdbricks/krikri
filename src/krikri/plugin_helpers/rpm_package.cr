@@ -137,6 +137,55 @@ module Krikri
         )
       end
 
+      # Real's `dnf:` ACTION plugin fetches the pkg_mgr fact on demand for a
+      # fact-less host (gather_facts: false) and puts it on the RESULT, so
+      # the registered task carries `ansible_facts: {pkg_mgr: <backend>}` -
+      # issue #844's registered `r` had exactly that, and a task that only
+      # checks `r.results | length > 0` is unaffected by it but any
+      # `r.ansible_facts.pkg_mgr` reference is. A task that pinned the
+      # backend itself (use_backend:) never runs that fetch in real, and a
+      # module result that ships its own ansible_facts (interpreter
+      # discovery) replaces the action plugin's on the wire, so neither
+      # surfaces here.
+      def finalize_result(result : PluginResult) : PluginResult
+        return result unless backend_resolved_from_facts? && pkg_mgr_fact_fetched?
+        return result if result.extra.has_key?("ansible_facts")
+        result.extra["ansible_facts"] = JSON::Any.new({"pkg_mgr" => JSON::Any.new(pkg_mgr_fact)})
+        if order = result.key_order
+          result.key_order = ["ansible_facts"] + order
+        end
+        result
+      end
+
+      # Ansible's dnf ACTION plugin only consults the pkg_mgr fact for the
+      # auto/yum backends; an explicit yum4/dnf4/dnf5 skips its setup call.
+      private def backend_resolved_from_facts? : Bool
+        (@params["use_backend"]? || "auto").in?("auto", "yum")
+      end
+
+      # True when pkg_mgr_fact came from a probe on the target, i.e. the
+      # fetch real's action plugin would have performed.
+      def pkg_mgr_fact_fetched? : Bool
+        pkg_mgr_fact
+        !@pkg_mgr_fact_from_vars
+      end
+
+      # Real's dnf.py appends "Installed <filename>" for EVERY file/URL spec
+      # right after _install_remote_rpms, before the transaction's own
+      # "Installed: <nevra>" entries, and on its no-op path too - so an
+      # already-installed local rpm under --check still reports
+      # results: ["Installed <path>"] (issue #844). Failures return before
+      # that append in real.
+      private def with_installed_filename_results(result : PluginResult, names : Array(String)) : PluginResult
+        return result if result.failed?
+        filenames = names.select { |name| name.strip.ends_with?(".rpm") && !remote_rpm_url?(name) }
+        return result if filenames.empty?
+        existing = result.extra["results"]?.try(&.as_a?) || [] of JSON::Any
+        appended = filenames.map { |name| JSON::Any.new("Installed #{name.strip}") }
+        result.extra["results"] = JSON::Any.new(appended + existing)
+        result
+      end
+
       # Ansible's check-mode shape: the module runs the SAME transaction
       # planning but stops before touching the host, so it reports what
       # it WOULD have done - `results` naming the RPMs involved and msg
@@ -278,11 +327,17 @@ module Krikri
       # backend pick (so a fact-less dnf5 host keeps the dnf5 result shapes
       # the old symlink probe produced).
       @pkg_mgr_fact : String? = nil
+      @pkg_mgr_fact_from_vars = false
 
       protected def pkg_mgr_fact : String
         @pkg_mgr_fact ||= begin
           fact = @vars["ansible_pkg_mgr"]?.try(&.as_s?)
-          fact.nil? || fact.empty? || fact == "auto" ? detect_pkg_mgr_fact : fact
+          if fact.nil? || fact.empty? || fact == "auto"
+            detect_pkg_mgr_fact
+          else
+            @pkg_mgr_fact_from_vars = true
+            fact
+          end
         end
       end
 
@@ -845,7 +900,7 @@ module Krikri
               )
             end
           end
-          handle_install_local(local_names, options)
+          with_installed_filename_results(handle_install_local(local_names, options), local_names)
         ensure
           # Ansible deletes its fetched temp via add_cleanup_file at module
           # exit, so the staged RPM lives for the whole install and is only
@@ -1168,8 +1223,8 @@ module Krikri
 
         if check_mode?
           pending = to_install + to_update
-          return transaction_result(false) if pending.empty?
-          return check_mode_transaction_result(true, pending.map { |pkg| "Installed: #{candidate_nevra(pkg)}" })
+          return with_installed_filename_results(transaction_result(false), names) if pending.empty?
+          return with_installed_filename_results(check_mode_transaction_result(true, pending.map { |pkg| "Installed: #{candidate_nevra(pkg)}" }), names)
         end
 
         changed = false
@@ -1205,7 +1260,7 @@ module Krikri
         # `state: latest` on an already-latest host is Ansible's ordinary
         # no-op (results [], msg "Nothing to do") - not a "Packages
         # already at latest version" summary of this engine's own making.
-        transaction_result(changed, installed)
+        with_installed_filename_results(transaction_result(changed, installed), names)
       end
 
       private def run_install_batch(to_install : Array(String), options : String) : BatchOutcome
