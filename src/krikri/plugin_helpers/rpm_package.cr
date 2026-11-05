@@ -882,6 +882,17 @@ module Krikri
       # the local path, as ansible does, instead of letting dnf's libdnf/curl
       # stack fetch the URL and fail with its own wording.
       private def handle_install(names : Array(String), options : String) : PluginResult
+        with_staged_remote_rpms(names) do |local_names|
+          with_installed_filename_results(handle_install_local(local_names, options), local_names)
+        end
+      end
+
+      # Remote RPM staging shared by every install-shaped path: real's
+      # dnf/yum module fetches an http(s) name itself (fetch_file) before
+      # the transaction, regardless of state, so `state: latest` must
+      # stage too - otherwise dnf's own curl stack reaches the URL and
+      # reports its libdnf wording (issue #876).
+      private def with_staged_remote_rpms(names : Array(String), &) : PluginResult
         staged = [] of String
         begin
           local_names = [] of String
@@ -900,7 +911,7 @@ module Krikri
               )
             end
           end
-          with_installed_filename_results(handle_install_local(local_names, options), local_names)
+          yield local_names
         ensure
           # Ansible deletes its fetched temp via add_cleanup_file at module
           # exit, so the staged RPM lives for the whole install and is only
@@ -1197,6 +1208,12 @@ module Krikri
       # gets right, just routing "not installed" to an install batch
       # instead of `already_installed`.
       private def handle_update(names : Array(String), options : String) : PluginResult
+        with_staged_remote_rpms(names) do |local_names|
+          handle_update_staged(local_names, options)
+        end
+      end
+
+      private def handle_update_staged(names : Array(String), options : String) : PluginResult
         to_install = [] of String
         to_update = [] of String
 
