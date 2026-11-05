@@ -62,6 +62,28 @@ describe "dnf plugin remote rpm URL fetch (issue 217)" do
     end
   end
 
+  # Issue 876 (v0112358.keydb_cluster, rocky): the role installs a URL
+  # rpm with `state: latest` (yum), and real's dnf.py fetches http(s)
+  # names via fetch_file before the transaction whichever state it is,
+  # so the download failure is fetch_file's "Failure downloading <url>,
+  # <msg>" there too. The `state: latest` path used to hand the URL to
+  # dnf itself, whose curl stack timed out with libdnf's own wording
+  # under "Failed to install packages".
+  it "reports a failed rpm URL download in fetch_file's wording under state latest" do
+    with_local_rpm_server(404) do |url|
+      result = PluginSpecHelper.run("yum",
+        {"name" => url, "state" => "latest", "use_backend" => "dnf4"},
+        vars: {"ansible_pkg_mgr" => "dnf"})
+
+      result["failed"].as_bool.must_equal(true)
+      result["changed"].as_bool.must_equal(false)
+      result["msg"].as_s.must_equal("Failure downloading #{url}, HTTP Error 404: Not Found")
+      result.as_h.has_key?("rc").must_equal(false)
+      result.as_h.has_key?("results").must_equal(false)
+      result.as_h.has_key?("failures").must_equal(false)
+    end
+  end
+
   # urllib's proxy_bypass_environment: a no_proxy host-suffix match sends
   # the request direct even with a proxy set, so the origin's own error
   # (the 404) is what surfaces again.
