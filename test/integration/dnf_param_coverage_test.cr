@@ -39,18 +39,34 @@ SH
 
 FAILING_RPM = "#!/bin/sh\nexit 1\n"
 
+# The same recorder, but the repo-availability probe joins the log as
+# well - the batched-probe example (issue #904) counts those invocations
+# instead of the transaction ones, so it needs to see them.
+RECORDING_DNF_ALL = <<-'SH'
+#!/bin/sh
+printf '%s\n' "$*" >> "${KRIKRI_FAKE_DNF_LOG:-/dev/null}"
+case "$*" in
+  "-q list --available "*)
+    exit 1
+    ;;
+esac
+echo "Installed:"
+echo "  fake-pkg"
+exit 0
+SH
+
 # Installs fake `dnf` (records its full argv, one invocation per line)
 # and `rpm` (always "not installed", so every spec lands on the install
 # path) at the front of PATH.
 # The plugin child inherits this process's ENV, and the fake dnf's log
 # path travels through it - ENV is process-global, so the whole block
 # holds ENV_MUTEX under minitest's parallel workers.
-private def with_recording_pkg_managers(&)
+private def with_recording_pkg_managers(dnf_script : String = RECORDING_DNF, &)
   PluginSpecHelper::ENV_MUTEX.synchronize do
     bin_dir = File.tempname("krikri-fake-dnf")
     Dir.mkdir_p(bin_dir)
     dnf = File.join(bin_dir, "dnf")
-    File.write(dnf, RECORDING_DNF)
+    File.write(dnf, dnf_script)
     File.chmod(dnf, 0o755)
     rpm = File.join(bin_dir, "rpm")
     File.write(rpm, FAILING_RPM)
@@ -429,10 +445,20 @@ private ISSUE280_DNF = <<-'SH'
 printf '%s\n' "$*" >> "${KRIKRI_FAKE_DNF_LOG:?}"
 case "$2/$3" in
   "list/--available")
-    for n in ${KRIKRI_FAKE_DNF_AVAILABLE:-}; do
-      [ "$4" = "$n" ] && exit 0
+    # Every requested spec rides in ONE invocation (issue #904), so each
+    # carried name answers with a row like real dnf prints and the
+    # invocation exits 0 as soon as any of them matched.
+    found=1
+    for n in "$@"; do
+      for a in ${KRIKRI_FAKE_DNF_AVAILABLE:-}; do
+        if [ "$n" = "$a" ]; then
+          printf '%s.x86_64  1.0-1.el9  fake\n' "$n"
+          found=0
+          break
+        fi
+      done
     done
-    exit 1
+    exit $found
     ;;
 esac
 if [ -n "${KRIKRI_FAKE_DNF_DEPSOLVE:-}" ]; then
@@ -522,12 +548,12 @@ describe "dnf plugin - same-name repo package vs a Provides: match (issue 280)" 
       result.as_h.keys.first(6).must_equal Krikri::PluginHelpers::DnfInstallFailures::DNF_DEPSOLVE_FAILURE_ORDER
       # Both names travel in ONE install batch - the divergence seen on
       # the real host was gcc silently installing on its own while the
-      # batch only ever saw gcc.
+      # batch only ever saw gcc. Their repo-row probe is batched too
+      # (issue #904), so both names ride in a single `list --available`.
       File.read_lines(log).last.must_equal(
         "install #{BASELINE_OPTIONS} curl gcc")
-      File.read_lines(log).first(2).must_equal([
-        "-q list --available curl",
-        "-q list --available gcc",
+      File.read_lines(log).first(1).must_equal([
+        "-q list --available curl gcc",
       ])
     end
   end
@@ -602,6 +628,28 @@ describe "dnf plugin - '*' upgrade-all best handling (issue 299)" do
       result = PluginSpecHelper.run("dnf", {"name" => "fake-pkg", "state" => "latest"}, vars: {"ansible_pkg_mgr" => "dnf"})
       falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
       recorded_install_command(log).must_equal("install #{BASELINE_OPTIONS} fake-pkg")
+    end
+  end
+
+  # Issue #904: Ansible's dnf module hands the whole `name:` list to ONE
+  # depsolve, so the repo-row question costs one dnf startup per task -
+  # not one per name. The engine used to probe each name separately,
+  # which is why a `perl(Module)` capability list ran ~2.7s per entry and
+  # a long list took minutes. Every requested spec has to reach dnf in a
+  # single `list --available` invocation.
+  it "probes repo availability once for a whole capability-name list" do
+    with_recording_pkg_managers(RECORDING_DNF_ALL) do |log|
+      result = PluginSpecHelper.run("dnf", {
+        "name"  => %(["perl(strict)", "perl(warnings)", "perl(File::Spec)"]),
+        "state" => "present",
+      }, vars: {"ansible_pkg_mgr" => "dnf"})
+      falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+
+      availability = File.read_lines(log).select(&.starts_with?("-q list --available"))
+      availability.size.must_equal(1)
+      availability[0].includes?("perl(strict)").must_equal(true)
+      availability[0].includes?("perl(warnings)").must_equal(true)
+      availability[0].includes?("perl(File::Spec)").must_equal(true)
     end
   end
 end

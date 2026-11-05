@@ -158,10 +158,20 @@ private PACKAGE732_DNF = <<-'SH'
 printf '%s\n' "$*" >> "${KRIKRI_FAKE_DNF_LOG:?}"
 case "$2/$3" in
   "list/--available")
-    for n in ${KRIKRI_FAKE_DNF_AVAILABLE:-}; do
-      [ "$4" = "$n" ] && exit 0
+    # Every requested spec rides in ONE invocation (issue #904), so each
+    # carried name answers with a row like real dnf prints and the
+    # invocation exits 0 as soon as any of them matched.
+    found=1
+    for n in "$@"; do
+      for a in ${KRIKRI_FAKE_DNF_AVAILABLE:-}; do
+        if [ "$n" = "$a" ]; then
+          printf '%s.x86_64  1.0-1.el9  fake\n' "$n"
+          found=0
+          break
+        fi
+      done
     done
-    exit 1
+    exit $found
     ;;
 esac
 echo "Installed:"
