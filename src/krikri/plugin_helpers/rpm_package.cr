@@ -4,6 +4,7 @@ require "./dnf_install_failures"
 require "./http_download"
 require "./fetch_tempfile"
 require "./multiext_split"
+require "./rpm_spec_probe"
 require "../base_plugin"
 
 module Krikri
@@ -29,6 +30,7 @@ module Krikri
       # own dnf/yum shell-out needs the identical shape and can't include
       # this module (it also serves apt).
       include DnfInstallFailures
+      include RpmSpecProbe
       # ----- shared execution path (moved verbatim from yum.cr, whose
       # install path was the more-refactored of the two; dnf.cr now
       # delegates to the same methods instead of carrying an older,
@@ -114,7 +116,7 @@ module Krikri
         # query the file with `rpm -qp` instead.
         query = pkg.starts_with?("/") && pkg.ends_with?(".rpm") ? "rpm -qp" : "rpm -q"
         result = remote_exec_tolerating_unknown_repo(
-          "#{query} --qf '%{NAME}-%{VERSION}-%{RELEASE}.%{ARCH}' #{quote_package(pkg)}"
+          "#{query} --qf '#{RPM_NEVRA_QUERYFORMAT}' #{quote_package(pkg)}"
         )
         out = result[:stdout].strip
         return pkg if result[:exit_code] != 0 || out.empty? || out.includes?("not installed")
@@ -221,6 +223,30 @@ module Krikri
         listed = remote_exec("#{pkg_manager_binary} list --available #{quote_package(pkg)}")
         row = parse_dnf_list_output(listed[:stdout]).first?
         row && row["nevra"].as_s? ? row["nevra"].as_s : pkg
+      end
+
+      # Batched #candidate_nevra for a whole pending list (check mode):
+      # the rpm side in one round trip and every repo lookup in ONE dnf
+      # invocation, instead of re-probing each name one at a time (issue
+      # #904). *states* is the classification the caller already computed,
+      # so nothing is probed twice. Specs the batch framing can't carry (a
+      # glob, a group, a URL/file) keep the per-name path.
+      private def candidate_nevras(pending : Array(String), states : Hash(String, Bool)) : Array(String)
+        batched = pending.select { |pkg| rpm_probe_batchable?(pkg) && !package_group?(pkg) && !url_or_file?(pkg) }.to_set
+        installed_nevras = rpm_nevras(pending.select { |pkg| batched.includes?(pkg) && states[pkg]? })
+        available_rows = dnf_available_rows(pending.select { |pkg| batched.includes?(pkg) && !states[pkg]? })
+
+        pending.map do |pkg|
+          unless batched.includes?(pkg)
+            next candidate_nevra(pkg)
+          end
+          if states[pkg]?
+            installed_nevras[pkg]? || pkg
+          else
+            row = available_rows.find { |candidate| candidate["name"].as_s? == pkg.strip }
+            row && (nevra = row["nevra"].as_s?) ? nevra : pkg
+          end
+        end
       end
 
       # An rpm FILE (a fetched URL or a local path) whose own NEVRA is
@@ -1055,7 +1081,7 @@ module Krikri
         if check_mode?
           pending = to_install + to_update
           return transaction_result(false) if pending.empty?
-          return check_mode_transaction_result(true, pending.map { |pkg| "Installed: #{candidate_nevra(pkg)}" })
+          return check_mode_transaction_result(true, candidate_nevras(pending, classified[:states]).map { |nevra| "Installed: #{nevra}" })
         end
 
         changed = false
@@ -1074,8 +1100,10 @@ module Krikri
             changed = true
             # Real builds `results` from the transaction's own package
             # set, i.e. the RPM NEVRA that actually landed - not the
-            # requested spec (see #rpm_nevra).
-            installed.concat(to_install.map { |pkg| "Installed: #{rpm_nevra(pkg)}" })
+            # requested spec (see #rpm_nevra). One batched lookup for the
+            # whole batch (issue #904).
+            nevras = rpm_nevras(to_install)
+            installed.concat(to_install.map { |pkg| "Installed: #{nevras[pkg]? || pkg}" })
           end
         end
 
@@ -1089,7 +1117,8 @@ module Krikri
 
           if outcome[:changed]
             changed = true
-            installed.concat(to_update.map { |pkg| "Installed: #{rpm_nevra(pkg)}" })
+            nevras = rpm_nevras(to_update)
+            installed.concat(to_update.map { |pkg| "Installed: #{nevras[pkg]? || pkg}" })
           end
         end
 
@@ -1100,10 +1129,15 @@ module Krikri
         transaction_result(changed, installed)
       end
 
-      private def classify_install_packages(names : Array(String), update_only : Bool) : NamedTuple(to_install: Array(String), to_update: Array(String), already_installed: Array(String))
+      private def classify_install_packages(names : Array(String), update_only : Bool) : NamedTuple(to_install: Array(String), to_update: Array(String), already_installed: Array(String), states: Hash(String, Bool))
         to_install = [] of String
         to_update = [] of String
         already_installed = [] of String
+
+        # Every name's already-installed answer in two round trips rather
+        # than up to three per name (issue #904) - check mode reuses the
+        # same answers for its NEVRA lookups.
+        states = installed_states(names.reject { |pkg| package_group?(pkg) || url_or_file?(pkg) })
 
         names.each do |pkg|
           if package_group?(pkg)
@@ -1131,7 +1165,7 @@ module Krikri
             end
           else
             # Check if package is installed
-            if package_installed?(pkg)
+            if states[pkg]?
               if update_only
                 to_update << pkg
               else
@@ -1148,18 +1182,19 @@ module Krikri
           end
         end
 
-        {to_install: to_install, to_update: to_update, already_installed: already_installed}
+        {to_install: to_install, to_update: to_update, already_installed: already_installed, states: states}
       end
 
       private def handle_remove(names : Array(String), options : String) : PluginResult
         to_remove = [] of String
+        states = installed_states(names.reject { |pkg| package_group?(pkg) })
 
         # Check which packages need to be removed
         names.each do |pkg|
           if package_group?(pkg)
             # For groups, always try to remove (dnf handles if not installed)
             to_remove << pkg
-          elsif package_installed?(pkg)
+          elsif states[pkg]?
             to_remove << pkg
           end
         end
@@ -1177,9 +1212,9 @@ module Krikri
         end
 
         # Ansible's `results` entries name the RPM that was removed, so the
-        # NEVRA has to be read BEFORE the transaction erases it.
-        nevras = {} of String => String
-        to_remove.each { |pkg| nevras[pkg] = rpm_nevra(pkg) }
+        # NEVRA has to be read BEFORE the transaction erases it - in one
+        # batched lookup for the whole removal list (issue #904).
+        nevras = rpm_nevras(to_remove)
 
         if check_mode?
           return check_mode_transaction_result(true, to_remove.map { |pkg| "Removed: #{nevras[pkg]? || pkg}" })
@@ -1233,6 +1268,7 @@ module Krikri
       private def handle_update_staged(names : Array(String), options : String) : PluginResult
         to_install = [] of String
         to_update = [] of String
+        states = installed_states(names.reject { |pkg| package_group?(pkg) || url_or_file?(pkg) })
 
         names.each do |pkg|
           if package_group?(pkg)
@@ -1248,7 +1284,7 @@ module Krikri
             unless rpm_file_already_installed?(pkg) && check_mode?
               to_install << pkg
             end
-          elsif package_installed?(pkg)
+          elsif states[pkg]?
             to_update << pkg
           else
             to_install << pkg
@@ -1258,7 +1294,7 @@ module Krikri
         if check_mode?
           pending = to_install + to_update
           return with_installed_filename_results(transaction_result(false), names) if pending.empty?
-          return with_installed_filename_results(check_mode_transaction_result(true, pending.map { |pkg| "Installed: #{candidate_nevra(pkg)}" }), names)
+          return with_installed_filename_results(check_mode_transaction_result(true, candidate_nevras(pending, states).map { |nevra| "Installed: #{nevra}" }), names)
         end
 
         changed = false
@@ -1274,7 +1310,8 @@ module Krikri
 
           if outcome[:changed]
             changed = true
-            installed.concat(to_install.map { |pkg| "Installed: #{rpm_nevra(pkg)}" })
+            nevras = rpm_nevras(to_install)
+            installed.concat(to_install.map { |pkg| "Installed: #{nevras[pkg]? || pkg}" })
           end
         end
 
@@ -1287,7 +1324,8 @@ module Krikri
 
           if outcome[:changed]
             changed = true
-            installed.concat(to_update.map { |pkg| "Installed: #{rpm_nevra(pkg)}" })
+            nevras = rpm_nevras(to_update)
+            installed.concat(to_update.map { |pkg| "Installed: #{nevras[pkg]? || pkg}" })
           end
         end
 
@@ -1540,41 +1578,132 @@ module Krikri
       end
 
       private def package_installed?(name : String) : Bool
+        installed_states([name])[name]? || false
+      end
+
+      # Whether each of *names* is already satisfied on the host, in the
+      # order the checks below have always run, but batched: Ansible's dnf
+      # module resolves a whole `name:` list in ONE depsolve, so this
+      # engine's per-name probing made capability-style names
+      # (`perl(Foo::Bar)`) cost a full dnf4 CLI startup each - ~2.7s per
+      # name, minutes for a long list (issue #904). One round trip now
+      # answers the rpm side for the whole list, and only the repo-row
+      # question needs a dnf invocation - also one for the whole list.
+      private def installed_states(names : Array(String)) : Hash(String, Bool)
+        states = Hash(String, Bool).new
+        bases = Hash(String, String).new
         # Strip version specifiers for checking
+        names.each { |name| bases[name] = name.split(/[<>=]/).first.strip }
+
+        batchable = bases.values.uniq!.select { |base| rpm_probe_batchable?(base) }
+        probes = rpm_spec_probes(batchable, RPM_NEVRA_QUERYFORMAT)
+        unprobed = batchable.reject { |base| probes[base]?.try(&.[:installed]) || false }
+        carried = repos_carrying(unprobed)
+
+        bases.each do |name, base_name|
+          # Glob specs (whose row listing would be the whole archive) and
+          # anything the batch framing cannot carry keep the per-name path.
+          unless batchable.includes?(base_name)
+            states[name] = package_installed_individually?(name)
+            next
+          end
+
+          probe = probes[base_name]?
+          states[name] = if probe.nil?
+                           package_installed_individually?(name)
+                         elsif probe[:installed]
+                           # Try a plain `rpm -q <name>` first (correctly
+                           # matches both a bare name and a NEVRA-style
+                           # "name-version" specifier).
+                           true
+                         elsif carried.includes?(base_name)
+                           # But never let a Provides: hit stand in for a
+                           # name the repos carry themselves: Ansible's dnf
+                           # module hands `name:` to python-dnf untouched,
+                           # which resolves it to the repo package of that
+                           # exact name - a depsolve-level fatal on Rocky 9,
+                           # where `dnf: name: curl` on a host whose
+                           # curl-minimal Provides: "curl" fails the task
+                           # (curl conflicts with curl-minimal; zorlin.rust
+                           # round round29879595, issue #280), not the
+                           # already-installed no-op this fallback used to
+                           # answer. A package of this exact name being
+                           # available means not-installed, so the install
+                           # batch runs and dnf reports its own failure
+                           # through the already-shaped depsolve/no-match
+                           # paths; a purely virtual name like RHEL 9's
+                           # `php-json` has no repo row, that listing fails
+                           # (like every other error: no binary, dead
+                           # repos), and the `--whatprovides` answer keeps
+                           # those.
+                           false
+                         else
+                           # A VIRTUAL package name satisfied purely via
+                           # another real package's `Provides:` (e.g.
+                           # RHEL 9's `php-json`, bundled into `php-common`
+                           # since PHP 8.0, or every `perl(Module)` name) -
+                           # `--whatprovides` ALONE regresses any
+                           # version-pinned NEVRA name (`rpm -q
+                           # --whatprovides telegraf-1.18.2` fails even when
+                           # that exact NEVRA is installed, verified live),
+                           # which is why the exact-name query runs first.
+                           probe[:provides]
+                         end
+        end
+        states
+      end
+
+      # The one-spec form of the probe chain above, unchanged in behavior
+      # for the specs the batched framing cannot carry.
+      private def package_installed_individually?(name : String) : Bool
         base_name = name.split(/[<>=]/).first.strip
 
-        # Try a plain `rpm -q <name>` first (correctly matches both a
-        # bare name and a NEVRA-style "name-version" specifier), falling
-        # back to `--whatprovides` (a Provides:/capability lookup) only
-        # for a VIRTUAL package name satisfied purely via another real
-        # package's `Provides:` (e.g. RHEL 9's `php-json`, bundled into
-        # `php-common` since PHP 8.0) - `--whatprovides` ALONE regresses
-        # any version-pinned NEVRA name (`rpm -q --whatprovides
-        # telegraf-1.18.2` fails even when that exact NEVRA is installed,
-        # verified live), so both checks are needed, in this order.
         result = remote_exec("rpm -q #{shell_single_quote(base_name)} 2>/dev/null")
         return true if result[:exit_code] == 0
 
-        # But never let a Provides: hit stand in for a name the repos
-        # carry themselves: Ansible's dnf module hands `name:` to
-        # python-dnf untouched, which resolves it to the repo package
-        # of that exact name - a depsolve-level fatal on Rocky 9, where
-        # `dnf: name: curl` on a host whose curl-minimal Provides:
-        # "curl" fails the task (curl conflicts with curl-minimal;
-        # zorlin.rust round round29879595, issue #280), not the
-        # already-installed no-op this fallback used to answer. Asking
-        # dnf/yum for the name itself separates those: a package of
-        # this exact name is available -> report not-installed so the
-        # install batch runs (and dnf reports its own failure through
-        # the already-shaped depsolve/no-match paths); a purely
-        # virtual name like RHEL 9's `php-json` has no repo row,
-        # this listing fails (like every other error: no binary, dead
-        # repos), and the `--whatprovides` fallback below keeps those.
         available = remote_exec("#{pkg_manager_binary} -q list --available #{shell_single_quote(base_name)} 2>/dev/null")
         return false if available[:exit_code] == 0
 
         result = remote_exec("rpm -q --whatprovides #{shell_single_quote(base_name)} 2>/dev/null")
         result[:exit_code] == 0
+      end
+
+      # The names among *specs* the enabled repos carry as a package of
+      # exactly that name - ONE dnf invocation for the whole list.
+      private def repos_carrying(specs : Array(String)) : Set(String)
+        carried = Set(String).new
+        dnf_available_rows(specs).each do |row|
+          if name = row["name"].as_s?
+            carried << name
+          end
+        end
+        carried
+      end
+
+      # The `dnf list --available` rows for a whole list of specs, in one
+      # invocation: a batch answers rc 0 when ANY spec matched, so the
+      # per-spec verdict comes from the rows' own package names rather
+      # than from the exit status.
+      private def dnf_available_rows(specs : Array(String)) : Array(JSON::Any)
+        return [] of JSON::Any if specs.empty?
+        result = remote_exec("#{pkg_manager_binary} -q list --available #{specs.map { |spec| shell_single_quote(spec) }.join(" ")} 2>/dev/null")
+        parse_dnf_list_output(result[:stdout])
+      end
+
+      # Batched #rpm_nevra over a whole list: ONE round trip for every
+      # plain spec, the per-spec query only for a path/glob spec the batch
+      # framing cannot carry.
+      private def rpm_nevras(names : Array(String)) : Hash(String, String)
+        plain = names.select { |pkg| rpm_probe_batchable?(pkg) && !(pkg.starts_with?("/") && pkg.ends_with?(".rpm")) }.to_set
+        probes = rpm_spec_probes(plain.to_a, RPM_NEVRA_QUERYFORMAT)
+        names.each_with_object({} of String => String) do |pkg, nevras_out|
+          if !plain.includes?(pkg)
+            nevras_out[pkg] = rpm_nevra(pkg)
+            next
+          end
+          nevra = probes[pkg]?.try(&.[:nevra])
+          nevras_out[pkg] = nevra.nil? || nevra.empty? ? pkg : nevra
+        end
       end
 
       private def handle_autoremove : PluginResult

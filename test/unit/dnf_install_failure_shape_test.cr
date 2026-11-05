@@ -509,7 +509,10 @@ private def with_cacheonly_dnf_shim(installed : Bool, &)
   Dir.mkdir_p(shim_dir)
   rpm_script = "#!/bin/sh\n"
   rpm_script += "case \"$*\" in *--whatprovides*) exit 1;; esac\n"
-  rpm_script += installed ? "exit 0\n" : "exit 1\n"
+  # The installed?-precheck is one batched `rpm -q --qf` for the whole
+  # package list (issue #904), so an "installed" answer has to come back
+  # as the NEVRA that query would print, not as a bare exit status.
+  rpm_script += installed ? "case \"$*\" in *--qf*) printf 'gzip-1.13-4.el10_2.x86_64'; exit 0;; esac\nexit 0\n" : "exit 1\n"
   File.write("#{shim_dir}/rpm", rpm_script)
   File.chmod("#{shim_dir}/rpm", 0o755)
   dnf_script = "#!/bin/sh\ncase \"$*\" in\n  *--available*) exit 0;;\n  *list*) exit 1;;\nesac\n"

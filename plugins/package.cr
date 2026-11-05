@@ -6,6 +6,7 @@ require "../src/krikri/plugin_helpers/apt_lock_retry"
 require "../src/krikri/plugin_helpers/apt_deb_install"
 require "../src/krikri/plugin_helpers/apt_locale"
 require "../src/krikri/plugin_helpers/dnf_install_failures"
+require "../src/krikri/plugin_helpers/rpm_spec_probe"
 
 module Krikri
   # Package Plugin - OS-agnostic package management
@@ -78,6 +79,7 @@ module Krikri
     # and key order) is parsed by the same shared helper the dnf/yum
     # plugins use - one source of truth for a live-verified shape.
     include PluginHelpers::DnfInstallFailures
+    include PluginHelpers::RpmSpecProbe
     property? check_mode : Bool
     # Resolved remote path of apt-get (see #apt_get_bin), nil until first
     # needed.
@@ -836,6 +838,18 @@ module Krikri
       statuses = Hash(String, DnfSpecResolution).new
       installed = Hash(String, String).new
       available = Hash(String, String).new
+
+      # Batched probes (issue #904): Ansible's dnf module resolves a whole
+      # `name:` list in ONE depsolve, so the per-spec probe chain below
+      # made capability names like `perl(Foo::Bar)` pay a full dnf CLI
+      # startup each (~2.7s per name, minutes for a long list). The RPM
+      # database side is answered for the whole list in one round trip and
+      # the repo rows in one dnf invocation; only a spec the batch framing
+      # cannot carry (a glob) keeps the per-spec path.
+      batchable = names.select { |pkg| rpm_probe_batchable?(pkg) }.to_set
+      probes = rpm_spec_probes(batchable.to_a, DNF_NEVRA_QF)
+      repo_rows = dnf_repo_rows(batchable.reject { |pkg| probes[pkg]?.try(&.[:installed]) || false }.to_a)
+
       names.each do |pkg|
         if url_or_file?(pkg)
           statuses[pkg] = DnfSpecResolution::Available
@@ -850,44 +864,79 @@ module Krikri
           end
         else
           has_glob = pkg.includes?('*') || pkg.includes?('?') || pkg.includes?('[')
-          rpm_probe = remote_exec("rpm -q --qf '#{DNF_NEVRA_QF}' #{shell_single_quote(pkg)}")
-          if rpm_probe[:exit_code] == 0
+          probe = batchable.includes?(pkg) ? probes[pkg]? : nil
+          if probe.nil?
+            classify_dnf_name_individually(pkg, has_glob, statuses, installed, available)
+          elsif probe[:installed]
             statuses[pkg] = DnfSpecResolution::Installed
-            # A glob spec can name several installed RPMs at once; only a
-            # single-line answer is one package's NEVRA.
-            nevra = rpm_probe[:stdout].strip
-            installed[pkg] = nevra if !nevra.empty? && !nevra.includes?('\n')
+            installed[pkg] = probe[:nevra] unless probe[:nevra].empty?
+          elsif row = repo_rows.find { |candidate| rpm_repo_row_matches?(candidate[0], pkg) }
+            statuses[pkg] = DnfSpecResolution::Available
+            available[pkg] = row[1]
+          elsif probe[:provides]
+            statuses[pkg] = DnfSpecResolution::Virtual
+          elsif (provides_nevra = dnf_available_provides_nevra(pkg))
+            statuses[pkg] = DnfSpecResolution::Available
+            available[pkg] = provides_nevra
           else
-            # A glob spec skips the repo-row probe, exactly as this check
-            # always did (`dnf list --available '*'` would list every
-            # package in the archive) - an unmatched glob keeps the
-            # transaction proceeding (the real install either matches or
-            # fails on its own) instead of a missing-spec failure no
-            # plain name is involved in.
-            if !has_glob
-              available_probe = remote_exec("dnf -q list --available #{shell_single_quote(pkg)} 2>/dev/null || yum -q list --available #{shell_single_quote(pkg)} 2>/dev/null")
-              row = dnf_check_update_rows(available_probe[:stdout]).first?
-              if available_probe[:exit_code] == 0
-                statuses[pkg] = DnfSpecResolution::Available
-                available[pkg] = row ? row[1] : pkg
-                next
-              end
-            end
-            if remote_exec("rpm -q --whatprovides #{shell_single_quote(pkg)}")[:exit_code] == 0
-              statuses[pkg] = DnfSpecResolution::Virtual
-            elsif has_glob
-              statuses[pkg] = DnfSpecResolution::Available
-              available[pkg] = pkg
-            elsif (provides_nevra = dnf_available_provides_nevra(pkg))
-              statuses[pkg] = DnfSpecResolution::Available
-              available[pkg] = provides_nevra
-            else
-              statuses[pkg] = DnfSpecResolution::Missing
-            end
+            statuses[pkg] = DnfSpecResolution::Missing
           end
         end
       end
       {statuses: statuses, installed: installed, available: available}
+    end
+
+    # The per-spec probe chain #classify_dnf_names keeps for a spec the
+    # batched framing cannot carry (a glob, whose row listing would be the
+    # whole archive, or anything with a newline).
+    #
+    # A glob spec skips the repo-row probe, exactly as this check always
+    # did (`dnf list --available '*'` would list every package in the
+    # archive) - an unmatched glob keeps the transaction proceeding (the
+    # real install either matches or fails on its own) instead of a
+    # missing-spec failure no plain name is involved in.
+    private def classify_dnf_name_individually(pkg : String, has_glob : Bool, statuses : Hash(String, DnfSpecResolution), installed : Hash(String, String), available : Hash(String, String)) : Nil
+      rpm_probe = remote_exec("rpm -q --qf '#{DNF_NEVRA_QF}' #{shell_single_quote(pkg)}")
+      if rpm_probe[:exit_code] == 0
+        statuses[pkg] = DnfSpecResolution::Installed
+        nevra = rpm_probe[:stdout].strip
+        installed[pkg] = nevra if !nevra.empty? && !nevra.includes?('\n')
+        return
+      end
+
+      if !has_glob
+        available_probe = remote_exec("dnf -q list --available #{shell_single_quote(pkg)} 2>/dev/null || yum -q list --available #{shell_single_quote(pkg)} 2>/dev/null")
+        row = dnf_check_update_rows(available_probe[:stdout]).first?
+        if available_probe[:exit_code] == 0
+          statuses[pkg] = DnfSpecResolution::Available
+          available[pkg] = row ? row[1] : pkg
+          return
+        end
+      end
+
+      if remote_exec("rpm -q --whatprovides #{shell_single_quote(pkg)}")[:exit_code] == 0
+        statuses[pkg] = DnfSpecResolution::Virtual
+      elsif has_glob
+        statuses[pkg] = DnfSpecResolution::Available
+        available[pkg] = pkg
+      elsif (provides_nevra = dnf_available_provides_nevra(pkg))
+        statuses[pkg] = DnfSpecResolution::Available
+        available[pkg] = provides_nevra
+      else
+        statuses[pkg] = DnfSpecResolution::Missing
+      end
+    end
+
+    # The `dnf list --available` rows for a whole list of specs in ONE
+    # invocation (issue #904). A batch answers rc 0 when ANY spec matched,
+    # so each spec's verdict comes from the rows' own package names. The
+    # `yum` fallback only runs when dnf answered nothing at all: on every
+    # host where both exist, yum IS dnf.
+    private def dnf_repo_rows(specs : Array(String)) : Array({String, String})
+      return [] of {String, String} if specs.empty?
+      quoted = specs.map { |spec| shell_single_quote(spec) }.join(" ")
+      result = remote_exec("dnf -q list --available #{quoted} 2>/dev/null || yum -q list --available #{quoted} 2>/dev/null")
+      dnf_check_update_rows(result[:stdout])
     end
 
     # The installed NEVRA rpm names for one package, epoch included (see
