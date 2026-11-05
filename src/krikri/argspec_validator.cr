@@ -15,9 +15,10 @@ require "./task_executor/result_display"
 # Data-driven module argument validation, matching ansible-core's
 # AnsibleModule argument-spec checks word-for-word.
 #
-# The spec table (data/argspecs.json) is GENERATED from the installed
-# ansible-core + collections by scripts/gen_argspecs.py: it captures each
-# module's own AnsibleModule(argument_spec=...) call (options, aliases,
+# The spec tables (data/argspecs.json for the default ansible-core 2.19
+# profile, data/argspecs_220.json for the 2.20 profile) are GENERATED from
+# the installed ansible-core + collections by scripts/gen_argspecs.py: each
+# captures the module's own AnsibleModule(argument_spec=...) call (options, aliases,
 # types, required, choices, defaults, mutually_exclusive/required_together/
 # required_one_of/required_if/required_by) plus live-probed facts the spec
 # itself cannot tell you (which module name Ansible prints in
@@ -98,6 +99,27 @@ module Krikri
 
     @@table : Hash(String, JSON::Any)? = nil
 
+    # Which ansible-core argspec generation the active table captures:
+    # "2.19" (default, data/argspecs.json from ansible-core 2.19.11) or
+    # "2.20" (data/argspecs_220.json from ansible-core 2.20.1, e.g. stat's
+    # get_selinux_context exists again there). Selectable per run via
+    # --krikri-argspec-profile; must be set before the first validation
+    # memoizes a table.
+    @@profile = "2.19"
+
+    def profile : String
+      @@profile
+    end
+
+    def profile=(value : String)
+      unless value.in?("2.19", "2.20")
+        raise ArgumentError.new("unsupported argspec profile '#{value}' (supported: 2.19, 2.20)")
+      end
+      @@profile = value
+      @@table = nil
+      @@option_order = nil
+    end
+
     # Params the sweep environment's collections mark removed_in_version:
     # passing one deprecates at module bootstrap (the general
     # "Param 'x' is deprecated. ... removed from collection 'C' version N"
@@ -109,7 +131,11 @@ module Krikri
     }
 
     private def table : Hash(String, JSON::Any)
-      @@table ||= JSON.parse({{ read_file("#{__DIR__}/../../data/argspecs.json") }}).as_h
+      @@table ||= JSON.parse(argspec_json_source).as_h
+    end
+
+    private def argspec_json_source : String
+      @@profile == "2.20" ? {{ read_file("#{__DIR__}/../../data/argspecs_220.json") }} : {{ read_file("#{__DIR__}/../../data/argspecs.json") }}
     end
 
     @@option_order : Hash(String, Array(String))? = nil
@@ -123,7 +149,7 @@ module Krikri
     private def option_order_table : Hash(String, Array(String))
       @@option_order ||= begin
         order = Hash(String, Array(String)).new
-        pull = JSON::PullParser.new({{ read_file("#{__DIR__}/../../data/argspecs.json") }})
+        pull = JSON::PullParser.new(argspec_json_source)
         pull.read_object do |module_name|
           names = [] of String
           pull.read_object do |key|

@@ -355,6 +355,7 @@ module_path_args = [] of String
 vault_id_args = [] of String
 vault_password_file = nil
 ask_vault_pass = false
+argspec_profile = "2.19"
 
 begin
   OptionParser.parse(cli_args) do |parser|
@@ -430,6 +431,10 @@ begin
 
     parser.on("--krikri-oneline", "Alias for -o/--one-line (the --krikri- namespace makes the extension discoverable even where upstream has no flag).") do
       oneline_enabled = true
+    end
+
+    parser.on("--krikri-argspec-profile=VERSION", "Module-argspec table to validate module arguments and echo invocation.module_args against: 2.19 (default, ansible-core 2.19.11) or 2.20 (ansible-core 2.20.1, e.g. restores stat's get_selinux_context in echoed module_args). Must be set before any module runs.") do |ver|
+      argspec_profile = ver
     end
 
     parser.on("-v", "--verbose", "Verbose output") do
@@ -598,6 +603,14 @@ end
 # the krikri-only CLI switches land on the same internal enabled flags.
 Krikri::ProfileTasks.enable if profile_tasks_enabled
 Krikri::Oneline.enable if oneline_enabled
+
+case argspec_profile
+when "2.19", "2.20", "2.20.1"
+  Krikri::ArgspecValidator.profile = argspec_profile == "2.19" ? "2.19" : "2.20"
+else
+  puts "Error: unsupported --krikri-argspec-profile '#{argspec_profile}' (supported: 2.19, 2.20)".colorize(:red)
+  exit 1
+end
 
 extra_vars = {} of String => JSON::Any
 extra_var_origins = {} of String => Krikri::VarOrigin

@@ -3,6 +3,7 @@ require "../../src/krikri/argspec_validator"
 require "../../src/krikri/variable_substitutor"
 
 describe Krikri::ArgspecValidator do
+  serial!
   it "builds invocation.module_args with spec defaults for command" do
     args = Krikri::ArgspecValidator.invocation_args("ansible.builtin.command", {"cmd" => "echo a"}).as(Hash(String, JSON::Any))
     args["cmd"].as_s.must_equal("echo a")
@@ -42,6 +43,25 @@ describe Krikri::ArgspecValidator do
     args = Krikri::ArgspecValidator.invocation_args("ansible.builtin.stat", {"path" => "/etc/hosts"}).as(Hash(String, JSON::Any))
     args.has_key?("path").must_equal(true)
     args.has_key?("get_selinux_context").must_equal(false)
+  end
+
+  it "echoes get_selinux_context under the 2.20 profile and drops it again on 2.19" do
+    # ansible-core 2.20 restored get_selinux_context to stat's argspec
+    # (issue #910): the 2.20 argspec profile echoes its default.
+    Krikri::ArgspecValidator.profile = "2.20"
+    begin
+      args = Krikri::ArgspecValidator.invocation_args("ansible.builtin.stat", {"path" => "/etc/hosts"}).as(Hash(String, JSON::Any))
+      args["get_selinux_context"].as_bool.must_equal(false)
+    ensure
+      Krikri::ArgspecValidator.profile = "2.19"
+    end
+    args = Krikri::ArgspecValidator.invocation_args("ansible.builtin.stat", {"path" => "/etc/hosts"}).as(Hash(String, JSON::Any))
+    args.has_key?("get_selinux_context").must_equal(false)
+  end
+
+  it "rejects an unsupported argspec profile" do
+    ex = assert_raises(ArgumentError) { Krikri::ArgspecValidator.profile = "2.18" }
+    ex.message.to_s.must_match(/supported: 2\.19, 2\.20/)
   end
 
   it "has no invocation for an unknown module" do
