@@ -35,6 +35,11 @@ describe Krikri::ArgspecValidator do
     args.keys.first(4).must_equal(%w[dest path src state])
   end
 
+  it "reports stat's get_selinux_context default in invocation.module_args" do
+    args = Krikri::ArgspecValidator.invocation_args("ansible.builtin.stat", {"path" => "/etc/hosts"}).as(Hash(String, JSON::Any))
+    args["get_selinux_context"].as_bool.must_equal(false)
+  end
+
   it "has no invocation for an unknown module" do
     Krikri::ArgspecValidator.invocation_args("ansible.builtin.nope", {} of String => String).must_be_nil
   end
