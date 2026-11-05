@@ -588,6 +588,29 @@ describe Krikri::VariableSubstitutor::JinjaRenderer do
     renderer.render(%({{ lookup('pipe', 'echo hello-from-pipe') }})).must_equal("hello-from-pipe")
   end
 
+  it "raises on lookup('lines'/'pipe', ...) with a failing command, and renders None under errors=ignore" do
+    # Real ansible's pipe.py and lines.py both RAISE on a non-zero exit
+    # ("The lookup plugin '<name>' failed: lookup_plugin.<name>(<cmd>)
+    # returned <rc>"), failing the task. The engine copies used to
+    # return None here, so a failing with_lines: loop source
+    # (tksarah.fetch-files's cat of a missing filelist, issue #866)
+    # hit the executor's generic "failed or is not available for this
+    # loop source" message instead of ansible's own. The generic
+    # errors='ignore' mode carries on with None instead (rendered
+    # empty, live-verified vs 2.19.11).
+    v = Hash(String, JSON::Any).new
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
+
+    assert_raises_message(Krikri::PythonLookupRunner::LookupError, "The lookup plugin 'lines' failed: lookup_plugin.lines(exit 3) returned 3") do
+      renderer.render(%({{ lookup('lines', 'exit 3') }}))
+    end
+    assert_raises_message(Krikri::PythonLookupRunner::LookupError, "The lookup plugin 'pipe' failed: lookup_plugin.pipe(exit 3) returned 3") do
+      renderer.render(%({{ lookup('pipe', 'exit 3') }}))
+    end
+    renderer.render(%({{ lookup('lines', 'exit 3', errors='ignore') }})).must_equal("")
+    renderer.render(%({{ query('lines', 'echo one; echo two') | join(',') }})).must_equal("one,two")
+  end
+
   it "renders lookup('template', path) rendering a local .j2 file against the calling template's own vars" do
     path = PluginSpecHelper.tmp_path("crinja_lookup_template_test.j2")
     Dir.mkdir_p(File.dirname(path))

@@ -803,6 +803,21 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
     evaluator.evaluate(%(lookup('pipe', 'exit 7', errors='ignore'))).must_equal("")
   end
 
+  it "raises (does not silently return 'undefined') for lookup('lines', ...) on a non-zero exit" do
+    # Ansible's lines lookup raises on ANY non-zero exit code
+    # ("The lookup plugin 'lines' failed: lookup_plugin.lines(<cmd>)
+    # returned <rc>"), failing the task's arg finalization - the same
+    # hard stop pipe above makes. The old lenient "undefined" sentinel
+    # here let a failing with_lines command (tksarah.fetch-files's cat
+    # of a missing filelist, issue #866) degrade instead of failing.
+    v = Hash(String, JSON::Any).new
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
+    assert_raises_message(Krikri::PythonLookupRunner::LookupError, /lookup plugin 'lines' failed: lookup_plugin\.lines\(echo out; exit 3\) returned 3/) do
+      evaluator.evaluate(%(lookup('lines', 'echo out; exit 3')))
+    end
+    evaluator.evaluate(%(lookup('lines', 'exit 3', errors='ignore'))).must_equal("")
+  end
+
   it "evaluates lookup('template', path) rendering a local .j2 file against expression vars" do
     path = PluginSpecHelper.tmp_path("lookup_template_test.j2")
     Dir.mkdir_p(File.dirname(path))

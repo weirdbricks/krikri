@@ -284,9 +284,32 @@ module Krikri
       when "pipe", "lines"
         output = IO::Memory.new
         status = Process.run("/bin/sh", ["-c", text(first)], output: output, error: Process::Redirect::Close) rescue nil
-        if status.nil? || !status.success?
-          AnyValue.new(nil)
-        elsif name == "pipe"
+        unless status.try(&.success?)
+          # Ansible's own pipe.py and lines.py both RAISE on a non-zero
+          # exit code ("lookup_plugin.<name>(<cmd>) returned <rc>"),
+          # failing the task - the engine copy used to return None here,
+          # so a with_lines: source whose command failed (tksarah.
+          # fetch-files's `cat sample_filelist.txt` of a missing file)
+          # degraded to the executor's generic "failed or is not
+          # available for this loop source" instead of ansible's own
+          # message. The generic errors= option goes on with a None
+          # result (warn warns first) - the same split the file case
+          # above makes.
+          command = text(first)
+          rc = status.try(&.exit_code) || 1
+          errors_option = kwargs["errors"]?.try { |value| text(value).strip.downcase }
+          if errors_option == "warn"
+            ResultDisplay.emit_display_warning(
+              "An error occurred while running the lookup plugin '#{name}': lookup_plugin.#{name}(#{command}) returned #{rc}"
+            )
+            return truthy?(kwargs["wantlist"]?) ? AnyValue.new([] of AnyValue) : AnyValue.new(nil)
+          end
+          return truthy?(kwargs["wantlist"]?) ? AnyValue.new([] of AnyValue) : AnyValue.new(nil) if errors_option == "ignore"
+          raise Krikri::PythonLookupRunner::LookupError.new(
+            "The lookup plugin '#{name}' failed: lookup_plugin.#{name}(#{command}) returned #{rc}"
+          )
+        end
+        if name == "pipe"
           AnyValue.new(output.to_s.chomp)
         else
           AnyValue.new(output.to_s.split('\n').reject(&.empty?).map { |line| AnyValue.new(line) })

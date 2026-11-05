@@ -290,7 +290,7 @@ module Krikri
         lookup_single_element_result(dict.map { |k, v| JSON::Any.new({"key" => JSON::Any.new(k), "value" => v}) }, kwargs, query_mode)
       end
 
-      private def lookup_lines(parts : Array(String)) : String
+      private def lookup_lines(parts : Array(String), kwargs : Array(String) = [] of String) : String
         # lookup('lines', command) - Ansible's own lines lookup:
         # runs *command* on the CONTROLLER (same as pipe above) but
         # returns its output SPLIT into a list of lines, not one
@@ -300,8 +300,18 @@ module Krikri
         begin
           output = IO::Memory.new
           status = Process.run("/bin/sh", ["-c", command], output: output, error: Process::Redirect::Close)
-          return "undefined" unless status.success?
+          # Ansible's own lines.py RAISES on a non-zero exit code
+          # ("lookup_plugin.lines(%s) returned %d"), failing the task
+          # exactly like pipe above - the old lenient "undefined"
+          # sentinel let a failing command degrade to the generic
+          # loop-source failure (or literal "undefined" text) instead
+          # of ansible's hard task failure.
+          return "" if !status.success? && first_found_errors_ignore?(kwargs)
+          raise PythonLookupRunner::LookupError.new(
+            "The lookup plugin 'lines' failed: lookup_plugin.lines(#{command}) returned #{status.exit_code}") unless status.success?
           output.to_s.split('\n').reject(&.empty?).to_json
+        rescue e : PythonLookupRunner::LookupError
+          raise e
         rescue
           "undefined"
         end
