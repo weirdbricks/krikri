@@ -933,6 +933,15 @@ module Krikri
       "ansible_connection", "ansible_host", "ansible_ssh_private_key_file",
       "ansible_ssh_common_args", "ansible_ssh_extra_args",
       "playbook_dir", "ansible_pkg_mgr",
+      # The interpreter keys the mysql_* plugins' driver gate probes with
+      # (mysql_connection.cr): a task pinning ansible_python_interpreter
+      # decides which Python's driver set the gate must ask, the way real
+      # ansible runs the module payload under exactly that interpreter -
+      # and discovered_interpreter_python is the discovery fact the gate
+      # falls back to. pip.cr documents wanting both of these from its
+      # vars too (its candidate order starts with them), so forwarding
+      # them here serves it the same way.
+      "ansible_python_interpreter", "discovered_interpreter_python",
     ]
 
     # Same @@local_md5_cache contract (computed once per distinct local

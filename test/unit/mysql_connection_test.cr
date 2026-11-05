@@ -119,6 +119,62 @@ describe Krikri::PluginHelpers::MysqlConnection do
     end
   end
 
+  describe ".mysql_driver_importable?" do
+    # The gate asks an interpreter, not a package-root scan: the import the
+    # module payload performs resolves pip user-site and venv layouts a
+    # directory scan cannot see. /bin/true and /bin/false stand in for
+    # interpreters with and without an importable driver - both run, so
+    # the "interpreter cannot execute at all" rescue (which keeps today's
+    # carry-on behavior) never muddies the assertion.
+    it "reports importable only when the probed interpreter imports a driver" do
+      Krikri::PluginHelpers::MysqlConnection.mysql_driver_importable?(interpreter: "/bin/true").must_equal(true)
+      Krikri::PluginHelpers::MysqlConnection.mysql_driver_importable?(interpreter: "/bin/false").must_equal(false)
+    end
+
+    it "probes the task's pinned ansible_python_interpreter" do
+      vars = {"ansible_python_interpreter" => JSON::Any.new("/bin/false")}
+      Krikri::PluginHelpers::MysqlConnection.mysql_driver_importable?(vars).must_equal(false)
+    end
+
+    it "falls back to the discovery fact when no interpreter is pinned" do
+      vars = {"discovered_interpreter_python" => JSON::Any.new("/bin/false")}
+      Krikri::PluginHelpers::MysqlConnection.mysql_driver_importable?(vars).must_equal(false)
+    end
+
+    it "treats an auto* interpreter directive as unpinned (discovery decides)" do
+      # auto* values are discovery directives, not interpreter names (the
+      # same treatment pip.cr's candidate list gives them); with discovery
+      # overridden by the explicit interpreter:, the directive itself must
+      # never be probed as a command.
+      vars = {"ansible_python_interpreter" => JSON::Any.new("auto")}
+      Krikri::PluginHelpers::MysqlConnection.mysql_driver_importable?(vars, interpreter: "/bin/false").must_equal(false)
+    end
+
+    it "treats an unexecutable interpreter as inconclusive, not driver-missing" do
+      # Real ansible fails the module run itself when its interpreter does
+      # not exist - a different failure this gate does not invent.
+      Krikri::PluginHelpers::MysqlConnection
+        .mysql_driver_importable?(interpreter: "/krikri-no-such-python").must_equal(true)
+    end
+  end
+
+  describe ".mysql_driver_missing_result" do
+    it "fails with upstream's byte-for-byte mysql_driver_fail_msg when no driver imports" do
+      result = Krikri::PluginHelpers::MysqlConnection.mysql_driver_missing_result(interpreter: "/bin/false")
+      result.try(&.msg).must_equal(
+        "A MySQL module is required: for Python 2.7 either PyMySQL, or " \
+        "MySQL-python, or for Python 3.X mysqlclient or PyMySQL. " \
+        "Consider setting ansible_python_interpreter to use " \
+        "the intended Python version.")
+      result.try(&.failed?).must_equal(true)
+      result.try(&.changed?).must_equal(false)
+    end
+
+    it "returns nil so the module carries on when a driver imports" do
+      Krikri::PluginHelpers::MysqlConnection.mysql_driver_missing_result(interpreter: "/bin/true").must_be_nil
+    end
+  end
+
   describe ".build_uri" do
     it "defaults to localhost:3306, with the current OS user as the connection username" do
       PluginSpecHelper::ENV_MUTEX.synchronize do

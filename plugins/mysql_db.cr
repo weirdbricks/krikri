@@ -99,20 +99,16 @@ module Krikri
     private CHECK_KEY_ORDER = %w[changed db db_list failed]
 
     def execute : PluginResult
-      # Ansible's `name:` param has `aliases: [db]` - same bug
-      # class fixed for postgresql_db/postgresql_user in round 43
-      # (robertdebock.postgres): a real playbook writing `db: mydb`
-      # (the alias) got "missing required argument: name" no matter
-      # what `db:` was set to.
-      raw_name = @params["name"]? || @params["db"]?
-      unless raw_name
-        return PluginResult.new(changed: false, failed: true, msg: "missing required argument: name")
+      if err = pre_dispatch_error
+        return err
       end
+
+      raw_name = @params["name"]? || @params["db"]?
 
       state = @params["state"]? || "present"
       check_mode = true?(@params["_ansible_check_mode"]?)
 
-      if state == "dump" || state == "import"
+      if dump_or_import?(state)
         return run_dump_or_import(state, raw_name.to_s)
       end
 
@@ -165,6 +161,31 @@ module Krikri
       PluginHelpers::MysqlConnection.add_mysqldb_connector_warning(PluginHelpers::DbErrors.connection_failed(ex, "MySQL"))
     rescue ex : MySql::Connection::PacketError
       PluginHelpers::MysqlConnection.add_mysqldb_connector_warning(PluginHelpers::DbErrors.query_failed(ex, "MySQL"))
+    end
+
+    # mysql_db.py's body opens with the driver gate (mysql_driver_fail_msg
+    # when neither PyMySQL nor MySQLdb imports) before even the empty-name
+    # handling, so a target without either driver fails here no matter what
+    # the task asked for - including check mode and dump/import. The
+    # missing-name failure follows the gate: Ansible's `name:` param has
+    # `aliases: [db]` - same bug class fixed for
+    # postgresql_db/postgresql_user in round 43 (robertdebock.postgres): a
+    # real playbook writing `db: mydb` (the alias) got "missing required
+    # argument: name" no matter what `db:` was set to.
+    private def pre_dispatch_error : PluginResult?
+      if err = PluginHelpers::MysqlConnection.mysql_driver_missing_result(@vars)
+        return err
+      end
+
+      unless @params["name"]? || @params["db"]?
+        return PluginResult.new(changed: false, failed: true, msg: "missing required argument: name")
+      end
+
+      nil
+    end
+
+    private def dump_or_import?(state : String) : Bool
+      state == "dump" || state == "import"
     end
 
     private def ensure_present(

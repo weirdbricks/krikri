@@ -143,6 +143,12 @@ module Krikri
       return bound if bound.is_a?(PluginResult)
       statements = bound
 
+      # mysql_query.py fails with mysql_driver_fail_msg when neither PyMySQL
+      # nor MySQLdb imports, before the connection attempt.
+      if err = PluginHelpers::MysqlConnection.mysql_driver_missing_result(@vars)
+        return err
+      end
+
       uri = PluginHelpers::MysqlConnection.build_uri(
         host: @params["login_host"]?,
         port: @params["login_port"]?,
