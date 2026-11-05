@@ -6030,11 +6030,32 @@ module Krikri
       String.build do |io|
         io << "[ERROR]: " << message << "\n"
         if path && pos && File.file?(path)
-          line, col = pos
-          io << ErrorBlock.origin_context(File.expand_path(path), line, col) << "\n"
+          if json_source_without_positions?(path)
+            io << "Origin: " << File.expand_path(path) << "\n"
+          else
+            line, col = pos
+            io << ErrorBlock.origin_context(File.expand_path(path), line, col) << "\n"
+          end
         end
         io << "\n"
       end
+    end
+
+    # ansible-core's own from_yaml (parsing/utils/yaml.py) tries
+    # `json.loads` on the whole file BEFORE its YAML parser, so a task
+    # file that parses as JSON (the flow-style `[{...}, {...}]` form some
+    # roles ship - ajtalla.kafka) gets ONLY the file-level Origin tag with
+    # no per-node line/column. Every task-level error anchored there then
+    # renders as the bare path with no :line:col and no excerpt/caret,
+    # while the identical error in block-style YAML reports the node
+    # position + caret (live-verified vs 2.19.11: the same removed
+    # `include:` in a role's main.yaml prints `Origin: <path>` when the
+    # file is JSON and `2:3` + caret when it is YAML - issue #880).
+    # krikri's libyaml source map records positions for JSON flow style
+    # too, so this check replicates real's position loss instead.
+    private def self.json_source_without_positions?(path : String) : Bool
+      parsed = JSON.parse(File.read(path)) rescue nil
+      !parsed.nil?
     end
 
     # ansible-core's Base._load_vars refuses a non-mapping (non-null)
@@ -6080,8 +6101,12 @@ module Krikri
       String.build do |io|
         io << "[ERROR]: " << message << "\n"
         if path && source_map && (pos = source_map.at?(prefix)) && File.file?(path)
-          line, col = pos
-          io << ErrorBlock.origin_context(File.expand_path(path), line, col) << "\n"
+          if json_source_without_positions?(path)
+            io << "Origin: " << File.expand_path(path) << "\n"
+          else
+            line, col = pos
+            io << ErrorBlock.origin_context(File.expand_path(path), line, col) << "\n"
+          end
         end
         io << "\n"
       end
