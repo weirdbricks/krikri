@@ -205,7 +205,7 @@ module Krikri
         # sees always belongs to THIS call, never a previous one.
         @lookup_list_form = false
         @lookup_undef_default = nil
-        raw_parts = split_top_level_commas(args)
+        raw_parts = expand_trailing_star_arg(split_top_level_commas(args))
         # The type as the raw split sees it, before the term rerender below
         # touches anything: the None-carry's file gate must know the dispatch
         # type spelled bare or fully-qualified (the same spellings the
@@ -467,7 +467,7 @@ module Krikri
       # JSON array (an already-list-shaped result, e.g. `url` with
       # `wantlist=True`, passes through unchanged).
       private def evaluate_query(args : String) : String
-        parts = split_top_level_commas(args)
+        parts = expand_trailing_star_arg(split_top_level_commas(args))
         lookup_type = parts[0]?.try { |part| quoted_string_literal(part.strip) }.try(&.as_s?)
 
         if lookup_type == "first_found"
@@ -524,6 +524,12 @@ module Krikri
       # a list, but may itself be a literal.
       private def evaluate_lookup_term(part : String) : JSON::Any
         stripped = part.strip
+        # Jinja's own `none`/`None` literal as a lookup term: ansible-core
+        # passes the real None to the plugin (`query('items', none)` is
+        # [None]), and this is also how #expand_trailing_star_arg encodes
+        # an unpacked nil element, which has no repr an expression parser
+        # could read back as a null.
+        return JSON::Any.new(nil) if stripped.in?("none", "None")
         if literal = sole_quoted_literal?(stripped)
           if literal.includes?("{{") || literal.includes?("{%")
             # The double-templated quoted term (`query('flattened',

@@ -961,6 +961,26 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
     JSON.parse(evaluator.evaluate("lookup('items', l1, l2)")).as_a.map(&.as_i).must_equal([1, 2, 3, 4])
   end
 
+  # Issue #842: a trailing `*sequence` call argument is Jinja2 argument
+  # unpacking, not multiplication - live-verified against ansible-core
+  # 2.19.11, where `lookup('items', *t)` with t=['a', 'b'] is exactly
+  # `lookup('items', 'a', 'b')` (one term each, so the all-string result
+  # comma-joins), `*[]` contributes no term and the empty result stays
+  # "[]", and `range(*[1, 4])` is range(1, 4).
+  it "unpacks a trailing *sequence argument into lookup terms (issue #842)" do
+    v = Hash(String, JSON::Any).new
+    v["t"] = JSON.parse(%(["a", "b"]))
+    v["n"] = JSON.parse(%([1, 4]))
+    v["empty"] = JSON.parse(%([]))
+    substitute = Krikri::VarSubstitutor.new(vars: v, host_name: "localhost")
+
+    substitute.substitute(%({{ lookup('items', *t) }}), output: true).must_equal("a,b")
+    substitute.substitute(%({{ lookup('items', 'x', *t) }}), output: true).must_equal("x,a,b")
+    substitute.substitute(%({{ lookup('items', *empty) }}), output: true).must_equal("[]")
+    substitute.substitute(%({{ query('items', *t) }}), output: true).must_equal("['a', 'b']")
+    substitute.substitute(%({{ range(*n) | list }}), output: true).must_equal("[1, 2, 3]")
+  end
+
   it "evaluates lookup('flattened', ...) deep-flattening nested list terms" do
     v = Hash(String, JSON::Any).new
     v["l1"] = JSON.parse(%([1, [2, 3]]))
