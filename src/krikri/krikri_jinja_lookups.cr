@@ -40,7 +40,8 @@ module Krikri
             result = poisoned
           else
             name = text(args[0]).sub(/^ansible\.(builtin|legacy)\./, "")
-            result = lookup(name, prepare_lookup_terms(args[1..], ctx), kwargs, ctx, query_mode)
+            result = lookup(name, prepare_lookup_terms(args[1..], ctx), kwargs, ctx, query_mode,
+              spelled_name: text(args[0]))
             # ansible-core's _invoke_lookup does ",".join(result) and, on
             # the TypeError that a non-string element raises, returns the
             # result's single element when it holds exactly one - so a
@@ -202,7 +203,8 @@ module Krikri
     end
 
     private def self.lookup(name : String, terms : Array(AnyValue), kwargs : Hash(String, AnyValue),
-                            ctx : KrikriJinja::Context, query_mode : Bool = false) : AnyValue
+                            ctx : KrikriJinja::Context, query_mode : Bool = false,
+                            spelled_name : String? = nil) : AnyValue
       first = terms[0]? || AnyValue.new(nil)
       role_path = scope_string(ctx, "role_path")
       case name
@@ -404,7 +406,7 @@ module Krikri
           AnyValue.new(lines.join(","))
         end
       when "first_found"
-        lookup_first_found(ctx, first, kwargs, role_path)
+        lookup_first_found(ctx, first, kwargs, role_path, spelled_name)
       when "sequence"
         AnyValue.new(LookupPlugins.sequence_lookup(text(first)).map { |value| AnyValue.new(value) })
       when "csvfile"
@@ -593,7 +595,7 @@ module Krikri
     # old raise here degraded downstream to an empty STRING whose
     # length is 0 - the task silently skipped. An errors= kwarg value
     # other than 'ignore' keeps the raise (Ansible re-raises there).
-    private def self.lookup_first_found(ctx : KrikriJinja::Context, term : AnyValue, kwargs : Hash(String, AnyValue), role_path : String?) : AnyValue
+    private def self.lookup_first_found(ctx : KrikriJinja::Context, term : AnyValue, kwargs : Hash(String, AnyValue), role_path : String?, spelled_name : String? = nil) : AnyValue
       hash = term.raw.as?(Hash(String, AnyValue))
       files = first_found_param(ctx, hash.try(&.["files"]?)) || [] of String
       paths = first_found_param(ctx, hash.try(&.["paths"]?)) || ["files", "templates", "vars", "."]
@@ -610,7 +612,7 @@ module Krikri
         return AnyValue.new(nil)
       end
       raise Krikri::FirstFoundLookupError.new(
-        "The lookup plugin 'first_found' failed: No file was found when using first_found."
+        "The lookup plugin '#{spelled_name || "first_found"}' failed: No file was found when using first_found."
       )
     end
 

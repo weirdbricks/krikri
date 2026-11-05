@@ -252,7 +252,8 @@ module Krikri
           raise UndefinedVariableError.new("'#{name}' is undefined")
         end
 
-        evaluate_lookup_scalar(lookup_type, parts, kwargs, query_mode) ||
+        evaluate_lookup_scalar(lookup_type, parts, kwargs, query_mode,
+          spelled_name: original_lookup_type) ||
           evaluate_lookup_file(lookup_type, parts, kwargs, query_mode) ||
           evaluate_lookup_list(lookup_type, parts, kwargs, query_mode) ||
           evaluate_lookup_cartesian(lookup_type, parts) ||
