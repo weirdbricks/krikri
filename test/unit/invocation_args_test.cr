@@ -35,9 +35,13 @@ describe Krikri::ArgspecValidator do
     args.keys.first(4).must_equal(%w[dest path src state])
   end
 
-  it "reports stat's get_selinux_context default in invocation.module_args" do
+  it "has no get_selinux_context in stat's invocation.module_args" do
+    # ansible-core 2.19 removed get_selinux_context from stat's argspec
+    # (and from its output entirely), so it must not appear as a spec
+    # default any more than a supplied value would be accepted.
     args = Krikri::ArgspecValidator.invocation_args("ansible.builtin.stat", {"path" => "/etc/hosts"}).as(Hash(String, JSON::Any))
-    args["get_selinux_context"].as_bool.must_equal(false)
+    args.has_key?("path").must_equal(true)
+    args.has_key?("get_selinux_context").must_equal(false)
   end
 
   it "has no invocation for an unknown module" do

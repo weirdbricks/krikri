@@ -50,6 +50,22 @@ describe Krikri::ArgspecValidator do
       "(attr, dest, destfile, name, regex, value).")
   end
 
+  it "rejects stat's typo'd parameter without advertising the removed get_selinux_context" do
+    # ansible-core 2.19 dropped get_selinux_context from stat's argspec
+    # (and its output), so the supported-parameters list must no longer
+    # offer it; message captured from a 2.19.11 ad-hoc stat run.
+    failure = Krikri::ArgspecValidator.validate(
+      "ansible.builtin.stat", "ansible.builtin.stat",
+      {"path" => "/tmp/kpg-work/existing.txt", "follow" => "false",
+       "get_attributes" => "true", "get_mime" => "true",
+       "follow_bogus" => "false"}, vars)
+    failure.as(Failure).msg.must_equal(
+      "Unsupported parameters for (ansible.builtin.stat) module: follow_bogus. " \
+      "Supported parameters include: checksum_algorithm, follow, get_attributes, " \
+      "get_checksum, get_mime, path (attr, attributes, checksum, checksum_algo, " \
+      "dest, mime, mime-type, mime_type, name).")
+  end
+
   it "validates template against copy's spec under Ansible's ansible.legacy.copy name" do
     failure = Krikri::ArgspecValidator.validate(
       "template", "ansible.builtin.template",
