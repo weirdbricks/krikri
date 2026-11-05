@@ -1251,6 +1251,43 @@ describe Krikri::PythonModuleRunner do
     parsed["truthy"].as_bool.must_equal(true)
   end
 
+  it "shim provides ansible.module_utils.ansible_release for modules importing __version__" do
+    skip("python3 not available") unless File.exists?("/usr/bin/python3")
+    # Issue #843: amazon.aws' module_utils import ansible_release, so any
+    # custom module built on them imports
+    # `from ansible.module_utils.ansible_release import __version__`.
+    # Real ansible bundles that file into the AnsiballZ payload, so it
+    # resolves even where ansible-core is not installed for the module's
+    # interpreter; the shim bundle stood in for ansible-core without the
+    # file, so the import died with ModuleNotFoundError before any result
+    # JSON. The value is the ansible-core release this engine targets -
+    # the same one the `ansible_version` magic variable reports - so a
+    # module gating on the version sees what it would under real
+    # ansible-playbook of that release.
+    work_dir = File.join(Dir.tempdir, "krikri-shim-spec-#{Random.rand(1_000_000)}")
+    Dir.mkdir_p(work_dir)
+    Krikri::PythonModuleRunner.write_module_utils_bundle(work_dir)
+    module_path = File.join(work_dir, "ansible_release_spec.py")
+    File.write(module_path, "from ansible.module_utils.basic import AnsibleModule\n" \
+                            "from ansible.module_utils.ansible_release import __version__, __author__, __codename__\n" \
+                            "module = AnsibleModule(argument_spec={})\n" \
+                            "module.exit_json(changed=False, version=__version__, author=__author__,\n" \
+                            "                 codename=__codename__, has_version=bool(__version__))\n")
+    stdout_io = IO::Memory.new
+    err = IO::Memory.new
+    status = Process.run("/usr/bin/python3", [module_path],
+      input: IO::Memory.new(%({"ANSIBLE_MODULE_ARGS": {}})),
+      output: stdout_io, error: err)
+    FileUtils.rm_r(work_dir)
+    status.success?.must_equal(true)
+    err.to_s.wont_include("ModuleNotFoundError")
+    parsed = Krikri::PythonModuleRunner.parse_module_output(stdout_io.to_s).not_nil!
+    parsed["has_version"].as_bool.must_equal(true)
+    parsed["version"].as_s.must_equal(Krikri::ANSIBLE_TARGET_VERSION)
+    parsed["author"].as_s.must_equal("Ansible, Inc.")
+    parsed["codename"].as_s.must_equal("What Is and What Should Never Be")
+  end
+
   # ---- collection imports on the module's PYTHONPATH (issue #692) ----
 
   it "maps collection roots to PYTHONPATH entries that expose ansible_collections" do
