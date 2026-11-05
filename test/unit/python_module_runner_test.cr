@@ -1288,6 +1288,55 @@ describe Krikri::PythonModuleRunner do
     parsed["codename"].as_s.must_equal("What Is and What Should Never Be")
   end
 
+  it "shim provides ansible.module_utils.six for modules importing it" do
+    skip("python3 not available") unless File.exists?("/usr/bin/python3")
+    # Issue #903's own repro: a custom module doing `from
+    # ansible.module_utils.six import string_types`, the same import
+    # amazon.aws' module_utils use. Real ansible bundles its vendored six
+    # into the AnsiballZ payload, so it resolves even where ansible-core
+    # isn't installed for the module's interpreter - and the shim bundle
+    # (written for such a target, and unconditionally whenever a role
+    # ships its own module_utils tree, where it also SHADOWS an installed
+    # ansible-core) lacked it, failing the task with "No module named
+    # 'ansible.module_utils.six'" where ansible-playbook reported ok=1.
+    # six ships as a package because modules import its `six.moves`
+    # submodules too, so both shapes are exercised.
+    work_dir = File.join(Dir.tempdir, "krikri-shim-spec-#{Random.rand(1_000_000)}")
+    Dir.mkdir_p(work_dir)
+    Krikri::PythonModuleRunner.write_module_utils_bundle(work_dir)
+    module_path = File.join(work_dir, "six_spec.py")
+    File.write(module_path, "from ansible.module_utils.basic import AnsibleModule\n" \
+                            "from ansible.module_utils.six import string_types, text_type, binary_type, ensure_text\n" \
+                            "from ansible.module_utils.six.moves import reduce\n" \
+                            "from ansible.module_utils.six.moves.urllib.parse import urlparse\n" \
+                            "import ansible.module_utils.six as six\n" \
+                            "module = AnsibleModule(argument_spec={})\n" \
+                            "module.exit_json(changed=False,\n" \
+                            "                 is_str=isinstance('x', string_types),\n" \
+                            "                 text=ensure_text(b'spec'),\n" \
+                            "                 types_ok=(isinstance('x', text_type) and isinstance(b'x', binary_type)),\n" \
+                            "                 items=sorted(six.iteritems({'a': 1})),\n" \
+                            "                 reduced=reduce(lambda a, b: a + b, [1, 2]),\n" \
+                            "                 path=urlparse('http://h/p').path,\n" \
+                            "                 py3=six.PY3)\n")
+    stdout_io = IO::Memory.new
+    err = IO::Memory.new
+    status = Process.run("/usr/bin/python3", [module_path],
+      input: IO::Memory.new(%({"ANSIBLE_MODULE_ARGS": {}})),
+      output: stdout_io, error: err)
+    FileUtils.rm_r(work_dir)
+    status.success?.must_equal(true)
+    err.to_s.wont_include("ModuleNotFoundError")
+    parsed = Krikri::PythonModuleRunner.parse_module_output(stdout_io.to_s).not_nil!
+    parsed["is_str"].as_bool.must_equal(true)
+    parsed["text"].as_s.must_equal("spec")
+    parsed["types_ok"].as_bool.must_equal(true)
+    parsed["items"].as_a.map { |pair| pair.as_a[0].as_s }.must_equal(["a"])
+    parsed["reduced"].as_i.must_equal(3)
+    parsed["path"].as_s.must_equal("/p")
+    parsed["py3"].as_bool.must_equal(true)
+  end
+
   # ---- collection imports on the module's PYTHONPATH (issue #692) ----
 
   it "maps collection roots to PYTHONPATH entries that expose ansible_collections" do

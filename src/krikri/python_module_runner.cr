@@ -745,6 +745,9 @@ module Krikri
       Dir.mkdir_p(File.dirname(text_init))
       File.write(common_init, "")
       File.write(text_init, "")
+      six_init = File.join(work_dir, "ansible", "module_utils", "six", "__init__.py")
+      Dir.mkdir_p(File.dirname(six_init))
+      File.write(six_init, SIX_PY_SHIM)
       File.write(File.join(work_dir, "ansible", "module_utils", "common", "text", "converters.py"), CONVERTERS_PY_SHIM)
       File.write(File.join(work_dir, "ansible", "module_utils", "common", "dict_transformations.py"), DICT_TRANSFORMATIONS_PY_SHIM)
       parsing_init = File.join(work_dir, "ansible", "module_utils", "parsing", "__init__.py")
@@ -976,6 +979,369 @@ module Krikri
                   context.check_hostname = False
                   context.verify_mode = _ssl.CERT_NONE
           return _urllib_request.urlopen(req, timeout=timeout, context=context)
+      PYTHON
+
+    # `ansible.module_utils.six` - ansible-core's own vendored copy of the
+    # six compatibility library, bundled into every AnsiballZ module
+    # payload. Custom modules and collections import it directly
+    # (`from ansible.module_utils.six import string_types`, and amazon.aws'
+    # own module_utils do the same, issue #903), so it resolves under
+    # ansible-playbook on a target that has no ansible-core installed at
+    # all. This bundle is written both for an ansible-core-less target and
+    # unconditionally whenever a role ships its own module_utils tree - and
+    # in that second case it SHADOWS an installed ansible-core (the module
+    # file's own directory is sys.path[0]), which made the import fail
+    # exactly where ansible-playbook succeeded. six ships as a PACKAGE
+    # (`six/__init__.py`), the same shape ansible-core uses, because
+    # modules also import its `six.moves` submodules
+    # (`from ansible.module_utils.six.moves import ...`,
+    # `...six.moves.urllib.parse`). Python-3 targets are all this shim has
+    # to cover - the py2 branches of six 1.16 are dead code there - but
+    # the public surface (type aliases, iterator/view helpers, moves,
+    # with_metaclass/add_metaclass, ensure_*, reraise/raise_from) is
+    # complete so a module behaves exactly as it does against the real one.
+    SIX_PY_SHIM = <<-PYTHON
+      """Vendored `six` (its Python 3 surface, six 1.16 API)."""
+
+      import functools
+      import importlib
+      import importlib.util
+      import io
+      import operator
+      import sys
+      import types
+      import unittest
+      from collections import abc as _collections_abc
+
+      __version__ = "1.16.0"
+      __author__ = "Benjamin Peterson <benjamin@python.org>"
+
+      PY2 = False
+      PY3 = True
+      PY34 = True
+      PY35 = True
+      PY36 = True
+      PY37 = True
+      PY38 = True
+      PY39 = True
+
+      string_types = (str,)
+      integer_types = (int,)
+      class_types = (type,)
+      text_type = str
+      binary_type = bytes
+      MAXSIZE = sys.maxsize
+      Iterator = _collections_abc.Iterator
+      Iterable = _collections_abc.Iterable
+
+      advance_iterator = next
+      next = next
+      callable = callable
+      print_ = print
+      wraps = functools.wraps
+
+
+      def add_move(move):
+          """Add an item to six.moves."""
+          setattr(moves, move.name, move)
+
+
+      def remove_move(name):
+          try:
+              delattr(moves, name)
+          except AttributeError:
+              raise AttributeError("no such move, %r" % (name,))
+
+
+      def get_unbound_function(unbound):
+          return unbound
+
+
+      create_bound_method = types.MethodType
+
+
+      def create_unbound_method(func, cls):
+          return func
+
+
+      def iterkeys(d, **kw):
+          return iter(d.keys(**kw))
+
+
+      def itervalues(d, **kw):
+          return iter(d.values(**kw))
+
+
+      def iteritems(d, **kw):
+          return iter(d.items(**kw))
+
+
+      def iterlists(d, **kw):
+          return iter(d.lists(**kw))
+
+
+      def keys(d, **kw):
+          return d.keys(**kw)
+
+
+      def values(d, **kw):
+          return d.values(**kw)
+
+
+      def items(d, **kw):
+          return d.items(**kw)
+
+
+      def lists(d, **kw):
+          return d.lists(**kw)
+
+
+      viewkeys = keys
+      viewvalues = values
+      viewitems = items
+      viewlists = lists
+
+      get_method_function = operator.attrgetter("__func__")
+      get_method_self = operator.attrgetter("__self__")
+      get_function_closure = operator.attrgetter("__closure__")
+      get_function_code = operator.attrgetter("__code__")
+      get_function_defaults = operator.attrgetter("__defaults__")
+      get_function_globals = operator.attrgetter("__globals__")
+
+      StringIO = io.StringIO
+      BytesIO = io.BytesIO
+
+      assertCountEqual = unittest.TestCase.assertCountEqual
+      assertRaisesRegex = unittest.TestCase.assertRaisesRegex
+      assertRegex = unittest.TestCase.assertRegex
+      assertNotRegex = unittest.TestCase.assertNotRegex
+
+
+      def b(s):
+          return s.encode("latin-1")
+
+
+      def u(s):
+          return s
+
+
+      def int2byte(i):
+          return bytes((i,))
+
+
+      def byte2int(bs):
+          return bs[0]
+
+
+      def indexbytes(buf, i):
+          return buf[i]
+
+
+      def iterbytes(buf):
+          return iter(buf)
+
+
+      def with_metaclass(meta, *bases):
+          class metaclass(type):
+              def __new__(cls, name, this_bases, d):
+                  if sys.version_info[:2] >= (3, 7):
+                      resolved_bases = types.resolve_bases(bases)
+                      if resolved_bases is not bases:
+                          d["__orig_bases__"] = bases
+                  else:
+                      resolved_bases = bases
+                  return meta(name, resolved_bases, d)
+
+              @classmethod
+              def __prepare__(cls, name, this_bases):
+                  return meta.__prepare__(name, bases)
+
+          return type.__new__(metaclass, "temporary_class", (), {})
+
+
+      def add_metaclass(metaclass):
+          def wrapper(cls):
+              orig_vars = cls.__dict__.copy()
+              slots = orig_vars.get("__slots__")
+              if slots is not None:
+                  if isinstance(slots, str):
+                      slots = [slots]
+                  for slots_var in slots:
+                      orig_vars.pop(slots_var)
+              orig_vars.pop("__dict__", None)
+              orig_vars.pop("__weakref__", None)
+              if hasattr(cls, "__qualname__"):
+                  orig_vars["__qualname__"] = cls.__qualname__
+              return metaclass(cls.__name__, cls.__bases__, orig_vars)
+
+          return wrapper
+
+
+      def ensure_binary(s, encoding="utf-8", errors="strict"):
+          if isinstance(s, binary_type):
+              return s
+          if isinstance(s, text_type):
+              return s.encode(encoding, errors)
+          raise TypeError("not expecting type '%s'" % type(s))
+
+
+      def ensure_str(s, encoding="utf-8", errors="strict"):
+          if not isinstance(s, (text_type, binary_type)):
+              raise TypeError("not expecting type '%s'" % type(s))
+          if isinstance(s, binary_type):
+              s = s.decode(encoding, errors)
+          return s
+
+
+      def ensure_text(s, encoding="utf-8", errors="strict"):
+          if isinstance(s, binary_type):
+              return s.decode(encoding, errors)
+          elif isinstance(s, text_type):
+              return s
+          else:
+              raise TypeError("not expecting type '%s'" % type(s))
+
+
+      def python_2_unicode_compatible(klass):
+          return klass
+
+
+      def reraise(tp, value, tb=None):
+          try:
+              if value is None:
+                  value = tp()
+              if value.__traceback__ is not tb:
+                  raise value.with_traceback(tb)
+              raise value
+          finally:
+              value = None
+              tb = None
+
+
+      def raise_from(value, from_value):
+          raise value from from_value
+
+
+      _MOVES = {
+          "cStringIO": ("io", "StringIO"),
+          "filter": ("builtins", "filter"),
+          "filterfalse": ("itertools", "filterfalse"),
+          "input": ("builtins", "input"),
+          "intern": ("sys", "intern"),
+          "map": ("builtins", "map"),
+          "getcwd": ("os", "getcwd"),
+          "getcwdb": ("os", "getcwdb"),
+          "getoutput": ("subprocess", "getoutput"),
+          "range": ("builtins", "range"),
+          "reload_module": ("importlib", "reload"),
+          "reduce": ("functools", "reduce"),
+          "shlex_quote": ("shlex", "quote"),
+          "StringIO": ("io", "StringIO"),
+          "UserDict": ("collections", "UserDict"),
+          "UserList": ("collections", "UserList"),
+          "UserString": ("collections", "UserString"),
+          "xrange": ("builtins", "range"),
+          "zip": ("builtins", "zip"),
+          "zip_longest": ("itertools", "zip_longest"),
+          "builtins": ("builtins", None),
+          "configparser": ("configparser", None),
+          "collections_abc": ("collections.abc", None),
+          "copyreg": ("copyreg", None),
+          "dbm_gnu": ("dbm.gnu", None),
+          "dbm_ndbm": ("dbm.ndbm", None),
+          "_dummy_thread": ("_thread", None),
+          "http_cookiejar": ("http.cookiejar", None),
+          "http_cookies": ("http.cookies", None),
+          "html_entities": ("html.entities", None),
+          "html_parser": ("html.parser", None),
+          "http_client": ("http.client", None),
+          "email_mime_base": ("email.mime.base", None),
+          "email_mime_image": ("email.mime.image", None),
+          "email_mime_multipart": ("email.mime.multipart", None),
+          "email_mime_nonmultipart": ("email.mime.nonmultipart", None),
+          "email_mime_text": ("email.mime.text", None),
+          "BaseHTTPServer": ("http.server", None),
+          "CGIHTTPServer": ("http.server", None),
+          "SimpleHTTPServer": ("http.server", None),
+          "cPickle": ("pickle", None),
+          "queue": ("queue", None),
+          "reprlib": ("reprlib", None),
+          "socketserver": ("socketserver", None),
+          "_thread": ("_thread", None),
+          "tkinter": ("tkinter", None),
+          "tkinter_dialog": ("tkinter.dialog", None),
+          "tkinter_filedialog": ("tkinter.filedialog", None),
+          "tkinter_scrolledtext": ("tkinter.scrolledtext", None),
+          "tkinter_simpledialog": ("tkinter.simpledialog", None),
+          "tkinter_tix": ("tkinter.tix", None),
+          "tkinter_ttk": ("tkinter.ttk", None),
+          "tkinter_constants": ("tkinter.constants", None),
+          "tkinter_dnd": ("tkinter.dnd", None),
+          "tkinter_colorchooser": ("tkinter.colorchooser", None),
+          "tkinter_commondialog": ("tkinter.commondialog", None),
+          "tkinter_tkfiledialog": ("tkinter.filedialog", None),
+          "tkinter_font": ("tkinter.font", None),
+          "tkinter_messagebox": ("tkinter.messagebox", None),
+          "tkinter_tksimpledialog": ("tkinter.simpledialog", None),
+          "xmlrpc_client": ("xmlrpc.client", None),
+          "xmlrpc_server": ("xmlrpc.server", None),
+      }
+
+      if sys.platform == "win32":
+          _MOVES["winreg"] = ("winreg", None)
+
+      _MOVES_PREFIX = __name__ + ".moves."
+
+
+      class _AliasLoader:
+          def __init__(self, module):
+              self._module = module
+
+          def create_module(self, spec):
+              return self._module
+
+          def exec_module(self, module):
+              pass
+
+
+      class _MovesFinder:
+          @staticmethod
+          def find_spec(fullname, path=None, target=None):
+              if not fullname.startswith(_MOVES_PREFIX):
+                  return None
+              entry = _MOVES.get(fullname[len(_MOVES_PREFIX):])
+              if entry is None or entry[1] is not None:
+                  return None
+              try:
+                  module = importlib.import_module(entry[0])
+              except ImportError:
+                  return None
+              return importlib.util.spec_from_loader(fullname, _AliasLoader(module))
+
+
+      class _MovesModule(types.ModuleType):
+          def __getattr__(self, name):
+              entry = _MOVES.get(name)
+              if entry is None:
+                  raise AttributeError("module %r has no attribute %r" % (self.__name__, name))
+              target = importlib.import_module(entry[0])
+              return target if entry[1] is None else getattr(target, entry[1])
+
+
+      moves = _MovesModule(_MOVES_PREFIX[:-1])
+      moves.__path__ = []
+
+      _urllib = types.ModuleType(_MOVES_PREFIX + "urllib")
+      _urllib.__path__ = []
+      for _suffix in ("parse", "error", "request", "response", "robotparser"):
+          _real = importlib.import_module("urllib." + _suffix)
+          setattr(_urllib, _suffix, _real)
+          sys.modules[_MOVES_PREFIX + "urllib." + _suffix] = _real
+          sys.modules[_MOVES_PREFIX + "urllib_" + _suffix] = _real
+      setattr(moves, "urllib", _urllib)
+      sys.modules[_MOVES_PREFIX + "urllib"] = _urllib
+      sys.modules[_MOVES_PREFIX[:-1]] = moves
+      sys.meta_path.append(_MovesFinder)
       PYTHON
 
     # In modern ansible-core the real text-conversion implementation
