@@ -2588,7 +2588,22 @@ module Krikri
     # unaffected); only inter-token whitespace runs are collapsed to one
     # space. Backslash escapes inside quotes don't terminate the quote.
     private def self.normalize_condition_whitespace(condition : String) : String
-      return condition unless condition.includes?('\n') || condition.includes?('\t') || condition.includes?("  ")
+      # Python's str-pattern `\s` (what the real Jinja2 lexer uses to skip
+      # inter-token whitespace) matches the whole Unicode whitespace class,
+      # not just ASCII - so a when:/changed_when: condition carrying a
+      # non-breaking space (U+00A0) between two tokens lexes fine in real
+      # ansible (netzwirt.mysql-server's `when: "'mariadb' in\u00a0
+      # mysql_server_package"` skipped the task), while the ASCII-only
+      # guard below used to leave the NBSP in place and the literal
+      # " in "/" not in " splits downstream never fired - the whole
+      # condition text then fell through to the bare-variable fallback and
+      # failed the task as "is undefined". Whitespace INSIDE quoted
+      # literals stays byte-for-byte (the loop below is quote-aware), so
+      # only the inter-token spots are widened.
+      needs_normalize = condition.includes?('\n') || condition.includes?('\t') ||
+                        condition.includes?("  ") ||
+                        condition.each_char.any? { |char| !char.ascii_whitespace? && char.whitespace? }
+      return condition unless needs_normalize
 
       String.build do |buf|
         in_quote = false
