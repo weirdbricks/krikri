@@ -39,6 +39,16 @@ module Krikri
       backup = true?(@params["backup"]?)
       insertbefore = true?(@params["insertbefore"]?)
       insertafter = true?(@params["insertafter"]?)
+      # community.general 13.0.0 added create_if_missing (bool, default
+      # true): with value: set and a nonmatching xpath, false means "a
+      # no-match is silently ignored instead of creating a new node".
+      # This used to be rejected as an unsupported parameter - correct
+      # for the pre-13.0 collection that verification ran against, but
+      # the podman-diff harness pins 13.4.0, where AnsibleModule accepts
+      # it (observed live: real reports failed=False changed=False for a
+      # value set against a nonmatching xpath) - so rejecting it failed
+      # every playbook that used the parameter.
+      create_if_missing = @params["create_if_missing"]?.nil? ? true : true?(@params["create_if_missing"]?)
       unless path || xmlstring
         return PluginResult.new(changed: false, failed: true,
           msg: "one of the following is required: path, xmlstring")
@@ -47,16 +57,6 @@ module Krikri
              @params["add_children"]? || @params["set_children"]? || @params["value"]?
         return PluginResult.new(changed: false, failed: true,
           msg: "one of the following is required: add_children, content, count, pretty_print, print_match, set_children, value")
-      end
-
-      # Ansible module argument validation (AnsibleModule init), which runs
-      # before any XML parsing. create_if_missing is NOT a real
-      # community.general.xml parameter (live-verified 2026-09-24 against
-      # ansible-core 2.19.11 + community.general: AnsibleModule rejects
-      # it before the module ever runs).
-      if raw.has_key?("create_if_missing")
-        return PluginResult.new(changed: false, failed: true,
-          msg: "Unsupported parameters for (community.general.xml) module: create_if_missing. Supported parameters include: add_children, attribute, backup, content, count, input_type, insertafter, insertbefore, namespaces, path, pretty_print, print_match, set_children, state, strip_cdata_tags, value, xmlstring (dest, ensure, file).")
       end
 
       # Ansible module argument validation (AnsibleModule init), which runs
@@ -272,7 +272,7 @@ module Krikri
         add_target_children(doc, xpath, arr, input_type, insertbefore, insertafter)
       elsif value_provided
         op_ran = true
-        set_target_inner(doc, xpath, attribute, @params["value"].not_nil!)
+        set_target_inner(doc, xpath, attribute, @params["value"].not_nil!, create_if_missing)
         if @failed_result
           return @failed_result.not_nil!
         end
@@ -550,13 +550,16 @@ module Krikri
       nil
     end
 
-    private def set_target_inner(doc : KXML::Document, xp : String?, attribute : String?, value : String) : Bool
+    private def set_target_inner(doc : KXML::Document, xp : String?, attribute : String?, value : String, create_if_missing : Bool = true) : Bool
       return false unless xp
       # Real set_target_inner auto-creates a missing target through
-      # check_or_make_target (there is no create_if_missing parameter -
-      # live-verified 2026-09-24 it is rejected by AnsibleModule) and
-      # fails only when the target still doesn't exist afterwards.
+      # check_or_make_target and fails only when the target still doesn't
+      # exist afterwards. With create_if_missing=false (community.general
+      # >= 13.0.0) a no-match returns BEFORE that creation attempt and
+      # before the "does not reference a node" failure - set_target then
+      # finishes the module with changed=false, a plain success.
       if !node_matches?(doc, xp)
+        return false unless create_if_missing
         check_or_make_target(doc, xp)
         return false if @failed_result
       end
