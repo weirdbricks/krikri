@@ -346,6 +346,47 @@ describe "ignore_errors: on an ordinary (non-when-related) task failure" do
     FileUtils.rm_rf(dir) if dir && Dir.exists?(dir)
   end
 
+  # An EMPTY-string pass-through value keeps its lineage too: with role
+  # defaults `gitlab_version: ""` behind
+  # `when: gitlab_version | default(false)`, real 2.19.11 labels the
+  # strict error with the defaults file's value position, NOT the when:
+  # token's (issue #877, JonasPammer.gitlab - we printed
+  # tasks/main.yml:38:9 where real printed defaults/main.yml:10:17).
+  it "labels an empty-string `var | default(false)` when: error with the variable's role-defaults position" do
+    dir = File.tempname("when-default-empty-origin", ".d")
+    Dir.mkdir(dir)
+    Dir.mkdir_p(File.join(dir, "roles", "testrole", "defaults"))
+    Dir.mkdir_p(File.join(dir, "roles", "testrole", "tasks"))
+    File.write(File.join(dir, "roles", "testrole", "defaults", "main.yml"), <<-YAML)
+      gitlab_version: ""
+      YAML
+    File.write(File.join(dir, "roles", "testrole", "tasks", "main.yml"), <<-YAML)
+      - name: Define the Gitlab package name.
+        ansible.builtin.set_fact:
+          gitlab_package_name: "{{ gitlab_version }}"
+        when: gitlab_version | default(false)
+      YAML
+    playbook = File.join(dir, "site.yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        roles:
+          - testrole
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+
+    status.success?.must_equal(false)
+    # Value token `""` starts at column 17, matching the live repro of
+    # issue #877 (defaults/main.yml:10:17 in the real role).
+    expected = "was derived from value of type 'str' at '#{File.join(dir, "roles", "testrole", "defaults", "main.yml")}:1:17'"
+    output.to_s.must_include(expected, output.to_s)
+  ensure
+    FileUtils.rm_rf(dir) if dir && Dir.exists?(dir)
+  end
+
   # The `lst | d([], true)` shape's fallback is a fresh value with no
   # lineage of its own, and real keeps labeling it at the when: value
   # token - the defined-string pass-through relabeling must not catch it.
