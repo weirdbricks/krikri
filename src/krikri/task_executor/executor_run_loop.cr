@@ -317,7 +317,12 @@ module Krikri
     # include_tasks: caller leaves this false: there, Ansible fails
     # the single include task itself (verified live, round173), so the
     # swallow path below is already correct for it.
-    private def partition_by_when(task : Task, hosts : Array(Host), inherit_on_error : Bool = false) : {Array(Host), Array(Host)}
+    # *skip_conditions*, when given, collects each skipped host's own failing
+    # when: clause - the batched include_tasks caller needs it to register the
+    # skip result per host (issue #888) after this method has moved on to
+    # later hosts, by which time @last_false_condition no longer holds that
+    # host's clause.
+    private def partition_by_when(task : Task, hosts : Array(Host), inherit_on_error : Bool = false, skip_conditions : Hash(String, String)? = nil) : {Array(Host), Array(Host)}
       return {hosts, [] of Host} unless when_condition = task.when_condition
 
       run_hosts = [] of Host
@@ -351,6 +356,9 @@ module Krikri
             run_hosts << host
           else
             skip_hosts << host
+            if conditions = skip_conditions
+              conditions[host.name] = @last_false_condition || ""
+            end
           end
         rescue ex : WhenEvaluationError
           # A raise here only affects THIS host - every other host in

@@ -876,6 +876,15 @@ module Krikri
     # at parse time instead (see parse_include_role) and never reaches the
     # executor.
     property include_role_nonstring_name : JSON::Any?
+    # The include_role: directive's own args AS WRITTEN (name/tasks_from/
+    # vars_from/apply/allow_duplicates/...), unrendered. Ansible's IncludeRole
+    # result carries them back out under `include_args` - but RENDERED, per
+    # invocation (live-verified vs 2.19.11: `name: "{{ rn }}"` registers
+    # include_args.name as the resolved role name) - so the executor renders
+    # each value when it builds the registered result (issue #888: the
+    # register: on an include_role:/include_tasks: statement used to leave
+    # the variable undefined for every later when: that referenced it).
+    property include_role_args : Hash(String, JSON::Any)?
     # Synthesized by RoleLoader when a role ships argument specs
     # (meta/argument_specs.yml/.yaml/.json, or the meta main file's
     # argument_specs: key) -
@@ -6649,6 +6658,18 @@ module Krikri
       task.become_user = task_hash["become_user"]?.try { |v| safe_yaml_to_string(v) } || play.become_user
       task.become_flags = task_hash["become_flags"]?.try { |v| safe_yaml_to_string(v) } || play.become_flags
 
+      # register: on the include statement itself - real's TaskInclude
+      # carries it like any task and registers the include's own result
+      # ({changed, include, include_args}) when the file loads (issue #888).
+      # The include-family parsers return before the main parse_task path's
+      # register: handling, so it was silently dropped and every later
+      # `when:` referencing the name failed with "'x' is undefined".
+      task.register = task_hash["register"]?.try do |v|
+        register_value = safe_yaml_to_string(v)
+        validate_register_name(register_value, source_file, source_map, task_source_prefix(source_prefix, source_index))
+        register_value
+      end
+
       if vars_yaml = task_hash["vars"]?.try(&.as_h?)
         vars = Hash(String, JSON::Any).new
         vars_yaml.each { |key, value| vars[key.to_s] = Vault.maybe_decrypt_json(Vault.yaml_value_to_json(value)) }
@@ -6982,6 +7003,13 @@ module Krikri
       task.include_role_bool_failure = bool_failure
       task.include_role_name = role_name
       task.include_role_nonstring_name = bad_name_yaml ? Vault.yaml_value_to_json(bad_name_yaml) : nil
+      # The raw include_role: args, kept for the registered include result's
+      # `include_args` (rendered there - see Task#include_role_args).
+      task.include_role_args = begin
+        args = Hash(String, JSON::Any).new
+        role_args.each { |key, value| args[key.as_s? || key.to_s] = Vault.yaml_value_to_json(value) }
+        args
+      end
       task.include_role_dir = file_dir
       task.include_role_tasks_from = role_args["tasks_from"]?.try(&.as_s)
       task.include_role_vars_from = role_args["vars_from"]?.try(&.as_s)
@@ -7007,6 +7035,18 @@ module Krikri
         vars = Hash(String, JSON::Any).new
         vars_yaml.each { |key, value| vars[key.to_s] = Vault.maybe_decrypt_json(Vault.yaml_value_to_json(value)) }
         task.include_role_vars = vars
+      end
+
+      # register: on the include statement itself - real's IncludeRole
+      # carries it like any task and registers the include's own result
+      # ({changed, include_args}) when the role loads (issue #888). The
+      # include-family parsers return before the main parse_task path's
+      # register: handling, so it was silently dropped and every later
+      # `when:` referencing the name failed with "'x' is undefined".
+      task.register = task_hash["register"]?.try do |v|
+        register_value = safe_yaml_to_string(v)
+        validate_register_name(register_value, source_file, source_map, task_source_prefix(source_prefix, source_index))
+        register_value
       end
       parse_include_apply(task, role_args["apply"]?)
 
