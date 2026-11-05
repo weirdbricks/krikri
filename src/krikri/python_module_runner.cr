@@ -2,6 +2,7 @@ require "json"
 require "base64"
 require "./collection_index"
 require "./bigint_json"
+require "./version"
 
 # Runner for role-private custom modules - a role's own `library/*.py`,
 # outside the plugin set this engine ships as native binaries.
@@ -750,6 +751,7 @@ module Krikri
       Dir.mkdir_p(File.dirname(parsing_init))
       File.write(parsing_init, "")
       File.write(File.join(work_dir, "ansible", "module_utils", "parsing", "convert_bool.py"), CONVERT_BOOL_PY_SHIM)
+      File.write(File.join(work_dir, "ansible", "module_utils", "ansible_release.py"), ANSIBLE_RELEASE_PY_SHIM)
     end
 
     # ansible-core vendors the python-distro project inside module_utils
@@ -1185,6 +1187,21 @@ module Krikri
 
           raise TypeError("The value '%s' is not a valid boolean. Valid booleans include: %s" % (to_text(value), ', '.join(repr(i) for i in BOOLEANS)))
       PYTHON
+
+    # ansible-core's ansible/module_utils/ansible_release.py is the
+    # running release's own metadata, and modules read `__version__` out
+    # of it (a module built on amazon.aws' module_utils, which import it,
+    # failed with "No module named 'ansible.module_utils.ansible_release'"
+    # under the shim bundle - issue #843 - while ansible-playbook, whose
+    # AnsiballZ payload bundles the file, ran it). The version is the
+    # ansible-core release this engine reproduces (ANSIBLE_TARGET_VERSION,
+    # the same value the `ansible_version` magic variable reports) rather
+    # than a second literal, so it tracks a compatibility-target bump.
+    ANSIBLE_RELEASE_PY_SHIM = <<-python
+      __version__ = '#{ANSIBLE_TARGET_VERSION}'
+      __author__ = 'Ansible, Inc.'
+      __codename__ = 'What Is and What Should Never Be'
+      python
 
     # Parses the module's stdout into its result JSON: Ansible modules
     # print a JSON object (pretty or single-line), possibly preceded by
