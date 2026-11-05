@@ -222,8 +222,7 @@ describe "unresolvable module names hard-stop the run (UnresolvedModuleError)" d
         gather_facts: false
         tasks:
           - name: unimplemented builtin
-            ansible.builtin.sysvinit:
-              name: foo
+            ansible.builtin.macports:
           - name: normal
             ansible.builtin.debug: msg=hi
       YAML

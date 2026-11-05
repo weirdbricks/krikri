@@ -321,6 +321,20 @@ describe Krikri::ArgspecValidator do
     failure.as(Failure).action_level?.must_equal(true)
   end
 
+  it "runs sysvinit's required_one_of [state, enabled] (issue #900: the task is a module failure, not a skip)" do
+    # sysvinit was an unavailable-module skip before its plugin existed,
+    # where real runs the module and its AnsibleModule init fails on the
+    # required_one_of check the moment a task passes only name: (the kpg
+    # sysvinit chaos shape, seeds 1793890551 et al).
+    failure = Krikri::ArgspecValidator.validate(
+      "sysvinit", "ansible.builtin.sysvinit", {"name" => "cron"}, vars)
+    failure.as(Failure).msg.must_equal("one of the following is required: state, enabled")
+    failure.as(Failure).action_level?.must_equal(false)
+    # Either option satisfies the check; the name: alias satisfies it too.
+    Krikri::ArgspecValidator.validate(
+      "sysvinit", "ansible.builtin.sysvinit", {"service" => "cron", "enabled" => "true"}, vars).must_be_nil
+  end
+
   it "delegates service validation to the service_mgr module's spec" do
     failure = Krikri::ArgspecValidator.validate(
       "service", "ansible.builtin.service",

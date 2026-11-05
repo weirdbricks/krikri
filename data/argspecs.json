@@ -4477,6 +4477,60 @@
   ],
   "required_together": []
  },
+ "ansible.builtin.sysvinit": {
+  "mutually_exclusive": [],
+  "options": {
+   "name": {
+    "aliases": [
+     "service"
+    ],
+    "type": "str",
+    "required": true
+   },
+   "state": {
+    "type": "str",
+    "choices": [
+     "started",
+     "stopped",
+     "restarted",
+     "reloaded"
+    ]
+   },
+   "enabled": {
+    "type": "bool"
+   },
+   "sleep": {
+    "type": "int",
+    "default": 1
+   },
+   "pattern": {
+    "type": "str"
+   },
+   "arguments": {
+    "aliases": [
+     "args"
+    ],
+    "type": "str"
+   },
+   "runlevels": {
+    "type": "list",
+    "elements": "str"
+   },
+   "daemonize": {
+    "type": "bool",
+    "default": false
+   }
+  },
+  "required_by": {},
+  "required_if": [],
+  "required_one_of": [
+   [
+    "state",
+    "enabled"
+   ]
+  ],
+  "required_together": []
+ },
  "ansible.builtin.tempfile": {
   "mutually_exclusive": [],
   "options": {

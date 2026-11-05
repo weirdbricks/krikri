@@ -355,6 +355,13 @@ module Krikri
       # EC2-API-compatible region logic: IAM is a global service.
       "amazon.aws.iam_user_info",
       "iam_user_info",
+      # ansible.builtin.sysvinit (issue #900, kpg sysvinit chaos): the
+      # SysV service-management module - real runs it and its
+      # AnsibleModule init fails the task on the required_one_of
+      # [['state', 'enabled']] check whenever a task passes only name:,
+      # while krikri took the graceful unavailable-module skip and exited
+      # rc=4. plugins/sysvinit.cr ports the module.
+      "ansible.builtin.sysvinit",
       "ansible.builtin.service_facts",
       "ansible.builtin.slurp",
       # No plugins/reboot.cr - handled entirely on the controller by
