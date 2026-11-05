@@ -85,6 +85,33 @@ describe "task error Origin blocks (issue #12)" do
     err.must_include "4   connection: local\n5   tasks:\n6     - include: sidecar.yml\n        ^ column 7\n"
   end
 
+  it "prints a JSON-flow task file's removed include: Origin as the bare path, no excerpt" do
+    # Some roles ship their tasks file as a JSON document (ajtalla.kafka).
+    # Real's loader parses such files with json.loads FIRST, so its task
+    # objects carry no line/column - the Origin renders as the bare path
+    # with no :line:col and no excerpt/caret (live-verified vs 2.19.11),
+    # unlike the block-style case above.
+    code, out, err, path = run_play_file([
+      "---",
+      "- hosts: localhost",
+      "  gather_facts: false",
+      "  connection: local",
+      "  roles:",
+      "    - role: jsonflow",
+    ].join("\n") + "\n",
+      {"roles/jsonflow/tasks/main.yaml" => %([{"include": "sidecar.yml"}])}
+    )
+    code.must_equal(1)
+    out.strip.empty?.must_equal(true)
+    err.must_include "[ERROR]: The 'ansible.builtin.include' action plugin has been removed. " \
+                     "Use include_tasks or import_tasks instead. This feature was removed from " \
+                     "ansible-core in a release after 2023-05-16."
+    sidecar = File.join(File.dirname(path), "roles", "jsonflow", "tasks", "main.yaml")
+    err.must_include "Origin: #{sidecar}\n\n"
+    err.wont_include "Origin: #{sidecar}:"
+    err.wont_include "^ column"
+  end
+
   it "pins the loop value token as the caused-by Origin of an undefined loop source" do
     code, out, _err, path = run_play_file([
       "---",
