@@ -701,6 +701,33 @@ module Krikri
   # indexes keep the plain list wording.
   LAZY_TEMPLATE_LIST_TYPE = "ansible._internal._templating._lazy_containers._AnsibleLazyTemplateList"
 
+  # ansible-core 2.19 tags every scalar flowing through templating with a
+  # datatag wrapper class, and a FAILED bracket subscript on one names that
+  # wrapper's full dotted class path in its falsy-key/empty-key wordings -
+  # not the plain type name the truthy-key attribute wording uses
+  # (live-verified vs 2.19.11 on `"C"[none]`, `"C"['']`, `5[0]`, `1.5[0]`).
+  # bool and None are never tagged, so they keep their plain Python names.
+  TAGGED_STR_TYPE   = "ansible.module_utils._internal._datatag._AnsibleTaggedStr"
+  TAGGED_INT_TYPE   = "ansible.module_utils._internal._datatag._AnsibleTaggedInt"
+  TAGGED_FLOAT_TYPE = "ansible.module_utils._internal._datatag._AnsibleTaggedFloat"
+
+  # The class-path label a FALSY-key (or empty-string-key) miss names for
+  # the type the miss hit: the lazy template containers for dict/list, the
+  # datatag wrappers for tagged scalars, the plain Python name for the
+  # untagged ones. The dict default also keeps the historical labeling for
+  # miss types this table predates (HostVarsVars).
+  private def self.miss_lazy_label(miss_type : String) : String
+    case miss_type
+    when "list"     then LAZY_TEMPLATE_LIST_TYPE
+    when "str"      then TAGGED_STR_TYPE
+    when "int"      then TAGGED_INT_TYPE
+    when "float"    then TAGGED_FLOAT_TYPE
+    when "bool"     then "bool"
+    when "NoneType" then "None"
+    else                 LAZY_TEMPLATE_DICT_TYPE
+    end
+  end
+
   # The structured value a dict/list-subscript miss was keyed with, when
   # the key was NOT a string (T2L.php's `php_configuration[{}]` - the loop
   # item itself, an empty dict). Ansible words a non-string key miss by
@@ -738,13 +765,12 @@ module Krikri
     if key && !key.as_s?
       shown = Krikri::ResultDisplay.python_repr(key)
       if python_falsy?(key)
-        lazy = miss_type == "list" ? LAZY_TEMPLATE_LIST_TYPE : LAZY_TEMPLATE_DICT_TYPE
-        return "#{lazy} object has no element #{shown}"
+        return "#{miss_lazy_label(miss_type)} object has no element #{shown}"
       end
       return "object of type '#{miss_type}' has no attribute #{shown}"
     end
     if missing_key.empty?
-      "'#{LAZY_TEMPLATE_DICT_TYPE} object' has no attribute ''"
+      "'#{miss_lazy_label(miss_type)} object' has no attribute ''"
     else
       "object of type '#{miss_type}' has no attribute '#{missing_key}'"
     end
@@ -840,24 +866,44 @@ module Krikri
       # A dynamic (or string) key on a list is always a miss, and ansible
       # words it by the key's truthiness through the lazy template list
       # (live-verified vs 2.19.11 on `{{ k_list[{}] }}` ->
-      # "_AnsibleLazyTemplateList object has no element {}"); only a key
-      # that resolves to a NON-string value is nameable that way - a
-      # string key on a list keeps the generic wording (not verified).
+      # "_AnsibleLazyTemplateList object has no element {}", and a STRING
+      # key through the getattr fallback -> "object of type 'list' has no
+      # attribute 'pass'") - a truthy non-string key gets the attribute
+      # rewording with the bare Python repr, a falsy one the element
+      # wording.
       kv = dict_chain_key_json(token, vars)
-      return {nil, nil} unless kv && !kv.as_s?
+      return {nil, nil} unless kv
       if (i = kv.as_i64?) && i >= 0 && i < raw.size
         return {nil, raw[i]}
       end
       @@miss_type = "list"
       @@miss_key_json = kv
-      return {kv.to_s, nil}
+      return {kv.as_s? || kv.to_s, nil}
     else
       # `.attr` on a scalar: Python's "object of type 'int' has no attribute 'b'"
       if token.starts_with?('.')
         @@miss_type = python_type_name(current)
         return {token[1..], nil}
       end
-      {nil, nil}
+      # A bracket subscript on a scalar: Python's `obj[key]` raises
+      # TypeError (except a str's integer index, which Jinja resolves to
+      # the character), Jinja falls back to getattr, and ansible-core
+      # 2.19 reports the scalar's own type - "object of type 'str' has no
+      # attribute 'pass'" (nkakouros.elasticsearch's
+      # `_elastic_elastic_user['pass']` after a set_fact left it an empty
+      # string, issue #874). The key's truthiness picks the wording, same
+      # as the dict/list branches (live-verified vs 2.19.11: an
+      # out-of-range int gives the unquoted "... has no attribute 9", a
+      # falsy key the tagged class path's element wording).
+      key = dict_chain_key_json(token, vars)
+      return {nil, nil} unless key
+      @@miss_type = python_type_name(current)
+      if (text = current.as_s?) && (idx = key.as_i64?)
+        pos = idx.negative? ? text.size + idx : idx
+        return {nil, JSON::Any.new(text[pos].to_s)} if pos >= 0 && pos < text.size
+      end
+      @@miss_key_json = key
+      {key.as_s? || key.to_s, nil}
     end
   end
 
