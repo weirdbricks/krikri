@@ -4167,7 +4167,13 @@ module Krikri
       # name - and HOST joins the origin scan, because the looked-up
       # layer is the include_vars one, whose per-key origins the
       # stanza's inner Origin points at.
-      seed = task.params[m[2]]?
+      # Same free-form seed rule the lazy-list branch below applies: a
+      # free-form command's text lives under "cmd" (the module's own key),
+      # not the "_raw_params" the message names (issue #879,
+      # adriano-di-giovanni.consul-tls) - without it the reachability
+      # filter never narrows and a sibling default failing with the same
+      # message looks ambiguous, hiding the stanza real prints.
+      seed = m[2] == "_raw_params" ? (task.params["cmd"]? || task.params["_raw_params"]?) : task.params[m[2]]?
       seed_text = seed.is_a?(String) ? seed + lookup_vars_seed_suffix(seed, vars_context) : nil
       origin = undef_chain_var_origin(task, m[3], reachable_from: seed_text, host: host)
       return nil unless origin
