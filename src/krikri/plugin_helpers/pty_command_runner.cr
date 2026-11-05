@@ -73,11 +73,23 @@ module Krikri
           LibC.close(master_fd)
           return nil
         end
-        slave_fd = LibC.open(String.new(name_ptr), LibC::O_RDWR)
+        slave_fd = LibC.open(String.new(name_ptr), LibC::O_RDWR | ControllingTty::O_NOCTTY)
         if slave_fd < 0
           LibC.close(master_fd)
           return nil
         end
+        # O_NOCTTY above is load-bearing for the resident plugin daemon: the
+        # daemon is a session leader with NO controlling terminal (sshd runs
+        # its no-pty command detached), and a session leader's first
+        # tty open without O_NOCTTY makes that tty the session's controlling
+        # one. The pty would then belong to the DAEMON's session, and the
+        # master close at the end of the run - the pty's normal teardown -
+        # makes the kernel SIGHUP the session's foreground process group:
+        # the daemon itself (issue #875, t-woerner.ipaclient: the whole
+        # resident daemon died with every remote `script:` task, leaving the
+        # controller's next read at EOF and the host UNREACHABLE). One-shot
+        # plugin processes can never steal the tty this way (they are never
+        # session leaders), which is why only the daemon path ever died.
 
         # Evented master reads: a blocking read(2) on a fiber holds the
         # whole scheduler thread, which would starve Process's reaper
