@@ -122,11 +122,17 @@ module Krikri
       Krikri::ProfileTasks.record_task_start(task, include_display_name)
       print_task_path(task)
 
-      run_hosts, skip_hosts = partition_by_when(task, hosts)
+      skip_conditions = Hash(String, String).new
+      run_hosts, skip_hosts = partition_by_when(task, hosts, skip_conditions: skip_conditions)
 
       skip_hosts.each do |host|
         puts Krikri::Oneline.skip_line(host.name).colorize(:cyan)
         @results[host.name]["skipped"] += 1
+        # A skipped include still registers its skip result (issue #888):
+        # Ansible's register fires for the skipped include too, so a later
+        # `when: reg is defined`/`reg is succeeded` sees the skip shape, not
+        # an undefined name.
+        register_skip_result(task, host, skip_conditions[host.name]?)
       end
 
       run_groups = Hash(String, Array(Host)).new { |hash, key| hash[key] = [] of Host }
@@ -219,6 +225,7 @@ module Krikri
             included_label = no_log_by_host[group_hosts.first.name]? ? "(censored due to no_log)" : nil
             suffix = included_label ? " => (item=#{included_label})" : ""
             puts "included: #{resolved_path} for #{connection_names.join(", ")}#{suffix}".colorize(:cyan)
+            group_hosts.each { |host| register_include_result(task, host, Hash(String, JSON::Any).new, include_names[resolved_path]) }
             next
           end
           unless yaml.as_a?
@@ -267,6 +274,9 @@ module Krikri
           # completed the include statement's own non-skipped result
           # (issue #320).
           group_hosts.each { |host| mark_role_dep_ran(task, host) }
+          # The include's own registered result goes down BEFORE the
+          # included tasks run, matching Ansible (issue #888).
+          group_hosts.each { |host| register_include_result(task, host, Hash(String, JSON::Any).new, include_names[resolved_path]) }
 
           connection_names = group_hosts.map { |host| host.name }
           # Same no_log censored-item suffix as the zero-task branch above
@@ -496,6 +506,98 @@ module Krikri
       else
         value
       end
+    end
+
+    # Ansible registers a RESULT for a successful include_tasks:/include_role:
+    # statement itself (live-verified vs 2.19.11): include_tasks gives
+    # `{"changed": false, "include": <the rendered file path>, "include_args":
+    # {}}`, include_role gives `{"changed": false, "include_args": <the
+    # rendered include_role args>}`. krikri executed the included tasks but
+    # never defined the variable, so any later `when:` referencing it died
+    # with "'x' is undefined" where real proceeded (issue #888) - the register
+    # goes down before the included tasks run, matching real's ordering (a
+    # task inside the included file sees it too).
+    private def register_include_result(task : Task, host : Host, vars_context : Hash(String, JSON::Any), rendered_file : String?) : Nil
+      register_name = task.register
+      return if register_name.nil? || register_name.empty?
+      return if task.is_static_import?
+
+      result = Hash(String, JSON::Any).new
+      result["changed"] = JSON::Any.new(false)
+      result["include"] = JSON::Any.new(rendered_file) if rendered_file
+      result["include_args"] = include_role_args_result(task, vars_context, host.name)
+      register_result(host, register_name, JSON::Any.new(result))
+    end
+
+    # The include_role args as real registers them: rendered per invocation
+    # (a templated `name: "{{ rn }}"` comes back resolved - live-verified vs
+    # 2.19.11). include_tasks carries an empty include_args regardless of its
+    # own file: arg, so a task without include_role_args gets exactly that.
+    private def include_role_args_result(task : Task, vars_context : Hash(String, JSON::Any), host_name : String) : JSON::Any
+      raw = task.include_role_args
+      return JSON::Any.new(Hash(String, JSON::Any).new) unless raw
+      rendered = Hash(String, JSON::Any).new
+      raw.each { |key, value| rendered[key] = render_include_role_var_value(value, vars_context, host_name) }
+      JSON::Any.new(rendered)
+    end
+
+    # A looped include's per-iteration entry inside the registered aggregate:
+    # the include's own result plus Ansible's loop bindings (ansible_loop_var
+    # + the item under the loop var's name), same convention the ordinary
+    # looped task register uses (append_loop_item_bindings). A looped include
+    # entry carries NO `changed` key - unlike the non-looped register, which
+    # does (live-verified vs 2.19.11, issue #888).
+    private def include_loop_success_entry(task : Task, item : JSON::Any, idx : Int32, rendered_file : String?, vars_context : Hash(String, JSON::Any), host_name : String) : JSON::Any
+      entry = Hash(String, JSON::Any).new
+      entry["include"] = JSON::Any.new(rendered_file) if rendered_file
+      entry["include_args"] = include_role_args_result(task, vars_context, host_name)
+      append_loop_item_bindings(task, entry, item, idx)
+      JSON::Any.new(entry)
+    end
+
+    # A looped include's per-iteration when:-skip entry: the ordinary skipped
+    # register shape plus the loop bindings (live-verified vs 2.19.11).
+    private def include_loop_skip_entry(task : Task, item : JSON::Any, idx : Int32) : JSON::Any
+      condition = @last_false_condition
+      false_condition = condition == "false" ? JSON::Any.new(false) : JSON::Any.new(condition || "")
+      entry = {
+        "changed"         => JSON::Any.new(false),
+        "skipped"         => JSON::Any.new(true),
+        "skip_reason"     => JSON::Any.new("Conditional result was False"),
+        "false_condition" => false_condition,
+      } of String => JSON::Any
+      append_loop_item_bindings(task, entry, item, idx)
+      JSON::Any.new(entry)
+    end
+
+    # The looped include register: Ansible aggregates a looped task's register
+    # into `{"changed": false, "msg": ..., "results": [...], "skipped": ...}`
+    # (same shape family finish_looped_task builds for ordinary looped tasks;
+    # an empty loop source gets the distinct "No items in the list" shape).
+    # Live-verified vs 2.19.11 for all-success, mixed skip, all-skipped and
+    # empty-loop includes. Iterations whose when: RAISED contribute no entry
+    # (their failure shape is already registered by swallow_when_error) and
+    # the caller skips this aggregate for such a loop, leaving that failed
+    # registration standing.
+    private def register_include_loop_aggregate(task : Task, host : Host, entries : Array(JSON::Any), empty_loop : Bool) : Nil
+      register_name = task.register
+      return if register_name.nil? || register_name.empty?
+      return if task.is_static_import?
+
+      aggregate = {} of String => JSON::Any
+      if empty_loop
+        aggregate["changed"] = JSON::Any.new(false)
+        aggregate["skipped"] = JSON::Any.new(true)
+        aggregate["skipped_reason"] = JSON::Any.new("No items in the list")
+        aggregate["results"] = JSON::Any.new([] of JSON::Any)
+      else
+        all_skipped = entries.all? { |entry| entry.as_h["skipped"]?.try(&.as_bool) == true }
+        aggregate["results"] = JSON::Any.new(entries)
+        aggregate["skipped"] = JSON::Any.new(all_skipped)
+        aggregate["msg"] = JSON::Any.new(all_skipped ? "All items skipped" : "All items completed")
+        aggregate["changed"] = JSON::Any.new(false)
+      end
+      register_result(host, register_name, JSON::Any.new(aggregate))
     end
 
     private def resolve_include_vars_path(task : Task, candidate : String) : String?
@@ -2109,6 +2211,9 @@ module Krikri
         if loop_items.empty?
           puts Krikri::Oneline.skip_line(host.name).colorize(:cyan)
           @results[host.name]["skipped"] += 1
+          # An empty loop source still registers the include's aggregate -
+          # real's "No items in the list" shape (issue #888).
+          register_include_loop_aggregate(task, host, [] of JSON::Any, true)
           return
         end
 
@@ -2148,6 +2253,8 @@ module Krikri
         # only, exactly like a looped module task's per-item skip lines.
         any_iteration_ran = false
         deferred_iterations = [] of Array(Task)
+        # Per-iteration entries for the registered aggregate (issue #888).
+        include_loop_entries = [] of JSON::Any
         loop_items.each_with_index do |item, idx|
           vars_context = base_vars_context.dup
           # Render any string field of the item that is itself a template
@@ -2213,9 +2320,17 @@ module Krikri
           # ultimately skipped still got counted as `ok` AND `skipped`
           # for the same task. See the non-looped branch's comment below
           # for how this was found.
-          status = run_include_tasks_once(task, host, vars_context, item_label, defer_when_stats: true, defer_run: true, collected: deferred_iterations)
+          status = run_include_tasks_once(task, host, vars_context, item_label, defer_when_stats: true, defer_run: true, collected: deferred_iterations, loop_entries: include_loop_entries, loop_index: idx)
           looped_when_failed = true if status == :failed
           any_iteration_ran = true unless status == :skipped
+        end
+        # The registered aggregate goes down BEFORE the included tasks run,
+        # matching Ansible (it registers every loop iteration's include
+        # before any included task executes). A loop with a raising when:
+        # keeps swallow_when_error's own failed registration instead - the
+        # aggregate of the non-failed entries would drop the failure.
+        unless looped_when_failed
+          register_include_loop_aggregate(task, host, include_loop_entries, false)
         end
         if looped_when_failed
           # One aggregate failure for the whole looped include task, not
@@ -2270,7 +2385,7 @@ module Krikri
       end
     end
 
-    private def run_include_tasks_once(task : Task, host : Host, vars_context : Hash(String, JSON::Any), item_label : String?, defer_when_stats : Bool = false, defer_run : Bool = false, collected : Array(Array(Task))? = nil) : Symbol
+    private def run_include_tasks_once(task : Task, host : Host, vars_context : Hash(String, JSON::Any), item_label : String?, defer_when_stats : Bool = false, defer_run : Bool = false, collected : Array(Array(Task))? = nil, loop_entries : Array(JSON::Any)? = nil, loop_index : Int32? = nil) : Symbol
       if task.when_condition
         begin
           when_result = evaluate_when_items(task, vars_context, host)
@@ -2314,6 +2429,15 @@ module Krikri
           # item: recap skipped=110 where Ansible says 101 (rounds 999040/
           # 999050). The looped caller books the single aggregate.
           @results[host.name]["skipped"] += 1 unless defer_when_stats
+          # The skip registers too (issue #888): a looped caller collects
+          # the entry for its aggregate instead of registering here.
+          if entries = loop_entries
+            if item = vars_context[task.loop_var || "item"]?
+              entries << include_loop_skip_entry(task, item, loop_index || 0)
+            end
+          else
+            register_skip_result(task, host)
+          end
           return :skipped
         end
       end
@@ -2388,6 +2512,14 @@ module Krikri
         included_label = included_line_item_label(task, item_label, included_line_label_value(task, item_label, vars_context), vars_context)
         suffix = included_label ? " => (item=#{included_label})" : ""
         puts "included: #{resolved_path} for #{host.name}#{suffix}".colorize(:cyan)
+        # The zero-task include still registers (issue #888).
+        if entries = loop_entries
+          if item = vars_context[task.loop_var || "item"]?
+            entries << include_loop_success_entry(task, item, loop_index || 0, file_rel, vars_context, host.name)
+          end
+        else
+          register_include_result(task, host, vars_context, file_rel)
+        end
         return :ok
       end
       unless yaml.as_a?
@@ -2511,6 +2643,15 @@ module Krikri
       included_label = included_line_item_label(task, item_label, included_line_label_value(task, item_label, vars_context), vars_context)
       suffix = included_label ? " => (item=#{included_label})" : ""
       puts "included: #{resolved_path} for #{connection_names.join(", ")}#{suffix}".colorize(:cyan)
+      # The successful include registers its result here (issue #888) - a
+      # looped caller collects the entry for its aggregate instead.
+      if entries = loop_entries
+        if item = vars_context[task.loop_var || "item"]?
+          entries << include_loop_success_entry(task, item, loop_index || 0, file_rel, vars_context, host.name)
+        end
+      else
+        register_include_result(task, host, vars_context, file_rel)
+      end
 
       if defer_run
         collected.try(&.push(included_tasks))
@@ -2961,6 +3102,9 @@ module Krikri
         if loop_items.empty?
           puts Krikri::Oneline.skip_line(host.name).colorize(:cyan)
           @results[host.name]["skipped"] += 1
+          # An empty loop source still registers the include's aggregate -
+          # real's "No items in the list" shape (issue #888).
+          register_include_loop_aggregate(task, host, [] of JSON::Any, true)
           return
         end
 
@@ -2976,6 +3120,9 @@ module Krikri
           )
         end
         mark_unsafe_loop_items(loop_items) if unsafe_items
+        # Per-iteration entries for the registered aggregate (issue #888).
+        role_loop_entries = [] of JSON::Any
+        role_loop_failed = false
         loop_items.each_with_index do |item, idx|
           vars_context = base_vars_context.dup
           # Same loop_var-replaces-item rule as the task loop paths
@@ -3002,14 +3149,25 @@ module Krikri
             swallow_when_error(task, host, WhenEvaluationError.new(ex.message), item_label: include_item_display_label(task, item, vars_context, host), loop_item: vars_context[loop_var || "item"]?)
             next
           end
-          run_include_role_once(task, host, vars_context, include_item_display_label(task, item, vars_context, host), idx)
+          status = run_include_role_once(task, host, vars_context, include_item_display_label(task, item, vars_context, host), idx, role_loop_entries)
+          role_loop_failed = true if status == :failed
+        end
+        # Same aggregate rule as the looped include_tasks path above: skip
+        # it when an iteration's when: raised (swallow_when_error's failed
+        # registration stands), register otherwise. run_include_role_once
+        # runs each role's body inline, so this lands after the last
+        # iteration - real registers the include_role result at the include
+        # task's own completion too, with the per-item entries collected
+        # into the one aggregate (live-verified vs 2.19.11, issue #888).
+        unless role_loop_failed
+          register_include_loop_aggregate(task, host, role_loop_entries, false)
         end
       else
         run_include_role_once(task, host, base_vars_context, nil)
       end
     end
 
-    private def run_include_role_once(task : Task, host : Host, vars_context : Hash(String, JSON::Any), item_label : String?, loop_index : Int32? = nil) : Nil
+    private def run_include_role_once(task : Task, host : Host, vars_context : Hash(String, JSON::Any), item_label : String?, loop_index : Int32? = nil, loop_entries : Array(JSON::Any)? = nil) : Symbol
       # A static import_role: (Task#is_static_import) is resolved at
       # parse time in Ansible - the import line itself produces NO
       # task result at all, ever (see the "ok" comment below), and a
@@ -3037,7 +3195,7 @@ module Krikri
           when_result = evaluate_when_items(task, vars_context, host)
         rescue ex : WhenEvaluationError
           swallow_when_error(task, host, ex, item_label: item_label)
-          return
+          return :failed
         end
 
         unless when_result
@@ -3047,7 +3205,16 @@ module Krikri
             puts Krikri::Oneline.skip_line(connection_host, "#{suffix}#{Krikri::ResultDisplay.skip_line_suffix(task.when_condition)}").colorize(:cyan)
           end
           @results[host.name]["skipped"] += 1
-          return
+          # The skip registers too (issue #888): a looped caller collects
+          # the entry for its aggregate instead of registering here.
+          if entries = loop_entries
+            if item = vars_context[task.loop_var || "item"]?
+              entries << include_loop_skip_entry(task, item, loop_index || 0)
+            end
+          else
+            register_skip_result(task, host)
+          end
+          return :skipped
         end
       end
 
@@ -3090,7 +3257,7 @@ module Krikri
       # like every other task-body failure.
       if (bool_failure = task.include_role_bool_failure)
         fail_include_role_bool_keyword(task, host, bool_failure, item_label)
-        return
+        return :ok
       end
 
       # A non-string name/role: value (present but not a string - real's
@@ -3100,7 +3267,7 @@ module Krikri
       # real's order (see fail_include_role_invalid_definition).
       if raw_name = task.include_role_nonstring_name
         fail_include_role_invalid_definition(task, raw_name)
-        return
+        return :ok
       end
 
       substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
@@ -3174,7 +3341,7 @@ module Krikri
         # include_role task's own fatal failure in Ansible, like the
         # role-not-found case below - not the whole-run load refusal.
         fail_include_role_removed_module(task, host, ex)
-        return
+        return :ok
       rescue ex : UnresolvedModuleError
         # Same bypass as HandlerNotFoundError's - an include_role:'d
         # role whose own tasks name a module Ansible can't resolve
@@ -3202,7 +3369,7 @@ module Krikri
                            templated_value_lineage_origin(task, host, raw_name, role_name, vars_context, substitutor)
                          end
         fail_include_role_not_found(task, host, ex.message || "role not found", loop_index, lineage_origin)
-        return
+        return :ok
       rescue ex : PlaybookParser::NonDictVarsError
         # Same bypass as UnresolvedModuleError's above: an include_role:'d
         # role whose own tasks carry a non-mapping `vars:` aborts the
@@ -3214,7 +3381,7 @@ module Krikri
         raise ex
       rescue ex
         fail_include(task, host, "Failed to load role '#{role_name}': #{ex.message}")
-        return
+        return :ok
       end
 
       apply_include_attrs(task, included_tasks)
@@ -3277,6 +3444,15 @@ module Krikri
         end
         suffix = shown_label ? " => (item=#{shown_label})" : ""
         puts "included: #{role_name} for #{connection_name}#{suffix}".colorize(:cyan)
+        # The successful include registers its result here (issue #888) - a
+        # looped caller collects the entry for its aggregate instead.
+        if entries = loop_entries
+          if item = vars_context[task.loop_var || "item"]?
+            entries << include_loop_success_entry(task, item, loop_index || 0, nil, vars_context, host.name)
+          end
+        else
+          register_include_result(task, host, vars_context, nil)
+        end
       end
       # A successful dynamic include statement itself books an `ok` (line
       # above) - real's include task result is a real non-skipped result,
@@ -3370,6 +3546,7 @@ module Krikri
       included_tasks = filter_runtime_loaded(included_tasks, task)
 
       run_task_list(included_tasks, host)
+      :ok
     end
 
     # Recursively renders every string field of a loop item that is

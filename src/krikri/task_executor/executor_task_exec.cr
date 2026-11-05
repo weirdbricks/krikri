@@ -1012,7 +1012,7 @@ module Krikri
     # registered `{{ var.results }}`) to a list of dicts, then yield
     # [parent_dict, subelement] pairs for each element of each dict's `key`
     # sub-list. Returns nil when the task has no with_subelements source.
-    private def register_skip_result(task : Task, host : Host) : Nil
+    private def register_skip_result(task : Task, host : Host, false_condition_override : String? = nil) : Nil
       register_name = task.register
       return if register_name.nil? || register_name.empty?
 
@@ -1025,7 +1025,12 @@ module Krikri
       # the conditional's false_condition landing last): a later
       # `to_json` of a skipped register - or a loop over a registered
       # loop's `results` - renders it verbatim.
-      condition = @last_false_condition
+      # false_condition_override: the batched include_tasks path registers
+      # each skipped host AFTER partition_by_when has already evaluated
+      # every host's when: in sequence, so @last_false_condition holds the
+      # LAST host's clause by then - the caller supplies each host's own
+      # failing clause instead (issue #888's skip half).
+      condition = false_condition_override || @last_false_condition
       false_condition = condition == "false" ? JSON::Any.new(false) : JSON::Any.new(condition || "")
       register_result(host, register_name, JSON::Any.new({
         "changed"         => JSON::Any.new(false),
