@@ -491,15 +491,15 @@ module Krikri
 
       # ansible-core's ssh_key_gen warns and skips generation when the
       # existing key files say there's nothing to do - private checked
-      # before public, force off, changed stays false, no ssh-keygen, no
-      # ssh_key_* result fields (found live via abaez.sudo's re-run,
-      # issue #197). The check runs before check mode's own would-generate
-      # return, so the warning surfaces in check mode too.
+      # before public, force off, changed stays false, no ssh-keygen
+      # (found live via abaez.sudo's re-run, issue #197). The check
+      # runs before check mode's own would-generate return, so the
+      # warning surfaces in check mode too.
       if !dir_missing && !overwrite
         if priv_exists
-          return ssh_key_skip_warning(key_path, "private")
+          return ssh_key_skip_warning(key_path, "private", key_path, pub_path, facts)
         elsif pub_exists
-          return ssh_key_skip_warning(pub_path, "public")
+          return ssh_key_skip_warning(pub_path, "public", key_path, pub_path, facts)
         end
       end
       return PluginResult.new(changed: true, failed: false, msg: "Would generate SSH key (check mode)") if check_mode
@@ -542,10 +542,21 @@ module Krikri
     # (module.warn -> result["warnings"]) - changed stays false and the
     # merged result keeps the warning without gaining any ssh_key_*
     # fields, matching ansible's skip path exactly.
-    private def ssh_key_skip_warning(path : String, kind : String) : PluginResult
+    private def ssh_key_skip_warning(path : String, kind : String, key_path : String, pub_path : String, facts : PluginHelpers::UserState::User?) : PluginResult
       result = PluginResult.new(changed: false, failed: false)
       result.extra["warnings"] = JSON::Any.new([JSON::Any.new(
         "Found existing ssh key #{kind} file \"#{path}\", no force, so skipping ssh-keygen generation")])
+      # Main() always sets ssh_key_file/ssh_public_key/ssh_fingerprint
+      # after ssh_key_gen when rc is not None, even on the
+      # already-exists skip (live-verified: reruns carry all three
+      # populated). The old no-op returned them absent.
+      result.extra["ssh_key_file"] = JSON::Any.new(key_path)
+      pub = remote_exec("cat #{shell_single_quote(pub_path)}")
+      result.extra["ssh_public_key"] = JSON::Any.new(pub[:stdout].strip) if pub[:exit_code] == 0
+      fingerprint = remote_exec("ssh-keygen -l -f #{shell_single_quote(key_path)}")
+      if fingerprint[:exit_code] == 0
+        result.extra["ssh_fingerprint"] = JSON::Any.new(fingerprint[:stdout].strip)
+      end
       result
     end
 

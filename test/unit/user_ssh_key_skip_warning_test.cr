@@ -30,7 +30,10 @@ describe "user plugin generate_ssh_key existing-key warnings" do
     warnings.size.must_equal(1)
     warnings[0].as_s.must_equal(
       "Found existing ssh key private file \"#{key_path}\", no force, so skipping ssh-keygen generation")
-    result["ssh_key_file"]?.must_be_nil
+    # Main() always sets ssh_key_file after ssh_key_gen when rc is
+    # not None. "not a real key" has no .pub companion and no
+    # ssh-keygen fingerprint, so those two stay absent here.
+    result["ssh_key_file"].as_s.must_equal(key_path)
     result["ssh_public_key"]?.must_be_nil
     result["ssh_fingerprint"]?.must_be_nil
   end
@@ -54,6 +57,8 @@ describe "user plugin generate_ssh_key existing-key warnings" do
     warnings.size.must_equal(1)
     warnings[0].as_s.must_equal(
       "Found existing ssh key public file \"#{key_path}.pub\", no force, so skipping ssh-keygen generation")
+    result["ssh_key_file"].as_s.must_equal(key_path)
+    result["ssh_public_key"].as_s.must_equal("ssh-ed25519 AAAA krikri-spec")
   end
 
   it "carries no warning when no key file exists (check-mode would-generate)" do
