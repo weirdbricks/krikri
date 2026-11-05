@@ -215,16 +215,20 @@ describe "deb822_repository types: validation wording (kpg32)" do
   end
 end
 
-# --- xml / expect: missing-Python-library gates ----------------------------
+# --- xml: missing-Python-library gate --------------------------------------
 #
-# Ansible's xml and expect import lxml/pexpect at MODULE level, so a target
-# without them fails with missing_required_lib() before the module
-# validates a parameter, reads a file or spawns anything. krikri
-# implements both natively (krikri-xml, and the pty layer) and so has no
-# such dependency - it used to report its own downstream outcome
-# instead. A python3 that cannot import the library reproduces the
-# target state; a real one (this dev machine has both) leaves the gate
+# Ansible's xml imports lxml at MODULE level, so a target without it fails
+# with missing_required_lib() before the module validates a parameter,
+# reads a file or parses anything. krikri implements it natively (krikri-xml)
+# and so has no such dependency - it used to report its own downstream
+# outcome instead. A python3 that cannot import the library reproduces the
+# target state; a real one (this dev machine has lxml) leaves the gate
 # inert and behavior unchanged.
+#
+# expect has no such gate anymore: pexpect is provisioned on the generator
+# podman pair's real side only (krikri never imports it), so probing the
+# local interpreter there failed tasks the reference ansible carried out.
+# See the expect block below for the regression tests.
 
 private def python_without_libs(name : String) : String
   dir = PluginSpecHelper.tmp_path("kpg32-pylibs-#{name}")
@@ -254,57 +258,53 @@ private def python_without_libs(name : String) : String
   dir
 end
 
-describe "expect plugin - pexpect library gate (kpg32)" do
-  it "fails with missing_required_lib before the command is even looked up" do
-    dir = python_without_libs("pexpect")
+# expect is the one kpg32-era gate that had to go: the generator's podman
+# pair installs python3-pexpect on the REAL container only (the only side
+# whose module imports it), so a probe of the krikri container's own
+# interpreter answered a question about a machine the reference ansible
+# never ran on - and failed the skip-shaped kpg expect cases real
+# completed. With the reference side guaranteed pexpect-present, krikri
+# behaves as pexpect-present unconditionally: the target's pexpect
+# importability must not change its outcome in either direction.
+describe "expect plugin - no pexpect library gate" do
+  it "proceeds on a target whose python cannot import pexpect" do
+    dir = python_without_libs("pexpect-gateless")
 
     result = PluginSpecHelper.run("expect", {
-      "command"   => "jzosqw",
-      "creates"   => "/tmp/krikri-no-such-creates",
+      "command"   => "krikri-no-such-command-xyz",
       "responses" => "{}",
     }, {} of String => String, "localhost", env: {"PATH" => dir})
 
+    # The gate used to fail here with missing_required_lib before the
+    # command was even looked up; the native pty path has no pexpect
+    # dependency, so the run falls through to pexpect's own
+    # command-not-found wording instead.
     result["failed"].as_bool.must_equal(true)
-    result["changed"].as_bool.must_equal(false)
-    msg = result["msg"].as_s
-    expect(str_starts_with?(msg, "Failed to import the required Python library (pexpect) on ")).must_equal(true)
-    expect(msg.includes?("'s Python ")).must_equal(true)
-    expect(msg.ends_with?("please consult the documentation on ansible_python_interpreter")).must_equal(true)
-    # The command is NOT named: Ansible never reaches the spawn.
-    expect(msg.includes?("jzosqw")).must_equal(false)
+    result["msg"].as_s.must_equal("The command was not found or was not executable: krikri-no-such-command-xyz.")
   end
 
-  it "wins over the creates:/removes: skip, which Ansible also never reaches" do
-    dir = python_without_libs("pexpect-skip")
-    dest = PluginSpecHelper.tmp_path("kpg32-expect-creates")
+  it "still reaches the removes: skip on such a target (the kpg expect shape)" do
+    dir = python_without_libs("pexpect-gateless-skip")
+    missing = PluginSpecHelper.tmp_path("kpg891-expect-removes")
 
     result = PluginSpecHelper.run("expect", {
       "command"   => "true",
-      "creates"   => dest,
+      "removes"   => missing,
       "responses" => "{}",
     }, {} of String => String, "localhost", env: {"PATH" => dir})
 
-    result["failed"].as_bool.must_equal(true)
-    expect(str_starts_with?(result["msg"].as_s, "Failed to import the required Python library (pexpect) on "))
-      .must_equal(true)
+    # Real ansible with pexpect installed exits ok with the skip text as
+    # stdout (changed=false, rc=0, no msg) - the outcome the generator's
+    # podman pair produces, which the gate used to preempt.
+    falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+    result["changed"].as_bool.must_equal(false)
+    result["stdout"].as_s.must_equal("skipped, since #{missing} does not exist")
+    result["rc"].as_i.must_equal(0)
   end
 
-  it "carries the ImportError reason as [ERROR]-only detail, never in the result msg" do
-    dir = python_without_libs("pexpect-detail")
-
-    result = PluginSpecHelper.run("expect", {
-      "command"   => "jzosqw",
-      "responses" => "{}",
-    }, {} of String => String, "localhost", env: {"PATH" => dir})
-
-    result["failed"].as_bool.must_equal(true)
-    expect(result["msg"].as_s.includes?("No module named")).must_equal(false)
-    result["_ansible_error_detail"].as_s.ends_with?(": No module named 'pexpect'").must_equal(true)
-  end
-
-  it "is inert when the target's python can import pexpect" do
+  it "is unaffected when the target's python can import pexpect" do
     # This dev machine has real pexpect, so the plugin must behave
-    # exactly as it did before the gate existed.
+    # exactly as it does on a target without it.
     result = PluginSpecHelper.run("expect", {
       "command"   => "krikri-no-such-command-xyz",
       "responses" => "{}",

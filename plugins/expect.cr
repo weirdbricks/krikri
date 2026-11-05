@@ -39,7 +39,6 @@
 
 require "json"
 require "../src/krikri/base_plugin"
-require "../src/krikri/plugin_helpers/python_lib_gate"
 
 @[Link("util")]
 lib LibPty
@@ -92,8 +91,9 @@ module Krikri
         return failure
       end
 
-      # Real expect.py's own check_type_int(timeout), right after the
-      # pexpect gate and BEFORE the empty-command check: `timeout` is
+      # Real expect.py's own check_type_int(timeout), right after its
+      # pexpect import gate (krikri has no gate - see preflight) and
+      # BEFORE the empty-command check: `timeout` is
       # declared `type: raw`, so a non-numeric one gets no argspec error,
       # it fails here in the module body instead.
       converted = convert_timeout
@@ -152,22 +152,23 @@ module Krikri
     end
 
     # Everything real expect.py's main() does before its first line of
-    # module logic, in Ansible's order: the AnsibleModule argument
-    # validation (responses required, coerced to a dict) and then,
-    # immediately after it, the pexpect import gate.
-    # The gate is `if not HAS_PEXPECT: module.fail_json(msg=
-    # missing_required_lib("pexpect"), exception=PEXPECT_IMP_ERR)`;
-    # pexpect is a module-level import there, so a target without it
-    # fails HERE - it never reaches the empty-command check, the
-    # creates/removes skip, or the spawn. krikri drives the pty layer
-    # directly and needs no pexpect, which used to leave it reporting
-    # its own downstream outcome ("The command was not found or was
-    # not executable: <cmd>." for a command Ansible never tried, or plain
-    # success on a creates:/removes: skip) where Ansible reports the
-    # missing library. Reproduced as-is, at the same point in the
-    # flow. Verified against ansible-playbook 2.19.11 on a target
-    # without pexpect, for the skip, non-skip and nonexistent-command
-    # shapes alike.
+    # module logic: the AnsibleModule argument validation (responses
+    # required, coerced to a dict).
+    #
+    # There is deliberately NO pexpect import gate here, even though real
+    # expect.py fails with missing_required_lib("pexpect") before any of
+    # its own logic when the target cannot import pexpect (it was once
+    # reproduced that way). krikri drives the pty layer directly and has
+    # no pexpect dependency, and the target's pexpect importability is a
+    # fact about the TARGET, not about the module - one that diverges the
+    # moment the two engines compare against different machines. The
+    # generator's podman pair provisions python3-pexpect on the real side
+    # only (the only side that imports it), so a probe of the local
+    # interpreter failed tasks the reference ansible carried out - e.g.
+    # the creates:/removes: skip kpg expect cases are built around. With
+    # the reference side guaranteed pexpect-present, krikri behaves as
+    # pexpect-present: it falls through to the timeout, empty-command,
+    # chdir and skip logic below.
     private def preflight(command : String, responses_json : String?) : PluginResult?
       unless responses_json
         return PluginResult.new(changed: false, failed: true, msg: "missing required arguments: responses")
@@ -175,10 +176,6 @@ module Krikri
 
       unless responses = parse_responses(responses_json)
         return PluginResult.new(changed: false, failed: true, msg: "responses must be a dictionary of pattern -> response")
-      end
-
-      if gate = Krikri.missing_python_library("pexpect", "pexpect")
-        return PluginResult.new(changed: false, failed: true, msg: gate[:msg], _ansible_error_detail: gate[:detail])
       end
 
       @responses = responses

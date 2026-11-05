@@ -3,6 +3,14 @@ require "digest/sha1"
 require "big"
 require "./param_sentinels"
 require "./python_literal"
+# The systemd unused-params warning below goes through
+# Krikri::ResultDisplay.emit_action_warning; without this require the
+# reference only resolves in compiles that pull result_display in through
+# some other path (the main binary, most suite shards), while a shard (or
+# single-file compile) whose file slice never requires it dies on
+# "undefined constant" - and which shard that is shifts with the measured
+# test timings that drive the shard assignment (issue #891's driver run).
+require "./task_executor/result_display"
 
 # Data-driven module argument validation, matching ansible-core's
 # AnsibleModule argument-spec checks word-for-word.
