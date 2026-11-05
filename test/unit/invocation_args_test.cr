@@ -36,32 +36,13 @@ describe Krikri::ArgspecValidator do
     args.keys.first(4).must_equal(%w[dest path src state])
   end
 
-  it "has no get_selinux_context in stat's invocation.module_args" do
-    # ansible-core 2.19 removed get_selinux_context from stat's argspec
-    # (and from its output entirely), so it must not appear as a spec
-    # default any more than a supplied value would be accepted.
+  it "echoes get_selinux_context as a spec default in stat's invocation.module_args" do
+    # ansible-core 2.21 (krikri's parity target) restored get_selinux_context
+    # to stat's argspec (issue #910), so its default is echoed like the
+    # other stat defaults.
     args = Krikri::ArgspecValidator.invocation_args("ansible.builtin.stat", {"path" => "/etc/hosts"}).as(Hash(String, JSON::Any))
     args.has_key?("path").must_equal(true)
-    args.has_key?("get_selinux_context").must_equal(false)
-  end
-
-  it "echoes get_selinux_context under the 2.20 profile and drops it again on 2.19" do
-    # ansible-core 2.20 restored get_selinux_context to stat's argspec
-    # (issue #910): the 2.20 argspec profile echoes its default.
-    Krikri::ArgspecValidator.profile = "2.20"
-    begin
-      args = Krikri::ArgspecValidator.invocation_args("ansible.builtin.stat", {"path" => "/etc/hosts"}).as(Hash(String, JSON::Any))
-      args["get_selinux_context"].as_bool.must_equal(false)
-    ensure
-      Krikri::ArgspecValidator.profile = "2.19"
-    end
-    args = Krikri::ArgspecValidator.invocation_args("ansible.builtin.stat", {"path" => "/etc/hosts"}).as(Hash(String, JSON::Any))
-    args.has_key?("get_selinux_context").must_equal(false)
-  end
-
-  it "rejects an unsupported argspec profile" do
-    ex = assert_raises(ArgumentError) { Krikri::ArgspecValidator.profile = "2.18" }
-    ex.message.to_s.must_match(/supported: 2\.19, 2\.20/)
+    args["get_selinux_context"].as_bool.must_equal(false)
   end
 
   it "has no invocation for an unknown module" do

@@ -1735,6 +1735,10 @@
     "type": "bool",
     "default": false
    },
+   "encoding": {
+    "type": "str",
+    "default": "utf-8"
+   },
    "mode": {
     "type": "raw"
    },
@@ -2064,7 +2068,12 @@
   "required_together": []
  },
  "ansible.builtin.deb822_repository": {
-  "mutually_exclusive": [],
+  "mutually_exclusive": [
+   [
+    "exclude",
+    "include"
+   ]
+  ],
   "options": {
    "allow_downgrade_to_insecure": {
     "type": "bool"
@@ -2098,8 +2107,20 @@
    "enabled": {
     "type": "bool"
    },
+   "exclude": {
+    "type": "list",
+    "elements": "str"
+   },
+   "include": {
+    "type": "list",
+    "elements": "str"
+   },
    "inrelease_path": {
     "type": "str"
+   },
+   "install_python_debian": {
+    "type": "bool",
+    "default": false
    },
    "languages": {
     "type": "list",
@@ -2327,10 +2348,6 @@
    "installroot": {
     "type": "str",
     "default": "/"
-   },
-   "install_repoquery": {
-    "type": "bool",
-    "default": true
    },
    "install_weak_deps": {
     "type": "bool",
@@ -2908,9 +2925,6 @@
     "default": "no"
    },
    "gpg_allowlist": {
-    "aliases": [
-     "gpg_whitelist"
-    ],
     "type": "list",
     "default": [],
     "elements": "str"
@@ -3486,6 +3500,10 @@
     ],
     "type": "str"
    },
+   "encoding": {
+    "type": "str",
+    "default": "utf-8"
+   },
    "insertafter": {
     "type": "str"
    },
@@ -3821,6 +3839,10 @@
    [
     "executable",
     "virtualenv"
+   ],
+   [
+    "editable",
+    "requirements"
    ]
   ],
   "options": {
@@ -4214,6 +4236,10 @@
     ],
     "type": "path",
     "required": true
+   },
+   "armor": {
+    "type": "bool",
+    "default": true
    }
   },
   "required_by": {},
@@ -4256,6 +4282,10 @@
     ],
     "type": "bool",
     "default": true
+   },
+   "get_selinux_context": {
+    "type": "bool",
+    "default": false
    },
    "checksum_algorithm": {
     "aliases": [
@@ -5122,7 +5152,15 @@
    }
   },
   "required_by": {},
-  "required_if": [],
+  "required_if": [
+   [
+    "append",
+    true,
+    [
+     "groups"
+    ]
+   ]
+  ],
   "required_one_of": [],
   "required_together": []
  },
@@ -5295,13 +5333,6 @@
    },
    "keepalive": {
     "type": "bool"
-   },
-   "keepcache": {
-    "type": "str",
-    "choices": [
-     "0",
-     "1"
-    ]
    },
    "metadata_expire": {
     "type": "str"
@@ -9978,10 +10009,13 @@
   "mutually_exclusive": [],
   "options": {
    "name": {
-    "type": "str",
     "aliases": [
      "pkg"
-    ]
+    ],
+    "type": "str"
+   },
+   "version": {
+    "type": "str"
    },
    "from_path": {
     "type": "path"
@@ -10004,6 +10038,12 @@
     "type": "bool",
     "default": false
    },
+   "install_recommendations": {
+    "type": "bool"
+   },
+   "install_suggestions": {
+    "type": "bool"
+   },
    "executable": {
     "type": "path"
    },
@@ -10013,7 +10053,7 @@
      "compatibility",
      "new"
     ],
-    "default": "compatibility"
+    "default": "new"
    },
    "name_check": {
     "type": "str"
@@ -10021,7 +10061,12 @@
   },
   "required_by": {},
   "required_if": [],
-  "required_one_of": [],
+  "required_one_of": [
+   [
+    "name",
+    "from_path"
+   ]
+  ],
   "required_together": []
  },
  "community.general.easy_install": {
@@ -10082,20 +10127,20 @@
     ],
     "type": "str",
     "choices": [
-     "swap",
-     "lvm",
-     "ext3",
-     "ocfs2",
-     "reiserfs",
-     "btrfs",
-     "ufs",
-     "ext2",
      "bcachefs",
-     "vfat",
-     "ext4",
-     "f2fs",
      "ext4dev",
-     "xfs"
+     "f2fs",
+     "xfs",
+     "btrfs",
+     "ocfs2",
+     "ufs",
+     "vfat",
+     "reiserfs",
+     "ext4",
+     "ext3",
+     "swap",
+     "ext2",
+     "lvm"
     ]
    },
    "dev": {
@@ -12128,10 +12173,6 @@
    "insertafter": {
     "type": "bool",
     "default": false
-   },
-   "create_if_missing": {
-    "type": "bool",
-    "default": true
    }
   },
   "required_by": {
@@ -13681,5 +13722,69 @@
     "password"
    ]
   ]
+ },
+ "ansible.builtin.homebrew": {
+  "mutually_exclusive": [],
+  "options": {
+   "name": {
+    "aliases": [
+     "formula",
+     "package",
+     "pkg"
+    ],
+    "type": "list",
+    "elements": "str"
+   },
+   "path": {
+    "type": "path",
+    "default": "/usr/local/bin:/opt/homebrew/bin:/home/linuxbrew/.linuxbrew/bin"
+   },
+   "state": {
+    "type": "str",
+    "choices": [
+     "present",
+     "installed",
+     "latest",
+     "upgraded",
+     "head",
+     "linked",
+     "unlinked",
+     "absent",
+     "removed",
+     "uninstalled"
+    ],
+    "default": "present"
+   },
+   "update_homebrew": {
+    "type": "bool",
+    "default": false
+   },
+   "upgrade_all": {
+    "aliases": [
+     "upgrade"
+    ],
+    "type": "bool",
+    "default": false
+   },
+   "install_options": {
+    "aliases": [
+     "options"
+    ],
+    "type": "list",
+    "elements": "str"
+   },
+   "upgrade_options": {
+    "type": "list",
+    "elements": "str"
+   },
+   "force_formula": {
+    "type": "bool",
+    "default": false
+   }
+  },
+  "required_by": {},
+  "required_if": [],
+  "required_one_of": [],
+  "required_together": []
  }
 }

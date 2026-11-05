@@ -1,12 +1,12 @@
 require "yaml"
 
 module Krikri
-  VERSION = "0.9.2404"
+  VERSION = "0.9.2405"
 
   # The ansible-core release krikri's output is verified against, byte for
   # byte (see README "Compatibility target"). Also the value of the
   # `ansible_version` magic variable.
-  ANSIBLE_TARGET_VERSION = "2.19.11"
+  ANSIBLE_TARGET_VERSION = "2.21.6"
 
   # Baked in at compile time via the same `--release` flag `build.sh`
   # passes through to `crystal build`. A timing-sensitive round run

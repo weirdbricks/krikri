@@ -79,7 +79,7 @@ describe "ansible_version magic var" do
     status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
 
     status.success?.must_equal(true)
-    output.to_s.must_include("ansible_version => {'string': '2.19.11', 'full': '2.19.11', 'major': 2, 'minor': 19, 'revision': 11}")
+    output.to_s.must_include("ansible_version => {'string': '2.21.6', 'full': '2.21.6', 'major': 2, 'minor': 21, 'revision': 6}")
   ensure
     File.delete(playbook) if playbook && File.exists?(playbook)
   end
