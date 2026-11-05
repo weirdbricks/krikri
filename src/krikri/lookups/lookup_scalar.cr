@@ -8,13 +8,15 @@ module Krikri
     # Scalar-returning lookups (config/env, inventory_hostnames, url, vars) -
     # extracted verbatim from expression_evaluator.cr (lookup-dispatch split).
     class ExpressionEvaluator
-      private def evaluate_lookup_scalar(lookup_type : String?, parts : Array(String), kwargs : Array(String), query_mode : Bool = false) : String?
+      private def evaluate_lookup_scalar(lookup_type : String?, parts : Array(String),
+                                         kwargs : Array(String), query_mode : Bool = false,
+                                         spelled_name : String? = nil) : String?
         case lookup_type
         when "first_found"
           params = parts[1]?.try { |part| first_found_params(part) }
           return "undefined" unless params
           begin
-            evaluate_first_found(params)
+            evaluate_first_found(params, spelled_name)
           rescue ex : FirstFoundLookupError | UndefinedVariableError
             # The generic lookup `errors='ignore'` option: same
             # empty-result tolerance the query()/with_ path already

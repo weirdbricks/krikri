@@ -267,6 +267,36 @@ describe "task error Origin blocks (issue #12)" do
     out.must_include "fatal: [localhost]: FAILED! => {\"msg\": \"The lookup plugin 'first_found' failed: No file was found when using first_found.\"}"
   end
 
+  it "echoes the FQCN a lookup() term spells in the first_found exhaustion error" do
+    # Real (2.19.x, live-verified with a minimal include_vars repro) wraps
+    # the plugin's own raise with the lookup name exactly as the CALLER
+    # spelled it in the term: marvhh.proxmox_upgrade writes
+    # `lookup('ansible.builtin.first_found', params)` and real prints
+    # 'ansible.builtin.first_found' in both the [ERROR] block and the
+    # fatal msg. The dispatch strips the collection prefix before the
+    # plugin runs, so the message used to collapse to the bare form
+    # (issue #883).
+    code, out, _err, _path = run_play_file([
+      "---",
+      "- hosts: localhost",
+      "  gather_facts: false",
+      "  connection: local",
+      "  tasks:",
+      "    - ansible.builtin.include_vars: \"{{ lookup('ansible.builtin.first_found', params) }}\"",
+      "      vars:",
+      "        params:",
+      "          files:",
+      "            - definitely-not-here-12.yml",
+      "          paths:",
+      "            - /tmp",
+    ].join("\n") + "\n")
+    code.must_equal(2)
+    fqcn_error = "Error while resolving value for '_raw_params': The lookup plugin 'ansible.builtin.first_found' failed: No file was found when using first_found."
+    out.must_include "[ERROR]: Task failed: Finalization of task args for 'ansible.builtin.include_vars' failed: #{fqcn_error}"
+    out.must_include %({"changed": false, "msg": "Task failed: Finalization of task args for 'ansible.builtin.include_vars' failed: #{fqcn_error}"})
+    out.wont_include "The lookup plugin 'first_found' failed"
+  end
+
   it "reports a missing meta/main.yml dependency with the ansible.legacy: search list and the meta Origin" do
     meta = [
       "galaxy_info:",

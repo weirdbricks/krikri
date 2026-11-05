@@ -134,7 +134,13 @@ module Krikri
       # entirely against the controller's own filesystem - Ansible's
       # first_found always does (it's how role vars files that live on the
       # controller, not the managed host, get found).
-      private def evaluate_first_found(params : JSON::Any) : String
+      # spelled_name carries the lookup name exactly as the role spelled it
+      # ('ansible.builtin.first_found' vs bare 'first_found'): ansible-core's
+      # Templar wraps the plugin's own raise with the name the CALLER wrote
+      # in the lookup term ("The lookup plugin '<as spelled>' failed: ...",
+      # live-verified vs 2.19.x - marvhh.proxmox_upgrade spells the FQCN and
+      # real prints it), so the message must not hardcode the bare form.
+      private def evaluate_first_found(params : JSON::Any, spelled_name : String? = nil) : String
         params_hash = params.as_h?
         # Real first_found accepts two more term shapes besides the
         # {files:, paths:, skip:} DICT form: a plain LIST of candidate
@@ -201,7 +207,7 @@ module Krikri
 
         return "[]" if skip_errors
         raise FirstFoundLookupError.new(
-          "The lookup plugin 'first_found' failed: No file was found when using first_found.")
+          "The lookup plugin '#{spelled_name || "first_found"}' failed: No file was found when using first_found.")
       end
 
       # A first_found params dict's own `files:`/`paths:` values can be
