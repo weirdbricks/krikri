@@ -335,6 +335,18 @@ describe Krikri::ArgspecValidator do
       "sysvinit", "ansible.builtin.sysvinit", {"service" => "cron", "enabled" => "true"}, vars).must_be_nil
   end
 
+  it "fails a typo'd sysvinit task on its required name, ahead of the typo (issue #902)" do
+    # The exact #902 kpg shape (seed 1793890551): `naem: cron` plus
+    # `state: started` - unsupported-params is collected LAST in
+    # AnsibleModule's validation, so real reports the missing required
+    # name ("missing required arguments: name"), never the typo.
+    failure = Krikri::ArgspecValidator.validate(
+      "sysvinit", "ansible.builtin.sysvinit",
+      {"state" => "started", "naem" => "cron"}, vars)
+    failure.as(Failure).msg.must_equal("missing required arguments: name")
+    failure.as(Failure).action_level?.must_equal(false)
+  end
+
   it "delegates service validation to the service_mgr module's spec" do
     failure = Krikri::ArgspecValidator.validate(
       "service", "ansible.builtin.service",
