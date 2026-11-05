@@ -1337,6 +1337,40 @@ describe Krikri::PythonModuleRunner do
     parsed["py3"].as_bool.must_equal(true)
   end
 
+  it "shim provides ansible.module_utils.common.warnings for modules importing warn" do
+    skip("python3 not available") unless File.exists?("/usr/bin/python3")
+    # Issue #908's own repro: a custom module importing warn from
+    # ansible.module_utils.common.warnings. Real ansible ships that file in
+    # the AnsiballZ payload and merges the recorded warning into the module
+    # result, so the task is ok with a [WARNING]: hello line; the shim bundle
+    # lacked the file, failing with ModuleNotFoundError. The shim records the
+    # warning in a module-global store and basic.py pulls it into
+    # result['warnings'] on exit_json, matching real's get_warnings() merge.
+    work_dir = File.join(Dir.tempdir, "krikri-shim-spec-#{Random.rand(1_000_000)}")
+    Dir.mkdir_p(work_dir)
+    Krikri::PythonModuleRunner.write_module_utils_bundle(work_dir)
+    module_path = File.join(work_dir, "warnings_spec.py")
+    File.write(module_path, "from ansible.module_utils.basic import AnsibleModule\n" \
+                            "from ansible.module_utils.common.warnings import warn, deprecate, get_warning_messages\n" \
+                            "module = AnsibleModule(argument_spec={})\n" \
+                            "warn('hello')\n" \
+                            "deprecate('gone', version='2.0')\n" \
+                            "recorded = get_warning_messages()\n" \
+                            "module.exit_json(changed=False, recorded=list(recorded))\n")
+    stdout_io = IO::Memory.new
+    err = IO::Memory.new
+    status = Process.run("/usr/bin/python3", [module_path],
+      input: IO::Memory.new(%({"ANSIBLE_MODULE_ARGS": {}})),
+      output: stdout_io, error: err)
+    FileUtils.rm_r(work_dir)
+    status.success?.must_equal(true)
+    err.to_s.wont_include("ModuleNotFoundError")
+    parsed = Krikri::PythonModuleRunner.parse_module_output(stdout_io.to_s).not_nil!
+    parsed["recorded"].as_a.map { |v| v.as_s }.must_equal(["hello"])
+    parsed["warnings"].as_a.map { |v| v.as_s }.must_equal(["hello"])
+    parsed["warnings"].as_a[0].as_s.must_equal("hello")
+  end
+
   # ---- collection imports on the module's PYTHONPATH (issue #692) ----
 
   it "maps collection roots to PYTHONPATH entries that expose ansible_collections" do
