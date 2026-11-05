@@ -34,3 +34,34 @@ jobs:
           scripts/make-multiarch-bundle.sh "$TAG" dl out
           scripts/make-darwin-with-linux-multiarch-bundle.sh "$TAG" dl out
           gh release upload "$TAG" out/*.tar.gz --clobber
+
+      # Formula/krikri-multiarch.rb must pin the bundle's real sha256 -
+      # release.yml cannot do it (the bundle does not exist yet when it
+      # runs), which left sha256 "" and Homebrew unable to verify the
+      # download (issue #841). Now that the bundle is uploaded, hash it
+      # and patch the formula's three version-bearing lines. A manual
+      # re-dispatch for an older tag just re-pins the same values.
+      - name: Update Formula/krikri-multiarch.rb
+        run: |
+          TAG="${{ inputs.tag }}"
+          [ -n "$TAG" ] || TAG=$(gh release view --json tagName --jq .tagName)
+          VERSION="${TAG#v}"
+          ASSET="krikri-${TAG}-darwin-with-linux-multiarch.tar.gz"
+          SHA=$(sha256sum "out/${ASSET}" | cut -d' ' -f1)
+          test -n "$SHA" || { echo "empty sha256 for $ASSET"; exit 1; }
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git fetch origin main
+          git checkout main
+          sed -i -E \
+            -e "s#^  version \".*\"#  version \"${VERSION}\"#" \
+            -e "s#^  url \".*darwin-with-linux-multiarch.tar.gz\"#  url \"https://github.com/weirdbricks/krikri/releases/download/${TAG}/${ASSET}\"#" \
+            -e "s#^  sha256 \".*\"#  sha256 \"${SHA}\"#" \
+            Formula/krikri-multiarch.rb
+          git add Formula/krikri-multiarch.rb
+          if git diff --cached --quiet; then
+            echo "Formula/krikri-multiarch.rb already up to date."
+          else
+            git commit -m "Update krikri-multiarch formula for ${TAG}"
+            git push origin HEAD:main
+          fi

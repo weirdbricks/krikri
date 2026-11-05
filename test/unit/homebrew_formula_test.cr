@@ -16,6 +16,21 @@ describe "homebrew formulas" do
     "krikri-multiarch" => File.join(PROJECT_ROOT, "Formula", "krikri-multiarch.rb"),
   }
 
+  it "pin a real sha256 in every formula" do
+    # release.yml ran the multiarch bump before release-bundle.yml had
+    # built the bundle, so sha256sum yielded "" and Homebrew could not
+    # verify the download (issue #841) - no formula may carry an empty
+    # one, and each must be a full 64-hex digest.
+    FORMULAS.each do |name, path|
+      File.read_lines(path).each do |line|
+        next unless line.strip.starts_with?("sha256 ")
+        digest = line.strip.lstrip("sha256 ").strip('"')
+        digest.matches?(/\A[0-9a-f]{64}\z/).must_equal(true,
+          "#{name} has empty or non-sha256 sha256: #{digest.inspect}")
+      end
+    end
+  end
+
   it "pin the same release version in both formulas" do
     versions = FORMULAS.values.map do |path|
       line = File.read_lines(path).find { |file_line| file_line.strip.starts_with?("version ") }
