@@ -3018,6 +3018,20 @@ module Krikri
         return raw_failure
       end
 
+      # Real's raw action hands the command straight to the CONNECTION
+      # (_low_level_execute_command), never to the command module, so the
+      # module's strip_empty_ends trailing-\r\n rstrip never applies: raw's
+      # registered stdout/stderr keep their trailing newline (`raw: echo hi`
+      # registers stdout "hi\n"; a failed spawn keeps dash's "...not
+      # found\n" - live-verified vs 2.19.11, issue #896). The shell plugin
+      # raw is aliased onto defaults that strip to true, so raw's dispatch
+      # forces it off for every raw run; the remote pty-merged capture
+      # below bypasses that strip on its own either way.
+      if RAW_MODULES.includes?(task.action_name || task.module_name)
+        substituted_params = substituted_params.dup
+        substituted_params["strip_empty_ends"] = "false"
+      end
+
       # Data-driven module argument validation against Ansible's own
       # argument specs (see ArgspecValidator) - the same checks the real
       # module's AnsibleModule init runs, controller-side, before the
