@@ -43,9 +43,13 @@ module Krikri
       # failed with "Failed to import the required Python library
       # (psycopg2) ..."). The dependency still decides the outcome, so it
       # is reproduced here - same message, same ordering - like the passlib
-      # gate in htpasswd and the pexpect gate in expect. Real passes no
+      # gate in htpasswd. Real passes no
       # exception= to fail_json here, so the [ERROR] block carries the msg
-      # alone, unlike expect/deb822_repository.
+      # alone, unlike deb822_repository. (expect's own pexpect gate is
+      # gone: krikri's native pty path has no pexpect dependency, and the
+      # generator's podman pair provisions pexpect on the real side only,
+      # so probing the local interpreter there failed tasks the reference
+      # ansible carried out.)
       #
       # nil when the target's Python imports psycopg2 cleanly - the module
       # connects, exactly as real's does.
