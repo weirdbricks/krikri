@@ -4251,10 +4251,6 @@
     "type": "bool",
     "default": true
    },
-   "get_selinux_context": {
-    "type": "bool",
-    "default": false
-   },
    "checksum_algorithm": {
     "aliases": [
      "checksum",
