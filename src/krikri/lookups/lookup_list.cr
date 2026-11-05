@@ -12,12 +12,20 @@ module Krikri
           # returns every term given, as a real list (mainly exists so
           # a caller can always treat the result as a list regardless
           # of how many terms were given).
-          lookup_single_element_result(parts[1..].map { |part| evaluate_lookup_term(part.strip) }, kwargs, query_mode)
+          lookup_scalar_result(parts[1..].map { |part| evaluate_lookup_term(part.strip) }, kwargs, query_mode)
         when "items"
           # lookup('items', list1, list2, ...) - Ansible's own
-          # items lookup: flattens the given list terms one level
-          # (itertools.chain, not a deep flatten).
-          lookup_single_element_result(parts[1..].flat_map { |part| lookup_array(evaluate_lookup_term(part.strip)) }, kwargs, query_mode)
+          # items lookup: flattens list/tuple terms one level
+          # (itertools.chain, not a deep flatten) while every other term
+          # (a bare string - its characters are NOT split - a dict, a
+          # number, None) is kept as ONE item (live-verified against
+          # ansible-core 2.19.11: `query('items', 'ab')` is ['ab'], not
+          # ['a', 'b']).
+          terms = parts[1..].flat_map do |part|
+            value = evaluate_lookup_term(part.strip)
+            value.as_a? || [value]
+          end
+          lookup_scalar_result(terms, kwargs, query_mode)
         when "flattened"
           # lookup('flattened', t1, t2, ...) - Ansible's own flattened
           # lookup: deep-flattens every term (nested lists flattened
@@ -31,27 +39,7 @@ module Krikri
           # dbs_distro_packages) }}"` (round 821001) made the apt plugin
           # fail with "No package matching 'undefined' is available".
           items = lookup_flatten(parts[1..].map { |part| evaluate_lookup_term(part.strip) })
-          wantlist = kwargs.any? { |part| part.strip.downcase.starts_with?("wantlist=true") }
-          # ansible-core's _invoke_lookup joins with ",".join and returns
-          # the sequence AS-IS when that raises TypeError - only an
-          # all-string result comma-joins; one non-string element (an
-          # Int64, or a BIGINT_SENTINEL_PREFIX-marked string, which IS an
-          # integer too wide for Int64 - issue #695) keeps the real list.
-          # Joining a marked string used to leak the marker into the
-          # rendered text.
-          list_form = query_mode || wantlist || lookup_join_list_form?(items)
-          # Assigned on BOTH branches: a nested lookup evaluated on this
-          # evaluator must never leave a stale true behind a joined str.
-          @lookup_list_form = list_form
-          if list_form
-            # The embedded bare-call renderer (#evaluate_bare_lookup_call)
-            # must know this result kept its list - it renders Python repr
-            # for list-kept results (and, since issue #698, for an unwrapped
-            # single element), never for a joined str (issue #695).
-            lookup_single_element_result(items, kwargs, query_mode)
-          else
-            items.map { |item| item.as_s }.join(",")
-          end
+          lookup_scalar_result(items, kwargs, query_mode)
         when "together"
           evaluate_lookup_together(parts, kwargs, query_mode)
         when "nested"
@@ -169,6 +157,36 @@ module Krikri
 
       private def lookup_array(value : JSON::Any?) : Array(JSON::Any)
         value.try(&.as_a?) || [] of JSON::Any
+      end
+
+      # A scalar `lookup(...)`'s list-producing result: ansible-core's
+      # _invoke_lookup joins with ",".join and returns the sequence AS-IS
+      # when that raises TypeError, so only an all-string result
+      # comma-joins - one non-string element (an Int64, or a
+      # BIGINT_SENTINEL_PREFIX-marked string, which IS an integer too wide
+      # for Int64 - issue #695) keeps the real list. Joining a marked
+      # string used to leak the marker into the rendered text. A query()
+      # or wantlist=True caller always keeps the list.
+      private def lookup_scalar_result(items : Array(JSON::Any), kwargs : Array(String), query_mode : Bool) : String
+        list_form = query_mode ||
+                    kwargs.any? { |part| part.strip.downcase.starts_with?("wantlist=true") } ||
+                    # An EMPTY result is left as the empty sequence (never
+                    # joined to ""): 2.19's munging only kicks in for a
+                    # truthy result, so `lookup('items', *[])` renders "[]".
+                    items.empty? ||
+                    lookup_join_list_form?(items)
+        # Assigned on BOTH branches: a nested lookup evaluated on this
+        # evaluator must never leave a stale true behind a joined str.
+        @lookup_list_form = list_form
+        if list_form
+          # The embedded bare-call renderer (#evaluate_bare_lookup_call)
+          # must know this result kept its list - it renders Python repr
+          # for list-kept results (and, since issue #698, for an unwrapped
+          # single element), never for a joined str (issue #695).
+          lookup_single_element_result(items, kwargs, query_mode)
+        else
+          items.map { |item| item.as_s }.join(",")
+        end
       end
 
       # A plain lookup() whose list result holds EXACTLY ONE non-string

@@ -2639,6 +2639,43 @@ module Krikri
         value.as_s? == OMIT_SENTINEL
       end
 
+      # Jinja2's `*sequence` call-argument unpacking, which legalises only
+      # as the LAST argument of a call (`lookup('items', *t)`); the
+      # sequence's elements become the call's trailing positional
+      # arguments. Every call form's argument list here is split as raw
+      # text and each part evaluated on its own, so a leading `*` reached
+      # the top-level `*`/`/` splitter with an empty left operand instead
+      # and raised "unsupported operand type(s) for *: 'NoneType' and
+      # 'list'" (issue #842). Live-verified against ansible-core 2.19.11:
+      # `query('items', *t)` passes t's elements as separate terms, `*[]`
+      # contributes no term at all, a star over a string unpacks its
+      # characters and over a dict its keys (Python's own `f(*iterable)`
+      # semantics), and a star anywhere but last is a template SYNTAX
+      # error - not a call shape this rewrites.
+      private def expand_trailing_star_arg(parts : Array(String)) : Array(String)
+        last = parts.last?
+        return parts unless last && last.strip.starts_with?('*')
+        # `**mapping` (Jinja2's keyword-argument unpacking) is a different
+        # call shape, left exactly as it was.
+        return parts if last.strip.starts_with?("**")
+        starred = resolve_plus_operand(last.strip[1..].strip)
+        elements = case raw = starred.raw
+                   when Array  then raw
+                   when String then raw.chars.map { |char| JSON::Any.new(char.to_s) }
+                   when Hash   then raw.keys.map { |key| JSON::Any.new(key) }
+                   else             return parts
+                   end
+        # Each element goes back through the same per-term evaluation the
+        # literal arguments do, so it must be re-encoded as expression
+        # text: Python's repr keeps a string's type where a bare rendering
+        # would re-type digits/bools, and nil has no repr an expression
+        # parser reads back, hence the `none` literal.
+        expanded = elements.map do |element|
+          element.raw.nil? ? "none" : @lookup.python_repr(element)
+        end
+        parts[0...-1] + expanded
+      end
+
       private def split_top_level_commas(expr : String) : Array(String)
         state = PlusSplitState.new
         expr.each_char { |char| split_top_level_commas_step(state, char) }
