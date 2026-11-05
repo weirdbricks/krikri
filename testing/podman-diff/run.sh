@@ -249,15 +249,21 @@ if printf '%s\n' "${cases[@]}" | grep -q '^current_container_facts'; then
     || { log "FATAL: community.docker install failed"; exit 1; }
 fi
 
-# expect cases need pexpect in the REAL container -
-# ansible.builtin.expect.py fails with "Failed to import the required
-# Python library (pexpect)." before any behavior otherwise. krikri's
-# plugin talks to the kernel pty directly (openpty + fork), so it needs
-# nothing. Gated on the requested case list like the htpasswd cases.
+# expect cases need pexpect in BOTH containers - ansible.builtin.expect.py
+# imports it at MODULE level, so a target without it fails with "Failed to
+# import the required Python library (pexpect)." before any behavior
+# otherwise. krikri's plugin talks to the kernel pty directly (openpty +
+# fork) so it needs nothing itself, but its kpg32 gate probes the target's
+# python for pexpect to mirror exactly that import failure - with the
+# package only in the real container the gate fires on the krikri side and
+# every case diverges on provisioning instead of behavior. Gated on the
+# requested case list like the htpasswd cases.
 if printf '%s\n' "${cases[@]}" | grep -q '^expect'; then
   log "installing python3-pexpect for expect cases"
-  podman exec "$NAME_A" bash -c "apt-get install -y -qq --no-install-recommends python3-pexpect >/dev/null" \
-    || { log "FATAL: python3-pexpect install failed"; exit 1; }
+  for c in "$NAME_A" "$NAME_B"; do
+    podman exec "$c" bash -c "apt-get install -y -qq --no-install-recommends python3-pexpect >/dev/null" \
+      || { log "FATAL: python3-pexpect install failed in $c"; exit 1; }
+  done
 fi
 
 # make cases need the real make(1) in BOTH containers - real
