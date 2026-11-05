@@ -112,7 +112,12 @@ fi
 # 2.14, where the module doesn't exist yet (a harness artifact, not a
 # divergence). For deb822 cases the real side gets a venv with a current
 # ansible-core + python3-debian (the module's own runtime dep) and those
-# cases run with that venv's ansible-playbook.
+# cases run with that venv's ansible-playbook. The venv is only the
+# controller: the module itself runs under the target's discovered
+# system python, and krikri's kpg32 gate probes the krikri container's
+# system python for debian.deb822 to mirror that import, so the krikri
+# container needs python3-debian too or the gate fires and every case
+# diverges on provisioning instead of behavior.
 #
 # dpkg_selections has the same 2.14 problem in the other direction: the
 # "Failed to find package 'x' to perform selection 'y'." guard for a
@@ -126,6 +131,8 @@ if printf '%s\n' "${cases[@]}" | grep -qE '^(deb822|dpkg_selections|apt219)'; th
   log "installing venv ansible-core (>=2.15) for deb822/dpkg_selections cases (+ python3-debian for deb822)"
   podman exec "$NAME_A" bash -c "apt-get install -y -qq --no-install-recommends python3-venv python3-debian >/dev/null && python3 -m venv /opt/ansible215 && /opt/ansible215/bin/pip install -q ansible-core==2.19.13" \
     || { log "FATAL: venv ansible-core install failed"; exit 1; }
+  podman exec "$NAME_B" bash -c "apt-get install -y -qq --no-install-recommends python3-debian >/dev/null" \
+    || { log "FATAL: python3-debian install failed in $NAME_B"; exit 1; }
   DEB822_ANSIBLE="/opt/ansible215/bin/ansible-playbook"
 fi
 
@@ -321,12 +328,18 @@ fi
 # xml cases: the real community.general.xml imports lxml in the REAL
 # container - without python3-lxml every case fails on the import
 # instead of exercising the xpath/mutation logic. krikri's xml plugin
-# uses native libxml2 (already installed in the krikri container).
-# Gated on the requested case list like the htpasswd cases.
+# uses native libxml2 (already installed in the krikri container) but
+# its kpg32 gate probes the target's python for lxml to mirror exactly
+# that import failure - with the package only in the real container the
+# gate fires on the krikri side and every case diverges on provisioning
+# instead of behavior. Gated on the requested case list like the
+# htpasswd cases.
 if printf '%s\n' "${cases[@]}" | grep -q '^xml'; then
   log "installing python3-lxml for xml cases"
-  podman exec "$NAME_A" bash -c "apt-get install -y -qq --no-install-recommends python3-lxml >/dev/null" \
-    || { log "FATAL: python3-lxml install failed"; exit 1; }
+  for c in "$NAME_A" "$NAME_B"; do
+    podman exec "$c" bash -c "apt-get install -y -qq --no-install-recommends python3-lxml >/dev/null" \
+      || { log "FATAL: python3-lxml install failed in $c"; exit 1; }
+  done
 fi
 
 # locale_gen cases need the locales package (real /etc/locale.gen,
@@ -386,29 +399,37 @@ fi
 # python3-selinux/python3-semanage every case would fail on the
 # libselinux/seobject import checks and mask all the argument-
 # validation behavior the cases are actually testing. krikri's
-# seboolean shells out to getenforce/getsebool, seport to semanage,
-# and selinux reads/writes /etc/selinux/config itself, so krikri needs
-# nothing. (The container genuinely has no SELinux - that's the point;
-# see the case files' own headers.)
+# seboolean shells out to getenforce/getsebool and seport to semanage,
+# and selinux reads/writes /etc/selinux/config itself, so those need
+# nothing - but its selinux/sefcontext kpg32 gates probe the target's
+# python for the selinux/seobject imports to mirror real's module-level
+# import failures, so the krikri container needs the packages too or
+# those gates fire on the krikri side and the cases diverge on
+# provisioning instead of behavior. (The container genuinely has no
+# SELinux - that's the point; see the case files' own headers.)
 if printf '%s\n' "${cases[@]}" | grep -qE '^(seboolean|seport|selinux|sefcontext)'; then
   log "installing python3-selinux + python3-semanage for seboolean/seport/selinux/sefcontext cases"
-  podman exec "$NAME_A" bash -c "apt-get install -y -qq --no-install-recommends python3-selinux python3-semanage >/dev/null" \
-    || { log "FATAL: SELinux python libs install failed"; exit 1; }
+  for c in "$NAME_A" "$NAME_B"; do
+    podman exec "$c" bash -c "apt-get install -y -qq --no-install-recommends python3-selinux python3-semanage >/dev/null" \
+      || { log "FATAL: SELinux python libs install failed in $c"; exit 1; }
+  done
 fi
 
 # htpasswd cases: the real community.general.htpasswd imports passlib in
 # the REAL container - without python3-passlib every case fails on the
 # import instead of exercising the hash/idempotency logic. krikri's
-# htpasswd shells to `openssl passwd`, so BOTH containers need the
-# openssl CLI on PATH (bookworm-slim ships without it). Gated on the
-# requested case list like the mysql cases above.
+# htpasswd shells to `openssl passwd` so it needs no python, but its
+# kpg32 gate probes the target's python for passlib to mirror exactly
+# that import failure - with the package only in the real container the
+# gate fires on the krikri side and every case diverges on provisioning
+# instead of behavior. BOTH containers need the openssl CLI on PATH
+# (bookworm-slim ships without it). Gated on the requested case list
+# like the mysql cases above.
 if printf '%s\n' "${cases[@]}" | grep -q '^htpasswd'; then
-  log "installing passlib (real) + openssl (both) for htpasswd cases"
-  podman exec "$NAME_A" bash -c "apt-get install -y -qq --no-install-recommends python3-passlib >/dev/null" \
-    || { log "FATAL: passlib install failed"; exit 1; }
+  log "installing passlib (both) + openssl (both) for htpasswd cases"
   for c in "$NAME_A" "$NAME_B"; do
-    podman exec "$c" bash -c "apt-get install -y -qq --no-install-recommends openssl >/dev/null" \
-      || { log "FATAL: openssl install failed in $c"; exit 1; }
+    podman exec "$c" bash -c "apt-get install -y -qq --no-install-recommends python3-passlib openssl >/dev/null" \
+      || { log "FATAL: passlib/openssl install failed in $c"; exit 1; }
   done
 fi
 

@@ -61,13 +61,26 @@ describe "community.general.xml plugin" do
       File.delete(path)
     end
 
-    it "rejects create_if_missing like AnsibleModule (live-verified 2026-09-24)" do
+    # community.general 13.0.0 added create_if_missing; 13.4.0 (the
+    # podman-diff pin) accepts it and treats false + nonmatching xpath as
+    # a silent no-op success (observed live: failed=False changed=False).
+    it "treats create_if_missing=false with a nonmatching xpath as a silent no-op success" do
       path = File.tempname("xmlspec", ".xml")
       File.write(path, %(<business><name>co</name></business>))
       result = run_xml(xml_params({"path" => path, "xpath" => "/business/missing", "value" => "x", "create_if_missing" => "false"}))
-      result["failed"].must_equal(true)
-      result["msg"].as_s.must_include("Unsupported parameters for (community.general.xml) module: create_if_missing")
+      expect(falsey?(result["failed"]?)).must_equal(true)
+      result["changed"].must_equal(false)
       File.read(path).wont_include("missing")
+      File.delete(path)
+    end
+
+    it "still creates the missing target when create_if_missing is explicitly true" do
+      path = File.tempname("xmlspec", ".xml")
+      File.write(path, %(<business><name>co</name></business>))
+      result = run_xml(xml_params({"path" => path, "xpath" => "/business/missing", "value" => "x", "create_if_missing" => "true"}))
+      expect(falsey?(result["failed"]?)).must_equal(true)
+      result["changed"].must_equal(true)
+      File.read(path).must_include("<missing>x</missing>")
       File.delete(path)
     end
 
