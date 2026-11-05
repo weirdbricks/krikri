@@ -76,9 +76,11 @@ describe "mount plugin result key order" do
     })
 
     result["changed"].as_bool.must_equal(true)
+    # ansible.posix 2.2.0 dropped the `warnings` key from that exit_json
+    # call, so no `deprecations` entry (and no display marker) rides the
+    # result any more - verified end-to-end against 2.20.1 with 2.2.2.
     result.as_h.keys.must_equal([
       "changed", "name", "opts", "dump", "passno", "fstab", "boot", "backup_file", "src", "fstype",
-      "deprecations", "_ansible_core_deprecations",
     ])
 
     result2 = PluginSpecHelper.run("mount", {
@@ -91,7 +93,6 @@ describe "mount plugin result key order" do
     result2["changed"].as_bool.must_equal(false)
     result2.as_h.keys.must_equal([
       "changed", "name", "opts", "dump", "passno", "fstab", "boot", "backup_file", "src", "fstype",
-      "deprecations", "_ansible_core_deprecations",
     ])
   ensure
     File.delete(fstab) if fstab && File.exists?(fstab)

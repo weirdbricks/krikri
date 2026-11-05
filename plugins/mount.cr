@@ -94,14 +94,6 @@ module Krikri
   # format only), `opts_no_log`, `fstab` `backup`'s exact filename format
   # (a reasonable equivalent is used instead).
   class MountPlugin < BasePlugin
-    # The exact stderr text ansible-core 2.19 renders for this
-    # deprecation (msg + "This feature will be removed from ansible-core
-    # version 2.23." + help_text), carried verbatim in the result's
-    # `_ansible_core_deprecations` display marker.
-    CORE_WARNINGS_DEPRECATION_TEXT = "Passing `warnings` to `exit_json` or `fail_json` is deprecated. " \
-                                     "This feature will be removed from ansible-core version 2.23. " \
-                                     "Use `AnsibleModule.warn` instead."
-
     DEFAULT_FSTAB = "/etc/fstab"
 
     def execute : PluginResult
@@ -347,32 +339,15 @@ module Krikri
       # user-specified src/fstype overrides appended (live-verified
       # against Ansible 2.19.11 via a registered {{ r | to_json }} dump in
       # the podman container: state=absent, changed and unchanged runs
-      # and check mode all identical).
+      # and check mode all identical). ansible.posix 2.2.0 dropped the
+      # `warnings` key that used to ride those args (it warns through
+      # `AnsibleModule.warn` now), so a successful run carries neither a
+      # `deprecations` entry nor the [DEPRECATION WARNING] stderr line
+      # ansible-core's _return_formatted used to emit for it - verified
+      # by running mount.py from both 2.1.0 and 2.2.2 directly against
+      # the same args, and end-to-end against 2.20.1.
       result.key_order = ["changed", "name", "opts", "dump", "passno", "fstab", "boot", "backup_file", "src", "fstype"]
-      add_exit_json_warnings_deprecation(result)
       result
-    end
-
-    # Real mount keeps a `warnings` list in the args dict it passes to
-    # its single `module.exit_json(changed=changed, **args)` success
-    # exit (ansible.posix 2.x mount.py) - and ansible-core 2.19's
-    # `_return_formatted` deprecates any `warnings` key passed to
-    # exit_json/fail_json outright. The deprecation rides every
-    # successful module run: the controller prints the "Deprecation
-    # warnings can be disabled" hint plus the [DEPRECATION WARNING] line
-    # (see ResultDisplay's `_ansible_core_deprecations` handling), while
-    # the result's own `deprecations` list still carries the structured
-    # entry into registered vars (both live-verified against 2.19.11).
-    # Ansible's fail_json paths don't pass args, so failed results carry no
-    # deprecation.
-    private def add_exit_json_warnings_deprecation(result : PluginResult) : Nil
-      result.extra["deprecations"] = JSON.parse([{
-        "collection_name" => "ansible.builtin",
-        "deprecator"      => {"resolved_name" => "ansible.builtin", "type" => nil},
-        "msg"             => "Passing `warnings` to `exit_json` or `fail_json` is deprecated.",
-        "version"         => "2.23",
-      }].to_json)
-      result.extra["_ansible_core_deprecations"] = JSON.parse([CORE_WARNINGS_DEPRECATION_TEXT].to_json)
     end
 
     private def desired_opts : String

@@ -106,35 +106,26 @@ describe "mount plugin" do
     result["msg"].as_s.must_include("path")
   end
 
-  # Ansible.posix.mount passes a `warnings` list to its single
-  # exit_json success exit, and ansible-core 2.19's _return_formatted
-  # deprecates that - every successful run carries the structured
-  # `deprecations` entry into registered vars plus the display marker
-  # ResultDisplay renders as the [DEPRECATION WARNING] stderr line
-  # (captured live against 2.19.11). Ansible's fail_json paths don't pass
-  # args, so failures carry neither.
-  it "carries the exit_json warnings deprecation on every successful result" do
+  # ansible.posix 2.2.0 dropped the `warnings` key ansible.posix 2.1.0
+  # passed to mount.py's single exit_json success exit (it warns through
+  # AnsibleModule.warn now), so ansible-core's _return_formatted has
+  # nothing to deprecate and a successful run registers neither a
+  # `deprecations` entry nor the [DEPRECATION WARNING] display marker
+  # (verified by running mount.py from both collections directly against
+  # the same args, and end-to-end against 2.20.1 with 2.2.2).
+  it "carries no exit_json warnings deprecation on a successful result" do
     fstab = fresh_fstab("deprecation.fstab")
 
     result = PluginSpecHelper.run("mount", {
       "path" => "/mnt/dep", "src" => "/dev/sdb1", "fstype" => "ext4", "state" => "present", "fstab" => fstab,
     })
 
-    deprecations = result["deprecations"].as_a
-    deprecations.size.must_equal(1)
-    entry = deprecations[0].as_h
-    entry["msg"].as_s.must_equal("Passing `warnings` to `exit_json` or `fail_json` is deprecated.")
-    entry["version"].as_s.must_equal("2.23")
-    entry["collection_name"].as_s.must_equal("ansible.builtin")
-    entry["deprecator"].as_h["resolved_name"].as_s.must_equal("ansible.builtin")
-    result["_ansible_core_deprecations"].as_a.size.must_equal(1)
-    result["_ansible_core_deprecations"].as_a[0].as_s.must_equal(
-      "Passing `warnings` to `exit_json` or `fail_json` is deprecated. " \
-      "This feature will be removed from ansible-core version 2.23. " \
-      "Use `AnsibleModule.warn` instead.")
+    result["changed"].as_bool.must_equal(true)
+    result["deprecations"]?.must_be_nil
+    result["_ansible_core_deprecations"]?.must_be_nil
   end
 
-  it "carries no deprecation on a failed result (Ansible's fail_json passes no args)" do
+  it "carries no deprecation on a failed result either (Ansible's fail_json passes no args)" do
     fstab = fresh_fstab("deprecation-fail.fstab")
 
     result = PluginSpecHelper.run("mount", {"path" => "/mnt/x", "state" => "present", "fstab" => fstab})
