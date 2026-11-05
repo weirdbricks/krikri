@@ -40,6 +40,7 @@ private def with_package753_shims(
   available : Array(String),
   check_update_out : String = "",
   check_update_rc : Int32 = 0,
+  provides : Array(String) = [] of String,
   &
 )
   bin_dir = File.join(Dir.tempdir, "krikri-pkg753-#{Random.rand(1_000_000)}")
@@ -78,6 +79,16 @@ private def with_package753_shims(
         done
         exit 1
         ;;
+      "provides/"*)
+        for pair in ${KRIKRI_DNF_PROVIDES:-}; do
+          cap="${pair%%=*}"; nevra="${pair#*=}"
+          [ "$3" = "$cap" ] && {
+            printf 'Repo        : fakerepo\nMatched from:\nProvide    : %s\n\n%s : a capability provider\n' "$cap" "$nevra"
+            exit 0
+          }
+        done
+        exit 1
+        ;;
     esac
     echo "Nothing to do"
     exit 0
@@ -93,6 +104,7 @@ private def with_package753_shims(
     "KRIKRI_DNF_LOG"              => log,
     "KRIKRI_RPM_INSTALLED"        => installed.join(" "),
     "KRIKRI_DNF_AVAILABLE"        => available.join(" "),
+    "KRIKRI_DNF_PROVIDES"         => provides.join(" "),
     "KRIKRI_DNF_CHECK_UPDATE_OUT" => check_update_out,
     "KRIKRI_DNF_CHECK_UPDATE_RC"  => check_update_rc.to_s,
   }.to_json
@@ -269,6 +281,29 @@ describe "package plugin - dnf check-mode result shapes (issue 753)" do
         "No match for argument: chrony",
         "Removed: tar-2:1.34-11.el9.x86_64",
       ])
+      result["rc"].as_i.must_equal(0)
+    end
+  end
+
+  it "present for a capability the repos provide reports the would-be install nevra (issue 907)" do
+    # Real ansible's dnf backend hands `perl(Devel::Cover)` to
+    # python-dnf, which resolves a Provides: spec to the archive's
+    # perl-Devel-Cover and reports changed: true - `dnf list --available`
+    # can't answer for a capability, so this used to be classified
+    # Missing and hard-failed with "No package ... available.".
+    with_package753_shims(pkg753_installed_pair, pkg753_available_pair,
+      provides: ["perl(Devel::Cover)=perl-Devel-Cover-1.40-1.el9.x86_64"]) do |env|
+      result = PluginSpecHelper.run("package", {
+        "name"                => "perl(Devel::Cover)",
+        "state"               => "present",
+        "use"                 => "dnf",
+        "_ansible_check_mode" => "true",
+        "_environment"        => env,
+      })
+
+      result["changed"].as_bool.must_equal(true)
+      result["msg"].as_s.must_equal("Check mode: No changes made, but would have if not in check mode")
+      result["results"].as_a.map(&.as_s).must_equal(["Installed: perl-Devel-Cover-1.40-1.el9.x86_64"])
       result["rc"].as_i.must_equal(0)
     end
   end

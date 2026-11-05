@@ -823,6 +823,10 @@ module Krikri
     #   and dnf reports its own failure; a purely virtual name (php-json)
     #   has no repo row, this listing fails, and the fallback keeps
     #   those.
+    # - A capability spec (issue #907's `perl(Devel::Cover)`) is neither
+    #   a package name nor installed, but dnf still resolves it against
+    #   the archive's Provides: - so it is a legitimate install target,
+    #   not a Missing one (see dnf_available_provides_nevra).
     #
     # A URL/local-path spec is never looked up this way (`rpm -q
     # <url-or-path>` treats the argument as a package FILE to query, not
@@ -874,6 +878,9 @@ module Krikri
             elsif has_glob
               statuses[pkg] = DnfSpecResolution::Available
               available[pkg] = pkg
+            elsif (provides_nevra = dnf_available_provides_nevra(pkg))
+              statuses[pkg] = DnfSpecResolution::Available
+              available[pkg] = provides_nevra
             else
               statuses[pkg] = DnfSpecResolution::Missing
             end
@@ -916,6 +923,40 @@ module Krikri
 
     private def dnf_check_update_rows(output : String) : Array({String, String})
       output.each_line.compact_map { |line| dnf_list_row(line) }.to_a
+    end
+
+    # The newest NEVRA the repos satisfy a capability spec with - issue
+    # #907's `package: name: perl(Devel::Cover)`, a Provides:/capability
+    # name that dnf itself resolves to the archive's perl-Devel-Cover.
+    # `dnf list --available` above can only answer for a package NAME
+    # (it exits 1 with "No matching Packages to list" for a capability
+    # the archive does carry), and `rpm -q --whatprovides` only sees
+    # already-installed providers, so an available-but-uninstalled
+    # capability fell through to Missing and hard-failed the task in
+    # check mode - while ansible's dnf module, which hands the spec to
+    # python-dnf's resolver, installs it fine. `dnf provides` is dnf's
+    # own provides-aware query (core dnf, no dnf-plugins-core needed)
+    # and exits 1 for a spec nothing provides.
+    private def dnf_available_provides_nevra(spec : String) : String?
+      result = remote_exec("dnf -q provides #{shell_single_quote(spec)} 2>/dev/null || yum -q provides #{shell_single_quote(spec)} 2>/dev/null")
+      return nil if result[:exit_code] != 0
+      # dnf lists a provider's versions ascending, so the last row is
+      # the newest - the release the transaction would pick.
+      nevra = nil
+      result[:stdout].each_line do |line|
+        row = dnf_provides_row_nevra(line)
+        nevra = row if row
+      end
+      nevra
+    end
+
+    # The NEVRA a `dnf provides` row names ("perl-DBI-1.643-9.el9.x86_64
+    # : A database access API for perl"), or nil for the block headers
+    # sharing that line shape ("Repo : appstream", "Provide : perl(DBI)
+    # = 1.643", "Matched from:").
+    private def dnf_provides_row_nevra(line : String) : String?
+      m = line.match(/\A(\S+-\S+-\S+\.[A-Za-z0-9_]+)\s+:\s/) || return nil
+      m[1]
     end
 
     # A requested spec matches a check-update row when both name the same
