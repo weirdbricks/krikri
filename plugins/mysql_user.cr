@@ -113,6 +113,12 @@ module Krikri
         return err
       end
 
+      # mysql_user.py fails with mysql_driver_fail_msg when neither PyMySQL
+      # nor MySQLdb imports, before any connection attempt.
+      if err = PluginHelpers::MysqlConnection.mysql_driver_missing_result(@vars)
+        return err
+      end
+
       uri = PluginHelpers::MysqlConnection.build_uri(
         host: @params["login_host"]?,
         port: @params["login_port"]?,

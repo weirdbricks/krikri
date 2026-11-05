@@ -131,6 +131,13 @@ module Krikri
       unknown = filters.reject { |entry| SUBSETS.includes?(entry.lstrip('!')) }
       excluded_fields = parse_filter(@params["exclude_fields"]?)
 
+      # mysql_info.py fails with mysql_driver_fail_msg when neither PyMySQL
+      # nor MySQLdb imports, after its filter handling and before the
+      # connection attempt.
+      if err = PluginHelpers::MysqlConnection.mysql_driver_missing_result(@vars)
+        return err
+      end
+
       uri = PluginHelpers::MysqlConnection.build_uri(
         host: @params["login_host"]?,
         port: @params["login_port"]?,

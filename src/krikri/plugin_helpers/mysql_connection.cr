@@ -2,6 +2,7 @@ require "json"
 require "uri"
 require "../base_plugin"
 require "system/user"
+require "./python_lib_gate"
 
 module Krikri
   module PluginHelpers
@@ -120,6 +121,76 @@ module Krikri
         texts << MYSQLDB_CONNECTOR_WARNING unless texts.includes?(MYSQLDB_CONNECTOR_WARNING)
         result.extra["warnings"] = JSON::Any.new(texts.map { |text| JSON::Any.new(text) })
         result
+      end
+
+      # Upstream's module-level import gate (ansible.mysql/community.mysql
+      # module_utils/mysql.py): every mysql_* module's bootstrap imports
+      # PyMySQL first and MySQLdb only as a fallback, and the module body
+      # fails with this exact fail_json - BEFORE any connection attempt,
+      # and before most of its own parameter handling - when neither
+      # import resolves. krikri's mysql_* plugins talk the wire protocol
+      # natively and would otherwise carry on to their own connect
+      # failure (or success) on a host where real ansible stops right
+      # here (stancel.create_mysql_dbs_and_users, issue #885). Byte-for-byte
+      # upstream's own constant, shared by both collections.
+      MYSQL_DRIVER_FAIL_MSG = "A MySQL module is required: for Python 2.7 either PyMySQL, or " \
+                              "MySQL-python, or for Python 3.X mysqlclient or PyMySQL. " \
+                              "Consider setting ansible_python_interpreter to use " \
+                              "the intended Python version."
+
+      # nil when the target's Python can import at least one of the two
+      # drivers upstream accepts - the module carries on - or the failed
+      # result carrying MYSQL_DRIVER_FAIL_MSG when neither imports.
+      def self.mysql_driver_missing_result(
+        vars : Hash(String, JSON::Any)? = nil,
+        interpreter : String? = nil,
+      ) : PluginResult?
+        return nil if mysql_driver_importable?(vars, interpreter)
+
+        PluginResult.new(changed: false, failed: true, msg: MYSQL_DRIVER_FAIL_MSG)
+      end
+
+      # The probe asks an interpreter instead of scanning package roots:
+      # the import the module payload performs resolves user-site
+      # (~/.local/lib/python3.X/site-packages), dist-packages and venv
+      # layouts a directory scan cannot see, and this dev host itself
+      # carries PyMySQL in user-site only - a scan would report the
+      # driver missing where real ansible imports it fine. The
+      # interpreter follows what the module would run under: the task's
+      # ansible_python_interpreter when pinned (auto* directives are
+      # discovery directives, not names - pip.cr's candidate order treats
+      # them the same way), then the discovery fact, then
+      # Krikri.discovered_target_python's INTERPRETER_FALLBACK order.
+      def self.mysql_driver_importable?(
+        vars : Hash(String, JSON::Any)? = nil,
+        interpreter : String? = nil,
+      ) : Bool
+        python = interpreter || probe_interpreter(vars)
+        return true unless python
+
+        driver_import_ok?(python, "import pymysql") || driver_import_ok?(python, "import MySQLdb")
+      end
+
+      private def self.probe_interpreter(vars : Hash(String, JSON::Any)?) : String?
+        if raw = vars.try(&.["ansible_python_interpreter"]?).try(&.as_s?)
+          stripped = raw.strip
+          return stripped if !stripped.empty? && !stripped.starts_with?("auto")
+        end
+        if discovered = vars.try(&.["discovered_interpreter_python"]?).try(&.as_s?)
+          stripped = discovered.strip
+          return stripped unless stripped.empty?
+        end
+        Krikri.discovered_target_python
+      end
+
+      private def self.driver_import_ok?(python : String, import_stmt : String) : Bool
+        status = Process.run(python, {"-c", import_stmt}, output: Process::Redirect::Close, error: Process::Redirect::Close)
+        status.success?
+      rescue
+        # An interpreter that cannot execute at all is not evidence a
+        # driver is missing - real ansible fails the module run itself in
+        # that shape, a different failure this gate does not invent.
+        true
       end
 
       # unix_socket, given, takes precedence over host/port (matches

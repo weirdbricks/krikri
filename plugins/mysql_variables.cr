@@ -106,6 +106,13 @@ module Krikri
       value = @params["value"]?
       mode = @params["mode"]? || "global"
 
+      # mysql_variables.py fails with mysql_driver_fail_msg when neither
+      # PyMySQL nor MySQLdb imports, after its variable-name checks and
+      # before the connection attempt.
+      if err = PluginHelpers::MysqlConnection.mysql_driver_missing_result(@vars)
+        return err
+      end
+
       uri = PluginHelpers::MysqlConnection.build_uri(
         host: @params["login_host"]?,
         port: @params["login_port"]?,
