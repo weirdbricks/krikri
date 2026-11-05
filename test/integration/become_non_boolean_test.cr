@@ -106,4 +106,113 @@ describe "a templated become: that renders to a non-boolean fails the task" do
   ensure
     FileUtils.rm_rf(root) if root
   end
+
+  # Issue #881 (danbohea.platformsh-setup): real 2.19 follows the rendered
+  # value's data lineage, so the conversion link of the keyword-failure
+  # chain is Origin'd at where the variable was DEFINED, not at the
+  # become: value token.
+  it "labels the conversion link with the role default's definition position" do
+    root = File.tempname("become-bool-lineage-defaults")
+    Dir.mkdir_p(File.join(root, "roles", "testrole", "defaults"))
+    Dir.mkdir_p(File.join(root, "roles", "testrole", "tasks"))
+    File.write(File.join(root, "roles", "testrole", "defaults", "main.yml"), <<-YAML)
+      cli_user: vagrant
+      YAML
+    File.write(File.join(root, "roles", "testrole", "tasks", "main.yml"), <<-YAML)
+      ---
+      - name: Try it
+        become: "{{ cli_user }}"
+        debug:
+          msg: hi
+      YAML
+    playbook = File.join(root, "site.yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        roles:
+          - testrole
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+
+    status.success?.must_equal(false, output.to_s)
+    output_text = output.to_s
+    # `cli_user: vagrant` - the value token starts at column 11, matching
+    # the live repro's defaults/main.yml:31:18 shape.
+    output_text.includes?("Origin: #{File.join(root, "roles", "testrole", "defaults", "main.yml")}:1:11").must_equal(true, output_text)
+    # The middle keyword link still points at the become: value itself.
+    output_text.includes?("Origin: #{File.join(root, "roles", "testrole", "tasks", "main.yml")}:3:11").must_equal(true, output_text)
+  ensure
+    FileUtils.rm_rf(root) if root
+  end
+
+  # The lineage follows a stored value that is itself a single-variable
+  # template to its innermost source (live-verified vs 2.19.11).
+  it "follows a chained single-variable template to the innermost definition" do
+    root = File.tempname("become-bool-lineage-chain")
+    Dir.mkdir_p(File.join(root, "roles", "testrole", "defaults"))
+    Dir.mkdir_p(File.join(root, "roles", "testrole", "tasks"))
+    File.write(File.join(root, "roles", "testrole", "defaults", "main.yml"), <<-YAML)
+      inner: vagrant
+      outer: "{{ inner }}"
+      YAML
+    File.write(File.join(root, "roles", "testrole", "tasks", "main.yml"), <<-YAML)
+      ---
+      - name: Try it
+        become: "{{ outer }}"
+        debug:
+          msg: hi
+      YAML
+    playbook = File.join(root, "site.yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        roles:
+          - testrole
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+
+    status.success?.must_equal(false, output.to_s)
+    output_text = output.to_s
+    output_text.includes?("Origin: #{File.join(root, "roles", "testrole", "defaults", "main.yml")}:1:8").must_equal(true, output_text)
+    output_text.includes?("Origin: #{File.join(root, "roles", "testrole", "defaults", "main.yml")}:2:8").must_equal(false, output_text)
+  ensure
+    FileUtils.rm_rf(root) if root
+  end
+
+  # A value the expression DERIVED has no lineage of its own: real keeps
+  # labeling the conversion link at the keyword value token (live-verified
+  # vs 2.19.11), so the lineage scan must not catch derived shapes.
+  it "keeps the keyword value's own origin for a derived expression" do
+    root = File.tempname("become-bool-lineage-derived")
+    Dir.mkdir(root)
+    File.write(File.join(root, "pb.yml"), <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          user_name: labros
+        tasks:
+          - name: configuration data
+            become: "{{ user_name | upper }}"
+            debug:
+              msg: hi
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, "pb.yml"], output: output, error: output, chdir: root)
+
+    status.success?.must_equal(false, output.to_s)
+    output_text = output.to_s
+    output_text.includes?("The value 'LABROS' could not be converted to 'bool'.").must_equal(true, output_text)
+    output_text.includes?("Origin: #{File.join(root, "pb.yml")}:5:16").must_equal(false, output_text)
+    output_text.includes?("Origin: #{File.join(root, "pb.yml")}:8:15").must_equal(true, output_text)
+  ensure
+    FileUtils.rm_rf(root) if root
+  end
 end

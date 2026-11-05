@@ -1051,10 +1051,12 @@ module Krikri
       # A KEYWORD conversion failure (a templated `become:` that rendered
       # to a non-boolean - issue #143) is not an action-plugin failure:
       # real's chain is the three-link keyword shape - "Task failed." at
-      # the task's Origin, then "Error processing keyword 'X'." and the
-      # bare conversion message, BOTH Origin'd at the keyword's value -
-      # never the "Action failed." segment the generic routing below
-      # would give a debug:/fail:/assert: task.
+      # the task's Origin, then "Error processing keyword 'X'." at the
+      # keyword's value and the bare conversion message at the value's
+      # lineage origin (its defining site when one is traceable, the
+      # keyword value itself otherwise - see the executor's
+      # bool_keyword_lineage_origin) - never the "Action failed." segment
+      # the generic routing below would give a debug:/fail:/assert: task.
       if kw = result["_ansible_keyword_conversion"]?.try(&.as_h?)
         if origin = error_origin_context(source_task)
           origin_text = kw["origin"]?.try(&.as_s?)
