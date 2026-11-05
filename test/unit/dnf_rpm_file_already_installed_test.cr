@@ -158,7 +158,9 @@ describe "dnf plugin - rpm file already installed resolves to the no-op (issue 7
       result["failed"]?.try(&.as_bool?).must_be_nil
       result["msg"].as_s.must_equal("Nothing to do")
       result["rc"].as_i.must_equal(0)
-      result["results"].as_a.must_equal([] of JSON::Any)
+      # Issue #844: real appends every file/URL spec as "Installed <path>"
+      # even when the transaction resolves to nothing.
+      result["results"].as_a.map(&.as_s).must_equal(["Installed #{rpm}"])
     end
   end
 
@@ -175,7 +177,27 @@ describe "dnf plugin - rpm file already installed resolves to the no-op (issue 7
       })
       result["changed"].as_bool.must_equal(true)
       result["msg"].as_s.must_equal("Check mode: No changes made, but would have if not in check mode")
-      result["results"].as_a.map(&.as_s).must_equal(["Installed: tree-1.8.0-10.el9.x86_64"])
+      # The file spec's own entry comes first, before the transaction's
+      # package entries (dnf.py appends filenames before resolve()).
+      result["results"].as_a.map(&.as_s).must_equal(["Installed #{rpm}", "Installed: tree-1.8.0-10.el9.x86_64"])
+    end
+  end
+
+  # Issue #844: real's dnf ACTION plugin only puts the on-demand pkg_mgr
+  # fact on the result when the play did not gather it. With the fact
+  # already known (the plugin spec default) no ansible_facts key appears.
+  it "does not add an ansible_facts pkg_mgr key when the play gathered it" do
+    with_dnf781_shims(true) do |env|
+      rpm = PluginSpecHelper.tmp_path("tree-1.8.0-10.el9.x86_64.rpm")
+      File.write(rpm, "not a real rpm - the shims never parse it")
+      result = PluginSpecHelper.run("dnf", {
+        "name"                => rpm,
+        "state"               => "present",
+        "disable_gpg_check"   => "true",
+        "_ansible_check_mode" => "true",
+        "_environment"        => env,
+      })
+      result.as_h.has_key?("ansible_facts").must_equal(false)
     end
   end
 
