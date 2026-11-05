@@ -10,7 +10,7 @@ class KrikriMultiarch < Formula
   depends_on :macos
 
   url "https://github.com/weirdbricks/krikri/releases/download/v0.9.2356/krikri-v0.9.2356-darwin-with-linux-multiarch.tar.gz"
-  sha256 ""
+  sha256 "f8759162bc076a5e18fc5137295687e6f52ed7c407d297af01c540f1c083f077"
 
   # Same dynamically-linked macOS binaries as the default `krikri` formula.
   # The declared set must cover every Homebrew library the shipped Mach-O

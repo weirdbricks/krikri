@@ -295,16 +295,17 @@ jobs:
       # installed 0.9.2089). That formula is hand-maintained (its install
       # block differs), so only its three version-bearing lines are
       # patched in place - each appears exactly once.
+      # The multiarch bundle is NOT built here: release-bundle.yml builds
+      # it from the just-published Linux/Darwin tarballs and dispatches
+      # AFTER this job (see below), so dist/ never contains it. Computing
+      # its sha256 here therefore yields "" (sha256sum on a missing file)
+      # and writes an empty checksum into the formula, leaving Homebrew
+      # unable to verify the download (issue #841). Leave this formula's
+      # version/url alone here and let release-bundle.yml patch all three
+      # lines once the bundle actually exists.
       - name: Update Formula/krikri-multiarch.rb
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          ASSET="krikri-${GITHUB_REF_NAME}-darwin-with-linux-multiarch.tar.gz"
-          SHA=$(sha256sum "dist/${ASSET}" | cut -d' ' -f1)
-          sed -i -E \
-            -e "s#^  version \".*\"#  version \"${VERSION}\"#" \
-            -e "s#^  url \".*darwin-with-linux-multiarch.tar.gz\"#  url \"https://github.com/weirdbricks/krikri/releases/download/${GITHUB_REF_NAME}/${ASSET}\"#" \
-            -e "s#^  sha256 \".*\"#  sha256 \"${SHA}\"#" \
-            Formula/krikri-multiarch.rb
+          echo "krikri-multiarch bundle is built by release-bundle.yml after this job; skipping formula update here (issue #841)."
 
       - name: Commit and push
         run: |
