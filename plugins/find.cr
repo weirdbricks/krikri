@@ -47,12 +47,12 @@ module Krikri
   #   requested bit present" semantics) and its documented scope cut
   #   (only `=` assignment, not the fuller chmod(1) `+`/`-`/`X`/`s`/`t`
   #   grammar).
-  # - limit: stops once this many matches are found - this plugin's own
-  #   directory walk is already a top-down, pre-order traversal (a
-  #   parent directory's own direct matches are always found before
-  #   descending into any of its subdirectories), matching
-  #   Ansible's own `os.walk()`-based "shallowest directory first"
-  #   ordering, so no walk-order change was needed to support this.
+  # - limit: stops once this many matches are found. The walk reproduces
+  #   os.walk's own ordering (see walk): per directory, its files then
+  #   its subdirectories, descending depth-first only after the whole
+  #   level has been emitted - Ansible's "shallowest directory first"
+  #   match order, so a limit: cutoff picks the same matches real find
+  #   does.
   #
   # - follow: descend into symlinked directories when recursing (default:
   #   false). Classification still uses lstat() regardless of follow (Ansible's own os.lstat() in its main loop), so a symlink-to-file
@@ -415,6 +415,9 @@ module Krikri
     private def walk(dir : String, current_depth : Int32, max_depth : Int32, options : Options, entries : Array(Tuple(String, EntryStat)), skipped_paths : Hash(String, JSON::Any)) : Nil
       return if current_depth > max_depth
 
+      files = [] of Tuple(String, EntryStat)
+      dirs = [] of Tuple(String, EntryStat)
+
       Dir.each_child(dir) do |child|
         child_path = File.join(dir, child)
         # The upfront lstat the entry itself is classified with - the
@@ -423,29 +426,32 @@ module Krikri
         # level on a read-but-no-execute directory, recording the PARENT's
         # path in skipped_paths where real find keeps walking.
         stat_or_errno = native_stat_ex(child_path, false)
-        entries << {child_path, stat_or_errno}
-
-        # Descend decision off the same upfront lstat the entry itself is
-        # classified with - the previous stat(File.directory?)+
-        # lstat(File.symlink?) pair cost two syscalls per entry and its
-        # stat EACCES-aborted the whole level on a read-but-no-execute
-        # directory, recording the PARENT's path in skipped_paths where
-        # real find keeps walking. A symlink child needs one
-        # target-following stat to learn it points at a directory (the
-        # old File.directory? semantics): with follow: true it is
-        # descended into, with follow: false it stays
-        # listed-but-unwalked - follow only widens the walk, never
-        # re-classifies a symlink as its target type.
-        if (stat = stat_or_errno).is_a?(Hash(String, JSON::Any))
-          descend = if stat["islnk"].as_bool
-                      options.follow && File.directory?(child_path)
-                    else
-                      stat["isdir"].as_bool
-                    end
-          if descend
-            walk(child_path, current_depth + 1, max_depth, options, entries, skipped_paths)
-          end
+        if walk_dir_group?(stat_or_errno, child_path)
+          dirs << {child_path, stat_or_errno}
+        else
+          files << {child_path, stat_or_errno}
         end
+      end
+
+      # os.walk hands real find each directory's (dirs, files) split and
+      # find iterates `files + dirs`, so a directory's regular files are
+      # always reported before its subdirectories - both in readdir
+      # order within their own group. A plain readdir order put a
+      # directory between two files whenever the filesystem happened to
+      # list it there (issue #905), and descending into each directory as
+      # soon as it was listed interleaved a subtree's matches with its
+      # siblings' instead of emitting the whole level first.
+      entries.concat(files)
+      entries.concat(dirs)
+
+      # Descent decision as os.walk makes it: every name in the dirs
+      # bucket is walked unless it is a symlink and follow: false - follow
+      # only widens the walk, never re-classifies a symlink as its target
+      # type in the results (see walk_dir_group?).
+      dirs.each do |child_path, stat_or_errno|
+        stat = stat_or_errno.as?(Hash(String, JSON::Any)) || next
+        next unless stat["isdir"].as_bool || options.follow
+        walk(child_path, current_depth + 1, max_depth, options, entries, skipped_paths)
       end
     rescue ex : File::Error
       # Ansible's os.walk(onerror=handle_walk_errors) - live-verified vs
@@ -463,6 +469,17 @@ module Krikri
       else
         raise WalkError.new(os_error_text(dir, ex))
       end
+    end
+
+    # os.walk sorts every listed entry into its `dirs` or `files` bucket
+    # via entry.is_dir(), which FOLLOWS symlinks (see walk: real find
+    # iterates files + dirs), so a symlink pointing at a directory belongs
+    # in the dirs group even when follow: false stops it being walked
+    # into. An entry whose lstat failed has no type at all and scandir
+    # leaves it in the files bucket, so it keeps its position there.
+    private def walk_dir_group?(stat_or_errno : EntryStat, path : String) : Bool
+      stat = stat_or_errno.as?(Hash(String, JSON::Any)) || return false
+      stat["isdir"].as_bool || (stat["islnk"].as_bool && File.directory?(path))
     end
 
     # Python's OSError str(): "[Errno 13] Permission denied: '/path'".
