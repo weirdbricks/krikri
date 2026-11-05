@@ -147,7 +147,18 @@ module Krikri
       # module result that ships its own ansible_facts (interpreter
       # discovery) replaces the action plugin's on the wire, so neither
       # surfaces here.
+      #
+      # A FAILED module result must not carry the fetched fact at all
+      # (issue #894): the module's own failure payload - which in real
+      # carries either the interpreter-discovery fact or nothing once
+      # discovery has already run - replaces whatever the action attached,
+      # so real's failed results never show pkg_mgr (live-verified vs
+      # 2.15.13 on Rocky 9: the failed "Unsupported parameters" result
+      # shows {"discovered_interpreter_python": ...} or no ansible_facts
+      # key at all). The backend-resolution tuple failure keeps its own
+      # ansible_facts - real's action-level fatal carries it (#768).
       def finalize_result(result : PluginResult) : PluginResult
+        return result if result.failed?
         return result unless backend_resolved_from_facts? && pkg_mgr_fact_fetched?
         return result if result.extra.has_key?("ansible_facts")
         result.extra["ansible_facts"] = JSON::Any.new({"pkg_mgr" => JSON::Any.new(pkg_mgr_fact)})
