@@ -348,4 +348,26 @@ describe "strict missing-attribute matrix (ansible-core 2.19 semantics)" do
     Krikri::VariableSubstitutor::JinjaRenderer.strict_render_undefined_message(
       "{{ true | ternary(reg.stdout, 'hi') }}", vars).must_equal(stdout_miss)
   end
+
+  it "words a string-key bracket subscript on a plain string scalar the way ansible does (issue #874)" do
+    vars = Hash(String, JSON::Any).new
+    vars["_elastic_elastic_user"] = JSON::Any.new("elastic")
+
+    error = assert_raises(Krikri::UndefinedVariableError) do
+      Krikri::VarSubstitutor.new(vars: vars).substitute(
+        "URL password: {{ _elastic_elastic_user['pass'] }}", strict: true)
+    end
+    error.message.must_equal("object of type 'str' has no attribute 'pass'")
+
+    vars["s"] = JSON::Any.new("C")
+    error = assert_raises(Krikri::UndefinedVariableError) do
+      Krikri::VarSubstitutor.new(vars: vars).substitute("{{ s[none] }}", strict: true)
+    end
+    error.message.must_equal("ansible.module_utils._internal._datatag._AnsibleTaggedStr object has no element None")
+
+    error = assert_raises(Krikri::UndefinedVariableError) do
+      Krikri::VarSubstitutor.new(vars: vars).substitute("{{ s[''] }}", strict: true)
+    end
+    error.message.must_equal("'ansible.module_utils._internal._datatag._AnsibleTaggedStr object' has no attribute ''")
+  end
 end
