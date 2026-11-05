@@ -451,6 +451,17 @@ VIRTUAL = {
         # option names the action plugin accepts; anything else is reported
         "valid": ["key", "parents"],
     },
+    "ansible.builtin.set_stats": {
+        # set_stats's unknown-option failure comes from the module's own
+        # AnsibleModule bootstrap, but the observed chain is the bare
+        # "Invalid options for <name>: <opts>" one (no "Module failed."
+        # middle segment) with a plain changed+msg dump - the same shape
+        # fail/group_by render through their action-level check
+        # (live-verified vs 2.19.11, issue #897).
+        "action_level": True,
+        "unsupported_kind": "invalid_options",
+        "valid": ["aggregate", "data", "per_host"],
+    },
     "ansible.builtin.wait_for_connection": {
         "action_level": True,
         "unsupported_kind": "invalid_options",
@@ -476,7 +487,6 @@ VIRTUAL = {
 NO_VALIDATE = {
     "ansible.builtin.fetch",
     "ansible.builtin.set_fact",
-    "ansible.builtin.set_stats",
     "ansible.builtin.add_host",
     "ansible.builtin.gather_facts",
     "ansible.builtin.reboot",

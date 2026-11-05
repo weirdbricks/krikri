@@ -4103,7 +4103,13 @@
   "no_validate": true
  },
  "ansible.builtin.set_stats": {
-  "no_validate": true
+  "action_level": true,
+  "unsupported_kind": "invalid_options",
+  "valid": [
+   "aggregate",
+   "data",
+   "per_host"
+  ]
  },
  "ansible.builtin.setup": {
   "mutually_exclusive": [],

@@ -295,6 +295,25 @@ describe Krikri::ArgspecValidator do
     failure.as(Failure).msg.must_equal("Invalid options for fail: aaa,bogus")
   end
 
+  it "uses the same Invalid-options wording for set_stats' typo'd options (issue #897)" do
+    # live-verified vs 2.19.11: a typo'd set_stats option is a MODULE-level
+    # fatal (unlike fail/group_by, whose checks live in the action plugin),
+    # but the observed chain is the same bare "Invalid options for <name>"
+    # one - no "Module failed." middle segment - with the name spelled as
+    # the task spelled it.
+    failure = Krikri::ArgspecValidator.validate(
+      "ansible.builtin.set_stats", "ansible.builtin.set_stats",
+      {"aggregate" => "true", "data" => "{}", "per_hots" => "true"}, vars)
+    failure.as(Failure).msg.must_equal("Invalid options for ansible.builtin.set_stats: per_hots")
+    failure.as(Failure).action_level?.must_equal(true)
+    Krikri::ArgspecValidator.validate(
+      "set_stats", "ansible.builtin.set_stats",
+      {"data" => "{}", "zz" => "1"}, vars).as(Failure).msg.must_equal("Invalid options for set_stats: zz")
+    Krikri::ArgspecValidator.validate(
+      "ansible.builtin.set_stats", "ansible.builtin.set_stats",
+      {"aggregate" => "true", "data" => "{}", "per_host" => "true"}, vars).must_be_nil
+  end
+
   it "runs script's action-plugin spec including its required_one_of" do
     failure = Krikri::ArgspecValidator.validate(
       "script", "ansible.builtin.script", {"zz" => "1"}, vars)
