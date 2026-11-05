@@ -347,6 +347,29 @@ describe Krikri::ArgspecValidator do
     failure.as(Failure).action_level?.must_equal(false)
   end
 
+  it "fails an invalid sysvinit state with the BadChoice wording (issue #901: module failure, not a skip)" do
+    # The exact #901 kpg shape (seed 1793890551): `state: stopped_x` -
+    # real's AnsibleModule fails the choices check ("value of state must
+    # be one of: ..., got: stopped_x", live-probed vs 2.19.11 with a
+    # local-connection repro), which the chaos playbook's ignore_errors
+    # rescues (ok=1/ignored=1); the unavailable-module skip produced
+    # skipped=1 and diverged. choices sits between the type checks and
+    # required_one_of, so a present-but-invalid state still reports the
+    # BadChoice, not the required_one_of.
+    failure = Krikri::ArgspecValidator.validate(
+      "sysvinit", "ansible.builtin.sysvinit",
+      {"name" => "cron", "state" => "stopped_x"}, vars)
+    failure.as(Failure).msg.must_equal(
+      "value of state must be one of: started, stopped, restarted, reloaded, got: stopped_x")
+    failure.as(Failure).action_level?.must_equal(false)
+    # Every real choice passes.
+    %w[started stopped restarted reloaded].each do |choice|
+      Krikri::ArgspecValidator.validate(
+        "sysvinit", "ansible.builtin.sysvinit",
+        {"name" => "cron", "state" => choice, "enabled" => "true"}, vars).must_be_nil
+    end
+  end
+
   it "delegates service validation to the service_mgr module's spec" do
     failure = Krikri::ArgspecValidator.validate(
       "service", "ansible.builtin.service",
