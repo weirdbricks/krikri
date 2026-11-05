@@ -62,10 +62,12 @@ module Krikri
   # - encoding: the text encoding used when `contains:` reads a file's
   #   content for matching (e.g. latin-1; Ansible 2.17+'s
   #   contentfilter opens the file with `open(..., encoding=encoding)`).
-  #   When not given, content is read as raw bytes and matched
-  #   latin-1-style, so any byte sequence is searchable without a decode
-  #   error. Encoding does NOT affect get_checksum - Ansible's
-  #   digest_from_file hashes raw bytes regardless of encoding.
+  #   When not given, content is decoded with Python's default codec
+  #   (UTF-8) strictly: an undecodable byte abandons the whole search
+  #   path with real's "Failed to read the file ..." encoding-error
+  #   skip - it does not fall back to byte-wise matching. Encoding does
+  #   NOT affect get_checksum - Ansible's digest_from_file hashes raw
+  #   bytes regardless of encoding.
   #
   # Directory walk via Dir.each_child + native lstat()/hashlib-equivalent
   # checksums (BasePlugin#native_stat/#native_checksum) rather than
@@ -85,8 +87,13 @@ module Krikri
     # filtering and turns a failure into a skipped entry (see match).
     private alias EntryStat = Hash(String, JSON::Any)? | Errno
 
-    # contains: with an unknown encoding: name - not a per-file miss but a
-    # path-level failure in real (see read_content)
+    # A contains: read failure real find turns into a per-search-path
+    # skip, not a per-file miss: an unknown encoding: name (open()'s
+    # LookupError, "unknown encoding: X") or an undecodable file under
+    # the strict default/UTF-8 decode ("Failed to read the file <path>
+    # due to an encoding error. current encoding: ...").
+    # collect_matches records the exception's str() verbatim in
+    # skipped_paths and warns about the TOP search path.
     class UnknownEncoding < Exception; end
 
     # A directory-listing error Ansible's handle_walk_errors does NOT swallow
@@ -243,7 +250,22 @@ module Krikri
         end
 
         begin
-          examined += walk_path(search_path, options, files, skipped_paths, warnings)
+          # The entry loop lives HERE, not in a helper, so the examined
+          # count survives a mid-path decode error: real counts every
+          # filesystem object of the directories it yielded before the
+          # failing one, and a helper-local counter would be unwound
+          # with the exception.
+          entries = list_entries(search_path, options, skipped_paths)
+          entries.each do |entry_path, stat_or_errno|
+            examined += 1
+            next if !options.hidden && hidden_path?(entry_path, search_path)
+
+            if stat_hash = match(entry_path, stat_or_errno, options, skipped_paths, warnings)
+              files << JSON::Any.new(stat_hash)
+            end
+
+            break if (limit = options.limit) && files.size >= limit
+          end
         rescue ex : UnknownEncoding
           skipped_paths[search_path] = JSON::Any.new(ex.message.to_s)
           warnings << "Skipped '#{search_path}' path due to this access issue: #{ex.message}\n"
@@ -257,24 +279,6 @@ module Krikri
       end
 
       {files, examined, skipped_paths, warnings}
-    end
-
-    private def walk_path(search_path : String, options : Options, files : Array(JSON::Any), skipped_paths : Hash(String, JSON::Any), warnings : Array(String)) : Int32
-      examined = 0
-
-      entries = list_entries(search_path, options, skipped_paths)
-      entries.each do |entry_path, stat_or_errno|
-        examined += 1
-        next if !options.hidden && hidden_path?(entry_path, search_path)
-
-        if stat_hash = match(entry_path, stat_or_errno, options, skipped_paths, warnings)
-          files << JSON::Any.new(stat_hash)
-        end
-
-        break if (limit = options.limit) && files.size >= limit
-      end
-
-      examined
     end
 
     # `paths:`/`patterns:`/`excludes:` accept Ansible's comma-
@@ -577,50 +581,169 @@ module Krikri
     # searches anywhere in the whole file content (Python's re.search()).
     # A read failure (permission denied, a regex that can't compile, etc.)
     # is treated as no match, same as Ansible's own broad `except
-    # Exception: pass` around this.
+    # Exception: pass` around this - but a DECODE failure is not one:
+    # real opens the file as text (see read_decoded) and lets the decode
+    # error abandon the whole search path, so it propagates out of here.
     private def matches_contains?(path : String, contains : String?, read_whole_file : Bool, encoding : String?) : Bool
       return true unless contains
 
       pattern = Regex.new(contains)
-      content = read_content(path, encoding)
-
       if read_whole_file
-        !!(content =~ pattern)
+        !!(read_decoded(path, encoding) =~ pattern)
       else
         anchored = Regex.new("\\A(?:#{contains})")
-        content.each_line.any?(&.matches?(anchored))
+        any_line_matches?(path, encoding, anchored)
       end
     rescue File::Error | Regex::Error
       false
     end
 
-    # `contains:`'s own file reading. An explicit encoding: selects the
-    # text decoding (Ansible 2.17+ opens the file with
-    # `open(..., encoding=encoding)`); undecodable byte sequences are
-    # skipped rather than failing the match - Ansible raises on the
-    # decode error and abandons the whole path, but a single bad byte
-    # shouldn't drop every other match here. With no encoding given,
-    # content is read as raw bytes and matched latin-1-style (each byte
-    # maps to the same codepoint), so any byte sequence is searchable
-    # without a decode error. Encoding affects ONLY this path:
-    # get_checksum hashes raw bytes via digest_from_file regardless of
-    # encoding.
-    private def read_content(path : String, encoding : String?) : String
-      if encoding
+    # `contains:`'s own file reading. Real find.py opens the file as
+    # text (`open(fsname, encoding=encoding)`) - with no explicit
+    # encoding: that is Python's default codec (UTF-8 on every Linux
+    # environment ansible-core's modules run in) at its default strict
+    # error handling, so an undecodable byte raises UnicodeDecodeError,
+    # which contentfilter converts into the per-search-path skip
+    # (raise_decode_error below). krikri previously read such files as
+    # raw bytes and matched latin-1-style instead, silently matching
+    # through files real refuses to read at all (issue #893: a git
+    # object file warned on real's stderr while krikri stayed silent).
+    #
+    # Encoding affects ONLY this path: get_checksum hashes raw bytes
+    # via digest_from_file regardless of encoding.
+    private def read_decoded(path : String, encoding : String?) : String
+      raw = File.read(path)
+      unless encoding
+        raise_decode_error(path, encoding) unless raw.valid_encoding?
+        return raw
+      end
+
+      case normalize_encoding(encoding)
+      when "UTF-8"
+        # read_whole_file: true reads the entire file (f.read()) before
+        # searching, so the first undecodable byte anywhere wins, match
+        # or not.
+        raise_decode_error(path, encoding) unless raw.valid_encoding?
+        raw
+      when "ASCII"
+        raise_decode_error(path, encoding) unless raw.ascii_only?
+        raw
+      when "ISO-8859-1"
+        # Latin-1 cannot produce a decode error - every byte maps to the
+        # same codepoint - which is exactly why real cannot hit one with
+        # it either.
+        raw.bytes.map(&.chr).join
+      else
         begin
           File.open(path) do |file|
             file.set_encoding(normalize_encoding(encoding), invalid: :skip)
             file.gets_to_end
           end
         rescue ArgumentError
-          # Python's LookupError text; find.py's per-path `except Exception`
-          # abandons the whole search path with this as the skip reason
+          # Python's LookupError text; find.py re-raises LookupError
+          # untouched and the per-path `except Exception` abandons the
+          # whole search path with this as the skip reason
           raise UnknownEncoding.new("unknown encoding: #{encoding}")
         end
-      else
-        raw = File.read(path)
-        raw.valid_encoding? ? raw : raw.bytes.map(&.chr).join
       end
+    end
+
+    # Line-by-line contains: matching. The strict codecs (default/UTF-8,
+    # ASCII) reproduce real's decode timing below; latin-1 and the exotic
+    # codecs cannot produce a decode error here (latin-1 accepts every
+    # byte, the exotic path skips invalid ones), so they simply iterate
+    # the decoded text's lines.
+    private def any_line_matches?(path : String, encoding : String?, anchored : Regex) : Bool
+      if encoding.nil? || {"UTF-8", "ASCII"}.includes?(normalize_encoding(encoding))
+        return any_strict_line_matches?(path, encoding, anchored)
+      end
+      read_decoded(path, encoding).each_line.any?(&.matches?(anchored))
+    end
+
+    # Real's TextIOWrapper decodes the file in 8192-byte chunks
+    # (io.TextIOWrapper._CHUNK_SIZE) and yields lines only from chunks
+    # that decoded whole: an undecodable byte anywhere in a chunk makes
+    # the whole chunk fail before ANY of its lines is yielded, while a
+    # match from an earlier, fully-decoded chunk is returned before the
+    # bad chunk is ever read. Reproduced closed-form: the first
+    # undecodable byte pins the first bad chunk; only lines terminating
+    # before that chunk's start may match; reaching the bad chunk raises
+    # the per-search-path skip (a sequence truncated at EOF errors the
+    # same way - its start byte sits in the final chunk).
+    private CHUNK_SIZE = 8192
+
+    private def any_strict_line_matches?(path : String, encoding : String?, anchored : Regex) : Bool
+      content = File.read(path)
+      ascii = !encoding.nil? && normalize_encoding(encoding) == "ASCII"
+      if bad = first_decode_error(content, ascii)
+        limit = (bad // CHUNK_SIZE) * CHUNK_SIZE
+        unless limit.zero?
+          # Every byte before the first undecodable one decoded clean,
+          # and a sequence cut at the boundary holds only continuation
+          # bytes (all >= 0x80), so the terminated lines inside the
+          # prefix are clean text; the unterminated tail is not yielded
+          # by real either - its newline needs the bad chunk decoded
+          # first.
+          content.byte_slice(0, limit).each_line(chomp: false) do |line|
+            next unless line.ends_with?('\n') || line.ends_with?('\r')
+            return true if line.matches?(anchored)
+          end
+        end
+        raise_decode_error(path, encoding)
+      end
+      content.each_line.any?(&.matches?(anchored))
+    end
+
+    # The byte offset of the first byte Python's strict decoder rejects -
+    # the UTF-8 codec's rules (stray continuation bytes, overlong forms,
+    # surrogate halves and > U+10FFFF sequences are all errors), or plain
+    # 7-bit ASCII bounds for encoding: ascii - nil when everything
+    # decodes.
+    private def first_decode_error(content : String, ascii : Bool) : Int32?
+      size = content.bytesize
+      if ascii
+        i = 0
+        while i < size
+          return i if content.byte_at(i) >= 0x80
+          i += 1
+        end
+        return nil
+      end
+
+      i = 0
+      while i < size
+        lead = content.byte_at(i)
+        if lead < 0x80
+          i += 1
+          next
+        end
+        span, lo, hi = case lead
+                       when 0xC2..0xDF then {2, 0x80, 0xBF}
+                       when 0xE0       then {3, 0xA0, 0xBF}
+                       when 0xE1..0xEC then {3, 0x80, 0xBF}
+                       when 0xED       then {3, 0x80, 0x9F}
+                       when 0xEE..0xEF then {3, 0x80, 0xBF}
+                       when 0xF0       then {4, 0x90, 0xBF}
+                       when 0xF1..0xF3 then {4, 0x80, 0xBF}
+                       when 0xF4       then {4, 0x80, 0x8F}
+                       else                 return i
+                       end
+        return i if i + span > size
+        return i unless lo <= content.byte_at(i + 1) <= hi
+        (2...span).each do |offset|
+          return i unless 0x80 <= content.byte_at(i + offset) <= 0xBF
+        end
+        i += span
+      end
+      nil
+    end
+
+    # contentfilter's UnicodeDecodeError conversion - the exact skip
+    # reason real records for the search path and warns with (fsname
+    # unquoted; encoding None names open()'s locale-default codec).
+    private def raise_decode_error(path : String, encoding : String?) : NoReturn
+      shown = encoding || "None (default determined by the Python built-in function \"open\")"
+      raise UnknownEncoding.new("Failed to read the file #{path} due to an encoding error. current encoding: #{shown}")
     end
 
     # Accepts Python's codec alias spellings ("latin-1", "utf8", "us-ascii")

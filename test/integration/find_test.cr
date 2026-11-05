@@ -395,13 +395,70 @@ describe "find plugin" do
       paths_of(result).must_equal([enc_path])
     end
 
-    it "matches raw non-UTF-8 bytes when no encoding is given (latin-1-style byte comparison)" do
-      raw_path = File.join(tmp_dir, "raw.bin")
-      File.write(raw_path, "raw \xFF\xFE bytes")
+    it "abandons the whole search path when contains: hits an undecodable file" do
+      # Real find.py opens contains: files as TEXT with open()'s default
+      # codec (UTF-8, strict error handling); an undecodable byte raises
+      # UnicodeDecodeError, which contentfilter re-raises as "Failed to
+      # read the file <path> due to an encoding error. current encoding:
+      # None (default determined by the Python built-in function
+      # \"open\")" - the main loop then skips the WHOLE search path with
+      # that reason, warns, and flips the msg. krikri previously read
+      # such files as raw bytes and matched latin-1-style straight
+      # through them, silently (issue #893: a git object file produced
+      # real's stderr warning while krikri printed nothing).
+      dir = PluginSpecHelper.tmp_path("find-decode-error")
+      Dir.mkdir_p(dir)
+      blob = File.join(dir, "blob.bin")
+      File.write(blob, "\x78\x9c\x0a binary \xFF\xFE")
 
-      result = PluginSpecHelper.run("find", {"paths" => tmp_dir, "patterns" => "raw.bin", "contains" => "raw"})
+      result = PluginSpecHelper.run("find", {"paths" => dir, "contains" => "tree"})
 
-      paths_of(result).must_equal([raw_path])
+      result["matched"].as_i64.must_equal(0)
+      result["examined"].as_i64.must_equal(1)
+      result["msg"].as_s.must_equal("Not all paths examined, check warnings for details")
+      result["skipped_paths"].as_h[dir].as_s.must_equal(
+        "Failed to read the file #{blob} due to an encoding error. " \
+        "current encoding: None (default determined by the Python built-in function \"open\")"
+      )
+      result["warnings"].as_a.map(&.as_s).must_equal([
+        "Skipped '#{dir}' path due to this access issue: " \
+        "Failed to read the file #{blob} due to an encoding error. " \
+        "current encoding: None (default determined by the Python built-in function \"open\")\n",
+      ])
+    end
+
+    it "abandons the whole search path on an undecodable file with read_whole_file: true too" do
+      # read_whole_file: true reads the entire file (f.read()) before
+      # searching, so the first undecodable byte anywhere wins, match or
+      # not.
+      dir = PluginSpecHelper.tmp_path("find-decode-error-whole")
+      Dir.mkdir_p(dir)
+      blob = File.join(dir, "blob.bin")
+      File.write(blob, "tree\n\xFF")
+
+      result = PluginSpecHelper.run("find", {"paths" => dir, "contains" => "tree", "read_whole_file" => "true"})
+
+      result["matched"].as_i64.must_equal(0)
+      result["skipped_paths"].as_h[dir].as_s.must_equal(
+        "Failed to read the file #{blob} due to an encoding error. " \
+        "current encoding: None (default determined by the Python built-in function \"open\")"
+      )
+    end
+
+    it "matches a line from a fully-decoded chunk before an undecodable byte in a later chunk" do
+      # Real's TextIOWrapper decodes 8192-byte chunks and yields their
+      # lines whole, so a "tree" line inside the first chunk is matched
+      # before the second chunk - holding the undecodable bytes - is
+      # ever decoded; the whole-file strict decode must not fire here.
+      dir = PluginSpecHelper.tmp_path("find-decode-chunk-match")
+      Dir.mkdir_p(dir)
+      path = File.join(dir, "blob.chunk")
+      File.write(path, "tree\n" + ("x" * 9000) + "\xFF\xFE")
+
+      result = PluginSpecHelper.run("find", {"paths" => dir, "patterns" => "*.chunk", "contains" => "tree"})
+
+      paths_of(result).must_equal([path])
+      result["msg"].as_s.must_equal("All paths examined")
     end
 
     it "does not affect get_checksum - Ansible hashes raw bytes regardless of encoding" do
