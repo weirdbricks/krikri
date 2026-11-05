@@ -869,8 +869,10 @@ describe Krikri::PlaybookParser do
 
     it "keeps a not-yet-implemented module from a RECOGNIZED collection as unavailable_module too (0.9.1050)" do
       # Same reversal, exercised on both sides of the OLD boundary: a
-      # real builtin this engine hasn't implemented
-      # (ansible.builtin.sysvinit) and an unimplemented module inside a
+      # real builtin spelling this engine hasn't implemented
+      # (ansible.builtin.macports - ansible-core's runtime redirects it to
+      # community.general.macports, which stays unimplemented) and an
+      # unimplemented module inside a
       # collection the engine otherwise ships modules for (amazon.aws)
       # both parse through with unavailable_module set instead of
       # refusing the whole run - on a controller where the collection
@@ -882,11 +884,10 @@ describe Krikri::PlaybookParser do
           - hosts: all
             tasks:
               - name: unimplemented builtin
-                ansible.builtin.sysvinit:
-                  name: foo
+                ansible.builtin.macports:
         YAML
       ).plays[0].tasks[0]
-      task.unavailable_module.must_equal("ansible.builtin.sysvinit")
+      task.unavailable_module.must_equal("ansible.builtin.macports")
 
       if Krikri::CollectionIndex.controller_resolves?("amazon.aws.autoscaling_group_info")[:resolves]
         task = Krikri::PlaybookParser.parse_string(<<-YAML
