@@ -57,4 +57,14 @@ describe "dnf5: argument-spec validation" do
     result["msg"].as_s.must_equal("argument 'name' is of type NoneType and we were unable to convert to list: " \
                                   "<class 'NoneType'> cannot be converted to a list")
   end
+
+  it "carries the empty results list on the autoremove rejection" do
+    # The autoremove/state check lives in the yumdnf module_utils shared
+    # with dnf, whose fail_json passes results=[] - dnf5's registered
+    # result has the same key (live-verified vs ansible-core 2.14.18).
+    result = run_dnf5(%({"autoremove": true, "state": "present"}))
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("Autoremove should be used alone or with state=absent")
+    result["results"].as_a.must_equal([] of JSON::Any)
+  end
 end

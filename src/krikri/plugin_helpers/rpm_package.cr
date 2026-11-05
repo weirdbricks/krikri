@@ -642,7 +642,11 @@ module Krikri
       # state defaults to "absent" when autoremove is set, and an explicit
       # state other than the literal "absent" fails - the "removed" alias
       # does NOT satisfy it because the check compares the raw parameter.
-      # Live-verified against ansible-core 2.19.11 (msg + results: [] shape).
+      # The fail_json carries an empty `results` list (yumdnf.py), so a
+      # registered result has it between the fail_json kwargs and the
+      # controller's changed: `results, failed, msg, changed`
+      # (live-verified vs ansible-core 2.14.18 in a Rocky 9 container; the
+      # check lives in the shared module_utils, so dnf and dnf5 fail alike).
       private def yumdnf_autoremove_rejection : PluginResult?
         return nil unless true?(@params["autoremove"]?)
         state = @params["state"]?
@@ -651,7 +655,9 @@ module Krikri
         PluginResult.new(
           changed: false,
           failed: true,
-          msg: "Autoremove should be used alone or with state=absent"
+          msg: "Autoremove should be used alone or with state=absent",
+          results: [] of String,
+          key_order: ["results", "failed", "msg", "changed"]
         )
       end
 
