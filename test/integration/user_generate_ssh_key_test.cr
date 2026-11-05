@@ -65,6 +65,12 @@ describe "user plugin generate_ssh_key" do
       })
 
       result["changed"].as_bool.must_equal(false)
+      # Main() always sets ssh_key_file/ssh_public_key/ssh_fingerprint
+      # after ssh_key_gen when rc is not None, even on the
+      # already-exists skip; only the warning is new.
+      result["ssh_key_file"].as_s.must_equal(key_path)
+      result["ssh_public_key"].as_s.must_include("ssh-ed25519")
+      result["ssh_fingerprint"].as_s.must_include("SHA256:")
       File.read(key_path).must_equal(before)
     ensure
       FileUtils.rm_rf(dir) if dir && Dir.exists?(dir)
@@ -129,6 +135,36 @@ describe "user plugin generate_ssh_key" do
       File.exists?(key_path).must_equal(true)
       File.exists?(key_path + ".pub").must_equal(true)
       File.exists?(File.join(dir, "~")).must_equal(false)
+    ensure
+      FileUtils.rm_rf(dir) if dir && Dir.exists?(dir)
+    end
+  end
+
+  it "populates ssh_key_file/public_key/fingerprint on existing-key skip (issue #848)" do
+    dir = File.tempname("krikri-ssh-key-848")
+    Dir.mkdir_p(dir)
+    key_path = File.join(dir, "id_ed25519")
+
+    begin
+      PluginSpecHelper.run("user", {
+        "name"             => TEST_USER,
+        "generate_ssh_key" => "true",
+        "ssh_key_type"     => "ed25519",
+        "ssh_key_file"     => key_path,
+      })
+
+      result = PluginSpecHelper.run("user", {
+        "name"             => TEST_USER,
+        "generate_ssh_key" => "true",
+        "ssh_key_type"     => "ed25519",
+        "ssh_key_file"     => key_path,
+      })
+
+      result["changed"].as_bool.must_equal(false)
+      result["ssh_key_file"].as_s.must_equal(key_path)
+      result["ssh_public_key"].as_s.must_include("ssh-ed25519")
+      result["ssh_fingerprint"].as_s.must_include("SHA256:")
+      result["warnings"].as_a.first.as_s.must_include("no force, so skipping")
     ensure
       FileUtils.rm_rf(dir) if dir && Dir.exists?(dir)
     end
