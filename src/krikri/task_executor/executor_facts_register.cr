@@ -421,7 +421,14 @@ module Krikri
       # resolve_become used to read back out of it as {false, nil}.
       result = PluginManager.execute_plugin("facts", config.to_json, host, vars_context, false, nil)
 
-      if Krikri.result_failed_flag(result)
+      # The ssh transport's connection-level failure result carries ONLY the
+      # unreachable flag (no "failed" key - it mirrors the shape real's own
+      # fatal UNREACHABLE line prints). Gate on it too: a gather whose
+      # dispatch never reached the target must book UNREACHABLE, not fall
+      # through to the success path below and print `ok:` with no facts
+      # while the play carries on (issue #887 - a role default
+      # ansible_ssh_user the host rejects).
+      if Krikri.result_failed_flag(result) || result["unreachable"]?.try(&.as_bool?) == true
         msg = result["msg"]?.try(&.as_s) || "Unknown error"
         # "Plugin execution failed on remote" alone hides WHY the plugin
         # died - the kata round of 2026-09-10 (36/36 roles) failed facts
@@ -429,7 +436,12 @@ module Krikri
         # libxml2.so.2, and only manual SSH reproduced the loader error.
         # Surface the plugin's own stderr so the cause is visible at the
         # point of failure.
-        if (stderr = result["stderr"]?.try(&.as_s?)) && !stderr.empty?
+        # The transport-unreachable shape carries the ssh stderr inside its
+        # msg already (ansible's [ERROR] block shows just the Task failed
+        # line there, no stderr section - issue #887's rejected-user
+        # gather), so only module-level failures get the stderr dump.
+        if (stderr = result["stderr"]?.try(&.as_s?)) && !stderr.empty? &&
+           result["unreachable"]?.try(&.as_bool?) != true
           msg += "\n  stderr: #{stderr.strip.lines[0, 10].join("\n  stderr: ")}"
         end
         # The gatherer marks an rc-127 interpreter-not-found failure with

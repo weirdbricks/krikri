@@ -83,6 +83,40 @@ describe Krikri::ConnectionSettings do
     conn.conn_host.must_equal("10.0.0.8")
   end
 
+  # Ansible resolves each connection option with a last-entry-wins loop
+  # (ConfigManager._loop_entries) over the plugin's flat vars name list
+  # [canonical, deprecated] against one merged task-vars dict, so the
+  # deprecated spelling wins whenever it is present at all - even from a
+  # LOWEST-precedence source (role defaults) against a canonical name from
+  # the inventory or the play vars. tyranron.coreos_bootstrap's
+  # `ansible_ssh_user: core` default is exactly that shape (issue #887):
+  # ansible dialed core@ and went UNREACHABLE while this engine dialed the
+  # inventory user and got further.
+  it "lets the deprecated ansible_ssh_* spelling beat the canonical name from any tier (issue #887)" do
+    host = conn_host("web1", "invuser", 2222, {
+      "ansible_user"     => jv("invuser"),
+      "ansible_host"     => jv("10.0.0.1"),
+      "ansible_port"     => JSON::Any.new(2222),
+      "ansible_ssh_user" => jv("core"),
+      "ansible_ssh_host" => jv("10.0.0.8"),
+      "ansible_ssh_port" => JSON::Any.new(2203),
+    } of String => JSON::Any)
+    conn = Krikri::ConnectionSettings.resolve(host, {
+      "ansible_user" => jv("taskuser"),
+      "ansible_port" => JSON::Any.new(2202),
+      "ansible_host" => jv("10.0.0.9"),
+    } of String => JSON::Any)
+    conn.user.must_equal("core")
+    conn.conn_host.must_equal("10.0.0.8")
+    conn.port.must_equal(2203)
+  end
+
+  it "still prefers a task-tier canonical var over nothing but yields to a host-tier alias (issue #887)" do
+    host = conn_host("web1", "invuser", 2222, {"ansible_ssh_user" => jv("core")} of String => JSON::Any)
+    conn = Krikri::ConnectionSettings.resolve(host, {"ansible_user" => jv("taskuser")} of String => JSON::Any)
+    conn.user.must_equal("core")
+  end
+
   it "ignores unrendered template values (the pre-pass's raw-vars view)" do
     host = conn_host("web1", "invuser", 2222)
     conn = Krikri::ConnectionSettings.resolve(host, {

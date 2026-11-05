@@ -219,6 +219,24 @@ module Krikri
       (password && !sshpass_available?) ? ["-o", "NumberOfPasswordPrompts=1"] : [] of String
     end
 
+    # ansible-core's ssh connection plugin adds these whenever NO connection
+    # password is configured (ssh.py's "ansible_password/ansible_ssh_password
+    # not set" block): without them ssh falls through to keyboard-interactive
+    # and password prompts on an auth failure, and the askpass noise lines
+    # ("ssh_askpass: exec ...", "Permission denied, please try again.")
+    # pollute the unreachable stderr that ansible's fatal msg embeds
+    # verbatim (issue #887: ansible's rejected-user stderr is just the
+    # known-hosts warning plus the `user@host: Permission denied` line).
+    # With a password configured sshpass/askpass handle the prompt the way
+    # ansible's password path does, so the options stay off there.
+    def self.no_password_auth_args(password : String?) : Array(String)
+      password ? [] of String : [
+        "-o", "KbdInteractiveAuthentication=no",
+        "-o", "PreferredAuthentications=gssapi-with-mic,gssapi-keyex,hostbased,publickey",
+        "-o", "PasswordAuthentication=no",
+      ]
+    end
+
     # The SSH_ASKPASS helper for the no-sshpass fallback: a tiny shell
     # script that answers ssh's password prompt with SSHPASS from the
     # environment - the same env-only channel `sshpass -e` uses, so the
@@ -1512,7 +1530,7 @@ module Krikri
         "-o", "ServerAliveInterval=60",
         "-o", "ServerAliveCountMax=3",
         "-o", "StrictHostKeyChecking=#{strict_host_key_checking}",
-      ] + askpass_args(password) + identity_args(identity_file) + (port ? ["-p", port.to_s] : [] of String) + extra_options + [
+      ] + no_password_auth_args(password) + askpass_args(password) + identity_args(identity_file) + (port ? ["-p", port.to_s] : [] of String) + extra_options + [
         "#{user}@#{host}",
       ] + remote_args
     end
@@ -1541,7 +1559,7 @@ module Krikri
         "-o", "ControlPersist=600",
       ] + (connect_timeout ? ["-o", "ConnectTimeout=#{CliOptions.timeout}"] : [] of String) + [
         "-o", "StrictHostKeyChecking=#{strict_host_key_checking}",
-      ] + askpass_args(password) + (recursive ? ["-r"] : [] of String) + identity_args(identity_file) +
+      ] + no_password_auth_args(password) + askpass_args(password) + (recursive ? ["-r"] : [] of String) + identity_args(identity_file) +
         (port ? ["-P", port.to_s] : [] of String) + extra_options +
         CliOptions.extra_scp_args + local_args
     end
@@ -1562,6 +1580,7 @@ module Krikri
              " -o ConnectTimeout=#{CliOptions.timeout} -o StrictHostKeyChecking=#{strict_host_key_checking}"
       base = "sshpass -e #{base}" if password && sshpass_available?
       base += " -o NumberOfPasswordPrompts=1" if password && !sshpass_available?
+      no_password_auth_args(password).each { |arg| base += " #{arg}" }
       base = "#{base}#{identity_ssh_opt(identity_file)}"
       extra_args.each { |arg| base += " #{shell_quote(arg)}" }
       port ? "#{base} -p #{port}" : base

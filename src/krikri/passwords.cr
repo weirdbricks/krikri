@@ -28,8 +28,17 @@ module Krikri
       lookup(BECOME_KEYS, vars, host)
     end
 
+    # Same deprecated-alias rule the connection settings apply (issue #887):
+    # ansible resolves each option through a last-entry-wins loop
+    # (ConfigManager._loop_entries) over the plugin's flat `vars:` name list
+    # against ONE merged task-vars dict, so the LAST listed spelling (e.g.
+    # ansible_sudo_pass) wins whenever it is present anywhere - even from a
+    # lower-precedence source than a canonical name earlier in the list.
+    # Walk the list back to front; within one name the task vars outrank the
+    # host's inventory vars (dispatch sites pass the full vars_context, but
+    # a few only hold the Host, so both sources are consulted).
     private def self.lookup(keys : Array(String), vars : Hash(String, JSON::Any)?, host : Host?) : String?
-      keys.each do |key|
+      keys.reverse_each do |key|
         [vars.try(&.[key]?), host.try(&.vars[key]?)].each do |value|
           next unless value
           password = value.as_s?
