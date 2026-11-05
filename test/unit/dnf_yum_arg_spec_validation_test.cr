@@ -284,6 +284,15 @@ describe "dnf: yumdnf mutual exclusion + autoremove sanity" do
     result["msg"].as_s.must_equal("Autoremove should be used alone or with state=absent")
   end
 
+  it "carries the empty results list on the autoremove rejection" do
+    # yumdnf.py's fail_json passes results=[], and the registered result
+    # keeps the fail_json kwargs first, before failed/msg and the
+    # controller's changed (live-verified vs ansible-core 2.14.18).
+    result = run_dnf({"autoremove" => "true", "state" => "present"})
+    result["results"].as_a.must_equal([] of JSON::Any)
+    result.as_h.keys.must_equal(["results", "failed", "msg", "changed", "exception"])
+  end
+
   it "fails autoremove with an explicit contradicting state even without name" do
     result = run_dnf({"autoremove" => "true", "state" => "present"})
     result["msg"].as_s.must_equal("Autoremove should be used alone or with state=absent")
