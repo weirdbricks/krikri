@@ -20,6 +20,17 @@ private def paths_of(result : JSON::Any) : Array(String)
   result["files"].as_a.map(&.["path"].as_s).sort!
 end
 
+# os.walk's own yield order, which real find turns into its result order:
+# per directory, `files + dirs` in readdir order, then depth-first into
+# each subdirectory.
+private def os_walk_order(dir : String) : Array(String)
+  children = Dir.children(dir)
+  files, dirs = children.partition { |child| !File.directory?(File.join(dir, child)) }
+  paths = (files + dirs).map { |child| File.join(dir, child) }
+  dirs.each { |child| paths.concat(os_walk_order(File.join(dir, child))) }
+  paths
+end
+
 private def with_follow_fixture : String
   target = File.join(tmp_dir, "follow_target")
   Dir.mkdir_p(target)
@@ -60,6 +71,41 @@ describe "find plugin" do
       File.join(tmp_dir, "sub", "c.txt"),
       File.join(tmp_dir, "sub", "subsub", "d.txt"),
     ].sort)
+  end
+
+  it "reports a directory's regular files before its subdirectories, like os.walk's files + dirs" do
+    # Issue #905: real find walks with os.walk and iterates `files + dirs`
+    # for every directory, so the regular files of a level always precede
+    # its subdirectories (each group still in readdir order). Readdir
+    # order is filesystem-dependent, so the expectation is derived from
+    # the same listing rather than hardcoded.
+    order_dir = File.join(tmp_dir, "order-flat")
+    Dir.mkdir_p(order_dir)
+    Dir.mkdir_p(File.join(order_dir, "d1"))
+    File.write(File.join(order_dir, "f1"), "")
+    Dir.mkdir_p(File.join(order_dir, "d2"))
+    File.write(File.join(order_dir, "f2"), "")
+
+    result = PluginSpecHelper.run("find", {"paths" => order_dir, "file_type" => "any"})
+
+    result["files"].as_a.map(&.["path"].as_s).must_equal(os_walk_order(order_dir))
+  end
+
+  it "emits a whole level before descending, depth-first, like os.walk" do
+    # Same issue: descending into a subdirectory the moment it is listed
+    # interleaves that subtree's matches with its siblings' - real find
+    # walks top-down, finishing a level before going deeper.
+    order_dir = File.join(tmp_dir, "order-recurse")
+    Dir.mkdir_p(File.join(order_dir, "d1", "deep"))
+    File.write(File.join(order_dir, "d1", "inner.txt"), "")
+    File.write(File.join(order_dir, "d1", "deep", "deepest.txt"), "")
+    Dir.mkdir_p(File.join(order_dir, "d2"))
+    File.write(File.join(order_dir, "d2", "other.txt"), "")
+    File.write(File.join(order_dir, "top.txt"), "")
+
+    result = PluginSpecHelper.run("find", {"paths" => order_dir, "file_type" => "any", "recurse" => "true"})
+
+    result["files"].as_a.map(&.["path"].as_s).must_equal(os_walk_order(order_dir))
   end
 
   it "excludes hidden files by default, even when recursing" do
