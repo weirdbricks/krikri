@@ -2262,7 +2262,21 @@ module Krikri
         end
       end
 
+      append_attr_diff(before, after, path)
       generate_attribute_diff(before, after)
+    end
+
+    # attr:/attributes: - Ansible's set_attributes_if_different records
+    # the file's CURRENT chattr flags and the RAW requested value,
+    # operator included (`attributes: "+i"` diffs an after of "+i", not
+    # the resolved "ie"), live-verified vs 2.21.6 on a real ext4 guest.
+    private def append_attr_diff(before : Hash(String, JSON::Any), after : Hash(String, JSON::Any), path : String) : Nil
+      parsed = attr_args || return
+      mod, flags = parsed
+      return unless attr_changed?(path)
+
+      before["attributes"] = JSON::Any.new(current_attr_flags(path))
+      after["attributes"] = JSON::Any.new(mod == '=' ? flags : "#{mod}#{flags}")
     end
 
     @last_error : String? = nil

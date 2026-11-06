@@ -1,6 +1,6 @@
 # Upgrade plan: parity target ansible-core 2.19.11 → 2.21.6
 
-Status: **source-diff + porting-guide pass complete at 0.9.2441 — pending live verification**.
+Status: **source-diff + porting-guide pass complete at 0.9.2442 — pending live verification**.
 Decision (2026-11-05): krikri tracks ansible-core **2.21.6 only** — the
 `--krikri-argspec-profile` knob proposed earlier was dropped before it
 shipped; `data/argspecs.json` IS the 2.21.6 capture, and
@@ -274,11 +274,36 @@ were, and they are done.
         it) while a value read from a yaml document keeps
         '_AnsibleTaggedStr' - both live-verified, both spellings covered
         by test/integration/conditional_clause_failure_shape_test.cr.
+- [x] **`file:` attribute-only diff entries - chattr half** (0.9.2442),
+      live-verified byte for byte against 2.21.6 on a local QEMU microVM
+      (real kernel, real ext4, real `chattr`): an `attr:`/`attributes:`
+      change now records `{"attributes": <current lsattr flags>}` ->
+      `{"attributes": <the RAW requested value, operator included>}` in
+      the diff's before/after, alone and combined with a mode change and
+      for a `-i` removal - real's `set_attributes_if_different` shape.
+      How to reproduce: boot `~/.local/share/krikri/microvm/gold-ubuntu-v2.qcow2`
+      (qemu-system-x86_64, `-enable-kvm -M q35 -cpu host`, a fresh
+      `qemu-img create -b` overlay, `hostfwd=tcp:127.77.x.y:PORT-:22`),
+      then drive it from this repo with `ansible-playbook`/`krikri-playbook
+      --diff` against an inventory using `~/.local/share/krikri/microvm/bench_key`;
+      run krikri with `SSH_AUTH_SOCK` unset (the host agent's keys exhaust
+      sshd's auth-attempt budget first).
 - [ ] **Known micro-divergences** (documented, deliberate or deferred):
       - custom-module injection echo (see the INJECT_INVOCATION deviation
         above).
-      - the file-attributes diff entry covers mode/owner/group; a
-        secontext- or chattr-flags-only change still diffs header-only.
+      - the `file:` diff's `secontext` entry: real records
+        `before["secontext"]` = the CURRENT context as a 4-element list
+        and `after["secontext"]` = the merged list (param parts override,
+        `None` parts kept), only when SELinux is enabled
+        (`basic.py:set_context_if_different`); krikri has no entry yet.
+        Unverifiable on this host (no SELinux) - the microVM route needs a
+        Rocky guest, and the cached `gold-rocky-v2.qcow2` does not boot
+        (its own bake console log stalls in dracut waiting for the root
+        UUID, so the golden is stale/corrupt; re-bake before trying).
+      - the same attribute-only diff entry is still missing from
+        `copy:`/`template:`/`archive:` (real only shows it when the
+        content is otherwise unchanged - with a content change the
+        content diff wins, live-verified on the microVM).
 - [ ] **Phase 4 — live verification** (blocked on the user running it):
       - re-run the #909/#910 repro against real 2.21.6 — byte-identical
         (already done ad hoc for stat; re-confirm on the release build).
