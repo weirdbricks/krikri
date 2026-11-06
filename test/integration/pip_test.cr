@@ -165,6 +165,40 @@ describe "pip plugin" do
     end
   end
 
+  # 2.21 passes `-e` before EVERY package instead of merging one -e into
+  # extra_args (2.19's shape bound the flag to the first package only, so
+  # the rest installed non-editable).
+  it "flags every package with -e when editable: is set (2.21)" do
+    shim_dir = File.tempname(".krikri-spec-pip-editable")
+    Dir.mkdir(shim_dir)
+    shim = File.join(shim_dir, "editable-pip")
+    File.write(shim, <<-SH
+      #!/bin/sh
+      export PATH=/usr/local/bin:/usr/bin:/bin
+      printf '%s\n' "$*" >> #{File.join(shim_dir, "marker")}
+      case "$1 $2 $3" in
+        "install pip pip") echo "Requirement already satisfied: pip in /usr/lib/python3/dist-packages (1.0)"; exit 0 ;;
+      esac
+      if [ "$1" = "show" ]; then exit 1; fi
+      exit 0
+      SH
+    )
+    File.chmod(shim, 0o755)
+    begin
+      result = PluginSpecHelper.run("pip", {
+        "name"       => "alpha,beta",
+        "editable"   => "true",
+        "executable" => shim,
+      })
+
+      result["failed"]?.try(&.as_bool).wont_equal(true)
+      marker = File.read(File.join(shim_dir, "marker"))
+      marker.must_include("-e alpha -e beta")
+    ensure
+      FileUtils.rm_rf(shim_dir)
+    end
+  end
+
   it "keeps a version-specifier comma as part of one requirement, not a second bogus package" do
     # Real bug found benchmarking jonaspammer.openssl (round 813196):
     # `name: "cryptography>3,<3.5"` - a single string whose comma is

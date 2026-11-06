@@ -978,7 +978,13 @@ module Krikri
         end
       end
 
-      extra = editable_extra(@params["extra_args"]? || "")
+      # 2.21 applies editable: to the install command itself, one `-e`
+      # per package (2.19 merged a single -e into extra_args, which pip
+      # then bound to the first package only). requirements: is
+      # exclusive with editable: in the 2.21 spec, so the -r path never
+      # carries a flag.
+      extra = @params["extra_args"]? || ""
+      editable = true?(@params["editable"]?)
 
       # `target` reaches here already comma-joined by the parser for a
       # literal YAML `name:` list (Ansible's pip module takes a
@@ -999,8 +1005,12 @@ module Krikri
       # `--upgrade`/`extra_args` are never comma-joined so they pass
       # through the `elsif spec` branch above and are handled directly
       # below, one per name.
-      quoted_target = requirements ? target : split_requirements(target).map { |tval| Process.quote(tval) }.join(" ")
-      argv = install_argv(pip_bin, upgrade, force_reinstall, extra, requirements, target)
+      quoted_target = if requirements
+                        target
+                      else
+                        split_requirements(target).map { |tval| editable ? "-e #{Process.quote(tval)}" : Process.quote(tval) }.join(" ")
+                      end
+      argv = install_argv(pip_bin, upgrade, force_reinstall, extra, requirements, target, editable)
       cmd = with_umask(with_chdir("#{break_system_packages_env}#{quoted_command(pip_bin)} install #{upgrade ? "--upgrade " : ""}#{force_reinstall ? "--force-reinstall " : ""}#{extra_tokens(extra)} #{quoted_target}".strip))
       result = remote_exec(cmd)
 
@@ -1028,8 +1038,9 @@ module Krikri
         key_order: ["changed", "stdout"])
     end
 
-    private def install_argv(pip_bin : String, upgrade : Bool, force_reinstall : Bool, extra : String, requirements : String?, target : String) : Array(String)
+    private def install_argv(pip_bin : String, upgrade : Bool, force_reinstall : Bool, extra : String, requirements : String?, target : String, editable : Bool = false) : Array(String)
       argv_target = requirements ? target.split(' ').reject(&.empty?) : split_requirements(target)
+      argv_target = argv_target.flat_map { |tval| editable ? ["-e", tval] : [tval] } if editable && requirements.nil?
       pip_bin.split(' ').reject(&.empty?) + ["install"] + (upgrade ? ["--upgrade"] : [] of String) + (force_reinstall ? ["--force-reinstall"] : [] of String) + extra.split(' ').reject(&.empty?) + argv_target
     end
 
@@ -1139,16 +1150,6 @@ module Krikri
         else
           already_installed?(pip_bin, package)
         end
-      end
-    end
-
-    # Merge the `-e` flag into extra_args when editable: is set
-    # (deduplicated if extra_args already includes it)
-    private def editable_extra(extra : String) : String
-      if true?(@params["editable"]?) && !extra.split(' ').includes?("-e")
-        extra.empty? ? "-e" : "#{extra} -e"
-      else
-        extra
       end
     end
 
