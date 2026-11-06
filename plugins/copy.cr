@@ -910,12 +910,32 @@ module Krikri
 
       # dest_root itself is a directory copy just created when it wasn't
       # there before - directory_mode applies to it like any other (only
-      # when it didn't already exist: pre-existing dirs stay untouched).
+      # when it didn't already exist: pre-existing dirs stay untouched
+      # on the local path, where real never runs the module at all -
+      # the action plugin returns changed/dest/src by itself).
       if (directory_mode = @params["directory_mode"]?.presence) && !dest_root_preexisted
         apply_directory_mode(dest_root, directory_mode)
       end
 
-      changed = false
+      # 2.21 delta (live-verified vs real 2.19.11 and 2.21.6 with
+      # remote_src=true): the module now runs with dest=dest_root and
+      # applies directory_mode to it unconditionally - a PRE-EXISTING
+      # dest_root is chmod'd to directory_mode too (2.19 left it alone).
+      # Local dir copies never reach that code (no module run), so the
+      # new behavior is remote_src-only. Check mode skips the real
+      # chmod (set_fs_attributes_if_different's no-write branch).
+      if dest_root_preexisted &&
+         (directory_mode = @params["directory_mode"]?.presence) &&
+         true?(@params["remote_src"]?) && !@check_mode
+        current = File.info?(dest_root, follow_symlinks: false)
+        apply_directory_mode(dest_root, directory_mode)
+        after = File.info?(dest_root, follow_symlinks: false)
+        if current && after && current.permissions != after.permissions
+          changed_by_attributes = true
+        end
+      end
+
+      changed = changed_by_attributes ? true : false
       copied = 0
 
       # directory_mode: Ansible applies this to every directory the
