@@ -247,7 +247,17 @@ module Krikri
       # results always carry path/dest in real, so they keep the
       # unconditional merge.
       add_path_info(result, stat_path_for(result, path)) unless path_less_failure?(result)
+      attach_file_warnings(result)
       result
+    end
+
+    # Warnings accumulated during state resolution (2.21's
+    # EACCES-as-absent warning) - attached to whatever result execute
+    # returns; the controller dedups identical warning texts.
+    private def attach_file_warnings(result : PluginResult) : Nil
+      return unless (warnings = @file_warnings) && !warnings.empty?
+      existing = result.extra["warnings"]?.try(&.as_a?) || [] of JSON::Any
+      result.extra["warnings"] = JSON::Any.new(existing + warnings.map { |w| JSON::Any.new(w) })
     end
 
     # A failure may name a different path than the task's (the first
@@ -324,10 +334,30 @@ module Krikri
       explicit_state = @params["state"]?
       return explicit_state unless explicit_state.nil? || explicit_state.empty?
 
+      # 2.21's get_state() switched from os.path.lexists to a raw
+      # os.lstat and treats EACCES as absent-with-warning (2.19 kept it
+      # a silent absent). krikri's exists?/symlink? probes already
+      # return false behind an unreadable ancestor, so only the warning
+      # is new here.
+      if lstat_errno(path) == Errno::EACCES
+        (@file_warnings ||= [] of String) << "Insufficient permissions to access #{path}. Treating as absent"
+        return "absent"
+      end
+
       return "link" if File.symlink?(path)
       return "directory" if Dir.exists?(path)
       return "file" if File.exists?(path)
       recurse ? "directory" : "file"
+    end
+
+    # Raw lstat errno, or nil when the lstat succeeds. Crystal's
+    # exists?/symlink? probes swallow every errno into `false`, which is
+    # the right outcome everywhere except this EACCES-as-absent warning.
+    private def lstat_errno(path : String) : Errno?
+      stat = LibC::Stat.new
+      return nil if LibC.lstat(path, pointerof(stat)) == 0
+      errno = Errno.value
+      errno == Errno::ENOENT ? nil : errno
     end
 
     private def dispatch_state(state : String, path : String) : PluginResult
@@ -2238,6 +2268,7 @@ module Krikri
     @last_error : String? = nil
     @selinux_enabled : Bool? = nil
     @mls_enabled : Bool? = nil
+    @file_warnings : Array(String)? = nil
   end
 end
 

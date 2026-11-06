@@ -314,6 +314,26 @@ describe "file plugin" do
       result["failed"].as_bool.must_equal(true)
     end
 
+    # 2.21's get_state() switched from os.path.lexists to a raw os.lstat
+    # and treats EACCES as absent-with-warning; 2.19 kept it a silent
+    # absent. Live-verified vs 2.21.6.
+    it "warns when an unreadable ancestor makes the path look absent (2.21)" do
+      locked = tmp_path("locked-ancestor")
+      Dir.mkdir_p(locked)
+      child = File.join(locked, "child")
+      File.write(child, "x")
+
+      begin
+        File.chmod(locked, 0o000)
+        result = PluginSpecHelper.run("file", {"path" => child})
+
+        result["warnings"].as_a.map(&.as_s).must_include(
+          "Insufficient permissions to access #{child}. Treating as absent")
+      ensure
+        File.chmod(locked, 0o755)
+      end
+    end
+
     it "defaults to file semantics when the path exists and recurse isn't set" do
       path = tmp_path("exists-default.txt")
       File.write(path, "x")
