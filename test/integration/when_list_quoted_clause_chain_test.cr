@@ -37,13 +37,13 @@ describe "when: list item clause ending in a quote (chain Origin)" do
 
     text = output.to_s
     status.success?.must_equal(false)
-    text.must_include("[ERROR]: Task failed: Error while evaluating conditional: 'user_setup_group' is undefined")
+    text.must_include("[ERROR]: Task failed: A 'when' expression failed: Error while evaluating conditional: 'user_setup_group' is undefined")
     # first link: the task's own mapping (column 3 = the `- name:` dash)
     text.must_include("Task failed.\nOrigin: #{main_file}:2:3")
     # second link: the list item's own position (column 7 = the first
     # character of the clause on the item line)
-    text.must_include("<<< caused by >>>\n\nError while evaluating conditional: 'user_setup_group' is undefined\nOrigin: #{main_file}:6:7")
-    text.must_include("fatal: [localhost]: FAILED! => {\"msg\": \"Task failed: Error while evaluating conditional: 'user_setup_group' is undefined\"}")
+    text.must_include("<<< caused by >>>\n\nA 'when' expression failed: Error while evaluating conditional: 'user_setup_group' is undefined\nOrigin: #{main_file}:6:7")
+    text.must_include("fatal: [localhost]: FAILED! => {\"msg\": \"Task failed: A 'when' expression failed: Error while evaluating conditional: 'user_setup_group' is undefined\"}")
     text.wont_include("Unhandled exception")
   ensure
     FileUtils.rm_rf(root) if root

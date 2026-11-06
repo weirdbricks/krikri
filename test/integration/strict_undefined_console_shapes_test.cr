@@ -28,7 +28,7 @@ describe "strict undefined / mandatory / when-error console shapes" do
 
     text.must_include("Error while resolving value for 'msg': 'missing' is undefined")
     text.must_include("The filter plugin 'ansible.builtin.mandatory' failed: Mandatory variable 'definitely_missing' not defined.")
-    text.must_include("[ERROR]: Task failed: Error while evaluating conditional: 'undefined_condition_var' is undefined")
+    text.must_include("[ERROR]: Task failed: A 'when' expression failed: Error while evaluating conditional: 'undefined_condition_var' is undefined")
     text.must_include("Error while evaluating conditional: 'undefined_condition_var' is undefined\nOrigin: #{playbook}:9:13")
   ensure
     File.delete(playbook) if playbook && File.exists?(playbook)

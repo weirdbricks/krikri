@@ -191,8 +191,10 @@ describe "until retries attempts key" do
     # changed,failed,msg,rc,attempts,<module keys>).
     result.as_h.has_key?("exception").must_equal(false)
     result.as_h.keys.first(5).must_equal(["changed", "failed", "msg", "rc", "attempts"])
-    output.matches?(/FAILED - RETRYING: \[localhost\]: .* \(2 retries left\)\./).must_equal(true)
+    # 2.21 counts the retries REMAINING AFTER each one (live-verified vs
+    # 2.21.6: retries: 2 prints 1 then 0), where 2.19 printed 2 then 1.
     output.matches?(/FAILED - RETRYING: \[localhost\]: .* \(1 retries left\)\./).must_equal(true)
+    output.matches?(/FAILED - RETRYING: \[localhost\]: .* \(0 retries left\)\./).must_equal(true)
   end
 
   it "registers no attempts key at all for a retries-0 until task" do

@@ -962,6 +962,12 @@ module Krikri
     # itself is about to use - it's cosmetic-only (a mistake here can't
     # affect what actually runs), so best-effort: on any substitution
     # error, fall back to the raw unrendered name rather than raising.
+    # ansible-core 2.21 labels EVERY conditional-expression failure with the
+    # clause that raised it ("Task failed: A 'when' expression failed: <detail>",
+    # live-captured vs 2.21.6; the same clause label rides the [ERROR] chain's
+    # "caused by" stanza). 2.19 printed the detail alone.
+    WHEN_EXPRESSION_FAILED_PREFIX = "A 'when' expression failed: "
+
     private def evaluate_when(when_condition : String, vars_context : Hash(String, JSON::Any), host : Host, substitutor : VarSubstitutor? = nil, task : Task? = nil) : Bool
       # Ansible compiles the raw conditional as an expression (no `{{ }}`
       # pre-render), so delimiters outside a string literal are its
@@ -974,7 +980,7 @@ module Krikri
       # visible (chriswayg.mailcow / rockandska.rabbitmq rounds had this
       # engine rendering them away and passing the task).
       if delimiter = ConditionalEvaluator.template_delimiter_error(when_condition)
-        raise WhenEvaluationError.new("Task failed: #{delimiter}")
+        raise WhenEvaluationError.new("Task failed: #{WHEN_EXPRESSION_FAILED_PREFIX}#{delimiter}")
       end
       # Ansible's conditional-as-template deprecation fires while the
       # conditional is being evaluated (see
@@ -1017,9 +1023,9 @@ module Krikri
           # filter's own failure keeps the plugin wording real prints for it
           # (live-probed same session, both when: forms).
           if ex.message.try(&.starts_with?("The filter plugin '"))
-            raise WhenEvaluationError.new("Task failed: #{ex.message}")
+            raise WhenEvaluationError.new("Task failed: #{WHEN_EXPRESSION_FAILED_PREFIX}#{ex.message}")
           end
-          raise WhenEvaluationError.new("Task failed: Error while evaluating conditional: #{ex.message}")
+          raise WhenEvaluationError.new("Task failed: #{WHEN_EXPRESSION_FAILED_PREFIX}Error while evaluating conditional: #{ex.message}")
         rescue ex : VariableSubstitutor::FilterEngine::UnknownFilterError | VariableSubstitutor::UnknownTestError
           # The `{{ }}`-wrapped `when:` form compiles its filter/test names
           # during the RENDER (substitute), before the unbraced form's own
@@ -1029,7 +1035,7 @@ module Krikri
           # NOT the "Syntax error in expression" wording the unbraced
           # form's gate produces. Unrescued, the raise escaped substitute
           # itself and crashed the whole run instead of failing one task.
-          raise WhenEvaluationError.new("Task failed: Syntax error in template: #{ex.message}")
+          raise WhenEvaluationError.new("Task failed: #{WHEN_EXPRESSION_FAILED_PREFIX}Syntax error in template: #{ex.message}")
         end
 
         begin
@@ -1049,24 +1055,24 @@ module Krikri
           # gets this prefix; an undefined reference keeps the familiar
           # "Error while evaluating conditional: " shape (assert:'s own
           # identical split lives in assert_action_plugin.cr).
-          raise WhenEvaluationError.new("Task failed: #{ex.message}")
+          raise WhenEvaluationError.new("Task failed: #{WHEN_EXPRESSION_FAILED_PREFIX}#{ex.message}")
         rescue ex : RenderExpressionError
           # A Python list-method's runtime failure ("'z' is not in list"):
           # real words it "Task failed: Error rendering expression: <msg>"
           # with the plain prefix and no conditional wrapper (probed vs
           # 2.19.11 2026-10-10, `when: lst.index('z') == 1`).
-          raise WhenEvaluationError.new("Task failed: Error rendering expression: #{ex.message}")
+          raise WhenEvaluationError.new("Task failed: #{WHEN_EXPRESSION_FAILED_PREFIX}Error rendering expression: #{ex.message}")
         rescue ex : ConditionalEvaluator::OrderingTypeError
           # A str-vs-number ordering comparison ('10' >= 1): Python's TypeError
           # is an expression render failure in ansible too, framed the same way
           # as the list-method one above (issue #219).
-          raise WhenEvaluationError.new("Task failed: Error rendering expression: #{ex.message}")
+          raise WhenEvaluationError.new("Task failed: #{WHEN_EXPRESSION_FAILED_PREFIX}Error rendering expression: #{ex.message}")
         rescue ex : Krikri::FilterPluginError
           # A FILTER plugin's runtime failure (e.g. length on None) - real
           # prints its wrapper message with the plain "Task failed: " prefix
           # and NO "Error while evaluating conditional: " (live-verified
           # against 2.19.11 for the mandatory twin).
-          raise WhenEvaluationError.new("Task failed: #{ex.message}")
+          raise WhenEvaluationError.new("Task failed: #{WHEN_EXPRESSION_FAILED_PREFIX}#{ex.message}")
         rescue ex : TestPluginError
           # A TEST plugin's runtime failure (the version test's own
           # validation errors: unknown kwargs, strict/version_type
@@ -1076,7 +1082,7 @@ module Krikri
           # failed: " prefix and no conditional wrapper (live-verified
           # against 2.19.11 for the kwargs matrix, round 5210000
           # follow-up: bodsch.icingaweb2's strict=True).
-          raise WhenEvaluationError.new("Task failed: #{ex.message}")
+          raise WhenEvaluationError.new("Task failed: #{WHEN_EXPRESSION_FAILED_PREFIX}#{ex.message}")
         rescue ex : VariableSubstitutor::FilterEngine::FilterFailureError
           # Same FilterFailureError split as the braced-render rescue above:
           # a filter that ran and failed is conditional-evaluation wording
@@ -1086,9 +1092,9 @@ module Krikri
           # "Syntax error in expression:" wording an unresolvable FILTER
           # NAME gets below.
           if ex.message.try(&.starts_with?("The filter plugin '"))
-            raise WhenEvaluationError.new("Task failed: #{ex.message}")
+            raise WhenEvaluationError.new("Task failed: #{WHEN_EXPRESSION_FAILED_PREFIX}#{ex.message}")
           end
-          raise WhenEvaluationError.new("Task failed: Error while evaluating conditional: #{ex.message}")
+          raise WhenEvaluationError.new("Task failed: #{WHEN_EXPRESSION_FAILED_PREFIX}Error while evaluating conditional: #{ex.message}")
         rescue ex : VariableSubstitutor::FilterEngine::UnknownFilterError | VariableSubstitutor::UnknownTestError
           # A compile-time-rejected filter/test name gets Ansible's own
           # "Syntax error in expression: " wording - Jinja's compiler
@@ -1098,9 +1104,9 @@ module Krikri
           # and `when: x is list` both fatal "Task failed: Syntax error
           # in expression: No filter/test named '...'.", found via
           # adarnimrod.apache's assert: version_compare preflight).
-          raise WhenEvaluationError.new("Task failed: Syntax error in expression: #{ex.message}")
+          raise WhenEvaluationError.new("Task failed: #{WHEN_EXPRESSION_FAILED_PREFIX}Syntax error in expression: #{ex.message}")
         rescue ex
-          raise WhenEvaluationError.new("Task failed: Error while evaluating conditional: #{ex.message}")
+          raise WhenEvaluationError.new("Task failed: #{WHEN_EXPRESSION_FAILED_PREFIX}Error while evaluating conditional: #{ex.message}")
         ensure
           VarSubstitutor.pop_current_when_site if task
         end

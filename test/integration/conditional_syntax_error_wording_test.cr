@@ -41,8 +41,8 @@ describe "unknown filter/test in conditionals: Syntax error in expression" do
             when: "ansible_os_family == 'Debian' and release | version_compare('5.7', '>=')"
       YAML
     status.exit_code.must_equal(2)
-    output.must_include("[ERROR]: Task failed: Syntax error in expression: No filter named 'version_compare'.")
-    output.must_include("fatal: [localhost]: FAILED! => {\"msg\": \"Task failed: Syntax error in expression: No filter named 'version_compare'.\"}")
+    output.must_include("[ERROR]: Task failed: A 'when' expression failed: Syntax error in expression: No filter named 'version_compare'.")
+    output.must_include("fatal: [localhost]: FAILED! => {\"msg\": \"Task failed: A 'when' expression failed: Syntax error in expression: No filter named 'version_compare'.\"}")
     output.wont_include("Error while evaluating conditional")
     output.wont_include("ALLOW_BROKEN_CONDITIONALS")
     output.wont_include("Unhandled exception")
@@ -58,7 +58,7 @@ describe "unknown filter/test in conditionals: Syntax error in expression" do
             when: "my_var is list"
       YAML
     status.exit_code.must_equal(2)
-    output.must_include("fatal: [localhost]: FAILED! => {\"msg\": \"Task failed: Syntax error in expression: No test named 'list'.\"}")
+    output.must_include("fatal: [localhost]: FAILED! => {\"msg\": \"Task failed: A 'when' expression failed: Syntax error in expression: No test named 'list'.\"}")
     output.wont_include("ALLOW_BROKEN_CONDITIONALS")
     output.wont_include("Unhandled exception")
   end
@@ -80,8 +80,8 @@ describe "unknown filter/test in conditionals: Syntax error in expression" do
               - x is variable_boolean_true
       YAML
     status.exit_code.must_equal(2)
-    output.must_include("[ERROR]: Task failed: Syntax error in expression: No test named 'variable_empty'.")
-    output.must_include("fatal: [localhost]: FAILED! => {\"msg\": \"Task failed: Syntax error in expression: No test named 'variable_empty'.\"}")
+    output.must_include("[ERROR]: Task failed: A 'when' expression failed: Syntax error in expression: No test named 'variable_empty'.")
+    output.must_include("fatal: [localhost]: FAILED! => {\"msg\": \"Task failed: A 'when' expression failed: Syntax error in expression: No test named 'variable_empty'.\"}")
     output.must_include("<<< caused by >>>")
     # The cause stanza's Origin sits at the list ITEM line (playbook
     # lines 7-8, column of the clause text after "- "), not the when:
@@ -113,8 +113,8 @@ describe "unknown filter/test in conditionals: Syntax error in expression" do
               or need_update | failed
       YAML
     status.exit_code.must_equal(2)
-    output.must_include("[ERROR]: Task failed: Syntax error in expression: No filter named 'failed'.")
-    output.must_include("fatal: [localhost]: FAILED! => {\"msg\": \"Task failed: Syntax error in expression: No filter named 'failed'.\"}")
+    output.must_include("[ERROR]: Task failed: A 'when' expression failed: Syntax error in expression: No filter named 'failed'.")
+    output.must_include("fatal: [localhost]: FAILED! => {\"msg\": \"Task failed: A 'when' expression failed: Syntax error in expression: No filter named 'failed'.\"}")
     output.must_include("<<< caused by >>>")
     # The cause stanza's Origin sits on the folded scalar's first line
     # (playbook line 12, indent 8 -> column 9), caret under the clause text.
@@ -178,13 +178,13 @@ describe "unknown filter/test in conditionals: Syntax error in expression" do
             when: "{{ php_version | version_compare('5.6', '==') }}"
       YAML
     status.exit_code.must_equal(2)
-    output.must_include("[ERROR]: Task failed: Syntax error in template: No filter named 'version_compare'.")
+    output.must_include("[ERROR]: Task failed: A 'when' expression failed: Syntax error in template: No filter named 'version_compare'.")
     output.must_include("Task failed.")
     output.must_include("<<< caused by >>>")
     # The cause stanza's Origin sits at the when: VALUE token (the opening
     # quote, column 13), like the unbraced form's.
     output.must_include("when: \"{{ php_version | version_compare('5.6', '==') }}\"\n" + " " * 14 + "^ column 13")
-    output.must_include("fatal: [localhost]: FAILED! => {\"msg\": \"Task failed: Syntax error in template: No filter named 'version_compare'.\"}")
+    output.must_include("fatal: [localhost]: FAILED! => {\"msg\": \"Task failed: A 'when' expression failed: Syntax error in template: No filter named 'version_compare'.\"}")
     output.wont_include("Module failed")
     output.wont_include("Action failed")
     output.wont_include("ALLOW_BROKEN_CONDITIONALS")
@@ -203,9 +203,9 @@ describe "unknown filter/test in conditionals: Syntax error in expression" do
             when: "{{ php_version is bogustest }}"
       YAML
     status.exit_code.must_equal(2)
-    output.must_include("[ERROR]: Task failed: Syntax error in template: No test named 'bogustest'.")
+    output.must_include("[ERROR]: Task failed: A 'when' expression failed: Syntax error in template: No test named 'bogustest'.")
     output.must_include("<<< caused by >>>")
-    output.must_include("fatal: [localhost]: FAILED! => {\"msg\": \"Task failed: Syntax error in template: No test named 'bogustest'.\"}")
+    output.must_include("fatal: [localhost]: FAILED! => {\"msg\": \"Task failed: A 'when' expression failed: Syntax error in template: No test named 'bogustest'.\"}")
     output.wont_include("Module failed")
     output.wont_include("Action failed")
     output.wont_include("Unhandled exception")
@@ -227,8 +227,8 @@ describe "unknown filter/test in conditionals: Syntax error in expression" do
             when: 1 >= {{ 1 }}
       YAML
     status.exit_code.must_equal(2)
-    output.must_include("[ERROR]: Task failed: Syntax error in expression. Template delimiters are not supported in expressions: expected token ':', got '}'")
-    output.must_include("fatal: [localhost]: FAILED! => {\"msg\": \"Task failed: Syntax error in expression. Template delimiters are not supported in expressions: expected token ':', got '}'\"}")
+    output.must_include("[ERROR]: Task failed: A 'when' expression failed: Syntax error in expression. Template delimiters are not supported in expressions: expected token ':', got '}'")
+    output.must_include("fatal: [localhost]: FAILED! => {\"msg\": \"Task failed: A 'when' expression failed: Syntax error in expression. Template delimiters are not supported in expressions: expected token ':', got '}'\"}")
     output.wont_include("Unhandled exception")
   end
 

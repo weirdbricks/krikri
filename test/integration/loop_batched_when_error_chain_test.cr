@@ -37,7 +37,7 @@ describe "looped batched path when: error chain block" do
 
     text = output.to_s
     status.exit_code.must_equal(2)
-    chain = "[ERROR]: Task failed: Conditional result (True) was derived from value of type 'list'"
+    chain = "[ERROR]: Task failed: A 'when' expression failed: Conditional result (True) was derived from value of type 'list'"
     text.must_include(chain, text)
     # Both items raise the SAME message text through the same rescue: the
     # chain's per-text dedup must keep the block to one (Ansible's Display

@@ -2843,6 +2843,34 @@ module Krikri
     # until:/retries:/delay: retries too - real prints the same
     # FAILED - RETRYING callback lines and attempts key for handlers
     # (issue #620, live-verified vs real ansible-playbook).
+    # ansible-core 2.21 labels an until:/retries: condition failure with the
+    # clause that raised it, exactly like `when:` ("Task failed: An 'until'
+    # expression failed: <detail>", live-captured vs 2.21.6).
+    UNTIL_EXPRESSION_FAILED_PREFIX = "An 'until' expression failed: "
+
+    # The clause-labelled detail for an until: condition that raised - the
+    # same wording classes the when: evaluator distinguishes (an
+    # unresolvable filter/test NAME is a compile-time syntax error, a
+    # filter that RAN and raised keeps its plugin wrapper, everything else
+    # is conditional-evaluation wording).
+    private def until_expression_failure(ex : Exception) : String
+      detail = if ex.is_a?(VariableSubstitutor::FilterEngine::FilterFailureError)
+                 message = ex.message.to_s
+                 message.starts_with?("The filter plugin '") ? message : "Error while evaluating conditional: #{message}"
+               elsif ex.is_a?(VariableSubstitutor::FilterEngine::UnknownFilterError) || ex.is_a?(VariableSubstitutor::UnknownTestError)
+                 "Syntax error in expression: #{ex.message}"
+               elsif ex.is_a?(ConditionalEvaluator::ConditionalBooleanError)
+                 # Real words the non-boolean class with its own text and no
+                 # "Error while evaluating conditional:" wrapper.
+                 ex.message.to_s
+               elsif ex.is_a?(ConditionalEvaluator::OrderingTypeError) || ex.is_a?(RenderExpressionError)
+                 "Error rendering expression: #{ex.message}"
+               else
+                 "Error while evaluating conditional: #{ex.message}"
+               end
+      "Task failed: #{UNTIL_EXPRESSION_FAILED_PREFIX}#{detail}"
+    end
+
     private def run_until_retries(
       task : Task,
       host : Host,
@@ -2968,25 +2996,30 @@ module Krikri
           maybe_conditional_delimiters_deprecation(task, until_condition, "until", vars_context)
           begin
             substituted_condition = substitutor.substitute(until_condition)
-            if ConditionalEvaluator.evaluate(substituted_condition, vars_context)
+            # strict/raise_undefined: real evaluates an until: like a when: -
+            # an undefined name raises, and the final result must be a real
+            # boolean (live-verified vs 2.21.6: `until: r.stdout` on
+            # "hi" fails "An 'until' expression failed: Conditional result
+            # (True) was derived from value of type 'str' ...").
+            if ConditionalEvaluator.evaluate(substituted_condition, vars_context, strict: true, raise_undefined: true)
               condition_met = true
               break
             end
-          rescue ex : VariableSubstitutor::FilterEngine::UnknownFilterError | VariableSubstitutor::UnknownTestError
-            # Ansible compiles a whole until: condition as an expression the
-            # first time it is evaluated, so a name it only knows as a test
-            # (`search` is a test) - or not at all - fails the WHOLE task
-            # then and there: one fatal "Task failed: Syntax error in
-            # expression: No filter named '...'." after the first attempt's
-            # run, recap failed=1, host halts (unless ignore_errors:). The
-            # raise must be caught HERE too: at top level it used to crash
-            # the whole process with an unhandled-exception stack trace, and from an
-            # include_tasks: file the include's generic rescue mislabeled it
-            # "Failed to load included tasks: ...". Same wording shape and
-            # [ERROR] chain as the when: evaluator's own unknown-filter
-            # branch, with the chain's caused-by Origin pinned at the until:
-            # value token, the position real reports for it (issue #318).
-            until_error = "Task failed: Syntax error in expression: #{ex.message}"
+          rescue ex : VariableSubstitutor::FilterEngine::UnknownFilterError | VariableSubstitutor::UnknownTestError | UndefinedVariableError | ConditionalEvaluator::UndefinedVariableError | ConditionalEvaluator::ConditionalBooleanError | ConditionalEvaluator::OrderingTypeError | RenderExpressionError
+            # An ansible-compiled until: condition fails the WHOLE task the
+            # first time it raises: one fatal "Task failed: An 'until'
+            # expression failed: <detail>" after the first attempt's run,
+            # recap failed=1, host halts (unless ignore_errors:) - the same
+            # clause-labelled shape the when: evaluator uses, live-captured
+            # vs 2.21.6 for an unknown filter, an unknown test, an undefined
+            # name and a raising filter. The raise must be caught HERE too:
+            # at top level it used to crash the whole process with an
+            # unhandled-exception stack trace, and from an include_tasks:
+            # file the include's generic rescue mislabeled it "Failed to
+            # load included tasks: ...". The chain's caused-by Origin is
+            # pinned at the until: value token, the position real reports
+            # for it (issue #318).
+            until_error = until_expression_failure(ex)
             emit_when_error_chain(task, until_error, host, clause_key: "until", clause_raw: until_condition)
             failed_result = when_error_result(WhenEvaluationError.new(until_error), task, host)
             if register_name && !register_name.empty?
@@ -3004,7 +3037,10 @@ module Krikri
         # before the delay sleep. Ansible's task_name is the task's get_name()
         # (the same text the TASK banner shows); the loop item is NOT part
         # of the line. Color DEBUG - plain text in a non-tty run.
-        puts "FAILED - RETRYING: [#{host.name}]: #{render_task_name_for_display(task, host)} (#{total_runs - attempt} retries left)."
+        # ansible-core 2.21 counts the retries REMAINING AFTER this one
+        # (retries: 3 prints 2, 1, 0), where 2.19 printed this attempt's own
+        # remaining count (3, 2, 1) - live-verified against both releases.
+        puts "FAILED - RETRYING: [#{host.name}]: #{render_task_name_for_display(task, host)} (#{total_runs - attempt - 1} retries left)."
         sleep(delay.seconds)
       end
 
@@ -3028,14 +3064,17 @@ module Krikri
         result_hash = result.as_h.dup
         result_hash["attempts"] = JSON::Any.new((condition_met ? attempt : total_runs - 1).to_i64)
         unless condition_met
-          result_hash["failed"] = JSON::Any.new(true)
           # A module that SUCCEEDED but never satisfied until: real 2.21
           # reports no controller exception placeholder on the exhausted
           # result (live-verified with command: /bin/true and with debug:
           # both carry changed/failed/msg/attempts and no exception,
           # while an until on a FAILING module does). The marker keeps
-          # register_result's failed-result backfill off for this shape.
-          result_hash["_ansible_no_exception_backfill"] = JSON::Any.new(true)
+          # register_result's failed-result backfill off for this shape,
+          # and ResultDisplay's block emitter off with it - real prints no
+          # [ERROR] block for an until that ran out on a healthy module.
+          module_failed = result_hash["failed"]?.try(&.as_bool?) == true
+          result_hash["_ansible_no_exception_backfill"] = JSON::Any.new(true) unless module_failed
+          result_hash["failed"] = JSON::Any.new(true)
         end
         result = JSON::Any.new(result_hash)
         if register_name && !register_name.empty?

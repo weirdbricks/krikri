@@ -52,14 +52,14 @@ describe "when: filter-plugin runtime failure chain" do
       YAML
 
     status.exit_code.must_equal(2)
-    output.must_include("[ERROR]: Task failed: The filter plugin 'ansible.builtin.length' failed: object of type 'NoneType' has no len()")
+    output.must_include("[ERROR]: Task failed: A 'when' expression failed: The filter plugin 'ansible.builtin.length' failed: object of type 'NoneType' has no len()")
     # the chain: task Origin, then the failing when: list item's own
     # value token (caret at column 11, under the text after "- ")
     output.must_include("Task failed.\nOrigin: ")
-    output.must_include("<<< caused by >>>\n\nThe filter plugin 'ansible.builtin.length' failed: object of type 'NoneType' has no len()\nOrigin: ")
+    output.must_include("<<< caused by >>>\n\nA 'when' expression failed: The filter plugin 'ansible.builtin.length' failed: object of type 'NoneType' has no len()\nOrigin: ")
     output.must_include("- (params | length > 0)\n             ^ column 11")
     # fatal line is the JSON shape, msg-only for a debug: task
-    output.must_include("fatal: [localhost]: FAILED! => {\"msg\": \"Task failed: The filter plugin 'ansible.builtin.length' failed: object of type 'NoneType' has no len()\"}")
+    output.must_include("fatal: [localhost]: FAILED! => {\"msg\": \"Task failed: A 'when' expression failed: The filter plugin 'ansible.builtin.length' failed: object of type 'NoneType' has no len()\"}")
     output.wont_include("ALLOW_BROKEN_CONDITIONALS")
     output.wont_include("Unhandled exception")
   end
@@ -78,9 +78,9 @@ describe "when: filter-plugin runtime failure chain" do
       YAML
 
     status.exit_code.must_equal(2)
-    output.must_include("[ERROR]: Task failed: The test plugin 'ansible.builtin.version' failed: Version comparison failed: '<' not supported between instances of 'str' and 'int'")
-    output.must_include("<<< caused by >>>\n\nThe test plugin 'ansible.builtin.version' failed: Version comparison failed: '<' not supported between instances of 'str' and 'int'\nOrigin: ")
-    output.must_include("fatal: [localhost]: FAILED! => {\"msg\": \"Task failed: The test plugin 'ansible.builtin.version' failed: Version comparison failed: '<' not supported between instances of 'str' and 'int'\"}")
+    output.must_include("[ERROR]: Task failed: A 'when' expression failed: The test plugin 'ansible.builtin.version' failed: Version comparison failed: '<' not supported between instances of 'str' and 'int'")
+    output.must_include("<<< caused by >>>\n\nA 'when' expression failed: The test plugin 'ansible.builtin.version' failed: Version comparison failed: '<' not supported between instances of 'str' and 'int'\nOrigin: ")
+    output.must_include("fatal: [localhost]: FAILED! => {\"msg\": \"Task failed: A 'when' expression failed: The test plugin 'ansible.builtin.version' failed: Version comparison failed: '<' not supported between instances of 'str' and 'int'\"}")
     output.wont_include("ALLOW_BROKEN_CONDITIONALS")
   end
 
@@ -131,11 +131,11 @@ describe "when: filter-plugin runtime failure chain" do
       YAML
 
     status.exit_code.must_equal(2)
-    output.must_include("[ERROR]: Task failed: The filter plugin 'ansible.builtin.length' failed: object of type 'NoneType' has no len()")
+    output.must_include("[ERROR]: Task failed: A 'when' expression failed: The filter plugin 'ansible.builtin.length' failed: object of type 'NoneType' has no len()")
     output.must_include("Task failed.\nOrigin: ")
-    output.must_include("<<< caused by >>>\n\nThe filter plugin 'ansible.builtin.length' failed: object of type 'NoneType' has no len()\nOrigin: ")
+    output.must_include("<<< caused by >>>\n\nA 'when' expression failed: The filter plugin 'ansible.builtin.length' failed: object of type 'NoneType' has no len()\nOrigin: ")
     output.must_include("- (params | length > 0)\n             ^ column 11")
-    output.must_include("fatal: [localhost]: FAILED! => {\"changed\": false, \"msg\": \"Task failed: The filter plugin 'ansible.builtin.length' failed: object of type 'NoneType' has no len()\"}")
+    output.must_include("fatal: [localhost]: FAILED! => {\"changed\": false, \"msg\": \"Task failed: A 'when' expression failed: The filter plugin 'ansible.builtin.length' failed: object of type 'NoneType' has no len()\"}")
     output.wont_include("ALLOW_BROKEN_CONDITIONALS")
   end
 
@@ -176,10 +176,10 @@ describe "when: filter-plugin runtime failure chain" do
     text = output.to_s
 
     status.exit_code.must_equal(2)
-    text.must_include("[ERROR]: Task failed: The filter plugin 'ansible.builtin.length' failed: object of type 'NoneType' has no len()\n\nTask failed.\nOrigin: #{tasks_file}:2:3")
-    text.must_include("<<< caused by >>>\n\nThe filter plugin 'ansible.builtin.length' failed: object of type 'NoneType' has no len()\nOrigin: #{tasks_file}:12:7")
+    text.must_include("[ERROR]: Task failed: A 'when' expression failed: The filter plugin 'ansible.builtin.length' failed: object of type 'NoneType' has no len()\n\nTask failed.\nOrigin: #{tasks_file}:2:3")
+    text.must_include("<<< caused by >>>\n\nA 'when' expression failed: The filter plugin 'ansible.builtin.length' failed: object of type 'NoneType' has no len()\nOrigin: #{tasks_file}:12:7")
     text.must_include("- (params | length > 0)\n         ^ column 7")
-    text.must_include("fatal: [localhost]: FAILED! => {\"changed\": false, \"msg\": \"Task failed: The filter plugin 'ansible.builtin.length' failed: object of type 'NoneType' has no len()\"}")
+    text.must_include("fatal: [localhost]: FAILED! => {\"changed\": false, \"msg\": \"Task failed: A 'when' expression failed: The filter plugin 'ansible.builtin.length' failed: object of type 'NoneType' has no len()\"}")
   ensure
     FileUtils.rm_rf(tempdir) if tempdir
   end

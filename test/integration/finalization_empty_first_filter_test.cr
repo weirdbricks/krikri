@@ -64,8 +64,8 @@ describe "empty-sequence first/last filter failure wording (issue #548)" do
     text = output.to_s
 
     status.exit_code.must_equal(2)
-    text.must_include("[ERROR]: Task failed: Error while evaluating conditional: No first item, sequence was empty.")
-    text.must_include("fatal: [localhost]: FAILED! => {\"msg\": \"Task failed: Error while evaluating conditional: No first item, sequence was empty.\"}")
+    text.must_include("[ERROR]: Task failed: A 'when' expression failed: Error while evaluating conditional: No first item, sequence was empty.")
+    text.must_include("fatal: [localhost]: FAILED! => {\"msg\": \"Task failed: A 'when' expression failed: Error while evaluating conditional: No first item, sequence was empty.\"}")
     text.wont_include("Unhandled exception")
   ensure
     FileUtils.rm_rf(tempdir) if tempdir

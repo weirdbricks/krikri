@@ -40,15 +40,15 @@ describe "when: block-inherited conditional failure chain" do
 
     text = output.to_s
     status.success?.must_equal(false)
-    text.must_include("[ERROR]: Task failed: Error while evaluating conditional: 'ansible_network_os' is undefined")
+    text.must_include("[ERROR]: Task failed: A 'when' expression failed: Error while evaluating conditional: 'ansible_network_os' is undefined")
     # first link: the failing child's own mapping - real labels the fatal
     # line with the child's `- name:` token (column 11 = right after
     # `        - `)
     text.must_include("Task failed.\nOrigin: #{playbook}:8:11\n\n6     - name: block conditional\n7       block:\n8         - name: first inner task\n            ^ column 11")
     # second link: the BLOCK's when: VALUE token (column 13 = right after
     # `      when: `), not the child's file where no `when:` sits
-    text.must_include("<<< caused by >>>\n\nError while evaluating conditional: 'ansible_network_os' is undefined\nOrigin: #{playbook}:14:13\n\n12           debug:\n13             msg: there\n14       when: ansible_network_os == 'nxos'\n               ^ column 13")
-    text.must_include("fatal: [localhost]: FAILED! => {\"msg\": \"Task failed: Error while evaluating conditional: 'ansible_network_os' is undefined\"}")
+    text.must_include("<<< caused by >>>\n\nA 'when' expression failed: Error while evaluating conditional: 'ansible_network_os' is undefined\nOrigin: #{playbook}:14:13\n\n12           debug:\n13             msg: there\n14       when: ansible_network_os == 'nxos'\n               ^ column 13")
+    text.must_include("fatal: [localhost]: FAILED! => {\"msg\": \"Task failed: A 'when' expression failed: Error while evaluating conditional: 'ansible_network_os' is undefined\"}")
     text.wont_include("Unhandled exception")
   ensure
     FileUtils.rm_rf(root) if root
@@ -85,7 +85,7 @@ describe "when: block-inherited conditional failure chain" do
 
     text = output.to_s
     status.success?.must_equal(false)
-    text.must_include("[ERROR]: Task failed: Error while evaluating conditional: object of type 'dict' has no attribute 'galera-cluster-nodes'")
+    text.must_include("[ERROR]: Task failed: A 'when' expression failed: Error while evaluating conditional: object of type 'dict' has no attribute 'galera-cluster-nodes'")
     text.scan("<<< caused by >>>").size.must_equal(2)
     # third stanza: the defining var's value line carries the Origin
     # (line 7 is the `galera_mysql_first_node:` play-var line)

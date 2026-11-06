@@ -6424,6 +6424,8 @@ module Krikri
     # task vars") keep their pre-existing display shape.
     private def conditional_evaluation_failure?(msg : String) : Bool
       inner = msg.starts_with?("Task failed: ") ? msg["Task failed: ".size..] : msg
+      inner = inner[WHEN_EXPRESSION_FAILED_PREFIX.size..] if inner.starts_with?(WHEN_EXPRESSION_FAILED_PREFIX)
+      inner = inner[UNTIL_EXPRESSION_FAILED_PREFIX.size..] if inner.starts_with?(UNTIL_EXPRESSION_FAILED_PREFIX)
       inner.starts_with?("Error while evaluating conditional:") || inner.starts_with?("Conditional result (") ||
         inner.starts_with?("Syntax error in expression:") ||
         # The delimiter class composes its message with the PERIOD form
@@ -6466,6 +6468,8 @@ module Krikri
     # failure's block for every wording class EXCEPT the compile/runtime
     # ones that end the block at the Origin (live-verified vs 2.19.11).
     private def conditional_hint_suppressed?(inner : String) : Bool
+      inner = inner[WHEN_EXPRESSION_FAILED_PREFIX.size..] if inner.starts_with?(WHEN_EXPRESSION_FAILED_PREFIX)
+      inner = inner[UNTIL_EXPRESSION_FAILED_PREFIX.size..] if inner.starts_with?(UNTIL_EXPRESSION_FAILED_PREFIX)
       inner.starts_with?("Error while evaluating conditional:") ||
         inner.starts_with?("Syntax error in expression:") ||
         inner.starts_with?("Syntax error in expression.") ||
@@ -6508,6 +6512,17 @@ module Krikri
     private def emit_when_error_chain(task : Task, msg : String, host : Host? = nil, clause_key : String = "when", clause_raw : String? = nil, loop_item : JSON::Any? = nil, loop_index : Int32? = nil) : Nil
       msg = decorate_conditional_value_origin(task, msg, host, loop_item: loop_item, loop_index: loop_index)
       inner = msg.starts_with?("Task failed: ") ? msg["Task failed: ".size..] : msg
+      # 2.21's clause label ("A 'when' expression failed: " / "An 'until'
+      # expression failed: ") prefixes every stanza of the block, but the
+      # wording-class pattern matches below key on the bare detail - so
+      # split the label off here and re-attach it when printing.
+      clause_label = ""
+      [WHEN_EXPRESSION_FAILED_PREFIX, UNTIL_EXPRESSION_FAILED_PREFIX].each do |prefix|
+        next unless inner.starts_with?(prefix)
+        clause_label = prefix
+        inner = inner[prefix.size..]
+        break
+      end
       return unless conditional_evaluation_failure?(msg)
       path = task.source_file || @playbook_file
       return unless path && File.file?(path)
@@ -6639,11 +6654,11 @@ module Krikri
       end
 
       text = String.build do |io|
-        io << "[ERROR]: Task failed: " << inner << "\n"
+        io << "[ERROR]: Task failed: " << clause_label << inner << "\n"
         io << "\nTask failed.\n"
         io << origin_context_block(path, lines, name_idx + 1, name_col)
         io << "\n<<< caused by >>>\n\n"
-        io << (mid || inner) << "\n"
+        io << clause_label << (mid || inner) << "\n"
         io << origin_context_block(cause_path, cause_lines, key_idx + 1, key_col)
         if cause_stanza
           io << "\n<<< caused by >>>\n\n"

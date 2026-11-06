@@ -1,6 +1,6 @@
 # Upgrade plan: parity target ansible-core 2.19.11 → 2.21.6
 
-Status: **source-diff + porting-guide pass complete at 0.9.2438 — pending live verification**.
+Status: **source-diff + porting-guide pass complete at 0.9.2439 — pending live verification**.
 Decision (2026-11-05): krikri tracks ansible-core **2.21.6 only** — the
 `--krikri-argspec-profile` knob proposed earlier was dropped before it
 shipped; `data/argspecs.json` IS the 2.21.6 capture, and
@@ -108,6 +108,30 @@ Branch: `crush/ansible-221-upgrade` (worktree
       reports "missing terminating ] for character class at 1" where
       2.21 prints "unterminated character set at position 0").
 
+- [x] **Clause-labelled conditional failures + until/retry wording**
+      (0.9.2439), all live-captured against 2.21.6:
+      - every `when:` evaluation failure now reads "Task failed: A 'when'
+        expression failed: <detail>" (name in the [ERROR] line, the
+        caused-by stanza and the fatal msg alike - byte-identical to real
+        for the undefined, unknown-filter/test, template-delimiter,
+        non-boolean, plugin-runtime and braced-template classes).
+        `assert:`'s `that:` is untouched (2.21 left it as it was).
+      - `until:` failures got the same treatment ("An 'until' expression
+        failed: <detail>") plus two behavior fixes: the condition is now
+        evaluated strict-undefined/non-boolean like a `when:` (an
+        undefined name or a non-bool result used to pass silently or fall
+        out as a bogus "Module failed."), and a `retries:` loop that runs
+        out on a module which SUCCEEDED no longer prints an [ERROR] block
+        at all (2.21 projects no controller exception there; 2.19 printed
+        "Task failed: Action failed.").
+      - the "FAILED - RETRYING" line counts the retries REMAINING AFTER
+        that line (retries: 3 prints 2, 1, 0) where 2.19 printed 3, 2, 1.
+      - a latent require cycle was broken while doing this (the
+        become-failure message constants moved into a leaf file): a new
+        spec shifted suite-shard membership and exposed it - any compile
+        that pulled `base_action_plugin` in first died with "undefined
+        constant ActionPlugin".
+
 ## Measured argspec delta 2.19.11 → 2.21.6 (small — 14 changed modules)
 
 | Module | Change |
@@ -213,20 +237,25 @@ were, and they are done.
       succeeded (0.9.2433) - `gap_fixes_test` and the new
       `until_exhausted_exception_shape_test` pin both shapes.
 - [ ] **Known micro-divergences** (documented, deliberate or deferred):
-      - conditional-expression failure wording (2.21 only, live-captured):
-        every when/until-style evaluation failure is now labelled with the
-        clause that raised - `when:` failures read "Task failed: A 'when'
-        expression failed: <detail>", `failed_when:`/`changed_when:`
-        failures "Task failed: Action failed: A '<clause>' expression
-        failed: <detail>" (or "... Module failed: A '<clause>' expression
-        failed: ..." when the module itself had already failed), while the
-        stored `failed_when_result`/`changed_when_result` keeps the bare
-        detail. A raising `*_when` on an already-failed module result also
-        gains `failed_when_suppressed_exception`/
+      - `failed_when:`/`changed_when:` failures (2.21, live-captured,
+        NOT yet implemented - `when:`/`until:`/`assert:` are done above):
+        real labels the clause and renders the three-part block
+        "Task failed: Action failed.\nOrigin(task)\n<<< caused by >>>\n
+        A '<clause>' expression failed: <detail>\nOrigin(clause value)"
+        with the same text in the fatal msg, or "... Module failed: A
+        '<clause>' expression failed: ..." (display only - the registered
+        msg keeps the module's own) when the module itself had already
+        failed; the stored `failed_when_result`/`changed_when_result`
+        keeps the bare detail. A raising `*_when` on an already-failed
+        module result also gains `failed_when_suppressed_exception`/
         `changed_when_suppressed_exception` ("(traceback unavailable)").
-        krikri still reports the 2.19 shapes ("Task failed: <detail>",
-        msg "Task failed: Action failed: Unknown error."). `assert:`'s
-        `that:` is NOT affected (2.21 left it unchanged, live-verified).
+        krikri still reports the 2.19 shapes there, and even for 2.19 it
+        mis-classifies a braced-form filter failure (stored as "Syntax
+        error in expression:"/"Syntax error in template:" instead of the
+        plugin wrapper / conditional-evaluation wording).
+      - an `until:` non-boolean result misses real's "at '<file>:<line>
+        :<col>'" value-lineage decoration the `when:` path applies
+        (everything else about the until wording matches).
       - custom-module injection echo (see the INJECT_INVOCATION deviation
         above).
       - the file-attributes diff entry covers mode/owner/group; a

@@ -40,11 +40,12 @@ describe "handler until/retries" do
     text = output.to_s
 
     # One FAILED - RETRYING line per failed attempt that still has
-    # retries left (2 then 1), then the fatal - matching real's handler
-    # output for the same playbook.
-    text.must_include("FAILED - RETRYING: [localhost]: Run flaky installer (2 retries left).")
+    # retries left, then the fatal - matching real's handler output for
+    # the same playbook. 2.21 counts the retries REMAINING AFTER each
+    # line (retries: 2 prints 1 then 0), where 2.19 printed 2 then 1.
     text.must_include("FAILED - RETRYING: [localhost]: Run flaky installer (1 retries left).")
-    text.wont_include("(0 retries left)")
+    text.must_include("FAILED - RETRYING: [localhost]: Run flaky installer (0 retries left).")
+    text.wont_include("(-1 retries left)")
     text.must_include("\"attempts\": 2")
     status.exit_code.must_equal(2)
   ensure
@@ -90,8 +91,8 @@ describe "handler until/retries" do
 
     # The marker file makes attempt 2 pass, so exactly one retry line
     # prints and the handler ends ok with attempts: 2 - no fatal.
-    text.must_include("FAILED - RETRYING: [localhost]: Run flaky installer (2 retries left).")
-    text.wont_include("(1 retries left)")
+    text.must_include("FAILED - RETRYING: [localhost]: Run flaky installer (1 retries left).")
+    text.wont_include("(0 retries left)")
     text.wont_include("FAILED!")
     # The registered handler result carries the successful attempt's
     # 1-based number - observed through the follow-up play's debug.
@@ -132,13 +133,13 @@ describe "handler until/retries" do
     text = output.to_s
 
     # Real templates retries:/delay: per task before the attempt loop, so
-    # the templated 4 gives exactly four RETRYING lines (4..1 left) and
-    # the fatal result carries attempts: 4 (real 2.19.11 stamps the
-    # retries count on a never-passing until, not 1 + retries) - the
-    # pre-fix behavior silently fell back to the implicit 3 retries.
-    text.must_include("FAILED - RETRYING: [localhost]: Run flaky installer (4 retries left).")
-    text.must_include("FAILED - RETRYING: [localhost]: Run flaky installer (1 retries left).")
-    text.wont_include("(0 retries left)")
+    # the templated 4 gives exactly four RETRYING lines (2.21 counts 3..0
+    # left) and the fatal result carries attempts: 4 (the retries count is
+    # stamped on a never-passing until, not 1 + retries) - the pre-fix
+    # behavior silently fell back to the implicit 3 retries.
+    text.must_include("FAILED - RETRYING: [localhost]: Run flaky installer (3 retries left).")
+    text.must_include("FAILED - RETRYING: [localhost]: Run flaky installer (0 retries left).")
+    text.wont_include("(-1 retries left)")
     text.must_include("\"attempts\": 4")
     status.exit_code.must_equal(2)
   ensure

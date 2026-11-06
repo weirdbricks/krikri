@@ -5,7 +5,7 @@ require "../minitest_helper"
 # var - is real 2.19.11's conditional-failure display class: the two-level
 # [ERROR] chain block ("Task failed." at the task's Origin, "<<< caused
 # by >>>" with the error's Origin at the when: value token) and the
-# "Task failed: Error rendering expression: ..." fatal msg, with no
+# "Task failed: A 'when' expression failed: Error rendering expression: ..." fatal msg, with no
 # ALLOW_BROKEN_CONDITIONALS hint after the block (issue #799,
 # ontic.redis's somaxconn sysctl task). Left out of the conditional-failure
 # wording classes, the failure fell through to the generic module-failure
@@ -42,9 +42,9 @@ describe "when: runtime expression failure chain" do
     status.exit_code.must_equal(2)
     text = output.to_s
     location = File.expand_path(playbook)
-    text.must_include("[ERROR]: Task failed: Error rendering expression: '<' not supported between instances of 'int' and '_AnsibleTaggedStr'")
+    text.must_include("[ERROR]: Task failed: A 'when' expression failed: Error rendering expression: '<' not supported between instances of 'int' and '_AnsibleTaggedStr'")
     text.must_include("Task failed.\nOrigin: #{location}:12:7")
-    text.must_include("<<< caused by >>>\n\nError rendering expression: '<' not supported between instances of 'int' and '_AnsibleTaggedStr'\nOrigin: #{location}:14:13")
+    text.must_include("<<< caused by >>>\n\nA 'when' expression failed: Error rendering expression: '<' not supported between instances of 'int' and '_AnsibleTaggedStr'\nOrigin: #{location}:14:13")
     # The runtime-expression class ends the block at the Origin, like the
     # other compile/runtime wording classes.
     text.wont_include("Broken conditionals")
@@ -79,7 +79,7 @@ describe "when: runtime expression failure chain" do
     # must keep ResultDisplay's generic path from printing a second,
     # differently-shaped "Module failed: " block.
     text.wont_include("Module failed")
-    text.must_include("fatal: [localhost]: FAILED! => {\"changed\": false, \"msg\": \"Task failed: Error rendering expression: '<' not supported between instances of 'int' and '_AnsibleTaggedStr'\"}")
+    text.must_include("fatal: [localhost]: FAILED! => {\"changed\": false, \"msg\": \"Task failed: A 'when' expression failed: Error rendering expression: '<' not supported between instances of 'int' and '_AnsibleTaggedStr'\"}")
     text.must_include("failed=1")
   end
 end

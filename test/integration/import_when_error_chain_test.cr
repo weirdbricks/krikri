@@ -46,13 +46,13 @@ describe "when: statically-imported conditional failure chain" do
 
     text = output.to_s
     status.success?.must_equal(false)
-    text.must_include("[ERROR]: Task failed: Error while evaluating conditional: 'node_type' is undefined")
+    text.must_include("[ERROR]: Task failed: A 'when' expression failed: Error while evaluating conditional: 'node_type' is undefined")
     # first link: the inlined task's own mapping, in ITS file
     text.must_include("Task failed.\nOrigin: #{child_file}:2:3\n\n1 ---\n2 - name: Install the required rpms\n    ^ column 3")
     # second link: the importing file's when: VALUE token (column 9 =
     # right after `  when: `)
-    text.must_include("<<< caused by >>>\n\nError while evaluating conditional: 'node_type' is undefined\nOrigin: #{main_file}:4:9\n\n2 - name: Set up ocp host\n3   import_tasks: okd-host.yml\n4   when: node_type == 'okd-host'\n          ^ column 9")
-    text.must_include("fatal: [localhost]: FAILED! => {\"msg\": \"Task failed: Error while evaluating conditional: 'node_type' is undefined\"}")
+    text.must_include("<<< caused by >>>\n\nA 'when' expression failed: Error while evaluating conditional: 'node_type' is undefined\nOrigin: #{main_file}:4:9\n\n2 - name: Set up ocp host\n3   import_tasks: okd-host.yml\n4   when: node_type == 'okd-host'\n          ^ column 9")
+    text.must_include("fatal: [localhost]: FAILED! => {\"msg\": \"Task failed: A 'when' expression failed: Error while evaluating conditional: 'node_type' is undefined\"}")
     text.wont_include("Unhandled exception")
   ensure
     FileUtils.rm_rf(root) if root
@@ -102,7 +102,7 @@ describe "when: statically-imported conditional failure chain" do
 
     text = output.to_s
     text.must_include("Task failed.\nOrigin: #{child_file}:2:3")
-    text.must_include("<<< caused by >>>\n\nError while evaluating conditional: object of type 'dict' has no attribute 'nosuchgroup'\nOrigin: #{main_file}:5:7")
+    text.must_include("<<< caused by >>>\n\nA 'when' expression failed: Error while evaluating conditional: object of type 'dict' has no attribute 'nosuchgroup'\nOrigin: #{main_file}:5:7")
   ensure
     FileUtils.rm_rf(root) if root
   end
@@ -168,9 +168,9 @@ describe "when: statically-imported conditional failure chain" do
     text.must_include("Task failed.\nOrigin: #{install_file}:4:7\n\n2 - name: install rclone from package\n3   block:\n4     - name: detect latest rclone package release\n        ^ column 7")
     # second link: the importing file's when: VALUE token (column 9 =
     # right after `  when: `)
-    text.must_include("<<< caused by >>>\n\nConditional result (True) was derived from value of type 'list' at '#{main_file}:5:9'. Conditionals must have a boolean result.\nOrigin: #{main_file}:5:9\n\n3   import_tasks: root.yml\n4   become: true\n5   when: lin_rclone_mounts |d([],true)\n          ^ column 9")
+    text.must_include("<<< caused by >>>\n\nA 'when' expression failed: Conditional result (True) was derived from value of type 'list' at '#{main_file}:5:9'. Conditionals must have a boolean result.\nOrigin: #{main_file}:5:9\n\n3   import_tasks: root.yml\n4   become: true\n5   when: lin_rclone_mounts |d([],true)\n          ^ column 9")
     text.must_include("Broken conditionals can be temporarily allowed with the `ALLOW_BROKEN_CONDITIONALS` configuration option.")
-    text.must_include("fatal: [localhost]: FAILED! => {\"changed\": false, \"msg\": \"Task failed: Conditional result (True) was derived from value of type 'list' at '#{main_file}:5:9'. Conditionals must have a boolean result.\"}")
+    text.must_include("fatal: [localhost]: FAILED! => {\"changed\": false, \"msg\": \"Task failed: A 'when' expression failed: Conditional result (True) was derived from value of type 'list' at '#{main_file}:5:9'. Conditionals must have a boolean result.\"}")
     text.wont_include("Unhandled exception")
   ensure
     FileUtils.rm_rf(root) if root
