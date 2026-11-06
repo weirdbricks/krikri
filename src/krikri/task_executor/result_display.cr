@@ -7,13 +7,16 @@ require "../variable_substitutor/filter_core"
 require "../argspec_validator"
 require "../difflib"
 require "./error_block"
-# The become-failure key-rejection below reads PluginManager's become
-# message constants; without this require the reference only resolves in
-# compiles that pull plugin_manager in through some other path (the main
-# binary, most suite shards), while the standalone single-file and
-# smaller-shard compiles of specs that exercise display_result die on
-# "undefined constant" (issue #763's driver run).
-require "../plugin_manager"
+# The become-failure key-rejection below reads the shared become message
+# constants. They live in a leaf file (plugin_manager.cr re-exports them
+# under its own names) rather than here requiring plugin_manager.cr
+# itself: that require closed a require cycle in which
+# base_action_plugin.cr's ActionPlugin class was not yet defined when
+# template_action_plugin.cr was reached, so any compile that pulled
+# base_action_plugin in first died with "undefined constant ActionPlugin"
+# (a single-file spec compile, or a suite shard whose first test file
+# required it).
+require "../become_messages"
 
 module Krikri
   # A module result's "failed" flag read the way Ansible's Python
@@ -490,8 +493,8 @@ module Krikri
       # `_connection_failure` marker only exists to keep failed_when: from
       # reinterpreting it.
       if (top = result.as_h?) && top.has_key?("_connection_failure") &&
-         (top["msg"]?.try(&.as_s?).to_s.starts_with?("Task failed: #{PluginManager::BECOME_PREMATURE_END}") ||
-         top["msg"]?.try(&.as_s?) == "Task failed: #{PluginManager::BECOME_CHOWN_FAILURE}")
+         (top["msg"]?.try(&.as_s?).to_s.starts_with?("Task failed: #{BecomeMessages::PREMATURE_END}") ||
+         top["msg"]?.try(&.as_s?) == "Task failed: #{BecomeMessages::CHOWN_FAILURE}")
         result = JSON::Any.new(top.reject("_connection_failure"))
       end
       if Krikri::RunOptions.verbosity < 3 && (top = result.as_h?) && (top.has_key?("warnings") || top.has_key?("invocation") || top.has_key?("deprecations") || top.has_key?("_ansible_core_deprecations") || top.has_key?("_ansible_pause_console"))
@@ -952,6 +955,15 @@ module Krikri
       # loop keyword's own Origin, not this "Task failed."/"Module
       # failed." chain shape (live-verified vs 2.19.11, round 5410000).
       return if result["_ansible_loop_source_error"]?.try(&.as_bool?) == true
+      # An until:/retries: loop that ran out on a module which SUCCEEDED
+      # projects no controller exception in 2.21, so real prints no [ERROR]
+      # block for it - only the "FAILED - RETRYING" lines and the fatal
+      # line (live-verified vs 2.21.6; 2.19 printed "Task failed: Action
+      # failed." there). The retry loop marks exactly that shape
+      # (_ansible_no_exception_backfill); when the module itself failed the
+      # marker is absent and the ordinary "Module failed:" block still
+      # prints, as real does.
+      return if result["_ansible_no_exception_backfill"]?.try(&.as_bool?) == true
       # Task-arg finalization failures ("Task failed: Finalization of task
       # args for ...") get their own multi-level block from the executor
       # (emit_finalization_error_block) before the fatal line; the
@@ -1013,7 +1025,7 @@ module Krikri
       # the connection plugin's AnsibleConnectionFailure carries no obj/
       # origin of its own, so real collapses to the single "Task failed."
       # segment holding the whole message (live-verified vs 2.19.11).
-      if msg.starts_with?("Task failed: #{PluginManager::BECOME_PREMATURE_END}")
+      if msg.starts_with?("Task failed: #{BecomeMessages::PREMATURE_END}")
         if origin = error_origin_context(source_task)
           ErrorBlock.emit(ErrorBlock::Node.new("Task failed.", source_context: origin)
             .with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(msg["Task failed: ".size..])))
@@ -1023,7 +1035,7 @@ module Krikri
       # ansible's _fixup_perms2 raises this AnsibleError from the action
       # plugin, so real collapses it to the single "Task failed." segment
       # with no "Module failed." middle (action/__init__.py:706-710).
-      if msg.starts_with?("Task failed: #{PluginManager::BECOME_CHOWN_FAILURE}")
+      if msg.starts_with?("Task failed: #{BecomeMessages::CHOWN_FAILURE}")
         if origin = error_origin_context(source_task)
           ErrorBlock.emit(ErrorBlock::Node.new("Task failed.", source_context: origin)
             .with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(msg["Task failed: ".size..])))
@@ -1038,7 +1050,7 @@ module Krikri
       # segment with the task's own Origin and no "Module failed." middle
       # (no module ever ran; live-verified vs 2.19.11 on both a play-level
       # task and the implicit Gathering Facts task).
-      if msg == "Task failed: #{PluginManager::BECOME_METHOD_EMPTY}"
+      if msg == "Task failed: #{BecomeMessages::METHOD_EMPTY}"
         if origin = error_origin_context(source_task)
           ErrorBlock.emit(ErrorBlock::Node.new("Task failed.", source_context: origin)
             .with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(msg["Task failed: ".size..])))

@@ -16,6 +16,7 @@ require "./inventory_parser"
 require "./task_executor/output_routing"
 require "./action_plugin_manager"
 require "./timing_profile"
+require "./become_messages"
 
 module Krikri
   # Issue #1 (arch awareness) - raised when a remote target reports a
@@ -1538,7 +1539,7 @@ module Krikri
       false
     end
 
-    BECOME_PREMATURE_END = "Premature end of stream waiting for become success."
+    BECOME_PREMATURE_END = BecomeMessages::PREMATURE_END
 
     # Issue #498: ansible validates a module's own arguments INSIDE the
     # module - after the become escalation - so on a controller whose
@@ -1564,9 +1565,9 @@ module Krikri
     # None/empty (become is enabled, the var is present, the template
     # rendered to nothing): the task executor books it as this fatal
     # before any module runs (issue #395).
-    BECOME_METHOD_EMPTY = "A non-empty plugin name is required."
+    BECOME_METHOD_EMPTY = BecomeMessages::METHOD_EMPTY
 
-    BECOME_CHOWN_FAILURE = "Failed to change ownership of the temporary files Ansible (via chmod nor setfacl) needs to create despite connecting as a privileged user. Unprivileged become user would be unable to read the file."
+    BECOME_CHOWN_FAILURE = BecomeMessages::CHOWN_FAILURE
 
     # sudo exits before the plugin ever runs (e.g. "sudo: a password is
     # required"): ansible-core 2.19.11 books this as the local connection's
