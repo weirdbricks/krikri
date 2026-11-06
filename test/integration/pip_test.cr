@@ -199,6 +199,52 @@ describe "pip plugin" do
     end
   end
 
+  # 2.21 resolves a bare name through pip >= 24.1's `--dry-run --report`
+  # before deciding check mode's changed, so an installed-but-outdated
+  # package reports changed. (Not live-verifiable here without a PyPI
+  # round trip; pinned to the module source's own flow.)
+  it "resolves a bare name to pip's concrete version in check mode (2.21)" do
+    shim_dir = File.tempname(".krikri-spec-pip-resolve")
+    Dir.mkdir(shim_dir)
+    shim = File.join(shim_dir, "resolve-pip")
+    File.write(shim, <<-SH
+      #!/bin/sh
+      export PATH=/usr/local/bin:/usr/bin:/bin
+      case "$1" in
+        show) echo "Name: pip"; echo "Version: 24.1"; exit 0 ;;
+        list) echo "alpha==1.0"; exit 0 ;;
+        freeze) echo "alpha==1.0"; exit 0 ;;
+        install)
+          for arg in "$@"; do
+            case "$arg" in
+              --report=*)
+                report="${arg#--report=}"
+                printf '{"install": [{"metadata": {"name": "alpha", "version": "2.0"}}]}' > "$report"
+                ;;
+            esac
+          done
+          exit 0
+          ;;
+      esac
+      exit 0
+      SH
+    )
+    File.chmod(shim, 0o755)
+    begin
+      result = PluginSpecHelper.run("pip", {
+        "name"                => "alpha",
+        "executable"          => shim,
+        "_ansible_check_mode" => "true",
+      })
+
+      falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+      # alpha==1.0 installed, pip would install 2.0 -> changed
+      result["changed"].as_bool.must_equal(true)
+    ensure
+      FileUtils.rm_rf(shim_dir)
+    end
+  end
+
   it "keeps a version-specifier comma as part of one requirement, not a second bogus package" do
     # Real bug found benchmarking jonaspammer.openssl (round 813196):
     # `name: "cryptography>3,<3.5"` - a single string whose comma is
@@ -1221,20 +1267,43 @@ describe "pip plugin" do
       end
     end
 
-    it "reports ok for a satisfied bare name in an existing virtualenv" do
-      venv = File.join(Dir.tempdir, "krikri-pip-spec-venv-#{Random::Secure.hex(8)}")
+    # A shim rather than a real venv: 2.21 resolves a bare name through
+    # `pip install --dry-run --report` on pip >= 24.1, so a real pip would
+    # make this spec depend on what PyPI serves today.
+    it "reports ok for a satisfied bare name (resolved version matches)" do
+      shim_dir = File.tempname(".krikri-spec-pip-satisfied")
+      Dir.mkdir(shim_dir)
+      shim = File.join(shim_dir, "satisfied-pip")
+      File.write(shim, <<-SH
+        #!/bin/sh
+        export PATH=/usr/local/bin:/usr/bin:/bin
+        case "$1" in
+          show) echo "Name: pip"; echo "Version: 24.1"; exit 0 ;;
+          list|freeze) echo "alpha==1.0"; exit 0 ;;
+          install)
+            for arg in "$@"; do
+              case "$arg" in
+                --report=*) printf '{"install": [{"metadata": {"name": "alpha", "version": "1.0"}}]}' > "${arg#--report=}" ;;
+              esac
+            done
+            exit 0
+            ;;
+        esac
+        exit 0
+        SH
+      )
+      File.chmod(shim, 0o755)
       begin
-        FileUtils.cp_r(pip_venv_skeleton, venv)
         result = PluginSpecHelper.run("pip", {
-          "name"                => "pip",
-          "virtualenv"          => venv,
+          "name"                => "alpha",
+          "executable"          => shim,
           "_ansible_check_mode" => "true",
         })
 
         result["failed"]?.try(&.as_bool).wont_equal(true)
         result["changed"].as_bool.must_equal(false)
       ensure
-        FileUtils.rm_rf(venv)
+        FileUtils.rm_rf(shim_dir)
       end
     end
 
@@ -1256,20 +1325,40 @@ describe "pip plugin" do
     end
 
     it "reports changed for state: absent when the package IS present" do
-      venv = File.join(Dir.tempdir, "krikri-pip-spec-venv-#{Random::Secure.hex(8)}")
+      shim_dir = File.tempname(".krikri-spec-pip-absent")
+      Dir.mkdir(shim_dir)
+      shim = File.join(shim_dir, "absent-pip")
+      File.write(shim, <<-SH
+        #!/bin/sh
+        export PATH=/usr/local/bin:/usr/bin:/bin
+        case "$1" in
+          show) echo "Name: pip"; echo "Version: 24.1"; exit 0 ;;
+          list|freeze) echo "alpha==1.0"; exit 0 ;;
+          install)
+            for arg in "$@"; do
+              case "$arg" in
+                --report=*) printf '{"install": [{"metadata": {"name": "alpha", "version": "1.0"}}]}' > "${arg#--report=}" ;;
+              esac
+            done
+            exit 0
+            ;;
+        esac
+        exit 0
+        SH
+      )
+      File.chmod(shim, 0o755)
       begin
-        FileUtils.cp_r(pip_venv_skeleton, venv)
         result = PluginSpecHelper.run("pip", {
-          "name"                => "pip",
+          "name"                => "alpha",
           "state"               => "absent",
-          "virtualenv"          => venv,
+          "executable"          => shim,
           "_ansible_check_mode" => "true",
         })
 
         result["failed"]?.try(&.as_bool).wont_equal(true)
         result["changed"].as_bool.must_equal(true)
       ensure
-        FileUtils.rm_rf(venv)
+        FileUtils.rm_rf(shim_dir)
       end
     end
 
