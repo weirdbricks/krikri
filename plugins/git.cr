@@ -664,14 +664,17 @@ module Krikri
 
         # switch_version()'s per-command failures: the message is git.py's
         # own wording and the command output rides in stdout/stderr/rc.
+        # 2.21 reworded the common checkout-failure tail so the HEAD
+        # branch's message carries a " HEAD" suffix
+        # ("Failed to checkout branch {branch} HEAD", live-verified).
         r = run_git("checkout --force #{sq(branch)}", d)
         unless r[:exit_code] == 0
-          return fail_with_output("Failed to checkout branch #{branch}", r,
+          return fail_with_output("Failed to checkout branch #{branch} HEAD", r,
             cmd: reported_cmd("checkout --force #{branch}"))
         end
         r = run_git("reset --hard #{sq(@remote)}/#{sq(branch)} --", d)
         unless r[:exit_code] == 0
-          return fail_with_output("Failed to checkout branch #{branch}", r,
+          return fail_with_output("Failed to checkout branch #{branch} HEAD", r,
             cmd: reported_cmd("reset --hard #{@remote}/#{branch} --"))
         end
       else
