@@ -978,11 +978,19 @@ module Krikri
     end
 
     # The new home: dir modify() needs to create, or nil when create_home:
-    # is off, home: isn't changing, or the target already exists.
+    # is off, home: isn't changing, or the target already exists. 2.21
+    # skips home creation for the placeholder conventions system accounts
+    # use (/nonexistent, /dev/null, /var/empty) - its
+    # PLACEHOLDER_HOME_DIRS gate covers both the usermod -m append and
+    # the main() tail's own create_homedir (krikri's creation runs
+    # through this one site, matching the latter's semantics).
+    PLACEHOLDER_HOME_DIRS = ["/nonexistent", "/dev/null", "/var/empty"]
+
     private def home_needing_creation(current : PluginHelpers::UserState::User) : String?
       return nil unless wants_create_home?
       new_home = @params["home"]?
       return nil unless new_home && new_home != current.home
+      return nil if PLACEHOLDER_HOME_DIRS.includes?(new_home)
       return nil if remote_dir_exists?(new_home)
 
       new_home
