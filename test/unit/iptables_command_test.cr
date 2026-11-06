@@ -27,6 +27,39 @@ describe Krikri::PluginHelpers::IptablesCommand do
       ])
     end
 
+    # 2.21 tracks which match extensions the rule already loads (seeding
+    # the set from the task's own match: list) and emits `-m` only once
+    # per extension - live-verified vs 2.21.6: uid_owner+gid_owner with
+    # `match: owner` yields exactly one `-m owner` before -j.
+    it "loads each match extension only once (2.21 loaded_extensions)" do
+      rule = Krikri::PluginHelpers::IptablesCommand.construct_rule({
+        "chain"      => "KRIKRI_TEST",
+        "jump"       => "ACCEPT",
+        "uid_owner"  => "1000",
+        "gid_owner"  => "1000",
+        "comment"    => "hi",
+        "match"      => "owner",
+      })
+
+      rule.must_equal([
+        "-m", "owner",
+        "-j", "ACCEPT",
+        "--uid-owner", "1000",
+        "--gid-owner", "1000",
+        "-m", "comment", "--comment", "hi",
+      ])
+    end
+
+    it "emits one -m owner for uid_owner plus gid_owner without match:" do
+      rule = Krikri::PluginHelpers::IptablesCommand.construct_rule({
+        "jump"      => "ACCEPT",
+        "uid_owner" => "1000",
+        "gid_owner" => "1000",
+      })
+
+      rule.must_equal(["-j", "ACCEPT", "-m", "owner", "--uid-owner", "1000", "--gid-owner", "1000"])
+    end
+
     it "puts -o after -j for out_interface (Ansible module ordering)" do
       rule = Krikri::PluginHelpers::IptablesCommand.construct_rule({
         "out_interface" => "eth0",
@@ -49,12 +82,15 @@ describe Krikri::PluginHelpers::IptablesCommand do
       rule.must_equal(["-m", "multiport", "--dports", "80,443"])
     end
 
-    it "duplicates -m multiport when match already includes it (Ansible has no dedup)" do
+    # 2.21 added the loaded_extensions set: a match extension the task's
+    # own match: list already loads is not emitted a second time (2.19
+    # duplicated it).
+    it "does not repeat -m multiport when match already includes it (2.21)" do
       rule = Krikri::PluginHelpers::IptablesCommand.construct_rule({
         "match"             => "multiport",
         "destination_ports" => "80,443",
       })
-      rule.must_equal(["-m", "multiport", "-m", "multiport", "--dports", "80,443"])
+      rule.must_equal(["-m", "multiport", "--dports", "80,443"])
     end
 
     it "uses the real -m flag for an explicit match: param (not a typo'd -mat)" do
@@ -269,10 +305,12 @@ describe Krikri::PluginHelpers::IptablesCommand do
         "gid_owner" => "dequeued",
         "jump"      => "ACCEPT",
       })
+      # One -m owner for both flags: 2.21's loaded_extensions skips the
+      # repeat the 2.19 module emitted (live-verified vs 2.21.6).
       rule.must_equal([
         "-j", "ACCEPT",
         "-m", "owner", "!", "--uid-owner", "1000",
-        "-m", "owner", "--gid-owner", "dequeued",
+        "--gid-owner", "dequeued",
       ])
     end
 

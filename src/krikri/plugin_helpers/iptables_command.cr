@@ -66,6 +66,12 @@ module Krikri
         # false "changed") repeated forever - never converging, and
         # never functionally applying the redirect rule the role needs.
         each_csv(params["match"]?) { |mat| append_param(rule, mat, "-m") }
+        # 2.21 keeps track of the match extensions already on the rule
+        # (the task's own match: list seeds the set) and emits `-m` only
+        # for an extension that is not loaded yet - so a rule that names
+        # the same extension twice (uid_owner: with gid_owner:, or
+        # match: [owner] plus uid_owner:) carries one `-m owner`.
+        loaded_extensions = Set(String).new(match_tokens(params))
         append_tcp_flags(rule, params["tcp_flags"]?)
         append_param(rule, params["jump"]?, "-j")
         if (jump = params["jump"]?) && jump.downcase == "tee"
@@ -76,7 +82,7 @@ module Krikri
         append_param(rule, params["to_destination"]?, "--to-destination")
         if dports = params["destination_ports"]?
           unless dports.empty?
-            rule.concat(["-m", "multiport"])
+            append_match(rule, true, "multiport", loaded_extensions)
             rule.concat(["--dports", dports])
           end
         end
@@ -101,13 +107,13 @@ module Krikri
         end
         append_syn(rule, params["syn"]?)
         if ctstate = params["ctstate"]?
-          append_ctstate(rule, ctstate, match_tokens(params))
+          append_ctstate(rule, ctstate, match_tokens(params), loaded_extensions)
         end
         src_range = params["src_range"]?
         dst_range = params["dst_range"]?
         if src_range || dst_range
           unless match_tokens(params).includes?("iprange")
-            rule.concat(["-m", "iprange"])
+            append_match(rule, true, "iprange", loaded_extensions)
           end
           append_param(rule, src_range, "--src-range")
           append_param(rule, dst_range, "--dst-range")
@@ -117,23 +123,23 @@ module Krikri
             append_param(rule, match_set, "--match-set")
             note_match_set_flags(rule, params)
           else
-            rule.concat(["-m", "set"])
+            append_match(rule, true, "set", loaded_extensions)
             append_param(rule, match_set, "--match-set")
             note_match_set_flags(rule, params)
           end
         end
         if (params["limit"]? && !params["limit"].empty?) ||
            (params["limit_burst"]? && !params["limit_burst"].empty?)
-          rule.concat(["-m", "limit"])
+          append_match(rule, true, "limit", loaded_extensions)
         end
         append_param(rule, params["limit"]?, "--limit")
         append_param(rule, params["limit_burst"]?, "--limit-burst")
         if uid = params["uid_owner"]?
-          rule.concat(["-m", "owner"])
+          append_match(rule, true, "owner", loaded_extensions)
           append_param(rule, uid, "--uid-owner")
         end
         if gid = params["gid_owner"]?
-          rule.concat(["-m", "owner"])
+          append_match(rule, true, "owner", loaded_extensions)
           append_param(rule, gid, "--gid-owner")
         end
         if params["jump"]?.nil?
@@ -153,7 +159,8 @@ module Krikri
           append_param(rule, params["icmp_type"]?, icmp_flag)
         end
         if comment = params["comment"]?
-          rule.concat(["-m", "comment", "--comment", comment])
+          append_match(rule, true, "comment", loaded_extensions)
+          rule.concat(["--comment", comment])
         end
 
         # Real quirk 2: `match_set` without `match_set_flags` appends
@@ -282,14 +289,24 @@ module Krikri
         end
       end
 
-      private def self.append_ctstate(rule : Array(String), ctstate : String, matches : Array(String)) : Nil
+      private def self.append_ctstate(rule : Array(String), ctstate : String, matches : Array(String), loaded_extensions : Set(String)) : Nil
         if matches.includes?("conntrack")
           rule.concat(["--ctstate", ctstate])
         elsif matches.includes?("state")
           rule.concat(["--state", ctstate])
         else
-          rule.concat(["-m", "conntrack", "--ctstate", ctstate])
+          append_match(rule, true, "conntrack", loaded_extensions)
+          rule.concat(["--ctstate", ctstate])
         end
+      end
+
+      # 2.21's append_match(): emit `-m <extension>` only when the rule does
+      # not already load it, and remember it when it does.
+      private def self.append_match(rule : Array(String), present : Bool, extension : String, loaded_extensions : Set(String)) : Nil
+        return unless present
+        return if loaded_extensions.includes?(extension)
+        rule.concat(["-m", extension])
+        loaded_extensions << extension
       end
 
       private def self.append_jump(rule : Array(String), value : String?, jump : String) : Nil
