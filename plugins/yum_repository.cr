@@ -37,13 +37,13 @@ module Krikri
   #   `exclude`/`includepkgs` space-joined on one line
   # - priority, bandwidth, cost, deltarpm_metadata_percentage,
   #   deltarpm_percentage, failovermethod, gpgcakey, http_caching,
-  #   include, ip_resolve, keepcache, metadata_expire,
+  #   include, ip_resolve, metadata_expire,
   #   metadata_expire_filter, mirrorlist_expire, password, proxy,
   #   proxy_password, proxy_username, retries, sslcacert, sslclientcert,
   #   sslclientkey, throttle, timeout, ui_repoid_vars, username: plain
   #   string/int values written as-is - Ansible validates a handful
   #   of these against a fixed choice list (`failovermethod`,
-  #   `http_caching`, `ip_resolve`, `keepcache`), which this plugin
+  #   `http_caching`, `ip_resolve`), which this plugin
   #   doesn't replicate (a real, minor scope cut - an invalid value is
   #   passed straight through and surfaces as whatever error `dnf`/`yum`
   #   itself gives, the same "no client-side choice validation" pattern
@@ -144,7 +144,7 @@ module Krikri
     STR_KEYS          = %w[
       mirrorlist metalink priority bandwidth cost deltarpm_metadata_percentage
       deltarpm_percentage failovermethod gpgcakey http_caching include ip_resolve
-      keepcache metadata_expire metadata_expire_filter mirrorlist_expire password
+      metadata_expire metadata_expire_filter mirrorlist_expire password
       proxy proxy_password proxy_username retries sslcacert sslclientcert
       sslclientkey throttle timeout ui_repoid_vars username
     ]
