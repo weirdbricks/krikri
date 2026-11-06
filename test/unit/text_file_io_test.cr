@@ -33,4 +33,15 @@ describe Krikri::PluginHelpers::TextFileIO do
     decode_error.must_be_nil
     text.must_equal("naïve")
   end
+
+  it "fails an unknown codec name with Ansible's module-crash wording" do
+    Krikri::PluginHelpers::TextFileIO.decode("x\n".to_slice, "20")
+      .must_equal({nil, "Task failed: Module failed: unknown encoding: 20"})
+  end
+
+  it "resolves Python's own codec spellings (latin-1)" do
+    text, error = Krikri::PluginHelpers::TextFileIO.decode(Bytes[0x63, 0x61, 0x66, 0xe9], "Latin-1")
+    error.must_be_nil
+    text.must_equal("café")
+  end
 end

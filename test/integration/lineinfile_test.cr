@@ -36,6 +36,18 @@ describe "lineinfile plugin" do
     File.read(path).to_slice.hexstring.must_equal("636166e90a6e61ef76650a")
   end
 
+  # An unknown codec name is a CPython LookupError, i.e. the module crash
+  # path (live-verified vs 2.21.6: msg exactly this).
+  it "fails an unknown encoding: name with Ansible's module-crash wording (2.21)" do
+    path = PluginSpecHelper.tmp_path("lineinfile-unknown-codec.txt")
+    File.write(path, "x\n")
+
+    result = PluginSpecHelper.run("lineinfile", {"path" => path, "line" => "y", "encoding" => "20"})
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("Task failed: Module failed: unknown encoding: 20")
+  end
+
   # A file the codec cannot decode fails the task with CPython's own
   # UnicodeDecodeError text (live-verified vs 2.21.6: msg is exactly
   # "'utf-8' codec can't decode byte 0xff in position 3: invalid start
