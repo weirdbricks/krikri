@@ -128,6 +128,26 @@ module Krikri
       end
     end
 
+    # A chcon failure while applying seuser:/serole:/setype:/selevel:.
+    # Ansible's set_context_if_different fails with the full
+    # 'invalid selinux context: <err>' shape (msg plus path,
+    # cur_context/new_context/input_was and the stat block), which
+    # BasePlugin#selinux_context_failure builds - but the failure is
+    # detected deep inside apply_single_file_attributes's callers, so the
+    # shaped result rides the exception up to dispatch_state_rescued's
+    # and create_directory's own rescues (issue #913; the previous
+    # 'set selinux context failed' wording is basic.py's NON-raising
+    # branch, which real only reaches when lsetfilecon returns nonzero
+    # without raising - the chcon failure krikri sees is the raising
+    # case, the same one every other secontext-consuming plugin renders).
+    class SelinuxContextError < Exception
+      getter result : PluginResult
+
+      def initialize(@result : PluginResult)
+        super(result.msg)
+      end
+    end
+
     property? check_mode : Bool
     property? diff_mode : Bool
 
@@ -407,6 +427,8 @@ module Krikri
       )
       result.extra["exception"] = JSON::Any.new(oserror_repr(target, ex.original))
       result
+    rescue ex : SelinuxContextError
+      ex.result
     rescue ex
       PluginResult.new(
         changed: false,
@@ -522,6 +544,7 @@ module Krikri
       # non-root user ("Unable to delete file").
       create_failure_msg = nil
       create_failure_exception = nil
+      create_failure_result = nil
       failing_component = path
       created = begin
         missing_components = [] of String
@@ -545,6 +568,13 @@ module Krikri
         create_failure_msg = "#{ex.label} failed"
         create_failure_exception = oserror_repr(failing_component, ex.original)
         false
+      rescue ex : SelinuxContextError
+        # A failed chcon on a just-created ancestor keeps the FULL
+        # 'invalid selinux context' shape (issue #913) -
+        # selinux_context_failure already statted the component and set
+        # path: to it, so hand the composed result straight through.
+        create_failure_result = ex.result
+        false
       rescue ex
         # apply_file_attributes -> apply_single_file_attributes can raise
         # a real, specific failure (owner:/group: naming a system user/
@@ -556,6 +586,9 @@ module Krikri
         false
       end
       unless created
+        if prebuilt = create_failure_result
+          return prebuilt
+        end
         # Ansible's ensure_directory fails on the first created ancestor
         # whose owner/group can't be applied, and fail_json(path=<that
         # ancestor>) makes add_path_info stat THAT directory (live-verified
@@ -1614,13 +1647,16 @@ module Krikri
     # merging and chcon live in BasePlugin's shared helpers so copy/
     # template/stat read and write the same context shape. Here only the
     # apply wrapper remains, failing the task the way Ansible's
-    # set_context_if_different does (fail_json(msg='set selinux context
-    # failed') on a nonzero lsetfilecon return).
+    # set_context_if_different does on the raising lsetfilecon path -
+    # the full 'invalid selinux context: <err>' shape built by
+    # selinux_context_failure, carried up on SelinuxContextError because
+    # the failure surfaces inside attribute-walking call chains that
+    # compose their own results (issue #913).
     private def apply_secontext(path : String) : Nil
       pending = pending_secontext_change(path) || return
-      _current, desired = pending
-      return if set_selinux_context(path, desired).nil?
-      raise "set selinux context failed"
+      current, desired = pending
+      return unless err = set_selinux_context(path, desired)
+      raise SelinuxContextError.new(selinux_context_failure(path, err, current, desired, secontext_input_was))
     end
 
     # Python's str(OSError) shape for a failed file syscall on *path*:
