@@ -1,6 +1,6 @@
 # Upgrade plan: parity target ansible-core 2.19.11 → 2.21.6
 
-Status: **plugin source-diff pass complete at 0.9.2430 — pending live verification**.
+Status: **source-diff + porting-guide pass complete at 0.9.2436 — pending live verification**.
 Decision (2026-11-05): krikri tracks ansible-core **2.21.6 only** — the
 `--krikri-argspec-profile` knob proposed earlier was dropped before it
 shipped; `data/argspecs.json` IS the 2.21.6 capture, and
@@ -154,32 +154,56 @@ were, and they are done.
       `apt_repository`, `yum_repository`, `dnf` (beyond install_repoquery),
       `assemble`, `expect`, `command`, `wait_for`, `wait_for_connection`,
       `deb822_repository`, `rpm_key`, `iptables`.
-- [ ] **Deferred module behavior gaps** found by that sweep (each
-      deliberate, to be handled or issue-filed after the first round):
-      - `pip` check-mode name resolution: 2.21 resolves bare package names
-        through `pip install --dry-run --report` (pip >= 24.1) before
-        deciding `changed`, and warns on older pip. krikri keeps its own
-        check-mode heuristic (issue #794 lineage).
-      - `iptables`: 2.21 de-duplicates `-m <match>` extensions against the
-        ones already emitted (`loaded_extensions`); krikri can emit the same
-        `-m` twice (cosmetic only - iptables accepts it).
-      - `package_facts` on Alpine: 2.21 queries apk with
-        `--fields name,version --format json` and maps "(none)" values;
-        krikri's apk path was not re-verified against that.
-- [ ] **Porting-guide pass** (2.20 + 2.21) for areas the probing can't
-      reach: deprecation gates, lookup/filter behavior, connection-level
-      changes. The live probing already covered templating scalars,
-      result shapes, and the invocation knob.
+- [x] **Deferred module behavior gaps** — all three are done (0.9.2432 /
+      0.9.2436): `iptables` de-duplicates `-m <match>` extensions like
+      2.21's `loaded_extensions`; `pip`'s check mode resolves bare names
+      through pip's dry-run report (>= 24.1) with the old-pip warning;
+      `package_facts` needs no change because krikri has no apk/pacman/etc
+      backend at all (apt + rpm only, a pre-existing documented scope cut -
+      2.21's apk JSON rewrite only affects Alpine hosts krikri never
+      gathers on).
+- [x] **Porting-guide pass** (2.20 + 2.21), done at 0.9.2434 - 0.9.2436:
+      - 2.21's only engine change is `password_hash`'s backend swap
+        (passlib -> libxcrypt): implemented in
+        `PluginHelpers::CryptHash` (0.9.2434) - salt re-encoding, always-on
+        rounds/cost marker, bcrypt support, clamped rounds, libxcrypt's own
+        error texts. Verified byte-for-byte against 2.21.6.
+      - 2.20's `include_vars` list validations: a non-list `extensions:`
+        fails with "The 'extensions' option must be a list." and a string
+        `ignore_files:` emits 2.20's deprecation (0.9.2435).
+      - 2.20's `yum_repository` `keepcache` removal: gone from the lint
+        table and the repo writer (0.9.2435); the argspec capture already
+        rejected it.
+      - 2.20 items with no krikri counterpart: PowerShell quote stripping,
+        `DEFAULT_TRANSPORT=smart`, `galaxy` v2 API, paramiko options,
+        `py3compat.environ`, vars-plugin fallbacks, `DataLoader.get_basedir`
+        (krikri resolves paths differently), controller/remote Python
+        version floors. `failed_when`'s
+        `failed_when_suppressed_exception` rename and the str-None
+        argspec rule were already implemented before this plan.
+      - `INJECT_FACTS_AS_VARS` is already true (2.20's default) in krikri.
+- [x] **Diff payload shapes** (0.9.2431): every diff dict now carries
+      bare headers (the display adds "before: "/"after: ", like the
+      callback), copy/template emit the one-entry list with no
+      before_header for a new dest, lineinfile/blockinfile keep their
+      two-entry list in diff mode too, and replace/yum_repository lead
+      with their headers in the real order. The until/`attempts` finding
+      turned out different from what this plan said: real 2.21 shows
+      `attempts` but NO `exception` placeholder when the module itself
+      succeeded (0.9.2433) - `gap_fixes_test` and the new
+      `until_exhausted_exception_shape_test` pin both shapes.
 - [ ] **Known micro-divergences** (documented, deliberate or deferred):
-      - copy/lineinfile diff dicts: real 2.21 orders
-        `before, after, before_header, after_header`; krikri emits
-        `after, after_header, before, before_header` — low-priority shape
-        fix, probe playbook `/tmp/nat5.yml`.
-      - debug-module until tasks: real 2.21 shows no `attempts`;
-        krikri keeps it (plain tasks and handlers DO carry it — the
-        debug-action result replacement swallows it upstream in real).
-      - custom-module injection echo (see the INJECT_INVOCATION
-        deviation above).
+      - `lineinfile`/`blockinfile` file-attributes diff entry: real 2.21
+        adds before/after for each changed attribute (mode/owner/group/
+        secontext/flags); krikri emits the entry's headers only, so the
+        --diff rendering of a pure attribute change stays silent.
+      - filter-error wrapper text: real wraps a filter exception as
+        "Finalization of task args for '<action>' failed: Error while
+        resolving value for '<param>': The filter plugin
+        '<fqcn>.<name>' failed: <msg>"; krikri reports "Action failed:
+        <msg>". Affects every filter, not just password_hash.
+      - `debug`-module until tasks and the custom-module injection echo
+        (see the INJECT_INVOCATION deviation above).
 - [ ] **Phase 4 — live verification** (blocked on the user running it):
       - re-run the #909/#910 repro against real 2.21.6 — byte-identical
         (already done ad hoc for stat; re-confirm on the release build).
