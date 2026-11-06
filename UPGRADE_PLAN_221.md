@@ -98,16 +98,23 @@ snapshot did.
   `_return_formatted` injects the mutated params. argspecs.json's find
   `patterns` default is pinned to `["*"]` (matching the echo), same pin the
   2.19 snapshot carried.
-- **2.21 reworked the registered result shape** (independent of the
-  injection knob): loop-item dicts now assemble as
-  `changed,failed,ansible_loop_var,item,<module keys>,invocation` (2.19:
-  module keys first, `failed` near the end) and a solo command result
-  reads `changed,failed,msg,rc,stdout,stderr,cmd,start,end,delta,
-  invocation,stdout_lines,stderr_lines` - `changed`/`failed`/`msg` lead
-  and `invocation` trails the module's own keys. krikri's key-order
-  machinery (apply_failed_key_order, the plugin key_order pins) is
-  2.19-shaped - this is the next large work item after the injection
-  flip.
+- [x] **2.21 reworked the registered result shape** (DONE): krikri now
+  normalizes every registered result through the UnifiedTaskResult
+  partition (ResultShape): declared-field lead (changed, failed,
+  unreachable, skipped, ansible_facts, exception, finished, msg, rc),
+  the skip-reason body, the when-verdict pairs + attempts/retries band,
+  a loop item's wrapper keys ahead of the module payload, then the
+  module's own keys in their prior relative order. Live-verified across
+  stat/file/copy/getent/command/fail/raw/debug/set_fact, solo + looped,
+  ok/failed/skipped/suppressed. Along the way: changed/failed backfill
+  on every registered result, `skipped` exported only when true, the
+  empty-loop aggregate carrying both reason keys, command/shell's 2.21
+  module key order + reworded non-zero-rc msg (raw keeps 2.19's), the
+  exception placeholder only on actually-failed results, attempts only
+  from the attempt loop (but on non-looped until tasks too - the
+  debug-module until case where real 2.21 shows no attempts is a known
+  micro-divergence), and 2.21's dropped exception on until-exhausted
+  loop items.
 - stat's unsupported-params message under 2.21.6 advertises
   `get_selinux_context` (captured live; test updated).
 
