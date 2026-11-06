@@ -9,6 +9,7 @@ require "system/user"
 require "system/group"
 require "../src/krikri/base_plugin"
 require "../src/krikri/plugin_helpers/url_preflight"
+require "../src/krikri/plugin_helpers/url_mask"
 require "../src/krikri/plugin_helpers/socket_connect"
 
 module Krikri
@@ -73,6 +74,19 @@ module Krikri
       # in _configure_auth's `if username:`.
       username = ["url_username", "user"].compact_map { |param_name| @params[param_name]? }.reject(&.empty?).first?
       password = ["url_password", "password"].compact_map { |param_name| @params[param_name]? }.reject(&.empty?).first? || ""
+
+      # ansible's _configure_auth (module_utils/urls.py) falls back to the
+      # URL's own userinfo when no url_username: was given, and requests -
+      # and reports - the URL with that userinfo stripped. It is the same
+      # in 2.19; ftp URLs keep theirs because that path returns first.
+      # (The percent-decoding of the credentials the Python original does
+      # is not reproduced; an encoded userinfo is used verbatim.)
+      masked_url = PluginHelpers::UrlMask.mask(url)
+      if username.nil? && !url.starts_with?("ftp:") && (stripped = strip_url_userinfo(url))
+        url, url_username, url_password = stripped
+        username = url_username
+        password = url_password
+      end
 
       # Ansible's uri ACTION plugin (its src: staging and its non-mapping
       # form-multipart body guard) runs before the module and therefore
@@ -337,7 +351,12 @@ module Krikri
       end
 
       result.extra["elapsed"] = JSON::Any.new(elapsed)
-      apply_response_extras(result, headers, body, redirected)
+      # 2.21 compares the final URL against the MASKED request URL
+      # (uri.py's `resp['redirected'] = info['url'] != masked_url`), so a
+      # URL carrying credentials reports redirected: true whether or not a
+      # redirect happened - the stripped request URL can never equal the
+      # "****" form. Without credentials this is the plain redirect flag.
+      apply_response_extras(result, headers, body, redirected || final_url != masked_url)
       # Real fetch_url parses the cookie jar into
       # the result on every response urllib returns normally: cookies
       # (name -> value dict) and cookies_string ("name=value; name2=value2"),
@@ -451,6 +470,26 @@ module Krikri
     # a real version, producing a download URL that 404'd. The 6th
     # element is the response's reason phrase (real failure msgs embed
     # it, see #execute).
+    # Splits a URL's userinfo off: {url with the userinfo removed, username,
+    # password} - or nil when the netloc carries no '@'.
+    private def strip_url_userinfo(url : String) : {String, String, String}?
+      if (match = url.match(/\A([A-Za-z][A-Za-z0-9+.\-]*:\/\/)([^\/?#]*)(.*)\z/m))
+        scheme = match[1]
+        netloc = match[2]
+        rest = match[3]
+        at = netloc.rindex('@')
+        return nil unless at
+        credentials = netloc[0, at]
+        host = netloc[at + 1..]
+        url_username, url_password = if (colon = credentials.index(':'))
+                                       {credentials[0, colon], credentials[colon + 1..]}
+                                     else
+                                       {credentials, ""}
+                                     end
+        {scheme + host + rest, url_username, url_password}
+      end
+    end
+
     private def request(url : String, method : String, username : String? = nil, password : String = "", src_body : String? = nil, redirects_left : Int32 = MAX_REDIRECTS, redirected : Bool = false, last_mod_time : Time? = nil, cookie_acc : Array(Tuple(String, String))? = nil) : {Int32, HTTP::Headers, String, Bool, String, String}
       raise "too many redirects" if redirects_left < 0
 

@@ -158,6 +158,19 @@ describe "uri plugin" do
     result.as_h.has_key?("content").must_equal(false)
   end
 
+  # ansible's _configure_auth takes credentials from the URL's userinfo
+  # (when no url_username: is given), strips them from the URL it requests,
+  # and 2.21's uri.py derives `redirected` from the masked request URL -
+  # so a credentialed URL reports redirected: true with no redirect at all
+  # (live-verified vs ansible-core 2.21.6).
+  it "strips userinfo from the URL it reports and flags redirected" do
+    result = PluginSpecHelper.run("uri", {"url" => "http://user:s3cret@#{URI_TEST_ADDRESS.address}:#{URI_TEST_ADDRESS.port}/text"})
+
+    result["url"].as_s.must_equal("http://#{URI_TEST_ADDRESS.address}:#{URI_TEST_ADDRESS.port}/text")
+    result["redirected"].as_bool.must_equal(true)
+    result["status"].as_i.must_equal(200)
+  end
+
   it "connects through unix_socket: without resolving the URL's host (kreinhub.docker_compose_install)" do
     sock_path = PluginSpecHelper.tmp_path("uri.sock")
     server = HTTP::Server.new { |ctx| ctx.response.print("via-socket") }
