@@ -207,23 +207,25 @@ describe Krikri::VariableSubstitutor::FilterEngine do
 
   it "password_hash honors an explicit salt for reproducible output" do
     result = engine.apply(s("secret"), %(password_hash('sha512', 'fixedsalt'))).as_s
-    # passlib's default rounds=656000 shows in the output (Ansible 2.19.11)
-    result.must_equal("$6$rounds=656000$fixedsalt$" + result.split('$').last)
+    # libxcrypt re-encodes the salt and always writes the rounds marker
+    # (live-verified vs ansible-core 2.21.6).
+    result.must_equal("$6$rounds=656000$aZ4SZFqQ$8JLe1RtOWmSYpLs5GxkmGZVLgiK5OWNAIOUdeUDbYXt.ixoeBcmHXr2RCCKd78pMAHbBELEnyDj4kqDIOyYWe0")
     engine.apply(s("secret"), %(password_hash('sha512', 'fixedsalt'))).as_s.must_equal(result)
   end
 
-  it "password_hash supports sha256 and md5" do
+  it "password_hash supports sha256, md5 and bcrypt" do
     expect(str_starts_with?(engine.apply(s("secret"), %(password_hash('sha256'))).as_s, "$5$")).must_equal(true)
     expect(str_starts_with?(engine.apply(s("secret"), %(password_hash('md5'))).as_s, "$1$")).must_equal(true)
+    expect(str_starts_with?(engine.apply(s("secret"), %(password_hash('bcrypt', 'abcdefghijklmnopqrstuv'))).as_s, "$2b$12$")).must_equal(true)
   end
 
-  # Dispatch-path pins for the rounds=/salt_size parity fix (issue #676);
-  # all vectors live-verified against ansible-core 2.19.11.
+  # Dispatch-path pins for the rounds=/salt_size parity fix (issue #676),
+  # re-captured against ansible-core 2.21.6.
   it "password_hash drops the rounds marker at exactly 5000 and keeps it otherwise" do
     engine.apply(s("hello"), %(password_hash('sha512', 'mysalt', rounds=5000))).as_s
-      .must_equal("$6$mysalt$HjkH9tPwoOZC7.Tbbf.865I0VP2JrcvX25YLWcUkIkNvMWhU/minCmQlwt98agkOaRtd2xgXkljSlU1AN7Lr/0")
+      .must_equal("$6$hZrQ$BbQdhpRdjnqFDPw4p5v843JM4Oin5nWjLVS6VPOVDpRbNui5p79Eip4Qdnht7WtEkbTE6JEU1sabIxihLQw9u0")
     engine.apply(s("hello"), %(password_hash('sha512', 'mysalt', rounds=10000))).as_s
-      .must_equal("$6$rounds=10000$mysalt$Y.NsiCg9v3qJJqwtWQr2JyC5YjD5NMnQlXmjnGeZuQkzEL5tHFttP93F1Uak4nRD.TEGswHgFaWy0Wzcvgblf1")
+      .must_equal("$6$rounds=10000$hZrQ$/caPJpw5Tj89xY2U1yA7CtVdIcI4dUAvUr1ObcI40ZlzgT7Z/eur5OUBN5jM6M9sYG70BY.VqurKBTUF7wECL.")
   end
 
   it "password_hash's fourth positional is rounds, third is salt_size" do
@@ -232,30 +234,30 @@ describe Krikri::VariableSubstitutor::FilterEngine do
     # given - so the 4th positional IS rounds (the issue had it
     # kwargs-only)
     engine.apply(s("hello"), %(password_hash('sha512', 'mysalt', 8, 10000))).as_s
-      .must_equal("$6$rounds=10000$mysalt$Y.NsiCg9v3qJJqwtWQr2JyC5YjD5NMnQlXmjnGeZuQkzEL5tHFttP93F1Uak4nRD.TEGswHgFaWy0Wzcvgblf1")
+      .must_equal("$6$rounds=10000$hZrQ$/caPJpw5Tj89xY2U1yA7CtVdIcI4dUAvUr1ObcI40ZlzgT7Z/eur5OUBN5jM6M9sYG70BY.VqurKBTUF7wECL.")
     engine.apply(s("hello"), %(password_hash('sha512', 'mysalt', 8, 5000))).as_s
-      .must_equal("$6$mysalt$HjkH9tPwoOZC7.Tbbf.865I0VP2JrcvX25YLWcUkIkNvMWhU/minCmQlwt98agkOaRtd2xgXkljSlU1AN7Lr/0")
+      .must_equal("$6$hZrQ$BbQdhpRdjnqFDPw4p5v843JM4Oin5nWjLVS6VPOVDpRbNui5p79Eip4Qdnht7WtEkbTE6JEU1sabIxihLQw9u0")
     # salt_size positional with explicit salt leaves the salt untouched
     engine.apply(s("hello"), %(password_hash('sha512', 'mysalt', 8))).as_s
       .must_equal(engine.apply(s("hello"), %(password_hash('sha512', 'mysalt'))).as_s)
   end
 
-  it "password_hash surfaces passlib's error texts through the engine" do
+  it "password_hash surfaces libxcrypt's error texts through the engine" do
+    # rounds below the floor are CLAMPED, not rejected (live-verified vs
+    # 2.21.6) - so an out-of-range value produces a hash, not an error.
+    expect(str_starts_with?(engine.apply(s("hello"), %(password_hash('sha512', 'mysalt', rounds=999))).as_s,
+      "$6$rounds=1000$")).must_equal(true)
     assert_raises_message(Exception,
-      "Could not hash the secret: sha512_crypt: min_desired_rounds (999) is too low, must be at least 1000") do
-      engine.apply(s("hello"), %(password_hash('sha512', 'mysalt', rounds=999)))
-    end
-    assert_raises_message(Exception,
-      "Could not hash the secret: salt too large (sha512_crypt requires <= 16 chars)") do
+      "invalid salt size supplied (29), expected at most 16") do
       engine.apply(s("hello"), %(password_hash('sha512', 'longsaltvalue0123456789abcdef')))
     end
     assert_raises_message(Exception,
-      "MinimalHandler.using() got an unexpected keyword argument 'rounds'") do
+      "Failed to generate salt for 'md5_crypt' algorithm: crypt_gensalt failed: unable to generate salt") do
       engine.apply(s("hello"), %(password_hash('md5', 'mysalt', rounds=5000)))
     end
     # hashtype is case-sensitive in real ansible ('SHA512' errors)
     assert_raises_message(Exception,
-      "SHA512 is not in the list of supported passlib algorithms: md5, sha256, sha512") do
+      "SHA512 is not in the list of supported passlib algorithms: md5, blowfish, sha256, sha512") do
       engine.apply(s("hello"), %(password_hash('SHA512', 'mysalt')))
     end
   end

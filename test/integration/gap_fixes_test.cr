@@ -186,10 +186,11 @@ describe "until retries attempts key" do
     result["failed"].as_bool.must_equal(true)
     result["attempts"].as_i.must_equal(2)
     result["failed"].as_bool.must_equal(true)
-    # 2.21: the exception placeholder sits in the declared-field lead and
-    # attempts in the declared band after msg/rc (live-verified vs
-    # 2.21.6: changed,failed,exception,msg,rc,attempts,<module keys>).
-    result["exception"].as_s.must_equal("(traceback unavailable)")
+    # A module that SUCCEEDED carries no exception placeholder here - the
+    # retry runner failed, not the module (live-verified vs 2.21.6:
+    # changed,failed,msg,rc,attempts,<module keys>).
+    result.as_h.has_key?("exception").must_equal(false)
+    result.as_h.keys.first(5).must_equal(["changed", "failed", "msg", "rc", "attempts"])
     output.matches?(/FAILED - RETRYING: \[localhost\]: .* \(2 retries left\)\./).must_equal(true)
     output.matches?(/FAILED - RETRYING: \[localhost\]: .* \(1 retries left\)\./).must_equal(true)
   end

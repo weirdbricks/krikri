@@ -3,6 +3,7 @@ require "../bigint_json"
 require "../py_dump"
 require "../py_set"
 require "uri"
+require "../plugin_helpers/crypt_hash"
 require "openssl/digest"
 require "uuid"
 require "yaml"
@@ -294,262 +295,21 @@ module Krikri
 
       # password_hash(hashtype='sha512', salt=None, salt_size=None,
       # rounds=None, ident=None) - a salted crypt(3) hash suitable for
-      # /etc/shadow (NOT a plain digest). Covers the three crypt(3)
-      # schemes passlib has that `openssl passwd` can also produce
-      # (md5/sha256/sha512 = $1$/$5$/$6$); passlib-only schemes like
-      # bcrypt aren't available without a real passlib port.
+      # /etc/shadow, NOT a plain digest. ansible-core 2.21 replaced the
+      # passlib backend with libxcrypt, so this delegates to
+      # PluginHelpers::CryptHash: same algorithm table (md5_crypt,
+      # bcrypt, sha256_crypt, sha512_crypt, yescrypt), same salt rules,
+      # and the controller's own crypt_gensalt()/crypt() doing the work -
+      # a user-supplied salt is re-encoded by libxcrypt and the scheme's
+      # rounds/cost marker is always written, exactly like real Ansible
+      # (live-verified vs 2.21.6: 'sha512' with salt 'saltsalt' yields
+      # $6$rounds=656000$n34PoBLM$...).
       #
-      # Every rule below is live-verified against ansible-core 2.19.11
-      # (issue #676, 2026-10-28):
-      # - hashtype is CASE-SENSITIVE ('SHA512' is an error, not lowercased).
-      # - Signature: third positional is salt_size, FOURTH is rounds
-      #   (the issue's "kwargs-only" note was wrong - real ansible maps
-      #   the 4th positional onto rounds, proven by "get_encrypted_
-      #   password() got multiple values for argument 'rounds'").
-      # - rounds/salt_size are SKIPPED when falsy (0/false/'' - so
-      #   rounds=0 is indistinguishable from no kwarg: the default-rounds
-      #   hash WITH its rounds= marker); bools coerce to int when truthy
-      #   (rounds=true == rounds=1).
-      # - The rounds marker is omitted only at exactly 5000; the
-      #   defaults (535000/656000) DO carry a marker.
-      # - A float rounds is passlib's .using() type error (unwrapped); a
-      #   non-numeric STRING rounds surfaces as python's int() conversion
-      #   error at hash time (wrapped) - and a string rounds beyond
-      #   Int64 range still reports the too-large bound error with the
-      #   raw digits.
-      # - salt_size's TYPE is checked by Ansible itself (unwrapped
-      #   "salt_size must be an integer", strings never parse); its
-      #   RANGE is passlib's, checked at hash time (wrapped) BEFORE the
-      #   explicit salt's own length check, which again precedes the
-      #   rounds bound checks. salt_size only sizes the GENERATED salt -
-      #   an explicit salt is never truncated.
-      # - Salt caps: 8 for md5, 16 for sha256/sha512; a generated salt
-      #   is passlib-charset [./0-9A-Za-z] with the scheme's own default
-      #   size (8 for md5, 16 for sha256/sha512) when salt_size is
-      #   skipped; md5 rejects any truthy rounds at .using() time.
+      # The filter-level name mapping ('md5'/'blowfish'/'sha256'/'sha512')
+      # and its passlib-era rejection message live in CryptHash too.
       def self.password_hash(s : String, hashtype : String, salt : String? = nil,
                              salt_size : JSON::Any? = nil, rounds : JSON::Any? = nil) : String
-        case hashtype
-        when "md5"
-          password_hash_md5(s, salt, salt_size, rounds)
-        when "sha256", "sha512"
-          password_hash_sha_crypt(s, hashtype, salt, salt_size, rounds)
-        else
-          raise "#{hashtype} is not in the list of supported passlib algorithms: md5, sha256, sha512"
-        end
-      end
-
-      private def self.password_hash_md5(s : String, salt : String?,
-                                         salt_size : JSON::Any?, rounds : JSON::Any?) : String
-        size = py_salt_size(salt_size, "md5_crypt", 8)
-        if py_truthy(rounds)
-          raise "MinimalHandler.using() got an unexpected keyword argument 'rounds'"
-        end
-        salt = validate_crypt_salt(salt, "md5_crypt", 8) || generate_salt(size || 8i64)
-        output = IO::Memory.new
-        status = Process.run("openssl", ["passwd", "-1", "-salt", salt, "-stdin"],
-          input: IO::Memory.new(s), output: output)
-        raise "password_hash: openssl passwd failed" unless status.success?
-        output.to_s.strip
-      end
-
-      private def self.password_hash_sha_crypt(s : String, hashtype : String, salt : String?,
-                                               salt_size : JSON::Any?, rounds : JSON::Any?) : String
-        sha512 = hashtype == "sha512"
-        scheme = sha512 ? "sha512_crypt" : "sha256_crypt"
-        # Ansible hashes through passlib, whose own DEFAULT rounds
-        # (535000 for sha256-crypt, 656000 for sha512-crypt) show in the
-        # output's rounds= prefix even when only a salt was given -
-        # openssl passwd's fixed 5000-round hash diverged byte for byte
-        # (live-verified vs 2.19.11 for both types).
-        size = py_salt_size(salt_size, scheme, 16)
-        salt = validate_crypt_salt(salt, scheme, 16) || generate_salt(size || 16i64)
-        rounds_n = py_rounds(rounds, scheme, sha512 ? 656000 : 535000)
-        prefix = rounds_n == 5000 ? "$#{sha512 ? "6" : "5"}$" : "$#{sha512 ? "6" : "5"}$rounds=#{rounds_n}$"
-        prefix + "#{salt}$" + sha_crypt(s, salt, rounds_n, sha512)
-      end
-
-      # Python truthiness over a resolved JSON filter argument: nil/false/
-      # zero/empty-string are falsy, everything else truthy.
-      private def self.py_truthy(v : JSON::Any?) : Bool
-        return false if v.nil?
-        case v.raw
-        when Nil     then false
-        when Bool    then v.as_bool
-        when Int64   then v.as_i64 != 0
-        when Float64 then v.as_f != 0.0
-        when String  then !v.as_s.empty?
-        else              true
-        end
-      end
-
-      # Ansible checks salt_size's TYPE itself (unwrapped error - strings
-      # never parse, unlike rounds); passlib checks the RANGE at hash time
-      # (wrapped error). Returns nil when salt_size is skipped (falsy).
-      private def self.py_salt_size(v : JSON::Any?, scheme : String, max : Int64) : Int64?
-        return nil unless py_truthy(v)
-        case raw = v.try(&.raw)
-        when Int64
-          size = raw
-        when Bool
-          size = raw ? 1i64 : 0i64
-        else
-          raise "salt_size must be an integer"
-        end
-        if size > max
-          raise "Could not hash the secret: #{scheme}: salt_size (#{size}) above max_salt_size (#{max})"
-        elsif size < 0
-          raise "Could not hash the secret: #{scheme}: salt_size (#{size}) below min_salt_size (0)"
-        end
-        size
-      end
-
-      # Rounds: skipped when falsy (the scheme default, WITH marker);
-      # strings parse python-style at hash time (wrapped invalid-literal
-      # error, digits beyond Int64 still report the too-large bound);
-      # floats are passlib's .using() type error (unwrapped). Bounds are
-      # passlib's shared sha-crypt ones: 1000..999999999.
-      private def self.py_rounds(v : JSON::Any?, scheme : String, default : Int64) : Int64
-        return default unless py_truthy(v)
-        n : Int64
-        case raw = v.try(&.raw)
-        when Int64
-          n = raw
-        when Bool
-          n = raw ? 1i64 : 0i64
-        when Float64
-          raise "min_desired_rounds must be integer, not float"
-        when String
-          text = raw.strip
-          parsed = text.to_i64?
-          if parsed
-            n = parsed
-          elsif text.matches?(/^\d+$/)
-            raise "Could not hash the secret: #{scheme}: min_desired_rounds (#{text}) is too large, cannot be more than 999999999"
-          else
-            raise "Could not hash the secret: invalid literal for int() with base 10: '#{raw}'"
-          end
-        else
-          raise "Could not hash the secret: invalid literal for int() with base 10: '#{v.to_json}'"
-        end
-        if n < 1000
-          raise "Could not hash the secret: #{scheme}: min_desired_rounds (#{n}) is too low, must be at least 1000"
-        elsif n > 999_999_999
-          raise "Could not hash the secret: #{scheme}: min_desired_rounds (#{n}) is too large, cannot be more than 999999999"
-        end
-        n
-      end
-
-      # Passlib's crypt salt charset check plus the scheme's size cap,
-      # both wrapped as hash-time errors. Empty/absent salt means
-      # "generate one" (empty explicit salt behaves as omitted,
-      # live-verified).
-      private def self.validate_crypt_salt(salt : String?, scheme : String, max : Int64) : String?
-        return nil if salt.nil? || salt.empty?
-        if salt.size > max
-          raise "Could not hash the secret: salt too large (#{scheme} requires <= #{max} chars)"
-        end
-        unless salt.matches?(/^[.\/A-Za-z0-9]+$/)
-          raise "Could not hash the secret: invalid characters in #{scheme} salt"
-        end
-        salt
-      end
-
-      # passlib-charset random salt (same [./0-9A-Za-z] class a real
-      # generated salt uses - hex digits are a subset but the plain
-      # charset matches what ansible/passlib hand out).
-      private def self.generate_salt(size : Int64) : String
-        charset = "./ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
-        String.build do |io|
-          size.times do
-            io << charset[Random::Secure.rand(charset.size)]
-          end
-        end
-      end
-
-      # The $5$/$6$ (sha256-crypt / sha512-crypt) algorithm - Drepper's
-      # spec via passlib's own pure-python implementation, verified
-      # byte-for-byte against passlib's output ("hello"/"mysalt" at both
-      # default round counts, and Drepper's own "Hello world!" vector).
-      private def self.sha_crypt(pw : String, salt : String, rounds : Int64, sha512 : Bool) : String
-        name = sha512 ? "sha512" : "sha256"
-        dlen = sha512 ? 64 : 32
-        pw_b = pw.to_slice
-        salt_b = salt.to_slice
-        pwd_len = pw_b.size
-
-        b = OpenSSL::Digest.new(name).update(pw_b).update(salt_b).update(pw_b).final
-        a = OpenSSL::Digest.new(name)
-        a.update(pw_b)
-        a.update(salt_b)
-        cnt = pwd_len
-        while cnt > dlen
-          a.update(b)
-          cnt -= dlen
-        end
-        a.update(b[0, cnt])
-        bits = pwd_len
-        while bits > 0
-          bits.odd? ? a.update(b) : a.update(pw_b)
-          bits >>= 1
-        end
-        da = a.final
-
-        rep = (pwd_len.to_f / dlen).ceil.to_i
-        dp_buf = IO::Memory.new
-        dp_digest = OpenSSL::Digest.new(name).update(pw * pwd_len).final
-        rep.times { dp_buf.write(dp_digest) }
-        dp_full = dp_buf.to_slice[0, pwd_len]
-        ds_full = OpenSSL::Digest.new(name).update(salt * (16 + da[0])).final[0, salt_b.size]
-
-        cur = sha_crypt_rounds(name, da, dp_full, ds_full, rounds)
-
-        # passlib's h64 encoding: the digest's bytes are read in the
-        # transpose-map order, then each 3-byte group packs
-        # LITTLE-ENDIAN (last byte in the high bits) and emits its
-        # 6-bit groups low-first, alphabet "./0-9A-Za-z".
-        alphabet = "./0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
-        perm = sha512 ? [42, 21, 0, 1, 43, 22, 23, 2, 44, 45, 24, 3, 4, 46, 25, 26, 5, 47, 48, 27, 6, 7, 49, 28, 29, 8, 50, 51, 30, 9, 10, 52, 31, 32, 11, 53, 54, 33, 12, 13, 55, 34, 35, 14, 56, 57, 36, 15, 16, 58, 37, 38, 17, 59, 60, 39, 18, 19, 61, 40, 41, 20, 62, 63] : [20, 10, 0, 11, 1, 21, 2, 22, 12, 23, 13, 3, 14, 4, 24, 5, 25, 15, 26, 16, 6, 17, 7, 27, 8, 28, 18, 29, 19, 9, 30, 31]
-        transposed = perm.map { |idx| cur[idx] }
-        result_b64 = IO::Memory.new
-        (transposed.size // 3).times do |group_index|
-          base = 3 * group_index
-          b64_triple(result_b64, alphabet, transposed[base + 2], transposed[base + 1], transposed[base], 4)
-        end
-        if (tail = transposed.size % 3) == 1
-          b64_triple(result_b64, alphabet, 0u8, 0u8, transposed[transposed.size - 1], 2)
-        elsif tail == 2
-          w = transposed[transposed.size - 2].to_u32 | (transposed[transposed.size - 1].to_u32 << 8)
-          3.times do
-            result_b64 << alphabet[w & 0x3f]
-            w >>= 6
-          end
-        end
-        result_b64.to_s
-      end
-
-      # The rounds burn loop: each round mixes the previous digest with
-      # the expanded password (dp) and salt (ds) digests per the
-      # 3/7-divisibility schedule.
-      private def self.sha_crypt_rounds(name : String, da : Bytes, dp_full : Bytes, ds_full : Bytes, rounds : Int64) : Bytes
-        cur = da
-        rounds.times do |i|
-          d = OpenSSL::Digest.new(name)
-          i.odd? ? d.update(dp_full) : d.update(cur)
-          d.update(ds_full) if i % 3 != 0
-          d.update(dp_full) if i % 7 != 0
-          i.odd? ? d.update(cur) : d.update(dp_full)
-          cur = d.final
-        end
-        cur
-      end
-
-      private def self.b64_triple(io : IO::Memory, alphabet : String, b2 : UInt8, b1 : UInt8, b0 : UInt8, n : Int32) : Nil
-        w = (b2.to_u32 << 16) | (b1.to_u32 << 8) | b0.to_u32
-        n.times do
-          io << alphabet[w & 0x3f]
-          w >>= 6
-        end
+        PluginHelpers::CryptHash.filter_password_hash(s, hashtype, salt, salt_size, rounds)
       end
 
       # to_uuid(namespace=ANSIBLE_NAMESPACE) - deterministic UUID5
