@@ -104,7 +104,7 @@ describe "round 994002 kop_misc2 registered key order" do
             release: kopR1
           register: KRIKRI_REGISTER
       YAML
-      keys.must_equal(["state", "ansible_facts", "changed", "failed"])
+      keys.must_equal(["changed", "failed", "ansible_facts", "state"])
     end
 
     it "registers the idempotent second present the same way, changed=false, no msg/release echo" do
@@ -121,7 +121,7 @@ describe "round 994002 kop_misc2 registered key order" do
             release: kopR1
           register: KRIKRI_REGISTER
       YAML
-      value.as_h.keys.must_equal(["state", "ansible_facts", "changed", "failed"])
+      value.as_h.keys.must_equal(["changed", "failed", "ansible_facts", "state"])
       value["state"].as_s.must_equal("present")
       value["changed"].as_bool.must_equal(false)
       value.as_h.has_key?("msg").must_equal(false)
@@ -144,7 +144,7 @@ describe "round 994002 kop_misc2 registered key order" do
             state: clean
           register: KRIKRI_REGISTER
       YAML
-      keys.must_equal(["state", "changed", "failed"])
+      keys.must_equal(["changed", "failed", "state"])
     end
 
     it "registers state=finalize as state, changed, failed" do
@@ -162,7 +162,7 @@ describe "round 994002 kop_misc2 registered key order" do
             state: finalize
           register: KRIKRI_REGISTER
       YAML
-      value.as_h.keys.must_equal(["state", "changed", "failed"])
+      value.as_h.keys.must_equal(["changed", "failed", "state"])
       value["state"].as_s.must_equal("finalize")
       value["changed"].as_bool.must_equal(true)
       value.as_h.has_key?("msg").must_equal(false)
@@ -182,7 +182,7 @@ describe "round 994002 kop_misc2 registered key order" do
             state: absent
           register: KRIKRI_REGISTER
       YAML
-      value.as_h.keys.must_equal(["state", "ansible_facts", "changed", "failed"])
+      value.as_h.keys.must_equal(["changed", "failed", "ansible_facts", "state"])
       value["state"].as_s.must_equal("absent")
       value["ansible_facts"]["deploy_helper"].as_a.size.must_equal(0)
       value.as_h.has_key?("msg").must_equal(false)
@@ -208,7 +208,7 @@ describe "round 994002 kop_misc2 registered key order" do
             dest: #{PluginSpecHelper.tmp_path("kop-maven-check.jar")}
           register: KRIKRI_REGISTER
       YAML
-      value.as_h.keys.must_equal(["skipped", "msg", "failed", "changed"])
+      value.as_h.keys.must_equal(["changed", "failed", "skipped", "msg"])
       value["skipped"].as_bool.must_equal(true)
       value["msg"].as_s.must_equal("remote module (community.general.maven_artifact) does not support check mode")
       value["failed"].as_bool.must_equal(false)
@@ -251,9 +251,9 @@ describe "round 994002 kop_misc2 registered key order" do
             register: KRIKRI_REGISTER
         YAML
         value.as_h.keys.must_equal([
-          "state", "dest", "group_id", "artifact_id", "version", "classifier",
-          "extension", "repository_url", "changed", "uid", "gid", "owner",
-          "group", "mode", "size", "failed",
+          "changed", "failed", "state", "dest", "group_id", "artifact_id", "version", "classifier",
+          "extension", "repository_url", "uid", "gid", "owner",
+          "group", "mode", "size",
         ])
         value["state"].as_s.must_equal("file")
         value["dest"].as_s.must_equal(dest)
@@ -318,7 +318,7 @@ describe "round 994002 kop_misc2 registered key order" do
             register: KRIKRI_REGISTER
         YAML
         value.as_h.keys.must_equal([
-          "state", "dest", "changed", "uid", "gid", "owner", "group", "mode", "size", "failed",
+          "changed", "failed", "state", "dest", "uid", "gid", "owner", "group", "mode", "size",
         ])
         value["state"].as_s.must_equal("file")
         value["changed"].as_bool.must_equal(false)
@@ -354,7 +354,7 @@ describe "round 994002 kop_misc2 registered key order" do
             register: KRIKRI_REGISTER
             ignore_errors: true
         YAML
-        value.as_h.keys.must_equal(["failed", "msg", "changed", "exception"])
+        value.as_h.keys.must_equal(["changed", "failed", "exception", "msg"])
         value["failed"].as_bool.must_equal(true)
         value["msg"].as_s.must_equal(
           "Failed to download artifact kop.bogus:kop_bogus_artifact:1.0 because of " \
@@ -394,7 +394,7 @@ describe "round 994002 kop_misc2 registered key order" do
           community.docker.current_container_facts:
           register: KRIKRI_REGISTER
       YAML
-      value.as_h.keys.must_equal(["ansible_facts", "failed", "changed"])
+      value.as_h.keys.must_equal(["changed", "failed", "ansible_facts"])
       if spec_in_container?
         value["ansible_facts"]["ansible_module_running_in_container"].as_bool.must_equal(true)
         value["ansible_facts"]["ansible_module_container_id"].as_s.wont_be_empty
@@ -432,7 +432,7 @@ describe "round 994002 kop_misc2 registered key order" do
             command: undefine
           register: KRIKRI_REGISTER
       YAML
-      value.as_h.keys.must_equal(["undefine", "failed", "changed"])
+      value.as_h.keys.must_equal(["changed", "failed", "undefine"])
       value["undefine"].as_nil.must_be_nil
       value["failed"].as_bool.must_equal(false)
       value["changed"].as_bool.must_equal(false)
@@ -608,7 +608,7 @@ describe "round 994002 kop_misc2 registered key order" do
             state: active
           register: KRIKRI_REGISTER
       YAML
-      value.as_h.keys.must_equal(["changed", "msg", "failed"])
+      value.as_h.keys.must_equal(["changed", "failed", "msg"])
       value["changed"].as_bool.must_equal(true)
       value["msg"].raw.must_equal(0_i64)
       value["failed"].as_bool.must_equal(false)
@@ -643,7 +643,7 @@ describe "round 994002 kop_misc2 registered key order" do
             state: inactive
           register: KRIKRI_REGISTER
       YAML
-      value.as_h.keys.must_equal(["changed", "msg", "failed"])
+      value.as_h.keys.must_equal(["changed", "failed", "msg"])
       value["changed"].as_bool.must_equal(true)
       value["msg"].raw.must_equal(0_i64)
     end
@@ -657,7 +657,7 @@ describe "round 994002 kop_misc2 registered key order" do
             state: absent
           register: KRIKRI_REGISTER
       YAML
-      value.as_h.keys.must_equal(["changed", "msg", "failed"])
+      value.as_h.keys.must_equal(["changed", "failed", "msg"])
       value["changed"].as_bool.must_equal(true)
       value["msg"].raw.must_equal(0_i64)
     end
@@ -689,7 +689,7 @@ describe "round 994002 kop_misc2 registered key order" do
           register: KRIKRI_REGISTER
           ignore_errors: true
       YAML
-      value.as_h.keys.must_equal(["diff", "failed", "msg", "checksum", "changed", "exception"])
+      value.as_h.keys.must_equal(["changed", "failed", "exception", "msg", "diff", "checksum"])
       value["diff"].as_a.size.must_equal(0)
       value["msg"].as_s.must_equal("Destination directory #{missing_parent} does not exist")
       value["checksum"].as_s.must_equal(Digest::SHA1.hexdigest("#{content.strip}\n"))
