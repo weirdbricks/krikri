@@ -79,7 +79,11 @@ describe "when: filter-plugin runtime failure chain" do
 
     status.exit_code.must_equal(2)
     output.must_include("[ERROR]: Task failed: A 'when' expression failed: The test plugin 'ansible.builtin.version' failed: Version comparison failed: '<' not supported between instances of 'str' and 'int'")
-    output.must_include("<<< caused by >>>\n\nA 'when' expression failed: The test plugin 'ansible.builtin.version' failed: Version comparison failed: '<' not supported between instances of 'str' and 'int'\nOrigin: ")
+    # 2.21 splits a test plugin's wrapper from its own cause: the middle
+    # link is the wrapper alone and the cause follows as a third record
+    # with no Origin (live-verified vs 2.21.6).
+    output.must_include("<<< caused by >>>\n\nA 'when' expression failed: The test plugin 'ansible.builtin.version' failed.\nOrigin: ")
+    output.must_include("<<< caused by >>>\n\nVersion comparison failed: '<' not supported between instances of 'str' and 'int'\n")
     output.must_include("fatal: [localhost]: FAILED! => {\"msg\": \"Task failed: A 'when' expression failed: The test plugin 'ansible.builtin.version' failed: Version comparison failed: '<' not supported between instances of 'str' and 'int'\"}")
     output.wont_include("ALLOW_BROKEN_CONDITIONALS")
   end

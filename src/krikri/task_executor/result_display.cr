@@ -1150,6 +1150,9 @@ module Krikri
       # same wording raised from a TASK ARG (not a when:) keeps its own
       # generic block here.
       return if result["_ansible_when_error_emitted"]?.try(&.as_bool?) == true
+      # A raising changed_when:/failed_when: already printed its
+      # clause-labelled chain (emit_conditional_clause_error_block).
+      return if result["_ansible_conditional_clause_emitted"]?.try(&.as_bool?) == true
       return if msg.includes?("Conditional result") ||
                 msg.includes?("Syntax error in expression")
 

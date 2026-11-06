@@ -112,7 +112,10 @@ describe "looped include_tasks with a raising when: recaps one failure" do
     # The chain's task-level Origin is the include task's `- name:` line;
     # the caused-by Origin is the when: value token.
     output.must_match(/Task failed\.\nOrigin: [^\n]*site\.yml:15:7\n/)
-    output.must_match(/<<< caused by >>>\n\nA 'when' expression failed: Conditional result \(True\) was derived from value of type 'list' at '[^']*site\.yml:8:9'/)
+    # 2.21's non-boolean shape: the caused-by line is the bare clause
+    # label, the detail follows as a third record (live-verified vs 2.21.6).
+    output.must_match(/<<< caused by >>>\n\nA 'when' expression failed\.\nOrigin: /)
+    output.must_match(/<<< caused by >>>\n\nConditional result \(True\) was derived from value of type 'list' at '[^']*site\.yml:8:9'/)
     output.must_match(/Origin: [^\n]*site\.yml:20:13\n/)
     output.scan("ALLOW_BROKEN_CONDITIONALS").size.must_equal(1)
     # Per-item failed dumps carry the loop bindings, keys alphabetical.

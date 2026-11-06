@@ -45,9 +45,11 @@ describe "loop item when origin" do
     output.must_include("was derived from value of type 'str' at '#{playbook}:13:17'. Conditionals must have a boolean result.")
     # One chain block per failing item, not one per task.
     output.scan("[ERROR]: Task failed:").size.must_equal(2)
-    # Each block's second Origin (the caused-by stanza) still points at
-    # the task's own when: token - real keeps that too.
-    output.scan("Origin: #{playbook}:6:13").size.must_equal(2)
+    # Each block's caused-by Origins still point at the task's own when:
+    # token - real keeps that too, and 2.21's three-record non-boolean
+    # shape prints the clause Origin twice per block (live-verified vs
+    # 2.21.6).
+    output.scan("Origin: #{playbook}:6:13").size.must_equal(4)
     # Interleaving: item 1's block precedes item 1's failed line, which
     # precedes item 2's block and failed line.
     b1 = output.index!("#{playbook}:11:17")

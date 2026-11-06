@@ -168,7 +168,11 @@ describe "when: statically-imported conditional failure chain" do
     text.must_include("Task failed.\nOrigin: #{install_file}:4:7\n\n2 - name: install rclone from package\n3   block:\n4     - name: detect latest rclone package release\n        ^ column 7")
     # second link: the importing file's when: VALUE token (column 9 =
     # right after `  when: `)
-    text.must_include("<<< caused by >>>\n\nA 'when' expression failed: Conditional result (True) was derived from value of type 'list' at '#{main_file}:5:9'. Conditionals must have a boolean result.\nOrigin: #{main_file}:5:9\n\n3   import_tasks: root.yml\n4   become: true\n5   when: lin_rclone_mounts |d([],true)\n          ^ column 9")
+    # 2.21's non-boolean shape: the middle link is the bare clause label,
+    # the detail is a third record at the same clause token (live-verified
+    # vs 2.21.6).
+    text.must_include("<<< caused by >>>\n\nA 'when' expression failed.\nOrigin: #{main_file}:5:9\n\n3   import_tasks: root.yml\n4   become: true\n5   when: lin_rclone_mounts |d([],true)\n          ^ column 9")
+    text.must_include("<<< caused by >>>\n\nConditional result (True) was derived from value of type 'list' at '#{main_file}:5:9'. Conditionals must have a boolean result.\nOrigin: #{main_file}:5:9")
     text.must_include("Broken conditionals can be temporarily allowed with the `ALLOW_BROKEN_CONDITIONALS` configuration option.")
     text.must_include("fatal: [localhost]: FAILED! => {\"changed\": false, \"msg\": \"Task failed: A 'when' expression failed: Conditional result (True) was derived from value of type 'list' at '#{main_file}:5:9'. Conditionals must have a boolean result.\"}")
     text.wont_include("Unhandled exception")

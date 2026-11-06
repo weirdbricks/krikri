@@ -2468,7 +2468,8 @@ module Krikri
           # decorated with the failing item's own origin, so the chain
           # re-uses it verbatim.
           if failed && (fail_msg = result["msg"]?.try(&.as_s?)) && conditional_evaluation_failure?(fail_msg)
-            emit_when_error_chain(task, fail_msg, host, loop_item: item, loop_index: idx)
+            emit_when_error_chain(task, fail_msg, host, loop_item: item, loop_index: idx,
+              cause_text: result["_ansible_conditional_cause"]?.try(&.as_s?))
           end
           # A batch-prepared (or solo) finalization failure carries its
           # [ERROR] chain block stashed on the result (see
@@ -2853,7 +2854,7 @@ module Krikri
     # unresolvable filter/test NAME is a compile-time syntax error, a
     # filter that RAN and raised keeps its plugin wrapper, everything else
     # is conditional-evaluation wording).
-    private def until_expression_failure(ex : Exception) : String
+    private def until_expression_failure(ex : Exception, task : Task? = nil, host : Host? = nil, until_condition : String? = nil) : String
       detail = if ex.is_a?(VariableSubstitutor::FilterEngine::FilterFailureError)
                  message = ex.message.to_s
                  message.starts_with?("The filter plugin '") ? message : "Error while evaluating conditional: #{message}"
@@ -2861,8 +2862,16 @@ module Krikri
                  "Syntax error in expression: #{ex.message}"
                elsif ex.is_a?(ConditionalEvaluator::ConditionalBooleanError)
                  # Real words the non-boolean class with its own text and no
-                 # "Error while evaluating conditional:" wrapper.
-                 ex.message.to_s
+                 # "Error while evaluating conditional:" wrapper - and
+                 # decorates it with the until: clause's own value position
+                 # ("at '<file>:line:col'"), the same data-lineage labeling
+                 # the when: path applies (live-verified vs 2.21.6).
+                 message = ex.message.to_s
+                 if task && until_condition
+                   message = decorate_conditional_value_origin(task, message, host,
+                     operand: until_condition, clause_key: "until", clause_raw: until_condition)
+                 end
+                 message
                elsif ex.is_a?(ConditionalEvaluator::OrderingTypeError) || ex.is_a?(RenderExpressionError)
                  "Error rendering expression: #{ex.message}"
                else
@@ -3019,9 +3028,9 @@ module Krikri
             # load included tasks: ...". The chain's caused-by Origin is
             # pinned at the until: value token, the position real reports
             # for it (issue #318).
-            until_error = until_expression_failure(ex)
+            until_error = until_expression_failure(ex, task, host, until_condition)
             emit_when_error_chain(task, until_error, host, clause_key: "until", clause_raw: until_condition)
-            failed_result = when_error_result(WhenEvaluationError.new(until_error), task, host)
+            failed_result = when_error_result(WhenEvaluationError.new(until_error), task, host, clause_key: "until", clause_raw: until_condition)
             if register_name && !register_name.empty?
               register_result(host, register_name, failed_result)
               vars_context[register_name] = @registered_vars[host.name][register_name]

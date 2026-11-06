@@ -1,6 +1,6 @@
 # Upgrade plan: parity target ansible-core 2.19.11 → 2.21.6
 
-Status: **source-diff + porting-guide pass complete at 0.9.2439 — pending live verification**.
+Status: **source-diff + porting-guide pass complete at 0.9.2440 — pending live verification**.
 Decision (2026-11-05): krikri tracks ansible-core **2.21.6 only** — the
 `--krikri-argspec-profile` knob proposed earlier was dropped before it
 shipped; `data/argspecs.json` IS the 2.21.6 capture, and
@@ -236,26 +236,39 @@ were, and they are done.
       `attempts` but NO `exception` placeholder when the module itself
       succeeded (0.9.2433) - `gap_fixes_test` and the new
       `until_exhausted_exception_shape_test` pin both shapes.
+- [x] **changed_when:/failed_when: clause labelling + non-boolean chain
+      shapes** (0.9.2440), live-captured vs 2.21.6:
+      - a raising `*_when` now renders 2.21's block - "Task failed: Action
+        failed:" + the clause-labelled detail with the clause value's own
+        Origin, and the same text in the fatal msg (only when the module
+        returned no msg of its own; a non-empty module msg is kept).
+      - a module that had already failed keeps its msg and shows "Module
+        failed" in the block, and the result's traceback placeholder moves
+        into `<clause>_when_suppressed_exception` ("(traceback
+        unavailable)"), exactly as 2.21 does.
+      - a braced form's raising filter is stored as its plugin wrapper /
+        conditional-evaluation wording instead of being mislabelled
+        "Syntax error in template:".
+      - the NON-BOOLEAN class ("Conditional result (...) ... Conditionals
+        must have a boolean result.") now renders 2.21's three-record
+        shape everywhere (when:, until:, *_when): the middle link
+        shortens to the bare clause label and the detail follows as a
+        third record at the same clause token. `*_when` keeps the
+        ALLOW_BROKEN_CONDITIONALS hint; `when:`/`until:` keep it too.
+      - a filter/test PLUGIN whose own error summary carries a cause (the
+        version test's "Version comparison failed: ...") splits into the
+        same three records; a filter that merely raises keeps the detail
+        inline in the caused-by line (both live-verified).
+      - an `until:` non-boolean result now carries real's "at
+        '<file>:line:col'" clause lineage like `when:` does.
 - [ ] **Known micro-divergences** (documented, deliberate or deferred):
-      - `failed_when:`/`changed_when:` failures (2.21, live-captured,
-        NOT yet implemented - `when:`/`until:`/`assert:` are done above):
-        real labels the clause and renders the three-part block
-        "Task failed: Action failed.\nOrigin(task)\n<<< caused by >>>\n
-        A '<clause>' expression failed: <detail>\nOrigin(clause value)"
-        with the same text in the fatal msg, or "... Module failed: A
-        '<clause>' expression failed: ..." (display only - the registered
-        msg keeps the module's own) when the module itself had already
-        failed; the stored `failed_when_result`/`changed_when_result`
-        keeps the bare detail. A raising `*_when` on an already-failed
-        module result also gains `failed_when_suppressed_exception`/
-        `changed_when_suppressed_exception` ("(traceback unavailable)").
-        krikri still reports the 2.19 shapes there, and even for 2.19 it
-        mis-classifies a braced-form filter failure (stored as "Syntax
-        error in expression:"/"Syntax error in template:" instead of the
-        plugin wrapper / conditional-evaluation wording).
-      - an `until:` non-boolean result misses real's "at '<file>:<line>
-        :<col>'" value-lineage decoration the `when:` path applies
-        (everything else about the until wording matches).
+      - `mandatory` inside a `when:` reports "Error while evaluating
+        conditional: 'x' is undefined" where 2.21 prints "The filter
+        plugin 'ansible.builtin.mandatory' failed: Mandatory variable 'x'
+        not defined." (a wrong failure class, not a display shape).
+      - the int-vs-str comparison class names the tagged type
+        ('_AnsibleTaggedStr') where real prints 'str' (data-tagging
+        naming, tracked with the Data Tagging follow-ups below).
       - custom-module injection echo (see the INJECT_INVOCATION deviation
         above).
       - the file-attributes diff entry covers mode/owner/group; a

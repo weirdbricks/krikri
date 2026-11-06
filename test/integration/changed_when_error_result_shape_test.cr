@@ -91,11 +91,13 @@ describe "changed_when:/failed_when: evaluation errors keep the module's own msg
       YAML
 
     # On a result the module did not fail, the raising changed_when
-    # finalizes through AnsibleActionCapturedError (real 2.19.11): the
-    # msgless result gains the action-level msg and the ERROR banner
-    # repeats it - not the module-class "Module failed." block.
-    output.must_include("Task failed: Action failed: Unknown error.")
-    output.must_include(%("msg": "Task failed: Action failed: Unknown error."))
+    # finalizes through AnsibleActionCapturedError: 2.21 labels the clause
+    # in the msg and in the [ERROR] block's caused-by stanza, and the
+    # block is the action-level one - never the module-class "Module
+    # failed." block (live-verified vs 2.21.6).
+    clause = "Task failed: Action failed: A 'changed_when' expression failed: Error while evaluating conditional: object of type 'dict' has no attribute 'diff'"
+    output.must_include("[ERROR]: #{clause}")
+    output.must_include(%("msg": "#{clause}"))
     output.wont_include("Task failed: Module failed.")
   end
 
@@ -127,7 +129,9 @@ describe "changed_when:/failed_when: evaluation errors keep the module's own msg
     # syntax-error shape, not the "Error while evaluating conditional:"
     # trap wording. (The console fatal block doesn't display the
     # *_when_result fields, so the follow-up debug surfaces them.)
-    output.scan(%(Syntax error in expression: No filter named 'search'.)).size.must_equal 2
+    # Six occurrences: the two [ERROR] blocks (brief + caused-by), the two
+    # fatal JSON lines, and the two entries in the surfacing debug.
+    output.scan(%(Syntax error in expression: No filter named 'search'.)).size.must_equal 6
   end
 
   it "stores a braced form's unknown filter with the rendered-template wording" do
@@ -155,9 +159,11 @@ describe "changed_when:/failed_when: evaluation errors keep the module's own msg
     # so real words the stored text with the rendered-template wording
     # (issue #871, Wtower.python-latest's version_compare failed_when,
     # live-verified vs 2.19) - not the unbraced form's "Syntax error in
-    # expression:" wording the test above asserts. Four occurrences: the
-    # two fatal JSON lines (command results carry the *_when_result field
-    # in the dumped shape) plus the two entries in the surfacing debug.
-    output.scan(%(Syntax error in template: No filter named 'nosuchfilterx'.)).size.must_equal 4
+    # expression:" wording the test above asserts. Ten occurrences: the two
+    # [ERROR] blocks (brief + caused-by), the two fatal JSON lines (command
+    # results carry the *_when_result field in the dumped shape) and the two
+    # entries in the surfacing debug - each text appearing twice more since
+    # both changed_when: and failed_when: tasks fail.
+    output.scan(%(Syntax error in template: No filter named 'nosuchfilterx'.)).size.must_equal 10
   end
 end
