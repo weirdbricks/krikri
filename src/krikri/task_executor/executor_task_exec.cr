@@ -3820,6 +3820,13 @@ module Krikri
       # removes it (see with_command_lines_augmented's comment).
       omit_command_lines = result_hash.has_key?("_ansible_omit_command_lines")
       result_hash.reject! { |key, _| key.starts_with?("_ansible_") }
+      # ansible-core 2.21's UnifiedTaskResult export: `changed` and
+      # `failed` are plain bool properties - EVERY exported result carries
+      # both (false included; live-verified on when:-skipped solo and
+      # loop-item registers, which 2.19 left without `failed`), while
+      # `skipped`/`unreachable` export only when true (`result or None`).
+      result_hash["changed"] = JSON::Any.new(false) unless result_hash.has_key?("changed")
+      result_hash["failed"] = JSON::Any.new(false) unless result_hash.has_key?("failed")
       # ansible-core 2.21 flipped INJECT_INVOCATION's default to false AND
       # relaxed the strategy's top-level strip with it: with the setting
       # off no module result carries `invocation` in the first place, and
@@ -3831,6 +3838,16 @@ module Krikri
       # vars_context exists (the attach sites), not at every one of this
       # function's 27 call sites.
       result_hash.delete("invocation") unless InvocationInjection.enabled?
+      # ansible-core 2.21 rebuilds every registered result on the
+      # UnifiedTaskResult dataclass: declared fields lead (changed, failed,
+      # msg, rc, ...), the changed_when/failed_when verdicts follow, a loop
+      # item's wrapper keys move ahead of the module payload, and the
+      # module's own keys keep their relative order in the tail (see
+      # ResultShape's comment for the live-verified shape table). Applied
+      # here, at the single point every registered result passes through -
+      # the same slot apply_failed_key_order occupies for the 2.19-era
+      # module-order restore, whose tail this partition now wraps.
+      ResultShape.normalize_registered!(result_hash)
       registered = with_command_lines_augmented(JSON::Any.new(result_hash), omit_command_lines: omit_command_lines)
       @registered_vars[host.name][register_name] = registered
       # Write-time unsafe marking - the per-task context build marks these
@@ -3852,7 +3869,12 @@ module Krikri
     # passes through, so no individual builder has to know the rule.
     private def apply_failed_key_order(hash : Hash(String, JSON::Any)) : Nil
       order = hash["_ansible_key_order"]?.try(&.as_a) || return
-      hash["exception"] = JSON::Any.new("(traceback unavailable)") unless hash.has_key?("exception")
+      # ansible-core 2.21 dropped the controller-added
+      # `exception: "(traceback unavailable)"` from results the failed_when
+      # suppression un-fails (live-verified: a suppressed `fail:` register
+      # under 2.21.6 carries no `exception`, where 2.19 always had it) -
+      # the key belongs only to results that are actually failed.
+      hash["exception"] = JSON::Any.new("(traceback unavailable)") unless hash.has_key?("exception") || hash["failed"]?.try(&.as_bool?) == false
       # A result whose display shape omits `changed` (debug:'s own
       # fatalization failure) but whose registered shape carries it - see
       # the `_ansible_register_changed` marker.

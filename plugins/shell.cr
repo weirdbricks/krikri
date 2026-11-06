@@ -518,7 +518,7 @@ module Krikri
       raw_result = PluginResult.new(
         changed: true,
         failed: result[:exit_code] != 0,
-        msg: result[:exit_code] == 0 ? "" : "non-zero return code",
+        msg: result[:exit_code] == 0 ? "" : "The command exited with a non-zero return code.",
         include_empty_msg: true,
         cmd: command_string,
         stdout: final_stdout,
@@ -572,12 +572,16 @@ module Krikri
         changed: false,
         failed: true,
         msg: "Error executing command.",
-        cmd: [executable, "-c", command_string].map { |arg| shlex_quote(arg) }.join(' '),
-        rc: errno,
+        # 2.21's registered spawn-failure shape (see command.cr's
+        # spawn_failure_result): module keys read stdout, stderr, cmd after
+        # the controller hoists the declared fields, then the derived
+        # *_lines.
         stdout: "",
-        stdout_lines: [] of String,
         stderr: "",
-        stderr_lines: [] of String
+        cmd: [executable, "-c", command_string].map { |arg| shlex_quote(arg) }.join(' '),
+        stdout_lines: [] of String,
+        stderr_lines: [] of String,
+        rc: errno
       )
       result.extra["exception"] = JSON::Any.new("[Errno #{errno}] #{reason}: b'#{executable}'")
       result

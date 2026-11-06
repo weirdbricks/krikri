@@ -4238,9 +4238,17 @@ module Krikri
             # TaskExecutor: result['failed_when_result'] = <verdict> whenever failed_when: is set
             hash["failed_when_result"] = JSON::Any.new(failed_when_result)
             # a module failure that failed_when: overrides to "not failed" keeps its
-            # traceback marker under the suppressed-exception key
-            if !failed_when_result && (suppressed = hash.delete("exception"))
-              hash["failed_when_suppressed_exception"] = suppressed
+            # traceback marker under the suppressed-exception key. 2.21
+            # exports that field for EVERY suppressed module failure -
+            # including a fail_json result that never carried an
+            # `exception` key (live-verified vs 2.21.6: a suppressed `fail:`
+            # register reads changed,failed,msg,failed_when_result,
+            # failed_when_suppressed_exception) - so synthesize the same
+            # placeholder the real failure path uses when there is nothing
+            # to move.
+            if !failed_when_result && module_failed
+              suppressed = hash.delete("exception")
+              hash["failed_when_suppressed_exception"] = suppressed || JSON::Any.new("(traceback unavailable)")
             end
             # A failed_when:-failed result with NO msg key finalizes through
             # AnsibleActionCapturedError.normalize_result_exception, whose

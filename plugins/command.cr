@@ -513,7 +513,7 @@ module Krikri
       with_executable_warning(PluginResult.new(
         changed: true,
         failed: exit_code != 0,
-        msg: exit_code == 0 ? "" : "non-zero return code",
+        msg: exit_code == 0 ? "" : "The command exited with a non-zero return code.",
         include_empty_msg: true,
         cmd: reported_cmd,
         stdout: final_stdout,
@@ -546,10 +546,15 @@ module Krikri
         changed: false,
         failed: true,
         msg: "Error executing command.",
-        cmd: argv.map { |arg| shlex_quote(arg) }.join(' '),
+        # 2.21's registered spawn-failure shape (fail_json kwargs rc,
+        # stdout, stderr, msg, cmd, exception; live-verified): after the
+        # controller hoists changed/failed/msg/rc, the module's own keys
+        # read stdout, stderr, cmd, then the derived *_lines - so the
+        # lines ride AFTER cmd here, not between stdout and stderr.
         stdout: "",
-        stdout_lines: [] of String,
         stderr: "",
+        cmd: argv.map { |arg| shlex_quote(arg) }.join(' '),
+        stdout_lines: [] of String,
         stderr_lines: [] of String,
         rc: spawn_errno(ex)
       )

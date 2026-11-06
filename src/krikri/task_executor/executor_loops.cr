@@ -2513,12 +2513,22 @@ module Krikri
       aggregate = {} of String => JSON::Any
       if loop_items.empty?
         aggregate["changed"] = JSON::Any.new(false)
+        aggregate["failed"] = JSON::Any.new(false)
         aggregate["skipped"] = JSON::Any.new(true)
+        # 2.21's empty-loop aggregate carries BOTH reason keys with the
+        # same text (live-verified: skip_reason AND skipped_reason both
+        # "No items in the list"), where krikri emitted only
+        # skipped_reason.
+        aggregate["skip_reason"] = JSON::Any.new("No items in the list")
         aggregate["skipped_reason"] = JSON::Any.new("No items in the list")
         aggregate["results"] = JSON::Any.new(results)
       else
         aggregate["results"] = JSON::Any.new(results)
-        aggregate["skipped"] = JSON::Any.new(all_items_skipped)
+        # 2.21's UnifiedTaskResult exports `skipped` only when true
+        # (`result or None`): a successful loop's aggregate carries no
+        # `skipped` key where 2.19 emitted skipped: false (live-verified
+        # TOPLOOP shape). `changed`/`failed` stay bool-always.
+        aggregate["skipped"] = JSON::Any.new(true) if all_items_skipped
         aggregate["changed"] = JSON::Any.new(true) if any_changed
         if any_failed
           aggregate["failed"] = JSON::Any.new(true)
@@ -2528,6 +2538,7 @@ module Krikri
           aggregate["msg"] = JSON::Any.new(all_items_skipped ? "All items skipped" : "All items completed")
         end
         aggregate["changed"] = JSON::Any.new(any_changed) unless aggregate.has_key?("changed")
+        aggregate["failed"] = JSON::Any.new(false) unless aggregate.has_key?("failed")
       end
 
       if executed_count == 0
@@ -2668,6 +2679,13 @@ module Krikri
 
       if register_name = task.register
         unless register_name.empty?
+          # ansible-core 2.21's UnifiedTaskResult export: the aggregate
+          # leads with changed/failed/msg and the results land last, while
+          # each per-item entry moves its loop-wrapper keys ahead of the
+          # module payload (ResultShape's comment carries the live-verified
+          # shape table). The aggregate here bypasses register_result, so
+          # the same normalization runs at this write.
+          ResultShape.normalize_registered!(aggregate)
           @registered_vars[host.name][register_name] = JSON::Any.new(aggregate)
           @hv_generation += 1
         end
