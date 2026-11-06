@@ -5,6 +5,7 @@ require "file_utils"
 require "system/user"
 require "system/group"
 require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/text_file_io"
 require "../src/krikri/plugin_helpers/line_editor"
 require "../src/krikri/plugin_helpers/python_pattern"
 
@@ -202,7 +203,8 @@ module Krikri
     # (Ansible's binary-mode readlines view) - the joined list IS the new
     # file content, byte for byte.
     private def apply(path : String, state : String, line : String?, regexp : String?, search_string : String?, firstmatch : Bool, being_created : Bool, check_mode : Bool) : PluginResult
-      original_content = File.exists?(path) ? File.read(path) : ""
+      original_content, read_failure = read_as_text(path)
+      return read_failure.not_nil! if read_failure
       original_lines = PluginHelpers::LineEditor.split_lines(original_content)
 
       new_lines, changed, msg, found =
@@ -338,6 +340,21 @@ module Krikri
     # File.write here followed it too, so keep that behavior.
     #
     # Returns nil on success, or a failed PluginResult.
+    # 2.21 opens the destination in text mode with the task's `encoding:`
+    # (default utf-8), so undecodable content fails the task with CPython's
+    # own UnicodeDecodeError text instead of being edited byte-wise. The
+    # file is decoded to UTF-8 for editing and re-encoded on the way out.
+    private def file_encoding : String
+      @params["encoding"]?.presence || "utf-8"
+    end
+
+    private def read_as_text(path : String) : {String, PluginResult?}
+      return {"", nil} unless File.exists?(path)
+      text, error = PluginHelpers::TextFileIO.decode(File.read(path).to_slice, file_encoding)
+      return {"", PluginResult.new(changed: false, failed: true, msg: error.not_nil!)} if error
+      {text.not_nil!, nil}
+    end
+
     private def write_with_optional_validate(path : String, content : String) : PluginResult?
       validate_cmd = @params["validate"]?
       if validate_cmd && !validate_cmd.includes?("%s")
@@ -359,7 +376,9 @@ module Krikri
         # held the bytes at 0644 & ~umask until the mode preservation
         # below ran after the write.
         create_staging_temp(temp_file, staging_temp_mode(path, 0o666, apply_task_mode: false))
-        File.write(temp_file, content, perm: 0o600)
+        bytes, encode_failure = PluginHelpers::TextFileIO.encode(content, file_encoding)
+        return PluginResult.new(changed: false, failed: true, msg: encode_failure.not_nil!) if encode_failure
+        File.write(temp_file, bytes.not_nil!, perm: 0o600)
       rescue ex
         return PluginResult.new(changed: false, failed: true, msg: "Failed to write temporary file: #{ex.message}")
       end
@@ -400,7 +419,9 @@ module Krikri
             unless File.exists?(dest)
               create_staging_temp(dest, staging_temp_mode(dest, 0o644, preserve_dest_mode: false))
             end
-            File.write(dest, content, perm: 0o600)
+            bytes, encode_failure = PluginHelpers::TextFileIO.encode(content, file_encoding)
+            return PluginResult.new(changed: false, failed: true, msg: encode_failure.not_nil!) if encode_failure
+            File.write(dest, bytes.not_nil!, perm: 0o600)
           rescue ex
             return PluginResult.new(changed: false, failed: true, msg: "Failed to write file (unsafe_writes fallback): #{ex.message}")
           end

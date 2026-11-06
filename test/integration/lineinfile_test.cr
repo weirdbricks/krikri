@@ -16,6 +16,40 @@ describe "lineinfile plugin" do
     File.read(path).must_include("new line")
   end
 
+  # 2.21 opens the destination in text mode with the task's encoding:
+  # option (default utf-8) instead of reading bytes. Live-verified vs
+  # ansible-core 2.21.6 with an iso-8859-1 file holding "café": the line
+  # is matched/inserted on decoded text and the file stays iso-8859-1.
+  it "edits a file in the task's encoding: and keeps its bytes in that encoding (2.21)" do
+    path = PluginSpecHelper.tmp_path("lineinfile-latin1.txt")
+    # "café\n" in iso-8859-1 (0xe9 for the e-acute)
+    File.open(path, "wb") { |file| file.write(Bytes[0x63, 0x61, 0x66, 0xe9, 0x0a]) }
+
+    result = PluginSpecHelper.run("lineinfile", {
+      "path"     => path,
+      "line"     => "naïve",
+      "encoding" => "iso-8859-1",
+    })
+
+    falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+    result["msg"].as_s.must_equal("line added")
+    File.read(path).to_slice.hexstring.must_equal("636166e90a6e61ef76650a")
+  end
+
+  # A file the codec cannot decode fails the task with CPython's own
+  # UnicodeDecodeError text (live-verified vs 2.21.6: msg is exactly
+  # "'utf-8' codec can't decode byte 0xff in position 3: invalid start
+  # byte"), not a mangled edit.
+  it "fails on content its encoding: cannot decode, with CPython's message (2.21)" do
+    path = PluginSpecHelper.tmp_path("lineinfile-undecodable.txt")
+    File.open(path, "wb") { |file| file.write(Bytes[0x6f, 0x6b, 0x0a, 0xff, 0xfe, 0x0a]) }
+
+    result = PluginSpecHelper.run("lineinfile", {"path" => path, "line" => "added"})
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("'utf-8' codec can't decode byte 0xff in position 3: invalid start byte")
+  end
+
   it "returns only backup/changed/msg (plus found for absent) like Ansible 2.19.11 - no path/line/state keys" do
     path = PluginSpecHelper.tmp_path("lineinfile-return-keys.txt")
     File.write(path, "keep\ndrop\n")
