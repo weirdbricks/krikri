@@ -342,6 +342,25 @@ module Krikri
         end
       end
 
+      # 2.21's get_cache tail (live-verified vs 2.21.6's apt.py): when
+      # the apt lists directory is absent the cache is recreated with
+      # `apt-get update -q` (up to two tries) and a still-failing run
+      # fails the task with exactly this message; 2.19 only recovered
+      # when python-apt itself raised on the lists path. Runs in check
+      # mode too (module-level get_cache precedes every branch).
+      unless Dir.exists?("/var/lib/apt/lists")
+        rc, stdout, stderr = recreate_apt_cache
+        if rc != 0
+          @omit_cache_updated = true
+          return PluginResult.new(
+            changed: false,
+            failed: true,
+            msg: "Failed to recreate the cache: #{stdout + stderr}",
+            rc: rc.to_i64,
+          )
+        end
+      end
+
       # Get state (default: present)
       state = @params["state"]? || "present"
       if @params["deb"]? && state != "present"
@@ -1150,6 +1169,23 @@ module Krikri
     # package carries "Candidate: <version>", and a purely virtual one
     # "Candidate: (none)" (resolvable: true, version nil - the same
     # let-apt-get-sort-it-out treatment real gives virtual names).
+    # recreate_cache: up to two `apt-get update -q` tries; the LAST
+    # try's rc/stdout/stderr are returned (2.21's own recreate_cache
+    # shape - note the loop re-runs on failure only).
+    private def recreate_apt_cache : {Int32, String, String}
+      rc = 1
+      stdout = ""
+      stderr = ""
+      2.times do
+        result = remote_exec("apt-get update -q")
+        rc = result[:exit_code]
+        stdout = result[:stdout].to_s
+        stderr = result[:stderr].to_s
+        break if rc == 0
+      end
+      {rc, stdout, stderr}
+    end
+
     private def apt_candidate(name : String) : {Bool, String?}
       probe = remote_exec("apt-cache policy #{shell_single_quote(name)} 2>/dev/null")
       return {false, nil} unless probe[:stdout].includes?("Candidate:")
