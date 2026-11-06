@@ -1,6 +1,6 @@
 # Upgrade plan: parity target ansible-core 2.19.11 → 2.21.6
 
-Status: **source-diff + porting-guide pass complete at 0.9.2440 — pending live verification**.
+Status: **source-diff + porting-guide pass complete at 0.9.2441 — pending live verification**.
 Decision (2026-11-05): krikri tracks ansible-core **2.21.6 only** — the
 `--krikri-argspec-profile` knob proposed earlier was dropped before it
 shipped; `data/argspecs.json` IS the 2.21.6 capture, and
@@ -261,14 +261,20 @@ were, and they are done.
         inline in the caused-by line (both live-verified).
       - an `until:` non-boolean result now carries real's "at
         '<file>:line:col'" clause lineage like `when:` does.
+- [x] **mandatory's failure class + string-literal type names**
+      (0.9.2441), live-verified vs 2.21.6:
+      - `missing | mandatory` in a `when:`/`failed_when:`/`until:`/
+        `assert:` now fails with the mandatory FILTER PLUGIN's own
+        wrapper ("The filter plugin 'ansible.builtin.mandatory' failed:
+        Mandatory variable 'x' not defined."), not the plain
+        "Error while evaluating conditional: 'x' is undefined" the strict
+        probe used to raise before the filter ever ran.
+      - an int-vs-str ordering TypeError now names a quoted STRING
+        LITERAL operand 'str' (real's Jinja builds a plain Python str for
+        it) while a value read from a yaml document keeps
+        '_AnsibleTaggedStr' - both live-verified, both spellings covered
+        by test/integration/conditional_clause_failure_shape_test.cr.
 - [ ] **Known micro-divergences** (documented, deliberate or deferred):
-      - `mandatory` inside a `when:` reports "Error while evaluating
-        conditional: 'x' is undefined" where 2.21 prints "The filter
-        plugin 'ansible.builtin.mandatory' failed: Mandatory variable 'x'
-        not defined." (a wrong failure class, not a display shape).
-      - the int-vs-str comparison class names the tagged type
-        ('_AnsibleTaggedStr') where real prints 'str' (data-tagging
-        naming, tracked with the Data Tagging follow-ups below).
       - custom-module injection echo (see the INJECT_INVOCATION deviation
         above).
       - the file-attributes diff entry covers mode/owner/group; a

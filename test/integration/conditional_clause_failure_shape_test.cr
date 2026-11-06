@@ -112,6 +112,62 @@ describe "clause-labelled changed_when:/failed_when: failures" do
     output.must_include("Broken conditionals can be temporarily allowed with the `ALLOW_BROKEN_CONDITIONALS` configuration option.")
   end
 
+  it "reports mandatory's own plugin failure in every conditional clause" do
+    _status, output, _playbook = run_clause_playbook(<<-YAML)
+    - hosts: localhost
+      connection: local
+      gather_facts: false
+      tasks:
+        - name: when
+          ansible.builtin.debug: {msg: hi}
+          when: missing_var | mandatory
+          ignore_errors: true
+        - name: failed_when
+          ansible.builtin.command: echo hi
+          failed_when: missing_var | mandatory
+          ignore_errors: true
+        - name: until
+          ansible.builtin.command: echo hi
+          until: missing_var | mandatory
+          retries: 1
+          delay: 0
+          ignore_errors: true
+        - name: assert
+          ansible.builtin.assert:
+            that: missing_var | mandatory
+          ignore_errors: true
+    YAML
+
+    wrapper = "The filter plugin 'ansible.builtin.mandatory' failed: Mandatory variable 'missing_var' not defined."
+    output.must_include("[ERROR]: Task failed: A 'when' expression failed: #{wrapper}")
+    output.must_include("[ERROR]: Task failed: Action failed: A 'failed_when' expression failed: #{wrapper}")
+    output.must_include("[ERROR]: Task failed: An 'until' expression failed: #{wrapper}")
+    output.must_include("[ERROR]: Task failed: #{wrapper}")
+    output.wont_include("is undefined")
+  end
+
+  it "names a literal string operand 'str' and a yaml-sourced one '_AnsibleTaggedStr'" do
+    _status, output, _playbook = run_clause_playbook(<<-YAML)
+    - hosts: localhost
+      connection: local
+      gather_facts: false
+      vars:
+        tagged: "10"
+      tasks:
+        - name: literal
+          ansible.builtin.debug: {msg: hi}
+          when: "'10' >= 1"
+          ignore_errors: true
+        - name: yaml value
+          ansible.builtin.debug: {msg: hi}
+          when: tagged >= 1
+          ignore_errors: true
+    YAML
+
+    output.must_include("Error rendering expression: '>=' not supported between instances of 'str' and 'int'")
+    output.must_include("Error rendering expression: '>=' not supported between instances of '_AnsibleTaggedStr' and 'int'")
+  end
+
   it "labels an until: evaluation failure and decorates a non-boolean result with the clause position" do
     _status, output, playbook = run_clause_playbook(<<-YAML)
     - hosts: localhost

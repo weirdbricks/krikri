@@ -2855,7 +2855,13 @@ module Krikri
     # filter that RAN and raised keeps its plugin wrapper, everything else
     # is conditional-evaluation wording).
     private def until_expression_failure(ex : Exception, task : Task? = nil, host : Host? = nil, until_condition : String? = nil) : String
-      detail = if ex.is_a?(VariableSubstitutor::FilterEngine::FilterFailureError)
+      detail = if ex.is_a?(Krikri::FilterPluginError) || ex.is_a?(Krikri::TestPluginError)
+                 # A filter/test PLUGIN's own runtime failure keeps its
+                 # wrapper and adds no conditional-evaluation prefix
+                 # (live-verified vs 2.21.6: mandatory's "Mandatory variable
+                 # 'x' not defined.").
+                 ex.message.to_s
+               elsif ex.is_a?(VariableSubstitutor::FilterEngine::FilterFailureError)
                  message = ex.message.to_s
                  message.starts_with?("The filter plugin '") ? message : "Error while evaluating conditional: #{message}"
                elsif ex.is_a?(VariableSubstitutor::FilterEngine::UnknownFilterError) || ex.is_a?(VariableSubstitutor::UnknownTestError)
@@ -3014,7 +3020,7 @@ module Krikri
               condition_met = true
               break
             end
-          rescue ex : VariableSubstitutor::FilterEngine::UnknownFilterError | VariableSubstitutor::UnknownTestError | UndefinedVariableError | ConditionalEvaluator::UndefinedVariableError | ConditionalEvaluator::ConditionalBooleanError | ConditionalEvaluator::OrderingTypeError | RenderExpressionError
+          rescue ex : VariableSubstitutor::FilterEngine::UnknownFilterError | VariableSubstitutor::UnknownTestError | UndefinedVariableError | ConditionalEvaluator::UndefinedVariableError | ConditionalEvaluator::ConditionalBooleanError | ConditionalEvaluator::OrderingTypeError | RenderExpressionError | Krikri::FilterPluginError | Krikri::TestPluginError
             # An ansible-compiled until: condition fails the WHOLE task the
             # first time it raises: one fatal "Task failed: An 'until'
             # expression failed: <detail>" after the first attempt's run,

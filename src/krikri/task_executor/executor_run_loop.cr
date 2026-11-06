@@ -4098,6 +4098,11 @@ module Krikri
       # trap and stores the bare "Syntax error in expression: ..." shape
       # the template engine itself reports, not the prefixed trap wording.
       #
+      # A filter PLUGIN's runtime failure (mandatory's "Mandatory variable
+      # 'x' not defined.", indent's operand TypeError) is stored with its
+      # own wrapper, no conditional-evaluation prefix (live-verified vs
+      # 2.21.6).
+      return message if exc.is_a?(Krikri::FilterPluginError) && message.starts_with?("The filter plugin '")
       # A filter that RAN and raised is the runtime class instead
       # (FilterFailureError subclasses UnknownFilterError): its plugin
       # wrapper, or the conditional-evaluation wording for a bare runtime
@@ -4301,7 +4306,7 @@ module Krikri
             maybe_conditional_delimiters_deprecation(task, changed_when, "changed_when", eval_context)
             hash["changed"] = JSON::Any.new(ConditionalEvaluator.evaluate(substitute_conditional_rendering_errors(substitutor, changed_when), eval_context, strict: true, raise_undefined: true))
           end
-        rescue e : ConditionalEvaluator::ConditionalBooleanError | ConditionalEvaluator::UndefinedVariableError | VariableSubstitutor::FilterEngine::UnknownFilterError | ChangedFailedWhenRenderSyntaxError
+        rescue e : ConditionalEvaluator::ConditionalBooleanError | ConditionalEvaluator::UndefinedVariableError | Krikri::FilterPluginError | Krikri::TestPluginError | VariableSubstitutor::FilterEngine::UnknownFilterError | ChangedFailedWhenRenderSyntaxError
           hash["failed"] = JSON::Any.new(true)
           detail = changed_failed_when_error_text(task, "changed_when", changed_when, host, e)
           hash["changed_when_result"] = JSON::Any.new(detail)
@@ -4340,7 +4345,7 @@ module Krikri
               hash["_ansible_error_detail"] = JSON::Any.new("Action failed: Unknown error.")
             end
           end
-        rescue e : ConditionalEvaluator::ConditionalBooleanError | ConditionalEvaluator::UndefinedVariableError | VariableSubstitutor::FilterEngine::UnknownFilterError | ChangedFailedWhenRenderSyntaxError
+        rescue e : ConditionalEvaluator::ConditionalBooleanError | ConditionalEvaluator::UndefinedVariableError | Krikri::FilterPluginError | Krikri::TestPluginError | VariableSubstitutor::FilterEngine::UnknownFilterError | ChangedFailedWhenRenderSyntaxError
           hash["failed"] = JSON::Any.new(true)
           detail = changed_failed_when_error_text(task, "failed_when", failed_when, host, e)
           hash["failed_when_result"] = JSON::Any.new(detail)
