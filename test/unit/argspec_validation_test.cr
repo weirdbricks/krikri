@@ -175,6 +175,17 @@ describe Krikri::ArgspecValidator do
       "flush is False but all of the following are missing: chain")
   end
 
+  # 2.21 added required_if=[['append', True, ['groups']]] to user - the
+  # old 'append' without 'groups' deprecation warning became a hard
+  # spec failure (live-verified vs 2.21.6).
+  it "enforces user's 2.21 append-requires-groups required_if" do
+    failure = Krikri::ArgspecValidator.validate(
+      "user", "ansible.builtin.user",
+      {"name" => "root", "state" => "present", "append" => "true"}, vars)
+    failure.as(Failure).msg.must_equal(
+      "append is True but all of the following are missing: groups")
+  end
+
   it "treats an explicit null as present-but-skipped for optional options" do
     failure = Krikri::ArgspecValidator.validate(
       "lineinfile", "ansible.builtin.lineinfile",
