@@ -518,7 +518,12 @@ module Krikri
       raw_result = PluginResult.new(
         changed: true,
         failed: result[:exit_code] != 0,
-        msg: result[:exit_code] == 0 ? "" : "The command exited with a non-zero return code.",
+        # 2.21 reworded the command/shell non-zero-rc msg (command.py:
+        # "The command exited with a non-zero return code.", live-verified
+        # vs 2.21.6) - but raw dispatches through this plugin with
+        # strip_empty_ends forced off, and raw.py kept the 2.19 wording,
+        # so the invoked name decides which text ships.
+        msg: result[:exit_code] == 0 ? "" : non_zero_rc_msg,
         include_empty_msg: true,
         cmd: command_string,
         stdout: final_stdout,
@@ -585,6 +590,20 @@ module Krikri
       )
       result.extra["exception"] = JSON::Any.new("[Errno #{errno}] #{reason}: b'#{executable}'")
       result
+    end
+
+    # 2.21 reworded the non-zero-rc msg in command.py/shell.py ("The
+    # command exited with a non-zero return code.", live-verified vs
+    # 2.21.6) - but raw.py kept the 2.19 wording, and raw dispatches
+    # through this plugin (with strip_empty_ends forced off), so the
+    # invoked module name decides which text ships.
+    private def non_zero_rc_msg : String
+      invoked = @params["_module_name"]? || "ansible.builtin.shell"
+      if true?(@params["_ansible_raw_dispatch"]?) || invoked.split(".").last == "raw"
+        "non-zero return code"
+      else
+        "The command exited with a non-zero return code."
+      end
     end
 
     # First executable file named *name* under the PATH Python's own

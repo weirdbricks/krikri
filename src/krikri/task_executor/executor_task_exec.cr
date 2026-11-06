@@ -3827,6 +3827,16 @@ module Krikri
       # `skipped`/`unreachable` export only when true (`result or None`).
       result_hash["changed"] = JSON::Any.new(false) unless result_hash.has_key?("changed")
       result_hash["failed"] = JSON::Any.new(false) unless result_hash.has_key?("failed")
+      # 2.21 keeps the controller-added `exception` placeholder on every
+      # actually-failed registered result - live-verified on raw nonzero
+      # and raw executable-not-found ignore_errors registers - regardless
+      # of whether the result carried a key-order marker (the executable-
+      # not-found branch builds its result without one). Suppressed
+      # failures carry no `exception`; the failed_when handler moved it to
+      # failed_when_suppressed_exception (or synthesized it there).
+      if result_hash["failed"].as_bool? == true && !result_hash.has_key?("exception")
+        result_hash["exception"] = JSON::Any.new("(traceback unavailable)")
+      end
       # ansible-core 2.21 flipped INJECT_INVOCATION's default to false AND
       # relaxed the strategy's top-level strip with it: with the setting
       # off no module result carries `invocation` in the first place, and

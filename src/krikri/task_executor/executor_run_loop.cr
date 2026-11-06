@@ -3030,6 +3030,15 @@ module Krikri
       if RAW_MODULES.includes?(task.action_name || task.module_name)
         substituted_params = substituted_params.dup
         substituted_params["strip_empty_ends"] = "false"
+        # Marks the raw dispatch for the shell plugin, whose result builder
+        # serves command/shell/raw with one code path: raw.py kept the
+        # 2.19 non-zero-rc msg where 2.21's command.py reworded it, and
+        # MODULE_ALIASES has already rewritten task.module_name to the
+        # shell target by the time the config is built, so the plugin
+        # cannot recover the invoked spelling from _module_name. The
+        # _ansible_ prefix keeps it out of every validation and register
+        # shape the way the other internal args are.
+        substituted_params["_ansible_raw_dispatch"] = "1"
       end
 
       # Data-driven module argument validation against Ansible's own
