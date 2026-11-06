@@ -56,6 +56,16 @@ snapshot did.
 
 ## Phase 0 findings (live-verified vs real 2.21.6)
 
+- [x] **Native-scalar param finalization** (DONE, 0.9.2408): a str-typed
+  option carrying a native YAML bool literal finalizes through Python
+  str() ("True"/"False") — krikri's demotion shipped the lowercase YAML
+  spelling. An explicit null command source reaches run_command as None
+  (TypeError, rc 257, cmd kept null, no stdout/stderr keys). A null debug
+  msg drops the msg key from the registered dict. The earlier
+  `cmd: false`-runs-"False" observation was the literal-vs-templated
+  split: templated vars already rendered Python-style; only the literal
+  demotion was wrong.
+
 - **`INJECT_INVOCATION` defaults to false in 2.21** (ansible-core config
   `INJECT_INVOCATION`, version_added 2.21; `AnsibleModule._return_formatted`
   pops `invocation` when unset; the action layer sets
