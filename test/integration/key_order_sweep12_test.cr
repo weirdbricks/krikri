@@ -78,7 +78,7 @@ describe "storage plugin registered key order (round 992003 kop_storage)" do
                 {{ r | to_json }}
               dest: KRIKRI_DUMP_PATH
       YAML
-    dump.as_h.keys.must_equal(["changed", "disk", "partitions", "script", "failed"])
+    dump.as_h.keys.must_equal(["changed", "failed", "disk", "partitions", "script"])
     dump["changed"].as_bool.must_equal(true)
     dump["script"].as_a.map(&.as_s).must_equal(["unit", "KiB", "mklabel", "msdos", "mkpart", "primary", "0%", "100%"])
     dump["disk"].as_h.keys.must_equal(["dev", "size", "unit", "table", "model", "logical_block", "physical_block"])
@@ -121,7 +121,7 @@ describe "storage plugin registered key order (round 992003 kop_storage)" do
               dest: KRIKRI_DUMP_PATH
       YAML
 
-    keys.as_h.keys.must_equal(["changed", "disk", "partitions", "script", "failed"])
+    keys.as_h.keys.must_equal(["changed", "failed", "disk", "partitions", "script"])
     keys["changed"].as_bool.must_equal(false)
     keys["script"].as_a.must_be_empty
     keys["partitions"][0]["num"].as_i64.must_equal(1)
@@ -148,7 +148,7 @@ describe "storage plugin registered key order (round 992003 kop_storage)" do
               dest: KRIKRI_DUMP_PATH
       YAML
 
-    keys.as_h.keys.must_equal(["rc", "out", "err", "failed", "msg", "changed", "exception"])
+    keys.as_h.keys.must_equal(["changed", "failed", "exception", "msg", "rc", "out", "err"])
     keys["failed"].as_bool.must_equal(true)
     keys["msg"].as_s.starts_with?("Error while getting device information with parted script:").must_equal(true)
     keys["exception"].as_s.must_equal("(traceback unavailable)")
@@ -157,6 +157,9 @@ describe "storage plugin registered key order (round 992003 kop_storage)" do
   it "rejects a number below 1 with Ansible's exact message" do
     result = PluginSpecHelper.run("parted", {"device" => "/dev/null", "number" => "0", "state" => "present"})
 
+    # Direct plugin run: the module's own wire emission order (fail_json's
+    # failed,msg,changed,exception); the 2.21 registered shape comes from
+    # the controller's normalization, which a bare plugin run never sees.
     result.as_h.keys.must_equal(["failed", "msg", "changed", "exception"])
     result["msg"].as_s.must_equal("The partition number must be greater then 0.")
   end
@@ -189,7 +192,7 @@ describe "storage plugin registered key order (round 992003 kop_storage)" do
               dest: KRIKRI_DUMP_PATH
       YAML
 
-    keys.as_h.keys.must_equal(["failed", "msg", "changed", "exception"])
+    keys.as_h.keys.must_equal(["changed", "failed", "exception", "msg"])
     keys["failed"].as_bool.must_equal(true)
     keys["msg"].as_s.must_equal("Device #{missing_pv} not found.")
   end
@@ -215,7 +218,7 @@ describe "storage plugin registered key order (round 992003 kop_storage)" do
               dest: KRIKRI_DUMP_PATH
       YAML
 
-    keys.as_h.keys.must_equal(["rc", "err", "failed", "msg", "changed", "exception"])
+    keys.as_h.keys.must_equal(["changed", "failed", "exception", "msg", "rc", "err"])
     keys["failed"].as_bool.must_equal(true)
     keys["msg"].as_s.must_equal("Volume group kop_vg_definitely_not_here does not exist.")
     (keys["rc"].as_i64 > 0).must_equal(true)
@@ -244,10 +247,7 @@ describe "storage plugin registered key order (round 992003 kop_storage)" do
               dest: KRIKRI_DUMP_PATH
       YAML
 
-    keys.as_h.keys.must_equal([
-      "changed", "name", "opts", "dump", "passno", "fstab", "boot",
-      "backup_file", "src", "fstype", "failed",
-    ])
+    keys.as_h.keys.must_equal(["changed", "failed", "name", "opts", "dump", "passno", "fstab", "boot", "backup_file", "src", "fstype"])
     keys["changed"].as_bool.must_equal(true)
     keys["deprecations"]?.must_be_nil
   end
@@ -272,10 +272,7 @@ describe "storage plugin registered key order (round 992003 kop_storage)" do
               dest: KRIKRI_DUMP_PATH
       YAML
 
-    keys.as_h.keys.must_equal([
-      "changed", "name", "opts", "dump", "passno", "fstab", "boot",
-      "backup_file", "failed",
-    ])
+    keys.as_h.keys.must_equal(["changed", "failed", "name", "opts", "dump", "passno", "fstab", "boot", "backup_file"])
     # An unmounted against a path that is not mounted (all this sandbox
     # can do) is the round's mount_unmounted_again capture: changed
     # false, same key order - the changed-true umount variant differs
@@ -307,7 +304,7 @@ describe "storage plugin registered key order (round 992003 kop_storage)" do
               dest: KRIKRI_DUMP_PATH
       YAML
 
-    keys.as_h.keys.must_equal(["failed", "msg", "changed", "exception"])
+    keys.as_h.keys.must_equal(["changed", "failed", "exception", "msg"])
     keys["msg"].as_s.starts_with?("Failed to find required executable").must_equal(true)
   end
 end

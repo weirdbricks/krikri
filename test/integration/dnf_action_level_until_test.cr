@@ -42,7 +42,11 @@ describe "yum action-level failure under until/retries" do
     # bookkeeping (attempts, the error-event exception) the escape path
     # would have dropped.
     text.must_include(%("attempts": 1, "changed": false, "msg": ["Could not detect which major revision of dnf is in use))
-    text.must_include(%q(\"exception\": \"(traceback unavailable)\", \"attempts\": 1}))
+    # 2.21's partition: the declared-field lead (ansible_facts, exception,
+    # msg) comes before the attempts key, so exception and attempts are no
+    # longer adjacent at the tail.
+    text.must_include(%q(\"exception\": \"(traceback unavailable)\", \"msg\":))
+    text.must_include(%q(\"attempts\": 1}))
   ensure
     File.delete(playbook) if playbook && File.exists?(playbook)
   end

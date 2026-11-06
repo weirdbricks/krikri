@@ -167,8 +167,11 @@ describe "until retries attempts key" do
         retries: 2
         delay: 0
       T
-    result["stderr_lines"].as_i.must_equal(1)
-    result.as_h.keys.last.must_equal("attempts")
+    # 2.21: a non-looped until task registers no attempts key at all
+    # (live-verified vs 2.21.6 - the loop bookkeeping engages only for
+    # looped until tasks).
+    result.as_h.has_key?("attempts").must_equal(false)
+    result.as_h.keys.last.must_equal("stderr_lines")
     result["failed"].as_bool.must_equal(false)
   end
 
@@ -181,11 +184,11 @@ describe "until retries attempts key" do
         delay: 0
         ignore_errors: true
       T
-    result["stderr_lines"].as_i.must_equal(2)
     result["failed"].as_bool.must_equal(true)
-    # Ansible also projects the error-event exception onto the exhausted
-    # result, after attempts (live-verified vs 2.19.11, ignored or not).
-    result.as_h.keys.last(3).must_equal(["failed", "attempts", "exception"])
+    # 2.21: no attempts key on a non-looped until task, and the exception
+    # placeholder sits in the declared-field lead (live-verified vs
+    # 2.21.6: changed,failed,exception,msg).
+    result.as_h.has_key?("attempts").must_equal(false)
     result["exception"].as_s.must_equal("(traceback unavailable)")
     output.matches?(/FAILED - RETRYING: \[localhost\]: .* \(2 retries left\)\./).must_equal(true)
     output.matches?(/FAILED - RETRYING: \[localhost\]: .* \(1 retries left\)\./).must_equal(true)
