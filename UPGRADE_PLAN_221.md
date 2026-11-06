@@ -193,17 +193,15 @@ were, and they are done.
       succeeded (0.9.2433) - `gap_fixes_test` and the new
       `until_exhausted_exception_shape_test` pin both shapes.
 - [ ] **Known micro-divergences** (documented, deliberate or deferred):
-      - `lineinfile`/`blockinfile` file-attributes diff entry: real 2.21
-        adds before/after for each changed attribute (mode/owner/group/
-        secontext/flags); krikri emits the entry's headers only, so the
-        --diff rendering of a pure attribute change stays silent.
       - filter-error wrapper text: real wraps a filter exception as
         "Finalization of task args for '<action>' failed: Error while
         resolving value for '<param>': The filter plugin
         '<fqcn>.<name>' failed: <msg>"; krikri reports "Action failed:
         <msg>". Affects every filter, not just password_hash.
-      - `debug`-module until tasks and the custom-module injection echo
-        (see the INJECT_INVOCATION deviation above).
+      - custom-module injection echo (see the INJECT_INVOCATION deviation
+        above).
+      - the file-attributes diff entry covers mode/owner/group; a
+        secontext- or chattr-flags-only change still diffs header-only.
 - [ ] **Phase 4 — live verification** (blocked on the user running it):
       - re-run the #909/#910 repro against real 2.21.6 — byte-identical
         (already done ad hoc for stat; re-confirm on the release build).
