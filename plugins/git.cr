@@ -986,12 +986,37 @@ module Krikri
         end
         return chosen.try { |line| line.split[0]? }
       else
-        # Appears to be a sha1 - return as-is (Ansible).
+        # 2.21 delta: a value that is neither branch nor tag is no longer
+        # returned as-is - it is validated against the remote with a
+        # `git fetch --dry-run` (check_rc=True), which fails the task
+        # with git's own stderr when the revision does not exist there.
+        # When there is no usable cwd (cloning), real prepares a
+        # throwaway repo under the module tmpdir to run the fetch in.
+        validate_sha_on_remote(dest, target, version)
         return version
       end
 
       return nil unless r[:exit_code] == 0
       r[:stdout].strip.empty? ? nil : r[:stdout].strip.split[0]
+    end
+
+    # get_sha_hash: `git fetch --dry-run <remote> <version>` with
+    # check_rc=True, run inside dest when there is one, else inside a
+    # freshly-initialized throwaway repo (<module tmpdir>/tmp_repo with
+    # origin added). Succeeding only proves the revision exists on the
+    # remote; the version is returned unchanged either way.
+    private def validate_sha_on_remote(dest : String?, target : String, version : String) : Nil
+      workdir = dest
+      if workdir.nil? || !Dir.exists?(workdir)
+        base = "#{Dir.tempdir}/krikri-git-tmp_repo-#{Random::Secure.hex(4)}"
+        Dir.mkdir_p(base)
+        workdir = "#{base}/tmp_repo"
+        Dir.mkdir_p(workdir)
+        run_git("init", workdir)
+        run_git("remote add origin #{sq(target)}", workdir)
+      end
+      r = run_git("fetch --dry-run #{sq(target)} #{sq(version)}", workdir)
+      raise_check_rc("fetch --dry-run #{target} #{version}", r) unless r[:exit_code] == 0
     end
 
     private def remote_branch?(dest : String?, target : String, version : String) : Bool
