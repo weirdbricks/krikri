@@ -86,6 +86,13 @@ module Krikri
       split = @params["split"]?
       fail_key = @params["fail_key"]? ? true?(@params["fail_key"]) : true
 
+      # 2.21 added an explicit guard for an empty split: a str param that
+      # is present but empty ("") fails the task BEFORE the getent call
+      # with exactly this message.
+      if split && split.empty?
+        return PluginResult.new(changed: false, failed: true, msg: "Invalid split value. The value must be a non-empty string")
+      end
+
       cmd = "#{getent_bin} #{sh_quote(database)}"
       cmd += " #{sh_quote(key)}" if key
       cmd += " -s #{sh_quote(service)}" if service

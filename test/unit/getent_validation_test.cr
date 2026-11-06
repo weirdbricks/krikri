@@ -30,6 +30,13 @@ describe "getent plugin argument validation" do
                                   "Supported parameters include: database, fail_key, key, service, split.")
   end
 
+  it "fails an empty split value with 2.21's non-empty-string wording" do
+    result = PluginSpecHelper.run("getent", {"database" => "passwd", "key" => "root", "split" => ""})
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("Invalid split value. The value must be a non-empty string")
+  end
+
   it "maps an unknown database to Ansible's rc-1 wording" do
     result = PluginSpecHelper.run("getent", {"database" => "krikri_db"})
 
