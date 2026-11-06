@@ -355,7 +355,7 @@ module Krikri
       # "before: "/"after: " at display time, so the prefix rides along here
       # like lineinfile's content diff already does.
       new_content = content.byte_slice(0, section_start) + new_section + content.byte_slice(section_end)
-      diff = generate_unified_diff(content, new_content, "before: #{path}", "after: #{path}") if changed && @diff_mode
+      diff = header_first_diff(content, new_content, path, path) if changed && @diff_mode
 
       backup_file = ""
       if changed && !@check_mode

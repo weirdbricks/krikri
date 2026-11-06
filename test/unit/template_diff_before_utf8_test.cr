@@ -62,7 +62,9 @@ describe "template: --diff before side of a multi-KB dest" do
       })
 
       result["changed"].as_bool.must_equal(true)
-      before = result["diff"]["before"].as_s
+      # template's diff payload is a one-entry LIST (copy's action builds
+      # it), like real ansible's.
+      before = result["diff"].as_a.first.as_h["before"].as_s
       # The load-bearing assertion: the "before" side is exactly what is
       # on disk - every typo'd character here was a byte iconv dropped.
       before.must_equal(original)

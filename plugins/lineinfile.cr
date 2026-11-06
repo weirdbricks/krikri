@@ -225,7 +225,7 @@ module Krikri
       # Real lineinfile's own diff headers (live-verified vs 2.19.11):
       # `before: <path> (content)` / `after: <path> (content)`, file
       # created or modified alike.
-      diff = generate_unified_diff(original_content, new_content, "before: #{path} (content)", "after: #{path} (content)") if changed && @diff_mode
+      diff = file_module_diff(path, original_content, new_content) if changed && @diff_mode
 
       # owner:/group:/mode: apply even when the line content itself was
       # already correct - Ansible's lineinfile module runs the
@@ -460,17 +460,7 @@ module Krikri
     # before/after text is empty for these runs) and a file-attributes
     # diff (which never carries before/after at all).
     private def lineinfile_diff(path : String) : JSON::Any
-      content_entry = JSON::Any.new({
-        "after"         => JSON::Any.new(""),
-        "after_header"  => JSON::Any.new("#{path} (content)"),
-        "before"        => JSON::Any.new(""),
-        "before_header" => JSON::Any.new("#{path} (content)"),
-      })
-      attributes_entry = JSON::Any.new({
-        "after_header"  => JSON::Any.new("#{path} (file attributes)"),
-        "before_header" => JSON::Any.new("#{path} (file attributes)"),
-      })
-      JSON::Any.new([content_entry, attributes_entry])
+      file_module_diff(path, "", "")
     end
 
     # Checks owner:/group:/mode:, then chattr-style attributes:/attr:

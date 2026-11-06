@@ -88,8 +88,10 @@ describe "replace plugin" do
     result["changed"].as_bool.must_equal(true)
     File.read(path).must_equal(content)
     diff = result["diff"].as_h
-    diff["before_header"].as_s.must_equal("before: #{path}")
-    diff["after_header"].as_s.must_equal("after: #{path}")
+    # The stored headers are bare - the callback adds the "before: "/
+    # "after: " prefixes when printing (live-verified vs 2.21.6).
+    diff["before_header"].as_s.must_equal(path.to_s)
+    diff["after_header"].as_s.must_equal(path.to_s)
     diff["before"].as_s.must_equal(content)
     diff["after"].as_s.must_equal("[a]\nname = x\ngpgcheck=1\npriority = 10\n")
   end

@@ -1363,6 +1363,39 @@ module Krikri
       }.to_json)
     end
 
+    # The diff dict shape replace.py and yum_repository.py build: headers
+    # FIRST (before_header, before, after_header, after), bare - the
+    # callback adds "before: "/"after: " when printing (live-verified vs
+    # ansible-core 2.19.11 and 2.21.6).
+    protected def header_first_diff(before : String, after : String, before_header : String, after_header : String) : JSON::Any
+      JSON::Any.new({
+        "before_header" => JSON::Any.new(before_header),
+        "before"        => JSON::Any.new(before),
+        "after_header"  => JSON::Any.new(after_header),
+        "after"         => JSON::Any.new(after),
+      })
+    end
+
+    # lineinfile/blockinfile's wire diff: a LIST of two entries - the
+    # content diff, then the file-attributes diff. Ansible's callback adds
+    # the "before: "/"after: " prefixes when it prints, so the headers
+    # stored in the result are the bare "<path> (content)" / "<path> (file
+    # attributes)" strings (live-verified vs ansible-core 2.19.11 and
+    # 2.21.6 - both put before/after BEFORE the two header keys).
+    protected def file_module_diff(path : String, before : String, after : String) : JSON::Any
+      content_entry = JSON::Any.new({
+        "before"        => JSON::Any.new(before),
+        "after"         => JSON::Any.new(after),
+        "before_header" => JSON::Any.new("#{path} (content)"),
+        "after_header"  => JSON::Any.new("#{path} (content)"),
+      })
+      attributes_entry = JSON::Any.new({
+        "before_header" => JSON::Any.new("#{path} (file attributes)"),
+        "after_header"  => JSON::Any.new("#{path} (file attributes)"),
+      })
+      JSON::Any.new([content_entry, attributes_entry])
+    end
+
     # Generate attribute diff
     protected def generate_attribute_diff(before : Hash(String, String), after : Hash(String, String)) : JSON::Any
       JSON.parse({

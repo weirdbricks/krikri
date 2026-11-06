@@ -158,7 +158,7 @@ module Krikri
       backup_file, write_failure = persist(path, new_content, being_created, changed, check_mode)
       return write_failure if write_failure
 
-      diff = generate_unified_diff(original_content, new_content, path, path) if changed && @diff_mode
+      diff = file_module_diff(path, original_content, new_content) if changed && @diff_mode
       # Real blockinfile's wire result ALWAYS carries a `diff` key - the
       # same two-entry list lineinfile's does (a content diff and a
       # file-attributes diff; both before/after bodies empty outside
@@ -206,17 +206,7 @@ module Krikri
     # entry (before/after empty outside --diff mode) plus a
     # file-attributes entry with no before/after at all.
     private def blockinfile_diff(path : String) : JSON::Any
-      content_entry = JSON::Any.new({
-        "after"         => JSON::Any.new(""),
-        "after_header"  => JSON::Any.new("#{path} (content)"),
-        "before"        => JSON::Any.new(""),
-        "before_header" => JSON::Any.new("#{path} (content)"),
-      })
-      attributes_entry = JSON::Any.new({
-        "after_header"  => JSON::Any.new("#{path} (file attributes)"),
-        "before_header" => JSON::Any.new("#{path} (file attributes)"),
-      })
-      JSON::Any.new([content_entry, attributes_entry])
+      file_module_diff(path, "", "")
     end
 
     # A file that had to be created reports "File created" even when the

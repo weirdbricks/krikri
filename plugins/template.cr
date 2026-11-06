@@ -297,13 +297,27 @@ module Krikri
         # exists and bare `before` when it does not; the after side is
         # `after:` plus the staged copy of the source the module rendered
         # (here: krikri's resolved source path).
+        # The payload is a one-entry LIST (copy's action builds it), the
+        # headers stay bare, and a dest that did not exist contributes no
+        # before_header at all - only the empty `before`. Real's
+        # after_header is the controller's staged temp copy of the source
+        # (a per-run /tmp path), so the resolved source name is used here.
         src_name = @params["_rendered_from_template"]? || "template"
-        diff_data = generate_unified_diff(
-          existing_content,
-          content,
-          File.exists?(dest) ? "before: #{dest}" : "before",
-          "after: #{src_name}"
-        )
+        entry = if File.exists?(dest)
+                  {
+                    "before_header" => JSON::Any.new(dest),
+                    "before"        => JSON::Any.new(existing_content),
+                    "after_header"  => JSON::Any.new(src_name),
+                    "after"         => JSON::Any.new(content),
+                  }
+                else
+                  {
+                    "before"       => JSON::Any.new(""),
+                    "after_header" => JSON::Any.new(src_name),
+                    "after"        => JSON::Any.new(content),
+                  }
+                end
+        diff_data = JSON::Any.new([JSON::Any.new(entry)])
       end
 
       # CHECK MODE: Report what would change

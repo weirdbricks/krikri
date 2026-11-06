@@ -37,6 +37,30 @@ module Krikri
     # (the copy action's already-correct-hash branch), whose result runs
     # diff, path, changed, the stat block, then the action-injected
     # checksum and dest - a different order, hence its own constant.
+    # Ansible's copy diff is the ACTION plugin's _get_diff_data payload: a
+    # one-entry LIST whose keys come out as before_header, before,
+    # after_header, after - with before_header ABSENT (and `before` an
+    # empty string) when the dest did not exist yet. The headers are bare;
+    # the callback adds "before: "/"after: " when printing (live-verified
+    # vs ansible-core 2.19.11 and 2.21.6).
+    private def copy_diff(before_content : String, after_content : String, dest : String, after_header : String) : JSON::Any
+      entry = if File.exists?(dest)
+                {
+                  "before_header" => JSON::Any.new(dest),
+                  "before"        => JSON::Any.new(before_content),
+                  "after_header"  => JSON::Any.new(after_header),
+                  "after"         => JSON::Any.new(after_content),
+                }
+              else
+                {
+                  "before"       => JSON::Any.new(""),
+                  "after_header" => JSON::Any.new(after_header),
+                  "after"        => JSON::Any.new(after_content),
+                }
+              end
+      JSON::Any.new([JSON::Any.new(entry)])
+    end
+
     private CHANGED_KEY_ORDER   = %w[diff dest src md5sum checksum changed backup_file uid gid owner group mode state size failed]
     private UNCHANGED_KEY_ORDER = %w[diff path changed uid gid owner group mode state size checksum dest failed]
     # force: false against an existing dest: Ansible's result is ONLY
@@ -420,19 +444,15 @@ module Krikri
       # Generate diff if in diff mode
       diff_data = nil
       if @diff_mode
-        # Real copy's diff headers (live-verified vs 2.19.11): the before
-        # side is `before: <dest>` when the dest file already exists and
-        # bare `before` when it does not. The after side is the dest path
-        # for inline content: but the CONTROLLER src path for a src: file
-        # (the action plugin's _get_diff_data sets after_header = source
-        # there) - __original_src_path, set by the controller when it
-        # inlined a src: file, distinguishes the two on the wire.
-        diff_data = generate_unified_diff(
-          existing_content,
-          content,
-          File.exists?(dest) ? "before: #{dest}" : "before",
-          "after: #{@params["__original_src_path"]?.presence || dest}"
-        )
+        # Real copy's diff is the action plugin's _get_diff_data payload
+        # (live-verified vs 2.19.11 and 2.21.6): a one-entry LIST whose
+        # keys are before_header, before, after_header, after - with
+        # before_header ABSENT when the dest did not exist yet (only the
+        # empty `before` is there). The after side is the dest path for
+        # inline content: but the CONTROLLER src path for a src: file,
+        # which __original_src_path carries when the controller inlined
+        # one.
+        diff_data = copy_diff(existing_content, content, dest, @params["__original_src_path"]?.presence || dest)
       end
 
       # CHECK MODE: Report what would change
@@ -706,12 +726,8 @@ module Krikri
           # Unreadable dest: diff from an empty before side, like the
           # content path does
         end
-        diff_data = generate_unified_diff(
-          existing_content,
-          File.read(src),
-          File.exists?(dest) ? "before: #{dest}" : "before",
-          "after: #{@params["__original_src_path"]?.presence || src}"
-        )
+        diff_data = copy_diff(existing_content, File.read(src), dest,
+          @params["__original_src_path"]?.presence || src)
       end
 
       # CHECK MODE: Report what would change

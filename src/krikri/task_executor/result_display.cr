@@ -2149,8 +2149,11 @@ module Krikri
     def self.display_content_diff(diff : JSON::Any) : Nil
       before = diff["before"].as_s
       after = diff["after"].as_s
-      before_header = diff["before_header"]?.try(&.as_s) || "before"
-      after_header = diff["after_header"]?.try(&.as_s) || "after"
+      # Ansible's callback prefixes the stored headers itself
+      # ("before: %s" / "after: %s"), falling back to the bare words when
+      # the dict carries no header key at all (copy onto an absent dest).
+      before_header = diff["before_header"]?.try(&.as_s?)
+      after_header = diff["after_header"]?.try(&.as_s?)
 
       # Ansible's callback takes the ---/+++ headers from difflib's
       # unified_diff itself, which yields no lines at all when the two
@@ -2160,8 +2163,8 @@ module Krikri
       # included. Verified against 2.19.11 --diff (issue #691).
       return if before == after
 
-      puts "--- #{before_header}".colorize(:red).bold
-      puts "+++ #{after_header}".colorize(:green).bold
+      puts "--- #{before_header ? "before: #{before_header}" : "before"}".colorize(:red).bold
+      puts "+++ #{after_header ? "after: #{after_header}" : "after"}".colorize(:green).bold
 
       show_unified_diff(before, after)
       puts ""
@@ -2184,8 +2187,10 @@ module Krikri
       # setters don't record) prints nothing, headers included.
       return if before == after
 
-      puts "--- before".colorize(:red).bold
-      puts "+++ after".colorize(:green).bold
+      before_header = diff["before_header"]?.try(&.as_s?)
+      after_header = diff["after_header"]?.try(&.as_s?)
+      puts "--- #{before_header ? "before: #{before_header}" : "before"}".colorize(:red).bold
+      puts "+++ #{after_header ? "after: #{after_header}" : "after"}".colorize(:green).bold
 
       show_unified_diff(before, after)
       puts ""

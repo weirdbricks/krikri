@@ -25,9 +25,12 @@ describe "copy diff headers" do
       "_ansible_diff"           => "true",
     })
 
-    diff = result["diff"].as_h
-    diff["after_header"].as_s.must_equal("after: #{src}")
-    diff["before_header"].as_s.must_equal("before")
+    # _get_diff_data emits a one-entry LIST and carries NO before_header
+    # at all when the dest did not exist yet (live-verified vs 2.19.11
+    # and 2.21.6); the "before: "/"after: " prefixes are the callback's.
+    diff = result["diff"].as_a.first.as_h
+    diff["after_header"].as_s.must_equal(src.to_s)
+    diff.has_key?("before_header").must_equal(false)
   end
 
   it "keeps the dest path as after_header for an inline content copy" do
@@ -41,9 +44,9 @@ describe "copy diff headers" do
       "_ansible_diff" => "true",
     })
 
-    diff = result["diff"].as_h
-    diff["after_header"].as_s.must_equal("after: #{dest}")
-    diff["before_header"].as_s.must_equal("before")
+    diff = result["diff"].as_a.first.as_h
+    diff["after_header"].as_s.must_equal(dest.to_s)
+    diff.has_key?("before_header").must_equal(false)
   end
 
   it "produces a src-path-headed diff for a src-file copy" do
@@ -59,9 +62,12 @@ describe "copy diff headers" do
       "_ansible_diff" => "true",
     })
 
-    diff = result["diff"].as_h
-    diff["after_header"].as_s.must_equal("after: #{src}")
-    diff["before_header"].as_s.must_equal("before")
+    # _get_diff_data emits a one-entry LIST and carries NO before_header
+    # at all when the dest did not exist yet (live-verified vs 2.19.11
+    # and 2.21.6); the "before: "/"after: " prefixes are the callback's.
+    diff = result["diff"].as_a.first.as_h
+    diff["after_header"].as_s.must_equal(src.to_s)
+    diff.has_key?("before_header").must_equal(false)
     diff["before"].as_s.must_equal("")
     diff["after"].as_s.must_equal("hello")
   end
@@ -80,9 +86,9 @@ describe "copy diff headers" do
       "_ansible_diff" => "true",
     })
 
-    diff = result["diff"].as_h
-    diff["before_header"].as_s.must_equal("before: #{dest}")
-    diff["after_header"].as_s.must_equal("after: #{src}")
+    diff = result["diff"].as_a.first.as_h
+    diff["before_header"].as_s.must_equal(dest.to_s)
+    diff["after_header"].as_s.must_equal(src.to_s)
     diff["before"].as_s.must_equal("old")
   end
 

@@ -458,6 +458,28 @@ describe "lineinfile plugin" do
     result["backup"].as_s.must_be_empty
   end
 
+  # In --diff mode the SAME two-entry list carries the real text - the
+  # headers stay bare and the content entry leads with before/after
+  # (live-verified vs 2.19.11 and 2.21.6: the callback is what prints
+  # "--- before: <path> (content)").
+  it "carries the content text in the diff list's first entry under --diff" do
+    path = PluginSpecHelper.tmp_path("lineinfile-diff-mode.txt")
+    File.write(path, "alpha\n")
+
+    result = PluginSpecHelper.run("lineinfile", {
+      "path" => path, "line" => "beta", "_ansible_diff" => "true",
+    })
+
+    diff = result["diff"].as_a
+    diff.size.must_equal(2)
+    first = diff[0].as_h
+    first.keys.must_equal(["before", "after", "before_header", "after_header"])
+    first["before"].as_s.must_equal("alpha\n")
+    first["after"].as_s.must_equal("alpha\nbeta\n")
+    first["before_header"].as_s.must_equal("#{path} (content)")
+    diff[1].as_h["before_header"].as_s.must_equal("#{path} (file attributes)")
+  end
+
   it "always carries a diff list on the wire (content + file-attributes entries), like Ansible 2.19.11 at -vvv" do
     path = PluginSpecHelper.tmp_path("lineinfile-wire-diff.txt")
     File.write(path, "alpha\n")

@@ -252,12 +252,12 @@ module Krikri
       current = read_current(path)
       unless current.includes?("[#{name}]")
         return PluginResult.new(changed: false, failed: false, repo: name, state: "absent",
-          diff: generate_unified_diff(current, "", "before: #{path}", "after: #{path}"), key_order: YUM_REPO_ORDER)
+          diff: header_first_diff(current, "", path, path), key_order: YUM_REPO_ORDER)
       end
 
       File.delete?(path) unless check_mode
       PluginResult.new(changed: true, failed: false, repo: name, state: "absent",
-        diff: generate_unified_diff(current, "", "before: #{path}", "after: #{path}"), key_order: YUM_REPO_ORDER)
+        diff: header_first_diff(current, "", path, path), key_order: YUM_REPO_ORDER)
     end
 
     private def write_repo(name : String, description : String, path : String, check_mode : Bool) : PluginResult
@@ -282,7 +282,7 @@ module Krikri
       # carried under such a key with "before: "/"after: " - same
       # convention copy.cr already uses for its own headers.
       PluginResult.new(changed: changed, failed: false, repo: name, state: "present",
-        diff: generate_unified_diff(current, merged, "before: #{path}", "after: #{path}"), key_order: YUM_REPO_ORDER)
+        diff: header_first_diff(current, merged, path, path), key_order: YUM_REPO_ORDER)
     end
 
     # Ansible's own yum_repository runs Python's configparser over
