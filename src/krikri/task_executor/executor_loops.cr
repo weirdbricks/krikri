@@ -3026,12 +3026,7 @@ module Krikri
       # key the same way a single-run task does.
       if result && total_runs > 1 && !exception_escape
         result_hash = result.as_h.dup
-        # 2.21: the attempts key exists only on a LOOPED until task's
-        # items (live-verified vs 2.21.6: a non-looped exhausted until
-        # register carries no attempts at all, where 2.19 always added
-        # it); item_label is set exactly when the loop machinery is
-        # driving the attempts.
-        result_hash["attempts"] = JSON::Any.new((condition_met ? attempt : total_runs - 1).to_i64) if item_label
+        result_hash["attempts"] = JSON::Any.new((condition_met ? attempt : total_runs - 1).to_i64)
         unless condition_met
           result_hash["failed"] = JSON::Any.new(true)
         end

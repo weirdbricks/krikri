@@ -167,10 +167,9 @@ describe "until retries attempts key" do
         retries: 2
         delay: 0
       T
-    # 2.21: a non-looped until task registers no attempts key at all
-    # (live-verified vs 2.21.6 - the loop bookkeeping engages only for
-    # looped until tasks).
-    result.as_h.has_key?("attempts").must_equal(false)
+    result["attempts"].as_i.must_equal(1)
+    # 2.21: attempts sits in the declared-field band after msg/rc, ahead
+    # of the module keys - no longer the registered dict's last key.
     result.as_h.keys.last.must_equal("stderr_lines")
     result["failed"].as_bool.must_equal(false)
   end
@@ -185,10 +184,11 @@ describe "until retries attempts key" do
         ignore_errors: true
       T
     result["failed"].as_bool.must_equal(true)
-    # 2.21: no attempts key on a non-looped until task, and the exception
-    # placeholder sits in the declared-field lead (live-verified vs
-    # 2.21.6: changed,failed,exception,msg).
-    result.as_h.has_key?("attempts").must_equal(false)
+    result["attempts"].as_i.must_equal(2)
+    result["failed"].as_bool.must_equal(true)
+    # 2.21: the exception placeholder sits in the declared-field lead and
+    # attempts in the declared band after msg/rc (live-verified vs
+    # 2.21.6: changed,failed,exception,msg,rc,attempts,<module keys>).
     result["exception"].as_s.must_equal("(traceback unavailable)")
     output.matches?(/FAILED - RETRYING: \[localhost\]: .* \(2 retries left\)\./).must_equal(true)
     output.matches?(/FAILED - RETRYING: \[localhost\]: .* \(1 retries left\)\./).must_equal(true)

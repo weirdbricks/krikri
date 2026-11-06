@@ -140,7 +140,7 @@ describe "iptables plugin run_command failure shape and raw rule string (probe 1
         YAML
       )
 
-      result.as_h.keys.must_equal(%w[cmd rc stdout stderr failed msg stdout_lines stderr_lines changed exception])
+      result.as_h.keys.must_equal(%w[changed failed exception msg rc cmd stdout stderr stdout_lines stderr_lines])
       result["rc"].as_i.must_equal(2)
       result["stdout"].as_s.must_equal("")
       result["stderr"].as_s.must_equal("iptables v1.8.7 (nf_tables): Chain 'KOP_NO_SUCH_TARGET' does not exist\nTry `iptables -h' or 'iptables --help' for more information.\n")

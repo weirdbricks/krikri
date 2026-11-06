@@ -536,7 +536,7 @@ describe "service registered shapes (round994002/994003 systemd dispatch)" do
       # Ansible's systemd-module registered shape: [name, changed, status,
       # enabled, state, failed] - no msg key (the round994003
       # firewalld_helper_service capture).
-      cold.keys.must_equal(["name", "changed", "status", "enabled", "state", "failed"])
+      cold.keys.must_equal(["changed", "failed", "name", "status", "enabled", "state"])
       cold["name"].as_s.must_equal("firewalld")
       cold["changed"].as_bool.must_equal(true)
       cold["enabled"].as_bool.must_equal(true)
@@ -578,7 +578,7 @@ describe "service registered shapes (round994002/994003 systemd dispatch)" do
       YAML
 
       warm = dumps["svc-warm"].as_h
-      warm.keys.must_equal(["name", "changed", "status", "enabled", "state", "failed"])
+      warm.keys.must_equal(["changed", "failed", "name", "status", "enabled", "state"])
       warm["changed"].as_bool.must_equal(false)
       warm["enabled"].as_bool.must_equal(true)
       warm["state"].as_s.must_equal("started")
@@ -609,7 +609,7 @@ describe "service registered shapes (round994002/994003 systemd dispatch)" do
       YAML
 
       noenable = dumps["svc-noenable"].as_h
-      noenable.keys.must_equal(["name", "changed", "status", "state", "failed"])
+      noenable.keys.must_equal(["changed", "failed", "name", "status", "state"])
       noenable["changed"].as_bool.must_equal(false)
       noenable["state"].as_s.must_equal("started")
     end
@@ -652,7 +652,7 @@ describe "dnf registered shape (round994003 dnf4 backend)" do
     YAML
 
     noop = dumps["dnf-noop"].as_h
-    noop.keys.must_equal(["msg", "changed", "results", "rc", "failed"])
+    noop.keys.must_equal(["changed", "failed", "msg", "rc", "results"])
     noop["msg"].as_s.must_equal("Nothing to do")
     noop["changed"].as_bool.must_equal(false)
     noop["results"].as_a.must_equal([] of JSON::Any)

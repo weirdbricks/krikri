@@ -68,7 +68,7 @@ describe "include_vars failure registration" do
     ])
 
     result.as_h.keys.must_equal(
-      ["failed", "message", "ansible_included_var_files", "ansible_facts", "changed", "exception", "msg"]
+      ["changed", "failed", "ansible_facts", "exception", "msg", "message", "ansible_included_var_files"]
     )
     result["failed"].as_bool.must_equal(true)
     result["changed"].as_bool.must_equal(false)
@@ -127,7 +127,7 @@ describe "include_vars failure registration" do
     ])
 
     result.as_h.keys.must_equal(
-      ["failed", "message", "ansible_included_var_files", "ansible_facts", "changed", "exception", "msg"]
+      ["changed", "failed", "ansible_facts", "exception", "msg", "message", "ansible_included_var_files"]
     )
     result["message"].as_s.must_equal("/nonexistent/varsdir directory does not exist")
   end
@@ -141,7 +141,7 @@ describe "include_vars failure registration" do
     ])
 
     result.as_h.keys.must_equal(
-      ["failed", "message", "ansible_included_var_files", "ansible_facts", "changed", "exception", "msg", "warnings"]
+      ["changed", "failed", "ansible_facts", "exception", "msg", "message", "ansible_included_var_files", "warnings"]
     )
     result["ansible_facts"].as_h.keys.must_equal(["a.yml"])
     result["warnings"].as_a.map(&.as_s).must_equal(
@@ -157,7 +157,7 @@ describe "include_vars failure registration" do
       "        register: r",
     ])
 
-    result.as_h.keys.must_equal(["failed", "exception", "msg", "changed"])
+    result.as_h.keys.must_equal(["changed", "failed", "exception", "msg"])
     result["msg"].as_s.must_equal(
       "Task failed: Finalization of task args for 'ansible.builtin.include_vars' failed: " \
       "Error while resolving value for 'file': 'definitely_undefined' is undefined"
