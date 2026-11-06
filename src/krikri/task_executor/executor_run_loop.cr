@@ -3201,13 +3201,13 @@ module Krikri
         if period = marker_task_timeout(result)
           return task_timeout_result(period)
         end
-        # ansible-core 2.21's INJECT_INVOCATION default: the target's own
-        # AnsibleModule._return_formatted already popped `invocation` when
-        # the flag was absent from the module args; a module that set
-        # kwargs['invocation'] itself, or one running under an older
-        # target ansible that always injects, still hands one back - shed
-        # it here, matching what the controller-side result would carry
-        # under the setting's resolution (see InvocationInjection).
+        # ansible-core 2.21's INJECT_INVOCATION default: the module's own
+        # _return_formatted (the shim, which every py_module run now
+        # uses) already popped `invocation` when the flag was absent from
+        # the module args; a module that set kwargs['invocation'] itself
+        # still hands one back - shed it here, matching what the
+        # controller-side result would carry under the setting's
+        # resolution (see InvocationInjection).
         result = InvocationInjection.strip(result) unless InvocationInjection.enabled?(vars_context)
         return apply_changed_failed_when(task, result, vars_context, host)
       end
@@ -3861,16 +3861,10 @@ module Krikri
         py_params["kv_argv"] = PythonModuleRunner.build_kv_argv(substituted_params).to_json
       end
       # The INJECT_INVOCATION resolution rides to the py_module plugin as
-      # its own param, NOT inside module_args: a target with ansible-core
-      # installed runs the custom module against the TARGET's real
-      # basic.py, and an older one rejects the unknown `_ansible_*` key as
-      # an unsupported parameter (live-verified: a role-library module
-      # failed "Unsupported parameters for (bigmod) module:
-      # _ansible_inject_invocation" on this 2.19.11 host) - where real
-      # 2.21 never hits that because its AnsiballZ payload bundles the
-      # controller's own basic.py. The plugin adds the flag to the args
-      # only on the shim path (its own bundled basic), and the controller
-      # strips `invocation` off the result when the setting is off.
+      # its own param, NOT inside module_args: the plugin adds the flag
+      # to the args itself (on the shim path, which since #915 is every
+      # new-style run), and the controller strips `invocation` off the
+      # result when the setting is off.
       py_params["_ansible_inject_invocation"] = InvocationInjection.enabled?(vars_context).to_s
 
       # A role shipping its OWN custom module_utils packages (e.g.

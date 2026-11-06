@@ -528,6 +528,29 @@ module Krikri
                   return parsed
               if kind == 'path':
                   return os.path.expanduser(os.path.expandvars(str(value)))
+              # Real check_type_str (common/validation.py): a str passes
+              # through unchanged, None becomes '' ("approximate pre-2.19
+              # templating None->empty str equivalency"), and anything else
+              # - a real int included, which is exactly what a wide-int
+              # param arrives as after the args' bigint marker unquoting -
+              # is to_native()'d into its str(). Returning the value
+              # unchanged instead left a str-typed param holding the int
+              # the caller sent, diverging from real's coerced echo
+              # (issue #915: this shim now serves targets that used to
+              # reach their own real basic.py, where the coercion ran).
+              # 'raw' deliberately falls through to the unchanged value -
+              # real's raw type never converts.
+              if kind == 'str':
+                  if isinstance(value, str):
+                      return value
+                  if value is None:
+                      return ''
+                  if isinstance(value, bytes):
+                      try:
+                          return value.decode('utf-8')
+                      except UnicodeDecodeError:
+                          return value.decode('utf-8', 'surrogateescape')
+                  return str(value)
               return value
 
           def _apply_argument_spec(self, raw_args):
@@ -757,10 +780,12 @@ module Krikri
     # work_dir too, and Python puts the script's own directory first on
     # sys.path - so the shim shadows any installed ansible-core exactly
     # when it's written, and the import resolves to it instead of dying
-    # with ModuleNotFoundError. Written ONLY for a target where the probe
-    # import failed (see py_module.cr): where ansible-core IS
-    # installed the module keeps running against the real basic.py,
-    # unchanged from pre-shim behavior.
+    # with ModuleNotFoundError. Written for EVERY new-style python
+    # module run (see py_module.cr): shadowing the target's own
+    # ansible-core unconditionally is what real's AnsiballZ payload
+    # does (it bundles the controller's module_utils), and it keeps the
+    # invocation echo independent of which ansible-core version the
+    # target happens to carry (issue #915).
     def self.write_module_utils_bundle(work_dir : String) : Nil
       package_init = File.join(work_dir, "ansible", "__init__.py")
       module_utils_init = File.join(work_dir, "ansible", "module_utils", "__init__.py")
@@ -808,9 +833,9 @@ module Krikri
     # upstream python-distro reads - /etc/os-release, then
     # /usr/lib/os-release, then /etc/lsb-release - including the
     # `linux_distribution(full_distribution_name=...)` compatibility
-    # tuple both bodsch modules call; targets WITH ansible-core keep
-    # importing its real vendored distro, unchanged from pre-shim
-    # behavior.
+    # tuple both bodsch modules call - the shim always wins over the
+    # target's own ansible-core now (issue #915), so this surface is
+    # what every target sees.
     DISTRO_PY_SHIM = <<-PYTHON
       def _os_release():
           for path in ("/etc/os-release", "/usr/lib/os-release"):
@@ -990,8 +1015,8 @@ module Krikri
     # defaults (timeout=10, validate_certs=True), a .read() that returns
     # bytes like the real response, and 'urllib2' redirect semantics
     # that are urllib's own. Client certificates, cookies and
-    # unix-socket transports stay uncovered - no probed module uses
-    # them, and a wrong guess would mask real behavior.
+    # unix-socket transports stay uncovered - no shim-covered module
+    # uses them, and a wrong guess would mask real behavior.
     URLS_PY_SHIM = <<-PYTHON
       import urllib.request as _urllib_request
       import ssl as _ssl

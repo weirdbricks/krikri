@@ -53,13 +53,11 @@ module Krikri
       args_json = @params["module_args"]? || "{}"
       kv_argv = @params["kv_argv"]? || "[]"
       # The controller's INJECT_INVOCATION resolution (see
-      # InvocationInjection): the flag rides OUTSIDE module_args because a
-      # target with ansible-core installed runs the module against the
-      # TARGET's real basic.py, which rejects the unknown `_ansible_*` key
-      # as an unsupported parameter - real 2.21 never hits that (its
-      # AnsiballZ payload bundles the controller's own basic.py). Added
-      # into the args only on the shim path below, where the shim mirrors
-      # real 2.21's _return_formatted inject-or-pop.
+      # InvocationInjection): the flag rides OUTSIDE module_args and rides
+      # with EVERY new-style module run, true or false, the way real 2.21's
+      # action layer passes it - the work-dir-local shim bundle below
+      # (which always shadows any installed ansible-core) mirrors real
+      # _return_formatted's inject-or-pop on it.
       inject_invocation = true?(@params["_ansible_inject_invocation"]?)
 
       source = begin
@@ -108,21 +106,29 @@ module Krikri
       File.chmod(module_path, 0o500)
 
       # A new-style module's `from ansible.module_utils.basic import
-      # AnsibleModule` needs ansible-core installed ON THE TARGET - which
-      # Ansible never requires (the AnsiballZ wrapper bundles
-      # module_utils INTO the module payload it ships). This plugin runs
-      # the raw module script instead, so on a target without
-      # ansible-core the import died with ModuleNotFoundError before any
-      # result JSON was printed - hard-FAILING the task where
-      # ansible-playbook succeeded (found via newrelic.newrelic-infra's
-      # own "Setup agent config *NIX": the role ships its own
-      # library/merge_yaml.py, which took this path and failed on every
-      # fresh target). Probe for ansible-core first; only when it's
-      # missing, write the shim bundle into the module's own directory -
-      # Python puts the script's directory first on sys.path, so when
-      # ansible-core IS installed (probe passed) the shim is never
-      # written and the module keeps running against the real basic.py,
-      # unchanged from pre-shim behavior.
+      # AnsibleModule` needs module_utils importable ON THE TARGET. Real
+      # Ansible never requires ansible-core there: the AnsiballZ wrapper
+      # bundles the CONTROLLER's module_utils INTO the module payload it
+      # ships, and the target's own install (if any) is never imported.
+      # This plugin runs the raw module script instead, so the shim
+      # bundle is written into the module's own directory on EVERY
+      # new-style run - Python puts the script's directory first on
+      # sys.path, and a regular package there wins, so the shim shadows
+      # any installed ansible-core exactly like the bundled payload
+      # does. Previously the bundle was probe-gated (written only where
+      # the `from ansible.module_utils.basic import AnsibleModule`
+      # import failed - found via newrelic.newrelic-infra's own "Setup
+      # agent config *NIX": the role ships its own library/merge_yaml.py,
+      # which died with ModuleNotFoundError on every fresh target), and
+      # a target WITH ansible-core kept importing its own real
+      # basic.py, whose version then decided the invocation echo (issue
+      # #915): a pre-2.21 basic.py neither knows
+      # `_ansible_inject_invocation` nor injects `invocation`, so the
+      # echo vanished where real always shows one. The trade: the shim
+      # (not the target's basic.py) now defines the module's import
+      # surface everywhere - accepted, since any module real runs
+      # successfully must already be compatible with controller-2.21
+      # module_utils, which the shim mirrors.
       #
       # A role shipping its OWN custom module_utils packages (e.g.
       # linux-system-roles.storage's the Ansible module beside its
@@ -131,18 +137,12 @@ module Krikri
       # wrapper bundles the role's own module_utils into the zipapp. The
       # controller only sends this when the role actually ships a
       # module_utils/ tree (see executor_run_loop's dispatch), so the
-      # common no-module_utils role costs nothing. When staging, the
-      # shim bundle skeleton (ansible/, the Ansible module) is written
-      # UNCONDITIONALLY rather than probe-gated: even with
-      # ansible-core installed on the target, its own package tree can
-      # never contain the role's custom package, so only a work-dir-local
-      # `ansible` package (which shadows the installed one - the script
-      # dir is sys.path[0] and a regular package there wins) makes
-      # `ansible.module_utils.<role_pkg>` resolve at all. The standard
+      # common no-module_utils role costs nothing. The standard
       # shims are written FIRST and role files never overwrite an
       # existing staged path: a role shipping its own module_utils/basic.
       # py (a name colliding with the shim) keeps the shim, noted here as
       # an accepted edge case rather than solved.
+      PythonModuleRunner.write_module_utils_bundle(work_dir) if python_module && python
       staged_utils = begin
         raw = @params["module_utils_files"]?
         raw.nil? || raw.empty? ? nil : JSON.parse(raw).as_h
@@ -150,7 +150,6 @@ module Krikri
         nil
       end
       if staged_utils && !staged_utils.empty?
-        PythonModuleRunner.write_module_utils_bundle(work_dir)
         staged_utils.each do |rel, encoded|
           next unless encoded.as_s?
           rel_path = rel
@@ -189,8 +188,8 @@ module Krikri
       # on sys.path) the import died with ModuleNotFoundError where
       # ansible-playbook ran the module fine. Only modules that actually
       # reference the collection namespace get the extra path - a
-      # module importing nothing beyond ansible.module_utils keeps the
-      # exact probe/shim behavior it had before.
+      # module importing nothing beyond ansible.module_utils keeps
+      # working exactly as before.
       if python_module && source.includes?("ansible_collections")
         collection_roots = PythonModuleRunner.collection_import_roots
         unless collection_roots.empty?
@@ -199,24 +198,12 @@ module Krikri
         end
       end
 
-      probe_out = IO::Memory.new
-      probe_err = IO::Memory.new
-      shim_staged = false
-      if python_module && (py = python) && (staged_utils.nil? || staged_utils.empty?)
-        probe = Process.new(
-          py, ["-c", "from ansible.module_utils.basic import AnsibleModule"],
-          env: env, output: probe_out, error: probe_err
-        )
-        unless probe.wait.success?
-          PythonModuleRunner.write_module_utils_bundle(work_dir)
-          shim_staged = true
-        end
-      elsif staged_utils && !staged_utils.empty?
-        # write_module_utils_bundle already ran unconditionally above (the
-        # role's own module_utils can only resolve under the work-dir-local
-        # package), so the module runs against the shim either way.
-        shim_staged = true
-      end
+      # The bundle above is written on every new-style run, so the
+      # module always runs against the shim and the invocation flag
+      # always rides with the args (a non-python module keeps the
+      # pre-shim no-flag behavior - its protocol has no
+      # _return_formatted to interpret the key).
+      shim_staged = python_module && !python.nil?
       if new_style
         parsed_args = begin
           JSON.parse(args_json).as_h
@@ -300,6 +287,13 @@ module Krikri
         msg = result_hash["msg"]?.try(&.as_s?) || (failed ? "Module failed (see result)" : "")
 
         extra = Hash(String, JSON::Any).new
+        # Real _return_formatted's inject-or-pop runs INSIDE the module
+        # (the shim's own exit_json/fail_json, which always sees the
+        # `_ansible_inject_invocation` flag since #915's always-bundle):
+        # an `invocation` echo rides the controller result untouched when
+        # the resolution is on and is popped when it is off - dropping it
+        # here instead vanished the echo on every path (issue #915).
+        result_hash.delete("invocation") unless inject_invocation
         result_hash.each do |key, value|
           # Real ansible drops a module's own fail_json(exception=...) key from
           # the controller result - it surfaces only at -vvv, never in the
@@ -307,7 +301,7 @@ module Krikri
           # result_display's "<msg>: <exception>" composition, which is meant
           # only for krikri-native plugins emulating a controller-side
           # ErrorSummary.
-          next if key.in?("changed", "failed", "msg", "invocation", "exception")
+          next if key.in?("changed", "failed", "msg", "exception")
           extra[key] = value
         end
 
