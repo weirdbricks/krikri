@@ -3014,21 +3014,21 @@ module Krikri
       # out (real sets attempts = total_runs - 1 there even though
       # total_runs runs actually happened), and marks the result
       # failed: true (the fatal display + ...ignoring/recap follow from
-      # the ordinary failure pipeline below). The exhausted result also
-      # carries Ansible's error-event projection exception:
-      # "(traceback unavailable)" AFTER attempts (live-verified - both a
-      # retries-exhausted and every other failed registered result project
-      # it; the fatal path just never gets to show it off). A single-run
-      # until task (retries: 0) gets NEITHER key (Ansible never engages the
-      # loop machinery). The action-level and finalization escapes above
-      # keep the loop from ever engaging, so they skip the key the same
-      # way a single-run task does.
+      # the ordinary failure pipeline below). 2.21 dropped the exhausted
+      # result's controller-projected exception:
+      # "(traceback unavailable)" that 2.19 appended after attempts
+      # (live-verified vs 2.21.6: a retries-exhausted loop item reads
+      # changed,failed,msg,attempts,ansible_loop_var,item with no
+      # exception), so the exhausted branch only marks failed now. A
+      # single-run until task (retries: 0) gets NEITHER key (Ansible never
+      # engages the loop machinery). The action-level and finalization
+      # escapes above keep the loop from ever engaging, so they skip the
+      # key the same way a single-run task does.
       if result && total_runs > 1 && !exception_escape
         result_hash = result.as_h.dup
         result_hash["attempts"] = JSON::Any.new((condition_met ? attempt : total_runs - 1).to_i64)
         unless condition_met
           result_hash["failed"] = JSON::Any.new(true)
-          result_hash["exception"] = JSON::Any.new("(traceback unavailable)") unless result_hash.has_key?("exception")
         end
         result = JSON::Any.new(result_hash)
         if register_name && !register_name.empty?

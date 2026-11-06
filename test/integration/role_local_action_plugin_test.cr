@@ -329,7 +329,7 @@ describe "role-private Python action plugin with an empty library placeholder (r
       # Key order is ansible's: the plugin's own keys first, `failed`
       # appended last (json.dumps preserves the dict's insertion order).
       output.to_s.must_include(
-        %("msg": "{\\"changed\\": false, \\"hello\\": \\"world\\", \\"failed\\": false}"),
+        %("msg": "{\\"changed\\": false, \\"failed\\": false, \\"hello\\": \\"world\\"}"),
         output.to_s)
     else
       output.to_s.must_include("is not supported by krikri", output.to_s)

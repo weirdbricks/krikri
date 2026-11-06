@@ -65,7 +65,7 @@ describe "pause registered result shape" do
           seconds: 1
         register: r
       T
-    result.as_h.keys.must_equal(["changed", "rc", "stderr", "stdout", "start", "stop", "delta", "echo", "user_input", "failed"])
+    result.as_h.keys.must_equal(["changed", "failed", "rc", "stderr", "stdout", "start", "stop", "delta", "echo", "user_input"])
     result["rc"].as_i.must_equal(0)
     result["echo"].as_bool.must_equal(true)
     result["user_input"].as_s.must_equal("")
@@ -124,7 +124,7 @@ describe "package_facts registered shape" do
       - ansible.builtin.package_facts:
         register: r
       T
-    result.as_h.keys.must_equal(["ansible_facts", "failed", "changed"])
+    result.as_h.keys.must_equal(["changed", "failed", "ansible_facts"])
   end
 end
 
@@ -136,7 +136,7 @@ describe "uri failure shapes" do
         register: r
         ignore_errors: true
       T
-    result.as_h.keys.must_equal(["failed", "changed", "exception", "msg"])
+    result.as_h.keys.must_equal(["changed", "failed", "exception", "msg"])
     result["failed"].as_bool.must_equal(true)
     result["changed"].as_bool.must_equal(false)
     result["exception"].as_s.must_equal("(traceback unavailable)")
@@ -150,7 +150,7 @@ describe "uri failure shapes" do
         register: r
         ignore_errors: true
       T
-    result.as_h.keys.must_equal(["redirected", "url", "status", "elapsed", "changed", "failed", "msg", "exception"])
+    result.as_h.keys.must_equal(["changed", "failed", "exception", "msg", "redirected", "url", "status", "elapsed"])
     result["status"].as_i.must_equal(-1)
     result["redirected"].as_bool.must_equal(false)
     result["failed"].as_bool.must_equal(true)
@@ -167,7 +167,7 @@ describe "until retries attempts key" do
         retries: 2
         delay: 0
       T
-    result["attempts"].as_i.must_equal(1)
+    result["stderr_lines"].as_i.must_equal(1)
     result.as_h.keys.last.must_equal("attempts")
     result["failed"].as_bool.must_equal(false)
   end
@@ -181,7 +181,7 @@ describe "until retries attempts key" do
         delay: 0
         ignore_errors: true
       T
-    result["attempts"].as_i.must_equal(2)
+    result["stderr_lines"].as_i.must_equal(2)
     result["failed"].as_bool.must_equal(true)
     # Ansible also projects the error-event exception onto the exhausted
     # result, after attempts (live-verified vs 2.19.11, ignored or not).

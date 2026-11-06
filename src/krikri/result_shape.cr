@@ -53,7 +53,9 @@ module Krikri
       failed_when_result
       failed_when_suppressed_exception
       break_when_result
-      break_when_suppressed_exception]
+      break_when_suppressed_exception
+      attempts
+      retries]
 
     def normalize!(hash : Hash(String, JSON::Any), loop_item : Bool = false) : Nil
       rebuilt = Hash(String, JSON::Any).new
