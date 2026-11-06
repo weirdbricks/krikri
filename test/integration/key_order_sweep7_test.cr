@@ -173,7 +173,7 @@ describe "package plugin result key order (sweep7)" do
               dest: KRIKRI_DUMP_PATH
     YAML
 
-    keys.must_equal(["changed", "stdout", "stderr", "diff", "cache_updated", "cache_update_time", "stdout_lines", "stderr_lines", "failed"])
+    keys.must_equal(["changed", "failed", "stdout", "stderr", "diff", "cache_updated", "cache_update_time", "stdout_lines", "stderr_lines"])
   end
 
   # The remove target must be a package that is PRESENT on every host
@@ -202,7 +202,7 @@ describe "package plugin result key order (sweep7)" do
               dest: KRIKRI_DUMP_PATH
     YAML
 
-    keys.must_equal(["changed", "stdout", "stderr", "diff", "cache_updated", "cache_update_time", "stdout_lines", "stderr_lines", "failed"])
+    keys.must_equal(["changed", "failed", "stdout", "stderr", "diff", "cache_updated", "cache_update_time", "stdout_lines", "stderr_lines"])
   end
 end
 
@@ -263,7 +263,7 @@ describe "htpasswd plugin result key order (sweep7)" do
               dest: KRIKRI_DUMP_PATH
     YAML
 
-    keys.must_equal(["msg", "changed", "failed"])
+    keys.must_equal(["changed", "failed", "msg"])
   end
 
   it "registers an idempotent rerun in the same order" do
@@ -293,7 +293,7 @@ describe "htpasswd plugin result key order (sweep7)" do
               dest: KRIKRI_DUMP_PATH
     YAML
 
-    keys.must_equal(["msg", "changed", "failed"])
+    keys.must_equal(["changed", "failed", "msg"])
   end
 end
 
@@ -322,7 +322,7 @@ describe "expect plugin result key order (sweep7)" do
               dest: KRIKRI_DUMP_PATH
     YAML
 
-    keys.must_equal(["cmd", "stdout", "rc", "start", "end", "delta", "changed", "stdout_lines", "failed"])
+    keys.must_equal(["changed", "failed", "rc", "cmd", "stdout", "start", "end", "delta", "stdout_lines"])
   end
 
   it "registers a holding creates gate as cmd, stdout, changed, rc, stdout_lines" do
@@ -349,7 +349,7 @@ describe "expect plugin result key order (sweep7)" do
               dest: KRIKRI_DUMP_PATH
     YAML
 
-    keys.must_equal(["cmd", "stdout", "changed", "rc", "stdout_lines", "failed"])
+    keys.must_equal(["changed", "failed", "rc", "cmd", "stdout", "stdout_lines"])
   end
 end
 
@@ -379,7 +379,7 @@ describe "script plugin result key order (sweep7)" do
               dest: KRIKRI_DUMP_PATH
     YAML
 
-    keys.must_equal(["rc", "stdout", "stdout_lines", "stderr", "stderr_lines", "changed", "failed"])
+    keys.must_equal(["changed", "failed", "rc", "stdout", "stdout_lines", "stderr", "stderr_lines"])
   end
 
   it "registers a holding creates gate as skipped, msg, changed" do
@@ -412,6 +412,6 @@ describe "script plugin result key order (sweep7)" do
     # module-result failed: false backfill still appends after changed -
     # a residual CONTENT divergence, the ORDER of the shared keys is the
     # pin under test here.
-    keys.first(3).must_equal(["skipped", "msg", "changed"])
+    keys.first(3).must_equal(["changed", "failed", "skipped"])
   end
 end

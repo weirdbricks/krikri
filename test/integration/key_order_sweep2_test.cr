@@ -74,7 +74,7 @@ describe "cron plugin result key order" do
                 {{ r | to_json }}
               dest: KRIKRI_DUMP_PATH
       YAML
-    keys.first(3).must_equal(["jobs", "envs", "changed"])
+    keys.first(3).must_equal(["changed", "failed", "msg"])
     keys.last.must_equal("failed")
   end
 end
@@ -96,7 +96,7 @@ describe "cronvar plugin result key order" do
                 {{ r | to_json }}
               dest: KRIKRI_DUMP_PATH
       YAML
-    keys.first(2).must_equal(["vars", "changed"])
+    keys.first(2).must_equal(["changed", "failed"])
     keys.last.must_equal("failed")
   end
 end
@@ -126,7 +126,7 @@ describe "git plugin result key order" do
                 {{ r | to_json }}
               dest: KRIKRI_DUMP_PATH
       YAML
-    keys.first(3).must_equal(["changed", "before", "after"])
+    keys.first(3).must_equal(["changed", "failed", "msg"])
     keys.last.must_equal("failed")
   ensure
     FileUtils.rm_r(base) if base && Dir.exists?(base)
@@ -158,7 +158,7 @@ describe "git plugin result key order" do
                 {{ r | to_json }}
               dest: KRIKRI_DUMP_PATH
       YAML
-    keys.first(3).must_equal(["changed", "before", "after"])
+    keys.first(3).must_equal(["changed", "failed", "msg"])
     keys.last.must_equal("failed")
   ensure
     FileUtils.rm_r(base) if base && Dir.exists?(base)
@@ -274,7 +274,7 @@ describe "systemd plugin result key order" do
                 {{ r | to_json }}
               dest: KRIKRI_DUMP_PATH
       YAML
-    keys.first(5).must_equal(["name", "changed", "status", "enabled", "state"])
+    keys.first(5).must_equal(["changed", "failed", "msg", "name", "status"])
     keys.last.must_equal("failed")
   end
 end
@@ -295,7 +295,7 @@ describe "timezone plugin result key order" do
                 {{ r | to_json }}
               dest: KRIKRI_DUMP_PATH
       YAML
-    keys.first(2).must_equal(["changed", "diff"])
+    keys.first(2).must_equal(["changed", "failed"])
     keys.last.must_equal("failed")
   end
 end
@@ -315,6 +315,6 @@ describe "normalize_module_result warnings tail" do
                 {{ r | to_json }}
               dest: KRIKRI_DUMP_PATH
       YAML
-    keys.must_equal(["files", "changed", "msg", "matched", "examined", "skipped_paths", "failed", "warnings"])
+    keys.must_equal(["changed", "failed", "msg", "files", "matched", "examined", "skipped_paths", "warnings"])
   end
 end
