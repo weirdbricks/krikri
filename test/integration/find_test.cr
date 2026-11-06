@@ -43,6 +43,18 @@ private def with_follow_fixture : String
 end
 
 describe "find plugin" do
+  it "carries blocks and disk_usage_bytes at the tail of each per-file dict (2.21)" do
+    result = PluginSpecHelper.run("find", {"paths" => tmp_dir, "patterns" => "*.txt", "recurse" => "true"})
+
+    entry = result["files"].as_a.first.as_h
+    keys = entry.keys
+    (keys.index("blocks").not_nil!).must_equal(keys.size - 2)
+    (keys.index("disk_usage_bytes").not_nil!).must_equal(keys.size - 1)
+    entry["disk_usage_bytes"].as_i64.must_equal(entry["blocks"].as_i64 * 512)
+    entry.has_key?("block_size").must_equal(false)
+    entry.has_key?("device_type").must_equal(false)
+  end
+
   it "matches top-level files only, non-recursively, by default" do
     result = PluginSpecHelper.run("find", {"paths" => tmp_dir, "patterns" => "*.txt"})
 

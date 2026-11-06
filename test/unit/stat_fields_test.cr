@@ -62,7 +62,7 @@ describe Krikri::PluginHelpers::StatFields do
       hash["ctime"].to_json.must_equal("1789308974.0")
     end
 
-    it "exposes block_size/blocks/device_type passthroughs and no disk_usage_bytes" do
+    it "exposes block_size/blocks/device_type passthroughs plus 2.21's disk_usage_bytes" do
       hash = Krikri::PluginHelpers::StatFields.build(
         "/tmp/f.txt", mode: REGULAR_FILE | 0o644,
         size: 1000_i64, uid: 0_i64, gid: 0_i64, pw_name: "root", gr_name: "root",
@@ -72,14 +72,15 @@ describe Krikri::PluginHelpers::StatFields do
       )
 
       # Same stat.py definitions Ansible uses: raw st_blksize/
-      # st_blocks/st_rdev. Ansible 2.19.11's stat result carries NO
-      # disk_usage_bytes (live-verified: a stat of a 6-byte file with
-      # blocks 8 returns block_size/blocks/device_type and nothing
-      # else in that family), so krikri must not invent one.
+      # st_blocks/st_rdev. 2.21's stat.py computes disk_usage_bytes
+      # (st_blocks * 512) inline in the same platform-dependent loop,
+      # immediately after `blocks`, so both keys are always paired.
       hash["block_size"].as_i64.must_equal(4096)
       hash["blocks"].as_i64.must_equal(8)
+      hash["disk_usage_bytes"].as_i64.must_equal(8 * 512)
       hash["device_type"].as_i64.must_equal(0)
-      hash.has_key?("disk_usage_bytes").must_equal(false)
+      (hash.keys.index!("blocks").not_nil!).must_equal(hash.keys.index!("disk_usage_bytes").not_nil! - 1)
+      (hash.keys.index!("disk_usage_bytes").not_nil!).must_equal(hash.keys.index!("block_size").not_nil! - 1)
     end
 
     it "decodes rwx permission bits from the mode" do
