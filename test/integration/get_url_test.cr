@@ -272,6 +272,21 @@ describe "get_url plugin" do
     File.delete(dest) if dest && File.exists?(dest)
   end
 
+  # 2.21 masks the userinfo of the url: it echoes back (module_utils/
+  # urls.py mask_url()); the download itself still uses the real
+  # credentials in the URL.
+  it "masks the credentials in the url it reports back (2.21)" do
+    dest = File.tempname("get-url-spec")
+    unname, port = GET_URL_TEST_ADDRESS.address, GET_URL_TEST_ADDRESS.port
+    url = "http://user:s3cret@#{unname}:#{port}/file.txt"
+    result = PluginSpecHelper.run("get_url", {"url" => url, "dest" => dest})
+
+    result["url"].as_s.must_equal("http://****:****@#{unname}:#{port}/file.txt")
+    File.read(dest).must_equal(FILE_CONTENT)
+  ensure
+    File.delete(dest) if dest && File.exists?(dest)
+  end
+
   it "copies across devices when the staged file cannot be renamed onto dest (EXDEV)" do
     # /dev/shm is a separate mount from the tmp dir, so tmp_dest there forces EXDEV on rename.
     if Dir.exists?("/dev/shm")

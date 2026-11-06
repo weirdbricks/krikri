@@ -8,6 +8,7 @@ require "../src/krikri/base_plugin"
 require "../src/krikri/python_literal"
 require "../src/krikri/plugin_helpers/http_download"
 require "../src/krikri/plugin_helpers/url_preflight"
+require "../src/krikri/plugin_helpers/url_mask"
 
 module Krikri
   # get_url plugin (ansible.builtin.get_url) - downloads a URL to a file.
@@ -44,7 +45,18 @@ module Krikri
     # Ansible doesn't would keep their current relative order at the end.
     private SUCCESS_KEY_ORDER = %w[msg status_code changed checksum_dest checksum_src dest elapsed url src md5sum backup_file uid gid owner group mode state size]
 
+    # 2.21 masks the url: value it echoes back (module_utils/urls.py
+    # mask_url()), so a user:password@host login stops showing up in task
+    # output. Done once here rather than at the ~12 result sites.
     def execute : PluginResult
+      result = build_result
+      if (echoed = result.extra["url"]?.try(&.as_s?))
+        result.extra["url"] = JSON::Any.new(PluginHelpers::UrlMask.mask(echoed))
+      end
+      result
+    end
+
+    private def build_result : PluginResult
       validate_bool_params!
       url = @params["url"]?
       dest = @params["dest"]?
@@ -773,7 +785,7 @@ module Krikri
         # a bare fail_json, no url/dest/elapsed (its module-level result
         # dict is not spread here).
         PluginResult.new(changed: false, failed: true,
-          msg: "Unable to find a checksum for file '#{target_basename}' in '#{checksum_url}'")
+          msg: "Unable to find a checksum for file '#{target_basename}' in '#{PluginHelpers::UrlMask.mask(checksum_url)}'")
       ensure
         File.delete(tmp_path) if File.exists?(tmp_path)
       end
