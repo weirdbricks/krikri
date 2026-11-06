@@ -1,6 +1,6 @@
 # Upgrade plan: parity target ansible-core 2.19.11 → 2.21.6
 
-Status: **code work complete at 0.9.2408 — pending live verification**.
+Status: **plugin source-diff pass complete at 0.9.2430 — pending live verification**.
 Decision (2026-11-05): krikri tracks ansible-core **2.21.6 only** — the
 `--krikri-argspec-profile` knob proposed earlier was dropped before it
 shipped; `data/argspecs.json` IS the 2.21.6 capture, and
@@ -113,15 +113,59 @@ were, and they are done.
 
 ## Remaining work
 
-- [ ] **Per-plugin module source diffs** (2.19.11 → 2.21.6) for every
-      natively-implemented module not yet covered by the live probing:
-      stat, copy, file, lineinfile, blockinfile, template, get_url, user,
-      git, pip, slurp, find, the package/dnf/yum family,
-      service/sysvinit, uri, archive... Look for returned-key changes,
-      msg wording, changed-detection, check-mode behavior. Method: diff
-      `/tmp/ans221/lib/python3*/site-packages/ansible/modules/...` vs
-      `/usr/lib/python3/dist-packages/ansible/modules/...` (the 2.21.6
-      venv still exists at `/tmp/ans221`).
+- [x] **Per-plugin module source diffs** (2.19.11 → 2.21.6): swept all
+      36 natively-implemented modules whose `.py` differs between the two
+      releases (diff `/tmp/ans221/lib/python3*/site-packages/ansible/modules`
+      vs `/usr/lib/python3/dist-packages/ansible/modules`). Fixed in 0.9.2409
+      - 0.9.2430:
+      - `install_repoquery` dropped from yum/dnf/dnf5/package (2.21 removed
+        it from the shared spec).
+      - `getent`: empty `split:` fails with 2.21's wording.
+      - `tempfile`: `prefix:`/`suffix:` must be single name components.
+      - `slurp`: `armor` (2.21's new param) implemented, incl. the
+        controller-deserializer failure on non-UTF-8 content.
+      - `stat`/`find`: `disk_usage_bytes` (2.21); find drops
+        block_size/device_type and keeps blocks/disk_usage_bytes last.
+      - `stat`: `get_selinux_context` (2.21's new param).
+      - `file`: EACCES-as-absent warning; warnings ride the result.
+      - `known_hosts`: hashed-host mismatch carries the lookup's rc/stderr.
+      - `apt`: recreate a missing apt lists cache before any branch.
+      - `copy`: `directory_mode:` now applies to a pre-existing
+        `remote_src:` dest root.
+      - `git`: " HEAD" checkout-failure wording, `track_submodules`
+        compares each submodule against its configured branch, and a
+        sha-looking `version:` is validated with a dry-run fetch.
+      - `user`: result `groups` is the account's real membership, `seuser`
+        on a non-SELinux host warns instead of failing, placeholder homes
+        (`/nonexistent`, `/dev/null`, `/var/empty`) are not created, and
+        2.21's append-requires-groups `required_if` is pinned.
+      - `get_url`/`uri` (+ new `PluginHelpers::UrlMask`): credentials in a
+        `url:` are masked in every echoed field/message; `uri` now also
+        uses URL userinfo as basic auth and strips it from the reported
+        URL, and derives `redirected` from the masked URL like real.
+      - `lineinfile`/`blockinfile` (+ new `PluginHelpers::TextFileIO`):
+        `encoding:` honored (iconv/CPython-codec names), undecodable
+        content and unknown codec names fail with 2.21's messages.
+      - `pip`: `editable:` now precedes every package (one `-e` each).
+      Unchanged after review: `cron`, `service`, `template`, `script`,
+      `group` (the `force` guard is BSD/macOS/BusyBox-only; Linux keeps
+      `groupdel -f`), `unarchive` (its zip date_time tuple change has no
+      counterpart - krikri shells out to unzip), `apt_key`,
+      `apt_repository`, `yum_repository`, `dnf` (beyond install_repoquery),
+      `assemble`, `expect`, `command`, `wait_for`, `wait_for_connection`,
+      `deb822_repository`, `rpm_key`, `iptables`.
+- [ ] **Deferred module behavior gaps** found by that sweep (each
+      deliberate, to be handled or issue-filed after the first round):
+      - `pip` check-mode name resolution: 2.21 resolves bare package names
+        through `pip install --dry-run --report` (pip >= 24.1) before
+        deciding `changed`, and warns on older pip. krikri keeps its own
+        check-mode heuristic (issue #794 lineage).
+      - `iptables`: 2.21 de-duplicates `-m <match>` extensions against the
+        ones already emitted (`loaded_extensions`); krikri can emit the same
+        `-m` twice (cosmetic only - iptables accepts it).
+      - `package_facts` on Alpine: 2.21 queries apk with
+        `--fields name,version --format json` and maps "(none)" values;
+        krikri's apk path was not re-verified against that.
 - [ ] **Porting-guide pass** (2.20 + 2.21) for areas the probing can't
       reach: deprecation gates, lookup/filter behavior, connection-level
       changes. The live probing already covered templating scalars,
