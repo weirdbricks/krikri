@@ -32,12 +32,14 @@ module Krikri
     # BasePlugin#validate_bool_params! - see its block comment. A bool
     # param only the OTHER family's backend has fails here with the bool
     # wording where Ansible would fail it as an unsupported param - same
-    # outcome, different message, accepted edge.
+    # outcome, different message, accepted edge. 2.21 dropped the retired
+    # `install_repoquery` from the shared yumdnf spec, so it left this
+    # union too (both backends now reject it as unsupported).
     protected def bool_params : Array(String)
       %w[allow_change_held_packages allow_downgrade allow_unauthenticated
         auto_install_module_deps autoclean autoremove best bugfix cacheonly clean
         disable_gpg_check download_only fail_on_autoremove force force_apt_get
-        install_repoquery install_weak_deps nobest only_upgrade purge security skip_broken
+        install_weak_deps nobest only_upgrade purge security skip_broken
         sslverify update_cache update_only validate_certs]
     end
 

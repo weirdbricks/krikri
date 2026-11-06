@@ -58,7 +58,7 @@ module Krikri
     # comment for the real-Ansible semantics and message wording.
     protected def bool_params : Array(String)
       %w[allow_downgrade allowerasing autoremove best bugfix cacheonly disable_gpg_check
-        download_only install_repoquery install_weak_deps nobest security skip_broken
+        download_only install_weak_deps nobest security skip_broken
         sslverify update_cache update_only validate_certs]
     end
 
@@ -102,10 +102,13 @@ module Krikri
         return failure
       end
 
+      # 2.21 dropped the retired `install_repoquery` from the shared
+      # yumdnf spec (yum routes to the dnf module, live-verified vs
+      # 2.21.6), so it left the supported set here too.
       yum_supported = {"allow_downgrade", "autoremove", "bugfix", "cacheonly",
                        "conf_file", "disable_excludes", "disable_gpg_check",
                        "disable_plugin", "disablerepo", "download_dir", "download_only",
-                       "enable_plugin", "enablerepo", "exclude", "install_repoquery",
+                       "enable_plugin", "enablerepo", "exclude",
                        "install_weak_deps", "installroot", "list", "lock_timeout",
                        "name", "nobest", "releasever", "security", "skip_broken",
                        "sslverify", "state", "update_cache", "update_only",
@@ -121,7 +124,7 @@ module Krikri
                "Supported parameters include: " \
                "allow_downgrade, autoremove, bugfix, cacheonly, conf_file, disable_excludes, disable_gpg_check, " \
                "disable_plugin, disablerepo, download_dir, download_only, enable_plugin, enablerepo, exclude, " \
-               "install_repoquery, install_weak_deps, installroot, list, lock_timeout, name, nobest, releasever, " \
+               "install_weak_deps, installroot, list, lock_timeout, name, nobest, releasever, " \
                "security, skip_broken, sslverify, state, update_cache, update_only, validate_certs, " \
                "use_backend (expire-cache, pkg)."
         )

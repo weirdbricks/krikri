@@ -18,8 +18,11 @@ module Krikri
   # words positionally), and this plugin's own argument-spec validation.
   # dnf5 shares ansible-core's `yumdnf_argument_spec` but ADDS
   # `auto_install_module_deps`/`best` and does NOT accept dnf's
-  # `use_backend`. (2.19 still validates the retired `install_repoquery`
-  # as a bool - live-verified - so it stays in the supported set.)
+  # `use_backend`. (2.19 still validated the retired `install_repoquery`
+  # as a bool - live-verified then; 2.21 removed it from the spec
+  # entirely, live-verified vs 2.21.6: `install_repoquery: true` fails
+  # "Unsupported parameters ... install_repoquery", so it is gone from
+  # the supported set.)
   #
   # Live-verified against ansible-core 2.21.4 on Fedora 41 (dnf5
   # 5.2.17): the whole option matrix is checked side-by-side in
@@ -31,7 +34,7 @@ module Krikri
     # comment for the real-Ansible semantics and message wording.
     protected def bool_params : Array(String)
       %w[allow_downgrade allowerasing auto_install_module_deps autoremove best bugfix
-        cacheonly disable_gpg_check download_only install_repoquery install_weak_deps nobest
+        cacheonly disable_gpg_check download_only install_weak_deps nobest
         security skip_broken sslverify update_cache update_only validate_certs]
     end
 
@@ -180,17 +183,17 @@ module Krikri
     end
 
     # Real dnf5's supported set = shared yumdnf_argument_spec + auto_install_module_deps
-    # + best and (unlike dnf) WITHOUT use_backend. 2.19's dnf5 argspec
-    # does still validate install_repoquery as a bool (live-verified:
-    # `dnf5: {install_repoquery: blah}` fails with the bool wording), so
-    # it stays supported here. The
+    # + best and (unlike dnf) WITHOUT use_backend. 2.21 dropped the
+    # retired `install_repoquery` from the spec entirely (live-verified
+    # vs 2.21.6 - the 2.19 spec still validated it as a bool), so it is
+    # no longer in the supported set. The
     # trailing "(expire-cache, pkg)" is Ansible's aliases appended to the list.
     private def unsupported_rejection : PluginResult?
       dnf5_supported = {"allow_downgrade", "allowerasing", "auto_install_module_deps",
                         "autoremove", "best", "bugfix", "cacheonly", "conf_file",
                         "disable_excludes", "disable_gpg_check", "disable_plugin",
                         "disablerepo", "download_dir", "download_only", "enable_plugin",
-                        "enablerepo", "exclude", "install_repoquery", "install_weak_deps", "installroot",
+                        "enablerepo", "exclude", "install_weak_deps", "installroot",
                         "list", "lock_timeout", "name", "nobest", "pkg", "releasever",
                         "security", "skip_broken", "sslverify", "state", "update_cache",
                         "update_only", "validate_certs", "expire-cache"}
@@ -205,7 +208,7 @@ module Krikri
              "Supported parameters include: " \
              "allow_downgrade, allowerasing, auto_install_module_deps, autoremove, best, bugfix, " \
              "cacheonly, conf_file, disable_excludes, disable_gpg_check, disable_plugin, disablerepo, " \
-             "download_dir, download_only, enable_plugin, enablerepo, exclude, install_repoquery, install_weak_deps, " \
+             "download_dir, download_only, enable_plugin, enablerepo, exclude, install_weak_deps, " \
              "installroot, list, lock_timeout, name, nobest, releasever, security, skip_broken, " \
              "sslverify, state, update_cache, update_only, validate_certs (expire-cache, pkg)."
       )
