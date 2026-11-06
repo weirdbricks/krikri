@@ -708,12 +708,20 @@ module Krikri
       # redirect_deprecation_lookup for why the bare qualification cannot
       # go through MODULE_SEARCH_COLLECTIONS.
       "amazon.aws.ec2_vpc_peer" => {warning_text: "ec2_vpc_peer has been renamed to ec2_vpc_peering. Please update your tasks.", collection: "amazon.aws", version: "13.0.0"},
-      # ansible-core's own builtin deprecation (ansible_builtin_runtime.yml
-      # plugin_routing.modules.apt_key.deprecation) for the module this engine
-      # still ships: removal is an ansible-core release, not a collection one,
-      # so the tail names ansible-core - live-verified vs 2.19.11 for all
-      # three spellings (bare apt_key echoes its as-written name, the FQCN
-      # and ansible.legacy spellings echo their as-written qualified name).
+      # ansible-core's own builtin-runtime deprecations for apt_repository
+      # and apt_key (ansible_builtin_runtime.yml, removal_version "2.25",
+      # warning_text "Use deb822_repository instead." - the console tail
+      # names ansible-core, not a collection). Live-verified vs 2.19.11:
+      # apt_repository's FQCN spelling echoes "ansible.builtin.apt_repository"
+      # and its bare and ansible.legacy spellings echo the bare
+      # "apt_repository" (the loader matches the builtin-runtime's bare key
+      # for those), so the table carries explicit FQCN and bare entries and
+      # the legacy spelling falls back to the bare key below. apt_key's
+      # spellings differ: bare echoes "apt_key" while the FQCN and
+      # ansible.legacy spellings echo their as-written qualified name, so
+      # all three are explicit entries.
+      "ansible.builtin.apt_repository" => {warning_text: "Use deb822_repository instead.", collection: "ansible.builtin", version: "2.25"},
+      "apt_repository"                 => {warning_text: "Use deb822_repository instead.", collection: "ansible.builtin", version: "2.25"},
       "apt_key"                 => {warning_text: "Use deb822_repository instead.", collection: "ansible.builtin", version: "2.25"},
       "ansible.builtin.apt_key" => {warning_text: "Use deb822_repository instead.", collection: "ansible.builtin", version: "2.25"},
       "ansible.legacy.apt_key"  => {warning_text: "Use deb822_repository instead.", collection: "ansible.builtin", version: "2.25"},
@@ -740,7 +748,20 @@ module Krikri
         return {name, entry}
       end
       if name.includes?(".")
-        return nil
+        # ansible.legacy.* spellings route through the builtin-runtime's
+        # bare key when the table has no explicit legacy entry:
+        # live-verified vs 2.19.11, `ansible.legacy.apt_repository:` echoes
+        # "apt_repository has been deprecated..." - not the legacy spelling
+        # (apt_key is the exception, handled by its explicit
+        # ansible.legacy.apt_key entry above, whose echo keeps the
+        # as-written qualified name).
+        entry = REDIRECT_DEPRECATIONS[name]?
+        if entry.nil? && (bare = name.split(".").last?)
+          if entry = REDIRECT_DEPRECATIONS[bare]?
+            return {bare, entry}
+          end
+        end
+        return entry ? {name, entry} : nil
       end
       MODULE_SEARCH_COLLECTIONS.each do |collection|
         qualified = "#{collection}.#{name}"
