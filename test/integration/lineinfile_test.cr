@@ -458,6 +458,40 @@ describe "lineinfile plugin" do
     result["backup"].as_s.must_be_empty
   end
 
+  # The attributes entry carries before/after for every attribute the
+  # pass changes (live-verified vs 2.21.6: a mode-only change reads
+  # {'before': {'mode': '0644'}, 'after': {'mode': '0600'}} with the two
+  # headers after them), and stays header-only when nothing changed.
+  it "carries before/after attributes in the file-attributes diff entry" do
+    path = PluginSpecHelper.tmp_path("lineinfile-attr-diff.txt")
+    File.write(path, "alpha\n")
+    File.chmod(path, 0o644)
+
+    result = PluginSpecHelper.run("lineinfile", {
+      "path" => path, "line" => "alpha", "mode" => "0600", "_ansible_diff" => "true",
+    })
+
+    entry = result["diff"].as_a[1].as_h
+    entry.keys.must_equal(["before", "after", "before_header", "after_header"])
+    entry["before"].as_h["mode"].as_s.must_equal("0644")
+    entry["after"].as_h["mode"].as_s.must_equal("0600")
+    entry["before_header"].as_s.must_equal("#{path} (file attributes)")
+  end
+
+  it "keeps the file-attributes diff entry header-only when nothing changed" do
+    path = PluginSpecHelper.tmp_path("lineinfile-attr-diff-noop.txt")
+    File.write(path, "alpha\n")
+    File.chmod(path, 0o644)
+
+    result = PluginSpecHelper.run("lineinfile", {
+      "path" => path, "line" => "alpha", "mode" => "0644", "_ansible_diff" => "true",
+    })
+
+    entry = result["diff"].as_a[1].as_h
+    entry.has_key?("before").must_equal(false)
+    entry["before_header"].as_s.must_equal("#{path} (file attributes)")
+  end
+
   # In --diff mode the SAME two-entry list carries the real text - the
   # headers stay bare and the content entry leads with before/after
   # (live-verified vs 2.19.11 and 2.21.6: the callback is what prints

@@ -1382,14 +1382,15 @@ module Krikri
     # stored in the result are the bare "<path> (content)" / "<path> (file
     # attributes)" strings (live-verified vs ansible-core 2.19.11 and
     # 2.21.6 - both put before/after BEFORE the two header keys).
-    protected def file_module_diff(path : String, before : String, after : String) : JSON::Any
+    protected def file_module_diff(path : String, before : String, after : String,
+                                   attributes_entry : JSON::Any? = nil) : JSON::Any
       content_entry = JSON::Any.new({
         "before"        => JSON::Any.new(before),
         "after"         => JSON::Any.new(after),
         "before_header" => JSON::Any.new("#{path} (content)"),
         "after_header"  => JSON::Any.new("#{path} (content)"),
       })
-      attributes_entry = JSON::Any.new({
+      attributes_entry ||= JSON::Any.new({
         "before_header" => JSON::Any.new("#{path} (file attributes)"),
         "after_header"  => JSON::Any.new("#{path} (file attributes)"),
       })

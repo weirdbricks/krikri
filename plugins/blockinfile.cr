@@ -158,7 +158,9 @@ module Krikri
       backup_file, write_failure = persist(path, new_content, being_created, changed, check_mode)
       return write_failure if write_failure
 
-      diff = file_module_diff(path, original_content, new_content) if changed && @diff_mode
+      attribute_baseline = File.info?(path)
+      diff = file_module_diff(path, original_content, new_content,
+        attributes_diff_entry(path, attribute_baseline)) if changed && @diff_mode
       # Real blockinfile's wire result ALWAYS carries a `diff` key - the
       # same two-entry list lineinfile's does (a content diff and a
       # file-attributes diff; both before/after bodies empty outside
@@ -499,6 +501,49 @@ module Krikri
       end
 
       nil
+    end
+
+    # ansible-core 2.21's file-attributes diff entry - see lineinfile.cr's
+    # identical helper: real passes an `attr_diff` dict into
+    # set_fs_attributes_if_different, which records before/after for every
+    # attribute that changes and leaves the entry header-only otherwise.
+    # `info` is the file's state BEFORE the attribute pass.
+    private def attributes_diff_entry(path : String, info : File::Info?) : JSON::Any
+      before = {} of String => JSON::Any
+      after = {} of String => JSON::Any
+      if info
+        if (mode = @params["mode"]?) && mode.matches?(/^0?\d+$/)
+          current_bits = info.permissions.value.to_i & 0o7777
+          target_bits = mode.to_i(8)
+          if current_bits != target_bits
+            before["mode"] = JSON::Any.new("0#{current_bits.to_s(8).rjust(3, '0')}")
+            after["mode"] = JSON::Any.new("0#{target_bits.to_s(8).rjust(3, '0')}")
+          end
+        end
+        if (owner = @params["owner"]?) && !owner.empty?
+          uid = resolve_owner_uid(owner)
+          unless info.owner_id.to_s == uid.to_s
+            before["owner"] = JSON::Any.new(info.owner_id.to_i64)
+            after["owner"] = JSON::Any.new(uid.to_i64)
+          end
+        end
+        if (group = @params["group"]?) && !group.empty?
+          gid = resolve_group_gid(group)
+          unless info.group_id.to_s == gid.to_s
+            before["group"] = JSON::Any.new(info.group_id.to_i64)
+            after["group"] = JSON::Any.new(gid.to_i64)
+          end
+        end
+      end
+
+      entry = {} of String => JSON::Any
+      unless before.empty?
+        entry["before"] = JSON::Any.new(before)
+        entry["after"] = JSON::Any.new(after)
+      end
+      entry["before_header"] = JSON::Any.new("#{path} (file attributes)")
+      entry["after_header"] = JSON::Any.new("#{path} (file attributes)")
+      JSON::Any.new(entry)
     end
 
     private def apply_mode_attr(path : String, info : File::Info, check_mode : Bool) : Bool
