@@ -67,7 +67,7 @@ describe "command/shell failed-result key order" do
                 {{ r | to_json }}
               dest: KRIKRI_DUMP_PATH
       YAML
-    keys.must_equal(%w[changed stdout stderr rc cmd start end delta failed msg stdout_lines stderr_lines exception])
+    keys.must_equal(%w[changed failed exception msg rc stdout stderr cmd start end delta stdout_lines stderr_lines])
   end
 
   it "registers a failed shell (rc != 0) in the same order with cmd as a string" do
@@ -87,7 +87,7 @@ describe "command/shell failed-result key order" do
                 {{ r | to_json }}
               dest: KRIKRI_DUMP_PATH
       YAML
-    keys.must_equal(%w[changed stdout stderr rc cmd start end delta failed msg stdout_lines stderr_lines exception])
+    keys.must_equal(%w[changed failed exception msg rc stdout stderr cmd start end delta stdout_lines stderr_lines])
   end
 end
 
@@ -110,7 +110,7 @@ describe "plain fail_json registered key order (default failed emission)" do
                 {{ r | to_json }}
               dest: KRIKRI_DUMP_PATH
       YAML
-    keys.must_equal(%w[failed msg changed exception])
+    keys.must_equal(%w[changed failed exception msg])
   end
 
   it "registers a service failure for a missing service as failed, msg, changed, exception" do
@@ -132,7 +132,7 @@ describe "plain fail_json registered key order (default failed emission)" do
                 {{ r | to_json }}
               dest: KRIKRI_DUMP_PATH
       YAML
-    keys.must_equal(%w[failed msg changed exception])
+    keys.must_equal(%w[changed failed exception msg])
   end
 end
 
@@ -156,7 +156,7 @@ describe "rc-257 missing-file failure key order" do
                 {{ r | to_json }}
               dest: KRIKRI_DUMP_PATH
       YAML
-    keys.must_equal(%w[rc failed msg changed exception])
+    keys.must_equal(%w[changed failed exception msg rc])
   end
 
   it "registers a blockinfile failure on a missing path as rc, failed, msg, changed, exception" do
@@ -178,7 +178,7 @@ describe "rc-257 missing-file failure key order" do
                 {{ r | to_json }}
               dest: KRIKRI_DUMP_PATH
       YAML
-    keys.must_equal(%w[rc failed msg changed exception])
+    keys.must_equal(%w[changed failed exception msg rc])
   end
 
   it "registers a replace failure on a missing path as rc, failed, msg, changed, exception" do
@@ -201,7 +201,7 @@ describe "rc-257 missing-file failure key order" do
                 {{ r | to_json }}
               dest: KRIKRI_DUMP_PATH
       YAML
-    keys.must_equal(%w[rc failed msg changed exception])
+    keys.must_equal(%w[changed failed exception msg rc])
   end
 end
 
@@ -225,6 +225,6 @@ describe "wait_for timeout registered key order" do
                 {{ r | to_json }}
               dest: KRIKRI_DUMP_PATH
       YAML
-    keys.must_equal(%w[elapsed failed msg changed exception])
+    keys.must_equal(%w[changed failed exception msg elapsed])
   end
 end
