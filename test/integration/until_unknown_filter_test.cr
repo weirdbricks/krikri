@@ -51,9 +51,9 @@ describe "until: with an unknown filter or test name" do
     # when the failure surfaces - and the failure means no retry line
     # ever prints, unlike an until: that merely stays false.
     File.read_lines(counter).size.must_equal(1)
-    output.must_include("[ERROR]: Task failed: Syntax error in expression: No filter named 'search'.")
+    output.must_include("[ERROR]: Task failed: An 'until' expression failed: Syntax error in expression: No filter named 'search'.")
     output.must_include("Syntax error in expression: No filter named 'search'.\nOrigin: ")
-    output.must_include("fatal: [localhost]: FAILED! => {\"changed\": false, \"msg\": \"Task failed: Syntax error in expression: No filter named 'search'.\"}")
+    output.must_include("fatal: [localhost]: FAILED! => {\"changed\": false, \"msg\": \"Task failed: An 'until' expression failed: Syntax error in expression: No filter named 'search'.\"}")
     output.wont_include("FAILED - RETRYING")
     output.wont_include("Unhandled exception")
     output.must_include("failed=1")
@@ -79,8 +79,8 @@ describe "until: with an unknown filter or test name" do
     # fatal is the until: task's own, real wording, not the include
     # loader's legacy generic rescue turning the raise into a bogus
     # load failure.
-    output.must_include("[ERROR]: Task failed: Syntax error in expression: No filter named 'search'.")
-    output.must_include("fatal: [localhost]: FAILED! => {\"changed\": false, \"msg\": \"Task failed: Syntax error in expression: No filter named 'search'.\"}")
+    output.must_include("[ERROR]: Task failed: An 'until' expression failed: Syntax error in expression: No filter named 'search'.")
+    output.must_include("fatal: [localhost]: FAILED! => {\"changed\": false, \"msg\": \"Task failed: An 'until' expression failed: Syntax error in expression: No filter named 'search'.\"}")
     output.wont_include("Failed to load included tasks")
     output.wont_include("Unhandled exception")
     output.must_include("failed=1")

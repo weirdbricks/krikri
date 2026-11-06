@@ -962,6 +962,12 @@ module Krikri
     # itself is about to use - it's cosmetic-only (a mistake here can't
     # affect what actually runs), so best-effort: on any substitution
     # error, fall back to the raw unrendered name rather than raising.
+    # ansible-core 2.21 labels EVERY conditional-expression failure with the
+    # clause that raised it ("Task failed: A 'when' expression failed: <detail>",
+    # live-captured vs 2.21.6; the same clause label rides the [ERROR] chain's
+    # "caused by" stanza). 2.19 printed the detail alone.
+    WHEN_EXPRESSION_FAILED_PREFIX = "A 'when' expression failed: "
+
     private def evaluate_when(when_condition : String, vars_context : Hash(String, JSON::Any), host : Host, substitutor : VarSubstitutor? = nil, task : Task? = nil) : Bool
       # Ansible compiles the raw conditional as an expression (no `{{ }}`
       # pre-render), so delimiters outside a string literal are its
@@ -974,7 +980,7 @@ module Krikri
       # visible (chriswayg.mailcow / rockandska.rabbitmq rounds had this
       # engine rendering them away and passing the task).
       if delimiter = ConditionalEvaluator.template_delimiter_error(when_condition)
-        raise WhenEvaluationError.new("Task failed: #{delimiter}")
+        raise WhenEvaluationError.new("Task failed: #{WHEN_EXPRESSION_FAILED_PREFIX}#{delimiter}")
       end
       # Ansible's conditional-as-template deprecation fires while the
       # conditional is being evaluated (see
@@ -1017,9 +1023,9 @@ module Krikri
           # filter's own failure keeps the plugin wording real prints for it
           # (live-probed same session, both when: forms).
           if ex.message.try(&.starts_with?("The filter plugin '"))
-            raise WhenEvaluationError.new("Task failed: #{ex.message}")
+            raise WhenEvaluationError.new("Task failed: #{WHEN_EXPRESSION_FAILED_PREFIX}#{ex.message}")
           end
-          raise WhenEvaluationError.new("Task failed: Error while evaluating conditional: #{ex.message}")
+          raise WhenEvaluationError.new("Task failed: #{WHEN_EXPRESSION_FAILED_PREFIX}Error while evaluating conditional: #{ex.message}")
         rescue ex : VariableSubstitutor::FilterEngine::UnknownFilterError | VariableSubstitutor::UnknownTestError
           # The `{{ }}`-wrapped `when:` form compiles its filter/test names
           # during the RENDER (substitute), before the unbraced form's own
@@ -1029,7 +1035,7 @@ module Krikri
           # NOT the "Syntax error in expression" wording the unbraced
           # form's gate produces. Unrescued, the raise escaped substitute
           # itself and crashed the whole run instead of failing one task.
-          raise WhenEvaluationError.new("Task failed: Syntax error in template: #{ex.message}")
+          raise WhenEvaluationError.new("Task failed: #{WHEN_EXPRESSION_FAILED_PREFIX}Syntax error in template: #{ex.message}")
         end
 
         begin
@@ -1049,24 +1055,26 @@ module Krikri
           # gets this prefix; an undefined reference keeps the familiar
           # "Error while evaluating conditional: " shape (assert:'s own
           # identical split lives in assert_action_plugin.cr).
-          raise WhenEvaluationError.new("Task failed: #{ex.message}")
+          raise WhenEvaluationError.new("Task failed: #{WHEN_EXPRESSION_FAILED_PREFIX}#{ex.message}")
         rescue ex : RenderExpressionError
           # A Python list-method's runtime failure ("'z' is not in list"):
           # real words it "Task failed: Error rendering expression: <msg>"
           # with the plain prefix and no conditional wrapper (probed vs
           # 2.19.11 2026-10-10, `when: lst.index('z') == 1`).
-          raise WhenEvaluationError.new("Task failed: Error rendering expression: #{ex.message}")
+          raise WhenEvaluationError.new("Task failed: #{WHEN_EXPRESSION_FAILED_PREFIX}Error rendering expression: #{ex.message}")
         rescue ex : ConditionalEvaluator::OrderingTypeError
           # A str-vs-number ordering comparison ('10' >= 1): Python's TypeError
           # is an expression render failure in ansible too, framed the same way
           # as the list-method one above (issue #219).
-          raise WhenEvaluationError.new("Task failed: Error rendering expression: #{ex.message}")
+          raise WhenEvaluationError.new("Task failed: #{WHEN_EXPRESSION_FAILED_PREFIX}Error rendering expression: #{ex.message}")
         rescue ex : Krikri::FilterPluginError
           # A FILTER plugin's runtime failure (e.g. length on None) - real
           # prints its wrapper message with the plain "Task failed: " prefix
           # and NO "Error while evaluating conditional: " (live-verified
-          # against 2.19.11 for the mandatory twin).
-          raise WhenEvaluationError.new("Task failed: #{ex.message}")
+          # against 2.19.11 for the mandatory twin). Its cause_text rides the
+          # exception so the display can split the wrapper from the cause the
+          # way 2.21 does.
+          raise WhenEvaluationError.new("Task failed: #{WHEN_EXPRESSION_FAILED_PREFIX}#{ex.message}")
         rescue ex : TestPluginError
           # A TEST plugin's runtime failure (the version test's own
           # validation errors: unknown kwargs, strict/version_type
@@ -1076,7 +1084,7 @@ module Krikri
           # failed: " prefix and no conditional wrapper (live-verified
           # against 2.19.11 for the kwargs matrix, round 5210000
           # follow-up: bodsch.icingaweb2's strict=True).
-          raise WhenEvaluationError.new("Task failed: #{ex.message}")
+          raise WhenEvaluationError.new("Task failed: #{WHEN_EXPRESSION_FAILED_PREFIX}#{ex.message}", ex.cause_text)
         rescue ex : VariableSubstitutor::FilterEngine::FilterFailureError
           # Same FilterFailureError split as the braced-render rescue above:
           # a filter that ran and failed is conditional-evaluation wording
@@ -1086,9 +1094,9 @@ module Krikri
           # "Syntax error in expression:" wording an unresolvable FILTER
           # NAME gets below.
           if ex.message.try(&.starts_with?("The filter plugin '"))
-            raise WhenEvaluationError.new("Task failed: #{ex.message}")
+            raise WhenEvaluationError.new("Task failed: #{WHEN_EXPRESSION_FAILED_PREFIX}#{ex.message}")
           end
-          raise WhenEvaluationError.new("Task failed: Error while evaluating conditional: #{ex.message}")
+          raise WhenEvaluationError.new("Task failed: #{WHEN_EXPRESSION_FAILED_PREFIX}Error while evaluating conditional: #{ex.message}")
         rescue ex : VariableSubstitutor::FilterEngine::UnknownFilterError | VariableSubstitutor::UnknownTestError
           # A compile-time-rejected filter/test name gets Ansible's own
           # "Syntax error in expression: " wording - Jinja's compiler
@@ -1098,9 +1106,9 @@ module Krikri
           # and `when: x is list` both fatal "Task failed: Syntax error
           # in expression: No filter/test named '...'.", found via
           # adarnimrod.apache's assert: version_compare preflight).
-          raise WhenEvaluationError.new("Task failed: Syntax error in expression: #{ex.message}")
+          raise WhenEvaluationError.new("Task failed: #{WHEN_EXPRESSION_FAILED_PREFIX}Syntax error in expression: #{ex.message}")
         rescue ex
-          raise WhenEvaluationError.new("Task failed: Error while evaluating conditional: #{ex.message}")
+          raise WhenEvaluationError.new("Task failed: #{WHEN_EXPRESSION_FAILED_PREFIX}Error while evaluating conditional: #{ex.message}")
         ensure
           VarSubstitutor.pop_current_when_site if task
         end
@@ -1364,7 +1372,7 @@ module Krikri
     # failed/_ansible_*), while a registered var keeps the full
     # changed+failed+msg shape either way (register strips the marker
     # with every other _ansible_* key).
-    private def when_error_result(ex : WhenEvaluationError, task : Task? = nil, host : Host? = nil, loop_item : JSON::Any? = nil, loop_index : Int32? = nil) : JSON::Any
+    private def when_error_result(ex : WhenEvaluationError, task : Task? = nil, host : Host? = nil, loop_item : JSON::Any? = nil, loop_index : Int32? = nil, clause_key : String = "when", clause_raw : String? = nil) : JSON::Any
       # A loop-source typing/lookup failure keeps real's own shape: the
       # bare msg (no "Task failed:" prefix), a msg-only dump, and the
       # emit_task_error_block suppression marker - see
@@ -1375,8 +1383,13 @@ module Krikri
       # failing ITEM's own origin in the msg (ansible's lineage labels
       # the tested item field's defining site, not the task's when:) -
       # each failing loop item's dump differs, like real's.
-      msg = decorate_conditional_value_origin(task, msg, host, loop_item: loop_item, loop_index: loop_index) if task
+      msg = decorate_conditional_value_origin(task, msg, host, clause_key: clause_key, clause_raw: clause_raw, loop_item: loop_item, loop_index: loop_index) if task
       fields = {"changed" => false, "failed" => true, "msg" => msg}
+      # A filter/test plugin's own cause rides along for the [ERROR]
+      # block's extra record (see WhenEvaluationError#cause_text).
+      if cause = ex.cause_text
+        fields["_ansible_conditional_cause"] = cause
+      end
       fields["_ansible_task_error_msg_only"] = true if task && debug_module?(task)
       # A conditional-EVALUATION failure's [ERROR] chain was already
       # emitted by emit_when_error_chain on the catch site - the marker
@@ -1503,10 +1516,10 @@ module Krikri
           # no-chain display.
           if item_label
             if emit_chain_for_item && @item_when_chain_emitted.add?({task.object_id, host.name})
-              emit_when_error_chain(task, msg, host)
+              emit_when_error_chain(task, msg, host, cause_text: ex.cause_text)
             end
           else
-            emit_when_error_chain(task, msg, host)
+            emit_when_error_chain(task, msg, host, cause_text: ex.cause_text)
           end
           display_msg = msg.starts_with?("Task failed: ") ? msg : "Task failed: #{msg}"
           if item_label
@@ -1654,7 +1667,7 @@ module Krikri
       # not at batch-build time (which would precede earlier members' output).
       if result && result["failed"]?.try(&.as_bool?) == true &&
          (msg = result["msg"]?.try(&.as_s?)) && conditional_evaluation_failure?(msg)
-        emit_when_error_chain(task, msg, host)
+        emit_when_error_chain(task, msg, host, cause_text: result["_ansible_conditional_cause"]?.try(&.as_s?))
       end
       {true, result}
     end
@@ -1822,7 +1835,7 @@ module Krikri
         # `item.invocation.module_args.creates` out of registered results),
         # and it silently didn't exist here: pre-strict templates read it as
         # an undefined value, 2.19-parity strictness fails the task on it.
-        interpreted = attach_batch_step_invocation(task, steps[idx], interpreted)
+        interpreted = attach_batch_step_invocation(task, steps[idx], interpreted, InvocationInjection.enabled?(vars_context))
         interpreted = shape_script_result(task, interpreted)
         cache[task] = {apply_changed_failed_when(task, interpreted, vars_context, host), vars_context}
       end
@@ -2572,7 +2585,7 @@ module Krikri
         # result's (already per-item-origin-decorated) msg. The chain
         # dedups identical repeats only.
         unless defer_when_chain
-          emit_when_error_chain(task, ex.message || "", host, loop_item: loop_item, loop_index: loop_index)
+          emit_when_error_chain(task, ex.message || "", host, loop_item: loop_item, loop_index: loop_index, cause_text: ex.cause_text)
         end
         return when_error_result(ex, task, host, loop_item: loop_item, loop_index: loop_index)
       end
@@ -3030,6 +3043,15 @@ module Krikri
       if RAW_MODULES.includes?(task.action_name || task.module_name)
         substituted_params = substituted_params.dup
         substituted_params["strip_empty_ends"] = "false"
+        # Marks the raw dispatch for the shell plugin, whose result builder
+        # serves command/shell/raw with one code path: raw.py kept the
+        # 2.19 non-zero-rc msg where 2.21's command.py reworded it, and
+        # MODULE_ALIASES has already rewritten task.module_name to the
+        # shell target by the time the config is built, so the plugin
+        # cannot recover the invoked spelling from _module_name. The
+        # _ansible_ prefix keeps it out of every validation and register
+        # shape the way the other internal args are.
+        substituted_params["_ansible_raw_dispatch"] = "1"
       end
 
       # Data-driven module argument validation against Ansible's own
@@ -3179,6 +3201,14 @@ module Krikri
         if period = marker_task_timeout(result)
           return task_timeout_result(period)
         end
+        # ansible-core 2.21's INJECT_INVOCATION default: the target's own
+        # AnsibleModule._return_formatted already popped `invocation` when
+        # the flag was absent from the module args; a module that set
+        # kwargs['invocation'] itself, or one running under an older
+        # target ansible that always injects, still hands one back - shed
+        # it here, matching what the controller-side result would carry
+        # under the setting's resolution (see InvocationInjection).
+        result = InvocationInjection.strip(result) unless InvocationInjection.enabled?(vars_context)
         return apply_changed_failed_when(task, result, vars_context, host)
       end
 
@@ -3200,7 +3230,7 @@ module Krikri
         PluginManager.remote_execution?("shell", exec_host, dispatch_vars),
         exec_host.connection_host)
       result = shape_script_result(task, result)
-      result = attach_invocation(task, substituted_params, result)
+      result = attach_invocation(task, substituted_params, result, InvocationInjection.enabled?(vars_context))
       apply_changed_failed_when(task, result, vars_context, host)
     end
 
@@ -3465,7 +3495,7 @@ module Krikri
     # pacifica.ansible_certinfra's loop over its CA chain).
     INVOCATION_FQCNS = %w[community.crypto.x509_certificate_info]
 
-    private def attach_invocation(task : Task, params : Hash(String, String), result : JSON::Any) : JSON::Any
+    private def attach_invocation(task : Task, params : Hash(String, String), result : JSON::Any, inject_invocation : Bool = true) : JSON::Any
       short = task.module_name.sub(/\Aansible\.(builtin|legacy)\./, "")
       fqcn = PlaybookParser::MODULE_ALIASES[task.module_name]? || task.module_name
       spec_name = if INVOCATION_MODULES.includes?(short)
@@ -3486,6 +3516,17 @@ module Krikri
         hash = hash.dup
         hash.delete("_ansible_invocation_module_args")
         result = JSON::Any.new(hash)
+      end
+      # ansible-core 2.21's INJECT_INVOCATION default is false: module
+      # results carry no `invocation` key at all unless the setting is
+      # enabled (InvocationInjection's own comment). The gate sits after
+      # the echo-marker cleanup and ahead of the echo build, so the OFF
+      # case also sheds the invocation a native plugin attached itself
+      # (copy's content echo, getent) or a real Python module returned in
+      # its own kwargs - the same pop AnsibleModule._return_formatted
+      # applies.
+      unless inject_invocation
+        return InvocationInjection.strip(result)
       end
       return result unless spec_name
       return result if hash.has_key?("invocation")
@@ -3566,9 +3607,9 @@ module Krikri
     # unknown (older construction sites, a plugin the argspec table can't
     # reproduce) keeps its result untouched - the same no-args no-attach
     # rule attach_invocation itself applies.
-    private def attach_batch_step_invocation(task : Task, step : BatchScript::Step, result : JSON::Any) : JSON::Any
+    private def attach_batch_step_invocation(task : Task, step : BatchScript::Step, result : JSON::Any, inject_invocation : Bool) : JSON::Any
       return result unless (params = step.params)
-      attach_invocation(task, params, result)
+      attach_invocation(task, params, result, inject_invocation)
     end
 
     # A whole-single-span `{{ expr }}` module/action arg whose structured
@@ -3819,6 +3860,18 @@ module Krikri
       else
         py_params["kv_argv"] = PythonModuleRunner.build_kv_argv(substituted_params).to_json
       end
+      # The INJECT_INVOCATION resolution rides to the py_module plugin as
+      # its own param, NOT inside module_args: a target with ansible-core
+      # installed runs the custom module against the TARGET's real
+      # basic.py, and an older one rejects the unknown `_ansible_*` key as
+      # an unsupported parameter (live-verified: a role-library module
+      # failed "Unsupported parameters for (bigmod) module:
+      # _ansible_inject_invocation" on this 2.19.11 host) - where real
+      # 2.21 never hits that because its AnsiballZ payload bundles the
+      # controller's own basic.py. The plugin adds the flag to the args
+      # only on the shim path (its own bundled basic), and the controller
+      # strips `invocation` off the result when the setting is off.
+      py_params["_ansible_inject_invocation"] = InvocationInjection.enabled?(vars_context).to_s
 
       # A role shipping its OWN custom module_utils packages (e.g.
       # linux-system-roles.storage's the Ansible module beside its
@@ -4002,6 +4055,16 @@ module Krikri
     private def substitute_conditional_rendering_errors(substitutor : VarSubstitutor, clause : String) : String
       begin
         substitutor.substitute(clause)
+      rescue e : VariableSubstitutor::FilterEngine::FilterFailureError
+        # A filter that RAN and raised is a runtime failure, not a
+        # template syntax error: real stores the plugin wrapper as-is, or
+        # the conditional-evaluation wording for a bare runtime failure
+        # (first/last on an empty sequence) - live-verified vs 2.21.6 for
+        # both, braced form.
+        message = e.message.to_s
+        raise ChangedFailedWhenRenderSyntaxError.new(
+          message.starts_with?("The filter plugin '") ? message : "Error while evaluating conditional: #{message}"
+        )
       rescue e : VariableSubstitutor::FilterEngine::UnknownFilterError
         raise ChangedFailedWhenRenderSyntaxError.new("Syntax error in template: #{e.message}")
       end
@@ -4034,6 +4097,20 @@ module Krikri
       # so it escapes the `except AnsibleError` conditional-evaluation
       # trap and stores the bare "Syntax error in expression: ..." shape
       # the template engine itself reports, not the prefixed trap wording.
+      #
+      # A filter PLUGIN's runtime failure (mandatory's "Mandatory variable
+      # 'x' not defined.", indent's operand TypeError) is stored with its
+      # own wrapper, no conditional-evaluation prefix (live-verified vs
+      # 2.21.6).
+      return message if exc.is_a?(Krikri::FilterPluginError) && message.starts_with?("The filter plugin '")
+      # A filter that RAN and raised is the runtime class instead
+      # (FilterFailureError subclasses UnknownFilterError): its plugin
+      # wrapper, or the conditional-evaluation wording for a bare runtime
+      # failure - live-verified vs 2.21.6 for both (a raising
+      # `changed_when` stores "The filter plugin '...' failed: ...").
+      if exc.is_a?(VariableSubstitutor::FilterEngine::FilterFailureError)
+        return message.starts_with?("The filter plugin '") ? message : "Error while evaluating conditional: #{message}"
+      end
       if exc.is_a?(VariableSubstitutor::FilterEngine::UnknownFilterError)
         return "Syntax error in expression: #{message}"
       end
@@ -4056,6 +4133,46 @@ module Krikri
         return with_origin_clause(message, "'#{tok[0]}:#{tok[1]}:#{tok[2]}'")
       end
       decorate_conditional_value_origin(task, message, host, operand: raw, clause_key: key, clause_raw: raw)
+    end
+
+    # ansible-core 2.21 labels a RAISING changed_when:/failed_when: with the
+    # clause that raised, and renders its own three-part [ERROR] block
+    # (live-captured vs 2.21.6):
+    #
+    #   [ERROR]: Task failed: Action failed: A 'changed_when' expression
+    #            failed: <detail>
+    #   Task failed: Action failed.
+    #   Origin: <task name line>
+    #   <<< caused by >>>
+    #   A 'changed_when' expression failed: <detail>
+    #   Origin: <clause value token>
+    #
+    # A module that had ALREADY failed keeps its own registered msg and
+    # shows "Module failed" in the block instead, and real moves that
+    # result's traceback placeholder into `<clause>_when_suppressed_exception`
+    # (live-verified: a /bin/false task with a raising failed_when
+    # registers the module's own msg plus
+    # failed_when_suppressed_exception: "(traceback unavailable)").
+    private def record_conditional_clause_failure(hash : Hash(String, JSON::Any), task : Task, clause_key : String, raw : String?, host : Host, module_failed : Bool, detail : String) : Nil
+      segment = module_failed ? "Module" : "Action"
+      if module_failed
+        hash["#{clause_key}_suppressed_exception"] = hash.delete("exception") || JSON::Any.new("(traceback unavailable)")
+      else
+        # A module that returned its OWN non-empty msg keeps it (real only
+        # replaces an absent/empty one - live-verified vs 2.21.6:
+        # `debug: msg=hello` behind a raising changed_when keeps "hello"
+        # while a command result, whose msg is empty on success, gets the
+        # clause chain).
+        existing = hash["msg"]?.try(&.as_s?)
+        if existing.nil? || existing.empty?
+          hash["msg"] = JSON::Any.new(conditional_clause_failure_text(clause_key, segment, detail))
+        end
+      end
+      emit_conditional_clause_error_block(task, clause_key, raw, segment, detail)
+      # The block above is the whole display for this failure - keep
+      # ResultDisplay's generic "Action failed."/"Module failed." chain
+      # from printing a second, unlabelled one.
+      hash["_ansible_conditional_clause_emitted"] = JSON::Any.new(true)
     end
 
     private def apply_changed_failed_when(task : Task, result : JSON::Any, vars_context : Hash(String, JSON::Any), host : Host) : JSON::Any
@@ -4189,14 +4306,11 @@ module Krikri
             maybe_conditional_delimiters_deprecation(task, changed_when, "changed_when", eval_context)
             hash["changed"] = JSON::Any.new(ConditionalEvaluator.evaluate(substitute_conditional_rendering_errors(substitutor, changed_when), eval_context, strict: true, raise_undefined: true))
           end
-        rescue e : ConditionalEvaluator::ConditionalBooleanError | ConditionalEvaluator::UndefinedVariableError | VariableSubstitutor::FilterEngine::UnknownFilterError | ChangedFailedWhenRenderSyntaxError
+        rescue e : ConditionalEvaluator::ConditionalBooleanError | ConditionalEvaluator::UndefinedVariableError | Krikri::FilterPluginError | Krikri::TestPluginError | VariableSubstitutor::FilterEngine::UnknownFilterError | ChangedFailedWhenRenderSyntaxError
           hash["failed"] = JSON::Any.new(true)
-          hash["changed_when_result"] = JSON::Any.new(changed_failed_when_error_text(task, "changed_when", changed_when, host, e))
-          if !module_failed && !hash.has_key?("msg")
-            hash["msg"] = JSON::Any.new("Task failed: Action failed: Unknown error.")
-            hash["_ansible_action_level"] = JSON::Any.new(true)
-            hash["_ansible_error_detail"] = JSON::Any.new("Action failed: Unknown error.")
-          end
+          detail = changed_failed_when_error_text(task, "changed_when", changed_when, host, e)
+          hash["changed_when_result"] = JSON::Any.new(detail)
+          record_conditional_clause_failure(hash, task, "changed_when", changed_when, host, module_failed, detail)
         end
 
         begin
@@ -4207,9 +4321,17 @@ module Krikri
             # TaskExecutor: result['failed_when_result'] = <verdict> whenever failed_when: is set
             hash["failed_when_result"] = JSON::Any.new(failed_when_result)
             # a module failure that failed_when: overrides to "not failed" keeps its
-            # traceback marker under the suppressed-exception key
-            if !failed_when_result && (suppressed = hash.delete("exception"))
-              hash["failed_when_suppressed_exception"] = suppressed
+            # traceback marker under the suppressed-exception key. 2.21
+            # exports that field for EVERY suppressed module failure -
+            # including a fail_json result that never carried an
+            # `exception` key (live-verified vs 2.21.6: a suppressed `fail:`
+            # register reads changed,failed,msg,failed_when_result,
+            # failed_when_suppressed_exception) - so synthesize the same
+            # placeholder the real failure path uses when there is nothing
+            # to move.
+            if !failed_when_result && module_failed
+              suppressed = hash.delete("exception")
+              hash["failed_when_suppressed_exception"] = suppressed || JSON::Any.new("(traceback unavailable)")
             end
             # A failed_when:-failed result with NO msg key finalizes through
             # AnsibleActionCapturedError.normalize_result_exception, whose
@@ -4223,27 +4345,11 @@ module Krikri
               hash["_ansible_error_detail"] = JSON::Any.new("Action failed: Unknown error.")
             end
           end
-        rescue e : ConditionalEvaluator::ConditionalBooleanError | ConditionalEvaluator::UndefinedVariableError | VariableSubstitutor::FilterEngine::UnknownFilterError | ChangedFailedWhenRenderSyntaxError
+        rescue e : ConditionalEvaluator::ConditionalBooleanError | ConditionalEvaluator::UndefinedVariableError | Krikri::FilterPluginError | Krikri::TestPluginError | VariableSubstitutor::FilterEngine::UnknownFilterError | ChangedFailedWhenRenderSyntaxError
           hash["failed"] = JSON::Any.new(true)
-          hash["failed_when_result"] = JSON::Any.new(changed_failed_when_error_text(task, "failed_when", failed_when, host, e))
-          # On a result the module did NOT already fail, a RAISING failed_when:
-          # finalizes through AnsibleActionCapturedError like the bool-true
-          # verdict above - the text-valued failed_when_result keeps the
-          # error text, so the display chain never sees the boolean shape
-          # and needs the same action-level markers here (issue #616:
-          # `failed_when: r.stdout` on a healthy command result reported
-          # "Module failed." where real prints "Task failed: Action
-          # failed.", live-verified vs 2.19).
-          if !module_failed
-            if !hash.has_key?("msg")
-              hash["msg"] = JSON::Any.new("Task failed: Action failed: Unknown error.")
-              hash["_ansible_action_level"] = JSON::Any.new(true)
-              hash["_ansible_error_detail"] = JSON::Any.new("Action failed: Unknown error.")
-            elsif hash["msg"].as_s? == ""
-              hash["_ansible_action_level"] = JSON::Any.new(true)
-              hash["_ansible_error_detail"] = JSON::Any.new("Action failed.")
-            end
-          end
+          detail = changed_failed_when_error_text(task, "failed_when", failed_when, host, e)
+          hash["failed_when_result"] = JSON::Any.new(detail)
+          record_conditional_clause_failure(hash, task, "failed_when", failed_when, host, module_failed, detail)
         end
       end
 

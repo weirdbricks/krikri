@@ -251,7 +251,13 @@ module Krikri
       remote_exec("rm -f #{shell_quote(tmp)}")
       return nil unless lookup[:stdout].empty?
 
-      PluginResult.new(changed: false, failed: true, msg: "Host parameter does not match hashed host field in supplied key")
+      # 2.21's sanity_check failure now carries the ssh-keygen run's rc,
+      # plus stderr when it produced any (2.19 emitted msg alone).
+      result = PluginResult.new(changed: false, failed: true, msg: "Host parameter does not match hashed host field in supplied key")
+      result.extra["rc"] = JSON::Any.new(lookup[:exit_code].to_i64)
+      stderr = lookup[:stderr].to_s.strip
+      result.extra["stderr"] = JSON::Any.new(stderr) unless stderr.empty?
+      result
     end
 
     # known_hosts.py search_for_host_key(): (found, replace_or_add,

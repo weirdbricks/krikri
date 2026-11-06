@@ -105,13 +105,16 @@ describe "looped include_tasks with a raising when: recaps one failure" do
 
     status.exit_code.must_equal(2)
     # One chain block only, regardless of how many items raised.
-    output.scan("[ERROR]: Task failed: Conditional result (True) was derived from value of type 'list'").size.must_equal(1)
+    output.scan("[ERROR]: Task failed: A 'when' expression failed: Conditional result (True) was derived from value of type 'list'").size.must_equal(1)
     # The defining site of the subscripted pass-through value: the
     # sequence start of repositories['ubuntu'] in the play vars.
     output.must_match(/was derived from value of type 'list' at '[^']*site\.yml:8:9'\. Conditionals must have a boolean result\./)
     # The chain's task-level Origin is the include task's `- name:` line;
     # the caused-by Origin is the when: value token.
     output.must_match(/Task failed\.\nOrigin: [^\n]*site\.yml:15:7\n/)
+    # 2.21's non-boolean shape: the caused-by line is the bare clause
+    # label, the detail follows as a third record (live-verified vs 2.21.6).
+    output.must_match(/<<< caused by >>>\n\nA 'when' expression failed\.\nOrigin: /)
     output.must_match(/<<< caused by >>>\n\nConditional result \(True\) was derived from value of type 'list' at '[^']*site\.yml:8:9'/)
     output.must_match(/Origin: [^\n]*site\.yml:20:13\n/)
     output.scan("ALLOW_BROKEN_CONDITIONALS").size.must_equal(1)

@@ -122,7 +122,7 @@ describe "strict conditional origin for compound expressions" do
 
     status.exit_code.must_equal(2)
     output.must_include("Conditional result (False) was derived from value of type 'NoneType' at '<unknown>'. Conditionals must have a boolean result.")
-    output.must_include("\"msg\": \"Task failed: Conditional result (False) was derived from value of type 'NoneType' at '<unknown>'. Conditionals must have a boolean result.\"")
+    output.must_include("\"msg\": \"Task failed: A 'when' expression failed: Conditional result (False) was derived from value of type 'NoneType' at '<unknown>'. Conditionals must have a boolean result.\"")
   end
 
   it "labels a null variable in a compound clause with '<unknown>'" do

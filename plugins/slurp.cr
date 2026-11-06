@@ -7,15 +7,15 @@
 # certs | Save ca certificate" task (`slurp: {src: ...}`, reading back a
 # just-generated cert to embed its content elsewhere) silently dropped.
 #
-# Always base64-encodes, unconditionally: ansible-core's argument_
-# spec is exactly `src` (type path, required, aliases [path]) - there is
-# NO `armor` param. An earlier version of this plugin invented one
-# (default true, `armor: false` returning raw UTF-8) and claimed it
-# mirrored real slurp.py; nothing in Ansible has it (ascii-armor is
-# a GPG/rpm-key concept, not a slurp one). Ansible rejects an
-# `armor:` task at argument-spec validation, so this engine does too -
-# same message shape command.cr/shell.cr use for their removed `warn`
-# param.
+# 2.21 added the `armor` param (type bool, default true): armor=false
+# returns the file content as a raw UTF-8 string with encoding "utf-8"
+# instead of base64 (live-verified vs real 2.21.6: content "floridian-
+# goat\n" / encoding "utf-8"). An earlier version of this plugin invented
+# armor for a pre-2.21 argspec and then rejected it as unsupported when
+# the 2.19 argspec said no such param exists - with the 2.21.6 capture
+# in data/argspecs.json the parameter is real and must be implemented.
+# Python's truthiness applies to the bool conversion; the default is
+# true.
 
 require "json"
 require "base64"
@@ -27,13 +27,7 @@ module Krikri
       src = @params["src"]? || @params["path"]?
       return PluginResult.new(changed: false, failed: true, msg: "missing required arguments: src") unless src
 
-      if @params.has_key?("armor")
-        return PluginResult.new(
-          changed: false,
-          failed: true,
-          msg: "Unsupported parameters for (ansible.builtin.slurp) module: armor. Supported parameters include: src (path)."
-        )
-      end
+      armor = @params["armor"]?.nil? ? true : true?(@params["armor"])
 
       # Ansible 2.19.11's slurp fails the task with msg "File not found: <src>"
       # (etc.) in the result dict, but the module process's OSError is what
@@ -75,7 +69,49 @@ module Krikri
       # so the reorder can place it before changed - without it the
       # executor's missing-failed backfill would append failed AFTER
       # changed, Ansible's exact opposite.
-      PluginResult.new(changed: false, failed: false, msg: "", content: Base64.strict_encode(bytes), source: src, encoding: "base64", failed_flag: false, key_order: SUCCESS_KEY_ORDER)
+      # armor=false hands the raw bytes to the controller's JSON
+      # deserialization, which refuses invalid UTF-8 (live-verified vs
+      # real 2.21.6 on a non-UTF-8 file). CPython's codec error reports
+      # the byte range of the first ill-formed sequence as "position
+      # S-E"; krikri derives the same pair from the first invalid byte.
+      raw_content = String.new(bytes)
+      if !armor && !raw_content.valid_encoding?
+        start = invalid_utf8_start(bytes)
+        return PluginResult.new(
+          changed: false, failed: true,
+          msg: "Refusing to deserialize an invalid UTF8 string value: 'utf-8' codec can't encode characters in position #{start}-#{start + 1}: surrogates not allowed"
+        )
+      end
+
+      PluginResult.new(
+        changed: false, failed: false, msg: "",
+        content: armor ? Base64.strict_encode(bytes) : raw_content,
+        source: src, encoding: armor ? "base64" : "utf-8",
+        failed_flag: false, key_order: SUCCESS_KEY_ORDER
+      )
+    end
+
+    # Index of the first byte that starts an ill-formed UTF-8 sequence,
+    # mirroring what CPython's utf-8 codec reports as the error position.
+    private def invalid_utf8_start(bytes : Bytes) : Int32
+      bytes.size.times do |i|
+        b = bytes[i]
+        if b < 0x80
+          next
+        elsif b < 0xC2 || b > 0xF4
+          return i
+        elsif b < 0xE0
+          return i unless bytes[i + 1]?.try &.in?(0x80..0xBF)
+        elsif b < 0xF0
+          return i unless bytes[i + 1]?.try(&.in?(0x80..0xBF)) && bytes[i + 2]?.try(&.in?(0x80..0xBF))
+          return i if b == 0xE0 && (bytes[i + 1] || 0) < 0xA0
+        else
+          return i unless bytes[i + 1]?.try(&.in?(0x80..0xBF)) && bytes[i + 2]?.try(&.in?(0x80..0xBF)) && bytes[i + 3]?.try(&.in?(0x80..0xBF))
+          return i if b == 0xF0 && (bytes[i + 1] || 0) < 0x90
+          return i if b == 0xF4 && (bytes[i + 1] || 0) > 0x8F
+        end
+      end
+      0
     end
 
     private SUCCESS_KEY_ORDER = %w[content source encoding failed changed]

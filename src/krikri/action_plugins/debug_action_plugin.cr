@@ -74,7 +74,18 @@ module Krikri
       # explicitly empty msg stays in that dict (`"msg": ""`) - its
       # exit_json emits the msg key even when the caller passed "" - so the
       # empty key must reach the dump, both for the loop-item and the
-      # non-loop case.
+      # non-loop case. A NULL msg is the one shape that drops the key
+      # entirely: 2.21's UnifiedTaskResult exports msg only when non-None
+      # (live-verified vs 2.21.6: both a YAML `msg:` null literal and a
+      # templated null register as {changed, failed} with no msg).
+      if msg == Krikri::NONE_SENTINEL ||
+         ((typed_null = native_msg) && typed_null.raw.nil?)
+        return ActionResult.final(JSON.parse({
+          "changed"                 => false,
+          "failed"                  => false,
+          "_ansible_verbose_always" => true,
+        }.to_json))
+      end
       final = result_json(false, false, msg.to_s, {"_ansible_verbose_always" => JSON::Any.new(true)},
         key_order: ["msg", "failed", "changed"], include_empty_msg: true)
       if (typed = native_msg) && typed.as_s?.nil?
@@ -103,8 +114,11 @@ module Krikri
     # "true" is rejected by the spec check upstream and never gets here.
     private def verbosity_level(value : String?) : Int32
       return 0 unless value
-      return 1 if value == "true"
-      return 0 if value == "false"
+      # A natively-typed bool literal demotes to Python str() text
+      # ("True"/"False" - see non_string_param_text); the int-typed spec
+      # converts the native bool to 1/0 either way.
+      return 1 if value == "true" || value == "True"
+      return 0 if value == "false" || value == "False"
       value.to_i? || 0
     end
 

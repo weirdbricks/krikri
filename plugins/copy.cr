@@ -37,6 +37,30 @@ module Krikri
     # (the copy action's already-correct-hash branch), whose result runs
     # diff, path, changed, the stat block, then the action-injected
     # checksum and dest - a different order, hence its own constant.
+    # Ansible's copy diff is the ACTION plugin's _get_diff_data payload: a
+    # one-entry LIST whose keys come out as before_header, before,
+    # after_header, after - with before_header ABSENT (and `before` an
+    # empty string) when the dest did not exist yet. The headers are bare;
+    # the callback adds "before: "/"after: " when printing (live-verified
+    # vs ansible-core 2.19.11 and 2.21.6).
+    private def copy_diff(before_content : String, after_content : String, dest : String, after_header : String) : JSON::Any
+      entry = if File.exists?(dest)
+                {
+                  "before_header" => JSON::Any.new(dest),
+                  "before"        => JSON::Any.new(before_content),
+                  "after_header"  => JSON::Any.new(after_header),
+                  "after"         => JSON::Any.new(after_content),
+                }
+              else
+                {
+                  "before"       => JSON::Any.new(""),
+                  "after_header" => JSON::Any.new(after_header),
+                  "after"        => JSON::Any.new(after_content),
+                }
+              end
+      JSON::Any.new([JSON::Any.new(entry)])
+    end
+
     private CHANGED_KEY_ORDER   = %w[diff dest src md5sum checksum changed backup_file uid gid owner group mode state size failed]
     private UNCHANGED_KEY_ORDER = %w[diff path changed uid gid owner group mode state size checksum dest failed]
     # force: false against an existing dest: Ansible's result is ONLY
@@ -396,11 +420,16 @@ module Krikri
             # file: recurse: immediately followed by copy: on a file
             # inside that tree) left copy: silently reporting ok forever
             # while dutifully fixing the attribute on disk every run.
+            # The attribute diff has to be READ before the pass applies
+            # them: real's file-module call diff-records the file's
+            # state at entry.
+            diff_data = file_attribute_diff(dest)
             attributes_fixed, failure = apply_extended_attributes(dest, content_sha1)
             return failure if failure
             result = PluginResult.new(
               changed: attributes_fixed,
               failed: false,
+              diff: diff_data,
               dest: dest,
               checksum: content_sha1,
               key_order: UNCHANGED_KEY_ORDER
@@ -420,19 +449,15 @@ module Krikri
       # Generate diff if in diff mode
       diff_data = nil
       if @diff_mode
-        # Real copy's diff headers (live-verified vs 2.19.11): the before
-        # side is `before: <dest>` when the dest file already exists and
-        # bare `before` when it does not. The after side is the dest path
-        # for inline content: but the CONTROLLER src path for a src: file
-        # (the action plugin's _get_diff_data sets after_header = source
-        # there) - __original_src_path, set by the controller when it
-        # inlined a src: file, distinguishes the two on the wire.
-        diff_data = generate_unified_diff(
-          existing_content,
-          content,
-          File.exists?(dest) ? "before: #{dest}" : "before",
-          "after: #{@params["__original_src_path"]?.presence || dest}"
-        )
+        # Real copy's diff is the action plugin's _get_diff_data payload
+        # (live-verified vs 2.19.11 and 2.21.6): a one-entry LIST whose
+        # keys are before_header, before, after_header, after - with
+        # before_header ABSENT when the dest did not exist yet (only the
+        # empty `before` is there). The after side is the dest path for
+        # inline content: but the CONTROLLER src path for a src: file,
+        # which __original_src_path carries when the controller inlined
+        # one.
+        diff_data = copy_diff(existing_content, content, dest, @params["__original_src_path"]?.presence || dest)
       end
 
       # CHECK MODE: Report what would change
@@ -706,12 +731,8 @@ module Krikri
           # Unreadable dest: diff from an empty before side, like the
           # content path does
         end
-        diff_data = generate_unified_diff(
-          existing_content,
-          File.read(src),
-          File.exists?(dest) ? "before: #{dest}" : "before",
-          "after: #{@params["__original_src_path"]?.presence || src}"
-        )
+        diff_data = copy_diff(existing_content, File.read(src), dest,
+          @params["__original_src_path"]?.presence || src)
       end
 
       # CHECK MODE: Report what would change
@@ -811,12 +832,16 @@ module Krikri
       # registered result echoes the user's own src: path (see the
       # src: below), unlike the content path whose src IS the staging
       # temp.
+      # copy.py hands atomic_move `keep_dest_attrs=not remote_src`, which
+      # also decides the context the written dest is relabelled to (issue
+      # #911).
+      keep_dest_attrs = !true?(@params["remote_src"]?)
       if @params["validate"]?
-        write = write_with_optional_validate(File.read(src), dest, src_sha1)
+        write = write_with_optional_validate(File.read(src), dest, src_sha1, keep_dest_attrs)
         write_failure = write[:failure]
         return write_failure if write_failure
       else
-        write = atomic_write(File.read(src), dest)
+        write = atomic_write(File.read(src), dest, keep_dest_attrs)
         write_failure = write[:failure]
         return write_failure if write_failure
       end
@@ -910,12 +935,32 @@ module Krikri
 
       # dest_root itself is a directory copy just created when it wasn't
       # there before - directory_mode applies to it like any other (only
-      # when it didn't already exist: pre-existing dirs stay untouched).
+      # when it didn't already exist: pre-existing dirs stay untouched
+      # on the local path, where real never runs the module at all -
+      # the action plugin returns changed/dest/src by itself).
       if (directory_mode = @params["directory_mode"]?.presence) && !dest_root_preexisted
         apply_directory_mode(dest_root, directory_mode)
       end
 
-      changed = false
+      # 2.21 delta (live-verified vs real 2.19.11 and 2.21.6 with
+      # remote_src=true): the module now runs with dest=dest_root and
+      # applies directory_mode to it unconditionally - a PRE-EXISTING
+      # dest_root is chmod'd to directory_mode too (2.19 left it alone).
+      # Local dir copies never reach that code (no module run), so the
+      # new behavior is remote_src-only. Check mode skips the real
+      # chmod (set_fs_attributes_if_different's no-write branch).
+      if dest_root_preexisted &&
+         (directory_mode = @params["directory_mode"]?.presence) &&
+         true?(@params["remote_src"]?) && !@check_mode
+        current = File.info?(dest_root, follow_symlinks: false)
+        apply_directory_mode(dest_root, directory_mode)
+        after = File.info?(dest_root, follow_symlinks: false)
+        if current && after && current.permissions != after.permissions
+          changed_by_attributes = true
+        end
+      end
+
+      changed = changed_by_attributes ? true : false
       copied = 0
 
       # directory_mode: Ansible applies this to every directory the
@@ -1045,10 +1090,10 @@ module Krikri
       expand_tilde("~/.ansible/tmp/ansible-tmp-#{sprintf("%.7f", Time.local.to_unix_f)}-#{Process.pid}-#{random}/.source#{File.extname(dest)}")
     end
 
-    private def write_with_optional_validate(content : String, dest : String, content_sha1 : String) : {failure: PluginResult?, staged: String?}
+    private def write_with_optional_validate(content : String, dest : String, content_sha1 : String, keep_dest_attrs : Bool = true) : {failure: PluginResult?, staged: String?}
       validate_cmd = @params["validate"]?
       unless validate_cmd
-        return atomic_write(content, dest)
+        return atomic_write(content, dest, keep_dest_attrs)
       end
 
       # copy.py's own gate before anything runs: fail_json(msg="validate
@@ -1110,11 +1155,19 @@ module Krikri
         return {failure: result, staged: nil}
       end
 
+      # atomic_move's own context capture: this staged temp is mv'd in as
+      # the dest's new inode, so the dest must be relabelled to what the
+      # write was meant to land on (issue #911) - read BEFORE the move.
+      secontext = prewrite_selinux_context(dest, keep_dest_attrs)
       begin
         FileUtils.mv(temp_file, dest)
       rescue ex
         File.delete(temp_file) if File.exists?(temp_file)
         return {failure: PluginResult.new(changed: false, failed: true, msg: "Failed to move file to destination: #{ex.message}"), staged: nil}
+      end
+
+      if failure = relabel_written_file(dest, secontext)
+        return {failure: failure, staged: nil}
       end
 
       {failure: nil, staged: temp_file}
@@ -1286,8 +1339,14 @@ module Krikri
     # only ever runs when the rename actually fails.
     #
     # Returns nil on success, or a failed PluginResult.
-    private def atomic_write(content : String, dest : String) : {failure: PluginResult?, staged: String?}
+    # *keep_dest_attrs* mirrors copy.py's atomic_move invocation
+    # (`keep_dest_attrs=not remote_src`): with remote_src: true even an
+    # existing dest takes the policy's default context instead of keeping
+    # its own (issue #911).
+    private def atomic_write(content : String, dest : String, keep_dest_attrs : Bool = true) : {failure: PluginResult?, staged: String?}
       temp_file = File.join(File.dirname(dest), ".krikri-playbook-copy-#{Random::Secure.hex(8)}.tmp")
+      # atomic_move's context capture, BEFORE the rename (issue #911).
+      secontext = prewrite_selinux_context(dest, keep_dest_attrs)
       begin
         # SECURITY: the temp is created EMPTY at 0600 and settled to its
         # final mode (the task's numeric mode:, else the dest's preserved
@@ -1353,10 +1412,14 @@ module Krikri
       rescue ex
         File.delete(temp_file) if File.exists?(temp_file)
         if true?(@params["unsafe_writes"]?)
-          failure = unsafe_write_fallback(content, dest)
+          failure = unsafe_write_fallback(content, dest, secontext)
           return {failure: failure, staged: nil}
         end
         return {failure: PluginResult.new(changed: false, failed: true, msg: "Failed to move file to destination: #{ex.message}"), staged: nil}
+      end
+
+      if failure = relabel_written_file(dest, secontext)
+        return {failure: failure, staged: nil}
       end
 
       {failure: nil, staged: temp_file}
@@ -1364,7 +1427,7 @@ module Krikri
 
     # unsafe_writes: the non-atomic fallback - write dest directly, in
     # place. Returns nil on success, or a failed PluginResult.
-    private def unsafe_write_fallback(content : String, dest : String) : PluginResult?
+    private def unsafe_write_fallback(content : String, dest : String, secontext : Array(String?)? = nil) : PluginResult?
       # Same umask-default contract as #atomic_write's temp file: 0666 &
       # ~umask for a new file, existing file's mode untouched (opening an
       # existing file for writing never changes its mode, so there is no
@@ -1375,7 +1438,7 @@ module Krikri
         create_staging_temp(dest, staging_temp_mode(dest, 0o666, preserve_dest_mode: false))
       end
       File.write(dest, content, perm: 0o600)
-      nil
+      relabel_written_file(dest, secontext)
     rescue ex
       PluginResult.new(changed: false, failed: true, msg: "Failed to write #{dest} (unsafe_writes fallback): #{ex.message}")
     end
@@ -1449,49 +1512,53 @@ module Krikri
       {true, nil}
     end
 
-    # seuser:/serole:/setype:/selevel: - SELinux file context, applied
-    # to dest via `chcon`. Mirrors archive.cr's proven implementation
-    # exactly (verified against AnsibleModule's own
-    # set_context_if_different/selinux_enabled source): Ansible
-    # skips this ENTIRELY (not even attempting it) when SELinux isn't
-    # enabled on the target at all - matched here via the standard
-    # `/sys/fs/selinux/enforce` selinuxfs check, the same file
-    # `selinuxenabled(8)` itself tests. On any non-SELinux host (the
-    # overwhelming majority of real-world targets this project has ever
-    # benchmarked against) this is a verified, confirmed no-op,
-    # identical to Ansible's own behavior - the chcon-invocation
-    # shape itself for an actually-SELinux-enabled host is implemented
-    # per `chcon(1)`'s documented flags but NOT live-verified against a
-    # real SELinux-enabled target (none available in this project's
-    # usual Ubuntu/Debian benchmark environment).
-    private def apply_selinux_context(dest : String) : PluginResult?
-      return nil unless File.exists?("/sys/fs/selinux/enforce")
+    # seuser:/serole:/setype:/selevel: - the SELinux file context.
+    # Parsing, the desired-context merge and the chcon itself live in
+    # BasePlugin's shared helpers (the same ones file/template/stat use),
+    # so a context change is DETECTED here rather than blindly re-applied:
+    # real's set_context_if_different reports changed only when the merged
+    # context differs, and a secontext-only copy rerun is `ok`
+    # (live-verified vs 2.21.6 on a Rocky 9 guest - krikri used to report
+    # ok even on the FIRST change because it never compared). Failure
+    # shape: basic.py's fail_json(msg='invalid selinux context: <err>',
+    # new_context=, cur_context=, input_was=) plus the dest's stat block.
+    private def apply_selinux_context(path : String, checksum : String? = nil) : {Bool, PluginResult?}
+      pending = pending_secontext_change(path)
+      return {false, nil} unless pending
+      current, desired = pending
 
-      flags = [] of String
-      flags << "-u #{@params["seuser"]}" if @params["seuser"]?
-      flags << "-r #{@params["serole"]}" if @params["serole"]?
-      flags << "-t #{@params["setype"]}" if @params["setype"]?
-      flags << "-l #{@params["selevel"]}" if @params["selevel"]?
-      return nil if flags.empty?
+      # basic.py's set_context_if_different returns changed BEFORE calling
+      # lsetfilecon in check mode, so a --check run reports the pending
+      # context change and writes nothing.
+      return {true, nil} if @check_mode
 
-      result = remote_exec("chcon #{flags.join(" ")} #{shell_single_quote(dest)}")
-      if result[:exit_code] != 0
-        return PluginResult.new(changed: false, failed: true, msg: "invalid selinux context: #{result[:stderr]}")
+      if err = set_selinux_context(path, desired)
+        failure = selinux_context_failure(path, err, current, desired, secontext_input_was)
+        # The copy ACTION plugin injects local_checksum into any result
+        # lacking one, failures included (see #atomic_write's own note).
+        failure.extra["checksum"] = JSON::Any.new(checksum) if checksum
+        return {false, failure}
       end
 
-      nil
+      {true, nil}
     end
 
-    # Combined attribute reconciliation for every path copy touches:
-    # mode/owner/group first (#apply_file_attributes), then chattr
-    # flags, then the SELinux context - the same order Ansible's
-    # set_fs_attributes_if_different applies them. Returns {changed,
+    # Combined attribute reconciliation for every path copy touches, in
+    # Ansible's own set_fs_attributes_if_different order: SELinux context
+    # first, then owner/group/mode (#apply_file_attributes), then the
+    # chattr flags. Returns {changed,
     # failure}: changed true when anything actually changed on disk,
     # failure a failed PluginResult when an unresolvable owner:/group:
     # name or the chattr/chcon call itself errored (all fail the task
     # like Ansible - none is silently swallowed the way a chmod/chown
     # EPERM is).
     private def apply_extended_attributes(path : String, checksum : String? = nil) : {Bool, PluginResult?}
+      # set_context_if_different is basic.py's FIRST setter - it runs
+      # before owner/group/mode/attributes, so its failure (and its diff
+      # entry) precedes theirs.
+      secontext_changed, failure = apply_selinux_context(path, checksum)
+      return {false, failure} if failure
+
       changed = begin
         apply_file_attributes(path)
       rescue ex : OwnerLookupFailure
@@ -1513,9 +1580,7 @@ module Krikri
       attr_changed, failure = apply_attr(path)
       return {false, failure} if failure
       changed = true if attr_changed
-
-      failure = apply_selinux_context(path)
-      return {false, failure} if failure
+      changed = true if secontext_changed
 
       {changed, nil}
     end

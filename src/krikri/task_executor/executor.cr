@@ -12,6 +12,8 @@ require "./handler_runner"
 require "./output_routing"
 require "../action_plugin_manager"
 require "../inventory_parser"
+require "../invocation_injection"
+require "../result_shape"
 require "../async_jobs"
 require "../task_batcher"
 require "../batch_script"
@@ -54,12 +56,12 @@ module Krikri
   # buluma.os_updates' SmokeTests task) stringify it in Python dict
   # insertion order, and ansible-core builds it as
   # {string, full, major, minor, revision} - live-verified against
-  # ansible-core 2.19.11. Crystal's Hash iterates in insertion order and
+  # ansible-core 2.21.6. Crystal's Hash iterates in insertion order and
   # the Jinja str() path preserves it, so the literal must be written in
   # ansible's own order; a sorted-looking order makes the rendered string
   # diverge from ansible byte for byte.
   ANSIBLE_VERSION_MAGIC_VAR = JSON.parse(%({
-    "string": "2.19.11", "full": "2.19.11", "major": 2, "minor": 19, "revision": 11
+    "string": "2.21.6", "full": "2.21.6", "major": 2, "minor": 21, "revision": 6
   }))
 
   # TaskExecutor - Executes tasks on hosts

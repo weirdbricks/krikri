@@ -55,6 +55,38 @@ describe "stat plugin" do
     stat["checksum"].as_s.must_equal(`sha1sum #{path}`.split(" ").first)
   end
 
+  it "carries disk_usage_bytes right after blocks (2.21)" do
+    path = tmp_path("stat-disk-usage.txt")
+    File.write(path, "x" * 100)
+
+    result = PluginSpecHelper.run("stat", {"path" => path})
+    stat = result["stat"]
+
+    keys = stat.as_h.keys
+    (keys.index("blocks").not_nil!).must_equal(keys.index("disk_usage_bytes").not_nil! - 1)
+    stat["disk_usage_bytes"].as_i64.must_equal(stat["blocks"].as_i64 * 512)
+  end
+
+  it "returns the all-null selinux_context when get_selinux_context is set on a non-SELinux host (2.21)" do
+    path = tmp_path("stat-selinux.txt")
+    File.write(path, "x")
+
+    result = PluginSpecHelper.run("stat", {"path" => path, "get_selinux_context" => "true"})
+    context = result["stat"]["selinux_context"].as_a
+
+    context.size.must_equal(4)
+    context.each { |part| falsey?(part.as_s?) }
+  end
+
+  it "omits selinux_context by default (get_selinux_context defaults false)" do
+    path = tmp_path("stat-no-selinux.txt")
+    File.write(path, "x")
+
+    result = PluginSpecHelper.run("stat", {"path" => path})
+
+    result["stat"].as_h.has_key?("selinux_context").must_equal(false)
+  end
+
   it "reports isdir: true for a directory and omits checksum" do
     path = tmp_path("stat-dir")
     Dir.mkdir_p(path)

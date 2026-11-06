@@ -39,17 +39,7 @@ private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-ex
 # openssl_csr_info_query, _exists and _check probes: the Ansible module's
 # get_info keys in real order (subject first, no leading changed), then
 # the controller backfill failed, changed LAST.
-private CSR_INFO_KEYS = [
-  "subject", "subject_ordered", "key_usage", "key_usage_critical",
-  "extended_key_usage", "extended_key_usage_critical", "basic_constraints",
-  "basic_constraints_critical", "ocsp_must_staple", "ocsp_must_staple_critical",
-  "subject_alt_name", "subject_alt_name_critical", "name_constraints_permitted",
-  "name_constraints_excluded", "name_constraints_critical", "public_key",
-  "public_key_type", "public_key_data", "public_key_fingerprints",
-  "subject_key_identifier", "authority_key_identifier", "authority_cert_issuer",
-  "authority_cert_serial_number", "extensions_by_oid", "signature_valid",
-  "failed", "changed",
-]
+private CSR_INFO_KEYS = ["changed", "failed", "subject", "subject_ordered", "key_usage", "key_usage_critical", "extended_key_usage", "extended_key_usage_critical", "basic_constraints", "basic_constraints_critical", "ocsp_must_staple", "ocsp_must_staple_critical", "subject_alt_name", "subject_alt_name_critical", "name_constraints_permitted", "name_constraints_excluded", "name_constraints_critical", "public_key", "public_key_type", "public_key_data", "public_key_fingerprints", "subject_key_identifier", "authority_key_identifier", "authority_cert_issuer", "authority_cert_serial_number", "extensions_by_oid", "signature_valid"]
 
 private def tool_available?(name : String) : Bool
   !Process.find_executable(name).nil?
@@ -115,11 +105,7 @@ describe "kop_pkg_misc round 993004 keyorder: openssl_csr/openssl_csr_info" do
       YAML
 
     dump = dumps["helper_csr"]
-    dump.as_h.keys.must_equal([
-      "privatekey", "subject", "subjectAltName", "keyUsage", "extendedKeyUsage",
-      "basicConstraints", "ocspMustStaple", "name_constraints_permitted",
-      "name_constraints_excluded", "diff", "filename", "changed", "failed",
-    ])
+    dump.as_h.keys.must_equal(["changed", "failed", "privatekey", "subject", "subjectAltName", "keyUsage", "extendedKeyUsage", "basicConstraints", "ocspMustStaple", "name_constraints_permitted", "name_constraints_excluded", "diff", "filename"])
     dump["privatekey"].as_s.must_equal("#{tmp}/kop.key")
     dump["filename"].as_s.must_equal("#{tmp}/kop.csr")
     dump["subject"].as_a[0].as_a.map(&.as_s).must_equal(["CN", "kop-probe"])
@@ -239,7 +225,7 @@ describe "kop_pkg_misc round 993004 keyorder: openssl_csr/openssl_csr_info" do
       YAML
 
     dump = dumps["fail"]
-    dump.as_h.keys.must_equal(["failed", "msg", "changed", "exception"])
+    dump.as_h.keys.must_equal(["changed", "failed", "exception", "msg"])
     dump["failed"].as_bool.must_equal(true)
     dump["msg"].as_s.must_equal(
       "Error while reading CSR file from disk: [Errno 2] No such file or directory: '#{tmp}/kop_nosuch.csr'"
@@ -279,10 +265,7 @@ describe "kop_pkg_misc round 993004 keyorder: apache2_module failure" do
       YAML
 
     dump = dumps["fail"]
-    dump.as_h.keys.must_equal([
-      "rc", "stdout", "stderr", "failed", "msg",
-      "stdout_lines", "stderr_lines", "changed", "exception",
-    ])
+    dump.as_h.keys.must_equal(["changed", "failed", "exception", "msg", "rc", "stdout", "stderr", "stdout_lines", "stderr_lines"])
     dump["rc"].as_i.must_equal(1)
     dump["stdout"].as_s.must_equal("")
     dump["stderr"].as_s.must_equal("ERROR: Module kop_bogus_module does not exist!\n")
@@ -340,10 +323,7 @@ describe "kop_pkg_misc round 993004 keyorder: subversion failure" do
       YAML
 
     dump = dumps["fail"]
-    dump.as_h.keys.must_equal([
-      "cmd", "rc", "stdout", "stderr", "failed", "msg",
-      "stdout_lines", "stderr_lines", "changed", "exception",
-    ])
+    dump.as_h.keys.must_equal(["changed", "failed", "exception", "msg", "rc", "cmd", "stdout", "stderr", "stdout_lines", "stderr_lines"])
     dump["cmd"].as_s.must_include("--non-interactive --no-auth-cache --trust-server-cert checkout -r HEAD file:///var/tmp/kop_nosuchrepo")
     dump["rc"].as_i.must_equal(1)
     dump["stdout"].as_s.must_equal("")
@@ -384,9 +364,7 @@ describe "kop_pkg_misc round 993004 keyorder: java_cert (keytool shim)" do
     # controller backfills failed last. cmd is the ARGV list.
     dump = run_java_cert_probe("import")
 
-    dump.as_h.keys.must_equal([
-      "changed", "msg", "rc", "cmd", "stdout", "error", "diff", "stdout_lines", "failed",
-    ])
+    dump.as_h.keys.must_equal(["changed", "failed", "msg", "rc", "cmd", "stdout", "error", "diff", "stdout_lines"])
     dump["changed"].as_bool.must_equal(true)
     dump["msg"].as_s.must_equal("")
     dump["rc"].as_i.must_equal(0)
@@ -433,7 +411,7 @@ describe "kop_pkg_misc round 993004 keyorder: java_cert (keytool shim)" do
     dump = run_java_cert_probe("remove")
 
     dump.as_h.keys.must_equal([
-      "changed", "msg", "rc", "cmd", "stdout", "error", "diff", "stdout_lines", "failed",
+      "changed", "failed", "msg", "rc", "cmd", "stdout", "error", "diff", "stdout_lines",
     ])
     dump["changed"].as_bool.must_equal(true)
     dump["msg"].as_s.must_equal("")
@@ -457,7 +435,7 @@ describe "kop_pkg_misc round 993004 keyorder: java_cert (keytool shim)" do
     # exception.
     dump = run_java_cert_probe("fail")
 
-    dump.as_h.keys.must_equal(["rc", "cmd", "failed", "msg", "changed", "exception"])
+    dump.as_h.keys.must_equal(["changed", "failed", "exception", "msg", "rc", "cmd"])
     dump["rc"].as_i.must_equal(1)
     cmd = dump["cmd"].as_a.map(&.as_s)
     cmd.first.must_equal("/usr/bin/openssl")
@@ -620,7 +598,7 @@ describe "kop_pkg_misc round 993004 keyorder: synchronize (delegate_to same host
 
     dump = run_synchronize_probes["push"]
 
-    dump.as_h.keys.must_equal(["changed", "msg", "rc", "cmd", "stdout_lines", "failed"])
+    dump.as_h.keys.must_equal(["changed", "failed", "msg", "rc", "cmd", "stdout_lines"])
     dump["changed"].as_bool.must_equal(true)
     # Ansible's msg is `out.replace(changed_marker, '')`: the raw rsync
     # stdout INCLUDING its trailing newline (round 995004: real msg ends
@@ -659,7 +637,7 @@ describe "kop_pkg_misc round 993004 keyorder: synchronize (delegate_to same host
 
     dump = run_synchronize_probes["exists"]
 
-    dump.as_h.keys.must_equal(["changed", "msg", "rc", "cmd", "stdout_lines", "failed"])
+    dump.as_h.keys.must_equal(["changed", "failed", "msg", "rc", "cmd", "stdout_lines"])
     dump["changed"].as_bool.must_equal(false)
     dump["msg"].as_s.must_equal("")
     dump["stdout_lines"].as_a.must_be_empty
@@ -670,7 +648,7 @@ describe "kop_pkg_misc round 993004 keyorder: synchronize (delegate_to same host
 
     dump = run_synchronize_probes["check"]
 
-    dump.as_h.keys.must_equal(["changed", "msg", "rc", "cmd", "stdout_lines", "failed"])
+    dump.as_h.keys.must_equal(["changed", "failed", "msg", "rc", "cmd", "stdout_lines"])
     dump["changed"].as_bool.must_equal(false)
     # Real synchronize.py appends --dry-run right after --compress/
     # --timeout and BEFORE --archive (round 995004 synchronize_check).
@@ -683,7 +661,7 @@ describe "kop_pkg_misc round 993004 keyorder: synchronize (delegate_to same host
 
     dump = run_synchronize_probes["fail"]
 
-    dump.as_h.keys.must_equal(["rc", "cmd", "failed", "msg", "changed", "exception"])
+    dump.as_h.keys.must_equal(["changed", "failed", "exception", "msg", "rc", "cmd"])
     dump["rc"].as_i.must_equal(23)
     dump["msg"].as_s.must_include("No such file or directory")
     dump["changed"].as_bool.must_equal(false)

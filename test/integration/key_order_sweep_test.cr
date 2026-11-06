@@ -76,7 +76,7 @@ describe "ping plugin result key order" do
                 {{ r | to_json }}
               dest: KRIKRI_DUMP_PATH
     YAML
-    keys.must_equal(["ping", "failed", "changed"])
+    keys.must_equal(["changed", "failed", "ping"])
   end
 end
 
@@ -110,7 +110,7 @@ describe "getent plugin result key order" do
                 {{ r | to_json }}
               dest: KRIKRI_DUMP_PATH
     YAML
-    keys.must_equal(["ansible_facts", "failed", "changed"])
+    keys.must_equal(["changed", "failed", "ansible_facts"])
   end
 end
 
@@ -211,11 +211,7 @@ describe "wait_for plugin result key order" do
                 {{ r | to_json }}
               dest: KRIKRI_DUMP_PATH
     YAML
-    keys.must_equal([
-      "state", "port", "search_regex", "match_groups", "match_groupdict",
-      "path", "elapsed", "uid", "gid", "owner", "group", "mode", "size",
-      "failed", "changed",
-    ])
+    keys.must_equal(["changed", "failed", "state", "port", "search_regex", "match_groups", "match_groupdict", "path", "elapsed", "uid", "gid", "owner", "group", "mode", "size"])
   end
 
   it "registers the check-mode skip as skipped, msg, failed, changed" do
@@ -236,7 +232,7 @@ describe "wait_for plugin result key order" do
                 {{ r | to_json }}
               dest: KRIKRI_DUMP_PATH
     YAML
-    keys.must_equal(["skipped", "msg", "failed", "changed"])
+    keys.must_equal(["changed", "failed", "skipped", "msg"])
   end
 end
 
@@ -423,7 +419,7 @@ describe "debug registered-result key order" do
                 {{ r | to_json }}
               dest: KRIKRI_DUMP_PATH
     YAML
-    keys.must_equal(["msg", "failed", "changed"])
+    keys.must_equal(["changed", "failed", "msg"])
   end
 
   it "registers a var debug with the var name leading (real: varname, failed, changed)" do
@@ -445,7 +441,7 @@ describe "debug registered-result key order" do
                 {{ r | to_json }}
               dest: KRIKRI_DUMP_PATH
     YAML
-    keys.must_equal(["krikri_order_probe_var", "failed", "changed"])
+    keys.must_equal(["changed", "failed", "krikri_order_probe_var"])
   end
 end
 
@@ -467,7 +463,7 @@ describe "set_fact registered-result key order" do
                 {{ r | to_json }}
               dest: KRIKRI_DUMP_PATH
     YAML
-    keys.must_equal(["ansible_facts", "failed", "changed"])
+    keys.must_equal(["changed", "failed", "ansible_facts"])
   end
 end
 
@@ -489,6 +485,6 @@ describe "assert registered-result key order" do
                 {{ r | to_json }}
               dest: KRIKRI_DUMP_PATH
     YAML
-    keys.must_equal(["changed", "msg", "failed"])
+    keys.must_equal(["changed", "failed", "msg"])
   end
 end

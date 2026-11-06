@@ -88,6 +88,7 @@ Lint/NotNil:
 
 Metrics/CyclomaticComplexity:
   Excluded:
+  - src/krikri/action_plugins/debug_action_plugin.cr
   - plugins/acl.cr
   - plugins/gem.cr
   - plugins/npm.cr

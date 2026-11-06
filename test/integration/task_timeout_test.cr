@@ -259,8 +259,8 @@ describe "task timeout keyword" do
   # dict (r1 | to_json, observed from 2.19.11 over SSH) reads
   # [timedout, failed, exception, msg, changed] - TaskTimeoutError's
   # ContributesToTaskResult payload leads the merged result. krikri used
-  # to mark the generic failed order and let `timedout` fall to the tail
-  # ([failed, msg, exception, changed, timedout]).
+  # 2.21: the declared-field lead (changed, failed, exception, msg) comes
+  # first and `timedout` falls to the module-key tail (ResultShape).
   it "registers the timed-out result in real's key ORDER" do
     success, output = run_play([
       "    - name: slow",
@@ -276,7 +276,7 @@ describe "task timeout keyword" do
     output.includes?(FATAL_LINE).must_equal(true, output)
     # The debug display JSON-escapes the msg body, so the escaped quotes
     # below are the literal output text (same shape real's stdout shows).
-    output.includes?(%q{KEYORDER|{\"timedout\": {\"frame\": \"Configure `DISPLAY_TRACEBACK` to see a traceback on timeout errors.\", \"period\": 1}, \"failed\": true, \"exception\": \"(traceback unavailable)\", \"msg\": \"Task failed: Timed out after 1 second(s).\", \"changed\": false}}).must_equal(true, output)
+    output.includes?(%q{KEYORDER|{\"changed\": false, \"failed\": true, \"exception\": \"(traceback unavailable)\", \"msg\": \"Task failed: Timed out after 1 second(s).\", \"timedout\": {\"frame\": \"Configure `DISPLAY_TRACEBACK` to see a traceback on timeout errors.\", \"period\": 1}}}).must_equal(true, output)
   end
 
   # Real's alarm wraps ALL of handler.run (ansible/executor/

@@ -712,6 +712,18 @@ module Krikri
       # BEFORE the null-file warning/lookup below ever runs (a falsy
       # non-string lands there instead - see
       # include_vars_value_type_error).
+      # 2.20 deprecated (but still accepts) a bare-string
+      # `ignore_files:`; the warning rides the console like every other
+      # deprecation, deduped by the display.
+      if task.include_vars_ignore_files_string_deprecated?
+        ResultDisplay.emit_core_deprecation(
+          "Specifying 'ignore_files' as a string is deprecated. This feature will be removed from action plugin 'include_vars' in ansible-core version 2.24.")
+      end
+      # 2.20 turned a non-list `extensions:` into a hard failure.
+      if task.include_vars_extensions_type_error?
+        finish_include_vars_arg_failure(task, host, "The 'extensions' option must be a list.")
+        return
+      end
       if type_name = task.include_vars_dir_type_error
         finish_include_vars_arg_failure(task, host, "join() argument must be str, bytes, or os.PathLike object, not '#{type_name}'")
         return

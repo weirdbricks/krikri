@@ -18,8 +18,8 @@ private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-ex
 # Ansible's per-item conditional-skip dict, in its own key order, with the
 # item and the loop variable name filled in per call site.
 private def skipped_item(item : String, false_condition : String) : String
-  %({"changed": false, "skipped": true, "skip_reason": "Conditional result was False", ) +
-    %("false_condition": #{false_condition}, "item": "#{item}", "ansible_loop_var": "item"})
+  %({"changed": false, "failed": false, "skipped": true, "skip_reason": "Conditional result was False", ) +
+    %("false_condition": #{false_condition}, "ansible_loop_var": "item", "item": "#{item}"})
 end
 
 # The same entry as it appears on the `(item=...)` label of a skipping
@@ -27,8 +27,8 @@ end
 # booleans. Spelled out rather than derived from skipped_item so the
 # rendering under test is pinned literally, not through a rewriter.
 private def skipped_item_repr(item : String) : String
-  %({'changed': False, 'skipped': True, 'skip_reason': 'Conditional result was False', ) +
-    %('false_condition': False, 'item': '#{item}', 'ansible_loop_var': 'item'})
+  %({'changed': False, 'failed': False, 'skipped': True, 'skip_reason': 'Conditional result was False', ) +
+    %('false_condition': False, 'ansible_loop_var': 'item', 'item': '#{item}'})
 end
 
 # Runs a playbook whose final task writes `{{ r | to_json }}` to a file
@@ -49,8 +49,8 @@ end
 
 describe "looped task register shape with when:-skipped items" do
   it "registers every skipped item and reports All items skipped" do
-    expected = %({"results": [#{skipped_item("a", "false")}, #{skipped_item("b", "false")}], ) +
-               %("skipped": true, "msg": "All items skipped", "changed": false})
+    expected = %({"changed": false, "failed": false, "skipped": true, "msg": "All items skipped", ) +
+               %("results": [#{skipped_item("a", "false")}, #{skipped_item("b", "false")}]})
     run_registered_dump(<<-YAML).must_equal(expected)
       - name: repro
         hosts: localhost
@@ -72,9 +72,8 @@ describe "looped task register shape with when:-skipped items" do
   end
 
   it "registers the skipped item alongside the executed one and reports All items completed" do
-    expected = %({"results": [#{skipped_item("a", %("item == 'b'"))}, ) +
-               %({"msg": "b", "failed": false, "changed": false, "item": "b", "ansible_loop_var": "item"}], ) +
-               %("skipped": false, "msg": "All items completed", "changed": false})
+    expected = %({"changed": false, "failed": false, "msg": "All items completed", "results": [#{skipped_item("a", %("item == 'b'"))}, ) +
+               %({"changed": false, "failed": false, "msg": "b", "ansible_loop_var": "item", "item": "b"}]})
     run_registered_dump(<<-YAML).must_equal(expected)
       - name: repro
         hosts: localhost
@@ -96,7 +95,7 @@ describe "looped task register shape with when:-skipped items" do
   end
 
   it "registers the No items in the list shape for an empty loop" do
-    expected = %({"changed": false, "skipped": true, "skipped_reason": "No items in the list", "results": []})
+    expected = %({"changed": false, "failed": false, "skipped": true, "skip_reason": "No items in the list", "skipped_reason": "No items in the list", "results": []})
     run_registered_dump(<<-YAML).must_equal(expected)
       - name: repro
         hosts: localhost
@@ -117,9 +116,8 @@ describe "looped task register shape with when:-skipped items" do
   end
 
   it "binds the custom loop_var and index_var on a skipped item after the skip keys" do
-    expected = %({"results": [{"changed": false, "skipped": true, "skip_reason": "Conditional result was False", ) +
-               %("false_condition": false, "p": "a", "ansible_loop_var": "p", "i": 0, "ansible_index_var": "i"}], ) +
-               %("skipped": true, "msg": "All items skipped", "changed": false})
+    expected = %({"changed": false, "failed": false, "skipped": true, "msg": "All items skipped", ) +
+               %("results": [{"changed": false, "failed": false, "skipped": true, "skip_reason": "Conditional result was False", "false_condition": false, "ansible_loop_var": "p", "ansible_index_var": "i", "p": "a", "i": 0}]})
     run_registered_dump(<<-YAML).must_equal(expected)
       - name: repro
         hosts: localhost
@@ -184,7 +182,7 @@ end
 
 describe "non-looped skipped task register shape" do
   it "registers changed, skipped, skip_reason, false_condition in Ansible's order" do
-    expected = %({"changed": false, "skipped": true, "skip_reason": "Conditional result was False", "false_condition": false})
+    expected = %({"changed": false, "failed": false, "skipped": true, "skip_reason": "Conditional result was False", "false_condition": false})
     run_registered_dump(<<-YAML).must_equal(expected)
       - name: repro
         hosts: localhost
@@ -236,7 +234,7 @@ describe "looped task register shape on the batched loop path" do
     # comes back through debug: - un-escaped back out of its display form.
     dumped = output.to_s.gsub("\\\"", "\"")
     dumped.must_include(%(#{skipped_item("a", "false")}, #{skipped_item("b", "false")}]))
-    dumped.must_include(%("skipped": true, "msg": "All items skipped", "changed": false}))
+    dumped.must_include(%("changed": false, "failed": false, "skipped": true, "msg": "All items skipped", "results": [))
     dumped.must_include("failed=0")
   ensure
     File.delete(playbook) if playbook && File.exists?(playbook)

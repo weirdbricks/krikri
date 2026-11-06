@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.2402-blue)](https://github.com/weirdbricks/krikri)
+[![Version](https://img.shields.io/badge/version-0.9.2445-blue)](https://github.com/weirdbricks/krikri)
 [![Compatibility](https://img.shields.io/badge/ansible--core-2.19.11-brightgreen)](#-what-is-krikri)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 [![Homebrew](https://img.shields.io/badge/homebrew-tap-blue)](#install-via-homebrew-macoslinux-prebuilt-binaries)
@@ -23,7 +23,7 @@ equivalent) and `krikri-lint` (the `ansible-lint` equivalent).
 
 | By the numbers | |
 |---|---|
-| Compatibility target | ansible-core 2.19.11 (byte-for-byte console output); `--krikri-argspec-profile=2.20` switches module-argspec validation + `invocation.module_args` echoing to ansible-core 2.20.1 |
+| Compatibility target | ansible-core 2.21.6 (byte-for-byte console output) |
 | Real Galaxy roles tested on real hosts | 8,000+ ([status per role](ROLES_TESTED.md)) |
 | Open gaps | [GitHub issues](https://github.com/weirdbricks/krikri/issues) |
 | Deliberate scope cuts | [KNOWN_MISSING.md](KNOWN_MISSING.md) |

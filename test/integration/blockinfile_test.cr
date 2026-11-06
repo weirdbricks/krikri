@@ -1,6 +1,36 @@
 require "../minitest_helper"
 
 describe "blockinfile plugin" do
+  # 2.21 opens the file in text mode with the task's encoding: (default
+  # utf-8), so the block is inserted into decoded text and the file keeps
+  # its own encoding.
+  it "inserts its block in the task's encoding: and keeps the file's bytes (2.21)" do
+    path = PluginSpecHelper.tmp_path("blockinfile-latin1.txt")
+    # "café\n" in iso-8859-1 (0xe9 for the e-acute)
+    File.open(path, "wb") { |file| file.write(Bytes[0x63, 0x61, 0x66, 0xe9, 0x0a]) }
+
+    result = PluginSpecHelper.run("blockinfile", {
+      "path"     => path,
+      "block"    => "naïve",
+      "encoding" => "iso-8859-1",
+    })
+
+    falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+    result["changed"].as_bool.must_equal(true)
+    File.read(path).to_slice.hexstring.includes?("6e61ef7665").must_equal(true)
+    File.read(path).to_slice.hexstring.includes?("636166e90a").must_equal(true)
+  end
+
+  it "fails on content its encoding: cannot decode, with CPython's message (2.21)" do
+    path = PluginSpecHelper.tmp_path("blockinfile-undecodable.txt")
+    File.open(path, "wb") { |file| file.write(Bytes[0x6f, 0x6b, 0x0a, 0xff, 0xfe, 0x0a]) }
+
+    result = PluginSpecHelper.run("blockinfile", {"path" => path, "block" => "added"})
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("'utf-8' codec can't decode byte 0xff in position 3: invalid start byte")
+  end
+
   it "inserts a new block at EOF and is idempotent on rerun" do
     path = File.tempname("blockinfile-spec")
     File.write(path, "line1\nline2\n")

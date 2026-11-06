@@ -18,7 +18,15 @@ private def run_play(playbook : String) : {Int32, String}
   File.write(File.join(dir, "pb.yml"), playbook)
 
   stdout_io = IO::Memory.new
-  status = Process.run(BINARY, ["-i", "inv.ini", "pb.yml"], output: stdout_io, error: stdout_io, chdir: dir)
+  # The invocation-echo shapes these specs pin are the machinery's own
+  # behavior, exercised under ansible-core 2.21's INJECT_INVOCATION=1:
+  # with the setting at its 2.21 default (off) module results carry no
+  # `invocation` at all (see InvocationInjection). The key ORDER pinned
+  # here is still the 2.19-era assembly; 2.21's item build reorders
+  # (changed,failed,loop-vars,module keys,invocation last) - tracked in
+  # UPGRADE_PLAN_221.md until the shape rework lands.
+  status = Process.run(BINARY, ["-i", "inv.ini", "pb.yml"], output: stdout_io, error: stdout_io, chdir: dir,
+    env: {"ANSIBLE_INJECT_INVOCATION" => "1"})
   {status.exit_code, stdout_io.to_s}
 ensure
   FileUtils.rm_rf(dir) if dir && Dir.exists?(dir)
@@ -39,7 +47,7 @@ describe "looped-task register aggregate shape" do
       YAML
 
     code.must_equal(0)
-    output.must_include("failed=none")
+    output.must_include("failed=False msg=All items completed")
     output.must_include("msg=All items completed")
   end
 
@@ -81,7 +89,7 @@ describe "stat loop-item register key order" do
       YAML
 
     code.must_equal(0)
-    output.must_include("KEYS|changed,stat,invocation,failed")
+    output.must_include("KEYS|changed,failed,ansible_loop_var,item,stat,invocation")
   end
 end
 
@@ -112,7 +120,7 @@ describe "command/shell loop-item register key order" do
       YAML
 
     code.must_equal(0)
-    output.must_include("KEYS|changed,stdout,stderr,rc,cmd,start,end,delta,msg,invocation,stdout_lines,stderr_lines,failed")
+    output.must_include("KEYS|changed,failed,msg,rc,ansible_loop_var,item,stdout,stderr,cmd,start,end,delta,invocation,stdout_lines,stderr_lines")
     output.must_include("ARGS|_raw_params,_uses_shell,expand_argument_vars,stdin_add_newline,strip_empty_ends,cmd,argv,chdir,executable,creates,removes,stdin")
     output.must_include("RP|$0 -lc true|CMD|")
   end
@@ -136,7 +144,7 @@ describe "command/shell loop-item register key order" do
       YAML
 
     code.must_equal(0)
-    output.must_include("KEYS|changed,stdout,stderr,rc,cmd,start,end,delta,msg,invocation,stdout_lines,stderr_lines,failed")
+    output.must_include("KEYS|changed,failed,msg,rc,ansible_loop_var,item,stdout,stderr,cmd,start,end,delta,invocation,stdout_lines,stderr_lines")
     output.must_include("ARGS|cmd,_uses_shell,expand_argument_vars,stdin_add_newline,strip_empty_ends,_raw_params,argv,chdir,executable,creates,removes,stdin")
   end
 end

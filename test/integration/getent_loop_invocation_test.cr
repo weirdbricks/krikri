@@ -38,7 +38,12 @@ describe "looped+registered getent invocation" do
       YAML
 
     output = IO::Memory.new
-    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+    # The pulsar pattern reads per-item invocation, which under ansible-core
+    # 2.21 exists only when INJECT_INVOCATION is enabled (its default is
+    # off; see InvocationInjection) - run with the setting on, the same
+    # way the real role would see invocation under a 2.19 controller.
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output,
+      env: {"ANSIBLE_INJECT_INVOCATION" => "1"})
 
     status.success?.must_equal(true)
     text = output.to_s
@@ -51,12 +56,15 @@ describe "looped+registered getent invocation" do
     File.delete(playbook) if playbook && File.exists?(playbook)
   end
 
-  it "does not expose invocation on a NON-looped register (Ansible's strategy strip)" do
-    # ansible-core's strategy plugin deletes a top-level `invocation`
-    # from the registered dict for a plain (non-looped) register, while a
-    # looped register's per-item results[] entries keep theirs - pinned
-    # above. Without this strip here, a registered getent result would
-    # show an `invocation` key Ansible never exposes.
+  it "does not expose invocation on a NON-looped register while INJECT_INVOCATION is off" do
+    # ansible-core 2.21 flipped INJECT_INVOCATION's default to false, and
+    # relaxed the strategy's top-level register strip exactly when the
+    # setting is on (live-verified vs 2.21.6: with it on a solo registered
+    # stat/command result KEEPS `invocation`). With the setting at its
+    # default (off) no module result carries `invocation` in the first
+    # place, so the registered dict shows none - this pins the default-off
+    # shape; the on-shape is pinned by the pulsar spec above (per-item)
+    # and the solo-register coverage in the executor specs.
     playbook = File.tempname("getent-noloop-invocation", ".yml")
     File.write(playbook, <<-YAML)
       - name: repro

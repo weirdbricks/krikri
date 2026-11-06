@@ -19,7 +19,7 @@ describe "when: evaluation raising an exception" do
   # process with an unhandled Crystal exception and stack trace -
   # #when_passes? (7 call sites: solo/looped/batched tasks and meta:)
   # had no rescue at all. ansible-playbook degrades to one clean
-  # failed task ("Task failed: Error while evaluating conditional:
+  # failed task ("Task failed: A 'when' expression failed: Error while evaluating conditional:
   # ...") and continues/exits normally.
   it "fails the task cleanly instead of crashing the whole process" do
     playbook = File.tempname("when-eval-error", ".yml")
@@ -185,7 +185,7 @@ describe "ignore_errors: on an ordinary (non-when-related) task failure" do
     # vars: bogus sits on line 5, its value starting at column 12.
     output.to_s.must_include("was derived from value of type 'str' at '#{File.expand_path(playbook)}:5:12'", output.to_s)
     # The clause appears in the block AND the fatal dump.
-    output.to_s.must_include(%({"msg": "Task failed: Conditional result (True) was derived from value of type 'str' at '#{File.expand_path(playbook)}:5:12'. Conditionals must have a boolean result."}), output.to_s)
+    output.to_s.must_include(%({"msg": "Task failed: A 'when' expression failed: Conditional result (True) was derived from value of type 'str' at '#{File.expand_path(playbook)}:5:12'. Conditionals must have a boolean result."}), output.to_s)
   ensure
     File.delete(playbook) if playbook && File.exists?(playbook)
   end
@@ -600,7 +600,7 @@ describe "ignore_errors: on an ordinary (non-when-related) task failure" do
     status.success?.must_equal(false)
     # The when: value token sits on line 10, column 13 (`      when: `).
     output.to_s.must_include("was derived from value of type 'int' at '#{File.expand_path(playbook)}:10:13'", output.to_s)
-    output.to_s.must_include(%({"msg": "Task failed: Conditional result (True) was derived from value of type 'int' at '#{File.expand_path(playbook)}:10:13'. Conditionals must have a boolean result."}), output.to_s)
+    output.to_s.must_include(%({"msg": "Task failed: A 'when' expression failed: Conditional result (True) was derived from value of type 'int' at '#{File.expand_path(playbook)}:10:13'. Conditionals must have a boolean result."}), output.to_s)
   ensure
     File.delete(playbook) if playbook && File.exists?(playbook)
   end
@@ -656,7 +656,7 @@ describe "ignore_errors: on an ordinary (non-when-related) task failure" do
     # #325's defaults/main.yml:3:18 shape).
     expected = "was derived from value of type 'list' at '#{File.join(dir, "roles", "testrole", "defaults", "main.yml")}:2:18'"
     output.to_s.must_include(expected, output.to_s)
-    output.to_s.must_include(%({"msg": "Task failed: Conditional result (False) was derived from value of type 'list' at '#{File.join(dir, "roles", "testrole", "defaults", "main.yml")}:2:18'. Conditionals must have a boolean result."}), output.to_s)
+    output.to_s.must_include(%({"msg": "Task failed: A 'when' expression failed: Conditional result (False) was derived from value of type 'list' at '#{File.join(dir, "roles", "testrole", "defaults", "main.yml")}:2:18'. Conditionals must have a boolean result."}), output.to_s)
     # The child task's own when: value token (line 4, column 9) is the
     # pre-fix mislabel - it must not come back under a different clause
     # ordering.

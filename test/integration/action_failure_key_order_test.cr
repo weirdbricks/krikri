@@ -48,7 +48,7 @@ end
 
 describe "action-level failure registered key order" do
   it "registers fail with failed, msg, changed, exception" do
-    failed_key_order(<<-T).must_equal(["failed", "msg", "changed", "exception"])
+    failed_key_order(<<-T).must_equal(["changed", "failed", "exception", "msg"])
       - name: f
         ansible.builtin.fail: {msg: boom}
         ignore_errors: true
@@ -57,7 +57,7 @@ describe "action-level failure registered key order" do
   end
 
   it "registers assert with its condition keys before msg" do
-    failed_key_order(<<-T).must_equal(["failed", "evaluated_to", "assertion", "msg", "changed", "exception"])
+    failed_key_order(<<-T).must_equal(["changed", "failed", "exception", "msg", "evaluated_to", "assertion"])
       - name: a
         ansible.builtin.assert: {that: [false], fail_msg: nope}
         ignore_errors: true
@@ -66,7 +66,7 @@ describe "action-level failure registered key order" do
   end
 
   it "registers copy's missing controller src with exception before changed" do
-    failed_key_order(<<-T).must_equal(["failed", "msg", "exception", "changed"])
+    failed_key_order(<<-T).must_equal(["changed", "failed", "exception", "msg"])
       - name: c
         ansible.builtin.copy: {src: /nonexistent-src-key-order, dest: /tmp/krikri-key-order-dst}
         ignore_errors: true
@@ -75,7 +75,7 @@ describe "action-level failure registered key order" do
   end
 
   it "registers template's missing controller src with exception before changed" do
-    failed_key_order(<<-T).must_equal(["failed", "msg", "exception", "changed"])
+    failed_key_order(<<-T).must_equal(["changed", "failed", "exception", "msg"])
       - name: t
         ansible.builtin.template: {src: /nonexistent-tmpl.j2, dest: /tmp/krikri-key-order-out.txt}
         ignore_errors: true
@@ -84,7 +84,7 @@ describe "action-level failure registered key order" do
   end
 
   it "registers unarchive's missing controller src with exception first" do
-    failed_key_order(<<-T).must_equal(["failed", "exception", "msg", "changed"])
+    failed_key_order(<<-T).must_equal(["changed", "failed", "exception", "msg"])
       - name: u
         ansible.builtin.unarchive: {src: /nonexistent-key-order.tgz, dest: /tmp/krikri-key-order-dir}
         ignore_errors: true
@@ -93,7 +93,7 @@ describe "action-level failure registered key order" do
   end
 
   it "registers add_host's missing-name failure with exception before changed" do
-    failed_key_order(<<-T).must_equal(["failed", "msg", "exception", "changed"])
+    failed_key_order(<<-T).must_equal(["changed", "failed", "exception", "msg"])
       - name: h
         ansible.builtin.add_host: {}
         ignore_errors: true
@@ -102,7 +102,7 @@ describe "action-level failure registered key order" do
   end
 
   it "registers group_by's missing-key failure in the plain fail_json order" do
-    failed_key_order(<<-T).must_equal(["failed", "msg", "changed", "exception"])
+    failed_key_order(<<-T).must_equal(["changed", "failed", "exception", "msg"])
       - name: g
         ansible.builtin.group_by: {}
         ignore_errors: true
@@ -111,7 +111,7 @@ describe "action-level failure registered key order" do
   end
 
   it "registers set_fact's invalid variable name with exception first" do
-    failed_key_order(<<-T).must_equal(["failed", "exception", "msg", "changed"])
+    failed_key_order(<<-T).must_equal(["changed", "failed", "exception", "msg"])
       - name: s
         ansible.builtin.set_fact: {"bad name": 1}
         ignore_errors: true
@@ -120,7 +120,7 @@ describe "action-level failure registered key order" do
   end
 
   it "registers a debug arg-finalization failure with changed backfilled" do
-    failed_key_order(<<-T).must_equal(["failed", "exception", "msg", "changed"])
+    failed_key_order(<<-T).must_equal(["changed", "failed", "exception", "msg"])
       - name: d
         ansible.builtin.debug: {msg: "{{ nope_undefined_key_order }}"}
         ignore_errors: true

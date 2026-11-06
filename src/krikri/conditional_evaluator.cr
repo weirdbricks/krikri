@@ -4299,7 +4299,7 @@ module Krikri
         # it 'int' in the TypeError, never '_AnsibleTaggedStr'.
         if Krikri.bigint_digits(value)
           "int"
-        elsif fact_string_operand?(operand_expr)
+        elsif fact_string_operand?(operand_expr) || Krikri.python_string_literal_operand?(operand_expr)
           "str"
         else
           "_AnsibleTaggedStr"

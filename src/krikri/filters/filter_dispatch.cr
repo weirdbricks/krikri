@@ -19,7 +19,46 @@ module Krikri
 
       # Apply a single filter to a value.
       # Example: myvar | default('value')
+      #
+      # Any exception a filter's own body raises surfaces as the
+      # FilterFailureError every caller already turns into a clean task
+      # failure, wrapped the way ansible-core 2.21 words it: "The filter
+      # plugin '<fqcn>' failed: <cause>" (live-verified: `'abc' |
+      # regex_replace('[', '')` inside a task param fails "Finalization of
+      # task args for 'ansible.builtin.file' failed: Error while resolving
+      # value for 'path': The filter plugin 'ansible.builtin.regex_replace'
+      # failed: unterminated character set at position 0"). Before this a
+      # bare ArgumentError escaped the dispatch entirely and CRASHED the
+      # run with an unhandled exception on the `when:`/`failed_when:`/
+      # assert paths, which have no generic rescue of their own.
       def apply(value : JSON::Any, filter_expr : String, chain_root : String? = nil) : JSON::Any
+        dispatch_filter(value, filter_expr, chain_root)
+      rescue ex : UndefinedVariableError | RenderExpressionError | KrikriJinja::TemplateError | VariableSubstitutor::UnknownTestError | VariableSubstitutor::TemplateSyntaxError | UnknownFilterError | FilterPluginError | TestPluginError | IpAddrCore::IpError | PipeLookupError | FirstFoundLookupError | PythonLookupRunner::LookupError
+        # Templating, lookup and test/filter-PLUGIN failures carry their own
+        # wording at the caller (see executor_run_loop's `when:` rescues);
+        # only a built-in filter's own raise gets the wrapper. UnknownFilterError
+        # covers FilterFailureError, so an already-wrapped failure re-raises
+        # unchanged instead of gaining a second prefix.
+        raise ex
+      rescue ex : Exception
+        message = ex.message || "filter failed"
+        raise ex if message.starts_with?("The filter plugin '")
+        raise FilterFailureError.new("The filter plugin '#{filter_plugin_display_name(filter_expr)}' failed: #{message}")
+      end
+
+      # The FQCN ansible-core names a filter plugin by in its error wrapper:
+      # core filters are registered as `ansible.builtin.<name>` (so a bare
+      # `| regex_replace` still reports the fully-qualified spelling), while
+      # a dotted spelling (ansible.utils.*, community.general.*) is already
+      # the resolved plugin name.
+      private def filter_plugin_display_name(filter_expr : String) : String
+        stripped = filter_expr.strip
+        name = stripped.match(REGEX_FILTER_CALL).try(&.[1]) || stripped
+        return name if name.includes?('.')
+        "ansible.builtin.#{name}"
+      end
+
+      private def dispatch_filter(value : JSON::Any, filter_expr : String, chain_root : String? = nil) : JSON::Any
         @chain_root = chain_root if chain_root
         # `ansible.builtin.`-prefixed filter names (a real, if uncommon,
         # spelling - Ansible's own core filters are all reachable

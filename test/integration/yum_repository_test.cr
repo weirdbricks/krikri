@@ -89,17 +89,18 @@ describe "yum_repository plugin" do
     File.exists?(repo_path("absrepo")).must_equal(false)
   end
 
-  # The module's diff dict always carries before_header/after_header keys,
-  # and Ansible's callback prefixes every header carried under such a key
-  # with "before: "/"after: " (CallbackBase._get_diff) - so the displayed
-  # header is `--- before: <path>`, not a bare path (issue #782).
-  it "carries before:/after: prefixes on the diff headers" do
+  # The module's diff dict always carries before_header/after_header keys
+  # holding the BARE dest path - the callback adds the "before: "/
+  # "after: " prefixes when it prints (CallbackBase._get_diff), so the
+  # displayed header is `--- before: <path>` while the wire value is the
+  # path alone (live-verified vs ansible-core 2.19.11 and 2.21.6).
+  it "carries the bare dest path in the diff headers" do
     result = PluginSpecHelper.run("yum_repository", {
       "name" => "hdrtest", "description" => "d", "baseurl" => "https://example.com", "reposdir" => repo_dir,
     })
 
-    expected_before = "before: #{repo_path("hdrtest")}"
-    expected_after = "after: #{repo_path("hdrtest")}"
+    expected_before = repo_path("hdrtest")
+    expected_after = repo_path("hdrtest")
     result["diff"].as_h["before_header"].as_s.must_equal(expected_before)
     result["diff"].as_h["after_header"].as_s.must_equal(expected_after)
   end

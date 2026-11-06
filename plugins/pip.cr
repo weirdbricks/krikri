@@ -301,18 +301,78 @@ module Krikri
           msg: pip_failure_msg(probe_out, probe_err), include_empty_msg: true, cmd: argv)
       end
 
+      # 2.21 resolves a bare package name to the concrete version pip would
+      # install (pip >= 24.1's `--dry-run --report`) before deciding, so
+      # "installed but outdated" reports changed like a real install would.
+      packages, resolution_warning = resolve_check_packages(pip_bin, split_requirements(name))
+
       # pip.py's loop with its early break: state=present changes when ANY
       # requirement is missing/unsatisfied, state=absent when ANY is present.
       changed = if state == "absent"
-                  split_requirements(name).any? { |package| requirement_present?(package, probe_out) }
+                  packages.any? { |package| requirement_present?(package, probe_out) }
                 else
-                  split_requirements(name).any? { |package| !requirement_present?(package, probe_out) }
+                  packages.any? { |package| !requirement_present?(package, probe_out) }
                 end
 
       # exit_json(changed=..., cmd=pkg_cmd, stdout=..., stderr=...): the
       # probe command and its output ride the result like an install's do.
-      PluginResult.new(changed: changed, failed: false, stdout: probe_out,
+      result = PluginResult.new(changed: changed, failed: false, stdout: probe_out,
         key_order: ["changed", "stdout"])
+      if warning = resolution_warning
+        result.extra["warnings"] = JSON::Any.new([JSON::Any.new(warning)])
+      end
+      result
+    end
+
+    # pip.py's _resolve_package_names(): a package with no version
+    # requirement is replaced by the concrete name==version pip would
+    # install, read back from `pip install --dry-run --ignore-installed
+    # --report=<tmpfile>`. pip older than 24.1 cannot report reliably, so
+    # it keeps the plain names and warns (real's own wording). Any failure
+    # of the probe leaves the list untouched - real raises and fails the
+    # task, but a check-mode probe is not worth failing a dry run over.
+    private def resolve_check_packages(pip_bin : String, packages : Array(String)) : {Array(String), String?}
+      bare = packages.reject { |package| !requirement_specs(package).empty? }
+      return {packages, nil} if bare.empty?
+
+      version = installed_pip_version(pip_bin)
+      if version.nil? || pip_version_cmp(version, "24.1") < 0
+        return {packages, "Using check mode with packages from vcs urls, file paths, or archives will not behave as expected when using pip versions <24.1."}
+      end
+
+      report_path = File.tempname("krikri-pip-report", ".json")
+      begin
+        report_arg = Process.quote("--report=#{report_path}")
+        result = remote_exec("#{quoted_command(pip_bin)} install --dry-run --ignore-installed #{report_arg} #{bare.map { |package| Process.quote(package) }.join(" ")}")
+        return {packages, nil} unless result[:exit_code] == 0 && File.exists?(report_path)
+
+        report = JSON.parse(File.read(report_path)) rescue nil
+        resolved = report.try(&.["install"]?).try(&.as_a?)
+        return {packages, nil} unless resolved
+
+        with_requirements = packages.reject { |package| bare.includes?(package) }
+        resolved_packages = resolved.compact_map do |entry|
+          metadata = entry["metadata"]?
+          next unless metadata
+          name = metadata["name"]?.try(&.as_s?)
+          version_string = metadata["version"]?.try(&.as_s?)
+          next unless name && version_string
+          "#{name}==#{version_string}"
+        end
+        {with_requirements + resolved_packages, nil}
+      ensure
+        File.delete(report_path) if File.exists?(report_path)
+      end
+    end
+
+    # `pip show pip`'s Version line (real's _get_package_info on itself).
+    private def installed_pip_version(pip_bin : String) : String?
+      result = remote_exec("#{quoted_command(pip_bin)} show pip")
+      return nil unless result[:exit_code] == 0
+      result[:stdout].each_line do |line|
+        return line.split(":", 2)[1].strip if line.starts_with?("Version:")
+      end
+      nil
     end
 
     # pip.py's _get_packages: `pip list --format=freeze` first, `pip freeze`
@@ -978,7 +1038,13 @@ module Krikri
         end
       end
 
-      extra = editable_extra(@params["extra_args"]? || "")
+      # 2.21 applies editable: to the install command itself, one `-e`
+      # per package (2.19 merged a single -e into extra_args, which pip
+      # then bound to the first package only). requirements: is
+      # exclusive with editable: in the 2.21 spec, so the -r path never
+      # carries a flag.
+      extra = @params["extra_args"]? || ""
+      editable = true?(@params["editable"]?)
 
       # `target` reaches here already comma-joined by the parser for a
       # literal YAML `name:` list (Ansible's pip module takes a
@@ -999,8 +1065,12 @@ module Krikri
       # `--upgrade`/`extra_args` are never comma-joined so they pass
       # through the `elsif spec` branch above and are handled directly
       # below, one per name.
-      quoted_target = requirements ? target : split_requirements(target).map { |tval| Process.quote(tval) }.join(" ")
-      argv = install_argv(pip_bin, upgrade, force_reinstall, extra, requirements, target)
+      quoted_target = if requirements
+                        target
+                      else
+                        split_requirements(target).map { |tval| editable ? "-e #{Process.quote(tval)}" : Process.quote(tval) }.join(" ")
+                      end
+      argv = install_argv(pip_bin, upgrade, force_reinstall, extra, requirements, target, editable)
       cmd = with_umask(with_chdir("#{break_system_packages_env}#{quoted_command(pip_bin)} install #{upgrade ? "--upgrade " : ""}#{force_reinstall ? "--force-reinstall " : ""}#{extra_tokens(extra)} #{quoted_target}".strip))
       result = remote_exec(cmd)
 
@@ -1028,8 +1098,9 @@ module Krikri
         key_order: ["changed", "stdout"])
     end
 
-    private def install_argv(pip_bin : String, upgrade : Bool, force_reinstall : Bool, extra : String, requirements : String?, target : String) : Array(String)
+    private def install_argv(pip_bin : String, upgrade : Bool, force_reinstall : Bool, extra : String, requirements : String?, target : String, editable : Bool = false) : Array(String)
       argv_target = requirements ? target.split(' ').reject(&.empty?) : split_requirements(target)
+      argv_target = argv_target.flat_map { |tval| editable ? ["-e", tval] : [tval] } if editable && requirements.nil?
       pip_bin.split(' ').reject(&.empty?) + ["install"] + (upgrade ? ["--upgrade"] : [] of String) + (force_reinstall ? ["--force-reinstall"] : [] of String) + extra.split(' ').reject(&.empty?) + argv_target
     end
 
@@ -1139,16 +1210,6 @@ module Krikri
         else
           already_installed?(pip_bin, package)
         end
-      end
-    end
-
-    # Merge the `-e` flag into extra_args when editable: is set
-    # (deduplicated if extra_args already includes it)
-    private def editable_extra(extra : String) : String
-      if true?(@params["editable"]?) && !extra.split(' ').includes?("-e")
-        extra.empty? ? "-e" : "#{extra} -e"
-      else
-        extra
       end
     end
 

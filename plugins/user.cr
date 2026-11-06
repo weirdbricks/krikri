@@ -193,16 +193,21 @@ module Krikri
         existing = result.extra["warnings"]?.try(&.as_a?) || [] of JSON::Any
         result.extra["warnings"] = JSON::Any.new([JSON::Any.new("The input password appears not to have been hashed. The 'password' argument must be encrypted for this module to work properly.")] + existing)
       end
-      # user.py warns (deprecation-style) when append is set without groups,
-      # but real ansible-core 2.19 only does so when the groups: key is
-      # absent entirely: buluma.vector passes
-      # `groups: "{{ vector_groups | default('') }}"`, which renders to an
-      # explicitly-provided empty string, and ansible emits no warning for
-      # that (verified on a real host) - same for a rendered empty list.
-      if true?(@params["append"]?) && @params["groups"]?.nil?
+      # 2.21: seuser on a non-SELinux host is silently ignored with a
+      # warning (2.19 appended -Z unconditionally and let useradd fail);
+      # main() warns right after instantiation, so it rides every result
+      # including failures. Same grounded SELinux-enabled probe file.cr
+      # uses for libselinux's is_selinux_enabled().
+      if (seuser = @params["seuser"]?.presence) && !Dir.exists?("/sys/fs/selinux")
         existing = result.extra["warnings"]?.try(&.as_a?) || [] of JSON::Any
-        result.extra["warnings"] = JSON::Any.new(existing + [JSON::Any.new("'append' is set, but no 'groups' are specified. Use 'groups' for appending new groups.This will change to an error in Ansible 2.14.")])
+        result.extra["warnings"] = JSON::Any.new(
+          existing + [JSON::Any.new("'seuser' is set to '#{seuser}' but SELinux is not enabled on this system. The 'seuser' parameter will be ignored.")])
       end
+      # 2.21: the old 'append' without 'groups' deprecation warning is
+      # gone - required_if=['append', True, ['groups']] now fails the
+      # task at argument-spec validation ("append is True but all of
+      # the following are missing: groups", live-verified vs 2.21.6)
+      # before the module body ever runs, so nothing to warn about here.
       result
     end
 
@@ -351,13 +356,14 @@ module Krikri
       attach_user_facts(result, facts) if facts
       attach_command_output(result, base.extra["stdout"]?.try(&.as_s) || "", base.extra["stderr"]?.try(&.as_s) || "")
 
-      # ansible-core user.py's own result keys beyond the resolved
-      # identity (verified against its main() result assembly and live
+      # ansible-core's registered user result key set beyond the resolved
+      # identity (2.21's main() result assembly and live
       # `ansible localhost -c local -m user` runs):
       # - name/state are ALWAYS echoed (even state=absent)
       # - append/move_home only on the modify-existing-account path
       # - system/create_home only on the create path
-      # - groups (the comma-joined param) only when groups: was given
+      # - groups: the ACTUAL supplementary memberships (2.21), whenever
+      #   the account exists and state is present
       # - password: 'NOT_LOGGING_PASSWORD' only when password: was given
       attach_user_identity(result, name, state)
       if current
@@ -367,8 +373,13 @@ module Krikri
         result.extra["system"] = JSON::Any.new(true?(@params["system"]?))
         result.extra["create_home"] = JSON::Any.new(wants_create_home?)
       end
-      if groups = @params["groups"]?.presence
-        result.extra["groups"] = JSON::Any.new(groups)
+      # 2.21 delta (live-verified): `groups` in the result is now the
+      # user's ACTUAL supplementary membership - comma-joined /etc/group
+      # order, primary group excluded (user_group_membership) - carried
+      # whenever the account exists and state is present. 2.19 echoed
+      # the requested groups: param value, and only when it was given.
+      if facts
+        result.extra["groups"] = JSON::Any.new(supplementary_groups(facts.name, facts.gid))
       end
       if @params["password"]?.presence
         result.extra["password"] = JSON::Any.new("NOT_LOGGING_PASSWORD")
@@ -567,6 +578,21 @@ module Krikri
       result.extra["home"] = JSON::Any.new(facts.home)
       result.extra["shell"] = JSON::Any.new(facts.shell)
       result.extra["comment"] = JSON::Any.new(facts.comment)
+    end
+
+    # The user's supplementary group memberships straight from
+    # /etc/group (grp.getgrall's own source and order): every group whose
+    # member list contains the user's name, skipping the primary group.
+    private def supplementary_groups(name : String, primary_gid : String) : String
+      memberships = [] of String
+      File.each_line("/etc/group") do |line|
+        fields = line.split(':')
+        next if fields.size < 4
+        next unless fields[3].split(',').includes?(name)
+        next if fields[2] == primary_gid
+        memberships << fields[0]
+      end
+      memberships.join(',')
     end
 
     # Ansible's user module echoes `name` and `state` in its result
@@ -952,11 +978,19 @@ module Krikri
     end
 
     # The new home: dir modify() needs to create, or nil when create_home:
-    # is off, home: isn't changing, or the target already exists.
+    # is off, home: isn't changing, or the target already exists. 2.21
+    # skips home creation for the placeholder conventions system accounts
+    # use (/nonexistent, /dev/null, /var/empty) - its
+    # PLACEHOLDER_HOME_DIRS gate covers both the usermod -m append and
+    # the main() tail's own create_homedir (krikri's creation runs
+    # through this one site, matching the latter's semantics).
+    PLACEHOLDER_HOME_DIRS = ["/nonexistent", "/dev/null", "/var/empty"]
+
     private def home_needing_creation(current : PluginHelpers::UserState::User) : String?
       return nil unless wants_create_home?
       new_home = @params["home"]?
       return nil unless new_home && new_home != current.home
+      return nil if PLACEHOLDER_HOME_DIRS.includes?(new_home)
       return nil if remote_dir_exists?(new_home)
 
       new_home

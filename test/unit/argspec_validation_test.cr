@@ -31,7 +31,7 @@ describe Krikri::ArgspecValidator do
     failure.wont_be_nil
     failure.as(Failure).msg.must_equal(
       "Unsupported parameters for (lineinfile) module: bakcrefs. " \
-      "Supported parameters include: attributes, backrefs, backup, create, firstmatch, " \
+      "Supported parameters include: attributes, backrefs, backup, create, encoding, firstmatch, " \
       "group, insertafter, insertbefore, line, mode, owner, path, regexp, search_string, " \
       "selevel, serole, setype, seuser, state, unsafe_writes, validate " \
       "(attr, dest, destfile, name, regex, value).")
@@ -44,16 +44,16 @@ describe Krikri::ArgspecValidator do
       {"path" => "/tmp/x", "bakcrefs" => "true"}, vars)
     failure.as(Failure).msg.must_equal(
       "Unsupported parameters for (ansible.builtin.lineinfile) module: bakcrefs. " \
-      "Supported parameters include: attributes, backrefs, backup, create, firstmatch, " \
+      "Supported parameters include: attributes, backrefs, backup, create, encoding, firstmatch, " \
       "group, insertafter, insertbefore, line, mode, owner, path, regexp, search_string, " \
       "selevel, serole, setype, seuser, state, unsafe_writes, validate " \
       "(attr, dest, destfile, name, regex, value).")
   end
 
-  it "rejects stat's typo'd parameter without advertising the removed get_selinux_context" do
-    # ansible-core 2.19 dropped get_selinux_context from stat's argspec
-    # (and its output), so the supported-parameters list must no longer
-    # offer it; message captured from a 2.19.11 ad-hoc stat run.
+  it "rejects stat's typo'd parameter and advertises get_selinux_context" do
+    # ansible-core 2.21 (krikri's parity target) has get_selinux_context in
+    # stat's argspec again, so the supported-parameters list offers it;
+    # message captured from a 2.21.6 ad-hoc stat run.
     failure = Krikri::ArgspecValidator.validate(
       "ansible.builtin.stat", "ansible.builtin.stat",
       {"path" => "/tmp/kpg-work/existing.txt", "follow" => "false",
@@ -62,7 +62,7 @@ describe Krikri::ArgspecValidator do
     failure.as(Failure).msg.must_equal(
       "Unsupported parameters for (ansible.builtin.stat) module: follow_bogus. " \
       "Supported parameters include: checksum_algorithm, follow, get_attributes, " \
-      "get_checksum, get_mime, path (attr, attributes, checksum, checksum_algo, " \
+      "get_checksum, get_mime, get_selinux_context, path (attr, attributes, checksum, checksum_algo, " \
       "dest, mime, mime-type, mime_type, name).")
   end
 
@@ -173,6 +173,17 @@ describe Krikri::ArgspecValidator do
       "iptables", "ansible.builtin.iptables", {"zz" => "1"}, vars)
     failure.as(Failure).msg.must_equal(
       "flush is False but all of the following are missing: chain")
+  end
+
+  # 2.21 added required_if=[['append', True, ['groups']]] to user - the
+  # old 'append' without 'groups' deprecation warning became a hard
+  # spec failure (live-verified vs 2.21.6).
+  it "enforces user's 2.21 append-requires-groups required_if" do
+    failure = Krikri::ArgspecValidator.validate(
+      "user", "ansible.builtin.user",
+      {"name" => "root", "state" => "present", "append" => "true"}, vars)
+    failure.as(Failure).msg.must_equal(
+      "append is True but all of the following are missing: groups")
   end
 
   it "treats an explicit null as present-but-skipped for optional options" do

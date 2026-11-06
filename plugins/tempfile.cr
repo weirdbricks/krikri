@@ -36,6 +36,18 @@ module Krikri
         return PluginResult.new(changed: false, failed: true, msg: "value of state must be one of: file, directory, got: #{state}")
       end
 
+      # 2.21 added a validity gate: prefix/suffix must be single file-name
+      # components (no path separators), checked BEFORE any creation.
+      # Python's truthiness applies - an empty string passes. The message
+      # renders the value with Python's repr() (single quotes).
+      {"prefix", "suffix"}.each do |param|
+        value = @params[param]?
+        next if value.nil? || value.empty?
+        unless value == File.basename(value)
+          return PluginResult.new(changed: false, failed: true, msg: "#{param} must be a valid file name component, got '#{value}'")
+        end
+      end
+
       dir = target_dir
       if dir && (errno = dir_errno(dir))
         return PluginResult.new(changed: false, failed: true, msg: failure_msg(dir, errno, state))

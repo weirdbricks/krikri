@@ -155,6 +155,25 @@ module Krikri
         )
       end
 
+      # An explicit null command source (a templated null, or YAML `cmd:`
+      # with no value): real's run_command receives Python None and raises
+      # TypeError('Argument 'args' to run_command must be list or string'),
+      # which fail_json reports as rc 257 with cmd kept NULL on the wire -
+      # no stdout/stderr keys at all (2.21 live-verified; the 2.19-era
+      # shape ran the empty command through the shell instead). The
+      # exception placeholder rides for the failed_when suppression flow.
+      if (explicit_null_param?("cmd") || explicit_null_param?("_raw_params")) && !argv
+        result = PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: "Argument 'args' to run_command must be list or string",
+          cmd: nil,
+          rc: 257
+        )
+        result.extra["exception"] = JSON::Any.new("(traceback unavailable)")
+        return result
+      end
+
       # Bool-typed params: AnsibleModule type-converts them at module
       # setup, after the required-args gate above - now via the shared
       # BasePlugin#validate_bool_params! (see its block comment).
@@ -513,7 +532,7 @@ module Krikri
       with_executable_warning(PluginResult.new(
         changed: true,
         failed: exit_code != 0,
-        msg: exit_code == 0 ? "" : "non-zero return code",
+        msg: exit_code == 0 ? "" : "The command exited with a non-zero return code.",
         include_empty_msg: true,
         cmd: reported_cmd,
         stdout: final_stdout,
@@ -546,10 +565,15 @@ module Krikri
         changed: false,
         failed: true,
         msg: "Error executing command.",
-        cmd: argv.map { |arg| shlex_quote(arg) }.join(' '),
+        # 2.21's registered spawn-failure shape (fail_json kwargs rc,
+        # stdout, stderr, msg, cmd, exception; live-verified): after the
+        # controller hoists changed/failed/msg/rc, the module's own keys
+        # read stdout, stderr, cmd, then the derived *_lines - so the
+        # lines ride AFTER cmd here, not between stdout and stderr.
         stdout: "",
-        stdout_lines: [] of String,
         stderr: "",
+        cmd: argv.map { |arg| shlex_quote(arg) }.join(' '),
+        stdout_lines: [] of String,
         stderr_lines: [] of String,
         rc: spawn_errno(ex)
       )

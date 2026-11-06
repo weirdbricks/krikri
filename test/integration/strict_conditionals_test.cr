@@ -100,7 +100,7 @@ describe "strict boolean conditionals" do
     status, output = run_playbook(playbook_for("my_list is defined and my_list"))
 
     status.exit_code.must_equal(2)
-    output.must_include("Task failed: Conditional result (True) was derived from value of type 'list'")
+    output.must_include("Task failed: A 'when' expression failed: Conditional result (True) was derived from value of type 'list'")
     output.must_include("Conditionals must have a boolean result")
     # The [ERROR] chain's Origin context quotes the playbook SOURCE
     # (Ansible's own chain does too); assert on the executed-task
@@ -134,7 +134,7 @@ describe "strict boolean conditionals" do
     status, output = run_playbook(yaml)
 
     status.exit_code.must_equal(2)
-    output.must_include("[ERROR]: Task failed: Error while evaluating conditional: 'sudoer' is undefined")
+    output.must_include("[ERROR]: Task failed: A 'when' expression failed: Error while evaluating conditional: 'sudoer' is undefined")
     # The middle chain record is the bare conditional-evaluation failure;
     # the missing-name cause follows with its own Origin stanza.
     output.must_include("Error while evaluating conditional.")
@@ -351,7 +351,7 @@ describe "strict boolean conditionals" do
 
     status, output = run_playbook(yaml)
     status.exit_code.must_equal(2)
-    output.must_include("Task failed: Conditional result (False) was derived from value of type 'str' at \"<environment variable 'CRYSTAL_ANSIBLE_SPEC_COND_STR_CALL_TEST'>\". Conditionals must have a boolean result.")
+    output.must_include("Task failed: A 'when' expression failed: Conditional result (False) was derived from value of type 'str' at \"<environment variable 'CRYSTAL_ANSIBLE_SPEC_COND_STR_CALL_TEST'>\". Conditionals must have a boolean result.")
   end
 
   # Round 5310002 follow-up: the FATAL line the failing conditional
@@ -374,7 +374,7 @@ describe "strict boolean conditionals" do
     YAML
     status, output = run_playbook(yaml)
     status.exit_code.must_equal(2)
-    output.must_include("fatal: [localhost]: FAILED! => {\"changed\": false, \"msg\": \"Task failed: Conditional result (False) was derived from value of type 'str' at \\\"<environment variable 'CRYSTAL_ANSIBLE_SPEC_COND_STR_CALL_TEST'>\\\". Conditionals must have a boolean result.\"}")
+    output.must_include("fatal: [localhost]: FAILED! => {\"changed\": false, \"msg\": \"Task failed: A 'when' expression failed: Conditional result (False) was derived from value of type 'str' at \\\"<environment variable 'CRYSTAL_ANSIBLE_SPEC_COND_STR_CALL_TEST'>\\\". Conditionals must have a boolean result.\"}")
 
     # Same failing condition on a debug:-family task: real's dump drops
     # the changed key entirely (live-verified 2.19.11).
@@ -390,7 +390,7 @@ describe "strict boolean conditionals" do
     YAML
     status, output = run_playbook(debug_yaml)
     status.exit_code.must_equal(2)
-    output.must_include("fatal: [localhost]: FAILED! => {\"msg\": \"Task failed: Error while evaluating conditional: 'CRYSTAL_ANSIBLE_SPEC_COND_STR_CALL_TEST_UNKNOWN' is undefined\"}")
+    output.must_include("fatal: [localhost]: FAILED! => {\"msg\": \"Task failed: A 'when' expression failed: Error while evaluating conditional: 'CRYSTAL_ANSIBLE_SPEC_COND_STR_CALL_TEST_UNKNOWN' is undefined\"}")
     # ...and that dump carries no changed key at all - the exact fatal
     # line above is the pin (a whole-output wont_include can't work).
   end
@@ -415,7 +415,7 @@ describe "strict boolean conditionals" do
     YAML
     status, output = run_playbook(yaml)
     status.exit_code.must_equal(2)
-    output.must_include("fatal: [localhost]: FAILED! => {\"changed\": false, \"msg\": \"Task failed: Error while evaluating conditional: 'CRYSTAL_ANSIBLE_SPEC_COND_STR_CALL_TEST_UNKNOWN' is undefined\"}")
+    output.must_include("fatal: [localhost]: FAILED! => {\"changed\": false, \"msg\": \"Task failed: A 'when' expression failed: Error while evaluating conditional: 'CRYSTAL_ANSIBLE_SPEC_COND_STR_CALL_TEST_UNKNOWN' is undefined\"}")
   end
 
   # The looped variant obeys the same module-keying (live-verified vs
@@ -439,7 +439,7 @@ describe "strict boolean conditionals" do
     YAML
     status, output = run_playbook(yaml)
     status.exit_code.must_equal(2)
-    output.must_include("failed: [localhost] (item=1) => {\"ansible_loop_var\": \"item\", \"changed\": false, \"item\": 1, \"msg\": \"Task failed: Error while evaluating conditional: 'CRYSTAL_ANSIBLE_SPEC_COND_STR_CALL_TEST_UNKNOWN' is undefined\"}")
+    output.must_include("failed: [localhost] (item=1) => {\"ansible_loop_var\": \"item\", \"changed\": false, \"item\": 1, \"msg\": \"Task failed: A 'when' expression failed: Error while evaluating conditional: 'CRYSTAL_ANSIBLE_SPEC_COND_STR_CALL_TEST_UNKNOWN' is undefined\"}")
     output.wont_include("One or more items failed")
 
     debug_yaml = <<-YAML
@@ -455,7 +455,7 @@ describe "strict boolean conditionals" do
     YAML
     status, output = run_playbook(debug_yaml)
     status.exit_code.must_equal(2)
-    output.must_include("failed: [localhost] (item=1) => {\"msg\": \"Task failed: Error while evaluating conditional: 'CRYSTAL_ANSIBLE_SPEC_COND_STR_CALL_TEST_UNKNOWN' is undefined\"}")
+    output.must_include("failed: [localhost] (item=1) => {\"msg\": \"Task failed: A 'when' expression failed: Error while evaluating conditional: 'CRYSTAL_ANSIBLE_SPEC_COND_STR_CALL_TEST_UNKNOWN' is undefined\"}")
     output.must_include("fatal: [localhost]: FAILED! => {\"msg\": \"One or more items failed\"}")
   end
 

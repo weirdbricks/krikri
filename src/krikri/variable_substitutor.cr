@@ -379,6 +379,21 @@ module Krikri
     filter_name == name
   end
 
+  # Whether *operand* is a quoted STRING LITERAL written directly in the
+  # expression (`'10'`, `"10"`) rather than a variable reference. Jinja
+  # builds a plain Python str for a literal, so ansible's TypeError names
+  # it 'str'; only a value READ from a yaml document carries the loader's
+  # tag and reports '_AnsibleTaggedStr' (live-verified vs 2.21.6:
+  # `when: "'10' >= 1"` says 'str' while `v: "10"` from vars says
+  # '_AnsibleTaggedStr').
+  def self.python_string_literal_operand?(operand : String) : Bool
+    text = operand.strip
+    return false if text.size < 2
+    quote = text[0]
+    return false unless quote == '\'' || quote == '"'
+    text[-1] == quote && !text[1...-1].includes?(quote)
+  end
+
   # The head of ansible-core's mandatory filter-plugin failure text, as the
   # finalization chain words it (see #mandatory_message for the full text).
   MANDATORY_FAILED_PREFIX = "The filter plugin 'ansible.builtin.mandatory' failed: "
@@ -1293,6 +1308,17 @@ module Krikri
   rescue e : KrikriJinja::TemplateError
     return nil unless e.kind == KrikriJinja::ErrorKind::Undefined
     msg = e.raw_message
+    # `missing | mandatory` reaches the mandatory FILTER PLUGIN in ansible,
+    # which fails the task with its own wrapper (not the plain undefined
+    # wording) - live-verified vs 2.21.6 for when:, failed_when:, until:
+    # and assert: alike. The strict engine raises on the bare operand
+    # before any filter runs, so raise the plugin failure from here (the
+    # same wording raise_if_strict_undefined produces for a `{{ }}` span).
+    if (undefined_name = Krikri.undefined_filter_chain_source(expr.strip, vars)) &&
+       Krikri.chain_first_filter?(expr.strip, "mandatory")
+      detail = Krikri.mandatory_message(expr.strip, undefined_name)
+      raise Krikri::FilterPluginError.new(Krikri::MANDATORY_FAILED_PREFIX + detail, detail)
+    end
     # The engine words a dict-subscript miss from the key's STRINGIFIED
     # form, which loses a non-string key's type and truthiness - exactly
     # the information ansible's wording turns on ({} key -> the lazy-dict

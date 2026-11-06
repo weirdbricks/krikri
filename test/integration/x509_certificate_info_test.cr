@@ -228,8 +228,13 @@ describe "x509_certificate_info plugin" do
     status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: captured, error: captured)
     output = captured.to_s
     status.success?.must_equal(true, "playbook failed: #{output}")
-    tail = /"valid_at",\s*"failed",\s*"changed"/
-    output.matches?(tail).must_equal(true, "expected valid_at, failed, changed tail, got: #{output}")
+    # 2.21: changed/failed hoist to the front (ResultShape's declared-field
+    # lead); the module's own keys keep their relative order, so valid_at
+    # stays the module dict's final key.
+    head = /"changed",\s*"failed",\s*"signature_algorithm"/
+    output.matches?(head).must_equal(true, "expected changed, failed lead, got: #{output}")
+    tail = /"issuer_uri",\s*"valid_at"\s*\]/
+    output.matches?(tail).must_equal(true, "expected valid_at as the final module key, got: #{output}")
   ensure
     File.delete(playbook) if playbook && File.exists?(playbook)
   end
@@ -306,7 +311,11 @@ describe "x509_certificate_info: AIA, TLS feature, extensions_by_oid, EC curves"
               msg: "{{ info.results[0].invocation | to_json }}"
       YAML
     captured = IO::Memory.new
-    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: captured, error: captured)
+    # ansible-core 2.21 defaults INJECT_INVOCATION to off - the loop-item
+    # invocation echo these specs pin exists only with the setting on
+    # (see InvocationInjection).
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: captured, error: captured,
+      env: {"ANSIBLE_INJECT_INVOCATION" => "1"})
     output = captured.to_s
     status.success?.must_equal(true, output)
     output.must_include(%(\\"module_args\\": {\\"path\\": \\"#{path}\\", \\"name_encoding\\": \\"ignore\\", \\"select_crypto_backend\\": \\"auto\\", \\"content\\": null, \\"valid_at\\": null}))
@@ -533,7 +542,12 @@ describe "x509_certificate_info: valid_at invocation echo" do
         tasks:
     YAML
     captured = IO::Memory.new
-    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: captured, error: captured)
+    # ansible-core 2.21 defaults INJECT_INVOCATION to off - module results
+    # carry no `invocation` unless the setting is enabled (see
+    # InvocationInjection). These specs pin the valid_at echo machinery,
+    # so run with the setting on.
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: captured, error: captured,
+      env: {"ANSIBLE_INJECT_INVOCATION" => "1"})
     output = captured.to_s
     status.success?.must_equal(true, "playbook failed: #{output}")
     output
@@ -626,7 +640,7 @@ describe "x509_certificate_info: valid_at invocation echo" do
             msg: "{{ result.results[0].keys() | list | to_json }}"
     TASKS
 
-    output.must_include(%([\\"failed\\", \\"msg\\", \\"invocation\\", \\"changed\\", \\"exception\\", \\"item\\", \\"ansible_loop_var\\"]))
+    output.must_include(%([\\"changed\\", \\"failed\\", \\"exception\\", \\"msg\\", \\"ansible_loop_var\\", \\"item\\", \\"invocation\\"]))
   end
 
   it "fails an invalid timespec with the uncaught-exception shape and no invocation echo" do

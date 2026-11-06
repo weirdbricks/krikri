@@ -149,16 +149,21 @@ module Krikri
     end
   end
 
-  # The plain string form a marked literal demotes to on the plugin wire -
-  # exactly what stringify_value produced before the marker existed, so
-  # every plugin that never asks about the native type sees identical text.
-  # A marked nil (YAML `key:` with no value) demotes to "" like
-  # stringify_value's own Nil case.
+  # The plain string form a marked literal demotes to on the plugin wire.
+  # Bools render as Python str() ("True"/"False") - what Ansible's argspec
+  # finalization puts on the wire for a str-typed option carrying a native
+  # bool literal (2.21 live-verified: `cmd: false` executes the literally-
+  # named "False", rc 2 ENOENT) - matching #python_str_scalar, whose
+  # template's-dest note records the same behavior live-verified against
+  # 2.19.11. Int/float spellings are identical either way. A marked nil
+  # (YAML `key:` with no value) demotes to "" like stringify_value's own
+  # Nil case - the explicit-null argspec flow handles real Nones.
   def self.non_string_param_text(native : JSON::Any) : String
     case native.raw
-    when Int64, Int32, Float64, Bool then native.raw.to_s
-    when Nil                         then ""
-    else                                  native.to_s
+    when Bool                  then native.as_bool ? "True" : "False"
+    when Int64, Int32, Float64 then native.raw.to_s
+    when Nil                   then ""
+    else                            native.to_s
     end
   end
 

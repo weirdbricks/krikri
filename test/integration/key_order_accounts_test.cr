@@ -290,14 +290,16 @@ describe "user plugin result key order" do
   end
 
   # Real check-mode modify of an existing user registers the full shape
-  # (modify_user is check-mode aware, rc=0 for a would-be change).
+  # (modify_user is check-mode aware, rc=0 for a would-be change). 2.21
+  # appends `groups` (the actual supplementary membership) after shell on
+  # every path where the account exists.
   it "serializes a check-mode modify of an existing user as the full modify shape" do
     result = PluginSpecHelper.run("user", {
       "name" => "root", "shell" => "/bin/krikri-fake-shell", "_ansible_check_mode" => "true",
     })
 
     result["changed"].as_bool.must_equal(true)
-    result.as_h.keys.must_equal(["name", "state", "append", "move_home", "changed", "uid", "group", "comment", "home", "shell"])
+    result.as_h.keys.must_equal(["name", "state", "append", "move_home", "changed", "uid", "group", "comment", "home", "shell", "groups"])
   end
 
   it "serializes a check-mode no-op modify identically (changed: false)" do
@@ -307,7 +309,7 @@ describe "user plugin result key order" do
     })
 
     result["changed"].as_bool.must_equal(false)
-    result.as_h.keys.must_equal(["name", "state", "append", "move_home", "changed", "uid", "group", "comment", "home", "shell"])
+    result.as_h.keys.must_equal(["name", "state", "append", "move_home", "changed", "uid", "group", "comment", "home", "shell", "groups"])
   end
 
   it "serializes an absent no-op as [name, state, changed]" do

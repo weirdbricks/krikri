@@ -2154,7 +2154,7 @@ module Krikri
         # as undefined, 2.19-parity strictness fails the task: Turgon37.
         # ssh_server's own `{{ ... | union([item.invocation.module_args.
         # creates]) }}` set_fact over the registered results).
-        interpreted = attach_batch_step_invocation(task, steps[i], interpreted)
+        interpreted = attach_batch_step_invocation(task, steps[i], interpreted, InvocationInjection.enabled?(vars_context))
         interpreted = shape_script_result(task, interpreted)
         item_results[idx] = apply_changed_failed_when(task, interpreted, vars_context, host)
       end
@@ -2468,7 +2468,8 @@ module Krikri
           # decorated with the failing item's own origin, so the chain
           # re-uses it verbatim.
           if failed && (fail_msg = result["msg"]?.try(&.as_s?)) && conditional_evaluation_failure?(fail_msg)
-            emit_when_error_chain(task, fail_msg, host, loop_item: item, loop_index: idx)
+            emit_when_error_chain(task, fail_msg, host, loop_item: item, loop_index: idx,
+              cause_text: result["_ansible_conditional_cause"]?.try(&.as_s?))
           end
           # A batch-prepared (or solo) finalization failure carries its
           # [ERROR] chain block stashed on the result (see
@@ -2513,12 +2514,22 @@ module Krikri
       aggregate = {} of String => JSON::Any
       if loop_items.empty?
         aggregate["changed"] = JSON::Any.new(false)
+        aggregate["failed"] = JSON::Any.new(false)
         aggregate["skipped"] = JSON::Any.new(true)
+        # 2.21's empty-loop aggregate carries BOTH reason keys with the
+        # same text (live-verified: skip_reason AND skipped_reason both
+        # "No items in the list"), where krikri emitted only
+        # skipped_reason.
+        aggregate["skip_reason"] = JSON::Any.new("No items in the list")
         aggregate["skipped_reason"] = JSON::Any.new("No items in the list")
         aggregate["results"] = JSON::Any.new(results)
       else
         aggregate["results"] = JSON::Any.new(results)
-        aggregate["skipped"] = JSON::Any.new(all_items_skipped)
+        # 2.21's UnifiedTaskResult exports `skipped` only when true
+        # (`result or None`): a successful loop's aggregate carries no
+        # `skipped` key where 2.19 emitted skipped: false (live-verified
+        # TOPLOOP shape). `changed`/`failed` stay bool-always.
+        aggregate["skipped"] = JSON::Any.new(true) if all_items_skipped
         aggregate["changed"] = JSON::Any.new(true) if any_changed
         if any_failed
           aggregate["failed"] = JSON::Any.new(true)
@@ -2528,6 +2539,7 @@ module Krikri
           aggregate["msg"] = JSON::Any.new(all_items_skipped ? "All items skipped" : "All items completed")
         end
         aggregate["changed"] = JSON::Any.new(any_changed) unless aggregate.has_key?("changed")
+        aggregate["failed"] = JSON::Any.new(false) unless aggregate.has_key?("failed")
       end
 
       if executed_count == 0
@@ -2668,6 +2680,13 @@ module Krikri
 
       if register_name = task.register
         unless register_name.empty?
+          # ansible-core 2.21's UnifiedTaskResult export: the aggregate
+          # leads with changed/failed/msg and the results land last, while
+          # each per-item entry moves its loop-wrapper keys ahead of the
+          # module payload (ResultShape's comment carries the live-verified
+          # shape table). The aggregate here bypasses register_result, so
+          # the same normalization runs at this write.
+          ResultShape.normalize_registered!(aggregate)
           @registered_vars[host.name][register_name] = JSON::Any.new(aggregate)
           @hv_generation += 1
         end
@@ -2825,6 +2844,48 @@ module Krikri
     # until:/retries:/delay: retries too - real prints the same
     # FAILED - RETRYING callback lines and attempts key for handlers
     # (issue #620, live-verified vs real ansible-playbook).
+    # ansible-core 2.21 labels an until:/retries: condition failure with the
+    # clause that raised it, exactly like `when:` ("Task failed: An 'until'
+    # expression failed: <detail>", live-captured vs 2.21.6).
+    UNTIL_EXPRESSION_FAILED_PREFIX = "An 'until' expression failed: "
+
+    # The clause-labelled detail for an until: condition that raised - the
+    # same wording classes the when: evaluator distinguishes (an
+    # unresolvable filter/test NAME is a compile-time syntax error, a
+    # filter that RAN and raised keeps its plugin wrapper, everything else
+    # is conditional-evaluation wording).
+    private def until_expression_failure(ex : Exception, task : Task? = nil, host : Host? = nil, until_condition : String? = nil) : String
+      detail = if ex.is_a?(Krikri::FilterPluginError) || ex.is_a?(Krikri::TestPluginError)
+                 # A filter/test PLUGIN's own runtime failure keeps its
+                 # wrapper and adds no conditional-evaluation prefix
+                 # (live-verified vs 2.21.6: mandatory's "Mandatory variable
+                 # 'x' not defined.").
+                 ex.message.to_s
+               elsif ex.is_a?(VariableSubstitutor::FilterEngine::FilterFailureError)
+                 message = ex.message.to_s
+                 message.starts_with?("The filter plugin '") ? message : "Error while evaluating conditional: #{message}"
+               elsif ex.is_a?(VariableSubstitutor::FilterEngine::UnknownFilterError) || ex.is_a?(VariableSubstitutor::UnknownTestError)
+                 "Syntax error in expression: #{ex.message}"
+               elsif ex.is_a?(ConditionalEvaluator::ConditionalBooleanError)
+                 # Real words the non-boolean class with its own text and no
+                 # "Error while evaluating conditional:" wrapper - and
+                 # decorates it with the until: clause's own value position
+                 # ("at '<file>:line:col'"), the same data-lineage labeling
+                 # the when: path applies (live-verified vs 2.21.6).
+                 message = ex.message.to_s
+                 if task && until_condition
+                   message = decorate_conditional_value_origin(task, message, host,
+                     operand: until_condition, clause_key: "until", clause_raw: until_condition)
+                 end
+                 message
+               elsif ex.is_a?(ConditionalEvaluator::OrderingTypeError) || ex.is_a?(RenderExpressionError)
+                 "Error rendering expression: #{ex.message}"
+               else
+                 "Error while evaluating conditional: #{ex.message}"
+               end
+      "Task failed: #{UNTIL_EXPRESSION_FAILED_PREFIX}#{detail}"
+    end
+
     private def run_until_retries(
       task : Task,
       host : Host,
@@ -2950,27 +3011,32 @@ module Krikri
           maybe_conditional_delimiters_deprecation(task, until_condition, "until", vars_context)
           begin
             substituted_condition = substitutor.substitute(until_condition)
-            if ConditionalEvaluator.evaluate(substituted_condition, vars_context)
+            # strict/raise_undefined: real evaluates an until: like a when: -
+            # an undefined name raises, and the final result must be a real
+            # boolean (live-verified vs 2.21.6: `until: r.stdout` on
+            # "hi" fails "An 'until' expression failed: Conditional result
+            # (True) was derived from value of type 'str' ...").
+            if ConditionalEvaluator.evaluate(substituted_condition, vars_context, strict: true, raise_undefined: true)
               condition_met = true
               break
             end
-          rescue ex : VariableSubstitutor::FilterEngine::UnknownFilterError | VariableSubstitutor::UnknownTestError
-            # Ansible compiles a whole until: condition as an expression the
-            # first time it is evaluated, so a name it only knows as a test
-            # (`search` is a test) - or not at all - fails the WHOLE task
-            # then and there: one fatal "Task failed: Syntax error in
-            # expression: No filter named '...'." after the first attempt's
-            # run, recap failed=1, host halts (unless ignore_errors:). The
-            # raise must be caught HERE too: at top level it used to crash
-            # the whole process with an unhandled-exception stack trace, and from an
-            # include_tasks: file the include's generic rescue mislabeled it
-            # "Failed to load included tasks: ...". Same wording shape and
-            # [ERROR] chain as the when: evaluator's own unknown-filter
-            # branch, with the chain's caused-by Origin pinned at the until:
-            # value token, the position real reports for it (issue #318).
-            until_error = "Task failed: Syntax error in expression: #{ex.message}"
+          rescue ex : VariableSubstitutor::FilterEngine::UnknownFilterError | VariableSubstitutor::UnknownTestError | UndefinedVariableError | ConditionalEvaluator::UndefinedVariableError | ConditionalEvaluator::ConditionalBooleanError | ConditionalEvaluator::OrderingTypeError | RenderExpressionError | Krikri::FilterPluginError | Krikri::TestPluginError
+            # An ansible-compiled until: condition fails the WHOLE task the
+            # first time it raises: one fatal "Task failed: An 'until'
+            # expression failed: <detail>" after the first attempt's run,
+            # recap failed=1, host halts (unless ignore_errors:) - the same
+            # clause-labelled shape the when: evaluator uses, live-captured
+            # vs 2.21.6 for an unknown filter, an unknown test, an undefined
+            # name and a raising filter. The raise must be caught HERE too:
+            # at top level it used to crash the whole process with an
+            # unhandled-exception stack trace, and from an include_tasks:
+            # file the include's generic rescue mislabeled it "Failed to
+            # load included tasks: ...". The chain's caused-by Origin is
+            # pinned at the until: value token, the position real reports
+            # for it (issue #318).
+            until_error = until_expression_failure(ex, task, host, until_condition)
             emit_when_error_chain(task, until_error, host, clause_key: "until", clause_raw: until_condition)
-            failed_result = when_error_result(WhenEvaluationError.new(until_error), task, host)
+            failed_result = when_error_result(WhenEvaluationError.new(until_error), task, host, clause_key: "until", clause_raw: until_condition)
             if register_name && !register_name.empty?
               register_result(host, register_name, failed_result)
               vars_context[register_name] = @registered_vars[host.name][register_name]
@@ -2986,7 +3052,10 @@ module Krikri
         # before the delay sleep. Ansible's task_name is the task's get_name()
         # (the same text the TASK banner shows); the loop item is NOT part
         # of the line. Color DEBUG - plain text in a non-tty run.
-        puts "FAILED - RETRYING: [#{host.name}]: #{render_task_name_for_display(task, host)} (#{total_runs - attempt} retries left)."
+        # ansible-core 2.21 counts the retries REMAINING AFTER this one
+        # (retries: 3 prints 2, 1, 0), where 2.19 printed this attempt's own
+        # remaining count (3, 2, 1) - live-verified against both releases.
+        puts "FAILED - RETRYING: [#{host.name}]: #{render_task_name_for_display(task, host)} (#{total_runs - attempt - 1} retries left)."
         sleep(delay.seconds)
       end
 
@@ -2996,21 +3065,31 @@ module Krikri
       # out (real sets attempts = total_runs - 1 there even though
       # total_runs runs actually happened), and marks the result
       # failed: true (the fatal display + ...ignoring/recap follow from
-      # the ordinary failure pipeline below). The exhausted result also
-      # carries Ansible's error-event projection exception:
-      # "(traceback unavailable)" AFTER attempts (live-verified - both a
-      # retries-exhausted and every other failed registered result project
-      # it; the fatal path just never gets to show it off). A single-run
-      # until task (retries: 0) gets NEITHER key (Ansible never engages the
-      # loop machinery). The action-level and finalization escapes above
-      # keep the loop from ever engaging, so they skip the key the same
-      # way a single-run task does.
+      # the ordinary failure pipeline below). 2.21 dropped the exhausted
+      # result's controller-projected exception:
+      # "(traceback unavailable)" that 2.19 appended after attempts
+      # (live-verified vs 2.21.6: a retries-exhausted loop item reads
+      # changed,failed,msg,attempts,ansible_loop_var,item with no
+      # exception), so the exhausted branch only marks failed now. A
+      # single-run until task (retries: 0) gets NEITHER key (Ansible never
+      # engages the loop machinery). The action-level and finalization
+      # escapes above keep the loop from ever engaging, so they skip the
+      # key the same way a single-run task does.
       if result && total_runs > 1 && !exception_escape
         result_hash = result.as_h.dup
         result_hash["attempts"] = JSON::Any.new((condition_met ? attempt : total_runs - 1).to_i64)
         unless condition_met
+          # A module that SUCCEEDED but never satisfied until: real 2.21
+          # reports no controller exception placeholder on the exhausted
+          # result (live-verified with command: /bin/true and with debug:
+          # both carry changed/failed/msg/attempts and no exception,
+          # while an until on a FAILING module does). The marker keeps
+          # register_result's failed-result backfill off for this shape,
+          # and ResultDisplay's block emitter off with it - real prints no
+          # [ERROR] block for an until that ran out on a healthy module.
+          module_failed = result_hash["failed"]?.try(&.as_bool?) == true
+          result_hash["_ansible_no_exception_backfill"] = JSON::Any.new(true) unless module_failed
           result_hash["failed"] = JSON::Any.new(true)
-          result_hash["exception"] = JSON::Any.new("(traceback unavailable)") unless result_hash.has_key?("exception")
         end
         result = JSON::Any.new(result_hash)
         if register_name && !register_name.empty?

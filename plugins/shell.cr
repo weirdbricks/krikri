@@ -147,6 +147,21 @@ module Krikri
         )
       end
 
+      # Same explicit-null shape as command.cr's branch (shell IS
+      # command.py with _uses_shell=True - the same run_command TypeError,
+      # rc 257, cmd kept null, no stdout/stderr keys; 2.21 live-verified).
+      if (explicit_null_param?("cmd") || explicit_null_param?("_raw_params")) && !argv
+        result = PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: "Argument 'args' to run_command must be list or string",
+          cmd: nil,
+          rc: 257
+        )
+        result.extra["exception"] = JSON::Any.new("(traceback unavailable)")
+        return result
+      end
+
       # Bool-typed params: AnsibleModule type-converts them at module
       # setup, after the required-args gate above - now via the shared
       # BasePlugin#validate_bool_params! (see its block comment).
@@ -518,7 +533,12 @@ module Krikri
       raw_result = PluginResult.new(
         changed: true,
         failed: result[:exit_code] != 0,
-        msg: result[:exit_code] == 0 ? "" : "non-zero return code",
+        # 2.21 reworded the command/shell non-zero-rc msg (command.py:
+        # "The command exited with a non-zero return code.", live-verified
+        # vs 2.21.6) - but raw dispatches through this plugin with
+        # strip_empty_ends forced off, and raw.py kept the 2.19 wording,
+        # so the invoked name decides which text ships.
+        msg: result[:exit_code] == 0 ? "" : non_zero_rc_msg,
         include_empty_msg: true,
         cmd: command_string,
         stdout: final_stdout,
@@ -572,15 +592,33 @@ module Krikri
         changed: false,
         failed: true,
         msg: "Error executing command.",
-        cmd: [executable, "-c", command_string].map { |arg| shlex_quote(arg) }.join(' '),
-        rc: errno,
+        # 2.21's registered spawn-failure shape (see command.cr's
+        # spawn_failure_result): module keys read stdout, stderr, cmd after
+        # the controller hoists the declared fields, then the derived
+        # *_lines.
         stdout: "",
-        stdout_lines: [] of String,
         stderr: "",
-        stderr_lines: [] of String
+        cmd: [executable, "-c", command_string].map { |arg| shlex_quote(arg) }.join(' '),
+        stdout_lines: [] of String,
+        stderr_lines: [] of String,
+        rc: errno
       )
       result.extra["exception"] = JSON::Any.new("[Errno #{errno}] #{reason}: b'#{executable}'")
       result
+    end
+
+    # 2.21 reworded the non-zero-rc msg in command.py/shell.py ("The
+    # command exited with a non-zero return code.", live-verified vs
+    # 2.21.6) - but raw.py kept the 2.19 wording, and raw dispatches
+    # through this plugin (with strip_empty_ends forced off), so the
+    # invoked module name decides which text ships.
+    private def non_zero_rc_msg : String
+      invoked = @params["_module_name"]? || "ansible.builtin.shell"
+      if true?(@params["_ansible_raw_dispatch"]?) || invoked.split(".").last == "raw"
+        "non-zero return code"
+      else
+        "The command exited with a non-zero return code."
+      end
     end
 
     # First executable file named *name* under the PATH Python's own

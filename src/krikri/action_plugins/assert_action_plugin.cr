@@ -150,6 +150,21 @@ module Krikri
         # var → fatal msg "Task failed: Error while evaluating
         # conditional: 'x' is undefined").
         return that_index_error("Task failed: Error while evaluating conditional: #{ex.message}", current_index)
+      rescue ex : VariableSubstitutor::FilterEngine::FilterFailureError
+        # A filter that RAN and raised - the same split the when: paths
+        # make (executor_run_loop's FilterFailureError arms): a built-in/
+        # role-local filter's own failure keeps the plugin wrapper real
+        # prints for it ("Task failed: The filter plugin
+        # 'ansible.builtin.password_hash' failed: ...", live-verified vs
+        # 2.21.6), while a bare runtime failure (first/last on an empty
+        # sequence) is conditional-evaluation wording (live-verified).
+        # FilterFailureError subclasses UnknownFilterError, so without
+        # this arm it landed in the compile-time "Syntax error in
+        # expression:" bucket below.
+        if ex.message.try(&.starts_with?("The filter plugin '"))
+          return that_index_error("Task failed: #{ex.message}", current_index)
+        end
+        return that_index_error("Task failed: Error while evaluating conditional: #{ex.message}", current_index)
       rescue ex : VariableSubstitutor::FilterEngine::UnknownFilterError | VariableSubstitutor::UnknownTestError
         # A compile-time-rejected filter/test name in a `that:` item is
         # Ansible's "Syntax error in expression: " failure class, not

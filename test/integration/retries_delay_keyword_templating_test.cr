@@ -134,8 +134,8 @@ describe "retries/delay keyword templating failures" do
     status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
     text = output.to_s
 
-    text.must_include("FAILED - RETRYING: [localhost]: fail repeatedly (2 retries left).")
     text.must_include("FAILED - RETRYING: [localhost]: fail repeatedly (1 retries left).")
+    text.must_include("FAILED - RETRYING: [localhost]: fail repeatedly (0 retries left).")
     text.must_include("\"attempts\": 2")
     status.exit_code.must_equal(0)
   ensure

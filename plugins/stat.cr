@@ -21,6 +21,10 @@ module Krikri
   #   mime-type)
   # - get_attributes: lsattr flags via `lsattr -vd` (default: true,
   #   matching Ansible; aliases: attr, attributes)
+  # - get_selinux_context: SELinux context as [user, role, type, range]
+  #   (default: false, 2.21's new param); [null, null, null, null] when
+  #   SELinux is disabled, matching AnsibleModule#selinux_context's
+  #   selinux_initial_context fallback
   #
   # get_mime/get_attributes both shell out - not a missed native-conversion
   # opportunity like stat's own core fields used to be, but the same thing
@@ -61,7 +65,7 @@ module Krikri
     # module setup by BasePlugin#validate_bool_params! - see its block
     # comment for the real-Ansible semantics and message wording.
     protected def bool_params : Array(String)
-      %w[follow get_attributes get_checksum get_mime]
+      %w[follow get_checksum get_mime get_attributes get_selinux_context]
     end
 
     protected def bool_param_aliases : Hash(String, String)
@@ -105,6 +109,7 @@ module Krikri
       get_checksum = true?(@params["get_checksum"]?, default: true)
       get_mime = true?(aliased_param("get_mime", ["mime", "mime_type", "mime-type"]), default: true)
       get_attributes = true?(aliased_param("get_attributes", ["attr", "attributes"]), default: true)
+      get_selinux_context = true?(@params["get_selinux_context"]?, default: false)
       algorithm = aliased_param("checksum_algorithm", ["checksum", "checksum_algo"]) || "sha1"
 
       # Ansible's argument_spec validates checksum_algorithm against
@@ -154,6 +159,9 @@ module Krikri
       add_checksum(stat_hash, path, algorithm) if get_checksum && is_regular
       add_mime(stat_hash, path) if get_mime
       add_attributes(stat_hash, path) if get_attributes
+      if selinux_failure = (add_selinux_context(stat_hash, path) if get_selinux_context)
+        return selinux_failure
+      end
 
       PluginResult.new(changed: false, failed: false, msg: "", stat: stat_hash, key_order: SUCCESS_KEY_ORDER)
     end
@@ -203,6 +211,36 @@ module Krikri
       stat_hash["version"] = version ? JSON::Any.new(version) : JSON::Any.new(nil)
       stat_hash["attributes"] = JSON::Any.new(attributes.map { |attribute| JSON::Any.new(attribute) })
       stat_hash["attr_flags"] = JSON::Any.new(attr_flags)
+    end
+
+    # AnsibleModule#selinux_context: [user, role, type, range] via
+    # lgetfilecon_raw when SELinux is enabled (l-prefix semantics - the
+    # path is NOT followed through symlinks), else the all-None
+    # selinux_initial_context. A retrieval OSError on an enabled host
+    # fails the task ("Failed to retrieve selinux context."); a -1
+    # return just leaves the all-None context. `ls -Zd` is the
+    # read-only stand-in for lgetfilecon_raw (same l-prefix semantics
+    # file.cr's own context reader uses), and the context is split at 4
+    # parts exactly like Ansible's own `context.split(':', 3)` (the MLS
+    # level may contain ':').
+    private def add_selinux_context(stat_hash : Hash(String, JSON::Any), path : String) : PluginResult?
+      none_context = [nil, nil, nil, nil].map { |part| JSON::Any.new(part) }
+      unless selinux_enabled?
+        stat_hash["selinux_context"] = JSON::Any.new(none_context)
+        return nil
+      end
+
+      # BasePlugin's shared reader: lgetfilecon_raw's l-semantics via
+      # `ls -Zd`, split the way Ansible's own `context.split(':', 3)`
+      # does - so an MLS policy's 4th (level) part stays its own entry.
+      # A nil here means SELinux is on but the context is unreadable, the
+      # case Ansible fails with "Failed to retrieve selinux context."
+      unless parts = current_selinux_context(path)
+        return PluginResult.new(changed: false, failed: true, msg: "Failed to retrieve selinux context.")
+      end
+
+      stat_hash["selinux_context"] = JSON::Any.new(parts.map { |part| JSON::Any.new(part) })
+      nil
     end
   end
 end

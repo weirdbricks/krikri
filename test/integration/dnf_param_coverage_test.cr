@@ -338,10 +338,8 @@ describe "dnf plugin - parameter coverage (CLI-invocation shape)" do
     end
   end
 
-  # install_repoquery / validate_certs / lock_timeout are accepted
-  # no-ops for the dnf backend, matching ansible-core's own dnf.py:
-  # - install_repoquery is documented as "effectively a no-op in DNF"
-  #   (deprecated, removal slated for ansible-core 2.20);
+  # validate_certs / lock_timeout are accepted no-ops for the dnf
+  # backend, matching ansible-core's own dnf.py:
   # - validate_certs only applies controller-side when Ansible
   #   fetches an https RPM URL itself (fetch_file in dnf.py's
   #   _parse_spec_group_file); krikri installs URL rpms on-target via
@@ -350,17 +348,32 @@ describe "dnf plugin - parameter coverage (CLI-invocation shape)" do
   #   referenced anywhere in dnf.py's implementation (the dnf python
   #   API waits on its own lock internally; only the retired yum
   #   backend consumed it).
-  it "accepts install_repoquery/validate_certs/lock_timeout as documented no-ops" do
+  # install_repoquery was REMOVED from the shared yumdnf spec in 2.21
+  # (live-verified vs 2.21.6 - 2.19 still accepted it as a documented
+  # no-op), so it now fails as an unsupported parameter.
+  it "accepts validate_certs/lock_timeout as documented no-ops" do
     with_recording_pkg_managers do |log|
+      result = PluginSpecHelper.run("dnf", {
+        "name"           => "fake-pkg",
+        "state"          => "present",
+        "validate_certs" => "false",
+        "lock_timeout"   => "90",
+      }, vars: {"ansible_pkg_mgr" => "dnf"})
+      falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+      recorded_install_command(log).must_equal("install #{BASELINE_OPTIONS} fake-pkg")
+    end
+  end
+
+  it "rejects install_repoquery as unsupported (2.21 removed it from the yumdnf spec)" do
+    with_recording_pkg_managers do |_log|
       result = PluginSpecHelper.run("dnf", {
         "name"              => "fake-pkg",
         "state"             => "present",
         "install_repoquery" => "false",
-        "validate_certs"    => "false",
-        "lock_timeout"      => "90",
       }, vars: {"ansible_pkg_mgr" => "dnf"})
-      falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
-      recorded_install_command(log).must_equal("install #{BASELINE_OPTIONS} fake-pkg")
+      result["failed"].as_bool.must_equal(true)
+      result["msg"].as_s.must_include("module: install_repoquery")
+      result["msg"].as_s.must_include("Unsupported parameters for (ansible.legacy.dnf) module")
     end
   end
 

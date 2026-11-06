@@ -65,9 +65,11 @@ describe "user plugin" do
   # Real check-mode modify of an existing user registers the full shape:
   # modify_user is check-mode aware and returns rc=0 for a would-be
   # change, so the result carries name/state, the modify-path params,
-  # changed, and the resolved facts (live-verified vs 2.19.11:
-  # [name, state, append, move_home, changed, uid, group, comment, home,
-  # shell, failed]).
+  # changed, and the resolved facts - plus 2.21's always-carried
+  # `groups` (the actual supplementary membership) after shell
+  # (live-verified vs 2.19.11: [name, state, append, move_home, changed,
+  # uid, group, comment, home, shell, failed]; the groups key was
+  # repositioned/carried by the 2.21 result rework).
   it "reports it would modify an existing user when an attribute differs (check mode, no real change)" do
     result = PluginSpecHelper.run("user", {"name" => "root", "shell" => "/bin/totally-fake-shell", "_ansible_check_mode" => "true"})
 
@@ -75,7 +77,7 @@ describe "user plugin" do
     result["name"].as_s.must_equal("root")
     result["append"].as_bool.must_equal(false)
     result["move_home"].as_bool.must_equal(false)
-    result.as_h.keys.must_equal(["name", "state", "append", "move_home", "changed", "uid", "group", "comment", "home", "shell"])
+    result.as_h.keys.must_equal(["name", "state", "append", "move_home", "changed", "uid", "group", "comment", "home", "shell", "groups"])
     `getent passwd root`.split(":")[6].strip.wont_equal("/bin/totally-fake-shell")
   end
 
@@ -118,47 +120,48 @@ describe "user plugin" do
     result["failed"].as_bool.must_equal(true)
   end
 
-  # Ad-hoc CLI comparison sweep vs Ansible (2026-09-13): verified
-  # live against ansible-core 2.19's user module - `state` is echoed on
-  # every path, `append`/`move_home` ride along on the modify-existing-
-  # account path, `groups` (the comma-joined param) only when given, and
-  # a given `password:` comes back as 'NOT_LOGGING_PASSWORD'.
-  it "echoes state plus the modify-path append/move_home and a given groups value (check mode)" do
+  # 2.21: `groups` in the result is the user's ACTUAL supplementary
+  # membership (comma-joined /etc/group order, primary group excluded),
+  # carried whenever the account exists and state is present - 2.19
+  # echoed the requested groups: param, only when given.
+  it "echoes actual supplementary membership as groups (check mode, modify path)" do
     result = PluginSpecHelper.run("user", {
-      "name" => "root", "state" => "present", "groups" => "root",
+      "name" => "root", "state" => "present",
       "append" => "true", "_ansible_check_mode" => "true",
     })
 
     result["state"].as_s.must_equal("present")
     result["append"].as_bool.must_equal(true)
     result["move_home"].as_bool.must_equal(false)
-    result["groups"].as_s.must_equal("root")
+
+    memberships = [] of String
+    File.each_line("/etc/group") do |line|
+      fields = line.split(':')
+      next unless fields.size >= 4 && fields[3].split(',').includes?("root") && fields[2] != "0"
+      memberships << fields[0]
+    end
+    result["groups"].as_s.must_equal(memberships.join(','))
   end
 
   # buluma.vector passes `groups: "{{ vector_groups | default('') }}"`,
-  # which renders to an explicitly-provided empty string; real
-  # ansible-core 2.19 stays silent about append for that (verified on a
-  # real host) - its append warning only fires when the groups: key is
-  # missing from the task entirely.
-  it "stays silent about append when groups is an explicitly-provided empty string (check mode)" do
+  # which renders to an explicitly-provided empty string; the param
+  # counts as provided for 2.21's required_if, so the task still runs.
+  it "runs with an explicitly-provided empty groups value (check mode)" do
     result = PluginSpecHelper.run("user", {
       "name" => "root", "state" => "present", "groups" => "",
       "append" => "true", "_ansible_check_mode" => "true",
     })
 
-    append_warning = result["warnings"]?.try(&.as_a.any?(&.as_s.includes?("'append' is set")))
-    falsey?(append_warning).must_equal(true)
+    falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
   end
 
-  it "warns when append is set and groups is absent from the task entirely (check mode)" do
-    result = PluginSpecHelper.run("user", {
-      "name" => "root", "state" => "present",
-      "append" => "true", "_ansible_check_mode" => "true",
-    })
-
-    result["warnings"].as_a.map(&.as_s).includes?(
-      "'append' is set, but no 'groups' are specified. Use 'groups' for appending new groups.This will change to an error in Ansible 2.14.").must_equal(true)
-  end
+  # 2.21 made `groups` required when append is true (required_if) - the
+  # task fails at argument-spec validation ("append is True but all of
+  # the following are missing: groups", live-verified vs 2.21.6) BEFORE
+  # the module body runs; the old 2.19 deprecation warning is gone.
+  # That validation lives in the controller's ArgspecValidator, so it is
+  # pinned against the generated table in argspec_validation_test.cr,
+  # not here.
 
   # Real user.py only echoes system/create_home on the create path AFTER
   # it actually ran (a check-mode create of a missing user exits bare

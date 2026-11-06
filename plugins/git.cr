@@ -664,14 +664,17 @@ module Krikri
 
         # switch_version()'s per-command failures: the message is git.py's
         # own wording and the command output rides in stdout/stderr/rc.
+        # 2.21 reworded the common checkout-failure tail so the HEAD
+        # branch's message carries a " HEAD" suffix
+        # ("Failed to checkout branch {branch} HEAD", live-verified).
         r = run_git("checkout --force #{sq(branch)}", d)
         unless r[:exit_code] == 0
-          return fail_with_output("Failed to checkout branch #{branch}", r,
+          return fail_with_output("Failed to checkout branch #{branch} HEAD", r,
             cmd: reported_cmd("checkout --force #{branch}"))
         end
         r = run_git("reset --hard #{sq(@remote)}/#{sq(branch)} --", d)
         unless r[:exit_code] == 0
-          return fail_with_output("Failed to checkout branch #{branch}", r,
+          return fail_with_output("Failed to checkout branch #{branch} HEAD", r,
             cmd: reported_cmd("reset --hard #{@remote}/#{branch} --"))
         end
       else
@@ -778,14 +781,30 @@ module Krikri
         return {true, nil} unless File.exists?(File.join(d, path, ".git"))
       end
 
-      before = submodule_revs(d, "HEAD")
+      before = submodule_versions(d, "HEAD")
+      if before.nil?
+        r = run_git("submodule foreach #{@git_path} rev-parse HEAD", d)
+        return {false, plain_fail("Unable to determine hashes of submodules", r)}
+      end
       r = run_git("submodule foreach #{@git_path} fetch", d)
       # git.py runs these with check_rc=True, so the failure is basic.py's
       # (bare rstripped stderr), not git.py's own message.
       return {false, check_rc_result("submodule foreach #{@git_path} fetch", r)} unless r[:exit_code] == 0
 
       if track_submodules
-        after = submodule_revs(d, "#{@remote}/master")
+        # 2.21 delta: each submodule is compared against its own
+        # configured remote branch (from .gitmodules, falling back to the
+        # remote's HEAD) instead of a hardcoded 'master' ref.
+        after = {} of String => String
+        before.each_key do |submodule|
+          branch = submodule_branch(d, submodule)
+          version_ref = branch == "HEAD" ? "HEAD" : "#{@remote}/#{branch}"
+          r2 = run_git("rev-parse #{sq(version_ref)}", File.join(d, submodule))
+          if r2[:exit_code] != 0
+            return {false, plain_fail("Unable to determine hash of submodule #{submodule} at #{version_ref}", r2)}
+          end
+          after[submodule] = r2[:stdout].strip
+        end
         return {before != after, nil}
       end
 
@@ -800,6 +819,52 @@ module Krikri
     private def submodule_revs(d : String, ref : String) : String
       r = run_git("submodule foreach #{@git_path} rev-parse #{sq(ref)}", d)
       r[:exit_code] == 0 ? r[:stdout] : ""
+    end
+
+    # get_submodule_versions: name→rev map parsed from the
+    # `submodule foreach git rev-parse <ref>` output ("Entering 'name'"
+    # headers followed by 40-hex hash lines). nil when the command
+    # itself failed (caller turns that into Ansible's own failure msg).
+    private def submodule_versions(d : String, ref : String) : Hash(String, String)?
+      r = run_git("submodule foreach #{@git_path} rev-parse #{sq(ref)}", d)
+      return nil unless r[:exit_code] == 0
+
+      submodules = {} of String => String
+      subm_name : String? = nil
+      r[:stdout].each_line do |line|
+        if line.starts_with?("Entering '") && line.rstrip.ends_with?("'")
+          subm_name = line.rstrip[10..-2]
+        elsif line.strip.size == 40 && line.strip =~ /\A[0-9a-f]{40}\z/
+          name = subm_name
+          return nil unless name
+          submodules[name] = line.strip
+          subm_name = nil
+        end
+      end
+      subm_name.nil? ? submodules : nil
+    end
+
+    # get_submodule_branch: the branch configured in .gitmodules for
+    # this submodule, else the submodule's remote HEAD (its
+    # refs/remotes/origin/HEAD symbolic ref, remote prefix stripped),
+    # else the literal "HEAD".
+    private def submodule_branch(d : String, submodule : String) : String
+      r = run_git("config -f .gitmodules submodule.#{submodule}.branch", d)
+      return r[:stdout].strip if r[:exit_code] == 0 && !r[:stdout].strip.empty?
+
+      r2 = run_git("symbolic-ref --short refs/remotes/origin/HEAD", File.join(d, submodule))
+      if r2[:exit_code] == 0 && !(head = r2[:stdout].strip).empty?
+        return head.split('/', 2)[-1]
+      end
+      "HEAD"
+    end
+
+    # fail_json(msg=..., stdout=..., stderr=..., rc=...) without a cmd.
+    private def plain_fail(msg : String, r) : PluginResult
+      PluginResult.new(changed: false, failed: true, msg: msg,
+        stdout: r[:stdout], stdout_lines: r[:stdout].lines.map(&.chomp),
+        stderr: r[:stderr], stderr_lines: r[:stderr].lines.map(&.chomp),
+        rc: r[:exit_code])
     end
 
     # Ansible's submodule_update: sync, then update --init --recursive
@@ -921,12 +986,37 @@ module Krikri
         end
         return chosen.try { |line| line.split[0]? }
       else
-        # Appears to be a sha1 - return as-is (Ansible).
+        # 2.21 delta: a value that is neither branch nor tag is no longer
+        # returned as-is - it is validated against the remote with a
+        # `git fetch --dry-run` (check_rc=True), which fails the task
+        # with git's own stderr when the revision does not exist there.
+        # When there is no usable cwd (cloning), real prepares a
+        # throwaway repo under the module tmpdir to run the fetch in.
+        validate_sha_on_remote(dest, target, version)
         return version
       end
 
       return nil unless r[:exit_code] == 0
       r[:stdout].strip.empty? ? nil : r[:stdout].strip.split[0]
+    end
+
+    # get_sha_hash: `git fetch --dry-run <remote> <version>` with
+    # check_rc=True, run inside dest when there is one, else inside a
+    # freshly-initialized throwaway repo (<module tmpdir>/tmp_repo with
+    # origin added). Succeeding only proves the revision exists on the
+    # remote; the version is returned unchanged either way.
+    private def validate_sha_on_remote(dest : String?, target : String, version : String) : Nil
+      workdir = dest
+      if workdir.nil? || !Dir.exists?(workdir)
+        base = "#{Dir.tempdir}/krikri-git-tmp_repo-#{Random::Secure.hex(4)}"
+        Dir.mkdir_p(base)
+        workdir = "#{base}/tmp_repo"
+        Dir.mkdir_p(workdir)
+        run_git("init", workdir)
+        run_git("remote add origin #{sq(target)}", workdir)
+      end
+      r = run_git("fetch --dry-run #{sq(target)} #{sq(version)}", workdir)
+      raise_check_rc("fetch --dry-run #{target} #{version}", r) unless r[:exit_code] == 0
     end
 
     private def remote_branch?(dest : String?, target : String, version : String) : Bool

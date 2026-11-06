@@ -355,13 +355,16 @@ module Krikri
       add_checksum(stat_hash, entry_path, options.algorithm) if options.get_checksum && stat_hash["isreg"].as_bool
 
       # Real find's per-file dicts are a REDUCED stat shape - no `exists`
-      # (every listed file exists by construction), no block_size/blocks/
+      # (every listed file exists by construction), no block_size/
       # device_type (live-verified vs 2.19.11 at -v; the full shape is
       # the stat module's own output, which find's docs point at but
-      # do not reproduce).
+      # do not reproduce). 2.21 find's own statinfo() ADDS `blocks` and
+      # `disk_usage_bytes` after `isgid` (stat grew disk_usage_bytes in
+      # the same release), so those two keys stay - and they already sit
+      # in that position in the shared table, with block_size/device_type
+      # (which find never carried) removed after them.
       stat_hash.delete("exists")
       stat_hash.delete("block_size")
-      stat_hash.delete("blocks")
       stat_hash.delete("device_type")
 
       reorder_stat_owners_after_ctime(stat_hash)

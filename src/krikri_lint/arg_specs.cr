@@ -157,7 +157,7 @@ module Krikri
           choices: {"state" => %w[file directory]},
         ),
         "yum_repository" => spec(
-          params: %w[async attributes bandwidth baseurl cost countme deltarpm_metadata_percentage deltarpm_percentage description enabled enablegroups exclude failovermethod file gpgcakey gpgcheck gpgkey group http_caching include includepkgs ip_resolve keepalive keepcache metadata_expire metadata_expire_filter metalink mirrorlist mirrorlist_expire mode module_hotfixes name owner password priority protect proxy proxy_password proxy_username repo_gpgcheck reposdir retries s3_enabled selevel serole setype seuser skip_if_unavailable ssl_check_cert_permissions sslcacert sslclientcert sslclientkey sslverify state throttle timeout ui_repoid_vars unsafe_writes username],
+          params: %w[async attributes bandwidth baseurl cost countme deltarpm_metadata_percentage deltarpm_percentage description enabled enablegroups exclude failovermethod file gpgcakey gpgcheck gpgkey group http_caching include includepkgs ip_resolve keepalive metadata_expire metadata_expire_filter metalink mirrorlist mirrorlist_expire mode module_hotfixes name owner password priority protect proxy proxy_password proxy_username repo_gpgcheck reposdir retries s3_enabled selevel serole setype seuser skip_if_unavailable ssl_check_cert_permissions sslcacert sslclientcert sslclientkey sslverify state throttle timeout ui_repoid_vars unsafe_writes username],
           aliases: {"attributes" => ["attr"], "sslcacert" => ["ca_cert"], "sslclientcert" => ["client_cert"], "sslclientkey" => ["client_key"], "exclude" => ["excludepkgs"], "sslverify" => ["validate_certs"]},
           required: %w[name],
           required_if: [
@@ -165,7 +165,7 @@ module Krikri
             RequiredIf.new("state", "present", %w[description], false),
           ],
           defaults: {"state" => "present"},
-          choices: {"failovermethod" => %w[roundrobin priority], "http_caching" => %w[all packages none], "ip_resolve" => %w[4 6 IPv4 IPv6 whatever], "keepcache" => %w[0 1], "metadata_expire_filter" => %w[never read-only:past read-only:present read-only:future], "state" => %w[present absent]},
+          choices: {"failovermethod" => %w[roundrobin priority], "http_caching" => %w[all packages none], "ip_resolve" => %w[4 6 IPv4 IPv6 whatever], "metadata_expire_filter" => %w[never read-only:past read-only:present read-only:future], "state" => %w[present absent]},
           booleans: %w[async countme enabled enablegroups gpgcheck keepalive module_hotfixes protect repo_gpgcheck s3_enabled skip_if_unavailable ssl_check_cert_permissions sslverify unsafe_writes],
         ),
       }

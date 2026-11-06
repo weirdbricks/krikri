@@ -297,13 +297,27 @@ module Krikri
         # exists and bare `before` when it does not; the after side is
         # `after:` plus the staged copy of the source the module rendered
         # (here: krikri's resolved source path).
+        # The payload is a one-entry LIST (copy's action builds it), the
+        # headers stay bare, and a dest that did not exist contributes no
+        # before_header at all - only the empty `before`. Real's
+        # after_header is the controller's staged temp copy of the source
+        # (a per-run /tmp path), so the resolved source name is used here.
         src_name = @params["_rendered_from_template"]? || "template"
-        diff_data = generate_unified_diff(
-          existing_content,
-          content,
-          File.exists?(dest) ? "before: #{dest}" : "before",
-          "after: #{src_name}"
-        )
+        entry = if File.exists?(dest)
+                  {
+                    "before_header" => JSON::Any.new(dest),
+                    "before"        => JSON::Any.new(existing_content),
+                    "after_header"  => JSON::Any.new(src_name),
+                    "after"         => JSON::Any.new(content),
+                  }
+                else
+                  {
+                    "before"       => JSON::Any.new(""),
+                    "after_header" => JSON::Any.new(src_name),
+                    "after"        => JSON::Any.new(content),
+                  }
+                end
+        diff_data = JSON::Any.new([JSON::Any.new(entry)])
       end
 
       # CHECK MODE: Report what would change
@@ -346,6 +360,10 @@ module Krikri
       # report ok forever while fixing it on disk; Ansible reports
       # `changed` once, then ok - live-verified against ansible-core 2.19).
       unless changed
+        # Read the attribute diff BEFORE applying: real's file-module call
+        # records the state it found at entry (and its registered result's
+        # `diff` is that DICT, not the content-diff list).
+        attribute_diff = file_attribute_diff(dest)
         begin
           attributes_fixed = apply_file_attributes(dest)
         rescue ex : OwnerLookupFailure
@@ -375,6 +393,7 @@ module Krikri
         result = PluginResult.new(
           changed: attributes_fixed,
           failed: false,
+          diff: attribute_diff,
           dest: dest,
           checksum: content_sha1,
           key_order: UNCHANGED_KEY_ORDER
@@ -605,6 +624,11 @@ module Krikri
           # Best-effort: non-root can't chown.
         end
 
+        # atomic_move's context capture, read BEFORE the move: the staged
+        # inode replaces dest's, so the dest has to be relabelled to the
+        # context the write was meant to land on (issue #911).
+        secontext = prewrite_selinux_context(dest)
+
         begin
           File.rename(temp_file, dest)
         rescue
@@ -660,6 +684,13 @@ module Krikri
         # `rm -f -r`s it even after a failed validate: - so the staged
         # candidate never outlives the run.
         FileUtils.rm_rf(run_dir)
+      end
+
+      # atomic_move's trailing relabel (issue #911), after every landing
+      # path above: the plain rename, the dest-adjacent stage rename and
+      # the unsafe_writes in-place write all end up here.
+      if failure = relabel_written_file(dest, secontext)
+        return failure
       end
 
       # Set ownership and permissions (may raise a real, specific
@@ -863,7 +894,7 @@ module Krikri
       # set_fs_attributes_if_different (set_context_if_different ->
       # owner -> group -> mode -> attributes) and file.cr's own
       # apply_single_file_attributes, which this mirrors.
-      secontext_will_change = secontext_changed?(path)
+      secontext_will_change = !pending_secontext_change(path).nil?
       apply_secontext(path)
 
       # owner/group/mode - the shared BasePlugin helper: resolves the
@@ -989,97 +1020,17 @@ module Krikri
       end
     end
 
-    # SELinux context params: Ansible accepts these on every host
-    # but only ACTS on them when SELinux is actually enabled - its
-    # set_context_if_different opens with `if not self.selinux_enabled():
-    # return changed`, a graceful no-op (live-verified against
-    # ansible-core 2.19.4 on this non-SELinux machine: silently
-    # accepted, no SELinux keys in the result, changed per the stat
-    # result only). Identical semantics to file.cr's merged
-    # implementation.
-    @selinux_enabled : Bool? = nil
-    @mls_enabled : Bool? = nil
-
-    private def selinux_enabled? : Bool
-      # Grounded approximation of libselinux's is_selinux_enabled(): the
-      # selinuxfs mount only exists when SELinux is active in the kernel.
-      @selinux_enabled ||= Dir.exists?("/sys/fs/selinux")
-    end
-
-    private def mls_enabled? : Bool
-      @mls_enabled ||= begin
-        File.read("/sys/fs/selinux/mls").strip == "1"
-      rescue
-        false
-      end
-    end
-
-    private def secontext_requested? : Bool
-      !!(@params["seuser"]? || @params["serole"]? || @params["setype"]? || @params["selevel"]?)
-    end
-
-    # The file's current context via `ls -Zd` (split limited to 4 parts
-    # exactly like Ansible's own `context.split(':', 3)` - the MLS
-    # level may itself contain ':').
-    private def current_selinux_context(path : String) : Array(String)?
-      return nil unless selinux_enabled?
-      result = remote_exec("ls -Zd #{shell_single_quote(path)}")
-      return nil unless result[:exit_code] == 0
-      context = result[:stdout].strip.split[0]?
-      return nil unless context
-      parts = context.split(':', 3)
-      (parts.size == 3 || (mls_enabled? && parts.size == 4)) ? parts : nil
-    end
-
-    # Desired context: provided parts override, unprovided parts keep
-    # their current value; "_default" resolves via matchpathcon
-    # (see file.cr's desired_selinux_context for the full
-    # the Ansible module grounding).
-    private def desired_selinux_context(path : String, current : Array(String)) : Array(String)
-      desired = current.dup
-      ["seuser", "serole", "setype"].each_with_index do |param, index|
-        next unless value = @params[param]?
-        desired[index] = value == "_default" ? selinux_default_context_part(path, index, current) : value
-      end
-      if selevel = @params["selevel"]?
-        if mls_enabled? && desired.size > 3
-          desired[3] = selevel == "_default" ? selinux_default_context_part(path, 3, current) : selevel
-        end
-      end
-      desired
-    end
-
-    private def selinux_default_context_part(path : String, index : Int32, current : Array(String)) : String
-      result = remote_exec("matchpathcon -n #{shell_single_quote(path)}")
-      if result[:exit_code] == 0 && (context = result[:stdout].strip.split[0]?)
-        parts = context.split(':', 3)
-        return parts[index] if parts.size > index
-      end
-      current[index]
-    end
-
-    private def secontext_changed?(path : String) : Bool
-      return false unless secontext_requested?
-      current = current_selinux_context(path)
-      return false unless current
-      desired_selinux_context(path, current) != current
-    end
-
-    # Applies the full context with `chcon -h` (Ansible's
-    # lsetfilecon equivalent, symlink-aware), failing the task on a
-    # nonzero exit like the Ansible module's fail_json(msg='set selinux
-    # context failed').
+    # SELinux context (seuser:/serole:/setype:/selevel:): the parsing,
+    # merging and chcon live in BasePlugin's shared helpers so file/
+    # copy/stat handle the very same context shape. Here only the apply
+    # wrapper remains, failing the task the way Ansible's
+    # set_context_if_different does on a nonzero lsetfilecon return.
     private def apply_secontext(path : String) : Nil
-      return unless secontext_requested?
-      current = current_selinux_context(path)
-      return unless current
-      desired = desired_selinux_context(path, current)
-      return if desired == current
-
-      result = remote_exec("chcon -h #{shell_single_quote(desired.join(':'))} #{shell_single_quote(path)}")
-      if result[:exit_code] != 0
-        raise "set selinux context failed"
-      end
+      pending = pending_secontext_change(path) || return
+      _current, desired = pending
+      return if @check_mode
+      return if set_selinux_context(path, desired).nil?
+      raise "set selinux context failed"
     end
   end
 end

@@ -3801,11 +3801,14 @@ module Krikri
       # the assert plugins' `_ansible_quiet` display marker is likewise
       # controller-internal, not part of the registered shape.
       #
-      # `invocation` is stripped here too, generically: ansible-core's
-      # strategy plugin (strategy/__init__.py, "register final results"
-      # block) deletes a top-level `invocation` key from the clean copy it
-      # registers. Round 813375 (galaxyproject.pulsar) pinned the exact
-      # split this mirrors: a NON-looped register never exposes
+      # `invocation` is stripped here too, when the 2.21 INJECT_INVOCATION
+      # setting is off (its default): ansible-core's strategy plugin
+      # (strategy/__init__.py, "register final results" block) deletes a
+      # top-level `invocation` key from the clean copy it registers, and
+      # 2.21 relaxed that strip for solo results exactly when the setting
+      # is on (see the gated delete below for the live evidence). The
+      # 2.19-era split this code mirrored (round 813375,
+      # galaxyproject.pulsar): a NON-looped register never exposes
       # `invocation` (stripped here), while each per-item entry inside a
       # LOOPED+registered task's `results[]` keeps its own `invocation`
       # intact (the strategy strip only touches the top-level dict) - so
@@ -3816,8 +3819,46 @@ module Krikri
       # Capture the pause opt-out marker BEFORE the _ansible_* strip below
       # removes it (see with_command_lines_augmented's comment).
       omit_command_lines = result_hash.has_key?("_ansible_omit_command_lines")
+      # The retry loop's "module succeeded, until never matched" marker has
+      # to be read BEFORE the blanket _ansible_* strip below.
+      no_exception_backfill = result_hash.has_key?("_ansible_no_exception_backfill")
       result_hash.reject! { |key, _| key.starts_with?("_ansible_") }
-      result_hash.delete("invocation")
+      # ansible-core 2.21's UnifiedTaskResult export: `changed` and
+      # `failed` are plain bool properties - EVERY exported result carries
+      # both (false included; live-verified on when:-skipped solo and
+      # loop-item registers, which 2.19 left without `failed`), while
+      # `skipped`/`unreachable` export only when true (`result or None`).
+      result_hash["changed"] = JSON::Any.new(false) unless result_hash.has_key?("changed")
+      result_hash["failed"] = JSON::Any.new(false) unless result_hash.has_key?("failed")
+      # 2.21 keeps the controller-added `exception` placeholder on every
+      # actually-failed registered result - live-verified on raw nonzero
+      # and raw executable-not-found ignore_errors registers - regardless
+      # of whether the result carried a key-order marker (the executable-
+      # not-found branch builds its result without one). Suppressed
+      # failures carry no `exception`; the failed_when handler moved it to
+      # failed_when_suppressed_exception (or synthesized it there).
+      backfill_failure_exception(result_hash, suppress: no_exception_backfill)
+      # ansible-core 2.21 flipped INJECT_INVOCATION's default to false AND
+      # relaxed the strategy's top-level strip with it: with the setting
+      # off no module result carries `invocation` in the first place, and
+      # with it on a solo (non-looped) registered result KEEPS its
+      # `invocation` (live-verified vs 2.21.6: stat solo + looped, env and
+      # `ansible_inject_invocation` var) while a LOOPED register's
+      # top-level aggregate still never carries one. The env tier only
+      # here - the `ansible_inject_invocation` var tier is honored where
+      # vars_context exists (the attach sites), not at every one of this
+      # function's 27 call sites.
+      result_hash.delete("invocation") unless InvocationInjection.enabled?
+      # ansible-core 2.21 rebuilds every registered result on the
+      # UnifiedTaskResult dataclass: declared fields lead (changed, failed,
+      # msg, rc, ...), the changed_when/failed_when verdicts follow, a loop
+      # item's wrapper keys move ahead of the module payload, and the
+      # module's own keys keep their relative order in the tail (see
+      # ResultShape's comment for the live-verified shape table). Applied
+      # here, at the single point every registered result passes through -
+      # the same slot apply_failed_key_order occupies for the 2.19-era
+      # module-order restore, whose tail this partition now wraps.
+      ResultShape.normalize_registered!(result_hash)
       registered = with_command_lines_augmented(JSON::Any.new(result_hash), omit_command_lines: omit_command_lines)
       @registered_vars[host.name][register_name] = registered
       # Write-time unsafe marking - the per-task context build marks these
@@ -3837,9 +3878,28 @@ module Krikri
     # every failure - including these, which krikri's own result builders
     # left out. Applied here, at the single point every registered result
     # passes through, so no individual builder has to know the rule.
+    # The controller-added `exception: "(traceback unavailable)"` belongs
+    # only to results that actually failed - an until-exhausted result whose
+    # module SUCCEEDED carries none in 2.21 (live-verified: command:/bin/true
+    # and debug: under `until: false` register changed/failed/msg/attempts
+    # and no exception, while an until on a failing module does have one).
+    # The retry loop marks such a result with _ansible_no_exception_backfill,
+    # which this consumes.
+    private def backfill_failure_exception(hash : Hash(String, JSON::Any), suppress : Bool = false) : Nil
+      return if suppress
+      return if hash.has_key?("exception")
+      return if hash["failed"]?.try(&.as_bool?) == false
+      hash["exception"] = JSON::Any.new("(traceback unavailable)")
+    end
+
     private def apply_failed_key_order(hash : Hash(String, JSON::Any)) : Nil
       order = hash["_ansible_key_order"]?.try(&.as_a) || return
-      hash["exception"] = JSON::Any.new("(traceback unavailable)") unless hash.has_key?("exception")
+      # ansible-core 2.21 dropped the controller-added
+      # `exception: "(traceback unavailable)"` from results the failed_when
+      # suppression un-fails (live-verified: a suppressed `fail:` register
+      # under 2.21.6 carries no `exception`, where 2.19 always had it) -
+      # the key belongs only to results that are actually failed.
+      backfill_failure_exception(hash, suppress: !hash.delete("_ansible_no_exception_backfill").nil?)
       # A result whose display shape omits `changed` (debug:'s own
       # fatalization failure) but whose registered shape carries it - see
       # the `_ansible_register_changed` marker.

@@ -21,14 +21,13 @@ module Krikri
       # float attributes that Ansible's stat/find results carry
       # through verbatim.
       #
-      # block_size/blocks/device_type are the raw st_blksize/st_blocks/
-      # st_rdev passthroughs from the same stat() struct. All three are
-      # emitted unconditionally (Ansible only gates them on the
-      # platform exposing st_blksize/st_blocks/st_rdev, which Linux
-      # always does). real stat.py has NO disk_usage_bytes field in
-      # 2.19.11 (its platform-dependent list passes st_blocks through
-      # as `blocks` and nothing computes a byte total) - an earlier
-      # reading of an older stat.py docs page invented it here.
+      # block_size/blocks/disk_usage_bytes/device_type come from the same
+      # stat() struct. blocks/device_type are the raw st_blocks/st_rdev
+      # passthroughs (emitted unconditionally - Ansible only gates them on
+      # the platform exposing st_blocks/st_rdev, which Linux always does);
+      # disk_usage_bytes is st_blocks * 512, added in 2.21 immediately
+      # after `blocks` (ansible-core's stat.py computes it inline in the
+      # same platform-dependent loop, so the two keys are always paired).
       def self.build(
         path : String,
         mode : Int32,
@@ -86,6 +85,7 @@ module Krikri
           "isuid"       => (special_digit & 4) != 0,
           "isgid"       => (special_digit & 2) != 0,
           "blocks"      => blocks,
+          "disk_usage_bytes" => blocks * 512,
           "block_size"  => block_size,
           "device_type" => device_type,
           "pw_name"     => pw_name,

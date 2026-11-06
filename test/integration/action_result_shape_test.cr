@@ -50,7 +50,7 @@ describe "group_by result shape" do
           key: krikri shape group one
         register: r
       T
-    result.as_h.keys.must_equal(["changed", "add_group", "parent_groups", "failed"])
+    result.as_h.keys.must_equal(["changed", "failed", "add_group", "parent_groups"])
     result["add_group"].as_s.must_equal("krikri-shape-group-one")
     result["parent_groups"].as_a.map(&.as_s).must_equal(["all"])
     result["changed"].as_bool.must_equal(true)
@@ -82,7 +82,7 @@ describe "raw result shape" do
       - ansible.builtin.raw: echo out; echo err >&2
         register: r
       T
-    result.as_h.keys.must_equal(%w[rc stdout stdout_lines stderr stderr_lines changed failed])
+    result.as_h.keys.must_equal(%w[changed failed rc stdout stdout_lines stderr stderr_lines])
     result["stdout"].as_s.strip.must_equal("out")
     result["changed"].as_bool.must_equal(true)
   end
@@ -93,12 +93,12 @@ describe "raw result shape" do
         register: r
         ignore_errors: true
       T
-    result.as_h.keys.must_equal(%w[rc stdout stdout_lines stderr stderr_lines changed failed msg exception])
+    result.as_h.keys.must_equal(%w[changed failed exception msg rc stdout stdout_lines stderr stderr_lines])
     result["rc"].as_i.must_equal(3)
     result["msg"].as_s.must_equal("non-zero return code")
   end
 
-  it "reports a missing executable as the login shell's 127 without cmd or exception" do
+  it "reports a missing executable as the login shell's 127, with the controller exception placeholder" do
     result = registered_dump(<<-T)
       - ansible.builtin.raw: echo hi
         args:
@@ -106,7 +106,7 @@ describe "raw result shape" do
         register: r
         ignore_errors: true
       T
-    result.as_h.keys.must_equal(%w[rc stdout stdout_lines stderr stderr_lines changed failed msg])
+    result.as_h.keys.must_equal(%w[changed failed exception msg rc stdout stdout_lines stderr stderr_lines])
     result["rc"].as_i.must_equal(127)
     result["msg"].as_s.must_equal("non-zero return code")
     result["stdout"].as_s.must_equal("")
@@ -129,7 +129,7 @@ describe "raw result shape" do
         register: r
         ignore_errors: true
       T
-    result.as_h.keys.must_equal(%w[rc stdout stdout_lines stderr stderr_lines changed failed])
+    result.as_h.keys.must_equal(%w[changed failed rc stdout stdout_lines stderr stderr_lines])
     result["rc"].as_i.must_equal(0)
     result["stdout"].as_s.must_equal("")
     result["stderr"].as_s.must_equal("")
@@ -149,7 +149,7 @@ describe "raw result shape" do
         register: r
         ignore_errors: true
       T
-    result.as_h.keys.must_equal(%w[rc stdout stdout_lines stderr stderr_lines changed failed msg])
+    result.as_h.keys.must_equal(%w[changed failed exception msg rc stdout stdout_lines stderr stderr_lines])
     result["rc"].as_i.must_equal(127)
     result["msg"].as_s.must_equal("non-zero return code")
     result["stdout"].as_s.must_equal("")
@@ -164,7 +164,9 @@ describe "raw result shape" do
         register: r
         check_mode: true
       T
-    result.as_h.keys.must_equal(%w[skipped failed changed])
+    # 2.21: the bare check-mode skip also backfills changed/failed (the
+    # UnifiedTaskResult export carries both bools always).
+    result.as_h.keys.must_equal(%w[changed failed skipped])
     result["changed"].as_bool.must_equal(false)
   end
 end
@@ -178,7 +180,7 @@ describe "add_host result shape" do
           custom_var: hello
         register: r
       T
-    result.as_h.keys.must_equal(%w[changed add_host failed])
+    result.as_h.keys.must_equal(%w[changed failed add_host])
     result["add_host"]["host_vars"].as_h.keys.must_equal(["custom_var"])
     result["add_host"]["groups"].as_a.map(&.as_s).must_equal(["krikri_shape_grp"])
   end

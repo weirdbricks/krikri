@@ -287,7 +287,7 @@ describe "failed no_log copy's [ERROR] block" do
             ignore_errors: true
     YAML
 
-    output.must_include("[ERROR]: Task failed: Module failed: non-zero return code")
+    output.must_include("[ERROR]: Task failed: Module failed: The command exited with a non-zero return code.")
     block_precedes_fatal?(output).must_equal(true, output)
     output.must_include(%(fatal: [localhost]: FAILED! => {"censored": "the output has been hidden due to the fact that 'no_log: true' was specified for this result", "changed": true}))
     output.must_include("...ignoring")
@@ -302,7 +302,7 @@ describe "failed no_log copy's [ERROR] block" do
             ignore_errors: true
     YAML
 
-    output.must_include("[ERROR]: Task failed: Module failed: non-zero return code")
+    output.must_include("[ERROR]: Task failed: Module failed: The command exited with a non-zero return code.")
     block_precedes_fatal?(output).must_equal(true, output)
     output.must_include(%(fatal: [localhost]: FAILED! => {"censored": "the output has been hidden due to the fact that 'no_log: true' was specified for this result", "changed": true}))
     output.must_include("...ignoring")

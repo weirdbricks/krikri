@@ -65,7 +65,7 @@ describe "pause registered result shape" do
           seconds: 1
         register: r
       T
-    result.as_h.keys.must_equal(["changed", "rc", "stderr", "stdout", "start", "stop", "delta", "echo", "user_input", "failed"])
+    result.as_h.keys.must_equal(["changed", "failed", "rc", "stderr", "stdout", "start", "stop", "delta", "echo", "user_input"])
     result["rc"].as_i.must_equal(0)
     result["echo"].as_bool.must_equal(true)
     result["user_input"].as_s.must_equal("")
@@ -124,7 +124,7 @@ describe "package_facts registered shape" do
       - ansible.builtin.package_facts:
         register: r
       T
-    result.as_h.keys.must_equal(["ansible_facts", "failed", "changed"])
+    result.as_h.keys.must_equal(["changed", "failed", "ansible_facts"])
   end
 end
 
@@ -136,7 +136,7 @@ describe "uri failure shapes" do
         register: r
         ignore_errors: true
       T
-    result.as_h.keys.must_equal(["failed", "changed", "exception", "msg"])
+    result.as_h.keys.must_equal(["changed", "failed", "exception", "msg"])
     result["failed"].as_bool.must_equal(true)
     result["changed"].as_bool.must_equal(false)
     result["exception"].as_s.must_equal("(traceback unavailable)")
@@ -150,7 +150,7 @@ describe "uri failure shapes" do
         register: r
         ignore_errors: true
       T
-    result.as_h.keys.must_equal(["redirected", "url", "status", "elapsed", "changed", "failed", "msg", "exception"])
+    result.as_h.keys.must_equal(["changed", "failed", "exception", "msg", "redirected", "url", "status", "elapsed"])
     result["status"].as_i.must_equal(-1)
     result["redirected"].as_bool.must_equal(false)
     result["failed"].as_bool.must_equal(true)
@@ -168,7 +168,9 @@ describe "until retries attempts key" do
         delay: 0
       T
     result["attempts"].as_i.must_equal(1)
-    result.as_h.keys.last.must_equal("attempts")
+    # 2.21: attempts sits in the declared-field band after msg/rc, ahead
+    # of the module keys - no longer the registered dict's last key.
+    result.as_h.keys.last.must_equal("stderr_lines")
     result["failed"].as_bool.must_equal(false)
   end
 
@@ -181,14 +183,18 @@ describe "until retries attempts key" do
         delay: 0
         ignore_errors: true
       T
+    result["failed"].as_bool.must_equal(true)
     result["attempts"].as_i.must_equal(2)
     result["failed"].as_bool.must_equal(true)
-    # Ansible also projects the error-event exception onto the exhausted
-    # result, after attempts (live-verified vs 2.19.11, ignored or not).
-    result.as_h.keys.last(3).must_equal(["failed", "attempts", "exception"])
-    result["exception"].as_s.must_equal("(traceback unavailable)")
-    output.matches?(/FAILED - RETRYING: \[localhost\]: .* \(2 retries left\)\./).must_equal(true)
+    # A module that SUCCEEDED carries no exception placeholder here - the
+    # retry runner failed, not the module (live-verified vs 2.21.6:
+    # changed,failed,msg,rc,attempts,<module keys>).
+    result.as_h.has_key?("exception").must_equal(false)
+    result.as_h.keys.first(5).must_equal(["changed", "failed", "msg", "rc", "attempts"])
+    # 2.21 counts the retries REMAINING AFTER each one (live-verified vs
+    # 2.21.6: retries: 2 prints 1 then 0), where 2.19 printed 2 then 1.
     output.matches?(/FAILED - RETRYING: \[localhost\]: .* \(1 retries left\)\./).must_equal(true)
+    output.matches?(/FAILED - RETRYING: \[localhost\]: .* \(0 retries left\)\./).must_equal(true)
   end
 
   it "registers no attempts key at all for a retries-0 until task" do

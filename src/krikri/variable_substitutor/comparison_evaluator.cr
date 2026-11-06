@@ -515,7 +515,7 @@ module Krikri
       # when ansible loaded anything and so arrives untagged (issue
       # #344).
       private def python_type_name(value : JSON::Any, operand_expr : String) : String
-        if value.raw.is_a?(String) && fact_string_operand?(operand_expr)
+        if value.raw.is_a?(String) && (fact_string_operand?(operand_expr) || Krikri.python_string_literal_operand?(operand_expr))
           "str"
         else
           case value.raw

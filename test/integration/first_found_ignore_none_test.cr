@@ -49,7 +49,7 @@ describe "first_found errors=ignore returns None" do
       YAML
 
     status.exit_code.must_equal(2)
-    output.must_include("Task failed: The filter plugin 'ansible.builtin.length' failed: object of type 'NoneType' has no len()")
+    output.must_include("Task failed: A 'when' expression failed: The filter plugin 'ansible.builtin.length' failed: object of type 'NoneType' has no len()")
     output.wont_include("skipping:")
   end
 

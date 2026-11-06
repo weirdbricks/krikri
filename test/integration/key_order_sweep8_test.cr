@@ -292,7 +292,7 @@ describe "gem plugin result key order (sweep8)" do
   it "registers a fresh install as name, state, changed" do
     with_gem_shim do
       keys = run_registered_dump(GEM_PLAY.sub("VERSION_LINE", ""))
-      keys.must_equal(["name", "state", "changed", "failed"])
+      keys.must_equal(["changed", "failed", "name", "state"])
     end
   end
 
@@ -301,25 +301,25 @@ describe "gem plugin result key order (sweep8)" do
       run_registered_dump(GEM_PLAY.sub("VERSION_LINE", ""))
       File.exists?(db).must_equal(true)
       keys = run_registered_dump(GEM_PLAY.sub("VERSION_LINE", ""))
-      keys.must_equal(["name", "state", "changed", "failed"])
+      keys.must_equal(["changed", "failed", "name", "state"])
     end
   end
 
   it "echoes version between state and changed when version is requested" do
     with_gem_shim do
       keys = run_registered_dump(GEM_PLAY.sub("VERSION_LINE", "version: \"1.0\""))
-      keys.must_equal(["name", "state", "version", "changed", "failed"])
+      keys.must_equal(["changed", "failed", "name", "state", "version"])
     end
   end
 
   it "registers an absent no-op and a removal in the same shape" do
     with_gem_shim do |db|
       keys = run_registered_dump(GEM_PLAY.sub("VERSION_LINE", "").sub("gem task", "gem absent no-op").sub("name: ko-gem", "name: ko-gem\n        state: absent"))
-      keys.must_equal(["name", "state", "changed", "failed"])
+      keys.must_equal(["changed", "failed", "name", "state"])
 
       File.write(db, "ko-gem (1.0)\n")
       keys = run_registered_dump(GEM_PLAY.sub("VERSION_LINE", "").sub("gem task", "gem removal").sub("name: ko-gem", "name: ko-gem\n        state: absent"))
-      keys.must_equal(["name", "state", "changed", "failed"])
+      keys.must_equal(["changed", "failed", "name", "state"])
     end
   end
 end
@@ -355,12 +355,12 @@ describe "apt_repository plugin result key order (sweep8)" do
 
   it "registers an absent no-op as changed, repo, sources_added, sources_removed, state, diff" do
     keys = run_registered_dump(APT_PLAY.sub("STATE_LINE", "state: absent"))
-    keys.must_equal(%w[changed repo sources_added sources_removed state diff failed])
+    keys.must_equal(%w[changed failed repo sources_added sources_removed state diff])
   end
 
   it "registers a check-mode add in the same shape" do
     keys = run_registered_dump(APT_PLAY.sub("STATE_LINE", "state: present"))
-    keys.must_equal(%w[changed repo sources_added sources_removed state diff failed])
+    keys.must_equal(%w[changed failed repo sources_added sources_removed state diff])
   end
 end
 describe "yum_repository plugin result key order (sweep8)" do
@@ -408,7 +408,7 @@ describe "yum_repository plugin result key order (sweep8)" do
   it "registers a fresh add as changed, repo, state, diff" do
     with_reposdir do |dir|
       keys = run_registered_dump(YUM_PLAY.gsub("KRIKRI_REPOSDIR", dir).gsub("            # STATE_SLOT\n", ""))
-      keys.must_equal(%w[changed repo state diff failed])
+      keys.must_equal(%w[changed failed repo state diff])
     end
   end
 
@@ -417,14 +417,14 @@ describe "yum_repository plugin result key order (sweep8)" do
       play = YUM_PLAY.gsub("KRIKRI_REPOSDIR", dir)
       run_registered_dump(play.gsub("            # STATE_SLOT\n", ""))
       keys = run_registered_dump(play.gsub("            # STATE_SLOT\n", ""))
-      keys.must_equal(%w[changed repo state diff failed])
+      keys.must_equal(%w[changed failed repo state diff])
     end
   end
 
   it "registers an already-absent no-op in the same shape" do
     with_reposdir do |dir|
       keys = run_registered_dump(YUM_PLAY.gsub("KRIKRI_REPOSDIR", dir).sub("            # STATE_SLOT", "state: absent"))
-      keys.must_equal(%w[changed repo state diff failed])
+      keys.must_equal(%w[changed failed repo state diff])
     end
   end
 end
@@ -465,12 +465,12 @@ describe "deb822_repository plugin result key order (sweep8)" do
 
   it "registers a check-mode add as repo, changed, dest, key_filename" do
     keys = run_registered_dump(DEB822_PLAY.gsub("STATE_SLOT", ""))
-    keys.must_equal(%w[repo changed dest key_filename failed])
+    keys.must_equal(%w[changed failed repo dest key_filename])
   end
 
   it "registers an absent no-op in the same shape" do
     keys = run_registered_dump(DEB822_PLAY.gsub("STATE_SLOT", "state: absent"))
-    keys.must_equal(%w[repo changed dest key_filename failed])
+    keys.must_equal(%w[changed failed repo dest key_filename])
   end
 end
 describe "iptables plugin result key order (sweep8)" do

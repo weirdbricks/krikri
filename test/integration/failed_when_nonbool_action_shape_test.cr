@@ -5,9 +5,9 @@ require "../minitest_helper"
 # module did NOT itself fail is normalized by task_executor as an
 # ACTION-level AnsibleActionCapturedError, not a module failure: the
 # [ERROR] block reads "Task failed: Action failed." while the result JSON
-# keeps the conditional error text in failed_when_result (live-verified
-# vs ansible-core 2.19, issue #616). krikri used to classify it as
-# "Module failed.".
+# keeps the conditional error text in failed_when_result (issue #616).
+# 2.21 additionally labels the clause in both places (live-verified vs
+# 2.21.6). krikri used to classify it as "Module failed.".
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
@@ -30,7 +30,7 @@ describe "failed_when non-boolean error action shape" do
     Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
     text = output.to_s
 
-    text.must_include("[ERROR]: Task failed: Action failed.")
+    text.must_include("[ERROR]: Task failed: Action failed: A 'failed_when' expression failed: Conditional result (True) was derived from value of type 'str'")
     text.wont_include("Module failed.")
   ensure
     File.delete(playbook) if playbook && File.exists?(playbook)

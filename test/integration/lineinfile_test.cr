@@ -16,6 +16,52 @@ describe "lineinfile plugin" do
     File.read(path).must_include("new line")
   end
 
+  # 2.21 opens the destination in text mode with the task's encoding:
+  # option (default utf-8) instead of reading bytes. Live-verified vs
+  # ansible-core 2.21.6 with an iso-8859-1 file holding "café": the line
+  # is matched/inserted on decoded text and the file stays iso-8859-1.
+  it "edits a file in the task's encoding: and keeps its bytes in that encoding (2.21)" do
+    path = PluginSpecHelper.tmp_path("lineinfile-latin1.txt")
+    # "café\n" in iso-8859-1 (0xe9 for the e-acute)
+    File.open(path, "wb") { |file| file.write(Bytes[0x63, 0x61, 0x66, 0xe9, 0x0a]) }
+
+    result = PluginSpecHelper.run("lineinfile", {
+      "path"     => path,
+      "line"     => "naïve",
+      "encoding" => "iso-8859-1",
+    })
+
+    falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+    result["msg"].as_s.must_equal("line added")
+    File.read(path).to_slice.hexstring.must_equal("636166e90a6e61ef76650a")
+  end
+
+  # An unknown codec name is a CPython LookupError, i.e. the module crash
+  # path (live-verified vs 2.21.6: msg exactly this).
+  it "fails an unknown encoding: name with Ansible's module-crash wording (2.21)" do
+    path = PluginSpecHelper.tmp_path("lineinfile-unknown-codec.txt")
+    File.write(path, "x\n")
+
+    result = PluginSpecHelper.run("lineinfile", {"path" => path, "line" => "y", "encoding" => "20"})
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("Task failed: Module failed: unknown encoding: 20")
+  end
+
+  # A file the codec cannot decode fails the task with CPython's own
+  # UnicodeDecodeError text (live-verified vs 2.21.6: msg is exactly
+  # "'utf-8' codec can't decode byte 0xff in position 3: invalid start
+  # byte"), not a mangled edit.
+  it "fails on content its encoding: cannot decode, with CPython's message (2.21)" do
+    path = PluginSpecHelper.tmp_path("lineinfile-undecodable.txt")
+    File.open(path, "wb") { |file| file.write(Bytes[0x6f, 0x6b, 0x0a, 0xff, 0xfe, 0x0a]) }
+
+    result = PluginSpecHelper.run("lineinfile", {"path" => path, "line" => "added"})
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("'utf-8' codec can't decode byte 0xff in position 3: invalid start byte")
+  end
+
   it "returns only backup/changed/msg (plus found for absent) like Ansible 2.19.11 - no path/line/state keys" do
     path = PluginSpecHelper.tmp_path("lineinfile-return-keys.txt")
     File.write(path, "keep\ndrop\n")
@@ -410,6 +456,62 @@ describe "lineinfile plugin" do
     result = PluginSpecHelper.run("lineinfile", {"path" => path, "line" => "beta"})
 
     result["backup"].as_s.must_be_empty
+  end
+
+  # The attributes entry carries before/after for every attribute the
+  # pass changes (live-verified vs 2.21.6: a mode-only change reads
+  # {'before': {'mode': '0644'}, 'after': {'mode': '0600'}} with the two
+  # headers after them), and stays header-only when nothing changed.
+  it "carries before/after attributes in the file-attributes diff entry" do
+    path = PluginSpecHelper.tmp_path("lineinfile-attr-diff.txt")
+    File.write(path, "alpha\n")
+    File.chmod(path, 0o644)
+
+    result = PluginSpecHelper.run("lineinfile", {
+      "path" => path, "line" => "alpha", "mode" => "0600", "_ansible_diff" => "true",
+    })
+
+    entry = result["diff"].as_a[1].as_h
+    entry.keys.must_equal(["before", "after", "before_header", "after_header"])
+    entry["before"].as_h["mode"].as_s.must_equal("0644")
+    entry["after"].as_h["mode"].as_s.must_equal("0600")
+    entry["before_header"].as_s.must_equal("#{path} (file attributes)")
+  end
+
+  it "keeps the file-attributes diff entry header-only when nothing changed" do
+    path = PluginSpecHelper.tmp_path("lineinfile-attr-diff-noop.txt")
+    File.write(path, "alpha\n")
+    File.chmod(path, 0o644)
+
+    result = PluginSpecHelper.run("lineinfile", {
+      "path" => path, "line" => "alpha", "mode" => "0644", "_ansible_diff" => "true",
+    })
+
+    entry = result["diff"].as_a[1].as_h
+    entry.has_key?("before").must_equal(false)
+    entry["before_header"].as_s.must_equal("#{path} (file attributes)")
+  end
+
+  # In --diff mode the SAME two-entry list carries the real text - the
+  # headers stay bare and the content entry leads with before/after
+  # (live-verified vs 2.19.11 and 2.21.6: the callback is what prints
+  # "--- before: <path> (content)").
+  it "carries the content text in the diff list's first entry under --diff" do
+    path = PluginSpecHelper.tmp_path("lineinfile-diff-mode.txt")
+    File.write(path, "alpha\n")
+
+    result = PluginSpecHelper.run("lineinfile", {
+      "path" => path, "line" => "beta", "_ansible_diff" => "true",
+    })
+
+    diff = result["diff"].as_a
+    diff.size.must_equal(2)
+    first = diff[0].as_h
+    first.keys.must_equal(["before", "after", "before_header", "after_header"])
+    first["before"].as_s.must_equal("alpha\n")
+    first["after"].as_s.must_equal("alpha\nbeta\n")
+    first["before_header"].as_s.must_equal("#{path} (content)")
+    diff[1].as_h["before_header"].as_s.must_equal("#{path} (file attributes)")
   end
 
   it "always carries a diff list on the wire (content + file-attributes entries), like Ansible 2.19.11 at -vvv" do

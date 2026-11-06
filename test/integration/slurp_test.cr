@@ -21,14 +21,26 @@ describe "slurp plugin" do
     result["source"].as_s.must_equal(path)
   end
 
-  it "rejects the fabricated armor param like Ansible's argument-spec validation" do
-    path = tmp_path("slurp_armor_reject.txt")
+  it "returns raw UTF-8 content with encoding utf-8 for armor=false (2.21 param)" do
+    path = tmp_path("slurp_unarmored.txt")
     File.write(path, "plain text")
 
     result = PluginSpecHelper.run("slurp", {"src" => path, "armor" => "false"})
 
+    falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+    result["encoding"].as_s.must_equal("utf-8")
+    result["content"].as_s.must_equal("plain text")
+    result["source"].as_s.must_equal(path)
+  end
+
+  it "fails armor=false on non-UTF-8 content like the controller's deserializer" do
+    path = tmp_path("slurp_armor_binary.bin")
+    File.write(path, "\xff\xfe\x00binary")
+
+    result = PluginSpecHelper.run("slurp", {"src" => path, "armor" => "false"})
+
     result["failed"].as_bool.must_equal(true)
-    result["msg"].as_s.must_equal("Unsupported parameters for (ansible.builtin.slurp) module: armor. Supported parameters include: src (path).")
+    result["msg"].as_s.must_equal("Refusing to deserialize an invalid UTF8 string value: 'utf-8' codec can't encode characters in position 0-1: surrogates not allowed")
   end
 
   it "accepts the path alias for src" do

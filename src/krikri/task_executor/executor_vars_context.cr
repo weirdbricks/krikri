@@ -2052,6 +2052,16 @@ module Krikri
     # the same "don't run this task" signal every caller already treats
     # a when:-skip as.
     class WhenEvaluationError < Exception
+      # Set when the failure came from a filter/test PLUGIN whose own error
+      # summary carries a separate cause (Krikri::FilterPluginError /
+      # TestPluginError's cause_text): ansible's event chain then renders
+      # the plugin wrapper as the middle link and that cause as its own
+      # record (live-verified vs 2.21.6).
+      property cause_text : String?
+
+      def initialize(message : String? = nil, @cause_text : String? = nil)
+        super(message)
+      end
     end
 
     # A `loop:` source that IS defined but resolves to a non-list (a
@@ -6424,6 +6434,8 @@ module Krikri
     # task vars") keep their pre-existing display shape.
     private def conditional_evaluation_failure?(msg : String) : Bool
       inner = msg.starts_with?("Task failed: ") ? msg["Task failed: ".size..] : msg
+      inner = inner[WHEN_EXPRESSION_FAILED_PREFIX.size..] if inner.starts_with?(WHEN_EXPRESSION_FAILED_PREFIX)
+      inner = inner[UNTIL_EXPRESSION_FAILED_PREFIX.size..] if inner.starts_with?(UNTIL_EXPRESSION_FAILED_PREFIX)
       inner.starts_with?("Error while evaluating conditional:") || inner.starts_with?("Conditional result (") ||
         inner.starts_with?("Syntax error in expression:") ||
         # The delimiter class composes its message with the PERIOD form
@@ -6466,6 +6478,8 @@ module Krikri
     # failure's block for every wording class EXCEPT the compile/runtime
     # ones that end the block at the Origin (live-verified vs 2.19.11).
     private def conditional_hint_suppressed?(inner : String) : Bool
+      inner = inner[WHEN_EXPRESSION_FAILED_PREFIX.size..] if inner.starts_with?(WHEN_EXPRESSION_FAILED_PREFIX)
+      inner = inner[UNTIL_EXPRESSION_FAILED_PREFIX.size..] if inner.starts_with?(UNTIL_EXPRESSION_FAILED_PREFIX)
       inner.starts_with?("Error while evaluating conditional:") ||
         inner.starts_with?("Syntax error in expression:") ||
         inner.starts_with?("Syntax error in expression.") ||
@@ -6505,9 +6519,20 @@ module Krikri
     # unknown-filter failure (issue #318) passes its own key/raw so the
     # Origin lands on the until: value token, the position real reports
     # for it there too.
-    private def emit_when_error_chain(task : Task, msg : String, host : Host? = nil, clause_key : String = "when", clause_raw : String? = nil, loop_item : JSON::Any? = nil, loop_index : Int32? = nil) : Nil
+    private def emit_when_error_chain(task : Task, msg : String, host : Host? = nil, clause_key : String = "when", clause_raw : String? = nil, loop_item : JSON::Any? = nil, loop_index : Int32? = nil, cause_text : String? = nil) : Nil
       msg = decorate_conditional_value_origin(task, msg, host, loop_item: loop_item, loop_index: loop_index)
       inner = msg.starts_with?("Task failed: ") ? msg["Task failed: ".size..] : msg
+      # 2.21's clause label ("A 'when' expression failed: " / "An 'until'
+      # expression failed: ") prefixes every stanza of the block, but the
+      # wording-class pattern matches below key on the bare detail - so
+      # split the label off here and re-attach it when printing.
+      clause_label = ""
+      [WHEN_EXPRESSION_FAILED_PREFIX, UNTIL_EXPRESSION_FAILED_PREFIX].each do |prefix|
+        next unless inner.starts_with?(prefix)
+        clause_label = prefix
+        inner = inner[prefix.size..]
+        break
+      end
       return unless conditional_evaluation_failure?(msg)
       path = task.source_file || @playbook_file
       return unless path && File.file?(path)
@@ -6604,14 +6629,39 @@ module Krikri
       # block stays as it is.
       mid = nil
       cause_stanza = nil
-      if (m = inner.match(/\AError while evaluating conditional: '([A-Za-z_][A-Za-z0-9_]*)' is undefined\z/)) &&
-         # Real 2.19 only adds the third record when the missing name was
-         # reached THROUGH a var value; when the name appears as a whole
-         # identifier directly in the when: text (nodejs_version_short's
-         # `when: - nodejs_version == _nodejs_version_short`), ansible
-         # fails on that direct reference and keeps the two-record block.
-         !raw.match(/\b#{Regex.escape(m[1])}\b/) &&
-         (origin = undef_chain_var_origin(task, m[1], reachable_from: raw))
+      if cause_text
+        # A filter/test PLUGIN's failure whose own error summary carries a
+        # cause: 2.21 renders the plugin wrapper as the middle link and the
+        # cause as its own record (live-verified vs 2.21.6 - the version
+        # test's "Version comparison failed: ...").
+        wrapper = inner.sub(/ failed: .*\z/m, " failed.")
+        mid = "#{clause_label}#{wrapper}"
+        # The cause record carries no Origin of its own (live-verified vs
+        # 2.21.6: the block ends at the cause text, then a blank line).
+        cause_stanza = cause_text + "\n"
+      elsif inner.starts_with?("Conditional result (") && !clause_label.empty?
+        # ansible-core 2.21 shortens the middle link of a NON-BOOLEAN
+        # conditional failure to its bare clause label and adds the detail
+        # as a third record pinned at the same clause token (live-verified
+        # vs 2.21.6 for when:, until: and changed_when:/failed_when: alike;
+        # 2.19 printed the detail in the middle link and no third record):
+        #
+        #   <<< caused by >>>
+        #   A 'when' expression failed.
+        #   Origin: <clause value>
+        #   <<< caused by >>>
+        #   Conditional result (...) ... Conditionals must have a boolean result.
+        #   Origin: <clause value>
+        mid = "#{clause_label.rstrip(": ")}."
+        cause_stanza = inner + "\n" + origin_context_block(cause_path, cause_lines, key_idx + 1, key_col)
+      elsif (m = inner.match(/\AError while evaluating conditional: '([A-Za-z_][A-Za-z0-9_]*)' is undefined\z/)) &&
+            # Real 2.19 only adds the third record when the missing name was
+            # reached THROUGH a var value; when the name appears as a whole
+            # identifier directly in the when: text (nodejs_version_short's
+            # `when: - nodejs_version == _nodejs_version_short`), ansible
+            # fails on that direct reference and keeps the two-record block.
+            !raw.match(/\b#{Regex.escape(m[1])}\b/) &&
+            (origin = undef_chain_var_origin(task, m[1], reachable_from: raw))
         mid = "Error while evaluating conditional."
         cause_stanza = "'#{m[1]}' is undefined\n" +
                        origin_context_block(origin.path, File.read_lines(origin.path), origin.line, origin.column)
@@ -6639,11 +6689,11 @@ module Krikri
       end
 
       text = String.build do |io|
-        io << "[ERROR]: Task failed: " << inner << "\n"
+        io << "[ERROR]: Task failed: " << clause_label << inner << "\n"
         io << "\nTask failed.\n"
         io << origin_context_block(path, lines, name_idx + 1, name_col)
         io << "\n<<< caused by >>>\n\n"
-        io << (mid || inner) << "\n"
+        io << (mid || (clause_label + inner)) << "\n"
         io << origin_context_block(cause_path, cause_lines, key_idx + 1, key_col)
         if cause_stanza
           io << "\n<<< caused by >>>\n\n"
@@ -6669,6 +6719,60 @@ module Krikri
       # items display the chain once.
       return unless @@when_error_chain_seen.add?(text)
       puts text
+    end
+
+    # The clause-labelled text ansible-core 2.21 puts in a failing
+    # changed_when:/failed_when: result's own msg (live-captured vs
+    # 2.21.6):
+    #
+    #   Task failed: Action failed: A 'changed_when' expression failed: <detail>
+    #
+    # and "<...> Module failed: <...>" when the module itself had already
+    # failed (that case's registered msg keeps the MODULE's own text - only
+    # this display text carries the clause).
+    private def conditional_clause_failure_text(clause_key : String, segment : String, detail : String) : String
+      "Task failed: #{segment} failed: A '#{clause_key}' expression failed: #{detail}"
+    end
+
+    # The matching [ERROR] block: "Task failed:" + the Action/Module
+    # segment on one line, then the clause-labelled detail as the
+    # caused-by stanza with the clause value's own Origin. The non-boolean
+    # class ("Conditional result (...) ...") shortens the caused-by line to
+    # its clause label and adds the detail as a third record - exactly the
+    # shortening the when: chain applies (both live-verified vs 2.21.6).
+    private def emit_conditional_clause_error_block(task : Task, clause_key : String, raw : String?, segment : String, detail : String) : Nil
+      path = task.source_file || @playbook_file
+      return unless path && File.file?(path)
+
+      lines = File.read_lines(path)
+      if located = locate_name_line(lines, task)
+        name_idx, name_col = located
+      else
+        return unless task.source_line > 0 && task.source_line <= lines.size
+        name_idx = task.source_line - 1
+        name_col = task.source_col > 0 ? task.source_col : (lines[name_idx].size - lines[name_idx].lstrip.size + 1)
+      end
+      task_origin = ErrorBlock.origin_context(path, name_idx + 1, name_col)
+
+      clause_origin = nil
+      if (tok = when_token_position(task, clause_key, raw)) && File.file?(tok[0])
+        clause_origin = ErrorBlock.origin_context(tok[0], tok[1], tok[2])
+      end
+
+      label = "A '#{clause_key}' expression failed"
+      short = detail.starts_with?("Conditional result (")
+      cause = ErrorBlock::Node.new(short ? "#{label}." : "#{label}: #{detail}", source_context: clause_origin)
+      if short
+        # Real ends the non-boolean class with its ALLOW_BROKEN_CONDITIONALS
+        # hint (live-verified vs 2.21.6, healthy and already-failed module
+        # alike).
+        cause.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(detail, source_context: clause_origin,
+          help_text: "Broken conditionals can be temporarily allowed with the `ALLOW_BROKEN_CONDITIONALS` configuration option."))
+      end
+      mid = ErrorBlock::Node.new("#{segment} failed.")
+      mid.with_chain(ErrorBlock::DIRECT_CAUSE, true, cause)
+      ErrorBlock.emit(ErrorBlock::Node.new("Task failed.", source_context: task_origin)
+        .with_chain(ErrorBlock::DIRECT_CAUSE, true, mid))
     end
 
     # The [ERROR] block for an empty delegate_to: - the message, the task

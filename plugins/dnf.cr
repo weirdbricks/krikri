@@ -34,8 +34,6 @@ module Krikri
   # - releasever: Different OS release version
   # - sslverify: Repo-server SSL validation (default true)
   # - download_only / download_dir: Download without installing
-  # - install_repoquery: Accepted as a no-op, matching Ansible's
-  #   own documented behavior for DNF (deprecated, removed in 2.20)
   # - lock_timeout: Accepted as a no-op for the dnf backend, matching
   #   Ansible's own dnf.py (the dnf python API handles lock
   #   waiting internally; only the retired yum backend consumed it)
@@ -69,7 +67,7 @@ module Krikri
     # comment for the real-Ansible semantics and message wording.
     protected def bool_params : Array(String)
       %w[allow_downgrade allowerasing autoremove best bugfix cacheonly disable_gpg_check
-        download_only install_repoquery install_weak_deps nobest security skip_broken
+        download_only install_weak_deps nobest security skip_broken
         sslverify update_cache update_only validate_certs]
     end
 
@@ -163,10 +161,13 @@ module Krikri
         return failure
       end
 
+      # 2.21 dropped the retired `install_repoquery` from the shared
+      # yumdnf spec (live-verified vs 2.21.6), so it left the supported
+      # set here too.
       dnf_supported = {"allow_downgrade", "allowerasing", "autoremove", "bugfix",
                        "cacheonly", "conf_file", "disable_excludes", "disable_gpg_check",
                        "disable_plugin", "disablerepo", "download_dir", "download_only",
-                       "enable_plugin", "enablerepo", "exclude", "install_repoquery",
+                       "enable_plugin", "enablerepo", "exclude",
                        "install_weak_deps", "installroot", "list", "lock_timeout",
                        "name", "best", "nobest", "releasever", "security", "skip_broken",
                        "sslverify", "state", "update_cache", "update_only",
@@ -183,7 +184,7 @@ module Krikri
                           "autoremove", "best", "bugfix", "cacheonly", "conf_file",
                           "disable_excludes", "disable_gpg_check", "disable_plugin",
                           "disablerepo", "download_dir", "download_only", "enable_plugin",
-                          "enablerepo", "exclude", "install_repoquery", "install_weak_deps",
+                          "enablerepo", "exclude", "install_weak_deps",
                           "installroot", "list", "lock_timeout", "name", "nobest",
                           "releasever", "security", "skip_broken", "sslverify", "state",
                           "update_cache", "update_only", "validate_certs", "expire-cache", "pkg"}
@@ -196,7 +197,7 @@ module Krikri
                  "Supported parameters include: " \
                  "allow_downgrade, allowerasing, auto_install_module_deps, autoremove, best, bugfix, " \
                  "cacheonly, conf_file, disable_excludes, disable_gpg_check, disable_plugin, disablerepo, " \
-                 "download_dir, download_only, enable_plugin, enablerepo, exclude, install_repoquery, " \
+                 "download_dir, download_only, enable_plugin, enablerepo, exclude, " \
                  "install_weak_deps, installroot, list, lock_timeout, name, nobest, releasever, security, " \
                  "skip_broken, sslverify, state, update_cache, update_only, validate_certs (expire-cache, pkg)."
           )
@@ -218,7 +219,7 @@ module Krikri
                  "Supported parameters include: " \
                  "allow_downgrade, allowerasing, autoremove, best, bugfix, cacheonly, conf_file, disable_excludes, " \
                  "disable_gpg_check, disable_plugin, disablerepo, download_dir, download_only, enable_plugin, " \
-                 "enablerepo, exclude, install_repoquery, install_weak_deps, installroot, list, lock_timeout, " \
+                 "enablerepo, exclude, install_weak_deps, installroot, list, lock_timeout, " \
                  "name, nobest, releasever, security, skip_broken, sslverify, state, update_cache, update_only, " \
                  "use_backend, validate_certs (expire-cache, pkg)."
           )

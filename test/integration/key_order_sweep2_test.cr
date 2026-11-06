@@ -74,8 +74,8 @@ describe "cron plugin result key order" do
                 {{ r | to_json }}
               dest: KRIKRI_DUMP_PATH
       YAML
-    keys.first(3).must_equal(["jobs", "envs", "changed"])
-    keys.last.must_equal("failed")
+    keys.first(3).must_equal(["changed", "failed", "msg"])
+    keys.last.must_equal("state")
   end
 end
 
@@ -96,8 +96,8 @@ describe "cronvar plugin result key order" do
                 {{ r | to_json }}
               dest: KRIKRI_DUMP_PATH
       YAML
-    keys.first(2).must_equal(["vars", "changed"])
-    keys.last.must_equal("failed")
+    keys.first(2).must_equal(["changed", "failed"])
+    keys.last.must_equal("state")
   end
 end
 
@@ -126,8 +126,8 @@ describe "git plugin result key order" do
                 {{ r | to_json }}
               dest: KRIKRI_DUMP_PATH
       YAML
-    keys.first(3).must_equal(["changed", "before", "after"])
-    keys.last.must_equal("failed")
+    keys.first(3).must_equal(["changed", "failed", "msg"])
+    keys.last.must_equal("after")
   ensure
     FileUtils.rm_r(base) if base && Dir.exists?(base)
   end
@@ -158,8 +158,8 @@ describe "git plugin result key order" do
                 {{ r | to_json }}
               dest: KRIKRI_DUMP_PATH
       YAML
-    keys.first(3).must_equal(["changed", "before", "after"])
-    keys.last.must_equal("failed")
+    keys.first(3).must_equal(["changed", "failed", "msg"])
+    keys.last.must_equal("after")
   ensure
     FileUtils.rm_r(base) if base && Dir.exists?(base)
   end
@@ -179,11 +179,11 @@ describe "package_facts plugin result key order" do
                 {{ r | to_json }}
               dest: KRIKRI_DUMP_PATH
       YAML
-    keys.first.must_equal("ansible_facts")
-    keys.last(2).must_equal(["failed", "changed"])
+    keys.first(2).must_equal(["changed", "failed"])
+    keys[2].must_equal("ansible_facts")
     # Full shape - Ansible has NO msg key (a krikri-only "Gathered N package
     # facts" msg used to sit between ansible_facts and failed).
-    keys.must_equal(["ansible_facts", "failed", "changed"])
+    keys.must_equal(["changed", "failed", "ansible_facts"])
   end
 end
 
@@ -201,8 +201,8 @@ describe "service_facts plugin result key order" do
                 {{ r | to_json }}
               dest: KRIKRI_DUMP_PATH
       YAML
-    keys.first.must_equal("ansible_facts")
-    keys.last(2).must_equal(["failed", "changed"])
+    keys.first(2).must_equal(["changed", "failed"])
+    keys[2].must_equal("ansible_facts")
   end
 end
 
@@ -227,7 +227,7 @@ describe "sudoers plugin result key order" do
               dest: KRIKRI_DUMP_PATH
       YAML
     keys.first.must_equal("changed")
-    keys.last.must_equal("failed")
+    keys.last.must_equal("msg")
   ensure
     FileUtils.rm_r(dir) if dir && Dir.exists?(dir)
   end
@@ -274,8 +274,8 @@ describe "systemd plugin result key order" do
                 {{ r | to_json }}
               dest: KRIKRI_DUMP_PATH
       YAML
-    keys.first(5).must_equal(["name", "changed", "status", "enabled", "state"])
-    keys.last.must_equal("failed")
+    keys.first(5).must_equal(["changed", "failed", "msg", "name", "status"])
+    keys.last.must_equal("state")
   end
 end
 
@@ -295,8 +295,8 @@ describe "timezone plugin result key order" do
                 {{ r | to_json }}
               dest: KRIKRI_DUMP_PATH
       YAML
-    keys.first(2).must_equal(["changed", "diff"])
-    keys.last.must_equal("failed")
+    keys.first(2).must_equal(["changed", "failed"])
+    keys.last.must_equal("diff")
   end
 end
 
@@ -315,6 +315,6 @@ describe "normalize_module_result warnings tail" do
                 {{ r | to_json }}
               dest: KRIKRI_DUMP_PATH
       YAML
-    keys.must_equal(["files", "changed", "msg", "matched", "examined", "skipped_paths", "failed", "warnings"])
+    keys.must_equal(["changed", "failed", "msg", "files", "matched", "examined", "skipped_paths", "warnings"])
   end
 end

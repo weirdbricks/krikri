@@ -747,6 +747,13 @@ module Krikri
     property include_vars_ignore_files : Array(String)?
     property include_vars_ignore_unknown_extensions : Bool?
     property include_vars_extensions : Array(String)?
+    # 2.20 made a non-list `extensions:` an error ("The 'extensions'
+    # option must be a list."); a bare string used to be wrapped into a
+    # one-element list silently.
+    property? include_vars_extensions_type_error : Bool = false
+    # 2.20 deprecated a bare-string `ignore_files:` (still accepted, one
+    # deprecation warning per run) - removed in 2.24.
+    property? include_vars_ignore_files_string_deprecated : Bool = false
     # The first include_vars: argument Ansible's action-level validation
     # loop rejects ("<key> is not a valid option in include_vars"), and
     # whether a file:-style key appears beside a dir:-style key (the
@@ -5486,11 +5493,21 @@ module Krikri
             task.include_vars_depth = hash["depth"]?.try { |depth_val| safe_yaml_to_string(depth_val) }
             task.include_vars_files_matching = hash["files_matching"]?.try { |pattern| safe_yaml_to_string(pattern) }
             task.include_vars_ignore_files = hash["ignore_files"]?.try do |list|
-              list.as_a?.try(&.map { |entry| safe_yaml_to_string(entry) }) || [safe_yaml_to_string(list)]
+              if (entries = list.as_a?)
+                entries.map { |entry| safe_yaml_to_string(entry) }
+              else
+                task.include_vars_ignore_files_string_deprecated = true
+                [safe_yaml_to_string(list)]
+              end
             end
             task.include_vars_ignore_unknown_extensions = parse_become_value(hash["ignore_unknown_extensions"]?) || false
             task.include_vars_extensions = hash["extensions"]?.try do |list|
-              list.as_a?.try(&.map { |entry| safe_yaml_to_string(entry) }) || [safe_yaml_to_string(list)]
+              if (entries = list.as_a?)
+                entries.map { |entry| safe_yaml_to_string(entry) }
+              else
+                task.include_vars_extensions_type_error = true
+                [safe_yaml_to_string(list)]
+              end
             end
           end
         elsif file = hash["file"]?
@@ -7198,7 +7215,7 @@ module Krikri
       when String  then value.as_s
       when Int64   then value.as_i64.to_s
       when Float64 then value.as_f.to_s
-      when Bool    then value.as_bool.to_s
+      when Bool    then value.as_bool ? "True" : "False"
       when Nil     then ""
       else              value.to_json
       end
@@ -8652,8 +8669,11 @@ module Krikri
       when Float64
         yaml.as_f.to_s
       when Bool
+        # Python str() spelling ("True"/"False") - what the argspec
+        # finalization puts on the wire for a str-typed option carrying a
+        # native bool (see non_string_param_text's comment).
         begin
-          yaml.as_bool.to_s
+          yaml.as_bool ? "True" : "False"
         rescue
           yaml.raw.to_s
         end

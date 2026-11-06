@@ -111,8 +111,8 @@ describe Krikri::ResultDisplay do
     it "still prints the header pair and body for a real content diff" do
       diff = JSON.parse(%({"before": "old\\n", "after": "new\\n", "before_header": "/tmp/conf (content)", "after_header": "/tmp/conf (content)"}))
       out = capture_output { Krikri::ResultDisplay.display_diff(diff) }
-      out.must_include("--- /tmp/conf (content)")
-      out.must_include("+++ /tmp/conf (content)")
+      out.must_include("--- before: /tmp/conf (content)")
+      out.must_include("+++ after: /tmp/conf (content)")
       out.must_include("-old")
       out.must_include("+new")
     end

@@ -42,7 +42,7 @@ describe "Krikri::PluginManager.become_chown_failure_result (become_chown_failur
 
   it "hides the probe failure's marker in the display but keeps it for failed_when" do
     source = File.read("src/krikri/task_executor/result_display.cr")
-    source.must_match(/BECOME_CHOWN_FAILURE/)
+    source.must_match(/BecomeMessages::CHOWN_FAILURE/)
     plugin_source = File.read("src/krikri/plugin_manager.cr")
     plugin_source.must_match(/"_connection_failure" => true,\n\s+\}\.to_json\)\n\s+end\n\n\s+private def self\.user_exists_remote/)
   end

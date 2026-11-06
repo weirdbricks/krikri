@@ -161,7 +161,7 @@ describe "mount_facts plugin result key order (round 992001)" do
               dest: KRIKRI_DUMP_PATH
     YAML
 
-    keys.must_equal(["ansible_facts", "failed", "changed"])
+    keys.must_equal(["changed", "failed", "ansible_facts"])
   end
 
   it "registers a gather with the repeat-mounts warning as ansible_facts, failed, changed, warnings" do
@@ -185,7 +185,7 @@ describe "mount_facts plugin result key order (round 992001)" do
               dest: KRIKRI_DUMP_PATH
     YAML
 
-    keys.must_equal(["ansible_facts", "failed", "changed", "warnings"])
+    keys.must_equal(["changed", "failed", "ansible_facts", "warnings"])
   end
 
   # Nested shape, same capture: each mount entry serializes as the fstab
@@ -252,7 +252,7 @@ describe "modprobe plugin failure key order (round 992001)" do
               dest: KRIKRI_DUMP_PATH
     YAML
 
-    keys.must_equal(["rc", "stdout", "stderr", "changed", "name", "params", "state", "failed", "msg", "stdout_lines", "stderr_lines", "exception"])
+    keys.must_equal(["changed", "failed", "exception", "msg", "rc", "stdout", "stderr", "name", "params", "state", "stdout_lines", "stderr_lines"])
   end
 
   # Value-level pins for the same failure (capture: rc 1, empty stdout,
