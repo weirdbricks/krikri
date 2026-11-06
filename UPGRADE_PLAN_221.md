@@ -288,22 +288,85 @@ were, and they are done.
       --diff` against an inventory using `~/.local/share/krikri/microvm/bench_key`;
       run krikri with `SSH_AUTH_SOCK` unset (the host agent's keys exhaust
       sshd's auth-attempt budget first).
+- [x] **SELinux context parity: the diff entries and the context bugs
+      under them** (0.9.2443), live-verified byte for byte against 2.21.6
+      on a Rocky 9 QEMU guest (SELinux enforcing, MLS policy, xfs root;
+      `~/.local/share/krikri/microvm/cloud/Rocky-9-GenericCloud-Base...`
+      booted straight from the cloud image with `seed-rocky/seed.iso`, no
+      re-bake needed - the stale `gold-rocky-v2.qcow2` was the bake's own
+      problem, not the image's):
+      - `file:`'s diff gained the `secontext` entry: `before` = the
+        current context as a list, `after` = the merged one
+        (basic.py:set_context_if_different, which runs before
+        owner/group/mode/attributes). Only present when a context change
+        is pending.
+      - `copy:`/`template:`'s equal-content path now emits the FILE
+        module's attribute diff (a DICT seeded with `path`, plus one entry
+        per attribute that changes) instead of nothing - same for a
+        mode/owner/group/attributes/secontext-only task. `archive:` needs
+        none: real prints no diff there at all (verified).
+      - **the parsing bug underneath**: Crystal's `split(':', 3)` is a
+        FIELD count where Python's is a MAXSPLIT, so every 4-part MLS
+        context read back as 3 with the level glued to the type
+        ("user_home_t:s0"). That made every secontext APPLY fail
+        ("invalid context") on a real SELinux host and `stat`'s
+        `selinux_context` come back 3-element. Now one shared reader in
+        `BasePlugin` (also the desired-context merge, `matchpathcon`
+        `_default` resolution and the chcon itself) used by file, copy,
+        template and stat.
+      - `copy:`/`template:` now report `changed` for a secontext-only
+        change (they reported `ok` and did nothing, or failed), honour
+        `--check` (report, don't write) and fail with basic.py's
+        `invalid selinux context: <err>` + `cur_context`/`new_context`/
+        `input_was`/`secontext` fields.
+- [x] **Files land with the context atomic_move gives them** (0.9.2444,
+      issue #911), live-verified byte for byte against 2.21.6 on the Rocky
+      9 guest: copy, template, lineinfile, blockinfile and get_url now
+      capture the context the write is meant to land on BEFORE the move
+      and relabel the new inode to it after - the dest's own context when
+      it existed (`keep_dest_attrs`, false for copy's `remote_src: true`),
+      else matchpathcon's policy default (`unconfined_u` vs `system_u` was
+      the visible symptom in every `stat`/`secontext` diff). The helpers
+      live in `BasePlugin` (`prewrite_selinux_context`,
+      `relabel_written_file`), and `add_path_info` now appends real's
+      `secontext` string on SELinux hosts.
+      - `archive:` was the opposite case: community.general's archive never
+        atomic_moves, it opens dest for writing and truncates it IN PLACE,
+        so a rewrite must NOT relabel (a new dest keeps the creating
+        process's `unconfined_u`). krikri's tmp+rename gave dest a fresh
+        inode, which reset the context (and mode/owner/hardlinks) and made
+        every following `setype:`-equal run report changed forever; it now
+        truncates dest in place, and an unwritable unreadable dest fails
+        with real's own two wordings (`Unable to write to compressed
+        file: ...` for a single-file compression, the bare
+        `Task failed: Module failed: <OSError>` crash chain for tar/zip).
+- [x] **lineinfile/blockinfile/get_url/archive secontext parity**
+      (0.9.2445, issue #912), live-verified vs 2.21.6: all four read and
+      apply the context through the shared helpers, so a secontext-only
+      change counts as `changed` (and honours `--check`), `_default`
+      resolves through matchpathcon instead of being passed to chcon
+      literally, and the setters run in basic.py's order (secontext,
+      owner, group, mode, attributes - chattr last, so an immutable file
+      no longer breaks the chcon). `lineinfile`/`blockinfile`'s
+      file-attributes diff entry now carries real's `secontext` and
+      `attributes` entries, in real's key order, and blockinfile builds it
+      after the attribute pass like real does (so a context-only change
+      shows the entry at all). A failing chcon reports real's
+      `invalid selinux context: [Errno N] <strerror>` (chcon's own
+      strerror is mapped back to its errno) with `path`/`cur_context`/
+      `new_context`/`input_was` plus the stat block. `archive:` records no
+      diff entries because real passes no `diff` there (source-verified);
+      `get_url:` likewise.
 - [ ] **Known micro-divergences** (documented, deliberate or deferred):
       - custom-module injection echo (see the INJECT_INVOCATION deviation
         above).
-      - the `file:` diff's `secontext` entry: real records
-        `before["secontext"]` = the CURRENT context as a 4-element list
-        and `after["secontext"]` = the merged list (param parts override,
-        `None` parts kept), only when SELinux is enabled
-        (`basic.py:set_context_if_different`); krikri has no entry yet.
-        Unverifiable on this host (no SELinux) - the microVM route needs a
-        Rocky guest, and the cached `gold-rocky-v2.qcow2` does not boot
-        (its own bake console log stalls in dracut waiting for the root
-        UUID, so the golden is stale/corrupt; re-bake before trying).
-      - the same attribute-only diff entry is still missing from
-        `copy:`/`template:`/`archive:` (real only shows it when the
-        content is otherwise unchanged - with a content change the
-        content diff wins, live-verified on the microVM).
+      - `file:`'s own chcon failure still reports basic.py's
+        `set selinux context failed` wording instead of the
+        `invalid selinux context: <err>` the raising libselinux call
+        produces (the other plugins were switched while doing #912).
+      - the destination of an `archive:`-style write whose failure real
+        reports through a traceback (`exception`) carries no traceback
+        here - the message text matches, the captured stack does not.
 - [ ] **Phase 4 — live verification** (blocked on the user running it):
       - re-run the #909/#910 repro against real 2.21.6 — byte-identical
         (already done ad hoc for stat; re-confirm on the release build).

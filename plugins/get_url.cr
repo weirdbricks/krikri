@@ -392,7 +392,9 @@ module Krikri
         File.delete(tmp_path)
       else
         backup_dest_if_requested(dest)
-        move_into_place(tmp_path, dest)
+        if failure = move_into_place(tmp_path, dest)
+          return failure
+        end
       end
 
       attrs_changed, failure = apply_extended_attributes(dest)
@@ -573,7 +575,12 @@ module Krikri
     # either (get_url.py fails with "Destination <dir> does not exist"
     # in destination_failure_result, above), so a dest under a missing
     # directory is an error, not a mkdir.
-    private def move_into_place(tmp_path : String, dest : String) : Nil
+    private def move_into_place(tmp_path : String, dest : String) : PluginResult?
+      # atomic_move's context capture, read BEFORE the move (issue #911):
+      # the staged file replaces dest's inode, so the dest has to be
+      # relabelled to the context the write was meant to land on (an
+      # existing dest's own, a new one's policy default).
+      secontext = prewrite_selinux_context(dest)
       begin
         File.rename(tmp_path, dest)
       rescue ex
@@ -583,6 +590,7 @@ module Krikri
         raise ex unless cross_device?(ex) || true?(@params["unsafe_writes"]?)
         unsafe_move_fallback(tmp_path, dest)
       end
+      relabel_written_file(dest, secontext)
     end
 
     private def cross_device?(ex : Exception) : Bool
@@ -1487,36 +1495,38 @@ module Krikri
       {true, nil}
     end
 
-    # seuser:/serole:/setype:/selevel: - SELinux file context via `chcon`,
-    # mirroring copy.cr's apply_selinux_context: skipped entirely (not
-    # even attempted) when SELinux isn't enabled on the target, matched
-    # via the standard /sys/fs/selinux/enforce selinuxfs check.
-    private def apply_selinux_context(dest : String) : PluginResult?
-      return nil unless File.exists?("/sys/fs/selinux/enforce")
+    # seuser:/serole:/setype:/selevel: - the SELinux file context, applied
+    # through BasePlugin's shared helpers (the same ones file, copy,
+    # template and stat use), so a context change is DETECTED and counted
+    # as changed instead of blindly re-applied, "_default" resolves
+    # through matchpathcon, and the parts merge into the file's current
+    # context the way basic.py's set_context_if_different does. Returns
+    # {changed, failure}; the failure is that fail_json's shape
+    # (msg='invalid selinux context: <err>', path, cur_context,
+    # new_context, input_was).
+    private def apply_secontext(path : String, check_mode : Bool = false) : {Bool, PluginResult?}
+      return {false, nil} unless pending = pending_secontext_change(path)
+      current, desired = pending
 
-      flags = [] of String
-      flags << "-u #{@params["seuser"]}" if @params["seuser"]?
-      flags << "-r #{@params["serole"]}" if @params["serole"]?
-      flags << "-t #{@params["setype"]}" if @params["setype"]?
-      flags << "-l #{@params["selevel"]}" if @params["selevel"]?
-      return nil if flags.empty?
+      return {true, nil} if check_mode
 
-      result = remote_exec("chcon #{flags.join(" ")} #{shell_single_quote(dest)}")
-      if result[:exit_code] != 0
-        return PluginResult.new(changed: false, failed: true, msg: "invalid selinux context: #{result[:stderr]}")
+      if err = set_selinux_context(path, desired)
+        return {false, selinux_context_failure(path, err, current, desired, secontext_input_was)}
       end
 
-      nil
+      {true, nil}
     end
 
-    # Combined attribute reconciliation for dest: mode/owner/group first
-    # (#apply_file_attributes), then chattr flags, then the SELinux
-    # context - the same order Ansible's
-    # set_fs_attributes_if_different applies them. Returns {changed,
-    # failure}: failure a failed PluginResult when the chattr/chcon call
-    # itself errored (both fail the task like Ansible - neither is
-    # silently swallowed the way a chmod/chown EPERM is).
+    # Basic.py's set_fs_attributes_if_different order: SELinux context
+    # first, then mode/owner/group (#apply_file_attributes), then the
+    # chattr flags. Returns {changed, failure}: failure a failed
+    # PluginResult when the chattr/chcon call itself errored (both fail
+    # the task like Ansible - neither is silently swallowed the way a
+    # chmod/chown EPERM is).
     private def apply_extended_attributes(path : String) : {Bool, PluginResult?}
+      secontext_changed, failure = apply_secontext(path)
+      return {false, failure} if failure
+
       begin
         changed = apply_file_attributes(path)
       rescue ex : OwnerLookupFailure
@@ -1529,13 +1539,11 @@ module Krikri
         failure.extra["path"] = JSON::Any.new(path)
         return {false, failure}
       end
+      changed = true if secontext_changed
 
       attr_changed, failure = apply_attr(path)
       return {false, failure} if failure
       changed = true if attr_changed
-
-      failure = apply_selinux_context(path)
-      return {false, failure} if failure
 
       {changed, nil}
     end

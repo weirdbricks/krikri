@@ -286,6 +286,13 @@ module Krikri
   # ownership change requested" instead of failing like this.
   class OwnerLookupFailure < Exception; end
 
+  # A mode: string that is neither octal nor a well-formed symbolic mode -
+  # basic.py's "mode must be in octal or symbolic form" (see
+  # BasePlugin#validate_symbolic_mode). Lives here like OwnerLookupFailure
+  # because both the file module and the chmod-ing writers (copy,
+  # template) resolve symbolic modes.
+  class InvalidModeError < Exception; end
+
   # Raised by PluginHelpers::DockerClient's sdk_import_gate (the vendored
   # Docker SDK import gate every SDK-based docker plugin runs at client
   # construction); run_and_capture turns it into the exact failure real's
@@ -1183,6 +1190,13 @@ module Krikri
         end
       )
       result.extra["size"] = stat_hash["size"]
+      # basic.py's add_path_info appends the file's current SELinux
+      # context as a ':'-joined string on an SELinux-enabled host (only
+      # there - the key is absent everywhere else, which is why no
+      # non-SELinux run has ever shown it).
+      if context = current_selinux_context(path)
+        result.extra["secontext"] = JSON::Any.new(context.join(':'))
+      end
     end
 
     # Expands a leading `~` or `~username` the same way Python's own
@@ -1395,6 +1409,445 @@ module Krikri
         "after_header"  => JSON::Any.new("#{path} (file attributes)"),
       })
       JSON::Any.new([content_entry, attributes_entry])
+    end
+
+    # ------------------------------------------------------------------
+    # SELinux file contexts (the file-common seuser:/serole:/setype:/
+    # selevel: args).
+    #
+    # Ansible binds libselinux in-process; krikri shells to the
+    # equivalent CLIs, so each piece below names the libselinux/Ansible
+    # call it stands in for. Every entry point is a graceful no-op on a
+    # host without SELinux active - the same skip Ansible's
+    # set_context_if_different opens with (`if not
+    # self.selinux_enabled(): return changed`).
+    #
+    # Live-verified against ansible-core 2.21.6 on a Rocky 9 guest
+    # (SELinux enforcing, MLS-enabled policy, xfs root) and unchanged on
+    # this non-SELinux host.
+    protected def selinux_enabled? : Bool
+      # libselinux's is_selinux_enabled(): the selinuxfs mount point only
+      # exists while SELinux is active in the kernel.
+      Dir.exists?("/sys/fs/selinux")
+    end
+
+    # is_selinux_mls_enabled(): only an MLS-enabled policy's context has
+    # the 4th (level) part that selevel: addresses.
+    protected def selinux_mls_enabled? : Bool
+      File.read("/sys/fs/selinux/mls").strip == "1"
+    rescue
+      false
+    end
+
+    protected def secontext_requested? : Bool
+      !!(@params["seuser"]? || @params["serole"]? || @params["setype"]? || @params["selevel"]?)
+    end
+
+    # libselinux's lgetfilecon_raw: `ls -Zd`'s first field (the l-prefix
+    # is the same l-stat semantics - the path itself, not its target).
+    # Split into at most 4 parts like Ansible's own `context.split(':', 3)`
+    # - Python's split takes a MAXSPLIT, Crystal's limit is the FIELD
+    # count, so 3 there is 4 here; the level may itself contain ':'
+    # (s0:c0.c255). Getting this wrong glued the level onto the type
+    # ("user_home_t:s0") and made every chcon call fail as an invalid
+    # context.
+    protected def current_selinux_context(path : String) : Array(String)?
+      return nil unless selinux_enabled?
+      result = remote_exec("ls -Zd #{shell_single_quote(path)}")
+      return nil unless result[:exit_code] == 0
+      context = result[:stdout].strip.split[0]?
+      return nil unless context
+      parts = context.split(':', 4)
+      parts.size == 3 || (selinux_mls_enabled? && parts.size == 4) ? parts : nil
+    end
+
+    # The context Ansible lands on: provided parts override, every other
+    # part keeps its current value (set_context_if_different iterates the
+    # CURRENT context, so an unprovided or None part is a no-op).
+    # "_default" is load_file_common_arguments' fill-in from
+    # libselinux's matchpathcon(); a matchpathcon failure leaves that part
+    # at its current value, which is where Ansible's all-None fallback
+    # context ends up too.
+    protected def desired_selinux_context(path : String, current : Array(String)) : Array(String)
+      desired = current.dup
+      {"seuser", "serole", "setype"}.each_with_index do |param, index|
+        next unless value = @params[param]?
+        next if index >= desired.size
+        desired[index] = value == "_default" ? selinux_default_context_part(path, index, current) : value
+      end
+      if selevel = @params["selevel"]?
+        if selinux_mls_enabled? && desired.size > 3
+          desired[3] = selevel == "_default" ? selinux_default_context_part(path, 3, current) : selevel
+        end
+      end
+      desired
+    end
+
+    private def selinux_default_context_part(path : String, index : Int32, current : Array(String)) : String
+      if parts = selinux_default_context(path)
+        return parts[index] if parts.size > index
+      end
+      current[index]
+    end
+
+    # libselinux's matchpathcon(): the policy's default context for a
+    # path, split into the same 3/4 parts current_selinux_context returns.
+    # nil when SELinux is off or the policy has no default for the path -
+    # Ansible's selinux_default_context falls back to its all-None
+    # initial context there, which every caller then treats as "keep the
+    # part's current value" (so a nil here is that same no-op).
+    protected def selinux_default_context(path : String) : Array(String)?
+      return nil unless selinux_enabled?
+      result = remote_exec("matchpathcon -n #{shell_single_quote(path)}")
+      return nil unless result[:exit_code] == 0
+      context = result[:stdout].strip.split[0]?
+      return nil unless context
+      parts = context.split(':', 4)
+      parts.size == 3 || (selinux_mls_enabled? && parts.size == 4) ? parts : nil
+    end
+
+    # {current, desired} when a change is actually pending: nil when
+    # nothing was requested, the host has no SELinux, the context can't be
+    # read, or it already matches. This is the changed-check half of the
+    # handling (read-only, safe in check mode).
+    protected def pending_secontext_change(path : String) : {Array(String), Array(String)}?
+      return nil unless secontext_requested?
+      current = current_selinux_context(path)
+      return nil unless current
+      desired = desired_selinux_context(path, current)
+      desired == current ? nil : {current, desired}
+    end
+
+    # libselinux's lsetfilecon(): `chcon -h` with the whole context (the
+    # h-prefix is the same l-semantics as the reader above). Returns nil
+    # on success, the error text on failure - Ansible fails the task with
+    # 'invalid selinux context: <err>' when lsetfilecon raises (the
+    # overwhelmingly common case) and 'set selinux context failed' when it
+    # returns nonzero.
+    protected def set_selinux_context(path : String, desired : Array(String)) : String?
+      result = remote_exec("chcon -h #{shell_single_quote(desired.join(':'))} #{shell_single_quote(path)}")
+      result[:exit_code] == 0 ? nil : selinux_tool_error(result[:stderr])
+    end
+
+    # libselinux's lsetfilecon sets errno and raises OSError, whose
+    # str() basic.py prints as "[Errno 22] Invalid argument"; chcon(1)
+    # writes the same errno in words instead ("chcon: invalid context:
+    # '<ctx>': Invalid argument"). Map the trailing strerror back to its
+    # number so an invalid-context failure reads byte-identically to real
+    # (live-verified vs 2.21.6 with `seuser: nonexistent_u`); anything
+    # that does not parse as a known strerror keeps chcon's own text.
+    private def selinux_tool_error(stderr : String) : String
+      line = stderr.strip.lines.last?.to_s
+      text = line.rpartition(": ")[2]
+      return line if text.empty?
+      if errno = Errno.values.find { |candidate| candidate.message == text }
+        return "[Errno #{errno.value}] #{text}"
+      end
+      line
+    end
+
+    # basic.py's fail_json shape for an lsetfilecon failure:
+    # msg='invalid selinux context: <err>', path, cur_context,
+    # new_context, input_was - plus the stat block fail_json's own
+    # _return_formatted/#add_path_info appends for a result carrying a
+    # path (uid/gid/owner/group/mode/state/size and the file's current
+    # context as a ':'-joined string). Live-verified byte for byte against
+    # 2.21.6.
+    protected def selinux_context_failure(path : String, err : String, current : Array(String), desired : Array(String), input_was : JSON::Any) : PluginResult
+      failure = PluginResult.new(changed: false, failed: true, msg: "invalid selinux context: #{err}")
+      add_path_info(failure, path)
+      failure.extra["path"] = JSON::Any.new(path)
+      failure.extra["secontext"] = JSON::Any.new(current.join(':'))
+      failure.extra["cur_context"] = JSON::Any.new(current.map { |part| JSON::Any.new(part) })
+      failure.extra["new_context"] = JSON::Any.new(desired.map { |part| JSON::Any.new(part) })
+      failure.extra["input_was"] = input_was
+      failure
+    end
+
+    # The input_was list the module-param path reports: the task's four
+    # raw se* values, whether set or not (an unset part stays None, which
+    # serializes as null - basic.py passes load_file_common_arguments'
+    # merged list, where unset parts are None).
+    protected def secontext_input_was : JSON::Any
+      JSON::Any.new(
+        ["seuser", "serole", "setype", "selevel"].map { |param| JSON::Any.new(@params[param]?) }
+      )
+    end
+
+    # ------------------------------------------------------------------
+    # atomic_move's own trailing relabel (issue #911).
+    #
+    # basic.py's atomic_move reads the context the destination is meant
+    # to end up with BEFORE it moves the staged temp file onto it:
+    #
+    #     if os.path.exists(dest) and keep_dest_attrs:
+    #         context = self.selinux_context(dest)          # keep it
+    #     else:
+    #         context = self.selinux_default_context(dest)  # policy default
+    #     ... rename / copy ladder ...
+    #     if self.selinux_enabled():
+    #         # rename might not preserve context
+    #         self.set_context_if_different(dest, context, False)
+    #
+    # and relabels the new inode to it afterwards. krikri's writers rename
+    # their own staged temp file into place, so the destination ends up
+    # with whatever context that NEW inode got at creation time: on a
+    # targeted-policy host the creating process's SELinux user
+    # (unconfined_u) where the policy default (and hence the same task
+    # under ansible-core) is system_u. Only SELinux hosts show it - the
+    # benchmark fleet is Ubuntu/Debian with SELinux off, which is why it
+    # went unnoticed until the secontext diffs were live-verified on a
+    # Rocky 9 guest.
+    #
+    # Every plugin that lands a file through its own rename (copy,
+    # template, lineinfile, blockinfile, get_url) calls these two halves
+    # around its write. Read-only in the first half, so check mode is
+    # unaffected.
+    protected def prewrite_selinux_context(dest : String, keep_dest_attrs : Bool = true) : Array(String?)?
+      return nil unless selinux_enabled?
+      if keep_dest_attrs && (current = current_selinux_context(dest))
+        return current.map { |part| part.as(String?) }
+      end
+      selinux_default_context(dest).try(&.map { |part| part.as(String?) })
+    end
+
+    # The after half: relabel the just-written dest to *context* (the
+    # pre-write capture) when its new inode's context differs. Returns nil
+    # when nothing had to be done, or the failed PluginResult real's own
+    # relabel raises - fail_json(msg='invalid selinux context: <err>',
+    # new_context=, cur_context=, input_was=).
+    protected def relabel_written_file(dest : String, context : Array(String?)?) : PluginResult?
+      return nil unless context
+      current = current_selinux_context(dest)
+      return nil unless current
+      desired = current.dup
+      current.size.times do |index|
+        next if index >= context.size
+        value = context[index]
+        desired[index] = value if value && value != current[index]
+      end
+      return nil if desired == current
+      return nil unless err = set_selinux_context(dest, desired)
+
+      selinux_context_failure(
+        dest, err, current, desired,
+        JSON::Any.new(context.map { |part| JSON::Any.new(part) })
+      )
+    end
+
+    # file.py's initial_diff() seeds every attribute diff with the path,
+    # then basic.py's setters add one entry per attribute that actually
+    # changes, in their own set order (secontext, owner, group, mode,
+    # attributes). Returns the seeded pair for a caller to fill in; the
+    # secontext entry, being the first setter, is already there.
+    protected def attribute_diff_skeleton(path : String) : NamedTuple(before: Hash(String, JSON::Any), after: Hash(String, JSON::Any))
+      before = {} of String => JSON::Any
+      after = {} of String => JSON::Any
+      before["path"] = JSON::Any.new(path)
+      after["path"] = JSON::Any.new(path)
+      if pending = pending_secontext_change(path)
+        current, desired = pending
+        before["secontext"] = JSON::Any.new(current.map { |part| JSON::Any.new(part) })
+        after["secontext"] = JSON::Any.new(desired.map { |part| JSON::Any.new(part) })
+      end
+      {before: before, after: after}
+    end
+
+    # See update_attributes_if_needed above for why this exists. Supports
+    # the common u/g/o/a scopes, +/-/= ops, and r/w/x/X/s/t perm chars,
+    # comma-separated clauses applied left to right - not every POSIX
+    # corner case, but every shape real playbooks (and this project's own
+    # fixtures) actually write.
+    # Ansible (AnsibleModule._symbolic_mode_to_octal in
+    # the Ansible module) validates each comma clause against
+    # USERS_RE ^[ugo]+$ and PERMS_RE ^[rwxXstugo]*$ - note the perms
+    # class includes u/g/o (copy syntax like `g+u`) - and fails the
+    # task with "mode must be in octal or symbolic form" on any
+    # violation. This mirrors that check exactly, so modes chmod(1)
+    # and Ansible both accept (copy syntax) keep working while
+    # anything else is rejected rather than silently no-op'd by the
+    # narrower compute regex in apply_symbolic_clause.
+    protected def validate_symbolic_mode(mode : String) : Nil
+      mode.split(',').each do |raw_clause|
+        clause = raw_clause.strip
+        next if clause.empty?
+        parts = clause.split(/[+=-]/, remove_empty: true)
+        users = parts.shift
+        users = "ugo" if users.empty? || users == "a"
+        next if parts.empty?
+        unless users.matches?(/\A[ugo]+\z/) && parts.all? { |perms| perms.matches?(/\A[rwxXstugo]*\z/) }
+          raise InvalidModeError.new("mode must be in octal or symbolic form")
+        end
+      end
+    end
+
+    protected def resolve_symbolic_mode(current : Int32, symbolic : String) : Int32
+      validate_symbolic_mode(symbolic)
+      symbolic.split(',').reduce(current) do |mode, raw_clause|
+        clause = raw_clause.strip
+        clause.empty? ? mode : apply_symbolic_clause(mode, clause)
+      end
+    end
+
+    protected def apply_symbolic_clause(mode : Int32, clause : String) : Int32
+      match = clause.match(/\A([ugoa]*)([+\-=])([rwxXst]*)\z/)
+      return mode unless match
+
+      scopes = match[1].empty? ? "ugo" : match[1].gsub("a", "ugo")
+      op = match[2][0]
+      perms = match[3]
+      rwx = symbolic_rwx_bits(mode, perms)
+
+      scopes.each_char do |scope|
+        shift = scope == 'u' ? 6 : scope == 'g' ? 3 : 0
+        mode = apply_symbolic_bits(mode, 0o7 << shift, rwx << shift, op)
+      end
+      mode = clear_assigned_special_bits(mode, scopes) if op == '='
+
+      mode = apply_symbolic_bits(mode, 0o4000, 0o4000, op) if perms.includes?('s') && scopes.includes?('u')
+      mode = apply_symbolic_bits(mode, 0o2000, 0o2000, op) if perms.includes?('s') && scopes.includes?('g')
+      mode = apply_symbolic_bits(mode, 0o1000, 0o1000, op) if perms.includes?('t')
+      mode
+    end
+
+    # Ansible's '=' assignment also clears the setuid/setgid/sticky bit of each
+    # class it names (u= drops setuid, g= drops setgid, o= drops sticky); '+' and
+    # '-' never touch those bits. The explicit s/t handling that follows re-sets
+    # any bit the clause asks for.
+    protected def clear_assigned_special_bits(mode : Int32, scopes : String) : Int32
+      scopes.each_char do |scope|
+        special = scope == 'u' ? 0o4000 : scope == 'g' ? 0o2000 : 0o1000
+        mode &= ~special
+      end
+      mode
+    end
+
+    protected def symbolic_rwx_bits(mode : Int32, perms : String) : Int32
+      rwx = 0
+      rwx |= 4 if perms.includes?('r')
+      rwx |= 2 if perms.includes?('w')
+      executable_somewhere = (mode & 0o111) != 0 || (mode & LibC::S_IFMT) == LibC::S_IFDIR
+      rwx |= 1 if perms.includes?('x') || (perms.includes?('X') && executable_somewhere)
+      rwx
+    end
+
+    protected def apply_symbolic_bits(mode : Int32, mask : Int32, bits : Int32, op : Char) : Int32
+      case op
+      when '+' then mode | bits
+      when '-' then mode & ~bits
+      else          (mode & ~mask) | bits
+      end
+    end
+
+    # attr:/attributes: - basic.py's set_attributes_if_different splits the
+    # raw value into its leading operator ('+'/'-', '=' when bare) plus the
+    # flag letters. Shared by every plugin that takes the param.
+    protected def attr_args : {Char, String}?
+      raw = @params["attr"]? || @params["attributes"]?
+      return nil unless raw
+      raw = raw.strip
+      return nil if raw.empty?
+      if raw[0] == '-' || raw[0] == '+'
+        {raw[0], raw[1..]}
+      else
+        {'=', raw}
+      end
+    end
+
+    # The file's current chattr flags as Ansible reads them: `lsattr -d`'s
+    # first field with the dash-padding stripped ("--------------e-------"
+    # -> "e"). An lsattr failure (missing binary, filesystem without
+    # support) is EMPTY flags, not an error - get_file_attributes swallows
+    # it; the chattr call is what surfaces a real failure later.
+    protected def current_attr_flags(path : String) : String
+      result = remote_exec("lsattr -d #{shell_single_quote(path)}")
+      return "" unless result[:exit_code] == 0
+      fields = result[:stdout].strip.split
+      return "" if fields.empty?
+      fields[0].delete('-').strip
+    end
+
+    # Changed when the current flags differ from the requested ones, or
+    # whenever the request is '-'-prefixed - which makes `attr: -i` never
+    # converge (ansible/ansible#33745), and `+i` report changed while other
+    # flags coexist (ext4's always-on extents `e`: "ie" != "i",
+    # ansible/ansible#48839). Both live-verified.
+    protected def attr_changed?(path : String) : Bool
+      parsed = attr_args
+      return false unless parsed
+      mod, flags = parsed
+      return false if flags.empty?
+      current_attr_flags(path) != flags || mod == '-'
+    end
+
+    # Ansible records one diff entry per attribute that actually changes,
+    # in basic.py's own set order, seeded with the path (file.py's
+    # initial_diff). This is the FILE module's diff dict - reached on the
+    # equal-content path, where copy's action plugin dispatches
+    # ansible.legacy.file instead of the copy module (live-verified vs
+    # 2.21.6: a copy: with unchanged content and a changed mode/owner/
+    # group/attributes/secontext prints exactly this, and its registered
+    # result's `diff` key is this DICT, not copy's usual list).
+    protected def file_attribute_diff(path : String) : JSON::Any?
+      return nil unless @diff_mode
+      info = File.info?(path, follow_symlinks: false)
+      return nil unless info
+
+      skeleton = attribute_diff_skeleton(path)
+      before = skeleton[:before]
+      after = skeleton[:after]
+      add_owner_group_diff(before, after, info)
+      add_mode_diff(before, after, info)
+      add_attributes_diff(before, after, path)
+      generate_attribute_diff(before, after)
+    end
+
+    # set_owner_if_different / set_group_if_different: the raw numeric
+    # uid/gid on both sides, and only when the value actually differs.
+    private def add_owner_group_diff(before : Hash(String, JSON::Any), after : Hash(String, JSON::Any), info : File::Info) : Nil
+      if owner = @params["owner"]?
+        uid = resolve_owner_uid(owner)
+        unless info.owner_id.to_s == uid.to_s
+          before["owner"] = JSON::Any.new(info.owner_id.to_i64)
+          after["owner"] = JSON::Any.new(uid.to_i64)
+        end
+      end
+
+      return unless group = @params["group"]?
+      gid = resolve_group_gid(group)
+      return if info.group_id.to_s == gid.to_s
+
+      before["group"] = JSON::Any.new(info.group_id.to_i64)
+      after["group"] = JSON::Any.new(gid.to_i64)
+    end
+
+    # set_mode_if_different: '0%03o' on both sides, the AFTER side being
+    # the RESOLVED target (a symbolic mode computed against the current
+    # stat), not the task's raw string.
+    private def add_mode_diff(before : Hash(String, JSON::Any), after : Hash(String, JSON::Any), info : File::Info) : Nil
+      return unless mode = @params["mode"]?
+
+      current_bits = info.permissions.value.to_i & 0o7777
+      target_bits = mode =~ /\A0?[0-7]{1,4}\z/ ? mode.to_i(8) : resolve_symbolic_mode(current_bits, mode)
+      return if current_bits == target_bits
+
+      before["mode"] = JSON::Any.new("0#{current_bits.to_s(8).rjust(3, '0')}")
+      after["mode"] = JSON::Any.new("0#{target_bits.to_s(8).rjust(3, '0')}")
+    end
+
+    # set_attributes_if_different: the current lsattr flags against the RAW
+    # requested value, operator included ("+i", not the resolved "i").
+    private def add_attributes_diff(before : Hash(String, JSON::Any), after : Hash(String, JSON::Any), path : String) : Nil
+      parsed = attr_args
+      return unless parsed
+      mod, flags = parsed
+      return if flags.empty?
+
+      current = current_attr_flags(path)
+      return unless current != flags || mod == '-'
+
+      before["attributes"] = JSON::Any.new(current)
+      after["attributes"] = JSON::Any.new(mod == '=' ? flags : "#{mod}#{flags}")
     end
 
     # Generate attribute diff

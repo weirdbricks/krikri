@@ -191,8 +191,14 @@ module Krikri
         # mode: is applied afterwards by set_fs_attributes_if_different
         # and its drift feeds the "and ownership, perms or SE linux
         # context changed" msg suffix (live-verified vs 2.19.11).
+        # The dest didn't exist, so atomic_move's own relabel gives it
+        # matchpathcon's policy default context (issue #911).
+        secontext = prewrite_selinux_context(path)
         File.write(path, "")
         File.chmod(path, 0o666 & ~creation_umask)
+        if failure = relabel_written_file(path, secontext)
+          return {false, failure}
+        end
       end
 
       {true, nil}
@@ -223,8 +229,12 @@ module Krikri
       return write_failure if write_failure
 
       # The attribute baseline is the file's state BEFORE the attribute
-      # pass below (the diff payload reports what that pass changes).
+      # pass below (the diff payload reports what that pass changes) -
+      # the pending SELinux context change and the current chattr flags
+      # are read at the same moment, for the same reason.
       attribute_baseline = File.info?(path)
+      secontext_baseline = pending_secontext_change(path)
+      attr_flags_baseline = current_attr_flags(path)
 
       # owner:/group:/mode: apply even when the line content itself was
       # already correct - Ansible's lineinfile module runs the
@@ -246,7 +256,7 @@ module Krikri
       # Real lineinfile's diff list: the content entry (before/after text,
       # file created or modified alike) plus the file-attributes entry.
       diff = file_module_diff(path, original_content, new_content,
-        attributes_diff_entry(path, attribute_baseline)) if changed && @diff_mode
+        attributes_diff_entry(path, attribute_baseline, secontext_baseline, attr_flags_baseline)) if changed && @diff_mode
 
       line_result(path, state, changed, msg, backup_file, found, !!attrs_changed, diff)
     end
@@ -348,21 +358,20 @@ module Krikri
     # `attr_diff` dict into set_fs_attributes_if_different, which records
     # `before`/`after` for every attribute that actually changes - and the
     # entry degenerates to its two headers when nothing did. `info` is the
-    # file's state BEFORE the attribute pass. mode/owner/group cover what
-    # roles change; a secontext/flags-only change keeps the header-only
-    # entry.
-    private def attributes_diff_entry(path : String, info : File::Info?) : JSON::Any
+    # file's state BEFORE the attribute pass and `secontext`/
+    # `attr_flags` its still-pending SELinux context change and current
+    # chattr flags, captured at the same moment (the setters run in
+    # secontext, owner, group, mode, attributes order and record as they
+    # go).
+    private def attributes_diff_entry(path : String, info : File::Info?, secontext : {Array(String), Array(String)}?, attr_flags : String) : JSON::Any
       before = {} of String => JSON::Any
       after = {} of String => JSON::Any
+      if current_and_desired = secontext
+        current, desired = current_and_desired
+        before["secontext"] = JSON::Any.new(current.map { |part| JSON::Any.new(part) })
+        after["secontext"] = JSON::Any.new(desired.map { |part| JSON::Any.new(part) })
+      end
       if info
-        if (mode = @params["mode"]?) && mode.matches?(/^0?\d+$/)
-          current_bits = mode_current_bits(info)
-          target_bits = mode.to_i(8)
-          if current_bits != target_bits
-            before["mode"] = JSON::Any.new("0#{current_bits.to_s(8).rjust(3, '0')}")
-            after["mode"] = JSON::Any.new("0#{target_bits.to_s(8).rjust(3, '0')}")
-          end
-        end
         if (owner = @params["owner"]?) && !owner.empty?
           uid = resolve_owner_uid(owner)
           unless info.owner_id.to_s == uid.to_s
@@ -375,6 +384,21 @@ module Krikri
           unless info.group_id.to_s == gid.to_s
             before["group"] = JSON::Any.new(info.group_id.to_i64)
             after["group"] = JSON::Any.new(gid.to_i64)
+          end
+        end
+        if (mode = @params["mode"]?) && mode.matches?(/^0?\d+$/)
+          current_bits = mode_current_bits(info)
+          target_bits = mode.to_i(8)
+          if current_bits != target_bits
+            before["mode"] = JSON::Any.new("0#{current_bits.to_s(8).rjust(3, '0')}")
+            after["mode"] = JSON::Any.new("0#{target_bits.to_s(8).rjust(3, '0')}")
+          end
+        end
+        if parsed = attr_args
+          mod, flags = parsed
+          if attr_flags != flags || mod == '-'
+            before["attributes"] = JSON::Any.new(attr_flags)
+            after["attributes"] = JSON::Any.new(mod == '=' ? flags : "#{mod}#{flags}")
           end
         end
       end
@@ -462,6 +486,12 @@ module Krikri
         end
       end
 
+      # atomic_move's context capture, read BEFORE the rename (issue
+      # #911): the staged inode replaces dest's, so the dest has to be
+      # relabelled to the context the write was meant to land on (an
+      # existing dest's own, a new one's policy default).
+      secontext = prewrite_selinux_context(dest)
+
       begin
         File.rename(temp_file, dest)
       rescue ex
@@ -477,12 +507,12 @@ module Krikri
           rescue ex
             return PluginResult.new(changed: false, failed: true, msg: "Failed to write file (unsafe_writes fallback): #{ex.message}")
           end
-          return nil
+          return relabel_written_file(dest, secontext)
         end
         return PluginResult.new(changed: false, failed: true, msg: "Failed to move file to destination: #{ex.message}")
       end
 
-      nil
+      relabel_written_file(dest, secontext)
     end
 
     # Runs the validate: command (with %s substituted by the staged
@@ -515,21 +545,25 @@ module Krikri
       file_module_diff(path, "", "")
     end
 
-    # Checks owner:/group:/mode:, then chattr-style attributes:/attr:
-    # flags, then the SELinux context parts - the same order
-    # Ansible's set_fs_attributes_if_different applies them (mirrors
-    # copy.cr's apply_extended_attributes). Returns {changed, failure}:
-    # failure a failed PluginResult when the chattr/chcon call itself
-    # errored. Returns whether anything was actually changed (skips the
-    # actual chmod/chown under check_mode, matching every other
-    # check_mode-aware plugin in this codebase).
+    # basic.py's set_fs_attributes_if_different order: SELinux context
+    # first, then owner/group/mode, then the chattr-style
+    # attributes:/attr: flags (mirrors copy.cr's
+    # apply_extended_attributes - running chattr last matters: an
+    # immutable file would break the setters after it). Returns
+    # {changed, failure}: failure a failed PluginResult when the
+    # chattr/chcon call itself errored. Returns whether anything was
+    # actually changed (skips the actual chmod/chown under check_mode,
+    # matching every other check_mode-aware plugin in this codebase).
     private def apply_file_attrs(path : String, check_mode : Bool) : {Bool, PluginResult?}
-      changed = false
       info = begin
         File.info(path)
       rescue
         return {false, nil}
       end
+
+      secontext_changed, failure = apply_secontext(path, check_mode)
+      return {false, failure} if failure
+      changed = secontext_changed
 
       changed = apply_mode_attr(path, info, check_mode) || changed
       changed = apply_owner_attr(path, info, check_mode) || changed
@@ -538,9 +572,6 @@ module Krikri
       attr_changed, failure = apply_attr(path, check_mode)
       return {false, failure} if failure
       changed = changed || attr_changed
-
-      failure = apply_secontext(path, check_mode)
-      return {false, failure} if failure
 
       {changed, nil}
     end
@@ -603,30 +634,29 @@ module Krikri
       {true, nil}
     end
 
-    # seuser:/serole:/setype:/selevel: - SELinux context parts, applied
-    # to the file via `chcon`. Mirrors copy.cr's proven implementation
-    # exactly: Ansible skips this ENTIRELY (a graceful no-op, its
-    # set_context_if_different opens with `if not self.selinux_enabled():
-    # return changed`) when SELinux isn't enabled on the target at all,
-    # the overwhelming majority of real-world targets.
-    private def apply_secontext(path : String, check_mode : Bool) : PluginResult?
-      return nil unless File.exists?("/sys/fs/selinux/enforce")
+    # seuser:/serole:/setype:/selevel: - the SELinux file context, applied
+    # through BasePlugin's shared helpers (the same ones file, copy,
+    # template and stat use), so a context change is DETECTED and counted
+    # as changed instead of blindly re-applied, "_default" resolves
+    # through matchpathcon, and the parts merge into the file's current
+    # context the way basic.py's set_context_if_different does. Returns
+    # {changed, failure}; the failure is that fail_json's shape
+    # (msg='invalid selinux context: <err>', path, cur_context,
+    # new_context, input_was).
+    private def apply_secontext(path : String, check_mode : Bool) : {Bool, PluginResult?}
+      return {false, nil} unless pending = pending_secontext_change(path)
+      current, desired = pending
 
-      flags = [] of String
-      flags << "-u #{@params["seuser"]}" if @params["seuser"]?
-      flags << "-r #{@params["serole"]}" if @params["serole"]?
-      flags << "-t #{@params["setype"]}" if @params["setype"]?
-      flags << "-l #{@params["selevel"]}" if @params["selevel"]?
-      return nil if flags.empty?
+      # set_context_if_different returns changed BEFORE calling
+      # lsetfilecon in check mode, so a --check run reports the pending
+      # context change and writes nothing.
+      return {true, nil} if check_mode
 
-      return nil if check_mode
-
-      result = remote_exec("chcon #{flags.join(" ")} #{shell_single_quote(path)}")
-      if result[:exit_code] != 0
-        return PluginResult.new(changed: false, failed: true, msg: "invalid selinux context: #{result[:stderr]}")
+      if err = set_selinux_context(path, desired)
+        return {false, selinux_context_failure(path, err, current, desired, secontext_input_was)}
       end
 
-      nil
+      {true, nil}
     end
 
     private def apply_mode_attr(path : String, info : File::Info, check_mode : Bool) : Bool

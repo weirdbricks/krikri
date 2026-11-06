@@ -113,8 +113,6 @@ module Krikri
       %w[follow force recurse unsafe_writes]
     end
 
-    class InvalidModeError < Exception; end
-
     # A chown/chmod syscall that failed for a reason no argument validation
     # catches (EPERM on an unprivileged user, EACCES, ...). Ansible's file
     # module fails with the bare "chown failed" / "chmod failed" msg and
@@ -1340,8 +1338,9 @@ module Krikri
       # checks.
       changed = true if attr_changed?(path)
 
-      # seuser:/serole:/setype:/selevel: - see secontext_changed? below.
-      changed = true if secontext_changed?(path)
+      # seuser:/serole:/setype:/selevel: - the shared pending-change probe,
+      # basic.py's set_context_if_different first setter.
+      changed = true if pending_secontext_change(path)
 
       changed
     end
@@ -1371,92 +1370,6 @@ module Krikri
         current_mode.lstrip('0') != target_mode.lstrip('0')
       else
         resolve_symbolic_mode(current_mode_bits, mode) != current_mode_bits
-      end
-    end
-
-    # See update_attributes_if_needed above for why this exists. Supports
-    # the common u/g/o/a scopes, +/-/= ops, and r/w/x/X/s/t perm chars,
-    # comma-separated clauses applied left to right - not every POSIX
-    # corner case, but every shape real playbooks (and this project's own
-    # fixtures) actually write.
-    # Ansible (AnsibleModule._symbolic_mode_to_octal in
-    # the Ansible module) validates each comma clause against
-    # USERS_RE ^[ugo]+$ and PERMS_RE ^[rwxXstugo]*$ - note the perms
-    # class includes u/g/o (copy syntax like `g+u`) - and fails the
-    # task with "mode must be in octal or symbolic form" on any
-    # violation. This mirrors that check exactly, so modes chmod(1)
-    # and Ansible both accept (copy syntax) keep working while
-    # anything else is rejected rather than silently no-op'd by the
-    # narrower compute regex in apply_symbolic_clause.
-    private def validate_symbolic_mode(mode : String) : Nil
-      mode.split(',').each do |raw_clause|
-        clause = raw_clause.strip
-        next if clause.empty?
-        parts = clause.split(/[+=-]/, remove_empty: true)
-        users = parts.shift
-        users = "ugo" if users.empty? || users == "a"
-        next if parts.empty?
-        unless users.matches?(/\A[ugo]+\z/) && parts.all? { |perms| perms.matches?(/\A[rwxXstugo]*\z/) }
-          raise InvalidModeError.new("mode must be in octal or symbolic form")
-        end
-      end
-    end
-
-    private def resolve_symbolic_mode(current : Int32, symbolic : String) : Int32
-      validate_symbolic_mode(symbolic)
-      symbolic.split(',').reduce(current) do |mode, raw_clause|
-        clause = raw_clause.strip
-        clause.empty? ? mode : apply_symbolic_clause(mode, clause)
-      end
-    end
-
-    private def apply_symbolic_clause(mode : Int32, clause : String) : Int32
-      match = clause.match(/\A([ugoa]*)([+\-=])([rwxXst]*)\z/)
-      return mode unless match
-
-      scopes = match[1].empty? ? "ugo" : match[1].gsub("a", "ugo")
-      op = match[2][0]
-      perms = match[3]
-      rwx = symbolic_rwx_bits(mode, perms)
-
-      scopes.each_char do |scope|
-        shift = scope == 'u' ? 6 : scope == 'g' ? 3 : 0
-        mode = apply_symbolic_bits(mode, 0o7 << shift, rwx << shift, op)
-      end
-      mode = clear_assigned_special_bits(mode, scopes) if op == '='
-
-      mode = apply_symbolic_bits(mode, 0o4000, 0o4000, op) if perms.includes?('s') && scopes.includes?('u')
-      mode = apply_symbolic_bits(mode, 0o2000, 0o2000, op) if perms.includes?('s') && scopes.includes?('g')
-      mode = apply_symbolic_bits(mode, 0o1000, 0o1000, op) if perms.includes?('t')
-      mode
-    end
-
-    # Ansible's '=' assignment also clears the setuid/setgid/sticky bit of each
-    # class it names (u= drops setuid, g= drops setgid, o= drops sticky); '+' and
-    # '-' never touch those bits. The explicit s/t handling that follows re-sets
-    # any bit the clause asks for.
-    private def clear_assigned_special_bits(mode : Int32, scopes : String) : Int32
-      scopes.each_char do |scope|
-        special = scope == 'u' ? 0o4000 : scope == 'g' ? 0o2000 : 0o1000
-        mode &= ~special
-      end
-      mode
-    end
-
-    private def symbolic_rwx_bits(mode : Int32, perms : String) : Int32
-      rwx = 0
-      rwx |= 4 if perms.includes?('r')
-      rwx |= 2 if perms.includes?('w')
-      executable_somewhere = (mode & 0o111) != 0 || (mode & LibC::S_IFMT) == LibC::S_IFDIR
-      rwx |= 1 if perms.includes?('x') || (perms.includes?('X') && executable_somewhere)
-      rwx
-    end
-
-    private def apply_symbolic_bits(mode : Int32, mask : Int32, bits : Int32, op : Char) : Int32
-      case op
-      when '+' then mode | bits
-      when '-' then mode & ~bits
-      else          (mode & ~mask) | bits
       end
     end
 
@@ -1697,116 +1610,17 @@ module Krikri
       end
     end
 
-    # SELinux context params (seuser:/serole:/setype:/selevel:,
-    # Ansible's file-common args). Ansible accepts these on every
-    # host but only ACTS on them when SELinux is actually enabled - its
-    # set_context_if_different opens with
-    # `if not self.selinux_enabled(): return changed`, a graceful no-op.
-    # Live-verified against ansible-core 2.19.4 on this non-SELinux
-    # machine: all four params are silently accepted, the result carries
-    # no SELinux keys at all, and an already-identical re-run reports
-    # ok/changed: false.
-    private def selinux_enabled? : Bool
-      # Grounded approximation of libselinux's is_selinux_enabled(): the
-      # selinuxfs mount only exists when SELinux is active in the kernel.
-      @selinux_enabled ||= Dir.exists?("/sys/fs/selinux")
-    end
-
-    # is_selinux_mls_enabled() - only an MLS-enabled policy's context has
-    # the 4th (level) part that selevel: addresses; Ansible appends
-    # selevel to the context list only when this is true.
-    private def mls_enabled? : Bool
-      @mls_enabled ||= begin
-        File.read("/sys/fs/selinux/mls").strip == "1"
-      rescue
-        false
-      end
-    end
-
-    private def secontext_requested? : Bool
-      !!(@params["seuser"]? || @params["serole"]? || @params["setype"]? || @params["selevel"]?)
-    end
-
-    # The file's current context via `ls -Zd` (read-only stand-in for
-    # libselinux's lgetfilecon_raw; l-prefix semantics: does NOT follow
-    # symlinks). Split limited to 4 parts exactly like Ansible's
-    # own `context.split(':', 3)` - the MLS level may itself contain
-    # ':' characters (e.g. "s0:c0.c255").
-    private def current_selinux_context(path : String) : Array(String)?
-      return nil unless selinux_enabled?
-      result = remote_exec("ls -Zd #{shell_single_quote(path)}")
-      return nil unless result[:exit_code] == 0
-      context = result[:stdout].strip.split[0]?
-      return nil unless context
-      parts = context.split(':', 3)
-      (parts.size == 3 || (mls_enabled? && parts.size == 4)) ? parts : nil
-    end
-
-    # Builds the desired context by overriding the parts the task
-    # provides, leaving the rest at their CURRENT values - mirroring
-    # set_context_if_different's iterate-over-current-context loop
-    # (a provided part wins only when it differs; an unprovided part
-    # keeps the current value). The documented "_default" value ("uses
-    # the matching portion of policy if available") is what
-    # Ansible's load_file_common_arguments fills in from libselinux's
-    # matchpathcon(); krikri shells to the same-named CLI tool for it,
-    # and a matchpathcon failure leaves the current part -
-    # Ansible's selinux_default_context returns an all-None context on
-    # matchpathcon failure, and a None part keeps the current value in
-    # set_context_if_different's loop.
-    private def desired_selinux_context(path : String, current : Array(String)) : Array(String)
-      desired = current.dup
-      ["seuser", "serole", "setype"].each_with_index do |param, index|
-        next unless value = @params[param]?
-        desired[index] = value == "_default" ? selinux_default_context_part(path, index, current) : value
-      end
-      # selevel only participates on an MLS-enabled policy (Ansible only appends it to the context list then), and only when
-      # the current context actually HAS a level part.
-      if selevel = @params["selevel"]?
-        if mls_enabled? && desired.size > 3
-          desired[3] = selevel == "_default" ? selinux_default_context_part(path, 3, current) : selevel
-        end
-      end
-      desired
-    end
-
-    private def selinux_default_context_part(path : String, index : Int32, current : Array(String)) : String
-      result = remote_exec("matchpathcon -n #{shell_single_quote(path)}")
-      if result[:exit_code] == 0 && (context = result[:stdout].strip.split[0]?)
-        parts = context.split(':', 3)
-        return parts[index] if parts.size > index
-      end
-      current[index]
-    end
-
-    # The changed-check half of the SELinux handling (read-only, safe in
-    # check mode): changed when the desired context differs from the
-    # file's current one.
-    private def secontext_changed?(path : String) : Bool
-      return false unless secontext_requested?
-      current = current_selinux_context(path)
-      return false unless current
-      desired_selinux_context(path, current) != current
-    end
-
-    # The apply half: Ansible sets the full context with
-    # selinux.lsetfilecon('<user>:<role>:<type>[:<level>]') - the
-    # l-prefix meaning it operates on the symlink itself - so this
-    # shells to `chcon -h` with the whole context string (chcon accepts
-    # a full context as its first argument) and fails the task on a
-    # nonzero exit, mirroring the Ansible module's
-    # fail_json(msg='set selinux context failed').
+    # SELinux context (seuser:/serole:/setype:/selevel:): the parsing,
+    # merging and chcon live in BasePlugin's shared helpers so copy/
+    # template/stat read and write the same context shape. Here only the
+    # apply wrapper remains, failing the task the way Ansible's
+    # set_context_if_different does (fail_json(msg='set selinux context
+    # failed') on a nonzero lsetfilecon return).
     private def apply_secontext(path : String) : Nil
-      return unless secontext_requested?
-      current = current_selinux_context(path)
-      return unless current
-      desired = desired_selinux_context(path, current)
-      return if desired == current
-
-      result = remote_exec("chcon -h #{shell_single_quote(desired.join(':'))} #{shell_single_quote(path)}")
-      if result[:exit_code] != 0
-        raise "set selinux context failed"
-      end
+      pending = pending_secontext_change(path) || return
+      _current, desired = pending
+      return if set_selinux_context(path, desired).nil?
+      raise "set selinux context failed"
     end
 
     # Python's str(OSError) shape for a failed file syscall on *path*:
@@ -2225,10 +2039,13 @@ module Krikri
       info = lstat(path)
       return nil unless info
 
-      before = {} of String => JSON::Any
-      after = {} of String => JSON::Any
-      before["path"] = JSON::Any.new(path)
-      after["path"] = JSON::Any.new(path)
+      # path first, then the secontext entry when a context change is
+      # pending (basic.py's set_context_if_different runs before owner/
+      # group/mode/attributes, live-verified vs 2.21.6 on a Rocky 9 guest:
+      # `secontext` arrives as a 4-string list on an MLS policy).
+      skeleton = attribute_diff_skeleton(path)
+      before = skeleton[:before]
+      after = skeleton[:after]
 
       # Get current owner
       if owner = requested_attr("owner")
@@ -2280,8 +2097,6 @@ module Krikri
     end
 
     @last_error : String? = nil
-    @selinux_enabled : Bool? = nil
-    @mls_enabled : Bool? = nil
     @file_warnings : Array(String)? = nil
   end
 end

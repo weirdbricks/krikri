@@ -319,7 +319,11 @@ module Krikri
         return error
       end
 
-      changed = replace_dest(dest, format, single_compress, tmp_dest)
+      replace = replace_dest(dest, format, single_compress, tmp_dest, single_compress ? found_paths[0]? : nil)
+      if failure = replace[:failure]
+        return failure
+      end
+      changed = replace[:changed]
 
       remove_sources(found_paths) if remove
 
@@ -328,9 +332,12 @@ module Krikri
       if error = apply_attributes(dest)
         return error
       end
-      if error = apply_selinux_context(dest)
-        return error
-      end
+      # Real ORs this into `changed` (set_fs_attributes_if_different's
+      # return is assigned back over archive.changed), so a task whose
+      # only difference is the SELinux context reports changed.
+      secontext_changed, error = apply_selinux_context(dest)
+      return error if error
+      changed = true if secontext_changed
 
       archived = single_compress ? found_paths : members
       stat_fields = dest_stat_fields(dest)
@@ -655,7 +662,12 @@ module Krikri
       # ansible-playbook via the podman-diff archive cases (B6): an
       # existing plain-text dest + format=tar fails changed=False on
       # the real side, every other format overwrites changed=True.
-      if format == "tar" && !single_compress && File.exists?(dest) && !valid_tar?(dest)
+      # An unreadable dest never reaches this check on the real side:
+      # destination_checksums() gives up (os.access R_OK) and the module
+      # goes straight to the rewrite, which is what fails there instead
+      # (live-verified: a mode-0000 tar dest reports the write's own
+      # permission error, not "tar is not a valid format").
+      if format == "tar" && !single_compress && File.exists?(dest) && File.readable?(dest) && !valid_tar?(dest)
         File.delete?(tmp_dest)
         return PluginResult.new(changed: false, failed: true, msg: "tar is not a valid format")
       end
@@ -670,7 +682,7 @@ module Krikri
     # checksum set on the real side (destination_checksums() returns
     # None when os.access R_OK fails) and falls back to a plain size
     # comparison (original_size != destination_size()).
-    private def replace_dest(dest : String, format : String, single_compress : Bool, tmp_dest : String) : Bool
+    private def replace_dest(dest : String, format : String, single_compress : Bool, tmp_dest : String, source_path : String? = nil) : {changed: Bool, failure: PluginResult?}
       new_signature = signature(tmp_dest, format, single_compress)
       changed =
         if File.exists?(dest) && !File.readable?(dest)
@@ -679,8 +691,59 @@ module Krikri
           signature(dest, format, single_compress) != new_signature
         end
 
-      File.rename(tmp_dest, dest)
-      changed
+      # Real archive.py opens dest for writing and truncates it IN PLACE -
+      # there is no atomic_move anywhere in community.general's archive -
+      # so an existing dest keeps its inode: its owner/group/mode and its
+      # SELinux context (including a context a previous `setype:` set)
+      # all survive the rewrite. Renaming the temp over dest gave dest a
+      # fresh inode instead, resetting the context to the creating
+      # process's and making every following `setype:`-equal run report
+      # changed forever (issue #912). A dest that does not exist yet is
+      # created at open(2)'s 0666 & ~umask with this process's own
+      # context - the same file real's tarfile/zipfile call creates.
+      begin
+        File.open(tmp_dest, "r") do |source|
+          File.open(dest, "w") { |target| IO.copy(source, target) }
+        end
+      rescue ex : File::Error
+        File.delete?(tmp_dest)
+        return {changed: false, failure: archive_write_failure(dest, ex, single_compress, source_path)}
+      end
+      File.delete(tmp_dest)
+      {changed: changed, failure: nil}
+    end
+
+    # The failure real's own rewrite produces when dest cannot be opened
+    # for writing (live-verified vs ansible-playbook 2.21.6 as a non-root
+    # user against a mode-0000 dest): a single-file compression
+    # (gz/bz2/xz) goes through add_single_target's try/except and reports
+    # "Unable to write to compressed file: <err>", while tar/zip go
+    # through add_targets' self.open() OUTSIDE its try and crash with the
+    # bare OSError text. Both name the destination as a str path (real
+    # only uses the b'' bytes repr for a dest it derived itself).
+    private def archive_write_failure(dest : String, ex : File::Error, single_compress : Bool, source_path : String?) : PluginResult
+      errno = ex.os_error.try(&.value)
+      detail = errno ? "[Errno #{errno}] #{String.new(LibC.strerror(errno))}: '#{dest}'" : ex.message.to_s
+      unless single_compress
+        # tar/zip's add_targets calls self.open() OUTSIDE its try, so the
+        # PermissionError escapes as a module crash: the fatal dump's msg
+        # carries the whole "Task failed: Module failed: <OSError>" chain
+        # and no dest/path keys at all.
+        return PluginResult.new(changed: false, failed: true,
+          msg: "Task failed: Module failed: #{detail}", _ansible_error_detail: detail)
+      end
+
+      failure = PluginResult.new(changed: false, failed: true,
+        msg: "Unable to write to compressed file: #{detail}", dest: dest)
+      # add_single_target's fail_json is called with path=<the source file>
+      # and _return_formatted/#add_path_info then appends THAT path's stat
+      # block (live-verified: path=/etc/hostname, its uid/gid/mode/size/
+      # secontext, while dest is the archive).
+      if source = source_path
+        add_path_info(failure, source)
+        failure.extra["path"] = JSON::Any.new(source)
+      end
+      failure
     end
 
     private def apply_dest_attributes(dest : String) : Nil
@@ -729,36 +792,26 @@ module Krikri
       nil
     end
 
-    # `seuser:`/`serole:`/`setype:`/`selevel:` - SELinux file context,
-    # applied to *dest* via `chcon`. Verified against AnsibleModule's
-    # own `set_context_if_different`/`selinux_enabled` source:
-    # Ansible skips this ENTIRELY (not even attempting it) when SELinux
-    # isn't enabled on the target at all (`if not self.selinux_enabled():
-    # return changed`) - matched here via the standard `/sys/fs/selinux/
-    # enforce` selinuxfs check, the same file `selinuxenabled(8)` itself
-    # tests. On any non-SELinux host (the overwhelming majority of real-
-    # world targets this project has ever benchmarked against) this is a
-    # verified, confirmed no-op, identical to Ansible's own behavior
-    # - the chcon-invocation shape itself for an actually-SELinux-enabled
-    # host is implemented per `chcon(1)`'s documented flags but NOT
-    # live-verified against a real SELinux-enabled target (none available
-    # in this project's usual Ubuntu/Debian benchmark environment).
-    private def apply_selinux_context(dest : String) : PluginResult?
-      return nil unless File.exists?("/sys/fs/selinux/enforce")
+    # `seuser:`/`serole:`/`setype:`/`selevel:` - the SELinux file context,
+    # applied to *dest* through BasePlugin's shared helpers (the same ones
+    # file, copy, template and stat use): the parts merge into the file's
+    # current context the way AnsibleModule's set_context_if_different
+    # does, "_default" resolves through matchpathcon instead of being
+    # passed to chcon literally, and a change is DETECTED (returned as the
+    # changed flag) rather than blindly re-applied. A no-op on any
+    # non-SELinux host - the same skip `if not self.selinux_enabled():
+    # return changed` opens with. Returns {changed, failure}; the failure
+    # is that fail_json's shape (msg='invalid selinux context: <err>',
+    # path, cur_context, new_context, input_was).
+    private def apply_selinux_context(dest : String) : {Bool, PluginResult?}
+      return {false, nil} unless pending = pending_secontext_change(dest)
+      current, desired = pending
 
-      flags = [] of String
-      flags << "-u #{shell_single_quote(@params["seuser"].to_s)}" if @params["seuser"]?
-      flags << "-r #{shell_single_quote(@params["serole"].to_s)}" if @params["serole"]?
-      flags << "-t #{shell_single_quote(@params["setype"].to_s)}" if @params["setype"]?
-      flags << "-l #{shell_single_quote(@params["selevel"].to_s)}" if @params["selevel"]?
-      return nil if flags.empty?
-
-      result = remote_exec("chcon #{flags.join(" ")} #{shell_single_quote(dest)}")
-      if result[:exit_code] != 0
-        return PluginResult.new(changed: false, failed: true, msg: "invalid selinux context: #{result[:stderr]}")
+      if err = set_selinux_context(dest, desired)
+        return {false, selinux_context_failure(dest, err, current, desired, secontext_input_was)}
       end
 
-      nil
+      {true, nil}
     end
 
     private def dest_stat_fields(dest : String) : NamedTuple(size: Int64, uid: Int64, gid: Int64, owner: String, group: String, mode: String, state: String)

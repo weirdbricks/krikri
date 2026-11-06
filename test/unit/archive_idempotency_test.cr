@@ -128,10 +128,9 @@ describe "archive rerun idempotency" do
   end
 
   it "falls back to a size-only comparison when dest exists but is unreadable" do
-    # The 0o000 dest is the whole premise: the plugin must fail to read
-    # it and fall back to the size-only comparison. As root nothing is
-    # unreadable - the plugin reads the garbage bytes and compares them
-    # normally - so the fallback cannot be exercised at all.
+    # A write-only (0200) dest is unreadable but still rewritable, so the
+    # plugin must fall back to real's size-only comparison. As root
+    # nothing is unreadable, so the fallback cannot be exercised at all.
     skip "running as root: nothing is unreadable, so the size-only fallback cannot be exercised" if PluginSpecHelper.running_as_root?
 
     work = PluginSpecHelper.tmp_path("archive-idem-unreadable")
@@ -144,12 +143,39 @@ describe "archive rerun idempotency" do
     built_size = File.size(dest)
 
     ["x" * built_size, "x" * (built_size + 1)].each_with_index do |garbage, i|
+      File.chmod(dest, 0o600)
       File.write(dest, garbage)
-      File.chmod(dest, 0o000)
+      File.chmod(dest, 0o200)
 
       result = PluginSpecHelper.run("archive", {"path" => src, "dest" => dest, "format" => "gz"})
       result["changed"].as_bool.must_equal(i == 1)
     end
+  ensure
+    FileUtils.rm_rf(src) if src
+    FileUtils.rm_rf(work) if work
+  end
+
+  it "fails like real when dest can be neither read nor written" do
+    # Real rewrites dest in place, so a mode-0000 dest is a hard failure
+    # (live-verified vs ansible-playbook 2.21.6 as a non-root user): the
+    # single-file compression path reports "Unable to write to compressed
+    # file: [Errno 13] Permission denied: '<dest>'".
+    skip "running as root: a 0000 dest is still writable, so the failure cannot be exercised" if PluginSpecHelper.running_as_root?
+
+    work = PluginSpecHelper.tmp_path("archive-idem-unwritable")
+    Dir.mkdir_p(work)
+    # A single-FILE source: that is the compress path
+    # (add_single_target), whose failure wording differs from tar/zip's.
+    src = File.join(work, "source.txt")
+    File.write(src, "compress me\n")
+    dest = File.join(work, "pack.gz")
+
+    PluginSpecHelper.run("archive", {"path" => src, "dest" => dest, "format" => "gz"})
+    File.chmod(dest, 0o000)
+
+    result = PluginSpecHelper.run("archive", {"path" => src, "dest" => dest, "format" => "gz"})
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("Unable to write to compressed file: [Errno 13] Permission denied: '#{dest}'")
   ensure
     FileUtils.rm_rf(src) if src
     FileUtils.rm_rf(work) if work

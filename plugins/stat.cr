@@ -225,23 +225,21 @@ module Krikri
     # level may contain ':').
     private def add_selinux_context(stat_hash : Hash(String, JSON::Any), path : String) : PluginResult?
       none_context = [nil, nil, nil, nil].map { |part| JSON::Any.new(part) }
-      unless Dir.exists?("/sys/fs/selinux")
+      unless selinux_enabled?
         stat_hash["selinux_context"] = JSON::Any.new(none_context)
         return nil
       end
 
-      result = remote_exec("ls -Zd #{shell_single_quote(path)}")
-      unless result[:exit_code] == 0 && (context = result[:stdout].strip.split[0]?)
+      # BasePlugin's shared reader: lgetfilecon_raw's l-semantics via
+      # `ls -Zd`, split the way Ansible's own `context.split(':', 3)`
+      # does - so an MLS policy's 4th (level) part stays its own entry.
+      # A nil here means SELinux is on but the context is unreadable, the
+      # case Ansible fails with "Failed to retrieve selinux context."
+      unless parts = current_selinux_context(path)
         return PluginResult.new(changed: false, failed: true, msg: "Failed to retrieve selinux context.")
       end
 
-      parts = context.split(':', 3)
-      mls = (File.read("/sys/fs/selinux/mls").strip == "1" rescue false)
-      stat_hash["selinux_context"] = if parts.size == 3 || (mls && parts.size == 4)
-        JSON::Any.new(parts.map { |part| JSON::Any.new(part) })
-      else
-        JSON::Any.new(none_context)
-      end
+      stat_hash["selinux_context"] = JSON::Any.new(parts.map { |part| JSON::Any.new(part) })
       nil
     end
   end
