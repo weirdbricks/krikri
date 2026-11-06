@@ -3029,6 +3029,13 @@ module Krikri
         result_hash["attempts"] = JSON::Any.new((condition_met ? attempt : total_runs - 1).to_i64)
         unless condition_met
           result_hash["failed"] = JSON::Any.new(true)
+          # A module that SUCCEEDED but never satisfied until: real 2.21
+          # reports no controller exception placeholder on the exhausted
+          # result (live-verified with command: /bin/true and with debug:
+          # both carry changed/failed/msg/attempts and no exception,
+          # while an until on a FAILING module does). The marker keeps
+          # register_result's failed-result backfill off for this shape.
+          result_hash["_ansible_no_exception_backfill"] = JSON::Any.new(true)
         end
         result = JSON::Any.new(result_hash)
         if register_name && !register_name.empty?

@@ -3819,6 +3819,9 @@ module Krikri
       # Capture the pause opt-out marker BEFORE the _ansible_* strip below
       # removes it (see with_command_lines_augmented's comment).
       omit_command_lines = result_hash.has_key?("_ansible_omit_command_lines")
+      # The retry loop's "module succeeded, until never matched" marker has
+      # to be read BEFORE the blanket _ansible_* strip below.
+      no_exception_backfill = result_hash.has_key?("_ansible_no_exception_backfill")
       result_hash.reject! { |key, _| key.starts_with?("_ansible_") }
       # ansible-core 2.21's UnifiedTaskResult export: `changed` and
       # `failed` are plain bool properties - EVERY exported result carries
@@ -3834,9 +3837,7 @@ module Krikri
       # not-found branch builds its result without one). Suppressed
       # failures carry no `exception`; the failed_when handler moved it to
       # failed_when_suppressed_exception (or synthesized it there).
-      if result_hash["failed"].as_bool? == true && !result_hash.has_key?("exception")
-        result_hash["exception"] = JSON::Any.new("(traceback unavailable)")
-      end
+      backfill_failure_exception(result_hash, suppress: no_exception_backfill)
       # ansible-core 2.21 flipped INJECT_INVOCATION's default to false AND
       # relaxed the strategy's top-level strip with it: with the setting
       # off no module result carries `invocation` in the first place, and
@@ -3877,6 +3878,20 @@ module Krikri
     # every failure - including these, which krikri's own result builders
     # left out. Applied here, at the single point every registered result
     # passes through, so no individual builder has to know the rule.
+    # The controller-added `exception: "(traceback unavailable)"` belongs
+    # only to results that actually failed - an until-exhausted result whose
+    # module SUCCEEDED carries none in 2.21 (live-verified: command:/bin/true
+    # and debug: under `until: false` register changed/failed/msg/attempts
+    # and no exception, while an until on a failing module does have one).
+    # The retry loop marks such a result with _ansible_no_exception_backfill,
+    # which this consumes.
+    private def backfill_failure_exception(hash : Hash(String, JSON::Any), suppress : Bool = false) : Nil
+      return if suppress
+      return if hash.has_key?("exception")
+      return if hash["failed"]?.try(&.as_bool?) == false
+      hash["exception"] = JSON::Any.new("(traceback unavailable)")
+    end
+
     private def apply_failed_key_order(hash : Hash(String, JSON::Any)) : Nil
       order = hash["_ansible_key_order"]?.try(&.as_a) || return
       # ansible-core 2.21 dropped the controller-added
@@ -3884,7 +3899,7 @@ module Krikri
       # suppression un-fails (live-verified: a suppressed `fail:` register
       # under 2.21.6 carries no `exception`, where 2.19 always had it) -
       # the key belongs only to results that are actually failed.
-      hash["exception"] = JSON::Any.new("(traceback unavailable)") unless hash.has_key?("exception") || hash["failed"]?.try(&.as_bool?) == false
+      backfill_failure_exception(hash, suppress: !hash.delete("_ansible_no_exception_backfill").nil?)
       # A result whose display shape omits `changed` (debug:'s own
       # fatalization failure) but whose registered shape carries it - see
       # the `_ansible_register_changed` marker.
