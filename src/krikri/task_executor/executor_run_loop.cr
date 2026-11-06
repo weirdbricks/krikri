@@ -1822,7 +1822,7 @@ module Krikri
         # `item.invocation.module_args.creates` out of registered results),
         # and it silently didn't exist here: pre-strict templates read it as
         # an undefined value, 2.19-parity strictness fails the task on it.
-        interpreted = attach_batch_step_invocation(task, steps[idx], interpreted)
+        interpreted = attach_batch_step_invocation(task, steps[idx], interpreted, InvocationInjection.enabled?(vars_context))
         interpreted = shape_script_result(task, interpreted)
         cache[task] = {apply_changed_failed_when(task, interpreted, vars_context, host), vars_context}
       end
@@ -3179,6 +3179,14 @@ module Krikri
         if period = marker_task_timeout(result)
           return task_timeout_result(period)
         end
+        # ansible-core 2.21's INJECT_INVOCATION default: the target's own
+        # AnsibleModule._return_formatted already popped `invocation` when
+        # the flag was absent from the module args; a module that set
+        # kwargs['invocation'] itself, or one running under an older
+        # target ansible that always injects, still hands one back - shed
+        # it here, matching what the controller-side result would carry
+        # under the setting's resolution (see InvocationInjection).
+        result = InvocationInjection.strip(result) unless InvocationInjection.enabled?(vars_context)
         return apply_changed_failed_when(task, result, vars_context, host)
       end
 
@@ -3200,7 +3208,7 @@ module Krikri
         PluginManager.remote_execution?("shell", exec_host, dispatch_vars),
         exec_host.connection_host)
       result = shape_script_result(task, result)
-      result = attach_invocation(task, substituted_params, result)
+      result = attach_invocation(task, substituted_params, result, InvocationInjection.enabled?(vars_context))
       apply_changed_failed_when(task, result, vars_context, host)
     end
 
@@ -3465,7 +3473,7 @@ module Krikri
     # pacifica.ansible_certinfra's loop over its CA chain).
     INVOCATION_FQCNS = %w[community.crypto.x509_certificate_info]
 
-    private def attach_invocation(task : Task, params : Hash(String, String), result : JSON::Any) : JSON::Any
+    private def attach_invocation(task : Task, params : Hash(String, String), result : JSON::Any, inject_invocation : Bool = true) : JSON::Any
       short = task.module_name.sub(/\Aansible\.(builtin|legacy)\./, "")
       fqcn = PlaybookParser::MODULE_ALIASES[task.module_name]? || task.module_name
       spec_name = if INVOCATION_MODULES.includes?(short)
@@ -3486,6 +3494,17 @@ module Krikri
         hash = hash.dup
         hash.delete("_ansible_invocation_module_args")
         result = JSON::Any.new(hash)
+      end
+      # ansible-core 2.21's INJECT_INVOCATION default is false: module
+      # results carry no `invocation` key at all unless the setting is
+      # enabled (InvocationInjection's own comment). The gate sits after
+      # the echo-marker cleanup and ahead of the echo build, so the OFF
+      # case also sheds the invocation a native plugin attached itself
+      # (copy's content echo, getent) or a real Python module returned in
+      # its own kwargs - the same pop AnsibleModule._return_formatted
+      # applies.
+      unless inject_invocation
+        return InvocationInjection.strip(result)
       end
       return result unless spec_name
       return result if hash.has_key?("invocation")
@@ -3566,9 +3585,9 @@ module Krikri
     # unknown (older construction sites, a plugin the argspec table can't
     # reproduce) keeps its result untouched - the same no-args no-attach
     # rule attach_invocation itself applies.
-    private def attach_batch_step_invocation(task : Task, step : BatchScript::Step, result : JSON::Any) : JSON::Any
+    private def attach_batch_step_invocation(task : Task, step : BatchScript::Step, result : JSON::Any, inject_invocation : Bool) : JSON::Any
       return result unless (params = step.params)
-      attach_invocation(task, params, result)
+      attach_invocation(task, params, result, inject_invocation)
     end
 
     # A whole-single-span `{{ expr }}` module/action arg whose structured
@@ -3819,6 +3838,18 @@ module Krikri
       else
         py_params["kv_argv"] = PythonModuleRunner.build_kv_argv(substituted_params).to_json
       end
+      # The INJECT_INVOCATION resolution rides to the py_module plugin as
+      # its own param, NOT inside module_args: a target with ansible-core
+      # installed runs the custom module against the TARGET's real
+      # basic.py, and an older one rejects the unknown `_ansible_*` key as
+      # an unsupported parameter (live-verified: a role-library module
+      # failed "Unsupported parameters for (bigmod) module:
+      # _ansible_inject_invocation" on this 2.19.11 host) - where real
+      # 2.21 never hits that because its AnsiballZ payload bundles the
+      # controller's own basic.py. The plugin adds the flag to the args
+      # only on the shim path (its own bundled basic), and the controller
+      # strips `invocation` off the result when the setting is off.
+      py_params["_ansible_inject_invocation"] = InvocationInjection.enabled?(vars_context).to_s
 
       # A role shipping its OWN custom module_utils packages (e.g.
       # linux-system-roles.storage's the Ansible module beside its

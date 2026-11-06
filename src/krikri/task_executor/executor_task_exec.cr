@@ -3801,11 +3801,14 @@ module Krikri
       # the assert plugins' `_ansible_quiet` display marker is likewise
       # controller-internal, not part of the registered shape.
       #
-      # `invocation` is stripped here too, generically: ansible-core's
-      # strategy plugin (strategy/__init__.py, "register final results"
-      # block) deletes a top-level `invocation` key from the clean copy it
-      # registers. Round 813375 (galaxyproject.pulsar) pinned the exact
-      # split this mirrors: a NON-looped register never exposes
+      # `invocation` is stripped here too, when the 2.21 INJECT_INVOCATION
+      # setting is off (its default): ansible-core's strategy plugin
+      # (strategy/__init__.py, "register final results" block) deletes a
+      # top-level `invocation` key from the clean copy it registers, and
+      # 2.21 relaxed that strip for solo results exactly when the setting
+      # is on (see the gated delete below for the live evidence). The
+      # 2.19-era split this code mirrored (round 813375,
+      # galaxyproject.pulsar): a NON-looped register never exposes
       # `invocation` (stripped here), while each per-item entry inside a
       # LOOPED+registered task's `results[]` keeps its own `invocation`
       # intact (the strategy strip only touches the top-level dict) - so
@@ -3817,7 +3820,17 @@ module Krikri
       # removes it (see with_command_lines_augmented's comment).
       omit_command_lines = result_hash.has_key?("_ansible_omit_command_lines")
       result_hash.reject! { |key, _| key.starts_with?("_ansible_") }
-      result_hash.delete("invocation")
+      # ansible-core 2.21 flipped INJECT_INVOCATION's default to false AND
+      # relaxed the strategy's top-level strip with it: with the setting
+      # off no module result carries `invocation` in the first place, and
+      # with it on a solo (non-looped) registered result KEEPS its
+      # `invocation` (live-verified vs 2.21.6: stat solo + looped, env and
+      # `ansible_inject_invocation` var) while a LOOPED register's
+      # top-level aggregate still never carries one. The env tier only
+      # here - the `ansible_inject_invocation` var tier is honored where
+      # vars_context exists (the attach sites), not at every one of this
+      # function's 27 call sites.
+      result_hash.delete("invocation") unless InvocationInjection.enabled?
       registered = with_command_lines_augmented(JSON::Any.new(result_hash), omit_command_lines: omit_command_lines)
       @registered_vars[host.name][register_name] = registered
       # Write-time unsafe marking - the per-task context build marks these

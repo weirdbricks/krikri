@@ -18,7 +18,15 @@ private def run_play(playbook : String) : {Int32, String}
   File.write(File.join(dir, "pb.yml"), playbook)
 
   stdout_io = IO::Memory.new
-  status = Process.run(BINARY, ["-i", "inv.ini", "pb.yml"], output: stdout_io, error: stdout_io, chdir: dir)
+  # The invocation-echo shapes these specs pin are the machinery's own
+  # behavior, exercised under ansible-core 2.21's INJECT_INVOCATION=1:
+  # with the setting at its 2.21 default (off) module results carry no
+  # `invocation` at all (see InvocationInjection). The key ORDER pinned
+  # here is still the 2.19-era assembly; 2.21's item build reorders
+  # (changed,failed,loop-vars,module keys,invocation last) - tracked in
+  # UPGRADE_PLAN_221.md until the shape rework lands.
+  status = Process.run(BINARY, ["-i", "inv.ini", "pb.yml"], output: stdout_io, error: stdout_io, chdir: dir,
+    env: {"ANSIBLE_INJECT_INVOCATION" => "1"})
   {status.exit_code, stdout_io.to_s}
 ensure
   FileUtils.rm_rf(dir) if dir && Dir.exists?(dir)

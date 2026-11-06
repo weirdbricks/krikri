@@ -52,6 +52,15 @@ module Krikri
       check_mode = true?(@params["_ansible_check_mode"]?)
       args_json = @params["module_args"]? || "{}"
       kv_argv = @params["kv_argv"]? || "[]"
+      # The controller's INJECT_INVOCATION resolution (see
+      # InvocationInjection): the flag rides OUTSIDE module_args because a
+      # target with ansible-core installed runs the module against the
+      # TARGET's real basic.py, which rejects the unknown `_ansible_*` key
+      # as an unsupported parameter - real 2.21 never hits that (its
+      # AnsiballZ payload bundles the controller's own basic.py). Added
+      # into the args only on the shim path below, where the shim mirrors
+      # real 2.21's _return_formatted inject-or-pop.
+      inject_invocation = true?(@params["_ansible_inject_invocation"]?)
 
       source = begin
         String.new(Base64.decode(source_b64))
@@ -192,6 +201,7 @@ module Krikri
 
       probe_out = IO::Memory.new
       probe_err = IO::Memory.new
+      shim_staged = false
       if python_module && (py = python) && (staged_utils.nil? || staged_utils.empty?)
         probe = Process.new(
           py, ["-c", "from ansible.module_utils.basic import AnsibleModule"],
@@ -199,6 +209,30 @@ module Krikri
         )
         unless probe.wait.success?
           PythonModuleRunner.write_module_utils_bundle(work_dir)
+          shim_staged = true
+        end
+      elsif staged_utils && !staged_utils.empty?
+        # write_module_utils_bundle already ran unconditionally above (the
+        # role's own module_utils can only resolve under the work-dir-local
+        # package), so the module runs against the shim either way.
+        shim_staged = true
+      end
+      if new_style
+        parsed_args = begin
+          JSON.parse(args_json).as_h
+        rescue
+          nil
+        end
+        if parsed_args
+          if shim_staged
+            # Mirror the real 2.21 action layer: the flag rides with EVERY
+            # module run, true or false, and the shim's _return_formatted
+            # equivalent injects or pops `invocation` off it.
+            parsed_args["_ansible_inject_invocation"] = JSON::Any.new(inject_invocation)
+          else
+            parsed_args.delete("_ansible_inject_invocation")
+          end
+          args_json = JSON::Any.new(parsed_args).to_json
         end
       end
 

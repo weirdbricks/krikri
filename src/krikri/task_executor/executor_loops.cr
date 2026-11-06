@@ -2154,7 +2154,7 @@ module Krikri
         # as undefined, 2.19-parity strictness fails the task: Turgon37.
         # ssh_server's own `{{ ... | union([item.invocation.module_args.
         # creates]) }}` set_fact over the registered results).
-        interpreted = attach_batch_step_invocation(task, steps[i], interpreted)
+        interpreted = attach_batch_step_invocation(task, steps[i], interpreted, InvocationInjection.enabled?(vars_context))
         interpreted = shape_script_result(task, interpreted)
         item_results[idx] = apply_changed_failed_when(task, interpreted, vars_context, host)
       end

@@ -65,22 +65,49 @@ snapshot did.
   #909 repro playbook: `r.results[0].invocation` errors under real 2.21.6.
   krikri still always emits `invocation` today, so this is now the
   **largest known divergence** and the top work item:
-  - [ ] Gate krikri's invocation echo behind the same knob (default OFF):
-        parse `defaults.inject_invocation` from ansible.cfg, the
-        `ANSIBLE_INJECT_INVOCATION` env var, and the
-        `ansible_inject_invocation` var, in ansible's precedence order.
-  - [ ] When OFF: every result path that attaches
-        `invocation.module_args` (plugins' echoes, action plugins,
-        python_module_runner, getent-style manual assembly) must omit it.
-  - [ ] When ON: the echo must match 2.21.6's (verified byte-identical
-        with `ANSIBLE_INJECT_INVOCATION=1` for stat + find).
-  - [ ] Re-triage: with injection OFF by default, many existing pinned
-        invocation-echo tests need re-scoping to the ON case.
+  - [x] Gate krikri's invocation echo behind the same knob (default OFF):
+        resolved per task as `ansible_inject_invocation` var >
+        `ANSIBLE_INJECT_INVOCATION` env > false (ansible.cfg's
+        `inject_invocation` ini key stays unsupported like every other
+        config-backed setting - krikri has no INI parsing).
+  - [x] When OFF: the echo build is skipped and every result path that
+        would carry `invocation` (native plugins' own echoes - copy,
+        getent - and real Python modules' kwargs via the py_module path)
+        sheds it (InvocationInjection.strip).
+  - [x] When ON: the echo matches 2.21.6's (verified live with
+        `ANSIBLE_INJECT_INVOCATION=1` for stat solo + loop items and
+        command solo + loop items).
+  - [x] Re-scoped the invocation-echo tests: echo-machinery specs run
+        with `ANSIBLE_INJECT_INVOCATION=1`; the default-off shapes are
+        pinned by updated specs.
+  - KNOWN deviations (deliberate, documented):
+    - a custom Python module on a target WITH ansible-core installed runs
+      against the target's real basic.py (pre-shim behavior kept), which
+      rejects the `_ansible_inject_invocation` wire key - so the flag is
+      only sent on the shim path, and a custom module's result carries no
+      controller-injected echo even with the setting on. Real 2.21 never
+      hits this (AnsiballZ bundles the controller's basic.py); making
+      krikri always-bundle is a separate architectural change.
+    - the register strip honors the env tier everywhere, but the
+      `ansible_inject_invocation` VAR tier is only honored where
+      vars_context exists (the attach sites); a var-only override on a
+      solo register still gets the top-level strip (27 register_result
+      call sites, most without vars in scope).
 - **find echoes `patterns: ["*"]` despite the spec default `[]`**: find.py's
   module body rewrites `params['patterns']` before `exit_json`, and
   `_return_formatted` injects the mutated params. argspecs.json's find
   `patterns` default is pinned to `["*"]` (matching the echo), same pin the
   2.19 snapshot carried.
+- **2.21 reworked the registered result shape** (independent of the
+  injection knob): loop-item dicts now assemble as
+  `changed,failed,ansible_loop_var,item,<module keys>,invocation` (2.19:
+  module keys first, `failed` near the end) and a solo command result
+  reads `changed,failed,msg,rc,stdout,stderr,cmd,start,end,delta,
+  invocation,stdout_lines,stderr_lines` - `changed`/`failed`/`msg` lead
+  and `invocation` trails the module's own keys. krikri's key-order
+  machinery (apply_failed_key_order, the plugin key_order pins) is
+  2.19-shaped - this is the next large work item after the injection
+  flip.
 - stat's unsupported-params message under 2.21.6 advertises
   `get_selinux_context` (captured live; test updated).
 

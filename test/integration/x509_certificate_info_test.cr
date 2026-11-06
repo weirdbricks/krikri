@@ -306,7 +306,11 @@ describe "x509_certificate_info: AIA, TLS feature, extensions_by_oid, EC curves"
               msg: "{{ info.results[0].invocation | to_json }}"
       YAML
     captured = IO::Memory.new
-    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: captured, error: captured)
+    # ansible-core 2.21 defaults INJECT_INVOCATION to off - the loop-item
+    # invocation echo these specs pin exists only with the setting on
+    # (see InvocationInjection).
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: captured, error: captured,
+      env: {"ANSIBLE_INJECT_INVOCATION" => "1"})
     output = captured.to_s
     status.success?.must_equal(true, output)
     output.must_include(%(\\"module_args\\": {\\"path\\": \\"#{path}\\", \\"name_encoding\\": \\"ignore\\", \\"select_crypto_backend\\": \\"auto\\", \\"content\\": null, \\"valid_at\\": null}))
@@ -533,7 +537,12 @@ describe "x509_certificate_info: valid_at invocation echo" do
         tasks:
     YAML
     captured = IO::Memory.new
-    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: captured, error: captured)
+    # ansible-core 2.21 defaults INJECT_INVOCATION to off - module results
+    # carry no `invocation` unless the setting is enabled (see
+    # InvocationInjection). These specs pin the valid_at echo machinery,
+    # so run with the setting on.
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: captured, error: captured,
+      env: {"ANSIBLE_INJECT_INVOCATION" => "1"})
     output = captured.to_s
     status.success?.must_equal(true, "playbook failed: #{output}")
     output

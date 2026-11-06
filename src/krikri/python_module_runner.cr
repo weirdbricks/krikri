@@ -442,6 +442,12 @@ module Krikri
               self.check_mode = bool(
                   raw_args.pop('_ansible_check_mode', False)
                   or os.environ.get('ANSIBLE_CHECK_MODE') == '1')
+              # Real 2.21's action layer passes the INJECT_INVOCATION config
+              # resolution with every module run and _return_formatted
+              # injects or pops `invocation` off it (basic.py:
+              # "_ansible_inject_invocation"); the shim mirrors that
+              # instead of the pre-2.21 always-inject.
+              self._inject_invocation = bool(raw_args.pop('_ansible_inject_invocation', False))
               self._apply_argument_spec(raw_args)
               # Real basic.py closes __init__ with this same gate
               # (basic.py: "if self.check_mode and not
@@ -687,6 +693,16 @@ module Krikri
               self._pull_global_warnings()
               result = dict(kwargs)
               result.setdefault('changed', False)
+              # Real _return_formatted (2.21) injects `invocation` only when
+              # the action layer passed `_ansible_inject_invocation`, and
+              # pops it otherwise - before the derived *_lines and warnings
+              # keys are added, so `invocation` sits before those in the
+              # dumped dict when present.
+              if self._inject_invocation:
+                  if 'invocation' not in result:
+                      result['invocation'] = {'module_args': self.params}
+              else:
+                  result.pop('invocation', None)
               # Real _return_formatted adds the <key>_lines companions for
               # stdout/stderr whenever those keys exist (empty list for an
               # empty string) - a result carrying stdout without them
@@ -714,6 +730,13 @@ module Krikri
               result = dict(kwargs)
               result['failed'] = True
               result['msg'] = msg
+              # Same inject-or-pop gate as exit_json above (real
+              # _return_formatted runs for both exits).
+              if self._inject_invocation:
+                  if 'invocation' not in result:
+                      result['invocation'] = {'module_args': self.params}
+              else:
+                  result.pop('invocation', None)
               # Only a real exception object builds an ErrorSummary chain in
               # real fail_json; a plain-string traceback is just hidden
               # (issue #557) and must not reach the error header.
