@@ -95,7 +95,7 @@ module Krikri
     private def as_bool(value) : Bool
       case value
       when Bool   then value
-      when String then value == "true" || value == "yes"
+      when String then value == "true" || value == "True" || value == "yes"
       else             false
       end
     end

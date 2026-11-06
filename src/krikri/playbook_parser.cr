@@ -7198,7 +7198,7 @@ module Krikri
       when String  then value.as_s
       when Int64   then value.as_i64.to_s
       when Float64 then value.as_f.to_s
-      when Bool    then value.as_bool.to_s
+      when Bool    then value.as_bool ? "True" : "False"
       when Nil     then ""
       else              value.to_json
       end
@@ -8652,8 +8652,11 @@ module Krikri
       when Float64
         yaml.as_f.to_s
       when Bool
+        # Python str() spelling ("True"/"False") - what the argspec
+        # finalization puts on the wire for a str-typed option carrying a
+        # native bool (see non_string_param_text's comment).
         begin
-          yaml.as_bool.to_s
+          yaml.as_bool ? "True" : "False"
         rescue
           yaml.raw.to_s
         end

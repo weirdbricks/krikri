@@ -147,6 +147,21 @@ module Krikri
         )
       end
 
+      # Same explicit-null shape as command.cr's branch (shell IS
+      # command.py with _uses_shell=True - the same run_command TypeError,
+      # rc 257, cmd kept null, no stdout/stderr keys; 2.21 live-verified).
+      if (explicit_null_param?("cmd") || explicit_null_param?("_raw_params")) && !argv
+        result = PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: "Argument 'args' to run_command must be list or string",
+          cmd: nil,
+          rc: 257
+        )
+        result.extra["exception"] = JSON::Any.new("(traceback unavailable)")
+        return result
+      end
+
       # Bool-typed params: AnsibleModule type-converts them at module
       # setup, after the required-args gate above - now via the shared
       # BasePlugin#validate_bool_params! (see its block comment).

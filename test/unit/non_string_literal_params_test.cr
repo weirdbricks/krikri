@@ -9,7 +9,9 @@ require "../../src/krikri/argspec_validator"
 # bool validation - see StrictBoolValidation#validate_bool_params_in!).
 describe "non-string YAML literal param marker" do
   it "round-trips int/float/bool literals through the prefixed JSON wire form" do
-    {"89" => 89_i64, "1.5" => 1.5, "true" => true, "false" => false}.each do |text, native|
+    # 2.21: a native bool demotes to Python str() ("True"/"False") on the
+    # wire - see non_string_param_text's comment.
+    {"89" => 89_i64, "1.5" => 1.5, "True" => true, "False" => false}.each do |text, native|
       marked = Krikri::NON_STRING_PARAM_PREFIX + native.to_json
       decoded = Krikri.non_string_scalar(marked)
       decoded.try(&.raw).must_equal(native)
@@ -28,7 +30,7 @@ describe "non-string YAML literal param marker" do
     }
     stripped = Krikri.strip_non_string_param_markers(params)
     stripped["dest"].must_equal("89")
-    stripped["follow"].must_equal("true")
+    stripped["follow"].must_equal("True")
     stripped["name"].must_equal("plain")
     # Untouched input hash is returned verbatim when nothing is marked
     unmarked = {"a" => "b"} of String => String

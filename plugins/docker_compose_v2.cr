@@ -418,7 +418,7 @@ module Krikri
       args << "--force-recreate" if recreate == "always"
       args << "--no-recreate" if recreate == "never"
       args << "--renew-anon-volumes" if true?(@params["renew_anon_volumes"]?)
-      args << "--no-deps" if false?(@params["dependencies"]?) || @params["dependencies"]? == "false"
+      args << "--no-deps" if false?(@params["dependencies"]?)
       args << "--timeout" << @params["timeout"] if @params["timeout"]?
       args << "--build" if build == "always"
       args << "--no-build" if build == "never"
@@ -438,7 +438,7 @@ module Krikri
 
     private def restart_cmd(check_mode : Bool) : Array(String)
       args = ["restart"]
-      args << "--no-deps" if @params["dependencies"]? == "false"
+      args << "--no-deps" if false?(@params["dependencies"]?)
       args << "--timeout" << @params["timeout"] if @params["timeout"]?
       args << "--dry-run" if check_mode
       services = split_list(@params["services"]?)

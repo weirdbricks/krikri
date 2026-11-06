@@ -579,8 +579,8 @@ module Krikri
     # "true"/"false" wire text and Ansible keeps it a Python bool - an int
     # subclass (True == 1) - so it converts too.
     private def decimal_int(raw : String) : Int32
-      return 1 if raw == "true"
-      return 0 if raw == "false"
+      return 1 if raw == "true" || raw == "True"
+      return 0 if raw == "false" || raw == "False"
       BigDecimal.new(raw).to_i
     rescue
       raw.to_i

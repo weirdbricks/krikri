@@ -155,6 +155,25 @@ module Krikri
         )
       end
 
+      # An explicit null command source (a templated null, or YAML `cmd:`
+      # with no value): real's run_command receives Python None and raises
+      # TypeError('Argument 'args' to run_command must be list or string'),
+      # which fail_json reports as rc 257 with cmd kept NULL on the wire -
+      # no stdout/stderr keys at all (2.21 live-verified; the 2.19-era
+      # shape ran the empty command through the shell instead). The
+      # exception placeholder rides for the failed_when suppression flow.
+      if (explicit_null_param?("cmd") || explicit_null_param?("_raw_params")) && !argv
+        result = PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: "Argument 'args' to run_command must be list or string",
+          cmd: nil,
+          rc: 257
+        )
+        result.extra["exception"] = JSON::Any.new("(traceback unavailable)")
+        return result
+      end
+
       # Bool-typed params: AnsibleModule type-converts them at module
       # setup, after the required-args gate above - now via the shared
       # BasePlugin#validate_bool_params! (see its block comment).
