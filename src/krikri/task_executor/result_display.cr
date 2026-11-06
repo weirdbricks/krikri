@@ -895,7 +895,7 @@ module Krikri
       # dispatches through the same plugin, so both spellings allow.
       return true if module_name.try { |name| name == "command" || name.ends_with?(".command") || name == "shell" || name.ends_with?(".shell") } &&
                      (msg == "non-zero return code" ||
-                      msg == "The command exited with a non-zero return code.")
+                     msg == "The command exited with a non-zero return code.")
       # copy's missing-parent check (issue #644): real prints the block
       # for a no_log copy whose dest's parent is absent (live-verified
       # against 2.19.11), and its wording echoes the destination directory.
