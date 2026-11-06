@@ -1,6 +1,6 @@
 # Upgrade plan: parity target ansible-core 2.19.11 → 2.21.6
 
-Status: **source-diff + porting-guide pass complete at 0.9.2436 — pending live verification**.
+Status: **source-diff + porting-guide pass complete at 0.9.2438 — pending live verification**.
 Decision (2026-11-05): krikri tracks ansible-core **2.21.6 only** — the
 `--krikri-argspec-profile` knob proposed earlier was dropped before it
 shipped; `data/argspecs.json` IS the 2.21.6 capture, and
@@ -87,6 +87,26 @@ Branch: `crush/ansible-221-upgrade` (worktree
       re-scoped to the 2.21 shapes; echo-machinery specs run with
       `ANSIBLE_INJECT_INVOCATION=1`; default-off shapes pinned by updated
       specs. Full suite green at 0.9.2408.
+
+- [x] **Filter-plugin failure wrapper** (0.9.2438): an exception raised
+      inside a filter's own body now surfaces as FilterFailureError naming
+      the plugin, the way 2.21 words it ("The filter plugin
+      'ansible.builtin.<name>' failed: <cause>", live-captured; a dotted
+      spelling such as community.general.* keeps its FQCN). Before this a
+      bare ArgumentError escaped the dispatch entirely: the task-param path
+      reported the cause with no plugin name and no way to
+      tell it from a module failure, and the `when:`/`failed_when:`/
+      `changed_when:`/assert paths had no rescue at all, so such a task
+      CRASHED the run with an unhandled exception and a Crystal stack dump.
+      assert's `that:` also gained the 2.19/2.21 FilterFailureError split
+      (a raising filter keeps the plugin wrapper, a bare runtime failure
+      such as first/last on an empty sequence keeps the
+      "Error while evaluating conditional:" wording) - it used to classify
+      both as compile-time "Syntax error in expression:".
+      Still divergent (inner cause text, per filter): krikri's own message
+      for the SAME raise can differ from CPython's (e.g. regex_replace
+      reports "missing terminating ] for character class at 1" where
+      2.21 prints "unterminated character set at position 0").
 
 ## Measured argspec delta 2.19.11 → 2.21.6 (small — 14 changed modules)
 
@@ -193,11 +213,20 @@ were, and they are done.
       succeeded (0.9.2433) - `gap_fixes_test` and the new
       `until_exhausted_exception_shape_test` pin both shapes.
 - [ ] **Known micro-divergences** (documented, deliberate or deferred):
-      - filter-error wrapper text: real wraps a filter exception as
-        "Finalization of task args for '<action>' failed: Error while
-        resolving value for '<param>': The filter plugin
-        '<fqcn>.<name>' failed: <msg>"; krikri reports "Action failed:
-        <msg>". Affects every filter, not just password_hash.
+      - conditional-expression failure wording (2.21 only, live-captured):
+        every when/until-style evaluation failure is now labelled with the
+        clause that raised - `when:` failures read "Task failed: A 'when'
+        expression failed: <detail>", `failed_when:`/`changed_when:`
+        failures "Task failed: Action failed: A '<clause>' expression
+        failed: <detail>" (or "... Module failed: A '<clause>' expression
+        failed: ..." when the module itself had already failed), while the
+        stored `failed_when_result`/`changed_when_result` keeps the bare
+        detail. A raising `*_when` on an already-failed module result also
+        gains `failed_when_suppressed_exception`/
+        `changed_when_suppressed_exception` ("(traceback unavailable)").
+        krikri still reports the 2.19 shapes ("Task failed: <detail>",
+        msg "Task failed: Action failed: Unknown error."). `assert:`'s
+        `that:` is NOT affected (2.21 left it unchanged, live-verified).
       - custom-module injection echo (see the INJECT_INVOCATION deviation
         above).
       - the file-attributes diff entry covers mode/owner/group; a
