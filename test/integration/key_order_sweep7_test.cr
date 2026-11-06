@@ -128,7 +128,7 @@ describe "package plugin result key order (sweep7)" do
               dest: KRIKRI_DUMP_PATH
     YAML
 
-    keys.must_equal(["changed", "cache_updated", "cache_update_time", "failed"])
+    keys.must_equal(["changed", "failed", "cache_updated", "cache_update_time"])
   end
 
   it "registers an absent no-op as just changed" do

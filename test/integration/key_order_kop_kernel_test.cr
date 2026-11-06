@@ -185,7 +185,7 @@ describe "mount_facts plugin result key order (round 992001)" do
               dest: KRIKRI_DUMP_PATH
     YAML
 
-    keys.must_equal(["ansible_facts", "failed", "changed", "warnings"])
+    keys.must_equal(["changed", "failed", "ansible_facts", "warnings"])
   end
 
   # Nested shape, same capture: each mount entry serializes as the fstab
