@@ -30,6 +30,27 @@ describe "tempfile plugin" do
     File.delete(path)
   end
 
+  it "fails a prefix containing a path separator with 2.21's wording" do
+    result = PluginSpecHelper.run("tempfile", {"prefix" => "sub/dir."})
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("prefix must be a valid file name component, got 'sub/dir.'")
+  end
+
+  it "fails a suffix containing a path separator with 2.21's wording" do
+    result = PluginSpecHelper.run("tempfile", {"suffix" => ".conf/x"})
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("suffix must be a valid file name component, got '.conf/x'")
+  end
+
+  it "accepts an empty prefix/suffix (Python truthiness)" do
+    result = PluginSpecHelper.run("tempfile", {"prefix" => "", "suffix" => ""})
+
+    falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+    File.delete(result["path"].as_s)
+  end
+
   it "names the file like Python's mkstemp: prefix plus 8 lowercase/digit/underscore chars" do
     result = PluginSpecHelper.run("tempfile", {} of String => String)
 
