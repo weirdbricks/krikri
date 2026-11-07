@@ -465,29 +465,71 @@ describe "non-string YAML literal module args (group_by/add_host)" do
     output.must_include("Origin:")
   end
 
-  it "add_host aborts the run on a non-string name like Ansible's inventory.add_host" do
+  it "fails a truthy non-string name in Ansible's AddHost result validation" do
     output, _scratch = run_playbook(<<-YAML)
           - add_host:
               name: 5
             ignore_errors: true
           - debug:
-              msg: never reached
+              msg: still here
     YAML
 
-    output.must_include("[ERROR]: Invalid host name supplied, expected a string but got <class 'ansible.module_utils._internal._datatag._AnsibleTaggedInt'> for 5")
-    output.wont_include("never reached")
-    output.wont_include("PLAY RECAP")
+    # Ansible 2.21 dies in its AddHost dataclass's `host_name: str` field
+    # validation - a task failure, not the whole-run abort 2.19's
+    # inventory.add_host raised, so ignore_errors keeps the play going.
+    output.must_include("[ERROR]: Task failed: AddHost.host_name must be <class 'str'> instead of <class 'ansible.module_utils._internal._datatag._AnsibleTaggedInt'>")
+    output.must_include(%(fatal: [localhost]: FAILED! => {"changed": false, "msg": "Task failed: AddHost.host_name must be <class 'str'> instead of <class 'ansible.module_utils._internal._datatag._AnsibleTaggedInt'>"}))
+    output.must_include("still here")
+    output.must_include("PLAY RECAP")
+    output.must_match(/ignored=1/)
   end
 
-  it "add_host aborts the run on a falsy non-string name like Ansible's empty-host check" do
+  it "rejects a falsy non-string name with the same AddHost validation failure" do
     output, _scratch = run_playbook(<<-YAML)
           - add_host:
               name: 0
             ignore_errors: true
     YAML
 
-    output.must_include("[ERROR]: Invalid empty host name provided: 0")
-    output.wont_include("PLAY RECAP")
+    # The dataclass validation is a type check, so a falsy literal hits the
+    # exact same failure a truthy one does (2.19 instead took the empty-host
+    # path for it, "Invalid empty host name provided: 0").
+    output.must_include("[ERROR]: Task failed: AddHost.host_name must be <class 'str'> instead of <class 'ansible.module_utils._internal._datatag._AnsibleTaggedInt'>")
+    output.must_include("PLAY RECAP")
+    output.must_match(/ignored=1/)
+  end
+
+  it "names the tagged container/bool class in the AddHost validation failure" do
+    output, _scratch = run_playbook(<<-YAML)
+          - add_host:
+              name: {a: b}
+            ignore_errors: true
+          - add_host:
+              name: [a, b]
+            ignore_errors: true
+          - add_host:
+              name: false
+            ignore_errors: true
+    YAML
+
+    output.must_include("AddHost.host_name must be <class 'str'> instead of <class 'ansible.module_utils._internal._datatag._AnsibleTaggedDict'>")
+    output.must_include("AddHost.host_name must be <class 'str'> instead of <class 'ansible.module_utils._internal._datatag._AnsibleTaggedList'>")
+    # A bool is not datatag-wrapped, so its class is the plain Python one.
+    output.must_include("AddHost.host_name must be <class 'str'> instead of <class 'bool'>")
+  end
+
+  it "keeps a marked STRING value as a valid host name (the wire marker is not the type)" do
+    output, _scratch = run_playbook(<<-YAML)
+          - add_host:
+              name: "{{ bracket_name }}"
+            vars:
+              bracket_name: "[]"
+    YAML
+
+    # A whole-span `{{ var }}` whose value is the text "[]" rides the
+    # NON_STRING_PARAM_PREFIX marker on the wire, but the value IS a str -
+    # Ansible adds it as a host (live-verified vs 2.21.6).
+    output.must_include("changed: [localhost]")
   end
 end
 
@@ -602,22 +644,24 @@ describe "add_host name-chain failure shapes (missing/null/empty name)" do
     output.must_match(/ignored=2/)
   end
 
-  it "aborts the run on an empty-string name like Ansible's inventory empty-host check" do
+  it "fails an empty-string name inside inventory's empty-host check, as a task failure" do
     output, _scratch = run_playbook(<<-YAML)
           - add_host:
               name: ""
             ignore_errors: true
           - debug:
-              msg: never reached
+              msg: still here
     YAML
 
-    # Byte-exact vs 2.19.11: the bare colon carries NO trailing space when
-    # the name is the empty string (a falsy non-None literal like `name:
-    # false` renders "Invalid empty host name provided: False").
-    output.must_include("[ERROR]: Invalid empty host name provided:")
+    # An empty string is a real str, so it clears the AddHost field
+    # validation and dies in inventory's add_dynamic_host instead - a task
+    # failure in 2.21, not the run abort 2.19 produced. Byte-exact: the
+    # bare colon carries NO trailing space.
+    output.must_include("[ERROR]: Task failed: Invalid empty host name provided:")
+    output.must_include(%(fatal: [localhost]: FAILED! => {"changed": false, "msg": "Task failed: Invalid empty host name provided:"}))
     output.wont_include("Invalid empty host name provided: ")
-    output.wont_include("never reached")
-    output.wont_include("PLAY RECAP")
+    output.must_include("still here")
+    output.must_match(/ignored=1/)
   end
 end
 
