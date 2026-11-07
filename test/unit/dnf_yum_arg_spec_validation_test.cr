@@ -128,6 +128,17 @@ describe "dnf: argument-spec validation" do
     result["msg"].as_s.must_include("The value 'sometimes' is not a valid boolean")
   end
 
+  # kpg:dnf chaos #42: a bad bool plus typo'd params - real reports the
+  # bool-type error, not the unsupported-params one (unsupported is
+  # collected but reported last in Ansible's check order).
+  it "reports a bad bool before unsupported parameters" do
+    result = run_dnf({"name" => "gzip", "install_weak_deps" => "ksjyws", "escurity" => "false", "sttae" => "present", "use_backend" => "dnf"})
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_include("argument 'install_weak_deps' is of type str")
+    result["msg"].as_s.must_include("The value 'ksjyws' is not a valid boolean")
+    result["msg"].as_s.wont_include("Unsupported parameters")
+  end
+
   it "still accepts all documented params including use_backend choices" do
     result = run_dnf({"name" => "bash", "state" => "present-nowhere", "use_backend" => "auto", "disable_gpg_check" => "yes"})
     result["failed"].as_bool.must_equal(true)

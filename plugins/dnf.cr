@@ -173,6 +173,14 @@ module Krikri
                        "sslverify", "state", "update_cache", "update_only",
                        "validate_certs", "use_backend", "expire-cache", "pkg"}
       dnf_internal = {"_ansible_check_mode", "_ansible_diff", "_module_name", "_verbosity", "_environment"}
+      # Ansible collects unsupported params but reports them LAST in its
+      # check order (mutually_exclusive -> required -> types -> choices ->
+      # ... -> unsupported), so a bool-type error beats a typo'd parameter
+      # (kpg:dnf chaos #42: install_weak_deps: ksjyws alongside escurity/
+      # sttae failed with the bool error on real, not the unsupported one).
+      # Compute the unsupported rejection here but return it only after
+      # the shared checks below.
+      unsupported_rejection : PluginResult? = nil
       if @dnf5_backend
         # Under the dnf5 backend the message is the dnf5 MODULE's own
         # argspec check, not dnf's: the action plugin strips use_backend
@@ -190,7 +198,7 @@ module Krikri
                           "update_cache", "update_only", "validate_certs", "expire-cache", "pkg"}
         unsupported = @params.keys.reject { |k| dnf5_supported.includes?(k) || dnf_internal.includes?(k) || k.starts_with?("_") || k == "use_backend" }
         unless unsupported.empty?
-          return PluginResult.new(
+          unsupported_rejection = PluginResult.new(
             changed: false,
             failed: true,
             msg: "Unsupported parameters for (#{backend_module_name}) module: #{unsupported.sort.join(", ")}. " \
@@ -212,7 +220,7 @@ module Krikri
         unsupported = @params.keys.reject { |k| dnf_supported.includes?(k) || dnf_internal.includes?(k) || k.starts_with?("_") }
         unless unsupported.empty?
           unsupported_sorted = unsupported.sort
-          return PluginResult.new(
+          unsupported_rejection = PluginResult.new(
             changed: false,
             failed: true,
             msg: "Unsupported parameters for (#{backend_module_name}) module: #{unsupported_sorted.join(", ")}. " \
@@ -265,7 +273,8 @@ module Krikri
         )
       end
 
-      nil
+      # unsupported-params is reported only after every other spec check
+      unsupported_rejection
     end
 
     def execute : PluginResult # ameba:disable Metrics/CyclomaticComplexity
