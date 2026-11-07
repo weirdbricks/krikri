@@ -351,24 +351,23 @@ module Krikri
       # every time (robertdebock.nextcloud's own `Configure nextcloud`
       # task, `chdir: /var/www/html/nextcloud`, `become_user: www-data`).
       if chdir && !File.directory?(chdir)
-        # The result carries the FULL real command-module shape with
-        # rc: NULL (not absent, not 0) - Ansible's chdir failure
-        # happens inside run_command, whose fail_json populates
-        # cmd/stdout/stdout_lines/stderr/stderr_lines/start/end/delta
-        # alongside rc: null (live-verified against 2.19.4: `{"changed":
-        # false, "cmd": ["pwd"], ..., "rc": null, "msg": "Unable to
-        # change directory before execution: ..."}`). With `rc` absent
-        # a registered result's `.rc` reference was genuinely undefined
-        # where Ansible hands back null - same divergence class as
-        # the creates:/removes: skip above (found via the podman-diff
-        # command_edge_cases C7 harness case).
+        # The result keeps the FULL real command-module shape
+        # (cmd/stdout/stdout_lines/stderr/stderr_lines/start/end/delta)
+        # but carries NO rc key - Ansible's chdir failure happens inside
+        # run_command, whose fail_json seeds rc=None, yet the controller's
+        # result normalization (UnifiedTaskResult.as_result_dict) drops
+        # every declared field whose value is null. So the rendered and
+        # registered result has no rc at all, while start/end/delta
+        # (arbitrary extra keys, not declared fields) stay null.
+        # Emitting rc:null here diverged on ansible-core 2.21.6 (podman-diff,
+        # krikri 0.9.2474); the pre-2.21 shape genuinely had rc:null, but the
+        # reference engine krikri targets now omits it.
         return with_executable_warning(PluginResult.new(
           changed: false,
           failed: true,
           msg: "Unable to change directory before execution.",
           _ansible_error_detail: chdir_error_detail(chdir),
           cmd: cmd_list,
-          rc: nil,
           stdout: "",
           stdout_lines: [] of String,
           stderr: "",

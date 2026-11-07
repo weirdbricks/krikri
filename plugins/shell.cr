@@ -318,12 +318,15 @@ module Krikri
 
       # Ansible's run_command tries os.chdir(chdir) BEFORE spawning
       # anything, so a nonexistent/non-directory chdir fails the MODULE
-      # (changed: false, rc: null, full command-module shape) instead of
-      # surfacing as a shell exit code with changed: true - the `cd X
-      # &&` prefix above would have run and failed inside the shell.
-      # Same up-front check as command.cr's, with the rc:null shape
-      # run_command actually produces (live-verified against 2.19.4;
-      # found via the podman-diff command_edge_cases C9 harness case).
+      # (changed: false, full command-module shape) instead of surfacing
+      # as a shell exit code with changed: true - the `cd X &&` prefix
+      # above would have run and failed inside the shell. command.py's own
+      # result dict seeds rc=None, but the controller's result
+      # normalization (UnifiedTaskResult.as_result_dict) drops every
+      # declared field whose value is null, so the rendered/registered
+      # result carries NO rc key at all - only start/end/delta (arbitrary
+      # extra keys, not declared fields) survive as nulls. Emitting rc:null
+      # here diverged on ansible-core 2.21.6 (podman-diff, krikri 0.9.2474).
       if chdir && !File.directory?(expand_tilde(chdir))
         return PluginResult.new(
           changed: false,
@@ -331,7 +334,6 @@ module Krikri
           msg: "Unable to change directory before execution.",
           _ansible_error_detail: chdir_error_detail(expand_tilde(chdir)),
           cmd: command_string,
-          rc: nil,
           stdout: "",
           stdout_lines: [] of String,
           stderr: "",

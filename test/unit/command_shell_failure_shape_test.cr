@@ -5,15 +5,13 @@ require "../minitest_helper"
 # Ansible's command/shell module fails these cases inside
 # AnsibleModule.run_command / before any process spawns, so the
 # registered result keeps the FULL command-module shape (cmd, stdout,
-# stdout_lines, stderr, stderr_lines, start, end, delta) with rc either
-# null (chdir failure) or the raw OSError errno (bad shell executable)
-# - and changed stays FALSE. This engine used to return either a bare
-# msg-only result (rc key absent entirely -> registered `.rc` reads
-# undefined where Ansible hands back null) or a shell "command not
-# found" exit code with changed=true.
+# stdout_lines, stderr, stderr_lines, start, end, delta) - with rc
+# absent for a chdir failure (its rc is None, and ansible-core 2.21's
+# result normalization drops null-valued declared fields) or the raw
+# OSError errno for a bad shell executable - and changed stays FALSE.
 describe "command/shell failure-path result shape" do
   describe "command with a nonexistent chdir" do
-    it "fails with rc null and the full result shape (not a missing rc key)" do
+    it "fails with the full result shape and NO rc key (ansible drops the null rc)" do
       result = PluginSpecHelper.run("command", {
         "cmd"   => "pwd",
         "chdir" => "/nonexistent-krikri-spec-dir-zzz",
@@ -21,12 +19,19 @@ describe "command/shell failure-path result shape" do
 
       result["failed"].as_bool.must_equal(true)
       result["changed"].as_bool.must_equal(false)
-      result["rc"].as_nil.must_be_nil
+      # ansible-core 2.21.6's rendered/registered result has no rc at all
+      # (command.py seeds rc=None, but the controller's result
+      # normalization omits null-valued declared fields). start/end/delta
+      # are extra keys, not declared fields, so they survive as nulls.
+      result.as_h.has_key?("rc").must_equal(false)
       result["stdout"].as_s.must_equal("")
       result["stderr"].as_s.must_equal("")
       result["stdout_lines"].as_a.must_be_empty
       result["stderr_lines"].as_a.must_be_empty
-      # Ansible 2.19.11's fatal msg is the generic text; the path lives only in
+      result["start"].raw.must_be_nil
+      result["end"].raw.must_be_nil
+      result["delta"].raw.must_be_nil
+      # Ansible's fatal msg is the generic text; the path lives only in
       # the [ERROR] block's detail (carried in _ansible_error_detail)
       result["msg"].as_s.must_equal("Unable to change directory before execution.")
       result["_ansible_error_detail"].as_s.must_include("/nonexistent-krikri-spec-dir-zzz")
@@ -67,7 +72,7 @@ describe "command/shell failure-path result shape" do
   end
 
   describe "shell with a nonexistent chdir" do
-    it "fails with rc null and changed false before the shell runs" do
+    it "fails with changed false and NO rc key before the shell runs (ansible drops the null rc)" do
       result = PluginSpecHelper.run("shell", {
         "cmd"   => "pwd",
         "chdir" => "/nonexistent-krikri-spec-dir-zzz",
@@ -75,7 +80,9 @@ describe "command/shell failure-path result shape" do
 
       result["failed"].as_bool.must_equal(true)
       result["changed"].as_bool.must_equal(false)
-      result["rc"].as_nil.must_be_nil
+      # ansible-core 2.21.6 omits the null-valued rc field from the result;
+      # emitting `rc: null` here was the issue #947 shell divergence.
+      result.as_h.has_key?("rc").must_equal(false)
       result["stdout"].as_s.must_equal("")
     end
   end
@@ -168,6 +175,27 @@ describe "command/shell failure-path result shape" do
       result["msg"].as_s.must_equal("Error executing command.")
       result["rc"].as_i.must_equal(13)
       result["exception"].as_s.must_equal("[Errno 13] Permission denied: b'#{not_executable}'")
+    end
+  end
+
+  # Issue #947 (kpg 000015-shell-chaos): a chdir failure must reproduce
+  # ansible-core 2.21.6's rendered key set EXACTLY - the null-valued `rc`
+  # field is dropped by ansible's result normalization, so a registered or
+  # displayed result has no rc key. This checks the whole key set (not just
+  # rc's absence) so any future drift in the failed-chdir shape is caught.
+  describe "chdir failure rendered key set" do
+    it "matches ansible's key set with no rc for both command and shell" do
+      expected = %w[changed cmd delta end exception failed msg start stderr stderr_lines stdout stdout_lines]
+      {"command" => "true", "shell" => "/bin/true"}.each do |plugin, cmd|
+        result = PluginSpecHelper.run(plugin, {
+          "cmd"   => cmd,
+          "chdir" => "/nonexistent-krikri-spec-dir-zzz",
+        })
+
+        result["failed"].as_bool.must_equal(true)
+        result.as_h.has_key?("rc").must_equal(false)
+        (expected - result.as_h.keys).must_be_empty
+      end
     end
   end
 end
