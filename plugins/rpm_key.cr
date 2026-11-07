@@ -50,6 +50,15 @@ module Krikri
       key = @params["key"]?
       return PluginResult.new(changed: false, failed: true, msg: "missing required arguments: key") unless key
 
+      # `key` is `type: str`, so a YAML integer reaches real Python as
+      # str(int) - bare digits. An integer too wide for Int64 arrives here
+      # BIGINT_SENTINEL_PREFIX-marked, and its digits are what the module's
+      # is_keyid test sees: `key: 0xdeadbeefcafeb00d` is the int
+      # 16045690984503095309, whose leading "16045690" is hex, so Ansible
+      # resolves it as a key ID (live-verified: state=absent exits ok with
+      # changed=False, never "Not a valid key").
+      key = Krikri.bigint_digits(key) || key
+
       state = @params["state"]?.try(&.downcase) || "present"
 
       # RpmKey.__init__: get_bin_path('rpm', True) before anything touches the key
@@ -64,10 +73,23 @@ module Krikri
       end
     end
 
+    # RpmKey#is_keyid's own regex, `(0x)?[0-9a-f]{8}` matched (not
+    # full-matched) against the space-stripped key: 8+ leading hex chars
+    # are enough, trailing junk and all, so `deadbeefXYZ` is still a key ID
+    # to Ansible while a shorter `67` is not.
     private def bare_keyid?(key : String) : Bool
       stripped = key.strip.gsub(" ", "")
-      stripped = stripped[2..] if stripped.starts_with?("0x") || stripped.starts_with?("0X")
-      stripped.matches?(/\A[0-9a-fA-F]{8,}\z/)
+      stripped.matches?(/\A(?:0[xX])?[0-9a-fA-F]{8}/)
+    end
+
+    # RpmKey.__init__ resolves `key` as URL -> bare key ID -> a file that
+    # exists on the target (the module reads it target-side, where this
+    # plugin also runs), and anything else fails there with "Not a valid
+    # key <key>" before any gpg/rpm call - so a key that simply is not a
+    # key file never reaches the PGP parser and never reports its "Failed
+    # to get keyid" wording (kpg rpm_key chaos, issue #938: `key: 67`).
+    private def url_or_keyfile?(key : String) : Bool
+      key.includes?("://") || File.file?(key)
     end
 
     private def normalize_keyid(key : String) : String
@@ -115,6 +137,10 @@ module Krikri
     private def add_key(key : String) : PluginResult
       if result = bare_keyid_result(key)
         return result
+      end
+
+      unless url_or_keyfile?(key)
+        return PluginResult.new(changed: false, failed: true, msg: "Not a valid key #{key}")
       end
 
       tmp_path = nil
@@ -278,6 +304,10 @@ module Krikri
     end
 
     private def remove_key(key : String) : PluginResult
+      unless bare_keyid?(key) || url_or_keyfile?(key)
+        return PluginResult.new(changed: false, failed: true, msg: "Not a valid key #{key}")
+      end
+
       short_id =
         if bare_keyid?(key)
           normalize_keyid(key)[-8..]? || normalize_keyid(key)
