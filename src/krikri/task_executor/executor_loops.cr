@@ -2670,7 +2670,12 @@ module Krikri
       # here - real's role._had_task_run likewise never turns on when a
       # loop skipped every item.
       mark_role_dep_ran(task, host) if executed_count > 0
-      if any_changed && (notify_list = task.notify)
+      # ansible only reads a task's notify: in its strategy's branch for
+      # a result that is none of failed/unreachable/skipped, so a loop
+      # with one failed item never notifies - even when ignore_errors:
+      # makes the play carry on, and even when other items changed
+      # (live-verified vs 2.21.6: a fail+change loop prints no handler).
+      if any_changed && !any_failed && !any_unreachable && (notify_list = task.notify)
         if notify_list.any?(&.includes?("{{"))
           notify_looped_items(task, host, loop_items, item_results, skipped_items, notify_list, base_vars_context)
         else
@@ -3153,7 +3158,11 @@ module Krikri
 
       changed = result["changed"]?.try(&.as_bool) || false
       failed = Krikri.result_failed_flag(result)
-      if changed && (notify_list = task.notify)
+      # Same rule as the plain and looped paths: a result ansible books
+      # as failed never notifies - an until: that ran out of retries on a
+      # changed-but-failing module does not fire its handler even under
+      # ignore_errors:.
+      if changed && !failed && (notify_list = task.notify)
         notify_handlers(task, host, notify_list)
       end
 
