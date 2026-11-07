@@ -55,6 +55,22 @@ binary and needs no Python, so it gathers facts and the play proceeds. This is i
 compiled-module design, not a defect; a role then failing later on that host (e.g. a variable only
 defined from facts) is the same role-side gap either way.
 
+### The static-musl Linux release binary cannot reach a musl host's `crypt()`
+
+`password_hash` resolves libxcrypt/libc's `crypt()`/`crypt_gensalt()` at runtime (`dlopen`), the way
+ansible's own `CryptFacade` does, so a host with libxcrypt (any glibc distro) gets byte-identical
+hashes, a host without it degrades with Ansible's own `crypt cannot be used as the 'libxcrypt'
+library is not installed or is unusable.`, and a bare musl `crypt()` (no `crypt_gensalt`) gets
+Ansible's hand-built salt string instead (live-verified in an Alpine container: the same
+`$6$rounds=656000$mysalt$...` libxcrypt produces).
+
+The exception is the *shipped* `krikri-*-linux-*.tar.gz` binary: it is fully static musl, and musl's
+static `dlopen` is a stub that fails, so on an Alpine/musl host even the musl `crypt()` compiled into
+that binary is unreachable and `password_hash` reports the libxcrypt-missing error where a
+Python-based Ansible on the same host would succeed. Deliberate: the alternative is statically
+vendoring libxcrypt into the release build (an extra source build per arch) to buy back one filter on
+a distro the static binary exists to avoid depending on in the first place.
+
 ### No automatic cross-compilation of plugin binaries for a foreign-arch target
 
 krikri's modules are compiled binaries uploaded to the target and exec'd there, so an x86_64
