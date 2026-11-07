@@ -2947,6 +2947,12 @@ module Krikri
       if ["setup", "gather_facts"].includes?(task.module_name.split(".").last)
         final_params["_first_gather"] = first_gather_for_host?(host).to_s
       end
+      # Whether the gather_facts ACTION would run its fact module async
+      # (`parallel:`): the failed-module payload it reports for an unknown
+      # task arg differs between the two forms (see gather_async_param).
+      if task.module_name.split(".").last == "gather_facts"
+        final_params["_ansible_gather_async"] = gather_async_param(params, vars_context)
+      end
 
       # environment: - substituted STRICTLY (UndefinedVariableError on an
       # undefined reference) ahead of this call, inside the same protected
@@ -3479,6 +3485,44 @@ module Krikri
 
     private def boolean_value_error(native : JSON::Any) : String
       "The value '#{python_value_text(native)}' is not a valid boolean. Valid booleans include: #{ArgspecValidator::BOOLEANS_REPR.join(", ")}"
+    end
+
+    # convert_bool.boolean(strict=True)'s VALUE for a `parallel:` that
+    # already passed strict_boolean_error - nil when the value is not in
+    # Ansible's BOOLEANS sets after all.
+    private def strict_boolean_value(native : JSON::Any) : Bool?
+      case raw = native.raw
+      when Bool
+        raw
+      when Int64
+        raw == 1
+      when Float64
+        raw == 1.0
+      when String
+        strict_boolean_string(raw)
+      end
+    end
+
+    private def strict_boolean_string(raw : String) : Bool?
+      normalized = raw.downcase.strip
+      return true if ArgspecValidator::REAL_TRUE.includes?(normalized)
+      return false if ArgspecValidator::REAL_FALSE.includes?(normalized)
+      nil
+    end
+
+    # The `_ansible_gather_async` wire value a gather_facts: task carries
+    # into the gatherer: Ansible's action runs its fact module under
+    # async_wrapper whenever `parallel` (a task arg, or the
+    # ansible_facts_parallel var, which wins) resolves truthy, and only
+    # that form's failed module result carries the discovery warning and
+    # the job-id/finished keys. An unset (or null) parallel falls back to
+    # the action's module-count default, which is a single setup module
+    # here, i.e. serial. An invalid value never reaches this: the strict
+    # conversion failed the task first (gather_facts_parallel_failure).
+    private def gather_async_param(params : Hash(String, String), vars_context : Hash(String, JSON::Any)) : String
+      native = vars_context["ansible_facts_parallel"]? || parallel_arg_native(params)
+      return "false" if native.nil? || native.raw.nil?
+      (strict_boolean_value(native) || false).to_s
     end
 
     # to_text(value) for the error message: scalars match Ansible's str()

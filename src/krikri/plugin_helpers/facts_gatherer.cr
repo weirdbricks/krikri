@@ -1,4 +1,5 @@
 require "json"
+require "../async_jobs"
 require "../param_sentinels"
 require "./distribution_facts"
 require "./service_mgr_fact"
@@ -148,6 +149,115 @@ module Krikri
         "interpreter_missing" => interpreter,
         "shell_dash"          => dash_shell?,
       }.to_json
+    end
+
+    # The forbidden parameter names in a fact-module invocation, sorted the
+    # way Ansible's UnsupportedError lists them (empty when the task only
+    # passed setup's own options). Leading-underscore keys are the
+    # executor's internal wire bookkeeping (_module_name, _first_gather,
+    # _ansible_*, _remote_connection, ...) and never task args - real
+    # strips that namespace before any argument-spec check.
+    private def unsupported_setup_params(params : JSON::Any?, invoked_as : String) : Array(String)
+      action = invoked_as.split('.').last
+      consumed = [] of String
+      consumed += GATHER_FACTS_CONSUMED_PARAMS if action == "gather_facts"
+      # The implicit Gathering Facts call reaches this plugin with no
+      # _module_name at all (the executor builds its params itself).
+      consumed += FACTS_CONSUMED_PARAMS if action == "facts" || invoked_as.empty?
+      hash = params.try(&.as_h?) || return [] of String
+      hash.keys.reject do |key|
+        SETUP_OPTIONS.includes?(key) ||
+          consumed.includes?(key) ||
+          key.starts_with?('_') ||
+          # The gather_facts action strips every task arg whose value is
+          # None before it runs the fact module (`mod_args = dict((k, v)
+          # for k, v in mod_args.items() if v is not None)`), so a null
+          # `parallel_bogus:` never reaches setup's spec - live-verified vs
+          # 2.21.6: the null form runs ok while `parallel_bogus: true`
+          # fails.
+          python_none_param?(hash[key])
+      end.sort!
+    end
+
+    private def python_none_param?(value : JSON::Any) : Bool
+      value.raw.nil? || value.as_s? == Krikri::NONE_SENTINEL
+    end
+
+    # The failure Ansible's fact module produces for an unknown parameter,
+    # and - when the gather_facts action is the caller - the failed_modules
+    # wrapper it puts around it. Real's setup module dies in AnsibleModule
+    # setup before it can gather anything, so the module result carries
+    # changed/failed/msg plus the always-present
+    # deprecations/exception/warnings keys, the discovery warning in
+    # `warnings` and the discovered interpreter in `ansible_facts` when
+    # discovery ran for this gather; only the async (parallel) copy adds
+    # the job id and the async-status `finished` flag. A direct setup: task
+    # (no wrapper) gets the bare module payload instead: the discovery
+    # stamp when it ran discovery, changed/failed/msg, and none of the
+    # async or action-level keys.
+    private def unsupported_params_failure(
+      unsupported : Array(String),
+      invoked_as : String,
+      async : Bool,
+      discovered : String?,
+      warnings : Array(String),
+      discovery_warnings : Array(String),
+    ) : String
+      # The gather_facts action always runs the fact module under its
+      # ansible.legacy.setup spelling, and that is the name the module's
+      # Unsupported-parameters message and the wrapper's failed_modules key
+      # carry; a direct setup: task prints the name it was invoked by.
+      wrapper = invoked_as.split('.').last == "gather_facts"
+      print_name = if wrapper
+                     "ansible.legacy.setup"
+                   elsif invoked_as.empty?
+                     "ansible.builtin.setup"
+                   else
+                     invoked_as
+                   end
+      message = "Unsupported parameters for (#{print_name}) module: #{unsupported.join(", ")}. " \
+                "Supported parameters include: #{SETUP_OPTIONS.join(", ")}."
+
+      module_result = {} of String => JSON::Any
+      if path = discovered
+        module_result["ansible_facts"] = JSON.parse({"discovered_interpreter_python" => path}.to_json)
+      end
+      module_result["ansible_job_id"] = JSON::Any.new(Krikri::AsyncJobs.generate_jid) if async
+      module_result["changed"] = JSON::Any.new(false)
+      module_result["deprecations"] = JSON::Any.new([] of JSON::Any)
+      module_result["exception"] = JSON::Any.new("(traceback unavailable)")
+      module_result["failed"] = JSON::Any.new(true)
+      module_result["finished"] = JSON::Any.new(true) if async
+      module_result["msg"] = JSON::Any.new(message)
+      module_result["warnings"] = JSON::Any.new(warnings.map { |warning| JSON::Any.new(warning) })
+
+      unless wrapper
+        # A direct setup: task's result is the module's own argument-spec
+        # failure, so it carries the interpreter that task discovered (when
+        # it ran discovery) but neither the async-status keys nor an
+        # action-level failed_modules wrapper (live-verified vs 2.21.6:
+        # `setup: bogus: true` dumps {"ansible_facts":
+        # {"discovered_interpreter_python": ...}, "changed": false,
+        # "msg": ...}).
+        direct = {} of String => JSON::Any
+        direct["ansible_facts"] = module_result["ansible_facts"] if module_result.has_key?("ansible_facts")
+        direct["changed"] = JSON::Any.new(false)
+        direct["failed"] = JSON::Any.new(true)
+        direct["msg"] = JSON::Any.new(message)
+        return direct.to_json
+      end
+
+      failed_modules_msg = "The following modules failed to execute: ansible.legacy.setup."
+      result = {} of String => JSON::Any
+      result["ansible_facts"] = JSON::Any.new({} of String => JSON::Any)
+      result["changed"] = JSON::Any.new(false)
+      result["failed"] = JSON::Any.new(true)
+      result["failed_modules"] = JSON::Any.new({"ansible.legacy.setup" => JSON::Any.new(module_result)})
+      result["msg"] = JSON::Any.new(failed_modules_msg)
+      unless discovery_warnings.empty?
+        result["_ansible_discovery_warning"] = JSON.parse(discovery_warnings.to_json)
+      end
+      result.to_json
     end
 
     # The exact block ansible-playbook prints when the implicit setup
@@ -420,6 +530,24 @@ module Krikri
     ALL_FAMILIES           = MIN_FAMILIES + FAMILY_SUBSETS.keys
     DEFAULT_GATHER_TIMEOUT = 10
     DEFAULT_FACT_PATH      = "/etc/ansible/facts.d"
+
+    # setup's own argument-spec options (ansible.builtin.setup's four
+    # documented params), in the order Ansible's UnsupportedError message
+    # sorts them into "Supported parameters include:".
+    SETUP_OPTIONS = %w[fact_path filter gather_subset gather_timeout]
+
+    # Task args the gather_facts ACTION plugin consumes itself and never
+    # forwards to the fact module it runs (gather_facts.py pops `parallel`
+    # off the task args before building the module args). A direct setup:
+    # task's own `parallel:` is NOT consumed - it reaches setup's argument
+    # spec and fails there like any other unknown key.
+    GATHER_FACTS_CONSUMED_PARAMS = %w[parallel]
+
+    # The same, for this engine's implicit Gathering Facts call: the
+    # executor hands the facts plugin the host's already-resolved
+    # ansible_python_interpreter, which real folds into the module's
+    # shebang rather than its argument spec.
+    FACTS_CONSUMED_PARAMS = %w[ansible_python_interpreter]
 
     # Ansible's get_collector_names,
     # narrowed to the families this engine implements: 'min' is prepended
@@ -2817,17 +2945,54 @@ module Krikri
       python_bin = nil if python_bin.try(&.empty?)
       discovered_interpreter = nil
       discovery_warnings = [] of String
+      # The same warnings in the shape a module RESULT carries them: real's
+      # Display renders msg + help_text ("See ... for more information."),
+      # while the copy that lands in a result's `warnings` list is the bare
+      # message. The unsupported-parameter failure below is the one result
+      # here that can carry that list (see its own comment).
+      discovery_warning_msgs = [] of String
       if python_bin.nil?
         python_bin, found_any = discover_python_interpreter
         discovered_interpreter = python_bin
         if !found_any
-          discovery_warnings << "No python interpreters found for host '#{host_name}' (tried #{interpreter_fallback_repr})."
+          message = "No python interpreters found for host '#{host_name}' (tried #{interpreter_fallback_repr})."
+          discovery_warning_msgs << message
+          discovery_warnings << message
         elsif first_gather
-          discovery_warnings << "Host '#{host_name}' is using the discovered Python interpreter at '#{python_bin}', but future installation of another Python interpreter could cause a different interpreter to be discovered. See https://docs.ansible.com/ansible-core/2.19/reference_appendices/interpreter_discovery.html for more information."
+          message = "Host '#{host_name}' is using the discovered Python interpreter at '#{python_bin}', but future installation of another Python interpreter could cause a different interpreter to be discovered."
+          discovery_warning_msgs << message
+          discovery_warnings << "#{message} See https://docs.ansible.com/ansible-core/2.19/reference_appendices/interpreter_discovery.html for more information."
         end
         if interpreter_missing?(python_bin)
           return missing_interpreter_failure(python_bin)
         end
+      end
+
+      # Every task arg the gather_facts action does not consume goes
+      # straight into the argument spec of the fact module it runs
+      # (ansible.legacy.setup), so a typo'd or unknown key fails INSIDE
+      # that module and the action books it as "The following modules
+      # failed to execute: ansible.legacy.setup." with the module's own
+      # failure under failed_modules - not as a plain module failure.
+      # krikri used to ignore unknown keys and report ok where real failed
+      # (issue #933). Discovery has already run at this point, exactly as
+      # it does in real before the module's argument spec is consulted, so
+      # the failure carries the discovery warning and the discovered
+      # interpreter like any other first-gather result (live-verified vs
+      # 2.21.6, serial and parallel).
+      invoked_as = params.try(&.["_module_name"]?).try(&.as_s?) || ""
+      unsupported = unsupported_setup_params(params, invoked_as)
+      unless unsupported.empty?
+        return unsupported_params_failure(
+          unsupported,
+          invoked_as,
+          async: params.try(&.["_ansible_gather_async"]?).try(&.as_s?) == "true",
+          # Only a gather that actually stamps the discovery result carries
+          # it (see the first_gather gate on the success path below).
+          discovered: first_gather ? discovered_interpreter : nil,
+          warnings: discovery_warning_msgs,
+          discovery_warnings: discovery_warnings,
+        )
       end
 
       facts = gather_facts(requested_subset, remote_connection, gather_timeout, fact_path, python_interpreter: python_bin)
