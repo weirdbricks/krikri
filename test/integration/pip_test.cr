@@ -1270,6 +1270,30 @@ describe "pip plugin" do
       end
     end
 
+    # Issue #954: Ansible declares virtualenv: as a path-type param, so it
+    # expands `~` before deciding whether the venv exists - a "~/demo_venv"
+    # that is already present is found, the package is probed, and a
+    # satisfied one reports ok. With the path left literal the existence
+    # check never matches and the module wrongly answers changed.
+    it "expands a ~-led virtualenv: and reports ok for a satisfied package (issue #954)" do
+      home = PluginSpecHelper.tmp_path("pip_tilde_home")
+      Dir.mkdir_p(home)
+      venv = File.join(home, "demo_venv")
+      begin
+        FileUtils.cp_r(pip_venv_skeleton, venv)
+        result = PluginSpecHelper.run("pip", {
+          "name"                => "pip>=20",
+          "virtualenv"          => "~/demo_venv",
+          "_ansible_check_mode" => "true",
+        }, env: {"HOME" => home})
+
+        result["failed"]?.try(&.as_bool).wont_equal(true)
+        result["changed"].as_bool.must_equal(false)
+      ensure
+        FileUtils.rm_rf(home)
+      end
+    end
+
     # A shim rather than a real venv: 2.21 resolves a bare name through
     # `pip install --dry-run --report` on pip >= 24.1, so a real pip would
     # make this spec depend on what PyPI serves today.
