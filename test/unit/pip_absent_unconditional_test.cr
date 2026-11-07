@@ -53,7 +53,29 @@ describe "pip: state=absent runs pip unconditionally" do
 
       result["failed"].as_bool.must_equal(true)
       result["changed"].as_bool.must_equal(false)
-      result["msg"].as_s.must_include("Failed to uninstall")
+      result["msg"].as_s.must_include("externally-managed-environment")
+    end
+  end
+
+  # Issue #946: a non-zero uninstall must surface the way Ansible's pip.py
+  # _fail() reports it - `cmd` carrying the exact argv it ran, and `msg`
+  # built from stdout/stderr ("\n:stderr: ..." when stdout is empty) -
+  # rather than krikri's old bespoke "Failed to uninstall:" prefix with no
+  # cmd key. Verified byte-for-byte against real ansible-core 2.21.6.
+  it "reports an uninstall failure as cmd + stderr-tagged msg like Ansible's _fail" do
+    with_fake_pip("uninstall-fails") do |script|
+      result = PluginSpecHelper.run("pip", {
+        "name"       => "krikri-no-such-package-zzz",
+        "state"      => "absent",
+        "executable" => script,
+      })
+
+      result["failed"].as_bool.must_equal(true)
+      result["changed"].as_bool.must_equal(false)
+      result["cmd"].as_a.map(&.as_s).must_equal([script, "uninstall", "-y", "krikri-no-such-package-zzz"])
+      msg = result["msg"].as_s
+      msg.must_include("\n:stderr: error: externally-managed-environment")
+      msg.includes?("Failed to uninstall").must_equal(false)
     end
   end
 end
