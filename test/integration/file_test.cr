@@ -318,6 +318,10 @@ describe "file plugin" do
     # and treats EACCES as absent-with-warning; 2.19 kept it a silent
     # absent. Live-verified vs 2.21.6.
     it "warns when an unreadable ancestor makes the path look absent (2.21)" do
+      # Root reads through mode 0000, so the EACCES this spec pins never
+      # happens (CI runs the suite as root inside its container).
+      skip "root reads through the 0000 ancestor this spec needs" if PluginSpecHelper.running_as_root?
+
       locked = tmp_path("locked-ancestor")
       Dir.mkdir_p(locked)
       child = File.join(locked, "child")

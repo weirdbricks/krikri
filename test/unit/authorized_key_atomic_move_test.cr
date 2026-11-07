@@ -13,9 +13,12 @@ require "file_utils"
 #
 # Both scenarios here need no root: a directory the suite user cannot write
 # (mode 0555, owned by itself) fails the rename and the mkstemp for any
-# non-root user.
+# non-root user. Root writes through mode 0555, so the ladder that is under
+# test never runs - CI runs the suite as root inside its container.
 describe "authorized_key: atomic_move write ladder" do
   it "crashes with real's not-writable-directory shape when the dest dir refuses the stage mkstemp" do
+    skip "root ignores the 0555 directory this spec needs" if PluginSpecHelper.running_as_root?
+
     cwd = PluginSpecHelper.tmp_path("ak-atomic-ro-dir")
     dir = File.join(cwd, "d")
     FileUtils.mkdir_p(dir)

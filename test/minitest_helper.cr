@@ -17,6 +17,15 @@ module PluginSpecHelper
   PROJECT_ROOT = File.expand_path("..", __DIR__)
   PLUGINS_DIR  = File.join(PROJECT_ROOT, "bin", "plugins")
 
+  # How long one plugin run may take before it is killed as hung. Generous on
+  # purpose: a full-suite run is N shard processes x 8 worker fibers (48
+  # concurrent tests on CI's 4-vCPU runner), and a plugin that spawns a few
+  # RSA keygens (x509_certificate_info) or shells out to npm/git/facts can
+  # spend a long time in the run queue without being wedged. All of those
+  # "hung" in CI under a 60s budget while passing in the same image when run
+  # alone; a genuinely stuck plugin still fails the suite, just later.
+  PLUGIN_RUN_TIMEOUT = 180.seconds
+
   # Parallel-safe test temp space. Each running test gets its own subtree
   # under test/tmp/p/<nonce>: the run_one hook below opens the scope before
   # setup and closes it after teardown, keyed by the worker fiber, so every
@@ -197,7 +206,7 @@ module PluginSpecHelper
     select
     when ex = drained.receive
       drain_error = ex
-    when timeout 60.seconds
+    when timeout PLUGIN_RUN_TIMEOUT
       timed_out = true
       # Process#signal, not #kill - Crystal 1.21 has no Process#kill, and
       # the process may have exited between the check and the signal.
@@ -207,7 +216,7 @@ module PluginSpecHelper
       end
     end
     process.wait
-    raise "plugin #{binary} hung for 60s and was killed" if timed_out
+    raise "plugin #{binary} hung for #{PLUGIN_RUN_TIMEOUT.total_seconds.to_i}s and was killed" if timed_out
     raise drain_error if drain_error
   end
 

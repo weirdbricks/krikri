@@ -45,10 +45,13 @@ jobs:
         # community.general.xml and htpasswd modules import exactly those libraries on
         # the target host - without them every one of those specs gets
         # Ansible's "Failed to import the required Python library" task
-        # failure instead of the behavior it pins), and python3-psycopg2
+        # failure instead of the behavior it pins), python3-psycopg2
         # (the postgresql_* plugins' shared psycopg2 gate - without it those
         # specs get the missing-library failure instead of the connection
-        # texts they pin). NOTE: do NOT add
+        # texts they pin) and python3-pymysql (the same gate for the mysql_*
+        # plugins: every mysql spec pins a host where the driver imports, so
+        # without it they get "A MySQL module is required: ..." instead of
+        # the connection texts they pin). NOTE: do NOT add
         # python3-semantic-version here: the maven_artifact tests pin a
         # host where that import FAILS (version_by_spec is rejected with
         # the missing_required_lib boilerplate before the spec parser
@@ -71,7 +74,7 @@ jobs:
             rsync iproute2 libcap2-bin kmod cron \
             python3 python3-pip python3-venv python3-apt python3-debian \
             python3-pexpect python3-lxml python3-passlib python3-psycopg2 \
-            acl parted lvm2 npm \
+            python3-pymysql acl parted lvm2 npm \
             curl zip unzip sudo \
             docker.io docker-compose-v2
 
@@ -95,9 +98,19 @@ jobs:
         # the block-style-list-param finalization spec needs: without it
         # zabbix_host dies at FQCN resolution ("Cannot resolve") instead
         # of reaching param finalization and its host_groups error chain.
+        #
+        # amazon.aws:10.1.1 + community.aws:10.0.0 are what the ec2_vpc_peer
+        # redirect-deprecation spec needs, and it needs BOTH: a bare
+        # `ec2_vpc_peer:` resolves through ansible-core's runtime redirect
+        # onto community.aws.ec2_vpc_peer, then through that collection's own
+        # runtime.yml onto amazon.aws's renamed module. With either one absent
+        # the chain dies at the collection import and the whole playbook is
+        # refused at load (rc=4) instead of printing the [DEPRECATION
+        # WARNING] - which is what real ansible does on the same controller,
+        # so the spec's captured host had both installed.
         run: |
           pip3 install --break-system-packages ansible-core==2.19.11
-          ansible-galaxy collection install community.general:12.5.0 community.docker:5.2.1 community.proxmox:1.3.0 community.mysql:5.0.2 community.zabbix:4.1.0
+          ansible-galaxy collection install community.general:12.5.0 community.docker:5.2.1 community.proxmox:1.3.0 community.mysql:5.0.2 community.zabbix:4.1.0 amazon.aws:10.1.1 community.aws:10.0.0
 
       - name: Cache shards
         uses: actions/cache@v4
