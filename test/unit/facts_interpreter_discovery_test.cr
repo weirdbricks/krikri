@@ -60,7 +60,19 @@ describe "Krikri::FactsGatherer interpreter discovery (facts_interpreter_discove
       result["ansible_facts"].as_h.keys.wont_include("_ansible_discovery_warning")
       warnings = result["_ansible_discovery_warning"].as_a
       warnings.size.must_equal(1)
-      warnings[0].as_s.must_equal("Host 'localhost' is using the discovered Python interpreter at '#{stamp}', but future installation of another Python interpreter could cause a different interpreter to be discovered. See https://docs.ansible.com/ansible-core/2.19/reference_appendices/interpreter_discovery.html for more information.")
+      warnings[0].as_s.must_equal("Host 'localhost' is using the discovered Python interpreter at '#{stamp}', but future installation of another Python interpreter could cause a different interpreter to be discovered. See https://docs.ansible.com/ansible-core/2.21/reference_appendices/interpreter_discovery.html for more information.")
+    end
+
+    it "points the discovery help link at the emulated ansible-core major.minor, not a stale one" do
+      config = JSON.parse(%({"host":{"name":"localhost","user":"root","port":22},"params":{"_first_gather":"true"},"vars":{}}))
+      result = JSON.parse(Krikri::FactsGatherer.run(config))
+      warning = result["_ansible_discovery_warning"].as_a[0].as_s
+      # Real's get_versioned_doclink derives the path segment from the
+      # running ansible-core version (2.21 for 2.21.6), so a hardcoded
+      # older release leaves the warning text one line different from
+      # ansible-playbook's on the same host (issue #933).
+      target = Krikri::ANSIBLE_TARGET_VERSION.split('.')[0, 2].join('.')
+      warning.must_match %r{/ansible-core/#{Regex.escape(target)}/reference_appendices/interpreter_discovery\.html}
     end
 
     it "carries no discovery warning on a later gather (discovery is cached in real)" do
