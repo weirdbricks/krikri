@@ -1248,6 +1248,25 @@ module Krikri
           return
         end
       end
+      # A gathered fact module that failed on its own (gather_facts with an
+      # option setup's argument spec rejects, issue #933): the action
+      # reports it as "The following modules failed to execute: ..." and
+      # hangs each failed module's own error off that message as a
+      # sub-event, so the chain is the two-segment action shape - "Task
+      # failed." at the task's Origin, the bare "Action failed." middle,
+      # then the failed_modules message with its Sub-Event box. The
+      # generic routing below would fold the three messages into one
+      # collapsed segment and drop the box entirely.
+      if (failed_modules = result["failed_modules"]?.try(&.as_h?)) &&
+         (failed = failed_modules.values.first?.try(&.as_h?)) &&
+         (detail = failed["msg"]?.try(&.as_s?))
+        message = "The following modules failed to execute: #{failed_modules.keys.join(", ")}."
+        cause = ErrorBlock::Node.new(message, events: [ErrorBlock::Node.new(detail)])
+        ErrorBlock.emit(ErrorBlock::Node.new("Task failed.", source_context: origin)
+          .with_chain(ErrorBlock::DIRECT_CAUSE, true,
+            ErrorBlock::Node.new("Action failed.").with_chain(ErrorBlock::DIRECT_CAUSE, true, cause)))
+        return
+      end
       # A plugin flagging _ansible_action_level failed in Ansible's controller-
       # side ACTION plugin (a bare AnsibleActionFail: no "Module failed."
       # middle segment), e.g. assemble's remote_src: false isdir() check.

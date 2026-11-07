@@ -135,6 +135,13 @@ module Krikri
 
         msg = deduplicate_message_parts(messages)
         segment = message_lines(msg, event.help_text, event.source_context).join('\n') + '\n'
+        # An event that captured CHILD events prints them under a boxed
+        # "Sub-Event N of M" listing after its own message (real's
+        # gather_facts failure: the action's caused-by event carries each
+        # failed fact module's own error this way).
+        if children = event.events
+          segment += format_event_children("Sub-Event", children.map { |child| format_event_verbose_message(child) })
+        end
         segments << segment
 
         if (child = link.chain) && link.chain_follow?
@@ -147,6 +154,39 @@ module Krikri
 
       segments.insert(0, brief_message(original) + "\n\n") if segments.size > 1
       segments.join
+    end
+
+    # Matches `_event_formatting._format_event_children`: each child's
+    # formatted message indented behind a "| " gutter, one numbered box
+    # per child, closed by an "End" line.
+    private def self.format_event_children(label : String, children : Array(String)) : String
+      String.build do |io|
+        io << '\n'
+        children.each_with_index do |child, index|
+          io << "+--[ #{label} #{index + 1} of #{children.size} ]---\n"
+          io << indent_event_text("\n#{child}\n")
+        end
+        io << "+--[ End #{label} ]---\n"
+      end
+    end
+
+    # `textwrap.indent(text, "| ", predicate_always_true)`: EVERY line of
+    # the text - blank ones included - gets the gutter prefix.
+    private def self.indent_event_text(text : String) : String
+      String.build do |io|
+        start = 0
+        text.each_char_with_index do |char, index|
+          next unless char == '\n'
+          io << "| "
+          io << text[start...index]
+          io << '\n'
+          start = index + 1
+        end
+        if start < text.size
+          io << "| "
+          io << text[start..]
+        end
+      end
     end
 
     # The collapsed half of the walk above: from a segment's first node,
