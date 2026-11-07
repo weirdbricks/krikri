@@ -442,4 +442,72 @@ describe "yum_repository plugin" do
     result["failed"].as_bool.must_equal(true)
     result["msg"].as_s.must_equal("chgrp failed: failed to look up group ")
   end
+
+  # ansible-core 2.21.6's yum_repository deprecates every explicitly-passed
+  # dnf-ineffective param from inside YumRepo.add() (the state=present
+  # write path), one module.deprecate per param in the params dict's sorted
+  # key order - live-verified vs 2.21.6 with the issue #929 repro playbook
+  # (hint line, then one [DEPRECATION WARNING] for each of
+  # http_caching/keepalive/mirrorlist_expire, on stderr even though the
+  # task's later file-attribute step failed). krikri wrote the byte-
+  # identical .repo file but dropped the warnings entirely.
+  it "carries the dnf-ineffective param deprecations on the state=present result" do
+    result = PluginSpecHelper.run("yum_repository", {
+      "name"              => "deprecateme",
+      "description"       => "d",
+      "baseurl"           => "https://example.com",
+      "http_caching"      => "packages",
+      "keepalive"         => "true",
+      "mirrorlist_expire" => "wkotyd",
+      "reposdir"          => repo_dir,
+    })
+
+    result["_ansible_core_deprecations"].as_a.map(&.as_s).must_equal([
+      "'http_caching' parameter is deprecated as it has no effect with dnf as an underlying package manager. " \
+      "This feature will be removed from module 'yum_repository' in ansible-core version 2.22.",
+      "'keepalive' parameter is deprecated as it has no effect with dnf as an underlying package manager. " \
+      "This feature will be removed from module 'yum_repository' in ansible-core version 2.22.",
+      "'mirrorlist_expire' parameter is deprecated as it has no effect with dnf as an underlying package manager. " \
+      "This feature will be removed from module 'yum_repository' in ansible-core version 2.22.",
+    ])
+  end
+
+  it "deprecates async with the removed-on-supported-systems wording" do
+    result = PluginSpecHelper.run("yum_repository", {
+      "name"        => "depasync",
+      "description" => "d",
+      "baseurl"     => "https://example.com",
+      "async"       => "true",
+      "reposdir"    => repo_dir,
+    })
+
+    result["_ansible_core_deprecations"].as_a.map(&.as_s).must_equal([
+      "'async' parameter is deprecated as it has been removed on systems supported by ansible-core. " \
+      "This feature will be removed from module 'yum_repository' in ansible-core version 2.22.",
+    ])
+  end
+
+  # add()'s `if value is None: continue` sits BEFORE the deprecate branch,
+  # and state=absent never reaches add() at all - so an unpassed param, an
+  # explicit null and the absent state all stay silent.
+  it "stays silent for state: absent, unpassed and explicitly-null deprecated params" do
+    PluginSpecHelper.run("yum_repository", {
+      "name" => "depsilent", "description" => "d", "baseurl" => "https://example.com",
+      "http_caching" => "packages", "reposdir" => repo_dir,
+    })
+
+    absent = PluginSpecHelper.run("yum_repository", {
+      "name" => "depsilent", "state" => "absent", "http_caching" => "packages", "reposdir" => repo_dir,
+    })
+    absent["_ansible_core_deprecations"]?.must_be_nil
+
+    nulled = PluginSpecHelper.run_raw("yum_repository", {
+      "name"         => JSON::Any.new("depnull"),
+      "description"  => JSON::Any.new("d"),
+      "baseurl"      => JSON::Any.new("https://example.com"),
+      "http_caching" => JSON::Any.new(nil),
+      "reposdir"     => JSON::Any.new(repo_dir),
+    })
+    nulled["_ansible_core_deprecations"]?.must_be_nil
+  end
 end
