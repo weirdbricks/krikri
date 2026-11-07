@@ -3,7 +3,7 @@ require "yaml"
 
 module Krikri
   # include_role:/import_role:'s own boolean keywords (`public:`,
-  # `allow_duplicates:`, `rolespec_validate:`) are converted to a Python
+  # `allow_duplicates:`, `rolespec_validate:`, `rescuable:`) are converted to a Python
   # bool by ansible-core 2.19.11 BEFORE the role itself is
   # resolved, and a value that is not a bool at all fails the task with a
   # three-link cause chain:
@@ -37,10 +37,12 @@ module Krikri
   # other's file without a cycle.
   module RoleBoolKeywords
     # Ansible's own conversion order - public is converted before
-    # allow_duplicates, which is converted before rolespec_validate
-    # (live-verified vs 2.19.11: a task with all three unconvertible
-    # reports `public`).
-    KEYWORDS = %w[public allow_duplicates rolespec_validate]
+    # allow_duplicates, which is converted before rolespec_validate, which
+    # is converted before rescuable
+    # (live-verified vs 2.19.11 for the first three, vs 2.21.6 for
+    # rescuable: a task with both rolespec_validate and rescuable
+    # unconvertible reports `rolespec_validate`).
+    KEYWORDS = %w[public allow_duplicates rolespec_validate rescuable]
 
     TRUE_WORDS  = %w[y yes on 1 true t]
     FALSE_WORDS = %w[n no off 0 false f]

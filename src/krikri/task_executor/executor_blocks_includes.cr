@@ -2993,7 +2993,7 @@ module Krikri
     end
 
     # include_role:'s own boolean keyword (public/allow_duplicates/
-    # rolespec_validate) whose value is not convertible to a Python bool.
+    # rolespec_validate/rescuable) whose value is not convertible to a Python bool.
     # Ansible 2.19.11 (live-verified): this is an ORDINARY task failure, not
     # a role-resolution failure - the three-link chain ("Task failed." ->
     # "Error processing keyword 'x'." -> "The value 'v' could not be
@@ -3262,7 +3262,7 @@ module Krikri
       # `ok=1 failed=1`.
 
       # Real converts this include_role:'s own boolean keywords (public,
-      # allow_duplicates, rolespec_validate) BEFORE it resolves the role,
+      # allow_duplicates, rolespec_validate, rescuable) BEFORE it resolves the role,
       # so an unconvertible value fails the task with the conversion
       # error even when the role name would not have resolved either
       # (live-verified vs 2.19.11). Placed after the when: check above,

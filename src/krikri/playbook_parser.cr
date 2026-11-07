@@ -3708,7 +3708,7 @@ module Krikri
         # the role exists, live-verified vs 2.19.11).
         validate_include_role_args(written_directive_key(task_hash, "import_role"), import_role_args, source_file, source_map, source_prefix, index)
         # Real converts an import_role:'s own boolean keywords (public,
-        # allow_duplicates, rolespec_validate) as part of loading it -
+        # allow_duplicates, rolespec_validate, rescuable) as part of loading it -
         # BEFORE it resolves the role name, so an unconvertible value
         # aborts the whole run (rc=4, no play banner) even when the role
         # itself does not exist (live-verified vs 2.19.11). The dynamic
@@ -6861,15 +6861,8 @@ module Krikri
     # (role_include.py), which also runs at PLAYBOOK-LOAD time and
     # aborts the whole run (rc=4, no play banner) on the first bad
     # argument, in the source's own order: required name/role, unknown
-    # options, non-string *_from: values, then apply: (live-verified vs
-    # 2.19.11 - including that the FROM_ARGS raise carries no obj=data
-    # and therefore renders WITHOUT an Origin block).
-    # ansible-core's IncludeRole.load argument validation
-    # (role_include.py), which runs at PLAYBOOK-LOAD time for both
-    # include_role: and import_role: and aborts the whole run (rc=4, no
-    # play banner) on the first bad argument, in the source's own order:
-    # required name/role, unknown options, non-string *_from: values,
-    # then apply: (live-verified vs 2.19.11 - including that the
+    # options, non-string *_from: values, then apply:, then rescuable:
+    # (live-verified vs 2.19.11 - including that the
     # FROM_ARGS raise carries no obj=data and therefore renders WITHOUT
     # an Origin block). Returns the role name as a string, or nil for a
     # non-string name - which real only trips over later, at role
@@ -6890,7 +6883,7 @@ module Krikri
       # 2. unknown options are refused, not silently ignored.
       valid_role_args = {"name", "role", "tasks_from", "vars_from", "defaults_from",
                          "handlers_from", "apply", "public", "allow_duplicates",
-                         "rolespec_validate"}
+                         "rolespec_validate", "rescuable"}
       bad_opts = role_args.keys.map(&.to_s).reject { |key| valid_role_args.includes?(key) }
       unless bad_opts.empty?
         # Real joins a frozenset here, so its key order is process-random
@@ -6923,6 +6916,21 @@ module Krikri
         elsif !apply_yaml.as_h?
           raise_include_directive_error(
             "Expected a dict for apply but got <class '#{include_arg_type_name(apply_yaml)}'> instead",
+            true, source_file, source_map, source_prefix, source_index)
+        end
+      end
+
+      # 5. rescuable: is only refused on the include (dynamic) forms when
+      #    TRUTHY - real's `if resc_attr` is Python truthiness of the raw
+      #    loaded value, so a falsy rescuable (false/0/""/[]) on
+      #    import_role: is accepted outright (live-verified vs 2.21.6:
+      #    `import_role: {rescuable: true}` refuses, `rescuable: false`
+      #    does not). The raise carries obj=data, so it renders WITH an
+      #    Origin block, like the apply one above.
+      if resc_yaml = role_args["rescuable"]?
+        if include_arg_truthy?(resc_yaml) && action.ends_with?("import_role")
+          raise_include_directive_error(
+            "Invalid options for #{action}: rescuable",
             true, source_file, source_map, source_prefix, source_index)
         end
       end
@@ -7031,7 +7039,7 @@ module Krikri
       end
 
       # Real converts include_role:'s own boolean keywords (public,
-      # allow_duplicates, rolespec_validate) before it resolves the role,
+      # allow_duplicates, rolespec_validate, rescuable) before it resolves the role,
       # in that order, and a value that is not a bool fails the task
       # (the executor's own path, before the role lookup). Checked last
       # so every other argument error is reported first, exactly like
