@@ -333,6 +333,11 @@ describe "apt_repository plugin result key order (sweep8)" do
   # (unprivileged; the mutating /etc/apt write needs root but shares
   # this one exit). The "Would add repository (check mode)" /
   # "Already ..." msgs were krikri's own - dropped, npm-style.
+  #
+  # ansible-core deprecates apt_repository itself (issue #918), so the
+  # controller also attaches a `deprecations` entry to every executed
+  # result; krikri's registered-shape partition keeps that
+  # controller-attached entry after the module's own keys.
 
   private APT_PLAY = <<-YAML
     - name: repro
@@ -353,14 +358,14 @@ describe "apt_repository plugin result key order (sweep8)" do
             dest: KRIKRI_DUMP_PATH
     YAML
 
-  it "registers an absent no-op as changed, repo, sources_added, sources_removed, state, diff" do
+  it "registers an absent no-op as changed, repo, sources_added, sources_removed, state, diff, deprecations" do
     keys = run_registered_dump(APT_PLAY.sub("STATE_LINE", "state: absent"))
-    keys.must_equal(%w[changed failed repo sources_added sources_removed state diff])
+    keys.must_equal(%w[changed failed repo sources_added sources_removed state diff deprecations])
   end
 
   it "registers a check-mode add in the same shape" do
     keys = run_registered_dump(APT_PLAY.sub("STATE_LINE", "state: present"))
-    keys.must_equal(%w[changed failed repo sources_added sources_removed state diff])
+    keys.must_equal(%w[changed failed repo sources_added sources_removed state diff deprecations])
   end
 end
 describe "yum_repository plugin result key order (sweep8)" do

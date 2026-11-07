@@ -708,15 +708,24 @@ module Krikri
       # redirect_deprecation_lookup for why the bare qualification cannot
       # go through MODULE_SEARCH_COLLECTIONS.
       "amazon.aws.ec2_vpc_peer" => {warning_text: "ec2_vpc_peer has been renamed to ec2_vpc_peering. Please update your tasks.", collection: "amazon.aws", version: "13.0.0"},
-      # ansible-core's own builtin deprecation (ansible_builtin_runtime.yml
-      # plugin_routing.modules.apt_key.deprecation) for the module this engine
-      # still ships: removal is an ansible-core release, not a collection one,
-      # so the tail names ansible-core - live-verified vs 2.19.11 for all
-      # three spellings (bare apt_key echoes its as-written name, the FQCN
-      # and ansible.legacy spellings echo their as-written qualified name).
-      "apt_key"                 => {warning_text: "Use deb822_repository instead.", collection: "ansible.builtin", version: "2.25"},
-      "ansible.builtin.apt_key" => {warning_text: "Use deb822_repository instead.", collection: "ansible.builtin", version: "2.25"},
-      "ansible.legacy.apt_key"  => {warning_text: "Use deb822_repository instead.", collection: "ansible.builtin", version: "2.25"},
+      # ansible-core's own builtin-runtime deprecations for apt_repository
+      # and apt_key (ansible_builtin_runtime.yml, removal_version "2.25",
+      # warning_text "Use deb822_repository instead." - the console tail
+      # names ansible-core, not a collection). Live-verified vs 2.19.11:
+      # apt_repository's FQCN spelling echoes "ansible.builtin.apt_repository"
+      # and its bare and ansible.legacy spellings echo the bare
+      # "apt_repository" (the loader matches the builtin-runtime's bare key
+      # for those), so the table carries explicit FQCN and bare entries and
+      # the legacy spelling falls back to the bare key below. apt_key's
+      # entries came from issue #917 and are unchanged here; note that a
+      # 2.21.6 recheck of `ansible.legacy.apt_key:` prints the BARE
+      # "apt_key" with a position-less Origin instead of that entry's
+      # qualified echo, a divergence still open on its own issue.
+      "ansible.builtin.apt_repository" => {warning_text: "Use deb822_repository instead.", collection: "ansible.builtin", version: "2.25"},
+      "apt_repository"                 => {warning_text: "Use deb822_repository instead.", collection: "ansible.builtin", version: "2.25"},
+      "apt_key"                        => {warning_text: "Use deb822_repository instead.", collection: "ansible.builtin", version: "2.25"},
+      "ansible.builtin.apt_key"        => {warning_text: "Use deb822_repository instead.", collection: "ansible.builtin", version: "2.25"},
+      "ansible.legacy.apt_key"         => {warning_text: "Use deb822_repository instead.", collection: "ansible.builtin", version: "2.25"},
     }
 
     # The table entry for a module name, together with the FQCN the
@@ -740,6 +749,18 @@ module Krikri
         return {name, entry}
       end
       if name.includes?(".")
+        # The ansible.legacy. collection resolves a task's name through the
+        # builtin-runtime's bare key, so its console line echoes the BARE
+        # name: live-verified vs ansible-core 2.21.6, `ansible.legacy.
+        # apt_repository:` prints "apt_repository has been deprecated...",
+        # never the as-written qualified spelling. Scoped to that prefix
+        # because only it reads the builtin table bare - any other dotted
+        # name reaching here resolved to nothing and warns not at all.
+        if name.starts_with?("ansible.legacy.") && (bare = name.split(".").last?)
+          if entry = REDIRECT_DEPRECATIONS[bare]?
+            return {bare, entry}
+          end
+        end
         return nil
       end
       MODULE_SEARCH_COLLECTIONS.each do |collection|
@@ -798,6 +819,20 @@ module Krikri
           "type"          => nil,
         },
       }.to_json)
+    end
+
+    # Whether a module's load-time deprecation warning carries an Origin
+    # block: only the two builtin-core deprecations do (issues #917/#918 -
+    # their console warning prints once per task occurrence, positioned at
+    # the module key for the bare and FQCN spellings and position-less
+    # `<unknown>` for ansible.legacy.); every collection-redirect entry
+    # above is Origin-less and dedups per run. Matched on the bare trailing
+    # segment because the table is keyed by bare and FQCN spellings alike.
+    def self.origin_carrying_builtin_deprecation?(name : String) : Bool
+      case name.split(".").last?
+      when "apt_key", "apt_repository" then true
+      else                                  false
+      end
     end
 
     # ansible-core's own builtin-runtime tombstones for the three

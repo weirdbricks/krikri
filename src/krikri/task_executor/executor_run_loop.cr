@@ -4021,7 +4021,12 @@ module Krikri
       return result if hash["skipped"]?.try(&.as_bool?)
       return result if hash["unreachable"]?.try(&.as_bool?)
       return result if hash["_connection_failure"]?.try(&.as_bool?)
-      return result if ResultDisplay.module_crash_result?(result)
+      # The load-time module deprecation bypasses the crash wrapper: real
+      # attaches the `deprecations` entry even when the module dies with an
+      # uncaught exception (live-verified vs 2.19.11: apt_repository's
+      # permission-denied fail_json and mysql_info's connect failure both
+      # carry the entry), unlike the module-side `_ansible_core_deprecations`
+      # removed-param deprecations the wrapper drops on a crash.
       hash["deprecations"] = JSON::Any.new([entry] of JSON::Any)
       JSON::Any.new(hash)
     end
