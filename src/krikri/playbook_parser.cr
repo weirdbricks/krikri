@@ -764,10 +764,11 @@ module Krikri
     property? include_vars_mixed : Bool = false
     # The Python type name of a TRUTHY non-string `file:`/`dir:` value.
     # Ansible's include_vars action plugin touches that value itself there -
-    # os.path.join(current_dir, self.source_dir) for dir, and
-    # source.startswith('~') inside _find_needle for file - and crashes
-    # with the type name in the message, before any str() copy of the
-    # path is taken (live-verified vs 2.19.11). A FALSY non-string value
+    # os.path.join(current_dir, self.source_dir) for dir, and the
+    # dataloader's `source.split('/')` (2.21's path_dwim_relative_stack,
+    # which used to reach source.startswith('~') instead) for file - and
+    # crashes with the type name in the message, before any str() copy of
+    # the path is taken (live-verified vs 2.21.6). A FALSY non-string value
     # (0, 0.0, false, "", [], {}, null) is not an error at all: Ansible's
     # `if not self.source_dir and not self.source_file` check discards it
     # and the lookup goes on with a None needle, which is exactly the
@@ -5549,7 +5550,7 @@ module Krikri
           end
         elsif file = hash["file"]?
           # Same three-way split for file: (see above), with the crash
-          # landing in _find_needle's source.startswith instead of
+          # landing in the dataloader's source.split('/') instead of
           # os.path.join. A bare YAML `file:` with no value lands here
           # too, and is simply discarded.
           file_str, task.include_vars_file_type_error = include_vars_path_kind(file)
@@ -5895,11 +5896,11 @@ module Krikri
     #   needle: {nil, nil}, the plain null-file failure this engine
     #   already produces,
     # - a TRUTHY non-string crashes the plugin where it uses the value as
-    #   a path - os.path.join for dir, source.startswith inside
-    #   _find_needle for file - and the crash text carries the value's
-    #   Python type name: {"_AnsibleTaggedInt"} and friends (live-
-    #   verified vs 2.19.11: int/float/list/dict ride the tagged
-    #   subclasses, bools are plain Python bools).
+    #   a path - os.path.join for dir, source.split('/') in the
+    #   dataloader's path_dwim_relative_stack for file - and the crash
+    #   text carries the value's Python type name: {"_AnsibleTaggedInt"}
+    #   and friends (live-verified vs 2.21.6: int/float/list/dict ride
+    #   the tagged subclasses, bools are plain Python bools).
     private def self.include_vars_path_kind(yaml : YAML::Any) : {String?, String?}
       case raw = yaml.raw
       when String

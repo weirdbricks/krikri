@@ -3,7 +3,7 @@ require "../minitest_helper"
 # Ansible's include_vars action plugin uses
 # the `file:`/`dir:` value AS a path in two places, before it ever copies it
 # to text: `os.path.join(current_dir, self.source_dir)` for dir: and
-# `_find_needle('vars', self.source_file)`'s `source.startswith('~')` for
+# `_find_needle('vars', self.source_file)` for
 # file:. A truthy non-string YAML literal therefore crashes the plugin there,
 # with the value's Python type name in the message - while a FALSY one
 # (0, 0.0, false, "", [], {}, a bare `file:`) is discarded by the plugin's own
@@ -12,7 +12,10 @@ require "../minitest_helper"
 # time (`file: 0` dropped the whole task with a parse warning instead of
 # running it). The free-form form (`include_vars: 21`) never becomes
 # Ansible's _raw_params at all: mod_args refuses it with a whole-playbook abort.
-# Every expectation below was probed against ansible-playbook 2.19.11.
+# Every expectation below was probed against ansible-playbook 2.21.6 - note
+# that the file: crash is `source.split('/')` there (2.21's
+# path_dwim_relative_stack), where 2.19 and earlier reached
+# `source.startswith('~')` first inside _find_needle.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(__DIR__, "..", "fixtures", "inventory-explicit-localhost.ini")
@@ -53,27 +56,35 @@ describe "include_vars with a non-string file:/dir: literal" do
     output.must_match(/ignored=1/)
   end
 
-  it "crashes a truthy non-string file literal in _find_needle, with its Python type name" do
+  it "crashes a truthy non-string file literal in the dataloader, with its Python type name" do
     _, output = run_playbook(play("          file: 21"))
 
-    output.must_include("[ERROR]: Task failed: '_AnsibleTaggedInt' object has no attribute 'startswith'")
-    output.must_include(%("msg": "Task failed: '_AnsibleTaggedInt' object has no attribute 'startswith'"))
+    output.must_include("[ERROR]: Task failed: '_AnsibleTaggedInt' object has no attribute 'split'")
+    output.must_include(%("msg": "Task failed: '_AnsibleTaggedInt' object has no attribute 'split'"))
     output.wont_include("Invalid request to find a file")
+    output.must_match(/ignored=1/)
+  end
+
+  it "crashes an integer file literal exactly as the generator's chaos seed does" do
+    _, output = run_playbook(play("          file: 71"))
+
+    output.must_include("[ERROR]: Task failed: '_AnsibleTaggedInt' object has no attribute 'split'")
+    output.must_include(%("msg": "Task failed: '_AnsibleTaggedInt' object has no attribute 'split'"))
     output.must_match(/ignored=1/)
   end
 
   it "prints plain bool for a true file literal and the tagged names for the containers" do
     _, bools = run_playbook(play("          file: true"))
-    bools.must_include("[ERROR]: Task failed: 'bool' object has no attribute 'startswith'")
+    bools.must_include("[ERROR]: Task failed: 'bool' object has no attribute 'split'")
 
     _, lists = run_playbook(play("          file: [a]"))
-    lists.must_include("[ERROR]: Task failed: '_AnsibleTaggedList' object has no attribute 'startswith'")
+    lists.must_include("[ERROR]: Task failed: '_AnsibleTaggedList' object has no attribute 'split'")
 
     _, dicts = run_playbook(play("          file: {a: 1}"))
-    dicts.must_include("[ERROR]: Task failed: '_AnsibleTaggedDict' object has no attribute 'startswith'")
+    dicts.must_include("[ERROR]: Task failed: '_AnsibleTaggedDict' object has no attribute 'split'")
 
     _, floats = run_playbook(play("          file: 1.5"))
-    floats.must_include("[ERROR]: Task failed: '_AnsibleTaggedFloat' object has no attribute 'startswith'")
+    floats.must_include("[ERROR]: Task failed: '_AnsibleTaggedFloat' object has no attribute 'split'")
   end
 
   it "crashes a truthy non-string dir literal in os.path.join instead" do
