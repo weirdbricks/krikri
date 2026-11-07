@@ -1733,6 +1733,19 @@ module Krikri
         return root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(msg["Task failed: ".size..]))
       end
 
+      # uri's controller-side action plugin hands a truthy non-string src:
+      # to _find_needle's path_dwim_relative_stack, which crashes on
+      # `source.split('/')` with a bare AttributeError - no obj, no cause
+      # contribution - so real collapses the block to the single
+      # "Task failed: '<PythonClass>' object has no attribute 'split'"
+      # segment at the task's Origin (live-verified vs 2.21.6:
+      # src 44/1.5/true/[1, 2]). The "Module failed." middle segment the
+      # generic chain would add never appears.
+      if msg.starts_with?("Task failed: '") && msg.ends_with?("object has no attribute 'split'") &&
+         module_name.try { |name| name.split(".").last == "uri" }
+        return root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(msg["Task failed: ".size..]))
+      end
+
       # An argspec-validation failure we emitted has Ansible's own chain
       # shape, which differs from every other failure class: module-level
       # validation (the generated spec table) is the generic collapsed

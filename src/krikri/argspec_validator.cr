@@ -577,8 +577,11 @@ module Krikri
       # so neither check below can fire.
       return nil if Krikri.lenient_boolean_true?(params["remote_src"]?)
 
+      failure, falsy_src = uri_non_string_src_outcome(non_string_natives, non_string_lists)
+      return failure if failure
+
       src = params["src"]?
-      if src && Krikri.python_param_truthy?(src)
+      if !falsy_src && src && Krikri.python_param_truthy?(src)
         unless File.exists?(src)
           return Failure.new("Task failed: Could not find or access '#{src}' on the Ansible Controller.\n" \
                              "If you are using a module and expect the file to exist on the remote, see the remote_src option", true)
@@ -589,6 +592,46 @@ module Krikri
         end
       end
       nil
+    end
+
+    # A natively-typed src: (a YAML int/float/bool literal, or a list whose
+    # members the parser marked) reaches Ansible's _find_needle unchanged:
+    # path_dwim_relative_stack starts with `source_root =
+    # source.split('/')[0]`, so a TRUTHY one crashes the action plugin with
+    # "<PythonClass> object has no attribute 'split'" before any
+    # file-existence check runs - while a FALSY one (0/0.0/false) is skipped
+    # by the action's own `if src:` and reaches the module, which stringifies
+    # it and fails opening the file ("Unable to open source file 0"). A
+    # str-typed src: - including the marker-wrapped one a whole-span `{{ }}`
+    # leaves behind, since a `{{ }}` rendering to text ("5", "[]") IS a str
+    # to ansible - is neither: it takes the ordinary controller-side
+    # existence check. (Live-verified vs ansible-core 2.21.6: 44/1.5/true/
+    # [1, 2] all crash, 0/0.0/false report "Unable to open source file
+    # <text>", a quoted "5"/"[]" reports the not-found message.)
+    #
+    # Returns the action-level failure (if any) plus whether this src: is a
+    # FALSY non-string, which the caller must not run the existence check on.
+    private def uri_non_string_src_outcome(non_string_natives : Hash(String, JSON::Any),
+                                           non_string_lists : Hash(String, JSON::Any)) : {Failure?, Bool}
+      return {uri_split_failure("_AnsibleTaggedList"), false} if non_string_lists.has_key?("src")
+
+      case raw = non_string_natives["src"]?.try(&.raw)
+      when Bool
+        {raw ? uri_split_failure("bool") : nil, !raw}
+      when Int64
+        {raw == 0 ? nil : uri_split_failure("_AnsibleTaggedInt"), raw == 0}
+      when Float64
+        {raw == 0.0 ? nil : uri_split_failure("_AnsibleTaggedFloat"), raw == 0.0}
+      when Array
+        {uri_split_failure("_AnsibleTaggedList"), false}
+      else
+        # No native mark at all, or a String one: a plain str.
+        {nil, false}
+      end
+    end
+
+    private def uri_split_failure(class_name : String) : Failure
+      Failure.new("Task failed: '#{class_name}' object has no attribute 'split'", true)
     end
 
     # Python class name for a uri body: that is not a mapping, spelled the
