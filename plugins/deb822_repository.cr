@@ -124,9 +124,13 @@ module Krikri
       # part of Ansible's argument_spec, so none are rejected.
       deb822_supported = {"allow_downgrade_to_insecure", "allow_insecure", "allow_weak", "architectures", "by_hash", "check_date", "check_valid_until", "components", "date_max_future", "enabled", "exclude", "include", "inrelease_path", "languages", "mode", "name", "pdiffs", "signed_by", "state", "suites", "targets", "trusted", "types", "uris"}
       deb822_internal = {"_ansible_check_mode", "_ansible_diff", "_module_name", "_verbosity", "_environment"}
+      # Ansible collects unsupported params but reports them LAST, so a
+      # missing-required or choices error beats a typo'd parameter (see
+      # dnf.cr).
       unsupported = @params.keys.reject { |k| deb822_supported.includes?(k) || deb822_internal.includes?(k) }
+      unsupported_rejection : PluginResult? = nil
       unless unsupported.empty?
-        return PluginResult.new(
+        unsupported_rejection = PluginResult.new(
           changed: false,
           failed: true,
           msg: "Unsupported parameters for (ansible.builtin.deb822_repository) module: #{unsupported.sort.join(", ")}. " \
@@ -148,6 +152,9 @@ module Krikri
         bad = parse_list_param(types).reject { |type| %w[deb deb-src].includes?(type) }
         return PluginResult.new(changed: false, failed: true, msg: "value of types must be one or more of: deb, deb-src. Got no match for: #{bad.join(", ")}") unless bad.empty?
       end
+
+      # unsupported-params is reported only after every other spec check
+      return unsupported_rejection if unsupported_rejection
 
       # The Ansible module's `from debian.deb822 import Deb822` runs right
       # after its own argspec validation and before ANY state handling,

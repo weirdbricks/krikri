@@ -114,10 +114,13 @@ module Krikri
                        "sslverify", "state", "update_cache", "update_only",
                        "validate_certs", "use_backend", "expire-cache", "pkg"}
       yum_internal = {"_ansible_check_mode", "_ansible_diff", "_module_name", "_verbosity", "_environment"}
+      # Ansible collects unsupported params but reports them LAST, so a
+      # bool-type error beats a typo'd parameter (see dnf.cr).
       unsupported = @params.keys.reject { |k| yum_supported.includes?(k) || yum_internal.includes?(k) || k.starts_with?("_") }
+      unsupported_rejection : PluginResult? = nil
       unless unsupported.empty?
         unsupported_sorted = unsupported.sort
-        return PluginResult.new(
+        unsupported_rejection = PluginResult.new(
           changed: false,
           failed: true,
           msg: "Unsupported parameters for (ansible.builtin.yum) module: #{unsupported_sorted.join(", ")}. " \
@@ -161,7 +164,8 @@ module Krikri
         )
       end
 
-      nil
+      # unsupported-params is reported only after every other spec check
+      unsupported_rejection
     end
 
     def execute : PluginResult

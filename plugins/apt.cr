@@ -211,9 +211,14 @@ module Krikri
       # needs an explicit exemption: it is not in the shared INTERNAL
       # list because it is this plugin's spec seam alone, and the
       # policy_rc_d lifecycle specs pass it on every call.)
+      # Ansible collects unsupported params but reports them LAST in its
+      # check order (mutually_exclusive -> ... -> unsupported), so the
+      # mutually-exclusive/choices/bool checks below all beat a typo'd
+      # parameter (see dnf.cr).
       unsupported = unsupported_param_keys(@params, APT_SPEC).reject { |key| key == "_policy_rc_d_path" }
+      unsupported_rejection : PluginResult? = nil
       unless unsupported.empty?
-        return unsupported_params_error(
+        unsupported_rejection = unsupported_params_error(
           @params["_module_name"]? || "ansible.builtin.apt",
           unsupported, APT_SPEC,
         )
@@ -265,6 +270,9 @@ module Krikri
       # anything non-"true" to false and happily proceeded where
       # Ansible never gets past argument validation.
       validate_bool_params!
+
+      # unsupported-params is reported only after every other spec check
+      return unsupported_rejection if unsupported_rejection
 
       # Ansible's apt module on a non-Debian-family host: it first
       # auto-installs its python3-apt dependency ("Updating cache and

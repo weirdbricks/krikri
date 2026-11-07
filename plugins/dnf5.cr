@@ -178,8 +178,11 @@ module Krikri
 
     # ----- argument-spec validation (split for readability) -----
 
+    # Ansible collects unsupported params but reports them LAST, so the
+    # mutual-exclusion, bool-type and list checks all beat a typo'd
+    # parameter (see dnf.cr).
     private def arg_spec_rejection : PluginResult?
-      unsupported_rejection || mutual_exclusion_rejection || bool_rejection || null_list_rejection
+      mutual_exclusion_rejection || bool_rejection || null_list_rejection || unsupported_rejection
     end
 
     # Real dnf5's supported set = shared yumdnf_argument_spec + auto_install_module_deps
@@ -217,8 +220,8 @@ module Krikri
     # AnsibleModule fails a bool-typed arg given a non-boolean value
     # at module setup - now via the shared BasePlugin#validate_bool_params!
     # raised inside the same rejection chain, keeping Ansible's check order
-    # (unsupported params -> bool types -> list coercion -> mutual
-    # exclusion; see plugins/dnf.cr for the message-provenance story).
+    # (mutually exclusive -> types -> list coercion -> unsupported;
+    # see plugins/dnf.cr for the message-provenance story).
     private def bool_rejection : Nil
       validate_bool_params!
     end
