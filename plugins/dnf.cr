@@ -153,17 +153,10 @@ module Krikri
     # argument_spec, so they are not rejected. use_backend is in the
     # dnf backend module's own argument_spec per dnf.py (2.19.11 lists
     # it in the supported-params message live) and stays accepted here.
-    private def arg_spec_rejection : PluginResult?
-      # Real's backend resolution runs before the module's own argument
-      # validation (in real it IS the surrounding code - the dnf ACTION
-      # plugin). Round 5310001: see RpmPackage#dnf_backend_resolution_failure.
-      if failure = dnf_backend_resolution_failure
-        return failure
-      end
-
-      # 2.21 dropped the retired `install_repoquery` from the shared
-      # yumdnf spec (live-verified vs 2.21.6), so it left the supported
-      # set here too.
+    # 2.21 dropped the retired `install_repoquery` from the shared
+    # yumdnf spec (live-verified vs 2.21.6), so it left the supported
+    # set here too.
+    private def unsupported_params_rejection : PluginResult?
       dnf_supported = {"allow_downgrade", "allowerasing", "autoremove", "bugfix",
                        "cacheonly", "conf_file", "disable_excludes", "disable_gpg_check",
                        "disable_plugin", "disablerepo", "download_dir", "download_only",
@@ -173,14 +166,6 @@ module Krikri
                        "sslverify", "state", "update_cache", "update_only",
                        "validate_certs", "use_backend", "expire-cache", "pkg"}
       dnf_internal = {"_ansible_check_mode", "_ansible_diff", "_module_name", "_verbosity", "_environment"}
-      # Ansible collects unsupported params but reports them LAST in its
-      # check order (mutually_exclusive -> required -> types -> choices ->
-      # ... -> unsupported), so a bool-type error beats a typo'd parameter
-      # (kpg:dnf chaos #42: install_weak_deps: ksjyws alongside escurity/
-      # sttae failed with the bool error on real, not the unsupported one).
-      # Compute the unsupported rejection here but return it only after
-      # the shared checks below.
-      unsupported_rejection : PluginResult? = nil
       if @dnf5_backend
         # Under the dnf5 backend the message is the dnf5 MODULE's own
         # argspec check, not dnf's: the action plugin strips use_backend
@@ -197,42 +182,51 @@ module Krikri
                           "releasever", "security", "skip_broken", "sslverify", "state",
                           "update_cache", "update_only", "validate_certs", "expire-cache", "pkg"}
         unsupported = @params.keys.reject { |k| dnf5_supported.includes?(k) || dnf_internal.includes?(k) || k.starts_with?("_") || k == "use_backend" }
-        unless unsupported.empty?
-          unsupported_rejection = PluginResult.new(
-            changed: false,
-            failed: true,
-            msg: "Unsupported parameters for (#{backend_module_name}) module: #{unsupported.sort.join(", ")}. " \
-                 "Supported parameters include: " \
-                 "allow_downgrade, allowerasing, auto_install_module_deps, autoremove, best, bugfix, " \
-                 "cacheonly, conf_file, disable_excludes, disable_gpg_check, disable_plugin, disablerepo, " \
-                 "download_dir, download_only, enable_plugin, enablerepo, exclude, " \
-                 "install_weak_deps, installroot, list, lock_timeout, name, nobest, releasever, security, " \
-                 "skip_broken, sslverify, state, update_cache, update_only, validate_certs (expire-cache, pkg)."
-          )
-        end
-        # fall through to the SHARED checks below (mutual exclusion, bool
-        # conversion, the explicit-null list check): dnf5.py shares
-        # yumdnf's argument_spec with dnf.py (live-verified vs 2.19.11),
-        # so a use_backend: dnf5 task still fails an explicit-null
-        # `name:` with the same NoneType message (etam.ipfs round
-        # 29895333) instead of skipping validation to the backend run.
+        return nil if unsupported.empty?
+        return PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: "Unsupported parameters for (#{backend_module_name}) module: #{unsupported.sort.join(", ")}. " \
+               "Supported parameters include: " \
+               "allow_downgrade, allowerasing, auto_install_module_deps, autoremove, best, bugfix, " \
+               "cacheonly, conf_file, disable_excludes, disable_gpg_check, disable_plugin, disablerepo, " \
+               "download_dir, download_only, enable_plugin, enablerepo, exclude, " \
+               "install_weak_deps, installroot, list, lock_timeout, name, nobest, releasever, security, " \
+               "skip_broken, sslverify, state, update_cache, update_only, validate_certs (expire-cache, pkg)."
+        )
       else
         unsupported = @params.keys.reject { |k| dnf_supported.includes?(k) || dnf_internal.includes?(k) || k.starts_with?("_") }
-        unless unsupported.empty?
-          unsupported_sorted = unsupported.sort
-          unsupported_rejection = PluginResult.new(
-            changed: false,
-            failed: true,
-            msg: "Unsupported parameters for (#{backend_module_name}) module: #{unsupported_sorted.join(", ")}. " \
-                 "Supported parameters include: " \
-                 "allow_downgrade, allowerasing, autoremove, best, bugfix, cacheonly, conf_file, disable_excludes, " \
-                 "disable_gpg_check, disable_plugin, disablerepo, download_dir, download_only, enable_plugin, " \
-                 "enablerepo, exclude, install_weak_deps, installroot, list, lock_timeout, " \
-                 "name, nobest, releasever, security, skip_broken, sslverify, state, update_cache, update_only, " \
-                 "use_backend, validate_certs (expire-cache, pkg)."
-          )
-        end
+        return nil if unsupported.empty?
+        return PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: "Unsupported parameters for (#{backend_module_name}) module: #{unsupported.sort.join(", ")}. " \
+               "Supported parameters include: " \
+               "allow_downgrade, allowerasing, autoremove, best, bugfix, cacheonly, conf_file, disable_excludes, " \
+               "disable_gpg_check, disable_plugin, disablerepo, download_dir, download_only, enable_plugin, " \
+               "enablerepo, exclude, install_weak_deps, installroot, list, lock_timeout, " \
+               "name, nobest, releasever, security, skip_broken, sslverify, state, update_cache, update_only, " \
+               "use_backend, validate_certs (expire-cache, pkg)."
+        )
       end
+    end
+
+    private def arg_spec_rejection : PluginResult?
+      # Real's backend resolution runs before the module's own argument
+      # validation (in real it IS the surrounding code - the dnf ACTION
+      # plugin). Round 5310001: see RpmPackage#dnf_backend_resolution_failure.
+      if failure = dnf_backend_resolution_failure
+        return failure
+      end
+
+      # Ansible collects unsupported params but reports them LAST in its
+      # check order (mutually_exclusive -> required -> types -> choices ->
+      # ... -> unsupported), so a bool-type error beats a typo'd parameter
+      # (kpg:dnf chaos #42: install_weak_deps: ksjyws alongside escurity/
+      # sttae failed with the bool error on real, not the unsupported one).
+      # Compute the unsupported rejection here but return it only after
+      # the shared checks below.
+      unsupported_rejection = unsupported_params_rejection
 
       if rejection = yumdnf_mutual_exclusion_rejection
         return rejection
@@ -273,28 +267,17 @@ module Krikri
         )
       end
 
-      # unsupported-params is reported only after every other spec check
-      unsupported_rejection
-    end
-
-    def execute : PluginResult # ameba:disable Metrics/CyclomaticComplexity
-      resolve_backend
-
-      if failure = arg_spec_rejection
-        return failure
-      end
-
-      # Argspec-choices validation (state, then use_backend - argument_spec
-      # dict order decides, and yumdnf.py appends use_backend last) precedes
-      # ALL module-body work, including list queries and yumdnf.py's own
-      # autoremove sanity check. An explicit state must be checked before
-      # anything else can return first: real ansible reports
-      # "value of state must be one of: ..." even when `list:` would also
-      # have produced a result. state's choice check only runs for an
-      # explicit STRING value (an omitted state defaults to None, which
-      # skips choices validation entirely; a non-string value keeps
-      # reaching the type-shaped check below, preserving this plugin's
-      # pre-existing behavior there).
+      # Ansible validates argument_spec CHOICES before it appends the
+      # collected unsupported-parameters error, so an invalid `state` value
+      # is what real reports even when the same task also carries an
+      # out-of-spec key. kpg:dnf chaos #950: `state: 99` alongside
+      # `cacheonly_bogus` failed on real with "value of state must be one
+      # of: ..." while this engine reported the unsupported parameter. The
+      # check is part of execute's sequencing too - real reports the state
+      # error even when `list:` would also have produced a result - so it
+      # has to sit before the unsupported-params return here (still after
+      # the type checks above: types precede choices in Ansible's order).
+      # An omitted state defaults to None, skipping choices validation.
       if explicit_state = @params["state"]?
         if explicit_state.is_a?(String) &&
            !["absent", "installed", "latest", "present", "removed"].includes?(explicit_state)
@@ -304,6 +287,17 @@ module Krikri
             msg: "value of state must be one of: absent, installed, latest, present, removed, got: #{explicit_state}"
           )
         end
+      end
+
+      # unsupported-params is reported only after every other spec check
+      unsupported_rejection
+    end
+
+    def execute : PluginResult # ameba:disable Metrics/CyclomaticComplexity
+      resolve_backend
+
+      if failure = arg_spec_rejection
+        return failure
       end
 
       # use_backend: Ansible's argument spec (dnf.py:

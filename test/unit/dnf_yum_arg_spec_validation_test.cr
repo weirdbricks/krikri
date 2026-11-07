@@ -139,6 +139,18 @@ describe "dnf: argument-spec validation" do
     result["msg"].as_s.wont_include("Unsupported parameters")
   end
 
+  # kpg:dnf chaos #950: an out-of-choices `state` (given as a YAML int, so
+  # demoted to "99") alongside a typo'd param - real reports the state
+  # choices error, not the unsupported-params one, because argument_spec
+  # choices are validated before the collected unsupported error is
+  # appended (arg_spec.py appends UnsupportedError last).
+  it "reports an invalid state choice before unsupported parameters" do
+    result = run_dnf_raw(%({"name": "bash", "state": 99, "cacheonly_bogus": true}))
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("value of state must be one of: absent, installed, latest, present, removed, got: 99")
+    result["msg"].as_s.wont_include("Unsupported parameters")
+  end
+
   it "still accepts all documented params including use_backend choices" do
     result = run_dnf({"name" => "bash", "state" => "present-nowhere", "use_backend" => "auto", "disable_gpg_check" => "yes"})
     result["failed"].as_bool.must_equal(true)
