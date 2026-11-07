@@ -1722,6 +1722,19 @@ module Krikri
     def self.task_error_chain(module_name : String?, msg : String, origin : String) : ErrorBlock::Node
       root = ErrorBlock::Node.new("Task failed.", source_context: origin)
 
+      # A module's uncaught-exception crash reaches the wire with the module
+      # API's wrapper prefix already baked into the msg ("Task failed:
+      # Module failed: <detail>", the exact text real ansible's fatal msg
+      # carries for e.g. lineinfile/blockinfile/replace's unknown-codec
+      # crash, live-verified vs 2.21.6). That msg IS the collapsed brief, so
+      # strip the prefix back to the bare detail before rebuilding the
+      # generic "Module failed." chain - otherwise the block renders the
+      # prefix twice (issue #949).
+      if msg.starts_with?("Task failed: Module failed: ")
+        detail = msg["Task failed: Module failed: ".size..]
+        return root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new("Module failed.").with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(detail)))
+      end
+
       # set_fact's strict cacheable: and gather_facts' strict parallel:
       # conversion failure (a plain convert_bool TypeError raised inside the
       # action plugin - no result contribution, no handling chain): the
