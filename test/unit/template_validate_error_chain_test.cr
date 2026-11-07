@@ -55,3 +55,20 @@ describe "template task_error_chain shapes" do
     Krikri::ErrorBlock.brief_message(chain).must_equal("Task failed: " + msg)
   end
 end
+
+describe "copy task_error_chain shapes" do
+  it "keeps the Unexpected-AnsibleActionFail chain for the src miss without the remote_src hint" do
+    # 2.21 moved the "If you are using a module ... remote_src option"
+    # sentence off the not-found message, so the gate that routes copy's
+    # src miss can no longer key on the hint's presence - the message
+    # prefix alone decides (issue #927).
+    msg = "Unexpected AnsibleActionFail error: Could not find or access 'missing.txt'\nSearched in:\n\t/pb/files/missing.txt\n\t/pb/missing.txt on the Ansible Controller."
+    chain = Krikri::ResultDisplay.task_error_chain("ansible.builtin.copy", msg, "Origin: /pb.yml:6")
+
+    chain.msg.must_equal("Task failed.")
+    middle = chain.chain.as(Krikri::ErrorBlock::Node)
+    middle.msg.must_equal("Unexpected AnsibleActionFail error.")
+    cause = middle.chain.as(Krikri::ErrorBlock::Node)
+    cause.msg.must_equal("Could not find or access 'missing.txt'\nSearched in:\n\t/pb/files/missing.txt\n\t/pb/missing.txt on the Ansible Controller.")
+  end
+end

@@ -51,7 +51,7 @@ describe "unarchive: remote_src:false controller-side src: staging" do
     failure = staged.as(JSON::Any)
     failure["failed"].as_bool.must_equal(true)
     failure["changed"].as_bool.must_equal(false)
-    failure["msg"].as_s.must_equal("Task failed: Could not find or access '#{missing_src}' on the Ansible Controller.\nIf you are using a module and expect the file to exist on the remote, see the remote_src option")
+    failure["msg"].as_s.must_equal("Task failed: Could not find or access '#{missing_src}' on the Ansible Controller.")
   end
 
   it "still fails on a controller miss when remote_src: is explicitly falsy, matching the default" do

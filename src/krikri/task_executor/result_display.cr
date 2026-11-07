@@ -1806,10 +1806,12 @@ module Krikri
         # "Unexpected AnsibleActionFail error: " prefix itself - both
         # live-verified): the chain is the collapsed
         # "Unexpected AnsibleActionFail error." shape carrying Ansible's
-        # full not-found text (now including the Searched-in list).
+        # full not-found text (now including the Searched-in list). The
+        # not-found msg itself ends at " on the Ansible Controller." -
+        # 2.21 moved the remote_src sentence to exception help text, off
+        # the message.
         if (msg.starts_with?("Task failed: Could not find or access '") ||
-           msg.starts_with?("Unexpected AnsibleActionFail error: Could not find or access '")) &&
-           msg.includes?("see the remote_src option")
+           msg.starts_with?("Unexpected AnsibleActionFail error: Could not find or access '"))
           not_found = msg.sub(/\A(?:Task failed: |Unexpected AnsibleActionFail error: )/, "")
           root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new("Unexpected AnsibleActionFail error.").with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(not_found)))
         elsif module_name.try(&.ends_with?(".copy")) &&

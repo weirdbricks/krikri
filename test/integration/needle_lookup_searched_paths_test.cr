@@ -137,6 +137,46 @@ describe "copy/script/unarchive controller-side src miss parity" do
     output.wont_include("does not exist on the target")
   end
 
+  it "ends script's not-found message at the Controller tail with no remote_src hint (issue #927)" do
+    # ansible-core 2.21 moved the "If you are using a module ... see the
+    # remote_src option" sentence out of AnsibleFileNotFound's message
+    # into its help text, so neither the fatal msg nor the console
+    # caused-by segment carries it anymore (live-verified vs 2.21.6,
+    # krikri-playbook-generator playbook 000148-script-chaos).
+    status, output, dir = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: s rel miss no hint
+            script:
+              cmd: 84
+            ignore_errors: true
+      YAML
+
+    status.success?.must_equal(true)
+    output.must_include(%(fatal: [localhost]: FAILED! => {"changed": false, "msg": "Could not find or access '84'\\nSearched in:\\n\\t#{dir}/files/84\\n\\t#{dir}/84\\n\\t#{dir}/files/84\\n\\t#{dir}/84 on the Ansible Controller."}))
+    output.wont_include("remote_src option")
+  end
+
+  it "ends an absolute-src template miss at the Controller tail with no remote_src hint" do
+    status, output, _ = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: t abs miss no hint
+            template:
+              src: /nonexistent/needle-hint.j2
+              dest: /tmp/needle-out.cfg
+            ignore_errors: true
+      YAML
+
+    status.success?.must_equal(true)
+    output.must_include(%(fatal: [localhost]: FAILED! => {"changed": false, "msg": "Could not find or access '/nonexistent/needle-hint.j2' on the Ansible Controller."}))
+    output.wont_include("remote_src option")
+  end
+
   it "gives unarchive's miss the Task-failed prefixed searched list" do
     status, output, dir = run_playbook(<<-YAML)
       - hosts: localhost

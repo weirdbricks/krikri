@@ -3,9 +3,9 @@ module Krikri
   # ._find_needle` -> `DataLoader.path_dwim_relative_stack`): the ordered
   # candidate list a missing file's "Could not find or access" error
   # reports, and the same list resolution searches. Behavior matched to
-  # ansible-core 2.19.11's dataloader.py, live-verified against
-  # ansible-playbook for template:/copy:/script:/unarchive: with a
-  # missing relative src (playbook-dir task and in-role task):
+  # ansible-core's dataloader.py, live-verified against ansible-playbook
+  # for template:/copy:/script:/unarchive: with a missing relative src
+  # (playbook-dir task and in-role task):
   #
   #   for each path in the task's search stack:
   #     <path>/<dirname>/<src>      (the `dirname-skip` condition in real
@@ -19,7 +19,12 @@ module Krikri
   # The message shape comes from AnsibleFileNotFound.__init__: with a
   # non-empty path list the " on the Ansible Controller." tail lands
   # after the LAST searched path (no list at all for an absolute src,
-  # whose lookup never populates one).
+  # whose lookup never populates one). Since 2.21 the "If you are using
+  # a module ... remote_src option" sentence is the exception's help
+  # text (_default_help_text), not part of the raised message - the
+  # message ends at " on the Ansible Controller." in the fatal result,
+  # and for script:/template: the console caused-by segment carries no
+  # hint at all (live-verified vs 2.21.6).
   module NeedleLookup
     # The task's search stack: Ansible's `Task.get_search_path()` - the
     # role dependency chain, current role first, then the directory of
@@ -61,9 +66,9 @@ module Krikri
 
     def self.not_found_message(src : String, candidates : Array(String)) : String
       if candidates.empty?
-        "Could not find or access '#{src}' on the Ansible Controller.\nIf you are using a module and expect the file to exist on the remote, see the remote_src option"
+        "Could not find or access '#{src}' on the Ansible Controller."
       else
-        "Could not find or access '#{src}'\nSearched in:\n\t#{candidates.join("\n\t")} on the Ansible Controller.\nIf you are using a module and expect the file to exist on the remote, see the remote_src option"
+        "Could not find or access '#{src}'\nSearched in:\n\t#{candidates.join("\n\t")} on the Ansible Controller."
       end
     end
 

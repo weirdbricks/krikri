@@ -808,7 +808,7 @@ describe "assemble's action-branch remote_src semantics (boolean(strict=False), 
             ignore_errors: true
     YAML
 
-    output.must_include(%("msg": "Task failed: Could not find or access '/nonexistent-krikri-assemble-src' on the Ansible Controller.\\nIf you are using a module and expect the file to exist on the remote, see the remote_src option"))
+    output.must_include(%("msg": "Task failed: Could not find or access '/nonexistent-krikri-assemble-src' on the Ansible Controller."))
     output.must_include("[ERROR]: Task failed: Could not find or access '/nonexistent-krikri-assemble-src' on the Ansible Controller.")
     output.wont_include("is not a directory")
   end
