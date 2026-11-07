@@ -23,18 +23,20 @@ module Krikri
         "Task failed: Module failed: unknown encoding: #{encoding}"
       end
 
-      # Bytes to UTF-8 text: {text, nil}, or {nil, failure message} when the
-      # content does not decode.
-      def self.decode(bytes : Bytes, encoding : String) : {String?, String?}
+      # Bytes to UTF-8 text: {text, nil}, or {"", failure message} when the
+      # content does not decode. The empty value rather than nil keeps every
+      # caller on a non-nilable tuple: a failure message is what makes the
+      # pair's value meaningless, not its absence.
+      def self.decode(bytes : Bytes, encoding : String) : {String, String?}
         if (failure = unknown_codec_failure(encoding))
-          return {nil, failure}
+          return {"", failure}
         end
 
         iconv = PythonCodecs.iconv_name(encoding)
         if iconv.nil? || iconv.in?("utf-8", "ascii")
           text = String.new(bytes)
           return {text, nil} if text.valid_encoding?
-          return {nil, utf8_decode_error(bytes)}
+          return {"", utf8_decode_error(bytes)}
         end
 
         input = IO::Memory.new(bytes)
@@ -42,16 +44,16 @@ module Krikri
         error = IO::Memory.new
         status = Process.run("iconv", ["-f", iconv, "-t", "UTF-8"], input: input, output: output, error: error)
         unless status.success?
-          return {nil, codec_decode_error(encoding, bytes)}
+          return {"", codec_decode_error(encoding, bytes)}
         end
         {output.to_s, nil}
       end
 
       # UTF-8 text to the file's own encoding: {bytes, nil} or
-      # {nil, failure message}.
-      def self.encode(text : String, encoding : String) : {Bytes?, String?}
+      # {empty bytes, failure message}.
+      def self.encode(text : String, encoding : String) : {Bytes, String?}
         if (failure = unknown_codec_failure(encoding))
-          return {nil, failure}
+          return {Bytes.new(0), failure}
         end
 
         iconv = PythonCodecs.iconv_name(encoding)
@@ -62,7 +64,7 @@ module Krikri
         error = IO::Memory.new
         status = Process.run("iconv", ["-f", "UTF-8", "-t", iconv], input: input, output: output, error: error)
         unless status.success?
-          return {nil, codec_encode_error(encoding, text)}
+          return {Bytes.new(0), codec_encode_error(encoding, text)}
         end
         {output.to_slice, nil}
       end
@@ -126,7 +128,7 @@ module Krikri
       end
 
       # First ill-formed position plus CPython's reason string for it.
-      private def self.utf8_failure(bytes : Bytes) : {Int32, String}
+      private def self.utf8_failure(bytes : Bytes) : {Int32, String} # ameba:disable Metrics/CyclomaticComplexity
         index = 0
         while index < bytes.size
           byte = bytes[index]

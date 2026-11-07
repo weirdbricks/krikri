@@ -9,7 +9,7 @@ require "../../src/krikri/python_test_runner"
 describe "configured plugin paths (issue #793)" do
   serial!
 
-  private def with_env(pairs : Hash(String, String?))
+  private def with_env(pairs : Hash(String, String?), &)
     previous = pairs.keys.to_h { |key| {key, ENV[key]?} }
     begin
       pairs.each do |key, value|
@@ -64,8 +64,8 @@ describe "configured plugin paths (issue #793)" do
       # find_sources feeds a last-import-wins name dict, so the playbook's
       # own file must come after the configured one for the playbook's
       # definition to win - as it does in ansible (extra dirs first).
-      configured_index = sources.index(File.join(configured, "cf.py")).not_nil!
-      playbook_index = sources.index(File.join(playbook, "filter_plugins", "pf.py")).not_nil!
+      configured_index = sources.index!(File.join(configured, "cf.py"))
+      playbook_index = sources.index!(File.join(playbook, "filter_plugins", "pf.py"))
       (configured_index < playbook_index).must_equal(true)
 
       # no role/playbook dir at all still resolves through the env var

@@ -33,12 +33,12 @@ describe Krikri::PluginHelpers::IptablesCommand do
     # `match: owner` yields exactly one `-m owner` before -j.
     it "loads each match extension only once (2.21 loaded_extensions)" do
       rule = Krikri::PluginHelpers::IptablesCommand.construct_rule({
-        "chain"      => "KRIKRI_TEST",
-        "jump"       => "ACCEPT",
-        "uid_owner"  => "1000",
-        "gid_owner"  => "1000",
-        "comment"    => "hi",
-        "match"      => "owner",
+        "chain"     => "KRIKRI_TEST",
+        "jump"      => "ACCEPT",
+        "uid_owner" => "1000",
+        "gid_owner" => "1000",
+        "comment"   => "hi",
+        "match"     => "owner",
       })
 
       rule.must_equal([

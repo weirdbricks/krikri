@@ -93,7 +93,7 @@ module Krikri
       value
     end
 
-    def execute : PluginResult
+    def execute : PluginResult # ameba:disable Metrics/CyclomaticComplexity
       path = aliased_param("path", ["dest", "name"])
       unless path
         return PluginResult.new(changed: false, failed: true, msg: "missing required arguments: path")

@@ -79,8 +79,8 @@ describe Krikri::PluginHelpers::StatFields do
       hash["blocks"].as_i64.must_equal(8)
       hash["disk_usage_bytes"].as_i64.must_equal(8 * 512)
       hash["device_type"].as_i64.must_equal(0)
-      (hash.keys.index!("blocks").not_nil!).must_equal(hash.keys.index!("disk_usage_bytes").not_nil! - 1)
-      (hash.keys.index!("disk_usage_bytes").not_nil!).must_equal(hash.keys.index!("block_size").not_nil! - 1)
+      hash.keys.index!("blocks").must_equal(hash.keys.index!("disk_usage_bytes") - 1)
+      hash.keys.index!("disk_usage_bytes").must_equal(hash.keys.index!("block_size") - 1)
     end
 
     it "decodes rwx permission bits from the mode" do

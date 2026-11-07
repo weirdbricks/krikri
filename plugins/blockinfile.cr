@@ -131,7 +131,7 @@ module Krikri
 
     private def apply(path : String, state : String, block : String?, being_created : Bool, check_mode : Bool) : PluginResult
       original_content, read_failure = read_as_text(path)
-      return read_failure.not_nil! if read_failure
+      return read_failure if read_failure
       marker_begin_line, marker_end_line = marker_lines
       # Ansible builds its marker-delimited block lines only from a
       # NON-EMPTY block (`if present and block:`), so the default empty
@@ -296,8 +296,8 @@ module Krikri
     private def read_as_text(path : String) : {String, PluginResult?}
       return {"", nil} unless File.exists?(path)
       text, error = PluginHelpers::TextFileIO.decode(File.read(path).to_slice, file_encoding)
-      return {"", PluginResult.new(changed: false, failed: true, msg: error.not_nil!)} if error
-      {text.not_nil!, nil}
+      return {"", PluginResult.new(changed: false, failed: true, msg: error)} if error
+      {text, nil}
     end
 
     private def write_with_optional_validate(path : String, content : String) : PluginResult?
@@ -316,8 +316,8 @@ module Krikri
         # below ran after the write.
         create_staging_temp(temp_file, staging_temp_mode(path, 0o644))
         bytes, encode_failure = PluginHelpers::TextFileIO.encode(content, file_encoding)
-        return PluginResult.new(changed: false, failed: true, msg: encode_failure.not_nil!) if encode_failure
-        File.write(temp_file, bytes.not_nil!, perm: 0o600)
+        return PluginResult.new(changed: false, failed: true, msg: encode_failure) if encode_failure
+        File.write(temp_file, bytes, perm: 0o600)
       rescue ex
         return PluginResult.new(changed: false, failed: true, msg: "Failed to write temporary file: #{ex.message}")
       end
@@ -368,8 +368,8 @@ module Krikri
               create_staging_temp(dest, staging_temp_mode(dest, 0o644, preserve_dest_mode: false))
             end
             bytes, encode_failure = PluginHelpers::TextFileIO.encode(content, file_encoding)
-            return PluginResult.new(changed: false, failed: true, msg: encode_failure.not_nil!) if encode_failure
-            File.write(dest, bytes.not_nil!, perm: 0o600)
+            return PluginResult.new(changed: false, failed: true, msg: encode_failure) if encode_failure
+            File.write(dest, bytes, perm: 0o600)
           rescue ex
             return PluginResult.new(changed: false, failed: true, msg: "Failed to write file (unsafe_writes fallback): #{ex.message}")
           end

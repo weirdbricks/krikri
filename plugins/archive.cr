@@ -328,15 +328,8 @@ module Krikri
       remove_sources(found_paths) if remove
 
       dest_state = missing.empty? ? (single_compress ? "compress" : "archive") : "incomplete"
-      apply_dest_attributes(dest)
-      if error = apply_attributes(dest)
-        return error
-      end
-      # Real ORs this into `changed` (set_fs_attributes_if_different's
-      # return is assigned back over archive.changed), so a task whose
-      # only difference is the SELinux context reports changed.
-      secontext_changed, error = apply_selinux_context(dest)
-      return error if error
+      failure, secontext_changed = settle_dest_metadata(dest)
+      return failure if failure
       changed = true if secontext_changed
 
       archived = single_compress ? found_paths : members
@@ -368,6 +361,20 @@ module Krikri
         state: stat_fields[:state],
         key_order: %w[archived dest dest_state changed arcroot missing expanded_paths expanded_exclude_paths uid gid owner group mode state size]
       )
+    end
+
+    # The dest's own metadata pass: attributes, then the SELinux context.
+    # Real ORs the latter into `changed` (set_fs_attributes_if_different's
+    # return is assigned back over archive.changed), so a task whose only
+    # difference is the SELinux context reports changed.
+    private def settle_dest_metadata(dest : String) : {PluginResult?, Bool}
+      apply_dest_attributes(dest)
+      if error = apply_attributes(dest)
+        return {error, false}
+      end
+      secontext_changed, error = apply_selinux_context(dest)
+      return {error, false} if error
+      {nil, secontext_changed}
     end
 
     private def build_compress(source : String, format : String, tmp_dest : String) : Bool

@@ -275,7 +275,7 @@ module Krikri
     private def attach_file_warnings(result : PluginResult) : Nil
       return unless (warnings = @file_warnings) && !warnings.empty?
       existing = result.extra["warnings"]?.try(&.as_a?) || [] of JSON::Any
-      result.extra["warnings"] = JSON::Any.new(existing + warnings.map { |w| JSON::Any.new(w) })
+      result.extra["warnings"] = JSON::Any.new(existing + warnings.map { |warning| JSON::Any.new(warning) })
     end
 
     # A failure may name a different path than the task's (the first

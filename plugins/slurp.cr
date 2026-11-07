@@ -93,7 +93,7 @@ module Krikri
 
     # Index of the first byte that starts an ill-formed UTF-8 sequence,
     # mirroring what CPython's utf-8 codec reports as the error position.
-    private def invalid_utf8_start(bytes : Bytes) : Int32
+    private def invalid_utf8_start(bytes : Bytes) : Int32 # ameba:disable Metrics/CyclomaticComplexity
       bytes.size.times do |i|
         b = bytes[i]
         if b < 0x80

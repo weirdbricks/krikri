@@ -27,7 +27,7 @@ describe Krikri::PluginHelpers::TextFileIO do
   it "round-trips a single-byte encoding through iconv" do
     bytes, error = Krikri::PluginHelpers::TextFileIO.encode("naïve", "iso-8859-1")
     error.must_be_nil
-    bytes.not_nil!.hexstring.must_equal("6e61ef7665")
+    bytes.hexstring.must_equal("6e61ef7665")
 
     text, decode_error = Krikri::PluginHelpers::TextFileIO.decode(Bytes[0x6e, 0x61, 0xef, 0x76, 0x65], "iso-8859-1")
     decode_error.must_be_nil
@@ -36,7 +36,7 @@ describe Krikri::PluginHelpers::TextFileIO do
 
   it "fails an unknown codec name with Ansible's module-crash wording" do
     Krikri::PluginHelpers::TextFileIO.decode("x\n".to_slice, "20")
-      .must_equal({nil, "Task failed: Module failed: unknown encoding: 20"})
+      .must_equal({"", "Task failed: Module failed: unknown encoding: 20"})
   end
 
   it "resolves Python's own codec spellings (latin-1)" do

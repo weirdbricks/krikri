@@ -63,7 +63,7 @@ describe "stat plugin" do
     stat = result["stat"]
 
     keys = stat.as_h.keys
-    (keys.index("blocks").not_nil!).must_equal(keys.index("disk_usage_bytes").not_nil! - 1)
+    keys.index!("blocks").must_equal(keys.index!("disk_usage_bytes") - 1)
     stat["disk_usage_bytes"].as_i64.must_equal(stat["blocks"].as_i64 * 512)
   end
 
