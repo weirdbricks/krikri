@@ -1760,17 +1760,18 @@ module Krikri
   # the run went on without the import's tasks, exit 0, instead of
   # failing the playbook the way Ansible does.
   #
-  # Byte shape (live-verified against 2.19.11): this is the DataLoader's
-  # AnsibleError, NOT a parser error - no Origin block, on STDERR, and
-  # rc=1 rather than the parser-error 4 (real appends the "If you are
-  # using a module..." hint plus the chained OSError text, then one
-  # blank line):
+  # Byte shape (live-verified against 2.21.6 in a container): this is the
+  # DataLoader's AnsibleFileNotFound, NOT a parser error - no Origin
+  # block, on STDERR, and rc=1 rather than the parser-error 4. 2.21
+  # folds the chained OSError and the "If you are using a module..."
+  # help text into that single line (static_import_missing_file_render
+  # builds it):
   #
-  #     [ERROR]: Unable to retrieve file contents.
-  #     Could not find or access '/work/bhwidi' on the Ansible Controller.
-  #     If you are using a module and expect the file to exist on the
-  #     remote, see the remote_src option: [Errno 2] No such file or
-  #     directory: '/work/bhwidi'
+  #     [ERROR]: Unable to retrieve file contents. Could not find or
+  #     access '/work/bhwidi' on the Ansible Controller: [Errno 2] No
+  #     such file or directory: '/work/bhwidi' If you are using a
+  #     module and expect the file to exist on the remote, see the
+  #     remote_src option.
   #
   class StaticImportMissingFileError < Exception
     getter render : String
@@ -3143,13 +3144,8 @@ module Krikri
       # StaticImportMissingFileError's own comment), and a bare Exception
       # was swallowed by parse_tasks's generic per-task rescue into a
       # warning + silent drop of the import (lucascbeyeler.zimbra,
-      # round 900185). The render is Ansible 2.19.11's exact DataLoader
-      # error block - hint line, chained OSError text, trailing blank.
-      raise StaticImportMissingFileError.new(
-        "[ERROR]: Unable to retrieve file contents.\n" \
-        "Could not find or access '#{resolved_path}' on the Ansible Controller.\n" \
-        "If you are using a module and expect the file to exist on the remote, see the remote_src option: [Errno 2] No such file or directory: '#{resolved_path}'\n\n"
-      ) unless File.exists?(resolved_path)
+      # round 900185).
+      raise StaticImportMissingFileError.new(static_import_missing_file_render(resolved_path)) unless File.exists?(resolved_path)
 
       # Matches Ansible's ordering: the notice prints (at -vv) before any
       # nested imports inside the file itself are loaded.
@@ -5980,6 +5976,23 @@ module Krikri
                    "or extra-vars passed in from the command line. Static imports cannot use variables from facts or inventory\n" \
                    "sources like group or host vars.")
       node.with_chain(ErrorBlock::DIRECT_CAUSE, true, cause_node)
+      "[ERROR]: " + ErrorBlock.format_event(node)
+    end
+
+    # The stderr block for a static import whose resolved target is
+    # missing. ansible-core 2.21 renders the DataLoader's
+    # AnsibleFileNotFound as ONE "[ERROR]:" line - the chained OSError
+    # folded in with ": " (the head's trailing period dropped), then the
+    # exception class's own help text appended after a space - live-
+    # verified against 2.21.6 in a fresh container, which is why the
+    # three-line-plus-trailing-blank 2.19.11 layout this used to hardcode
+    # no longer matches. No Origin block: nothing here is a task or a
+    # parser error.
+    private def self.static_import_missing_file_render(resolved_path : String) : String
+      node = ErrorBlock::Node.new(
+        "Unable to retrieve file contents. Could not find or access '#{resolved_path}' on the Ansible Controller.",
+        help_text: "If you are using a module and expect the file to exist on the remote, see the remote_src option.")
+      node.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new("[Errno 2] No such file or directory: '#{resolved_path}'"))
       "[ERROR]: " + ErrorBlock.format_event(node)
     end
 

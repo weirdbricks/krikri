@@ -254,11 +254,37 @@ describe "PlaybookParser include directive argument validation" do
       Krikri::PlaybookParser.parse(File.expand_path(path))
     end
     resolved = File.expand_path("bhwidi", root)
+    # ansible-core 2.21 folds the chained OSError and the AnsibleFileNotFound
+    # help text into one "[ERROR]:" line: the head's trailing period dropped,
+    # the cause joined with ": ", the hint appended after a space.
     ex.render.must_equal(
-      "[ERROR]: Unable to retrieve file contents.\n" \
-      "Could not find or access '#{resolved}' on the Ansible Controller.\n" \
-      "If you are using a module and expect the file to exist on the remote, see the remote_src option: [Errno 2] No such file or directory: '#{resolved}'\n\n")
+      "[ERROR]: Unable to retrieve file contents. Could not find or access '#{resolved}' on the Ansible Controller: " \
+      "[Errno 2] No such file or directory: '#{resolved}' " \
+      "If you are using a module and expect the file to exist on the remote, see the remote_src option.\n")
     ex.render.wont_include("Origin:")
+  end
+
+  it "reports a non-string import_tasks file value as the missing file, not Ansible's crash" do
+    root = PluginSpecHelper.tmp_path("incdir_import_int_file")
+    path = write_playbook(root, <<-YAML)
+        - name: t1
+          ansible.builtin.import_tasks:
+            file: 46
+      YAML
+
+    ex = assert_raises(Krikri::StaticImportMissingFileError) do
+      Krikri::PlaybookParser.parse(File.expand_path(path))
+    end
+    resolved = File.expand_path("46", root)
+    # Real ansible-playbook dies here instead: an uncaught Python TypeError
+    # (its own path_dwim runs len() over the _AnsibleTaggedInt) with a full
+    # traceback and rc=250. KNOWN_MISSING.md records why that is not
+    # imitated; what must hold is that the value is stringified into the
+    # path it resolves to.
+    ex.render.must_equal(
+      "[ERROR]: Unable to retrieve file contents. Could not find or access '#{resolved}' on the Ansible Controller: " \
+      "[Errno 2] No such file or directory: '#{resolved}' " \
+      "If you are using a module and expect the file to exist on the remote, see the remote_src option.\n")
   end
 
   it "reports a missing role include against the playbook dir, not the role tasks dir" do
