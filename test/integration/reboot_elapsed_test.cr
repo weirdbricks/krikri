@@ -70,7 +70,14 @@ describe "ansible.builtin.reboot's elapsed result field" do
 
     status.success?.must_equal(true)
     output.must_include("elapsed=0")
-    output.must_include("not supported over a local connection")
     output.wont_include("has no attribute")
+  end
+
+  it "uses Ansible's action-level message for local-connection refusal" do
+    status, output = run_reboot_playbook
+
+    status.success?.must_equal(true)
+    output.must_include("Running ansible.builtin.reboot with local connection would reboot the control node.")
+    output.wont_include("Module failed: Running ansible.builtin.reboot")
   end
 end
