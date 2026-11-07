@@ -201,11 +201,27 @@ module Krikri
     # its args as a JSON dict (via the ANSIBLE_MODULE_ARGS env var its
     # basic.py reads when no argv is given); everything else is
     # old-style key=value argv.
+    #
+    # NEW_STYLE_PYTHON_MODULE_RE in the same file ALSO counts a
+    # collection module_utils import (`from|import
+    # ansible_collections.<ns>.<coll>.plugins.module_utils...`) as
+    # new-style - such a module (a custom `library/` module built on
+    # amazon.aws' AnsibleAWSModule, which wraps AnsibleModule) gets its
+    # args on stdin JSON like any module_utils importer, because ansible
+    # bundles the collection's module_utils into the AnsiballZ payload.
+    # Missing this form classified the module old-style, and the shim
+    # AnsibleModule (argv is never read) then saw no args at all:
+    # "missing required arguments: tags" for a dict arg the task passed
+    # (issue #955).
+    COLLECTION_MODULE_UTILS_IMPORT =
+      /\b(?:from|import)\s+ansible_collections\.[^.\s]+\.[^.\s]+\.plugins\.module_utils\b/
+
     def new_style?(source : String) : Bool
       source.includes?("from ansible.module_utils") ||
         source.includes?("import ansible.module_utils") ||
         source.includes?("ansible.module_utils.basic") ||
-        source.includes?(MODULE_COMMON_MARKER)
+        source.includes?(MODULE_COMMON_MARKER) ||
+        source.matches?(COLLECTION_MODULE_UTILS_IMPORT)
     end
 
     # The modularizer step itself: swap the legacy marker for the
@@ -448,6 +464,14 @@ module Krikri
               # "_ansible_inject_invocation"); the shim mirrors that
               # instead of the pre-2.21 always-inject.
               self._inject_invocation = bool(raw_args.pop('_ansible_inject_invocation', False))
+              # Real basic.py's PASS_VARS always exposes `_diff` (from
+              # `_ansible_diff`, default False) on the instance, and
+              # amazon.aws' AnsibleAWSModule copies `self._module._diff`
+              # right after constructing its AnsibleModule - without the
+              # attribute a collection-backed custom module died with
+              # "'AnsibleModule' object has no attribute '_diff'" before
+              # it ever looked at its params (issue #955).
+              self._diff = bool(raw_args.pop('_ansible_diff', False))
               self._apply_argument_spec(raw_args)
               # Real basic.py closes __init__ with this same gate
               # (basic.py: "if self.check_mode and not
