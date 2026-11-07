@@ -58,7 +58,19 @@ module Krikri
     # native 2) takes the action's controller-side branch instead, so the
     # assemble module - and its strict remote_src conversion with it -
     # never runs at all (live-verified vs 2.19.11).
+    #
+    # ignore_hidden and decrypt consequently only reach the MODULE on that
+    # BOOLEANS_TRUE remote_src path. On the controller-side branch the
+    # action plugin consumes both itself - ignore_hidden as a plain Python
+    # truthiness test (any non-empty string skips dotfiles), decrypt via
+    # args.pop - and its clean-up loop strips both from the args it hands
+    # the copy module, while backup/unsafe_writes DO survive into copy's
+    # spec. So real Ansible accepts a non-boolean `ignore_hidden: judtft`
+    # (or `decrypt:`) whenever remote_src is falsy: the task assembles and
+    # reports changed, with no conversion error at all (live-verified vs
+    # 2.19.11, issue #931).
     protected def bool_params : Array(String)
+      return %w[backup unsafe_writes] if remote_src_delegated?
       %w[backup decrypt ignore_hidden unsafe_writes]
     end
 
@@ -85,7 +97,7 @@ module Krikri
         return PluginResult.new(changed: false, failed: true, msg: msg)
       end
 
-      ignore_hidden = true?(@params["ignore_hidden"]?)
+      ignore_hidden = ignore_hidden_effective?
       regexp = @params["regexp"]?.try { |rval| Regex.new(rval) rescue nil }
       delimiter = @params["delimiter"]?
 
@@ -179,6 +191,19 @@ module Krikri
                  %w[y yes on 1 true t].includes?(@params["remote_src"].downcase.strip)
                end
       !truthy
+    end
+
+    # ignore_hidden as the code path that actually runs reads it. On the
+    # controller-side branch it is the action plugin's own raw Python
+    # truthiness test (`ignore_hidden and basename.startswith('.')`), so
+    # ANY non-empty string skips dotfiles - `ignore_hidden: "false"`
+    # included, since the string is truthy. On the module path assemble.py
+    # reads the value its argspec already converted to a real bool
+    # (check_type_bool), so the boolean spellings decide instead
+    # (live-verified vs 2.19.11 for both branches).
+    private def ignore_hidden_effective? : Bool
+      return python_param_truthy?("ignore_hidden") if remote_src_delegated?
+      true?(@params["ignore_hidden"]?)
     end
 
     # An unhandled module exception (atomic_move's FileNotFoundError /
