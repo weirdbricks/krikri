@@ -1789,6 +1789,13 @@ module Krikri
           # middle segment, not a bare action failure (live-verified against
           # 2.19.11 with `validate: cupsd -t -c %s`, issue #615).
           root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new("Module failed.").with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(msg)))
+        elsif msg.starts_with?("validate must contain %s: ")
+          # The validate gate's "must contain %s" refusal is also a
+          # fail_json inside the copy MODULE template's action plugin
+          # delegates to, so real renders the same generic "Module failed."
+          # chain as the "failed to validate" result (live-verified against
+          # ansible-core 2.21.6 with `validate: 68`, issue #939).
+          root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new("Module failed.").with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(msg)))
         elsif msg.starts_with?("chown failed: ") || msg.starts_with?("chgrp failed: ")
           # The owner/group application runs inside the copy MODULE that
           # template's action delegates to (live-verified vs ansible 2.19,
