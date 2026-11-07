@@ -1,5 +1,6 @@
 require "../minitest_helper"
 require "file_utils"
+require "../../src/krikri/playbook_parser"
 
 # include_role:/import_role:/import_tasks:/include_tasks: argument
 # validation at PARSE time - ansible-core's TaskInclude.check_options
@@ -79,6 +80,74 @@ describe "PlaybookParser include directive argument validation" do
     end
     ex.message.to_s.must_equal(
       "Expected a dict for apply but got <class 'ansible.module_utils._internal._datatag._AnsibleTaggedStr'> instead")
+  end
+
+  it "accepts rescuable: on include_role (ansible-core's IncludeRole OTHER_ARGS, issue #923)" do
+    # Live-verified against ansible-core 2.21.6: `include_role:
+    # {rescuable: true}` runs the role; refusing it as an unknown option
+    # (the pre-fix behavior) aborts the whole playbook at load instead.
+    path = write_playbook(PluginSpecHelper.tmp_path("incdir_rescuable_ok"), <<-YAML)
+        - name: t1
+          ansible.builtin.include_role:
+            name: whatever
+            rescuable: true
+      YAML
+
+    Krikri::PlaybookParser.parse(File.expand_path(path))
+  end
+
+  it "refuses a truthy rescuable on import_role at parse time, with Origin" do
+    # Real's `if resc_attr and ir.action not in _ACTION_INCLUDE_ROLE`
+    # carries obj=data, so the block renders WITH an Origin (live-
+    # verified vs 2.21.6).
+    path = write_playbook(PluginSpecHelper.tmp_path("incdir_import_rescuable"), <<-YAML)
+        - name: t1
+          ansible.builtin.import_role:
+            name: whatever
+            rescuable: true
+      YAML
+
+    ex = assert_raises(Krikri::IncludeDirectiveError) do
+      Krikri::PlaybookParser.parse(File.expand_path(path))
+    end
+    ex.message.to_s.must_equal("Invalid options for ansible.builtin.import_role: rescuable")
+    ex.render.must_include("Origin: #{File.expand_path(path)}:")
+  end
+
+  it "accepts a falsy rescuable on import_role (real gates the refusal on Python truthiness)" do
+    # Live-verified vs 2.21.6: `import_role: {rescuable: false}` parses
+    # and runs - only a truthy rescuable is refused there. The role has
+    # to exist: a static import resolves (and refuses a missing) role at
+    # parse time regardless of rescuable.
+    root = PluginSpecHelper.tmp_path("incdir_import_rescuable_false")
+    path = write_playbook(root, <<-YAML)
+        - name: t1
+          ansible.builtin.import_role:
+            name: whatever
+            rescuable: false
+      YAML
+    Dir.mkdir_p(File.join(root, "roles", "whatever", "tasks"))
+    File.write(File.join(root, "roles", "whatever", "tasks", "main.yml"), "- debug: msg=hi\n")
+
+    Krikri::PlaybookParser.parse(File.expand_path(path))
+  end
+
+  it "orders the rescuable bool-keyword conversion last (after rolespec_validate)" do
+    # Live-verified vs 2.21.6: a task with both rolespec_validate and
+    # rescuable unconvertible reports `rolespec_validate` - rescuable is
+    # declared last on IncludeRole.
+    args = Hash(YAML::Any, YAML::Any).new
+    args[YAML::Any.new("rolespec_validate")] = YAML::Any.new("snhvdg")
+    args[YAML::Any.new("rescuable")] = YAML::Any.new("snhvdg")
+    Krikri::RoleBoolKeywords.failure(args).try(&.keyword).must_equal("rolespec_validate")
+
+    args = Hash(YAML::Any, YAML::Any).new
+    args[YAML::Any.new("rescuable")] = YAML::Any.new("snhvdg")
+    failure = Krikri::RoleBoolKeywords.failure(args)
+    failure.try(&.keyword).must_equal("rescuable")
+    failure.try(&.value_repr).must_equal("'snhvdg'")
+    failure.try(&.brief).must_equal(
+      "Error processing keyword 'rescuable': The value 'snhvdg' could not be converted to 'bool'.")
   end
 
   it "refuses a non-string *_from value at parse time WITHOUT an Origin block" do
