@@ -1287,6 +1287,12 @@ module Krikri
           cause.source_context = undef_origin
         elsif (crash_path = result["_ansible_error_origin"]?.try(&.as_s?)) && !crash_path.empty?
           cause.source_context = "Origin: #{crash_path}"
+        elsif arg_origin = include_vars_arg_cause_origin(source_task, msg)
+          # include_vars' argument validation raises with the offending
+          # value as the exception's obj (include_vars.py), so real's
+          # caused-by event carries that value's own Origin and the chain
+          # does NOT collapse into the header (see the helper).
+          cause.source_context = arg_origin
         end
         ErrorBlock.emit(root.with_chain(ErrorBlock::DIRECT_CAUSE, true, cause))
         return
@@ -1299,7 +1305,7 @@ module Krikri
         key = match[1]
         inner = "Invalid variable name '#{key}'."
         root = ErrorBlock::Node.new("Task failed.", source_context: origin)
-        if key_origin = set_fact_key_origin(source_task, key)
+        if key_origin = mapping_key_origin(source_task, key)
           cause = ErrorBlock::Node.new(inner, source_context: key_origin,
             help_text: "Variable names must be strings starting with a letter or underscore character, and contain only letters, numbers and underscores.")
         else
@@ -1591,14 +1597,15 @@ module Krikri
       nil
     end
 
-    # Origin context of a set_fact mapping key named `key`: the key's own
-    # line/column inside the task, found by scanning the task's source
-    # lines for the key followed by ':' (a quoted key points at the
-    # opening quote, like Ansible's per-key Origin).
+    # Origin context of a mapping key named `key` inside a task (set_fact's
+    # variable name, include_vars' option): the key's own line/column
+    # inside the task, found by scanning the task's source lines for the
+    # key followed by ':' (a quoted key points at the opening quote, like
+    # Ansible's per-key Origin).
     # Public so TaskExecutor's set_fact reserved-name warning (issued from
     # merge_ansible_facts, outside this result-dump path) can reuse the same
     # per-key Origin scan.
-    def self.set_fact_key_origin(task : Task, key : String) : String?
+    def self.mapping_key_origin(task : Task, key : String) : String?
       path = task.source_file
       return nil unless path && task.source_line > 0 && File.file?(path)
 
@@ -1621,13 +1628,37 @@ module Krikri
       nil
     end
 
+    # The caused-by Origin of an include_vars argument-validation failure.
+    # Ansible raises those with the OFFENDING VALUE as the exception's obj
+    # (include_vars.py), so its event carries that value's own source
+    # context and the chain stays two-segment instead of collapsing into
+    # the header. Two shapes pass an obj: the unknown-option loop tags the
+    # KEY (`obj=arg` - "<key> is not a valid option in include_vars",
+    # caret on the key) and _set_args' non-list check tags the VALUE
+    # (`obj=self.valid_extensions` - "The 'extensions' option must be a
+    # list.", caret on the value). The file/dir mixing error passes the
+    # whole args mapping (obj=self._task.args), which yields no usable
+    # origin, so its block stays collapsed. Live-verified against
+    # ansible-playbook 2.21.6; best-effort like the scans above, so an
+    # option written inline (`include_vars: {flie: x}`) keeps the
+    # collapsed shape rather than pointing at a wrong position.
+    def self.include_vars_arg_cause_origin(task : Task, msg : String) : String?
+      short = task.module_name.try { |name| name.split(".").last }
+      return nil unless short && ["_include_vars", "include_vars"].includes?(short)
+      if match = msg.match(/\A(.+) is not a valid option in include_vars\z/)
+        return mapping_key_origin(task, match[1])
+      end
+      return task_param_value_origin(task, "extensions") if msg == "The 'extensions' option must be a list."
+      nil
+    end
+
     # The Origin of a task param's VALUE (the position Ansible's
     # AnsibleActionFail obj= attaches as the failing event's source
     # context - e.g. add_host's `groups: 5` points at the 5, column of
     # the value, not the key). Same best-effort text scan as
-    # set_fact_key_origin above, but the caret lands on the first
+    # mapping_key_origin above, but the caret lands on the first
     # non-space character after `key:`.
-    # Public (same reason as set_fact_key_origin) so the lookup dispatch's
+    # Public (same reason as mapping_key_origin) so the lookup dispatch's
     # Jinja-const embedded-template warning - emitted from inside the
     # expression evaluator while THIS param is being finalized, and the
     # evaluator otherwise has no route to the task (issue #259) - can

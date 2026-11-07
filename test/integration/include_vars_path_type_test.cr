@@ -127,6 +127,66 @@ describe "include_vars with a non-string file:/dir: literal" do
     invalid.must_include("[ERROR]: Task failed: files_macthing is not a valid option in include_vars")
   end
 
+  it "keeps the arg-validation chain two-segment, Origin'd at the offending option" do
+    # include_vars.py raises its argument-validation failures with the
+    # offending VALUE as the exception's obj, so ansible's caused-by event
+    # carries that value's own source context and the block does NOT
+    # collapse into the header: the unknown-option loop tags the KEY
+    # (`obj=arg`, caret on the key) while the non-list `extensions:` check
+    # tags the VALUE (caret on the value). Captured byte-for-byte from
+    # ansible-playbook 2.21.6.
+    scratch = PluginSpecHelper.tmp_path("include-vars-option-origin")
+    FileUtils.mkdir_p(scratch)
+    playbook = File.join(scratch, "play.yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: typo on file
+            include_vars:
+              name: bawazd
+              flie: vars.yml
+            ignore_errors: true
+          - name: non-list extensions
+            include_vars:
+              dir: /nonexistent-krikri-dir
+              extensions: notalist
+            ignore_errors: true
+      YAML
+    output = IO::Memory.new
+    Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output, chdir: scratch)
+    text = output.to_s
+
+    typo = "[ERROR]: Task failed: flie is not a valid option in include_vars\n\n" +
+           "Task failed.\nOrigin: #{playbook}:5:7\n\n" \
+           "3   gather_facts: false\n" \
+           "4   tasks:\n" \
+           "5     - name: typo on file\n" \
+           "        ^ column 7\n\n" \
+           "<<< caused by >>>\n\n" \
+           "flie is not a valid option in include_vars\nOrigin: #{playbook}:8:9\n\n" \
+           "6       include_vars:\n" \
+           "7         name: bawazd\n" \
+           "8         flie: vars.yml\n" \
+           "          ^ column 9\n\n"
+    text.must_include(typo)
+
+    extensions = "[ERROR]: Task failed: The 'extensions' option must be a list.\n\n" +
+                 "Task failed.\nOrigin: #{playbook}:10:7\n\n" \
+                 " 8         flie: vars.yml\n" \
+                 " 9       ignore_errors: true\n" \
+                 "10     - name: non-list extensions\n" \
+                 "         ^ column 7\n\n" \
+                 "<<< caused by >>>\n\n" \
+                 "The 'extensions' option must be a list.\nOrigin: #{playbook}:13:21\n\n" \
+                 "11       include_vars:\n" \
+                 "12         dir: /nonexistent-krikri-dir\n" \
+                 "13         extensions: notalist\n" \
+                 "                       ^ column 21\n\n"
+    text.must_include(extensions)
+  end
+
   it "aborts the whole playbook on a non-string free-form value, like Ansible's mod_args" do
     _, output = run_playbook(<<-YAML)
       - hosts: localhost

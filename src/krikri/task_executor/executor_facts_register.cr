@@ -584,7 +584,7 @@ module Krikri
     # vars:-key path emits - "[WARNING]: Found variable using reserved
     # name '<key>'." plus the key's own Origin block and a blank line -
     # once per key position per run (Display.warning's dedup). The Origin
-    # scan is ResultDisplay.set_fact_key_origin's; merge_ansible_facts
+    # scan is ResultDisplay.mapping_key_origin's; merge_ansible_facts
     # runs inside concurrent per-host fibers, so the dedup set needs the
     # mutex like playbook_parser.cr's @@reserved_toplevel_var_warnings.
     @@reserved_set_fact_warnings = Set(String).new
@@ -592,7 +592,7 @@ module Krikri
 
     private def warn_reserved_set_fact_key(task : Task, key : String) : Nil
       return unless PlaybookParser::RESERVED_VAR_NAMES.includes?(key)
-      return unless origin = ResultDisplay.set_fact_key_origin(task, key)
+      return unless origin = ResultDisplay.mapping_key_origin(task, key)
       dedup_key = "#{key}\n#{origin}"
       RESERVED_SET_FACT_WARN_MUTEX.synchronize do
         return if @@reserved_set_fact_warnings.includes?(dedup_key)
@@ -613,7 +613,7 @@ module Krikri
     # position real's data lineage reports for a set_fact-sourced value
     # (live-verified 2.19.11: `user: setfact_value` reports the value's
     # column, not the key's). Same best-effort line scan as
-    # ResultDisplay's set_fact_key_origin (quoted keys carry their colon
+    # ResultDisplay's mapping_key_origin (quoted keys carry their colon
     # after the closing quote; only a whitespace-prefixed mapping key
     # matches), but pointing at the value like task_param_value_origin.
     private def set_fact_value_origin(task : Task, key : String) : FileVarOrigin?
