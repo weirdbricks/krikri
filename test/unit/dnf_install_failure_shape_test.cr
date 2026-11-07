@@ -485,20 +485,24 @@ describe "DnfInstallFailures missing-spec stripping (issue 321)" do
   end
 end
 
-# Issue #769 (Rocky 10, `cacheonly: true` + stale package cache): dnf.py's
-# transaction tail wraps the download-time cache-verification failure as
-# "Unknown Error occurred: ..." with EMPTY failures and results. The
+# Issues #769/#932 (Rocky 10, `cacheonly: true` + stale package cache): the
 # transaction resolves fine, then base.download_packages()' cache
 # verification (dnf/base.py _select_remote_pkgs) raises a plain
-# dnf.exceptions.Error - not a DownloadError - which skips the "Failed to
-# download packages" catch and lands in the generic dnf.exceptions.Error
-# handler; failure_response only ever collected missing-spec entries, so
-# both lists stay empty. The CLI prints the same failure as log lines -
-# captured live from rockylinux:10's `dnf -y update --cacheonly ... gzip`:
+# dnf.exceptions.Error - not a DownloadError. Since ansible-core 2.21 the
+# module is a wrapper around an embedded script (_embed/dnf.py) that only
+# catches DownloadError around the download and only catches
+# dnf.exceptions.Error around resolve(), so this one escapes to the
+# script's blanket `except Exception`: msg is the bare exception text (no
+# "Unknown Error occurred: " prefix), results [], rc 1, and the empty
+# `failures` list the script reports is never forwarded by the module
+# wrapper - the fatal carries no failures key at all (issue #932,
+# live-verified on rockylinux:10 with ansible-core 2.21.6). The CLI prints
+# the same failure as log lines - captured live from rockylinux:10's
+# `dnf -y update --cacheonly ... gzip`:
 CACHEONLY_INVALID_CACHE_STDERR = "Error opening /var/cache/dnf/baseos-5b8a90704d474d3e/packages/gzip-1.13-4.el10_2.x86_64.rpm: No such file or directory\n" \
                                  "Package \"gzip-1.13-4.el10_2.x86_64\" from repository \"baseos\" has incorrect checksum\n" \
                                  "Error: Some packages have invalid cache, but cannot be downloaded due to \"--cacheonly\" option\n"
-CACHEONLY_INVALID_CACHE_MSG = "Unknown Error occurred: Some packages have invalid cache, but cannot be downloaded due to \"--cacheonly\" option"
+CACHEONLY_INVALID_CACHE_MSG = "Some packages have invalid cache, but cannot be downloaded due to \"--cacheonly\" option"
 
 # An args-aware shim pair: the `rpm` script answers the installed?-
 # precheck (argv0 is rpm itself, so no name check), the `dnf` script's
@@ -533,10 +537,10 @@ ensure
   FileUtils.rm_r(shim_dir) if shim_dir
 end
 
-describe "dnf cacheonly download failure - ansible's Unknown Error shape (issue 769)" do
+describe "dnf cacheonly download failure - ansible's blanket-handler shape (issues 769, 932)" do
   serial!
 
-  it "reports Unknown Error occurred with empty failures for an update_only transaction" do
+  it "reports the bare download error with no failures key for an update_only transaction" do
     with_cacheonly_dnf_shim(installed: true) do
       result = PluginSpecHelper.run("dnf",
         {"name" => "gzip", "state" => "present", "update_only" => "true", "cacheonly" => "true",
@@ -546,11 +550,11 @@ describe "dnf cacheonly download failure - ansible's Unknown Error shape (issue 
       result["failed"].as_bool.must_equal(true)
       result["changed"].as_bool.must_equal(false)
       result["msg"].as_s.must_equal(CACHEONLY_INVALID_CACHE_MSG)
-      result["failures"].as_a.map(&.as_s).must_equal([] of String)
+      result.as_h.has_key?("failures").must_equal(false)
       result["results"].as_a.must_equal([] of JSON::Any)
       result["rc"].as_i.must_equal(1)
       result.as_h.has_key?("stderr").must_equal(false)
-      result.as_h.keys.first(5).must_equal(["msg", "failures", "results", "rc", "failed"])
+      result.as_h.keys.first(4).must_equal(["msg", "results", "rc", "failed"])
     end
   end
 
@@ -563,11 +567,32 @@ describe "dnf cacheonly download failure - ansible's Unknown Error shape (issue 
       result["failed"].as_bool.must_equal(true)
       result["changed"].as_bool.must_equal(false)
       result["msg"].as_s.must_equal(CACHEONLY_INVALID_CACHE_MSG)
-      result["failures"].as_a.map(&.as_s).must_equal([] of String)
+      result.as_h.has_key?("failures").must_equal(false)
       result["results"].as_a.must_equal([] of JSON::Any)
       result["rc"].as_i.must_equal(1)
       result.as_h.has_key?("stderr").must_equal(false)
-      result.as_h.keys.first(5).must_equal(["msg", "failures", "results", "rc", "failed"])
+      result.as_h.keys.first(4).must_equal(["msg", "results", "rc", "failed"])
+    end
+  end
+
+  # The issue #932 playbook: `state: latest`, `update_only` and
+  # `cacheonly` against an installed package, with the chaos mutations
+  # around it (best/bugfix/security/exclude/lock_timeout) - the same
+  # blanket-handler fatal, msg unprefixed and no `failures` key.
+  it "reports the issue 932 state-latest parameter set the same way" do
+    with_cacheonly_dnf_shim(installed: true) do
+      result = PluginSpecHelper.run("dnf",
+        {"name" => "gzip", "state" => "latest", "update_only" => "true", "cacheonly" => "true",
+         "best" => "false", "bugfix" => "false", "security" => "false",
+         "exclude" => "[\"ehswcf\", \"qfrvxt\"]", "lock_timeout" => "84"},
+        vars: {"ansible_pkg_mgr" => "dnf"})
+
+      result["failed"].as_bool.must_equal(true)
+      result["changed"].as_bool.must_equal(false)
+      result["msg"].as_s.must_equal(CACHEONLY_INVALID_CACHE_MSG)
+      result.as_h.has_key?("failures").must_equal(false)
+      result["results"].as_a.must_equal([] of JSON::Any)
+      result["rc"].as_i.must_equal(1)
     end
   end
 end

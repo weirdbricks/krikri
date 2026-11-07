@@ -81,6 +81,12 @@ module Krikri
       DNF4_LIST_ORDER   = %w[msg results]
       DNF5_LIST_ORDER   = %w[msg results rc]
       DNF_FAILURE_ORDER = %w[msg failures results rc failed]
+      # The 2.21 dnf module's blanket-handler failure order (see
+      # unknown_error_failure): msg, results and rc from the embedded
+      # script's own dict, `changed` from the module wrapper and `failed`
+      # from the controller - with no `failures` key, which the wrapper
+      # only forwards when the list is non-empty (issue #932).
+      DNF_UNKNOWN_ERROR_ORDER = %w[msg results rc failed]
 
       # The transaction success key order an includer emits - dnf4/yum
       # (the response-dict order) by default, dnf5's kwargs order where
@@ -526,26 +532,27 @@ module Krikri
         "Failed to update package cache: #{stderr}"
       end
 
-      # dnf.py's transaction tail (the big try wrapping resolve(),
-      # download_packages() and the rpm transaction) ends in a generic
-      # handler: any dnf.exceptions.Error that is neither a DepsolveError
-      # nor a DownloadError becomes msg "Unknown Error occurred: {e}" with
-      # failure_response's otherwise-empty failures/results. The one that
-      # reaches it in practice is download-time cache verification under
-      # cacheonly: base.download_packages() first verifies every
-      # transaction package against its cached copy, and a cache missing
-      # (or corrupting) an rpm raises a PLAIN dnf.exceptions.Error - not a
-      # DownloadError - so the dedicated "Failed to download packages"
-      # catch never sees it and it lands in the generic handler
-      # (dnf/base.py _select_remote_pkgs). failure_response only ever
-      # collects missing-spec entries during install marking, so
-      # `failures` stays empty, and `results` stays empty even though
-      # resolve() had already succeeded (results go to the success
-      # response, never to failure_response). The CLI prints the same
-      # error as log lines - the "Package ... has incorrect checksum"
-      # criticals and a final "Error: ..." - which are never module JSON,
-      # so shelling the CLI must repack the failure into the module's
-      # shape instead of dumping the raw lines (issue #769).
+      # The download-time cache verification failure under cacheonly - the
+      # one plain dnf.exceptions.Error in practice. dnf 2.21's dnf module
+      # is a thin wrapper over an embedded script (module_utils/_embed/
+      # dnf.py) whose body catches only DownloadError around
+      # base.download_packages(); the verification (dnf/base.py
+      # _select_remote_pkgs) raises a PLAIN dnf.exceptions.Error, so it
+      # escapes that catch AND the resolve()-only dnf.exceptions.Error
+      # handler below it, landing in the script's blanket
+      # `except Exception`, which reports msg = str(e) verbatim - NO
+      # "Unknown Error occurred: " prefix, results [] and rc 1. That
+      # script's dict also carries `failures: []`, but the module wrapper
+      # only forwards `failures` to fail_json when the list is non-empty,
+      # so the fatal has NO failures key at all: changed/msg/rc/results
+      # only (issue #932, live-verified against ansible-core 2.21.6 on
+      # rockylinux:10). The prefixed msg with an empty failures list was
+      # the pre-2.21 module's shape (issue #769), whose transaction tail
+      # wrapped the download in the same prefixed handler. The CLI prints
+      # the same error as log lines - the "Package ... has incorrect
+      # checksum" criticals and a final "Error: ..." - which are never
+      # module JSON, so shelling the CLI must repack the failure into the
+      # module's shape instead of dumping the raw lines.
       private CACHEONLY_INVALID_CACHE_TEXT = "Some packages have invalid cache, but cannot be downloaded due to \"--cacheonly\" option"
 
       private def unknown_error_failure(result : NamedTuple(exit_code: Int32, stdout: String, stderr: String)) : PluginResult?
@@ -555,12 +562,10 @@ module Krikri
         PluginResult.new(
           changed: false,
           failed: true,
-          msg: "Unknown Error occurred: #{line}",
-          include_empty_msg: true,
-          failures: [] of String,
+          msg: line,
           results: [] of String,
           rc: result[:exit_code],
-          key_order: DNF_FAILURE_ORDER
+          key_order: DNF_UNKNOWN_ERROR_ORDER
         )
       end
 
@@ -1754,9 +1759,9 @@ module Krikri
                     result[:stdout].includes?("Installed:")
           transaction_result(changed, upgrade_results(result[:stdout]))
         else
-          # Same dnf.exceptions.Error wrap as the install/update batches
+          # Same blanket-handler wrap as the install/update batches
           # above: cacheonly's download-time cache verification failure is
-          # the generic "Unknown Error occurred" shape, not the raw dump.
+          # the bare-message, no-`failures` shape, not the raw dump.
           unknown_error_failure(result) ||
             failure_result("Failed to upgrade system", error_lines(result), result[:exit_code])
         end
