@@ -44,16 +44,18 @@ module Krikri
         return invalid_jid_result(jid)
       end
 
+      cleanup_mode = @params["mode"]? == "cleanup"
+
       status = AsyncJobs.read_status(jid)
       unless status
         # Ansible's own not-found shape (async_status.py's
         # fail_json call): msg without the jid interpolated, jid carried
         # separately as ansible_job_id, and started/finished as real
         # JSON booleans (ansible-core 2.19+ wording).
-        return not_found_result(jid)
+        return not_found_result(jid, cleanup_mode)
       end
 
-      if @params["mode"]? == "cleanup"
+      if cleanup_mode
         return cleanup_result(jid)
       end
 
@@ -69,16 +71,30 @@ module Krikri
         ansible_job_id: jid)
     end
 
-    private def not_found_result(jid : String) : PluginResult
-      # Ansible's result also carries the results_file path (the job file
-      # that doesn't exist) plus empty stdout/stderr pairs with their
-      # _lines companions - live-captured from ansible-playbook
-      # 2.19.11 against a never-started jid.
-      PluginResult.new(changed: false, failed: true, msg: "could not find job",
-        ansible_job_id: jid, started: true, finished: true,
-        results_file: AsyncJobs.status_path(jid),
-        stdout: "", stdout_lines: [] of String,
-        stderr: "", stderr_lines: [] of String)
+    private def not_found_result(jid : String, cleanup_mode : Bool) : PluginResult
+      # Ansible's result also carries the job-file path plus empty
+      # stdout/stderr pairs with their _lines companions - live-captured
+      # from ansible-playbook 2.19.11 against a never-started jid. WHICH
+      # path key depends on the mode: the async_status ACTION plugin
+      # pre-seeds the result before calling the module, setting
+      # results_file in status mode but erased in cleanup mode
+      # (action/async_status.py), and the module's not-found fail_json
+      # merges over that - so a cleanup on a jid that never ran still
+      # reports erased, not results_file.
+      path = AsyncJobs.status_path(jid)
+      if cleanup_mode
+        PluginResult.new(changed: false, failed: true, msg: "could not find job",
+          ansible_job_id: jid, started: true, finished: true,
+          erased: path,
+          stdout: "", stdout_lines: [] of String,
+          stderr: "", stderr_lines: [] of String)
+      else
+        PluginResult.new(changed: false, failed: true, msg: "could not find job",
+          ansible_job_id: jid, started: true, finished: true,
+          results_file: path,
+          stdout: "", stdout_lines: [] of String,
+          stderr: "", stderr_lines: [] of String)
+      end
     end
 
     private def cleanup_result(jid : String) : PluginResult

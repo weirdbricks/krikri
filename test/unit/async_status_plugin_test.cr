@@ -52,6 +52,30 @@ describe "async_status plugin result shapes" do
     end
   end
 
+  # Regression for issue #943: the async_status ACTION plugin pre-seeds the
+  # result with the job-file path before calling the module, using
+  # `results_file` in status mode but `erased` in cleanup mode
+  # (action/async_status.py). The module's not-found fail_json merges over
+  # that, so cleanup on a jid that never ran reports `erased`, never
+  # `results_file` - live-verified against ansible-playbook 2.21.6.
+  it "reports erased (not results_file) for a cleanup on a never-started jid" do
+    jid = "#{Time.utc.to_unix}.#{Random::Secure.hex(6)}"
+    begin
+      result = PluginSpecHelper.run("async_status", {"jid" => jid, "mode" => "cleanup"})
+
+      result["failed"].as_bool.must_equal(true)
+      result["msg"].as_s.must_equal("could not find job")
+      result["ansible_job_id"].as_s.must_equal(jid)
+      result["started"].as_bool.must_equal(true)
+      result["finished"].as_bool.must_equal(true)
+      result["erased"].as_s.must_equal(status_path(jid))
+      result["results_file"]?.must_be_nil
+    ensure
+      File.delete?(status_path(jid))
+      File.delete?(config_path(jid))
+    end
+  end
+
   # Regression: a traversal jid must be rejected before AsyncJobs joins it
   # into the async-dir path - status mode would otherwise read an arbitrary
   # controller-local file and mode: cleanup would delete one.
