@@ -1065,11 +1065,7 @@ module Krikri
       # `--upgrade`/`extra_args` are never comma-joined so they pass
       # through the `elsif spec` branch above and are handled directly
       # below, one per name.
-      quoted_target = if requirements
-                        target
-                      else
-                        split_requirements(target).map { |tval| editable ? "-e #{Process.quote(tval)}" : Process.quote(tval) }.join(" ")
-                      end
+      quoted_target = quoted_install_target(target, requirements, editable)
       argv = install_argv(pip_bin, upgrade, force_reinstall, extra, requirements, target, editable)
       cmd = with_umask(with_chdir("#{break_system_packages_env}#{quoted_command(pip_bin)} install #{upgrade ? "--upgrade " : ""}#{force_reinstall ? "--force-reinstall " : ""}#{extra_tokens(extra)} #{quoted_target}".strip))
       result = remote_exec(cmd)
@@ -1096,6 +1092,15 @@ module Krikri
       # relative order; the missing echo keys are a known set gap.
       PluginResult.new(changed: changed, failed: false, msg: "Package installed", stdout: result[:stdout],
         key_order: ["changed", "stdout"])
+    end
+
+    # The shell-quoted install target: a requirements file passes through
+    # verbatim, every other target is split back apart (see #install's
+    # comment on the parser's comma-joining) and each element re-quoted,
+    # carrying the -e flag when editable: is set.
+    private def quoted_install_target(target : String, requirements : String?, editable : Bool) : String
+      return target if requirements
+      split_requirements(target).map { |tval| editable ? "-e #{Process.quote(tval)}" : Process.quote(tval) }.join(" ")
     end
 
     private def install_argv(pip_bin : String, upgrade : Bool, force_reinstall : Bool, extra : String, requirements : String?, target : String, editable : Bool = false) : Array(String)
@@ -1242,12 +1247,23 @@ module Krikri
 
     private def remove(pip_bin : String, name : String) : PluginResult
       bare_name = name.split(/[=<>!~]/, 2)[0]
+      argv = pip_bin.split(' ').reject(&.empty?) + ["uninstall", "-y", bare_name]
 
       cmd = with_umask(with_chdir("#{break_system_packages_env}#{quoted_command(pip_bin)} uninstall -y #{Shell.single_quote(bare_name)}"))
       result = remote_exec(cmd)
 
-      unless result[:exit_code] == 0
-        return PluginResult.new(changed: false, failed: true, msg: "Failed to uninstall: #{result[:stderr]}")
+      # Ansible's pip.py treats rc==1 carrying a "not installed" line as
+      # the ordinary "nothing to uninstall" outcome and any OTHER non-zero
+      # rc as a hard failure reported through _fail(): `cmd` is the exact
+      # argv it ran (["<interpreter>", "-m", "pip", "uninstall", "-y",
+      # "<pkg>"]) and `msg` is pip_failure_msg's stdout/stderr tagging
+      # ("\n:stderr: <stderr>" when stdout is empty). A PEP 668 refusal
+      # surfaces exactly like that, not with a bespoke "Failed to
+      # uninstall:" prefix and no cmd key (issue #946).
+      not_installed = (result[:stdout] + result[:stderr]).downcase.includes?("not installed")
+      unless result[:exit_code] == 0 || (result[:exit_code] == 1 && not_installed)
+        return PluginResult.new(changed: false, failed: true,
+          msg: pip_failure_msg(result[:stdout], result[:stderr]), include_empty_msg: true, cmd: argv)
       end
 
       # Ansible runs `pip uninstall` unconditionally and lets pip's
@@ -1256,7 +1272,7 @@ module Krikri
       # a PEP 668 externally-managed environment report state=absent as
       # ok where Ansible fails (pip refuses to even run), so the
       # command must actually be issued and its output parsed.
-      if (result[:stdout] + result[:stderr]).downcase.includes?("not installed")
+      if not_installed
         return PluginResult.new(changed: false, failed: false, msg: "Package already absent",
           key_order: ["changed", "stdout"])
       end

@@ -858,11 +858,14 @@ describe "pip plugin" do
 
         # Got past discovery into the uninstall itself, and the
         # interpreter that ran it is the versioned one, never bare
-        # python3.
+        # python3. Ansible reports the argv under `cmd` and the stub's
+        # branded stderr in the msg ("\n:stderr: <marker>"), so both name
+        # the winning interpreter.
         result["failed"].as_bool.must_equal(true)
         msg = result["msg"].as_s
-        msg.must_include("Failed to uninstall: krikri-picked-python3.10")
+        msg.must_include(":stderr: krikri-picked-python3.10")
         msg.wont_include("krikri-picked-bare-python3")
+        result["cmd"].as_a.map(&.as_s).first.ends_with?("python3.10").must_equal(true)
       ensure
         FileUtils.rm_rf(shim_dir)
       end
