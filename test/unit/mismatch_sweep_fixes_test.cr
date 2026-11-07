@@ -17,7 +17,7 @@ require "../../src/krikri/template_action_plugin"
 # - nsupdate: Python's own error wordings real wraps (binascii base64
 #   errors, AnsibleModule's missing_required_lib for gssapi, dnspython's
 #   OSError-shaped transport errors with UDP always reported as timeout)
-# - template: Ansible's two-line "Could not find or access ... on the Ansible
+# - template: Ansible's "Could not find or access ... on the Ansible
 #   Controller" wording for a missing source
 # - file: Ansible's "Error, could not touch target: [Errno 2] ..." touch
 #   wording, "src does not exist" hard-link setup check, and the chown
@@ -140,8 +140,7 @@ describe "mismatch-sweep fixes (cron/mount/nsupdate/replace/template/file)" do
 
     result.success?.must_equal(false)
     result.error_message.must_equal(
-      "Could not find or access '/tmp/krikri-spec-does-not-exist.j2' on the Ansible Controller.\n" \
-      "If you are using a module and expect the file to exist on the remote, see the remote_src option"
+      "Could not find or access '/tmp/krikri-spec-does-not-exist.j2' on the Ansible Controller."
     )
   end
 
