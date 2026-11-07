@@ -28,6 +28,17 @@ describe "deb822_repository plugin" do
     result["msg"].as_s.must_include("body_string")
   end
 
+  it "rejects a non-bool install_python_debian with Ansible's bool-type error (core 2.20+ bool arg)" do
+    result = PluginSpecHelper.run("deb822_repository", {
+      "name"                  => "testrepo-bad-ipd",
+      "install_python_debian" => "banana",
+    })
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_include("argument 'install_python_debian' is of type str")
+    result["msg"].as_s.must_include("The value 'banana' is not a valid boolean")
+  end
+
   it "succeeds without uris/suites (Ansible treats both as optional - a name-only task writes just X-Repolib-Name + Types: deb)" do
     result = PluginSpecHelper.run("deb822_repository", {
       "name"                => "testrepo-name-only",

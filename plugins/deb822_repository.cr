@@ -76,11 +76,13 @@ module Krikri
   #
   # Dependency gate: the Ansible module is Python and imports
   # `debian.deb822` unconditionally right after its own module-arg
-  # validation - a target without python3-debian FAILS the task with
-  # missing_required_lib("python3-debian") wording (live-verified
-  # against ansible-core 2.19.11 on trixie and 2.19's observed behavior;
-  # neither auto-installs the dependency, unlike devel's
-  # install_python_debian/respawn path). This plugin previously
+  # validation - a target without python3-debian FAILS the task
+  # (live-verified against ansible-core 2.19.11 on trixie with
+  # missing_required_lib wording). Core 2.20+ also accepts an
+  # install_python_debian option (default false) whose true value makes
+  # the module apt-install python3-debian and respawn before giving up;
+  # this plugin implements the default-false gate only and always
+  # reports the dependency as missing. This plugin previously
   # skipped that gate entirely and happily wrote the file, reporting
   # changed=1 where Ansible reports a failed (often ignore_errors'd)
   # task - found via krikri-playbook-generator's fixed generic
@@ -93,7 +95,7 @@ module Krikri
     # comment for the real-Ansible semantics and message wording.
     protected def bool_params : Array(String)
       %w[allow_downgrade_to_insecure allow_insecure allow_weak by_hash check_date
-        check_valid_until enabled pdiffs trusted]
+        check_valid_until enabled install_python_debian pdiffs trusted]
     end
 
     # Every bool option here defaults to None in Ansible's argspec, so an
@@ -119,10 +121,14 @@ module Krikri
       # 2.15 has no body_string/body - a body-only task fails with
       # "Unsupported parameters", it does not write the file). Found via
       # the podman-diff deb822_repository_edge_cases V5 harness case.
-      # check_mode/diff_mode/_verbosity/_environment are engine-internal
+      # install_python_debian is core 2.20+'s python3-debian auto-install
+      # toggle (the happy-path kpg fixture passes it explicitly) - it is
+      # accepted like any other argspec option and popped before rendering,
+      # never written into the .sources file. check_mode/diff_mode/
+      # _verbosity/_environment are engine-internal
       # keys injected by the executor (see build_plugin_config), not
       # part of Ansible's argument_spec, so none are rejected.
-      deb822_supported = {"allow_downgrade_to_insecure", "allow_insecure", "allow_weak", "architectures", "by_hash", "check_date", "check_valid_until", "components", "date_max_future", "enabled", "exclude", "include", "inrelease_path", "languages", "mode", "name", "pdiffs", "signed_by", "state", "suites", "targets", "trusted", "types", "uris"}
+      deb822_supported = {"allow_downgrade_to_insecure", "allow_insecure", "allow_weak", "architectures", "by_hash", "check_date", "check_valid_until", "components", "date_max_future", "enabled", "exclude", "include", "inrelease_path", "install_python_debian", "languages", "mode", "name", "pdiffs", "signed_by", "state", "suites", "targets", "trusted", "types", "uris"}
       deb822_internal = {"_ansible_check_mode", "_ansible_diff", "_module_name", "_verbosity", "_environment"}
       # Ansible collects unsupported params but reports them LAST, so a
       # missing-required or choices error beats a typo'd parameter (see
@@ -177,10 +183,10 @@ module Krikri
     end
 
     # The Ansible module's unconditional `from debian.deb822 import Deb822`
-    # (ansible-core 2.15+ through 2.19.x; devel's install_python_debian
-    # auto-install path does not exist in any released core): a target
-    # without python3-debian fails with missing_required_lib wording
-    # before the module does anything. Probed through the same
+    # (ansible-core 2.15+; 2.20+ can auto-install the dependency via
+    # install_python_debian, which this plugin does not implement): a
+    # target without python3-debian fails with missing_required_lib
+    # wording before the module does anything. Probed through the same
     # Ansible's interpreter discovery order, reporting sys.executable; the
     # module passes the caught ImportError as `exception`, which real shows
     # in the [ERROR] block only ("...: No module named 'debian'").
