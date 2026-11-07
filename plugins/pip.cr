@@ -180,9 +180,19 @@ module Krikri
     # Whether the target virtualenv still needs creating (check mode must
     # exit before it would be, see the caller's comment).
     private def check_mode_venv_missing? : Bool
-      venv = @params["virtualenv"]?
+      venv = virtualenv_path
       return false unless venv
       !remote_file_exists?("#{venv}/bin/activate")
+    end
+
+    # Ansible declares virtualenv: as a path-type param, so AnsibleModule
+    # runs it through os.path.expanduser before the module body ever looks
+    # at it. Without the same expansion, `virtualenv: ~/some_venv` stays a
+    # literal "~" path that never exists on disk, so the existence probe
+    # wrongly reports the venv missing and check mode answers changed where
+    # Ansible answers ok (issue #954).
+    private def virtualenv_path : String?
+      @params["virtualenv"]?.try { |venv| expand_tilde(venv) }
     end
 
     # The per-state action pip.py dispatches through its state_map, after
@@ -812,7 +822,7 @@ module Krikri
     # executable. Returns a PluginResult only on failure (venv creation
     # error), so callers can `return pip_bin if pip_bin.is_a?(PluginResult)`.
     private def resolve_pip_binary : String | PluginResult
-      if venv = @params["virtualenv"]?
+      if venv = virtualenv_path
         # Ansible keys venv creation on bin/activate, not the directory: a
         # pre-created empty dir (file: state=directory) still runs
         # virtualenv_command, which fails on a host lacking it.
