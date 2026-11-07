@@ -139,6 +139,20 @@ single aggregate (the per-iteration results never reach this engine as one aggre
 Decided 2026-10-10.
 
 
+### `ansible.cfg` is located but never parsed: settings come from `ANSIBLE_*` vars and play vars
+
+- krikri finds `ansible.cfg` the way Ansible does (its path shows on the `-v` config line and in the
+  `-vv`+ banner) but reads no INI values out of it. A setting that exists only in that file therefore
+  has no effect here. Seen in practice: `[defaults] inject_invocation = True` (2.21's default is off;
+  real then echoes `invocation`, krikri does not - the #909/#910 repro shape), `stdout_callback`,
+  `callbacks_enabled` and the `profile_tasks` knobs.
+- The same switches do work through their environment variable (`ANSIBLE_INJECT_INVOCATION`,
+  `ANSIBLE_STDOUT_CALLBACK`, `ANSIBLE_CALLBACKS_ENABLED`, ...) or a play var where Ansible has one
+  (`ansible_inject_invocation`); those are what krikri reads.
+- No INI parser is planned: the file's key/merge semantics are a large surface for settings that
+  mostly have an env-var equivalent. Decided 2026-11-07.
+
+
 ### Console-output differences from ansible-core 2.19.11 that cannot be matched
 
 krikri aims for byte-for-byte identical stdout/stderr/exit code to `ansible-playbook`
@@ -256,7 +270,7 @@ krikri aims for byte-for-byte identical stdout/stderr/exit code to `ansible-play
 
 ### `ansible_version` is pinned to a fixed ansible-core release, not this project's own version
 
-- `ANSIBLE_VERSION_MAGIC_VAR` reports `2.19.4` regardless of which `ansible-playbook` is
+- `ANSIBLE_VERSION_MAGIC_VAR` reports `2.21.6` regardless of which `ansible-playbook` is
   installed on the machine running krikri. Deliberate: version-gated role features expect a
   2.x-shaped comparison target, and this project's sub-1.0 version would make every such min-version
   check fail unconditionally. It will not drift to match whatever is locally installed.
