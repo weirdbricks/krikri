@@ -108,6 +108,21 @@ describe "deb822_repository param coverage" do
     result["repo"].as_s.must_include("Types: deb")
   end
 
+  it "accepts core 2.20+ install_python_debian and never renders it (the module pops it from params)" do
+    result = PluginSpecHelper.run("deb822_repository", {
+      "name"                  => "param-audit-install-python-debian",
+      "uris"                  => "https://example.com/repo",
+      "suites"                => "stable",
+      "install_python_debian" => "false",
+      "_ansible_check_mode"   => "true",
+    })
+
+    falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+    repo = result["repo"].as_s
+    repo.wont_include("Install-Python-Debian")
+    repo.wont_include("Python-Debian")
+  end
+
   it "writes inrelease_path as Inrelease-Path: (Ansible module never pops it from params)" do
     result = PluginSpecHelper.run("deb822_repository", {
       "name"                => "param-audit-inrelease",
