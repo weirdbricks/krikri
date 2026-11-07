@@ -706,11 +706,33 @@ describe "git plugin param coverage" do
     # switch_version()'s fail_json: the message is the module's own
     # wording, and the pathspec error is NOT appended to it.
     result["msg"].as_s.must_equal("Failed to checkout no-such-ref")
-    # ... with the command, its rc, and both streams as siblings.
-    result["cmd"].as_s.must_include("checkout --force no-such-ref")
+    # ... with the command, its rc, and both streams as siblings. git.py
+    # hands fail_json the argv LIST, so `cmd` is a JSON array, not a
+    # joined string.
+    cmd = result["cmd"].as_a.map(&.as_s)
+    cmd.last(3).must_equal(["checkout", "--force", "no-such-ref"])
+    cmd.first.ends_with?("git").must_equal(true)
     result["rc"].as_i64.must_equal(1)
     result["stderr"].as_s.must_include("did not match any file(s) known to git")
     result["stdout"].as_s.must_equal("")
+  end
+
+  it "reports a failed checkout's cmd as the argv array git.py passes to fail_json" do
+    # Regression for #944: ansible-playbook reports
+    # `"cmd": ["/usr/bin/git", "checkout", "--force", dpvald]` for a
+    # switch_version() checkout failure. krikri reported the joined
+    # string "/usr/bin/git checkout --force dpvald" instead, so the task
+    # result's cmd key differed byte for byte.
+    repo = tmp_path("git-fixture-checkout-cmd-array")
+    build_fixture_repo(repo)
+    dest = tmp_path("git-checkout-cmd-array-dest")
+    `rm -rf #{dest}`
+
+    result = PluginSpecHelper.run("git", {"repo" => repo, "dest" => dest, "version" => "dpvald"})
+
+    result["failed"].as_bool.must_equal(true)
+    # Not a String: git.py builds the reported command as an argv list.
+    result["cmd"].as_a.map(&.as_s).last(3).must_equal(["checkout", "--force", "dpvald"])
   end
 
   it "fails a clone of an existing non-empty directory with basic.py's check_rc shape" do
