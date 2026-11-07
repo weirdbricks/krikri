@@ -1865,6 +1865,23 @@ module Krikri
         else
           root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new("Module failed.").with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(msg)))
         end
+      when "wait_for_connection"
+        # Ansible's action plugin does int(self._task.args.get(name)) for
+        # each numeric arg before anything else, so a non-numeric value
+        # raises an uncaught Python ValueError that the task executor
+        # wraps as "Task failed: invalid literal for int() with base
+        # 10: '<value>'" - the fatal msg keeps that prefix while the
+        # [ERROR] block is the single collapsed "Task failed: <inner>"
+        # line at the task's Origin, with no "Module failed." middle
+        # segment (live-verified vs 2.21.6). The plugin emits that exact
+        # string; strip the prefix here for the block. Any OTHER failure
+        # (the timeout msg a normal module result carries) keeps the
+        # generic "Module failed." chain.
+        if msg.starts_with?("Task failed: invalid literal for int() with base 10: ")
+          root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(msg["Task failed: ".size..]))
+        else
+          root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new("Module failed.").with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(msg)))
+        end
       when "fail", "assert", "debug", "reboot"
         # debug's failed_when rejection is an ACTION-level failure in real
         # ("Task failed: Action failed: fw", live-verified vs 2.19.11) -

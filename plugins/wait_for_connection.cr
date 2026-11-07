@@ -31,9 +31,14 @@ module Krikri
   # timeout alike - Ansible always sets it too.
   class WaitForConnectionPlugin < BasePlugin
     def execute : PluginResult
-      # Ansible module converts each arg with int() before anything else,
-      # so a non-numeric value fails the task (even in check mode)
-      # rather than silently falling back to the default.
+      # Ansible's action plugin converts each numeric arg with int()
+      # before anything else, in this exact order (connect_timeout, delay,
+      # sleep, timeout), so a non-numeric value fails the task (even in
+      # check mode) before any connection attempt rather than silently
+      # falling back to the default.
+      connect_timeout = int_arg("connect_timeout", 5)
+      return invalid_int_result("connect_timeout") unless connect_timeout
+
       delay = int_arg("delay", 0)
       return invalid_int_result("delay") unless delay
 
@@ -42,9 +47,6 @@ module Krikri
 
       timeout = int_arg("timeout", 600)
       return invalid_int_result("timeout") unless timeout
-
-      connect_timeout = int_arg("connect_timeout", 5)
-      return invalid_int_result("connect_timeout") unless connect_timeout
 
       start_monotonic = Time.instant
 
@@ -91,9 +93,15 @@ module Krikri
       raw.to_i?
     end
 
+    # Ansible's action plugin lets int()'s own ValueError escape run(), so
+    # the task executor reports it verbatim - naming the offending VALUE,
+    # not the parameter - wrapped as "Task failed: <exc>". Emit that exact
+    # string so the fatal msg matches; ResultDisplay strips the prefix for
+    # the [ERROR] brief.
     private def invalid_int_result(name : String) : PluginResult
+      value = @params[name]? || ""
       PluginResult.new(changed: false, failed: true,
-        msg: "invalid integer value for #{name}")
+        msg: "Task failed: invalid literal for int() with base 10: '#{value}'")
     end
 
     # Ansible's action plugin raises

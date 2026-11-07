@@ -20,6 +20,20 @@ describe "wait_for_connection plugin" do
     falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
   end
 
+  it "reports int()'s own ValueError wording for a non-numeric delay" do
+    # Ansible's action plugin does int(self._task.args.get('delay')) before
+    # any connection attempt, so a non-numeric value raises an uncaught
+    # Python ValueError naming the VALUE. The task executor wraps it as
+    # "Task failed: <exc>", which is the fatal msg (live-verified vs
+    # 2.21.6). Issue #948.
+    result = PluginSpecHelper.run("wait_for_connection", {
+      "connect_timeout" => "5", "delay" => "oeuxgr", "sleep" => "1",
+    })
+
+    truthy?(result["failed"]?.try(&.as_bool)).must_equal(true)
+    result["msg"].as_s.must_equal("Task failed: invalid literal for int() with base 10: 'oeuxgr'")
+  end
+
   # PluginSpecHelper always configures {"host" => {"name" => "localhost",
   # ...}} - and BasePlugin#local_connection? treats the host NAME
   # "localhost" as authoritative over any ansible_connection: var (see
