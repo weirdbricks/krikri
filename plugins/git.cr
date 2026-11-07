@@ -110,13 +110,13 @@ module Krikri
     # rc=rc)` failure sites: the msg is the module's own wording and the
     # command's output travels in the sibling keys, never appended to the
     # message. `cmd` is emitted only by the sites that pass one in
-    # git.py; it is always the argv joined the way basic.py's
-    # `_clean_args` renders it (shlex.quote per token, spaces between).
-    private def fail_with_output(msg : String, r, cmd : String? = nil) : PluginResult
+    # git.py; those hand fail_json the argv LIST they built, so it comes
+    # out as a JSON array, NOT basic.py's _clean_args joined string.
+    private def fail_with_output(msg : String, r, cmd : Array(String)? = nil) : PluginResult
       result = PluginResult.new(changed: false, failed: true, msg: msg,
         rc: r[:exit_code], stdout: r[:stdout], stdout_lines: r[:stdout].lines.map(&.chomp),
         stderr: r[:stderr], stderr_lines: r[:stderr].lines.map(&.chomp))
-      result.extra["cmd"] = JSON::Any.new(cmd) if cmd
+      result.extra["cmd"] = JSON::Any.new(cmd.map { |a| JSON::Any.new(a) }) if cmd
       result
     end
 
@@ -128,14 +128,14 @@ module Krikri
       PluginResult.new(changed: false, failed: true, msg: msg)
     end
 
-    # The `<git> <args>` string Ansible reports in `cmd`: git resolved to its
-    # absolute path (module.get_bin_path('git', True) / the executable:
-    # value) plus the argv exactly as git.py built it. krikri's own
-    # execution goes through `-C <dest>`, which real instead expresses as
-    # run_command's cwd=, so that never appears here.
-    private def reported_cmd(args : String) : String
-      git = Process.find_executable(@git_path) || @git_path
-      "#{git} #{args}"
+    # The argv Ansible reports in `cmd` for a switch_version() command:
+    # git resolved to its absolute path (module.get_bin_path('git', True)
+    # / the executable: value) followed by the argv exactly as git.py
+    # built it as a LIST. krikri's own execution goes through `-C <dest>`,
+    # which real instead expresses as run_command's cwd=, so that never
+    # appears here.
+    private def reported_argv(argv : Array(String)) : Array(String)
+      [git_bin] + argv
     end
 
     # The `cmd` string Ansible reports, for a command krikri assembled as
@@ -667,15 +667,16 @@ module Krikri
         # 2.21 reworded the common checkout-failure tail so the HEAD
         # branch's message carries a " HEAD" suffix
         # ("Failed to checkout branch {branch} HEAD", live-verified).
+        # This first checkout's own fail_json passes no cmd=; the reset
+        # below runs through the shared tail, which reports the argv list.
         r = run_git("checkout --force #{sq(branch)}", d)
         unless r[:exit_code] == 0
-          return fail_with_output("Failed to checkout branch #{branch} HEAD", r,
-            cmd: reported_cmd("checkout --force #{branch}"))
+          return fail_with_output("Failed to checkout branch #{branch} HEAD", r)
         end
         r = run_git("reset --hard #{sq(@remote)}/#{sq(branch)} --", d)
         unless r[:exit_code] == 0
           return fail_with_output("Failed to checkout branch #{branch} HEAD", r,
-            cmd: reported_cmd("reset --hard #{@remote}/#{branch} --"))
+            cmd: reported_argv(["reset", "--hard", Shell.quote_arg("#{@remote}/#{branch}")]))
         end
       else
         if remote_branch?(d, @remote, @version)
@@ -686,17 +687,16 @@ module Krikri
                         "+refs/heads/#{sq(@version)}:refs/heads/#{sq(@version)} " \
                         "+refs/heads/#{sq(@version)}:refs/remotes/#{sq(@remote)}/#{sq(@version)}", d)
             unless r[:exit_code] == 0
-              return fail_with_output("Failed to fetch branch from remote: #{@version}", r,
-                cmd: reported_cmd("fetch --depth=#{dep} #{@remote} " \
-                                  "+refs/heads/#{@version}:refs/heads/#{@version} " \
-                                  "+refs/heads/#{@version}:refs/remotes/#{@remote}/#{@version}"))
+              # set_remote_branch()'s fail_json carries no cmd=, only the
+              # msg plus the command's rc/stdout/stderr siblings.
+              return fail_with_output("Failed to fetch branch from remote: #{@version}", r)
             end
           end
           if !local_branch?(d, @version)
             r = run_git("checkout --track -b #{sq(@version)} #{sq(@remote)}/#{sq(@version)}", d)
             unless r[:exit_code] == 0
               return fail_with_output("Failed to checkout #{@version}", r,
-                cmd: reported_cmd("checkout --track -b #{@version} #{@remote}/#{@version}"))
+                cmd: reported_argv(["checkout", "--track", "-b", @version, "#{@remote}/#{@version}"]))
             end
           else
             r = run_git("checkout --force #{sq(@version)}", d)
@@ -706,14 +706,14 @@ module Krikri
             r = run_git("reset --hard #{sq(@remote)}/#{sq(@version)}", d)
             unless r[:exit_code] == 0
               return fail_with_output("Failed to checkout branch #{@version}", r,
-                cmd: reported_cmd("reset --hard #{@remote}/#{@version}"))
+                cmd: reported_argv(["reset", "--hard", "#{@remote}/#{@version}"]))
             end
           end
         else
           r = run_git("checkout --force #{sq(@version)}", d)
           unless r[:exit_code] == 0
             return fail_with_output("Failed to checkout #{@version}", r,
-              cmd: reported_cmd("checkout --force #{@version}"))
+              cmd: reported_argv(["checkout", "--force", @version]))
           end
         end
       end
