@@ -113,7 +113,12 @@ module Krikri
     private def find_param(keys) : String?
       keys.each do |key|
         value = @params[key]?
-        return value if value && !value.strip.empty?
+        # Ansible's args.get chain only skips an ABSENT key (and a key
+        # whose value is None): an empty or whitespace-only string is a
+        # present, perfectly usable value there, so whitespace-only names
+        # must reach inventory (live-verified vs 2.21.6 - `name: "   "`
+        # adds a host literally named spaces).
+        return value if value && value != Krikri::NONE_SENTINEL
       end
       nil
     end

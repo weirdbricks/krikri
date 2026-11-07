@@ -3302,34 +3302,9 @@ module Krikri
     end
 
     # Ansible's add_host: non-string YAML literal args (the parser marks
-    # those; see NON_STRING_PARAM_PREFIX) crash the run at two different
-    # stages, both live-verified vs 2.19.11:
+    # those; see NON_STRING_PARAM_PREFIX) - all live-verified vs
+    # ansible-core 2.21.6:
     #
-    # - groups/group/groupname (real precedence, first present wins): a
-    #   TRUTHY non-list/non-string fails the task inside the action
-    #   plugin with AnsibleActionFail "Groups must be specified as a
-    #   list." - an un-prefixed fatal msg plus a two-segment [ERROR]
-    #   block whose cause carries the failing param value's own Origin
-    #   (see emit_task_error_block's _ansible_fail_param branch). A falsy
-    #   literal (0/0.0/false) is skipped by the action's `if groups:`
-    #   truthiness check entirely.
-    # - name/hostname/host (real precedence, the FIRST PRESENT key wins -
-    #   args.get returns a present key's value even when it is None or
-    #   ""): a None value - the key absent everywhere, a YAML `name:`
-    #   with no value (the parser wires literal nulls as NONE_SENTINEL),
-    #   or a whole-span null template - fails the task inside the action
-    #   plugin with AnsibleActionFail "name, host or hostname needs to be
-    #   provided" BEFORE the groups handling, an un-prefixed fatal msg
-    #   plus the plain "Task failed: <msg>" chain (no "Module failed."
-    #   segment, no "Action failed." one either - a raised
-    #   AnsibleActionFail, unlike group_by's returned failed result). An
-    #   empty-STRING value passes the action's `is None` check and aborts
-    #   the whole run at inventory.add_host with "Invalid empty host name
-    #   provided:" (rc 1, no recap), exactly like the falsy non-string
-    #   literals ("Invalid empty host name provided: 0") and the truthy
-    #   non-string ones ("Invalid host name supplied, expected a string
-    #   but got <class 'ansible.module_utils._internal._datatag
-    #   ._AnsibleTaggedInt'> for 5") below.
     # - groups/group/groupname (real precedence, first present wins): a
     #   TRUTHY non-list/non-string fails the task inside the action
     #   plugin with AnsibleActionFail "Groups must be specified as a
@@ -3339,10 +3314,32 @@ module Krikri
     #   literal (0/0.0/false) is skipped by the action's `if groups:`
     #   truthiness check entirely. A LIST whose MEMBERS aren't all
     #   strings crashes the member loop's `group_name.strip()` at the
-    #   first non-string member - see list_member_attribute_crash.
-    #   The groups failure precedes the name crash (action stage before
-    #   result processing), and the name failure precedes the groups
-    #   failure (Ansible's name check is the first raise in the action).
+    #   first non-string member - see list_member_attribute_crash. A
+    #   groups failure precedes the non-string-name validation and the
+    #   empty-name crash below (the action handles groups before it
+    #   constructs its AddHost result), while the None-name check is the
+    #   action's first raise and precedes all of them.
+    # - name/hostname/host (real precedence, the FIRST PRESENT key wins -
+    #   args.get returns a present key's value even when it is None or
+    #   ""): a None value - the key absent everywhere, a YAML `name:`
+    #   with no value (the parser wires literal nulls as NONE_SENTINEL),
+    #   or a whole-span null template - raises AnsibleActionFail "name,
+    #   host or hostname needs to be provided" BEFORE the groups
+    #   handling: an un-prefixed fatal msg plus the collapsed one-segment
+    #   "Task failed: <msg>" block.
+    # - any OTHER non-string name (int/float/bool/dict/list, truthy or
+    #   falsy) passes the action's `is None` check and then dies in the
+    #   `host_name: str` field validation of Ansible's own AddHost result
+    #   dataclass (ActionBase#add_host -> _task.AddHost): a TASK failure,
+    #   NOT a whole-run abort, with "Task failed: AddHost.host_name must
+    #   be <class 'str'> instead of <class '<type>'>". Ansible 2.19
+    #   aborted the run at inventory.add_host instead ("Invalid host name
+    #   supplied, expected a string but got ..."), so that older shape is
+    #   a version difference, not a dropped branch.
+    # - an empty-STRING name passes every check above (it IS a str) and
+    #   fails inside inventory's add_dynamic_host - again a task failure,
+    #   with "Task failed: Invalid empty host name provided:", the bare
+    #   colon carrying no trailing space (live-verified byte-for-byte).
     private def add_host_literal_type_failure(task : Task, params : Hash(String, String)) : JSON::Any?
       return nil unless task.module_name == "ansible.builtin.add_host" || task.module_name == "add_host"
 
@@ -3384,27 +3381,18 @@ module Krikri
         end
       end
 
-      if native = Krikri.non_string_scalar(effective_name)
-        if Krikri.python_param_truthy?(effective_name)
-          STDERR.puts "[ERROR]: Invalid host name supplied, expected a string but got <class '#{Krikri.python_scalar_class_path(native)}'> for #{Krikri.python_str_scalar(native)}".colorize(:red)
-        else
-          STDERR.puts "[ERROR]: Invalid empty host name provided: #{Krikri.python_str_scalar(native)}".colorize(:red)
-        end
-        # Same Process.exit reasoning as abort_invalid_meta_action: this
-        # runs inside the executor's per-task paths, which swallow `exit`'s
-        # ExitException; both streams are flushed explicitly first.
-        STDOUT.flush
-        STDERR.flush
-        Process.exit(1)
+      # A NON_STRING_PARAM_PREFIX-marked STRING (a whole-span `{{ var }}`
+      # whose value is the text "[]", see substitute_task_params' "[]"
+      # case) is a real host name to Ansible, so only a genuinely
+      # non-string native value takes the AddHost validation failure.
+      if (native = Krikri.non_string_scalar(effective_name)) && !native.raw.is_a?(String)
+        return literal_crash_result("AddHost.host_name must be <class 'str'> instead of <class '#{Krikri.python_value_class_path(native)}'>")
       end
       if effective_name.empty?
-        # Ansible's message carries the name's Python str() after the colon
-        # only when there IS one - an empty string renders the bare colon
-        # with no trailing space (live-verified byte-for-byte vs 2.19.11).
-        STDERR.puts "[ERROR]: Invalid empty host name provided:".colorize(:red)
-        STDOUT.flush
-        STDERR.flush
-        Process.exit(1)
+        # The bare colon carries no trailing space - the name's Python
+        # str() renders nothing for an empty string (live-verified
+        # byte-for-byte vs 2.21.6).
+        return literal_crash_result("Invalid empty host name provided:")
       end
       nil
     end

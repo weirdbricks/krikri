@@ -7370,6 +7370,18 @@ module Krikri
             # empty-list/dict-member-list/JSON branches so every fail msg
             # container takes this wire. Templated values are never marked.
             params[key.to_s] = Krikri::NON_STRING_PARAM_PREFIX + value.to_json
+          elsif (module_name == "ansible.builtin.add_host" || module_name == "add_host") && key.to_s.in?({"name", "hostname", "host"}) && (value.raw.is_a?(Hash) || value.raw.is_a?(Array))
+            # A dict/list-valued add_host name: Ansible's AddHost result
+            # field validation rejects it as non-str, but the generic
+            # container wires below (a scalar list comma-joins into "a,b",
+            # a dict renders as bare JSON text) hand the executor a plain
+            # STRING that looks like a host name, so the failure vanished.
+            # The marker keeps the native container reachable for
+            # add_host_literal_type_failure (live-verified vs 2.21.6:
+            # `name: {a: b}` / `name: [a, b]` fail with
+            # _AnsibleTaggedDict/_AnsibleTaggedList) while every demotion
+            # site reduces it to the same plain text anything else saw.
+            params[key.to_s] = Krikri::NON_STRING_PARAM_PREFIX + value.to_json
           elsif module_name == "ansible.builtin.set_fact" && fact_literal_scalar?(value)
             # A literal (non-templated) YAML SCALAR set_fact value keeps its
             # YAML type across the strings-only param wire the same way a

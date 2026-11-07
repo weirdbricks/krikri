@@ -103,6 +103,14 @@ describe "AddHostActionPlugin" do
     inventory.hosts.size.must_equal(1)
   end
 
+  it "accepts a whitespace-only name (Ansible only rejects an absent/None one)" do
+    inventory = build_inventory
+    result = run_add_host(inventory, {"name" => "   "})
+
+    result.success?.must_equal(true)
+    inventory.hosts.has_key?("   ").must_equal(true)
+  end
+
   it "is dispatched controller-only (no module upload, no plugins/*.cr binary)" do
     Krikri::ActionPluginManager.skips_module_dispatch?("ansible.builtin.add_host").must_equal(true)
     Krikri::ActionPluginManager.skips_module_dispatch?("add_host").must_equal(true)

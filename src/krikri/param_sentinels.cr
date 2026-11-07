@@ -358,18 +358,15 @@ module Krikri
     end
   end
 
-  # The FULL Python class path Ansible's inventory layer reports for a
-  # non-string scalar host name - Inventory.add_host's
-  # "expected a string but got %s for %s" formats type(host), which is
-  # the fully-qualified class, not the short name the task-executor
-  # crash messages use (live-verified vs 2.19.11).
-  def self.python_scalar_class_path(native : JSON::Any) : String
-    case native.raw
-    when Int64, Int32 then "ansible.module_utils._internal._datatag._AnsibleTaggedInt"
-    when Float64      then "ansible.module_utils._internal._datatag._AnsibleTaggedFloat"
-    when Bool         then "bool"
-    else                   native.raw.class.to_s
-    end
+  # The FULL Python class path Ansible reports for a non-string value in
+  # its AddHost result field validation ("AddHost.host_name must be
+  # <class 'str'> instead of <class '<type>'>"): datatag-wrapped YAML
+  # scalars AND containers are fully qualified, plain Python bool/NoneType
+  # are not (live-verified vs 2.21.6 for int, float, bool, dict and
+  # list).
+  def self.python_value_class_path(native : JSON::Any) : String
+    type_name = python_value_type_name(native)
+    type_name.starts_with?("_AnsibleTagged") ? "ansible.module_utils._internal._datatag.#{type_name}" : type_name
   end
 
   # Prefix marking a string as the decimal text of an integer too wide for
