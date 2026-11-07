@@ -2213,7 +2213,7 @@ describe Krikri::PlaybookParser do
       # defined) but points at vars/8.8.12.yml when only vars/8.8.15.yml
       # exists - Ansible refuses the WHOLE RUN ("[ERROR]: Unable to
       # retrieve file contents. Could not find or access '...vars/
-      # 8.8.12.yml' on the Ansible Controller.", no PLAY RECAP; a plain
+      # 8.8.12.yml' on the Ansible Controller: ...", no PLAY RECAP; a plain
       # literal missing path fails identically). This engine raised a
       # bare-String exception that parse_tasks's generic per-task rescue
       # swallowed into a "Warning: Skipping task" - the play "succeeded"
@@ -2241,7 +2241,7 @@ describe Krikri::PlaybookParser do
             - myrole
         YAML
 
-      assert_raises_message(Krikri::StaticImportMissingFileError, /Could not find or access '.*vars\/8\.8\.12\.yml' on the Ansible Controller\./) do
+      assert_raises_message(Krikri::StaticImportMissingFileError, /Could not find or access '.*vars\/8\.8\.12\.yml' on the Ansible Controller: \[Errno 2\] No such file or directory/) do
         Krikri::PlaybookParser.parse_string(playbook_yaml, File.join(root, "site.yml"))
       end
     end
@@ -2273,7 +2273,7 @@ describe Krikri::PlaybookParser do
         YAML
 
       missing = File.join(root, "vars", "8.8.12.yml")
-      assert_raises_message(Krikri::StaticImportMissingFileError, /Could not find or access '#{Regex.escape(missing)}' on the Ansible Controller\./) do
+      assert_raises_message(Krikri::StaticImportMissingFileError, /Could not find or access '#{Regex.escape(missing)}' on the Ansible Controller: \[Errno 2\] No such file or directory: '#{Regex.escape(missing)}'/) do
         Krikri::PlaybookParser.parse_string(playbook_yaml, File.join(root, "site.yml"))
       end
     end

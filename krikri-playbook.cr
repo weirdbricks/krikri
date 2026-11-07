@@ -917,10 +917,10 @@ rescue ex : Krikri::RoleDependencyCycleError
   exit 1
 rescue ex : Krikri::StaticImportMissingFileError
   # import_tasks:' resolved file genuinely missing is Ansible's
-  # own DataLoader AnsibleError - on STDERR, NO Origin block, and rc=1
-  # rather than the parser-error 4 (live-verified vs 2.19.11; the
-  # render carries the hint line, the chained OSError text and the
-  # trailing blank).
+  # own DataLoader AnsibleFileNotFound - on STDERR, NO Origin block, and
+  # rc=1 rather than the parser-error 4 (live-verified vs 2.21.6; the
+  # render is that release's single collapsed line, cause and help text
+  # included).
   STDERR.print ex.render
   exit 1
 rescue ex : Krikri::VaultFileError
