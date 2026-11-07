@@ -104,6 +104,28 @@ describe Krikri::PythonModuleRunner do
     Krikri::PythonModuleRunner.new_style?("#!/usr/bin/python\nimport json\nprint('{}')").must_equal(false)
   end
 
+  it "counts a collection module_utils import as new-style like ansible's modularizer" do
+    # Real ansible-core's NEW_STYLE_PYTHON_MODULE_RE (module_common.py)
+    # also matches `from|import
+    # ansible_collections.<ns>.<coll>.plugins.module_utils...`, so a
+    # library/ module built on amazon.aws' AnsibleAWSModule gets its
+    # args as stdin JSON the same way an ansible.module_utils importer
+    # does. Classifying it old-style shipped the args as argv instead,
+    # which the module's AnsibleModule never reads - the task failed
+    # with "missing required arguments: tags" for a dict arg it was
+    # given (issue #955).
+    Krikri::PythonModuleRunner.new_style?(
+      %(from ansible_collections.amazon.aws.plugins.module_utils.modules import AnsibleAWSModule))
+      .must_equal(true)
+    Krikri::PythonModuleRunner.new_style?(
+      %(import ansible_collections.community.general.plugins.module_utils.foo))
+      .must_equal(true)
+    # A namespace mention outside an import statement stays old-style.
+    Krikri::PythonModuleRunner.new_style?(
+      "#!/usr/bin/python\nNS = 'ansible_collections.ns.coll.plugins.module_utils'\nprint('{}')\n")
+      .must_equal(false)
+  end
+
   it "classifies a legacy INCLUDE-marker module as new-style and splices the import in" do
     # Ansible's modularizer (executor/module_common.py _find_module_utils)
     # gives a module carrying `#<<INCLUDE_ANSIBLE_MODULE_COMMON>>` the
@@ -926,6 +948,41 @@ describe Krikri::PythonModuleRunner do
     parsed.wont_be_nil
     parsed["failed"].as_bool.must_equal(true)
     parsed["msg"].as_s.must_include("missing required arguments")
+  end
+
+  it "shim exposes AnsibleModule._diff for collection wrappers that copy it" do
+    skip("python3 not available") unless File.exists?("/usr/bin/python3")
+    # amazon.aws' AnsibleAWSModule copies `self._module._diff` right
+    # after constructing its AnsibleModule (real basic.py always
+    # carries the PASS_VARS attribute). Without it a library/ module
+    # built on AnsibleAWSModule died with "'AnsibleModule' object has
+    # no attribute '_diff'" before it read the params the task passed
+    # (issue #955).
+    work_dir = File.join(Dir.tempdir, "krikri-shim-spec-#{Random.rand(1_000_000)}")
+    Dir.mkdir_p(work_dir)
+    Krikri::PythonModuleRunner.write_module_utils_bundle(work_dir)
+    module_path = File.join(work_dir, "dict_info_spec.py")
+    File.write(module_path, "from ansible.module_utils.basic import AnsibleModule\n" \
+                            "class AnsibleAWSModule:\n" \
+                            "    def __init__(self, **kwargs):\n" \
+                            "        self._module = AnsibleModule(**kwargs)\n" \
+                            "        self._diff = self._module._diff\n" \
+                            "    @property\n" \
+                            "    def params(self):\n" \
+                            "        return self._module.params\n" \
+                            "    def exit_json(self, **kwargs):\n" \
+                            "        self._module.exit_json(**kwargs)\n" \
+                            "module = AnsibleAWSModule(argument_spec={'tags': {'type': 'dict', 'required': True}})\n" \
+                            "module.exit_json(changed=False, got=module.params['tags'], diff=module._diff)\n")
+    stdout_io = IO::Memory.new
+    status = Process.run("/usr/bin/python3", [module_path],
+      input: IO::Memory.new(%({"ANSIBLE_MODULE_ARGS": {"tags": {"Name": "demo"}, "_ansible_diff": false}})),
+      output: stdout_io, error: Process::Redirect::Close)
+    FileUtils.rm_r(work_dir)
+    status.success?.must_equal(true)
+    parsed = Krikri::PythonModuleRunner.parse_module_output(stdout_io.to_s).not_nil!
+    parsed["got"]["Name"].as_s.must_equal("demo")
+    parsed["diff"].as_bool.must_equal(false)
   end
 
   it "shim supports AnsibleModule.log() for role-private modules that call it" do
