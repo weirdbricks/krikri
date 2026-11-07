@@ -476,7 +476,14 @@ VIRTUAL = {
             "jid": {"required": True, "type": "str"},
             "mode": {"type": "str", "choices": ["status", "cleanup"], "default": "status"},
         },
-            },
+        # Its validate_argument_spec reports the resolved action plugin
+        # (self._load_name) under the FQCN spelling, and the bare spelling
+        # keeps the short name - live-verified vs 2.21.6 both ways, same
+        # quirk as debug/assert/script (not pause's spelling-blind fixed).
+        "print": {
+            "ansible.builtin.async_status": "ansible_collections.ansible.builtin.plugins.action.async_status",
+        },
+    },
 }
 
 # Modules Ansible never argspec-validates on this class of host:

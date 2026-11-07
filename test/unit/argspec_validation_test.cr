@@ -155,6 +155,27 @@ describe Krikri::ArgspecValidator do
     failure.as(Failure).msg.must_equal("value of mode must be one of: status, cleanup, got: bogus")
   end
 
+  # async_status's action plugin validates its own reduced spec, so its
+  # UnsupportedError names the resolved action plugin under the FQCN
+  # spelling while the bare spelling keeps the short name - live-verified
+  # vs 2.21.6 both ways (issue #942).
+  it "prints async_status's resolved action-plugin path for the FQCN spelling only" do
+    failure = Krikri::ArgspecValidator.validate(
+      "ansible.builtin.async_status", "ansible.builtin.async_status",
+      {"jid" => "19", "mode" => "status", "mode_bogus" => "status"}, vars)
+    failure.as(Failure).msg.must_equal(
+      "Unsupported parameters for " \
+      "(ansible_collections.ansible.builtin.plugins.action.async_status) module: mode_bogus. " \
+      "Supported parameters include: jid, mode.")
+
+    Krikri::ArgspecValidator.validate(
+      "async_status", "ansible.builtin.async_status",
+      {"jid" => "19", "mode" => "status", "mode_bogus" => "status"}, vars)
+      .as(Failure).msg.must_equal(
+      "Unsupported parameters for (async_status) module: mode_bogus. " \
+      "Supported parameters include: jid, mode.")
+  end
+
   it "enforces mutually exclusive options with Ansible's pipe-joined wording" do
     failure = Krikri::ArgspecValidator.validate(
       "lineinfile", "ansible.builtin.lineinfile",
