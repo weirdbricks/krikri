@@ -1614,6 +1614,9 @@
     ],
     "default": "status"
    }
+  },
+  "print": {
+   "ansible.builtin.async_status": "ansible_collections.ansible.builtin.plugins.action.async_status"
   }
  },
  "ansible.builtin.authorized_key": {
