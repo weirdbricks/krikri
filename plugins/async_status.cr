@@ -126,6 +126,27 @@ module Krikri
                    failed: finished && job_failed)
                end
 
+      # ansible-core 2.19+ validates every module result against the
+      # controller's task-result schema on its way in
+      # (UnifiedTaskResult.convert_field): `finished` is a bool field, so a
+      # job file returning it as a JSON int (pre-2.19 modules and hand-seeded
+      # fixtures wrote 0/1) warns and converts. The module only returns the
+      # file's own finished value when BOTH keys exist - a file without
+      # `started` forces finished=True and one with `started` but no
+      # `finished` forces False (both bools, never warned), and a null
+      # finished is the optional field's None (also never warned). `started`
+      # has no schema field, so its own int rides through silently - which
+      # is why real prints exactly ONE warning for the seeded
+      # started:1/finished:1 fixture. The block (msg + Origin + obj +
+      # help_text), type names and obj dumps were live-captured against
+      # 2.21.6 with seeded int/float/str/dict/list job files; the Origin is
+      # <unknown> because plain module JSON carries no origin tags.
+      if (file = status.as_h?) && file.has_key?("started") &&
+         (raw_finished = file["finished"]?) &&
+         !raw_finished.raw.is_a?(Bool) && !raw_finished.raw.nil?
+        result.extra["warnings"] = JSON.parse([finished_conversion_warning(raw_finished)].to_json)
+      end
+
       # Normalize started/finished into the RESULT so a finished poll
       # never omits the key (the until:/retries machinery keys off
       # `poll_result.finished`; a finished poll that omits it would
@@ -167,6 +188,61 @@ module Krikri
       order << "changed" unless order.includes?("changed")
       result.key_order = order
       result
+    end
+
+    # The controller schema-conversion warning's full display block: real
+    # renders msg, the Origin line (obj values from plain module JSON have
+    # no origin tags), the raw value and the help_text as one multi-line
+    # [WARNING] (trailing blank line added by the display emitter).
+    private def finished_conversion_warning(value : JSON::Any) : String
+      String.build do |io|
+        io << "Value for result key 'finished' of type " << native_type_name(value)
+        io << " was converted to bool.\n"
+        io << "Origin: <unknown>\n\n"
+        io << warn_obj_dump(value) << "\n\n"
+        io << "Values for result key 'finished' must be of type bool."
+      end
+    end
+
+    # ansible's native_type_name for the JSON types a job file can carry.
+    private def native_type_name(value : JSON::Any) : String
+      case value.raw
+      when Int64, Int32            then "int"
+      when Float64                 then "float"
+      when String                  then "str"
+      when Hash(String, JSON::Any) then "dict"
+      when Array(JSON::Any)        then "list"
+      else                              "bool"
+      end
+    end
+
+    # The warning's obj dump renders the RAW value: bare for scalars
+    # (verified: int 1 -> "1", float 1.5 -> "1.5", str "yes" -> unquoted
+    # "yes"), python repr for containers (dict -> "{'a': True}", list ->
+    # "[True, 1]", live-captured).
+    private def warn_obj_dump(value : JSON::Any) : String
+      case raw = value.raw
+      when Int64, Int32, Float64   then raw.to_s
+      when String                  then raw
+      when Hash(String, JSON::Any) then python_repr(value)
+      when Array(JSON::Any)        then python_repr(value)
+      else                              "None"
+      end
+    end
+
+    private def python_repr(value : JSON::Any) : String
+      case raw = value.raw
+      when Nil                   then "None"
+      when Bool                  then raw ? "True" : "False"
+      when Int64, Int32, Float64 then raw.to_s
+      when String                then "'#{raw}'"
+      when Hash(String, JSON::Any)
+        "{" + raw.map { |key, entry| "'#{key}': #{python_repr(entry)}" }.join(", ") + "}"
+      when Array(JSON::Any)
+        "[" + raw.map { |entry| python_repr(entry) }.join(", ") + "]"
+      else
+        "None"
+      end
     end
   end
 end
