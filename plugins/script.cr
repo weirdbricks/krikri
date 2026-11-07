@@ -93,6 +93,18 @@ module Krikri
       invocation += " #{args}" if args
       invocation = "cd #{shell_quote(chdir)} && #{invocation}" if chdir
 
+      # Real's script action hands script_cmd to _low_level_execute_command,
+      # which ALWAYS runs it through the connection's shell (`/bin/sh -c
+      # '<cmd>'`): a missing/inexecutable `executable:` is therefore reported
+      # BY that shell as an ordinary non-zero exit (dash:
+      # "/bin/sh: 1: 86: not found", rc 127) rather than as a spawn failure.
+      # This engine's remote_exec argv fast path would direct-exec the first
+      # word instead and report its own fake result shape (rc 1, "Local
+      # execution failed: Error executing process: ..."), which real never
+      # produces for this module - same wrapper the shell module already
+      # uses (plugins/shell.cr).
+      invocation = "/bin/sh -c #{shell_quote(invocation)}"
+
       # Remote staging (executor-side) opts this run into a simulated
       # ssh -tt session: real's script action runs the staged file via
       # _low_level_execute_command with in_data=nil, so its ssh plugin
@@ -138,7 +150,10 @@ module Krikri
         invocation = "{ #{invocation}; } 2>&1" if pty_result.nil?
       end
 
-      result = pty_result || remote_exec(invocation)
+      # force_shell: the sh -c wrapper above must survive untouched even when
+      # its string is metachar-free - the inner /bin/sh is what reports a bad
+      # `executable:` the way real does.
+      result = pty_result || remote_exec(invocation, force_shell: true)
       cleanup
 
       # Real's script ACTION returns the module capture untouched - no
