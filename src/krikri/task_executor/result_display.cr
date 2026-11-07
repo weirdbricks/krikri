@@ -1792,10 +1792,12 @@ module Krikri
         else
           root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new("Module failed.").with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(msg)))
         end
-      when "fail", "assert", "debug"
+      when "fail", "assert", "debug", "reboot"
         # debug's failed_when rejection is an ACTION-level failure in real
         # ("Task failed: Action failed: fw", live-verified vs 2.19.11) -
-        # the action plugin owns the whole result.
+        # the action plugin owns the whole result. Reboot's local-connection
+        # refusal is raised by its controller-side action plugin the same
+        # way (issue #919).
         root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new("Action failed.").with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(msg)))
       else
         # copy:'s controller-side src miss (both the remote-host variant,

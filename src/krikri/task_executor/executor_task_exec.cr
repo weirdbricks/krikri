@@ -1175,10 +1175,11 @@ module Krikri
 
       if PluginManager.local_connection?(exec_host, vars_context)
         return JSON.parse({
-          "changed" => false,
-          "elapsed" => 0,
-          "failed"  => true,
-          "msg"     => "ansible.builtin.reboot is not supported over a local connection (would reboot the controller itself)",
+          "changed"  => false,
+          "elapsed"  => 0,
+          "failed"   => true,
+          "msg"      => "Running ansible.builtin.reboot with local connection would reboot the control node.",
+          "rebooted" => false,
         }.to_json)
       end
 
