@@ -26,4 +26,34 @@ describe "dpkg_selections plugin" do
     result["failed"].as_bool.must_equal(true)
     result["msg"].as_s.must_equal("missing required arguments: selection")
   end
+
+  # #951: the kpg podman round ran this module in a Rocky container.
+  # Ansible resolves dpkg via get_bin_path(required=True) at the top of
+  # main(), before it reads any selection, so there it fails on the
+  # missing executable. Probing the package first reported the
+  # missing-package message instead.
+  it "fails the dpkg executable lookup before the package probe" do
+    scratch = PluginSpecHelper.tmp_path("dpkg-selections-nodpkg")
+    Dir.mkdir_p(scratch)
+    %w[/sbin /usr/sbin /usr/local/sbin].each do |dir|
+      skip "#{dir}/dpkg exists on this host, dpkg cannot be hidden" if File::Info.executable?(File.join(dir, "dpkg"))
+    end
+
+    result = PluginSpecHelper.run("dpkg_selections",
+      {"name" => "coreutils", "selection" => "hold"},
+      env: {"PATH" => "#{scratch}:/nonexistent-krikri-dpkg-path"})
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_match(/\AFailed to find required executable "dpkg" in paths: /)
+  end
+
+  it "still reports the missing-package failure when dpkg is installed" do
+    skip "no dpkg on this host" unless Process.find_executable("dpkg")
+
+    result = PluginSpecHelper.run("dpkg_selections",
+      {"name" => "krikri-no-such-package-951", "selection" => "hold"})
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("Failed to find package 'krikri-no-such-package-951' to perform selection 'hold'.")
+  end
 end

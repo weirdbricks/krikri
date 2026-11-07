@@ -12,6 +12,7 @@
 
 require "json"
 require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/get_bin_path"
 
 module Krikri
   class DpkgSelectionsPlugin < BasePlugin
@@ -25,6 +26,19 @@ module Krikri
 
       unless VALID_SELECTIONS.includes?(selection)
         return PluginResult.new(changed: false, failed: true, msg: "value of selection must be one of: #{VALID_SELECTIONS.join(", ")}, got: #{selection}")
+      end
+
+      # Real resolves dpkg through get_bin_path(required=True) at the top
+      # of main(), before it reads any selection - so on a host that has
+      # no dpkg at all (every rpm-family distro) Ansible fails there, and
+      # its missing-package wording below never appears. Probing the
+      # package first reported the wrong failure for exactly that case
+      # (#951, live-verified against ansible-playbook in a Rocky podman
+      # container).
+      dpkg = find_required_binary("dpkg")
+      unless dpkg
+        return PluginResult.new(changed: false, failed: true,
+          msg: PluginHelpers::GetBinPath.missing_executable_error("dpkg", @bin_searched_paths))
       end
 
       # Ansible's own module refuses to set a selection for a
@@ -41,7 +55,7 @@ module Krikri
         return PluginResult.new(changed: false, failed: true, msg: "Failed to find package '#{name}' to perform selection '#{selection}'.")
       end
 
-      current = remote_exec("dpkg --get-selections #{shell_quote(name)} 2>/dev/null")
+      current = remote_exec("#{shell_quote(dpkg)} --get-selections #{shell_quote(name)} 2>/dev/null")
       current_selection = current[:stdout].strip.split(/\s+/).last?
       current_selection ||= "not present"
 
@@ -56,7 +70,7 @@ module Krikri
       check_mode = true?(@params["_ansible_check_mode"]?)
       return PluginResult.new(changed: true, failed: false, before: current_selection, after: selection, key_order: ["changed", "before", "after"]) if check_mode
 
-      result = remote_exec("echo #{shell_quote("#{name} #{selection}")} | dpkg --set-selections")
+      result = remote_exec("echo #{shell_quote("#{name} #{selection}")} | #{shell_quote(dpkg)} --set-selections")
       return PluginResult.new(changed: false, failed: true, msg: "failed to set selection: #{result[:stderr].strip}") unless result[:exit_code] == 0
 
       PluginResult.new(changed: true, failed: false, before: current_selection, after: selection, key_order: ["changed", "before", "after"])
