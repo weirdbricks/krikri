@@ -968,7 +968,7 @@ module Krikri
       if msg = check_required_one_of(entry, provided, defaults)
         return msg
       end
-      if msg = check_required_if(entry, provided, defaults)
+      if msg = check_required_if(entry, provided, defaults, options)
         return msg
       end
       if msg = check_required_by(entry, provided, defaults)
@@ -1848,7 +1848,7 @@ module Krikri
       nil
     end
 
-    private def check_required_if(entry : JSON::Any, provided : Hash(String, String), defaults : Hash(String, JSON::Any)) : String?
+    private def check_required_if(entry : JSON::Any, provided : Hash(String, String), defaults : Hash(String, JSON::Any), options : Hash(String, JSON::Any)) : String?
       requirements = entry["required_if"]?.try(&.as_a?) || return nil
       requirements.each do |req|
         parts = req.as_a
@@ -1862,7 +1862,7 @@ module Krikri
         current = provided[key]?
         current = default_value_string(defaults[key]) if current.nil? && defaults[key]?
         next unless current
-        next unless value_matches?(current, val)
+        next unless value_matches?(current, val, options[key]?)
 
         missing = reqs.reject { |needed| present?(needed, provided, defaults) }
         max_missing = is_one_of ? reqs.size : 0
@@ -1874,9 +1874,20 @@ module Krikri
       nil
     end
 
-    private def value_matches?(current : String, val : JSON::Any) : Bool
+    # required_if compares parameters[key] == val AFTER Ansible's type
+    # conversion, so a bool trigger matches every bool-typed spelling
+    # convert_bool accepts ("yes", "1", "True", ...) - a YAML-native
+    # `append: true` demotes on the wire to Python str() text "True" and
+    # used to miss the lowercase-only comparison, so user's
+    # append-requires-groups required_if never fired and the typo'd-param
+    # Unsupported-parameters error won instead (issue #928). A
+    # non-bool-typed option converts to str/int, which Python never
+    # equates to a bool.
+    private def value_matches?(current : String, val : JSON::Any, spec : JSON::Any?) : Bool
       case raw = val.raw
-      when Bool   then current == (raw ? "true" : "false")
+      when Bool
+        return false unless spec.try(&.["type"]?.try(&.as_s?)) == "bool"
+        convert_invocation_bool(current).as_bool? == raw
       when String then current == raw
       when Int    then current == raw.to_s
       when Float  then current == raw.to_s

@@ -186,6 +186,21 @@ describe Krikri::ArgspecValidator do
       "append is True but all of the following are missing: groups")
   end
 
+  # A YAML-native `append: true` rides the wire as a marked non-string
+  # literal demoting to Python str() text "True", and required_if's
+  # trigger comparison must still fire on it - real compares the
+  # TYPE-CONVERTED value (bool True == True), so every convert_bool
+  # spelling matches, and the required_if beats a typo'd param
+  # (issue #928: the Unsupported-parameters error won instead).
+  it "matches a required_if bool trigger on the demoted native-bool wire text" do
+    failure = Krikri::ArgspecValidator.validate(
+      "user", "ansible.builtin.user",
+      {"name" => "root", "state" => "present",
+       "append" => Krikri::NON_STRING_PARAM_PREFIX + "true"}, vars)
+    failure.as(Failure).msg.must_equal(
+      "append is True but all of the following are missing: groups")
+  end
+
   it "treats an explicit null as present-but-skipped for optional options" do
     failure = Krikri::ArgspecValidator.validate(
       "lineinfile", "ansible.builtin.lineinfile",
