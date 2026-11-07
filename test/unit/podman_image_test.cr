@@ -60,6 +60,13 @@ end
 # result dict is changed/actions/podman_actions/image/stdout (then
 # Ansible's own stdout_lines and failed), with no msg at all on success.
 describe "podman_image result shape" do
+  # These drive real `podman image ls`/`inspect`/`rmi` against the host's one
+  # shared image store, so they follow the docker_compose_v2/docker_container
+  # live-spec convention: off by default (KRIKRI_DOCKER_TESTS=1 enables them)
+  # and serialized, since another podman client holding the storage lock can
+  # stretch a run past the 60s plugin ceiling and fail the suite spuriously.
+  serial!
+
   def podman_available? : Bool
     PluginSpecHelper.run("podman_image", {
       "name" => "krikri-pi-nosuchimage-#{Process.pid}", "state" => "absent",
@@ -72,6 +79,7 @@ describe "podman_image result shape" do
   end
 
   it "matches Ansible's absent-and-missing key set and order" do
+    skip_unless_live_docker
     skip "podman not available" unless podman_available?
     result = PluginSpecHelper.run("podman_image", {
       "name" => "docker.io/library/krikri-pi-shape-gone-#{Process.pid}", "state" => "absent",
@@ -84,6 +92,7 @@ describe "podman_image result shape" do
   end
 
   it "matches Ansible's present key set and order" do
+    skip_unless_live_docker
     skip "podman not available" unless podman_available?
     skip "alpine image not present locally" unless tag_alpine("docker.io/library/krikri-pi-shape:1")
     begin
@@ -102,6 +111,7 @@ describe "podman_image result shape" do
   end
 
   it "matches Ansible's removed key set and order" do
+    skip_unless_live_docker
     skip "podman not available" unless podman_available?
     skip "alpine image not present locally" unless tag_alpine("docker.io/library/krikri-pi-shape2:1")
     begin
