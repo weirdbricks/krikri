@@ -1,6 +1,7 @@
 require "json"
 require "../async_jobs"
 require "../param_sentinels"
+require "../version"
 require "./distribution_facts"
 require "./service_mgr_fact"
 require "./getfqdn"
@@ -548,6 +549,15 @@ module Krikri
     # ansible_python_interpreter, which real folds into the module's
     # shebang rather than its argument spec.
     FACTS_CONSUMED_PARAMS = %w[ansible_python_interpreter]
+
+    # Ansible's interpreter_discovery builds the help_text doclink from
+    # the RUNNING ansible-core's major.minor (get_versioned_doclink), so
+    # a 2.21.6 controller points at /ansible-core/2.21/. A hardcoded
+    # release here made the discovery warning diverge from real's byte
+    # for byte as soon as the emulated release moved on (issue #933's
+    # podman diff: real 2.21 vs krikri 2.19). Derived from the release
+    # krikri targets so it cannot drift again.
+    ANSIBLE_DOC_VERSION = Krikri::ANSIBLE_TARGET_VERSION.split('.')[0, 2].join('.')
 
     # Ansible's get_collector_names,
     # narrowed to the families this engine implements: 'min' is prepended
@@ -2961,7 +2971,7 @@ module Krikri
         elsif first_gather
           message = "Host '#{host_name}' is using the discovered Python interpreter at '#{python_bin}', but future installation of another Python interpreter could cause a different interpreter to be discovered."
           discovery_warning_msgs << message
-          discovery_warnings << "#{message} See https://docs.ansible.com/ansible-core/2.19/reference_appendices/interpreter_discovery.html for more information."
+          discovery_warnings << "#{message} See https://docs.ansible.com/ansible-core/#{ANSIBLE_DOC_VERSION}/reference_appendices/interpreter_discovery.html for more information."
         end
         if interpreter_missing?(python_bin)
           return missing_interpreter_failure(python_bin)
