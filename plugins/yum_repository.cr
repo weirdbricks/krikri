@@ -53,9 +53,10 @@ module Krikri
   #   `protect`, `ssl_check_cert_permissions`, `ui_repoid_vars`) are
   #   themselves deprecated in Ansible as of 2.20-2.22 ("has no
   #   effect with dnf as an underlying package manager") - Ansible
-  #   still *writes* them to the file (only emits a deprecation warning),
-  #   so this plugin does too, matching actual file output rather than
-  #   the deprecation status.
+  #   still *writes* them to the file while emitting a per-param
+  #   module.deprecate from the state=present write path (see
+  #   DEPRECATED_DNF_NOEFFECT_PARAMS below), so this plugin writes the
+  #   same file content AND carries the same warnings on the result.
   # - state: present (default) | absent
   # - file: filename without the `.repo` extension (default: `name`)
   # - reposdir: directory to write into (default: /etc/yum.repos.d)
@@ -162,6 +163,26 @@ module Krikri
       "validate_certs" => "sslverify",
     }
 
+    # ansible-core 2.21.6's yum_repository deprecates, inside YumRepo.add()
+    # (the state=present write path, reached only AFTER the reposdir check
+    # and the module bootstrap's own checks), every explicitly-passed param
+    # that has no effect with dnf, plus async - one module.deprecate per
+    # param, walked in the params dict's sorted key order (live-verified vs
+    # 2.21.6: the one-time hint line, then one [DEPRECATION WARNING] per
+    # param, e.g. http_caching/keepalive/mirrorlist_expire for a task
+    # passing those three). state=absent never reaches add(), and a
+    # params-dict None (param not passed, or passed as an explicit null) is
+    # skipped by add()'s `if value is None: continue` before the deprecate
+    # branch, so only actually-present values warn. The messages travel in
+    # the module result, so a later fail_json (e.g. a chown failure) still
+    # shows them - only an uncaught module crash drops them, which the
+    # display layer's module_crash_result? gate already mirrors.
+    DEPRECATED_DNF_NOEFFECT_PARAMS = %w[
+      async deltarpm_metadata_percentage gpgcakey http_caching keepalive
+      metadata_expire_filter mirrorlist_expire protect
+      ssl_check_cert_permissions ui_repoid_vars
+    ]
+
     def initialize(config : JSON::Any)
       super(config)
       PARAM_ALIASES.each do |alias_name, canonical|
@@ -222,7 +243,32 @@ module Krikri
         return PluginResult.new(changed: false, failed: true, msg: "Repo directory '#{reposdir}' does not exist.")
       end
 
-      write_repo(name, description, path, check_mode)
+      result = write_repo(name, description, path, check_mode)
+      attach_add_deprecations(result)
+      result
+    end
+
+    # The module's own deprecations for the dnf-irrelevant params, attached
+    # to whatever result the state=present path ends with (success or
+    # fail_json alike) - Ansible emits them inside add(), which has already
+    # run by the time anything after the reposdir check answers.
+    private def attach_add_deprecations(result : PluginResult) : Nil
+      texts = DEPRECATED_DNF_NOEFFECT_PARAMS.compact_map do |key|
+        next nil unless @params[key]? && !explicit_null_param?(key)
+        if key == "async"
+          "'async' parameter is deprecated as it has been removed on systems supported by ansible-core. " \
+          "This feature will be removed from module 'yum_repository' in ansible-core version 2.22."
+        else
+          "'#{key}' parameter is deprecated as it has no effect with dnf as an underlying package manager. " \
+          "This feature will be removed from module 'yum_repository' in ansible-core version 2.22."
+        end
+      end
+      return if texts.empty?
+
+      marker = result.extra["_ansible_core_deprecations"]?
+      list = marker.try(&.as_a?) || [] of JSON::Any
+      texts.each { |text| list << JSON::Any.new(text) }
+      result.extra["_ansible_core_deprecations"] = JSON::Any.new(list)
     end
 
     # Python's os.path.join drops every component before an absolute
