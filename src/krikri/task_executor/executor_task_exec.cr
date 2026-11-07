@@ -3207,12 +3207,12 @@ module Krikri
       literal_attribute_crash_result(native, "startswith")
     end
 
-    # os.path.expanduser(os.fspath(x)) on a non-string YAML literal - the
-    # crash Ansible's unarchive action hits on a non-string src
-    # (`source = os.path.expanduser(source)`, unarchive.py action, both
-    # remote_src flavors, live-verified vs 2.19.11).
-    private def literal_expanduser_crash_result(native : JSON::Any) : JSON::Any
-      literal_crash_result("expected str, bytes or os.PathLike object, not #{Krikri.python_scalar_type_name(native)}")
+    # Python's "'<type>' is not iterable" TypeError from `'://' in source`
+    # on a non-string YAML literal - the crash Ansible's unarchive action
+    # hits on a non-string src with remote_src falsy (unarchive.py, live-
+    # verified vs 2.21.6, issue #940).
+    private def literal_iterable_crash_result(native : JSON::Any) : JSON::Any
+      literal_crash_result("argument of type '#{Krikri.python_scalar_type_name(native)}' is not iterable")
     end
 
     private def literal_crash_result(bare : String) : JSON::Any
@@ -3246,9 +3246,15 @@ module Krikri
     # - unarchive dest: the same _remote_expand_user call (unarchive.py:66),
     #   firing for EVERY non-string literal dest, falsy ones included (the
     #   presence check is a None check, not a truthiness check);
-    # - unarchive src: `os.path.expanduser(source)` right after the dest
-    #   expand (unarchive.py:67) - "expected str, bytes or os.PathLike
-    #   object, not <type>", in BOTH remote_src flavors;
+    # - unarchive src: ansible-core 2.21.6 moved `os.path.expanduser(source)`
+    #   INSIDE the `if not remote_src:` block and after the URL probe
+    #   `if '://' in source`. So a falsy remote_src (the default) crashes in
+    #   that probe first with Python's "'<type>' is not iterable" TypeError
+    #   (issue #940), while a truthy remote_src never enters the block and
+    #   lets the module's own path-typed spec coerce the literal. (2.19.11
+    #   ran expanduser before the probe for BOTH flavors - "expected str,
+    #   bytes or os.PathLike object, not <type>" - which this used to
+    #   mirror);
     # - assemble src (only when the action takes its controller-side
     #   branch - remote_src present and boolean(strict=False) falsy, see
     #   assemble_action_local_path?; the default delegates to the module,
@@ -3271,7 +3277,17 @@ module Krikri
           return literal_attribute_crash_result(native, "startswith")
         end
         if native = Krikri.non_string_scalar(params["src"]?)
-          return literal_expanduser_crash_result(native)
+          # copy: (deprecated) is mutually exclusive with remote_src; when
+          # only copy: is given it sets remote_src to `not boolean(copy)`.
+          # A truthy effective remote_src skips the local branch entirely,
+          # so src reaches the module (coerced by its path-typed spec) and
+          # there is no controller-side crash here.
+          effective_remote_src = if params.has_key?("copy")
+                                   !ansible_boolean_param?(params["copy"]?)
+                                 else
+                                   remote_src_param?(params)
+                                 end
+          return literal_iterable_crash_result(native) unless effective_remote_src
         end
         return nil
       end

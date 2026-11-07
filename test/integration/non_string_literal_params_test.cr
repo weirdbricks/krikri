@@ -292,7 +292,30 @@ describe "non-string YAML literal module args (script/unarchive/assemble)" do
     output.must_include(%("msg": "Task failed: '_AnsibleTaggedInt' object has no attribute 'startswith'"))
     output.must_include(%("msg": "Task failed: 'bool' object has no attribute 'startswith'"))
     output.must_include(%("msg": "Task failed: '_AnsibleTaggedFloat' object has no attribute 'startswith'"))
-    output.must_include(%("msg": "Task failed: expected str, bytes or os.PathLike object, not _AnsibleTaggedInt"))
+    output.must_include(%("msg": "Task failed: argument of type '_AnsibleTaggedInt' is not iterable"))
+    output.to_s.wont_include("\u{E000}")
+  end
+
+  it "unarchive crashes on a non-string src in the action plugin's URL probe, before include/exclude validation" do
+    output, _scratch = run_playbook(<<-YAML)
+          - unarchive:
+              dest: /tmp
+              remote_src: "false"
+              src: 41
+              include:
+              - onmpch
+              exclude:
+              - copztf
+            ignore_errors: true
+    YAML
+
+    # ansible-core 2.21.6 moved `os.path.expanduser(source)` inside the
+    # `not remote_src` block, after `if '://' in source`; that probe raises
+    # TypeError on a non-string literal, which the task reports before the
+    # module's own include|exclude mutual-exclusion check ever runs (issue
+    # #940, live-verified vs 2.21.6).
+    output.must_include(%("msg": "Task failed: argument of type '_AnsibleTaggedInt' is not iterable"))
+    output.to_s.wont_include("mutually exclusive")
     output.to_s.wont_include("\u{E000}")
   end
 
