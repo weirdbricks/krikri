@@ -187,10 +187,19 @@ jobs:
         # KRIKRI_DOCKER_TESTS=1 turns on the live docker_compose_v2 /
         # docker_container tests, which are skipped by default locally (~135s
         # of live podman work); CI always runs them.
+        #
+        # KRIKRI_TEST_SHARDS=4 plus `-p 4` (16 concurrent tests) instead of
+        # the local default of 6 x 8 = 48: the runners have 4 vCPUs, and at 48
+        # worker fibers plugin runs that fork the 38M fat-plugin hardlink or shell
+        # out to openssl/npm/git were occasionally killed as hung - x509,
+        # facts, git, npm, apt - while the same specs pass in that image run
+        # alone. 16 keeps the IO-bound tests overlapped without starving the
+        # CPU-bound ones.
         env:
           CRYSTAL_CACHE_DIR: /root/.cache/krikri-minitest
           KRIKRI_DOCKER_TESTS: "1"
-        run: scripts/minitest.sh
+          KRIKRI_TEST_SHARDS: "4"
+        run: scripts/minitest.sh -- -p 4
 
       - name: Lint (ameba)
         # lib/ameba/bin/ameba does not exist after `shards install`:
