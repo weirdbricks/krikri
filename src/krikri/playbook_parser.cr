@@ -4110,14 +4110,25 @@ module Krikri
       # list-end hook lost every warning that preceded the aborting task
       # (issue #863).
       if module_name
-        # Only the builtin apt_key deprecation carries an Origin block (issue
-        # #917: its warning echoes the module key's own position and prints
-        # once per task occurrence); collection redirects carry none and
-        # dedup per run. The source map records the downstream map value's
-        # position instead, so scan upward from the task start for the key.
+        # Only the builtin-core deprecations carry an Origin block (issues
+        # #917/#918: their warnings echo the module key's own position and
+        # print once per task occurrence); collection redirects carry none
+        # and dedup per run. The source map records the downstream map
+        # value's position instead, so scan upward from the task start for
+        # the key.
         deprecation_origin = nil
-        if module_name.ends_with?("apt_key")
-          if deprecation_pos = source_map.try(&.at?("#{task_source_prefix(source_prefix, index)}/#{module_name}"))
+        if origin_carrying_builtin_deprecation?(module_name)
+          if module_name == "ansible.legacy.apt_repository"
+            # The ansible.legacy. spelling resolves the name through the
+            # builtin-runtime's bare key, and that path loses the task
+            # position along with the qualification: real prints the
+            # position-less `Origin: <unknown>` block with the bare module
+            # key as its whole excerpt and no caret line (live-verified vs
+            # ansible-core 2.21.6, beside the bare and FQCN spellings'
+            # positioned blocks). apt_key's legacy entry predates this and
+            # is left as issue #917 set it.
+            deprecation_origin = "Origin: <unknown>\n\n#{module_name.split(".").last}"
+          elsif deprecation_pos = source_map.try(&.at?("#{task_source_prefix(source_prefix, index)}/#{module_name}"))
             line = deprecation_pos[0]
             if line > 0 && source_file && File.file?(source_file)
               # The source map records the map value's (nested) position,

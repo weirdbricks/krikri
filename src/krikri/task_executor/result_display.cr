@@ -298,10 +298,13 @@ module Krikri
       return unless module_name
       if text = Krikri::PlaybookParser.redirect_deprecation_text(module_name)
         # Ansible's Display dedups a deprecation's console line per distinct
-        # message per run - but the apt_key Origin block makes each task's
-        # warning distinct, so the Origin-ful form prints once per occurrence
-        # (issue #917) while the Origin-less collection redirects dedup.
-        if origin && module_name.ends_with?("apt_key")
+        # message per run - but the builtin-core deprecations' Origin block
+        # makes each task's warning distinct, so the Origin-ful form prints
+        # once per occurrence (issues #917/#918) while the Origin-less
+        # collection redirects dedup. A position-less origin (the
+        # ansible.legacy.apt_repository <unknown> block) repeats verbatim,
+        # so it dedups like any identical message.
+        if origin && Krikri::PlaybookParser.origin_carrying_builtin_deprecation?(module_name)
           key = "#{text}\n#{origin}"
           return unless @@deprecation_texts.add?(key)
           emit_deprecation_hint
