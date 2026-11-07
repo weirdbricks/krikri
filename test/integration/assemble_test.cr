@@ -80,6 +80,78 @@ describe "assemble plugin" do
     File.read(dest).must_equal("visible\n")
   end
 
+  # Issue #931: on the controller-side remote_src branch the assemble ACTION
+  # plugin consumes ignore_hidden itself as plain Python truthiness and strips
+  # it before delegating to the copy module, so a non-boolean value never
+  # reaches any type: bool conversion and any non-empty string skips dotfiles
+  # - real Ansible assembles and reports changed (live-verified vs 2.19.11).
+  it "accepts a non-boolean ignore_hidden when remote_src is falsy" do
+    src = as_path("assemble_src_ignore_hidden_bad")
+    dest = as_path("assemble_dest_ignore_hidden_bad.conf")
+    FileUtils.rm_rf(src)
+    Dir.mkdir_p(src)
+    File.write(File.join(src, ".hidden"), "hidden\n")
+    File.write(File.join(src, "visible"), "visible\n")
+    File.delete(dest) if File.exists?(dest)
+
+    result = PluginSpecHelper.run("assemble",
+      {"src" => src, "dest" => dest, "remote_src" => "false", "ignore_hidden" => "judtft"})
+
+    falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+    result["changed"].as_bool.must_equal(true)
+    File.read(dest).must_equal("visible\n")
+  end
+
+  # Same branch, spelled as a STRING "false": the action plugin's truthiness
+  # test still sees a non-empty string, so dotfiles are skipped - unlike the
+  # module path below, where check_type_bool turns it into a real False.
+  it "treats a string 'false' ignore_hidden as truthy on the controller-side branch" do
+    src = as_path("assemble_src_ignore_hidden_string_false")
+    dest = as_path("assemble_dest_ignore_hidden_string_false.conf")
+    FileUtils.rm_rf(src)
+    Dir.mkdir_p(src)
+    File.write(File.join(src, ".hidden"), "hidden\n")
+    File.write(File.join(src, "visible"), "visible\n")
+    File.delete(dest) if File.exists?(dest)
+
+    PluginSpecHelper.run("assemble",
+      {"src" => src, "dest" => dest, "remote_src" => "false", "ignore_hidden" => "false"})
+
+    File.read(dest).must_equal("visible\n")
+  end
+
+  # ...while the module path (default/true remote_src) really does hand
+  # ignore_hidden to assemble.py's own argument spec, where the strict
+  # type: bool conversion fails the task.
+  it "rejects a non-boolean ignore_hidden on the module path" do
+    src = as_path("assemble_src_ignore_hidden_bad_module")
+    dest = as_path("assemble_dest_ignore_hidden_bad_module.conf")
+    FileUtils.rm_rf(src)
+    Dir.mkdir_p(src)
+    File.write(File.join(src, "visible"), "visible\n")
+    File.delete(dest) if File.exists?(dest)
+
+    result = PluginSpecHelper.run("assemble", {"src" => src, "dest" => dest, "ignore_hidden" => "judtft"})
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_include("argument 'ignore_hidden' is of type str")
+  end
+
+  # ...and there a string "false" converts to a real False, so dotfiles stay.
+  it "includes hidden fragments when a string 'false' ignore_hidden takes the module path" do
+    src = as_path("assemble_src_ignore_hidden_string_false_module")
+    dest = as_path("assemble_dest_ignore_hidden_string_false_module.conf")
+    FileUtils.rm_rf(src)
+    Dir.mkdir_p(src)
+    File.write(File.join(src, ".hidden"), "hidden\n")
+    File.write(File.join(src, "visible"), "visible\n")
+    File.delete(dest) if File.exists?(dest)
+
+    PluginSpecHelper.run("assemble", {"src" => src, "dest" => dest, "ignore_hidden" => "false"})
+
+    File.read(dest).must_equal("hidden\nvisible\n")
+  end
+
   it "writes a timestamped backup when backup: true and dest changes" do
     src = as_path("assemble_src_backup")
     dest = as_path("assemble_dest_backup.conf")
