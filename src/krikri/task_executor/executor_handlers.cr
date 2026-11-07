@@ -386,7 +386,9 @@ module Krikri
       # `augenrules --load` never re-applied the just-regenerated
       # rules).
       changed = result["changed"]?.try(&.as_bool) == true
-      if changed && (notify_list = handler.notify)
+      # A handler's own result goes through the same strategy branch as a
+      # task's, so a failed handler notifies nothing else either.
+      if changed && !Krikri.result_failed_flag(result) && (notify_list = handler.notify)
         notify_handlers(handler, host, notify_list)
       end
 

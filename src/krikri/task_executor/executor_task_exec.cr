@@ -1391,7 +1391,11 @@ module Krikri
       mark_role_dep_ran(task, host)
       changed = result["changed"]?.try(&.as_bool) || false
       failed = Krikri.result_failed_flag(result)
-      if changed && (notify_list = task.notify)
+      # ansible only reads a task's notify: in its strategy's branch for
+      # a result that is none of failed/unreachable/skipped: a task that
+      # ends up failed never notifies, even when ignore_errors: lets the
+      # play continue past it (live-verified vs 2.21.6).
+      if changed && !failed && (notify_list = task.notify)
         notify_handlers(task, host, notify_list)
       end
 
