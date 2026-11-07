@@ -711,7 +711,11 @@ module Krikri
       # os.path.join), which is AFTER the validation loop above but
       # BEFORE the null-file warning/lookup below ever runs (a falsy
       # non-string lands there instead - see
-      # include_vars_value_type_error).
+      # include_vars_value_type_error). The file: crash is in the
+      # dataloader now: since 2.21 `path_dwim_relative_stack` starts
+      # with `source_root = source.split('/')[0]`, ahead of the
+      # `source.startswith(...)` it used to reach (live-verified vs
+      # 2.21.6).
       # 2.20 deprecated (but still accepts) a bare-string
       # `ignore_files:`; the warning rides the console like every other
       # deprecation, deduped by the display.
@@ -729,7 +733,7 @@ module Krikri
         return
       end
       if type_name = task.include_vars_file_type_error
-        finish_include_vars_arg_failure(task, host, "'#{type_name}' object has no attribute 'startswith'")
+        finish_include_vars_arg_failure(task, host, "'#{type_name}' object has no attribute 'split'")
         return
       end
       name_key, name_unhashable = include_vars_name_shape(task)
