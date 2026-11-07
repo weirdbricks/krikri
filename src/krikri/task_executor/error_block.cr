@@ -62,6 +62,29 @@ module Krikri
 
     @@seen = Set(String).new
 
+    # Ansible composes its "Valid booleans include: ..." enumeration from
+    # a Python SET (`BOOLEANS` in module_utils/parsing/convert_bool.py),
+    # whose iteration order is randomized per PROCESS. A MODULE runs in a
+    # fresh process per invocation on the target, so one module-level bool
+    # failure never renders the same text twice and `Display._deduplicate`
+    # cannot collapse two of them: a loop's identical failed items - and
+    # the same failure on several hosts - each print their own block
+    # (live-verified vs ansible-core 2.21.6, issue #952: five expect: items
+    # gave five blocks with five orderings, two hosts gave two). krikri
+    # keeps this enumeration's order fixed (see
+    # PluginHelpers::StrictBoolValidation), so its rendering of the same
+    # failures WOULD dedupe - hence the exemption in record_displayed.
+    #
+    # The identical wording raised controller-side (set_fact's cacheable:,
+    # gather_facts' parallel:) comes from the one long-lived controller
+    # process, whose set order never changes, so real DOES collapse those
+    # repeats into a single block (live-verified vs 2.21.6). Only the
+    # module-rendered chain carries the "Module failed: " segment, which is
+    # what separates the two.
+    SET_ORDERED_BOOL_ENUM = "is not a valid boolean. Valid booleans include: "
+
+    MODULE_FAILED_SEGMENT = "Module failed: "
+
     # Renders the event tree into Ansible's `[ERROR]: ...` block and
     # prints it, unless the exact text was already displayed (Ansible's
     # `Display._deduplicate` - one global set, so a loop's per-item
@@ -77,7 +100,7 @@ module Krikri
     # ansible prints the report under that banner).
     def self.emit_to(io : IO, node : Node) : Bool
       text = "[ERROR]: " + format_event(node)
-      return false unless @@seen.add?(text)
+      return false unless record_displayed(text)
       io.print text
       true
     end
@@ -89,7 +112,7 @@ module Krikri
     # task-failure blocks go to stdout (live-verified vs 2.19.11).
     def self.emit_stderr(node : Node) : Bool
       text = "[ERROR]: " + format_event(node)
-      return false unless @@seen.add?(text)
+      return false unless record_displayed(text)
       STDERR.print text
       true
     end
@@ -98,9 +121,19 @@ module Krikri
     # rendered at its raise site (a RemovedModuleError's render carries
     # the Origin context the raise site built from the source map).
     def self.emit_rendered_stderr(text : String) : Bool
-      return false unless @@seen.add?(text)
+      return false unless record_displayed(text)
       STDERR.print text
       true
+    end
+
+    # Books `text` as displayed the way `Display._deduplicate` does (a
+    # global set keyed on the rendered message) and returns true when the
+    # caller should print it. A module-composed bool enumeration never
+    # repeats verbatim in real (see SET_ORDERED_BOOL_ENUM), so it is never
+    # booked and always prints.
+    private def self.record_displayed(text : String) : Bool
+      return true if text.includes?(SET_ORDERED_BOOL_ENUM) && text.includes?(MODULE_FAILED_SEGMENT)
+      @@seen.add?(text)
     end
 
     # Test hook: forget all displayed blocks.
