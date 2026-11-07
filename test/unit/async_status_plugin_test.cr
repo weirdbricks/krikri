@@ -131,4 +131,92 @@ describe "async_status plugin result shapes" do
       end
     end
   end
+
+  # Regression for issue #922: ansible-core 2.19+'s controller validates each
+  # module result against the task-result schema, and `finished` is a bool
+  # field - a job file returning it as a JSON int (the pre-2.19 wire shape,
+  # also what the kpg fixtures seed) warns and converts. The warning's block
+  # text, obj dump and Origin: <unknown> are live-captured against 2.21.6
+  # with the same seeded file.
+  it "warns and converts a JSON-int finished like the controller schema check" do
+    seeded = warn_case({"started" => 1, "finished" => 1})
+
+    seeded["warnings"].as_a.size.must_equal(1)
+    seeded["warnings"].as_a[0].as_s.must_equal(
+      "Value for result key 'finished' of type int was converted to bool.\n" \
+      "Origin: <unknown>\n" \
+      "\n" \
+      "1\n" \
+      "\n" \
+      "Values for result key 'finished' must be of type bool."
+    )
+    seeded["finished"].as_bool.must_equal(true)
+  end
+
+  it "warns for other non-bool finished types with ansible's type names and obj dumps" do
+    warn_case({"started" => 1, "finished" => "yes"})["warnings"].as_a[0].as_s.must_equal(
+      "Value for result key 'finished' of type str was converted to bool.\n" \
+      "Origin: <unknown>\n" \
+      "\n" \
+      "yes\n" \
+      "\n" \
+      "Values for result key 'finished' must be of type bool."
+    )
+    warn_case({"started" => 1, "finished" => 1.5})["warnings"].as_a[0].as_s.must_equal(
+      "Value for result key 'finished' of type float was converted to bool.\n" \
+      "Origin: <unknown>\n" \
+      "\n" \
+      "1.5\n" \
+      "\n" \
+      "Values for result key 'finished' must be of type bool."
+    )
+    warn_case({"started" => 1, "finished" => {"a" => true}})["warnings"].as_a[0].as_s.must_equal(
+      "Value for result key 'finished' of type dict was converted to bool.\n" \
+      "Origin: <unknown>\n" \
+      "\n" \
+      "{'a': True}\n" \
+      "\n" \
+      "Values for result key 'finished' must be of type bool."
+    )
+    warn_case({"started" => 1, "finished" => [true, 1]})["warnings"].as_a[0].as_s.must_equal(
+      "Value for result key 'finished' of type list was converted to bool.\n" \
+      "Origin: <unknown>\n" \
+      "\n" \
+      "[True, 1]\n" \
+      "\n" \
+      "Values for result key 'finished' must be of type bool."
+    )
+  end
+
+  # The module only returns the job file's own finished value when BOTH keys
+  # exist: a file without `started` forces finished=True and one with
+  # `started` but no `finished` forces False - both bools, so the controller
+  # never warns. A null finished is the optional field's None - also silent.
+  it "stays silent when the module would force a bool finished itself" do
+    warn_case({"finished" => 1})["warnings"]?.must_be_nil
+    warn_case({"started" => 1})["warnings"]?.must_be_nil
+    warn_case({"started" => 1, "finished" => nil})["warnings"]?.must_be_nil
+  end
+
+  # Seeds a job file in a private async dir and runs the plugin binary
+  # against it, returning the plugin's JSON result.
+  private def warn_case(file : Hash) : JSON::Any
+    jid = "#{Time.utc.to_unix}.#{Random::Secure.hex(6)}"
+    PluginSpecHelper::ENV_MUTEX.synchronize do
+      original_home = ENV["HOME"]?
+      home = File.join(Dir.tempdir, "krikri-async-status-spec-#{Random::Secure.hex(4)}")
+      Dir.mkdir_p(File.join(home, ".ansible_async"))
+      ENV["HOME"] = home
+      begin
+        File.write(File.join(async_dir, jid), file.merge({"ansible_job_id" => jid}).to_json)
+
+        PluginSpecHelper.run("async_status", {"jid" => jid})
+      ensure
+        FileUtils.rm_r(home) if original_home != home
+        original_home ? (ENV["HOME"] = original_home) : ENV.delete("HOME")
+        File.delete?(status_path(jid))
+        File.delete?(config_path(jid))
+      end
+    end
+  end
 end
