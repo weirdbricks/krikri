@@ -693,6 +693,22 @@ describe Krikri::ArgspecValidator do
       "Task failed: body must be mapping, cannot be type _AnsibleTaggedStr")
   end
 
+  # The split crash is a bare AttributeError with no result contribution, so
+  # real collapses the block to a single "Task failed: <msg>" segment at the
+  # task's Origin - unlike copy's src miss, which keeps the
+  # "Unexpected AnsibleActionFail error." middle segment.
+  it "renders uri's non-string src: crash as the collapsed action-level chain" do
+    chain = Krikri::ResultDisplay.task_error_chain(
+      "ansible.builtin.uri", "Task failed: '_AnsibleTaggedInt' object has no attribute 'split'", "Origin: /pb.yml:6")
+
+    chain.msg.must_equal("Task failed.")
+    cause = chain.chain.as(Krikri::ErrorBlock::Node)
+    cause.msg.must_equal("'_AnsibleTaggedInt' object has no attribute 'split'")
+    cause.chain.must_be_nil
+    Krikri::ErrorBlock.brief_message(chain).must_equal(
+      "Task failed: '_AnsibleTaggedInt' object has no attribute 'split'")
+  end
+
   it "reports type errors in the module's own argument_spec order, not alphabetically" do
     # Ansible's _validate_argument_types walks argument_spec.items() in
     # DECLARATION order and the module fails on errors[0] - live-verified
@@ -1005,6 +1021,61 @@ describe Krikri::ArgspecValidator do
         "uri", "ansible.builtin.uri",
         {"url" => "http://127.0.0.1:1/x", "src" => missing, "remote_src" => "true"}, vars)
       failure.must_be_nil
+      # ... and a truthy native src: takes the same short-circuit.
+      Krikri::ArgspecValidator.validate(
+        "uri", "ansible.builtin.uri",
+        {"url" => "http://127.0.0.1:1/x", "src" => Krikri::NON_STRING_PARAM_PREFIX + "44",
+         "remote_src" => "true"}, vars
+      ).must_be_nil
+    end
+
+    # _find_needle's path_dwim_relative_stack starts with
+    # `source.split('/')[0]`, so the natively-typed src: ansible's action
+    # plugin hands it crashes with a bare AttributeError instead of ever
+    # reaching the file-not-found branch (live-verified vs ansible-core
+    # 2.21.6 for int/float/bool/list; issue #941).
+    it "crashes a truthy non-string src: inside _find_needle like real's split AttributeError" do
+      {
+        Krikri::NON_STRING_PARAM_PREFIX + "44"                                           => "_AnsibleTaggedInt",
+        Krikri::NON_STRING_PARAM_PREFIX + "1.5"                                          => "_AnsibleTaggedFloat",
+        Krikri::NON_STRING_PARAM_PREFIX + "true"                                         => "bool",
+        Krikri::NON_STRING_MEMBER_PREFIX + "1," + Krikri::NON_STRING_MEMBER_PREFIX + "2" => "_AnsibleTaggedList",
+        Krikri::NON_STRING_PARAM_PREFIX + %([1, 2])                                      => "_AnsibleTaggedList",
+      }.each do |src, class_name|
+        failure = Krikri::ArgspecValidator.validate(
+          "uri", "ansible.builtin.uri", {"url" => "http://127.0.0.1:1/x", "src" => src}, vars)
+        failure.as(Failure).msg.must_equal(
+          "Task failed: '#{class_name}' object has no attribute 'split'")
+        failure.as(Failure).action_level?.must_equal(true)
+      end
+    end
+
+    # A FALSY non-string src: is skipped by the action plugin's own
+    # `if src:`, so it reaches the module and fails opening the file there
+    # instead - and a form-multipart body then reaches the action's own
+    # body guard (live-verified vs ansible-core 2.21.6).
+    it "leaves a falsy non-string src: to the module instead of the split crash" do
+      [Krikri::NON_STRING_PARAM_PREFIX + "0",
+       Krikri::NON_STRING_PARAM_PREFIX + "0.0",
+       Krikri::NON_STRING_PARAM_PREFIX + "false"].each do |src|
+        Krikri::ArgspecValidator.validate(
+          "uri", "ansible.builtin.uri", {"url" => "http://127.0.0.1:1/x", "src" => src}, vars
+        ).must_be_nil
+      end
+      failure = Krikri::ArgspecValidator.validate(
+        "uri", "ansible.builtin.uri",
+        {"url" => "http://127.0.0.1:1/x", "src" => Krikri::NON_STRING_PARAM_PREFIX + "0",
+         "body_format" => "form-multipart", "body" => "hello"}, vars)
+      failure.as(Failure).msg.must_equal("body must be mapping, cannot be type _AnsibleTaggedStr")
+    end
+
+    # A whole-span `{{ }}` rendering to TEXT rides the wire behind the same
+    # marker, but ansible sees a str and reports the ordinary not-found.
+    it "keeps a str-typed marked src: on the controller-side existence check" do
+      failure = Krikri::ArgspecValidator.validate(
+        "uri", "ansible.builtin.uri",
+        {"url" => "http://127.0.0.1:1/x", "src" => Krikri::NON_STRING_PARAM_PREFIX + "[]".to_json}, vars)
+      failure.as(Failure).msg.must_include("Could not find or access '[]' on the Ansible Controller")
     end
 
     it "names the templated Python class of a non-mapping form-multipart body" do
