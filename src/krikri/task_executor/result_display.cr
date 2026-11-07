@@ -294,10 +294,23 @@ module Krikri
     # distinct message per run through emit_core_deprecation, exactly
     # like Ansible's Display. nil module names (pseudo-tasks) and
     # non-deprecated modules are no-ops.
-    def self.emit_module_redirect_deprecation(module_name : String?) : Nil
+    def self.emit_module_redirect_deprecation(module_name : String?, origin : String? = nil) : Nil
       return unless module_name
       if text = Krikri::PlaybookParser.redirect_deprecation_text(module_name)
-        emit_core_deprecation(text)
+        # Ansible's Display dedups a deprecation's console line per distinct
+        # message per run - but the apt_key Origin block makes each task's
+        # warning distinct, so the Origin-ful form prints once per occurrence
+        # (issue #917) while the Origin-less collection redirects dedup.
+        if origin && module_name.ends_with?("apt_key")
+          key = "#{text}\n#{origin}"
+          return unless @@deprecation_texts.add?(key)
+          emit_deprecation_hint
+          STDERR.puts "[DEPRECATION WARNING]: #{text}".colorize(:light_magenta)
+          STDERR.puts origin.colorize(:light_magenta)
+          STDERR.puts
+        else
+          emit_core_deprecation(text)
+        end
       end
     end
 

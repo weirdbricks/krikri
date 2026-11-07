@@ -4110,7 +4110,33 @@ module Krikri
       # list-end hook lost every warning that preceded the aborting task
       # (issue #863).
       if module_name
-        ResultDisplay.emit_module_redirect_deprecation(module_name)
+        # Only the builtin apt_key deprecation carries an Origin block (issue
+        # #917: its warning echoes the module key's own position and prints
+        # once per task occurrence); collection redirects carry none and
+        # dedup per run. The source map records the downstream map value's
+        # position instead, so scan upward from the task start for the key.
+        deprecation_origin = nil
+        if module_name.ends_with?("apt_key")
+          if deprecation_pos = source_map.try(&.at?("#{task_source_prefix(source_prefix, index)}/#{module_name}"))
+            line = deprecation_pos[0]
+            if line > 0 && source_file && File.file?(source_file)
+              # The source map records the map value's (nested) position,
+              # but the Origin points at the module KEY's own line. Scan
+              # upward from the value for the key when they differ.
+              lines = File.read_lines(source_file)
+              key_line = line
+              (0...line).each do |i|
+                key_line = i + 1 if lines[i]?.try(&.includes?("#{module_name}:"))
+              end
+              src_line = lines[key_line - 1]?
+              if src_line && (key_idx = src_line.index("#{module_name}:"))
+                deprecation_pos = {key_line, key_idx + 1}
+              end
+            end
+            deprecation_origin = deprecation_origin_block(source_file, source_map, deprecation_pos)
+          end
+        end
+        ResultDisplay.emit_module_redirect_deprecation(module_name, deprecation_origin)
       end
 
       # A `static:` beside a NON-include action is ansible-core's own
@@ -6121,6 +6147,18 @@ module Krikri
         pos = {line, key_idx + 1} if key_idx
       end
       origin_error_render_at(message, source_file, source_map, pos)
+    end
+
+    # The Origin block a core deprecation prints (ansible-core 2.19.11's
+    # _error_utils.SourceContext layout minus its [ERROR] line): the Origin
+    # tag with the excerpt-and-caret block, or nil when there is no usable
+    # source position (including JSON flow-style sources, which real gives
+    # only the bare file-level Origin tag - no position, no excerpt).
+    private def self.deprecation_origin_block(path : String?, source_map : YamlSourceMap?, pos : YamlSourceMap::Pos?) : String?
+      return nil unless path && pos && File.file?(path)
+      return "Origin: #{File.expand_path(path)}" if json_source_without_positions?(path)
+      line, col = pos
+      ErrorBlock.origin_context(File.expand_path(path), line, col)
     end
 
     private def self.origin_error_render(message : String, path : String?, source_map : YamlSourceMap?, prefix : String) : String

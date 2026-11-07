@@ -708,6 +708,15 @@ module Krikri
       # redirect_deprecation_lookup for why the bare qualification cannot
       # go through MODULE_SEARCH_COLLECTIONS.
       "amazon.aws.ec2_vpc_peer" => {warning_text: "ec2_vpc_peer has been renamed to ec2_vpc_peering. Please update your tasks.", collection: "amazon.aws", version: "13.0.0"},
+      # ansible-core's own builtin deprecation (ansible_builtin_runtime.yml
+      # plugin_routing.modules.apt_key.deprecation) for the module this engine
+      # still ships: removal is an ansible-core release, not a collection one,
+      # so the tail names ansible-core - live-verified vs 2.19.11 for all
+      # three spellings (bare apt_key echoes its as-written name, the FQCN
+      # and ansible.legacy spellings echo their as-written qualified name).
+      "apt_key"                 => {warning_text: "Use deb822_repository instead.", collection: "ansible.builtin", version: "2.25"},
+      "ansible.builtin.apt_key" => {warning_text: "Use deb822_repository instead.", collection: "ansible.builtin", version: "2.25"},
+      "ansible.legacy.apt_key"  => {warning_text: "Use deb822_repository instead.", collection: "ansible.builtin", version: "2.25"},
     }
 
     # The table entry for a module name, together with the FQCN the
@@ -723,9 +732,15 @@ module Krikri
     # the bare spelling would go unwarned; a supported module's bare
     # spelling already arrives here resolved.
     private def self.redirect_deprecation_lookup(name : String) : {String, NamedTuple(warning_text: String, collection: String, version: String)}?
+      # The bare apt_key entry is keyed as-written (ansible-core 2.19.11
+      # echoes "apt_key", not a resolved FQCN, for that spelling), so it must
+      # win before the MODULE_SEARCH_COLLECTIONS qualification below would
+      # resolve it onto ansible.builtin.apt_key.
+      if entry = REDIRECT_DEPRECATIONS[name]?
+        return {name, entry}
+      end
       if name.includes?(".")
-        entry = REDIRECT_DEPRECATIONS[name]?
-        return entry ? {name, entry} : nil
+        return nil
       end
       MODULE_SEARCH_COLLECTIONS.each do |collection|
         qualified = "#{collection}.#{name}"
@@ -755,8 +770,13 @@ module Krikri
     # the deprecations.
     def self.redirect_deprecation_text(name : String) : String?
       fqcn, entry = redirect_deprecation_lookup(name) || return nil
-      "#{fqcn} has been deprecated. #{entry[:warning_text]} " \
-      "This feature will be removed from collection '#{entry[:collection]}' version #{entry[:version]}."
+      if entry[:collection] == "ansible.builtin"
+        "#{fqcn} has been deprecated. #{entry[:warning_text]} " \
+        "This feature will be removed from ansible-core version #{entry[:version]}."
+      else
+        "#{fqcn} has been deprecated. #{entry[:warning_text]} " \
+        "This feature will be removed from collection '#{entry[:collection]}' version #{entry[:version]}."
+      end
     end
 
     # The `deprecations` result entry real attaches to every executed
