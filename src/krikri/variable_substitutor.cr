@@ -2229,6 +2229,42 @@ module Krikri
       facts.has_key?(name["ansible_".size..])
     end
 
+    # ansible-core records at most ONE INJECT_FACTS_AS_VARS deprecation per
+    # top-level templating operation: the deprecate tag instance is shared by
+    # every injected fact, so its audit context keeps the first access only.
+    # Live-verified against 2.21.6: one `msg: "{{ d1 }}/{{ d2 }}"` whose two
+    # role defaults each read a different fact prints ONE block, at the first
+    # value's defining site, while a LATER task reading d2 gets d2's - a task
+    # param, a when: clause and a template file each start a fresh operation,
+    # so the fiber's rendering site IS the operation identity (issue #964).
+    @@tripped_fact_deprecation_ops = Set(String).new
+
+    def self.current_fact_deprecation_op : String?
+      if path = current_template_file
+        return "file:#{File.expand_path(path)}"
+      end
+      if site = current_when_site
+        return "when:#{site.source_file}:#{site.source_line}:#{site.exact_col}"
+      end
+      if site = current_task_param
+        return "param:#{site.source_file}:#{site.source_line}:#{site.key}"
+      end
+      nil
+    end
+
+    # Emits the INJECT_FACTS_AS_VARS deprecation for a placeable Origin while
+    # keeping ansible's one-block-per-templating-operation record. A read
+    # whose Origin krikri cannot place (nil) stays silent and does not spend
+    # the operation's block, so a later placeable read in the same operation
+    # still gets it - real keeps the first ACCESS, whichever fact it named.
+    def self.emit_fact_deprecation(origin : String?) : Nil
+      return unless origin
+      if op = current_fact_deprecation_op
+        return unless @@tripped_fact_deprecation_ops.add?(op)
+      end
+      ResultDisplay.emit_top_level_fact_deprecation(origin)
+    end
+
     # Per-host registry of UNSAFE variable names - names whose current
     # value was produced by EXECUTION (a `register:`ed module result, a
     # `set_fact:` write, or a gathered fact) rather than read out of a

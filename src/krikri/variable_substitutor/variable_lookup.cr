@@ -336,7 +336,7 @@ module Krikri
       # (VarSubstitutor#fact_read_origin).
       private def emit_fact_deprecation(name : String) : Nil
         return unless VarSubstitutor.top_level_fact_name?(name, @vars)
-        Krikri::ResultDisplay.emit_top_level_fact_deprecation(VarSubstitutor.fact_read_origin(name))
+        VarSubstitutor.emit_fact_deprecation(VarSubstitutor.fact_read_origin(name))
       end
 
       # Marks *host* as the origin host when *current* IS the hostvars
