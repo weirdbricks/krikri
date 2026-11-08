@@ -185,6 +185,45 @@ Fiber.yield
 
 private GET_URL_TEST_BASE = "http://#{GET_URL_TEST_ADDRESS}"
 
+# A throwaway self-signed certificate (and its key) for the TLS-rejection
+# specs: long-dated so the fixture never expires, and never in the host's
+# trust store, so connecting through it is rejected the same way the
+# real-world certificate failures these specs reproduce are.
+private TLS_FIXTURE_DIR  = File.expand_path("../fixtures", __DIR__)
+private SELF_SIGNED_CERT = File.join(TLS_FIXTURE_DIR, "get_url_spec_self_signed.crt")
+private SELF_SIGNED_KEY  = File.join(TLS_FIXTURE_DIR, "get_url_spec_self_signed.key")
+
+# A TLS endpoint presenting `cert`/`key` and then going quiet. Every
+# connection is answered on its own fiber: a rejected download costs TWO
+# handshakes - the plugin's own request plus the re-probe that recovers the
+# certificate reason - and a server answering only the first would leave
+# that probe failing on a connection error instead.
+private def start_tls_server(cert : String = SELF_SIGNED_CERT, key : String = SELF_SIGNED_KEY) : Int32
+  context = OpenSSL::SSL::Context::Server.new
+  context.certificate_chain = cert
+  context.private_key = key
+  listener = TCPServer.new("127.0.0.1", 0)
+  port = listener.local_address.port
+  spawn do
+    loop do
+      connection = listener.accept? || break
+      spawn do
+        begin
+          # The handshake is the whole interaction: the client aborts on
+          # the certificate it was just sent.
+          OpenSSL::SSL::Socket::Server.new(connection, context, sync_close: true)
+        rescue
+          # the client hung up mid-handshake, as these specs expect
+        ensure
+          connection.close rescue nil
+        end
+      end
+    end
+  end
+  Fiber.yield
+  port
+end
+
 # Whole-second `elapsed` from a fast local request, pinned as a small
 # non-negative int rather than an exact 0: under `-p 8` the single-OS-
 # thread suite juggles 8 worker fibers plus this file's own HTTP::Server
@@ -2159,5 +2198,55 @@ describe "get_url plugin ftp://" do
     File.exists?(dest).must_equal(false)
   ensure
     File.delete(dest) if dest && File.exists?(dest)
+  end
+end
+
+# Issue 981 (adrianlut.intel_sgx_sdk): the role's get_url against
+# https://download.01.org was rejected on the certificate, and krikri reported
+# OpenSSL's own handshake error ("SSL_connect: error:0A000086:SSL routines::
+# certificate verify failed") where Ansible reports CPython's ssl-module text
+# naming WHY the certificate was rejected - in that run "unable to get local
+# issuer certificate", i.e. a chain problem, not a name problem. The same
+# failure result also rendered dest's mode as "1777" against Ansible's
+# "01777", both visible in the task's fatal line.
+describe "get_url plugin certificate rejections" do
+  it "rewords a rejected certificate chain as CPython's ssl module does" do
+    port = start_tls_server
+    dest = File.tempname("get-url-spec")
+
+    result = PluginSpecHelper.run("get_url", {"url" => "https://127.0.0.1:#{port}/file.txt", "dest" => dest})
+
+    result["failed"].as_bool.must_equal(true)
+    # libcrypto's own text for X509_V_ERR_DEPTH_ZERO_SELF_SIGNED_CERT, which
+    # is word for word the reason part CPython prints (live-verified vs
+    # ansible-core 2.21.6: "certificate verify failed: self-signed
+    # certificate").
+    result["msg"].as_s.must_equal(
+      "Request failed: <urlopen error [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: self-signed certificate (_ssl.c:1147)>")
+    File.exists?(dest).must_equal(false)
+  ensure
+    File.delete(dest) if dest && File.exists?(dest)
+  end
+
+  it "renders a failing dest directory's mode as basic.py's '0%03o' octal" do
+    dest_dir = PluginSpecHelper.tmp_path("geturl-sticky-#{Random::Secure.hex(4)}")
+    Dir.mkdir(dest_dir)
+    File.chmod(dest_dir, 0o1777)
+    closed_server = TCPServer.new("127.0.0.1", 0)
+    closed_port = closed_server.local_address.port
+    closed_server.close
+
+    result = PluginSpecHelper.run("get_url", {"url" => "http://127.0.0.1:#{closed_port}/x", "dest" => dest_dir})
+
+    result["failed"].as_bool.must_equal(true)
+    result["dest"].as_s.must_equal(dest_dir)
+    result["state"].as_s.must_equal("directory")
+    # Ansible's add_path_info renders '0%03o' of the permission bits, so a
+    # sticky directory reports "01777" - not the stat module's "%04o"
+    # rendering of the same bits, which is "1777" (live-verified vs
+    # ansible-core 2.21.6).
+    result["mode"].as_s.must_equal("01777")
+  ensure
+    FileUtils.rm_rf(dest_dir) if dest_dir && Dir.exists?(dest_dir)
   end
 end

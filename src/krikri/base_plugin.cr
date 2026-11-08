@@ -1149,9 +1149,13 @@ module Krikri
     # names, falling back to the stringified numeric id exactly like
     # basic.py's pwd.getpwuid/grp.getgrgid KeyError rescue, NOT the
     # empty-string orphan convention native_stat's stat-module output
-    # uses), mode (zero-padded octal of the LSTAT'd permission bits, so
-    # a symlink reports its own "0777"), state ("link"/"directory"/
-    # "hard" for a regular file with nlink > 1/"file"), and size.
+    # uses), mode ('0%03o' of the LSTAT'd permission bits - a literal
+    # leading "0" in front of a >=3-digit octal, so a symlink reports
+    # its own "0777" and a sticky directory its own "01777" - which is
+    # NOT the stat module's "%04o" that renders that same directory as
+    # "1777"; the two only diverge once a setuid/setgid/sticky bit is
+    # set), state ("link"/"directory"/"hard" for a regular file with
+    # nlink > 1/"file"), and size.
     #
     # Existence is checked through the link (os.path.exists), so a
     # DANGLING symlink - unstatable through the link - gets no fields
@@ -1177,7 +1181,10 @@ module Krikri
       result.extra["owner"] = JSON::Any.new(owner.empty? ? stat_hash["uid"].as_i64.to_s : owner)
       group = stat_hash["gr_name"].as_s
       result.extra["group"] = JSON::Any.new(group.empty? ? stat_hash["gid"].as_i64.to_s : group)
-      result.extra["mode"] = stat_hash["mode"]
+      # native_stat's "mode" is the stat module's own "%04o" rendering;
+      # re-format it as basic.py's '0%03o' (see this method's comment).
+      mode_bits = stat_hash["mode"].as_s.to_i(8)
+      result.extra["mode"] = JSON::Any.new("0#{mode_bits.to_s(8).rjust(3, '0')}")
       result.extra["state"] = JSON::Any.new(
         if stat_hash["islnk"].as_bool
           "link"
