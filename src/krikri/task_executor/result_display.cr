@@ -336,23 +336,21 @@ module Krikri
 
     # A collection-level plugin deprecation (a community.mysql ->
     # ansible.mysql redirect, community.general.proxmox_kvm's
-    # moved-content notice): one [DEPRECATION WARNING] console line per
-    # distinct message per run through emit_core_deprecation, exactly
-    # like Ansible's Display. nil module names (pseudo-tasks) and
-    # non-deprecated modules are no-ops.
+    # moved-content notice): one [DEPRECATION WARNING] console block per
+    # distinct message per run, exactly like Ansible's Display. nil module
+    # names (pseudo-tasks) and non-deprecated modules are no-ops.
     def self.emit_module_redirect_deprecation(module_name : String?, origin : String? = nil) : Nil
       return unless module_name
       if text = Krikri::PlaybookParser.redirect_deprecation_text(module_name)
-        # Ansible's Display dedups a deprecation's console line per distinct
-        # message per run - but the builtin-core deprecations' Origin block
-        # makes each task's warning distinct, so the Origin-ful form prints
-        # once per occurrence (issues #917/#918) while the Origin-less
-        # collection redirects dedup. A position-less origin (the
-        # ansible.legacy.apt_repository <unknown> block) repeats verbatim,
-        # so it dedups like any identical message.
-        if origin && Krikri::PlaybookParser.origin_carrying_builtin_deprecation?(module_name)
-          key = "#{text}\n#{origin}"
-          return unless @@deprecation_texts.add?(key)
+        # Ansible's Display dedups a deprecation's console line on the
+        # WHOLE formatted message, Origin block included - so a positioned
+        # block makes each task occurrence distinct (issues #917/#918) and
+        # prints once per occurrence, while a position-less `<unknown>`
+        # block repeats verbatim and collapses onto the run's first one
+        # (the bare mysql_db spelling, issue #973; the ansible.legacy.
+        # apt_repository block).
+        if origin
+          return unless @@deprecation_texts.add?("#{text}\n#{origin}")
           emit_deprecation_hint
           STDERR.puts "[DEPRECATION WARNING]: #{text}".colorize(:light_magenta)
           STDERR.puts origin.colorize(:light_magenta)

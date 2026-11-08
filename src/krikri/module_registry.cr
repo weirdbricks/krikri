@@ -783,6 +783,19 @@ module Krikri
       nil
     end
 
+    # The FQCN that one of the deprecations above echoes on the console,
+    # nil for every name that is not one of them. A caller compares it
+    # against the as-written spelling to tell whether real kept the YAML
+    # tag on the name: an as-written FQCN keeps it (a positioned Origin
+    # block), a bare or ansible.legacy spelling is rebuilt by joining the
+    # collection onto the name and prints the position-less
+    # `Origin: <unknown>` form instead (issue #973).
+    def self.redirect_deprecation_fqcn(name : String) : String?
+      if lookup = redirect_deprecation_lookup(name)
+        lookup[0]
+      end
+    end
+
     # The exact console [DEPRECATION WARNING] text ansible-core
     # 2.19.11 prints for one of the deprecations above (live-verified:
     # the loader's warning_text joined onto the "has been deprecated."
