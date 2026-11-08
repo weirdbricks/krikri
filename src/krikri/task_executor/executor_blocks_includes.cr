@@ -294,6 +294,11 @@ module Krikri
           # is the one path that made the pre-0.9.600 parse-time check
           # miss the case entirely.
           raise ex
+        rescue ex : MetaWhenFatalError
+          # A meta: task's raising when: ABORTS the whole run (see
+          # meta_when_fatal) - it is never an include load failure, so it
+          # must reach krikri-playbook's own rescue the same way.
+          raise ex
         rescue ex : RemovedModuleError
           # A tombstone-removed module reached at RUN time through the
           # included file is the include task's own fatal failure in
@@ -2737,6 +2742,10 @@ module Krikri
       :ok
     rescue ex : HandlerNotFoundError
       # Same as the batched include path above - see there.
+      raise ex
+    rescue ex : MetaWhenFatalError
+      # Same whole-run abort bypass as the batched path above (see
+      # meta_when_fatal).
       raise ex
     rescue ex : RemovedModuleError
       # Same as the batched include path's removed-module rescue above -
