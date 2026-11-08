@@ -5728,19 +5728,43 @@ module Krikri
     # at this block's `when:` line (issue #990 caught the chain pinned at the
     # inner keyword). Each clause is therefore resolved on its own, an
     # inherited clause through the chain's recorded positions.
+    #
+    # A STATIC import splices a block: in from its own file, so the block also
+    # evaluates the import line's clauses, which prefix the merged list - and
+    # in real each clause is its own templating operation. A fact read in an
+    # import clause therefore deprecates at the IMPORT's `when:` token in the
+    # importing file, a position the block's own-file scan can never find (the
+    # merged condition text exists nowhere in the block's file), which is why
+    # roxxers.certbot's `import_tasks: setup-RedHat.yml` gated on
+    # `ansible_os_family == 'RedHat'` printed no block at all (issue #995).
     private def emit_skipped_block_when_deprecation(block_task : Task, raw : String, host : Host) : Nil
       scope = {"ansible_facts" => JSON::Any.new(facts_dict_for(host.name))}
       inherited = block_task.block_inherited_when.try(&.origins)
       (block_task.when_condition_list || [raw]).each do |clause|
-        next unless clause.scan(/ansible_[A-Za-z0-9_]+/).any? { |match| VarSubstitutor.top_level_fact_name?(match[0], scope) }
-        origin = if pos = inherited.try(&.[clause]?)
-                   ErrorBlock.origin_context(pos[0], pos[1], pos[2])
-                 else
-                   conditional_deprecation_text(block_task, "when", clause, header: "", footer: "").chomp
-                 end
-        next if origin.empty?
-        ResultDisplay.emit_top_level_fact_deprecation(origin)
+        if clause.scan(/ansible_[A-Za-z0-9_]+/).any? { |match| VarSubstitutor.top_level_fact_name?(match[0], scope) }
+          origin = if pos = inherited.try(&.[clause]?)
+                     ErrorBlock.origin_context(pos[0], pos[1], pos[2])
+                   elsif pos = import_line_clause_origin(block_task, clause)
+                     ErrorBlock.origin_context(pos[0], pos[1], pos[2])
+                   else
+                     conditional_deprecation_text(block_task, "when", clause, header: "", footer: "").chomp
+                   end
+          ResultDisplay.emit_top_level_fact_deprecation(origin) unless origin.empty?
+        end
+        # Python's `and` short-circuits, so a clause past the first False one
+        # is never templated and a fact read in it warns about nothing.
+        break if clause == @last_false_condition
       end
+    end
+
+    # The parse-time position of an import_tasks: line's own clause that a
+    # static import merged onto *task* - the IMPORTING file, which is where
+    # real's Origin points (live-verified vs 2.21.6: the excerpt shows the
+    # `- import_tasks:` line and its `when:`). nil for a clause the task, or
+    # the block it belongs to, wrote itself.
+    private def import_line_clause_origin(task : Task, clause : String) : {String, Int32, Int32}?
+      task.imported_when_origins.try { |origins| origins[clause]? } ||
+        task.inherited_when_origin
     end
 
     # The YAML token position of every `key:` clause in *clauses*, keyed by

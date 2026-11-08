@@ -400,4 +400,108 @@ describe "INJECT_FACTS_AS_VARS deprecation from a when: clause" do
     stderr.must_include("/play.yml:10:11\n")
     stderr.includes?("/inner.yml:7:").must_equal(false)
   end
+
+  # Issue #995 (roxxers.certbot): the role's tasks/main.yml gates
+  # `import_tasks: setup-RedHat.yml` on `ansible_os_family == 'RedHat'`
+  # and that imported file is a block:. The import's clause is evaluated
+  # FIRST and, being False off a RedHat host, short-circuits the block's
+  # own clauses - real 2.21.6 prints exactly one block, Origin'd at the
+  # import line's `when:` token in tasks/main.yml, where krikri stayed
+  # silent (the merged condition text exists nowhere in the imported
+  # file, so the own-file scan found no clause to label).
+  it "attributes a skipped imported block's Origin to the import's when: token" do
+    dir = PluginSpecHelper.tmp_path("inject-facts-import-block-#{Random::Secure.hex(4)}")
+    tasks_dir = File.join(dir, "roles", "certbot_like", "tasks")
+    FileUtils.mkdir_p(tasks_dir)
+    File.write(File.join(tasks_dir, "main.yml"), <<-YAML)
+      ---
+      - import_tasks: setup-RedHat.yml
+        when: ansible_os_family == 'NotARealFamily'
+
+      - name: keep the play alive
+        ansible.builtin.debug:
+          msg: done
+      YAML
+    File.write(File.join(tasks_dir, "setup-RedHat.yml"), <<-YAML)
+      ---
+      - block:
+
+        - name: redhat only step
+          ansible.builtin.debug:
+            msg: redhat
+
+        when:
+          - ansible_distribution == 'NotARealDistro'
+          - ansible_distribution_major_version | int >= 8
+      YAML
+    playbook = File.join(dir, "play.yml")
+    File.write(playbook, <<-PLAYBOOK)
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        roles:
+          - certbot_like
+      PLAYBOOK
+
+    stdout = IO::Memory.new
+    stderr = IO::Memory.new
+    Process.run(BINARY, ["-i", "localhost,", playbook], output: stdout, error: stderr, chdir: dir)
+
+    stdout.to_s.must_include("TASK [certbot_like : redhat only step]")
+    stderr = stderr.to_s
+    stderr.scan(/DEPRECATION WARNING\]: INJECT_FACTS_AS_VARS/).size.must_equal(1)
+    stderr.must_include("Origin: #{File.join(tasks_dir, "main.yml")}:3:9\n")
+    stderr.must_include("3   when: ansible_os_family == 'NotARealFamily'\n")
+    stderr.must_include("          ^ column 9")
+    # Nothing past the False import clause is templated, so the block's
+    # own fact reads cannot be labeled.
+    stderr.wont_include("setup-RedHat.yml:")
+  end
+
+  # The complement: an import clause that PASSES still gets its own block
+  # and the block's own clause then evaluates too, so both deprecate - the
+  # import's first, in evaluation order (live-verified vs 2.21.6).
+  it "prints one block per evaluated clause, the import's before the block's own" do
+    dir = PluginSpecHelper.tmp_path("inject-facts-import-block-#{Random::Secure.hex(4)}")
+    tasks_dir = File.join(dir, "roles", "certbot_like", "tasks")
+    FileUtils.mkdir_p(tasks_dir)
+    File.write(File.join(tasks_dir, "main.yml"), <<-YAML)
+      ---
+      - import_tasks: setup-RedHat.yml
+        when: ansible_os_family != 'NotARealFamily'
+
+      - name: keep the play alive
+        ansible.builtin.debug:
+          msg: done
+      YAML
+    File.write(File.join(tasks_dir, "setup-RedHat.yml"), <<-YAML)
+      ---
+      - block:
+
+        - name: redhat only step
+          ansible.builtin.debug:
+            msg: redhat
+
+        when: ansible_distribution == 'NotARealDistro'
+      YAML
+    playbook = File.join(dir, "play.yml")
+    File.write(playbook, <<-PLAYBOOK)
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        roles:
+          - certbot_like
+      PLAYBOOK
+
+    stdout = IO::Memory.new
+    stderr = IO::Memory.new
+    Process.run(BINARY, ["-i", "localhost,", playbook], output: stdout, error: stderr, chdir: dir)
+
+    stdout.to_s.must_include("TASK [certbot_like : redhat only step]")
+    stderr = stderr.to_s
+    stderr.scan(/DEPRECATION WARNING\]: INJECT_FACTS_AS_VARS/).size.must_equal(2)
+    stderr.must_include("Origin: #{File.join(tasks_dir, "main.yml")}:3:9\n")
+    stderr.must_include("Origin: #{File.join(tasks_dir, "setup-RedHat.yml")}:8:9\n")
+    (stderr.index!("main.yml:3:9") < stderr.index!("setup-RedHat.yml:8:9")).must_equal(true)
+  end
 end
