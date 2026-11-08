@@ -37,14 +37,14 @@ describe "Krikri::PluginManager.become_chown_failure_result (become_chown_failur
 
   it "carries the same exception key on the probe-detected chown failure result" do
     plugin_source = File.read("src/krikri/plugin_manager.cr")
-    plugin_source.must_match(/"exception"\s+=> "\(traceback unavailable\)",\n\s+"_connection_failure" => true,\n\s+\}\.to_json\)\n\s+end\n\n\s+private def self\.user_exists_remote/)
+    plugin_source.must_match(/"exception"\s+=> "\(traceback unavailable\)",\n\s+"_ansible_raise_escape"\s+=> true,\n\s+"_connection_failure"\s+=> true,\n\s+\}\.to_json\)\n\s+end\n\n\s+private def self\.user_exists_remote/)
   end
 
   it "hides the probe failure's marker in the display but keeps it for failed_when" do
     source = File.read("src/krikri/task_executor/result_display.cr")
     source.must_match(/BecomeMessages::CHOWN_FAILURE/)
     plugin_source = File.read("src/krikri/plugin_manager.cr")
-    plugin_source.must_match(/"_connection_failure" => true,\n\s+\}\.to_json\)\n\s+end\n\n\s+private def self\.user_exists_remote/)
+    plugin_source.must_match(/"_connection_failure"\s+=> true,\n\s+\}\.to_json\)\n\s+end\n\n\s+private def self\.user_exists_remote/)
   end
 
   it "probes whether root can chown a scratch file to the become_user, like _fixup_perms2" do
@@ -52,5 +52,19 @@ describe "Krikri::PluginManager.become_chown_failure_result (become_chown_failur
     script.must_match(/mktemp/)
     script.must_match(/chown cve_user "\$t"/)
     script.must_match(/exit \$rc/)
+  end
+
+  # Issue #986: _fixup_perms2 RAISES this in ansible, so an until:/retries:
+  # task is never retried and never gets an attempts key - the marker is
+  # what run_until_retries escapes on, next to the action-level and
+  # finalization ones.
+  it "marks the unknown-become_user chown failure as a raise escape" do
+    result = Krikri::PluginManager.become_chown_failure_result(1, "sudo: unknown user nosuchuser\n", "nosuchuser", "root")
+    result.as(JSON::Any)["_ansible_raise_escape"].as_bool.must_equal(true)
+  end
+
+  it "marks the probe-detected chown failure as a raise escape too" do
+    plugin_source = File.read("src/krikri/plugin_manager.cr")
+    plugin_source.must_match(/"_ansible_raise_escape"\s+=> true,\n\s+"_connection_failure"\s+=> true,/)
   end
 end

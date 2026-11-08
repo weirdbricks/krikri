@@ -1574,13 +1574,19 @@ module Krikri
     # become failure with the sudo stderr appended, not as unparseable
     # module output. `_connection_failure` stays so failed_when: cannot
     # reinterpret it; the display strips it.
+    # `_ansible_raise_escape` marks the RAISE class: ansible raises this
+    # out of handler.run() rather than returning it as a result, so an
+    # until:/retries: task never retries it (see run_until_retries' own
+    # escape). The key is dropped from displays and registered vars by the
+    # blanket `_ansible_*` strip.
     def self.become_premature_end_result(output : String, stderr : String) : JSON::Any?
       return nil unless output.strip.empty? && !stderr.strip.empty?
       JSON.parse({
-        "changed"             => false,
-        "failed"              => true,
-        "msg"                 => "Task failed: #{BECOME_PREMATURE_END}\n>>> Standard Error\n#{stderr.strip}",
-        "_connection_failure" => true,
+        "changed"               => false,
+        "failed"                => true,
+        "msg"                   => "Task failed: #{BECOME_PREMATURE_END}\n>>> Standard Error\n#{stderr.strip}",
+        "_connection_failure"   => true,
+        "_ansible_raise_escape" => true,
       }.to_json)
     end
 
@@ -1603,11 +1609,14 @@ module Krikri
       # "(traceback unavailable)" placeholder, while the fatal dump strips
       # the key (live-verified vs 2.19.11 - issue #546's
       # laniakea.galaxy_tools debug-of-registered-result divergence).
+      # `_ansible_raise_escape`: _fixup_perms2 RAISES this one too, so an
+      # until:/retries: task is never retried (issue #986).
       JSON.parse({
-        "changed"   => false,
-        "failed"    => true,
-        "msg"       => "Task failed: #{BECOME_CHOWN_FAILURE}",
-        "exception" => "(traceback unavailable)",
+        "changed"               => false,
+        "failed"                => true,
+        "msg"                   => "Task failed: #{BECOME_CHOWN_FAILURE}",
+        "exception"             => "(traceback unavailable)",
+        "_ansible_raise_escape" => true,
       }.to_json)
     end
 
@@ -1649,16 +1658,19 @@ module Krikri
 
     # ansible raises this from _fixup_perms2 before the module runs, so
     # failed_when:/changed_when: never get to see it; the marker keeps them
-    # from reinterpreting it (the display strips it).
+    # from reinterpreting it (the display strips it). Same raise class as
+    # become_premature_end_result, hence the same `_ansible_raise_escape`
+    # (issue #986).
     private def self.become_chown_failure_json : JSON::Any
       # Same 2.19 exception-key treatment as become_chown_failure_result
       # above - the probe-detected shape is the same _fixup_perms2 fatal.
       JSON.parse({
-        "changed"             => false,
-        "failed"              => true,
-        "msg"                 => "Task failed: #{BECOME_CHOWN_FAILURE}",
-        "exception"           => "(traceback unavailable)",
-        "_connection_failure" => true,
+        "changed"               => false,
+        "failed"                => true,
+        "msg"                   => "Task failed: #{BECOME_CHOWN_FAILURE}",
+        "exception"             => "(traceback unavailable)",
+        "_ansible_raise_escape" => true,
+        "_connection_failure"   => true,
       }.to_json)
     end
 
