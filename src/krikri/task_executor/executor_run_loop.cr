@@ -988,6 +988,7 @@ module Krikri
       # itself, matching Ansible's warning-then-error order for a non-string
       # whole-template result.
       maybe_conditional_delimiters_deprecation(task, when_condition, "when", vars_context) if task
+      maybe_fact_alias_defined_deprecation(task, when_condition, vars_context) if task
       # The play_hosts read deprecation raised while THIS clause evaluates
       # gets its Origin from the clause's own source position (issue #835:
       # bloxberg.corosync_pacemaker's import-line `when: >- ... play_hosts

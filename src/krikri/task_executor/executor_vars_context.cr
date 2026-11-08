@@ -5708,6 +5708,19 @@ module Krikri
     # owns the clause; the child's own mapping has none when the
     # condition was inherited). Deduplicated per Origin by the display
     # side, so calling it for every child warns once.
+    # `when: ansible_os_family is defined` reads a top-level fact alias, but the
+    # is-defined test is answered leniently without resolving the name, so the read
+    # never reaches the substitutor and no deprecation printed at all - real 2.21.6
+    # prints the INJECT_FACTS_AS_VARS block, Origin'd at the when: value token
+    # (live-verified: `ansible_os_family is defined` in a playbook's only task).
+    private def maybe_fact_alias_defined_deprecation(task : Task, raw : String, vars_context : Hash(String, JSON::Any)) : Nil
+      return unless ConditionalEvaluator.whole_condition_is_defined_test?(raw)
+      return unless raw.scan(/ansible_[A-Za-z0-9_]+/).any? { |match| VarSubstitutor.top_level_fact_name?(match[0], vars_context) }
+      origin = conditional_deprecation_text(task, "when", raw, header: "", footer: "").chomp
+      return if origin.empty?
+      ResultDisplay.emit_top_level_fact_deprecation(origin)
+    end
+
     private def emit_skipped_block_when_deprecation(block_task : Task, raw : String, host : Host) : Nil
       scope = {"ansible_facts" => JSON::Any.new(facts_dict_for(host.name))}
       return unless raw.scan(/ansible_[A-Za-z0-9_]+/).any? { |match| VarSubstitutor.top_level_fact_name?(match[0], scope) }

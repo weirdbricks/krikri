@@ -329,7 +329,7 @@ module Krikri
     # issue #730, likewise skips with an undefined head where the
     # probe's strict evaluation raised) - and the is-defined handlers
     # below answer the test leniently instead.
-    private def self.whole_condition_is_defined_test?(condition : String) : Bool
+    def self.whole_condition_is_defined_test?(condition : String) : Bool
       stripped = condition.strip
       return false unless stripped.ends_with?(" is defined") ||
                           stripped.ends_with?(" is not defined") ||

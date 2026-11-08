@@ -121,4 +121,41 @@ describe "INJECT_FACTS_AS_VARS deprecation from a when: clause" do
 
     stderr.includes?("INJECT_FACTS_AS_VARS").must_equal(false)
   end
+
+  it "prints it for a whole `is defined` test, which resolves the name leniently" do
+    # The is-defined test never goes through the substitutor, so the read
+    # produced no deprecation at all (live-verified vs 2.21.6, which prints
+    # the whole block Origin'd at the when: value token like any other read).
+    stderr = run_playbook(<<-PLAYBOOK)
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        tasks:
+          - name: gated by an is defined test
+            debug:
+              msg: hi
+            when: ansible_os_family is defined
+      PLAYBOOK
+
+    stderr.must_include("[DEPRECATION WARNING]: INJECT_FACTS_AS_VARS default to `True` is deprecated, top-level facts will not be auto injected after the change. This feature will be removed from ansible-core version 2.24.")
+    stderr.must_include(":8:13\n")
+    stderr.must_include("8       when: ansible_os_family is defined\n")
+    stderr.must_include("              ^ column 13")
+    stderr.must_include("Use `ansible_facts[\"fact_name\"]` (no `ansible_` prefix) instead.")
+  end
+
+  it "stays silent for an is defined test on a name that is not a top-level fact" do
+    stderr = run_playbook(<<-PLAYBOOK)
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        tasks:
+          - name: gated by a plain variable
+            debug:
+              msg: hi
+            when: not_a_fact is defined
+      PLAYBOOK
+
+    stderr.includes?("INJECT_FACTS_AS_VARS").must_equal(false)
+  end
 end
