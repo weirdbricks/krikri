@@ -306,6 +306,85 @@ describe "lineinfile plugin" do
     result2["changed"].as_bool.must_equal(false)
   end
 
+  # ansible-core passes mode: through set_mode_if_different, whose
+  # _symbolic_mode_to_octal resolves chmod(1)'s symbolic syntax against
+  # the file's CURRENT bits; the octal-only guard here used to drop such
+  # a mode entirely, leaving the package mode in place while reporting
+  # ok. ansible-lockdown.ubuntu24_stig sets sshd_config with
+  # `mode: 'go-rwx'` and the audit plugins with `mode: 'u-x,go-rwx'`, so
+  # ansible ended at 0600 where this engine stayed 0644 (issue #983,
+  # live-verified vs ansible-core 2.21.6: changed, 0644 -> 0600).
+  it "applies a symbolic mode: against the file's current bits" do
+    path = PluginSpecHelper.tmp_path("lineinfile-symbolic-mode.txt")
+    File.write(path, "ClientAliveCountMax 3\n")
+    File.chmod(path, 0o644)
+
+    result = PluginSpecHelper.run("lineinfile", {
+      "path"   => path,
+      "line"   => "ClientAliveCountMax 3",
+      "regexp" => "(?i)^(#|)ClientAliveCountMax\\s\\d*",
+      "state"  => "present",
+      "mode"   => "go-rwx",
+    })
+
+    result["changed"].as_bool.must_equal(true)
+    (File.info(path).permissions.value & 0o777).must_equal(0o600)
+
+    # Already at the resolved mode -> nothing left to do.
+    result2 = PluginSpecHelper.run("lineinfile", {
+      "path"   => path,
+      "line"   => "ClientAliveCountMax 3",
+      "regexp" => "(?i)^(#|)ClientAliveCountMax\\s\\d*",
+      "state"  => "present",
+      "mode"   => "go-rwx",
+    })
+    result2["changed"].as_bool.must_equal(false)
+  end
+
+  it "resolves a multi-clause symbolic mode: (u-x,go-rwx)" do
+    path = PluginSpecHelper.tmp_path("lineinfile-symbolic-mode-clauses.txt")
+    File.write(path, "active = yes\n")
+    File.chmod(path, 0o644)
+
+    result = PluginSpecHelper.run("lineinfile", {
+      "path"   => path,
+      "line"   => "active = yes",
+      "regexp" => "(?i)active\\s*=\\s*no",
+      "state"  => "present",
+      "create" => "yes",
+      "mode"   => "u-x,go-rwx",
+    })
+
+    result["changed"].as_bool.must_equal(true)
+    (File.info(path).permissions.value & 0o777).must_equal(0o600)
+  end
+
+  it "reports the resolved target mode in the file-attributes diff entry for a symbolic mode:" do
+    path = PluginSpecHelper.tmp_path("lineinfile-symbolic-mode-diff.txt")
+    File.write(path, "alpha\n")
+    File.chmod(path, 0o644)
+
+    result = PluginSpecHelper.run("lineinfile", {
+      "path" => path, "line" => "alpha", "mode" => "go-rwx", "_ansible_diff" => "true",
+    })
+
+    entry = result["diff"].as_a[1].as_h
+    entry["before"].as_h["mode"].as_s.must_equal("0644")
+    entry["after"].as_h["mode"].as_s.must_equal("0600")
+  end
+
+  it "fails like ansible-core on an invalid symbolic mode:" do
+    path = PluginSpecHelper.tmp_path("lineinfile-bogus-mode.txt")
+    File.write(path, "alpha\n")
+
+    result = PluginSpecHelper.run("lineinfile", {
+      "path" => path, "line" => "alpha", "mode" => "u+q",
+    })
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("mode must be in octal or symbolic form")
+  end
+
   it "removes a matching line when state=absent" do
     path = PluginSpecHelper.tmp_path("lineinfile-absent.txt")
     File.write(path, "keep me\nremove me\n")
