@@ -4,12 +4,14 @@ require "json"
 
 # Issue #329 (Rocky 9, `package: name: <https .rpm URL>` whose GPG key
 # isn't installed): ansible's dnf backend validates the signature of each
-# downloaded rpm itself BEFORE the transaction, then fails through a bare
-# fail_json - ONLY msg "Failed to validate GPG signature for <nevra>: <key
-# error>", with no stderr/rc/failures/results keys and no raw-output dump.
-# dnf 4.14 (EL9) never prints "Failing package is:", so the failing nevra
-# only shows up as the transaction table's @commandline row; the CLI's own
-# lines around it (live-captured from Rocky:
+# downloaded rpm itself BEFORE the transaction, then fails with "Failed to
+# validate GPG signature for <nevra>: <key error>" - no stderr/failures key
+# (the check raises before any per-spec failure exists) and no raw-output
+# dump, but with results [] and rc 1 (issue #980: ansible-core 2.21
+# re-reports an empty-failures failure through fail_json(msg=, results=,
+# rc=)). dnf 4.14 (EL9) never prints "Failing package is:", so the failing
+# nevra only shows up as the transaction table's @commandline row; the CLI's
+# own lines around it (live-captured from Rocky:
 #
 #   Public key for <file>.rpm is not installed
 #   Error: GPG check FAILED
@@ -46,10 +48,10 @@ ensure
   FileUtils.rm_r(shim_dir) if shim_dir
 end
 
-describe "package: unsigned .rpm install - ansible's bare GPG-validation msg (issue 329)" do
+describe "package: unsigned .rpm install - ansible's GPG-validation failure (issue 329)" do
   serial!
 
-  it "reports the bare GPG msg, no stderr key (present)" do
+  it "reports the bare GPG msg, no stderr or failures key (present)" do
     with_gpg_failing_dnf_shim(PGDG_TABLE_STDOUT, PGDG_KEY_STDERR) do
       result = PluginSpecHelper.run("package",
         {"name" => PGDG_URL, "state" => "present", "use" => "dnf"})
@@ -59,8 +61,8 @@ describe "package: unsigned .rpm install - ansible's bare GPG-validation msg (is
       result["msg"].as_s.must_equal(PGDG_GPG_MSG)
       result.as_h.has_key?("stderr").must_equal(false)
       result.as_h.has_key?("failures").must_equal(false)
-      result.as_h.has_key?("rc").must_equal(false)
-      result.as_h.has_key?("results").must_equal(false)
+      result["rc"].as_i.must_equal(1)
+      result["results"].as_a.must_equal([] of JSON::Any)
     end
   end
 

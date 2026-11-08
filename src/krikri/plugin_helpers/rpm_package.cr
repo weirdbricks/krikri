@@ -1354,12 +1354,15 @@ module Krikri
           # missing spec once) parsed out of dnf's output - NOT the
           # raw dnf stderr/stdout dump the fallback below keeps for
           # outputs nothing in parses (repo metadata/404-class errors).
-          # Ansible's dnf fails the GPG check via a bare fail_json(msg=...)
-          # with no rc/failures/results keys, unlike its depsolve failure
-          # which does carry all three plus the failure key order its
-          # module dict gets there (issue #216).
+          # Ansible's dnf fails the GPG check with no per-spec failures
+          # list (the check raises before any is recorded) but still
+          # with results [] and rc 1 - 2.21's backend re-reports an
+          # empty-failures failure through fail_json(msg=, results=,
+          # rc=), giving its alphabetical key order (issue #980) -
+          # unlike its depsolve failure, which carries the failures key
+          # too plus the order its module dict gets there (issue #216).
           if gpg_msg = gpg_validation_failure_msg(result[:stdout] + "\n" + result[:stderr])
-            return {changed: false, message: nil, output: result[:stdout], failure: PluginResult.new(changed: false, failed: true, msg: gpg_msg)}
+            return {changed: false, message: nil, output: result[:stdout], failure: PluginResult.new(changed: false, failed: true, msg: gpg_msg, results: [] of String, rc: 1, key_order: PluginHelpers::DnfInstallFailures::DNF_METADATA_FAILURE_ORDER)}
           end
           if depsolve_msg = depsolve_failure_msg(result[:stdout] + "\n" + result[:stderr])
             return {changed: false, message: nil, output: result[:stdout], failure: PluginResult.new(changed: false, failed: true, msg: depsolve_msg, failures: [] of String, results: [] of String, rc: result[:exit_code], key_order: PluginHelpers::DnfInstallFailures::DNF_DEPSOLVE_FAILURE_ORDER)}
