@@ -239,7 +239,16 @@ module Krikri
                "<urlopen error #{ex.message || ex.class.name}>"
         raise FetchError.new(FetchError::Kind::UrlError, "Request failed: #{text}")
       rescue ex : OpenSSL::SSL::Error
-        reason = hostname_mismatch_reason(uri)
+        # Every certificate rejection is a URLError carrying CPython's
+        # ssl-module text in real Ansible
+        # ("<urlopen error [SSL: CERTIFICATE_VERIFY_FAILED] certificate
+        # verify failed: <reason> (_ssl.c:1147)>"), where Crystal only
+        # has OpenSSL's own handshake error ("SSL_connect:
+        # error:0A000086:SSL routines::certificate verify failed") -
+        # which names neither the failure's cause nor Python's shape. The
+        # trailing _ssl.c line number is CPython's own, so it is pinned to
+        # the one the benchmark hosts run.
+        reason = certificate_verify_reason(uri)
         if reason
           raise FetchError.new(FetchError::Kind::UrlError, "Request failed: <urlopen error [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: #{reason} (_ssl.c:1147)>")
         end
@@ -424,18 +433,22 @@ module Krikri
         head.to_s
       end
 
-      # urllib sends SNI on every TLS request, so certificate-vhosting servers
-      # (CDNs, shared hosts) answer it with the certificate the requested
-      # hostname expects, and word a wrong-name certificate as
-      # CERTIFICATE_VERIFY_FAILED only after the certificate CHAIN verified
-      # ("Hostname mismatch, certificate is not valid for '<host>'."), while
-      # Crystal surfaces the same case as a raw OpenSSL handshake error. This
-      # probe re-runs the handshake the way urllib's does - SNI, chain
-      # verification, and only a post-handshake hostname validation - so the
-      # caller can reword only the chain-verified-but-name-wrong case; a chain
-      # problem (such as self-signed or unknown issuer) fails the handshake
-      # itself and returns nil, keeping Crystal's original wording. IP-literal
-      # hosts are skipped: Python words those mismatches differently.
+      # Real urllib words EVERY certificate rejection through CPython's ssl
+      # module - "[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed:
+      # <reason> (_ssl.c:1147)" - where <reason> is libcrypto's own text for
+      # the X509_V_ERR_* its store check landed on ("unable to get local
+      # issuer certificate", "self-signed certificate", "certificate has
+      # expired", ...), or, when the CHAIN verified and only the name is
+      # wrong, CPython's own "Hostname mismatch, certificate is not valid for
+      # '<host>'.". Crystal surfaces all of these as a bare OpenSSL handshake
+      # error.
+      #
+      # urllib also sends SNI on every TLS request, so certificate-vhosting
+      # servers (CDNs, shared hosts) answer it with the certificate the
+      # requested hostname expects. This probe re-runs the handshake the way
+      # urllib's does - SNI, chain verification, and only a post-handshake
+      # hostname validation - so the caller can reproduce whichever reason
+      # applies.
       #
       # OpenSSL::SSL::Socket::Client can't run this probe: its `hostname:`
       # argument sends SNI but also asks OpenSSL to verify the hostname in the
@@ -485,9 +498,14 @@ module Krikri
         end
       end
 
-      private def self.hostname_mismatch_reason(uri : URI) : String?
+      # X509_V_OK: the store verified the chain, so a handshake that failed
+      # anyway did so outside certificate verification - Crystal's own
+      # wording is the honest one there.
+      X509_V_OK = 0
+
+      private def self.certificate_verify_reason(uri : URI) : String?
         host = uri.host
-        return nil unless host && !::Socket::IPAddress.valid?(host)
+        return nil unless host
 
         context = OpenSSL::SSL::Context::Client.new
         ssl = LibSSL.ssl_new(context)
@@ -505,7 +523,20 @@ module Krikri
             LibSSL::TLSExt::NAMETYPE_host_name,
             host.to_unsafe.as(Pointer(Void)),
           )
-          return nil unless LibSSL.ssl_connect(ssl) == 1
+          if LibSSL.ssl_connect(ssl) != 1
+            # The chain check ITSELF rejected the certificate. The store's
+            # verdict survives the failed handshake, and libcrypto's text for
+            # that code is word-for-word what Python prints.
+            code = LibSSL.ssl_get_verify_result(ssl)
+            return nil if code == X509_V_OK
+            text = LibCrypto.x509_verify_cert_error_string(code)
+            return text ? String.new(text) : nil
+          end
+          # A verified chain leaves only the name able to be wrong, and
+          # Python words an IP-literal mismatch differently ("IP address
+          # mismatch, ..."), so those keep Crystal's own text.
+          return nil if ::Socket::IPAddress.valid?(host)
+
           cert = LibSSL.ssl_get_peer_certificate(ssl)
           return nil unless cert
 
@@ -720,4 +751,15 @@ module Krikri
       end
     end
   end
+end
+
+# Crystal's own OpenSSL bindings stop short of the two calls that turn a
+# failed handshake into the reason Python's ssl module reports: the store's
+# X509_V_ERR_* verdict for the rejected chain, and libcrypto's text for it.
+lib LibSSL
+  fun ssl_get_verify_result = SSL_get_verify_result(handle : SSL) : LibC::Long
+end
+
+lib LibCrypto
+  fun x509_verify_cert_error_string = X509_verify_cert_error_string(code : LibC::Long) : UInt8*
 end
