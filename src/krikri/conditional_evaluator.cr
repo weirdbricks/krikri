@@ -829,19 +829,26 @@ module Krikri
         end
       end
 
-      # Handle comparison operators
-      if condition.includes?("==")
-        return evaluate_comparison(condition, "==", vars, raise_undefined)
-      elsif condition.includes?("!=")
-        return evaluate_comparison(condition, "!=", vars, raise_undefined)
-      elsif condition.includes?("<=")
-        return evaluate_comparison(condition, "<=", vars, raise_undefined)
-      elsif condition.includes?(">=")
-        return evaluate_comparison(condition, ">=", vars, raise_undefined)
-      elsif condition.includes?("<")
-        return evaluate_comparison(condition, "<", vars, raise_undefined)
-      elsif condition.includes?(">")
-        return evaluate_comparison(condition, ">", vars, raise_undefined)
+      # Handle comparison operators.
+      #
+      # Each candidate is routed on a TOKEN-level occurrence only
+      # (#top_level_operator_index), never on `includes?`: a comparison
+      # operator spelled INSIDE a filter argument's quoted string - the
+      # `==` in ansible-lockdown.ubuntu24_stig's own gate
+      # `ansible_facts['mounts'] | selectattr('mount', '==', m) | list |
+      # length > 0` (issue #983) - matches `includes?` too, and splitting
+      # there handed the evaluator the truncated chain `selectattr('mount', '`,
+      # which hard-failed the task with "Syntax error in expression: No
+      # filter named 'selectattr('mount', ''." (exit code 2 with 41 tasks
+      # of the role never reached, against ansible's exit 0) where
+      # ansible-core 2.19 evaluates the trailing `> 0` against the
+      # filtered list, sees 0 elements, and simply skips. Falling through
+      # to the NEXT candidate when only a quoted/nested occurrence exists
+      # is what makes the trailing real comparison win.
+      {"==", "!=", "<=", ">=", "<", ">"}.each do |operator|
+        next unless condition.includes?(operator)
+        next unless top_level_operator_index(condition, operator)
+        return evaluate_comparison(condition, operator, vars, raise_undefined)
       end
 
       # Handle 'in' / 'not in' operator. `'x' not in list` must be checked
@@ -1661,6 +1668,59 @@ module Krikri
       true
     end
 
+    # Index of the FIRST occurrence of *operator* that a Jinja lexer would
+    # read as an operator - one outside string literals and outside
+    # bracket nesting - or nil when it only ever appears inside one.
+    #
+    # Why this exists (ansible-lockdown.ubuntu24_stig, issue #983): the
+    # comparison routing and #evaluate_comparison both keyed on the raw
+    # text, so the quoted `==` in `ansible_facts['mounts'] |
+    # selectattr('mount', '==', m) | list | length > 0` was mistaken for a
+    # top-level comparison. Splitting there left an unbalanced quote on
+    # the left operand (`selectattr('mount', '`), which resolved as the
+    # nonexistent filter of that whole name and hard-failed the task -
+    # where ansible-core 2.19 splits nothing, compares the filtered
+    # list's length against 0 and skips the task. Reporting the first
+    # qualifying index (rather than a full split) keeps Python's own
+    # "split at the first operator" reading for chained spellings.
+    #
+    # The scan tracks quotes and bracket depth exactly like
+    # #split_by_operator, so the two can never disagree about which
+    # occurrence is at token level.
+    private def self.top_level_operator_index(condition : String, operator : String) : Int32?
+      paren_depth = 0
+      in_quotes = false
+      quote_char = ' '
+      i = 0
+
+      while i < condition.size
+        char = condition[i]
+
+        if (char == '"' || char == '\'') && !escaped_quote_at?(condition, i)
+          if in_quotes && char == quote_char
+            in_quotes = false
+          elsif !in_quotes
+            in_quotes = true
+            quote_char = char
+          end
+        end
+
+        if !in_quotes
+          if char == '(' || char == '[' || char == '{'
+            paren_depth += 1
+          elsif char == ')' || char == ']' || char == '}'
+            paren_depth -= 1
+          end
+        end
+
+        return i if !in_quotes && paren_depth == 0 && operator_at?(condition, i, operator)
+
+        i += 1
+      end
+
+      nil
+    end
+
     private def self.split_by_operator(condition : String, operator : String) : Array(String)
       parts = [] of String
       current = String::Builder.new
@@ -1806,11 +1866,16 @@ module Krikri
 
     # Evaluate comparison operators
     private def self.evaluate_comparison(condition : String, operator : String, vars : Hash(String, JSON::Any), raise_undefined : Bool = false) : Bool
-      parts = condition.split(operator, 2)
-      return false if parts.size != 2
+      # Split at the operator's first TOKEN-level occurrence, not at
+      # whatever String#split finds first: a quoted occurrence earlier in
+      # the condition (`selectattr('mount', '==', m) | list | length > 0`,
+      # issue #983) would otherwise truncate both operands mid-string,
+      # leaving an unbalanced quote on the left one.
+      operator_index = top_level_operator_index(condition, operator)
+      return false unless operator_index
 
-      left_expr = parts[0].strip
-      right_expr = parts[1].strip
+      left_expr = condition[0, operator_index].strip
+      right_expr = condition[(operator_index + operator.size)..].strip
 
       none_result = default_chain_vs_none(left_expr, right_expr, operator, vars)
       return none_result unless none_result.nil?

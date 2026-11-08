@@ -248,7 +248,15 @@ module Krikri
       # even looked at the mode param once no line edit was needed.
       attrs_changed = false
       if File.exists?(path)
-        attrs_changed, attrs_failure = apply_file_attrs(path, check_mode)
+        begin
+          attrs_changed, attrs_failure = apply_file_attrs(path, check_mode)
+        rescue InvalidModeError
+          # basic.py's set_mode_if_different rejects a mode: that is
+          # neither octal nor valid chmod(1) symbolic syntax with this
+          # exact msg - before the symbolic-mode support above, such a
+          # value was silently ignored here instead.
+          return PluginResult.new(changed: false, failed: true, msg: "mode must be in octal or symbolic form")
+        end
         return attrs_failure if attrs_failure
       end
       changed = changed || !!attrs_changed
@@ -386,9 +394,9 @@ module Krikri
             after["group"] = JSON::Any.new(gid.to_i64)
           end
         end
-        if (mode = @params["mode"]?) && mode.matches?(/^0?\d+$/)
+        if mode = @params["mode"]?
           current_bits = mode_current_bits(info)
-          target_bits = mode.to_i(8)
+          target_bits = mode_target_bits(current_bits, mode)
           if current_bits != target_bits
             before["mode"] = JSON::Any.new("0#{current_bits.to_s(8).rjust(3, '0')}")
             after["mode"] = JSON::Any.new("0#{target_bits.to_s(8).rjust(3, '0')}")
@@ -662,14 +670,26 @@ module Krikri
 
     private def apply_mode_attr(path : String, info : File::Info, check_mode : Bool) : Bool
       return false unless mode = @params["mode"]?
-      return false unless mode =~ /^0?\d+$/
 
-      current = (info.permissions.value & 0o7777).to_s(8)
-      target = mode.to_i(8).to_s(8)
-      return false if current.lstrip('0').presence == target.lstrip('0').presence
+      current = mode_current_bits(info)
+      target = mode_target_bits(current, mode)
+      return false if current == target
 
-      (File.chmod(path, mode.to_i(8)) rescue nil) unless check_mode
+      (File.chmod(path, target) rescue nil) unless check_mode
       true
+    end
+
+    # The task's mode: as permission bits, resolving the symbolic
+    # spelling (`go-rwx`, `u-x,go-rwx`) against the file's CURRENT bits
+    # the way chmod(1) and ansible-core's _symbolic_mode_to_octal do.
+    # The previous octal-only test dropped every symbolic mode on the
+    # floor: the file kept its package mode while ansible chmod'ed it,
+    # so ansible-lockdown.ubuntu24_stig's `mode: 'go-rwx'` on
+    # sshd_config and `mode: 'u-x,go-rwx'` on the audit plugins left
+    # 0644 here against ansible's 0600 - reported ok on both sides, so
+    # only the later stat listings showed the drift (issue #983).
+    private def mode_target_bits(current : Int32, mode : String) : Int32
+      mode =~ /^0?\d+$/ ? mode.to_i(8) : resolve_symbolic_mode(current, mode)
     end
 
     private def apply_owner_attr(path : String, info : File::Info, check_mode : Bool) : Bool
