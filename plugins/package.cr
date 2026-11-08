@@ -693,15 +693,24 @@ module Krikri
     private def dnf_install_failure_result(name : String, install_result : NamedTuple(exit_code: Int32, stdout: String, stderr: String)) : PluginResult
       # Issue #329 (Rocky 9, `package: name: <https .rpm URL>` whose GPG
       # key isn't installed): ansible's dnf module validates the signature
-      # of a downloaded rpm itself BEFORE the transaction and fails through
-      # a bare fail_json - just msg "Failed to validate GPG signature for
-      # <nevra>: <key error>", with none of the stderr/rc/failures/results
-      # keys this function's other branches carry (nor the generic raw
-      # dump's own), so the check runs before they do. The EL9 CLI never
-      # names the failing nevra outright, only via the transaction table's
-      # @commandline row.
+      # of a downloaded rpm itself BEFORE the transaction and fails with
+      # "Failed to validate GPG signature for <nevra>: <key error>". That
+      # check raises before any per-spec failure is recorded, so the dict
+      # has no stderr and no failures key - but it does carry results []
+      # and rc 1: ansible-core 2.21's dnf backend re-reports every failure
+      # with an empty failures list through fail_json(msg=, results=,
+      # rc=), and the resulting key order is alphabetical (issue #980,
+      # adipriyantobpn.repo-epel). The EL9 CLI never names the failing
+      # nevra outright, only via the transaction table's @commandline row.
       if gpg_msg = gpg_validation_failure_msg(install_result[:stdout] + "\n" + install_result[:stderr])
-        return PluginResult.new(changed: false, failed: true, msg: gpg_msg)
+        return PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: gpg_msg,
+          results: [] of String,
+          rc: 1,
+          key_order: PluginHelpers::DnfInstallFailures::DNF_METADATA_FAILURE_ORDER
+        )
       end
       # A depsolve failure ("Problem: ..." block) matches none of the
       # parse_dnf_install_failures lines, so it used to fall through to

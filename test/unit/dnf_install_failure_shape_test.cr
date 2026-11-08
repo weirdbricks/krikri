@@ -178,8 +178,36 @@ describe "dnf/yum failed install - Ansible's per-spec failures shape (issue 19)"
       result["msg"].as_s.must_equal(
         "Failed to validate GPG signature for epel-release-9-11.el9.noarch: Public key for epel-release-latest-9.noarchabc.rpm is not installed")
       result.as_h.has_key?("failures").must_equal(false)
-      result.as_h.has_key?("rc").must_equal(false)
-      result.as_h.has_key?("results").must_equal(false)
+      result["rc"].as_i.must_equal(1)
+      result["results"].as_a.must_equal([] of JSON::Any)
+    end
+  end
+
+  it "reports the GPG failure with results and rc through package: (issue 980)" do
+    # adipriyantobpn.repo-epel installs epel-release from its URL with
+    # `yum:`; real ansible-core 2.21.6 reports the failure as
+    # {"changed": false, "msg": "Failed to validate GPG signature for
+    # <nevra>: <key error>", "rc": 1, "results": []} - the signature
+    # check raises before any per-spec failure exists, so there is no
+    # failures key, but the dnf backend's empty-failures fail_json still
+    # supplies results and rc, and the key order is alphabetical.
+    with_failing_dnf_shim(
+      "",
+      "Public key for epel-release-latest-9.noarchabc.rpm is not installed. Failing package is: epel-release-9-11.el9.noarch\nError: GPG check FAILED\n") do
+      rpm = PluginSpecHelper.tmp_path("epel-release-latest-9.noarch.rpm")
+      File.write(rpm, "")
+      result = PluginSpecHelper.run("package",
+        {"name" => rpm, "state" => "present", "use" => "dnf"})
+
+      result["failed"].as_bool.must_equal(true)
+      result["changed"].as_bool.must_equal(false)
+      result["msg"].as_s.must_equal(
+        "Failed to validate GPG signature for epel-release-9-11.el9.noarch: Public key for epel-release-latest-9.noarchabc.rpm is not installed")
+      result["rc"].as_i.must_equal(1)
+      result["results"].as_a.must_equal([] of JSON::Any)
+      result.as_h.has_key?("failures").must_equal(false)
+      result.as_h.has_key?("stderr").must_equal(false)
+      result.as_h.keys.first(5).must_equal(["changed", "msg", "rc", "results", "failed"])
     end
   end
 
