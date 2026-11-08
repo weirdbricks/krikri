@@ -2398,100 +2398,47 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
   end
 
   describe "unknown fully-qualified lookup collections fail like Ansible (issue #511)" do
-    serial! # swaps CollectionIndex.missing_lookup_warning_sink (process-global)
-
     private def evaluator
       Krikri::VariableSubstitutor::ExpressionEvaluator.new(Hash(String, JSON::Any).new)
     end
 
     it "fails a lookup whose ns.coll collection is not installed, with Ansible's not-found message" do
-      # Real ansible-core 2.19 (verified against geoffreyvanwyk.moodle's
+      # Real ansible-core 2.21 (verified against geoffreyvanwyk.moodle's
       # own lookup('geoffreyvanwyk.moodle.php_version', ...), a lookup
       # plugin that does not exist anywhere): task-fatal
       # "The lookup plugin 'nope.nope.php_version' was not found." -
       # NOT the "undefined" sentinel the dispatch used to fall back to.
-      # Real also [WARNING]s the loader's ImportError on stderr the
-      # moment it tries to load the plugin, ahead of the failure.
-      captured = IO::Memory.new
-      previous = Krikri::CollectionIndex.missing_lookup_warning_sink
-      begin
-        Krikri::CollectionIndex.missing_lookup_warning_sink = captured
-        ex = assert_raises(Krikri::PythonLookupRunner::LookupError) do
-          evaluator.evaluate("lookup('nope.nope.php_version', moodle_version='4.5')")
-        end
-        ex.message.must_equal("The lookup plugin 'nope.nope.php_version' was not found.")
-      ensure
-        Krikri::CollectionIndex.missing_lookup_warning_sink = previous
+      # No loader [WARNING] precedes it any more: 2.21's loader swallows
+      # the absent collection's ImportError (issue #965).
+      ex = assert_raises(Krikri::PythonLookupRunner::LookupError) do
+        evaluator.evaluate("lookup('nope.nope.php_version', moodle_version='4.5')")
       end
-      captured.to_s.must_include("[WARNING]: Error loading plugin 'nope.nope.php_version': No module named 'ansible_collections.nope'")
+      ex.message.must_equal("The lookup plugin 'nope.nope.php_version' was not found.")
     end
 
-    it "prints the loader-ImportError warning only once per absent collection" do
-      # Real Display.warning dedupes on the formatted message, so a
-      # repeated lookup of the same absent collection stays silent after
-      # the first line; a distinct leaf name keeps this independent of
-      # the slot the not-found test above may already have consumed
-      # (minitest order is randomized).
-      captured = IO::Memory.new
-      previous = Krikri::CollectionIndex.missing_lookup_warning_sink
-      begin
-        Krikri::CollectionIndex.missing_lookup_warning_sink = captured
-        2.times do
-          assert_raises(Krikri::PythonLookupRunner::LookupError) do
-            evaluator.evaluate("lookup('nope.nope.dup_lookup', moodle_version='4.5')")
-          end
-        end
-      ensure
-        Krikri::CollectionIndex.missing_lookup_warning_sink = previous
-      end
-
-      captured.to_s.lines.count { |line| !line.strip.empty? }.must_equal(1, captured.to_s)
-      captured.to_s.must_include("Error loading plugin 'nope.nope.dup_lookup'")
-    end
-
-    it "warns the same loader ImportError on the krikri-jinja engine path" do
+    it "fails the same unknown lookup on the krikri-jinja engine path" do
       # The same lookup through a real {{ }} render rides the engine's
       # own dispatcher (python_lookup), which raises the same typed
-      # LookupError - it must warn identically, not only the hand-rolled
-      # dispatch.
-      captured = IO::Memory.new
-      previous = Krikri::CollectionIndex.missing_lookup_warning_sink
-      begin
-        Krikri::CollectionIndex.missing_lookup_warning_sink = captured
-        renderer = Krikri::VariableSubstitutor::JinjaRenderer.new({} of String => JSON::Any)
-        assert_raises(Krikri::PythonLookupRunner::LookupError) do
-          renderer.render("{{ lookup('nope.nope.jinja_lookup') }}")
-        end
-      ensure
-        Krikri::CollectionIndex.missing_lookup_warning_sink = previous
+      # LookupError.
+      renderer = Krikri::VariableSubstitutor::JinjaRenderer.new({} of String => JSON::Any)
+      ex = assert_raises(Krikri::PythonLookupRunner::LookupError) do
+        renderer.render("{{ lookup('nope.nope.jinja_lookup') }}")
       end
-
-      captured.to_s.must_include("[WARNING]: Error loading plugin 'nope.nope.jinja_lookup': No module named 'ansible_collections.nope'")
+      ex.message.must_equal("The lookup plugin 'nope.nope.jinja_lookup' was not found.")
     end
 
     it "fails a bare lookup name that cannot be found, with Ansible's not-found message (issue #751)" do
-      # Real ansible-core 2.19 (verified against the issue's own
+      # Real ansible-core 2.21 (verified against the issue's own
       # query('nonexistent_lookup', 'a') repro): task-fatal
       # "The lookup plugin 'nonexistent_lookup' was not found." - the
       # "undefined" sentinel the dispatch used to fall back to let
       # query() collapse it to an empty list and a typo'd lookup name
-      # silently emptied its consumer. Real also prints NO loader
-      # warning for a bare unknown name (it never resolves into a
-      # collection the loader would import-fail on), unlike the FQCN
-      # case above.
+      # silently emptied its consumer.
       return unless Krikri::CollectionIndex.bare_lookup_resolves?("nonexistent_lookup") == false
-      captured = IO::Memory.new
-      previous = Krikri::CollectionIndex.missing_lookup_warning_sink
-      begin
-        Krikri::CollectionIndex.missing_lookup_warning_sink = captured
-        ex = assert_raises(Krikri::PythonLookupRunner::LookupError) do
-          evaluator.evaluate("lookup('nonexistent_lookup', moodle_version='4.5')")
-        end
-        ex.message.must_equal("The lookup plugin 'nonexistent_lookup' was not found.")
-      ensure
-        Krikri::CollectionIndex.missing_lookup_warning_sink = previous
+      ex = assert_raises(Krikri::PythonLookupRunner::LookupError) do
+        evaluator.evaluate("lookup('nonexistent_lookup', moodle_version='4.5')")
       end
-      captured.to_s.must_be_empty
+      ex.message.must_equal("The lookup plugin 'nonexistent_lookup' was not found.")
     end
 
     it "fails an ansible.builtin-prefixed unknown lookup with the name as spelled (issue #751)" do

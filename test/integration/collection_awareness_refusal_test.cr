@@ -7,9 +7,10 @@ require "file_utils"
 # installed collection providing it) refuses the WHOLE playbook at load
 # - rc=4, zero tasks run, no PLAY RECAP, the generic couldn't-resolve
 # wording plus the offending task's Origin block on stderr, byte-shape
-# verified against ansible-core 2.19.11 on this machine (including the
-# [WARNING] line the collection loader prints when the collection
-# cannot even be imported).
+# verified against ansible-core 2.21.6 on this machine. 2.21's loader
+# swallows the ImportError an absent collection raises while it reads
+# routing metadata, so no "Error loading plugin" [WARNING] precedes the
+# refusal (2.19 printed one; issue #965).
 #
 # A name real CAN resolve keeps the existing behavior: an installed
 # collection's module krikri hasn't ported skips lazily (round 811000),
@@ -25,9 +26,9 @@ private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-ex
 # shape, no import warning), kubernetes.core shipping helm_repository
 # (so the unported module keeps its lazy skip path), and community.google
 # deliberately absent (so bare `gc_storage:`'s redirect dies on an
-# absent collection INSIDE a present namespace - the collection-level
-# warning text). Pointed at via ANSIBLE_COLLECTIONS_PATH for the spawned
-# binary only (child env, no process-wide state); the dev machine's own
+# absent collection INSIDE a present namespace). Pointed at via
+# ANSIBLE_COLLECTIONS_PATH for the spawned binary only (child env, no
+# process-wide state); the dev machine's own
 # installed collections sit behind it in the search order and agree with
 # every pin.
 private def fixture_collections_root : String
@@ -50,7 +51,7 @@ ensure
 end
 
 describe "controller collection-set awareness refuses unresolvable module names at load" do
-  it "refuses a missing-collection FQCN with rc=4, the [WARNING] + [ERROR] + Origin block, and zero tasks" do
+  it "refuses a missing-collection FQCN with rc=4, the [ERROR] + Origin block, and zero tasks (no loader warning)" do
     status, stdout, stderr = run_playbook(<<-YAML)
       - hosts: localhost
         connection: local
@@ -63,11 +64,34 @@ describe "controller collection-set awareness refuses unresolvable module names 
     status.exit_code.must_equal(4, "stderr:\n#{stderr}")
     # Nothing ran - not even a play banner.
     stdout.must_equal("")
-    stderr.must_include("[WARNING]: Error loading plugin 'freeipa.ansible_freeipa.ipaclient_setup_nis': No module named 'ansible_collections.freeipa'")
+    # ansible-core 2.21 prints no loader [WARNING] for an absent
+    # collection (issue #965: bodsch.geoip's `bodsch.core.check_mode`).
+    stderr.wont_include("[WARNING]: Error loading plugin")
     stderr.must_include("[ERROR]: couldn't resolve module/action 'freeipa.ansible_freeipa.ipaclient_setup_nis'. This often indicates a misspelling, missing collection, or incorrect module path.")
     stderr.must_include("Origin: ")
     stderr.must_include("- name: missing coll")
     stderr.must_include("^ column 7")
+    stderr.wont_include("PLAY RECAP")
+  end
+
+  it "refuses a role task's absent-collection FQCN without the pre-2.21 loader warning (issue #965)" do
+    # The exact bodsch.geoip shape: a bare-key task whose FQCN names a
+    # collection that is not installed. Real 2.21.6 goes straight to the
+    # couldn't-resolve [ERROR] + Origin, with no "Error loading plugin"
+    # line ahead of it (live-verified on the role's own prepare.yml).
+    status, stdout, stderr = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: detect ansible check_mode
+            bodsch.core.check_mode:
+            register: _check_mode
+      YAML
+    status.exit_code.must_equal(4, "stderr:\n#{stderr}")
+    stdout.must_equal("")
+    stderr.wont_include("[WARNING]: Error loading plugin")
+    stderr.must_include("[ERROR]: couldn't resolve module/action 'bodsch.core.check_mode'. This often indicates a misspelling, missing collection, or incorrect module path.")
     stderr.wont_include("PLAY RECAP")
   end
 
@@ -88,7 +112,7 @@ describe "controller collection-set awareness refuses unresolvable module names 
     stderr.must_include("Origin: ")
   end
 
-  it "refuses a bare name whose builtin redirect dies on an absent collection, warning naming the target" do
+  it "refuses a bare name whose builtin redirect dies on an absent collection, NO loader warning" do
     status, stdout, stderr = run_playbook(<<-YAML, {"ANSIBLE_COLLECTIONS_PATH" => fixture_collections_root})
       - hosts: localhost
         connection: local
@@ -100,7 +124,7 @@ describe "controller collection-set awareness refuses unresolvable module names 
       YAML
     status.exit_code.must_equal(4, "stderr:\n#{stderr}")
     stdout.must_equal("")
-    stderr.must_include("[WARNING]: Error loading plugin 'community.google.gc_storage': No module named 'ansible_collections.community.google'")
+    stderr.wont_include("[WARNING]: Error loading plugin")
     stderr.must_include("[ERROR]: couldn't resolve module/action 'gc_storage'. This often indicates a misspelling, missing collection, or incorrect module path.")
   end
 

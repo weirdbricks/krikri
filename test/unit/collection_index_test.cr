@@ -78,10 +78,9 @@ describe Krikri::CollectionIndex do
     result[:resolves].must_equal(true)
   end
 
-  it "refuses an FQCN whose installed fixture collection lacks the module file (no warning)" do
+  it "refuses an FQCN whose installed fixture collection lacks the module file" do
     result = Krikri::CollectionIndex.controller_resolves?("testns.prov.missing")
     result[:resolves].must_equal(false)
-    result[:missing_collection_warning].must_be_nil
   end
 
   it "follows the collection's own meta/runtime.yml redirect to a module file that exists" do
@@ -89,18 +88,17 @@ describe Krikri::CollectionIndex do
     result[:resolves].must_equal(true)
   end
 
-  it "refuses an FQCN whose namespace is absent, with the namespace-level import warning" do
+  it "refuses an FQCN whose namespace is absent" do
+    # ansible-core 2.21's loader swallows the collection ImportError (its
+    # 2.19-era "Error loading plugin" [WARNING] is gone - issue #965),
+    # so the refusal stands alone.
     result = Krikri::CollectionIndex.controller_resolves?("absentns.absentcoll.thing")
     result[:resolves].must_equal(false)
-    result[:missing_collection_warning].must_equal(
-      "Error loading plugin 'absentns.absentcoll.thing': No module named 'ansible_collections.absentns'")
   end
 
-  it "refuses an FQCN whose collection is absent inside a present namespace, with the collection-level warning" do
+  it "refuses an FQCN whose collection is absent inside a present namespace" do
     result = Krikri::CollectionIndex.controller_resolves?("testns.absentcoll.thing")
     result[:resolves].must_equal(false)
-    result[:missing_collection_warning].must_equal(
-      "Error loading plugin 'testns.absentcoll.thing': No module named 'ansible_collections.testns.absentcoll'")
   end
 
   it "resolves a bare name through the collections: keyword entries" do
@@ -151,65 +149,13 @@ describe Krikri::CollectionIndex do
     result[:resolves].must_equal(true)
   end
 
-  it "refuses a bare name whose builtin redirect dies on an absent collection (gc_storage), warning naming the target" do
+  it "refuses a bare name whose builtin redirect dies on an absent collection (gc_storage)" do
     # The fixture carries a community.* collection (community.crypto)
     # but no community.google, so the redirect chain for bare
     # `gc_storage:` dies on an absent collection INSIDE a present
-    # namespace - the collection-level import warning, deterministic on
-    # any controller.
+    # namespace - a silent refusal under ansible-core 2.21 (issue #965).
     result = Krikri::CollectionIndex.controller_resolves?("gc_storage")
     result[:resolves].must_equal(false)
-    result[:missing_collection_warning].must_equal(
-      "Error loading plugin 'community.google.gc_storage': No module named 'ansible_collections.community.google'")
-  end
-
-  it "warns once per absent listed collection when a bare name is walked through collections:" do
-    # Ansible walks each collections: entry for the bare name and prints
-    # the loader's warning for every one it cannot import; the present
-    # testns.prov imports fine and adds nothing.
-    Krikri::CollectionIndex.missing_listed_collection_warnings("systemd", ["absentns.absentcoll", "testns.prov", "testns.absentcoll"]).must_equal([
-      "Error loading plugin 'systemd': No module named 'ansible_collections.absentns'",
-      "Error loading plugin 'systemd': No module named 'ansible_collections.testns.absentcoll'",
-    ])
-  end
-
-  it "carries the collections-walk warning on a service task in a play declaring an absent collection" do
-    pb = Krikri::PlaybookParser.parse_string(<<-YAML)
-      - name: svc play
-        hosts: all
-        gather_facts: false
-        collections:
-          - absentns.absentcoll
-        tasks:
-          - name: start it
-            ansible.builtin.service:
-              name: x
-              state: started
-      YAML
-    pb.plays[0].tasks[0].delegated_collection_warnings.must_equal([
-      "Error loading plugin 'systemd': No module named 'ansible_collections.absentns'",
-    ])
-  end
-
-  it "carries the collections-walk warning on a package task in a play declaring an absent collection" do
-    # The package action delegates to the bare `apt` module on an apt
-    # host, so it is the loader's walk for THAT bare name ansible
-    # warns about - not a walk for `package` itself (issue #396).
-    pb = Krikri::PlaybookParser.parse_string(<<-YAML)
-      - name: pkg play
-        hosts: all
-        gather_facts: false
-        collections:
-          - absentns.absentcoll
-        tasks:
-          - name: install it
-            ansible.builtin.package:
-              name: x
-              state: present
-      YAML
-    pb.plays[0].tasks[0].delegated_collection_warnings.must_equal([
-      "Error loading plugin 'apt': No module named 'ansible_collections.absentns'",
-    ])
   end
 
   it "treats an installed ansible.netcommon as the truth for its own names" do
@@ -225,7 +171,6 @@ describe Krikri::CollectionIndex do
     result[:resolves].must_equal(true)
     result = Krikri::CollectionIndex.controller_resolves?("ansible.netcommon.cli_parse")
     result[:resolves].must_equal(false)
-    result[:missing_collection_warning].must_be_nil
   end
 
   # ------------------------------------------------------------------
@@ -239,14 +184,11 @@ describe Krikri::CollectionIndex do
   it "refuses a bare name that is neither builtin nor redirected (docker, as ansible-core does)" do
     result = Krikri::CollectionIndex.controller_resolves?("docker")
     result[:resolves].must_equal(false)
-    result[:missing_collection_warning].must_be_nil
   end
 
   it "refuses a missing-collection FQCN the way ansible-core does (freeipa.ansible_freeipa)" do
     result = Krikri::CollectionIndex.controller_resolves?("freeipa.ansible_freeipa.ipaclient_setup_nis")
     result[:resolves].must_equal(false)
-    result[:missing_collection_warning].must_equal(
-      "Error loading plugin 'freeipa.ansible_freeipa.ipaclient_setup_nis': No module named 'ansible_collections.freeipa'")
   end
 
   it "leaves ansible.builtin. spellings to the engine's own resolution (never refuses)" do

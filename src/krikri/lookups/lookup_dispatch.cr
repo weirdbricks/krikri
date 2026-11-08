@@ -294,9 +294,6 @@ module Krikri
         return unless name.matches?(/\A\w+\.\w+\.\w+\z/)
         namespace, collection, _leaf = name.split('.', 3)
         return if Krikri::CollectionIndex.installed?(namespace, collection)
-        # Real prints the loader's ImportError as a [WARNING] the moment
-        # it tries to load the plugin, ahead of the hard not-found failure.
-        Krikri::CollectionIndex.warn_missing_lookup_plugin(name)
         raise PythonLookupRunner::LookupError.new("The lookup plugin '#{original}' was not found.")
       end
 

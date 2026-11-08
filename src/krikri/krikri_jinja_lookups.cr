@@ -686,15 +686,11 @@ module Krikri
       # LookupError is what JinjaRenderer#render! re-raises as a hard
       # task failure - same message shape the hand-rolled dispatch
       # raises for the same condition.
-      # Same loader-ImportError [WARNING] real prints before this failure
-      # when the name names a collection that cannot be imported; bare
-      # names and installed collections stay silent (the helper filters).
       unless source
         if message = PythonLookupRunner.hashi_vault_load_failure(name)
           raise PythonLookupRunner::LookupError.new(message)
         end
       end
-      Krikri::CollectionIndex.warn_missing_lookup_plugin(name) unless source
       raise PythonLookupRunner::LookupError.new("The lookup plugin '#{name}' was not found.") unless source
 
       options = {} of String => JSON::Any
