@@ -43,6 +43,13 @@ module Krikri
         )
       end
 
+      # Ansible's debug action takes the var: branch only for a
+      # PYTHON-TRUTHY argument, so a null var (NONE_SENTINEL on this
+      # wire - a bare `var:` or a block-tag template that rendered
+      # nothing) and an empty `var: ""` fall through to the msg side and
+      # print the "Hello world!" default (live-verified vs 2.21.6).
+      var_name = nil if var_name.try { |v| v.empty? || v == NONE_SENTINEL }
+
       # Get verbosity level (default: 0)
       required_verbosity = @params["verbosity"]?.try(&.to_i?) || 0
       current_verbosity = @params["_verbosity"]?.try(&.to_i) || 0
