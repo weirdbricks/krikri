@@ -56,4 +56,20 @@ describe "unarchive task_error_chain shapes" do
     cause.chain.must_be_nil
     Krikri::ErrorBlock.brief_message(chain).must_equal("Task failed: Source '/x.tar' failed to transfer")
   end
+
+  it "uses the generic Module-failed chain for the module's own missing-src gate" do
+    # With remote_src: truthy the action plugin hands the task straight to
+    # the module, whose main() fails the same missing src with its own
+    # "Source '<src>' does not exist" (module.fail_json, live-verified vs
+    # 2.19.11) - a module-level failure, so real renders the generic
+    # "Module failed." middle segment, not the collapsed action shape.
+    msg = "Source '/x.tar' does not exist"
+    chain = Krikri::ResultDisplay.task_error_chain("ansible.builtin.unarchive", msg, "Origin: /pb.yml:6")
+
+    chain.msg.must_equal("Task failed.")
+    middle = chain.chain.as(Krikri::ErrorBlock::Node)
+    middle.msg.must_equal("Module failed.")
+    middle.chain.as(Krikri::ErrorBlock::Node).msg.must_equal(msg)
+    Krikri::ErrorBlock.brief_message(chain).must_equal("Task failed: Module failed: " + msg)
+  end
 end

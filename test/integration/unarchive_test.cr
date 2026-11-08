@@ -909,6 +909,29 @@ describe "unarchive plugin" do
     result["msg"].as_s.must_include("must be an existing dir")
   end
 
+  it "words a missing src the way the module's own remote_src branch does" do
+    # smsilva.ansible_oracle_xe (issue #997) unarchives a path its earlier
+    # copy: task never placed on the target, with remote_src: yes.
+    # unarchive.py's main() only says "Source '<src>' failed to transfer"
+    # when remote_src is FALSY (the controller-to-target copy never
+    # happened) and "does not exist" otherwise - live-verified vs 2.19.11,
+    # including copy: no, which the action plugin rewrites into
+    # remote_src: true before the module ever runs.
+    dest = fresh_dest("missing-src-wording")
+    missing = File.join(TMP_DIR, "missing-src-wording.tar.gz")
+    FileUtils.rm_rf(missing) if File.exists?(missing)
+
+    PluginSpecHelper.run("unarchive", {"src" => missing, "dest" => dest, "remote_src" => "true"})["msg"].as_s
+      .must_equal("Source '#{missing}' does not exist")
+    PluginSpecHelper.run("unarchive", {"src" => missing, "dest" => dest, "copy" => "false"})["msg"].as_s
+      .must_equal("Source '#{missing}' does not exist")
+
+    PluginSpecHelper.run("unarchive", {"src" => missing, "dest" => dest, "remote_src" => "false"})["msg"].as_s
+      .must_equal("Source '#{missing}' failed to transfer")
+    PluginSpecHelper.run("unarchive", {"src" => missing, "dest" => dest, "copy" => "true"})["msg"].as_s
+      .must_equal("Source '#{missing}' failed to transfer")
+  end
+
   it "includes the member list when list_files: true" do
     dest = fresh_dest("list-files")
     result = PluginSpecHelper.run("unarchive", {"src" => File.join(TMP_DIR, "archive.tar.gz"), "dest" => dest, "list_files" => "true"})
