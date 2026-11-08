@@ -149,6 +149,31 @@ describe Krikri::ConditionalEvaluator do
       Krikri::ConditionalEvaluator.evaluate("n / 2 == 6", v).must_equal(false)
       Krikri::ConditionalEvaluator.evaluate("n * 2 == 20", v).must_equal(true)
     end
+
+    it "evaluates % (modulo) in a comparison operand (issue #967)" do
+      # eirikns.apt's first task is an assert whose `that:` list ends in
+      # `apt_periodic_update_package_lists % 1 == 0` (and the same modulo
+      # gate on three more role defaults). ansible-playbook evaluates it ok;
+      # this evaluator's operand guard knew `*`/`/` but not `%`, so the left
+      # operand never reached ExpressionEvaluator and the plain lookup
+      # failed the whole role with "'apt_periodic_update_package_lists % 1'
+      # is undefined" while ansible proceeded through 5 more tasks.
+      v = vars({"n" => 4_i64, "days" => 1_i64} of String => JSON::Any::Type)
+      Krikri::ConditionalEvaluator.evaluate("n % 2 == 0", v).must_equal(true)
+      Krikri::ConditionalEvaluator.evaluate("n % 2 == 1", v).must_equal(false)
+      Krikri::ConditionalEvaluator.evaluate("days % 1 == 0", v).must_equal(true)
+      # Python's floored modulo (`-7 % 3` is 2), not a remainder.
+      Krikri::ConditionalEvaluator.evaluate("-7 % 3 == 2", v).must_equal(true)
+    end
+
+    it "leaves a quoted `%` alone (it is a string literal, not an operator)" do
+      # The `%` routing must not fire from inside quotes: hardening and
+      # version-gated roles commonly compare percent-bearing strings
+      # (`match('.*%')`, `'50%'`), which ansible-playbook treats as text.
+      v = vars({"pct" => "50%"} of String => JSON::Any::Type)
+      Krikri::ConditionalEvaluator.evaluate("pct == '50%'", v).must_equal(true)
+      Krikri::ConditionalEvaluator.evaluate("pct is match('.*%')", v).must_equal(true)
+    end
   end
 
   describe "defined-but-null variable vs the bare None literal through default()" do
