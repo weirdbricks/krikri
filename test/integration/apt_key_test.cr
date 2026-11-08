@@ -139,6 +139,38 @@ done
 exit 1
 SH
 
+# The same recv failure, but with the per-invocation gpg home real
+# apt-key builds (`mktemp -d /tmp/apt-key-gpghome.XXXXXXXXXX`), which
+# the shim records so the spec can pin the passthrough without
+# hardcoding a path: apt-key's own homedir differs on every call, and
+# the plugin never sees it anywhere except in the child's stdout.
+private APT_KEY_RECV_RANDOM_HOME_SHIM = <<-'SH'
+#!/bin/bash
+STATE="${KRIKRI_APT_KEY_STATE:?}"
+args=("$@")
+for i in "${!args[@]}"; do
+  case "${args[$i]}" in
+    adv)
+      rest=("${args[@]:$((i+1))}")
+      if [[ "${rest[*]}" == *--list-public-keys* ]]; then
+        [ -f "$STATE" ] && cat "$STATE"
+        exit 0
+      fi
+      if [[ "${rest[*]}" == *--recv* ]]; then
+        homedir=$(mktemp -d /tmp/apt-key-gpghome.XXXXXXXXXX)
+        printf '%s' "$homedir" > "${KRIKRI_APT_KEY_HOMEDIR:?}"
+        echo "Executing: $homedir/gpg.1.sh ${rest[*]}"
+        echo "Warning: apt-key is deprecated. Manage keyring files in trusted.gpg.d instead (see apt-key(8))." >&2
+        echo "gpg: keyserver receive failed: Server indicated a failure" >&2
+        rmdir "$homedir" 2>/dev/null
+        exit 2
+      fi
+      ;;
+  esac
+done
+exit 1
+SH
+
 # Installs an arbitrary apt-key double at the front of PATH for the
 # block's duration and yields the shim's own path (the resolved binary
 # path the plugin's failure `cmd` is built from). ENV is process-global,
@@ -480,6 +512,43 @@ describe "apt_key plugin" do
     end
     File.delete(state) rescue nil
     File.delete(attempts) rescue nil
+  end
+
+  it "passes the keyserver child's stdout through verbatim, random apt-key gpg home included (issue #998)" do
+    # stancel.nginx_install round 1794130429: the round's ansible-vs-
+    # krikri diff was the gpg home apt-key names in its "Executing:"
+    # line, which `mktemp -d /tmp/apt-key-gpghome.XXXXXXXXXX` makes
+    # different on every invocation - real ansible differs against
+    # itself there in exactly the same field, so nothing on krikri's
+    # side can match it. What must hold is the property that makes it
+    # unmatchable rather than a gap: import_key hands run_command's
+    # stdout/stderr to fail_json untouched, so the plugin passes the
+    # child's bytes through as its own (no normalising, stripping or
+    # masking of temp paths), and a role that registers the result sees
+    # exactly what ansible would have put there.
+    state = apt_key_spec_state_file
+    home_file = File.tempname(".krikri-spec-aptkey-homedir")
+    with_apt_key_shim_body(APT_KEY_RECV_RANDOM_HOME_SHIM, state) do
+      ENV["KRIKRI_APT_KEY_HOMEDIR"] = home_file
+      begin
+        result = PluginSpecHelper.run("apt_key", {"state" => "present", "keyserver" => "pool.sks-keyservers.net", "id" => FAKE_KEY_ID})
+      ensure
+        ENV.delete("KRIKRI_APT_KEY_HOMEDIR")
+      end
+
+      home = File.read(home_file).strip
+      home.must_match(%r{\A/tmp/apt-key-gpghome\.[A-Za-z0-9]{10}\z})
+      executing = "Executing: #{home}/gpg.1.sh --no-tty --keyserver pool.sks-keyservers.net --recv #{FAKE_KEY_ID}"
+      result["failed"].as_bool.must_equal(true)
+      result["stdout"].as_s.must_equal("#{executing}\n")
+      result["stdout_lines"].as_a.must_equal([executing])
+      # The path belongs to the child's stream only: import_key's msg
+      # carries the keyserver name and never any of the child's output.
+      result["msg"].as_s.must_equal("Error fetching key #{FAKE_KEY_ID} from keyserver: pool.sks-keyservers.net")
+      result["msg"].as_s.wont_include("apt-key-gpghome")
+    end
+    File.delete(state) rescue nil
+    File.delete(home_file) rescue nil
   end
 
   it "requires no key material when keyserver: + id: are given (url/data/file are alternatives, not prerequisites)" do
