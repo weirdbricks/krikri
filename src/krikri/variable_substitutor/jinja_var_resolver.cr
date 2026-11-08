@@ -105,7 +105,7 @@ module Krikri
       private def emit_fact_deprecation(name : String) : Nil
         return if JinjaVarResolver.materializing_vars?
         return unless VarSubstitutor.top_level_fact_name?(name, @raw_vars)
-        Krikri::ResultDisplay.emit_top_level_fact_deprecation(VarSubstitutor.fact_read_origin(name))
+        VarSubstitutor.emit_fact_deprecation(VarSubstitutor.fact_read_origin(name))
       end
 
       # Ansible's `vars` magic variable: the whole current scope as a

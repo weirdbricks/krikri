@@ -426,7 +426,7 @@ module Krikri
           )
         end
         if template_reads_name?(->(name : String) { VarSubstitutor.top_level_fact_name?(name, template_vars) }, template)
-          Krikri::ResultDisplay.emit_top_level_fact_deprecation(
+          VarSubstitutor.emit_fact_deprecation(
             ErrorBlock.origin_context(File.expand_path(template_path), 0, nil, show_content: false)
           )
         end
@@ -447,7 +447,7 @@ module Krikri
           end
         end
         if template_reads_name?(names_a_fact_through_its_value, template)
-          Krikri::ResultDisplay.emit_top_level_fact_deprecation(var_value_origin)
+          VarSubstitutor.emit_fact_deprecation(var_value_origin)
         end
       end
 

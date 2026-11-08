@@ -223,4 +223,38 @@ describe "INJECT_FACTS_AS_VARS deprecation" do
     stderr.must_include("Origin: #{File.join(dir, "play.yml")}:5:15\n")
     stderr.wont_include("Origin: #{File.join(dir, "t.j2")}")
   end
+
+  it "prints one block per templating operation, at the first fact it read" do
+    # Issue #964, badsectorlabs.ludus_emux via geerlingguy.docker: one task
+    # param that pulls in several defaults each naming a different fact.
+    # Real keeps the deprecate tag's FIRST access per render (live-verified
+    # against 2.21.6: task 1 prints only os_name's declaration), so the
+    # second value's Origin must not add its own block; a later task that
+    # reads that second value alone gets it, at its own site.
+    stdout, stderr, dir = run_files({"play.yml" => <<-PLAYBOOK})
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        vars:
+          os_name: "{{ ansible_os_family }}"
+          os_dist: "{{ ansible_distribution }}"
+        tasks:
+          - name: both vars at once
+            debug:
+              msg: "{{ os_name }} {{ os_dist }}"
+          - name: the second var alone
+            debug:
+              msg: "{{ os_dist }}"
+      PLAYBOOK
+
+    stdout.must_include("TASK [both vars at once]")
+    stdout.must_include("TASK [the second var alone]")
+    stderr.scan(/DEPRECATION WARNING\]: #{Regex.escape(FACT_DEPRECATION_TEXT)}/).size.must_equal(2)
+    stderr.must_include("Origin: #{File.join(dir, "play.yml")}:5:14\n")
+    stderr.must_include("Origin: #{File.join(dir, "play.yml")}:6:14\n")
+    stderr.scan(":5:14\n").size.must_equal(1)
+    stderr.scan(":6:14\n").size.must_equal(1)
+    # In the tasks' own order, the way ansible interleaves them.
+    (stderr.index!(":5:14") < stderr.index!(":6:14")).must_equal(true)
+  end
 end
