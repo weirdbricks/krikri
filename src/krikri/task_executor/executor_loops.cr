@@ -1056,6 +1056,24 @@ module Krikri
         task.loop_lookup_plugin.try { |plugin| plugin.includes?(".") ? nil : "with_#{plugin}" }
     end
 
+    # Pushes the loop SOURCE's own file position for the duration of the
+    # block, for the paths that render the source's own text OUTSIDE
+    # #resolve_loop_items_or_raise (include_vars' with_first_found
+    # candidates, a literal loop: list's per-item renders). ansible tags a
+    # top-level fact read there at the source ELEMENT that named the fact
+    # (mullholland.ntp's include_vars + with_first_found, issue #956), so
+    # the read hook needs the same site the loop-keyword renders get.
+    private def with_loop_source_site(task : Task, & : -> T) : T forall T
+      key = loop_source_keyword(task)
+      return yield unless key && (path = task.source_file)
+      VarSubstitutor.push_loop_source_site(path, task.source_line, key)
+      begin
+        yield
+      ensure
+        VarSubstitutor.pop_loop_source_site
+      end
+    end
+
     private def resolve_loop_items_or_raise(task : Task, host : Host, vars_context : Hash(String, JSON::Any), & : -> Array(JSON::Any)?) : Array(JSON::Any)?
       # While the loop's own value renders (scalar template, lookup terms,
       # per-candidate first_found strings), register WHERE that value sits
@@ -1070,6 +1088,7 @@ module Krikri
       loop_param_registered = false
       if loop_key && task.source_file
         VarSubstitutor.set_current_task_param(task.source_file, task.source_line, loop_key, task.loop_template)
+        VarSubstitutor.push_loop_source_site(task.source_file, task.source_line, loop_key)
         loop_param_registered = true
       end
       yield
@@ -1183,7 +1202,10 @@ module Krikri
 
       raise WhenEvaluationError.new(ex.message)
     ensure
-      VarSubstitutor.pop_current_task_param if loop_param_registered
+      if loop_param_registered
+        VarSubstitutor.pop_loop_source_site
+        VarSubstitutor.pop_current_task_param
+      end
     end
 
     # Whether the undefined reference that killed a when: evaluation is the
@@ -1725,7 +1747,9 @@ module Krikri
       # render sees the alias-free snapshot (Ansible's own scoping,
       # see #synthesize_legacy_ssh_aliases), while the per-iteration
       # task-arg context below keeps the full one.
-      rendered_items = render_loop_items_strict_or_raise(task, loop_items, loop_source_vars_context(task, host, base_vars_context), host.name)
+      rendered_items = with_loop_source_site(task) do
+        render_loop_items_strict_or_raise(task, loop_items, loop_source_vars_context(task, host, base_vars_context), host.name)
+      end
       if rendered_items.nil?
         # Strict item templating failed but the task's own when: evaluates
         # False without `item` bound - Ansible evaluates the when:

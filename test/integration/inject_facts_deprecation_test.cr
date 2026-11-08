@@ -158,4 +158,42 @@ describe "INJECT_FACTS_AS_VARS deprecation from a when: clause" do
 
     stderr.includes?("INJECT_FACTS_AS_VARS").must_equal(false)
   end
+
+  it "attributes a loop source's fact read to the candidate element that named it" do
+    # mullholland.ntp's "Include distribution specific variables" (issue
+    # #956): a with_first_found: candidate list of template strings. Real
+    # renders the whole candidate list as ONE templating operation and
+    # tags the deprecation at the first candidate that named a fact, never
+    # at the `with_first_found:` keyword line - one block for the task,
+    # live-verified against 2.21.6.
+    dir = PluginSpecHelper.tmp_path("inject-facts-loop-#{Random::Secure.hex(4)}")
+    FileUtils.mkdir_p(dir)
+    File.write(File.join(dir, "default.yml"), "---\nntp_package: ntp\n")
+    playbook = File.join(dir, "play.yml")
+    File.write(playbook, <<-PLAYBOOK)
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        tasks:
+          - name: Include distribution specific variables
+            ansible.builtin.include_vars: "{{ item }}"
+            with_first_found:
+              - '{{ ansible_distribution }}-{{ ansible_distribution_major_version }}.yml'
+              - '{{ ansible_distribution }}.yml'
+              - '{{ ansible_os_family }}.yml'
+              - 'default.yml'
+      PLAYBOOK
+
+    stdout = IO::Memory.new
+    stderr = IO::Memory.new
+    Process.run(BINARY, ["-i", "localhost,", playbook], output: stdout, error: stderr, chdir: dir)
+
+    # The candidate on line 8 (its opening quote, column 11) is the first
+    # element naming a fact, and it is the only block the task gets.
+    stderr.to_s.must_include("Origin: #{playbook}:8:11\n")
+    stderr.to_s.must_include("8         - '{{ ansible_distribution }}-{{ ansible_distribution_major_version }}.yml'\n")
+    stderr.to_s.must_include("            ^ column 11")
+    stderr.to_s.scan(/DEPRECATION WARNING\]: INJECT_FACTS_AS_VARS/).size.must_equal(1)
+    stderr.to_s.wont_include("Origin: #{playbook}:7:")
+  end
 end

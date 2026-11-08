@@ -2096,9 +2096,10 @@ module Krikri
     # RESOLVES a variable (the play_hosts read alias, the top-level fact
     # alias): a template-file render in progress wins (the read belongs to
     # the file), then the conditional clause being evaluated, then the
-    # templated task param being finalized; nil when none applies - reads
-    # whose Origin krikri does not reproduce (a vars file) stay silent
-    # rather than mis-attribute the warning.
+    # loop source being rendered, then the templated task param being
+    # finalized; nil when none applies - reads whose Origin krikri does
+    # not reproduce (a vars file) stay silent rather than mis-attribute
+    # the warning.
     def self.current_deprecation_origin : String?
       if path = current_template_file
         return ErrorBlock.origin_context(File.expand_path(path), 0, nil, show_content: false)
@@ -2146,6 +2147,13 @@ module Krikri
           # the variable would be a mis-attribution.
           return published_var_origin(preparing.host_name, preparing.name)
         end
+      end
+      # A read while a loop SOURCE renders belongs to the source ELEMENT
+      # that named the fact, not to the loop keyword's own value token -
+      # real renders the items through the templar and tags the element
+      # (mullholland.ntp's with_first_found candidates, issue #956).
+      if loop_site = current_loop_source_site
+        return ResultDisplay.loop_source_origin(loop_site.source_file, loop_site.source_line, loop_site.key, name)
       end
       deprecation_site_names?(name) ? current_deprecation_origin : nil
     end
@@ -2246,6 +2254,14 @@ module Krikri
       if site = current_when_site
         return "when:#{site.source_file}:#{site.source_line}:#{site.exact_col}"
       end
+      # A loop source's candidates are one operation too: real renders
+      # them through a single templar call, so only the first element's
+      # fact access gets the block (mullholland.ntp's with_first_found,
+      # issue #956 - live-verified vs 2.21.6: one block, at the first
+      # candidate that named a fact).
+      if site = current_loop_source_site
+        return "loop:#{site.source_file}:#{site.source_line}:#{site.key}"
+      end
       if site = current_task_param
         return "param:#{site.source_file}:#{site.source_line}:#{site.key}"
       end
@@ -2319,6 +2335,30 @@ module Krikri
     def self.resolved_var_name?(host_name : String?, name : String) : Bool
       return false unless host_name
       @@resolved_var_names[host_name]?.try(&.includes?(name)) || false
+    end
+
+    # The loop SOURCE this fiber is resolving right now: a top-level fact
+    # read while its items render deprecates at the source ELEMENT that
+    # named the fact, not at the loop keyword's own value token.
+    # Separate from the templated-param stack because the loop-source
+    # resolution may nest operations that pop that stack by their own
+    # pairing, while this entry must survive the whole resolution.
+    record LoopSourceSite, source_file : String?, source_line : Int32, key : String
+    @@loop_source_sites = {} of Fiber => Array(LoopSourceSite)
+
+    def self.push_loop_source_site(source_file : String?, source_line : Int32, key : String) : Nil
+      (@@loop_source_sites[Fiber.current] ||= Array(LoopSourceSite).new).push(LoopSourceSite.new(source_file, source_line, key))
+    end
+
+    def self.pop_loop_source_site : Nil
+      fiber = Fiber.current
+      return unless stack = @@loop_source_sites[fiber]?
+      stack.pop
+      @@loop_source_sites.delete(fiber) if stack.empty?
+    end
+
+    def self.current_loop_source_site : LoopSourceSite?
+      @@loop_source_sites[Fiber.current]?.try(&.last?)
     end
 
     # Snapshot of every host's unsafe-name registry - the serialized form
