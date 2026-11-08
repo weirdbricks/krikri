@@ -591,7 +591,21 @@ module Krikri
       rescue IO::TimeoutError
         raise FetchError.new(FetchError::Kind::ContentCopy, "", reason: body_timeout_reason(scheme))
       rescue ex
-        raise FetchError.new(FetchError::Kind::ContentCopy, "", reason: ex.message || ex.class.name)
+        raise FetchError.new(FetchError::Kind::ContentCopy, "", reason: copy_failure_reason(ex))
+      end
+
+      # to_native() of whatever get_url's copyfileobj handler caught. An OS
+      # error on the write (a full staging filesystem: "[Errno 28] No space
+      # left on device") is Python's bare str(OSError) - errno and strerror
+      # with NO path, because the call that failed is the file object's own
+      # write, which raises with filename=None. Crystal's IO::Error message
+      # names the staging file ("write (<path>): <strerror>"), which ansible
+      # never prints, so rebuild the Python shape from the errno it carries.
+      def self.copy_failure_reason(ex : Exception) : String
+        if errno = ex.as?(IO::Error).try(&.os_error).as?(Errno)
+          return SocketConnect.python_error_text(errno) unless errno.none?
+        end
+        ex.message || ex.class.name
       end
 
       # urllib.error.HTTPError's str(): the code and the server's own

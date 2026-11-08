@@ -1035,6 +1035,68 @@ describe "get_url plugin" do
       Krikri::PluginHelpers::HTTPDownload.body_timeout_reason("http").must_equal("timed out")
     end
 
+    it "words a failed OS write on the staged body as python's bare str(OSError)" do
+      # Live-verified against ansible-core: a full staging filesystem fails
+      # get_url's copyfileobj with "[Errno 28] No space left on device" -
+      # errno and strerror only, with no path. The call that raises is the
+      # file object's own write, so its OSError carries filename=None, while
+      # Crystal's IO::Error text names the staging file ("write (<path>):
+      # <strerror>"); ansible never prints that path.
+      enospc = IO::Error.from_os_error("write", Errno::ENOSPC, target: "/tmp/tmp_ab12cd")
+      Krikri::PluginHelpers::HTTPDownload.copy_failure_reason(enospc)
+        .must_equal("[Errno 28] No space left on device")
+      # Anything without an errno behind it keeps its own text, as
+      # to_native() of a non-OSError exception does.
+      Krikri::PluginHelpers::HTTPDownload.copy_failure_reason(Exception.new("boom"))
+        .must_equal("boom")
+    end
+
+    it "reports a mid-body connection reset with python's str(OSError) text" do
+      # Same handler, read side: ansible-core 2.21 answers a body reset mid
+      # copy with "failed to create temporary content file: [Errno 104]
+      # Connection reset by peer" (live-verified), so the reason must be the
+      # OSError's errno + strerror and not Crystal's own socket wording.
+      reset_server = TCPServer.new("127.0.0.1", 0)
+      reset_port = reset_server.local_address.port
+      spawn do
+        loop do
+          client = reset_server.accept
+          # Drain the request head, then promise a body far longer than what
+          # is sent and force a RST instead of a FIN (SO_LINGER 0).
+          begin
+            client.read_timeout = 1.second
+            loop do
+              line = client.gets("\r\n")
+              break if line.nil? || line.strip.empty?
+            end
+          rescue
+          end
+          client.print("HTTP/1.1 200 OK\r\nContent-Length: 100000\r\nContent-Type: application/octet-stream\r\n\r\n")
+          client.print("x" * 1000)
+          client.flush
+          client.linger = 0
+          client.close
+        end
+      rescue
+        # the server was closed by the test
+      end
+      dest = File.tempname("get-url-spec")
+
+      result = PluginSpecHelper.run("get_url", {
+        "url" => "http://127.0.0.1:#{reset_port}/reset", "dest" => dest, "timeout" => "10",
+      })
+
+      result["failed"].as_bool.must_equal(true)
+      result["msg"].as_s.must_equal("failed to create temporary content file: [Errno 104] Connection reset by peer")
+      result["url"]?.must_be_nil
+      result["dest"]?.must_be_nil
+      result["status_code"]?.must_be_nil
+      File.exists?(dest).must_equal(false)
+    ensure
+      reset_server.try(&.close)
+      File.delete(dest) if dest && File.exists?(dest)
+    end
+
     it "reports a directory dest as the directory itself on a download failure" do
       # Real get_url only derives the filename from the final response,
       # which a failed request never produces - so a failed download into
