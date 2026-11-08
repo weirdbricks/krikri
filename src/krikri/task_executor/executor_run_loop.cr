@@ -3244,7 +3244,10 @@ module Krikri
       apply_changed_failed_when(task, result, vars_context, host)
     end
 
-    RAW_MODULES = {"raw", "ansible.builtin.raw", "ansible.legacy.raw"}
+    # One definition, shared with the batcher's own raw exclusion
+    # (TaskBatcher::raw_task?) - raw also aliases to shell, so a second
+    # hand-maintained copy here would drift silently.
+    RAW_MODULES = TaskBatcher::RAW_MODULES
 
     # The executable-present half of raw:'s missing-`_raw_params` behavior:
     # real's raw action reads ONLY `_raw_params` and `executable` off the
