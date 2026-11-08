@@ -311,9 +311,13 @@ module Krikri
           msg: pip_failure_msg(probe_out, probe_err), include_empty_msg: true, cmd: argv)
       end
 
-      # 2.21 resolves a bare package name to the concrete version pip would
-      # install (pip >= 24.1's `--dry-run --report`) before deciding, so
-      # "installed but outdated" reports changed like a real install would.
+      # Only the refs that fail to parse as a PEP 508 requirement (VCS
+      # urls, file paths, archives) get resolved to the concrete
+      # name==version pip would install. A bare name keeps its own empty
+      # requirement, which every installed version satisfies, so an
+      # installed-but-outdated package reports ok like Ansible's own - a
+      # real install would upgrade it, but check mode does not look at
+      # the index at all (issue #1004).
       packages, resolution_warning = resolve_check_packages(pip_bin, split_requirements(name))
 
       # pip.py's loop with its early break: state=present changes when ANY
@@ -334,16 +338,16 @@ module Krikri
       result
     end
 
-    # pip.py's _resolve_package_names(): a package with no version
+    # pip.py's _resolve_package_names(): a ref that is NOT a parseable
     # requirement is replaced by the concrete name==version pip would
     # install, read back from `pip install --dry-run --ignore-installed
     # --report=<tmpfile>`. pip older than 24.1 cannot report reliably, so
-    # it keeps the plain names and warns (real's own wording). Any failure
+    # it keeps those refs and warns (real's own wording). Any failure
     # of the probe leaves the list untouched - real raises and fails the
     # task, but a check-mode probe is not worth failing a dry run over.
     private def resolve_check_packages(pip_bin : String, packages : Array(String)) : {Array(String), String?}
-      bare = packages.reject { |package| !requirement_specs(package).empty? }
-      return {packages, nil} if bare.empty?
+      to_resolve = packages.reject { |package| parsable_requirement?(package) }
+      return {packages, nil} if to_resolve.empty?
 
       version = installed_pip_version(pip_bin)
       if version.nil? || pip_version_cmp(version, "24.1") < 0
@@ -353,14 +357,14 @@ module Krikri
       report_path = File.tempname("krikri-pip-report", ".json")
       begin
         report_arg = Process.quote("--report=#{report_path}")
-        result = remote_exec("#{quoted_command(pip_bin)} install --dry-run --ignore-installed #{report_arg} #{bare.map { |package| Process.quote(package) }.join(" ")}")
+        result = remote_exec("#{quoted_command(pip_bin)} install --dry-run --ignore-installed #{report_arg} #{to_resolve.map { |package| Process.quote(package) }.join(" ")}")
         return {packages, nil} unless result[:exit_code] == 0 && File.exists?(report_path)
 
         report = JSON.parse(File.read(report_path)) rescue nil
         resolved = report.try(&.["install"]?).try(&.as_a?)
         return {packages, nil} unless resolved
 
-        with_requirements = packages.reject { |package| bare.includes?(package) }
+        other_packages = packages.reject { |package| to_resolve.includes?(package) }
         resolved_packages = resolved.compact_map do |entry|
           metadata = entry["metadata"]?
           next unless metadata
@@ -369,10 +373,29 @@ module Krikri
           next unless name && version_string
           "#{name}==#{version_string}"
         end
-        {with_requirements + resolved_packages, nil}
+        {other_packages + resolved_packages, nil}
       ensure
         File.delete(report_path) if File.exists?(report_path)
       end
+    end
+
+    # pip.py's Package.has_requirement is literally `self._requirement is
+    # not None`, i.e. "the packaging grammar accepted this string" - true
+    # for a bare `six` too, whose specifier is simply empty. So the refs
+    # _resolve_package_names replaces with a resolved name==version are
+    # the ones that grammar REJECTS: VCS urls, local file paths/archives
+    # and a direct `name @ url` reference (`six` alone parses,
+    # `git+https://host/x.git` and `/tmp/x.tar.gz` do not).
+    private def parsable_requirement?(package : String) : Bool
+      piece = package.strip
+      return false if piece.empty?
+      return false if piece.includes?("://") || piece.includes?('@')
+      return false if {"git+", "hg+", "bzr+", "svn+"}.any? { |prefix| piece.starts_with?(prefix) }
+      return false if piece.starts_with?('/') || piece.starts_with?('.') || piece.starts_with?('~')
+
+      # PEP 508's name rule: alphanumerics at both ends, `-_.` inside.
+      name = piece.split(/[=<>!~(\[;\s]/, 2)[0].strip
+      name.matches?(/\A[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?\z/)
     end
 
     # `pip show pip`'s Version line (real's _get_package_info on itself).

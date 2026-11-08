@@ -199,17 +199,22 @@ describe "pip plugin" do
     end
   end
 
-  # 2.21 resolves a bare name through pip >= 24.1's `--dry-run --report`
-  # before deciding check mode's changed, so an installed-but-outdated
-  # package reports changed. (Not live-verifiable here without a PyPI
-  # round trip; pinned to the module source's own flow.)
-  it "resolves a bare name to pip's concrete version in check mode (2.21)" do
+  # Only a ref the packaging grammar rejects reaches pip.py's
+  # _resolve_package_names; a bare name parses (its specifier is simply
+  # empty), so check mode never asks the index about one and an
+  # installed-but-outdated package is ok (issue #1004). A VCS url DOES
+  # get resolved through pip >= 24.1's `--dry-run --report`, so a
+  # resolution landing on a version other than the frozen one still
+  # reports changed.
+  it "resolves a VCS url, not a bare name, to pip's concrete version in check mode" do
     shim_dir = File.tempname(".krikri-spec-pip-resolve")
     Dir.mkdir(shim_dir)
+    marker = File.join(shim_dir, "marker")
     shim = File.join(shim_dir, "resolve-pip")
     File.write(shim, <<-SH
       #!/bin/sh
       export PATH=/usr/local/bin:/usr/bin:/bin
+      printf '%s\\n' "$*" >> #{marker}
       case "$1" in
         show) echo "Name: pip"; echo "Version: 24.1"; exit 0 ;;
         list) echo "alpha==1.0"; exit 0 ;;
@@ -232,14 +237,15 @@ describe "pip plugin" do
     File.chmod(shim, 0o755)
     begin
       result = PluginSpecHelper.run("pip", {
-        "name"                => "alpha",
+        "name"                => "git+https://example.invalid/alpha.git",
         "executable"          => shim,
         "_ansible_check_mode" => "true",
       })
 
       falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
-      # alpha==1.0 installed, pip would install 2.0 -> changed
+      # resolved alpha==2.0 against a frozen alpha==1.0 -> changed
       result["changed"].as_bool.must_equal(true)
+      File.read(marker).must_include("--dry-run")
     ensure
       FileUtils.rm_rf(shim_dir)
     end
@@ -1294,10 +1300,9 @@ describe "pip plugin" do
       end
     end
 
-    # A shim rather than a real venv: 2.21 resolves a bare name through
-    # `pip install --dry-run --report` on pip >= 24.1, so a real pip would
-    # make this spec depend on what PyPI serves today.
-    it "reports ok for a satisfied bare name (resolved version matches)" do
+    # A shim rather than a real venv, so the freeze list is fixed instead
+    # of tracking whatever PyPI serves today.
+    it "reports ok for a satisfied bare name" do
       shim_dir = File.tempname(".krikri-spec-pip-satisfied")
       Dir.mkdir(shim_dir)
       shim = File.join(shim_dir, "satisfied-pip")
@@ -1307,10 +1312,49 @@ describe "pip plugin" do
         case "$1" in
           show) echo "Name: pip"; echo "Version: 24.1"; exit 0 ;;
           list|freeze) echo "alpha==1.0"; exit 0 ;;
+        esac
+        exit 0
+        SH
+      )
+      File.chmod(shim, 0o755)
+      begin
+        result = PluginSpecHelper.run("pip", {
+          "name"                => "alpha",
+          "executable"          => shim,
+          "_ansible_check_mode" => "true",
+        })
+
+        result["failed"]?.try(&.as_bool).wont_equal(true)
+        result["changed"].as_bool.must_equal(false)
+      ensure
+        FileUtils.rm_rf(shim_dir)
+      end
+    end
+
+    # Issue #1004: pip.py's Package.has_requirement is `self._requirement
+    # is not None`, which a bare name satisfies (its specifier is just
+    # empty), so _resolve_package_names never resolves one to the version
+    # the index serves. The frozen installed version therefore satisfies
+    # it and the task is ok even when that version is outdated - real
+    # ansible-playbook 2.21.6 reports ok here (verified with six==1.15.0
+    # in a venv while PyPI serves 1.17.0). A shim keeps that comparison
+    # offline: the report it would hand back advertises alpha 2.0.
+    it "reports ok for an installed but outdated bare name (issue #1004)" do
+      shim_dir = File.tempname(".krikri-spec-pip-outdated")
+      Dir.mkdir(shim_dir)
+      marker = File.join(shim_dir, "install-called")
+      shim = File.join(shim_dir, "outdated-pip")
+      File.write(shim, <<-SH
+        #!/bin/sh
+        export PATH=/usr/local/bin:/usr/bin:/bin
+        case "$1" in
+          show) echo "Name: pip"; echo "Version: 24.1"; exit 0 ;;
+          list|freeze) echo "alpha==1.0"; exit 0 ;;
           install)
+            printf '%s\\n' "$*" >> #{marker}
             for arg in "$@"; do
               case "$arg" in
-                --report=*) printf '{"install": [{"metadata": {"name": "alpha", "version": "1.0"}}]}' > "${arg#--report=}" ;;
+                --report=*) printf '{"install": [{"metadata": {"name": "alpha", "version": "2.0"}}]}' > "${arg#--report=}" ;;
               esac
             done
             exit 0
@@ -1329,6 +1373,7 @@ describe "pip plugin" do
 
         result["failed"]?.try(&.as_bool).wont_equal(true)
         result["changed"].as_bool.must_equal(false)
+        File.exists?(marker).must_equal(false)
       ensure
         FileUtils.rm_rf(shim_dir)
       end
