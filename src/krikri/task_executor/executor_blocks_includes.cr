@@ -123,7 +123,7 @@ module Krikri
       print_task_path(task)
 
       skip_conditions = Hash(String, String).new
-      run_hosts, skip_hosts = partition_by_when(task, hosts, skip_conditions: skip_conditions)
+      run_hosts, skip_hosts = partition_include_by_when(task, hosts, skip_conditions)
 
       skip_hosts.each do |host|
         puts Krikri::Oneline.skip_line(host.name).colorize(:cyan)
@@ -658,6 +658,58 @@ module Krikri
       first_existing(roots, candidate)
     end
 
+    # Renders include_vars's own path argument (the free-form statement's
+    # value, `file:` or `dir:`) with that argument registered as the current
+    # templating site. ansible-core tags a top-level fact read reached from
+    # the path with the path VALUE's own position - the same Origin a
+    # finalized task param carries - and this render never goes through
+    # #substitute_task_params, so without the site the read stayed silent
+    # (nycrecords.nginx's `include_vars: "{{ ansible_os_family }}.yml"`,
+    # issue #974; live-verified against 2.21.6 for all three key shapes).
+    private def render_include_vars_path(substitutor : VarSubstitutor, task : Task, key : String?, text : String) : String
+      VarSubstitutor.set_current_task_param(task.source_file, task.source_line, key, text) if key
+      begin
+        substitutor.scan_strict_include_vars_path(text, task.vars)
+        substitutor.substitute(text, strict: true).strip
+      ensure
+        VarSubstitutor.pop_current_task_param if key
+      end
+    end
+
+    # A DYNAMIC INCLUDE's own `when:` clause, evaluated with its deprecations
+    # held back: ansible-core shows the warnings it captured for an include
+    # only when the include is skipped or fails, never when it runs (see
+    # ResultDisplay.begin_deferred_fact_deprecations, issue #974).
+    private def evaluate_include_when_items(task : Task, vars_context : Hash(String, JSON::Any), host : Host) : Bool
+      ResultDisplay.begin_deferred_fact_deprecations
+      begin
+        verdict = evaluate_when_items(task, vars_context, host)
+        ResultDisplay.finish_deferred_fact_deprecations(flush: !verdict)
+        verdict
+      rescue ex
+        # A clause that raised is a FAILED include: real still shows what it
+        # captured before the failure.
+        ResultDisplay.finish_deferred_fact_deprecations(flush: true)
+        raise ex
+      end
+    end
+
+    # #partition_by_when for a dynamic include, holding the batch's
+    # conditional deprecations until its verdicts are known - they reach the
+    # console only for the hosts the include is SKIPPED for (see
+    # ResultDisplay.begin_deferred_fact_deprecations).
+    private def partition_include_by_when(task : Task, hosts : Array(Host), skip_conditions : Hash(String, String)) : {Array(Host), Array(Host)}
+      ResultDisplay.begin_deferred_fact_deprecations
+      begin
+        run_hosts, skip_hosts = partition_by_when(task, hosts, skip_conditions: skip_conditions)
+        ResultDisplay.finish_deferred_fact_deprecations(flush: !skip_hosts.empty?)
+        {run_hosts, skip_hosts}
+      rescue ex
+        ResultDisplay.finish_deferred_fact_deprecations(flush: true)
+        raise ex
+      end
+    end
+
     # Records the VarOrigin of every key a successfully loaded
     # include_vars: file defines (see @included_var_origins): real points
     # a name-template error inside such a value at the included file's
@@ -900,8 +952,7 @@ module Krikri
 
           substitutor = VarSubstitutor.new(vars: item_context, host_name: host.name)
           candidate = begin
-            substitutor.scan_strict_include_vars_path(task.include_vars_file || "", task.vars)
-            substitutor.substitute(task.include_vars_file || "", strict: true).strip
+            render_include_vars_path(substitutor, task, task.include_vars_origin_key, task.include_vars_file || "")
           rescue ex : UndefinedVariableError | FirstFoundLookupError
             # Ansible templates include_vars's own path strictly
             # (verified live against 2.19.4: `include_vars: "{{ users }}"`
@@ -1152,8 +1203,7 @@ module Krikri
       # given directly; either way it is templated.
       substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
       candidate = begin
-        substitutor.scan_strict_include_vars_path(task.include_vars_file || "", task.vars)
-        substitutor.substitute(task.include_vars_file || "", strict: true).strip
+        render_include_vars_path(substitutor, task, task.include_vars_origin_key, task.include_vars_file || "")
       rescue ex : UndefinedVariableError | FirstFoundLookupError
         # Ansible fails the include_vars task ITSELF when its path
         # template references an undefined variable ("Error while resolving
@@ -1268,8 +1318,7 @@ module Krikri
       substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
       raw_dir = task.include_vars_dir || ""
       candidate = begin
-        substitutor.scan_strict_include_vars_path(raw_dir, task.vars)
-        substitutor.substitute(raw_dir, strict: true).strip
+        render_include_vars_path(substitutor, task, task.include_vars_origin_key, raw_dir)
       rescue ex : UndefinedVariableError
         finish_include_vars_failure(task, host, ex.message || "is undefined")
         return
@@ -2414,7 +2463,7 @@ module Krikri
     private def run_include_tasks_once(task : Task, host : Host, vars_context : Hash(String, JSON::Any), item_label : String?, defer_when_stats : Bool = false, defer_run : Bool = false, collected : Array(Array(Task))? = nil, loop_entries : Array(JSON::Any)? = nil, loop_index : Int32? = nil) : Symbol
       if task.when_condition
         begin
-          when_result = evaluate_when_items(task, vars_context, host)
+          when_result = evaluate_include_when_items(task, vars_context, host)
         rescue ex : WhenEvaluationError
           # A LOOPED include's per-item when: failure must not book stats
           # here: Ansible recaps the whole looped task ONCE no matter
@@ -3218,7 +3267,7 @@ module Krikri
       # sibling true-branch rationale).
       if task.when_condition && !task.is_static_import?
         begin
-          when_result = evaluate_when_items(task, vars_context, host)
+          when_result = evaluate_include_when_items(task, vars_context, host)
         rescue ex : WhenEvaluationError
           swallow_when_error(task, host, ex, item_label: item_label)
           return :failed
