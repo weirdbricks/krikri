@@ -100,7 +100,15 @@ module Krikri
       # Prefer the same discovery Ansible does; the plain PATH lookup
       # stays as the fallback for a target where no fallback name
       # resolves.
-      python = Krikri.discovered_target_python ||
+      #
+      # An interpreter the task's vars name wins over discovery, as in
+      # real's _get_shebang: a `delegate_to: localhost` task runs under
+      # the implicit localhost's ansible_python_interpreter (the Python
+      # ansible itself runs under, where libraries installed beside
+      # ansible live - boto3 for amazon.aws, issue #1005) and an
+      # inventory-pinned ansible_python_interpreter decides the run
+      # instead of whichever python3 discovery happens to find first.
+      python = Krikri.interpreter_from_vars(@vars) || Krikri.discovered_target_python ||
                %w[python3 python].find { |bin| !`command -v #{bin} 2>/dev/null`.strip.empty? }
       if python_module && !python
         return PluginResult.new(changed: false, failed: true, msg: "py_module: no python3/python on the target - cannot run custom module #{module_name}")

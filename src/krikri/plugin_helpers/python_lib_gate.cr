@@ -54,6 +54,25 @@ module Krikri
     nil
   end
 
+  # The interpreter a task's VARS select for its Python module run, or
+  # nil when they leave it to discovery. Real ansible resolves it in
+  # module_common's _get_shebang: ansible_python_interpreter when the
+  # host pins one (an "auto*" value is the discovery directive, not a
+  # path), otherwise the interpreter discovery recorded in
+  # discovered_interpreter_python. Same order mysql_connection's driver
+  # gate already uses.
+  def self.interpreter_from_vars(vars : Hash(String, JSON::Any)?) : String?
+    if raw = vars.try(&.["ansible_python_interpreter"]?).try(&.as_s?)
+      stripped = raw.strip
+      return stripped if !stripped.empty? && !stripped.starts_with?("auto")
+    end
+    if discovered = vars.try(&.["discovered_interpreter_python"]?).try(&.as_s?)
+      stripped = discovered.strip
+      return stripped unless stripped.empty?
+    end
+    nil
+  end
+
   # The interpreter's own sys.executable, which is what Ansible's
   # missing_required_lib names (never the bare command name). Ansible's
   # module runs UNDER that interpreter, so the two are the same path;

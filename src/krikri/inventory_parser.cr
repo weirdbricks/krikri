@@ -4,6 +4,7 @@ require "./vault"
 require "./host"
 require "./var_origin"
 require "./inventory_plugins"
+require "./controller_python"
 
 module Krikri
   # Inventory - represents the complete inventory
@@ -124,6 +125,12 @@ module Krikri
           # Create implicit localhost
           localhost = Host.new("localhost", ENV["USER"]? || "root", 22)
           localhost.vars["ansible_connection"] = JSON::Any.new("local")
+          # Real's implicit localhost also carries its own sys.executable
+          # as ansible_python_interpreter (`_create_implicit_localhost`),
+          # so its modules run under the Python ansible itself runs under
+          # - that is where libraries installed beside ansible (boto3,
+          # issue #1005) are importable.
+          ControllerPython.apply_implicit_localhost_interpreter(localhost.vars)
           [localhost]
         end
       else
