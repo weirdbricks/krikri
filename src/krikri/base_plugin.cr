@@ -11,6 +11,7 @@ require "./ssh_manager"
 require "./connection_settings"
 require "./local_executor"
 require "./param_sentinels"
+require "./module_utils_deprecations"
 require "./plugin_helpers/strict_bool_params"
 require "./plugin_helpers/stat_fields"
 require "./plugin_helpers/controlling_tty"
@@ -219,16 +220,17 @@ module Krikri
       if @msg.starts_with?("Task failed: Module failed: ")
         order = ["failed", "changed", "exception", "msg"]
         result.each_key do |key|
-          next if key.in?("failed", "msg", "diff", "changed", "exception", "deprecations", "warnings")
+          next if key.in?("failed", "msg", "diff", "changed", "exception", "deprecations", "warnings", "_ansible_core_deprecations")
           order << key
         end
         order << "warnings" if result.has_key?("warnings")
+        order << "_ansible_core_deprecations" if result.has_key?("_ansible_core_deprecations")
         order << "deprecations" if result.has_key?("deprecations")
         return order
       end
       order = ["failed", "msg", "diff"]
       result.each_key do |key|
-        next if key.in?("failed", "msg", "diff", "changed", "exception", "deprecations", "warnings")
+        next if key.in?("failed", "msg", "diff", "changed", "exception", "deprecations", "warnings", "_ansible_core_deprecations")
         order << key
       end
       order << "changed"
@@ -244,6 +246,11 @@ module Krikri
       # module's result dict LAST, whatever the module itself exited
       # with (live-verified vs 2.19.11 with community.postgresql's
       # deprecated-alias warnings on both a failing and a passing task).
+      # The engine-internal console marker rides just in front of them:
+      # it is not a key real ever emits (register strips every
+      # `_ansible_*` key), so only the plugin wire order sees it, and
+      # `deprecations` keeps the last slot real gives it.
+      order << "_ansible_core_deprecations" if result.has_key?("_ansible_core_deprecations")
       order << "deprecations" if result.has_key?("deprecations")
       order
     end
@@ -503,14 +510,54 @@ module Krikri
     abstract def execute : PluginResult
 
     # Last chance for a plugin to add the result keys Ansible's controller
-    # appends after the module's own dict - today only
-    # community.postgresql's deprecated-alias warnings
-    # (PluginHelpers::PostgresqlDeprecations). Wraps #execute rather
-    # than living inside it so EVERY exit path gets them, the early
-    # argument-validation failures included, exactly as Ansible's
-    # AnsibleModule does (its collected deprecations ride along with the
-    # fail_json exit too). Default: no change.
+    # appends after the module's own dict - community.postgresql's
+    # deprecated-alias warnings (PluginHelpers::PostgresqlDeprecations) for
+    # the plugins that opt in, plus the ansible.module_utils import
+    # deprecations every plugin whose real counterpart still imports from a
+    # deprecated module_utils path carries (ModuleUtilsDeprecations). Wraps
+    # #execute rather than living inside it so EVERY exit path gets them, the
+    # early argument-validation failures included, exactly as Ansible's
+    # AnsibleModule does (the import runs first, then its collected
+    # deprecations ride along with the fail_json exit too).
     def finalize_result(result : PluginResult) : PluginResult
+      attach_module_utils_import_deprecations(result)
+    end
+
+    # Reproduces the deprecated module_utils imports a native plugin's real
+    # module source still opens with, for the plugin binaries no python
+    # payload runs (see Krikri::ModuleUtilsDeprecations). Real collects them
+    # while importing - before the module body - so they are PREPENDED to
+    # whatever the plugin already attaches (firewalld_info's exit_json
+    # `warnings` deprecation, which real records after them) and deduped by
+    # msg against what is already there, since a plugin that reproduces its
+    # own import deprecation (sysctl) must keep exactly one entry: real
+    # answers each imported name once per run.
+    private def attach_module_utils_import_deprecations(result : PluginResult) : PluginResult
+      # The module a table entry is keyed by is the one this binary
+      # implements: the executor's own `_module_name` (the task's spelling)
+      # when it is there, else the plugin binary's file name - every plugin
+      # binary is a copy of the fat one, so its program name IS the module.
+      module_name = @params["_module_name"]? || File.basename(PROGRAM_NAME)
+      texts = ModuleUtilsDeprecations.text_import_deprecation_texts(module_name)
+      return result if texts.empty?
+
+      entries = ModuleUtilsDeprecations.text_import_deprecation_result_entries(module_name)
+      existing_entries = result.extra["deprecations"]?.try(&.as_a?) || [] of JSON::Any
+      fresh_entries = entries.reject do |entry|
+        existing_entries.any? { |present| present["msg"]?.try(&.as_s?) == entry["msg"].as_s }
+      end
+      unless fresh_entries.empty?
+        result.extra["deprecations"] = JSON::Any.new(fresh_entries + existing_entries.to_a)
+      end
+
+      existing_texts = result.extra["_ansible_core_deprecations"]?.try(&.as_a?) || [] of JSON::Any
+      fresh_texts = texts.reject do |text|
+        existing_texts.any? { |present| present.as_s? == text }
+      end
+      unless fresh_texts.empty?
+        result.extra["_ansible_core_deprecations"] = JSON::Any.new(
+          fresh_texts.map { |text| JSON::Any.new(text) } + existing_texts.to_a)
+      end
       result
     end
 

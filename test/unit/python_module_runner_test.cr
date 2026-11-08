@@ -1125,6 +1125,101 @@ describe Krikri::PythonModuleRunner do
     parsed["roundtrip"].as_s.must_equal("café")
   end
 
+  it "shim deprecates the ansible.module_utils._text imports like ansible-core 2.21" do
+    skip("python3 not available") unless File.exists?("/usr/bin/python3")
+    # ansible-core 2.21 answers each name imported from the `_text` shim
+    # with its own deprecation (ansible/module_utils/_text.py's
+    # __getattr__ -> _warnings.deprecate), so a role-private module
+    # importing from that path prints a [DEPRECATION WARNING] per name and
+    # its registered result carries one `deprecations` entry per name -
+    # live-verified against ansible-core 2.21.6 (issue #1000). The console
+    # line (the engine-internal marker the display prints from) merges
+    # Display's removal tail and the shim's help text onto the msg.
+    work_dir = File.join(Dir.tempdir, "krikri-shim-spec-#{Random.rand(1_000_000)}")
+    Dir.mkdir_p(work_dir)
+    Krikri::PythonModuleRunner.write_module_utils_bundle(work_dir)
+    module_path = File.join(work_dir, "text_import_deprecation_spec.py")
+    File.write(module_path, "from ansible.module_utils.basic import AnsibleModule\n" \
+                            "from ansible.module_utils._text import to_bytes, to_native\n" \
+                            "module = AnsibleModule(argument_spec={})\n" \
+                            "module.exit_json(changed=False, ok=to_native(to_bytes('x')))\n")
+    stdout_io = IO::Memory.new
+    err = IO::Memory.new
+    status = Process.run("/usr/bin/python3", [module_path],
+      input: IO::Memory.new(%({"ANSIBLE_MODULE_ARGS": {}})),
+      output: stdout_io, error: err)
+    FileUtils.rm_r(work_dir)
+    status.success?.must_equal(true)
+    parsed = Krikri::PythonModuleRunner.parse_module_output(stdout_io.to_s).not_nil!
+    parsed["ok"].as_s.must_equal("x")
+    parsed["_ansible_core_deprecations"].as_a.map(&.as_s).must_equal([
+      "Importing 'to_bytes' from 'ansible.module_utils._text' is deprecated. " \
+      "This feature will be removed from ansible-core version 2.24. " \
+      "Use ansible.module_utils.common.text.converters instead.",
+      "Importing 'to_native' from 'ansible.module_utils._text' is deprecated. " \
+      "This feature will be removed from ansible-core version 2.24. " \
+      "Use ansible.module_utils.common.text.converters instead.",
+    ])
+    parsed["deprecations"].as_a.must_equal([
+      JSON.parse({
+        "msg"             => "Importing 'to_bytes' from 'ansible.module_utils._text' is deprecated.",
+        "collection_name" => "ansible.builtin",
+        "version"         => "2.24",
+        "deprecator"      => {"resolved_name" => "ansible.builtin", "type" => nil},
+      }.to_json),
+      JSON.parse({
+        "msg"             => "Importing 'to_native' from 'ansible.module_utils._text' is deprecated.",
+        "collection_name" => "ansible.builtin",
+        "version"         => "2.24",
+        "deprecator"      => {"resolved_name" => "ansible.builtin", "type" => nil},
+      }.to_json),
+    ])
+    # Real prints these on the controller, not from the module's own stderr.
+    err.to_s.must_equal("")
+  end
+
+  it "shim provides ansible.module_utils.common._collections_compat and its module deprecation" do
+    skip("python3 not available") unless File.exists?("/usr/bin/python3")
+    # ansible-core 2.21 still ships `_collections_compat` (the collections
+    # ABC shim) and deprecates the whole module on import, so a module
+    # importing MutableSequence from it runs under ansible-playbook with
+    # one [DEPRECATION WARNING] (live-verified vs 2.21.6, issue #1000).
+    # The shim bundle lacked the file, so the same module died with
+    # "No module named 'ansible.module_utils.common._collections_compat'"
+    # and its task FAILED where real succeeded.
+    work_dir = File.join(Dir.tempdir, "krikri-shim-spec-#{Random.rand(1_000_000)}")
+    Dir.mkdir_p(work_dir)
+    Krikri::PythonModuleRunner.write_module_utils_bundle(work_dir)
+    module_path = File.join(work_dir, "collections_compat_spec.py")
+    File.write(module_path, "from ansible.module_utils.basic import AnsibleModule\n" \
+                            "from ansible.module_utils.common._collections_compat import MutableSequence\n" \
+                            "module = AnsibleModule(argument_spec={})\n" \
+                            "module.exit_json(changed=False, is_seq=isinstance([], MutableSequence))\n")
+    stdout_io = IO::Memory.new
+    err = IO::Memory.new
+    status = Process.run("/usr/bin/python3", [module_path],
+      input: IO::Memory.new(%({"ANSIBLE_MODULE_ARGS": {}})),
+      output: stdout_io, error: err)
+    FileUtils.rm_r(work_dir)
+    status.success?.must_equal(true)
+    err.to_s.wont_include("ModuleNotFoundError")
+    parsed = Krikri::PythonModuleRunner.parse_module_output(stdout_io.to_s).not_nil!
+    parsed["is_seq"].as_bool.must_equal(true)
+    parsed["_ansible_core_deprecations"].as_a.map(&.as_s).must_equal([
+      "The `ansible.module_utils.common._collections_compat` module is deprecated. " \
+      "This feature will be removed from ansible-core version 2.24. " \
+      "Use `collections.abc` from the Python standard library instead.",
+    ])
+    parsed["deprecations"].as_a.must_equal([
+      JSON.parse({
+        "msg"             => "The `ansible.module_utils.common._collections_compat` module is deprecated.",
+        "collection_name" => "ansible.builtin",
+        "version"         => "2.24",
+        "deprecator"      => {"resolved_name" => "ansible.builtin", "type" => nil},
+      }.to_json),
+    ])
+  end
+
   it "shim provides ansible.module_utils.common.text.converters for modules importing to_native" do
     skip("python3 not available") unless File.exists?("/usr/bin/python3")
     # The exact shape that ModuleNotFoundError'd at import time on a

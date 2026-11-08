@@ -3,6 +3,7 @@ require "file_utils"
 require "json"
 require "../../src/krikri/inventory_parser"
 require "../../src/krikri/action_plugin_manager"
+require "../../src/krikri/ssh_manager"
 
 # Registered-result key orders (and spot values) for the round-993004
 # kop_pkg_misc probe family - synchronize, subversion, apache2_module,
@@ -593,12 +594,16 @@ end
 describe "kop_pkg_misc round 993004 keyorder: synchronize (delegate_to same host)" do
   @sync_tmp : String? = nil
 
+  # ansible.posix.synchronize's MODULE payload imports to_bytes/to_native
+  # from the deprecated ansible.module_utils._text path (synchronize.py:371),
+  # so a run against ansible-core 2.21 registers both entries after every key
+  # the module emitted (issue #1000, live-verified vs 2.21.6).
   it "registers the push as [changed, msg, rc, cmd, stdout_lines, failed]" do
     skip("no rsync binary") unless tool_available?("rsync")
 
     dump = run_synchronize_probes["push"]
 
-    dump.as_h.keys.must_equal(["changed", "failed", "msg", "rc", "cmd", "stdout_lines"])
+    dump.as_h.keys.must_equal(["changed", "failed", "msg", "rc", "cmd", "stdout_lines", "deprecations"])
     dump["changed"].as_bool.must_equal(true)
     # Ansible's msg is `out.replace(changed_marker, '')`: the raw rsync
     # stdout INCLUDING its trailing newline (round 995004: real msg ends
@@ -637,7 +642,7 @@ describe "kop_pkg_misc round 993004 keyorder: synchronize (delegate_to same host
 
     dump = run_synchronize_probes["exists"]
 
-    dump.as_h.keys.must_equal(["changed", "failed", "msg", "rc", "cmd", "stdout_lines"])
+    dump.as_h.keys.must_equal(["changed", "failed", "msg", "rc", "cmd", "stdout_lines", "deprecations"])
     dump["changed"].as_bool.must_equal(false)
     dump["msg"].as_s.must_equal("")
     dump["stdout_lines"].as_a.must_be_empty
@@ -648,7 +653,7 @@ describe "kop_pkg_misc round 993004 keyorder: synchronize (delegate_to same host
 
     dump = run_synchronize_probes["check"]
 
-    dump.as_h.keys.must_equal(["changed", "failed", "msg", "rc", "cmd", "stdout_lines"])
+    dump.as_h.keys.must_equal(["changed", "failed", "msg", "rc", "cmd", "stdout_lines", "deprecations"])
     dump["changed"].as_bool.must_equal(false)
     # Real synchronize.py appends --dry-run right after --compress/
     # --timeout and BEFORE --archive (round 995004 synchronize_check).
@@ -661,7 +666,7 @@ describe "kop_pkg_misc round 993004 keyorder: synchronize (delegate_to same host
 
     dump = run_synchronize_probes["fail"]
 
-    dump.as_h.keys.must_equal(["changed", "failed", "exception", "msg", "rc", "cmd"])
+    dump.as_h.keys.must_equal(["changed", "failed", "exception", "msg", "rc", "cmd", "deprecations"])
     dump["rc"].as_i.must_equal(23)
     dump["msg"].as_s.must_include("No such file or directory")
     dump["changed"].as_bool.must_equal(false)

@@ -1,6 +1,7 @@
 require "./executor"
 require "../plugin_helpers/ansible_splitlines"
 require "../plugin_helpers/script_pty_capture"
+require "../module_utils_deprecations"
 
 module Krikri
   class TaskExecutor
@@ -280,6 +281,17 @@ module Krikri
         unless @adhoc || (task.include_role? && task.is_static_import?)
           display_host = active_hosts.first? || hosts.first
           task_display_name = render_task_name_for_display(task, display_host)
+          # Real loads a task's ACTION plugin lazily, right before the task's
+          # own banner - before its `when:` is even evaluated, so a skipped
+          # task warns too (live-verified vs ansible-core 2.21.6) - and a
+          # controller-side action plugin importing from a deprecated
+          # ansible.module_utils path warns there. synchronize's does (see
+          # ModuleUtilsDeprecations); emitting it here puts the lines between
+          # the play and this task's banners, once per run (Display dedups
+          # the text), exactly where real prints them.
+          ModuleUtilsDeprecations.action_plugin_text_import_deprecation_texts(task.module_name).each do |text|
+            Krikri::ResultDisplay.emit_core_deprecation(text)
+          end
           Krikri::OutputBanner.banner("TASK [#{task_role_prefix(task)}#{task_display_name}]")
           # The profile_tasks aggregate callback's per-task timestamp line
           # fires here too - banner or no banner (under the oneline stdout
