@@ -1,4 +1,5 @@
 require "../vault"
+require "./output_routing"
 
 module Krikri
   # Matches ansible-core 2.19's task-failure error-block
@@ -101,7 +102,7 @@ module Krikri
     def self.emit_to(io : IO, node : Node) : Bool
       text = "[ERROR]: " + format_event(node)
       return false unless record_displayed(text)
-      io.print text
+      io.print OutputRouting.normalize_for_display(text)
       true
     end
 
@@ -113,7 +114,7 @@ module Krikri
     def self.emit_stderr(node : Node) : Bool
       text = "[ERROR]: " + format_event(node)
       return false unless record_displayed(text)
-      STDERR.print text
+      STDERR.print OutputRouting.normalize_for_display(text)
       true
     end
 
@@ -122,7 +123,7 @@ module Krikri
     # the Origin context the raise site built from the source map).
     def self.emit_rendered_stderr(text : String) : Bool
       return false unless record_displayed(text)
-      STDERR.print text
+      STDERR.print OutputRouting.normalize_for_display(text)
       true
     end
 

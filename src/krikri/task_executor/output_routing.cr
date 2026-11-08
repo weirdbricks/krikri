@@ -62,6 +62,26 @@ module Krikri
       # again, from at_exit, where nothing can rescue it).
       LibC._exit(0)
     end
+
+    # Ansible's `Display.display` rewrites every CRLF in a message to a
+    # bare LF before writing it ("Some environments, such as Azure
+    # Pipelines, render `\r` as an additional `\n`" - ansible-core's own
+    # comment for it), and display() is the one choke point every
+    # banner, task line, result, warning and `[ERROR]:` block passes
+    # through on its way to the terminal. krikri wrote such text
+    # verbatim, so a message whose own PAYLOAD carries CRLF came out one
+    # byte longer than real's: an unreachable report's ssh stderr
+    # (`Warning: Permanently added '[host]:2222' (ED25519) to the list
+    # of known hosts.\r\nuser@host: Permission denied (publickey,
+    # password).`) rendered as `\r\r\n` on a tty against real's `\r\n`
+    # (issue #975, live-verified vs ansible-core 2.21.6).
+    def self.normalize_for_display(text : String) : String
+      text.includes?("\r\n") ? text.gsub("\r\n", '\n') : text
+    end
+
+    def self.normalize_for_display(object : T) : T forall T
+      object
+    end
   end
 end
 
@@ -72,7 +92,7 @@ end
 # --forks fan-out - krikri-playbook.cr requires it first, ahead of every
 # other require, for exactly that reason.
 def puts(*objects) : Nil
-  Krikri::OutputRouting.current_io.puts(*objects)
+  Krikri::OutputRouting.current_io.puts(*objects.map { |object| Krikri::OutputRouting.normalize_for_display(object) })
 rescue ex : IO::Error
   Krikri::OutputRouting.exit_quietly_if_broken_pipe(ex)
 end
