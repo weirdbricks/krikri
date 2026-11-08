@@ -4327,9 +4327,18 @@ module Krikri
         begin
           if changed_when
             maybe_conditional_delimiters_deprecation(task, changed_when, "changed_when", eval_context)
-            hash["changed"] = JSON::Any.new(with_conditional_param_site(task, "changed_when", changed_when) do
+            changed_when_verdict = with_conditional_param_site(task, "changed_when", changed_when) do
               ConditionalEvaluator.evaluate(substitute_conditional_rendering_errors(substitutor, changed_when), eval_context, strict: true, raise_undefined: true)
-            end)
+            end
+            hash["changed"] = JSON::Any.new(changed_when_verdict)
+            # TaskExecutor: result['changed_when_result'] = <verdict>
+            # whenever changed_when: is set - 2.21's UnifiedTaskResult
+            # exports the field on the success path too, so a registered
+            # (and thus dumped) result carries it (live-verified vs 2.21.6:
+            # a raw task with `changed_when: False` registers
+            # changed,changed_when_result,failed,...). The loop AGGREGATE
+            # never gets it - only each item result does.
+            hash["changed_when_result"] = JSON::Any.new(changed_when_verdict)
           end
         rescue e : ConditionalEvaluator::ConditionalBooleanError | ConditionalEvaluator::UndefinedVariableError | Krikri::FilterPluginError | Krikri::TestPluginError | VariableSubstitutor::FilterEngine::UnknownFilterError | ChangedFailedWhenRenderSyntaxError
           hash["failed"] = JSON::Any.new(true)
