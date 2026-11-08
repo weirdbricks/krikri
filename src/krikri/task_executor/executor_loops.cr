@@ -1245,20 +1245,25 @@ module Krikri
     # (LoopTypeError / LoopLookupError): real's registered fatal msg is
     # the BARE error - NO "Task failed:" prefix and NO "Module failed:"
     # middle (live-verified vs 2.19.11, round 5410000
-    # badsectorlabs.ludus_vulhub) - and the dump is msg-only
-    # ({"msg": "..."}), like a debug: task-failure's. _ansible_loop_
-    # source_error is what suppresses ResultDisplay's own generic
-    # "Task failed."/"Module failed." chain block (emit_task_error_block)
-    # for this failure: the [ERROR] block comes from
-    # emit_loop_source_error_block instead.
-    private def loop_source_error_result(ex : WhenEvaluationError) : JSON::Any
+    # badsectorlabs.ludus_vulhub). Whether the fatal dump carries
+    # changed is MODULE-KEYED exactly like when_error_result's: every
+    # module but debug: dumps it ("fatal: [host]: FAILED! =>
+    # {"changed": false, "msg": "The lookup plugin 'first_found'
+    # failed: ..."}" - live-verified vs 2.21.6, issue #987
+    # eggermontrob.mailserver; every such shape was keyless on 2.19.11,
+    # where these were originally pinned), while debug: dumps msg alone
+    # (Ansible's callback _clean_results keeps only msg for a debug:
+    # result that has one).
+    # _ansible_loop_source_error is what suppresses ResultDisplay's own
+    # generic "Task failed."/"Module failed." chain block
+    # (emit_task_error_block) for this failure: the [ERROR] block comes
+    # from emit_loop_source_error_block instead.
+    private def loop_source_error_result(ex : WhenEvaluationError, task : Task? = nil) : JSON::Any
       msg = ex.message || "The `loop` value must resolve to a 'list'."
-      JSON.parse({
-        "failed"                       => true,
-        "msg"                          => msg,
-        "_ansible_task_error_msg_only" => true,
-        "_ansible_loop_source_error"   => true,
-      }.to_json)
+      fields = {"changed" => false, "failed" => true, "msg" => msg}
+      fields["_ansible_task_error_msg_only"] = true if task && debug_module?(task)
+      fields["_ansible_loop_source_error"] = true
+      JSON.parse(fields.to_json)
     end
 
     @@loop_source_error_seen = Set(String).new

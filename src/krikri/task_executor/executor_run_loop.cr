@@ -678,7 +678,7 @@ module Krikri
         # "undefined" a loop-variable delegate_to: leniently renders to
         # before any item exists is dropped - real never templated
         # delegate_to there either.
-        finish_single_task(task, host, loop_source_error_result(ex), vars_context: vars_context, exec_host: exec_host.name == "undefined" ? nil : exec_host)
+        finish_single_task(task, host, loop_source_error_result(ex, task), vars_context: vars_context, exec_host: exec_host.name == "undefined" ? nil : exec_host)
         return
       rescue ex : WhenEvaluationError
         # Real templates delegate_to: BEFORE any loop item exists, so when
@@ -1384,10 +1384,10 @@ module Krikri
     # with every other _ansible_* key).
     private def when_error_result(ex : WhenEvaluationError, task : Task? = nil, host : Host? = nil, loop_item : JSON::Any? = nil, loop_index : Int32? = nil, clause_key : String = "when", clause_raw : String? = nil) : JSON::Any
       # A loop-source typing/lookup failure keeps real's own shape: the
-      # bare msg (no "Task failed:" prefix), a msg-only dump, and the
-      # emit_task_error_block suppression marker - see
+      # bare msg (no "Task failed:" prefix), the module-keyed dump, and
+      # the emit_task_error_block suppression marker - see
       # loop_source_error_result's comment (round 5410000).
-      return loop_source_error_result(ex) if ex.is_a?(LoopTypeError) || ex.is_a?(LoopLookupError)
+      return loop_source_error_result(ex, task) if ex.is_a?(LoopTypeError) || ex.is_a?(LoopLookupError)
       msg = ex.message || "Error while evaluating conditional"
       # The loop bindings let a `when: item.<key>` failure carry the
       # failing ITEM's own origin in the msg (ansible's lineage labels
@@ -1457,20 +1457,29 @@ module Krikri
       # A loop-source typing/lookup failure rides this no-result-pipeline
       # path (include_tasks:/include_role:'s own loop funnel): real's
       # block + fatal are distinct - the [ERROR] block from
-      # emit_loop_source_error_block and a msg-only dump with the BARE
-      # msg (no "Task failed:" prefix), not the chain shape (live-
-      # verified vs 2.19.11, round 5410000).
+      # emit_loop_source_error_block and a dump carrying the BARE msg (no
+      # "Task failed:" prefix), not the chain shape (live-verified vs
+      # 2.19.11, round 5410000). The dump's changed key is module-keyed
+      # exactly as on the result-pipeline path (see
+      # loop_source_error_result): every module but debug: carries
+      # "changed": false (live-verified vs 2.21.6, issue #987), debug:
+      # dumps the msg alone.
       if ex.is_a?(LoopTypeError) || ex.is_a?(LoopLookupError)
         unless defer_display
           if Krikri::Oneline.enabled?
             # The oneline callback's failed shape for the no-result
             # pipeline path: the synthesized-exception line plus the
-            # msg-only FAILED! dump (same payload the fatal line carries).
+            # FAILED! dump (same payload the fatal line carries).
+            payload = debug_module?(task) ? {"msg" => msg} : {"changed" => false, "msg" => msg}
             puts Krikri::Oneline.exception_line("(traceback unavailable)").colorize(:red)
-            puts "#{host.name} | FAILED! => #{ResultDisplay.dump_oneline_json(JSON.parse({"msg" => msg}.to_json))}".colorize(:red)
+            puts "#{host.name} | FAILED! => #{ResultDisplay.dump_oneline_json(JSON.parse(payload.to_json))}".colorize(:red)
           else
             emit_loop_source_error_block(task, ex)
-            puts "fatal: [#{host_label}]#{suffix}: FAILED! => {\"msg\": #{msg.to_json}}".colorize(:red)
+            if debug_module?(task)
+              puts "fatal: [#{host_label}]#{suffix}: FAILED! => {\"msg\": #{msg.to_json}}".colorize(:red)
+            else
+              puts "fatal: [#{host_label}]#{suffix}: FAILED! => {\"changed\": false, \"msg\": #{msg.to_json}}".colorize(:red)
+            end
             puts "...ignoring".colorize(:red) if ignore_errors
           end
           register_name = task.register

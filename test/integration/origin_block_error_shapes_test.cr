@@ -197,7 +197,7 @@ describe "task error Origin blocks (issue #12)" do
     code.must_equal(2)
     out.must_include "[ERROR]: The lookup plugin 'first_found' failed: No file was found when using first_found.\n" \
                      "Origin: <unknown>\n\ninvoke_lookup()\n\n"
-    out.must_include "fatal: [localhost]: FAILED! => {\"msg\": \"The lookup plugin 'first_found' failed: No file was found when using first_found.\"}"
+    out.must_include "fatal: [localhost]: FAILED! => {\"changed\": false, \"msg\": \"The lookup plugin 'first_found' failed: No file was found when using first_found.\"}"
   end
 
   it "prints the same bodyless block for a with_first_found: include_vars:" do
@@ -217,7 +217,32 @@ describe "task error Origin blocks (issue #12)" do
     code.must_equal(2)
     out.must_include "[ERROR]: The lookup plugin 'first_found' failed: No file was found when using first_found.\n" \
                      "Origin: <unknown>\n\ninvoke_lookup()\n\n"
-    out.must_include "fatal: [localhost]: FAILED! => {\"msg\": \"The lookup plugin 'first_found' failed: No file was found when using first_found.\"}"
+    out.must_include "fatal: [localhost]: FAILED! => {\"changed\": false, \"msg\": \"The lookup plugin 'first_found' failed: No file was found when using first_found.\"}"
+  end
+
+  # Issue #987 (eggermontrob.mailserver): an ORDINARY module task's
+  # with_first_found: exhaustion dumps changed alongside the bare msg
+  # too - the dump rule is the module's, not the include funnel's, so
+  # only a debug: task's fatal is cleaned down to the msg alone.
+  it "keeps changed: false in a with_first_found: module task's fatal" do
+    code, out, _err, _path = run_play_file([
+      "---",
+      "- hosts: localhost",
+      "  gather_facts: false",
+      "  connection: local",
+      "  tasks:",
+      "    - ansible.builtin.command: echo hi",
+      "      with_first_found:",
+      "        - files:",
+      "            - definitely-not-here-12.yml",
+      "          paths:",
+      "            - /tmp",
+    ].join("\n") + "\n")
+    code.must_equal(2)
+    out.must_include "[ERROR]: The lookup plugin 'first_found' failed: No file was found when using first_found.\n" \
+                     "Origin: <unknown>\n\ninvoke_lookup()\n\n"
+    out.must_include "fatal: [localhost]: FAILED! => {\"changed\": false, \"msg\": \"The lookup plugin 'first_found' failed: No file was found when using first_found.\"}"
+    out.must_include "failed=1"
   end
 
   it "fails a with_first_found: handler with the same bodyless block" do

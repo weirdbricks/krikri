@@ -1586,7 +1586,7 @@ module Krikri
       # LoopLookupError (not FirstFoundLookupError): the with_first_found:
       # keyword's exhaustion is the with_<lookup>: machinery's own lookup
       # failure - real prints the bodyless [ERROR] block (Origin: <unknown>
-      # + invoke_lookup()) and a msg-only fatal for it on EVERY module
+      # + invoke_lookup()) and the bare-msg fatal for it on EVERY module
       # kind the keyword is attached to (module task, include_tasks:,
       # include_vars:, handler - live-verified vs 2.19.11, issue #12), not
       # the arg-finalization "Task failed:" wrapper the plain

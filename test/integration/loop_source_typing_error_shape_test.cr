@@ -165,7 +165,9 @@ describe "loop: source typing errors" do
     success.must_equal(false)
     output.must_include("The `loop` value must resolve to a 'list', not 'NoneType'.")
     output.must_include("Provide a list of items/templates, or a template resolving to a list.")
-    output.must_include("fatal: [localhost]: FAILED! => {\"msg\": \"The `loop` value must resolve to a 'list', not 'NoneType'.\"}")
+    # include_tasks is not a debug: action, so its fatal keeps changed -
+    # the module-keyed dump rule (see loop_source_error_result).
+    output.must_include("fatal: [localhost]: FAILED! => {\"changed\": false, \"msg\": \"The `loop` value must resolve to a 'list', not 'NoneType'.\"}")
     output.wont_include("msg: child")
   end
 
