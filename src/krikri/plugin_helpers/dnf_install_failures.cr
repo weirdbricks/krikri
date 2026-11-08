@@ -152,6 +152,27 @@ module Krikri
         stripped.strip
       end
 
+      # Ansible's dnf module resolves a requested GROUP spec (a leading
+      # `@`) against the comps data BEFORE any transaction and, when the
+      # group/environment is unknown, raises its own "No group <spec>
+      # available." (group_spec is name[1:].strip) via a fail_json whose
+      # empty failures list is dropped - so the result is msg/results/rc
+      # only, no `failures` key. dnf's own CLI names the same condition
+      # differently ("Module or Group '<name>' is not available." then
+      # "Error: Nothing to do.", exit 1), so a group the repos don't
+      # define used to fall through to the generic "Failed to install
+      # packages" raw-output dump instead of matching ansible (issue #958,
+      # AAROC.CODE-RADE-container). dnf prints one line per unknown group;
+      # ansible raises on the first, so the first wins.
+      def group_not_available_msg(output : String) : String?
+        output.each_line do |line|
+          if m = line.strip.match(/Module or Group '(.+)' is not available\.\z/)
+            return "No group #{m[1]} available."
+          end
+        end
+        nil
+      end
+
       # Ansible's dnf module checks the signature of a remote/local .rpm
       # itself before the transaction and fails with a module-level
       # "Failed to validate GPG signature for <nevra>: <libdnf error>"
