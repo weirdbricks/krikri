@@ -79,7 +79,7 @@ describe "include_vars failure registration" do
 
     message = result["message"].as_s
     message.must_match(/\ACould not find or access 'definitely_missing\.yml'\nSearched in:\n\t/)
-    message.must_match(/ on the Ansible Controller\.\nIf you are using a module and expect the file to exist on the remote, see the remote_src option\z/)
+    message.must_match(/ on the Ansible Controller\.\z/)
     # Every searched candidate is the "<base>/vars/<file>" / "<base>/<file>"
     # pair of the play dir, repeated twice (the basedir and the play dir are
     # the same for a play-level task). Only the file-name part is asserted -
@@ -87,6 +87,30 @@ describe "include_vars failure registration" do
     searched = message.split("\nSearched in:\n")[1].split(" on the Ansible")[0].split("\n\t").map(&.strip)
     searched.map(&.ends_with?("definitely_missing.yml")).must_equal([true, true, true, true])
     searched.map(&.ends_with?("/vars/definitely_missing.yml")).must_equal([true, false, true, false])
+  end
+
+  # ansible-core 2.21 keeps "If you are using a module ... remote_src
+  # option" in AnsibleFileNotFound's own help text instead of the raised
+  # message, so neither include_vars message shape carries it
+  # (honzamach.accounts' missing `include_vars: vault/secrets.yml`,
+  # issue #969).
+  it "keeps the dataloader help text out of the not-found messages" do
+    missing = registered_dump([
+      "      - ansible.builtin.include_vars:",
+      "          file: definitely_missing.yml",
+      "        ignore_errors: true",
+      "        register: r",
+    ])
+    missing["message"].as_s.wont_include("remote_src option")
+    missing["message"].as_s.must_match(/ on the Ansible Controller\.\z/)
+
+    null_lookup = registered_dump([
+      "      - ansible.builtin.include_vars:",
+      "          name: a.yml",
+      "        ignore_errors: true",
+      "        register: r",
+    ])
+    null_lookup["message"].as_s.must_equal("Could not find file on the Ansible Controller.")
   end
 
   it "leaves r defined afterwards, as an ordinary task failure does" do
@@ -113,8 +137,7 @@ describe "include_vars failure registration" do
     ])
 
     result["message"].as_s.must_equal(
-      "Could not find or access '/nonexistent/definitely_missing.yml' on the Ansible Controller.\n" \
-      "If you are using a module and expect the file to exist on the remote, see the remote_src option"
+      "Could not find or access '/nonexistent/definitely_missing.yml' on the Ansible Controller."
     )
   end
 
@@ -178,8 +201,7 @@ describe "include_vars failure registration" do
     result["failed"].as_bool.must_equal(false)
     result["failed_when_result"].as_bool.must_equal(false)
     result["message"].as_s.must_equal(
-      "Could not find or access '/nonexistent/definitely_missing.yml' on the Ansible Controller.\n" \
-      "If you are using a module and expect the file to exist on the remote, see the remote_src option"
+      "Could not find or access '/nonexistent/definitely_missing.yml' on the Ansible Controller."
     )
   end
 end

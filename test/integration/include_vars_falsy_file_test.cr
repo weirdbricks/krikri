@@ -60,8 +60,7 @@ describe "include_vars file argument resolving to a falsy native value" do
     message = falsy_include_vars_message(output)
     message.must_equal(
       "Could not find file\nSearched in:\n\t#{src_dir}/vars/[]\n\t#{src_dir}/[]\n\t" \
-      "#{src_dir}/vars/[]\n\t#{src_dir}/[] on the Ansible Controller.\n" \
-      "If you are using a module and expect the file to exist on the remote, see the remote_src option")
+      "#{src_dir}/vars/[]\n\t#{src_dir}/[] on the Ansible Controller.")
   ensure
     FileUtils.rm_rf(src_dir) if src_dir
   end
@@ -83,8 +82,7 @@ describe "include_vars file argument resolving to a falsy native value" do
     message = falsy_include_vars_message(output)
     message.must_equal(
       "Could not find file\nSearched in:\n\t#{src_dir}/vars/False\n\t#{src_dir}/False\n\t" \
-      "#{src_dir}/vars/False\n\t#{src_dir}/False on the Ansible Controller.\n" \
-      "If you are using a module and expect the file to exist on the remote, see the remote_src option")
+      "#{src_dir}/vars/False\n\t#{src_dir}/False on the Ansible Controller.")
   ensure
     FileUtils.rm_rf(src_dir) if src_dir
   end

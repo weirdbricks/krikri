@@ -1698,13 +1698,14 @@ module Krikri
       if message == "include_vars: null file"
         # Ansible's _find_needle('vars', None) - the dataloader refuses a
         # null lookup value WITHOUT the quoted-name form the missing-
-        # file case gets: "Could not find file on the Ansible
-        # Controller." (live-verified vs 2.19.11).
+        # file case gets, and without the "remote_src option" hint that
+        # only rides AnsibleFileNotFound's help text (live-verified vs
+        # 2.21.6): "Could not find file on the Ansible Controller."
         h["ansible_facts"] = include_vars_wrapped_facts(name_key, Hash(String, JSON::Any).new)
         h["ansible_included_var_files"] = JSON::Any.new([] of JSON::Any)
         h["changed"] = JSON::Any.new(false)
         h["failed"] = JSON::Any.new(true)
-        h["message"] = JSON::Any.new("Could not find file on the Ansible Controller.\nIf you are using a module and expect the file to exist on the remote, see the remote_src option")
+        h["message"] = JSON::Any.new("Could not find file on the Ansible Controller.")
         h["msg"] = JSON::Any.new("Task failed: Action failed: Unknown error.")
         h["_ansible_action_level"] = JSON::Any.new(true)
         h["_ansible_error_detail"] = JSON::Any.new("Action failed: Unknown error.")
@@ -1810,8 +1811,14 @@ module Krikri
     # search also hits different candidate paths (the "vars/"-suffixed
     # joins), a resolution-shape gap of its own, so changing only the
     # head would half-fix it.
+    # The message ends at " on the Ansible Controller.": 2.21 moved the
+    # "If you are using a module ... remote_src option" sentence into
+    # AnsibleFileNotFound's _default_help_text, which rides the [ERROR]
+    # block's own help segment, never the failure's `message:` (see
+    # NeedleLookup's header; live-verified vs 2.21.6 for honzamach
+    # .accounts' missing vault/secrets.yml, issue #969).
     private def include_vars_file_not_found_message(task : Task, file : String, falsy_native : Bool = false) : String
-      tail = " on the Ansible Controller.\nIf you are using a module and expect the file to exist on the remote, see the remote_src option"
+      tail = " on the Ansible Controller."
       head = falsy_native ? "Could not find file" : "Could not find or access '#{file}'"
       return "#{head}#{tail}" if file.starts_with?("/")
       bases = [] of String
