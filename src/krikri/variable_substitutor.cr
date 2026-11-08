@@ -2122,17 +2122,79 @@ module Krikri
       current_deprecation_origin
     end
 
+    # The Origin block for one top-level fact READ: the value krikri is
+    # re-rendering at that moment when its stored text names the fact,
+    # otherwise the site whose own template text names it; nil when
+    # neither places the read, so it stays silent rather than
+    # mis-attribute the warning.
+    #
+    # ansible-core tags every stored YAML value with its DEFINING position
+    # and lazily templating that value is what reads the fact, so a read
+    # reached through another variable's value (`docker_yum_repo_url:
+    # https://...{{ ansible_distribution }}...` read as `{{ docker_yum_
+    # repo_url }}`, or a `when:` on such a variable) reports that value's
+    # own declaration - the role's defaults/main.yml line and value column
+    # - not the template that merely used the variable (issue #961,
+    # adzumatokaku.docker_role; live-verified against 2.21.6, including a
+    # two-level chain where the INNERMOST value's line wins).
+    def self.fact_read_origin(name : String) : String?
+      if stack = @@preparing_vars[Fiber.current]?
+        stack.reverse_each do |preparing|
+          next unless preparing.text.try(&.includes?(name))
+          # A value whose own defining site krikri cannot place stays
+          # silent: real points at the value, so the site that merely used
+          # the variable would be a mis-attribution.
+          return published_var_origin(preparing.host_name, preparing.name)
+        end
+      end
+      deprecation_site_names?(name) ? current_deprecation_origin : nil
+    end
+
+    # Fiber-scoped stack of the variable values this fiber is re-rendering
+    # right now - pushed by every entry point that renders ONE NAMED
+    # variable's own stored template text (a task param's strict probe, a
+    # span's leading variable, the engine's per-name preparation) and
+    # popped in an ensure. The innermost entry is the value real is
+    # templating at the moment a fact inside it is read, which is the
+    # Origin its deprecation carries.
+    record PreparingVar, host_name : String?, name : String, text : String?
+    @@preparing_vars = {} of Fiber => Array(PreparingVar)
+
+    def self.push_preparing_var(host_name : String?, name : String, text : String?) : Nil
+      (@@preparing_vars[Fiber.current] ||= Array(PreparingVar).new).push(PreparingVar.new(host_name, name, text))
+    end
+
+    def self.pop_preparing_var : Nil
+      fiber = Fiber.current
+      return unless stack = @@preparing_vars[fiber]?
+      stack.pop
+      @@preparing_vars.delete(fiber) if stack.empty?
+    end
+
+    # Per-host resolver from a variable name to its defining Origin block,
+    # published by TaskExecutor#build_vars_context (see
+    # #register_var_origin_lookup): the task executor owns the layer
+    # precedence, this module only needs the answer for the value being
+    # re-rendered.
+    @@var_origin_lookups = {} of String => (String -> String?)
+
+    def self.register_var_origin_lookup(host_name : String, &block : String -> String?) : Nil
+      @@var_origin_lookups[host_name] = block
+    end
+
+    # The defining Origin block of *name*'s own stored value for *host* (see
+    # #register_var_origin_lookup), or nil when the executor cannot place it.
+    def self.published_var_origin(host_name : String?, name : String) : String?
+      return nil unless host_name
+      @@var_origin_lookups[host_name]?.try(&.call(name))
+    end
+
     # Whether the template being rendered by the CURRENT fiber site names
-    # *name* - the guard that keeps the top-level fact deprecation tied to
-    # the template text that actually named the fact. Without it, a
-    # variable whose OWN stored value references a fact (`myvar: "{{
-    # ansible_os_family }}"`) would deprecate at every site that renders
-    # `{{ myvar }}`, attributed to that site: real tags the fact VALUE and
-    # the warning belongs to the template that names the fact (its
-    # declaration, which krikri cannot place). So a read that is only
-    # reached through a nested re-render stays silent, while a direct
-    # `when: ansible_os_family == ...` - whose clause text names it -
-    # warns exactly where real does.
+    # *name* - the guard that ties a fact read to the template text that
+    # named it, for the reads no variable value accounts for (a `when:`
+    # clause, a task param, a template file). A read reached only through
+    # another variable's value is attributed to that value's declaration
+    # instead (see #fact_read_origin).
     def self.deprecation_site_names?(name : String) : Bool
       if path = current_template_file
         content = File.read(path) rescue nil
@@ -2458,6 +2520,12 @@ module Krikri
     # unchanged; the strict probe re-evaluates only when a miss signal
     # appeared, and only its verdict can raise.
     def evaluate_structured_strict(expr : String) : JSON::Any?
+      with_re_rendered_value(expr) do
+        evaluate_structured_strict_body(expr)
+      end
+    end
+
+    private def evaluate_structured_strict_body(expr : String) : JSON::Any?
       signal_before = KrikriJinja.miss_count
       self.class.enter_strict_span
       self.class.enter_deferred_leaf_scope
@@ -2711,7 +2779,43 @@ module Krikri
       end
     end
 
+    # The leading variable of *span* whose own stored value is unrendered
+    # template text - so resolving the span re-renders THAT value, the one
+    # real ansible-core is templating at that moment - or nil for anything
+    # else: not a leading name, a plain value, a resolved/unsafe value real
+    # never re-renders (see #re_template_from_variable?), or a magic name.
+    private def re_rendered_span_root(span : String) : String?
+      root = span.lstrip[/\A[A-Za-z_][A-Za-z0-9_]*/]?
+      return nil unless root
+      return nil if NON_VAR_ROOT_NAMES.includes?(root)
+      raw = @vars[root]?.try(&.raw)
+      return nil unless raw.is_a?(String) && (raw.includes?("{{") || raw.includes?("{%") || raw.includes?("{#"))
+      return nil if UnsafeValues.unsafe_text?(raw)
+      return nil if VarSubstitutor.resolved_var_name?(@host_name, root)
+      root
+    end
+
+    # Runs *block* with the value *span* re-renders registered as the one
+    # being templated on this fiber, so a top-level fact read inside it is
+    # attributed to that value's own Origin (see #fact_read_origin).
+    private def with_re_rendered_value(span : String, & : -> T) : T forall T
+      root = re_rendered_span_root(span)
+      return yield unless root
+      self.class.push_preparing_var(@host_name, root, @vars[root].raw.as?(String))
+      begin
+        yield
+      ensure
+        self.class.pop_preparing_var
+      end
+    end
+
     private def evaluate_stripped_span(stripped : String, strict : Bool, output : Bool, native : Bool, evaluator) : String
+      with_re_rendered_value(stripped) do
+        evaluate_stripped_span_body(stripped, strict, output, native, evaluator)
+      end
+    end
+
+    private def evaluate_stripped_span_body(stripped : String, strict : Bool, output : Bool, native : Bool, evaluator) : String
       raise_if_strict_undefined(stripped, output) if strict
       if native && (nv = native_scalar(stripped, evaluator))
         nv
@@ -3721,7 +3825,9 @@ module Krikri
     # set_fact native-typing path), so the evaluation happens once and the
     # strict-undefined failure still fires exactly as it would have.
     def check_strict_undefined(inner : String) : Nil
-      raise_if_strict_undefined(inner)
+      with_re_rendered_value(inner) do
+        raise_if_strict_undefined(inner)
+      end
     end
 
     # strict: helper - raises UndefinedVariableError when *inner* (a single

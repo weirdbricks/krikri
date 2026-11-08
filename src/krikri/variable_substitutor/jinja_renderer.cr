@@ -551,55 +551,70 @@ module Krikri
           return raw_value
         end
 
-        # A variable whose own stored value is `{{ }}` text bottoming out
-        # at a name set nowhere (`phpmyadmin_mysql_password: "{{
-        # mysql_root_password }}"` with no `mysql_root_password`
-        # anywhere) is UNDEFINED, not "defined, with the seven-character
-        # value `undefined`" - which is what the lenient re-render below
-        # otherwise hands the engine, since `VarSubstitutor#substitute`
-        # renders any unresolved lookup as that literal sentinel text.
-        # The engine then saw an ordinary non-empty string: `| default('x')`
-        # returned "undefined" instead of "x", `is defined` was True
-        # where Ansible says False, and `when: v | default('') !=
-        # ''` ran a task Ansible skips.
-        #
-        # Returning nil (an undefined value to the engine) instead lets
-        # Jinja's OWN undefined semantics answer all three, which is exactly
-        # what they exist for - no sentinel string doing double duty.
-        # The complementary half (a STRICT caller - module-arg
-        # finalization - failing the task rather than rendering
-        # anything) is `VarSubstitutor#raise_if_nested_value_undefined`,
-        # which fires before this conversion is ever reached.
-        if (raw = raw_value.raw).is_a?(String) && substitutor.unresolvable_template?(raw)
-          return nil
-        end
-
-        active = @@prepare_vars_active[Fiber.current] ||= Array(String).new
+        # Register this value as the one being re-rendered on the fiber, so
+        # a top-level fact read inside it is attributed to this value's own
+        # Origin - which is where ansible-core's INJECT_FACTS_AS_VARS
+        # deprecation points (see VarSubstitutor#fact_read_origin). The
+        # innermost in-progress value wins, matching real's lazy per-value
+        # templating. Registered BEFORE the unresolvable-template verdict
+        # below: that probe renders the value too (real renders it lazily at
+        # the use site, so `{{ myvar is defined }}` warns), and a memoized
+        # probe would otherwise leave the fact read attributed to the
+        # template that merely read the variable.
         base_name = name.split(/[\.\[]/, 2)[0]
-        if active.includes?(base_name)
-          return raw_value
-        end
-        active.push(base_name)
-        @@prepare_vars_depth += 1
+        VarSubstitutor.push_preparing_var(substitutor.host_name, base_name, raw_value.raw.as?(String))
         begin
-          # The strict-span nested-leaf deferral (see
-          # #prepare_rerender_walk).
-          rendered = prepare_rerender_walk(raw_value, substitutor)
-          # Ansible 2.19.11 turns a variable whose stored text uses block
-          # tags (`{% for %}`/`{% if %}`) and renders to nothing into None,
-          # while `{{ "" }}` and a literal '' stay "" - so
-          # `v.rstrip(";")` fails with "'NoneType' has no attribute
-          # 'rstrip'" there. inofix.yapkg's `yapkg_list` (a for-loop over
-          # an empty list) hit this; krikri kept "" and ran the task
-          # Ansible fails.
-          if rendered && (src = raw_value.raw).is_a?(String) && src.includes?("{%") && rendered.raw == ""
-            return JSON::Any.new(nil)
+          # A variable whose own stored value is `{{ }}` text bottoming out
+          # at a name set nowhere (`phpmyadmin_mysql_password: "{{
+          # mysql_root_password }}"` with no `mysql_root_password`
+          # anywhere) is UNDEFINED, not "defined, with the seven-character
+          # value `undefined`" - which is what the lenient re-render below
+          # otherwise hands the engine, since `VarSubstitutor#substitute`
+          # renders any unresolved lookup as that literal sentinel text.
+          # The engine then saw an ordinary non-empty string: `| default('x')`
+          # returned "undefined" instead of "x", `is defined` was True
+          # where Ansible says False, and `when: v | default('') !=
+          # ''` ran a task Ansible skips.
+          #
+          # Returning nil (an undefined value to the engine) instead lets
+          # Jinja's OWN undefined semantics answer all three, which is exactly
+          # what they exist for - no sentinel string doing double duty.
+          # The complementary half (a STRICT caller - module-arg
+          # finalization - failing the task rather than rendering
+          # anything) is `VarSubstitutor#raise_if_nested_value_undefined`,
+          # which fires before this conversion is ever reached.
+          if (raw = raw_value.raw).is_a?(String) && substitutor.unresolvable_template?(raw)
+            return nil
           end
-          rendered
+
+          active = @@prepare_vars_active[Fiber.current] ||= Array(String).new
+          if active.includes?(base_name)
+            return raw_value
+          end
+          active.push(base_name)
+          @@prepare_vars_depth += 1
+          begin
+            # The strict-span nested-leaf deferral (see
+            # #prepare_rerender_walk).
+            rendered = prepare_rerender_walk(raw_value, substitutor)
+            # Ansible 2.19.11 turns a variable whose stored text uses block
+            # tags (`{% for %}`/`{% if %}`) and renders to nothing into None,
+            # while `{{ "" }}` and a literal '' stay "" - so
+            # `v.rstrip(";")` fails with "'NoneType' has no attribute
+            # 'rstrip'" there. inofix.yapkg's `yapkg_list` (a for-loop over
+            # an empty list) hit this; krikri kept "" and ran the task
+            # Ansible fails.
+            if rendered && (src = raw_value.raw).is_a?(String) && src.includes?("{%") && rendered.raw == ""
+              return JSON::Any.new(nil)
+            end
+            rendered
+          ensure
+            @@prepare_vars_depth -= 1
+            active.pop
+            @@prepare_vars_active.delete(Fiber.current) if active.empty?
+          end
         ensure
-          @@prepare_vars_depth -= 1
-          active.pop
-          @@prepare_vars_active.delete(Fiber.current) if active.empty?
+          VarSubstitutor.pop_preparing_var
         end
       end
 

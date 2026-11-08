@@ -18,14 +18,26 @@ private BINARY                = File.join(PROJECT_ROOT, "bin", "krikri-playbook"
 private FACT_DEPRECATION_TEXT = "INJECT_FACTS_AS_VARS default to `True` is deprecated, top-level facts will not be auto injected after the change. This feature will be removed from ansible-core version 2.24."
 
 private def run(playbook_text : String) : {String, String}
+  stdout, stderr, _dir = run_files({"play.yml" => playbook_text})
+  {stdout, stderr}
+end
+
+# Writes *files* (playbook text keyed by path relative to a fresh scratch
+# dir, roles included; the playbook itself is always "play.yml") and runs
+# the binary there. Returns the scratch dir too, so a spec can assert the
+# absolute Origins the engine prints.
+private def run_files(files : Hash(String, String)) : {String, String, String}
   dir = PluginSpecHelper.tmp_path("fact-deprecation-#{Random::Secure.hex(4)}")
   FileUtils.mkdir_p(dir)
-  playbook = File.join(dir, "play.yml")
-  File.write(playbook, playbook_text)
+  files.each do |relative, content|
+    path = File.join(dir, relative)
+    FileUtils.mkdir_p(File.dirname(path))
+    File.write(path, content)
+  end
   stdout = IO::Memory.new
   stderr = IO::Memory.new
-  Process.run(BINARY, ["-i", "localhost,", playbook], output: stdout, error: stderr, chdir: dir)
-  {stdout.to_s, stderr.to_s}
+  Process.run(BINARY, ["-i", "localhost,", File.join(dir, "play.yml")], output: stdout, error: stderr, chdir: dir)
+  {stdout.to_s, stderr.to_s, dir}
 end
 
 describe "INJECT_FACTS_AS_VARS deprecation" do
@@ -99,29 +111,116 @@ describe "INJECT_FACTS_AS_VARS deprecation" do
     (stderr.index!(":12:13") < stderr.index!(":17:13")).must_equal(true)
   end
 
-  it "stays silent for spellings real does not inject and for indirect reads" do
+  it "stays silent for spellings real does not inject" do
     # clean_facts drops `ansible_*_interpreter`, so that alias never warns
-    # (live-verified against 2.21.6), and a variable whose OWN value names
-    # the fact is tagged at its declaration in real - an Origin this
-    # engine cannot place, so the read stays silent rather than
-    # mis-attributing the warning to the template that merely uses the
-    # variable.
+    # even though this engine's own fact store holds it for a local
+    # connection (live-verified against 2.21.6).
     stdout, stderr = run(<<-PLAYBOOK)
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        tasks:
+          - name: interpreter alias
+            debug:
+              msg: "{{ ansible_python_interpreter | default('none') }}"
+      PLAYBOOK
+
+    stdout.must_include("TASK [interpreter alias]")
+    stderr.wont_include("INJECT_FACTS_AS_VARS")
+  end
+
+  it "attributes a read reached through a variable's value to that value's declaration" do
+    # Issue #961, adzumatokaku.docker_role: nothing in the task's own text
+    # names a fact - the role's defaults/main.yml value does
+    # (`docker_yum_repo_url: https://...{{ ansible_distribution }}...`) and
+    # the task only reads that variable. Real templates the VALUE lazily
+    # and tags the warning with the value's own declaring position, the
+    # opening quote of the defaults/vars scalar (live-verified against
+    # 2.21.6: line 5, column 22 for the playbook below), so the read must
+    # not stay silent.
+    stdout, stderr, dir = run_files({"play.yml" => <<-PLAYBOOK})
       - hosts: localhost
         connection: local
         gather_facts: true
         vars:
           indirect_reader: "{{ ansible_os_family }}"
         tasks:
-          - name: interpreter alias
-            debug:
-              msg: "{{ ansible_python_interpreter | default('none') }}"
           - name: indirect read
             debug:
               msg: "{{ indirect_reader }}"
       PLAYBOOK
 
     stdout.must_include("TASK [indirect read]")
-    stderr.wont_include("INJECT_FACTS_AS_VARS")
+    stderr.must_include("[DEPRECATION WARNING]: #{FACT_DEPRECATION_TEXT}\n")
+    stderr.must_include("Origin: #{File.join(dir, "play.yml")}:5:22\n")
+    stderr.must_include("5     indirect_reader: \"{{ ansible_os_family }}\"\n")
+    stderr.must_include("^ column 22")
+    # One block total: the read belongs to the value, not to the param that
+    # rendered the variable.
+    stderr.scan(/DEPRECATION WARNING\]: #{Regex.escape(FACT_DEPRECATION_TEXT)}/).size.must_equal(1)
+  end
+
+  it "attributes a role default's fact read to the defaults file, not the task" do
+    # The shape issue #961 was filed for, reproduced from
+    # adzumatokaku.docker_role: a role default naming ansible_distribution,
+    # read by a task that mentions no fact at all. The Origin is the
+    # defaults file's own line and value column (live-verified against
+    # 2.21.6: 13:22 for this fixture).
+    stdout, stderr, dir = run_files({
+      "play.yml" => <<-PLAYBOOK,
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        roles:
+          - rdemo
+      PLAYBOOK
+      "roles/rdemo/defaults/main.yml" => <<-YAML,
+        ---
+        # Service options.
+        docker_service_state: started
+
+        # For RedHat/CentOS/Fedora.
+        docker_yum_repo_url: https://download.docker.com/linux/{{ (ansible_distribution == "Fedora") | ternary("fedora","centos") }}/docker-ce.repo
+        YAML
+      "roles/rdemo/tasks/main.yml" => <<-YAML,
+        ---
+        - name: show repo url
+          ansible.builtin.debug:
+            msg: "{{ docker_yum_repo_url }}"
+        YAML
+    })
+
+    defaults = File.join(dir, "roles", "rdemo", "defaults", "main.yml")
+    stdout.must_include("TASK [rdemo : show repo url]")
+    stderr.must_include("[DEPRECATION WARNING]: #{FACT_DEPRECATION_TEXT}\n")
+    stderr.must_include("Origin: #{defaults}:6:22\n")
+    stderr.must_include("^ column 22")
+    stdout.must_include("docker-ce.repo")
+  end
+
+  it "attributes a template file's indirect read to the value, not the file" do
+    # A `.j2` that reads a variable whose own value names a fact: real's
+    # Origin is the value's declaration, not the template file (different
+    # from a DIRECT `{{ ansible_os_family }}` in a .j2, whose Origin is the
+    # file alone) - live-verified against 2.21.6.
+    stdout, stderr, dir = run_files({
+      "play.yml" => <<-PLAYBOOK,
+        - hosts: localhost
+          connection: local
+          gather_facts: true
+          vars:
+            repo_url: "https://x/{{ ansible_distribution }}"
+          tasks:
+            - name: render file
+              ansible.builtin.template:
+                src: t.j2
+                dest: out.txt
+        PLAYBOOK
+      "t.j2" => "url={{ repo_url }}\n",
+    })
+
+    stdout.must_include("TASK [render file]")
+    stderr.must_include("Origin: #{File.join(dir, "play.yml")}:5:15\n")
+    stderr.wont_include("Origin: #{File.join(dir, "t.j2")}")
   end
 end
