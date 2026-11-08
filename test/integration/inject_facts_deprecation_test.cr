@@ -1,5 +1,7 @@
 require "../minitest_helper"
 
+require "socket"
+
 # ansible-core 2.21 tags every fact it ALSO injects at the top level as
 # `ansible_<fact>` (INJECT_FACTS_AS_VARS defaulting to True) and prints
 # this deprecation the first time a template reads one - issue #962,
@@ -20,6 +22,40 @@ private def run_playbook(playbook_text : String) : String
   stderr = IO::Memory.new
   Process.run(BINARY, ["-i", "localhost,", playbook], output: stdout, error: stderr, chdir: dir)
   stderr.to_s
+end
+
+# Batching only engages off the local connection, so the batch-shape cases
+# below need a real sshd; they skip without one. The same throwaway server
+# batch_when_error_side_effects_test.cr's header documents works; override
+# KRIKRI_TEST_SSHD_HOST/PORT/USER/KEY to point elsewhere.
+private DEPR_SSHD_HOST = ENV["KRIKRI_TEST_SSHD_HOST"]? || "127.0.0.1"
+private DEPR_SSHD_PORT = (ENV["KRIKRI_TEST_SSHD_PORT"]? || "2224").to_i
+private DEPR_SSHD_USER = ENV["KRIKRI_TEST_SSHD_USER"]? || "root"
+private DEPR_SSHD_KEY  = ENV["KRIKRI_TEST_SSHD_KEY"]? || "/tmp/kkt-key"
+
+private def depr_sshd_reachable? : Bool
+  return false unless File.exists?(DEPR_SSHD_KEY)
+  TCPSocket.new(DEPR_SSHD_HOST, DEPR_SSHD_PORT, connect_timeout: 1).close
+  true
+rescue
+  false
+end
+
+private def run_batched_playbook(playbook_text : String) : {String, String}
+  dir = PluginSpecHelper.tmp_path("inject-facts-batch-#{Random::Secure.hex(4)}")
+  FileUtils.mkdir_p(dir)
+  playbook = File.join(dir, "play.yml")
+  File.write(playbook, playbook_text)
+  inventory = File.join(dir, "inv.ini")
+  File.write(inventory, "[target]\ntarget ansible_connection=ssh ansible_host=#{DEPR_SSHD_HOST} " \
+                        "ansible_user=#{DEPR_SSHD_USER} ansible_port=#{DEPR_SSHD_PORT} " \
+                        "ansible_ssh_private_key_file=#{DEPR_SSHD_KEY} " \
+                        "ansible_ssh_common_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null " \
+                        "-o IdentitiesOnly=yes -o ConnectTimeout=5'\n")
+  stdout = IO::Memory.new
+  stderr = IO::Memory.new
+  Process.run(BINARY, ["-i", inventory, playbook], output: stdout, error: stderr, chdir: dir)
+  {stdout.to_s, stderr.to_s}
 end
 
 describe "INJECT_FACTS_AS_VARS deprecation from a when: clause" do
@@ -195,5 +231,61 @@ describe "INJECT_FACTS_AS_VARS deprecation from a when: clause" do
     stderr.to_s.must_include("            ^ column 11")
     stderr.to_s.scan(/DEPRECATION WARNING\]: INJECT_FACTS_AS_VARS/).size.must_equal(1)
     stderr.to_s.wont_include("Origin: #{playbook}:7:")
+  end
+
+  # Issue #979 (6nsh.zabbix_proxy, ginsys.nginx / round 29902182): a batch
+  # group's later members are evaluated and prepared during batch-build -
+  # their when:, and for a template: the whole file render - so a fact read
+  # there printed the block even when the group's FIRST member failed and
+  # the play ended before that task was ever reached. Real printed nothing.
+  it "stays silent for batch members a failed neighbour keeps the play from reaching" do
+    skip "no reachable test sshd (see this file's header for the throwaway setup)" unless depr_sshd_reachable?
+
+    template = PluginSpecHelper.tmp_path("inject-facts-batch-#{Random::Secure.hex(4)}.j2")
+    File.write(template, "distro {{ ansible_distribution_major_version }}\n")
+    begin
+      stdout, stderr = run_batched_playbook(<<-PLAYBOOK)
+        - hosts: target
+          gather_facts: true
+          tasks:
+            - name: fail first
+              ansible.builtin.command: /bin/false
+            - name: gated by a top-level fact
+              ansible.builtin.command: /bin/true
+              when: ansible_os_family | length > 0
+            - name: render a template that reads a fact
+              ansible.builtin.template:
+                src: #{template}
+                dest: /tmp/krikri-979-never-reached.txt
+                mode: '0644'
+        PLAYBOOK
+
+      stdout.wont_include("gated by a top-level fact")
+      stdout.wont_include("render a template that reads a fact")
+      stderr.includes?("INJECT_FACTS_AS_VARS").must_equal(false)
+    ensure
+      File.delete(template) if File.exists?(template)
+    end
+  end
+
+  # The other half of the same rule: the warning a batch build merely
+  # prepared must still reach stderr once its task is really reached.
+  it "still warns for a batch member that is reached" do
+    skip "no reachable test sshd (see this file's header for the throwaway setup)" unless depr_sshd_reachable?
+
+    stdout, stderr = run_batched_playbook(<<-PLAYBOOK)
+      - hosts: target
+        gather_facts: true
+        tasks:
+          - name: first member succeeds
+            ansible.builtin.command: /bin/true
+          - name: gated by a top-level fact
+            ansible.builtin.command: /bin/true
+            when: ansible_os_family | length > 0
+      PLAYBOOK
+
+    stdout.must_include("gated by a top-level fact")
+    stderr.must_include("[DEPRECATION WARNING]: INJECT_FACTS_AS_VARS default to `True` is deprecated, top-level facts will not be auto injected after the change. This feature will be removed from ansible-core version 2.24.")
+    stderr.scan(/DEPRECATION WARNING\]: INJECT_FACTS_AS_VARS/).size.must_equal(1)
   end
 end
