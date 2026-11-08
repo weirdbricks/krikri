@@ -1541,6 +1541,33 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
     evaluator.evaluate("n / 1024 / 1024").must_equal("256.0")
   end
 
+  it "evaluates % modulo (and str % args) at the same precedence as *, matching Jinja2/Python" do
+    # Issue #967: eirikns.apt's own assert gates on
+    # `apt_periodic_update_package_lists % 1 == 0`, and a bare `when:`/
+    # `assert:` value only reaches this evaluator when its dispatch guard
+    # recognizes an arithmetic operator - `%` was missing from both
+    # split_top_level_mult_div and that guard, so the condition fell through
+    # to the plain variable lookup, which reported the whole operand text
+    # ("'apt_periodic_update_package_lists % 1' is undefined") and failed a
+    # task ansible-playbook runs as ok. Values verified against
+    # ansible-core 2.19: modulo keeps int for an int pair (float if either
+    # side is float), floors like Python rather than taking Crystal's
+    # remainder sign (`-7 % 3` is 2, `7 % -3` is -2), and shares `*`'s
+    # precedence (`7 % 3 * 2` is 2, left to right). A str left operand is
+    # Python's printf form.
+    v = Hash(String, JSON::Any).new
+    v["n"] = JSON::Any.new(4_i64)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
+
+    evaluator.evaluate("17 % 5").must_equal("2")
+    evaluator.evaluate("n % 2").must_equal("0")
+    evaluator.evaluate("5.5 % 2").must_equal("1.5")
+    evaluator.evaluate("7 % 3 * 2").must_equal("2")
+    evaluator.evaluate("-7 % 3").must_equal("2")
+    evaluator.evaluate("7 % -3").must_equal("-2")
+    evaluator.evaluate("'%d items' % n").must_equal("4 items")
+  end
+
   it "repeats strings/lists for Python-valid `*` pairs and raises on invalid ones" do
     # Differential-fuzz fix: combine_mult_div used to collapse every
     # non-numeric operand pair to JSON null (rendered as ""), so even the

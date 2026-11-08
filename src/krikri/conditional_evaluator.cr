@@ -3733,7 +3733,7 @@ module Krikri
       # false (skipping), while the naive splitter hard-failed "'ver' is
       # undefined" (ecgalaxy.php, issue #488).
       if expr.matches?(/\[[^\[\]]*\s*:\s*[^\[\]]*\]/) || expr.includes?("|") || expr.includes?("(") || expr.includes?(" - ") || expr.includes?("~") ||
-         expr.includes?("*") || expr.includes?("/") || expr.includes?("+")
+         expr.includes?("*") || expr.includes?("/") || expr.includes?("+") || top_level_percent?(expr)
         # A filter chain fed by a genuinely undefined variable is fatal
         # for a `when:`/`assert:` in Ansible exactly as a bare
         # undefined reference is ("Error while evaluating conditional:
@@ -4049,6 +4049,38 @@ module Krikri
         raise UndefinedVariableError.new("'#{expr}' is undefined") if raise_undefined
         nil
       end
+    end
+
+    # Whether *expr* carries a `%` OUTSIDE quotes and brackets, i.e. a real
+    # modulo/printf operator as Jinja2's grammar sees it, as opposed to one
+    # merely sitting inside a string literal (`match(".*%")`, `'50%'`,
+    # `"100%% done"`). `#evaluate_value`'s other arithmetic guards are plain
+    # `includes?` checks, which is safe for `*`/`/`/`~`/`(` (never inside an
+    # ordinary identifier or literal a conditional would keep intact) but
+    # NOT for `%` - quoted-percent operands are common in real playbooks.
+    # A top-level `%` must reach ExpressionEvaluator exactly like `*`/`/`
+    # do, or it falls through to the bare-name lookup: ansible-playbook
+    # evaluates eirikns.apt's `apt_periodic_update_package_lists % 1 == 0`
+    # assert clause as ok, while that lookup answered with
+    # "'apt_periodic_update_package_lists % 1' is undefined" and failed the
+    # whole task (issue #967).
+    private def self.top_level_percent?(expr : String) : Bool
+      depth = 0
+      quote = nil.as(Char?)
+      expr.each_char do |char|
+        if q = quote
+          quote = nil if char == q
+        elsif char == '\'' || char == '"'
+          quote = char
+        elsif "[({".includes?(char)
+          depth += 1
+        elsif "])}".includes?(char)
+          depth -= 1
+        elsif char == '%' && depth == 0
+          return true
+        end
+      end
+      false
     end
 
     # The typed verdict for a bare conditional variable whose stored

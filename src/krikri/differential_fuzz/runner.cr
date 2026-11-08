@@ -184,13 +184,13 @@ module Krikri::DifferentialFuzz
         end
       }),
       # Constructs the heuristic parser does not implement or answers
-      # through its plain-lookup fallback, where the engine raises: `%`
-      # modulo (unimplemented - both the printf form and the arithmetic
-      # one), `not (...)` wrapped around an unimplemented inner construct,
+      # through its plain-lookup fallback, where the engine raises:
+      # `not (...)` wrapped around an unimplemented inner construct,
       # unary-minus-with-subscript corner shapes, generator-built
       # malformed syntax, and bare-callable attribute references
       # (`str.count`). The hand side answers "undefined"/a fallback value
-      # where Jinja2 raises.
+      # where Jinja2 raises. (`%` modulo used to belong here too, until
+      # issue #967 implemented it in split_top_level_mult_div.)
       KnownDifference.new("hand-lenient-unimplemented-construct", ->(o : Outcome) {
         if o.status.one_errored? && o.hand_value.is_a?(String) &&
            (error = o.jinja_error).is_a?(String)

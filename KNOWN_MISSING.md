@@ -254,7 +254,7 @@ krikri aims for byte-for-byte identical stdout/stderr/exit code to `ansible-play
 
 - What remains after triaging `bin/differential_fuzz` is deliberate, not defect: two-raw-string and
   numeric-string-vs-number orderings, per-filter argument type leniency (`| sum`/`| abs` on strings,
-  `| split(dict)`), the unimplemented `%` modulo, `not (...)` around an unimplemented inner construct,
+  `| split(dict)`), `not (...)` around an unimplemented inner construct,
   bare-callable attributes (`str.count`), and the lenient chain off a lenient undefined for bracket
   indexing (`missing_var[9]` stays the "undefined" sentinel - the load-bearing shape behind
   `x | default(other.thing.y)`). These live as tight predicates in

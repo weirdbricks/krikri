@@ -1715,11 +1715,15 @@ module Krikri
         state.current << char
       end
 
-      # Splits *expr* on every top-level `*`, `/`, or `//` (outside
-      # quotes/brackets - `*`/`/` need no spacing requirement, unlike
-      # `-`, since a bare `*` or `/` never appears inside an ordinary
+      # Splits *expr* on every top-level `*`, `/`, `//` or `%` (outside
+      # quotes/brackets - they need no spacing requirement, unlike `-`,
+      # since a bare `*`, `/` or `%` never appears inside an ordinary
       # identifier). Returns {operands, operators} (one fewer operator
-      # than operand), or nil when there's no top-level `*`/`/` at all.
+      # than operand), or nil when there's no top-level one at all.
+      # `%` shares this precedence level because it is Python/Jinja2's
+      # modulo operator (`10 % 3`) as well as the `str % args` printf
+      # form - unimplemented here until issue #967, whose eirikns.apt
+      # assert gates on `apt_periodic_update_package_lists % 1 == 0`.
       private def split_top_level_mult_div(expr : String) : {Array(String), Array(String)}?
         state = MultDivSplitState.new
         chars = expr.chars
@@ -1751,7 +1755,7 @@ module Krikri
         case char
         when '\'', '"', '[', '(', '{', ']', ')', '}'
           split_mult_div_delimiter(state, char)
-        when '*', '/'
+        when '*', '/', '%'
           # The operator step's own skip-ahead return value (i + 2 for a
           # `//` pair) must propagate: the old code discarded it and
           # advanced only one character, so `10 // 0` split as
@@ -1794,6 +1798,8 @@ module Krikri
             return i + 2
           end
           state.ops << "/"
+        elsif char == '%'
+          state.ops << "%"
         else
           state.ops << "*"
         end
@@ -1805,7 +1811,9 @@ module Krikri
       # filter chain) and combines them left to right, matching real
       # Jinja2/Python's own arithmetic: `/` always produces a float
       # (true division, even for an evenly-divisible pair), `*`
-      # preserves int when both operands are int, `//` floors to int.
+      # preserves int when both operands are int, `//` floors to int,
+      # `%` keeps int for an int pair (float if either side is float) and
+      # floors like Python's own modulo rather than Crystal's remainder.
       private def evaluate_mult_div(expr : String, parts : Array(String), ops : Array(String)) : String
         # Crinja-first delegation, general filter-chain-dispatch
         # construct (mult/div): try-Crinja-first, same pattern as the
@@ -1871,6 +1879,22 @@ module Krikri
             # existing convention here (nil/"undefined", not a crash) is
             # more consistent than introducing a hard failure only `//` has.
             return bf.zero? ? JSON::Any.new(nil) : JSON::Any.new((af / bf).floor.to_i64)
+          end
+        when "%"
+          if af && bf
+            # `Float#modulo` is Python's floored modulo (`-7 % 3` is 2,
+            # not Crystal's remainder -1), so an int pair inherits that
+            # sign rule while keeping the int result Python's int
+            # operands produce; a float on either side stays float.
+            # Modulo by zero is a real ZeroDivisionError in Python, but
+            # this global fallback already degrades `/`/`//` by zero
+            # leniently, so keep that convention here too.
+            if bf.zero?
+              return JSON::Any.new(nil)
+            end
+            both_int = (a.raw.is_a?(Int64) || a.raw.is_a?(Bool)) &&
+                       (b.raw.is_a?(Int64) || b.raw.is_a?(Bool))
+            return both_int ? JSON::Any.new(af.modulo(bf).to_i64) : JSON::Any.new(af.modulo(bf))
           end
         end
 
