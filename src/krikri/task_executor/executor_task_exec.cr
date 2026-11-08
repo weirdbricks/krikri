@@ -1466,7 +1466,7 @@ module Krikri
           # this method's skipped bookkeeping below must not run for it.
           next if print_skipped_looped_task(nested_task, host, inherited_when)
         elsif nested_task.module_name == "_meta"
-          unless meta_when_silent?(nested_task)
+          unless meta_ignores_when?(nested_task)
             puts Krikri::Oneline.skip_line(connection_host, meta_skip_dump(nested_task, host)).colorize(:cyan)
           end
         else
@@ -1698,10 +1698,11 @@ module Krikri
 
     # The meta: actions whose when: real REJECTS outright ("... task does
     # not support when conditional" warning, the task then simply runs -
-    # printing NO skipping line at all, live-verified vs 2.19.11 for
-    # noop/refresh_inventory/reset_connection at both task level and
-    # inside a when:-false block).
-    private def meta_when_silent?(task : Task) : Bool
+    # never evaluated, so it cannot skip or fail, and printing NO skipping
+    # line at all; live-verified vs 2.21.6 for noop/refresh_inventory/
+    # reset_connection at task level, inside a when:-false block, and
+    # through an inherited block:/role when:).
+    private def meta_ignores_when?(task : Task) : Bool
       case task.meta_action
       when "noop", "refresh_inventory", "reset_connection" then true
       else                                                      false
@@ -1713,7 +1714,7 @@ module Krikri
     # "skip_reason" (live-verified vs 2.19.11 for all six conditional-
     # capable actions; end_host's msg uniquely carries the lowercase
     # "evaluated to false" sentence). Actions real rejects outright are
-    # handled by meta_when_silent?; anything unverified keeps the generic
+    # handled by meta_ignores_when?; anything unverified keeps the generic
     # false_condition shape.
     private def meta_skip_dump(task : Task, host : Host) : String
       return "" unless RunOptions.verbosity >= 1

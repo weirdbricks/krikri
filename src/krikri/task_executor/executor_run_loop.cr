@@ -509,6 +509,16 @@ module Krikri
         # meta: task prints "skipping: [host]" but - like every other
         # meta: outcome - does NOT bump the recap's skipped= counter
         # (defer_stats: true), unlike an ordinary task's when: skip.
+        #
+        # EXCEPT the actions real refuses a when: for (see
+        # meta_ignores_when?): those are never gated at all - the action
+        # runs whatever the conditional says (a false or even a raising
+        # one), which is why that conditional must not be evaluated here
+        # either.
+        if meta_ignores_when?(task)
+          execute_meta(task, host)
+          return
+        end
         vars_context = build_vars_context(task, host)
         begin
           execute_meta(task, host) if when_passes?(task, vars_context, host, defer_stats: true)
@@ -1336,7 +1346,7 @@ module Krikri
           # A meta: whose when: was evaluated here follows real's own meta
           # rules: the actions that reject a when: outright print NO
           # skipping line at all, the rest print the meta-shaped dump.
-          unless meta_when_silent?(task)
+          unless meta_ignores_when?(task)
             puts "skipping: [#{host.name}]#{meta_skip_dump(task, host)}".colorize(:cyan)
           end
         else

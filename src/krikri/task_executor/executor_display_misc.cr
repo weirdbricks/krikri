@@ -1477,6 +1477,20 @@ module Krikri
       unless action && Krikri::PlaybookParser::SUPPORTED_META_ACTIONS.includes?(action)
         abort_invalid_meta_action(task, action || "None")
       end
+      # Three actions refuse a `when:` outright: real's strategy warns
+      # once ("<action> task does not support when conditional") and then
+      # never evaluates the conditional, so the action still takes effect
+      # (a `when: false` refresh_inventory DOES re-read the inventory, and
+      # a raising conditional is no failure at all). Any when: the task
+      # effectively carries triggers the warning - its own, or one a
+      # block:/role/static import contributes (real's Task.when inherits
+      # that parent chain), but NOT one an include_tasks:/include_role:
+      # statement carries, whose loaded parent real treats as dynamic and
+      # leaves out of its children's Task.when (live-verified vs 2.21.6
+      # across all of those shapes).
+      if meta_ignores_when?(task) && (condition = task.when_condition) && !condition.strip.empty?
+        ResultDisplay.emit_display_warning("#{action} task does not support when conditional")
+      end
       case action
       when "flush_handlers"
         # Called once per host by the outer per-task host loop in #run,
