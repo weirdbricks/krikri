@@ -228,6 +228,20 @@ module Krikri
       res
     end
 
+    # Real unarchive's main() derives b_dest = os.path.abspath(dest) once
+    # and hands THAT to the handler, while res_args (and every fail_json
+    # message) keeps the raw dest param - so a `dest: /usr/bin/` task
+    # reports "dest": "/usr/bin/" yet runs tar with `-C /usr/bin` and
+    # unzip with `-d /usr/bin`. os.path.abspath is purely lexical (it
+    # never resolves symlinks), which is exactly File.expand_path plus
+    # Path#normalize (Crystal's expand_path keeps a trailing slash, which
+    # abspath drops), and it also anchors a relative dest absolutely.
+    # Found via opsta.etcd (issue #993), whose extract_results.cmd
+    # differed from real's by that one trailing slash.
+    private def command_dest(dest : String) : String
+      Path[File.expand_path(dest)].normalize.to_s
+    end
+
     private def creates_skip_result : PluginResult?
       creates = @params["creates"]? || return nil
       expanded_creates = expand_tilde(creates)
@@ -739,7 +753,7 @@ module Krikri
     # real's set_fs_attributes_if_different does.
     private def tar_argv(op : String, src : String, dest : String, exclude : Array(String), include_files : Array(String), keep_newer : Bool, extra_opts : Array(String)) : Array(String)?
       tar = tar_bin || return nil
-      argv = [tar, op, "-C", dest]
+      argv = [tar, op, "-C", command_dest(dest)]
       if zipflag = tar_zipflag(src)
         argv << zipflag
       end
@@ -1037,7 +1051,7 @@ module Krikri
       # outright - and krikri's post-extraction attribute pass then ran
       # over the raw (unsanitized) member names. Matching Ansible's
       # exact invocation means matching its exact failure.
-      cmd = "unzip #{overwrite_flag} -d #{shell_single_quote(dest)} #{shell_single_quote(src)}#{zip_flags(exclude, include_files)}"
+      cmd = "unzip #{overwrite_flag} -d #{shell_single_quote(command_dest(dest))} #{shell_single_quote(src)}#{zip_flags(exclude, include_files)}"
       result = remote_exec(cmd)
       {cmd: cmd, exit_code: result[:exit_code], stdout: result[:stdout], stderr: result[:stderr]}
     end
