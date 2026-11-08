@@ -424,6 +424,13 @@ module Krikri
       (@@deferred_fact_deprecations[Fiber.current] ||= Array(Array(String)).new) << [] of String
     end
 
+    # Whether a deferral scope is open on this fiber, so a caller can tell
+    # an emission that will actually reach the console from one that a
+    # running include drops (see VarSubstitutor.emit_fact_deprecation).
+    def self.deferring_fact_deprecations? : Bool
+      @@deferred_fact_deprecations[Fiber.current]?.try { |buffers| !buffers.empty? } || false
+    end
+
     def self.finish_deferred_fact_deprecations(flush : Bool) : Nil
       fiber = Fiber.current
       return unless buffers = @@deferred_fact_deprecations[fiber]?
@@ -1874,6 +1881,49 @@ module Krikri
         return ErrorBlock.origin_context(path, val_idx + 1, val_indent + 3)
       end
       nil
+    end
+
+    # The Origin of a top-level fact read inside a CONDITIONAL clause
+    # (`when:`/`until:`/...). Ansible tags every YAML scalar with its own
+    # position and evaluates a conditional's list ITEM as one templating
+    # operation, so a fact read inside a block-sequence clause reports that
+    # item's scalar token (`- ansible_distribution == "CentOS"`), never the
+    # `when:` key line (live-verified vs 2.21.6 on jetune.docker's
+    # initialize.yml, which is the shape issue #990 caught at the key
+    # line). A clause written on the key line itself (`when: x == 'y'`)
+    # keeps the plain param-VALUE position. *name* is the fact being read,
+    # so the item that actually named it wins; a lone item is taken as-is
+    # (a wrapped scalar can name the fact on a continuation line), and a
+    # multi-item list with no naming item falls back to the key-line value
+    # position rather than guessing which item real was evaluating.
+    def self.conditional_value_origin(path : String?, source_line : Int32, key : String, name : String? = nil) : String?
+      return nil unless path && source_line > 0 && File.file?(path)
+
+      lines = File.read_lines(path)
+      return nil unless idx = param_key_line_index(lines, source_line, key)
+      key_line = lines[idx]
+      needle = "#{key}:"
+      rest = key_line[(key_line.index!(needle) + needle.size)..]
+      return param_value_origin(path, source_line, key) unless rest.strip.empty?
+
+      key_indent = key_line.size - key_line.lstrip.size
+      items = [] of {Int32, Int32}
+      ((idx + 1)...lines.size).each do |val_idx|
+        val_line = lines[val_idx]
+        val_stripped = val_line.strip
+        next if val_stripped.empty? || val_stripped.starts_with?("#")
+        val_indent = val_line.size - val_line.lstrip.size
+        # The clause list ends at the first line back at (or above) the
+        # key's own indent - the next keyword of this task, or the next
+        # task. Only DEEPER lines are the block sequence's items or a
+        # wrapped item's continuation.
+        break if val_indent <= key_indent
+        next unless val_stripped.starts_with?("- ")
+        return ErrorBlock.origin_context(path, val_idx + 1, val_indent + 3) if name && val_line.includes?(name)
+        items << {val_idx, val_indent}
+      end
+      return ErrorBlock.origin_context(path, items.first[0] + 1, items.first[1] + 3) if items.size == 1
+      param_value_origin(path, source_line, key)
     end
 
     # The line index of a task param's `<key>:` mapping key at or after

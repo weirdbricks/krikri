@@ -18,6 +18,14 @@ require "./action_groups"
 require "./collection_index"
 
 module Krikri
+  # A `block:`'s own `when:` clauses as the tasks nested inside it - and the
+  # tasks its dynamic includes load at run time - evaluate them. See
+  # Task#block_inherited_when.
+  record BlockInheritedWhen,
+    condition : String,
+    conditions : Array(String),
+    origins : Hash(String, {String, Int32, Int32})?
+
   # Represents a single task in a playbook
   class Task
     property name : String
@@ -280,6 +288,19 @@ module Krikri
     # truth for every non-strict consumer (loop pre-gates, register:/
     # batcher scans, block/import inheritance display).
     property when_condition_list : Array(String)?
+    # The clauses a `block:` contributes to this task through Ansible's
+    # PARENT CHAIN, kept apart from the merged `when_condition` because
+    # that chain also reaches the tasks a dynamic include loads: real
+    # evaluates a block's `when:` once per executed child, and an
+    # `include_tasks:`/`include_role:` child's own file re-evaluates it
+    # too (live-verified against 2.21.6 with jetune.docker_swarm_master,
+    # issue #990: the block's fact read is reported after the FIRST
+    # included task's banner, Origin'd at the block's own clause item).
+    # The include statement's OWN `when:` stays out of this chain - real
+    # evaluates that once, at the include, and never for its children.
+    # `origins` maps each clause to its own YAML token so the clauses keep
+    # the block's Origin instead of the inner task's.
+    property block_inherited_when : BlockInheritedWhen?
     property register : String?
     property notify : Array(String)?
     # Ansible's handler `listen:` accepts a single topic string OR a

@@ -5721,12 +5721,49 @@ module Krikri
       ResultDisplay.emit_top_level_fact_deprecation(origin)
     end
 
+    # The condition a skipped block evaluates can be a CHAIN - a block inside
+    # another block, or inside a file a block's dynamic include loads, merges
+    # the enclosing clause in front of its own - and real reports each clause
+    # at its own Origin: the inherited one at the block that wrote it, never
+    # at this block's `when:` line (issue #990 caught the chain pinned at the
+    # inner keyword). Each clause is therefore resolved on its own, an
+    # inherited clause through the chain's recorded positions.
     private def emit_skipped_block_when_deprecation(block_task : Task, raw : String, host : Host) : Nil
       scope = {"ansible_facts" => JSON::Any.new(facts_dict_for(host.name))}
-      return unless raw.scan(/ansible_[A-Za-z0-9_]+/).any? { |match| VarSubstitutor.top_level_fact_name?(match[0], scope) }
-      origin = conditional_deprecation_text(block_task, "when", raw, header: "", footer: "").chomp
-      return if origin.empty?
-      ResultDisplay.emit_top_level_fact_deprecation(origin)
+      inherited = block_task.block_inherited_when.try(&.origins)
+      (block_task.when_condition_list || [raw]).each do |clause|
+        next unless clause.scan(/ansible_[A-Za-z0-9_]+/).any? { |match| VarSubstitutor.top_level_fact_name?(match[0], scope) }
+        origin = if pos = inherited.try(&.[clause]?)
+                   ErrorBlock.origin_context(pos[0], pos[1], pos[2])
+                 else
+                   conditional_deprecation_text(block_task, "when", clause, header: "", footer: "").chomp
+                 end
+        next if origin.empty?
+        ResultDisplay.emit_top_level_fact_deprecation(origin)
+      end
+    end
+
+    # The YAML token position of every `key:` clause in *clauses*, keyed by
+    # the clause string itself - the shape Ansible's parent chain needs for
+    # a `block:`'s when: (each clause keeps the BLOCK's Origin even after
+    # inheriting onto the children that evaluate it, see
+    # Task#block_inherited_when). Best-effort: an unlocatable clause simply
+    # gets no entry, leaving the child's Origin undecorated rather than
+    # pinned at the child's own file.
+    private def conditional_clause_origins(task : Task, key : String, clauses : Array(String)) : Hash(String, {String, Int32, Int32})?
+      path = task.source_file
+      return nil unless path && File.file?(path) && task.source_line > 0
+
+      lines = File.read_lines(path)
+      name_idx = locate_name_line(lines, task).try(&.[0]) || (task.source_line - 1)
+      return nil if name_idx < 0
+
+      origins = nil
+      clauses.each do |clause|
+        next unless pos = locate_conditional_origin(lines, name_idx, key, clause)
+        (origins ||= Hash(String, {String, Int32, Int32}).new)[clause] = {File.expand_path(path), pos[0] + 1, pos[1]}
+      end
+      origins
     end
 
     private def conditional_deprecation_text(task : Task, key : String, raw : String, that_index : Int32? = nil, header : String = DELIMITERS_DEPRECATION_HEADER, footer : String = "") : String

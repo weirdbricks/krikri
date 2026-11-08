@@ -2104,7 +2104,7 @@ module Krikri
     # finalized; nil when none applies - reads whose Origin krikri does
     # not reproduce (a vars file) stay silent rather than mis-attribute
     # the warning.
-    def self.current_deprecation_origin : String?
+    def self.current_deprecation_origin(name : String? = nil) : String?
       if path = current_template_file
         return ErrorBlock.origin_context(File.expand_path(path), 0, nil, show_content: false)
       end
@@ -2115,7 +2115,10 @@ module Krikri
           # file has no "when:" text to scan for.
           return ErrorBlock.origin_context(path, site.source_line, site.exact_col)
         end
-        return ResultDisplay.param_value_origin(site.source_file, site.source_line, "when")
+        # A when:'s block-sequence item is its own YAML scalar (and its own
+        # templating operation) in real, so the fact read is pinned at the
+        # ITEM that named it - see ResultDisplay.conditional_value_origin.
+        return ResultDisplay.conditional_value_origin(site.source_file, site.source_line, "when", name)
       end
       return unless site = current_task_param
       return site.origin if site.origin
@@ -2125,7 +2128,7 @@ module Krikri
     end
 
     def self.play_hosts_read_origin : String?
-      current_deprecation_origin
+      current_deprecation_origin("play_hosts")
     end
 
     # The Origin block for one top-level fact READ: the value krikri is
@@ -2160,7 +2163,7 @@ module Krikri
       if loop_site = current_loop_source_site
         return ResultDisplay.loop_source_origin(loop_site.source_file, loop_site.source_line, loop_site.key, name)
       end
-      deprecation_site_names?(name) ? current_deprecation_origin : nil
+      deprecation_site_names?(name) ? current_deprecation_origin(name) : nil
     end
 
     # Fiber-scoped stack of the variable values this fiber is re-rendering
@@ -2257,7 +2260,11 @@ module Krikri
         return "file:#{File.expand_path(path)}"
       end
       if site = current_when_site
-        return "when:#{site.source_file}:#{site.source_line}:#{site.exact_col}"
+        # The clause TEXT is part of the identity: real evaluates each item
+        # of a when: list as its own templating operation, so a list whose
+        # two items each read a fact prints one block per item, each pinned
+        # at its own item token (live-verified vs 2.21.6, issue #990).
+        return "when:#{site.source_file}:#{site.source_line}:#{site.exact_col}:#{site.text}"
       end
       # A loop source's candidates are one operation too: real renders
       # them through a single templar call, so only the first element's
@@ -2280,6 +2287,16 @@ module Krikri
     # still gets it - real keeps the first ACCESS, whichever fact it named.
     def self.emit_fact_deprecation(origin : String?) : Nil
       return unless origin
+      # A deferred scope displays nothing unless its dynamic include ends up
+      # skipped, so the operation record must not be spent on it: the tasks
+      # that include loads re-evaluate the very same clause as an operation
+      # of their own, and a record real never made silenced them (issue
+      # #990 - jetune.docker's block-level `when: ansible_os_family == ...`
+      # printed nothing while its include ran).
+      if ResultDisplay.deferring_fact_deprecations?
+        ResultDisplay.emit_top_level_fact_deprecation(origin)
+        return
+      end
       if op = current_fact_deprecation_op
         return unless @@tripped_fact_deprecation_ops.add?(op)
       end
