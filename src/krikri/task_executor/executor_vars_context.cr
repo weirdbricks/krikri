@@ -3083,25 +3083,34 @@ module Krikri
         end
 
         # A block-tag template (`{%`/`{#`) that renders to a literally
-        # EMPTY string is treated as OMITTED, not as an empty-string
-        # value - live-verified against ansible-core 2.19.11:
-        # `content: "{% for f in restic_files %}{{ f }}\n{% endfor %}"`
-        # with `restic_files: []` fails copy's own `src (or content) is
-        # required` check (hbjydev.restic, round found this originally),
-        # while a BARE `{{ some_empty_string_var }}`, mixed text
-        # (`"prefix{{ e }}"`), a literal `content: ""`, and even a bare
-        # `{{ '' }}` expression all succeed and write a real empty file
-        # (verified live, all four shapes, same ansible-core version) -
-        # so this is specific to block-tag rendering, not "any empty
-        # content:" generally (geerlingguy.sanoid's own `content: "{{
-        # sanoid_conf }}"` with `sanoid_conf: ""` must keep succeeding).
-        # Only the WHOLE-VALUE case is treated this way, matching
-        # OMIT_SENTINEL's own existing whole-value-vs-partial split
-        # immediately below - a block tag that's only PART of a larger
-        # value and happens to contribute nothing keeps the surrounding
-        # literal text, it doesn't omit the whole param.
+        # EMPTY string is an explicit NULL, not an empty-string value:
+        # ansible-core's Jinja native-environment concat returns None
+        # when the render produced no output parts at all, so such an
+        # argument arrives at its action plugin as a genuine None (live-
+        # verified against 2.21.6, where a debug msg read back as
+        # `NoneType=None` from an empty for-loop, from a false if-block
+        # and from a comment-only template alike). That is NOT the same
+        # as an absent argument, which is why debug's `msg` default
+        # never applies to one: debug over an empty loop prints
+        # `ok: [host] => {}` on real - the result carries no msg key at
+        # all - while this engine used to drop the argument and print
+        # debug's "Hello world!" default (issue #1006).
+        # copy's own restic-shaped `content:` (a `{% for %}` loop over an
+        # empty list, hbjydev.restic) still fails its "src (or content)
+        # is required" check because copy reads an explicit null content
+        # as unset (see copy.cr#explicit_null_param?). A BARE
+        # `{{ some_empty_string_var }}`, mixed text (`"prefix{{ e }}"`),
+        # a literal `content: ""`, and even a bare `{{ '' }}` expression
+        # all render to real empty strings and must keep behaving
+        # exactly as before (verified live, all four shapes, same
+        # ansible-core version) - so this rule is specific to block-tag
+        # rendering, not "any empty value". Only the WHOLE-VALUE case is
+        # treated this way, matching the OMIT_SENTINEL split immediately
+        # below - a block tag that's only PART of a larger value and
+        # happens to contribute nothing keeps the surrounding literal
+        # text.
         if (value.includes?("{%") || value.includes?("{#")) && substituted_value.empty?
-          substituted_value = OMIT_SENTINEL
+          substituted_value = Krikri::NONE_SENTINEL
         end
 
         # A whole-span template whose rendered result is empty text is

@@ -22,6 +22,17 @@ module Krikri
       msg = @params["msg"]?
       var_name = @params["var"]?
 
+      # Ansible's own debug action takes the var: branch only when the
+      # argument is PYTHON-TRUTHY (its `if raw_var_arg := new_module_args
+      # ['var']` check), so a null var - a bare `var:` with no value, or
+      # a block-tag template that rendered nothing and is therefore None,
+      # both of which ride this wire as NONE_SENTINEL - and an empty
+      # `var: ""` all fall through to the msg side and print debug's
+      # "Hello world!" default (live-verified vs 2.21.6). Without this,
+      # the sentinel itself became the result KEY and printed as an
+      # undefined-variable marker.
+      var_name = nil if var_name.try { |v| v.empty? || v == Krikri::NONE_SENTINEL }
+
       # A natively typed msg (literal YAML number/bool, or a whole-span
       # `{{ expr }}` evaluated structurally) arrives JSON-encoded behind the
       # NATIVE_TYPED_PREFIX - Ansible keeps that exact type in the result.

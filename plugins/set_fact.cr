@@ -82,6 +82,13 @@ module Krikri
           # fall through to the legacy coercion
         end
       end
+      # A block-tag template that renders to nothing executes no output
+      # node, which ansible-core's native templating turns into a real
+      # Python None (see substitute_task_params' block-tag rule) - so a
+      # set_fact whose value is such a template registers the fact as null
+      # on real (live-verified vs 2.21.6: `ansible_facts: {"x": null}`),
+      # not as "" and certainly not as the raw sentinel text.
+      return JSON::Any.new(nil) if value == NONE_SENTINEL
       # WHY: no bool coercion here on purpose. ansible's block-tag
       # output ({% if %}...{% endif %}) stays a str, so bare "yes"/"no"/
       # "true"/"false" text must NOT become a JSON bool - only a

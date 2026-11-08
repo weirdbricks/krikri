@@ -174,16 +174,18 @@ describe "omit" do
     FileUtils.rm_rf(dir) if dir && Dir.exists?(dir)
   end
 
-  it "treats a block-tag template rendering to nothing as omitted, not empty" do
+  it "treats a block-tag template rendering to nothing as an explicit null, not empty" do
     # hbjydev.restic's own content: "{% for f in restic_files %}{{ f
     # }}\n{% endfor %}" with restic_files: [] - live-verified vs
     # ansible-core 2.19.11: Ansible fails copy's own "src (or
     # content) is required" check here, unlike a bare `{{ empty_var
     # }}"`/literal `""` content (both succeed and write a real empty
     # file - see copy_empty_content_spec.cr). The block tag's own empty
-    # render is functionally indistinguishable from an unset param, so
-    # this dedicated OMIT path in substitute_task_params drops the
-    # param key entirely rather than sending copy.cr a literal "".
+    # render is a genuine Python None in Ansible (its native templating
+    # returns None when the render executes no output node), so copy
+    # reads it as an unset content and this engine marks the param
+    # NONE_SENTINEL - present-but-null - rather than sending copy.cr a
+    # literal "".
     dir = File.tempname("omit-block-tag")
     Dir.mkdir_p(dir)
     File.write(File.join(dir, "inv.ini"), "localhost ansible_connection=local\n")
@@ -211,5 +213,53 @@ describe "omit" do
     File.exists?(dest).must_equal(false)
   ensure
     FileUtils.rm_rf(dir) if dir && Dir.exists?(dir)
+  end
+
+  it "keeps a block-tag template that renders nothing a present null so defaults never apply" do
+    # Ansible's Jinja native environment returns None - not the empty
+    # string - for a template that renders no output node at all, so the
+    # argument counts as PRESENT-but-null: an argspec default never
+    # applies to it. debug's `msg` is the observable case (issue #1006):
+    # `msg: "{% for item in out.results %}{{ item }}{% endfor %}"` over an
+    # empty list prints `ok: [localhost] => {}` on real ansible-core
+    # 2.21.6 - the result carries no msg key, so debug's "Hello world!"
+    # default is nowhere in it - while a literal `msg: ""` keeps
+    # `"msg": ""`. Registered results agree: the empty-loop task registers
+    # {changed, failed} with no msg, and a set_fact whose value is such a
+    # template registers the fact as null. All five shapes live-verified
+    # in one playbook against 2.21.6.
+    status, output = run_omit(<<-TASKS)
+      - name: empty rendered block-tag msg
+        ansible.builtin.debug:
+          msg: "{% if false %}Hello{% endif %}"
+        register: empty_msg
+      - ansible.builtin.debug:
+          msg: "EMPTY={{ empty_msg | to_json }}"
+      - name: literal empty msg
+        ansible.builtin.debug:
+          msg: ""
+      - name: empty rendered block-tag fact
+        ansible.builtin.set_fact:
+          facty: "{% if false %}Hello{% endif %}"
+        register: empty_fact
+      - ansible.builtin.debug:
+          msg: "FACT={{ empty_fact | to_json }}"
+      - name: empty rendered block-tag var
+        ansible.builtin.debug:
+          var: "{% if false %}Hello{% endif %}"
+    TASKS
+    status.must_equal(0)
+    # The whole result dump is empty - no msg key, so no default text
+    # (the ONLY "Hello world!" in this play is the null-var task's).
+    output.must_include("ok: [localhost] => {}")
+    output.scan("Hello world!").size.must_equal(1)
+    output.wont_include("__crystal_ansible_none__")
+    output.must_include(%(EMPTY={\\"changed\\": false, \\"failed\\": false}))
+    # A literal "" is still a real empty string with its msg key intact.
+    output.must_include(%("msg": ""))
+    output.must_include(%(FACT={\\"changed\\": false, \\"failed\\": false, \\"ansible_facts\\": {\\"facty\\": null}}))
+    # A null `var:` is Python-falsy, so it takes the msg side of debug's
+    # own branch and prints the default - the sentinel never names a key.
+    output.must_include(%("msg": "Hello world!"))
   end
 end
