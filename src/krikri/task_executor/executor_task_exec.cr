@@ -1549,7 +1549,7 @@ module Krikri
         # the plain-skip collapse below only covers an UNDEFINED source).
         # One clean failed task, banner already printed by the caller.
         emit_loop_source_error_block(task, ex)
-        finish_single_task(task, host, loop_source_error_result(ex), vars_context: vars_context)
+        finish_single_task(task, host, loop_source_error_result(ex, task), vars_context: vars_context)
         return true
       rescue
         nil
