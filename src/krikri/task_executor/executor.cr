@@ -340,15 +340,18 @@ module Krikri
     # calling build_vars_context again when it reaches the same task -
     # otherwise every batched task pays for that construction twice.
     @batch_cache : Hash(String, Hash(Task, {JSON::Any?, Hash(String, JSON::Any)}))
-    # Warnings captured during batch-build's up-front step preparation,
-    # per (host, task): real only prints a task's warnings when that task
-    # is actually reached (issue #489 - a later member's jinja-constant
-    # warning surfaced during batch-build, ahead of earlier members'
-    # output and even for tasks an earlier member's failure keeps the
-    # play from ever reaching), so the captured text rides here and is
-    # printed by try_batched_result exactly when the task is consumed;
-    # leftovers for never-reached tasks are never printed.
-    @batch_captured_warnings : Hash(String, Hash(Task, String))
+    # Warnings and deprecations captured during batch-build's up-front
+    # when: evaluation and step preparation, per (host, task): real only
+    # prints them when the task is actually reached (issue #489 - a later
+    # member's jinja-constant warning surfaced during batch-build, ahead of
+    # earlier members' output and even for tasks an earlier member's
+    # failure keeps the play from ever reaching; issue #979 for the
+    # INJECT_FACTS_AS_VARS/play_hosts read deprecations a never-reached
+    # member's when: or template raised there), so the captured output
+    # rides here and is emitted by try_batched_result exactly when the task
+    # is consumed; leftovers for never-reached tasks are never printed, and
+    # a held-back deprecation only claims its dedupe key if it prints.
+    @batch_captured_warnings : Hash(String, Hash(Task, ResultDisplay::CapturedStderr))
     # Max hosts run concurrently per task via the --forks flag; defaults
     # to 5, matching ansible-playbook's own default (--forks 1
     # restores the original one-host-at-a-time behavior). Only tasks
@@ -568,7 +571,7 @@ module Krikri
       @task_group = Hash(Task, Array(Task)).new
       @grouped_lists = Set(UInt64).new
       @batch_cache = Hash(String, Hash(Task, {JSON::Any?, Hash(String, JSON::Any)})).new
-      @batch_captured_warnings = Hash(String, Hash(Task, String)).new
+      @batch_captured_warnings = Hash(String, Hash(Task, ResultDisplay::CapturedStderr)).new
       @batch_groups_run = Set({String, UInt64}).new
       @included_vars = Hash(String, Hash(String, JSON::Any)).new
       @included_var_origins = Hash(String, Hash(String, VarOrigin)).new

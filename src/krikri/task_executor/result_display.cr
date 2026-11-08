@@ -176,19 +176,37 @@ module Krikri
       emit_warning_stderr("") if text.strip.includes?('\n')
     end
 
-    # Fiber-scoped stack of active warning captures: real prints a
-    # task's warnings at display time, i.e. only when that task is
-    # actually reached, but krikri's batch-build prepares every group
-    # member up front - emitters that fire during that preparation
-    # (issue #489's authorized_key jinja-constant warning for a task an
-    # earlier member's failure keeps the play from ever reaching) would
-    # surface ahead of earlier members' output and for tasks that never
-    # run. Capturing during prepare_batch_step and re-emitting at
-    # consumption restores real's ordering. A stack, like the
-    # substitutor's fiber-scoped stacks, so a nested capture keeps its
-    # own text; with no capture active the write is byte-identical to a
-    # plain STDERR.puts.
-    @@stderr_warning_captures = {} of Fiber => Array(String::Builder)
+    # One deprecation block a capture held back instead of printing it: the
+    # dedupe set its key belongs to, that key, and the exact lines it would
+    # have written. The dedupe claim is applied at REPLAY time, never at
+    # capture time, so a capture whose text is never replayed - a batch
+    # member an earlier member's failure keeps the play from ever reaching -
+    # leaves no trace in the run-wide sets and a later real read of the same
+    # origin still prints (issue #979).
+    record PendingDeprecation, dedupe : Set(String), key : String, lines : Array(String)
+
+    # Fiber-scoped stack of active stderr captures: real prints a task's
+    # warnings and deprecations at display time, i.e. only when that task is
+    # actually reached, but krikri's batch-build evaluates every group
+    # member's when: and prepares its action up front (a template: renders
+    # on the controller there) - emitters that fire during that preparation
+    # (issue #489's authorized_key jinja-constant warning, an
+    # INJECT_FACTS_AS_VARS or play_hosts read in a never-reached member's
+    # when: or template, issue #979) would surface ahead of earlier members'
+    # output and for tasks that never run. Capturing during the build and
+    # re-emitting at consumption restores real's ordering; dropping a never
+    # reached member's capture restores real's silence. A stack, like the
+    # substitutor's fiber-scoped stacks, so a nested capture keeps its own
+    # text; with no capture active the write is byte-identical to a plain
+    # STDERR.puts.
+    class StderrCapture
+      # Captured output in emission order: literal text a warning emitter
+      # already deduped and formatted, and deprecation blocks held back for
+      # replay.
+      getter parts = [] of String | PendingDeprecation
+    end
+
+    @@stderr_warning_captures = {} of Fiber => Array(StderrCapture)
 
     # Shared stderr funnel for the warning emitters (display warnings
     # and the jinja-constant block alike): appends the exact would-be
@@ -196,19 +214,74 @@ module Krikri
     # instead of writing STDERR when one is active on the current fiber.
     def self.emit_warning_stderr(text : String) : Nil
       if frames = @@stderr_warning_captures[Fiber.current]?
-        frames.last << text << '\n'
+        frames.last.parts << "#{text}\n"
       else
         STDERR.puts text
       end
     end
 
-    # Runs *block* with warning output captured on the current fiber and
-    # returns exactly what would have gone to STDERR (empty when nothing
-    # warned); the caller decides whether/when to print it.
-    def self.capture_stderr_warnings(&block : -> _) : String
-      builder = String::Builder.new
+    # Serializes "claim the dedupe key, then print" across the fibers of a
+    # --forks run: the claim is the Display-level dedupe every emitter
+    # shares, and a replayed block claims late.
+    DEPRECATION_CLAIM_MUTEX = Mutex.new
+
+    # The deprecation counterpart of the funnel above: with a capture active
+    # the block is held back (see PendingDeprecation), otherwise it claims
+    # its dedupe key and prints - unchanged for every path that never
+    # batches.
+    def self.emit_or_defer_deprecation(dedupe : Set(String), key : String, lines : Array(String)) : Nil
+      if frames = @@stderr_warning_captures[Fiber.current]?
+        frames.last.parts << PendingDeprecation.new(dedupe, key, lines)
+        return
+      end
+      DEPRECATION_CLAIM_MUTEX.synchronize do
+        return unless dedupe.add?(key)
+        emit_deprecation_hint
+        lines.each { |line| emit_warning_stderr(line) }
+      end
+    end
+
+    # Replays one held-back block when its task is finally reached: the
+    # claim happens here, so an origin a dropped capture merely prepared is
+    # still free to print for the read that really happens.
+    def self.replay_deprecation(pending : PendingDeprecation) : Nil
+      DEPRECATION_CLAIM_MUTEX.synchronize do
+        next unless pending.dedupe.add?(pending.key)
+        emit_deprecation_hint
+        pending.lines.each { |line| emit_warning_stderr(line) }
+      end
+    end
+
+    # What one capture window produced, in emission order. #emit prints it,
+    # claiming each deprecation block as it goes; #text is the literal
+    # warning text alone.
+    record CapturedStderr, capture : StderrCapture do
+      def emit : Nil
+        capture.parts.each do |part|
+          case part
+          when PendingDeprecation then ResultDisplay.replay_deprecation(part)
+          else                         STDERR.print part
+          end
+        end
+      end
+
+      def text : String
+        String.build do |io|
+          capture.parts.each { |part| io << part if part.is_a?(String) }
+        end
+      end
+
+      def empty? : Bool
+        capture.parts.empty?
+      end
+    end
+
+    # Runs *block* with stderr captured on the current fiber and returns what
+    # it produced; the caller decides whether/when to emit it.
+    def self.capture_stderr(&block : -> _) : CapturedStderr
+      capture = StderrCapture.new
       fiber = Fiber.current
-      (@@stderr_warning_captures[fiber] ||= Array(String::Builder).new) << builder
+      (@@stderr_warning_captures[fiber] ||= Array(StderrCapture).new) << capture
       begin
         block.call
       ensure
@@ -216,7 +289,15 @@ module Krikri
         frames.pop
         @@stderr_warning_captures.delete(fiber) if frames.empty?
       end
-      builder.to_s
+      CapturedStderr.new(capture)
+    end
+
+    # Runs *block* with warning output captured and returns exactly the text
+    # that would have gone to STDERR (empty when nothing warned). A
+    # deprecation block raised in the window is dropped unclaimed - a caller
+    # that will replay the output wants #capture_stderr.
+    def self.capture_stderr_warnings(&block : -> _) : String
+      capture_stderr { block.call }.text
     end
 
     # Core-emitted deprecation lines already printed this run (real
@@ -263,11 +344,13 @@ module Krikri
 
     # The one-time "can be disabled" hint Ansible prints before a run's
     # first deprecation of ANY kind - shared by every deprecation emitter
-    # so a later source never repeats it.
+    # so a later source never repeats it. Only ever printed alongside a
+    # block that actually prints, so a batch member the play never reaches
+    # cannot spend it (see #emit_or_defer_deprecation).
     private def self.emit_deprecation_hint : Nil
       unless @@deprecation_hint_seen
         @@deprecation_hint_seen = true
-        STDERR.puts "[WARNING]: Deprecation warnings can be disabled by setting `deprecation_warnings=False` in ansible.cfg.".colorize(:light_magenta)
+        emit_warning_stderr("[WARNING]: Deprecation warnings can be disabled by setting `deprecation_warnings=False` in ansible.cfg.".colorize(:light_magenta).to_s)
       end
     end
 
@@ -280,23 +363,19 @@ module Krikri
     # excerpt-and-caret block for a task param read; nil (a read whose
     # Origin krikri does not reproduce - a vars file, a when:) stays
     # silent rather than mis-attribute the warning. Dedup keyed on the
-    # Origin string with a mutex, the same per-Origin pattern the lookup
-    # dispatch's Jinja-const warning uses.
+    # Origin string, the same per-Origin pattern the lookup dispatch's
+    # Jinja-const warning uses.
     @@play_hosts_deprecation_origins = Set(String).new
-    PLAY_HOSTS_DEPRECATION_MUTEX = Mutex.new
 
     def self.emit_play_hosts_deprecation(origin : String?) : Nil
       return unless origin
-      PLAY_HOSTS_DEPRECATION_MUTEX.synchronize do
-        return if @@play_hosts_deprecation_origins.includes?(origin)
-        @@play_hosts_deprecation_origins << origin
-        emit_deprecation_hint
-        STDERR.puts "[DEPRECATION WARNING]: The `play_hosts` magic variable is deprecated. This feature will be removed from ansible-core version 2.23.".colorize(:light_magenta)
-        STDERR.puts origin.colorize(:light_magenta)
-        STDERR.puts
-        STDERR.puts "Use `ansible_play_batch` instead.".colorize(:light_magenta)
-        STDERR.puts
-      end
+      emit_or_defer_deprecation(@@play_hosts_deprecation_origins, origin, [
+        "[DEPRECATION WARNING]: The `play_hosts` magic variable is deprecated. This feature will be removed from ansible-core version 2.23.".colorize(:light_magenta).to_s,
+        origin.colorize(:light_magenta).to_s,
+        "",
+        "Use `ansible_play_batch` instead.".colorize(:light_magenta).to_s,
+        "",
+      ])
     end
 
     # The INJECT_FACTS_AS_VARS deprecation (ansible-core 2.21): reading a
@@ -307,8 +386,7 @@ module Krikri
     # while a second template printing at its own Origin gets its own
     # (live-verified against 2.21.6).
     @@top_level_fact_deprecation_origins = Set(String).new
-    TOP_LEVEL_FACT_DEPRECATION_MUTEX = Mutex.new
-    TOP_LEVEL_FACT_DEPRECATION_TEXT  = "INJECT_FACTS_AS_VARS default to `True` is deprecated, top-level facts will not be auto injected after the change. This feature will be removed from ansible-core version 2.24."
+    TOP_LEVEL_FACT_DEPRECATION_TEXT = "INJECT_FACTS_AS_VARS default to `True` is deprecated, top-level facts will not be auto injected after the change. This feature will be removed from ansible-core version 2.24."
 
     # The buffer behind #begin_deferred_fact_deprecations: one entry per
     # open deferral scope on this fiber, so a nested scope pops back to its
@@ -323,16 +401,13 @@ module Krikri
           return
         end
       end
-      TOP_LEVEL_FACT_DEPRECATION_MUTEX.synchronize do
-        return if @@top_level_fact_deprecation_origins.includes?(origin)
-        @@top_level_fact_deprecation_origins << origin
-        emit_deprecation_hint
-        STDERR.puts "[DEPRECATION WARNING]: #{TOP_LEVEL_FACT_DEPRECATION_TEXT}".colorize(:light_magenta)
-        STDERR.puts origin.colorize(:light_magenta)
-        STDERR.puts
-        STDERR.puts "Use `ansible_facts[\"fact_name\"]` (no `ansible_` prefix) instead.".colorize(:light_magenta)
-        STDERR.puts
-      end
+      emit_or_defer_deprecation(@@top_level_fact_deprecation_origins, origin, [
+        "[DEPRECATION WARNING]: #{TOP_LEVEL_FACT_DEPRECATION_TEXT}".colorize(:light_magenta).to_s,
+        origin.colorize(:light_magenta).to_s,
+        "",
+        "Use `ansible_facts[\"fact_name\"]` (no `ansible_` prefix) instead.".colorize(:light_magenta).to_s,
+        "",
+      ])
     end
 
     # ansible-core captures every warning and deprecation raised while a task

@@ -116,4 +116,69 @@ describe Krikri::ResultDisplay do
       FileUtils.rm_rf(src_dir) if src_dir
     end
   end
+
+  # Issue #979: the same up-front batch-build work also RAISES
+  # deprecations - a later member's `when:` reading a top-level fact
+  # alias, or its template: rendering a file that does - and those used to
+  # write straight to STDERR, so they surfaced for members a failed
+  # neighbour keeps the play from ever reaching. A deprecation block is now
+  # held back like any other captured output, and - unlike a warning,
+  # whose emitter dedupes as it formats - its per-Origin dedupe claim is
+  # only spent when the block is actually replayed, so a dropped capture
+  # cannot silence the read that really happens.
+  describe ".capture_stderr" do
+    it "holds a deprecation block back and keeps STDERR silent" do
+      origin = "Origin: capture-test-held-#{Random::Secure.hex(4)}.j2"
+      _, stderr = capture_stderr_fd do
+        Krikri::ResultDisplay.capture_stderr do
+          Krikri::ResultDisplay.emit_top_level_fact_deprecation(origin)
+        end
+      end
+
+      stderr.must_be_empty
+    end
+
+    it "prints a held-back block once when it is replayed, deduped per origin" do
+      origin = "Origin: capture-test-replay-#{Random::Secure.hex(4)}.j2"
+      held = Krikri::ResultDisplay.capture_stderr do
+        Krikri::ResultDisplay.emit_top_level_fact_deprecation(origin)
+      end
+
+      _, stderr = capture_stderr_fd do
+        held.emit
+        held.emit
+      end
+
+      stderr.must_include("[DEPRECATION WARNING]: INJECT_FACTS_AS_VARS")
+      stderr.must_include(origin)
+      stderr.must_include("Use `ansible_facts[\"fact_name\"]` (no `ansible_` prefix) instead.")
+      stderr.scan(/DEPRECATION WARNING\]: INJECT_FACTS_AS_VARS/).size.must_equal(1)
+    end
+
+    it "leaves a dropped capture's origin free for the read that really happens" do
+      origin = "Origin: capture-test-dropped-#{Random::Secure.hex(4)}.j2"
+      _, stderr = capture_stderr_fd do
+        # A batch member the play never reached: prepared, then dropped
+        # without ever being replayed.
+        Krikri::ResultDisplay.capture_stderr do
+          Krikri::ResultDisplay.emit_top_level_fact_deprecation(origin)
+        end
+        Krikri::ResultDisplay.emit_top_level_fact_deprecation(origin)
+      end
+
+      stderr.must_include("[DEPRECATION WARNING]: INJECT_FACTS_AS_VARS")
+      stderr.must_include(origin)
+    end
+
+    it "holds the play_hosts read deprecation back the same way" do
+      origin = "Origin: capture-test-play-hosts-#{Random::Secure.hex(4)}.yml"
+      _, stderr = capture_stderr_fd do
+        Krikri::ResultDisplay.capture_stderr do
+          Krikri::ResultDisplay.emit_play_hosts_deprecation(origin)
+        end
+      end
+
+      stderr.must_be_empty
+    end
+  end
 end

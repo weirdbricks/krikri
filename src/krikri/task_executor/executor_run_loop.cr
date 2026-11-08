@@ -1661,13 +1661,14 @@ module Krikri
       # reaching it) still yields nil, exactly as `cache[task]?` did.
       result = cache.delete(task).try(&.[0])
       # Same "when the task is reached, not at batch-build time" rule for
-      # the warnings captured during step preparation (issue #489): the
+      # the output captured during when: evaluation and step preparation
+      # (issue #489's warnings, issue #979's read deprecations): the
       # consumed entry's text prints here, under this task's own banner
-      # just before its result display; entries for never-reached tasks
-      # are never printed.
+      # just before its result display; entries for never-reached tasks are
+      # never printed.
       if host_warnings = @batch_captured_warnings[host.name]?
-        if text = host_warnings.delete(task)
-          STDERR.print text
+        if captured = host_warnings.delete(task)
+          captured.emit
         end
         @batch_captured_warnings.delete(host.name) if host_warnings.empty?
       end
@@ -1750,45 +1751,55 @@ module Krikri
         # both read this member's identical vars_context.
         member_substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
 
-        # defer_stats + defer_display: a when:-skipped batch member has its
-        # skipped counter AND its "skipping:" print both deferred - the
-        # counter aggregates at the task level, and the print is emitted by
-        # execute_task when it consumes this nil from the cache, so each
-        # group member's skip prints under its own banner rather than all
-        # at once here during batch-build.
-        begin
-          unless when_passes?(task, vars_context, host, shared: member_substitutor, defer_stats: true, defer_display: true)
-            cache[task] = {nil, vars_context}
-            next
+        # Batch-build looks at every member up front - its when: is
+        # evaluated and its action prepared (a template: renders on the
+        # controller) - so anything that emits stderr does it here, ahead of
+        # the members that really run: issue #489's authorized_key
+        # jinja-constant warning, and an INJECT_FACTS_AS_VARS or play_hosts
+        # read in a later member's when: or template (issue #979).
+        # Real only emits when the task is actually reached, so capture the
+        # whole window and let try_batched_result emit it when it consumes
+        # the task; a member a halt keeps from ever being reached never
+        # emits, and its held-back deprecation does not spend the run's
+        # per-origin dedupe either.
+        member_state = :run
+        outcome = nil
+        captured = ResultDisplay.capture_stderr do
+          begin
+            # defer_stats + defer_display: a when:-skipped batch member has
+            # its skipped counter AND its "skipping:" print both deferred -
+            # the counter aggregates at the task level, and the print is
+            # emitted by execute_task when it consumes this nil from the
+            # cache, so each group member's skip prints under its own banner
+            # rather than all at once here during batch-build.
+            member_state = :skip unless when_passes?(task, vars_context, host, shared: member_substitutor, defer_stats: true, defer_display: true)
+          rescue ex : WhenEvaluationError
+            cache[task] = {when_error_result(ex, task, host), vars_context}
+            # A member whose when: RAISED is a failed task, not a skipped
+            # one, and Ansible aborts the play at it - so the group's
+            # remaining members must never reach the target. Without this
+            # the round trip still dispatched them: tumf.docker-compose's
+            # `when: ver|failed` (issue #649) failed the Remove Old Version
+            # task, yet the group's next member - Install Docker Compose's
+            # get_url - ran anyway and left a real docker-compose binary on
+            # the host, so krikri's warm phase stat-ed a file ansible's warm
+            # phase never created (skipping vs ok). The solo path gets this
+            # for free: finish_single_task halts the host before the
+            # consumer reaches later tasks, while a batch build executes
+            # every member it adds.
+            halted = true unless resolve_task_ignore_errors(task, vars_context, host)
+            member_state = :when_raised
           end
-        rescue ex : WhenEvaluationError
-          cache[task] = {when_error_result(ex, task, host), vars_context}
-          # A member whose when: RAISED is a failed task, not a skipped one, and
-          # Ansible aborts the play at it - so the group's remaining members must
-          # never reach the target. Without this the round trip still dispatched
-          # them: tumf.docker-compose's `when: ver|failed` (issue #649) failed the
-          # Remove Old Version task, yet the group's next member - Install Docker
-          # Compose's get_url - ran anyway and left a real docker-compose binary
-          # on the host, so krikri's warm phase stat-ed a file ansible's warm
-          # phase never created (skipping vs ok). The solo path gets this for
-          # free: finish_single_task halts the host before the consumer reaches
-          # later tasks, while a batch build executes every member it adds.
-          halted = true unless resolve_task_ignore_errors(task, vars_context, host)
+          outcome = prepare_batch_step(task, host, vars_context, shared: member_substitutor) if member_state == :run
+        end
+        (@batch_captured_warnings[host.name] ||= Hash(Task, ResultDisplay::CapturedStderr).new)[task] = captured unless captured.empty?
+
+        if member_state == :when_raised
+          next
+        elsif member_state == :skip
+          cache[task] = {nil, vars_context}
           next
         end
-
-        # Batch-build prepares every member up front, so rendering a later
-        # member's args can emit stderr warnings here (issue #489: the
-        # authorized_key jinja-constant block) - real only warns when the
-        # task is actually reached, so capture instead of printing and let
-        # try_batched_result emit the text when it consumes the task;
-        # leftovers for members a halt keeps from ever being reached are
-        # simply never printed.
-        outcome = nil
-        captured = ResultDisplay.capture_stderr_warnings do
-          outcome = prepare_batch_step(task, host, vars_context, shared: member_substitutor)
-        end
-        (@batch_captured_warnings[host.name] ||= Hash(Task, String).new)[task] = captured unless captured.empty?
 
         case step_outcome = outcome
         when JSON::Any
