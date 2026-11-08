@@ -35,7 +35,7 @@ describe "include_role: templated role-name Origin lineage" do
 
     output = `cd #{src_dir} && #{BINARY} -i #{INVENTORY} pb.yml 2>&1`
 
-    output.must_include("[ERROR]: the role 'missing_role_xyz' was not found in ")
+    output.must_include("[ERROR]: The role 'missing_role_xyz' was not found in: ")
     output.must_include("Origin: #{src_dir}/roles/outer/defaults/main.yml:1:11")
     output.must_include("1 lib_name: missing_role_xyz")
     output.must_include("            ^ column 11")
@@ -68,7 +68,7 @@ describe "include_role: templated role-name Origin lineage" do
 
     output = `cd #{src_dir} && #{BINARY} -i #{INVENTORY} pb.yml 2>&1`
 
-    output.must_include("[ERROR]: the role 'missing_two' was not found in ")
+    output.must_include("[ERROR]: The role 'missing_two' was not found in: ")
     output.must_include("Origin: #{src_dir}/roles/outer/defaults/main.yml:3:7")
     output.must_include("3   k2: missing_two")
     output.must_include("      ^ column 7")
@@ -103,7 +103,7 @@ describe "include_role: templated role-name Origin lineage" do
 
     output = `cd #{src_dir} && #{BINARY} -i #{INVENTORY} pb.yml 2>&1`
 
-    output.must_include("[ERROR]: the role 'MISSING_ROLE_XYZ' was not found in ")
+    output.must_include("[ERROR]: The role 'MISSING_ROLE_XYZ' was not found in: ")
     output.must_include("Origin: #{src_dir}/roles/outer/tasks/main.yml:2:11")
     output.must_include("2     name: \"{{ lib_name | upper }}\"")
     output.must_include("            ^ column 11")

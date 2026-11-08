@@ -192,15 +192,15 @@ module Krikri
 
     # The role search path list exactly as ansible-core's
     # RoleDefinition._load_role_path builds and REPORTS it
-    # (definition.py: "the role '<name>' was not found in <paths>"):
+    # (definition.py: "The role '<name>' was not found in: <paths>"):
     # the playbook dir's own roles/ subtree first, then the configured
     # roles paths (ANSIBLE_ROLES_PATH or the ~/.ansible:/usr/share:/
     # /etc/ansible defaults), then the playbook dir itself. Live-verified
-    # against 2.19.11: a missing role errors as "the role 'x' was not
-    # found in /work/roles:/root/.ansible/roles:/usr/share/ansible/roles:
+    # against 2.21.6: a missing role errors as "The role 'x' was not
+    # found in: /work/roles:/root/.ansible/roles:/usr/share/ansible/roles:
     # /etc/ansible/roles:/work". When the play declares `collections:`,
     # ansible reports those collection names (plus "ansible.legacy") as a
-    # prefix in front of the paths - live-verified vs 2.19.11 with
+    # prefix in front of the paths - live-verified vs 2.21.6 with
     # `collections: [community.general, ansible.posix]`:
     #   "community.general:ansible.posix:ansible.legacy:/pb/roles:...:/pb"
     # Display-only - resolve_role_dir above keeps its own (superset) search
@@ -219,7 +219,7 @@ module Krikri
     # dependencies through the collection-aware loader, which prefixes the
     # joined list with the "ansible.legacy" collection name and appends the
     # declaring role's own parent directory as an extra search root before
-    # the playbook dir (live-verified vs 2.19.11:
+    # the playbook dir (live-verified vs 2.21.6:
     #   play-level `roles: [missing]` ->
     #     "/pb/roles:/home/.../.ansible/roles:/usr/share/ansible/roles:
     #      /etc/ansible/roles:/pb"
@@ -1007,7 +1007,7 @@ module Krikri
           # at hand - only when this raise is really about THIS entry
           # (a nested dependency's own not-found raise already carries its
           # declaring meta's render from the inner rescue).
-          if ex.render.nil? && ex.message.to_s.includes?("the role '#{dep_name}' was not found in ansible.legacy:") &&
+          if ex.render.nil? && ex.message.to_s.includes?("The role '#{dep_name}' was not found in: ansible.legacy:") &&
              (pos = dependency_origin_pos(meta_path, dep, dep_index))
             ex.render = PlaybookParser.origin_error_render_at(
               ex.message.to_s, meta_path, cached_source_map(meta_path), pos)
@@ -1094,9 +1094,9 @@ module Krikri
       if dependency_declaring_dir
         # A meta/main.yml dependency is loaded collection-independently, so
         # it never gets the play's collections in its search list.
-        "the role '#{name}' was not found in #{role_search_display_dependency(playbook_dir, dependency_declaring_dir)}"
+        "The role '#{name}' was not found in: #{role_search_display_dependency(playbook_dir, dependency_declaring_dir)}"
       else
-        "the role '#{name}' was not found in #{role_search_display(playbook_dir, collections)}"
+        "The role '#{name}' was not found in: #{role_search_display(playbook_dir, collections)}"
       end
     end
 

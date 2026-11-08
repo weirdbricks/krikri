@@ -2,7 +2,7 @@ require "file_utils"
 require "../minitest_helper"
 
 # A STATIC import_role: naming a missing role - Ansible's exact stderr
-# shapes live-verified against ansible-core 2.19.11 (issue #94). Two
+# shapes live-verified against ansible-core 2.21.6 (issue #94). Two
 # cases: the parse-time refusal at the top level (rc=1, Origin block),
 # and the run-time fatal through an include_tasks:-loaded file inside a
 # role (rc=2, wrapped <<< caused by >>> block + per-host fatal line).
@@ -35,7 +35,7 @@ describe "static import_role: naming a missing role" do
 
     status, output = run_playbook(dir)
 
-    output.must_include("[ERROR]: the role 'nonexistent.role' was not found in #{dir}/roles:")
+    output.must_include("[ERROR]: The role 'nonexistent.role' was not found in: #{dir}/roles:")
     output.must_include("Origin: #{dir}/site.yml:5:20")
     output.must_include("3   connection: local")
     output.must_include("4   tasks:")
@@ -63,7 +63,7 @@ describe "static import_role: naming a missing role" do
 
     status, output = run_playbook(dir)
 
-    output.must_include("[ERROR]: the role 'nonexistent.role' was not found in #{dir}/roles:")
+    output.must_include("[ERROR]: The role 'nonexistent.role' was not found in: #{dir}/roles:")
     output.must_include("Origin: #{dir}/site.yml:5:15")
     exit_code = status.exit_code
     exit_code.must_equal(1)
@@ -91,7 +91,7 @@ describe "static import_role: naming a missing role" do
 
     status, output = run_playbook(dir)
 
-    output.must_include("[ERROR]: the role 'nonexistent.role' was not found in #{dir}/roles:")
+    output.must_include("[ERROR]: The role 'nonexistent.role' was not found in: #{dir}/roles:")
     output.must_include(":#{dir}\n")
     output.wont_include("tasks/roles")
     exit_code = status.exit_code
@@ -125,11 +125,11 @@ describe "static import_role: naming a missing role" do
 
     status, output = run_playbook(dir)
 
-    output.must_include("[ERROR]: the role 'nonexistent.role' was not found in #{dir}/roles:")
-    output.must_include("\n\nthe role 'nonexistent.role' was not found in #{dir}/roles:")
+    output.must_include("[ERROR]: The role 'nonexistent.role' was not found in: #{dir}/roles:")
+    output.must_include("\n\nThe role 'nonexistent.role' was not found in: #{dir}/roles:")
     output.must_include("<<< caused by >>>")
     output.must_include("Origin: #{dir}/roles/r3/tasks/sub/x.yml:1:16")
-    output.must_include(%(fatal: [localhost]: FAILED! => {"changed": false, "include": "sub/x.yml", "reason": "the role 'nonexistent.role' was not found in #{dir}/roles:))
+    output.must_include(%(fatal: [localhost]: FAILED! => {"changed": false, "include": "sub/x.yml", "reason": "The role 'nonexistent.role' was not found in: #{dir}/roles:))
     output.wont_include("tasks/sub/roles")
     output.wont_include("Failed to load included tasks")
     output.must_match(/ok=0\s+changed=0\s+unreachable=0\s+failed=1\s+skipped=0\s+rescued=0\s+ignored=0/)
@@ -165,7 +165,7 @@ describe "static import_role: naming a missing role" do
 
     status, output = run_playbook(dir)
 
-    output.must_include("[ERROR]: the role 'nonexistent.role' was not found in #{dir}/roles:")
+    output.must_include("[ERROR]: The role 'nonexistent.role' was not found in: #{dir}/roles:")
     output.must_include("<<< caused by >>>")
     output.wont_include("fatal: [localhost]")
     output.must_match(/ok=0\s+changed=0\s+unreachable=0\s+failed=1\s+skipped=0\s+rescued=0\s+ignored=0/)
