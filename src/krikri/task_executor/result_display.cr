@@ -1720,6 +1720,57 @@ module Krikri
       return nil unless path && source_line > 0 && File.file?(path)
 
       lines = File.read_lines(path)
+      return nil unless idx = param_key_line_index(lines, source_line, key, list_entry_key)
+      line = lines[idx]
+      needle = "#{key}:"
+      col = line.index!(needle) + needle.size
+      while col < line.size && line[col] == ' '
+        col += 1
+      end
+      ErrorBlock.origin_context(path, idx + 1, col + 1)
+    end
+
+    # The Origin of a top-level fact read inside a LOOP SOURCE. Ansible
+    # renders a loop's items in order and pins the deprecation at the
+    # list ELEMENT that named the fact - its own scalar token
+    # (`- "{{ ansible_os_family }}.yml"`), never at the `<key>:` line -
+    # live-verified vs 2.21.6 on mullholland.ntp's with_first_found, whose
+    # candidates are block-sequence elements (issue #956). *name* is the
+    # fact being read, so the element that actually named it wins; nil
+    # when no element of the source names it.
+    def self.loop_source_origin(path : String?, source_line : Int32, key : String, name : String? = nil) : String?
+      return nil unless path && source_line > 0 && File.file?(path)
+
+      lines = File.read_lines(path)
+      return nil unless idx = param_key_line_index(lines, source_line, key)
+      key_line = lines[idx]
+      needle = "#{key}:"
+      rest = key_line[(key_line.index!(needle) + needle.size)..]
+      # A loop source written on the key line itself (`loop: "{{ x }}"`,
+      # `with_items: [a, b]`) keeps the plain param-VALUE position.
+      unless rest.strip.empty?
+        return nil if name && !key_line.includes?(name)
+        return param_value_origin(path, source_line, key)
+      end
+      key_indent = key_line.size - key_line.lstrip.size
+      ((idx + 1)...lines.size).each do |val_idx|
+        val_line = lines[val_idx]
+        val_stripped = val_line.strip
+        next if val_stripped.empty? || val_stripped.starts_with?("#")
+        val_indent = val_line.size - val_line.lstrip.size
+        return nil if val_indent < key_indent
+        next unless val_stripped.starts_with?("- ")
+        next if name && !val_line.includes?(name)
+        # The element's own scalar start - a quoted scalar's opening quote,
+        # which is where ansible anchors it.
+        return ErrorBlock.origin_context(path, val_idx + 1, val_indent + 3)
+      end
+      nil
+    end
+
+    # The line index of a task param's `<key>:` mapping key at or after
+    # *source_line*: nothing but whitespace/quotes may precede the key.
+    private def self.param_key_line_index(lines : Array(String), source_line : Int32, key : String, list_entry_key : Bool = false) : Int32?
       needle = "#{key}:"
       ((source_line - 1)...lines.size).each do |idx|
         line = lines[idx]
@@ -1732,11 +1783,7 @@ module Krikri
         stripped = prefix.strip
         next unless stripped.empty? || (stripped.size == 1 && {"'", '"'}.includes?(stripped)) ||
                     (list_entry_key && stripped == "-")
-        col = at + needle.size
-        while col < line.size && line[col] == ' '
-          col += 1
-        end
-        return ErrorBlock.origin_context(path, idx + 1, col + 1)
+        return idx
       end
       nil
     end

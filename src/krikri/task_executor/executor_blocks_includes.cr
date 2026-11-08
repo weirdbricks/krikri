@@ -1038,7 +1038,10 @@ module Krikri
       # sources (round 701114/821007 cases A/B).
       deferred_undef_error : UndefinedVariableError? = nil
       items = begin
-        resolve_first_found(task, host, vars_context)
+        # The candidate list IS the loop source, so its renders carry the
+        # loop-source Origin a top-level fact read inside them deprecates
+        # at (see TaskExecutor#with_loop_source_site).
+        with_loop_source_site(task) { resolve_first_found(task, host, vars_context) }
       rescue ex : LoopLookupError
         # with_first_found: exhaustion is the with_<lookup>: machinery's
         # own lookup failure - real prints the bodyless [ERROR] block
