@@ -1958,9 +1958,9 @@ module Krikri
           # Emulated by pushing the condition down onto the children and
           # falling through to the normal flow below, so the standard
           # halt/rescue/always/rescued accounting applies unchanged.
-          inherit_when_condition(task.when_condition.as(String), task.when_condition_list, task.block_tasks)
-          inherit_when_condition(task.when_condition.as(String), task.when_condition_list, task.rescue_tasks)
-          inherit_when_condition(task.when_condition.as(String), task.when_condition_list, task.always_tasks)
+          inherit_block_when(task, task.block_tasks)
+          inherit_block_when(task, task.rescue_tasks)
+          inherit_block_when(task, task.always_tasks)
           when_errored = true
         end
 
@@ -1968,9 +1968,9 @@ module Krikri
           # Ansible inherits a block's when: onto every child, so a task
           # that changes a variable the condition reads (e.g. set_fact of
           # ansible_hostname) makes the later children skip.
-          inherit_when_condition(task.when_condition.as(String), task.when_condition_list, task.block_tasks)
-          inherit_when_condition(task.when_condition.as(String), task.when_condition_list, task.rescue_tasks)
-          inherit_when_condition(task.when_condition.as(String), task.when_condition_list, task.always_tasks)
+          inherit_block_when(task, task.block_tasks)
+          inherit_block_when(task, task.rescue_tasks)
+          inherit_block_when(task, task.always_tasks)
         end
 
         unless when_errored || when_result

@@ -288,4 +288,116 @@ describe "INJECT_FACTS_AS_VARS deprecation from a when: clause" do
     stderr.must_include("[DEPRECATION WARNING]: INJECT_FACTS_AS_VARS default to `True` is deprecated, top-level facts will not be auto injected after the change. This feature will be removed from ansible-core version 2.24.")
     stderr.scan(/DEPRECATION WARNING\]: INJECT_FACTS_AS_VARS/).size.must_equal(1)
   end
+
+  # jetune.docker_swarm_master's `when:` lists (issue #990): real evaluates
+  # each item as its own templating operation, so a two-item list prints two
+  # blocks, each pinned at the item that named the fact - never at the
+  # `when:` key line, and never just one block for the whole list.
+  # Live-verified vs 2.21.6.
+  it "pins each block-sequence when: item's read at its own item token" do
+    stderr = run_playbook(<<-PLAYBOOK)
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        tasks:
+          - name: item gate
+            debug:
+              msg: hi
+            when:
+              - ansible_os_family | length > 0
+              - ansible_architecture | length > 0
+      PLAYBOOK
+
+    stderr.scan(/DEPRECATION WARNING\]: INJECT_FACTS_AS_VARS/).size.must_equal(2)
+    stderr.must_include(":9:11\n")
+    stderr.must_include("8       when:\n")
+    stderr.must_include("9         - ansible_os_family | length > 0\n")
+    stderr.must_include("            ^ column 11")
+    stderr.must_include(":10:11\n")
+    stderr.must_include("10         - ansible_architecture | length > 0\n")
+  end
+
+  # A dynamic include's loaded tasks inherit the enclosing BLOCK's when:
+  # through real's parent chain, so the block's fact read is reported after
+  # the first included task's banner, Origin'd at the block's own clause
+  # item (jetune.docker's main.yml/initialize.yml shape, issue #990).
+  # Live-verified vs 2.21.6; the include statement's OWN when: stays silent
+  # (issue #974), which is why the clause lives on the block here.
+  it "warns for the block when: a dynamic include's tasks inherit" do
+    dir = PluginSpecHelper.tmp_path("inject-facts-block-include-#{Random::Secure.hex(4)}")
+    FileUtils.mkdir_p(dir)
+    File.write(File.join(dir, "inner.yml"), <<-YAML)
+      ---
+      - name: inner task
+        debug:
+          msg: hi
+      YAML
+    playbook = File.join(dir, "play.yml")
+    File.write(playbook, <<-PLAYBOOK)
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        tasks:
+          - name: outer
+            block:
+              - name: include inner
+                include_tasks: inner.yml
+            when:
+              - ansible_os_family | length > 0
+      PLAYBOOK
+
+    stdout = IO::Memory.new
+    stderr = IO::Memory.new
+    Process.run(BINARY, ["-i", "localhost,", playbook], output: stdout, error: stderr, chdir: dir)
+
+    stdout.to_s.must_include("TASK [inner task]")
+    stderr = stderr.to_s
+    stderr.scan(/DEPRECATION WARNING\]: INJECT_FACTS_AS_VARS/).size.must_equal(1)
+    stderr.must_include("/play.yml:10:11\n")
+    stderr.must_include(" 8           include_tasks: inner.yml\n")
+    stderr.must_include(" 9       when:\n")
+    stderr.must_include("10         - ansible_os_family | length > 0\n")
+    stderr.must_include("             ^ column 11")
+  end
+
+  # The skipped half of the same inheritance: a block inside the included
+  # file that is itself skipped still evaluates the inherited clause for
+  # each child, and real pins that read at the OUTER block's item - not at
+  # the inner block's own `when:` line (issue #990, live-verified vs 2.21.6).
+  it "keeps the outer block's Origin for a skipped block inside an include" do
+    dir = PluginSpecHelper.tmp_path("inject-facts-skipped-block-#{Random::Secure.hex(4)}")
+    FileUtils.mkdir_p(dir)
+    File.write(File.join(dir, "inner.yml"), <<-YAML)
+      ---
+      - name: inner block
+        block:
+          - name: inner task
+            debug:
+              msg: hi
+        when: false
+      YAML
+    playbook = File.join(dir, "play.yml")
+    File.write(playbook, <<-PLAYBOOK)
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        tasks:
+          - name: outer
+            block:
+              - name: include inner
+                include_tasks: inner.yml
+            when:
+              - ansible_os_family | length > 0
+      PLAYBOOK
+
+    stdout = IO::Memory.new
+    stderr = IO::Memory.new
+    Process.run(BINARY, ["-i", "localhost,", playbook], output: stdout, error: stderr, chdir: dir)
+
+    stdout.to_s.must_include("skipping: [localhost]")
+    stderr = stderr.to_s
+    stderr.scan(/DEPRECATION WARNING\]: INJECT_FACTS_AS_VARS/).size.must_equal(1)
+    stderr.must_include("/play.yml:10:11\n")
+    stderr.includes?("/inner.yml:7:").must_equal(false)
+  end
 end

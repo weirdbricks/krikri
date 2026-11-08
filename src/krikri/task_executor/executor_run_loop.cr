@@ -323,7 +323,7 @@ module Krikri
     # later hosts, by which time @last_false_condition no longer holds that
     # host's clause.
     private def partition_by_when(task : Task, hosts : Array(Host), inherit_on_error : Bool = false, skip_conditions : Hash(String, String)? = nil) : {Array(Host), Array(Host)}
-      return {hosts, [] of Host} unless when_condition = task.when_condition
+      return {hosts, [] of Host} unless task.when_condition
 
       run_hosts = [] of Host
       skip_hosts = [] of Host
@@ -349,9 +349,9 @@ module Krikri
           if evaluate_when_items(task, vars_context, host)
             if inherit_on_error
               # Ansible re-evaluates the block's when: on every child.
-              inherit_when_condition(when_condition, task.when_condition_list, task.block_tasks)
-              inherit_when_condition(when_condition, task.when_condition_list, task.rescue_tasks)
-              inherit_when_condition(when_condition, task.when_condition_list, task.always_tasks)
+              inherit_block_when(task, task.block_tasks)
+              inherit_block_when(task, task.rescue_tasks)
+              inherit_block_when(task, task.always_tasks)
             end
             run_hosts << host
           else
@@ -364,9 +364,9 @@ module Krikri
           # A raise here only affects THIS host - every other host in
           # *hosts* still gets partitioned normally.
           if inherit_on_error
-            inherit_when_condition(when_condition, task.when_condition_list, task.block_tasks)
-            inherit_when_condition(when_condition, task.when_condition_list, task.rescue_tasks)
-            inherit_when_condition(when_condition, task.when_condition_list, task.always_tasks)
+            inherit_block_when(task, task.block_tasks)
+            inherit_block_when(task, task.rescue_tasks)
+            inherit_block_when(task, task.always_tasks)
             run_hosts << host
           else
             # Fails cleanly for this one host (stats/halt/register/print
@@ -1003,6 +1003,7 @@ module Krikri
       # the condition rendering its own template) restore the outer one.
       if task
         exact_pos = task.imported_when_origins.try { |origins| origins[when_condition]? } ||
+                    task.block_inherited_when.try { |inherited| inherited.origins.try { |origins| origins[when_condition]? } } ||
                     task.inherited_when_origin
         # A BLOCK's when: is only ever pre-evaluated here (to decide
         # whether the block runs at all); ansible evaluates it on the
@@ -4698,6 +4699,48 @@ module Krikri
       end
     end
 
+    # `block_task`'s `when:` reaches its children the way Ansible's parent
+    # chain does: as a merged condition string AND as the block's own
+    # clauses, which the children - including the files their dynamic
+    # includes load - evaluate individually (see
+    # Task#block_inherited_when).
+    private def inherit_block_when(block_task : Task, tasks : Array(Task)?) : Nil
+      return unless tasks
+      return if tasks.empty?
+      condition = block_task.when_condition
+      return unless condition
+
+      chain = block_when_chain(block_task)
+      return if chain.empty?
+      inherited = BlockInheritedWhen.new(
+        chain.size == 1 ? chain.first : chain.map { |clause| "(#{clause})" }.join(" and "),
+        chain,
+        block_when_origins(block_task))
+      inherit_when_condition(condition, block_task.when_condition_list, tasks)
+      tasks.each { |nested_task| nested_task.block_inherited_when = inherited }
+    end
+
+    # The clauses `block_task` itself contributes to its children: its own
+    # when: clauses, with any chain the block inherited from an ENCLOSING
+    # block stripped back off (inherit_when_condition prepends that chain
+    # to when_condition_list, so the tail is the block's own).
+    private def block_when_chain(block_task : Task) : Array(String)
+      own = block_task.when_condition_list ||
+            (block_task.when_condition ? [block_task.when_condition.as(String)] : [] of String)
+      outer = block_task.block_inherited_when.try(&.conditions)
+      return own unless outer && own.size > outer.size
+      own[outer.size..]
+    end
+
+    private def block_when_origins(block_task : Task) : Hash(String, {String, Int32, Int32})?
+      outer = block_task.block_inherited_when.try(&.origins)
+      own = conditional_clause_origins(block_task, "when", block_when_chain(block_task))
+      return outer || own unless outer && own
+      merged = outer.dup
+      own.each { |clause, origin| merged[clause] = origin }
+      merged
+    end
+
     # The ambient Play an include directive's loaded tasks are parsed
     # against: the include statement's own become/become_user (what this
     # engine has always propagated to the tasks it loads) with the
@@ -4733,6 +4776,17 @@ module Krikri
       end
       if apply_when = task.include_apply_when
         inherit_when_condition(apply_when, task.include_apply_when_list, loaded)
+      end
+      # The enclosing BLOCK's `when:` rides Ansible's parent chain into the
+      # tasks a dynamic include loads, so each of them evaluates it too -
+      # which is where real prints the deprecation a block-level fact read
+      # raises (issue #990). A STATIC import is excluded: the parser already
+      # merged its own when: into the loaded tasks at parse time.
+      unless task.is_static_import?
+        if inherited = task.block_inherited_when
+          inherit_when_condition(inherited.condition, inherited.conditions, loaded)
+          loaded.each { |loaded_task| loaded_task.block_inherited_when = inherited }
+        end
       end
       # Ansible's module_defaults context is a RUNTIME stack: an
       # include_tasks: inside a defaults-carrying block applies those
