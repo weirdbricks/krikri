@@ -2069,6 +2069,82 @@ describe "krikri-playbook CLI (--check mode)" do
       end
     end
 
+    it "meta: noop/refresh_inventory/reset_connection warn that a when: is unsupported and still take effect" do
+      # Ansible's strategy reads these three actions' `when:` only to warn
+      # ("<action> task does not support when conditional"); it never
+      # evaluates it, so a false - or an undefined-variable - conditional
+      # neither skips the task nor fails the run, and a gated
+      # refresh_inventory still re-reads the inventory. Live-verified
+      # against ansible-core 2.21.6 with a dynamic inventory script that
+      # only reports the second host once the marker exists (plays 2's own
+      # host list then sees it, exactly like the ungated case).
+      script = File.tempname("dynamic-inventory-meta-when", ".sh")
+      marker = File.tempname("dynamic-inventory-meta-when-marker")
+      File.delete(marker) rescue nil
+      File.write(script, <<-SH)
+        #!/bin/sh
+        if [ -f #{marker} ]; then
+          echo '{"all":{"hosts":["hostone","hosttwo"]},"_meta":{"hostvars":{"hostone":{"ansible_connection":"local"},"hosttwo":{"ansible_connection":"local"}}}}'
+        else
+          echo '{"all":{"hosts":["hostone"]},"_meta":{"hostvars":{"hostone":{"ansible_connection":"local"}}}}'
+        fi
+        SH
+      File.chmod(script, 0o755)
+
+      tmp = File.tempname("meta-when-unsupported", ".yml")
+      File.write(tmp, <<-YAML)
+        - hosts: all
+          gather_facts: false
+          tasks:
+            - name: create marker
+              ansible.builtin.file:
+                path: #{marker}
+                state: touch
+              delegate_to: localhost
+            - name: noop gated by a false when
+              ansible.builtin.meta: noop
+              when: false
+            - name: refresh gated by an undefined-variable when
+              ansible.builtin.meta: refresh_inventory
+              when: meta_when_undefined_var
+            - name: reset gated by a false when
+              ansible.builtin.meta: reset_connection
+              when: false
+            - name: flush handlers with a when (supported, no warning)
+              ansible.builtin.meta: flush_handlers
+              when: true
+            - name: after the meta tasks
+              ansible.builtin.debug:
+                msg: still running
+        - hosts: all
+          gather_facts: false
+          tasks:
+            - name: play2 view
+              ansible.builtin.debug:
+                msg: "play2 saw {{ inventory_hostname }}"
+        YAML
+      begin
+        captured = IO::Memory.new
+        status = Process.run(BINARY, ["-i", script, tmp], output: captured, error: captured)
+        output = captured.to_s
+
+        status.success?.must_equal(true)
+        output.must_include("[WARNING]: noop task does not support when conditional")
+        output.must_include("[WARNING]: refresh_inventory task does not support when conditional")
+        output.must_include("[WARNING]: reset_connection task does not support when conditional")
+        output.wont_include("flush_handlers task does not support when conditional")
+        output.wont_include("Error while evaluating conditional")
+        output.wont_include("skipping:")
+        output.must_include("still running")
+        output.must_include("play2 saw hostone")
+        output.must_include("play2 saw hosttwo")
+      ensure
+        File.delete(tmp) rescue nil
+        File.delete(script) rescue nil
+        File.delete(marker) rescue nil
+      end
+    end
+
     it "rejects an unknown gathering mode" do
       status, output = run_playbook(
         "test-gathering-smart-quick.yml", ["--gathering", "bogus"], inventory: testservers_inventory
