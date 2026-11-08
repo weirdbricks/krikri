@@ -4097,14 +4097,18 @@ module Krikri
       # list-end hook lost every warning that preceded the aborting task
       # (issue #863).
       if module_name
-        # Only the builtin-core deprecations carry an Origin block (issues
-        # #917/#918: their warnings echo the module key's own position and
-        # print once per task occurrence); collection redirects carry none
-        # and dedup per run. The source map records the downstream map
-        # value's position instead, so scan upward from the task start for
-        # the key.
-        deprecation_origin = nil
+        # Every load-time deprecation carries an Origin block: real renders
+        # it from the YAML tag on the module-name string, so a spelling
+        # whose resolution rebuilds that name from parts loses the tag and
+        # prints the position-less `Origin: <unknown>` form with an excerpt
+        # instead of the positioned one (issues #917/#918 for the
+        # builtin-core entries, issue #973 for the collection redirects).
+        # The source map records the downstream map value's position
+        # instead, so scan upward from the task start for the key.
+        positionless_excerpt : String? = nil
+        deprecated = false
         if origin_carrying_builtin_deprecation?(module_name)
+          deprecated = true
           if module_name == "ansible.legacy.apt_repository"
             # The ansible.legacy. spelling resolves the name through the
             # builtin-runtime's bare key, and that path loses the task
@@ -4114,7 +4118,26 @@ module Krikri
             # ansible-core 2.21.6, beside the bare and FQCN spellings'
             # positioned blocks). apt_key's legacy entry predates this and
             # is left as issue #917 set it.
-            deprecation_origin = "Origin: <unknown>\n\n#{module_name.split(".").last}"
+            positionless_excerpt = module_name.split(".").last
+          end
+        elsif deprecation_fqcn = redirect_deprecation_fqcn(module_name)
+          deprecated = true
+          if deprecation_fqcn != module_name
+            # A collection redirect resolved from a bare or ansible.legacy
+            # spelling joins the collection onto the name, losing the tag -
+            # real prints `Origin: <unknown>` with that FQCN as the whole
+            # excerpt right after the warning line (live-verified vs
+            # ansible-core 2.21.6 on `mysql_db:`, which is how the
+            # net2grid.mysql-deploy role spells it). The as-written FQCN
+            # keeps its tag and prints the positioned block below.
+            positionless_excerpt = deprecation_fqcn
+          end
+        end
+        deprecation_origin =
+          if !deprecated
+            nil
+          elsif excerpt = positionless_excerpt
+            "Origin: <unknown>\n\n#{excerpt}"
           elsif deprecation_pos = source_map.try(&.at?("#{task_source_prefix(source_prefix, index)}/#{module_name}"))
             line = deprecation_pos[0]
             if line > 0 && source_file && File.file?(source_file)
@@ -4131,9 +4154,8 @@ module Krikri
                 deprecation_pos = {key_line, key_idx + 1}
               end
             end
-            deprecation_origin = deprecation_origin_block(source_file, source_map, deprecation_pos)
+            deprecation_origin_block(source_file, source_map, deprecation_pos)
           end
-        end
         ResultDisplay.emit_module_redirect_deprecation(module_name, deprecation_origin)
       end
 

@@ -68,7 +68,7 @@ ensure
 end
 
 describe "community.general.proxmox_kvm deprecation" do
-  it "prints the trailer once and one deprecation line per distinct module, before the play banner" do
+  it "prints the trailer once and one deprecation block per task occurrence, before the play banner" do
     success, output = run_play([
       "    - name: first vm",
       "      community.general.proxmox_kvm:",
@@ -81,8 +81,10 @@ describe "community.general.proxmox_kvm deprecation" do
     ])
     success.must_equal(true, output)
     output.scan(TRAILER_LINE).size.must_equal(1)
-    # One line for BOTH tasks: Ansible's Display dedups on the message.
-    output.scan(DEPRECATION_LINE).size.must_equal(1)
+    # One block per task: Ansible's Display dedups on the WHOLE formatted
+    # message, Origin block included, and the two tasks sit at different
+    # positions (2.21.6).
+    output.scan(DEPRECATION_LINE).size.must_equal(2)
     # The stderr lines land before the play banner, like Ansible's
     # task-load-time emission.
     trailer_idx = output.index!(TRAILER_LINE)
