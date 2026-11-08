@@ -1003,10 +1003,19 @@ module Krikri
       if task
         exact_pos = task.imported_when_origins.try { |origins| origins[when_condition]? } ||
                     task.inherited_when_origin
+        # A BLOCK's when: is only ever pre-evaluated here (to decide
+        # whether the block runs at all); ansible evaluates it on the
+        # block's CHILDREN, so the deprecation a fact-alias read raises
+        # belongs after each child's own banner. Registering the clause
+        # text only for the children's own evaluations (the block's
+        # inherited condition reaches them) keeps the warning where real
+        # prints it - the block's skip path emits it separately, after
+        # the first child's banner (print_skipped_tasks).
+        site_text = task.block? ? nil : when_condition
         if exact_pos
-          VarSubstitutor.set_current_when_site(exact_pos[0], exact_pos[1], exact_pos[2])
+          VarSubstitutor.set_current_when_site(exact_pos[0], exact_pos[1], exact_pos[2], site_text)
         else
-          VarSubstitutor.set_current_when_site(task.source_file, task.source_line, 0)
+          VarSubstitutor.set_current_when_site(task.source_file, task.source_line, 0, site_text)
         end
       end
       begin
@@ -4174,6 +4183,21 @@ module Krikri
       hash["_ansible_conditional_clause_emitted"] = JSON::Any.new(true)
     end
 
+    # Runs *block* with the clause's own value position registered as the
+    # fiber's current templated-param site, so a deprecation raised while
+    # the clause resolves names (the top-level fact alias read) carries
+    # the clause value's Origin the way ansible-core's points at it
+    # (live-verified 2.21.6: `changed_when: ansible_os_family == 'x'`
+    # reports the value token's column).
+    private def with_conditional_param_site(task : Task, key : String, raw : String, & : -> T) : T forall T
+      VarSubstitutor.set_current_task_param(task.source_file, task.source_line, key, raw)
+      begin
+        yield
+      ensure
+        VarSubstitutor.pop_current_task_param
+      end
+    end
+
     private def apply_changed_failed_when(task : Task, result : JSON::Any, vars_context : Hash(String, JSON::Any), host : Host) : JSON::Any
       # assert:'s non-bool that: failure rides its raw item text for the
       # fatal msg's lineage clause - inert for every other result shape.
@@ -4303,7 +4327,9 @@ module Krikri
         begin
           if changed_when
             maybe_conditional_delimiters_deprecation(task, changed_when, "changed_when", eval_context)
-            hash["changed"] = JSON::Any.new(ConditionalEvaluator.evaluate(substitute_conditional_rendering_errors(substitutor, changed_when), eval_context, strict: true, raise_undefined: true))
+            hash["changed"] = JSON::Any.new(with_conditional_param_site(task, "changed_when", changed_when) do
+              ConditionalEvaluator.evaluate(substitute_conditional_rendering_errors(substitutor, changed_when), eval_context, strict: true, raise_undefined: true)
+            end)
           end
         rescue e : ConditionalEvaluator::ConditionalBooleanError | ConditionalEvaluator::UndefinedVariableError | Krikri::FilterPluginError | Krikri::TestPluginError | VariableSubstitutor::FilterEngine::UnknownFilterError | ChangedFailedWhenRenderSyntaxError
           hash["failed"] = JSON::Any.new(true)
@@ -4315,7 +4341,9 @@ module Krikri
         begin
           if failed_when
             maybe_conditional_delimiters_deprecation(task, failed_when, "failed_when", eval_context)
-            failed_when_result = ConditionalEvaluator.evaluate(substitute_conditional_rendering_errors(substitutor, failed_when), eval_context, strict: true, raise_undefined: true)
+            failed_when_result = with_conditional_param_site(task, "failed_when", failed_when) do
+              ConditionalEvaluator.evaluate(substitute_conditional_rendering_errors(substitutor, failed_when), eval_context, strict: true, raise_undefined: true)
+            end
             hash["failed"] = JSON::Any.new(failed_when_result)
             # TaskExecutor: result['failed_when_result'] = <verdict> whenever failed_when: is set
             hash["failed_when_result"] = JSON::Any.new(failed_when_result)

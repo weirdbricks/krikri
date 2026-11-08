@@ -1422,13 +1422,13 @@ module Krikri
     # whose when: was False hands it to every child's skip line, whose -v
     # dump carries it as false_condition exactly like a task-level
     # when:-false skip (live-verified vs 2.19.11).
-    private def print_skipped_tasks(tasks : Array(Task), host : Host, inherited_when : String? = nil) : Nil
+    private def print_skipped_tasks(tasks : Array(Task), host : Host, inherited_when : String? = nil, block_task : Task? = nil) : Nil
       tasks.each do |nested_task|
         # A nested block is transparent - like Ansible, it gets no
         # "TASK [...]" banner of its own, only its members do.
         if nested_task.block?
-          print_skipped_tasks(nested_task.block_tasks || [] of Task, host, inherited_when)
-          print_skipped_tasks(nested_task.always_tasks || [] of Task, host, inherited_when)
+          print_skipped_tasks(nested_task.block_tasks || [] of Task, host, inherited_when, block_task)
+          print_skipped_tasks(nested_task.always_tasks || [] of Task, host, inherited_when, block_task)
           next
         end
 
@@ -1445,6 +1445,14 @@ module Krikri
         end
 
         Krikri::OutputBanner.banner("#{task_banner_kind} [#{task_role_prefix(nested_task)}#{render_task_name_for_display(nested_task, host)}]")
+        # A skipped block's inherited when: IS evaluated per child in real
+        # (once per child task's own conditional check), so a deprecation
+        # it raises - the top-level fact alias read - prints after the
+        # first child's banner, exactly here. Deduplicated per Origin, so
+        # only the first child's call emits it.
+        if (block = block_task) && (condition = inherited_when)
+          emit_skipped_block_when_deprecation(block, condition, host)
+        end
         # A looped task inside a when:-false block does NOT print the
         # single bare line a non-looped task gets: the inherited
         # condition is evaluated per loop item, so real prints ONE

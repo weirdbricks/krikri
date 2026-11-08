@@ -1043,7 +1043,10 @@ describe "krikri-playbook CLI (--check mode)" do
 
     status.success?.must_equal(true)
     output.must_include("TASK [Gathering Facts]")
-    output.wont_include("hostname is {{ ansible_hostname }}") # substitution actually happened
+    # The INJECT_FACTS_AS_VARS deprecation's Origin block quotes the raw
+    # msg: source line, so this has to match the rendered JSON line and
+    # not the bare template text.
+    output.wont_include(%("msg": "hostname is {{ ansible_hostname }}")) # substitution actually happened
   end
 
   it "skips the Gathering Facts task entirely when gather_facts: false" do
@@ -1645,9 +1648,11 @@ describe "krikri-playbook CLI (--check mode)" do
       status.success?.must_equal(true)
       # The whole point: skipping the round trip must not mean skipping
       # the facts. All three plays resolve ansible_kernel, none falls
-      # back to the default('MISSING').
-      output.wont_include("MISSING")
-      output.scan(/play\d kernel=/).size.must_equal(3)
+      # back to the default('MISSING') - asserted on the rendered JSON
+      # lines, because the deprecation Origin block quotes the raw msg:
+      # source line that carries the fallback text.
+      output.wont_include("kernel=MISSING")
+      output.scan(/"msg": "play\d kernel=/).size.must_equal(3)
     end
 
     it "smart and implicit produce the same task results, differing only in gathering" do
@@ -1659,8 +1664,8 @@ describe "krikri-playbook CLI (--check mode)" do
       )
 
       %w[play1 play2 play3].each do |play|
-        implicit_line = implicit_output.lines.find(&.includes?("#{play} kernel="))
-        smart_line = smart_output.lines.find(&.includes?("#{play} kernel="))
+        implicit_line = implicit_output.lines.find(&.includes?(%(msg": "#{play} kernel=)))
+        smart_line = smart_output.lines.find(&.includes?(%(msg": "#{play} kernel=)))
         smart_line.must_equal(implicit_line)
       end
     end
@@ -1696,7 +1701,7 @@ describe "krikri-playbook CLI (--check mode)" do
       # Without the clear_facts this would be 1; the clear in play 2 makes
       # play 3 gather again. Matches ansible-core 2.19.4 exactly.
       output.scan("TASK [Gathering Facts]").size.must_equal(2)
-      output.wont_include("MISSING")
+      output.wont_include("kernel=MISSING")
     end
 
     it "meta: produces no per-host output line and no recap credit" do

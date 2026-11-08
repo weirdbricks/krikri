@@ -1069,7 +1069,7 @@ module Krikri
       loop_key = loop_source_keyword(task)
       loop_param_registered = false
       if loop_key && task.source_file
-        VarSubstitutor.set_current_task_param(task.source_file, task.source_line, loop_key)
+        VarSubstitutor.set_current_task_param(task.source_file, task.source_line, loop_key, task.loop_template)
         loop_param_registered = true
       end
       yield
@@ -3015,16 +3015,21 @@ module Krikri
           substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
           maybe_conditional_delimiters_deprecation(task, until_condition, "until", vars_context)
           begin
-            substituted_condition = substitutor.substitute(until_condition)
-            # strict/raise_undefined: real evaluates an until: like a when: -
-            # an undefined name raises, and the final result must be a real
-            # boolean (live-verified vs 2.21.6: `until: r.stdout` on
-            # "hi" fails "An 'until' expression failed: Conditional result
-            # (True) was derived from value of type 'str' ...").
-            if ConditionalEvaluator.evaluate(substituted_condition, vars_context, strict: true, raise_undefined: true)
-              condition_met = true
-              break
+            # The clause's value position rides the fiber as its templated
+            # param site, so a top-level fact alias read while the clause
+            # resolves deprecates with the until: value's own Origin
+            # (live-verified vs 2.21.6) - the position the delimiters
+            # deprecation above already reports.
+            condition_met = with_conditional_param_site(task, "until", until_condition) do
+              substituted_condition = substitutor.substitute(until_condition)
+              # strict/raise_undefined: real evaluates an until: like a when: -
+              # an undefined name raises, and the final result must be a real
+              # boolean (live-verified vs 2.21.6: `until: r.stdout` on
+              # "hi" fails "An 'until' expression failed: Conditional result
+              # (True) was derived from value of type 'str' ...").
+              ConditionalEvaluator.evaluate(substituted_condition, vars_context, strict: true, raise_undefined: true)
             end
+            break if condition_met
           rescue ex : VariableSubstitutor::FilterEngine::UnknownFilterError | VariableSubstitutor::UnknownTestError | UndefinedVariableError | ConditionalEvaluator::UndefinedVariableError | ConditionalEvaluator::ConditionalBooleanError | ConditionalEvaluator::OrderingTypeError | RenderExpressionError | Krikri::FilterPluginError | Krikri::TestPluginError
             # An ansible-compiled until: condition fails the WHOLE task the
             # first time it raises: one fatal "Task failed: An 'until'

@@ -235,7 +235,16 @@ module Krikri
       state = NameTemplateErrorState.new
       top = NameTemplateContext.new
       top.origin = name_value_origin(task)
-      rendered = marker_render_chunks(task.name, substitutor, vars_context, task, host, top, state, 0, nil)
+      # A gathered fact's top-level alias read from the name: deprecates
+      # with the name VALUE token as its Origin (live-verified against
+      # 2.21.6: `- name: "task for {{ ansible_os_family }}"` points at
+      # the value's opening quote), so the render carries its param site.
+      VarSubstitutor.set_current_task_param(task.source_file, task.source_line, "name", task.name)
+      begin
+        rendered = marker_render_chunks(task.name, substitutor, vars_context, task, host, top, state, 0, nil)
+      ensure
+        VarSubstitutor.pop_current_task_param
+      end
       complete_name_context(top, state, rendered)
     rescue
       task.name

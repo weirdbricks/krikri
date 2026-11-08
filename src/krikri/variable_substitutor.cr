@@ -2017,11 +2017,11 @@ module Krikri
     # Stores just the param's source position (not the Task object):
     # the plugin binaries compile this templating engine without the
     # playbook parser, so Task is not a type the whole program shares.
-    record TemplatedParamSite, source_file : String?, source_line : Int32, key : String
+    record TemplatedParamSite, source_file : String?, source_line : Int32, key : String, text : String? = nil
     @@templated_task_param = {} of Fiber => Array(TemplatedParamSite)
 
-    def self.set_current_task_param(source_file : String?, source_line : Int32, key : String) : Nil
-      (@@templated_task_param[Fiber.current] ||= Array(TemplatedParamSite).new).push(TemplatedParamSite.new(source_file, source_line, key))
+    def self.set_current_task_param(source_file : String?, source_line : Int32, key : String, text : String? = nil) : Nil
+      (@@templated_task_param[Fiber.current] ||= Array(TemplatedParamSite).new).push(TemplatedParamSite.new(source_file, source_line, key, text))
     end
 
     def self.pop_current_task_param : Nil
@@ -2049,11 +2049,11 @@ module Krikri
     # parser recorded one (import-merged clauses: imported_when_origins /
     # inherited_when_origin); 0 falls back to scanning the task's own file
     # for the "when:" key, the same locate param_value_origin performs.
-    record WhenOriginSite, source_file : String?, source_line : Int32, exact_col : Int32
+    record WhenOriginSite, source_file : String?, source_line : Int32, exact_col : Int32, text : String? = nil
     @@current_when_site = {} of Fiber => Array(WhenOriginSite)
 
-    def self.set_current_when_site(source_file : String?, source_line : Int32, exact_col : Int32) : Nil
-      (@@current_when_site[Fiber.current] ||= Array(WhenOriginSite).new).push(WhenOriginSite.new(source_file, source_line, exact_col))
+    def self.set_current_when_site(source_file : String?, source_line : Int32, exact_col : Int32, text : String? = nil) : Nil
+      (@@current_when_site[Fiber.current] ||= Array(WhenOriginSite).new).push(WhenOriginSite.new(source_file, source_line, exact_col, text))
     end
 
     def self.pop_current_when_site : Nil
@@ -2092,13 +2092,14 @@ module Krikri
       @@current_template_file[Fiber.current]?.try(&.last?)
     end
 
-    # The formatted Origin block for a play_hosts read deprecation: a
-    # template-file render in progress wins (the read belongs to the
-    # file), then the when: clause being evaluated, then the templated
-    # task param being finalized; nil when none applies - reads whose
-    # Origin krikri does not reproduce (a vars file) stay silent rather
-    # than mis-attribute the warning.
-    def self.play_hosts_read_origin : String?
+    # The formatted Origin block for a deprecation raised while a template
+    # RESOLVES a variable (the play_hosts read alias, the top-level fact
+    # alias): a template-file render in progress wins (the read belongs to
+    # the file), then the conditional clause being evaluated, then the
+    # templated task param being finalized; nil when none applies - reads
+    # whose Origin krikri does not reproduce (a vars file) stay silent
+    # rather than mis-attribute the warning.
+    def self.current_deprecation_origin : String?
       if path = current_template_file
         return ErrorBlock.origin_context(File.expand_path(path), 0, nil, show_content: false)
       end
@@ -2112,7 +2113,58 @@ module Krikri
         return ResultDisplay.param_value_origin(site.source_file, site.source_line, "when")
       end
       return unless site = current_task_param
-      ResultDisplay.param_value_origin(site.source_file, site.source_line, site.key)
+      # A task's own `name:` opens its mapping (`- name:`), so the list
+      # dash is part of that key's line prefix.
+      ResultDisplay.param_value_origin(site.source_file, site.source_line, site.key, list_entry_key: site.key == "name")
+    end
+
+    def self.play_hosts_read_origin : String?
+      current_deprecation_origin
+    end
+
+    # Whether the template being rendered by the CURRENT fiber site names
+    # *name* - the guard that keeps the top-level fact deprecation tied to
+    # the template text that actually named the fact. Without it, a
+    # variable whose OWN stored value references a fact (`myvar: "{{
+    # ansible_os_family }}"`) would deprecate at every site that renders
+    # `{{ myvar }}`, attributed to that site: real tags the fact VALUE and
+    # the warning belongs to the template that names the fact (its
+    # declaration, which krikri cannot place). So a read that is only
+    # reached through a nested re-render stays silent, while a direct
+    # `when: ansible_os_family == ...` - whose clause text names it -
+    # warns exactly where real does.
+    def self.deprecation_site_names?(name : String) : Bool
+      if path = current_template_file
+        content = File.read(path) rescue nil
+        return content.try(&.includes?(name)) || false
+      end
+      if site = current_when_site
+        return site.text.try(&.includes?(name)) || false
+      end
+      if site = current_task_param
+        return site.text.try(&.includes?(name)) || false
+      end
+      false
+    end
+
+    # Whether *name* is one of the gathered facts' TOP-LEVEL
+    # `ansible_`-prefixed spellings - the aliases ansible-core 2.21
+    # deprecates (the INJECT_FACTS_AS_VARS default): reading one from a
+    # template prints the [DEPRECATION WARNING] naming the reading
+    # template's Origin, once per Origin, whichever template kind read it.
+    #
+    # The injected copy real tags is clean_facts(facts), which drops
+    # ansible_local plus every `ansible_*_interpreter` key before
+    # injecting, so those spellings never deprecate even though krikri's
+    # own fact store holds them (ansible_python_interpreter for a local
+    # connection) - live-verified against 2.21.6: `ansible_hostname`
+    # warns, `ansible_python_interpreter` and `ansible_host` do not.
+    def self.top_level_fact_name?(name : String, vars : Hash(String, JSON::Any)) : Bool
+      return false unless name.starts_with?("ansible_") && name != "ansible_local"
+      return false if name.ends_with?("_interpreter")
+      facts = vars["ansible_facts"]?.try(&.as_h?)
+      return false unless facts
+      facts.has_key?(name["ansible_".size..])
     end
 
     # Per-host registry of UNSAFE variable names - names whose current

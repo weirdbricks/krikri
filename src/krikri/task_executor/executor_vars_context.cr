@@ -2928,7 +2928,7 @@ module Krikri
         # lookup-arg constants, and the evaluator has no task context of
         # its own. Popping in the begin's ensure keeps the stack
         # consistent through the strict-undefined rescues too.
-        VarSubstitutor.set_current_task_param(task.source_file, task.source_line, key) if task
+        VarSubstitutor.set_current_task_param(task.source_file, task.source_line, key, value) if task
         debug_msg = key == "msg" && module_name == "ansible.builtin.debug"
         begin
           # inside the begin: native_typed_value's strict-undefined check must
@@ -5658,7 +5658,38 @@ module Krikri
       evaluated = action_result.final_result.try(&.as_h["_ansible_that_evaluated"]?.try(&.as_i?)) || conditions.size
       (0...Math.min(evaluated, conditions.size)).each do |idx|
         maybe_conditional_delimiters_deprecation(task, conditions[idx], "that", vars_context, idx)
+        emit_assert_that_fact_deprecation(task, conditions[idx], vars_context, idx)
       end
+    end
+
+    # assert:'s `that:` items are evaluated inside the action plugin, so no
+    # templated-param site is on the fiber while they resolve a name - the
+    # top-level fact alias read is detected on the (still raw) item text
+    # instead, and Origin'd at the item's own scalar position, which is
+    # what real 2.21.6 reports for it (live-verified: `- ansible_os_family
+    # == 'Debian'` under `that:` reports the item value's column).
+    private def emit_assert_that_fact_deprecation(task : Task, raw : String, vars_context : Hash(String, JSON::Any), that_index : Int32) : Nil
+      return unless raw.scan(/ansible_[A-Za-z0-9_]+/).any? { |match| VarSubstitutor.top_level_fact_name?(match[0], vars_context) }
+      origin = conditional_deprecation_text(task, "that", raw, that_index, header: "", footer: "").chomp
+      return if origin.empty?
+      ResultDisplay.emit_top_level_fact_deprecation(origin)
+    end
+
+    # A skipped block:'s `when:` is still a real evaluation in ansible -
+    # every child task evaluates the inherited condition for its own
+    # "skipping" line - so a top-level fact alias it reads deprecates
+    # after the first child's banner. krikri's skip path only prints the
+    # skip lines, so the warning is emitted from there, Origin'd at the
+    # BLOCK's own `when:` value token (the block task is the one that
+    # owns the clause; the child's own mapping has none when the
+    # condition was inherited). Deduplicated per Origin by the display
+    # side, so calling it for every child warns once.
+    private def emit_skipped_block_when_deprecation(block_task : Task, raw : String, host : Host) : Nil
+      scope = {"ansible_facts" => JSON::Any.new(facts_dict_for(host.name))}
+      return unless raw.scan(/ansible_[A-Za-z0-9_]+/).any? { |match| VarSubstitutor.top_level_fact_name?(match[0], scope) }
+      origin = conditional_deprecation_text(block_task, "when", raw, header: "", footer: "").chomp
+      return if origin.empty?
+      ResultDisplay.emit_top_level_fact_deprecation(origin)
     end
 
     private def conditional_deprecation_text(task : Task, key : String, raw : String, that_index : Int32? = nil, header : String = DELIMITERS_DEPRECATION_HEADER, footer : String = "") : String

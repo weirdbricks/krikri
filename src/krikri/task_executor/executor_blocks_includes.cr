@@ -58,8 +58,8 @@ module Krikri
         # always: (verified against ansible-playbook) - rescue: is
         # left alone since it only ever runs if the block itself
         # actually failed, which can't happen when it never ran at all.
-        print_skipped_tasks(task.block_tasks || [] of Task, host, task.when_condition)
-        print_skipped_tasks(task.always_tasks || [] of Task, host, task.when_condition)
+        print_skipped_tasks(task.block_tasks || [] of Task, host, task.when_condition, task)
+        print_skipped_tasks(task.always_tasks || [] of Task, host, task.when_condition, task)
       end
       return if run_hosts.empty?
 
@@ -1921,8 +1921,8 @@ module Krikri
           # aggregate line for the block) - rescue: is left alone since
           # it only ever runs if the block itself actually failed, which
           # can't happen when it never ran at all.
-          print_skipped_tasks(task.block_tasks || [] of Task, host, task.when_condition)
-          print_skipped_tasks(task.always_tasks || [] of Task, host, task.when_condition)
+          print_skipped_tasks(task.block_tasks || [] of Task, host, task.when_condition, task)
+          print_skipped_tasks(task.always_tasks || [] of Task, host, task.when_condition, task)
           return
         end
       end
