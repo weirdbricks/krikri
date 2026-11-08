@@ -1466,6 +1466,12 @@ module Krikri
           # this method's skipped bookkeeping below must not run for it.
           next if print_skipped_looped_task(nested_task, host, inherited_when)
         elsif nested_task.module_name == "_meta"
+          # Real still raises its "does not support when conditional"
+          # warning for a meta: action reached under a False block
+          # condition - the block's clause makes the child's own
+          # `task.when` truthy, and _execute_meta warns before deciding
+          # anything (live-verified vs 2.21.6, issue #1003).
+          warn_meta_when_unsupported(nested_task, inherited_when)
           unless meta_ignores_when?(nested_task)
             puts Krikri::Oneline.skip_line(connection_host, meta_skip_dump(nested_task, host)).colorize(:cyan)
           end
@@ -1707,6 +1713,27 @@ module Krikri
       when "noop", "refresh_inventory", "reset_connection" then true
       else                                                      false
       end
+    end
+
+    # Real's `_cond_not_supported_warn` (strategy/__init__.py's
+    # _execute_meta), raised for exactly the actions meta_ignores_when?
+    # names, before the action runs and before anything is evaluated:
+    # `"<action> task does not support when conditional"`. Live-verified
+    # vs 2.21.6 that a when:-FALSE `meta: noop` still warns (the
+    # conditional is never evaluated at all, so no skipping line
+    # follows), that a meta: child of a when:-false BLOCK warns through
+    # the block's inherited condition - which arrives as *inherited_when*
+    # there, since a false block hands its clause down at skip time
+    # rather than merging it into the child's own when_condition - and
+    # that `when: []` does not (real tests `task.when` for truthiness).
+    # Display dedupes the line, so two hosts or two such tasks print it
+    # once (issue #1003).
+    private def warn_meta_when_unsupported(task : Task, inherited_when : String? = nil) : Nil
+      action = task.meta_action
+      return unless action && meta_ignores_when?(task)
+      condition = task.when_condition || inherited_when
+      return if condition.nil? || condition.strip.empty?
+      ResultDisplay.emit_display_warning("#{action} task does not support when conditional")
     end
 
     # The -v dump real appends to a skipped meta: line - every action
