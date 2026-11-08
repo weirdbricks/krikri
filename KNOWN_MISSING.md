@@ -127,7 +127,7 @@ the same code path the same-arch run has always used. Decided 2026-10-11.
 
 ### `password_mechanism=sshpass` is not implemented (askpass is always the fallback)
 
-ansible-core 2.19 defaults `password_mechanism` to `ssh_askpass` and only needs the `sshpass` program when
+ansible-core 2.21.6 defaults `password_mechanism` to `ssh_askpass` and only needs the `sshpass` program when
 the option is set to `sshpass` explicitly (without it installed, real fails the host with `to use the
 password_mechanism=sshpass, you must install the sshpass program`). krikri has no such option: with a
 connection password it uses `sshpass -e` when the program exists and otherwise OpenSSH's `SSH_ASKPASS`
@@ -135,20 +135,13 @@ connection password it uses `sshpass -e` when the program exists and otherwise O
 `ansible_ssh_password_mechanism: sshpass` without `sshpass` installed succeeds here where real fails.
 Decided 2026-10-08: lenient direction, not worth emulating.
 
-### `timedout.frame` deprecation warning is not printed
-
-Real ansible-core 2.19.11 prints a stderr `[DEPRECATION WARNING]: The `timedout.frame` task result key is
-deprecated` (with an Origin block) when a registered timed-out result is templated. krikri enforces
-`timeout:` and matches the result values and key order but does not emit that warning: stderr only, no
-effect on task status or stdout. Decided 2026-10-07: not worth matching.
-
 ### Callback-plugin emulation covers exactly two shapes, and errors on everything else
 
 There is no generic callback-plugin architecture. `ANSIBLE_CALLBACKS_ENABLED` recognizes exactly
 `ansible.posix.profile_tasks` (plus the legacy short form `profile_tasks`) and
 `ANSIBLE_STDOUT_CALLBACK` recognizes exactly `oneline` (plus a no-op `default`, which is what
 krikri's hardcoded display already is); every other value is a hard startup error
-(`[ERROR]: Could not load 'X' callback plugin.`, rc 1) instead of upstream's behavior. Real 2.19.11
+(`[ERROR]: Could not load 'X' callback plugin.`, rc 1) instead of upstream's behavior. Real 2.21.6
 warns-and-SKIPS an unknown `callbacks_enabled` entry (`[WARNING]: Skipping callback plugin 'X',
 unable to load`) and fails hard only for an unloadable stdout callback - krikri errors hard for
 BOTH, on purpose (product decision, 2026-10-10): a run that silently produces different output
@@ -186,10 +179,10 @@ Decided 2026-10-10.
   mostly have an env-var equivalent. Decided 2026-11-07.
 
 
-### Console-output differences from ansible-core 2.19.11 that cannot be matched
+### Console-output differences from ansible-core 2.21.6 that cannot be matched
 
 krikri aims for byte-for-byte identical stdout/stderr/exit code to `ansible-playbook`
-2.19.11 (checked with `scripts/output_parity.sh` and the per-module
+2.21.6 (checked with `scripts/output_parity.sh` and the per-module
 `krikri-playbook-generator`). The known exceptions:
 
 - Python interpreter-discovery warnings (`Host ... is using the discovered Python interpreter ...`):
@@ -228,8 +221,6 @@ krikri aims for byte-for-byte identical stdout/stderr/exit code to `ansible-play
   and fork scheduling (two Ansible runs already disagree byte-for-byte); krikri uses inventory/pattern
   order, so `scripts/cli_output_parity.sh` runs its execution cases against single-host play
   patterns and sorts the `hosts (N):` block in `--list-hosts`.
-- `group_vars/`/`host_vars/` adjacent to the PLAYBOOK: Ansible 2.19.11 does NOT load them (only
-  inventory-adjacent ones), krikri loads both, so such playbooks see variables real leaves undefined.
 - Quote-soup task arguments (single-quoted Jinja with embedded escaped quotes as YAML quote soup):
   krikri's YAML/arg split keeps backslashes verbatim where Ansible's splitter unescapes them, so both
   "succeed" with different bytes; clean quoting is identical.
@@ -251,7 +242,7 @@ krikri aims for byte-for-byte identical stdout/stderr/exit code to `ansible-play
 - Python-set iteration order in results: `openssl_csr`/`openssl_certificate` `public_key_fingerprints`
   and `postgresql_privs`'s multi-privilege list come from a Python set/frozenset in real
   (nondeterministic across Ansible runs themselves); krikri keeps the declared order. Other
-  `ansible-core` releases may differ; 2.19.11 is the reference.
+  `ansible-core` releases may differ; 2.21.6 is the reference.
 - `apt:`/`apt_repository:` update-cache retry warnings against a repo with no Release file
   (`webbylab.nginx-proxy`, #220): real's python-apt exception text includes a libapt-only
   `W:Repositories should provide a clear-signed InRelease file...` line the apt CLI never prints, and
@@ -284,8 +275,8 @@ krikri aims for byte-for-byte identical stdout/stderr/exit code to `ansible-play
 
 - A `src` whose `..` components carry the composed `dest/<host>/<src>` path outside `dest`
   fails with "Detected directory traversal, expected to be contained in ..." instead of writing
-  there. Ansible 2.19.11 writes through: its CVE-2019-3828 traversal guard never fires in this case
-  (observed behavior). Deliberate: `src` can come from host-controlled data (e.g. `find:` results) and a
+  there. Ansible 2.21.6 writes through: its CVE-2019-3828 traversal guard never fires in this case
+  (observed behavior, re-verified 2026-11-07). Deliberate: `src` can come from host-controlled data (e.g. `find:` results) and a
   controller-side write outside `dest` is exactly that CVE. Non-escaping paths match real
   byte-for-byte.
 
@@ -390,7 +381,7 @@ krikri aims for byte-for-byte identical stdout/stderr/exit code to `ansible-play
   real `DataLoader` (so `find_file_in_search_path` resolves through `ansible_search_path`), and
   `self.set_options()`/`self.get_option()` work off the plugin's own `DOCUMENTATION`. The one piece
   that cannot be is a `Templar`: `self._templar` stays `None`, so a plugin that templates through it
-  fails instead of resolving (ansible-core 2.19 refuses to render strings it did not mark itself, so a
+  fails instead of resolving (ansible-core refuses to render strings it did not mark itself, so a
   stand-in would silently return unrendered text).
 - **Arbitrary-Python-module support is scoped to role-private `library/*.py` sources** (plus the
   playbook-adjacent `library/`): a module with a resolvable source RUNS on the target with the
@@ -406,16 +397,6 @@ krikri aims for byte-for-byte identical stdout/stderr/exit code to `ansible-play
   reference reports "unavailable modules" and skips the task while a FILTER reference fails with
   Ansible's own "No filter named 'x'." rather than silently passing the operand through un-filtered.
   Every `bodsch.*` role calls at least one of these, so that author's roles keep diverging by design.
-
-### SELinux security-context relabeling is not implemented
-
-- The `file:`/`copy:`/`template:`/`getent:` family manage Unix mode, owner/group and (where `libacl`
-  is present) POSIX ACLs, but not SELinux contexts - krikri carries no `libselinux`/`matchpathcon`
-  equivalent and never relabels. On an SELinux-*enforcing* host, Ansible's `file:` can flip `changed`
-  based on a context it would fix up even when mode/owner already match. This is the one candidate
-  source of `juju4.adduser`'s `~/.ssh` extra-`changed` report, never reproduced with SELinux enabled.
-  Accepted scope cut - closing it means vendoring a real SELinux policy query for a single
-  unreproduced, host-flavored report.
 
 ### Fact caching
 
@@ -471,10 +452,6 @@ because anyone intends to fix them.
   `object of type 'HostVarsVars' has no attribute 'x'`; krikri fails the same task (and
   `is defined`/`default()` behave the same) but says `object of type 'dict'`, since each
   host's vars reach the template engine as a plain dict.
-- **`version_compare` was removed in ansible-core 2.19**: a role using that filter fails on
-  both engines (the role is broken against 2.19 either way), only the wording differs -
-  Ansible's `No filter named 'version_compare' found.` vs krikri's
-  `unknown filter "version_compare"`.
 - **An erroring task NAME prints an inline marker instead of Ansible's warning.** When a task's
   `name:` itself fails to template (e.g. it reads an undefined `_latest_release.json`), Ansible emits
   `[WARNING]: Encountered 1 template error` and the task runs on; krikri runs it too but renders an
@@ -507,7 +484,7 @@ because anyone intends to fix them.
 ### Everything else
 
 - **`ansible-playbook`'s CLI flag surface is fully covered by name, and all but one flag is
-  behavioral.** `--help` lists every flag ansible-core 2.19.4 does, including its own long
+  behavioral.** `--help` lists every flag ansible-core 2.21.6 does, including its own long
   aliases (`--inventory-file`, `--vault-pass-file`).
   * `-M`/`--module-path` is accepted and ignored, a scope cut rather than an oversight: real searches
     those directories for PYTHON modules while every module here is a compiled binary, and faking it
@@ -595,7 +572,7 @@ because anyone intends to fix them.
 
 ## Plugin key-order probe coverage
 
-`PluginResult#key_order` (or an omit-`changed` wire) pins a plugin's keys to Ansible 2.19.11's order. Probes: `testing/keyorder_probes/kop_*` roles, run via `krikri-role-tester run` with `local:` queue entries and compared by `krikri-role-tester keyorder` (`--values` for values, not just shapes). Add to this list when another module family is probed.
+`PluginResult#key_order` (or an omit-`changed` wire) pins a plugin's keys to `ansible-playbook`'s own order. The probes below were captured on 2.19.11 controllers; re-probing each family under the 2.21.6 target is still pending (2.21 did change the registered-result wrapper order, which `src/krikri/result_shape.cr` already reproduces). Probes: `testing/keyorder_probes/kop_*` roles, run via `krikri-role-tester run` with `local:` queue entries and compared by `krikri-role-tester keyorder` (`--values` for values, not just shapes). Add to this list when another module family is probed.
 
 ### Verified
 

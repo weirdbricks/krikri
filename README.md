@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.2484-blue)](https://github.com/weirdbricks/krikri)
+[![Version](https://img.shields.io/badge/version-0.9.2485-blue)](https://github.com/weirdbricks/krikri)
 [![Compatibility](https://img.shields.io/badge/ansible--core-2.21.6-brightgreen)](#-what-is-krikri)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 [![Homebrew](https://img.shields.io/badge/homebrew-tap-blue)](#install-via-homebrew-macoslinux-prebuilt-binaries)
@@ -168,7 +168,7 @@ with `gather_facts: true`) or `smart`.
 ### Callback plugins
 
 Two callback shapes are emulated, byte-matched against ansible-core
-2.19.11; anything else is a hard startup error rather than a silent
+2.21.6; anything else is a hard startup error rather than a silent
 divergence:
 
 - `ANSIBLE_CALLBACKS_ENABLED=ansible.posix.profile_tasks` (or the legacy
@@ -180,14 +180,16 @@ divergence:
   the whole default output surface with one line per host result
   (`localhost | CHANGED | rc=0 | (stdout) hi` for command-family results,
   `localhost | SUCCESS => {compact json}` for the rest), no banners and no
-  PLAY RECAP - plus the `[DEPRECATION WARNING]` line real 2.19 emits for
-  this callback. `default` is accepted as a no-op; every other stdout
-  callback value (`minimal`, `dense`, ...) errors.
+  PLAY RECAP - plus the deprecated callback's own `[DEPRECATION WARNING]`
+  (2.21.6 shape: `Origin: <Config env: ANSIBLE_STDOUT_CALLBACK>` and the
+  configured spelling repeated under it). `default` is accepted as a
+  no-op; every other stdout callback value (`minimal`, `dense`, ...)
+  errors.
 
 The `-o` / `--one-line` / `--krikri-oneline` flag turns the oneline
 display on without the env var. **This is a krikri extension, not
 parity**: real `ansible-playbook` rejects `-o` (it is adhoc-only there,
-verified against 2.19.11), so accepting it cannot break an upstream
+verified against 2.21.6), so accepting it cannot break an upstream
 playbook command line. All krikri-only convenience switches use the
 `--krikri-` prefix and are grouped under "Krikri-specific options:" in
 `--help`.
