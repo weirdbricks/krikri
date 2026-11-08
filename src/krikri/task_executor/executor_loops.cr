@@ -2028,6 +2028,11 @@ module Krikri
       # for it yet.
       return false if task.templated_action
       return false if task.until_condition
+      # raw:'s result is the connection's own pty capture, reshaped per item
+      # only by the one-at-a-time path (see TaskBatcher::raw_task?), so a
+      # batched loop of raw tasks loses that shape exactly as a grouped one
+      # does (issue #960).
+      return false if TaskBatcher.raw_task?(task)
       # A `timeout:` task's deadline is per ITEM in real: its SIGALRM
       # wraps each iteration's own handler.run (_run_loop calls _execute
       # per item, so every item gets a fresh full budget - Atlantic round

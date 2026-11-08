@@ -179,12 +179,46 @@ module Krikri
         # Play-level vars are shared by the whole flat list and so
         # cannot split a group.
         ConnectionSettings::CONNECTION_VAR_KEYS.any? { |key| task.vars.has_key?(key) } ||
-        # group_by:/set_stats: - same category as reboot: above: no
-        # uploaded plugin binary at all, handled entirely controller-side
-        # (group_by: mutates the shared Inventory; set_stats: writes into
-        # a controller-side accumulator for the final recap) - neither
-        # can run as a remote batch script step.
-        {"ansible.builtin.reboot", "ansible.builtin.group_by", "ansible.builtin.set_stats"}.includes?(task.module_name)
+        # group_by:/set_stats:/reboot:/raw: - see runs_only_solo? below.
+        runs_only_solo?(task)
+    end
+
+    # Modules with no remote batch script step at all.
+    private def self.runs_only_solo?(task : Task) : Bool
+      # reboot:/group_by:/set_stats: ship no plugin binary and are handled
+      # entirely controller-side (reboot: drives its own SSH calls,
+      # group_by: mutates the shared Inventory, set_stats: writes a
+      # controller-side accumulator for the final recap) - none of them
+      # can run as a step inside the group's one shared SSH script.
+      {"ansible.builtin.reboot", "ansible.builtin.group_by", "ansible.builtin.set_stats"}.includes?(task.module_name) ||
+        # raw: - see raw_task? below: its result shape and its capture
+        # only exist on the solo path.
+        raw_task?(task)
+    end
+
+    # The raw: spellings (bare and qualified) - the one definition of the
+    # set, shared with TaskExecutor's own raw handling. A task's
+    # `action_name` keeps the name as written (raw) while `module_name` is
+    # the alias-resolution target (ansible.builtin.shell), so callers check
+    # `action_name || module_name`.
+    RAW_MODULES = {"raw", "ansible.builtin.raw", "ansible.legacy.raw"}
+
+    # raw: is an ACTION plugin in real Ansible, not a module: it hands the
+    # command text to the connection with a pty and returns the connection's
+    # own capture - {rc, stdout, stdout_lines, stderr, stderr_lines} with no
+    # command-module keys, failing with "non-zero return code" rather than a
+    # module msg. TaskExecutor::execute_task_once rebuilds exactly that
+    # (shape_raw_result, raw_remote_pty_shape, raw_spawn_failure_shape) for a
+    # solo raw task; a batch script has no pty to capture through and its
+    # members skip that shaping entirely, so a grouped raw reported the shell
+    # plugin's own cmd/start/end/delta result and "Module failed: The command
+    # exited with a non-zero return code." where real printed "Action failed:
+    # non-zero return code" (issue #960, adarnimrod.openwrt-bootstrap's
+    # `raw: opkg update`). Every other raw fidelity fix (issues #490/#631/
+    # #775/#820 - pty stream merge, CRLF, the ssh close notice, TERM) lives
+    # on that solo path too, so raw keeps its own group and always takes it.
+    def self.raw_task?(task : Task) : Bool
+      RAW_MODULES.includes?(task.action_name || task.module_name)
     end
 
     # WHY one helper: both conditions mean the task never

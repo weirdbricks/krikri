@@ -569,4 +569,29 @@ describe Krikri::TaskBatcher do
       ])
     end
   end
+
+  it "keeps raw: in a group of its own - only the solo path reproduces Ansible's capture" do
+    # raw: is an ACTION plugin in real Ansible, not a module: it hands
+    # the command to the connection over a pty and reports a bare
+    # {rc, stdout, stderr} shape with no command-module keys, failing
+    # with "non-zero return code" instead of a module msg (issue #960,
+    # adarnimrod.openwrt-bootstrap: a grouped raw printed the shell
+    # plugin's own cmd/start/end/delta result as "Module failed: The
+    # command exited with a non-zero return code." where real printed
+    # "Action failed: non-zero return code"). execute_task_once rebuilds
+    # that capture for a solo raw task (raw_remote_pty_shape,
+    # raw_spawn_failure_shape), and a batch script has no pty to capture
+    # through - so a raw member must never take the batch transport.
+    groups = plan_play(<<-YAML)
+      - hosts: all
+        gather_facts: false
+        tasks:
+          - name: update lists
+            raw: opkg update
+          - name: install python
+            raw: opkg install python
+      YAML
+
+    groups.must_equal([["update lists"], ["install python"]])
+  end
 end
