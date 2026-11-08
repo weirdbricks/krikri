@@ -100,13 +100,12 @@ module Krikri
       # ansible-core 2.21 deprecates reading a gathered fact's top-level
       # `ansible_`-prefixed spelling (INJECT_FACTS_AS_VARS default). The
       # tag fires on an actual template READ - this per-name resolution -
-      # and the warning's Origin is the reading template's own position
-      # from the fiber's current render context.
+      # and the warning's Origin is the position of whatever value real was
+      # templating at that moment (VarSubstitutor#fact_read_origin).
       private def emit_fact_deprecation(name : String) : Nil
         return if JinjaVarResolver.materializing_vars?
         return unless VarSubstitutor.top_level_fact_name?(name, @raw_vars)
-        return unless VarSubstitutor.deprecation_site_names?(name)
-        Krikri::ResultDisplay.emit_top_level_fact_deprecation(VarSubstitutor.current_deprecation_origin)
+        Krikri::ResultDisplay.emit_top_level_fact_deprecation(VarSubstitutor.fact_read_origin(name))
       end
 
       # Ansible's `vars` magic variable: the whole current scope as a

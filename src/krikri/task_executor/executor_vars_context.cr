@@ -104,6 +104,23 @@ module Krikri
       have ? winner : nil
     end
 
+    # The Origin block of the value being re-rendered when a top-level fact
+    # is read through it (see VarSubstitutor#fact_read_origin): real points
+    # that warning at the DEFINING site of the value that names the fact,
+    # so a role default reports its own defaults/main.yml line and value
+    # column, not the task param that merely read the variable
+    # (live-verified vs 2.21.6, issue #961). A layer var_origin_for cannot
+    # place (a runtime value, a CLI extra var) yields nil and the read stays
+    # silent rather than being mis-attributed.
+    private def re_rendered_value_origin_block(task : Task, host : Host, name : String) : String?
+      origin = var_origin_for(task, host, name)
+      return nil unless origin.is_a?(FileVarOrigin) && origin.column > 0 && File.file?(origin.path)
+      # The warning printer adds the blank line after the block itself, so
+      # the excerpt's own trailing newline has to go (real's Origin block is
+      # followed by exactly one blank line).
+      var_origin_block(origin).chomp
+    end
+
     # The file position real attributes a TEMPLATED include_role role-name
     # to: ansible-core 2.19 tags every YAML-sourced scalar with its
     # defining position and the tag SURVIVES plain container access, so a
@@ -634,6 +651,13 @@ module Krikri
       # - the `ansible_facts` dict spelling of the same facts
       # - the `ansible_facts` dict spelling of the same facts
       VarSubstitutor.set_resolved_var_names(host.name, resolved_var_names_for(host, registered, vars_context))
+
+      # Publish where each name's own stored value is defined, for the
+      # INJECT_FACTS_AS_VARS read deprecation of a fact reached only
+      # through another variable's value - ansible-core points that warning
+      # at the DEFINING site of the value that names the fact (see
+      # VarSubstitutor#fact_read_origin).
+      VarSubstitutor.register_var_origin_lookup(host.name) { |name| re_rendered_value_origin_block(task, host, name) }
 
       # Ansible's `vars` magic variable: a dict of every variable in
       # scope, most often used for a membership test rather than to read

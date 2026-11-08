@@ -430,6 +430,25 @@ module Krikri
             ErrorBlock.origin_context(File.expand_path(template_path), 0, nil, show_content: false)
           )
         end
+        # A read reached only through another variable's own value: real
+        # templates that value lazily when the file reads the variable, so
+        # the warning points at the value's DEFINING site - a role
+        # default's defaults/main.yml line - and not at this file (issue
+        # #961, live-verified against 2.21.6). Only names the file actually
+        # reads are tested, so the scope's eager pre-render cannot produce
+        # a warning for a value this template never uses.
+        var_value_origin : String? = nil
+        names_a_fact_through_its_value = ->(read : String) do
+          if (origin = re_rendered_var_fact_origin(read))
+            var_value_origin = origin
+            true
+          else
+            false
+          end
+        end
+        if template_reads_name?(names_a_fact_through_its_value, template)
+          Krikri::ResultDisplay.emit_top_level_fact_deprecation(var_value_origin)
+        end
       end
 
       engine = KrikriJinja.derive_engine(
@@ -639,6 +658,20 @@ module Krikri
       return true if engine.filters.has_key?(name)
       short = name.count('.') >= 2 ? name.rpartition('.')[2] : nil
       !!(short && engine.filters.has_key?(short))
+    end
+
+    # The Origin block of *name*'s own stored value when that value is
+    # unrendered template text naming a gathered fact's top-level alias -
+    # the warning a template file's READ of *name* draws, attributed to the
+    # value's defining site rather than to the file (see the caller; issue
+    # #961). nil otherwise: no such value, a value with no template in it
+    # (nothing re-renders, so no fact is read), or a defining site the
+    # executor cannot place.
+    private def re_rendered_var_fact_origin(name : String) : String?
+      return nil unless (raw = @vars[name]?.try(&.raw)).is_a?(String)
+      return nil unless raw.includes?("{{") || raw.includes?("{%")
+      return nil unless raw.scan(/ansible_[A-Za-z0-9_]+/).any? { |match| VarSubstitutor.top_level_fact_name?(match[0], @vars) }
+      VarSubstitutor.published_var_origin(@vars["inventory_hostname"]?.try(&.as_s?), name)
     end
 
     # Whether the parsed template contains a direct read of a name the

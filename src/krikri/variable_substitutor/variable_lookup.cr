@@ -331,12 +331,12 @@ module Krikri
       # ansible-core 2.21's INJECT_FACTS_AS_VARS deprecation fires when a
       # template RESOLVES a top-level fact alias - not when the fact is
       # only stored - so the read sites here (and JinjaVarResolver's) are
-      # where real prints it. The Origin is the reading template's own
-      # position, the same fiber context the play_hosts read uses.
+      # where real prints it. The Origin is the position of whatever value
+      # real was templating at that moment
+      # (VarSubstitutor#fact_read_origin).
       private def emit_fact_deprecation(name : String) : Nil
         return unless VarSubstitutor.top_level_fact_name?(name, @vars)
-        return unless VarSubstitutor.deprecation_site_names?(name)
-        Krikri::ResultDisplay.emit_top_level_fact_deprecation(VarSubstitutor.current_deprecation_origin)
+        Krikri::ResultDisplay.emit_top_level_fact_deprecation(VarSubstitutor.fact_read_origin(name))
       end
 
       # Marks *host* as the origin host when *current* IS the hostvars
