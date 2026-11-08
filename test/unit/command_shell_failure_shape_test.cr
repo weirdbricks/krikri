@@ -198,4 +198,54 @@ describe "command/shell failure-path result shape" do
       end
     end
   end
+
+  # Issue #960 (adarnimrod.openwrt-bootstrap): real's raw action hands the
+  # bare command to the CONNECTION (raw.py defaults `executable` to False,
+  # so the action base never adds its `<exe> -c` wrap unless the task names
+  # one), and sshd runs it through the login shell - bash on the round
+  # hosts - so a missing command lands on the merged pty stream as "bash:
+  # line 1: X: command not found". Aliasing raw onto the shell plugin
+  # wrapped it in the module-side /bin/sh instead, which only coincides on
+  # the LOCAL connection (shell=True spawns /bin/sh there): over ssh
+  # krikri's result said "/bin/sh: 1: opkg: not found" where real's said
+  # "bash: line 1: opkg: command not found". Only REMOTE raw (the
+  # __raw_pty_merge marker) takes the login shell.
+  describe "remote raw dispatch" do
+    it "runs the command through the login shell, not a module-side /bin/sh" do
+      result = PluginSpecHelper.run("shell", {
+        "cmd"                   => "nosuchcmd_krikri_960_zzz",
+        "strip_empty_ends"      => "false",
+        "_ansible_raw_dispatch" => "1",
+        "__raw_pty_merge"       => "1",
+      })
+
+      result["rc"].as_i.must_equal(127)
+      result["stdout"].as_s.must_equal("bash: line 1: nosuchcmd_krikri_960_zzz: command not found\r\n")
+      result["stderr"].as_s.must_equal("")
+    end
+
+    it "keeps an explicit executable: as the shell (real raw forwards it)" do
+      result = PluginSpecHelper.run("shell", {
+        "cmd"                   => "nosuchcmd_krikri_960_zzz",
+        "executable"            => "/bin/sh",
+        "strip_empty_ends"      => "false",
+        "_ansible_raw_dispatch" => "1",
+        "__raw_pty_merge"       => "1",
+      })
+
+      result["rc"].as_i.must_equal(127)
+      result["stdout"].as_s.must_equal("/bin/sh: 1: nosuchcmd_krikri_960_zzz: not found\r\n")
+    end
+
+    it "leaves local raw on the module-side /bin/sh dash reports" do
+      result = PluginSpecHelper.run("shell", {
+        "cmd"                   => "nosuchcmd_krikri_960_zzz",
+        "strip_empty_ends"      => "false",
+        "_ansible_raw_dispatch" => "1",
+      })
+
+      result["rc"].as_i.must_equal(127)
+      result["stderr"].as_s.must_equal("/bin/sh: 1: nosuchcmd_krikri_960_zzz: not found\n")
+    end
+  end
 end
