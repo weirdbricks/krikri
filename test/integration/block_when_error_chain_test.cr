@@ -94,4 +94,53 @@ describe "when: block-inherited conditional failure chain" do
   ensure
     FileUtils.rm_rf(root) if root
   end
+
+  # Issue #996 (serlophug.ceph-config): a block's when: in LIST form is
+  # still inherited by its children, and a child failing one of those
+  # clauses gets the same two-level chain - but with the "caused by"
+  # Origin pinned on the FAILING CLAUSE's own item line, not on the
+  # block's `when:` key (live-verified 2.21.6: the list item's value
+  # token, tasks/main.yml:57:7 for the role's `- not containerized_
+  # deployment|bool`). A looped child prints the chain once, before its
+  # per-item failed lines.
+  it "pins a list-form block when: clause failure on the clause's own item line" do
+    root = PluginSpecHelper.tmp_path("block-when-list-chain")
+    playbook = File.join(root, "pb.yml")
+    FileUtils.mkdir_p(root)
+    File.write(playbook, <<-YAML)
+      ---
+      - hosts: localhost
+        gather_facts: false
+        connection: local
+        tasks:
+          - block:
+              - name: inner task
+                debug:
+                  msg: hi
+                with_items:
+                  - a
+                  - b
+            when:
+              - not containerized_deployment|bool
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", File.join(__DIR__, "..", "fixtures", "inventory-localhost-local.ini"), playbook],
+      output: output, error: output, input: IO::Memory.new)
+
+    text = output.to_s
+    status.success?.must_equal(false)
+    text.must_include("[ERROR]: Task failed: A 'when' expression failed: Error while evaluating conditional: 'containerized_deployment' is undefined")
+    # first link: the failing child's own `- name:` token
+    text.must_include("Task failed.\nOrigin: #{playbook}:7:11\n\n5   tasks:\n6     - block:\n7         - name: inner task\n            ^ column 11")
+    # second link: the list item carrying the failing clause (column 11 =
+    # right after `        - `), NOT the block's `when:` key line
+    text.must_include("<<< caused by >>>\n\nA 'when' expression failed: Error while evaluating conditional: 'containerized_deployment' is undefined\nOrigin: #{playbook}:14:11\n\n12             - b\n13       when:\n14         - not containerized_deployment|bool\n             ^ column 11")
+    # the chain prints once for the whole loop, before both item lines
+    text.scan("<<< caused by >>>").size.must_equal(1)
+    text.scan("failed: [localhost] (item=").size.must_equal(2)
+    text.wont_include("Unhandled exception")
+  ensure
+    FileUtils.rm_rf(root) if root
+  end
 end

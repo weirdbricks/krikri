@@ -6439,6 +6439,29 @@ module Krikri
         propagate_import_when_origins(task.rescue_tasks || [] of Task, nil, block_when_origin)
         propagate_import_when_origins(task.always_tasks || [] of Task, nil, block_when_origin)
       end
+      # The LIST form carries one position PER clause: real pins the
+      # chain's "caused by" Origin on the failing clause's own item line,
+      # not on the block's `when:` key the single record above can only
+      # name (serlophug.ceph-config's `when: - not containerized_
+      # deployment|bool` block, issue #996). The clause->position map is
+      # the same one the static-import path builds, and the executor
+      # already prefers it over the single inherited record.
+      if (block_when_items = task_hash["when"]?.try(&.as_a?)) && source_file
+        block_when_prefix = task_source_prefix(source_prefix, source_index)
+        block_when_path = File.expand_path(source_file)
+        clause_origins = Hash(String, {String, Int32, Int32}).new
+        block_when_items.each_with_index do |item, item_idx|
+          clause = safe_yaml_to_string(item).strip
+          next if clause.empty?
+          next unless (pos = source_map.try(&.at?("#{block_when_prefix}/when/#{item_idx}")))
+          clause_origins[clause] = {block_when_path, pos[0], pos[1]}
+        end
+        unless clause_origins.empty?
+          propagate_import_when_origins(task.block_tasks || [] of Task, clause_origins, nil)
+          propagate_import_when_origins(task.rescue_tasks || [] of Task, clause_origins, nil)
+          propagate_import_when_origins(task.always_tasks || [] of Task, clause_origins, nil)
+        end
+      end
 
       # Stamp this block's own name onto every descendant's
       # block_name_chain - AFTER the children parse, so a nested block's
