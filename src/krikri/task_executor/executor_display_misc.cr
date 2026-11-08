@@ -1488,9 +1488,7 @@ module Krikri
       # statement carries, whose loaded parent real treats as dynamic and
       # leaves out of its children's Task.when (live-verified vs 2.21.6
       # across all of those shapes).
-      if meta_ignores_when?(task) && (condition = task.when_condition) && !condition.strip.empty?
-        ResultDisplay.emit_display_warning("#{action} task does not support when conditional")
-      end
+      warn_meta_when_unsupported(task)
       case action
       when "flush_handlers"
         # Called once per host by the outer per-task host loop in #run,
