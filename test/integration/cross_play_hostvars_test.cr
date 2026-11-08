@@ -132,7 +132,11 @@ describe "cross-play hostvars without a fact cache" do
 
     status.success?.must_equal(true, output)
     output.must_include("family=", output)
-    output.wont_include("MISSING", output)
+    # The INJECT_FACTS_AS_VARS deprecation's Origin block quotes the raw
+    # msg: source line, which itself contains these default('MISSING')
+    # fallbacks, so only the rendered values prove the fallback never ran.
+    output.wont_include("family=MISSING", output)
+    output.wont_include("hvf=MISSING", output)
   end
 
   it "does not depend on ANSIBLE_CACHE_PLUGIN being set" do

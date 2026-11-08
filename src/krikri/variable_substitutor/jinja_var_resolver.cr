@@ -17,6 +17,33 @@ module Krikri
     class JinjaVarResolver < KrikriJinja::VariableResolver
       @cache = {} of String => KrikriJinja::AnyValue
 
+      # Depth of the whole-`vars`-dict materialization in progress (see
+      # build_vars_dict): that pass resolves EVERY name whether the
+      # template reads it or not, and ansible's top-level-fact
+      # deprecation only fires for names a template actually reads, so
+      # materialization must stay silent (otherwise any `vars`-using
+      # template would deprecate every gathered fact at once). Keyed per
+      # FIBER and a depth rather than one flag: a sibling host's genuine
+      # read must keep warning while another host's template materializes
+      # the dict, and preparing a var's own templated value during the
+      # pass constructs further resolvers that can nest another
+      # materialization, which must not clear its parent's guard on the
+      # way out.
+      @@materializing_vars = {} of Fiber => Int32
+
+      def self.materializing_vars? : Bool
+        (@@materializing_vars[Fiber.current]? || 0) > 0
+      end
+
+      def self.note_materializing_vars(delta : Int32) : Nil
+        depth = (@@materializing_vars[Fiber.current]? || 0) + delta
+        if depth > 0
+          @@materializing_vars[Fiber.current] = depth
+        else
+          @@materializing_vars.delete(Fiber.current)
+        end
+      end
+
       # *strict*: the probe-style engine evaluations (evaluate_structured
       # with strict: true) need a demoted unresolvable value to reach the
       # engine as a STRICT Undefined, so consuming it (`~` concat,
@@ -46,6 +73,7 @@ module Krikri
                   # context (play_hosts_read_origin); reads with no
                   # reproducible Origin stay silent.
                   Krikri::ResultDisplay.emit_play_hosts_deprecation(VarSubstitutor.play_hosts_read_origin) if name == "play_hosts"
+                  emit_fact_deprecation(name)
                   convert(name)
                 elsif name == "omit"
                   KrikriJinja::AnyValue.new(Krikri::OMIT_SENTINEL)
@@ -69,15 +97,32 @@ module Krikri
         KrikriJinja.from_json_any(prepared)
       end
 
+      # ansible-core 2.21 deprecates reading a gathered fact's top-level
+      # `ansible_`-prefixed spelling (INJECT_FACTS_AS_VARS default). The
+      # tag fires on an actual template READ - this per-name resolution -
+      # and the warning's Origin is the reading template's own position
+      # from the fiber's current render context.
+      private def emit_fact_deprecation(name : String) : Nil
+        return if JinjaVarResolver.materializing_vars?
+        return unless VarSubstitutor.top_level_fact_name?(name, @raw_vars)
+        return unless VarSubstitutor.deprecation_site_names?(name)
+        Krikri::ResultDisplay.emit_top_level_fact_deprecation(VarSubstitutor.current_deprecation_origin)
+      end
+
       # Ansible's `vars` magic variable: the whole current scope as a
       # dict, for dynamically computed names (`vars['prefix_' + suffix]`).
       # It never contains itself, matching `'vars' in vars` being False.
       private def build_vars_dict : KrikriJinja::AnyValue
         dict = {} of String => KrikriJinja::AnyValue
-        @raw_vars.each_key do |key|
-          next if key == "vars"
-          value = resolve(key)
-          dict[key] = value if value && !value.raw.is_a?(KrikriJinja::Undefined)
+        JinjaVarResolver.note_materializing_vars(1)
+        begin
+          @raw_vars.each_key do |key|
+            next if key == "vars"
+            value = resolve(key)
+            dict[key] = value if value && !value.raw.is_a?(KrikriJinja::Undefined)
+          end
+        ensure
+          JinjaVarResolver.note_materializing_vars(-1)
         end
         KrikriJinja::AnyValue.new(dict)
       end

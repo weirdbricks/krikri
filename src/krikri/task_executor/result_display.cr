@@ -299,6 +299,31 @@ module Krikri
       end
     end
 
+    # The INJECT_FACTS_AS_VARS deprecation (ansible-core 2.21): reading a
+    # gathered fact's top-level `ansible_`-prefixed spelling from any
+    # template prints this block, deduplicated per distinct Origin per run
+    # exactly like the play_hosts read above - two hosts, or a loop, or
+    # several fact names inside one template all share one warning,
+    # while a second template printing at its own Origin gets its own
+    # (live-verified against 2.21.6).
+    @@top_level_fact_deprecation_origins = Set(String).new
+    TOP_LEVEL_FACT_DEPRECATION_MUTEX = Mutex.new
+    TOP_LEVEL_FACT_DEPRECATION_TEXT  = "INJECT_FACTS_AS_VARS default to `True` is deprecated, top-level facts will not be auto injected after the change. This feature will be removed from ansible-core version 2.24."
+
+    def self.emit_top_level_fact_deprecation(origin : String?) : Nil
+      return unless origin
+      TOP_LEVEL_FACT_DEPRECATION_MUTEX.synchronize do
+        return if @@top_level_fact_deprecation_origins.includes?(origin)
+        @@top_level_fact_deprecation_origins << origin
+        emit_deprecation_hint
+        STDERR.puts "[DEPRECATION WARNING]: #{TOP_LEVEL_FACT_DEPRECATION_TEXT}".colorize(:light_magenta)
+        STDERR.puts origin.colorize(:light_magenta)
+        STDERR.puts
+        STDERR.puts "Use `ansible_facts[\"fact_name\"]` (no `ansible_` prefix) instead.".colorize(:light_magenta)
+        STDERR.puts
+      end
+    end
+
     # An action-plugin warning raised while validating task args (the
     # service plugin's `Ignoring "X" as it is not used in "systemd"` for
     # its UNUSED_PARAMS): one console line per distinct message per run,
@@ -1691,7 +1716,7 @@ module Krikri
       param_value_origin(task.source_file, task.source_line, key)
     end
 
-    def self.param_value_origin(path : String?, source_line : Int32, key : String) : String?
+    def self.param_value_origin(path : String?, source_line : Int32, key : String, list_entry_key : Bool = false) : String?
       return nil unless path && source_line > 0 && File.file?(path)
 
       lines = File.read_lines(path)
@@ -1701,9 +1726,12 @@ module Krikri
         at = line.index(needle)
         next unless at
         prefix = line[0...at]
-        # only a mapping key: nothing but whitespace/quotes before it
+        # only a mapping key: nothing but whitespace/quotes before it - or,
+        # for a key that opens a task's own mapping (`- name:`), the list
+        # dash itself.
         stripped = prefix.strip
-        next unless stripped.empty? || (stripped.size == 1 && {"'", '"'}.includes?(stripped))
+        next unless stripped.empty? || (stripped.size == 1 && {"'", '"'}.includes?(stripped)) ||
+                    (list_entry_key && stripped == "-")
         col = at + needle.size
         while col < line.size && line[col] == ' '
           col += 1
