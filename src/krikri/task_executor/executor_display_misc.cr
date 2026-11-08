@@ -1487,7 +1487,8 @@ module Krikri
       # that parent chain), but NOT one an include_tasks:/include_role:
       # statement carries, whose loaded parent real treats as dynamic and
       # leaves out of its children's Task.when (live-verified vs 2.21.6
-      # across all of those shapes).
+      # across all of those shapes). See warn_meta_when_unsupported for
+      # the one shape that does not arrive merged into when_condition.
       warn_meta_when_unsupported(task)
       case action
       when "flush_handlers"

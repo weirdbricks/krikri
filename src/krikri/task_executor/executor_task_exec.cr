@@ -1470,7 +1470,9 @@ module Krikri
           # warning for a meta: action reached under a False block
           # condition - the block's clause makes the child's own
           # `task.when` truthy, and _execute_meta warns before deciding
-          # anything (live-verified vs 2.21.6, issue #1003).
+          # anything (live-verified vs 2.21.6, issue #1003). This printer
+          # deliberately leaves that clause out of `when_condition`, so the
+          # block's own condition is handed over explicitly.
           warn_meta_when_unsupported(nested_task, inherited_when)
           unless meta_ignores_when?(nested_task)
             puts Krikri::Oneline.skip_line(connection_host, meta_skip_dump(nested_task, host)).colorize(:cyan)
@@ -1725,14 +1727,23 @@ module Krikri
     # the block's inherited condition - which arrives as *inherited_when*
     # there, since a false block hands its clause down at skip time
     # rather than merging it into the child's own when_condition - and
-    # that `when: []` does not (real tests `task.when` for truthiness).
-    # Display dedupes the line, so two hosts or two such tasks print it
-    # once (issue #1003).
+    # that `when: []` on its own does not (real tests `task.when` for
+    # truthiness). Display dedupes the line, so two hosts or two such
+    # tasks print it once (issue #1003).
+    #
+    # The two sources are tested SEPARATELY rather than falling back from
+    # one to the other: real extends the child's `when` list with the
+    # block's clause, so a child whose own `when: []` contributes nothing
+    # still has the block's entry and warns (live-verified vs 2.21.6 - it
+    # is the resulting list real tests for truthiness, not either source).
     private def warn_meta_when_unsupported(task : Task, inherited_when : String? = nil) : Nil
       action = task.meta_action
       return unless action && meta_ignores_when?(task)
-      condition = task.when_condition || inherited_when
-      return if condition.nil? || condition.strip.empty?
+      own = task.when_condition
+      own_present = own ? !own.strip.empty? : false
+      inherited_present = inherited_when ? !inherited_when.strip.empty? : false
+      return unless own_present || inherited_present
+
       ResultDisplay.emit_display_warning("#{action} task does not support when conditional")
     end
 

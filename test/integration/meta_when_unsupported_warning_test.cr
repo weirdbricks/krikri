@@ -100,4 +100,47 @@ describe "a meta action that rejects when: conditionals" do
     text.wont_include("skipping:")
     text.must_include("reached after the block")
   end
+
+  it "warns for a when-false block's meta children even when their own when: is an empty list" do
+    success, text = run_meta_play([
+      "  - block:",
+      "    - name: noop with an empty own when inside a false block",
+      "      ansible.builtin.meta: noop",
+      "      when: []",
+      "    - name: refresh with no own when inside a false block",
+      "      ansible.builtin.meta: refresh_inventory",
+      "    when: false",
+      "  - name: after the block",
+      "    ansible.builtin.debug:",
+      "      msg: reached after the block",
+    ])
+
+    # Real extends the child's `when` with the block's clause and then tests
+    # THAT list for truthiness, so a child whose own `when: []` contributes
+    # nothing still has the block's entry and warns (live-verified vs
+    # ansible-core 2.21.6) - the child's own clause must not shadow it.
+    success.must_equal(true)
+    text.must_include(NOOP_WARNING)
+    text.must_include("[WARNING]: refresh_inventory task does not support when conditional")
+    text.wont_include("skipping:")
+    text.must_include("reached after the block")
+  end
+
+  it "stays silent when the only when: anywhere is an empty list" do
+    success, text = run_meta_play([
+      "  - block:",
+      "    - name: ungated noop inside a block with no when",
+      "      ansible.builtin.meta: noop",
+      "    - name: noop whose own when is an empty list",
+      "      ansible.builtin.meta: noop",
+      "      when: []",
+      "  - name: after the block",
+      "    ansible.builtin.debug:",
+      "      msg: reached after the block",
+    ])
+
+    success.must_equal(true)
+    text.wont_include(NOOP_WARNING)
+    text.must_include("reached after the block")
+  end
 end
