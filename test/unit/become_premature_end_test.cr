@@ -136,3 +136,54 @@ describe "executor module-argspec skip on a doomed local become (become_prematur
     out.must_include("Unsupported parameters for (ansible.legacy.command) module: warn.")
   end
 end
+
+# Issue #986 (cloudweeb.apache_exporter live round): real ansible RAISES a
+# become failure out of handler.run(), and task_executor.py's attempt loop
+# only ever sees RETURNED results ("exceptions raised anywhere here bypass
+# failed_when, `until` retries, intra-loop register/register-projections"),
+# so an until:/retries: task runs ONCE - no FAILED - RETRYING line, no
+# attempts key on the fatal result (live-verified vs 2.21.6 with the role's
+# own `get_url` under `delegate_to: localhost` inheriting the play's
+# become: true on a controller whose sudo needs a password). Same fake-sudo
+# seam as the argspec test above, so this holds on hosts whose own sudo is
+# passwordless.
+private def issue986_run_playbook : String
+  fake_bin = PluginSpecHelper.tmp_path("issue986-fake-bin")
+  FileUtils.rm_rf(fake_bin)
+  FileUtils.mkdir_p(fake_bin)
+  sudo_path = File.join(fake_bin, "sudo")
+  File.write(sudo_path, "#!/bin/sh\necho 'sudo: a password is required' >&2\nexit 1\n")
+  File.chmod(sudo_path, 0o755)
+  playbook = PluginSpecHelper.tmp_path("issue986-play.yml")
+  File.write(playbook, <<-YAML)
+    - hosts: localhost
+      gather_facts: false
+      become: true
+      become_user: krikri-issue986-other
+      tasks:
+        - name: download under until
+          command:
+            _raw_params: /bin/true
+          register: dl
+          until: dl is succeeded
+          retries: 2
+          delay: 1
+    YAML
+  output = IO::Memory.new
+  Process.run(
+    File.join(PluginSpecHelper::PROJECT_ROOT, "bin", "krikri-playbook"),
+    ["-i", File.join(PluginSpecHelper::PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini"), playbook],
+    output: output, error: output,
+    env: {"PATH" => "#{fake_bin}:#{ENV["PATH"]}"}
+  )
+  output.to_s
+end
+
+describe "until: on a raised become failure (become_premature_end_test.cr)" do
+  it "runs the task once: no FAILED - RETRYING line and no attempts key" do
+    out = issue986_run_playbook
+    out.must_include("Premature end of stream waiting for become success")
+    out.wont_include("RETRYING")
+    out.wont_include("attempts")
+  end
+end

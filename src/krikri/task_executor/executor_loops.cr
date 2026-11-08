@@ -3025,7 +3025,25 @@ module Krikri
           # result, so the loop sees it as an ordinary failed attempt
           # unless it is caught here.
           when_error = result_hash["_ansible_when_error_emitted"]?.try(&.as_bool?) == true
-          if Krikri.result_failed_flag(result) && (action_level || finalization || when_error)
+          # A become/connection failure is the fourth escape shape, and the
+          # same rule as the three above: real's attempt loop only ever
+          # sees RETURNED results, while a become failure is RAISED out of
+          # handler.run() by the connection plugin (task_executor.py's own
+          # note on the loop reads "exceptions raised anywhere here bypass
+          # failed_when, `until` retries, intra-loop
+          # register/register-projections"), so such a task runs ONCE - no
+          # FAILED - RETRYING lines, no attempts key, recap failed=1
+          # (issue #986: cloudweeb.apache_exporter's `get_url`
+          # delegate_to: localhost, inheriting the play's become: true on a
+          # controller whose sudo needs a password, printed five retry
+          # lines real never does; live-verified vs 2.21.6). The
+          # `_connection_failure` marker is NOT the test - a module whose
+          # output fails to parse carries it too, yet real returns that one
+          # as an ordinary result dict and DOES retry it (live-verified vs
+          # 2.21.6 with a module printing non-JSON), hence the dedicated
+          # raise marker.
+          raise_escape = result_hash["_ansible_raise_escape"]?.try(&.as_bool?) == true
+          if Krikri.result_failed_flag(result) && (action_level || finalization || when_error || raise_escape)
             if register_name && !register_name.empty?
               register_result(host, register_name, result)
               vars_context[register_name] = @registered_vars[host.name][register_name]
