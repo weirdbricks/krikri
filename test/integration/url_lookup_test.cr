@@ -135,7 +135,7 @@ describe "lookup('url', ...)" do
     # stale `victoriametrics_version` default whose GitHub release
     # checksums file has since been removed (404). ansible-playbook
     # fails the whole enclosing set_fact: task right at the lookup
-    # ("The lookup plugin 'url' failed: Received HTTP error for <url> :
+    # ("The lookup plugin 'url' failed: Received HTTP error for <url>:
     # HTTP Error 404: Not Found") - this previously degraded silently
     # to "undefined" instead (this spec's own prior assertion, written
     # without live verification against Ansible), letting
@@ -149,6 +149,22 @@ describe "lookup('url', ...)" do
     assert_raises_message(Exception, /HTTP Error 404/) do
       evaluator.evaluate(%(lookup('url', '#{URL_LOOKUP_BASE}/missing.txt', wantlist=True)))
     end
+  end
+
+  it "words the 404 error exactly as ansible-playbook does, with no space before the first colon" do
+    # issue #977 (thoth-station.metrics_exporter): ansible-playbook 2.21.6
+    # renders "Received HTTP error for <url>: HTTP Error 404: Not Found" -
+    # url.py's own message carries no trailing space and ansible's
+    # error-detail rendering appends the chained urllib HTTPError after a
+    # bare ": ". This engine's message used " : " there, a byte-level
+    # output diff against Ansible for the same broken-upstream lookup.
+    v = Hash(String, JSON::Any).new
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
+    ex = assert_raises(Exception) do
+      evaluator.evaluate(%(lookup('url', '#{URL_LOOKUP_BASE}/missing.txt', wantlist=True)))
+    end
+    ex.message.to_s.must_equal(
+      "The lookup plugin 'url' failed: Received HTTP error for #{URL_LOOKUP_BASE}/missing.txt: HTTP Error 404: Not Found")
   end
 end
 

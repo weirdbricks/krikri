@@ -301,7 +301,7 @@ module Krikri
           # Ansible's own url lookup plugin raises a hard
           # AnsibleError (failing the whole enclosing task, e.g. a
           # set_fact:) on ANY non-2xx response - verified against its
-          # exact live error message ("Received HTTP error for <url> :
+          # exact live error message ("Received HTTP error for <url>:
           # HTTP Error <code>: <reason>"). Found benchmarking buluma.
           # victoriametrics's own checksum-lookup task: a stale
           # `victoriametrics_version` default whose GitHub release
@@ -319,7 +319,16 @@ module Krikri
           # `subelements:`'s own `raise` (elsewhere in this file)
           # already relies on for "fail the enclosing task", not a new
           # mechanism.
-          raise "The lookup plugin 'url' failed: Received HTTP error for #{url} : HTTP Error #{response.status_code}: #{response.status.description}"
+          # ansible-core 2.21.6's live wording is exactly
+          # "Received HTTP error for <url>: <reason>", with NO space before
+          # that first colon (issue #977; the space here cost a real
+          # thoth-station.metrics_exporter round a byte-level diff).
+          # url.py raises with just the URL and ansible's error-detail
+          # rendering appends the chained urllib HTTPError's own
+          # "HTTP Error <code>: <reason>" after a bare ": " - so the
+          # separator between the URL and the reason has no leading space,
+          # unlike the reason's own "HTTP Error 404: Not Found" colon.
+          raise "The lookup plugin 'url' failed: Received HTTP error for #{url}: HTTP Error #{response.status_code}: #{response.status.description}"
         end
 
         split_lines ? response.body.lines.map(&.strip).reject(&.empty?).to_json : [response.body].to_json
