@@ -299,7 +299,8 @@ module Krikri
       end
 
       # Get optional parameters
-      executable = @params["executable"]? || "/bin/sh"
+      explicit_executable = @params["executable"]?
+      executable = explicit_executable || "/bin/sh"
 
       # Build full command. argv: form is quoted element-wise and joined
       # (see the comment above); cmd:/free-form is passed through verbatim
@@ -401,7 +402,38 @@ module Krikri
       # `<executable> -c <quoted string>` form for the default as for a
       # custom executable makes the outer wrapper irrelevant - the
       # module's own shell does the interpreting, exactly like real.
-      remote_command = "#{executable} -c #{shell_single_quote(full_cmd)}"
+      #
+      # Remote raw is the exception, and it is what real's raw action does
+      # with any command it was not given an `executable:` for: raw.py
+      # reads `self._task.args.get('executable', False)` - a FALSE default,
+      # so the action base's `if executable is None: executable =
+      # play_context.executable` never fires and no `<exe> -c` wrap is
+      # applied - and hands the bare string to the CONNECTION. sshd then
+      # runs it through the login shell (bash on the round hosts), so
+      # `raw: opkg update` fails with bash's "bash: line 1: opkg: command
+      # not found" on the pty, not dash's "/bin/sh: 1: opkg: not found"
+      # (adarnimrod.openwrt-bootstrap's cold+warm divergence, issue #960;
+      # the wording only differs remotely because sshd's login shell
+      # replaces the /bin/sh the local connection's shell=True uses).
+      # LOCAL raw stays wrapped, which is the same /bin/sh real ends up
+      # with there, and so does a raw that DOES name `executable:` - real
+      # then wraps `<exe> -c '<cmd>'` itself, which krikri sends through
+      # the login shell exactly as real does. __raw_pty_merge is set only
+      # for remote raw (local raw keeps its two captured streams).
+      #
+      # The login shell is spelled bare - `bash -c '<cmd>'` - because the
+      # diagnostics real surfaces from sshd's session are labelled with the
+      # shell's BASENAME ("bash: line 1: ..."). Letting this process's own
+      # /bin/bash interpret the string instead labels the identical
+      # failure "/bin/bash: line 1: ...", which real never prints.
+      remote_raw_login_shell = !@params["_ansible_raw_dispatch"]?.nil? &&
+                               explicit_executable.nil? &&
+                               !@params["__raw_pty_merge"]?.nil?
+      remote_command = if remote_raw_login_shell
+                         "bash -c #{shell_single_quote(full_cmd)}"
+                       else
+                         "#{executable} -c #{shell_single_quote(full_cmd)}"
+                       end
 
       # stdin: (+ stdin_add_newline:) - Ansible hands `data` directly
       # to the spawned command's stdin, appending a newline unless

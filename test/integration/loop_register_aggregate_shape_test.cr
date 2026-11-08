@@ -101,6 +101,9 @@ end
 # `cmd` - is the single SUPPLIED option and leads `invocation.module_args`,
 # while `cmd` falls back into its declaration-order slot among the null
 # defaults (zzet.rbenv's nested loop over registered shell results, #673).
+# Both tasks declare `changed_when: false`, and real's item result carries
+# the verdict right after the declared fields' msg/rc, ahead of the loop
+# wrapper keys (live-verified vs 2.21.6).
 describe "command/shell loop-item register key order" do
   it "places invocation after msg and folds the free-form arg into _raw_params" do
     code, output = run_play(<<-YAML)
@@ -120,7 +123,7 @@ describe "command/shell loop-item register key order" do
       YAML
 
     code.must_equal(0)
-    output.must_include("KEYS|changed,failed,msg,rc,ansible_loop_var,item,stdout,stderr,cmd,start,end,delta,invocation,stdout_lines,stderr_lines")
+    output.must_include("KEYS|changed,failed,msg,rc,changed_when_result,ansible_loop_var,item,stdout,stderr,cmd,start,end,delta,invocation,stdout_lines,stderr_lines")
     output.must_include("ARGS|_raw_params,_uses_shell,expand_argument_vars,stdin_add_newline,strip_empty_ends,cmd,argv,chdir,executable,creates,removes,stdin")
     output.must_include("RP|$0 -lc true|CMD|")
   end
@@ -144,7 +147,7 @@ describe "command/shell loop-item register key order" do
       YAML
 
     code.must_equal(0)
-    output.must_include("KEYS|changed,failed,msg,rc,ansible_loop_var,item,stdout,stderr,cmd,start,end,delta,invocation,stdout_lines,stderr_lines")
+    output.must_include("KEYS|changed,failed,msg,rc,changed_when_result,ansible_loop_var,item,stdout,stderr,cmd,start,end,delta,invocation,stdout_lines,stderr_lines")
     output.must_include("ARGS|cmd,_uses_shell,expand_argument_vars,stdin_add_newline,strip_empty_ends,_raw_params,argv,chdir,executable,creates,removes,stdin")
   end
 end
