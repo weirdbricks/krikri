@@ -124,13 +124,38 @@ module Krikri
 
     private def debug_var(var_name : String) : ActionResult
       var_value = VariableSubstitutor::VariableLookup.new(@vars).resolve(var_name)
+      # ansible-core decides what `var:` MEANS by evaluating its raw text as
+      # a Jinja EXPRESSION (action/debug.py: evaluate_expression(
+      # raw_var_arg)), not by looking the text up as a variable name.
+      # hurricanehrndz.sssd's `var: MOLECULE_TESTRUN|default(false)` is a
+      # filter chain, so real debug resolves it to false while krikri
+      # reported the whole chain as an undefined NAME (issue #970). The
+      # bare name/dotted/bracket lookup stays FIRST, since that is what the
+      # overwhelming majority of `var:` uses are and its unsafe/lazy-render
+      # handling below depends on having resolved a real variable.
       unless var_value
-        return ActionResult.final(result_json(false, false, "", {
-          "_ansible_verbose_always" => JSON::Any.new(true),
-          # 2.19.11 renders the undefined var's error inline (older releases
-          # printed "VARIABLE IS NOT DEFINED!")
-          var_name => JSON::Any.new("<< error 1 - #{Krikri.strict_undefined_message(var_name, @vars)} >>"),
-        }, key_order: [var_name, "failed", "changed"]))
+        begin
+          # The strict-undefined probe runs BEFORE the lenient evaluation:
+          # a chain over an undefined name renders to an empty string there
+          # (`nosuch|upper` would print "" instead of real's inline marker),
+          # and a `mandatory` chain to a null result where real fails the
+          # task. Skipped for an expression that runs a lookup, so the
+          # probe's own second evaluation can never re-run a command.
+          unless var_name.includes?("lookup(") || var_name.includes?("query(")
+            if (undefined_msg = Krikri.strict_undefined_probe_message(var_name, @vars))
+              return undefined_var_result(var_name, undefined_msg)
+            end
+          end
+          var_value = VariableSubstitutor::JinjaRenderer.new(@vars).evaluate_value!(var_name)
+        rescue ex : Exception
+          # A `var` expression that raises (division by zero, a failing
+          # filter such as mandatory) fails the task in real debug with
+          # this framing rather than printing a marker.
+          return ActionResult.failure("Error while resolving `var` expression: #{ex.message}")
+        end
+      end
+      unless var_value
+        return undefined_var_result(var_name, undefined_var_message(var_name))
       end
 
       # Real debug's var: templates the looked-up value through the
@@ -172,6 +197,27 @@ module Krikri
         "_ansible_verbose_always" => JSON::Any.new(true),
         var_name                  => rendered,
       }, key_order: [var_name, "failed", "changed"]))
+    end
+
+    # An unresolvable `var:` still SUCCEEDS, carrying 2.19.11's inline error
+    # marker under the raw var text (older releases printed "VARIABLE IS
+    # NOT DEFINED!"). The marker's origin/excerpt warning block is emitted
+    # later by ResultDisplay off this text.
+    private def undefined_var_result(var_name : String, undefined_msg : String) : ActionResult
+      ActionResult.final(result_json(false, false, "", {
+        "_ansible_verbose_always" => JSON::Any.new(true),
+        var_name                  => JSON::Any.new("<< error 1 - #{undefined_msg} >>"),
+      }, key_order: [var_name, "failed", "changed"]))
+    end
+
+    # The name real debug's inline marker quotes for an unresolvable `var:`
+    # expression: the failing expression's SOURCE variable ('nosuch' for
+    # `nosuch|upper`, live-verified vs 2.21.6), which only the filter-chain
+    # probe can name. Every other shape (a bare, dotted or bracket path)
+    # keeps the pre-existing root-name wording.
+    private def undefined_var_message(var_name : String) : String
+      Krikri.undefined_filter_chain_source(var_name, @vars) ||
+        Krikri.strict_undefined_message(var_name, @vars)
     end
 
     # Render lazy `{{ ... }}` template strings inside a looked-up var
