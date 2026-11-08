@@ -1652,7 +1652,7 @@ module Krikri
   # A `roles:` entry (play-level, or a role's own `meta/main.yml`
   # `dependencies:` list) naming a role this engine can't find on disk
   # at all. Ansible refuses the WHOLE run immediately with a plain
-  # "[ERROR]: the role '<name>' was not found ..." message, exit 1 -
+  # "[ERROR]: The role '<name>' was not found in: ..." message, exit 1 -
   # verified directly (both a play-level `roles: - bogus_role` and a
   # dependency role's own missing `meta/main.yml` dependency give the
   # identical rc=1). RoleLoader#load_role previously raised a bare
@@ -3763,7 +3763,7 @@ module Krikri
           else
             # A literal (non-templated) name - Ansible resolves it
             # up front and refuses the WHOLE playbook if the role isn't
-            # installed anywhere ("the role '<name>' was not found",
+            # installed anywhere ("The role '<name>' was not found in:",
             # rc=1, zero tasks run), not a mid-play failure once this
             # one task is finally reached. Checked here (not deferred to
             # #parse_include_role, which has no existence check at all -
@@ -3790,7 +3790,7 @@ module Krikri
               # <playbook>/roles:...:<playbook>, not .../tasks/sub/roles).
               # Resolution itself (role_exists?) keeps its wider
               # role-relative search, which is a superset.
-              message = "the role '#{role_name_raw}' was not found in #{RoleLoader.role_search_display(playbook_dir || file_dir, play.collections)}"
+              message = "The role '#{role_name_raw}' was not found in: #{RoleLoader.role_search_display(playbook_dir || file_dir, play.collections)}"
               # Ansible's Origin for this raise points at the `name:` VALUE
               # (not the task's first key), live-verified vs 2.19.11. The
               # source map only has a `name` entry for the mapping form -

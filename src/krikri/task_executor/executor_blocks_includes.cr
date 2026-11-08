@@ -2861,9 +2861,9 @@ module Krikri
     end
 
     # include_role: whose named role resolves nowhere - Ansible's
-    # own fatal shape (live-verified vs 2.19.11, both from a play task
+    # own fatal shape (live-verified vs 2.21.6, both from a play task
     # and from inside a role's own tasks): the loader's AnsibleError is
-    # printed on STDERR as an "[ERROR]: the role 'x' was not found in
+    # printed on STDERR as an "[ERROR]: The role 'x' was not found in:
     # <search paths>" block whose Origin points at the role-name VALUE,
     # the task result line is the two-key fatal dump, the task counts as
     # failed only, and the play halts for that host UNCONDITIONALLY -
@@ -2872,8 +2872,8 @@ module Krikri
     # every ordinary module failure.
     # looped include_role: whose named role resolves nowhere - Ansible
     # prints NO fatal: line per failing item on stdout, only the
-    # "[ERROR]: the role 'x' was not found" block per item on STDERR
-    # (live-verified vs 2.19.11), whose Origin points at that loop
+    # "[ERROR]: The role 'x' was not found in:" block per item on STDERR
+    # (live-verified vs 2.21.6), whose Origin points at that loop
     # item's own YAML position when the name is exactly the loop
     # variable - the failed count and the unconditional halt are the
     # same as the single-role case below.
@@ -3428,8 +3428,8 @@ module Krikri
       rescue ex : RoleNotFoundError
         # include_role: naming a role that resolves nowhere is
         # Ansible's own fatal include failure shape (live-verified vs
-        # 2.19.11): the loader's AnsibleError goes to STDERR as an
-        # "[ERROR]: the role 'x' was not found in <search paths>" block
+        # 2.21.6): the loader's AnsibleError goes to STDERR as an
+        # "[ERROR]: The role 'x' was not found in: <search paths>" block
         # with the role-name VALUE's own Origin, the task result is the
         # two-key fatal dump `{"changed": false, "reason": ...}`, and
         # the play HALTS for that host unconditionally - ignore_errors:

@@ -894,9 +894,9 @@ rescue ex : Krikri::PlaybookParser::NonDictVarsError
 rescue ex : Krikri::RoleNotFoundError
   # A `roles:` entry (play-level or a role's own meta/main.yml
   # dependency) naming a role not found on disk is Ansible's own
-  # "[ERROR]: the role '<name>' was not found in <search paths>" block
+  # "[ERROR]: The role '<name>' was not found in: <search paths>" block
   # at rc=1, on STDERR, with an Origin block when the raise site had a
-  # source position (live-verified vs 2.19.11) - not the parser-error 4
+  # source position (live-verified vs 2.21.6) - not the parser-error 4
   # this engine fell back to when the missing role silently emptied the
   # whole play list ("No valid plays found"). Found benchmarking
   # weareinteractive.sftp (round 178): its own meta/main.yml depends on

@@ -131,7 +131,7 @@ describe "slash-containing role names resolve as subdirectories inside a role ch
 
     status.success?.must_equal(false, output)
     output.must_include(
-      "the role 'outer/nope' was not found in #{File.join(dir, "roles")}", output)
+      "The role 'outer/nope' was not found in: #{File.join(dir, "roles")}", output)
   ensure
     FileUtils.rm_rf(dir) if dir
   end

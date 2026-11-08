@@ -325,7 +325,7 @@ describe "PlaybookParser include directive argument validation" do
       Krikri::PlaybookParser.parse(File.expand_path(path))
     end
     ex.message.to_s.must_equal(
-      "the role 'zzznope' was not found in #{File.expand_path(root)}/roles:#{ansible_home}/.ansible/roles:/usr/share/ansible/roles:/etc/ansible/roles:#{File.expand_path(root)}")
+      "The role 'zzznope' was not found in: #{File.expand_path(root)}/roles:#{ansible_home}/.ansible/roles:/usr/share/ansible/roles:/etc/ansible/roles:#{File.expand_path(root)}")
     ex.render.as(String).must_include("Origin: #{File.expand_path(path)}:")
   end
 end

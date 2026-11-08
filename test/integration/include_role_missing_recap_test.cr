@@ -43,15 +43,15 @@ describe "include_role: naming a role that doesn't exist" do
     output = `cd #{src_dir} && #{BINARY} -i #{INVENTORY} pb.yml 2>&1`
     exit_code = $?.exit_code
 
-    # Ansible 2.19.11's fatal include shape (live-verified, both from a play
+    # Ansible 2.21.6's fatal include shape (live-verified, both from a play
     # task and from inside a role's own tasks): the loader's AnsibleError
-    # goes to STDERR as an "[ERROR]: the role 'x' was not found in <search
+    # goes to STDERR as an "[ERROR]: The role 'x' was not found in: <search
     # paths>" block whose Origin points at the role-name VALUE inside the
     # role's own tasks file, the task result line is the two-key fatal
     # dump, and the play halts for that host unconditionally (ignore_
     # errors: does not apply - failed=1 ignored=0).
-    output.must_include(%(fatal: [localhost]: FAILED! => {"changed": false, "reason": "the role 'nonexistent_role_xyz' was not found in #{src_dir}/roles:))
-    output.must_include("[ERROR]: the role 'nonexistent_role_xyz' was not found in ")
+    output.must_include(%(fatal: [localhost]: FAILED! => {"changed": false, "reason": "The role 'nonexistent_role_xyz' was not found in: #{src_dir}/roles:))
+    output.must_include("[ERROR]: The role 'nonexistent_role_xyz' was not found in: ")
     output.must_include("Origin: #{src_dir}/roles/outer/tasks/main.yml:3:11")
     output.wont_include("should not run")
     output.must_match(/ok=0\s+changed=0\s+unreachable=0\s+failed=1\s+skipped=0\s+rescued=0\s+ignored=0/)

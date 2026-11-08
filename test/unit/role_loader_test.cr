@@ -637,10 +637,10 @@ describe Krikri::RoleLoader do
   end
 
   it "raises with a clear message when the role directory can't be found" do
-    # Ansible 2.19.11's message names the full search-path list it looked
-    # through (definition.py's "the role '<name>' was not found in
+    # Ansible 2.21.6's message names the full search-path list it looked
+    # through (definition.py's "The role '<name>' was not found in:
     # <paths>").
-    assert_raises_message(Exception, /the role 'nonexistent' was not found in #{roles_root}\/roles:/) do
+    assert_raises_message(Exception, /The role 'nonexistent' was not found in: #{roles_root}\/roles:/) do
       Krikri::RoleLoader.load_roles(roles_yaml("- nonexistent"), fresh_play, roles_root)
     end
   end
@@ -1107,8 +1107,8 @@ describe Krikri::RoleLoader do
   end
 
   it "keeps the not-found error unchanged for a genuinely missing subdirectory" do
-    # Live-verified vs 2.19.11: include_role: name: CiscoUcs.ucs/admin/nope
-    # reports the same "was not found in <search paths>" message, with
+    # Live-verified vs 2.21.6: include_role: name: CiscoUcs.ucs/admin/nope
+    # reports the same "was not found in: <search paths>" message, with
     # the slash-containing name verbatim.
     build_role("outer") { |role| role.tasks("- name: t\n  ansible.builtin.debug:\n    msg: hi\n") }
 
@@ -1116,7 +1116,7 @@ describe Krikri::RoleLoader do
       Krikri::RoleLoader.load_roles(roles_yaml("- outer/nope"), fresh_play, roles_root)
     end
     (error.message || "").must_equal(
-      "the role 'outer/nope' was not found in #{Krikri::RoleLoader.role_search_display(roles_root)}")
+      "The role 'outer/nope' was not found in: #{Krikri::RoleLoader.role_search_display(roles_root)}")
   end
 
   it "prefixes the not-found search list with the play's collections" do
@@ -1130,7 +1130,7 @@ describe Krikri::RoleLoader do
       Krikri::RoleLoader.load_roles(roles_yaml("- nonexistent_role_xyz"), play, roles_root)
     end
     (error.message || "").must_equal(
-      "the role 'nonexistent_role_xyz' was not found in #{Krikri::RoleLoader.role_search_display(roles_root, play.collections)}")
+      "The role 'nonexistent_role_xyz' was not found in: #{Krikri::RoleLoader.role_search_display(roles_root, play.collections)}")
     (error.message || "").includes?("community.general:ansible.posix:ansible.legacy:").must_equal(true)
   end
 
@@ -1153,7 +1153,22 @@ describe Krikri::RoleLoader do
       Krikri::RoleLoader.load_roles(roles_yaml("- nonexistent_role_xyz"), fresh_play, roles_root)
     end
     (error.message || "").must_equal(
-      "the role 'nonexistent_role_xyz' was not found in #{Krikri::RoleLoader.role_search_display(roles_root)}")
+      "The role 'nonexistent_role_xyz' was not found in: #{Krikri::RoleLoader.role_search_display(roles_root)}")
     (error.message || "").includes?("ansible.legacy:").must_equal(false)
+  end
+
+  it "reports a missing meta dependency with ansible's capitalised 'in:' wording" do
+    # ansible-core 2.21.6 raises this from RoleDefinition._load_role_path
+    # as "The role %r was not found in: %s" - capital "The" and a colon
+    # after "in" - for EVERY role-resolution failure, meta/main.yml
+    # dependencies included (live-verified: jtyr.waagent's own
+    # `dependencies: [config_encoder_filters]`, issue #991).
+    build_role("declarer") { |role| role.meta("dependencies:\n  - nope_dep\n") }
+
+    error = assert_raises(Krikri::RoleNotFoundError) do
+      Krikri::RoleLoader.load_roles(roles_yaml("- declarer"), fresh_play, roles_root)
+    end
+    (error.message || "").must_equal(
+      "The role 'nope_dep' was not found in: #{Krikri::RoleLoader.role_search_display_dependency(roles_root, File.join(roles_root, "roles", "declarer"))}")
   end
 end

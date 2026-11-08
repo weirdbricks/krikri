@@ -345,7 +345,7 @@ describe "task error Origin blocks (issue #12)" do
     # The dependency context's search list is ansible.legacy:-prefixed and
     # appends the declaring role's parent (here <tmp>/roles) before the
     # playbook dir - unlike the play-level form, which carries no prefix.
-    err.must_include "the role 'missing_dep_xyz' was not found in ansible.legacy:"
+    err.must_include "The role 'missing_dep_xyz' was not found in: ansible.legacy:"
     err.must_include ":#{File.join(File.dirname(path), "roles")}:#{File.dirname(path)}\n"
     # The Origin points at the dependency entry inside the DECLARING
     # role's own meta/main.yml (line 5, the `role:` key column 5).
@@ -374,7 +374,7 @@ describe "task error Origin blocks (issue #12)" do
       "roles/r2/tasks/main.yml" => "- ansible.builtin.debug:\n    msg: hi\n",
     })
     code.must_equal(1)
-    err.must_include "the role 'missing_dep_bare' was not found in ansible.legacy:"
+    err.must_include "The role 'missing_dep_bare' was not found in: ansible.legacy:"
     meta_path = File.join(File.dirname(path), "roles", "r2", "meta", "main.yml")
     err.must_include "Origin: #{meta_path}:5:5\n"
     err.must_include "5   - missing_dep_bare\n      ^ column 5\n"

@@ -109,8 +109,8 @@ module Krikri
     # Same rendering and dedup as emit, but on STDERR. Ansible
     # routes an error block to stderr when the error is raised OUTSIDE
     # task result processing - a dynamic include_role:'s role resolution
-    # failure ("the role 'x' was not found in ...") - while ordinary
-    # task-failure blocks go to stdout (live-verified vs 2.19.11).
+    # failure ("The role 'x' was not found in: ...") - while ordinary
+    # task-failure blocks go to stdout (live-verified vs 2.21.6).
     def self.emit_stderr(node : Node) : Bool
       text = "[ERROR]: " + format_event(node)
       return false unless record_displayed(text)

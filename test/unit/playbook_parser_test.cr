@@ -2290,7 +2290,7 @@ describe Krikri::PlaybookParser do
             - does_not_exist
         YAML
 
-      assert_raises_message(Krikri::RoleNotFoundError, /the role 'does_not_exist' was not found in .*\/roles:/) do
+      assert_raises_message(Krikri::RoleNotFoundError, /The role 'does_not_exist' was not found in: .*\/roles:/) do
         Krikri::PlaybookParser.parse_string(playbook_yaml, File.join(root, "site.yml"))
       end
     end
