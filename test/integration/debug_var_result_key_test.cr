@@ -92,4 +92,36 @@ describe "debug: var result key" do
   ensure
     File.delete(playbook) if playbook && File.exists?(playbook)
   end
+
+  # ansible-core's debug evaluates the raw `var` text as a Jinja
+  # EXPRESSION (action/debug.py: evaluate_expression(raw_var_arg)), so a
+  # filter chain resolves to its value while the result key keeps the raw
+  # text. Live-verified against 2.21.6, and the exact shape
+  # hurricanehrndz.sssd ships (issue #970): the chain used to be reported
+  # as an undefined NAME.
+  it "evaluates the var: text as an expression, under the raw text as key" do
+    playbook = File.tempname("debug-var-expression", ".yml")
+    File.write(playbook, <<-YAML)
+      - name: repro
+        hosts: localhost
+        gather_facts: false
+        tasks:
+          - name: filtered default debug
+            ansible.builtin.debug:
+              var: krikri_spec_undefined_var_zzz|default(false)
+          - name: is defined debug
+            ansible.builtin.debug:
+              var: krikri_spec_undefined_var_zzz is defined
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+
+    status.success?.must_equal(true)
+    output.to_s.must_include(%("krikri_spec_undefined_var_zzz|default(false)": false))
+    output.to_s.must_include(%("krikri_spec_undefined_var_zzz is defined": false))
+    output.to_s.wont_include("is undefined >>")
+  ensure
+    File.delete(playbook) if playbook && File.exists?(playbook)
+  end
 end
