@@ -1372,6 +1372,13 @@ module Krikri
           if metadata_msg = repo_metadata_failure_msg(result[:stdout] + "\n" + result[:stderr])
             return {changed: false, message: nil, output: result[:stdout], failure: PluginResult.new(changed: false, failed: true, msg: metadata_msg, results: [] of String, rc: result[:exit_code], key_order: PluginHelpers::DnfInstallFailures::DNF_METADATA_FAILURE_ORDER)}
           end
+          # An unknown group spec fails here the way ansible's module's own
+          # comps lookup does - "No group <spec> available.", msg/results/rc
+          # only (the module drops the empty failures list) - instead of the
+          # generic raw-dump fallback below (issue #958).
+          if group_msg = group_not_available_msg(result[:stdout] + "\n" + result[:stderr])
+            return {changed: false, message: nil, output: result[:stdout], failure: PluginResult.new(changed: false, failed: true, msg: group_msg, results: [] of String, rc: result[:exit_code], key_order: PluginHelpers::DnfInstallFailures::DNF_METADATA_FAILURE_ORDER)}
+          end
           if failures = parse_dnf_install_failures(result[:stdout], result[:stderr], @requested_names)
             # Ansible's module marks the missing specs into `failures`
             # first and then STILL depsolves the survivors (issue #321)

@@ -117,6 +117,33 @@ describe "dnf/yum failed install - Ansible's per-spec failures shape (issue 19)"
     end
   end
 
+  it "reports an unknown group with ansible's No group ... available. msg (issue 958)" do
+    # AAROC.CODE-RADE-container's `yum: name: "@X Software Development"`
+    # on Rocky: ansible's dnf module resolves the group spec against comps
+    # before any transaction and fails with "No group X Software
+    # Development available." plus results []/rc 1 and NO failures key
+    # (the module drops the empty list). dnf's CLI instead prints
+    # "Module or Group '...' is not available." + "Error: Nothing to do."
+    # on stderr (the metadata-check line on stdout), which used to fall
+    # through to the generic "Failed to install packages" raw dump.
+    with_failing_dnf_shim(
+      "Last metadata expiration check: 5:05:39 ago on Sat Nov  7 19:35:22 2026.\n",
+      "Module or Group 'X Software Development' is not available.\nError: Nothing to do.\n") do
+      result = PluginSpecHelper.run("dnf",
+        {"name" => "@X Software Development", "state" => "present"},
+        vars: {"ansible_pkg_mgr" => "dnf"})
+
+      result["failed"].as_bool.must_equal(true)
+      result["changed"].as_bool.must_equal(false)
+      result["msg"].as_s.must_equal("No group X Software Development available.")
+      result.as_h.has_key?("failures").must_equal(false)
+      result.as_h.has_key?("stderr").must_equal(false)
+      result["results"].as_a.must_equal([] of JSON::Any)
+      result["rc"].as_i.must_equal(1)
+      result.as_h.keys.first(5).must_equal(["changed", "msg", "rc", "results", "failed"])
+    end
+  end
+
   it "keeps the raw-line fallback for outputs nothing parses (dnf)" do
     # Only outputs matching NEITHER the metadata-download helper (now
     # its own ansible shape, issue 267) NOR the per-spec parser reach

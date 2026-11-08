@@ -739,6 +739,20 @@ module Krikri
           key_order: PluginHelpers::DnfInstallFailures::DNF_METADATA_FAILURE_ORDER
         )
       end
+      # An unknown group spec fails the way ansible's module's own comps
+      # lookup does - "No group <spec> available.", msg/results/rc only
+      # (the module drops the empty failures list) - not the raw-dump
+      # fallback below (issue #958).
+      if group_msg = group_not_available_msg(install_result[:stdout] + "\n" + install_result[:stderr])
+        return PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: group_msg,
+          results: [] of String,
+          rc: install_result[:exit_code],
+          key_order: PluginHelpers::DnfInstallFailures::DNF_METADATA_FAILURE_ORDER
+        )
+      end
       if failures = parse_dnf_install_failures(install_result[:stdout], install_result[:stderr])
         PluginResult.new(
           changed: false,
