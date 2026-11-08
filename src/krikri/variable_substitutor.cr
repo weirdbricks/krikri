@@ -2017,11 +2017,15 @@ module Krikri
     # Stores just the param's source position (not the Task object):
     # the plugin binaries compile this templating engine without the
     # playbook parser, so Task is not a type the whole program shares.
-    record TemplatedParamSite, source_file : String?, source_line : Int32, key : String, text : String? = nil
+    record TemplatedParamSite, source_file : String?, source_line : Int32, key : String, text : String? = nil, origin : String? = nil
     @@templated_task_param = {} of Fiber => Array(TemplatedParamSite)
 
-    def self.set_current_task_param(source_file : String?, source_line : Int32, key : String, text : String? = nil) : Nil
-      (@@templated_task_param[Fiber.current] ||= Array(TemplatedParamSite).new).push(TemplatedParamSite.new(source_file, source_line, key, text))
+    # *origin* is the formatted Origin block when the caller already knows
+    # the exact token the read belongs to (a task's templated action name,
+    # whose directive can sit on the task's own `- action: ...` line, where
+    # the key-based text scan below finds nothing) - it wins over the scan.
+    def self.set_current_task_param(source_file : String?, source_line : Int32, key : String, text : String? = nil, origin : String? = nil) : Nil
+      (@@templated_task_param[Fiber.current] ||= Array(TemplatedParamSite).new).push(TemplatedParamSite.new(source_file, source_line, key, text, origin))
     end
 
     def self.pop_current_task_param : Nil
@@ -2114,6 +2118,7 @@ module Krikri
         return ResultDisplay.param_value_origin(site.source_file, site.source_line, "when")
       end
       return unless site = current_task_param
+      return site.origin if site.origin
       # A task's own `name:` opens its mapping (`- name:`), so the list
       # dash is part of that key's line prefix.
       ResultDisplay.param_value_origin(site.source_file, site.source_line, site.key, list_entry_key: site.key == "name")

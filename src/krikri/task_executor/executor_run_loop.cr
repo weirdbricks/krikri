@@ -2465,10 +2465,19 @@ module Krikri
     # task args failed" rescue) as one clean failed task - Ansible's
     # own "couldn't resolve module/action 'x'" verdict for a templated
     # name that renders to something unknown.
+    # ansible-core renders a templated action's module name during task
+    # post-validation, so a top-level fact read inside it deprecates with
+    # the directive's own VALUE token as Origin - live-verified against
+    # 2.21.6: `action: "{{ ansible_pkg_mgr }}"` reports that value's
+    # opening quote, and the mapping form the `module:` value (galexrt.ntp,
+    # issue #988). Registered as the fiber's templated-param site - the
+    # same mechanism a task arg's fact read uses, with the same
+    # one-block-per-operation dedupe (two tasks each naming a fact get one
+    # block each, a looped action one for all its items).
     private def resolve_templated_action(task : Task, substitutor : VarSubstitutor) : Task
       raw = task.templated_action || return task
 
-      rendered = substitutor.substitute(raw).strip
+      rendered = with_templated_action_param_site(task, raw) { substitutor.substitute(raw).strip }
       tokens = rendered.split(/\s+/, 2)
       raw_name = tokens[0]
       resolved = PlaybookParser.resolve_module_name(raw_name)
@@ -2491,6 +2500,19 @@ module Krikri
       # shared original keeps the as-written template text.
       resolved_task.resolved_templated_name = resolved
       resolved_task
+    end
+
+    private def with_templated_action_param_site(task : Task, raw : String, & : -> T) : T forall T
+      site = task.templated_action_site
+      return yield unless site
+      key, line, col = site
+      origin = task.source_file.try { |path| ErrorBlock.origin_context(path, line, col) }
+      VarSubstitutor.set_current_task_param(task.source_file, line, key, raw, origin)
+      begin
+        yield
+      ensure
+        VarSubstitutor.pop_current_task_param
+      end
     end
 
     # ansible coerces the templated async:/poll: value with int(), so a
