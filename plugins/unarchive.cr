@@ -364,10 +364,35 @@ module Krikri
     # failure is the action plugin's own AnsibleActionFail, while the source
     # failure is the module's own ordinary failure - which Ansible's executor
     # DOES retry (live-verified vs 2.19.11).
+    #
+    # A missing src is then worded by unarchive.py's own main(), which picks
+    # between two messages on remote_src: a falsy one (src: was supposed to
+    # be copied over from the controller, so it never made it) is "failed to
+    # transfer", a truthy one is "does not exist". smsilva.ansible_oracle_xe
+    # hit the second with `remote_src: yes` on an archive its earlier copy:
+    # never placed on the target (issue #997, live-verified vs 2.19.11).
     private def validate_src_and_dest(src : String, dest : String) : {Bool, String}?
       return {true, "dest '#{dest}' must be an existing dir"} unless remote_dir_exists?(dest)
-      return {false, "Source '#{src}' failed to transfer"} unless remote_file_exists?(src)
+      unless remote_file_exists?(src)
+        return {false, "Source '#{src}' does not exist"} if remote_src_param?
+        return {false, "Source '#{src}' failed to transfer"}
+      end
       nil
+    end
+
+    # remote_src as the MODULE sees it, i.e. after Ansible's unarchive action
+    # plugin has rewritten a `copy:` argument into it. copy: is unarchive's
+    # older, mutually-exclusive spelling and inverted (`copy: no` means
+    # remote_src: true, live-verified vs 2.19.11), and the action plugin
+    # reads it through boolean(strict=False), so any spelling that is not
+    # explicitly true counts as falsy. krikri has no action layer left to do
+    # that rewrite (stage_unarchive_remote_src only consults copy: to decide
+    # whether to stage at all), so it happens here.
+    private def remote_src_param? : Bool
+      if copy = @params["copy"]?
+        return !true?(copy)
+      end
+      true?(@params["remote_src"]?)
     end
 
     private def cleanup_after_unarchive(tmp_download_path : String?, src : String) : Nil
