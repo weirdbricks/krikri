@@ -41,10 +41,15 @@ describe "sysctl plugin result key order (round 992001)" do
   # Ansible.posix.sysctl has exactly one success exit -
   # module.exit_json(changed=result.changed) (sysctl.py:416) - so the
   # registered result is the bare changed plus the controller-backfilled
-  # failed: false, and nothing else (no name/sysctl_file echo, no msg).
-  # Capture-verified all three probe shapes: set (changed), idempotent
-  # rerun, and check mode all register [changed, failed].
-  it "registers a fresh set as changed, failed - nothing else" do
+  # failed: false, and nothing else of the module's own (no name/
+  # sysctl_file echo, no msg). ansible-core then appends the module's
+  # collected deprecations: the module imports `to_native` from the
+  # deprecated ansible.module_utils._text shim, so every run registers
+  # one entry after failed (re-captured against ansible-core 2.21.6, see
+  # issue #992; the round-992001 capture predates that shim). All three
+  # probe shapes - set (changed), idempotent rerun, check mode - register
+  # [changed, failed, deprecations].
+  it "registers a fresh set as changed, failed, deprecations" do
     conf = unique_tmp("kop-sysctl.conf")
 
     keys = run_registered_dump(<<-YAML)
@@ -68,10 +73,10 @@ describe "sysctl plugin result key order (round 992001)" do
               dest: KRIKRI_DUMP_PATH
     YAML
 
-    keys.must_equal(["changed", "failed"])
+    keys.must_equal(["changed", "failed", "deprecations"])
   end
 
-  it "registers an idempotent rerun as changed, failed" do
+  it "registers an idempotent rerun as changed, failed, deprecations" do
     conf = unique_tmp("kop-sysctl-idem.conf")
     File.write(conf, "vm.swappiness=10\n")
 
@@ -96,10 +101,10 @@ describe "sysctl plugin result key order (round 992001)" do
               dest: KRIKRI_DUMP_PATH
     YAML
 
-    keys.must_equal(["changed", "failed"])
+    keys.must_equal(["changed", "failed", "deprecations"])
   end
 
-  it "registers a check-mode set as changed, failed" do
+  it "registers a check-mode set as changed, failed, deprecations" do
     conf = unique_tmp("kop-sysctl-check.conf")
     File.write(conf, "vm.swappiness=10\n")
 
@@ -125,7 +130,7 @@ describe "sysctl plugin result key order (round 992001)" do
               dest: KRIKRI_DUMP_PATH
     YAML
 
-    keys.must_equal(["changed", "failed"])
+    keys.must_equal(["changed", "failed", "deprecations"])
   end
 end
 

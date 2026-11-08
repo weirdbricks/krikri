@@ -231,4 +231,43 @@ describe "sysctl plugin" do
     result.as_h.has_key?("name").must_equal(false)
     result.as_h.has_key?("sysctl_file").must_equal(false)
   end
+
+  # ansible.posix.sysctl imports `to_native` from the deprecated
+  # ansible.module_utils._text shim (sysctl.py:108), so ansible-core
+  # 2.21.6 deprecates every sysctl task the moment the module is
+  # imported - on stderr as the hint line plus one [DEPRECATION WARNING],
+  # and in the registered result's `deprecations` list (live-verified:
+  # `r1.deprecations` is exactly one entry, msg without a removal tail).
+  # krikri wrote the same file but printed neither line (issue #992,
+  # officel.sysctl-conf round 29902200).
+  it "carries the module_utils._text import deprecation on every result" do
+    conf = fresh_conf("text-deprecation.conf")
+
+    result = PluginSpecHelper.run("sysctl", {"name" => "net.ipv4.ip_forward", "value" => "1", "sysctl_file" => conf, "reload" => "false"})
+
+    result["_ansible_core_deprecations"].as_a.map(&.as_s).must_equal([
+      "Importing 'to_native' from 'ansible.module_utils._text' is deprecated. " \
+      "This feature will be removed from ansible-core version 2.24. " \
+      "Use ansible.module_utils.common.text.converters instead.",
+    ])
+    result["deprecations"].as_a.must_equal([
+      JSON.parse({
+        "msg"             => "Importing 'to_native' from 'ansible.module_utils._text' is deprecated.",
+        "collection_name" => "ansible.builtin",
+        "version"         => "2.24",
+        "deprecator"      => {"resolved_name" => "ansible.builtin", "type" => nil},
+      }.to_json),
+    ])
+  end
+
+  # The collection happens before argument validation, so a fail_json
+  # exit carries the same entry - real's module bootstrap collects the
+  # import deprecation, then the fail_json result is returned with it.
+  it "carries the import deprecation on a fail_json exit too" do
+    result = PluginSpecHelper.run("sysctl", {} of String => String)
+
+    result["failed"].as_bool.must_equal(true)
+    result["_ansible_core_deprecations"].as_a.size.must_equal(1)
+    result["deprecations"].as_a.size.must_equal(1)
+  end
 end
