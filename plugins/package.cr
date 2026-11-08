@@ -717,18 +717,18 @@ module Krikri
       # the raw stderr dump below - with the Problem block duplicated,
       # because this `dnf install ... || yum install ...` compound prints
       # it once per package-manager binary. Real ansible's depsolve catch
-      # reports the whole block once as the msg, with an empty failures
-      # list, no stderr key, and the alphabetical key order its module
-      # dict gets there: changed, failures, msg, rc, results (issue #216).
+      # reports the whole block once as the msg with no per-spec failure
+      # recorded, so ansible-core 2.21's empty-failures fail_json wrapper
+      # leaves the failures key out entirely: changed, msg, rc, results
+      # (issues #216, #989).
       if depsolve_msg = depsolve_failure_msg(install_result[:stdout] + "\n" + install_result[:stderr])
         return PluginResult.new(
           changed: false,
           failed: true,
           msg: depsolve_msg,
-          failures: [] of String,
           results: [] of String,
           rc: install_result[:exit_code],
-          key_order: PluginHelpers::DnfInstallFailures::DNF_DEPSOLVE_FAILURE_ORDER
+          key_order: PluginHelpers::DnfInstallFailures::DNF_DEPSOLVE_EMPTY_FAILURE_ORDER
         )
       end
       # A repo-metadata download failure (the repo's repodata/repomd.xml

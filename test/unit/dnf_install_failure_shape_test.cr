@@ -34,7 +34,9 @@ MODULAR_STDERR = "Error: All matches for argument: mysql-devel were filtered out
 # prints - twice, because `package:` shells `dnf install ... || yum install ...`
 # and each binary prints its own copy - is real ansible's depsolve catch
 # msg verbatim after the "Depsolve Error occurred: " prefix, NOT an input to
-# the per-spec failures parser (nothing in it matches those lines).
+# the per-spec failures parser (nothing in it matches those lines). The
+# resulting fatal carries no failures key: ansible-core 2.21 only
+# forwards that list when it is non-empty (issue #989).
 DEPSOLVE_STDERR = "Error: \n Problem: package perl-File-Temp-1:0.231.100-4.el9.noarch from appstream requires perl(Carp), but none of the providers can be installed\n  - conflicting requests\n  - package perl-Carp-1.50-460.el9.0.1.noarch from appstream is filtered out by exclude filtering\n(try to add '--skip-broken' to skip uninstallable packages or '--nobest' to use not only best candidate packages)\nError: \n Problem: package perl-File-Temp-1:0.231.100-4.el9.noarch from appstream requires perl(Carp), but none of the providers can be installed\n  - conflicting requests\n  - package perl-Carp-1.50-460.el9.0.1.noarch from appstream is filtered out by exclude filtering\n(try to add '--skip-broken' to skip uninstallable packages or '--nobest' to use not only best candidate packages)\n"
 DEPSOLVE_MSG    = "Depsolve Error occurred: \n Problem: package perl-File-Temp-1:0.231.100-4.el9.noarch from appstream requires perl(Carp), but none of the providers can be installed\n  - conflicting requests\n  - package perl-Carp-1.50-460.el9.0.1.noarch from appstream is filtered out by exclude filtering"
 
@@ -250,11 +252,43 @@ describe "dnf/yum failed install - Ansible's per-spec failures shape (issue 19)"
       result["failed"].as_bool.must_equal(true)
       result["changed"].as_bool.must_equal(false)
       result["msg"].as_s.must_equal(DEPSOLVE_MSG)
-      result["failures"].as_a.map(&.as_s).must_equal([] of String)
       result["results"].as_a.must_equal([] of JSON::Any)
       result["rc"].as_i.must_equal(1)
       result.as_h.has_key?("stderr").must_equal(false)
-      result.as_h.keys.first(6).must_equal(["changed", "failures", "msg", "rc", "results", "failed"])
+      result.as_h.keys.first(5).must_equal(["changed", "msg", "rc", "results", "failed"])
+    end
+  end
+
+  it "leaves the failures key out of a bare depsolve error (issue 989)" do
+    # Ansible-core 2.21's dnf module wrapper forwards `failures` to
+    # fail_json only when the backend script's list is non-empty, so a
+    # depsolve error that never marks a spec unresolvable fails with
+    # msg/results/rc and NO failures key at all (live-confirmed on
+    # Rocky 9: `package: name=curl` with curl-minimal installed).
+    with_failing_dnf_shim("", DEPSOLVE_STDERR) do
+      result = PluginSpecHelper.run("dnf",
+        {"name" => "curl", "state" => "present"},
+        vars: {"ansible_pkg_mgr" => "dnf"})
+
+      result["failed"].as_bool.must_equal(true)
+      result["changed"].as_bool.must_equal(false)
+      result["msg"].as_s.must_equal(DEPSOLVE_MSG)
+      result.as_h.has_key?("failures").must_equal(false)
+      result["results"].as_a.must_equal([] of JSON::Any)
+      result["rc"].as_i.must_equal(1)
+      result.as_h.has_key?("stderr").must_equal(false)
+      result.as_h.keys.first(5).must_equal(["changed", "msg", "rc", "results", "failed"])
+    end
+  end
+
+  it "leaves the failures key out of package:'s bare depsolve error (issue 989)" do
+    with_failing_dnf_shim("", DEPSOLVE_STDERR) do
+      result = PluginSpecHelper.run("package",
+        {"name" => "curl", "state" => "present", "use" => "dnf"})
+
+      result["msg"].as_s.must_equal(DEPSOLVE_MSG)
+      result.as_h.has_key?("failures").must_equal(false)
+      result.as_h.keys.first(5).must_equal(["changed", "msg", "rc", "results", "failed"])
     end
   end
 
