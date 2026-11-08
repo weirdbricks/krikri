@@ -224,7 +224,7 @@ module Krikri
       rescue ex : FetchError
         raise ex
       rescue ex : IO::TimeoutError
-        raise timeout_failure(ex)
+        raise timeout_failure(ex, uri.scheme.to_s)
       rescue Socket::Addrinfo::Error
         # getaddrinfo EAI_NONAME surfaces in urllib as socket.gaierror -2.
         raise FetchError.new(FetchError::Kind::UrlError, "Request failed: <urlopen error [Errno -2] Name or service not known>")
@@ -600,9 +600,11 @@ module Krikri
       # Python words a TLS read timeout differently from a plaintext one:
       # ssl reads surface ssl.SSLError("The read operation timed out"),
       # while a plain socket read is the bare socket.timeout's "timed
-      # out" - so ansible's copyfileobj failure text depends on the URL
-      # scheme, not on anything in the response.
-      def self.body_timeout_reason(scheme : String) : String
+      # out". Every read on the connection times out that way - the wait
+      # for the response head as much as the body copy - so both
+      # fetch_url's OSError text and get_url's copyfileobj text depend on
+      # the URL scheme, not on anything in the response.
+      def self.read_timeout_reason(scheme : String) : String
         scheme.downcase == "https" ? "The read operation timed out" : "timed out"
       end
 
@@ -620,7 +622,7 @@ module Krikri
           IO.copy(response.body_io, file)
         end
       rescue IO::TimeoutError
-        raise FetchError.new(FetchError::Kind::ContentCopy, "", reason: body_timeout_reason(scheme))
+        raise FetchError.new(FetchError::Kind::ContentCopy, "", reason: read_timeout_reason(scheme))
       rescue ex
         raise FetchError.new(FetchError::Kind::ContentCopy, "", reason: copy_failure_reason(ex))
       end
@@ -654,14 +656,17 @@ module Krikri
       # A connect timeout is raised before urllib hands the request
       # to the socket layer and comes back wrapped in a URLError
       # ("Request failed: <urlopen error timed out>"); a timeout
-      # waiting for the response head is a bare socket.timeout
-      # ("Connection failure: timed out"). Crystal reports the two
-      # with different messages.
-      private def self.timeout_failure(ex : IO::TimeoutError) : FetchError
+      # waiting for the response head is a bare timeout on the socket
+      # layer, which fetch_url's OSError branch prefixes with
+      # "Connection failure: " and whose own text is python's
+      # scheme-dependent read-timeout wording (see
+      # read_timeout_reason). Crystal reports the two with different
+      # messages.
+      private def self.timeout_failure(ex : IO::TimeoutError, scheme : String) : FetchError
         if connect_timeout?(ex)
           FetchError.new(FetchError::Kind::UrlError, "Request failed: <urlopen error timed out>")
         else
-          FetchError.new(FetchError::Kind::ConnectionFailure, "Connection failure: timed out")
+          FetchError.new(FetchError::Kind::ConnectionFailure, "Connection failure: #{read_timeout_reason(scheme)}")
         end
       end
 

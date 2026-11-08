@@ -1063,15 +1063,69 @@ describe "get_url plugin" do
       File.delete(dest) if dest && File.exists?(dest)
     end
 
+    it "reports an https response-head timeout with ssl's read-timeout text" do
+      # Same wait, over TLS: live-verified against ansible-core 2.21, the
+      # timeout lands inside ssl's read and its text is "The read
+      # operation timed out", which fetch_url's OSError branch reports as
+      # "Connection failure: The read operation timed out" (issue #984).
+      # get_url must not flatten it to the plaintext socket wording.
+      cert_path = PluginSpecHelper.tmp_path("hang.crt")
+      key_path = PluginSpecHelper.tmp_path("hang.key")
+      Process.run("openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
+                              "-subj", "/CN=127.0.0.1", "-keyout", key_path, "-out", cert_path],
+        output: Process::Redirect::Close, error: Process::Redirect::Close)
+      tls = OpenSSL::SSL::Context::Server.new
+      tls.certificate_chain = cert_path
+      tls.private_key = key_path
+
+      hang_server = TCPServer.new("127.0.0.1", 0)
+      hang_port = hang_server.local_address.port
+      spawn do
+        loop do
+          socket = hang_server.accept
+          spawn do
+            begin
+              # The handshake completes, the request head is swallowed,
+              # and no response head is ever written.
+              conn = OpenSSL::SSL::Socket::Server.new(socket, context: tls, sync_close: true)
+              while conn.gets
+              end
+            rescue
+              # the client hung up, or the test closed the listener
+            ensure
+              socket.close rescue nil
+            end
+          end
+        end
+      rescue
+        # the server was closed by the test
+      end
+      dest = File.tempname("get-url-spec")
+
+      result = PluginSpecHelper.run("get_url", {
+        "url" => "https://127.0.0.1:#{hang_port}/hang", "dest" => dest, "timeout" => "1",
+        "validate_certs" => "no",
+      })
+
+      result["failed"].as_bool.must_equal(true)
+      result["msg"].as_s.must_equal("Connection failure: The read operation timed out")
+      result["url"].as_s.must_equal("https://127.0.0.1:#{hang_port}/hang")
+      result["status_code"]?.must_be_nil
+      File.exists?(dest).must_equal(false)
+    ensure
+      hang_server.try(&.close)
+      File.delete(dest) if dest && File.exists?(dest)
+    end
+
     it "words the body-read timeout reason by URL scheme" do
       # Live-verified against ansible-core: a TLS read timeout surfaces as
       # ssl.SSLError's "The read operation timed out", while a plaintext
       # socket read is socket.timeout's bare "timed out" - so the
       # copyfileobj reason text depends on the URL scheme
-      # (see PluginHelpers::HTTPDownload.body_timeout_reason).
-      Krikri::PluginHelpers::HTTPDownload.body_timeout_reason("https").must_equal("The read operation timed out")
-      Krikri::PluginHelpers::HTTPDownload.body_timeout_reason("HTTPS").must_equal("The read operation timed out")
-      Krikri::PluginHelpers::HTTPDownload.body_timeout_reason("http").must_equal("timed out")
+      # (see PluginHelpers::HTTPDownload.read_timeout_reason).
+      Krikri::PluginHelpers::HTTPDownload.read_timeout_reason("https").must_equal("The read operation timed out")
+      Krikri::PluginHelpers::HTTPDownload.read_timeout_reason("HTTPS").must_equal("The read operation timed out")
+      Krikri::PluginHelpers::HTTPDownload.read_timeout_reason("http").must_equal("timed out")
     end
 
     it "words a failed OS write on the staged body as python's bare str(OSError)" do
