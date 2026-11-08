@@ -71,7 +71,9 @@ describe "krikri ad-hoc CLI" do
   it "-o/--one-line condenses output to a single line" do
     _, output = run_adhoc(["localhost", "-i", INVENTORY, "-o", "-m", "debug", "-a", "msg=oneliner"])
 
-    lines = output.strip.split("\n")
+    # -o is deprecated upstream, so the two deprecation blocks print first
+    # (see the dedicated test below); the result is still one line.
+    lines = output.strip.split("\n").select { |line| line.starts_with?("localhost |") }
     lines.size.must_equal(1)
     lines[0].must_include("localhost | SUCCESS => {")
     lines[0].must_include("oneliner")
@@ -80,11 +82,28 @@ describe "krikri ad-hoc CLI" do
   it "-o renders command-module output inline with escaped newlines" do
     _, output = run_adhoc(["localhost", "-i", INVENTORY, "-o", "-m", "command", "-a", "printf 'a\\nb\\n'"])
 
-    lines = output.strip.split("\n")
+    lines = output.strip.split("\n").select { |line| line.starts_with?("localhost |") }
     lines.size.must_equal(1)
     # The embedded newline is escaped as literal \n, keeping the line one
     # line (the module itself strips the trailing one).
     lines[0].must_include("rc=0 | (stdout) a\\nb")
+  end
+
+  it "names each -o/--one-line spelling in its own deprecation, then the oneline callback's" do
+    # Live-captured from ansible-core 2.21.6: one warning per flag
+    # occurrence, in command-line order and naming the exact spelling,
+    # then the callback's own deprecation with its <unknown> Origin block.
+    _, output = run_adhoc(["localhost", "-i", INVENTORY, "-o", "--one-line", "-m", "debug", "-a", "msg=x"])
+
+    output.must_include("[WARNING]: Deprecation warnings can be disabled by setting `deprecation_warnings=False` in ansible.cfg.\n")
+    output.must_include("[DEPRECATION WARNING]: The '-o' argument is deprecated. This feature will be removed from ansible-core version 2.23. Use callback configuration to enable the oneline callback instead.\n")
+    output.must_include("[DEPRECATION WARNING]: The '--one-line' argument is deprecated. This feature will be removed from ansible-core version 2.23. Use callback configuration to enable the oneline callback instead.\n")
+    output.must_include("[DEPRECATION WARNING]: oneline has been deprecated. Use another callback plugin, or vendor and/or move the oneline callback to a collection. This feature will be removed from ansible-core version 2.23.\nOrigin: <unknown>\n\noneline\n\n")
+
+    flag_idx = output.index!("The '-o' argument is deprecated")
+    one_line_idx = output.index!("The '--one-line' argument is deprecated")
+    callback_idx = output.index!("oneline has been deprecated")
+    (flag_idx < one_line_idx && one_line_idx < callback_idx).must_equal(true)
   end
 
   it "-t/--tree logs the result as JSON in the tree directory" do

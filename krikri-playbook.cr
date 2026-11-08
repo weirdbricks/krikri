@@ -133,7 +133,7 @@ end
 # is faked - a value that cannot be derived is simply not printed.
 def print_startup_banner(cfg_path : String?) : Nil
   home = ENV["HOME"]? || ""
-  puts "ansible-playbook [core 2.19.11]"
+  puts "ansible-playbook [core #{Krikri::ANSIBLE_TARGET_VERSION}]"
   puts "  config file = #{cfg_path ? cfg_path : "None"}"
   module_paths = [ENV["ANSIBLE_LIBRARY"]?, "#{home}/.ansible/plugins/modules", "/usr/share/ansible/plugins/modules"].compact.reject(&.empty?)
   puts "  configured module search path = [#{module_paths.map { |path| "'#{path}'" }.join(", ")}]"
@@ -292,12 +292,18 @@ end
 # implemented. Any other value - including other valid upstream stdout
 # callbacks such as minimal or dense - errors hard rather than silently
 # producing output different from the named callback's shape. The FQCN
-# spellings are accepted the same way real 2.19 resolves them.
+# spellings are accepted the same way real 2.21 resolves them.
 oneline_enabled = false
+# The value as configured, exactly as the user spelled it (short name or
+# FQCN): the startup deprecation names it verbatim and attributes it to the
+# variable it came from. nil when one of krikri's own flags selected the
+# callback, which has no upstream origin to report.
+oneline_configured_name : String? = nil
 if stdout_callback = ENV["ANSIBLE_STDOUT_CALLBACK"]?
   case stdout_callback
   when "oneline", "ansible.builtin.oneline"
     oneline_enabled = true
+    oneline_configured_name = stdout_callback
   when "default", "ansible.builtin.default"
     # Matches krikri's hardcoded display exactly; accepted as a no-op.
   else
@@ -1262,12 +1268,15 @@ unless limit_hosts.empty?
   end
 end
 
-# The oneline stdout callback's own startup deprecation (2.19-behavior
+# The oneline stdout callback's own startup deprecation (2.21-behavior
 # parity, not a krikri deprecation). Real loads the stdout callback when
 # the run starts - after the inventory warnings, and NOT at all for
 # --syntax-check/--list-tasks (live-verified: no deprecation line there) -
 # so it emits here, right before the first play output.
-Krikri::Oneline.emit_startup_deprecation if oneline_enabled
+if oneline_enabled
+  Krikri::Oneline.emit_startup_deprecation(oneline_configured_name || "oneline",
+    origin_env: oneline_configured_name ? "ANSIBLE_STDOUT_CALLBACK" : nil)
+end
 
 # Real -vv prints a "PLAYBOOK: <file>" banner (basename) plus the play
 # count line (full path as given) right before the first play.

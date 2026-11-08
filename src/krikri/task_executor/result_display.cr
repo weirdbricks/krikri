@@ -240,6 +240,27 @@ module Krikri
       STDERR.puts line.colorize(:light_magenta)
     end
 
+    # A core deprecation carrying ansible-core 2.21's Origin block: the
+    # warning line, then `Origin: <origin>`, then a blank line, then -
+    # only when *payload* is given - the payload line and another blank
+    # line. Live-captured from 2.21.6 for a deprecated callback selected
+    # from the environment: the env-origin form repeats the configured
+    # value as a payload, while a config-file origin prints no payload.
+    # Deduped on the whole emitted shape, like emit_core_deprecation.
+    def self.emit_deprecation_with_origin(text : String, origin : String, payload : String? = nil) : Nil
+      line = "[DEPRECATION WARNING]: #{text}"
+      key = payload ? "#{line}\n#{origin}\n#{payload}" : "#{line}\n#{origin}"
+      return unless @@deprecation_texts.add?(key)
+      emit_deprecation_hint
+      STDERR.puts line.colorize(:light_magenta)
+      STDERR.puts "Origin: #{origin}".colorize(:light_magenta)
+      STDERR.puts
+      if payload
+        STDERR.puts payload.colorize(:light_magenta)
+        STDERR.puts
+      end
+    end
+
     # The one-time "can be disabled" hint Ansible prints before a run's
     # first deprecation of ANY kind - shared by every deprecation emitter
     # so a later source never repeats it.
@@ -2598,8 +2619,21 @@ module Krikri
   # the clean_for_display strip are exactly what the real oneline.py
   # callback feeds its results through).
   module Oneline
-    def self.emit_startup_deprecation : Nil
-      ResultDisplay.emit_core_deprecation(DEPRECATION_TEXT)
+    # *configured_name* is the value exactly as the user wrote it - both
+    # `oneline` and `ansible.builtin.oneline` name themselves in the
+    # message - and *origin_env* the environment variable the callback
+    # was selected from, which earns 2.21's Origin block (see
+    # emit_deprecation_with_origin). krikri's own -o / --one-line /
+    # --krikri-oneline flags have no upstream counterpart (real
+    # ansible-playbook rejects them), so they pass no origin and print
+    # the bare deprecation line.
+    def self.emit_startup_deprecation(configured_name : String, origin_env : String? = nil) : Nil
+      text = deprecation_text(configured_name)
+      if origin_env
+        ResultDisplay.emit_deprecation_with_origin(text, "<Config env: #{origin_env}>", payload: configured_name)
+      else
+        ResultDisplay.emit_core_deprecation(text)
+      end
     end
 
     # Called from ResultDisplay.display_result's entrypoint for every

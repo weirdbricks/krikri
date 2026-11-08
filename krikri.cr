@@ -83,6 +83,10 @@ task_timeout = nil.as(Int32?)
 background_seconds = 0
 poll_interval = 0
 one_line = false
+# Every -o/--one-line spelling given, in command-line order: each one
+# deprecates itself in ansible-core 2.21, naming the exact spelling (see
+# the emission right after the parser block).
+one_line_argument_names = ARGV.select { |arg| arg == "-o" || arg == "--one-line" }
 tree_dir = nil.as(String?)
 
 begin
@@ -280,6 +284,17 @@ rescue ex : Exception
   exit 1
 end
 
+# -o/--one-line deprecate themselves in ansible-core 2.21: one warning per
+# occurrence, naming the spelling used and in command-line order
+# (live-verified 2.21.6: `-o --one-line` prints both, in that order, and
+# the warning precedes even the "no pattern" usage error; a combined
+# `-ovv` names '-o' too, though krikri's parser does not accept combined
+# short flags at all). The oneline CALLBACK's own deprecation is separate
+# and prints later, right before the first result.
+one_line_argument_names.each do |name|
+  Krikri::ResultDisplay.emit_core_deprecation("The '#{name}' argument is deprecated. This feature will be removed from ansible-core version 2.23. Use callback configuration to enable the oneline callback instead.")
+end
+
 if pattern.empty?
   puts "Error: A host pattern is required"
   puts "Usage: krikri <pattern> [options]"
@@ -438,6 +453,16 @@ _ = poll_interval
 
 Krikri::ResultDisplay.adhoc_oneline = true if one_line
 Krikri::ResultDisplay.adhoc_tree_dir = tree_dir if tree_dir
+# The oneline callback's own deprecation, printed when the callback is
+# loaded for the run - after the inventory warnings and before the first
+# result, the same way the playbook path emits it (live-verified 2.21.6
+# for ad-hoc -o: `Origin: <unknown>` - a CLI flag is not one of Ansible's
+# tracked config sources - followed by the payload line repeating the
+# callback name).
+if one_line
+  Krikri::ResultDisplay.emit_deprecation_with_origin(
+    Krikri::Oneline.deprecation_text("oneline"), "<unknown>", payload: "oneline")
+end
 
 task = Krikri::Task.new(name: "ansible ad-hoc command", module_name: resolved_module)
 task.params = Krikri::PlaybookParser.parse_adhoc_params(resolved_module, module_args)

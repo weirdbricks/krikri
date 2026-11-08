@@ -1,5 +1,6 @@
 require "../minitest_helper"
 require "file_utils"
+require "../../src/krikri/version"
 
 # The oneline stdout-callback emulation (src/krikri/oneline_output.cr):
 # ANSIBLE_STDOUT_CALLBACK=oneline (or -o/--one-line/--krikri-oneline)
@@ -84,10 +85,14 @@ describe "oneline stdout callback emulation" do
     end
   end
 
-  it "prints the 2.19 deprecation warning and no recap or banners" do
+  it "prints the 2.21 deprecation warning and no recap or banners" do
     _, output = run_playbook(ONELINE_PLAYBOOK, {"ANSIBLE_STDOUT_CALLBACK" => "oneline"})
 
-    output.must_include("[DEPRECATION WARNING]: The oneline callback plugin is deprecated. This feature will be removed from ansible-core version 2.23.")
+    # Live-captured from ansible-core 2.21.6: the runtime yml's deprecation
+    # entry, its Origin block, then a payload line repeating the configured
+    # value (the env-origin shape).
+    output.must_include("[DEPRECATION WARNING]: oneline has been deprecated. Use another callback plugin, or vendor and/or move the oneline callback to a collection. This feature will be removed from ansible-core version 2.23.")
+    output.must_include("Origin: <Config env: ANSIBLE_STDOUT_CALLBACK>\n\noneline\n")
     output.must_include("[WARNING]: Deprecation warnings can be disabled by setting `deprecation_warnings=False` in ansible.cfg.")
     # The hint precedes the deprecation line, matching the real run's
     # Display ordering.
@@ -105,6 +110,10 @@ describe "oneline stdout callback emulation" do
   it "accepts the ansible.builtin.oneline FQCN and a no-op default" do
     _, fqcn = run_playbook(ONELINE_PLAYBOOK, {"ANSIBLE_STDOUT_CALLBACK" => "ansible.builtin.oneline"})
     fqcn.must_include("localhost | CHANGED | rc=0 | (stdout) hi")
+    # 2.21.6 names the FQCN spelling verbatim in both the warning and the
+    # trailing payload line (live-captured).
+    fqcn.must_include("[DEPRECATION WARNING]: ansible.builtin.oneline has been deprecated.")
+    fqcn.must_include("Origin: <Config env: ANSIBLE_STDOUT_CALLBACK>\n\nansible.builtin.oneline\n")
 
     _, default_cb = run_playbook(ONELINE_PLAYBOOK, {"ANSIBLE_STDOUT_CALLBACK" => "default"})
     default_cb.must_include("PLAY RECAP")
@@ -125,7 +134,16 @@ describe "oneline stdout callback emulation" do
       _, output = run_playbook(ONELINE_PLAYBOOK, args: [flag])
       output.must_include("localhost | CHANGED | rc=0 | (stdout) hi")
       output.wont_include("PLAY RECAP")
+      # No upstream origin exists for a krikri-only flag (real
+      # ansible-playbook rejects -o), so the deprecation prints bare.
+      output.must_include("[DEPRECATION WARNING]: oneline has been deprecated.")
+      output.wont_include("Origin: ")
     end
+  end
+
+  it "reports the parity-target core version in the -vv startup banner" do
+    _, output = run_playbook(ONELINE_PLAYBOOK, {"ANSIBLE_STDOUT_CALLBACK" => "oneline"}, args: ["-vv"])
+    output.must_include("ansible-playbook [core #{Krikri::ANSIBLE_TARGET_VERSION}]\n")
   end
 
   it "renders skipped looped tasks as one bare SKIPPED line" do

@@ -44,9 +44,19 @@ module Krikri
   # dependency-free state and line-shape core, so the banner funnel can
   # check `Oneline.enabled?` without dragging the display layer in.
   module Oneline
-    # Byte-parity with 2.19.11: the oneline callback deprecates itself at
-    # load time. This is 2.19 behavior parity, not a krikri deprecation.
-    DEPRECATION_TEXT = "The oneline callback plugin is deprecated. This feature will be removed from ansible-core version 2.23."
+    # Byte-parity with ansible-core 2.21.6: selecting the oneline callback
+    # deprecates it at load time, through the builtin runtime yml's
+    # `callback.oneline.deprecation` entry (removal_version 2.23 plus this
+    # warning_text) rendered by Display's plugin-info message formatter -
+    # live-captured: "<name> has been deprecated. <warning_text> This
+    # feature will be removed from ansible-core version 2.23.", where
+    # <name> is the configured value exactly as the user spelled it (short
+    # or FQCN). Behavior parity, not a krikri deprecation.
+    DEPRECATION_WARNING_TEXT = "Use another callback plugin, or vendor and/or move the oneline callback to a collection."
+
+    def self.deprecation_text(configured_name : String) : String
+      "#{configured_name} has been deprecated. #{DEPRECATION_WARNING_TEXT} This feature will be removed from ansible-core version 2.23."
+    end
 
     @@enabled = false
 
