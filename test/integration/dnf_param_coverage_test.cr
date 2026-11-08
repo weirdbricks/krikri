@@ -410,10 +410,11 @@ end
 # curl-minimal Provides: the "curl" capability - must still reach the
 # install batch. Real ansible resolves `curl` to the repo package of
 # that exact name and fails the task with dnf's own Depsolve Error
-# (curl conflicts with curl-minimal; rc 1, failures/results []), while
-# the whatprovides fallback in package_installed? classified curl as
-# already installed and the task reported ok/changed, installing only
-# gcc. Verified live: `dnf -q list --available curl` exits 0 there,
+# (curl conflicts with curl-minimal; rc 1, results [] and no failures
+# key at all, issue #989), while the whatprovides fallback in
+# package_installed? classified curl as already installed and the task
+# reported ok/changed, installing only gcc. Verified live:
+# `dnf -q list --available curl` exits 0 there,
 # `dnf -q list --available php-json` (a purely virtual name with no
 # repo row of its own) exits 1. dnf/rpm are not on the spec host, so a
 # dispatching fake rpm/dnf builds the Rocky resolution table by hand:
@@ -555,10 +556,13 @@ describe "dnf plugin - same-name repo package vs a Provides: match (issue 280)" 
       result["failed"].as_bool.must_equal(true)
       result["changed"].as_bool.must_equal(false)
       result["msg"].as_s.must_equal(ISSUE280_DEPSOLVE_MSG)
-      result["failures"].as_a.map(&.as_s).must_equal([] of String)
+      # No spec went unresolvable, so ansible-core 2.21's dnf module
+      # wrapper has no `failures` list to forward and drops the key
+      # (issue #989).
+      result.as_h.has_key?("failures").must_equal(false)
       result["results"].as_a.must_equal([] of JSON::Any)
       result["rc"].as_i.must_equal(1)
-      result.as_h.keys.first(6).must_equal Krikri::PluginHelpers::DnfInstallFailures::DNF_DEPSOLVE_FAILURE_ORDER
+      result.as_h.keys.first(5).must_equal Krikri::PluginHelpers::DnfInstallFailures::DNF_DEPSOLVE_EMPTY_FAILURE_ORDER
       # Both names travel in ONE install batch - the divergence seen on
       # the real host was gcc silently installing on its own while the
       # batch only ever saw gcc. Their repo-row probe is batched too

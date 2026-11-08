@@ -1358,14 +1358,16 @@ module Krikri
           # list (the check raises before any is recorded) but still
           # with results [] and rc 1 - 2.21's backend re-reports an
           # empty-failures failure through fail_json(msg=, results=,
-          # rc=), giving its alphabetical key order (issue #980) -
-          # unlike its depsolve failure, which carries the failures key
-          # too plus the order its module dict gets there (issue #216).
+          # rc=), giving its alphabetical key order (issue #980).
           if gpg_msg = gpg_validation_failure_msg(result[:stdout] + "\n" + result[:stderr])
             return {changed: false, message: nil, output: result[:stdout], failure: PluginResult.new(changed: false, failed: true, msg: gpg_msg, results: [] of String, rc: 1, key_order: PluginHelpers::DnfInstallFailures::DNF_METADATA_FAILURE_ORDER)}
           end
+          # A bare depsolve error records no per-spec failure at all, so
+          # it goes through that same empty-failures fail_json wrapper:
+          # msg/results/rc and no failures key (issue #989; #216 saw the
+          # key only because its case also marked a spec unresolvable).
           if depsolve_msg = depsolve_failure_msg(result[:stdout] + "\n" + result[:stderr])
-            return {changed: false, message: nil, output: result[:stdout], failure: PluginResult.new(changed: false, failed: true, msg: depsolve_msg, failures: [] of String, results: [] of String, rc: result[:exit_code], key_order: PluginHelpers::DnfInstallFailures::DNF_DEPSOLVE_FAILURE_ORDER)}
+            return {changed: false, message: nil, output: result[:stdout], failure: PluginResult.new(changed: false, failed: true, msg: depsolve_msg, results: [] of String, rc: result[:exit_code], key_order: PluginHelpers::DnfInstallFailures::DNF_DEPSOLVE_EMPTY_FAILURE_ORDER)}
           end
           # A repo-metadata download failure (the repo's repomd.xml
           # 404s) matches none of the parse lines and used to reach the

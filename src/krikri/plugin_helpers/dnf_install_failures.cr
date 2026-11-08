@@ -38,8 +38,22 @@ module Krikri
       # Ansible's observed depsolve-failure key order (live on Rocky,
       # dnf4 backend): alphabetical - changed, failures, msg, rc,
       # results - with no stderr key, and the controller-appended
-      # `failed` trailing like every other registered order.
+      # `failed` trailing like every other registered order. Only a
+      # depsolve that still carries per-spec entries gets here (the
+      # missing-spec-then-depsolve combination of issue #321); a
+      # depsolve error on its own has no failures key at all.
       DNF_DEPSOLVE_FAILURE_ORDER = %w[changed failures msg rc results failed]
+
+      # Ansible-core 2.21's dnf module wrapper re-reports the backend
+      # script's failure through fail_json(msg=, results=, rc=) whenever
+      # that script's `failures` list is EMPTY, so the key is absent
+      # entirely: alphabetical changed/msg/rc/results with the
+      # controller-appended `failed` trailing. A bare depsolve error
+      # (curl against the installed curl-minimal, gremid.clojure in
+      # round29902238) never marks a spec unresolvable, so it lands here
+      # - live-confirmed against ansible-core 2.21.6 on Rocky 9
+      # (issue #989).
+      DNF_DEPSOLVE_EMPTY_FAILURE_ORDER = %w[changed msg rc results failed]
 
       # Ansible's observed repo-metadata-failure key order (live on
       # Rocky, dnf4 backend): alphabetical - changed, msg, rc, results -
