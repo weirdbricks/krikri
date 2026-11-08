@@ -218,10 +218,15 @@ describe "authorized_key plugin result key order" do
     result["changed"].as_bool.must_equal(true)
     result["keyfile"].as_s.must_equal(path)
     result["state"].as_s.must_equal("file")
+    # authorized_key.py:230 imports to_native from the deprecated
+    # ansible.module_utils._text path, so the controller appends that
+    # import deprecation after every key the module itself emitted
+    # (issue #1000, live-verified vs ansible-core 2.21.6).
     result.as_h.keys.must_equal([
       "key", "manage_dir", "path", "user", "state", "exclusive",
       "validate_certs", "follow", "key_options", "comment", "keyfile",
       "changed", "uid", "gid", "owner", "group", "mode", "size",
+      "deprecations", "_ansible_core_deprecations",
     ])
   ensure
     `rm -rf #{base}` if base
@@ -242,6 +247,7 @@ describe "authorized_key plugin result key order" do
       "key", "manage_dir", "path", "user", "state", "exclusive",
       "validate_certs", "follow", "key_options", "comment", "keyfile",
       "uid", "gid", "owner", "group", "mode", "size",
+      "deprecations", "_ansible_core_deprecations",
     ])
   ensure
     `rm -rf #{base}` if base
@@ -263,6 +269,7 @@ describe "authorized_key plugin result key order" do
     result.as_h.keys.must_equal([
       "key", "state", "user", "manage_dir", "exclusive", "validate_certs",
       "follow", "path", "key_options", "comment", "keyfile", "changed",
+      "deprecations", "_ansible_core_deprecations",
     ])
   end
 
@@ -273,7 +280,11 @@ describe "authorized_key plugin result key order" do
 
     result["failed"].as_bool.must_equal(true)
     result["msg"].as_s.must_equal("invalid key specified: not-a-real-ssh-key")
-    result.as_h.keys.must_equal(["failed", "msg", "changed", "exception"])
+    # Real appends the collected deprecations after every module key; the
+    # `_ansible_core_deprecations` in front of it is this engine's internal
+    # console marker (register strips every `_ansible_*` key), and it rides
+    # just ahead of the list real gives the last slot.
+    result.as_h.keys.must_equal(["failed", "msg", "changed", "exception", "_ansible_core_deprecations", "deprecations"])
   end
 end
 

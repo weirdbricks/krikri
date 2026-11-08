@@ -77,10 +77,13 @@ describe "mount plugin result key order" do
 
     result["changed"].as_bool.must_equal(true)
     # ansible.posix 2.2.0 dropped the `warnings` key from that exit_json
-    # call, so no `deprecations` entry (and no display marker) rides the
-    # result any more - verified end-to-end against 2.20.1 with 2.2.2.
+    # call, so no exit_json-kwargs deprecation rides the result any more -
+    # but the module's own ansible.module_utils._text imports still do
+    # (mount.py:229), and the controller appends those last, after every
+    # key the module itself emitted (issue #1000, live-verified vs 2.21.6).
     result.as_h.keys.must_equal([
       "changed", "name", "opts", "dump", "passno", "fstab", "boot", "backup_file", "src", "fstype",
+      "deprecations", "_ansible_core_deprecations",
     ])
 
     result2 = PluginSpecHelper.run("mount", {
@@ -93,6 +96,7 @@ describe "mount plugin result key order" do
     result2["changed"].as_bool.must_equal(false)
     result2.as_h.keys.must_equal([
       "changed", "name", "opts", "dump", "passno", "fstab", "boot", "backup_file", "src", "fstype",
+      "deprecations", "_ansible_core_deprecations",
     ])
   ensure
     File.delete(fstab) if fstab && File.exists?(fstab)
@@ -301,7 +305,10 @@ describe "acl plugin result key order" do
     })
 
     result["changed"].as_bool.must_equal(false)
-    result.as_h.keys.must_equal(["changed", "msg", "acl"])
+    # acl.py:150 imports to_native from the deprecated
+    # ansible.module_utils._text path, so the controller appends that import
+    # deprecation after the module's own keys (issue #1000).
+    result.as_h.keys.must_equal(["changed", "msg", "acl", "deprecations", "_ansible_core_deprecations"])
   ensure
     File.delete(target) if target && File.exists?(target)
   end

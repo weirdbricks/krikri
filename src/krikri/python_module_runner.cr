@@ -450,6 +450,11 @@ module Krikri
               self.argument_spec = argument_spec or {}
               self.supports_check_mode = supports_check_mode
               self._warnings = []
+              # The deprecations the module's own imports and code recorded,
+              # in real's wire shape plus the console text Display formats
+              # from each (see WARNINGS_PY_SHIM).
+              self._deprecations = []
+              self._deprecation_console_texts = []
               self.tmpdir = tempfile.gettempdir()
               self.check_mode = False
               self.params = {}
@@ -641,6 +646,23 @@ module Krikri
               except Exception:
                   pass
 
+          def _pull_global_deprecations(self):
+              # Real _return_formatted ends with
+              # `deprecations = get_deprecations(); if deprecations:
+              #   kwargs['deprecations'] = deprecations` - the module's
+              # collected deprecations ride the result, which is where
+              # ansible's controller prints them from (and what a
+              # registered result carries). The console text of each rides
+              # the engine-internal marker the display prints before the
+              # status line.
+              try:
+                  from ansible.module_utils.common.warnings import (
+                      get_deprecation_messages, get_deprecation_console_texts)
+                  self._deprecations = list(get_deprecation_messages())
+                  self._deprecation_console_texts = list(get_deprecation_console_texts())
+              except Exception:
+                  pass
+
           def warn(self, message):
               self._warnings.append(str(message))
 
@@ -738,6 +760,7 @@ module Krikri
 
           def exit_json(self, **kwargs):
               self._pull_global_warnings()
+              self._pull_global_deprecations()
               result = dict(kwargs)
               result.setdefault('changed', False)
               # Real _return_formatted (2.21) injects `invocation` only when
@@ -760,11 +783,15 @@ module Krikri
                   result['stderr_lines'] = str(result['stderr']).splitlines()
               if self._warnings:
                   result['warnings'] = self._warnings
+              if self._deprecations:
+                  result['deprecations'] = self._deprecations
+                  result['_ansible_core_deprecations'] = self._deprecation_console_texts
               sys.stdout.write(json.dumps(result) + '\\n')
               sys.exit(0)
 
           def fail_json(self, msg='Module failed', **kwargs):
               self._pull_global_warnings()
+              self._pull_global_deprecations()
               # Real fail_json accepts an exception kwarg (run_command's
               # Popen OSError, issue #384): ansible-core 2.19 composes the
               # task error header as "<msg>: <exception str>" from the
@@ -795,6 +822,9 @@ module Krikri
                   result['stderr_lines'] = str(result['stderr']).splitlines()
               if self._warnings:
                   result['warnings'] = self._warnings
+              if self._deprecations:
+                  result['deprecations'] = self._deprecations
+                  result['_ansible_core_deprecations'] = self._deprecation_console_texts
               sys.stdout.write(json.dumps(result) + '\\n')
               sys.exit(1)
       PYTHON
@@ -834,6 +864,7 @@ module Krikri
       File.write(File.join(work_dir, "ansible", "module_utils", "common", "text", "converters.py"), CONVERTERS_PY_SHIM)
       File.write(File.join(work_dir, "ansible", "module_utils", "common", "dict_transformations.py"), DICT_TRANSFORMATIONS_PY_SHIM)
       File.write(File.join(work_dir, "ansible", "module_utils", "common", "warnings.py"), WARNINGS_PY_SHIM)
+      File.write(File.join(work_dir, "ansible", "module_utils", "common", "_collections_compat.py"), COLLECTIONS_COMPAT_PY_SHIM)
       parsing_init = File.join(work_dir, "ansible", "module_utils", "parsing", "__init__.py")
       Dir.mkdir_p(File.dirname(parsing_init))
       File.write(parsing_init, "")
@@ -995,8 +1026,18 @@ module Krikri
     # to_bytes/to_text/to_native surface modules actually import; the
     # error-handler spellings real _text.py maps (surrogate_or_strict
     # et al) become surrogateescape on py3 like the real code.
+    #
+    # ansible-core 2.21 serves `_text` as a shim whose module-level
+    # __getattr__ deprecates each imported name on first access, so a module
+    # importing from this path prints one [DEPRECATION WARNING] per name (and
+    # carries one `deprecations` entry per name) while ansible-playbook runs
+    # it. This file reproduces that: the implementations sit behind
+    # __getattr__, which records the same deprecation the real
+    # ansible/module_utils/_text.py does (msg + version "2.24" + help_text)
+    # and only then hands the helper out, so an unknown name still raises
+    # AttributeError like real and each name deprecates once (issue #1000).
     TEXT_PY_SHIM = <<-PYTHON
-      def to_bytes(value, errors='surrogate_or_strict', encoding='utf-8'):
+      def _to_bytes(value, errors='surrogate_or_strict', encoding='utf-8'):
           if isinstance(value, bytes):
               return value
           if errors in ('surrogate_or_strict', 'surrogate_or_replace',
@@ -1007,7 +1048,7 @@ module Krikri
           except (UnicodeEncodeError, LookupError):
               return str(value).encode(encoding, 'replace')
 
-      def to_text(value, errors='surrogate_or_strict', encoding='utf-8'):
+      def _to_text(value, errors='surrogate_or_strict', encoding='utf-8'):
           if isinstance(value, bytes):
               if errors in ('surrogate_or_strict', 'surrogate_or_replace',
                             'surrogate_or_xmltext', 'surrogate_then_replace'):
@@ -1020,11 +1061,68 @@ module Krikri
               return value
           return str(value)
 
-      def to_native(value, errors='surrogate_or_strict', encoding='utf-8'):
-          return to_text(value, errors, encoding)
+      def _to_native(value, errors='surrogate_or_strict', encoding='utf-8'):
+          return _to_text(value, errors, encoding)
 
-      def to_basestring(value):
-          return to_text(value)
+      def _to_basestring(value):
+          return _to_text(value)
+
+      _DEPRECATED_HELPERS = {
+          'to_bytes': _to_bytes,
+          'to_text': _to_text,
+          'to_native': _to_native,
+      }
+
+      def __getattr__(importable_name):
+          helper = _DEPRECATED_HELPERS.get(importable_name)
+          if helper is None:
+              if importable_name == 'to_basestring':
+                  return _to_basestring
+              raise AttributeError('module %r has no attribute %r'
+                                   % (__name__, importable_name))
+          from ansible.module_utils.common import warnings as _warnings
+          _warnings.deprecate(
+              msg='Importing %r from %r is deprecated.'
+                  % (importable_name, __name__),
+              version='2.24',
+              deprecator={'resolved_name': 'ansible.builtin', 'type': None},
+              help_text='Use ansible.module_utils.common.text.converters instead.',
+          )
+          return helper
+      PYTHON
+
+    # `ansible/module_utils/common/_collections_compat` - the collections-ABC
+    # shim collection modules still import MutableSequence and friends from.
+    # Real ships it and deprecates the whole module on import; the shim bundle
+    # lacked the file entirely, so such a module died here with "No module
+    # named 'ansible.module_utils.common._collections_compat'" and its task
+    # FAILED where ansible-playbook ran it (issue #1000). The re-exports and
+    # the module-level deprecation are ansible-core 2.21's own.
+    COLLECTIONS_COMPAT_PY_SHIM = <<-PYTHON
+      from collections.abc import (
+          MappingView,
+          ItemsView,
+          KeysView,
+          ValuesView,
+          Mapping, MutableMapping,
+          Sequence, MutableSequence,
+          Set, MutableSet,
+          Container,
+          Hashable,
+          Sized,
+          Callable,
+          Iterable,
+          Iterator,
+      )
+
+      from ansible.module_utils.common import warnings as _warnings
+
+      _warnings.deprecate(
+          msg='The `ansible.module_utils.common._collections_compat` module is deprecated.',
+          help_text='Use `collections.abc` from the Python standard library instead.',
+          version='2.24',
+          deprecator={'resolved_name': 'ansible.builtin', 'type': None},
+      )
       PYTHON
 
     # `ansible.module_utils.urls` - role-private modules fetch URLs with
@@ -1655,15 +1753,26 @@ module Krikri
 
     # ansible.module_utils.common.warnings - the global warning and
     # deprecation accumulators real basic.py merges into the module result
-    # (kwargs['warnings'] = get_warnings()). Modules importing warn or
-    # deprecate directly (issue #908: a custom module importing warn, the
-    # same import amazon.aws' AnsibleAWSModule tree uses) died with
-    # ModuleNotFoundError under the shim bundle, which lacked the file,
-    # while ansible-playbook's AnsiballZ payload ran it. The shim carries
-    # the same warn/deprecate/get_warning_messages/get_deprecation_messages/
-    # get_warnings/get_deprecations/error_as_warning surface and tracks
-    # messages as plain strings so the shim's basic.py pulls them into
-    # result['warnings'] the way real does.
+    # (kwargs['warnings'] = get_warnings(), kwargs['deprecations'] =
+    # get_deprecations()). Modules importing warn or deprecate directly
+    # (issue #908: a custom module importing warn, the same import
+    # amazon.aws' AnsibleAWSModule tree uses) died with ModuleNotFoundError
+    # under the shim bundle, which lacked the file, while ansible-playbook's
+    # AnsiballZ payload ran it. The shim carries the same
+    # warn/deprecate/get_warning_messages/get_deprecation_messages/
+    # get_warnings/get_deprecations/error_as_warning surface.
+    #
+    # A deprecation is recorded in the two shapes real produces for one:
+    # `deprecation_as_dict`'s wire dict (msg/collection_name/version/
+    # deprecator, what a registered result carries) and the console line
+    # Display formats from it (msg + the removal sentence naming the
+    # collection and version + the help text). The console text is the
+    # dedup key, exactly as Display dedups on the formatted message. A
+    # caller that resolves its own deprecator (the `_text` and
+    # `_collections_compat` shims, which are ansible-core's own module_utils)
+    # passes it as a plain {'resolved_name': ..., 'type': None} dict;
+    # deprecate() records it as given, like real's get_best_deprecator does
+    # for a caller inside module_utils.
     WARNINGS_PY_SHIM = <<-PYTHON
       _global_warnings = {}
       _global_deprecations = {}
@@ -1681,14 +1790,40 @@ module Krikri
           _record_warning(msg or str(exception))
 
 
-      def deprecate(msg, version=None, date=None, collection_name=None, *, deprecator=None, help_text=None, obj=None):
-          if version:
-              text = '%s (version %s)' % (msg, version)
-          elif date:
-              text = '%s (removed in %s)' % (msg, date)
+      def _deprecation_console_text(msg, version, date, collection_name, help_text):
+          if collection_name == 'ansible.builtin':
+              collection_fragment = 'from ansible-core'
+          elif collection_name:
+              collection_fragment = "from collection '%s'" % collection_name
           else:
-              text = 'DEPRECATED: %s' % msg
-          _global_deprecations[text] = None
+              collection_fragment = 'from'
+          if not collection_name:
+              when_fragment = 'in the future'
+          elif date:
+              when_fragment = 'in a release after %s' % date
+          elif version:
+              when_fragment = 'version %s' % version
+          else:
+              when_fragment = 'in a future release'
+          text = '%s This feature will be removed %s %s.' % (msg, collection_fragment, when_fragment)
+          if help_text:
+              text = '%s %s' % (text, help_text)
+          return text
+
+
+      def deprecate(msg, version=None, date=None, collection_name=None, *, deprecator=None, help_text=None, obj=None):
+          resolved_name = None
+          if isinstance(deprecator, dict):
+              resolved_name = deprecator.get('resolved_name')
+          elif collection_name:
+              resolved_name = collection_name
+          text = _deprecation_console_text(msg, version, date, resolved_name, help_text)
+          _global_deprecations[text] = {
+              'msg': msg,
+              'collection_name': resolved_name,
+              'version': version,
+              'deprecator': {'resolved_name': resolved_name, 'type': None},
+          }
 
 
       def get_warning_messages():
@@ -1696,7 +1831,11 @@ module Krikri
 
 
       def get_deprecation_messages():
-          return tuple({'msg': text, 'collection_name': None, 'version': None} for text in _global_deprecations)
+          return tuple(dict(record) for record in _global_deprecations.values())
+
+
+      def get_deprecation_console_texts():
+          return list(_global_deprecations)
 
 
       def get_warnings():
@@ -1704,7 +1843,7 @@ module Krikri
 
 
       def get_deprecations():
-          return list(_global_deprecations)
+          return [dict(record) for record in _global_deprecations.values()]
       PYTHON
 
     # Parses the module's stdout into its result JSON: Ansible modules

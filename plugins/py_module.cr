@@ -41,6 +41,18 @@ module Krikri
   # with its rc and raw output, matching Ansible's
   # "MODULE FAILURE" shape.
   class PyModulePlugin < BasePlugin
+    # A python module's ansible.module_utils import deprecations come from
+    # ITS OWN imports, which the shim bundle reproduces at run time (its
+    # _text/_collections_compat shims record them, and exit_json/fail_json
+    # put them on the result in real's shape).
+    # BasePlugin#finalize_result's table is for the modules this engine runs
+    # WITHOUT python and is keyed by module name, so a role's own
+    # library/<name>.py shadowing a natively implemented module of the same
+    # name would otherwise gain deprecations its source never triggers.
+    def finalize_result(result : PluginResult) : PluginResult
+      result
+    end
+
     def execute : PluginResult
       source_b64 = @params["module_source"]?
       unless source_b64

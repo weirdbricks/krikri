@@ -109,11 +109,13 @@ describe "mount plugin" do
   # ansible.posix 2.2.0 dropped the `warnings` key ansible.posix 2.1.0
   # passed to mount.py's single exit_json success exit (it warns through
   # AnsibleModule.warn now), so ansible-core's _return_formatted has
-  # nothing to deprecate and a successful run registers neither a
-  # `deprecations` entry nor the [DEPRECATION WARNING] display marker
-  # (verified by running mount.py from both collections directly against
-  # the same args, and end-to-end against 2.20.1 with 2.2.2).
-  it "carries no exit_json warnings deprecation on a successful result" do
+  # nothing to deprecate: no "Passing `warnings` to `exit_json`" entry and
+  # no such [DEPRECATION WARNING] display line. The module's own
+  # ansible.module_utils._text imports are a separate question and DO
+  # deprecate under ansible-core 2.21 - mount.py:229 imports to_bytes and
+  # to_native from that deprecated path - so those two entries are what a
+  # registered result carries (issue #1000, live-verified vs 2.21.6).
+  it "carries only the module's import deprecations on a successful result" do
     fstab = fresh_fstab("deprecation.fstab")
 
     result = PluginSpecHelper.run("mount", {
@@ -121,18 +123,24 @@ describe "mount plugin" do
     })
 
     result["changed"].as_bool.must_equal(true)
-    result["deprecations"]?.must_be_nil
-    result["_ansible_core_deprecations"]?.must_be_nil
+    result["deprecations"].as_a.map(&.["msg"].as_s).must_equal([
+      "Importing 'to_bytes' from 'ansible.module_utils._text' is deprecated.",
+      "Importing 'to_native' from 'ansible.module_utils._text' is deprecated.",
+    ])
+    result["_ansible_core_deprecations"].as_a.size.must_equal(2)
   end
 
-  it "carries no deprecation on a failed result either (Ansible's fail_json passes no args)" do
+  it "carries only the module's import deprecations on a failed result too" do
     fstab = fresh_fstab("deprecation-fail.fstab")
 
     result = PluginSpecHelper.run("mount", {"path" => "/mnt/x", "state" => "present", "fstab" => fstab})
 
     result["failed"].as_bool.must_equal(true)
-    result["deprecations"]?.must_be_nil
-    result["_ansible_core_deprecations"]?.must_be_nil
+    result["deprecations"].as_a.map(&.["msg"].as_s).must_equal([
+      "Importing 'to_bytes' from 'ansible.module_utils._text' is deprecated.",
+      "Importing 'to_native' from 'ansible.module_utils._text' is deprecated.",
+    ])
+    result["_ansible_core_deprecations"].as_a.size.must_equal(2)
   end
 
   it "omits src/fstype from the result when the task did not pass them (Ansible only copies non-None params)" do

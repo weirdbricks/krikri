@@ -247,12 +247,18 @@ describe "storage plugin registered key order (round 992003 kop_storage)" do
               dest: KRIKRI_DUMP_PATH
       YAML
 
-    keys.as_h.keys.must_equal(["changed", "failed", "name", "opts", "dump", "passno", "fstab", "boot", "backup_file", "src", "fstype"])
+    keys.as_h.keys.must_equal(["changed", "failed", "name", "opts", "dump", "passno", "fstab", "boot", "backup_file", "src", "fstype", "deprecations"])
     keys["changed"].as_bool.must_equal(true)
-    keys["deprecations"]?.must_be_nil
+    # The mount module's ansible.module_utils._text imports still deprecate
+    # under ansible-core 2.21 (mount.py:229), and the controller appends
+    # those entries after every module key (issue #1000).
+    keys["deprecations"].as_a.map(&.["msg"].as_s).must_equal([
+      "Importing 'to_bytes' from 'ansible.module_utils._text' is deprecated.",
+      "Importing 'to_native' from 'ansible.module_utils._text' is deprecated.",
+    ])
   end
 
-  it "mount unmounted registers [..., backup_file, failed] (no src/fstype, no deprecations key)" do
+  it "mount unmounted registers [..., backup_file, deprecations] (no src/fstype)" do
     fstab = PluginSpecHelper.tmp_path("mount-unmounted-keyorder.fstab")
     File.write(fstab, "tmpfs /var/tmp/kop-mnt-keyorder2 tmpfs defaults 0 0\n")
 
@@ -272,7 +278,7 @@ describe "storage plugin registered key order (round 992003 kop_storage)" do
               dest: KRIKRI_DUMP_PATH
       YAML
 
-    keys.as_h.keys.must_equal(["changed", "failed", "name", "opts", "dump", "passno", "fstab", "boot", "backup_file"])
+    keys.as_h.keys.must_equal(["changed", "failed", "name", "opts", "dump", "passno", "fstab", "boot", "backup_file", "deprecations"])
     # An unmounted against a path that is not mounted (all this sandbox
     # can do) is the round's mount_unmounted_again capture: changed
     # false, same key order - the changed-true umount variant differs

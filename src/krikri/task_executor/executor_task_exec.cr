@@ -3730,7 +3730,30 @@ module Krikri
         result["changed"] = JSON::Any.new(false)
         result["exception"] = JSON::Any.new("(traceback unavailable)")
       end
+      # The module whose payload real ansible imports for this task
+      # deprecates its ansible.module_utils._text imports BEFORE its own
+      # argument validation, so a spec rejection like this one still carries
+      # those deprecations - on the result (for register) and on the console
+      # marker (live-verified vs 2.21.6: a `mount:` task missing src/fstype
+      # prints both import lines and registers both entries). Only
+      # module-level failures take this path: an action-plugin-level one
+      # never reaches the module at all.
+      unless action_level_only
+        if texts = module_utils_import_deprecation_texts(task.module_name)
+          result["deprecations"] = JSON::Any.new(
+            ModuleUtilsDeprecations.text_import_deprecation_result_entries(task.module_name))
+          result["_ansible_core_deprecations"] = JSON::Any.new(texts.map { |text| JSON::Any.new(text) })
+        end
+      end
       JSON.parse(result.to_json)
+    end
+
+    # Ansible-core 2.21's deprecated ansible.module_utils import warnings for
+    # one module, nil when it imports none (see
+    # Krikri::ModuleUtilsDeprecations).
+    private def module_utils_import_deprecation_texts(module_name : String) : Array(String)?
+      texts = ModuleUtilsDeprecations.text_import_deprecation_texts(module_name)
+      texts.empty? ? nil : texts
     end
 
     # Whether Ansible's copy ACTION plugin leaves the copy MODULE unexecuted
