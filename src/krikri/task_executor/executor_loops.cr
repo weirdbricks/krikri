@@ -3060,7 +3060,9 @@ module Krikri
         # ansible-core 2.21 counts the retries REMAINING AFTER this one
         # (retries: 3 prints 2, 1, 0), where 2.19 printed this attempt's own
         # remaining count (3, 2, 1) - live-verified against both releases.
-        puts "FAILED - RETRYING: [#{host.name}]: #{render_task_name_for_display(task, host)} (#{total_runs - attempt - 1} retries left)."
+        # get_name() prefixes the role name, so this line carries the same
+        # "<role> : " prefix the TASK banner does (issue #959).
+        puts "FAILED - RETRYING: [#{host.name}]: #{task_role_prefix(task)}#{render_task_name_for_display(task, host)} (#{total_runs - attempt - 1} retries left)."
         sleep(delay.seconds)
       end
 
