@@ -167,7 +167,7 @@ BLOCK
       YAML
     stdout_text.must_include("TASK [ansible.builtin.include_vars]")
     stdout_text.must_include("[ERROR]: Task failed: Action failed: Unknown error.")
-    stdout_text.must_include(%(fatal: [localhost]: FAILED! => {"ansible_facts": {}, "ansible_included_var_files": [], "changed": false, "message": "Could not find or access '/nonexistent/krikri_spec_vars.yml' on the Ansible Controller.\\nIf you are using a module and expect the file to exist on the remote, see the remote_src option", "msg": "Task failed: Action failed: Unknown error."}))
+    stdout_text.must_include(%(fatal: [localhost]: FAILED! => {"ansible_facts": {}, "ansible_included_var_files": [], "changed": false, "message": "Could not find or access '/nonexistent/krikri_spec_vars.yml' on the Ansible Controller.", "msg": "Task failed: Action failed: Unknown error."}))
     stdout_text.must_include("...ignoring")
   end
 end
