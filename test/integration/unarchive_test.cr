@@ -339,6 +339,32 @@ describe "unarchive plugin" do
     result["changed"].as_bool.must_equal(false)
   end
 
+  it "extracts with the abspath'd dest but reports dest exactly as given (opsta.etcd, issue #993)" do
+    # Real unarchive's main() derives b_dest = os.path.abspath(dest) and
+    # hands THAT to the handler, while res_args keeps the raw param - so
+    # a role asking for `dest: /usr/bin/` gets tar `-C /usr/bin` (no
+    # trailing slash) in extract_results.cmd and "dest": "/usr/bin/" in
+    # the very same result. Live-verified against ansible-playbook
+    # 2.21.6: `-C /tmp/x` alongside `dest=/tmp/x/`.
+    dest = "#{fresh_dest("tar-dest-trailing-slash")}/"
+    result = PluginSpecHelper.run("unarchive", {"src" => File.join(TMP_DIR, "archive.tar.gz"), "dest" => dest})
+
+    result["changed"].as_bool.must_equal(true)
+    result["dest"].as_s.must_equal(dest)
+    cmd = result["extract_results"]["cmd"].as_a.map(&.as_s)
+    cmd[cmd.index!("-C") + 1].must_equal(dest.chomp("/"))
+  end
+
+  it "does the same for unzip -d on a zip archive" do
+    dest = "#{fresh_dest("zip-dest-trailing-slash")}/"
+    result = PluginSpecHelper.run("unarchive", {"src" => File.join(TMP_DIR, "archive.zip"), "dest" => dest})
+
+    result["changed"].as_bool.must_equal(true)
+    result["dest"].as_s.must_equal(dest)
+    result["extract_results"]["cmd"].as_s.must_include("-d '#{dest.chomp("/")}'")
+    result["extract_results"]["cmd"].as_s.wont_include("-d '#{dest}'")
+  end
+
   it "honors extra_opts: ['--strip-components=1'] to flatten a wrapped archive" do
     # Real bug found benchmarking robertdebock.phpmyadmin: extra_opts was
     # entirely unimplemented (silently dropped), so a role unpacking a
