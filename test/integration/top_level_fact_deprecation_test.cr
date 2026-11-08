@@ -40,6 +40,23 @@ private def run_files(files : Hash(String, String)) : {String, String, String}
   {stdout.to_s, stderr.to_s, dir}
 end
 
+# Reads one gathered fact's value off the local host, so a spec can name the
+# vars file an `include_vars: "{{ ansible_os_family }}.yml"` fixture needs
+# without hard-coding this machine's OS.
+private def fact_value(name : String) : String
+  stdout, _stderr = run(<<-PLAYBOOK)
+    - hosts: localhost
+      connection: local
+      gather_facts: true
+      tasks:
+        - name: read fact
+          debug:
+            msg: "{{ #{name} }}"
+    PLAYBOOK
+
+  stdout.match!(/"msg": "([^"]+)"/)[1]
+end
+
 describe "INJECT_FACTS_AS_VARS deprecation" do
   it "attributes a task's when: clause read to the clause value token" do
     stdout, stderr = run(<<-PLAYBOOK)
@@ -256,5 +273,94 @@ describe "INJECT_FACTS_AS_VARS deprecation" do
     stderr.scan(":6:14\n").size.must_equal(1)
     # In the tasks' own order, the way ansible interleaves them.
     (stderr.index!(":5:14") < stderr.index!(":6:14")).must_equal(true)
+  end
+
+  it "attributes an include_vars path read to that argument's own value" do
+    # Issue #974, nycrecords.nginx: `include_vars: "{{ ansible_os_family
+    # }}.yml"` reads the fact while the executor templates the path, not
+    # during task-arg finalization, so the read used to stay silent. Real
+    # pins it on the path argument's VALUE (the statement's own
+    # `include_vars:` key for the free-form form, `file:` in the mapping
+    # form) - live-verified against 2.21.6.
+    family = fact_value("ansible_os_family")
+    stdout, stderr, dir = run_files({
+      "play.yml" => <<-PLAYBOOK,
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        tasks:
+          - name: free-form include_vars
+            include_vars: "{{ ansible_os_family }}.yml"
+          - name: mapping include_vars
+            include_vars:
+              file: "{{ ansible_os_family }}.yml"
+      PLAYBOOK
+      "#{family}.yml" => "---\nstub_user: www-data\n",
+    })
+
+    stdout.must_include("TASK [free-form include_vars]")
+    stdout.must_include("TASK [mapping include_vars]")
+    stdout.wont_include("FAILED")
+    stderr.must_include("[DEPRECATION WARNING]: #{FACT_DEPRECATION_TEXT}\n")
+    stderr.must_include("Origin: #{File.join(dir, "play.yml")}:6:21\n")
+    stderr.must_include("6       include_vars: \"{{ ansible_os_family }}.yml\"\n")
+    stderr.must_include("^ column 21")
+    stderr.must_include("Origin: #{File.join(dir, "play.yml")}:9:15\n")
+    stderr.must_include("^ column 15")
+    stderr.scan(/DEPRECATION WARNING\]: #{Regex.escape(FACT_DEPRECATION_TEXT)}/).size.must_equal(2)
+  end
+
+  it "drops a passing dynamic include's own when: deprecation" do
+    # ansible-core captures a task's warnings into its result, and the
+    # strategy never displays an include result's - only a skipped or
+    # failed include shows them (live-verified against 2.21.6, issue #974:
+    # nycrecords.nginx's passing `when: ansible_os_family == 'RedHat'`
+    # clause printed nothing while its five skipping siblings each printed
+    # a block).
+    stdout, stderr, dir = run_files({
+      "play.yml" => <<-PLAYBOOK,
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        tasks:
+          - name: passing include
+            include_tasks: inc.yml
+            when: ansible_os_family != 'NoSuchFamily'
+          - name: skipped include
+            include_tasks: inc.yml
+            when: ansible_os_family == 'NoSuchFamily'
+      PLAYBOOK
+      "inc.yml" => "---\n- name: inside include\n  debug:\n    msg: inside\n",
+    })
+
+    stdout.must_include("TASK [inside include]")
+    stderr.scan(/DEPRECATION WARNING\]: #{Regex.escape(FACT_DEPRECATION_TEXT)}/).size.must_equal(1)
+    stderr.must_include("Origin: #{File.join(dir, "play.yml")}:10:13\n")
+    stderr.wont_include(":7:13")
+  end
+
+  it "drops a passing include_role's own when: deprecation" do
+    stdout, stderr, dir = run_files({
+      "play.yml" => <<-PLAYBOOK,
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        tasks:
+          - name: passing role
+            include_role:
+              name: rr
+            when: ansible_os_family != 'NoSuchFamily'
+          - name: skipped role
+            include_role:
+              name: rr
+            when: ansible_os_family == 'NoSuchFamily'
+      PLAYBOOK
+      "roles/rr/tasks/main.yml" => "---\n- name: inside role\n  debug:\n    msg: inside role\n",
+    })
+
+    stdout.must_include("TASK [rr : inside role]")
+    stderr.scan(/DEPRECATION WARNING\]: #{Regex.escape(FACT_DEPRECATION_TEXT)}/).size.must_equal(1)
+    stderr.must_include("Origin: #{File.join(dir, "play.yml")}:12:13\n")
+    stderr.wont_include(":8:13")
   end
 end

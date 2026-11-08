@@ -310,8 +310,19 @@ module Krikri
     TOP_LEVEL_FACT_DEPRECATION_MUTEX = Mutex.new
     TOP_LEVEL_FACT_DEPRECATION_TEXT  = "INJECT_FACTS_AS_VARS default to `True` is deprecated, top-level facts will not be auto injected after the change. This feature will be removed from ansible-core version 2.24."
 
+    # The buffer behind #begin_deferred_fact_deprecations: one entry per
+    # open deferral scope on this fiber, so a nested scope pops back to its
+    # caller's buffer.
+    @@deferred_fact_deprecations = {} of Fiber => Array(Array(String))
+
     def self.emit_top_level_fact_deprecation(origin : String?) : Nil
       return unless origin
+      if buffers = @@deferred_fact_deprecations[Fiber.current]?
+        unless buffers.empty?
+          buffers.last << origin
+          return
+        end
+      end
       TOP_LEVEL_FACT_DEPRECATION_MUTEX.synchronize do
         return if @@top_level_fact_deprecation_origins.includes?(origin)
         @@top_level_fact_deprecation_origins << origin
@@ -322,6 +333,30 @@ module Krikri
         STDERR.puts "Use `ansible_facts[\"fact_name\"]` (no `ansible_` prefix) instead.".colorize(:light_magenta)
         STDERR.puts
       end
+    end
+
+    # ansible-core captures every warning and deprecation raised while a task
+    # runs into that task's own result, and a DYNAMIC INCLUDE's result then
+    # goes through the strategy's "included:" path, which never displays
+    # them - so a `when:` clause reading a top-level fact warns when it
+    # SKIPS the include and stays silent when the include RUNS
+    # (live-verified against 2.21.6 for include_tasks and include_role,
+    # issue #974: nycrecords.nginx's passing `when: ansible_os_family ==
+    # 'RedHat'` printed nothing while its five skipping siblings each
+    # printed a block). Hold the readings here until the verdict is known;
+    # #finish_deferred_fact_deprecations drops them when the include runs.
+    def self.begin_deferred_fact_deprecations : Nil
+      (@@deferred_fact_deprecations[Fiber.current] ||= Array(Array(String)).new) << [] of String
+    end
+
+    def self.finish_deferred_fact_deprecations(flush : Bool) : Nil
+      fiber = Fiber.current
+      return unless buffers = @@deferred_fact_deprecations[fiber]?
+      return if buffers.empty?
+      origins = buffers.pop
+      @@deferred_fact_deprecations.delete(fiber) if buffers.empty?
+      return unless flush
+      origins.each { |origin| emit_top_level_fact_deprecation(origin) }
     end
 
     # An action-plugin warning raised while validating task args (the

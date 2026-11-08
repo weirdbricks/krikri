@@ -722,6 +722,13 @@ module Krikri
     # name instead of merging its keys into the context.
     property include_vars_file : String?
     property include_vars_name : String?
+    # The task-argument key ansible-core pins its Origin on for a top-level
+    # fact read inside include_vars's own path: the free-form statement's
+    # `include_vars:` key, `file:` in the mapping form, `dir:` for dir mode
+    # (live-verified against 2.21.6 - each names that value's own column).
+    # The path is templated by the executor rather than the generic task-arg
+    # finalization, so the key has to be kept from parse time.
+    property include_vars_origin_key : String?
     # dir:-mode parameters (Ansible's include_vars directory form,
     # the Ansible module) - include_vars_dir is
     # the (possibly templated) directory to load every vars file from;
@@ -1001,6 +1008,7 @@ module Krikri
       @include_vars = nil
       @include_vars_file = nil
       @include_vars_name = nil
+      @include_vars_origin_key = nil
       @include_vars_dir = nil
       @include_vars_depth = nil
       @include_vars_files_matching = nil
@@ -5513,6 +5521,7 @@ module Krikri
           dir_str, task.include_vars_dir_type_error = include_vars_path_kind(dir)
           if dir_str
             task.include_vars_dir = dir_str
+            task.include_vars_origin_key = "dir"
             task.include_vars_depth = hash["depth"]?.try { |depth_val| safe_yaml_to_string(depth_val) }
             task.include_vars_files_matching = hash["files_matching"]?.try { |pattern| safe_yaml_to_string(pattern) }
             task.include_vars_ignore_files = hash["ignore_files"]?.try do |list|
@@ -5540,6 +5549,7 @@ module Krikri
           # too, and is simply discarded.
           file_str, task.include_vars_file_type_error = include_vars_path_kind(file)
           task.include_vars_file = file_str
+          task.include_vars_origin_key = "file"
         end
         task.include_vars_name = hash["name"]?.try do |name_val|
           # The `name:` value becomes the FACTS KEY verbatim (real
@@ -5567,6 +5577,7 @@ module Krikri
             true, source_file, source_map, source_prefix, source_index)
         end
         task.include_vars_file = value.as_s?
+        task.include_vars_origin_key = "include_vars"
       end
 
       parse_common_task_attributes(task, task_hash, play, handler ? "Handler" : "Task", source_file, source_map, source_prefix, source_index)
