@@ -534,27 +534,20 @@ module Krikri
     # (missing ansible-core installation, unreadable runtime data,
     # redirect cycle), and the caller keeps the permissive path.
     #
-    # missing_collection_warning mirrors the [WARNING] ansible-core's
-    # collection loader prints ahead of its refusal when resolution dies
-    # on a collection that cannot be IMPORTED from any search path - the
-    # full "Error loading plugin '<plugin>': No module named
-    # 'ansible_collections.<ns>[.<coll>]'" line, with <plugin> the FQCN
-    # being resolved at the point of death: the as-written FQCN itself,
-    # or the redirect TARGET's FQCN for a bare name (live-verified vs
-    # 2.19.11: bare `gc_storage:` warns about community.google.gc_storage;
-    # an absent namespace warns 'ansible_collections.<ns>', an absent
-    # collection inside a present namespace
-    # 'ansible_collections.<ns>.<coll>'). A collection that IS installed
-    # (module file merely missing) resolves far enough that real prints
-    # no warning.
-    alias Resolution = {resolves: Bool?, missing_collection_warning: String?}
-    alias ChainResult = {resolves: Bool?, warning: String?}
+    # A name that dies on a collection that cannot be imported refuses
+    # SILENTLY: ansible-core 2.21's loader catches the ImportError while
+    # it reads that collection's routing metadata (2.19 let it escape,
+    # which is where the "Error loading plugin '<name>': No module named
+    # ..." [WARNING] line came from), so real prints no warning ahead of
+    # the refusal and resolution carries no text for the caller.
+    alias Resolution = {resolves: Bool?}
+    alias ChainResult = {resolves: Bool?}
 
     def self.controller_resolves?(name : String,
                                   task_collections : Array(String) = [] of String,
                                   role_path : String? = nil,
                                   playbook_dir : String? = nil) : Resolution
-      unsure : Resolution = {resolves: nil, missing_collection_warning: nil}
+      unsure : Resolution = {resolves: nil}
       return unsure if name.empty? || name.includes?("{{")
 
       parts = name.split('.')
@@ -576,19 +569,19 @@ module Krikri
       parts = name.split('.')
       ns, coll = parts[0], parts[1]
       leaf = parts[2..].join('.')
-      unsure : Resolution = {resolves: nil, missing_collection_warning: nil}
+      unsure : Resolution = {resolves: nil}
       return unsure if ns == "ansible" && (coll == "builtin" || coll == "legacy")
       fq = "#{ns}.#{coll}.#{leaf}"
       result = chain_resolves?("modules", fq, Set(String).new)
-      return {resolves: true, missing_collection_warning: nil} if result[:resolves] == true
+      return {resolves: true} if result[:resolves] == true
       # Module routing definitively dead: real still consults the action
       # routing before refusing (bare `ios:` resolves only through
       # cisco.ios's action plugin, live-verified vs 2.19.11). Unsure
       # module outcome stays unsure.
       return unsure unless result[:resolves] == false
       action = chain_resolves?("action", fq, Set(String).new)
-      return {resolves: true, missing_collection_warning: nil} if action[:resolves] == true
-      return {resolves: false, missing_collection_warning: result[:warning]} if action[:resolves] == false
+      return {resolves: true} if action[:resolves] == true
+      return {resolves: false} if action[:resolves] == false
       unsure
     end
 
@@ -601,13 +594,13 @@ module Krikri
                                      playbook_dir : String?) : Resolution
       case builtin_module?(name)
       when true
-        return {resolves: true, missing_collection_warning: nil}
+        return {resolves: true}
       when nil
         # No ansible-core installation discoverable: krikri's own native
         # resolution is the only builtin signal available, and
         # inventing a refusal without it would be the dangerous
         # direction.
-        return {resolves: nil, missing_collection_warning: nil}
+        return {resolves: nil}
       end
 
       # A library/ source outranks everything collection-side: ansible
@@ -617,22 +610,17 @@ module Krikri
       # community.general.consul_acl's tombstone) is never consulted
       # when the library file exists.
       if library_module?(name, role_path, playbook_dir)
-        return {resolves: true, missing_collection_warning: nil}
+        return {resolves: true}
       end
 
       if redirects = builtin_redirects("modules")
         if target = redirects[name]?
-          # The warning (when the chain dies on an absent collection)
-          # names the redirect TARGET, live-verified vs 2.19.11: bare
-          # `gc_storage:` warns about community.google.gc_storage, not
-          # about anything named gc_storage-as-plugin... the plugin name
-          # in the warning IS the target FQCN.
           result = chain_resolves?("modules", target, Set(String).new)
-          return {resolves: result[:resolves], missing_collection_warning: result[:warning]} unless result[:resolves].nil?
+          return {resolves: result[:resolves]} unless result[:resolves].nil?
         end
       else
         # No readable runtime data at all: unsure, keep running.
-        return {resolves: nil, missing_collection_warning: nil}
+        return {resolves: nil}
       end
 
       # Action routing: the module file is gone but an action-plugin
@@ -643,7 +631,7 @@ module Krikri
       end
 
       if listed_collections_provide?(name, task_collections)
-        return {resolves: true, missing_collection_warning: nil}
+        return {resolves: true}
       end
 
       # Same treatment for a role-local action plugin: ansible's observed
@@ -652,10 +640,10 @@ module Krikri
       # `warn:` resolve at load time, so the playbook runs - parse must
       # not refuse a name whose only source is such a file.
       if local_action_plugin?(name, role_path, playbook_dir)
-        return {resolves: true, missing_collection_warning: nil}
+        return {resolves: true}
       end
 
-      {resolves: false, missing_collection_warning: nil}
+      {resolves: false}
     end
 
     private def self.action_redirect_resolution(name : String) : Resolution?
@@ -663,7 +651,7 @@ module Krikri
       target = action_redirects[name]? || return nil
       result = chain_resolves?("action", target, Set(String).new)
       return nil if result[:resolves].nil?
-      {resolves: result[:resolves], missing_collection_warning: nil}
+      {resolves: result[:resolves]}
     end
 
     # A listed collection that cannot provide the name is skipped, not
@@ -676,57 +664,6 @@ module Krikri
         action_result = module_result[:resolves] == false ? chain_resolves?("action", "#{entry}.#{name}", Set(String).new) : nil
         module_result[:resolves] == true || action_result.try(&.[:resolves]) == true
       end
-    end
-
-    # The ImportError text ansible-core's collection loader surfaces when
-    # resolution dies on a collection that cannot be imported from any
-    # search root: "No module named 'ansible_collections.<ns>'" for an
-    # absent namespace, '...ansible_collections.<ns>.<coll>' for an absent
-    # collection inside a present namespace (live-verified vs 2.19.11).
-    private def self.missing_collection_reason(namespace : String, collection : String) : String
-      ns_present = collection_dirs.keys.any?(&.starts_with?("#{namespace}."))
-      module_name = ns_present ? "ansible_collections.#{namespace}.#{collection}" : "ansible_collections.#{namespace}"
-      "No module named '#{module_name}'"
-    end
-
-    # The [WARNING] lines ansible-core's loader prints while it walks a
-    # task's collections: list to find a bare module name (a service
-    # action's delegated `systemd` module): one per listed collection that
-    # cannot be imported. A listed collection that IS installed imports
-    # cleanly and adds nothing, so only absent entries warn.
-    def self.missing_listed_collection_warnings(name : String, task_collections : Array(String)) : Array(String)
-      task_collections.compact_map do |entry|
-        next unless entry.count('.') == 1
-        namespace, collection = entry.split('.')
-        next if collection_dirs.has_key?("#{namespace}.#{collection}")
-        "Error loading plugin '#{name}': #{missing_collection_reason(namespace, collection)}"
-      end
-    end
-
-    # Where the missing-lookup-plugin [WARNING] goes - STDERR in
-    # production, replaceable so a spec can capture the text without
-    # touching the process's STDERR (same indirection as
-    # PythonFilterRunner.warning_sink).
-    class_property missing_lookup_warning_sink : IO = STDERR
-
-    # A distinct lookup-plugin [WARNING] already printed this run - real
-    # Display.warning dedupes on the formatted message, so a repeated
-    # lookup of the same absent collection stays silent after the first.
-    @@missing_lookup_warnings = Set(String).new
-
-    # The [WARNING] real's plugin loader prints the moment a lookup name
-    # resolves into a collection that cannot be imported, ahead of the
-    # hard not-found failure ("Error loading plugin 'nope.nope.php_version':
-    # No module named 'ansible_collections.nope'"). Bare names and names
-    # inside an installed collection stay silent - real only surfaces
-    # the loader's ImportError there.
-    def self.warn_missing_lookup_plugin(fqcn : String) : Nil
-      return unless fqcn.count('.') >= 2
-      namespace, collection, _leaf = fqcn.split('.', 3)
-      return if installed?(namespace, collection)
-      line = "[WARNING]: Error loading plugin '#{fqcn}': #{missing_collection_reason(namespace, collection)}"
-      return unless @@missing_lookup_warnings.add?(line)
-      missing_lookup_warning_sink.puts line.colorize(:light_magenta)
     end
 
     # A role's own meta/main.yml `collections:` list - the role's
@@ -766,26 +703,24 @@ module Krikri
     # onward), with the ansible_builtin_runtime.yml consulted for FQCN
     # keys when the collection directory is absent (real's builtin
     # runtime carries FQCN keys for names that moved between
-    # collections, e.g. community.general.docker_service). The warning
-    # travels back from the point of death: an absent collection's import
-    # failure, nil for every other outcome.
+    # collections, e.g. community.general.docker_service).
     #
     # On the "action" kind a leaf counts as present when EITHER the
     # collection's action plugin file OR its module file exists - a
     # module without a dedicated action plugin still runs, through the
     # generic normal action.
     private def self.chain_resolves?(kind : String, fqcn : String, seen : Set(String)) : ChainResult
-      return {resolves: nil, warning: nil} if seen.includes?(fqcn) || seen.size > MAX_REDIRECT_HOPS
+      return {resolves: nil} if seen.includes?(fqcn) || seen.size > MAX_REDIRECT_HOPS
       seen << fqcn
 
       parts = fqcn.split('.')
-      return {resolves: nil, warning: nil} if parts.size < 3
+      return {resolves: nil} if parts.size < 3
       ns, coll = parts[0], parts[1]
       leaf = parts[2..].join('.')
 
       if ns == "ansible" && coll == "builtin"
         # Redirect target inside ansible-core itself.
-        return {resolves: builtin_target?(kind, leaf), warning: nil}
+        return {resolves: builtin_target?(kind, leaf)}
       end
 
       # An installed collection is the truth for its own names: real
@@ -810,7 +745,7 @@ module Krikri
       # (krikri-only hosts, test containers) while the check keeps its
       # teeth for the genuinely optional community collections.
       if ns == "ansible" && {"posix", "netcommon", "utils", "windows", "legacy"}.includes?(coll)
-        return {resolves: true, warning: nil}
+        return {resolves: true}
       end
 
       # Collection directory absent: the builtin runtime's FQCN redirect
@@ -820,9 +755,9 @@ module Krikri
           result = chain_resolves?(kind, target, seen)
           return result unless result[:resolves].nil?
         end
-        return {resolves: false, warning: "Error loading plugin '#{fqcn}': #{missing_collection_reason(ns, coll)}"}
+        return {resolves: false}
       end
-      {resolves: nil, warning: nil}
+      {resolves: nil}
     end
 
     # Does ansible-core provide `leaf` under this routing kind? A module
@@ -856,11 +791,11 @@ module Krikri
     # An installed collection's own resolution: the plugin file, then its
     # meta/runtime.yml redirects, then (still before "absent") the
     # builtin runtime's FQCN redirect. No import failure anywhere (the
-    # collection IS importable), so a refusal here carries no warning.
+    # collection IS importable).
     private def self.installed_collection_resolution(kind : String, leaf : String, dirs : Array(String),
                                                      fqcn : String, seen : Set(String)) : ChainResult
       dirs.each do |dir|
-        return {resolves: true, warning: nil} if collection_leaf_file?(kind, dir, leaf)
+        return {resolves: true} if collection_leaf_file?(kind, dir, leaf)
       end
       dirs.each do |dir|
         redirects = collection_redirects(dir, kind)
@@ -877,7 +812,7 @@ module Krikri
           return result unless result[:resolves].nil?
         end
       end
-      {resolves: false, warning: nil}
+      {resolves: false}
     end
 
     private def self.collection_leaf_file?(kind : String, dir : String, leaf : String) : Bool

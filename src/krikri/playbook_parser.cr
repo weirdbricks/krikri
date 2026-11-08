@@ -117,24 +117,14 @@ module Krikri
     # modules accounting); the executor's reached-unavailable paths key
     # on this flag to fail instead of skip.
     property? unresolvable_mapping_module : Bool = false
-    # The as-written module name the failure message echoes, and - when
-    # resolution died on an absent collection directory - the [WARNING]
-    # text ansible-core's loader prints right before the task-failure
-    # [ERROR] chain ("Error loading plugin '<fqcn>': ...").
+    # The as-written module name the failure message echoes.
     property unresolvable_mapping_name : String?
-    property unresolvable_mapping_warning : String?
     # The mapping's own `module:` VALUE token - playbook path plus 1-based
     # (line, column) - which real 2.19.11 pins the chain's "caused by"
     # Origin at (6:17 in the issue #666 repro), distinct from the
     # task-level Origin at the task's name line. nil without a source map
     # (the stanza is then omitted, never mislabeled).
     property unresolvable_mapping_origin : {String, Int32, Int32}?
-    # The [WARNING] lines ansible-core's loader prints when a fact-delegating
-    # action (service -> systemd, package -> apt) runs its delegated module
-    # by BARE name, walking this task's collections: list and printing a
-    # warning for each absent entry (set only on service/package tasks;
-    # emitted by the executor when the delegated manager actually runs).
-    property delegated_collection_warnings : Array(String) = [] of String
     property params : Hash(String, String)
     property vars : Hash(String, JSON::Any)
     # environment: - per-task env vars (Ansible keyword). Raw,
@@ -4186,7 +4176,6 @@ module Krikri
       # the source spelling, not `ansible.builtin.debug`.
       as_written_module_name = module_name
       mapping_module_unresolvable = false
-      mapping_module_warning = nil.as(String?)
       if templated_action_string
         # Never unavailable/skipped - resolved (or failed) at run time.
         resolved_module_name = nil
@@ -4287,20 +4276,11 @@ module Krikri
           MARIADB_FORK_ALIASES.includes?(module_name) && resolution[:resolves] == false
         mapping_module_unresolvable =
           action_mapping && resolution[:resolves] == false && (resolved_module_name.nil? || mariadb_fork_refusal)
-        mapping_module_warning = resolution[:missing_collection_warning]
         if !action_mapping && resolution[:resolves] == false && (resolved_module_name.nil? || mariadb_fork_refusal)
           message = "couldn't resolve module/action '#{module_name}'. " \
                     "This often indicates a misspelling, missing collection, or incorrect module path."
           prefix = task_source_prefix(source_prefix, index)
           render = (source_file && source_map && source_map.at?(prefix)) ? origin_error_render(message, source_file, source_map, prefix) : nil
-          # An FQCN (or a bare name's redirect target) whose collection
-          # cannot be imported reproduces the [WARNING] ansible-core's
-          # loader prints ahead of the refusal (live-verified vs
-          # 2.19.11); other refusal shapes get none.
-          if warning = resolution[:missing_collection_warning]
-            warning_line = "[WARNING]: #{warning}\n"
-            render = render ? warning_line + render : "#{warning_line}[ERROR]: #{message}\n\n"
-          end
           raise UnresolvedModuleError.new(message, render)
         end
 
@@ -4341,18 +4321,6 @@ module Krikri
       task = Task.new(name || as_written_module_name, module_name)
       task.action_name = as_written_module_name
       task.has_explicit_name = !name.nil?
-      # A fact-delegating action (service -> systemd, package -> apt) runs
-      # its delegated module by BARE name, so ansible-core's loader walks
-      # the task's collections: list first and prints a [WARNING] for each
-      # absent entry before the module runs (live-verified vs 2.19.11 on a
-      # role declaring `collections:` with an uninstalled collection -
-      # issue #396 for the package half). Only the fact-chosen manager is
-      # affected: an explicit `use:` names it, `auto` or unset defers to
-      # the host's manager fact.
-      if (leaf = module_name.split('.').last) == "service" || leaf == "package"
-        bare_module = leaf == "service" ? "systemd" : "apt"
-        task.delegated_collection_warnings = CollectionIndex.missing_listed_collection_warnings(bare_module, task_collections || [] of String)
-      end
       if templated_action_string
         task.templated_action = templated_action_string
         # A dict-form directive's args: payload is static (only the module
@@ -4369,7 +4337,6 @@ module Krikri
         if mapping_module_unresolvable
           task.unresolvable_mapping_module = true
           task.unresolvable_mapping_name = as_written_module_name
-          task.unresolvable_mapping_warning = mapping_module_warning
           if source_file && (line_col = mapping_module_origin)
             task.unresolvable_mapping_origin = {source_file, line_col[0], line_col[1]}
           end

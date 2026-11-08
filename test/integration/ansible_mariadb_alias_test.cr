@@ -50,11 +50,11 @@ end
 # describe/it macros cannot expand inside a runtime block, so the loop
 # is unrolled into one it per module name.
 describe "ansible.mariadb module resolution" do
-  it "refuses ansible.mariadb.mariadb_db at load (rc=4) on a controller without the collection" do
+  it "refuses ansible.mariadb.mariadb_db at load (rc=4) on a controller without the collection, no loader warning" do
     if mariadb_collection_state == false
       status, output = run_playbook("ansible.mariadb.mariadb_db")
       status.exit_code.must_equal(4, output)
-      output.must_include("[WARNING]: Error loading plugin 'ansible.mariadb.mariadb_db': No module named 'ansible_collections.ansible.mariadb'")
+      output.wont_include("[WARNING]: Error loading plugin")
       output.must_include("[ERROR]: couldn't resolve module/action 'ansible.mariadb.mariadb_db'. This often indicates a misspelling, missing collection, or incorrect module path.")
       output.wont_include("PLAY RECAP")
     else
@@ -65,11 +65,11 @@ describe "ansible.mariadb module resolution" do
     end
   end
 
-  it "refuses ansible.mariadb.mariadb_user at load (rc=4) on a controller without the collection" do
+  it "refuses ansible.mariadb.mariadb_user at load (rc=4) on a controller without the collection, no loader warning" do
     if mariadb_collection_state == false
       status, output = run_playbook("ansible.mariadb.mariadb_user")
       status.exit_code.must_equal(4, output)
-      output.must_include("[WARNING]: Error loading plugin 'ansible.mariadb.mariadb_user': No module named 'ansible_collections.ansible.mariadb'")
+      output.wont_include("[WARNING]: Error loading plugin")
       output.must_include("[ERROR]: couldn't resolve module/action 'ansible.mariadb.mariadb_user'. This often indicates a misspelling, missing collection, or incorrect module path.")
       output.wont_include("PLAY RECAP")
     else

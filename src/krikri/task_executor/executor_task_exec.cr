@@ -580,12 +580,12 @@ module Krikri
     # task whose module name is definitively unresolvable on the
     # controller (Task#unresolvable_mapping_module, issue #666). Ansible
     # resolves a mapping's module lazily, per task, after its when: - so
-    # a reached task fails there (rc=2) with the loader's [WARNING]
-    # (missing collection) ahead of the two-segment "Cannot resolve '...'
-    # to an action or module." [ERROR] chain (task-level Origin at the
-    # task's name line, cause's at the mapping's own `module:` VALUE
-    # token - live-captured vs 2.19.11 on the xlab_si.nuage_create_entity
-    # repro), while a when:-false task is an ordinary skip. The returned
+    # a reached task fails there (rc=2) with the two-segment "Cannot
+    # resolve '...' to an action or module." [ERROR] chain (task-level
+    # Origin at the task's name line, cause's at the mapping's own
+    # `module:` VALUE token - live-captured vs 2.19.11 on the
+    # xlab_si.nuage_create_entity repro), while a when:-false task is an
+    # ordinary skip. The returned
     # result flows through the normal failure pipeline (display, stats,
     # halt) - the chain is emitted HERE so it precedes the fatal line,
     # deduped per exact text like Display._deduplicate; the result's
@@ -596,9 +596,6 @@ module Krikri
     private def unresolvable_mapping_module_failure(task : Task) : JSON::Any
       name = task.unresolvable_mapping_name || task.action_name || task.module_name
       message = "Cannot resolve '#{name}' to an action or module."
-      if warning = task.unresolvable_mapping_warning
-        ResultDisplay.emit_display_warning(warning)
-      end
       emit_unresolvable_mapping_error_block(task, message)
       JSON.parse({
         "changed"                              => false,
@@ -3622,29 +3619,6 @@ module Krikri
       community.mysql.mysql_query community.mysql.mysql_variables
     ]
 
-    # A fact-delegating action (service -> systemd, package -> apt) runs its
-    # delegated manager module by BARE name, so ansible-core's loader walks
-    # the task's collections: list and prints a [WARNING] for each absent
-    # entry before the module runs (live-verified vs 2.19.11 on a role
-    # declaring `collections:` with an uninstalled collection - issue #396
-    # for the package half). Only the fact-chosen manager is affected: an
-    # explicit `use:` names it, `auto` or unset defers to the host fact.
-    # Display dedupe makes a second task with the same absent collection
-    # silent, exactly like Ansible's global Display.warning.
-    private def emit_delegated_collection_warnings(
-      task : Task,
-      params : Hash(String, String),
-      vars_context : Hash(String, JSON::Any),
-      manager_fact : String,
-      target_manager : String,
-    ) : Nil
-      return if task.delegated_collection_warnings.empty?
-      use = params["use"]?.try(&.downcase)
-      effective = use.nil? || use == "auto" ? vars_context[manager_fact]?.try(&.as_s?) : use
-      return unless effective == target_manager
-      task.delegated_collection_warnings.each { |warning| ResultDisplay.emit_action_warning(warning) }
-    end
-
     private def argspec_validation_result(
       task : Task,
       params : Hash(String, String),
@@ -3655,12 +3629,6 @@ module Krikri
       # Role-private library/ modules and the py_module runner run real
       # Python whose spec we don't know - nothing to validate against.
       return nil if task.unavailable_module
-      case task.module_name.split('.').last
-      when "service"
-        emit_delegated_collection_warnings(task, params, vars_context, "ansible_service_mgr", "systemd") unless action_level_only
-      when "package"
-        emit_delegated_collection_warnings(task, params, vars_context, "ansible_pkg_mgr", "apt") unless action_level_only
-      end
       action_name = task.action_name || task.module_name
       failure = ArgspecValidator.validate(action_name, task.module_name, params, vars_context)
       return nil unless failure

@@ -172,7 +172,6 @@ describe "Krikri::PlaybookParser (playbook_parser_local_action_test.cr)" do
       task = pb.plays[0].tasks[0]
       task.unresolvable_mapping_module?.must_equal(true)
       task.unresolvable_mapping_name.must_equal("some_unknown_module_xyz")
-      task.unresolvable_mapping_warning.must_be_nil
       # The `module:` VALUE token's own position (the runtime chain's
       # "caused by" Origin) - line 7, column 17 in the heredoc above.
       task.unresolvable_mapping_origin.try { |_, line, col| {line, col} }.must_equal({7, 17})
@@ -198,11 +197,11 @@ describe "Krikri::PlaybookParser (playbook_parser_local_action_test.cr)" do
       task.delegate_to.must_be_nil
     end
 
-    it "carries the missing-collection warning on an FQCN mapping local_action" do
-      # An FQCN whose namespace directory is absent is the shape where
-      # ansible-core's loader ALSO prints its "Error loading plugin"
-      # [WARNING] before the runtime failure - the executor replays that
-      # text from the task's carried warning.
+    it "flags an FQCN mapping local_action without carrying a loader warning" do
+      # An FQCN whose namespace directory is absent used to carry
+      # ansible-core 2.19's "Error loading plugin" [WARNING] text into
+      # the runtime failure; 2.21's loader swallows the ImportError and
+      # prints none (issue #965), so nothing is carried.
       pb = Krikri::PlaybookParser.parse_string(<<-YAML)
         - name: unresolvable fqcn mapping local_action
           hosts: all
@@ -216,8 +215,6 @@ describe "Krikri::PlaybookParser (playbook_parser_local_action_test.cr)" do
       task = pb.plays[0].tasks[0]
       task.unresolvable_mapping_module?.must_equal(true)
       task.unresolvable_mapping_name.must_equal("absentns.absentcoll.thing")
-      task.unresolvable_mapping_warning.must_equal(
-        "Error loading plugin 'absentns.absentcoll.thing': No module named 'ansible_collections.absentns'")
     end
   end
 end
