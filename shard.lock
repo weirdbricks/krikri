@@ -5,8 +5,8 @@ shards:
     version: 1.7.0
 
   awscr-signer:
-    git: https://github.com/weirdbricks/awscr-signer.git
-    version: 0.9.0+git.commit.2a8cc0980c9ba18ef22bf870e8be12783ee2b5ec
+    git: https://github.com/taylorfinnell/awscr-signer.git
+    version: 0.10.0+git.commit.91324fe3e9192507a22a36fd205cd022135b41b4
 
   bz2:
     git: https://github.com/weirdbricks/bz2.cr.git
