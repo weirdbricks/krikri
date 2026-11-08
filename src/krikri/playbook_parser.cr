@@ -86,6 +86,18 @@ module Krikri
     # when it doesn't resolve (Ansible: "couldn't resolve
     # module/action 'x'"), never be skipped like an unknown module.
     property templated_action : String?
+    # Where templated_action's module NAME was written: the YAML key it
+    # sits under (`action`/`local_action` as written, or `module` for the
+    # mapping form, whose only templated token that is) plus that value
+    # token's source position. ansible-core renders the name during task
+    # post-validation and tags it with the value's own Origin, so a
+    # top-level fact read while resolving it deprecates there
+    # (live-verified against 2.21.6: the directive value's opening quote -
+    # `action: "{{ ansible_pkg_mgr }}"` reports its column 11, the mapping
+    # form's `module:` value its own). The position comes from the YAML
+    # source map, not a text scan, because the directive can sit on the
+    # task's own `- action: ...` line (galexrt.ntp, issue #988).
+    property templated_action_site : {String, Int32, Int32}?
     # The module name resolve_templated_action rendered OUT of
     # templated_action, stamped on the shallow copy it returns - the
     # shared original task must keep the as-written template text, but
@@ -3954,6 +3966,7 @@ module Krikri
       # unresolvable_mapping_origin).
       mapping_module_origin = nil.as({Int32, Int32}?)
       templated_action_string = nil.as(String?)
+      templated_action_site = nil.as({String, Int32, Int32}?)
       if (directive_key = module_name) && ACTION_DIRECTIVE_KEYS.includes?(directive_key)
         action_directive_form = true
         is_local_action = module_name.includes?("local_action")
@@ -3971,6 +3984,9 @@ module Krikri
             # renders `TASK [{{ pm }}]`, while the whitespace-split first
             # token truncates the name to `TASK [{{]`.
             templated_action_string = s.strip
+            if value_pos = source_map.try(&.at?("#{task_source_prefix(source_prefix, index)}/#{directive_key}"))
+              templated_action_site = {directive_key, value_pos[0], value_pos[1]}
+            end
             module_name = s.strip[/\A(?:[^\s{]|\{\{.*?\}\})+/] || tokens[0]
           else
             module_name = tokens[0]
@@ -4019,7 +4035,12 @@ module Krikri
             end
           end
           raise "action: is missing 'module' in task '#{name || "at index #{index + 1}"}'" if mod.empty?
-          templated_action_string = mod if mod.includes?("{{")
+          if mod.includes?("{{")
+            templated_action_string = mod
+            if value_pos = source_map.try(&.at?("#{task_source_prefix(source_prefix, index)}/#{directive_key}/module"))
+              templated_action_site = {"module", value_pos[0], value_pos[1]}
+            end
+          end
           module_name = mod
           module_params = YAML::Any.new(collected)
           # The `module:` VALUE token's own source-map position - real
@@ -4353,6 +4374,7 @@ module Krikri
       task.has_explicit_name = !name.nil?
       if templated_action_string
         task.templated_action = templated_action_string
+        task.templated_action_site = templated_action_site
         # A dict-form directive's args: payload is static (only the module
         # name is templated), so it can still be shaped at parse time; the
         # string form's params only exist once the module name resolves.

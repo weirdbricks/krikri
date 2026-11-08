@@ -363,4 +363,92 @@ describe "INJECT_FACTS_AS_VARS deprecation" do
     stderr.must_include("Origin: #{File.join(dir, "play.yml")}:12:13\n")
     stderr.wont_include(":8:13")
   end
+
+  it "attributes a templated action's module-name read to the directive's value" do
+    # Issue #988, galexrt.ntp: `action: "{{ ansible_pkg_mgr }}"` makes the
+    # module NAME a template, which ansible-core post-validates before the
+    # action runs - so the fact it reads deprecates with the directive's
+    # own VALUE token as Origin instead of staying silent. The fixture
+    # renders to a harmless module (the warning, not a package install, is
+    # what it asserts) and keeps the role's own LOOPED shape, which real
+    # still warns about once (live-verified against 2.21.6: 6:15, one block
+    # for both items).
+    stdout, stderr, dir = run_files({"play.yml" => <<-PLAYBOOK})
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        tasks:
+          - name: templated action
+            action: "{{ 'debug' if ansible_os_family else 'fail' }}"
+            args:
+              msg: "item {{ item }}"
+            with_items:
+              - one
+              - two
+      PLAYBOOK
+
+    stdout.must_include("TASK [templated action]")
+    stdout.must_include("ok: [localhost] => (item=one)")
+    stdout.must_include("ok: [localhost] => (item=two)")
+    stdout.wont_include("FAILED")
+    stderr.must_include("[DEPRECATION WARNING]: #{FACT_DEPRECATION_TEXT}\n")
+    stderr.must_include("Origin: #{File.join(dir, "play.yml")}:6:15\n")
+    stderr.must_include("6       action: \"{{ 'debug' if ansible_os_family else 'fail' }}\"\n")
+    stderr.must_include("^ column 15")
+    stderr.must_include("Use `ansible_facts[\"fact_name\"]` (no `ansible_` prefix) instead.")
+    stderr.scan(/DEPRECATION WARNING\]: #{Regex.escape(FACT_DEPRECATION_TEXT)}/).size.must_equal(1)
+  end
+
+  it "warns once per task for a templated action on the task's own line" do
+    # `- action: "{{ ... }}"` puts the directive on the list-entry line,
+    # where a key-based text scan finds no value token, so the Origin has
+    # to come from the parsed position. Two such tasks are two templating
+    # operations and real prints a block for each (live-verified against
+    # 2.21.6: 5:15 and 9:15, one per task).
+    stdout, stderr, dir = run_files({"play.yml" => <<-PLAYBOOK})
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        tasks:
+          - action: "{{ 'debug' if ansible_os_family else 'fail' }}"
+            args:
+              msg: one
+          - name: second
+            action: "{{ 'debug' if ansible_os_family else 'fail' }}"
+            args:
+              msg: two
+      PLAYBOOK
+
+    stdout.must_include("\"msg\": \"one\"")
+    stdout.must_include("\"msg\": \"two\"")
+    stderr.must_include("Origin: #{File.join(dir, "play.yml")}:5:15\n")
+    stderr.must_include("Origin: #{File.join(dir, "play.yml")}:9:15\n")
+    stderr.must_include("5     - action: \"{{ 'debug' if ansible_os_family else 'fail' }}\"\n")
+    stderr.scan(/DEPRECATION WARNING\]: #{Regex.escape(FACT_DEPRECATION_TEXT)}/).size.must_equal(2)
+  end
+
+  it "attributes a mapping action's templated module: read to that value" do
+    # The mapping form templates only the `module:` value, and real pins
+    # the deprecation there rather than on the directive's own line
+    # (live-verified against 2.21.6: 7:17, a different token than the
+    # mapping-form deprecation's 7:9 on the same line).
+    stdout, stderr, dir = run_files({"play.yml" => <<-PLAYBOOK})
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        tasks:
+          - name: mapping action
+            action:
+              module: "{{ 'debug' if ansible_os_family else 'fail' }}"
+              msg: hi
+      PLAYBOOK
+
+    stdout.must_include("TASK [mapping action]")
+    stdout.wont_include("FAILED")
+    stderr.must_include("[DEPRECATION WARNING]: #{FACT_DEPRECATION_TEXT}\n")
+    stderr.must_include("Origin: #{File.join(dir, "play.yml")}:7:17\n")
+    stderr.must_include("7         module: \"{{ 'debug' if ansible_os_family else 'fail' }}\"\n")
+    stderr.must_include("^ column 17")
+    stderr.scan(/DEPRECATION WARNING\]: #{Regex.escape(FACT_DEPRECATION_TEXT)}/).size.must_equal(1)
+  end
 end
