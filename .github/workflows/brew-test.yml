@@ -21,7 +21,16 @@ jobs:
         runner: [macos-15, macos-15-intel, ubuntu-latest, ubuntu-24.04-arm]
     runs-on: ${{ matrix.runner }}
     steps:
+      # fetch-depth: 0 (complete history): `brew tap <name> "$GITHUB_WORKSPACE"`
+      # clones this checkout as a local tap, and Homebrew unshallows that
+      # clone before installing the multiarch formula ("==> Unshallowing
+      # weirdbricks/krikri"). The default depth-1 checkout only carries the
+      # tag commit's refs, so on a tag push that fetch has no branch to
+      # resolve and fails - "git ... fetch --unshallow exited with 1" -
+      # turning Brew Formula Test red on releases (v0.9.2484, v0.9.2485).
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       # Linuxbrew isn't preinstalled on GitHub's Ubuntu runners (unlike
       # Homebrew, which is preinstalled on the macOS ones) - confirmed
