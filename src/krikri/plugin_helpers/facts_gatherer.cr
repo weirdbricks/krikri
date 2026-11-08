@@ -294,7 +294,14 @@ module Krikri
       # order, with each value escaped by String#to_json (the \r\n
       # inside the shell strings stays escaped exactly as ansible
       # displays it).
-      fatal_json = %({"ansible_facts": {}, "changed": false, "failed_modules": {"ansible.legacy.setup": {"exception": "(traceback unavailable)", "failed": true, "module_stderr": #{module_stderr.to_json}, "module_stdout": #{module_stdout.to_json}, "msg": #{not_found_msg.to_json}, "rc": 127}}, "msg": #{failed_modules_msg.to_json}})
+      #
+      # The inner setup result is a module result, so ansible's
+      # UnifiedTaskResult always carries that kind's default keys too:
+      # changed/deprecations at the front and warnings at the end, even
+      # for a module that never ran (live-verified vs 2.21.6: the
+      # deserialization failure still yields {"changed": false,
+      # "deprecations": [], ... "rc": 127, "warnings": []}).
+      fatal_json = %({"ansible_facts": {}, "changed": false, "failed_modules": {"ansible.legacy.setup": {"changed": false, "deprecations": [], "exception": "(traceback unavailable)", "failed": true, "module_stderr": #{module_stderr.to_json}, "module_stdout": #{module_stdout.to_json}, "msg": #{not_found_msg.to_json}, "rc": 127, "warnings": []}}, "msg": #{failed_modules_msg.to_json}})
 
       [
         "[ERROR]: Task failed: Action failed: #{failed_modules_msg}",

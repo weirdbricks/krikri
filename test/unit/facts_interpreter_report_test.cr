@@ -28,9 +28,25 @@ describe "Krikri::FactsGatherer.interpreter_missing_report (facts_interpreter_re
       "| ",
       "+--[ End Sub-Event ]---",
       "",
-      "fatal: [testhost]: FAILED! => {\"ansible_facts\": {}, \"changed\": false, \"failed_modules\": {\"ansible.legacy.setup\": {\"exception\": \"(traceback unavailable)\", \"failed\": true, \"module_stderr\": \"/bin/sh: 1: /home/core/bin/python: not found\\n\", \"module_stdout\": \"\", \"msg\": \"The module interpreter '/home/core/bin/python' was not found.\", \"rc\": 127}}, \"msg\": \"The following modules failed to execute: ansible.legacy.setup.\"}",
+      "fatal: [testhost]: FAILED! => {\"ansible_facts\": {}, \"changed\": false, \"failed_modules\": {\"ansible.legacy.setup\": {\"changed\": false, \"deprecations\": [], \"exception\": \"(traceback unavailable)\", \"failed\": true, \"module_stderr\": \"/bin/sh: 1: /home/core/bin/python: not found\\n\", \"module_stdout\": \"\", \"msg\": \"The module interpreter '/home/core/bin/python' was not found.\", \"rc\": 127, \"warnings\": []}}, \"msg\": \"The following modules failed to execute: ansible.legacy.setup.\"}",
     ].join("\n")
     Krikri::FactsGatherer.interpreter_missing_report("testhost", "/home/core/bin/python", "testhost", false).must_equal(expected.chomp)
+  end
+
+  it "carries the module result's changed, deprecations and warnings keys" do
+    # The setup result inside failed_modules is a module result, so
+    # ansible's UnifiedTaskResult fills that kind's default keys even
+    # though the module never started: an interpreter-missing gather
+    # prints {"changed": false, "deprecations": [], ... "rc": 127,
+    # "warnings": []} (live-verified vs 2.21.6).
+    payload = Krikri::FactsGatherer.interpreter_missing_report("testhost", "/bin/python", "testhost", false)
+      .split("\n").last.sub("fatal: [testhost]: FAILED! => ", "")
+    setup_result = JSON.parse(payload)["failed_modules"]["ansible.legacy.setup"]
+
+    setup_result.as_h.keys.must_equal(%w[changed deprecations exception failed module_stderr module_stdout msg rc warnings])
+    setup_result["changed"].raw.must_equal(false)
+    setup_result["deprecations"].as_a.must_be_empty
+    setup_result["warnings"].as_a.must_be_empty
   end
 
   it "uses the remote shell error and connection-closed stderr for an SSH gather" do
