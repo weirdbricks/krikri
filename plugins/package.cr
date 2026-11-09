@@ -2029,15 +2029,19 @@ module Krikri
             if sim[:exit_code] == 0
               return simulate_result(sim[:stdout], sim[:stderr])
             end
+            # apt.py's "No package matching" failure is a bare
+            # fail_json(msg): it fires at cache resolution BEFORE any
+            # apt-get run, so there is no rc/stderr to report and the
+            # registered result carries neither key (issue #1040,
+            # live-verified in check mode - ansible prints
+            # {"changed": false, "msg": ...} alone).
             return PluginResult.new(
               changed: false,
               failed: true,
               # apt.py names the first unresolvable list member, not the
               # whole joined name it was handed. The simulate call folds
               # stderr into stdout (2>&1), so the E: lines live in stdout.
-              msg: no_package_msg(apt_first_missing_name(sim[:stdout] + sim[:stderr], names) || name),
-              rc: sim[:exit_code],
-              stderr: sim[:stderr].empty? ? sim[:stdout] : sim[:stderr]
+              msg: no_package_msg(apt_first_missing_name(sim[:stdout] + sim[:stderr], names) || name)
             )
           end
 
