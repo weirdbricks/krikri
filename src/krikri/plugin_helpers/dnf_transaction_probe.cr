@@ -29,6 +29,11 @@ module Krikri
     # repo). It only ever READS the host - it marks and resolves, never
     # downloads or runs the transaction (exactly where ansible's own
     # fail_json returns), so a failing task mutates nothing under it.
+    # The module builds `results` from the resolved transaction BEFORE
+    # its --check stop (dnf.py raises the canned failure right where the
+    # real run does), so the same list rides the failure under --check
+    # too - issue #1038 (the check phase of the same round), where this
+    # engine also reported results [].
     #
     # python3-dnf is the same requirement ansible's own dnf module has
     # (its _ensure_dnf respawns the interpreter until `import dnf`
@@ -279,12 +284,13 @@ module Krikri
             update_only = cfg.get('update_only', False)
             allow_downgrade = cfg.get('allow_downgrade', False)
             download_only = cfg.get('download_only', False)
+            allowerasing = cfg.get('allowerasing', False)
             names = cfg.get('names', [])
             response_results = []
 
             if names == ['*'] and state == 'latest':
                 base.upgrade_all()
-                return _transaction_results(base, response_results, base.resolve(allow_erasing=False), download_only)
+                return _transaction_results(base, response_results, base.resolve(allow_erasing=allowerasing), download_only)
 
             pkg_specs, grp_specs, filenames = _parse_spec_group_file(base, names, update_only)
             pkg_specs = [p.strip() for p in pkg_specs]
@@ -354,7 +360,7 @@ module Krikri
             else:
                 raise RuntimeError('state %s has no install transaction' % state)
 
-            return _transaction_results(base, response_results, base.resolve(allow_erasing=False), download_only)
+            return _transaction_results(base, response_results, base.resolve(allow_erasing=allowerasing), download_only)
 
         try:
             print(json.dumps({'results': main()}))
@@ -369,6 +375,13 @@ module Krikri
       # which keeps the caller's historical results [] shape.
       def dnf_transaction_probe_results(names : Array(String)) : Array(String)
         return [] of String unless transaction_probe_dnf4?
+        # `update_cache`'s metadata refresh (dnf.py _setup_base's
+        # base.update_cache() before fill_sack) is the one request knob
+        # this replay does not model - resolving from a stale cache can
+        # name a different transaction than the module's own, so keep
+        # the historical results [] shape rather than answer with a
+        # guess (issue #1038's gate).
+        return [] of String if true?(@params["update_cache"]?)
         config = dnf_transaction_probe_config(names)
         payload = Base64.strict_encode(config.to_json)
         program = "import base64,json\ncfg=json.loads(base64.b64decode('#{payload}').decode())\n" + PROBE_PROGRAM
@@ -402,6 +415,8 @@ module Krikri
           "update_only"       => JSON::Any.new(true?(@params["update_only"]?)),
           "allow_downgrade"   => JSON::Any.new(true?(@params["allow_downgrade"]?)),
           "download_only"     => JSON::Any.new(true?(@params["download_only"]?)),
+          "allowerasing"      => JSON::Any.new(true?(@params["allowerasing"]?)),
+          "update_cache"      => JSON::Any.new(true?(@params["update_cache"]?)),
           "download_dir"      => JSON::Any.new(@params["download_dir"]?),
           "conf_file"         => JSON::Any.new(@params["conf_file"]?),
           "installroot"       => JSON::Any.new(@params["installroot"]? || "/"),

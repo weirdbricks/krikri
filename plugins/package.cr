@@ -6,6 +6,7 @@ require "../src/krikri/plugin_helpers/apt_lock_retry"
 require "../src/krikri/plugin_helpers/apt_deb_install"
 require "../src/krikri/plugin_helpers/apt_locale"
 require "../src/krikri/plugin_helpers/dnf_install_failures"
+require "../src/krikri/plugin_helpers/dnf_transaction_probe"
 require "../src/krikri/plugin_helpers/rpm_spec_probe"
 
 module Krikri
@@ -881,13 +882,17 @@ module Krikri
         )
       end
       if failures = parse_dnf_install_failures(install_result[:stdout], install_result[:stderr])
-        # Ansible's fail_json for this shape carries the survivors'
-        # resolved transaction in `results` (issue #1020:
-        # archf.packages' "installing default packages" reported the
-        # full "Installed: <nevra>"/"Removed: <nevra>" lists real's
-        # install_set/remove_set iterate, where this engine sent []) -
-        # the same dnf-marking replay the dnf/yum plugins use (see
-        # DnfTransactionProbe).
+        # Ansible checks the unresolvable specs off into `failures` and
+        # STILL depsolves the survivors, so this failure carries the
+        # whole would-transaction in `results` - every dependency, in
+        # dnf's own package-set order (issue #1038, archf.packages:
+        # 255 "Installed: <nevra>" entries under --check and in real
+        # runs alike, where this engine reported `results: []`; issue
+        # #1020 pinned the real-run capture of the same round). The
+        # entries come from the same dnf-marking replay the dnf/yum
+        # plugins use (see DnfTransactionProbe); an empty probe answer
+        # (a goal it cannot mirror, or no python-dnf on the target)
+        # keeps the historical empty list.
         PluginResult.new(
           changed: false,
           failed: true,

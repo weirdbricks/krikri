@@ -45,6 +45,7 @@ private def with_package753_shims(
   install_err : String = "",
   install_rc : Int32 = 1,
   metadata_err : String = "",
+  probe_results : Array(String)? = nil,
   &
 )
   bin_dir = File.join(Dir.tempdir, "krikri-pkg753-#{Random.rand(1_000_000)}")
@@ -117,6 +118,16 @@ private def with_package753_shims(
   File.write(File.join(bin_dir, "dnf"), dnf_shim)
   File.write(File.join(bin_dir, "yum"), dnf_shim)
   {"rpm", "dnf", "yum"}.each { |bin| File.chmod(File.join(bin_dir, bin), 0o755) }
+
+  # The would-transaction probe shells out to the target's python-dnf
+  # (issue #1038); on the spec host there is no dnf module, so a canned
+  # python3 stands in for it (its first interpreter candidate, and the
+  # one the probe chain stops at when it answers).
+  if probe_results
+    probe_json = {"results" => probe_results}.to_json
+    File.write(File.join(bin_dir, "python3"), "#!/bin/sh\nprintf '%s\\n' '#{probe_json}'\n")
+    File.chmod(File.join(bin_dir, "python3"), 0o755)
+  end
 
   env = {
     "PATH"                        => "#{bin_dir}:/usr/bin:/bin",
@@ -528,6 +539,98 @@ describe "package plugin - the fill_sack repo-metadata load fails every request 
       result["changed"].as_bool.must_equal(false)
       result["msg"].as_s.must_equal(ISSUE1031_METADATA_MSG)
       result["rc"].as_i.must_equal(1)
+    end
+  end
+end
+
+# Issue #1038 (archf.packages, Rocky 9, round29903334): with one
+# unresolvable spec among many resolvable ones, real ansible records the
+# bad spec into `failures` and STILL depsolves the survivors, so the
+# "Failed to install some of the specified packages" failure carries the
+# WHOLE would-transaction in `results` - every dependency, in dnf's own
+# package-set iteration order (live-captured: 255 "Installed: <nevra>"
+# entries on a 26-spec request) - under --check and in real runs alike.
+# This engine reported `results: []` there; the entries now come from
+# DnfTransactionProbe (canned here through the python3 shim).
+# The canned would-transaction the python3 probe shim answers with
+# (issue #1038's shape: the failure's `results` naming the resolved
+# transaction in dnf's own package-set order).
+PROBE1038_RESULTS = [
+  "Installed: vim-8.2.2637-26.el9_8.23.x86_64",
+  "Installed: vim-common-2:8.2.2637-26.el9_8.23.noarch",
+  "Removed: vim-filesystem-2:8.2.2637-1.el9.noarch",
+]
+
+describe "package plugin - dnf failed install carries the would-transaction (issue 1038)" do
+  it "check mode reports the would-transaction results on the missing-spec failure" do
+    with_package753_shims(
+      [] of String,
+      ["vim=8.2.2637-26.el9_8.23"],
+      install_out: "No match for argument: no-such-pkg\n",
+      install_err: "Error: Unable to find a match: no-such-pkg\n",
+      install_rc: 1,
+      probe_results: PROBE1038_RESULTS,
+    ) do |env|
+      result = PluginSpecHelper.run("package", {
+        "name"                => "[\"vim\", \"no-such-pkg\"]",
+        "state"               => "latest",
+        "use"                 => "dnf",
+        "_ansible_check_mode" => "true",
+        "_environment"        => env,
+      })
+
+      result["failed"].as_bool.must_equal(true)
+      result["changed"].as_bool.must_equal(false)
+      result["msg"].as_s.must_equal("Failed to install some of the specified packages")
+      result["failures"].as_a.map(&.as_s).must_equal(["No package no-such-pkg available."])
+      result["results"].as_a.map(&.as_s).must_equal(PROBE1038_RESULTS)
+      result["rc"].as_i.must_equal(1)
+      result.as_h.keys.first(5).must_equal(["msg", "failures", "results", "rc", "failed"])
+    end
+  end
+
+  it "a real run reports the same would-transaction results on the same failure" do
+    with_package753_shims(
+      [] of String,
+      ["vim=8.2.2637-26.el9_8.23"],
+      install_out: "No match for argument: no-such-pkg\n",
+      install_err: "Error: Unable to find a match: no-such-pkg\n",
+      install_rc: 1,
+      probe_results: PROBE1038_RESULTS,
+    ) do |env|
+      result = PluginSpecHelper.run("package", {
+        "name"         => "[\"vim\", \"no-such-pkg\"]",
+        "state"        => "latest",
+        "use"          => "dnf",
+        "_environment" => env,
+      })
+
+      result["failed"].as_bool.must_equal(true)
+      result["msg"].as_s.must_equal("Failed to install some of the specified packages")
+      result["failures"].as_a.map(&.as_s).must_equal(["No package no-such-pkg available."])
+      result["results"].as_a.map(&.as_s).must_equal(PROBE1038_RESULTS)
+      result["rc"].as_i.must_equal(1)
+    end
+  end
+
+  it "keeps results: [] when no python-dnf probe can answer (the issue #19 shape)" do
+    with_package753_shims(
+      [] of String,
+      ["vim=8.2.2637-26.el9_8.23"],
+      install_out: "No match for argument: no-such-pkg\n",
+      install_err: "Error: Unable to find a match: no-such-pkg\n",
+      install_rc: 1,
+    ) do |env|
+      result = PluginSpecHelper.run("package", {
+        "name"                => "[\"vim\", \"no-such-pkg\"]",
+        "state"               => "latest",
+        "use"                 => "dnf",
+        "_ansible_check_mode" => "true",
+        "_environment"        => env,
+      })
+
+      result["failed"].as_bool.must_equal(true)
+      result["results"].as_a.must_equal([] of JSON::Any)
     end
   end
 end

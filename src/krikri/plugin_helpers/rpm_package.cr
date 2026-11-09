@@ -297,7 +297,9 @@ module Krikri
       # Ansible's failure shape: msg, failures, results, rc, failed. The
       # backend's own error text is what goes in `failures`; `results`
       # carries the resolved transaction's entries where ansible's
-      # fail_json does (see DnfTransactionProbe), empty elsewhere.
+      # fail_json does (issue #1038's "Failed to install some of the
+      # specified packages" failure - see DnfTransactionProbe), empty
+      # elsewhere.
       private def failure_result(msg : String, failures : Array(String), rc : Int32 = 1, results : Array(String) = [] of String) : PluginResult
         PluginResult.new(
           changed: false,
@@ -1287,9 +1289,10 @@ module Krikri
             return depsolve_failure
           end
           # Ansible's fail_json for this shape carries the survivors'
-          # resolved transaction in `results` (issue #1020) - the same
-          # dnf-marking replay every other entry of this shape uses
-          # (see DnfTransactionProbe).
+          # resolved transaction in `results` (issue #1020, with issue
+          # #1038 pinning its --check twin) - the same dnf-marking
+          # replay every other entry of this shape uses (see
+          # DnfTransactionProbe).
           return failure_result("Failed to install some of the specified packages", failures, result[:exit_code], dnf_transaction_probe_results(all_names))
         end
         unknown_error_failure(result)
