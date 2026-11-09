@@ -168,6 +168,24 @@ describe "package:/apt locate-miss failure shape (issues 194 and 195)" do
     end
   end
 
+  it "keeps the check-mode No package matching failure to ansible's bare msg" do
+    # Issue #1040 (benibr.firewall, check-mode "install iptables"): apt.py
+    # fails a name its cache cannot resolve BEFORE any apt-get run, so its
+    # fail_json(msg) carries no rc/stderr keys - ansible's check-mode
+    # result is {"changed": false, "msg": ...} alone (live-verified), and
+    # attaching the simulate run's rc/stderr diverged from it.
+    with_failing_apt_get_shim(APT_LOCATE_MISS_STDERR) do
+      result = PluginSpecHelper.run("package",
+        {"name" => "krikri-no-such-pkg-194", "state" => "present", "use" => "apt", "_ansible_check_mode" => "true"})
+
+      result["failed"].as_bool.must_equal(true)
+      result["changed"].as_bool.must_equal(false)
+      result["msg"].as_s.must_equal("No package matching 'krikri-no-such-pkg-194' is available")
+      result.as_h.has_key?("rc").must_equal(false)
+      result.as_h.has_key?("stderr").must_equal(false)
+    end
+  end
+
   it "reports apt.py's install failure shape for non-locate-miss failures (present)" do
     # Issue #440 (buluma.jitsi): real ansible's package: delegates to the
     # apt module, whose install() rc!=0 exit is fail_json(msg="'%s'
