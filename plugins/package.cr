@@ -683,6 +683,41 @@ module Krikri
       nil
     end
 
+    # Issue #1019 (aaditya2801.k8s_master): a request whose specs are ALL
+    # already installed is not an early ok. Ansible's dnf module builds
+    # its dnf Base and fill_sack()s every enabled repo before it resolves
+    # anything, so a repo whose repomd.xml cannot be downloaded fails the
+    # task with libdnf's bare metadata msg even though the resolution
+    # itself comes out empty - in --check too (dnf.py resolves first and
+    # only stops before do_transaction). Live-verified against
+    # ansible-core 2.21 on Rocky 10 with the role's own dead kubernetes
+    # repo file in place: `package: {name: iproute-tc, state: present}`
+    # on the already-installed iproute-tc fatal'd with {"changed": false,
+    # "msg": "Failed to download metadata for repo 'kubernetes': ...",
+    # "rc": 1, "results": []}, also under --check, while this engine said
+    # ok in both modes without ever invoking dnf. The probe below is that
+    # metadata load and resolution and nothing more. dnf.py's present
+    # path marks NOTHING for a spec that is already installed - it never
+    # upgrades it - so --nobest pins the empty resolution it arrives at
+    # (a plain `dnf install` of an installed-but-outdated name upgrades
+    # it wherever dnf.conf carries best=True, verified live, which would
+    # mutate the host behind an unchanged result), and
+    # --setopt=tsflags=test keeps even an unexpectedly non-empty
+    # resolution (an installed glob with missing members) from ever
+    # touching the host. The compound and its failure parser are the
+    # ordinary install path's own, so every failure shape - metadata,
+    # depsolve, missing spec - reports exactly like the install this
+    # request never needed.
+    private def dnf_present_noop_probe_failure(name : String, shell_pkg : String) : PluginResult?
+      gpg_opt = true?(@params["disable_gpg_check"]?) ? "--nogpgcheck" : "--setopt=localpkg_gpgcheck=1"
+      probe = remote_exec(
+        "dnf install -y #{gpg_opt} --nobest --setopt=tsflags=test #{shell_pkg} || " \
+        "yum install -y #{gpg_opt} --nobest --setopt=tsflags=test #{shell_pkg}"
+      )
+      return nil if probe[:exit_code] == 0
+      dnf_install_failure_result(name, probe)
+    end
+
     # The failure shape real ansible's dnf module reports for a transaction
     # that couldn't install some requested specs: the canned msg with one
     # deduped `failures` entry per unresolvable spec and no stderr key -
@@ -1145,9 +1180,17 @@ module Krikri
           return dnf_missing_spec_failure(missing) unless missing.empty?
           results = names.select { |pkg| installed_status[pkg]? == DnfSpecResolution::Available }
             .map { |pkg| "Installed: #{available_nevras[pkg]? || pkg}" }.sort!
+          if is_installed && !names.empty?
+            failure = dnf_present_noop_probe_failure(name, shell_pkg)
+            return failure if failure
+          end
           return dnf_check_mode_transaction_result(!results.empty?, results)
         end
         if is_installed
+          if !names.empty?
+            failure = dnf_present_noop_probe_failure(name, shell_pkg)
+            return failure if failure
+          end
           PluginResult.new(
             changed: false,
             failed: false,

@@ -231,7 +231,14 @@ describe "package plugin - same-name repo package vs a Provides: match (issue 73
       falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
       result["changed"].as_bool.must_equal(false)
       result["msg"].as_s.must_equal("Package php-json already installed")
-      File.read_lines(log).must_equal(["-q list --available php-json"])
+      # Issue #1019: the satisfied no-op still runs dnf's own metadata
+      # load before it can know the transaction is empty (ansible's
+      # fill_sack() happens before any resolution), so the install probe
+      # follows the classification query.
+      File.read_lines(log).must_equal([
+        "-q list --available php-json",
+        "install -y --setopt=localpkg_gpgcheck=1 --nobest --setopt=tsflags=test php-json",
+      ])
     end
   end
 end
