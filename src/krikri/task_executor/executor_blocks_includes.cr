@@ -70,7 +70,16 @@ module Krikri
       changed_before = Hash(String, Int32).new
       run_hosts.each { |host| changed_before[host.name] = @results[host.name]["changed"] }
 
-      run_task_batch(task.block_tasks || [] of Task, run_hosts)
+      # A body task's failure only counts toward max_fail_percentage:
+      # when no rescue:/always: is left to run for the host - with a
+      # chain pending, Ansible lands the host in RESCUE/ALWAYS instead of
+      # booking it into _tqm._failed_hosts, and never books it later
+      # either (see @chain_pending_failures).
+      if task.rescue_tasks || task.always_tasks
+        with_pending_chain { run_task_batch(task.block_tasks || [] of Task, run_hosts) }
+      else
+        run_task_batch(task.block_tasks || [] of Task, run_hosts)
+      end
 
       block_failed = Hash(String, Bool).new
       run_hosts.each { |host| block_failed[host.name] = @halted_hosts.includes?(host.name) }
@@ -94,7 +103,14 @@ module Krikri
 
         propagate_role_context(task, rescue_tasks)
         rescue_hosts.each { |host| bind_failure_vars(host) }
-        run_task_batch(rescue_tasks, rescue_hosts)
+        # A rescue: failure still leaves the always: section to run when
+        # the block has one, so it doesn't count either - but without an
+        # always: it lands the host COMPLETE in Ansible and DOES count.
+        if task.always_tasks
+          with_pending_chain { run_task_batch(rescue_tasks, rescue_hosts) }
+        else
+          run_task_batch(rescue_tasks, rescue_hosts)
+        end
 
         rescue_hosts.each do |host|
           block_failed[host.name] = @halted_hosts.includes?(host.name)
@@ -112,7 +128,10 @@ module Krikri
 
       run_hosts.each do |host|
         @halted_hosts.delete(host.name)
-        halt_if_failed(task, host, block_failed[host.name])
+        # new_failure: false - this re-books the halt the chain's own
+        # failure already earned; its @chain_pending_failures
+        # classification must survive.
+        halt_if_failed(task, host, block_failed[host.name], new_failure: false)
       end
     end
 
@@ -1056,7 +1075,7 @@ module Krikri
             @results[host.name]["ignored"] += 1
           else
             @results[host.name]["failed"] += 1
-            @halted_hosts.add(host.name)
+            book_failure_halt(host)
           end
         elsif executed
           @results[host.name]["ok"] += 1
@@ -1719,7 +1738,7 @@ module Krikri
         @results[host.name]["ignored"] += 1
       else
         @results[host.name]["failed"] += 1
-        @halted_hosts.add(host.name)
+        book_failure_halt(host)
       end
     end
 
@@ -2001,7 +2020,13 @@ module Krikri
       # "Make a swap file"/"Make swap file system"/"Mount swap", none
       # of which have their own notify:) - "Run swapon" never fired.
       changed_before = @results[host.name]["changed"]
-      run_task_list(task.block_tasks || [] of Task, host)
+      # Same max_fail_percentage: classification rule as
+      # execute_block_multi's own body - see the comment there.
+      if task.rescue_tasks || task.always_tasks
+        with_pending_chain { run_task_list(task.block_tasks || [] of Task, host) }
+      else
+        run_task_list(task.block_tasks || [] of Task, host)
+      end
       block_failed = @halted_hosts.includes?(host.name)
 
       if block_failed && (rescue_tasks = task.rescue_tasks)
@@ -2023,7 +2048,13 @@ module Krikri
 
         propagate_role_context(task, rescue_tasks)
         bind_failure_vars(host)
-        run_task_list(rescue_tasks, host)
+        # Same rule as execute_block_multi's rescue: - a rescue: failure
+        # counts only when no always: remains to run.
+        if task.always_tasks
+          with_pending_chain { run_task_list(rescue_tasks, host) }
+        else
+          run_task_list(rescue_tasks, host)
+        end
         block_failed = @halted_hosts.includes?(host.name)
       end
 
@@ -2037,7 +2068,9 @@ module Krikri
       notify_hosts_if_changed(task, [host], {host.name => changed_before})
 
       @halted_hosts.delete(host.name)
-      halt_if_failed(task, host, block_failed)
+      # new_failure: false - re-books the chain's own failure; see
+      # execute_block_multi's end.
+      halt_if_failed(task, host, block_failed, new_failure: false)
     end
 
     # Copy the *enclosing* task's role context (defaults/vars/dirs) into each

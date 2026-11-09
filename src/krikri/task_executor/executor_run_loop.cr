@@ -151,8 +151,12 @@ module Krikri
         if @any_errors_fatal
           true
         elsif limit = @max_fail_percentage
-          # Strictly greater, matching Ansible.
-          (failed * 100.0 / hosts.size) > limit
+          # Strictly greater, matching Ansible. Ansible measures
+          # _tqm._failed_hosts here, which never books a failure that
+          # left a rescue:/always: chain running (see
+          # @chain_pending_failures) - so those hosts don't count.
+          counted = hosts.count { |host| @halted_hosts.includes?(host.name) && !@chain_pending_failures.includes?(host.name) }
+          (counted * 100.0 / hosts.size) > limit
         else
           false
         end
@@ -1519,7 +1523,7 @@ module Krikri
           @results[host.name]["failed"] += 1
         end
       end
-      @halted_hosts.add(host.name) unless ignore_errors
+      book_failure_halt(host) unless ignore_errors
       suffix = item_label ? " => (item=#{item_label})" : ""
       # A loop-source typing/lookup failure rides this no-result-pipeline
       # path (include_tasks:/include_role:'s own loop funnel): real's
@@ -4732,18 +4736,53 @@ module Krikri
     # include_role:'s role-resolution failure, which Ansible halts
     # on unconditionally (live-verified vs 2.19.11: `failed=1 ignored=0`
     # even with ignore_errors: true on the include task).
-    private def halt_if_failed(task : Task, host : Host, failed : Bool, result : JSON::Any? = nil, force_halt : Bool = false) : Nil
+    # *new_failure:* false when re-booking the halt a block's body/
+    # rescue failure already earned (execute_block/execute_block_multi's
+    # own end) - its @chain_pending_failures classification belongs to
+    # that original failure, not to this moment, so it must survive the
+    # temporary un-halt the rescue:/always: sections needed.
+    private def halt_if_failed(task : Task, host : Host, failed : Bool, result : JSON::Any? = nil, force_halt : Bool = false, new_failure : Bool = true) : Nil
       return unless failed && (force_halt || !resolve_task_ignore_errors(task, host: host))
 
       @failed_task_info[host.name] = {task, result} if result
-      @halted_hosts.add(host.name)
+      book_failure_halt(host, new_failure)
       return unless task.run_once?
 
       @hosts.each do |other|
         next if other.name == host.name
         next if @halted_hosts.includes?(other.name)
         next if @unreachable_hosts.includes?(other.name)
-        @halted_hosts.add(other.name)
+        book_failure_halt(other, new_failure)
+      end
+    end
+
+    # Book a task failure's halt and classify it for abort_play?'s
+    # max_fail_percentage: count: a failure that left a rescue:/always:
+    # chain running is recorded in @chain_pending_failures (and never
+    # counts), anything else counts and clears a stale classification
+    # from an earlier, since-recovered failure episode.
+    private def book_failure_halt(host : Host, new_failure : Bool = true) : Nil
+      @halted_hosts.add(host.name)
+      return unless new_failure
+
+      if @block_chain_depth > 0
+        @chain_pending_failures.add(host.name)
+      else
+        @chain_pending_failures.delete(host.name)
+      end
+    end
+
+    # While the yielded section runs, the host's block still owes a
+    # rescue:/always: chain, so failures booking halts inside it don't
+    # count toward max_fail_percentage: (see @chain_pending_failures) -
+    # matching Ansible, where such a failure lands the host in
+    # RESCUE/ALWAYS instead of being booked into _tqm._failed_hosts.
+    private def with_pending_chain(&)
+      @block_chain_depth += 1
+      begin
+        yield
+      ensure
+        @block_chain_depth -= 1
       end
     end
 
