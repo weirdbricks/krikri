@@ -207,16 +207,17 @@ module Krikri
       # verified against ansible-core 2.19's own output for this exact
       # task. check_mode/diff_mode/_verbosity/_environment are engine-
       # internal keys injected by the executor (see build_plugin_config),
-      # and _policy_rc_d_path is the spec seam above - none are part of
-      # Ansible's argument_spec, so none are rejected. (_policy_rc_d_path
-      # needs an explicit exemption: it is not in the shared INTERNAL
-      # list because it is this plugin's spec seam alone, and the
-      # policy_rc_d lifecycle specs pass it on every call.)
+      # and _policy_rc_d_path/_apt_get_paths are this plugin's spec seams
+      # (the policy-rc.d path, and the no-apt-get gate's own probe paths)
+      # - none are part of Ansible's argument_spec, so none are rejected.
+      # (The seams need explicit exemptions: they are not in the shared
+      # INTERNAL list because they are this plugin's alone, and the
+      # specs that drive those paths pass them on every call.)
       # Ansible collects unsupported params but reports them LAST in its
       # check order (mutually_exclusive -> ... -> unsupported), so the
       # mutually-exclusive/choices/bool checks below all beat a typo'd
       # parameter (see dnf.cr).
-      unsupported = unsupported_param_keys(@params, APT_SPEC).reject { |key| key == "_policy_rc_d_path" }
+      unsupported = unsupported_param_keys(@params, APT_SPEC).reject { |key| key.in?("_policy_rc_d_path", "_apt_get_paths") }
       unsupported_rejection : PluginResult? = nil
       unless unsupported.empty?
         unsupported_rejection = unsupported_params_error(
@@ -283,7 +284,14 @@ module Krikri
       # command.", "rc": 2} - observed live on Rocky 9.6 with Oefenweb.dns
       # (round 196). Without this guard this engine's dpkg-query-based
       # absent path quietly reported "Package ... not installed" rc=0.
-      unless File.exists?("/usr/bin/apt-get") || File.exists?("/usr/local/bin/apt-get")
+      # Check mode must never reach that attempt: real's !HAVE_PYTHON_APT
+      # ladder fails fast with the python3-apt refusal instead (the
+      # module-start check below), because the auto-install is a real
+      # host mutation - so this ENOENT shape is a NORMAL-run-only
+      # outcome (issue #1033, agx.gbp on Rocky round29903240: ansible's
+      # --check output for this task is the refusal, where this guard
+      # used to answer with the shape below).
+      unless @check_mode || apt_get_paths.any? { |path| File.exists?(path) }
         # Real run_command's ENOENT shape keeps the bare "Error executing
         # command." as the fatal msg while the [ERROR] block renders the
         # Errno text from the exception field - here carried as
@@ -316,8 +324,11 @@ module Krikri
       # apt.py cannot even begin when the bindings are missing and it
       # is in check mode, so a plain name install fails there too
       # (check mode's only recovery would be the auto-install, which
-      # is a real host mutation).
+      # is a real host mutation). Like every fail_json before the cache
+      # pass it carries no cache keys (issue #1033's loop-item lines are
+      # exactly {ansible_loop_var, changed, item, msg}).
       if @check_mode && !python_apt_present?
+        @omit_cache_updated = true
         return PluginResult.new(
           changed: false,
           failed: true,
@@ -2115,6 +2126,20 @@ module Krikri
     # since the quoted text is part of the registered failure msgs.
     private def naive_single_quote(value : String) : String
       "'#{value}'"
+    end
+
+    # `_apt_get_paths` is the no-apt-get guard's own seam (same
+    # underscore-prefixed family as `_policy_rc_d_path`, and the same
+    # seam apt_repository's gate uses) - the comma-separated paths its
+    # File.exists? probe checks - so a spec can force the gate to fire
+    # even on a dev box that really has apt-get. Never set by real
+    # playbooks (Ansible has no such param and would reject it).
+    private def apt_get_paths : Array(String)
+      if override = @params["_apt_get_paths"]?
+        override.split(',').map(&.strip).reject(&.empty?)
+      else
+        ["/usr/bin/apt-get", "/usr/local/bin/apt-get"]
+      end
     end
 
     # Real apt.py's APT_GET_CMD: get_bin_path("apt-get") - the RESOLVED
