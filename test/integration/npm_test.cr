@@ -79,4 +79,33 @@ describe "npm plugin" do
     result["cmd"].as_s.must_equal("/nonexistent-krikri-npm list --json --long --global")
     result["exception"].as_s.must_equal("[Errno 2] No such file or directory: b'/nonexistent-krikri-npm'")
   end
+
+  it "check mode predicts changed without running the install" do
+    # Ansible's _exec gate runs only the list probe in check mode:
+    # `npm install`/`uninstall` are predicted from the installed-set
+    # check but never started (live-verified vs ansible - `changed:`,
+    # nothing executes). A stub npm logs every command it receives so
+    # the spec pins that the mutating command never ran; real npm
+    # mutation has no suite coverage by design (see this file's header).
+    dir = PluginSpecHelper.tmp_path("npm-check-mode")
+    Dir.mkdir_p(dir)
+    log = File.join(dir, "commands.log")
+    stub = File.join(dir, "npm")
+    File.write(stub, <<-SH)
+      #!/bin/sh
+      echo "$@" >> #{Process.quote(log)}
+      echo '{"dependencies":{}}'
+      SH
+    File.chmod(stub, 0o755)
+
+    result = PluginSpecHelper.run("npm", {
+      "name"                => "krikri-test-package",
+      "global"              => "true",
+      "executable"          => stub,
+      "_ansible_check_mode" => "true",
+    })
+
+    result["changed"].as_bool.must_equal(true)
+    File.read(log).must_equal("list --json --long --global\n")
+  end
 end
