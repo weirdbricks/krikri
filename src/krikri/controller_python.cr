@@ -51,11 +51,53 @@ module Krikri
     @@capability_mutex = Mutex.new
     @@capable = {} of String => Array(String)
     @@capable_mutex = Mutex.new
+    @@ansible_python = {} of String => String?
+    @@ansible_python_mutex = Mutex.new
 
     # The plain controller interpreter - unchanged behavior, the first
     # `python3`/`python` on PATH.
     def executable : String?
       Process.find_executable("python3") || Process.find_executable("python")
+    end
+
+    # The interpreter the user's own `ansible-playbook` (then `ansible`)
+    # runs under, read from its `#!` line. Real ansible runs every
+    # module of a `delegate_to: localhost` task under exactly this
+    # Python: it is real's `sys.executable`, which ansible-core stamps
+    # onto the implicit localhost host as `ansible_python_interpreter`
+    # (inventory/data.py `_create_implicit_localhost`), so libraries
+    # installed beside ansible - boto3 for amazon.aws, issue #1005 -
+    # are importable there and nowhere else. nil when no ansible binary
+    # is on PATH (or none names a python): there is then no ansible
+    # behavior to match, and callers keep discovery.
+    def ansible_python : String?
+      signature = choice_signature
+      @@ansible_python_mutex.synchronize do
+        if @@ansible_python.has_key?(signature)
+          return @@ansible_python[signature]
+        end
+      end
+      found : String? = nil
+      {"ansible-playbook", "ansible"}.each do |binary|
+        if interpreter = shebang_interpreter(binary)
+          found = interpreter
+          break
+        end
+      end
+      @@ansible_python_mutex.synchronize { @@ansible_python[signature] = found }
+      found
+    end
+
+    # Gives *vars* the interpreter real ansible's implicit localhost
+    # carries. Only the IMPLICIT localhost gets it (real's
+    # `_create_implicit_localhost` runs only when no inventory defines
+    # localhost, and `set_variable` would not override one that does),
+    # so callers apply this exactly where they synthesize that host or
+    # its hostvars entry.
+    def apply_implicit_localhost_interpreter(vars : Hash(String, JSON::Any)) : Nil
+      return if vars.has_key?("ansible_python_interpreter")
+      return unless python = ansible_python
+      vars["ansible_python_interpreter"] = JSON::Any.new(python)
     end
 
     # Whether *python* can import the `ansible` package. Cached per path;

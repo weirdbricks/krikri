@@ -173,6 +173,55 @@ describe Krikri::PythonModuleRunner do
     result["ansible_facts"]["deployment"]["timestamp"].as_s.must_equal("20260101000000")
   end
 
+  # A stand-in "interpreter" that never runs the module: it answers with
+  # the marker below, so a spec can tell WHICH interpreter the plugin
+  # picked without depending on the pythons this host happens to have.
+  it "runs the module under the interpreter the task's vars name (issue #1005)" do
+    dir = PluginSpecHelper.tmp_path("py-module-interpreter-vars")
+    Dir.mkdir_p(dir)
+    interpreter = File.join(dir, "pinned-python")
+    File.write(interpreter, "#!/bin/sh\nprintf '%s\\n' '{\"changed\": false, \"ran_by\": \"pinned\"}'\n")
+    File.chmod(interpreter, 0o755)
+
+    # Real resolves a python module's interpreter from the task's vars
+    # before discovery ever runs (module_common's _get_shebang), which is
+    # what makes `delegate_to: localhost` run under the implicit
+    # localhost's ansible_python_interpreter - the python ansible itself
+    # runs under, where libraries installed beside ansible live.
+    result = PluginSpecHelper.run("py_module", {
+      "module_name"         => "whichpy",
+      "module_source"       => Base64.strict_encode("#!/usr/bin/python\nprint('never runs')\n"),
+      "new_style"           => "true",
+      "module_args"         => "{}",
+      "_ansible_check_mode" => "false",
+    }, vars: {"ansible_python_interpreter" => interpreter})
+
+    expect(falsey?(result["failed"]?)).must_equal(true)
+    result["ran_by"].as_s.must_equal("pinned")
+  end
+
+  it "treats an auto* interpreter as the discovery directive and takes the discovery fact" do
+    dir = PluginSpecHelper.tmp_path("py-module-interpreter-auto")
+    Dir.mkdir_p(dir)
+    discovered = File.join(dir, "discovered-python")
+    File.write(discovered, "#!/bin/sh\nprintf '%s\\n' '{\"changed\": false, \"ran_by\": \"discovered\"}'\n")
+    File.chmod(discovered, 0o755)
+
+    # `ansible_python_interpreter: auto` (and auto_silent/auto_legacy)
+    # asks for discovery rather than naming a path, so the interpreter
+    # discovery recorded - what real's _get_shebang falls through to -
+    # decides the run.
+    result = PluginSpecHelper.run("py_module", {
+      "module_name"         => "whichpy",
+      "module_source"       => Base64.strict_encode("#!/usr/bin/python\nprint('never runs')\n"),
+      "new_style"           => "true",
+      "module_args"         => "{}",
+      "_ansible_check_mode" => "false",
+    }, vars: {"ansible_python_interpreter" => "auto", "discovered_interpreter_python" => discovered})
+
+    result["ran_by"].as_s.must_equal("discovered")
+  end
+
   # ---- argument building ----
 
   it "re-types JSON-encoded params and adds the reserved _ansible keys" do

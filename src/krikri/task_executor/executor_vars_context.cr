@@ -1,4 +1,5 @@
 require "../run_options"
+require "../controller_python"
 require "../deprecation_hint"
 require "../value_origin_chain"
 require "./executor"
@@ -263,7 +264,13 @@ module Krikri
       # ordering for every other key. A registered var (set_fact:) for
       # the same key still wins - Ansible's registered tier outranks
       # play vars - so it is left exactly as baseA stacked it.
-      ConnectionSettings::CONNECTION_VAR_KEYS.each do |key|
+      #
+      # The python interpreter vars ride the same way (issue #1005): a
+      # play-level `ansible_python_interpreter` outranks the inventory's,
+      # exactly as it does for the connection keys, and a delegated task
+      # reads that as "the play's value outranks the delegate's host var"
+      # (see delegated_dispatch_vars).
+      (ConnectionSettings::CONNECTION_VAR_KEYS + INTERPRETER_VAR_KEYS).each do |key|
         next if @registered_vars[host.name].has_key?(key)
         vars_context[key] = @play_vars[key] if @play_vars.has_key?(key)
       end
@@ -1276,6 +1283,11 @@ module Krikri
         implicit["group_names"] = JSON::Any.new(Array(JSON::Any).new)
         implicit["ansible_host"] = JSON::Any.new("localhost")
         implicit["ansible_connection"] = JSON::Any.new("local")
+        # Real sets it as a host var on the implicit host, so it shows up
+        # in hostvars too (inventory/data.py `_create_implicit_localhost`
+        # does `set_variable("ansible_python_interpreter",
+        # sys.executable)`) - issue #1005.
+        ControllerPython.apply_implicit_localhost_interpreter(implicit)
         # The implicit entry is not one of the loop's inventory hosts, so it
         # missed the facts/registered/set_facts merge those entries get - but
         # `delegate_to: localhost` + `delegate_facts: true` (Ansible's

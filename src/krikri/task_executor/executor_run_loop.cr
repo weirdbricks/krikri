@@ -1,4 +1,5 @@
 require "./executor"
+require "../controller_python"
 require "../plugin_helpers/ansible_splitlines"
 require "../plugin_helpers/script_pty_capture"
 require "../module_utils_deprecations"
@@ -882,6 +883,13 @@ module Krikri
       # on the controller.
       if target_name == "localhost" || target_name == "127.0.0.1"
         fallback.vars["ansible_connection"] = JSON::Any.new("local")
+        # This fallback stands in for real's IMPLICIT localhost, which
+        # carries ansible_python_interpreter = its own sys.executable
+        # (`_create_implicit_localhost`): a task delegated to localhost
+        # runs its module under the Python ansible itself runs under,
+        # where libraries installed beside ansible live (boto3, issue
+        # #1005). An inventory-defined localhost keeps its own vars.
+        ControllerPython.apply_implicit_localhost_interpreter(fallback.vars)
       else
         fallback.vars["ansible_connection"] = JSON::Any.new("ssh")
       end
@@ -913,7 +921,7 @@ module Krikri
     # ansible_connection are dropped, so a task-level connection var
     # override on the delegated task itself still applies where
     # ansible's own task-vars tier would put it).
-    private def delegated_dispatch_vars(exec_host : Host, vars_context : Hash(String, JSON::Any)) : Hash(String, JSON::Any)
+    private def delegated_dispatch_vars(host : Host, exec_host : Host, vars_context : Hash(String, JSON::Any)) : Hash(String, JSON::Any)
       dispatch = vars_context.dup
       dispatch.delete("ansible_host")
       dispatch.delete("ansible_ssh_host")
@@ -925,8 +933,34 @@ module Krikri
       end
       dispatch["ansible_connection"] =
         exec_host.vars["ansible_connection"]? || JSON::Any.new("ssh")
+      # Which Python runs the module is the DELEGATE's business in real
+      # ansible - that is how `delegate_to: localhost` ends up under the
+      # implicit localhost's own interpreter (issue #1005) - so the
+      # delegate's interpreter keys replace the origin's. They are not
+      # connection keys (CONNECTION_VAR_KEYS), hence this separate step.
+      #
+      # A delegate's values are HOST vars, though, and real ranks the
+      # origin's play/block/task vars above them: a delegated task that
+      # pins ansible_python_interpreter in its own `vars:`, in its block
+      # or in the play runs under THAT interpreter (verified live against
+      # ansible-core 2.21.6), while the origin host's own inventory value
+      # never applies to the delegate at all. Both shapes reach this same
+      # merged context, so the origin's raw inventory value is the tell:
+      # anything else in the context outranks the delegate's host var.
+      INTERPRETER_VAR_KEYS.each do |key|
+        value = exec_host.vars[key]?
+        next unless value
+        existing = dispatch[key]?
+        next if existing && existing != host.vars[key]?
+        dispatch[key] = value
+      end
       dispatch
     end
+
+    # The vars that select the Python a module runs under (issue #1005):
+    # ansible_python_interpreter when the host pins one, and the
+    # interpreter discovery recorded in discovered_interpreter_python.
+    INTERPRETER_VAR_KEYS = ["ansible_python_interpreter", "discovered_interpreter_python"]
 
     # The `-> target` label for display sites that have no already-
     # resolved exec_host at hand (loop-source failure lines,
@@ -2682,7 +2716,7 @@ module Krikri
       # when:/failed_when: evaluation below keep the ORIGIN's context -
       # ansible templates a delegated task's args against the task's own
       # (origin) vars and books the result on the origin host.
-      dispatch_vars = exec_host == host ? vars_context : delegated_dispatch_vars(exec_host, vars_context)
+      dispatch_vars = exec_host == host ? vars_context : delegated_dispatch_vars(host, exec_host, vars_context)
 
       # Ansible resolves the task's effective connection type through
       # its plugin loader right after the when: evaluates and BEFORE the
@@ -3174,6 +3208,21 @@ module Krikri
       end
 
       wire_vars = vars_context
+      # A delegated task's module runs under the DELEGATE's interpreter
+      # vars in real ansible - that is how `delegate_to: localhost`
+      # picks up the implicit localhost's own ansible_python_interpreter
+      # (the python ansible itself runs under, issue #1005). Everything
+      # else keeps the origin's context (krikri templates a delegated
+      # task's params against the origin's vars, and the plugins that
+      # read full vars - debug:/assert: - show the origin's).
+      if exec_host != host
+        wire_vars = vars_context.dup
+        INTERPRETER_VAR_KEYS.each do |key|
+          if value = dispatch_vars[key]?
+            wire_vars[key] = value
+          end
+        end
+      end
       if PluginManager.remote_execution?(task.module_name, exec_host, dispatch_vars)
         wire_vars = dispatch_vars.dup
         wire_vars["ansible_connection"] = JSON::Any.new("local")

@@ -150,4 +150,62 @@ describe Krikri::ControllerPython do
       FileUtils.rm_r(bin)
     end
   end
+
+  # Issue #1005: real ansible stamps its own sys.executable onto the
+  # IMPLICIT localhost host as ansible_python_interpreter
+  # (inventory/data.py `_create_implicit_localhost`), so a module
+  # delegated to localhost runs under the python ansible itself runs
+  # under - the interpreter with libraries installed beside ansible
+  # (boto3 and friends). krikri stands in for that python with the one
+  # its `ansible-playbook` shebang names.
+  it "reads the interpreter ansible itself runs under for the implicit localhost" do
+    python = usable_python3
+    return unless python
+
+    bin = PluginSpecHelper.tmp_path("controller-python-ansible-python")
+    Dir.mkdir_p(bin)
+    write_ansible_playbook(bin, python)
+    with_path(bin) do
+      Krikri::ControllerPython.ansible_python.must_equal(python)
+      vars = {} of String => JSON::Any
+      Krikri::ControllerPython.apply_implicit_localhost_interpreter(vars)
+      vars["ansible_python_interpreter"].as_s.must_equal(python)
+    end
+    FileUtils.rm_r(bin)
+  end
+
+  it "leaves an interpreter the host already defines alone" do
+    python = usable_python3
+    return unless python
+
+    bin = PluginSpecHelper.tmp_path("controller-python-ansible-python-pinned")
+    Dir.mkdir_p(bin)
+    write_ansible_playbook(bin, python)
+    with_path(bin) do
+      # An inventory-defined localhost keeps its own vars: real only sets
+      # the implicit host's (an explicit localhost is never re-created).
+      vars = {"ansible_python_interpreter" => JSON::Any.new("/opt/pinned/python3")}
+      Krikri::ControllerPython.apply_implicit_localhost_interpreter(vars)
+      vars["ansible_python_interpreter"].as_s.must_equal("/opt/pinned/python3")
+    end
+    FileUtils.rm_r(bin)
+  end
+
+  it "finds no ansible interpreter on a controller without ansible" do
+    bin = PluginSpecHelper.tmp_path("controller-python-no-ansible")
+    Dir.mkdir_p(bin)
+    previous = ENV["PATH"]
+    ENV["PATH"] = bin
+    begin
+      # A krikri-only controller has no sys.executable to stand in for,
+      # so callers keep interpreter discovery instead of inventing one.
+      Krikri::ControllerPython.ansible_python.must_be_nil
+      vars = {} of String => JSON::Any
+      Krikri::ControllerPython.apply_implicit_localhost_interpreter(vars)
+      vars.has_key?("ansible_python_interpreter").must_equal(false)
+    ensure
+      ENV["PATH"] = previous
+      FileUtils.rm_r(bin)
+    end
+  end
 end
