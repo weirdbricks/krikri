@@ -1161,15 +1161,15 @@ module Krikri
     # krikri-playbook.cr constructs a fresh TaskExecutor per play).
     private def execute_reboot(params : Hash(String, String), exec_host : Host, vars_context : Hash(String, JSON::Any),
                                check_mode : Bool = @check_mode) : JSON::Any
-      # Ansible's reboot module always returns an "elapsed" field (integer
-      # seconds since the reboot command was issued) in its result, including in
-      # check mode where it returns {'changed': True, 'elapsed': 0,
-      # 'rebooted': True} - round900541 derjd.reboot: the role's reboot:
-      # handler registers its result as rv and a follow-up debug: task reads
-      # rv.elapsed, which crashed this engine with "object of type 'dict' has
-      # no attribute 'elapsed'" where Ansible succeeded.
-      return JSON.parse({"changed" => true, "elapsed" => 0, "failed" => false, "msg" => "Would have rebooted"}.to_json) if check_mode
-
+      # Ansible's reboot ACTION plugin refuses a local connection before it
+      # ever looks at check mode (run() tests `self._connection.transport ==
+      # 'local'` first, and only then `self._task.check_mode`), so `--check`
+      # over ansible_connection=local is still a FAILURE, not a silent
+      # `changed`: live-verified against ansible-playbook 2.21, which reports
+      # "Task failed: Action failed: Running ansible.builtin.reboot with
+      # local connection would reboot the control node." and - because the
+      # task failed rather than changed - never fires the handler it would
+      # have notified (issue #1008, kpg playbooks 000019/23/27/35).
       if PluginManager.local_connection?(exec_host, vars_context)
         return JSON.parse({
           "changed"  => false,
@@ -1179,6 +1179,15 @@ module Krikri
           "rebooted" => false,
         }.to_json)
       end
+
+      # Ansible's reboot module always returns an "elapsed" field (integer
+      # seconds since the reboot command was issued) in its result, including in
+      # check mode where it returns {'changed': True, 'elapsed': 0,
+      # 'rebooted': True} - round900541 derjd.reboot: the role's reboot:
+      # handler registers its result as rv and a follow-up debug: task reads
+      # rv.elapsed, which crashed this engine with "object of type 'dict' has
+      # no attribute 'elapsed'" where Ansible succeeded.
+      return JSON.parse({"changed" => true, "elapsed" => 0, "failed" => false, "msg" => "Would have rebooted"}.to_json) if check_mode
 
       reboot_timeout = params["reboot_timeout"]?.try(&.to_i?) || 600
       connect_timeout = params["connect_timeout"]?.try(&.to_i?) || 5

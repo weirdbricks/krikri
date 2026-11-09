@@ -22,13 +22,16 @@ require "../minitest_helper"
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
+# Only needed to reach the check-mode branch without a local connection - no
+# SSH is ever attempted in check mode, for either engine.
+private NONLOCAL = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-nonlocal-host.ini")
 
-private def run_reboot_playbook(extra_args : Array(String) = [] of String)
+private def run_reboot_playbook(extra_args : Array(String) = [] of String, inventory : String = INVENTORY)
   dir = File.tempname("reboot-elapsed")
   Dir.mkdir_p(dir)
   File.write(File.join(dir, "site.yml"), <<-YAML)
     - name: repro
-      hosts: localhost
+      hosts: all
       gather_facts: false
       tasks:
         - name: reboot the box
@@ -41,7 +44,7 @@ private def run_reboot_playbook(extra_args : Array(String) = [] of String)
     YAML
 
   output = IO::Memory.new
-  status = Process.run(BINARY, ["-i", INVENTORY] + extra_args + [File.join(dir, "site.yml")],
+  status = Process.run(BINARY, ["-i", inventory] + extra_args + [File.join(dir, "site.yml")],
     output: output, error: output, chdir: dir)
   {status, output.to_s}
 ensure
@@ -50,10 +53,11 @@ end
 
 describe "ansible.builtin.reboot's elapsed result field" do
   it "is present in check mode, so a registered rv.elapsed renders" do
-    status, output = run_reboot_playbook(["--check"])
+    status, output = run_reboot_playbook(["--check"], NONLOCAL)
 
     status.success?.must_equal(true)
     output.must_include("elapsed=0")
+    output.must_include("changed: [batchhost]")
     output.wont_include("has no attribute")
   end
 
@@ -64,8 +68,7 @@ describe "ansible.builtin.reboot's elapsed result field" do
     # under ignore_errors.
     #
     # The localhost inventory fixture is already ansible_connection=local,
-    # so a non-check run takes the local-connection refusal branch (in
-    # check mode the check-mode branch would short-circuit first).
+    # so a non-check run takes the local-connection refusal branch.
     status, output = run_reboot_playbook
 
     status.success?.must_equal(true)
@@ -79,5 +82,18 @@ describe "ansible.builtin.reboot's elapsed result field" do
     status.success?.must_equal(true)
     output.must_include("Running ansible.builtin.reboot with local connection would reboot the control node.")
     output.wont_include("Module failed: Running ansible.builtin.reboot")
+  end
+
+  it "refuses the local connection in check mode too, instead of reporting changed" do
+    # The action plugin's local-connection guard runs BEFORE its check-mode
+    # early return, so --check against ansible_connection=local still fails
+    # (and, being a failure rather than a change, never fires a notified
+    # handler). Issue #1008 / kpg playbook 000023.
+    status, output = run_reboot_playbook(["--check"])
+
+    status.success?.must_equal(true)
+    output.must_include("Running ansible.builtin.reboot with local connection would reboot the control node.")
+    output.wont_include("changed: [localhost]")
+    output.must_include("changed=0")
   end
 end
