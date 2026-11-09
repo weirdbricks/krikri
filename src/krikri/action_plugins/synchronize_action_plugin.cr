@@ -237,7 +237,11 @@ module Krikri
       src = src_param.to_s
       dest = dest_param.to_s
 
-      private_key = @params["private_key"]? || @vars["ansible_ssh_private_key_file"]?.try(&.as_s?)
+      # The rsync rsh key resolves through the same ConnectionSettings
+      # ladder as the adjacent password lookup - both key spellings,
+      # then ANSIBLE_PRIVATE_KEY_FILE (issue #1067), the option values
+      # ansible.posix feeds rsync's `ssh -i` from.
+      private_key = @params["private_key"]? || ConnectionSettings.resolve(@host, @vars).identity_file
       conn_password = Passwords.connection(@vars, @host)
 
       # ansible.posix's own action plugin folds the connection's

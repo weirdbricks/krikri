@@ -213,6 +213,20 @@ describe "SynchronizeActionPlugin delegate_to localhost munging" do
     json.as_h["cmd"].as_s.must_include("syncuser@unresolvable-sync-spec-host:/tmp/sync-spec-dest/")
   end
 
+  # The rsync rsh key resolves through the shared ConnectionSettings
+  # ladder (both key spellings, then ANSIBLE_PRIVATE_KEY_FILE - issue
+  # #1067), not just the ansible_ssh_private_key_file var.
+  it "feeds the rsync rsh key through the shared ladder (canonical spelling included)" do
+    vars = {"ansible_private_key_file" => JSON::Any.new("/keys/id_ecdsa")}
+    result = run_delegate_sync("unresolvable-sync-spec-host", {
+      "src"  => "/tmp/sync-spec-src/",
+      "dest" => "/tmp/sync-spec-dest/",
+    }, vars)
+
+    json = result.final_result || raise "expected a final result"
+    json.as_h["cmd"].as_s.must_include("-i /keys/id_ecdsa")
+  end
+
   it "stays a plain local sync when the task host IS the localhost delegate" do
     delegate = Krikri::Host.new("localhost")
     delegate.vars["ansible_connection"] = JSON::Any.new("local")

@@ -807,10 +807,13 @@ module Krikri
       @host.name
     end
 
-    # ansible_ssh_private_key_file, if the inventory specifies one -
-    # nil (ssh's own default identity/agent resolution) otherwise.
+    # The identity file this plugin's own SSH calls dial with, resolved
+    # through the same ConnectionSettings ladder every other transport
+    # uses (both key spellings, then ANSIBLE_PRIVATE_KEY_FILE - issue
+    # #1067) - nil (ssh's own default identity/agent resolution)
+    # otherwise.
     protected def get_identity_file : String?
-      @vars["ansible_ssh_private_key_file"]?.try(&.as_s?)
+      effective_connection.identity_file
     end
 
     # The EFFECTIVE connection user/port for this plugin's own SSH

@@ -486,8 +486,18 @@ module Krikri
         entry = entry.strip
         next if entry.empty?
 
-        expand_host_range(entry).each do |hostname|
+        # Same `host:port` split as the file-based sources - ansible's
+        # host_list plugin feeds each entry through the identical
+        # _expand_hostpattern (verified with `ansible-inventory -i
+        # '127.0.0.1:2202,' --list`).
+        host_pattern, entry_port = split_host_port(entry)
+
+        expand_host_range(host_pattern).each do |hostname|
           host = Host.new(hostname)
+          if entry_port
+            host.vars["ansible_port"] = JSON::Any.new(entry_port.to_i64)
+            host.port = entry_port
+          end
           inventory.add_host(host)
           inventory.get_or_create_group("ungrouped").add_host(host)
           inventory.get_or_create_group("all").add_host(host)
@@ -784,6 +794,29 @@ module Krikri
       names.empty? ? [entry] : names
     end
 
+    # The port half of ansible-core's parse_address
+    # (lib/ansible/parsing/utils/addresses.py), applied BEFORE range
+    # expansion exactly as its ini/yaml/host_list inventory sources do:
+    # `beta:2345` and `192.168.0.1:2202` split into (host, port),
+    # `[::1]:2202` - the only port form an IPv6 literal accepts - splits
+    # through the bracketed form, and anything else keeps its colons
+    # (`::1`, `foo:22:33`, `web[01:03]`). The result is the hostname
+    # WITHOUT the port and the port as a value for ansible_port - the
+    # documented `host:port` inventory form (issue #1067). An entry
+    # whose host part would be empty (`:2202`) is left untouched: real
+    # rejects the token outright ("Not a valid network hostname") and
+    # this parser has no fatal-error path to mirror that with, so the
+    # pre-split literal behavior is kept instead of inventing a
+    # nameless host.
+    private def self.split_host_port(entry : String) : {String, Int32?}
+      match = entry.match(/\A\[(.+)\]:([0-9]+)\z/) ||
+              entry.match(/\A((?:[^:\[\]]|\[[^\]]*\])*):([0-9]+)\z/)
+      return {entry, nil} unless match
+      host = match[1]
+      return {entry, nil} if host.empty?
+      {host, match[2].to_i}
+    end
+
     # Parse host line from INI. *path*/*line_no* label the line for
     # Host#var_origins.
     private def self.parse_host_line(line : String, group_name : String, inventory : Inventory, path : String? = nil, line_no : Int32 = 0) : Nil
@@ -801,18 +834,41 @@ module Krikri
       parts = shlex_split(line)
       return if parts.empty?
 
+      # A `host:port` entry (the documented INI form) splits into the
+      # hostname and an ansible_port value before the token is looked at
+      # any further - ansible-core's ini plugin runs parse_address's
+      # port half first and only then expands ranges, so
+      # `web[01:03]:2202` is three hosts all on port 2202. Verified
+      # against `ansible-inventory --list`: the inventory hostname is
+      # the host part ALONE and ansible_port lands as an INT var.
+      host_pattern, entry_port = split_host_port(parts[0])
+
       # A host entry may be a RANGE standing for several hosts -
       # `web[01:03]`, `n[1:3]`, `h[a:c]`, `x[01:10:3]`,
       # `srv[1:2].ex.com`. Previously the whole thing was taken as one
       # literal hostname, so an inventory using the ordinary
       # `web[01:03]` form defined a single host actually NAMED
       # "web[01:03]" and every real host in it was invisible.
-      expand_host_range(parts[0]).each do |hostname|
+      expand_host_range(host_pattern).each do |hostname|
         # Get or create host
         host = inventory.hosts[hostname]?
         unless host
           host = Host.new(hostname)
           inventory.add_host(host)
+        end
+
+        # The split port becomes an ansible_port VAR, seeded before the
+        # line's own key=value pairs apply - ansible's inventory
+        # add_host(host, port=...) sets it first and the inline
+        # assignments overwrite it, so `127.0.0.1:2202 ansible_port=2223`
+        # ends up on 2223 (verified with `ansible-inventory --list`).
+        # The end-of-line ansible_port handling below then mirrors it
+        # onto Host#port.
+        if entry_port
+          host.vars["ansible_port"] = JSON::Any.new(entry_port.to_i64)
+          if path
+            host.var_origins["ansible_port"] = FileVarOrigin.new(File.expand_path(path), line_no, 0)
+          end
         end
 
         # Parse host variables
@@ -884,7 +940,19 @@ module Krikri
       # Parse hosts
       if hosts_yaml = yaml["hosts"]?.try(&.as_h?)
         hosts_yaml.each do |hostname, host_vars|
-          host = Host.new(hostname.to_s)
+          # Same `host:port` split as the INI layer - ansible's yaml
+          # inventory plugin feeds every host key through the identical
+          # _expand_hostpattern (verified with `ansible-inventory
+          # --list` on a quoted `"127.0.0.1:2202":` key: the host is
+          # named without the port and ansible_port is an int var).
+          # Seeded before the key's own vars, which overwrite it - the
+          # same last-word rule as the INI form.
+          host_pattern, entry_port = split_host_port(hostname.to_s)
+          host = Host.new(host_pattern)
+          if entry_port
+            host.vars["ansible_port"] = JSON::Any.new(entry_port.to_i64)
+            host.port = entry_port
+          end
 
           # Parse host vars
           if host_vars.as_h?

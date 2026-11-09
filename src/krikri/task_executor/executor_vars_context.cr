@@ -660,6 +660,26 @@ module Krikri
       # extra-var" behavior).
       @extra_vars.each { |key, value| vars_context[key] = value }
 
+      # Ansible's PlayContext.update_vars surfaces the RESOLVED
+      # remote_user as ansible_user AND its deprecated alias when no
+      # variable supplies either - verified 2.21.6: with only
+      # ANSIBLE_REMOTE_USER=root in the environment (issue #1067),
+      # `{{ ansible_user }}` and `{{ ansible_ssh_user }}` both render
+      # root, and with no user anywhere both stay undefined. Filled
+      # after every variable layer so inventory/play/task/extra-vars
+      # values all outrank it - the exact slot ANSIBLE_REMOTE_USER holds
+      # in ansible's own remote_user resolution (vars before env).
+      # Withheld from the alias-free snapshots (the
+      # include_legacy_ssh_aliases: false rebuilds) like the synthesized
+      # aliases themselves: ansible's fill is the same task-arg-only
+      # magic surface, never a real variable a loop source can read.
+      if include_legacy_ssh_aliases &&
+         !(vars_context.has_key?("ansible_user") || vars_context.has_key?("ansible_ssh_user")) &&
+         (env_user = ConnectionSettings.configured_remote_user)
+        vars_context["ansible_user"] = JSON::Any.new(env_user)
+        vars_context["ansible_ssh_user"] = JSON::Any.new(env_user)
+      end
+
       # The SSH connection keys are read DIRECTLY out of this hash by
       # ConnectionSettings.resolve (controller-side dispatch, batching,
       # upload caching) - long before per-param templating ever runs - so

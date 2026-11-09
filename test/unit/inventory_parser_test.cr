@@ -262,6 +262,88 @@ describe Krikri::InventoryParser do
     end
   end
 
+  describe "host:port entries (issue #1067)" do
+    include RaisesAssertion
+
+    it "splits a host:port entry into the hostname and an ansible_port var" do
+      write(File.join(root, "inventory.ini"), <<-INI)
+        [g]
+        127.0.0.1:2202 ansible_user=root
+        web[01:02]:2200
+        INI
+
+      inventory = Krikri::InventoryParser.parse(File.join(root, "inventory.ini"))
+
+      # Ansible names the host WITHOUT the port and sets ansible_port as
+      # an int var (verified with `ansible-inventory --list`).
+      inventory.hosts.has_key?("127.0.0.1:2202").must_equal(false)
+      host = inventory.hosts["127.0.0.1"]
+      host.port.must_equal(2202)
+      host.vars["ansible_port"].as_i?.must_equal(2202)
+      host.user.must_equal("root")
+
+      # The split happens BEFORE range expansion (ansible's
+      # parse_address-then-expand order), so every expanded host
+      # carries the port.
+      ["web01", "web02"].each do |name|
+        inventory.hosts[name].port.must_equal(2200)
+        inventory.hosts[name].vars["ansible_port"].as_i?.must_equal(2200)
+      end
+    end
+
+    it "lets an inline ansible_port= override the entry's :port suffix" do
+      write(File.join(root, "inventory.ini"), <<-INI)
+        [g]
+        127.0.0.1:2202 ansible_port=2223
+        INI
+
+      inventory = Krikri::InventoryParser.parse(File.join(root, "inventory.ini"))
+
+      host = inventory.hosts["127.0.0.1"]
+      host.port.must_equal(2223)
+      host.vars["ansible_port"].as_i?.must_equal(2223)
+    end
+
+    it "splits only the bracketed form of a colonful host, keeping other colons literal" do
+      write(File.join(root, "inventory.ini"), <<-INI)
+        [g]
+        [::1]:2202
+        foo:22:33
+        INI
+
+      inventory = Krikri::InventoryParser.parse(File.join(root, "inventory.ini"))
+
+      inventory.hosts.has_key?("[::1]").must_equal(false)
+      inventory.hosts["::1"].port.must_equal(2202)
+      inventory.hosts["foo:22:33"].vars["ansible_port"]?.must_be_nil
+    end
+
+    it "splits host:port keys in a YAML inventory like ansible's yaml plugin" do
+      write(File.join(root, "inventory.yml"), <<-YAML)
+        all:
+          hosts:
+            "127.0.0.1:2202":
+              ansible_user: root
+        YAML
+
+      inventory = Krikri::InventoryParser.parse(File.join(root, "inventory.yml"))
+
+      inventory.hosts.has_key?("127.0.0.1:2202").must_equal(false)
+      host = inventory.hosts["127.0.0.1"]
+      host.port.must_equal(2202)
+      host.vars["ansible_port"].as_i?.must_equal(2202)
+      host.user.must_equal("root")
+    end
+
+    it "splits host:port entries in a host-list source" do
+      inventory = Krikri::InventoryParser.parse_host_list("127.0.0.1:2202,web1")
+
+      inventory.hosts["127.0.0.1"].port.must_equal(2202)
+      inventory.hosts.has_key?("127.0.0.1:2202").must_equal(false)
+      inventory.hosts.has_key?("web1").must_equal(true)
+    end
+  end
+
   describe "host-pattern wildcard matching (fnmatch semantics)" do
     include RaisesAssertion
     it "matches a trailing * over literal dots" do

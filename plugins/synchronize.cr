@@ -36,7 +36,9 @@ module Krikri
           msg: "synchronize requires both src and dest parameters are set")
       end
 
-      private_key = @params["private_key"]? || @vars["ansible_ssh_private_key_file"]?.try(&.as_s?)
+      # Same key ladder as the action plugin's own rsync rsh lookup
+      # (both spellings, then ANSIBLE_PRIVATE_KEY_FILE - issue #1067).
+      private_key = @params["private_key"]? || get_identity_file
       dest_port = resolve_dest_port
 
       argv = SynchronizeRsync.build_argv(src, dest, @params, private_key, dest_port)
