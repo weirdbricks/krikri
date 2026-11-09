@@ -728,3 +728,92 @@ describe "dnf check-mode resolution probe (issue 1050)" do
     end
   end
 end
+
+# Issue #1031 (aaditya2801.k8s_master, Rocky --check): ansible's dnf
+# module builds its dnf Base and fill_sack()s EVERY enabled repo before
+# it resolves anything at all, so a repo whose repomd.xml cannot be
+# downloaded fails the task with libdnf's bare metadata msg whatever the
+# request was - state: absent, a nameless invocation, `list:`, in
+# --check too. This engine formed those verdicts from probes that never
+# load the repo metadata (`rpm -q`, a `dnf remove` that resolves from
+# the installed set alone), so check mode reported per-spec failed/ok
+# where ansible failed on the metadata for every item. The cases below
+# pin the metadata shape for exactly those invocation-less verdicts; the
+# issue's own `package:` loop shape is pinned in
+# package_dnf_check_mode_test.cr.
+describe "dnf-family fill_sack metadata load preempts every verdict (issue 1031)" do
+  serial!
+
+  it "check mode state: absent fails with the metadata shape instead of a would-remove plan" do
+    with_failing_dnf_shim("", METADATA_404_STDERR) do
+      result = PluginSpecHelper.run("dnf",
+        {"name" => "cfssl-1.3.2", "state" => "absent", "_ansible_check_mode" => "true"},
+        vars: {"ansible_pkg_mgr" => "dnf"})
+
+      result["failed"].as_bool.must_equal(true)
+      result["changed"].as_bool.must_equal(false)
+      result["msg"].as_s.must_equal(METADATA_404_MSG)
+      result["results"].as_a.must_equal([] of JSON::Any)
+      result["rc"].as_i.must_equal(1)
+      result.as_h.has_key?("failures").must_equal(false)
+      result.as_h.keys.first(5).must_equal(["changed", "msg", "rc", "results", "failed"])
+    end
+  end
+
+  it "a real state: absent fails with the metadata shape before any removal can run" do
+    # `dnf remove` resolves from the installed set alone and would even
+    # remove where ansible's fill_sack() already failed the task - the
+    # metadata load has to come first in a real run too.
+    with_failing_dnf_shim("", METADATA_404_STDERR) do
+      result = PluginSpecHelper.run("dnf",
+        {"name" => "cfssl-1.3.2", "state" => "absent"},
+        vars: {"ansible_pkg_mgr" => "dnf"})
+
+      result["failed"].as_bool.must_equal(true)
+      result["changed"].as_bool.must_equal(false)
+      result["msg"].as_s.must_equal(METADATA_404_MSG)
+      result["results"].as_a.must_equal([] of JSON::Any)
+      result["rc"].as_i.must_equal(1)
+    end
+  end
+
+  it "a nameless invocation fails with the metadata shape instead of an early verdict" do
+    with_failing_dnf_shim("", METADATA_404_STDERR) do
+      result = PluginSpecHelper.run("dnf",
+        {"state" => "present"},
+        vars: {"ansible_pkg_mgr" => "dnf"})
+
+      result["failed"].as_bool.must_equal(true)
+      result["changed"].as_bool.must_equal(false)
+      result["msg"].as_s.must_equal(METADATA_404_MSG)
+      result["rc"].as_i.must_equal(1)
+    end
+  end
+
+  it "list: reports the metadata shape instead of an empty/raw listing failure" do
+    with_failing_dnf_shim("", METADATA_404_STDERR) do
+      result = PluginSpecHelper.run("dnf",
+        {"list" => "installed"},
+        vars: {"ansible_pkg_mgr" => "dnf"})
+
+      result["failed"].as_bool.must_equal(true)
+      result["changed"].as_bool.must_equal(false)
+      result["msg"].as_s.must_equal(METADATA_404_MSG)
+      result["results"].as_a.must_equal([] of JSON::Any)
+      result["rc"].as_i.must_equal(1)
+    end
+  end
+
+  it "package:'s state: absent fails with the same shape" do
+    with_failing_dnf_shim("", METADATA_404_STDERR) do
+      result = PluginSpecHelper.run("package",
+        {"name" => "cfssl-1.3.2", "state" => "absent", "use" => "dnf"})
+
+      result["failed"].as_bool.must_equal(true)
+      result["changed"].as_bool.must_equal(false)
+      result["msg"].as_s.must_equal(METADATA_404_MSG)
+      result["results"].as_a.must_equal([] of JSON::Any)
+      result["rc"].as_i.must_equal(1)
+    end
+  end
+end

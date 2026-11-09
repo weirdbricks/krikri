@@ -532,6 +532,34 @@ module Krikri
         "Failed to update package cache: #{stderr}"
       end
 
+      # Ansible's dnf module builds its dnf Base and fill_sack()s EVERY
+      # enabled repo before it resolves anything at all, so a repo whose
+      # repomd.xml cannot be downloaded fails the task with libdnf's bare
+      # metadata msg whatever the request was - state: absent, a nameless
+      # invocation, `list:`, in --check too - and never reaches its own
+      # per-request verdicts. This engine forms those verdicts from probes
+      # that do not model that load (rpm -q reads the database, `dnf
+      # remove` resolves from the installed set alone and would even
+      # remove where ansible never gets that far), so the verdicts came
+      # out ok/per-spec where ansible failed on the metadata (issue
+      # #1031, aaditya2801.k8s_master's `package:` loop under --check).
+      # The probe below is that metadata load and nothing more: `makecache`
+      # is the one spec-less command that loads every enabled repo's
+      # metadata the way fill_sack does, and only its metadata verdict
+      # surfaces - a host whose repos all load keeps every existing
+      # verdict and shape unchanged. Memoized: one probe per plugin
+      # process (one task), whatever the verdict sites below ask.
+      @fill_sack_failure : PluginResult? = nil
+      @fill_sack_probed = false
+
+      private def fill_sack_metadata_failure : PluginResult?
+        return @fill_sack_failure if @fill_sack_probed
+        @fill_sack_probed = true
+        probe = remote_exec("#{pkg_manager_binary} makecache")
+        msg = repo_metadata_failure_msg(probe[:stdout] + "\n" + probe[:stderr])
+        @fill_sack_failure = msg ? repo_metadata_failure_result(msg) : nil
+      end
+
       # The download-time cache verification failure under cacheonly - the
       # one plain dnf.exceptions.Error in practice. dnf 2.21's dnf module
       # is a thin wrapper over an embedded script (module_utils/_embed/
@@ -614,6 +642,13 @@ module Krikri
         # outright while ansible-playbook reported ok. Mirrors
         # apt.cr's identical fix for the same bug class (round 84000).
         if @params["name"]? || @params["pkg"]?
+          # ansible's fill_sack() runs before the empty-request "Nothing
+          # to do" verdict, so an unloadable repo fails here too (issue
+          # #1031) - the update_cache branch above already loads (and
+          # reports) the same metadata through its own makecache.
+          if failure = fill_sack_metadata_failure
+            return failure
+          end
           return PluginResult.new(
             changed: false,
             failed: false,
@@ -623,6 +658,10 @@ module Krikri
             rc: 0,
             key_order: transaction_key_order
           )
+        end
+
+        if failure = fill_sack_metadata_failure
+          return failure
         end
 
         PluginResult.new(
@@ -786,6 +825,23 @@ module Krikri
         if result[:exit_code] != 0 && (flag = list_flag(query))
           retry_result = remote_exec("#{pkg_manager_binary} list #{flag}")
           result = retry_result if retry_result[:exit_code] == 0
+        end
+
+        # ansible's list_items() goes through the same fill_sack() as
+        # every other dnf-module path, so an unloadable repo fails with
+        # libdnf's bare metadata msg before any listing exists. The probe
+        # is needed even though the listing ran: `dnf list installed`
+        # answers from the installed set alone and exits 0 without ever
+        # touching the dead repo's metadata, where ansible's fill_sack()
+        # fails the task anyway (issue #1031). The metadata line this
+        # listing did print - `list: available` and friends fail on it -
+        # preempts both the raw "Failed to list packages" fallback below
+        # and a parser handed no rows to parse.
+        if failure = fill_sack_metadata_failure
+          return failure
+        end
+        if metadata_msg = repo_metadata_failure_msg(result[:stdout] + "\n" + result[:stderr])
+          return repo_metadata_failure_result(metadata_msg)
         end
 
         results = parse_dnf_list_output(result[:stdout])
@@ -1312,6 +1368,15 @@ module Krikri
       end
 
       private def handle_remove(names : Array(String), options : String) : PluginResult
+        # ansible's fill_sack() fails a removal request on an unloadable
+        # repo before its own remove logic runs - in --check too - while
+        # `dnf remove` itself resolves from the installed set and would
+        # happily remove (or report the would-remove/no-op verdict this
+        # method builds from rpm's view alone) where ansible never gets
+        # that far (issue #1031).
+        if failure = fill_sack_metadata_failure
+          return failure
+        end
         to_remove = [] of String
         states = installed_states(names.reject { |pkg| package_group?(pkg) })
 
@@ -1812,6 +1877,12 @@ module Krikri
           # reports "Nothing to do".
           transaction_result(changed, autoremove_results(result[:stdout]))
         else
+          # ansible's autoremove path fill_sack()s first, so an unloadable
+          # repo reports libdnf's bare metadata msg - present in this
+          # output - not the canned wrapper below (issue #1031).
+          if metadata_msg = repo_metadata_failure_msg(result[:stdout] + "\n" + result[:stderr])
+            return repo_metadata_failure_result(metadata_msg)
+          end
           failure_result("Autoremove failed", error_lines(result), result[:exit_code])
         end
       end
@@ -1844,6 +1915,12 @@ module Krikri
                     result[:stdout].includes?("Installed:")
           transaction_result(changed, upgrade_results(result[:stdout]))
         else
+          # ansible's upgrade_all path fill_sack()s first, so an unloadable
+          # repo reports libdnf's bare metadata msg - present in this
+          # output - not the canned wrapper below (issue #1031).
+          if metadata_msg = repo_metadata_failure_msg(result[:stdout] + "\n" + result[:stderr])
+            return repo_metadata_failure_result(metadata_msg)
+          end
           # Same blanket-handler wrap as the install/update batches
           # above: cacheonly's download-time cache verification failure is
           # the bare-message, no-`failures` shape, not the raw dump.

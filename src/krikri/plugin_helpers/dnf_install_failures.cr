@@ -1,4 +1,5 @@
 require "json"
+require "../base_plugin"
 
 module Krikri
   module PluginHelpers
@@ -164,6 +165,24 @@ module Krikri
         stripped = line.strip
         stripped = stripped[7..] if stripped.starts_with?("Error: ")
         stripped.strip
+      end
+
+      # The registered result for that metadata failure: msg = libdnf's
+      # own text, results [], rc 1 and NO failures key (the module
+      # wrapper only forwards non-empty failures lists - issue #980).
+      # Every verdict site that can see a repo-metadata failure in some
+      # dnf/yum output reports it through here, so the shape cannot
+      # drift between the install batches, the check-mode probes and the
+      # verbs whose own CLI output carries the same line (issue #1031).
+      def repo_metadata_failure_result(msg : String) : PluginResult
+        PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: msg,
+          results: [] of String,
+          rc: 1,
+          key_order: DNF_METADATA_FAILURE_ORDER
+        )
       end
 
       # Ansible's dnf module resolves a requested GROUP spec (a leading

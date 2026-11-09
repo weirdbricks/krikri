@@ -44,6 +44,7 @@ private def with_package753_shims(
   install_out : String = "",
   install_err : String = "",
   install_rc : Int32 = 1,
+  metadata_err : String = "",
   &
 )
   bin_dir = File.join(Dir.tempdir, "krikri-pkg753-#{Random.rand(1_000_000)}")
@@ -69,6 +70,14 @@ private def with_package753_shims(
     #!/bin/sh
     printf '%s\n' "$*" >> "${KRIKRI_DNF_LOG:?}"
     case "$1" in
+      makecache)
+        if [ -n "${KRIKRI_DNF_METADATA_ERR:-}" ]; then
+          printf '%b' "${KRIKRI_DNF_METADATA_ERR}" >&2
+          exit 1
+        fi
+        echo "Metadata cache created"
+        exit 0
+        ;;
       check-update)
         printf '%b' "${KRIKRI_DNF_CHECK_UPDATE_OUT:-}"
         exit "${KRIKRI_DNF_CHECK_UPDATE_RC:-0}"
@@ -120,6 +129,7 @@ private def with_package753_shims(
     "KRIKRI_DNF_INSTALL_OUT"      => install_out,
     "KRIKRI_DNF_INSTALL_ERR"      => install_err,
     "KRIKRI_DNF_INSTALL_RC"       => install_rc.to_s,
+    "KRIKRI_DNF_METADATA_ERR"     => metadata_err,
   }.to_json
   yield env
 ensure
@@ -416,6 +426,107 @@ describe "package plugin - check-mode resolution probe (issue 1050)" do
       result["failed"].as_bool.must_equal(true)
       result["changed"].as_bool.must_equal(false)
       result["msg"].as_s.must_equal(ISSUE1050_DEPSOLVE_MSG)
+      result["rc"].as_i.must_equal(1)
+    end
+  end
+end
+
+# Issue #1031 (aaditya2801.k8s_master, Rocky --check): ansible's dnf
+# module Base fill_sack()s EVERY enabled repo before it resolves
+# anything, so the role's dead kubernetes repo (repomd.xml 404s) failed
+# every `package: {name: "{{ item }}", state: present}` loop item under
+# --check with libdnf's bare metadata msg - including the item the repos
+# could not name at all - where this engine's check-mode plan answered
+# the canned "No package kubeadm available." failures built from
+# classification probes that never load the repo metadata. Live-
+# captured from the issue's round and re-verified against ansible-core
+# 2.21.6 on a rockylinux:9 container with the role's own repo file:
+#   failed: [testhost] (item=kubeadm) => {"changed": false, "msg":
+#   "Failed to download metadata for repo 'kubernetes': Cannot download
+#   repomd.xml: Cannot download repodata/repomd.xml: All mirrors were
+#   tried", "rc": 1, "results": []}
+ISSUE1031_METADATA_MSG    = "Failed to download metadata for repo 'kubernetes': Cannot download repomd.xml: Cannot download repodata/repomd.xml: All mirrors were tried"
+ISSUE1031_METADATA_STDERR = "Errors during downloading metadata for repository 'kubernetes':\n" \
+                            "  - Status code: 404 for https://packages.cloud.google.com/yum/repos/kubernetes-el7-x86_64/repodata/repomd.xml (IP: 142.251.210.78)\n" \
+                            "Error: " + ISSUE1031_METADATA_MSG + "\n"
+
+describe "package plugin - the fill_sack repo-metadata load fails every request (issue 1031)" do
+  it "check-mode present for a name the repos cannot name reports the metadata shape" do
+    # kubeadm: not installed and no repo row (the dead kubernetes repo
+    # hid it), so the old check-mode plan built "No package kubeadm
+    # available." where ansible fails on the metadata.
+    with_package753_shims(pkg753_installed_pair, pkg753_available_pair,
+      metadata_err: ISSUE1031_METADATA_STDERR) do |env|
+      result = PluginSpecHelper.run("package", {
+        "name"                => "kubeadm",
+        "state"               => "present",
+        "use"                 => "dnf",
+        "_ansible_check_mode" => "true",
+        "_environment"        => env,
+      })
+
+      result["failed"].as_bool.must_equal(true)
+      result["changed"].as_bool.must_equal(false)
+      result["msg"].as_s.must_equal(ISSUE1031_METADATA_MSG)
+      result["results"].as_a.must_equal([] of JSON::Any)
+      result["rc"].as_i.must_equal(1)
+      result.as_h.has_key?("failures").must_equal(false)
+      result.as_h.keys.first(5).must_equal(["changed", "msg", "rc", "results", "failed"])
+    end
+  end
+
+  it "check-mode absent reports the metadata shape instead of a would-remove plan" do
+    with_package753_shims(pkg753_installed_pair, pkg753_available_pair,
+      metadata_err: ISSUE1031_METADATA_STDERR) do |env|
+      result = PluginSpecHelper.run("package", {
+        "name"                => "tar",
+        "state"               => "absent",
+        "use"                 => "dnf",
+        "_ansible_check_mode" => "true",
+        "_environment"        => env,
+      })
+
+      result["failed"].as_bool.must_equal(true)
+      result["changed"].as_bool.must_equal(false)
+      result["msg"].as_s.must_equal(ISSUE1031_METADATA_MSG)
+      result["results"].as_a.must_equal([] of JSON::Any)
+      result["rc"].as_i.must_equal(1)
+    end
+  end
+
+  it "a nameless invocation reports the metadata shape instead of the Nothing-to-do ok" do
+    with_package753_shims(pkg753_installed_pair, pkg753_available_pair,
+      metadata_err: ISSUE1031_METADATA_STDERR) do |env|
+      result = PluginSpecHelper.run("package", {
+        "state"               => "present",
+        "use"                 => "dnf",
+        "_ansible_check_mode" => "true",
+        "_environment"        => env,
+      })
+
+      result["failed"].as_bool.must_equal(true)
+      result["changed"].as_bool.must_equal(false)
+      result["msg"].as_s.must_equal(ISSUE1031_METADATA_MSG)
+      result["rc"].as_i.must_equal(1)
+    end
+  end
+
+  it "state: latest reports the metadata shape instead of the Nothing-to-do ok" do
+    # The latest branch's own check-update loads the same repo metadata,
+    # so its failure text preempts the per-spec plan for free.
+    with_package753_shims(pkg753_installed_pair, pkg753_available_pair,
+      check_update_out: ISSUE1031_METADATA_STDERR, check_update_rc: 1) do |env|
+      result = PluginSpecHelper.run("package", {
+        "name"                => "tar",
+        "state"               => "latest",
+        "use"                 => "dnf",
+        "_ansible_check_mode" => "true",
+        "_environment"        => env,
+      })
+
+      result["failed"].as_bool.must_equal(true)
+      result["changed"].as_bool.must_equal(false)
+      result["msg"].as_s.must_equal(ISSUE1031_METADATA_MSG)
       result["rc"].as_i.must_equal(1)
     end
   end
