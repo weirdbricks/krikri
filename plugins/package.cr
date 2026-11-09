@@ -718,6 +718,35 @@ module Krikri
       dnf_install_failure_result(name, probe)
     end
 
+    # Issue #1050 (kurron.resilio-sync, Rocky 9 --check): ansible's dnf
+    # module resolves the whole transaction before its check-mode stop
+    # (dnf.py's base.resolve() runs ahead of the "Check mode: No changes
+    # made" exit), so a goal the solver can't satisfy - `curl` against
+    # the installed curl-minimal - fails the task with the Depsolve
+    # Error block under --check exactly like the real install. The
+    # check-mode branches used to report the would-install shape for
+    # anything the repo listing named, never running that resolution, so
+    # check mode ended changed (rc 0) where real ended failed. probe_cmd
+    # is the real install/upgrade compound of the calling branch with
+    # --assumeno standing in for the check-mode stop: the goal marks and
+    # depsolves exactly like the module's resolve, then aborts at the
+    # confirmation prompt before any download or transaction step can
+    # touch the host (live-verified vs dnf 4 on Rocky 9: a resolvable
+    # goal ends "Operation aborted." rc 1 with nothing installed). Only
+    # a failure class the real run's own parser reports surfaces here -
+    # the abort and any output none of them claims is a resolvable goal,
+    # never an invented failure.
+    private def dnf_check_mode_resolve_probe_failure(name : String, probe_cmd : String, names : Array(String), gpg_opt : String) : PluginResult?
+      probe = remote_exec(probe_cmd)
+      return nil if probe[:exit_code] == 0
+      output = probe[:stdout] + "\n" + probe[:stderr]
+      return nil unless gpg_validation_failure_msg(output) || depsolve_failure_msg(output) ||
+                        repo_metadata_failure_msg(output) || group_not_available_msg(output) ||
+                        parse_dnf_install_failures(probe[:stdout], probe[:stderr])
+      dnf_depsolve_retry_failure(probe, names, gpg_opt) ||
+        dnf_install_failure_result(name, probe)
+    end
+
     # The failure shape real ansible's dnf module reports for a transaction
     # that couldn't install some requested specs: the canned msg with one
     # deduped `failures` entry per unresolvable spec and no stderr key -
@@ -1177,13 +1206,27 @@ module Krikri
           # check mode exactly like the real install does - the module's
           # transaction resolution runs before any check-mode stop.
           missing = names.select { |pkg| installed_status[pkg]? == DnfSpecResolution::Missing }
-          return dnf_missing_spec_failure(missing) unless missing.empty?
           results = names.select { |pkg| installed_status[pkg]? == DnfSpecResolution::Available }
             .map { |pkg| "Installed: #{available_nevras[pkg]? || pkg}" }.sort!
           if is_installed && !names.empty?
             failure = dnf_present_noop_probe_failure(name, shell_pkg)
             return failure if failure
           end
+          # A pending transaction resolves before the check-mode stop,
+          # like the noop probe above (issue #1050's curl-vs-curl-minimal
+          # Depsolve Error fails the task under --check on real ansible).
+          # A batch the CLI aborts at for a missing spec still depsolves
+          # its survivors through the retry chain, matching real's
+          # mark-then-resolve order (issue #321).
+          unless results.empty?
+            gpg_opt = true?(@params["disable_gpg_check"]?) ? "--nogpgcheck" : "--setopt=localpkg_gpgcheck=1"
+            failure = dnf_check_mode_resolve_probe_failure(name,
+              "dnf install -y #{gpg_opt} --assumeno #{shell_pkg} || " \
+              "yum install -y #{gpg_opt} --assumeno #{shell_pkg}",
+              names, gpg_opt)
+            return failure if failure
+          end
+          return dnf_missing_spec_failure(missing) unless missing.empty?
           return dnf_check_mode_transaction_result(!results.empty?, results)
         end
         if is_installed
@@ -1293,9 +1336,10 @@ module Krikri
           # "Removed: <old nevra>". An installed spec with no pending
           # row contributes nothing, so an all-current request collapses
           # to the ordinary "Nothing to do" no-op. Unresolvable specs
-          # fail like the real install does (see the present branch).
+          # fail like the real install does (see the present branch) -
+          # reported after the resolution probe below, in real's
+          # mark-then-resolve order.
           missing = names.select { |pkg| installed_status[pkg]? == DnfSpecResolution::Missing }
-          return dnf_missing_spec_failure(missing) unless missing.empty?
           # check-update returns 100 if updates are available. The old
           # `dnf check-update X || yum check-update X` swallowed dnf's
           # exit-100 (non-zero runs the yum fallback, whose own exit code
@@ -1330,6 +1374,19 @@ module Krikri
             end
           end
           results = installs.sort + removals.sort
+          # A pending named goal resolves before the check-mode stop,
+          # like the present branch's probe (issue #1050). The wildcard
+          # upgrade-all goal keeps its check-update-only modeling (its
+          # best=False resolution is pinned by its own harness, issue
+          # #299).
+          unless results.empty? || wildcard_latest
+            failure = dnf_check_mode_resolve_probe_failure(name,
+              "dnf install -y --assumeno #{shell_pkg} || " \
+              "yum install -y --assumeno #{shell_pkg}",
+              names, "")
+            return failure if failure
+          end
+          return dnf_missing_spec_failure(missing) unless missing.empty?
           return dnf_check_mode_transaction_result(!results.empty?, results)
         end
 

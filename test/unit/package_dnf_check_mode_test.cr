@@ -41,6 +41,9 @@ private def with_package753_shims(
   check_update_out : String = "",
   check_update_rc : Int32 = 0,
   provides : Array(String) = [] of String,
+  install_out : String = "",
+  install_err : String = "",
+  install_rc : Int32 = 1,
   &
 )
   bin_dir = File.join(Dir.tempdir, "krikri-pkg753-#{Random.rand(1_000_000)}")
@@ -69,6 +72,13 @@ private def with_package753_shims(
       check-update)
         printf '%b' "${KRIKRI_DNF_CHECK_UPDATE_OUT:-}"
         exit "${KRIKRI_DNF_CHECK_UPDATE_RC:-0}"
+        ;;
+      install|upgrade)
+        if [ -n "${KRIKRI_DNF_INSTALL_OUT:-}" ] || [ -n "${KRIKRI_DNF_INSTALL_ERR:-}" ]; then
+          printf '%b' "${KRIKRI_DNF_INSTALL_OUT:-}"
+          printf '%b' "${KRIKRI_DNF_INSTALL_ERR:-}" >&2
+          exit "${KRIKRI_DNF_INSTALL_RC:-1}"
+        fi
         ;;
     esac
     case "$2/$3" in
@@ -107,6 +117,9 @@ private def with_package753_shims(
     "KRIKRI_DNF_PROVIDES"         => provides.join(" "),
     "KRIKRI_DNF_CHECK_UPDATE_OUT" => check_update_out,
     "KRIKRI_DNF_CHECK_UPDATE_RC"  => check_update_rc.to_s,
+    "KRIKRI_DNF_INSTALL_OUT"      => install_out,
+    "KRIKRI_DNF_INSTALL_ERR"      => install_err,
+    "KRIKRI_DNF_INSTALL_RC"       => install_rc.to_s,
   }.to_json
   yield env
 ensure
@@ -326,6 +339,83 @@ describe "package plugin - dnf check-mode result shapes (issue 753)" do
       result["msg"].as_s.must_equal("Failed to install some of the specified packages")
       result["failures"].as_a.map(&.as_s).must_equal(["No package totally-bogus-pkg-753 available."])
       result["results"].as_a.must_equal([] of JSON::Any)
+      result["rc"].as_i.must_equal(1)
+    end
+  end
+end
+
+# Issue #1050 (kurron.resilio-sync, Rocky 9): under --check, `package:
+# name: "{{item}}"` on `curl` reported changed where real ansible's dnf
+# module failed the task with the Depsolve Error block - dnf.py resolves
+# the whole transaction (base.resolve()) BEFORE its check-mode stop, and
+# the installed curl-minimal makes installing curl unsatisfiable. This
+# engine's check-mode branches never ran that resolution. The Problem
+# block below is trimmed from the round's live capture (ansible-core
+# 2.21.6 on Rocky 9); depsolve_failure_msg lifts it verbatim and stops at
+# the blank line before dnf's "(try to add ...)" hint.
+ISSUE1050_DEPSOLVE_STDERR = "Error: \n Problem: problem with installed package curl-minimal-7.76.1-40.el9.x86_64\n  - package curl-minimal-7.76.1-40.el9.x86_64 from @System conflicts with curl provided by curl-7.76.1-40.el9_8.9.x86_64 from baseos\n  - cannot install the best candidate for the job\n"
+ISSUE1050_DEPSOLVE_MSG    = "Depsolve Error occurred: \n Problem: problem with installed package curl-minimal-7.76.1-40.el9.x86_64\n  - package curl-minimal-7.76.1-40.el9.x86_64 from @System conflicts with curl provided by curl-7.76.1-40.el9_8.9.x86_64 from baseos\n  - cannot install the best candidate for the job"
+
+describe "package plugin - check-mode resolution probe (issue 1050)" do
+  it "present with a solver-unsatisfiable goal fails with the depsolve shape, not changed" do
+    with_package753_shims(pkg753_installed_pair, pkg753_available_pair,
+      install_err: ISSUE1050_DEPSOLVE_STDERR) do |env|
+      result = PluginSpecHelper.run("package", {
+        "name"                => "chrony",
+        "state"               => "present",
+        "use"                 => "dnf",
+        "_ansible_check_mode" => "true",
+        "_environment"        => env,
+      })
+
+      result["failed"].as_bool.must_equal(true)
+      result["changed"].as_bool.must_equal(false)
+      result["msg"].as_s.must_equal(ISSUE1050_DEPSOLVE_MSG)
+      # ansible-core 2.21's empty-failures fail_json wrapper (issue
+      # #989): alphabetical changed/msg/rc/results, `failed` trailing.
+      result.as_h.keys.first(5).must_equal(["changed", "msg", "rc", "results", "failed"])
+      result["rc"].as_i.must_equal(1)
+      result["results"].as_a.must_equal([] of JSON::Any)
+    end
+  end
+
+  it "present with a resolvable goal keeps the would-install shape when the probe aborts" do
+    # The --assumeno probe reproduces dnf.py's resolve-and-stop: a
+    # solvable goal ends "Operation aborted." rc 1 without installing
+    # anything (live-verified vs dnf 4 on Rocky 9), which must never be
+    # read as a failure.
+    with_package753_shims(pkg753_installed_pair, pkg753_available_pair,
+      install_out: "Operation aborted.\n", install_rc: 1) do |env|
+      result = PluginSpecHelper.run("package", {
+        "name"                => "chrony",
+        "state"               => "present",
+        "use"                 => "dnf",
+        "_ansible_check_mode" => "true",
+        "_environment"        => env,
+      })
+
+      result["failed"]?.try(&.as_bool).must_be_nil
+      result["changed"].as_bool.must_equal(true)
+      result["msg"].as_s.must_equal("Check mode: No changes made, but would have if not in check mode")
+      result["results"].as_a.map(&.as_s).must_equal(["Installed: chrony-4.8-1.el9.x86_64"])
+      result["rc"].as_i.must_equal(0)
+    end
+  end
+
+  it "latest with a solver-unsatisfiable goal fails with the depsolve shape too" do
+    with_package753_shims(pkg753_installed_pair, pkg753_available_pair, pkg753_check_update_out, 100,
+      install_err: ISSUE1050_DEPSOLVE_STDERR) do |env|
+      result = PluginSpecHelper.run("package", {
+        "name"                => "chrony",
+        "state"               => "latest",
+        "use"                 => "dnf",
+        "_ansible_check_mode" => "true",
+        "_environment"        => env,
+      })
+
+      result["failed"].as_bool.must_equal(true)
+      result["changed"].as_bool.must_equal(false)
+      result["msg"].as_s.must_equal(ISSUE1050_DEPSOLVE_MSG)
       result["rc"].as_i.must_equal(1)
     end
   end

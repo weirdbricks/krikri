@@ -685,3 +685,46 @@ describe "dnf cacheonly download failure - ansible's blanket-handler shape (issu
     end
   end
 end
+
+# Issue #1050 (kurron.resilio-sync, Rocky 9 --check): ansible's dnf module
+# resolves the transaction BEFORE its check-mode stop (dnf.py's
+# base.resolve()), so a solver-unsatisfiable goal fails the task with the
+# Depsolve Error block under --check exactly like the real install - this
+# engine's check-mode branches reported the would-install shape without
+# ever running that resolution (check mode ended changed, rc 0, where
+# real ended failed). Same shimmed dnf as the real-run tests above; the
+# "Operation aborted." twin is what the --assumeno probe gets for a
+# SOLVABLE goal (it aborts before downloading or installing anything),
+# which must stay a clean would-install.
+describe "dnf check-mode resolution probe (issue 1050)" do
+  serial!
+
+  it "check mode on a solver-unsatisfiable install fails with the depsolve shape, not changed" do
+    with_failing_dnf_shim("", DEPSOLVE_STDERR) do
+      result = PluginSpecHelper.run("dnf",
+        {"name" => "curl", "state" => "present", "_ansible_check_mode" => "true"},
+        vars: {"ansible_pkg_mgr" => "dnf"})
+
+      result["failed"].as_bool.must_equal(true)
+      result["changed"].as_bool.must_equal(false)
+      result["msg"].as_s.must_equal(DEPSOLVE_MSG)
+      result["results"].as_a.must_equal([] of JSON::Any)
+      result["rc"].as_i.must_equal(1)
+      result.as_h.keys.first(5).must_equal(["changed", "msg", "rc", "results", "failed"])
+    end
+  end
+
+  it "check mode on a solvable install keeps the would-install shape when the probe aborts" do
+    with_failing_dnf_shim("", "Operation aborted.\n") do
+      result = PluginSpecHelper.run("dnf",
+        {"name" => "curl", "state" => "present", "_ansible_check_mode" => "true"},
+        vars: {"ansible_pkg_mgr" => "dnf"})
+
+      result["failed"]?.try(&.as_bool).must_be_nil
+      result["changed"].as_bool.must_equal(true)
+      result["msg"].as_s.must_equal("Check mode: No changes made, but would have if not in check mode")
+      result["results"].as_a.map(&.as_s).must_equal(["Installed: curl"])
+      result["rc"].as_i.must_equal(0)
+    end
+  end
+end
