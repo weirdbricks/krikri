@@ -62,6 +62,12 @@ private def with_failing_apt_get_shim(stderr : String, stdout : String = "", dpk
   script = "cat <<'KRIKRI_FAKE_APT_EOF'\n#{stdout}\nKRIKRI_FAKE_APT_EOF\ncat <<'KRIKRI_FAKE_APT_EOF' >&2\n#{stderr}KRIKRI_FAKE_APT_EOF\nexit 100\n"
   File.write("#{shim_dir}/apt-get", script)
   File.chmod("#{shim_dir}/apt-get", 0o755)
+  # apt.py's trailing apt-mark manual (mark_installed) must succeed like
+  # on a real root host - a real apt-mark fails on these fabricated
+  # names and that fail_json would preempt the install-failure shape
+  # under test (see apt_mark_manual_failure_test.cr).
+  File.write("#{shim_dir}/apt-mark", "#!/bin/sh\nexit 0\n")
+  File.chmod("#{shim_dir}/apt-mark", 0o755)
   if dpkg_version
     # Shims dpkg-query to print the given Version only for the plugin's
     # -f='${Version}' query (a versionless record prints nothing but
