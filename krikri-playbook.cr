@@ -1487,6 +1487,16 @@ playbook.plays.each_with_index do |play, _play_index|
     # Run tasks
     begin
       Krikri::TimingProfile.measure("execute", "execute") { executor.run }
+    rescue ex : Krikri::TaskExecutor::MetaWhenFatalError
+      # A meta: task's `when:` that raised is NOT a task failure in real:
+      # its strategy evaluates those conditions itself, so the exception
+      # reaches the CLI and takes the run down with the [ERROR] + Origin
+      # block on STDERR and rc=1 - no fatal: line, no PLAY RECAP, and no
+      # rescue even under ignore_errors: true (live-verified vs
+      # ansible-core 2.21.6, issue #1007). See MetaWhenFatalError's own
+      # comment.
+      Krikri::ErrorBlock.emit_rendered_stderr(ex.render)
+      exit 1
     rescue ex : Krikri::HandlerNotFoundError
       # Ansible aborts the whole run at the notifying task, prints
       # this one line, and exits 1 with NO play recap (verified against

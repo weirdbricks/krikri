@@ -94,6 +94,13 @@ module Krikri
       return false if task.block?
       return false if task.include_tasks? && !task_has_loop?(task)
       return false if task.include_role?
+      # A meta: task does no remote work, so a worker fiber buys nothing -
+      # and it must not need one: a raising when: on a meta: aborts the
+      # whole run (see meta_when_fatal), an exception only the main fiber
+      # can deliver to krikri-playbook's own rescue. A worker's uncaught
+      # exception is merely reported at exit, leaving the rest of the play
+      # to run.
+      return false if task.meta?
       true
     end
 
@@ -533,10 +540,13 @@ module Krikri
         end
         vars_context = build_vars_context(task, host)
         begin
-          execute_meta(task, host) if when_passes?(task, vars_context, host, defer_stats: true)
+          passes = when_passes?(task, vars_context, host, defer_stats: true)
         rescue ex : WhenEvaluationError
-          swallow_when_error(task, host, ex, defer_stats: true)
+          # Real's strategy evaluates a meta: task's when: itself and lets
+          # a raise escape the run entirely - see meta_when_fatal.
+          raise meta_when_fatal(task, host, ex)
         end
+        execute_meta(task, host) if passes
         return
       end
       return execute_include_vars(task, host) if task.include_vars?

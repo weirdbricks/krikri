@@ -2088,6 +2088,27 @@ module Krikri
       end
     end
 
+    # A meta: task's `when:` that raised while being evaluated. Ansible's
+    # STRATEGY evaluates those conditions itself (strategy/__init__.py's
+    # _execute_meta -> task._resolve_conditional), outside the task
+    # executor's conditional wrapper, so the exception is not a task
+    # failure at all: it propagates as a plain AnsibleError and takes the
+    # whole run down - the [ERROR] + Origin block on stderr and rc=1, with
+    # no "Task failed." chain, no fatal: line, no PLAY RECAP, and no
+    # rescue even under ignore_errors: true (live-verified vs
+    # ansible-core 2.21.6, issue #1007).
+    #
+    # `render` is the finished `[ERROR]: ...` block, built at the raise
+    # site where the task's source position lives; krikri-playbook prints
+    # it and exits 1.
+    class MetaWhenFatalError < Exception
+      getter render : String
+
+      def initialize(message : String?, @render : String)
+        super(message)
+      end
+    end
+
     # A `loop:` source that IS defined but resolves to a non-list (a
     # null, a scalar string, a dict, ...). Unlike the UNDEFINED case
     # (whose verdict consults the task's own when:, see
@@ -6633,6 +6654,99 @@ module Krikri
         inner.starts_with?("Syntax error in template:")
     end
 
+    # A source position in a playbook file: the path, its lines (already
+    # read, for the block renderers), the 0-based line index and the
+    # 1-based column.
+    alias SourcePosition = NamedTuple(path: String, lines: Array(String), idx: Int32, col: Int32)
+
+    # A failing conditional clause: the clause's own TEXT plus where its
+    # value token sits (see conditional_cause_position).
+    alias ConditionalCausePosition = NamedTuple(raw: String, path: String, lines: Array(String), idx: Int32, col: Int32)
+
+    # The position real labels a task's own failures with: its `- name:`
+    # key (Ansible's Origin points at the key, e.g. column 7 for
+    # `    - name:`), or - for a nameless task - the module key line, the
+    # same fallback emit_finalization_error_block uses. nil when the task
+    # has no usable source file.
+    private def task_origin_position(task : Task) : SourcePosition?
+      path = task.source_file || @playbook_file
+      return nil unless path && File.file?(path)
+
+      lines = File.read_lines(path)
+      located = locate_name_line(lines, task)
+      if located
+        idx, col = located
+      else
+        return nil unless task.source_line > 0 && task.source_line <= lines.size
+        idx = task.source_line - 1
+        col = task.source_col > 0 ? task.source_col : (lines[idx].size - lines[idx].lstrip.size + 1)
+      end
+      {path: path, lines: lines, idx: idx, col: col}
+    end
+
+    # The clause real pins a failing conditional's Origin at: the clause
+    # TEXT to match (a when: LIST fails strict per CLAUSE, and real labels
+    # that failing clause's ITEM line - the " and "-joined when_condition
+    # string matches no item in the folded-list scan, so the whole block
+    # used to be dropped; issue #330, constrict0r.desktop) plus the file
+    # line its VALUE token sits on. nil when there is no source position
+    # for it (a role/include-sourced task whose clause lives elsewhere).
+    private def conditional_cause_position(task : Task, clause_key : String, clause_raw : String?, task_pos : SourcePosition) : ConditionalCausePosition?
+      # Same failing-clause labeling decorate_conditional_value_origin
+      # already uses (#325); the until: caller's clause_raw and every other
+      # shape stay as they were.
+      raw = if clause_raw
+              clause_raw
+            elsif clause_key == "when" && task.when_condition_list &&
+                  (failing = @last_failed_when_clause)
+              failing
+            else
+              task.when_condition.to_s
+            end
+      # A merged import_tasks: when:'s failing clause can be one of the
+      # IMPORT line's own items - ansible evaluates the import's clauses
+      # first (they prefix the merged list), so its Origin belongs at that
+      # clause's recorded position in the IMPORTING file (issue #328,
+      # daixijun.mysql). The own-file locate below MUST be skipped then:
+      # the inlined child commonly carries an identically-worded own when:,
+      # whose line the scan would find and pin the Origin at the child's
+      # file instead - a different file from real's output. The remembered
+      # failing clause is the strict list item evaluate_when_items raised
+      # on (import-inlined tasks always evaluate per-clause); a lookup miss
+      # means the failing clause is the child's own, and the branches below
+      # behave as before.
+      imported_clause_origin = nil
+      if clause_key == "when" && (clause = @last_failed_when_clause) &&
+         (imported_map = task.imported_when_origins)
+        imported_clause_origin = imported_map[clause]?
+      end
+      if imported_clause_origin && File.file?(imported_clause_origin[0])
+        # The stored position is already 1-based (like
+        # inherited_when_origin's); renderers re-add the 1 by using
+        # idx + 1.
+        {raw: raw, path: imported_clause_origin[0], lines: File.read_lines(imported_clause_origin[0]),
+         idx: imported_clause_origin[1] - 1, col: imported_clause_origin[2]}
+      else
+        key_line = locate_conditional_origin(task_pos[:lines], task_pos[:idx], clause_key, raw)
+        # A statically-imported task's failing `when:` lives on the
+        # IMPORTING file's import_tasks: line, not in the task's own file
+        # (the parser ANDed it in), so the own-file scan finds nothing -
+        # real still prints the block, with the Origin pinned at the import
+        # line's when: VALUE token in the importing file (issue #252,
+        # Jooho.okd_prerequisites: okd-host.yml's first task reports
+        # tasks/main.yml's `when: node_type == 'okd-host'`).
+        if key_line
+          idx, col = key_line
+          {raw: raw, path: task_pos[:path], lines: task_pos[:lines], idx: idx, col: col}
+        elsif (inherited = task.inherited_when_origin) &&
+              (cause_path = inherited[0]) && File.file?(cause_path)
+          # The stored source-map position is already 1-based (unlike
+          # locate_conditional_origin's 0-based line index).
+          {raw: raw, path: cause_path, lines: File.read_lines(cause_path), idx: inherited[1] - 1, col: inherited[2]}
+        end
+      end
+    end
+
     # The two-level [ERROR] chain Ansible prints on stdout BEFORE the fatal
     # line for a failing `when:` (live-captured 2.19.11):
     #
@@ -6672,89 +6786,18 @@ module Krikri
         break
       end
       return unless conditional_evaluation_failure?(msg)
-      path = task.source_file || @playbook_file
-      return unless path && File.file?(path)
+      return unless (task_pos = task_origin_position(task))
+      path = task_pos[:path]
+      lines = task_pos[:lines]
+      name_idx = task_pos[:idx]
+      name_col = task_pos[:col]
 
-      lines = File.read_lines(path)
-      located = locate_name_line(lines, task)
-      if located
-        name_idx, name_col = located
-      else
-        # A nameless task's origin is the module key line itself (Ansible's
-        # two-level shape: "Task failed." + Origin at the module key) -
-        # the same fallback emit_finalization_error_block uses.
-        return unless task.source_line > 0 && task.source_line <= lines.size
-        name_idx = task.source_line - 1
-        name_col = task.source_col > 0 ? task.source_col : (lines[name_idx].size - lines[name_idx].lstrip.size + 1)
-      end
-
-      # A when: LIST fails strict per CLAUSE, and real pins the chain's
-      # "caused by" Origin on that failing clause's ITEM line: the
-      # " and "-joined when_condition string matches no item in the
-      # folded-list scan below, locate returned nil, and the whole chain
-      # never printed (issue #330, constrict0r.desktop) - only the
-      # failing clause text can match a list item. Same failing-clause
-      # labeling decorate_conditional_value_origin already uses (#325);
-      # the until: caller's clause_raw and every other shape stay as they
-      # were.
-      raw = if clause_raw
-              clause_raw
-            elsif clause_key == "when" && task.when_condition_list &&
-                  (failing = @last_failed_when_clause)
-              failing
-            else
-              task.when_condition.to_s
-            end
-      # A merged import_tasks: when:'s failing clause can be one of the
-      # IMPORT line's own items - ansible evaluates the import's clauses
-      # first (they prefix the merged list), so its chain's "caused by"
-      # Origin belongs at that clause's recorded position in the
-      # IMPORTING file (issue #328, daixijun.mysql). The own-file locate
-      # below MUST be skipped then: the inlined child commonly carries an
-      # identically-worded own when:, whose line the scan would find and
-      # pin the Origin at the child's file instead - different file from
-      # real's output. The remembered failing clause is the strict list
-      # item evaluate_when_items raised on (import-inlined tasks always
-      # evaluate per-clause); a lookup miss means the failing clause is
-      # the child's own, and the existing branches behave as before.
-      imported_clause_origin = nil
-      if clause_key == "when" && (clause = @last_failed_when_clause) &&
-         (imported_map = task.imported_when_origins)
-        imported_clause_origin = imported_map[clause]?
-      end
-      if imported_clause_origin && File.file?(imported_clause_origin[0])
-        cause_path = imported_clause_origin[0]
-        cause_lines = File.read_lines(cause_path)
-        # The stored position is already 1-based (like
-        # inherited_when_origin's); the block below re-adds the 1 by
-        # rendering key_idx + 1.
-        key_idx = imported_clause_origin[1] - 1
-        key_col = imported_clause_origin[2]
-      else
-        key_line = locate_conditional_origin(lines, name_idx, clause_key, raw)
-        # A statically-imported task's failing `when:` lives on the IMPORTING
-        # file's import_tasks: line, not in the task's own file (the parser
-        # ANDed it in), so the own-file scan finds nothing - real 2.19 still
-        # prints the chain, with the "caused by" Origin pinned at the import
-        # line's when: VALUE token in the importing file (issue #252,
-        # Jooho.okd_prerequisites: okd-host.yml's first task reports
-        # tasks/main.yml's `when: node_type == 'okd-host'`).
-        if key_line
-          key_idx, key_col = key_line
-          cause_path = path
-          cause_lines = lines
-        elsif (inherited = task.inherited_when_origin) &&
-              (cause_path = inherited[0]) && File.file?(cause_path)
-          cause_lines = File.read_lines(cause_path)
-          # The stored source-map position is already 1-based (unlike
-          # locate_conditional_origin's 0-based line index); the block below
-          # re-adds the 1.
-          key_idx = inherited[1] - 1
-          key_col = inherited[2]
-        else
-          return
-        end
-      end
+      return unless (cause = conditional_cause_position(task, clause_key, clause_raw, task_pos))
+      raw = cause[:raw]
+      cause_path = cause[:path]
+      cause_lines = cause[:lines]
+      key_idx = cause[:idx]
+      key_col = cause[:col]
 
       # The THIRD chain record real 2.19.11 adds when the conditional's
       # missing reference was reached through a failing VAR VALUE (a
@@ -6857,6 +6900,41 @@ module Krikri
       # items display the chain once.
       return unless @@when_error_chain_seen.add?(text)
       puts text
+    end
+
+    # The whole-run abort a raising `when:` on a meta: task produces.
+    # Ansible's strategy evaluates those conditions itself
+    # (strategy/__init__.py's _execute_meta -> task._resolve_conditional),
+    # outside the task executor's clause-labelled wrapper, so the
+    # exception is not a task failure at all: it reaches the CLI as a
+    # plain AnsibleError and takes the run down with one `[ERROR]:` line,
+    # the failing clause's Origin block, and rc=1 - no "Task failed."
+    # chain, no fatal: line, no PLAY RECAP, and no rescue under
+    # ignore_errors: true (live-verified vs ansible-core 2.21.6 for a
+    # task-level `when:`, a block-inherited one, a non-boolean `when:`
+    # and `ignore_errors: true`, issue #1007). Returns the exception for
+    # the caller to raise; the block is rendered here, where the task's
+    # source position lives.
+    private def meta_when_fatal(task : Task, host : Host, ex : WhenEvaluationError) : MetaWhenFatalError
+      msg = decorate_conditional_value_origin(task, ex.message || "Error while evaluating conditional", host)
+      # No clause label: real's label comes from the task executor's
+      # wrapper, which a meta: task's condition never passes through - and
+      # "Task failed: " is that wrapper's own result prefix.
+      inner = msg.starts_with?("Task failed: ") ? msg["Task failed: ".size..] : msg
+      inner = inner[WHEN_EXPRESSION_FAILED_PREFIX.size..] if inner.starts_with?(WHEN_EXPRESSION_FAILED_PREFIX)
+
+      source_context = nil
+      if (task_pos = task_origin_position(task)) &&
+         (cause = conditional_cause_position(task, "when", nil, task_pos))
+        source_context = ErrorBlock.origin_context(cause[:path], cause[:idx] + 1, cause[:col])
+      end
+      help_text = if conditional_hint_suppressed?(inner)
+                    nil
+                  else
+                    "Broken conditionals can be temporarily allowed with the `ALLOW_BROKEN_CONDITIONALS` configuration option."
+                  end
+      render = "[ERROR]: " + ErrorBlock.format_event(ErrorBlock::Node.new(inner, source_context: source_context, help_text: help_text))
+      MetaWhenFatalError.new(inner, render)
     end
 
     # The clause-labelled text ansible-core 2.21 puts in a failing
