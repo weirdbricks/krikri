@@ -1,6 +1,7 @@
 require "json"
 require "../collection_index"
 require "../aws_secret_lookup"
+require "../onepassword_lookup"
 
 module Krikri
   module VariableSubstitutor
@@ -261,6 +262,8 @@ module Krikri
           evaluate_lookup_file_parsers(lookup_type, parts, kwargs) ||
           evaluate_custom_python_lookup(lookup_type, parts, kwargs, query_mode) ||
           evaluate_lookup_aws_secret(lookup_type, parts, kwargs, query_mode) ||
+          evaluate_lookup_onepassword(lookup_type, parts, kwargs, query_mode,
+            spelled_name: original_lookup_type) ||
           hashi_vault_lookup_failure(original_lookup_type) ||
           unknown_fqcn_lookup_failure(original_lookup_type, lookup_type) ||
           unknown_bare_lookup_failure(original_lookup_type, lookup_type) ||
@@ -455,6 +458,67 @@ module Krikri
         end
       end
 
+      # community.general.onepassword - natively implemented for the same
+      # reason amazon.aws.aws_secret is (see OnePasswordLookup: the
+      # collection is deliberately supported, the lookup wraps the `op`
+      # CLI on the CONTROLLER, and PythonLookupRunner deliberately does
+      # not see installed collections), so the old dispatch chain fell
+      # through to the "undefined" sentinel and the task silently
+      # succeeded - with the literal text "undefined" as the fetched key -
+      # even when the item did not exist (issue #1059). The wrapper prefix
+      # carries the name AS SPELLED (ansible words the failure with the
+      # name the playbook invoked, live-verified vs 2.21: a bare
+      # `onepassword` says 'onepassword', the FQCN says
+      # 'community.general.onepassword'); the text below the prefix is the
+      # plugin's own, Python bytes-repr wart included.
+      private def evaluate_lookup_onepassword(lookup_type : String?, parts : Array(String),
+                                              kwargs : Array(String), query_mode : Bool,
+                                              spelled_name : String?) : String?
+        return nil unless lookup_type.try(&.in?("onepassword", "community.general.onepassword"))
+
+        options = Hash(String, String).new
+        kwargs.each do |kwarg|
+          key, _, raw_value = kwarg.strip.partition('=')
+          next if key.empty? || key.downcase.in?("wantlist", "errors")
+          options[key] = aws_secret_option_text(evaluate_lookup_term(raw_value))
+        end
+        terms = parts[1..].map { |part| aws_secret_option_text(evaluate_lookup_term(part)) }
+
+        name = spelled_name || lookup_type
+        begin
+          result = Krikri::OnePasswordLookup.run(terms, options)
+        rescue ex : Krikri::OnePasswordLookup::Error
+          # Ansible's generic lookup errors= option swallows a dispatched
+          # plugin failure: warn warns and carries on, ignore just carries
+          # on, both with an empty result (the same split the file/template
+          # lookups make).
+          if first_found_errors_ignore?(kwargs) || lookup_errors_warn?(kwargs)
+            if lookup_errors_warn?(kwargs)
+              ResultDisplay.emit_display_warning(
+                "An error occurred while running the lookup plugin '#{name}': #{ex.message}")
+            end
+            return ""
+          end
+          raise PythonLookupRunner::LookupError.new("The lookup plugin '#{name}' failed: #{ex.message}")
+        end
+        # Same list-form convention as the custom-python dispatch: a
+        # list-shaped result comma-joins for a plain lookup() of strings
+        # only; query()/wantlist=True/empty/non-string results keep the
+        # real list.
+        list_form = query_mode ||
+                    kwargs.any? { |kwarg| kwarg.strip.downcase.starts_with?("wantlist=true") } ||
+                    result.empty? ||
+                    result.any? { |item| !(raw = item.raw).is_a?(String) || !Krikri.bigint_digits(raw).nil? }
+        # Assigned on BOTH branches: a nested lookup evaluated on this
+        # evaluator must never leave a stale true behind a joined str.
+        @lookup_list_form = list_form
+        if list_form
+          result.to_json
+        else
+          result.map { |item| item.as_s }.join(",")
+        end
+      end
+
       # `query(lookup_type, args)` - Ansible's list-forcing sibling
       # of `lookup(...)` (see the call site's own comment for why this
       # exists as a separate entry point rather than just an alias).
@@ -513,6 +577,13 @@ module Krikri
         kwargs.any? do |kwarg|
           key, _, value = kwarg.strip.partition('=')
           key.strip.downcase == "errors" && value.strip.delete("'\"").downcase == "ignore"
+        end
+      end
+
+      private def lookup_errors_warn?(kwargs : Array(String)) : Bool
+        kwargs.any? do |kwarg|
+          key, _, value = kwarg.strip.partition('=')
+          key.strip.downcase == "errors" && value.strip.delete("'\"").downcase == "warn"
         end
       end
 

@@ -3,6 +3,7 @@ require "krikri-jinja/krikri_jinja"
 require "./collection_index"
 require "./lookup_plugins"
 require "./aws_secret_lookup"
+require "./onepassword_lookup"
 require "./python_lookup_runner"
 require "./jinja_host_context"
 require "./vault"
@@ -443,6 +444,8 @@ module Krikri
         list_form ? AnyValue.new(hosts.map { |host| AnyValue.new(host) }) : AnyValue.new(hosts.join(","))
       when "aws_secret", "amazon.aws.aws_secret"
         lookup_aws_secret(name, terms, kwargs, query_mode)
+      when "onepassword", "community.general.onepassword"
+        lookup_onepassword(spelled_name || name, terms, kwargs, query_mode)
       else
         python_lookup(name, terms, kwargs, ctx, query_mode)
       end
@@ -503,6 +506,55 @@ module Krikri
       when Float64 then raw.to_s
       else              raw.to_json
       end
+    end
+
+    # community.general.onepassword - natively implemented (same reason
+    # as aws_secret above: the collection is deliberately supported and
+    # the lookup wraps the `op` CLI on the controller, where
+    # PythonLookupRunner cannot reach installed collections' plugins), so
+    # the old dispatch fell through to python_lookup and its "was not
+    # found" failure - or, through the hand-rolled evaluator's "undefined"
+    # sentinel, to a silent success with the literal text (issue #1059).
+    # The wrapper prefix carries the name AS SPELLED and the text below it
+    # is the plugin's own - including its Python bytes-repr wart on a
+    # failed `op` run (live-verified vs ansible-core 2.21 +
+    # community.general).
+    private def self.lookup_onepassword(name : String, terms : Array(AnyValue),
+                                        kwargs : Hash(String, AnyValue), query_mode : Bool) : AnyValue
+      options = {} of String => String
+      kwargs.each do |key, value|
+        next if key.downcase.in?("wantlist", "errors")
+        options[key] = aws_secret_text(value)
+      end
+      term_values = flatten(terms).map { |term| aws_secret_text(term) }
+      begin
+        result = Krikri::OnePasswordLookup.run(term_values, options)
+      rescue ex : Krikri::OnePasswordLookup::Error
+        # The generic lookup errors= option swallows a dispatched plugin
+        # failure (the same split the file/template arms make): warn warns
+        # and carries on, ignore just carries on, both with an empty
+        # result - [] under wantlist=True/query(), None otherwise.
+        errors_option = kwargs["errors"]?.try { |value| text(value).strip.downcase }
+        if errors_option.in?("warn", "ignore")
+          if errors_option == "warn"
+            ResultDisplay.emit_display_warning(
+              "An error occurred while running the lookup plugin '#{name}': #{ex.message}")
+          end
+          return (query_mode || truthy?(kwargs["wantlist"]?)) ? AnyValue.new([] of AnyValue) : AnyValue.new(nil)
+        end
+        raise PythonLookupRunner::LookupError.new("The lookup plugin '#{name}' failed: #{ex.message}")
+      end
+      converted = KrikriJinja.from_json_any(JSON::Any.new(result))
+      # Same list-form convention as python_lookup's own dispatch: a
+      # list-shaped result comma-joins for a plain lookup() of strings
+      # only - query()/wantlist=True/empty/non-string results stay a real
+      # list (issue #695's rule).
+      items = converted.raw.as?(Array(AnyValue))
+      return converted unless items && !items.empty? && !(query_mode || truthy?(kwargs["wantlist"]?))
+      return converted unless items.all? do |item|
+                                (raw = item.raw).is_a?(String) && Krikri.bigint_digits(raw).nil?
+                              end
+      AnyValue.new(items.map { |item| item.raw.as(String) }.join(","))
     end
 
     private def self.flatten(terms : Array(AnyValue)) : Array(AnyValue)
