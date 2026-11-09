@@ -26,8 +26,8 @@ module Krikri::Lint
         "force_apt_get, install_recommends, lock_timeout, only_upgrade, " \
         "package, policy_rc_d, purge, state, update_cache, " \
         "update_cache_retries, update_cache_retry_max_delay, upgrade " \
-        "(name, pkg, default-release, install-recommends, allow-downgrade, " \
-        "allow_downgrades, allow-downgrades, allow-unauthenticated, " \
+        "(allow-downgrade, allow-downgrades, allow-unauthenticated, " \
+        "allow_downgrades, default-release, install-recommends, name, pkg, " \
         "update-cache)."
       )
       v.first.line.must_equal(2)
@@ -213,12 +213,104 @@ module Krikri::Lint
       v.must_be_empty
     end
 
-    it "ignores modules without a spec" do
+    it "validates community modules the spec table covers" do
       v = lint_yaml(rule, <<-YAML)
         ---
-        - name: Unspecified module
+        - name: Unnamed docker container
           community.docker.docker_container:
             whatever: 1
+        YAML
+      v.size.must_equal(1)
+      v.first.message.must_equal("missing required arguments: name")
+    end
+
+    # Regression: issue #1015 - the rule validated only a hand-maintained
+    # set of core specs, so every module data/argspecs.json covers but
+    # that set did not (dnf5 and all community modules among them) went
+    # unvalidated, and non-bool type conversions never failed at all.
+    it "flags an invalid state choice on a module the generated table covers" do
+      v = lint_yaml(rule, <<-YAML)
+        ---
+        - name: Bad dnf5 state
+          ansible.builtin.dnf5:
+            name: sl
+            state: bogus-state
+        YAML
+      v.size.must_equal(1)
+      v.first.message.must_equal(
+        "value of state must be one of: absent, installed, latest, present, removed, got: bogus-state"
+      )
+    end
+
+    it "flags an unsupported parameter with the sorted alias tail" do
+      v = lint_yaml(rule, <<-YAML)
+        ---
+        - name: Bad dnf5 param
+          ansible.builtin.dnf5:
+            name: sl
+            use_backend: dnf5
+        YAML
+      v.size.must_equal(1)
+      v.first.message.must_equal(
+        "Unsupported parameters for (basic.py) module: use_backend. " \
+        "Supported parameters include: allow_downgrade, allowerasing, " \
+        "auto_install_module_deps, autoremove, best, bugfix, cacheonly, " \
+        "conf_file, disable_excludes, disable_gpg_check, disable_plugin, " \
+        "disablerepo, download_dir, download_only, enable_plugin, " \
+        "enablerepo, exclude, install_weak_deps, installroot, list, " \
+        "lock_timeout, name, nobest, releasever, security, skip_broken, " \
+        "sslverify, state, update_cache, update_only, validate_certs " \
+        "(expire-cache, pkg)."
+      )
+    end
+
+    it "flags a null value a list-typed option cannot convert" do
+      v = lint_yaml(rule, <<-YAML)
+        ---
+        - name: Null name
+          ansible.builtin.dnf5:
+            state: present
+            name:
+        YAML
+      v.size.must_equal(1)
+      v.first.message.must_equal(
+        "argument 'name' is of type NoneType and we were unable to " \
+        "convert to list: <class 'NoneType'> cannot be converted to a list"
+      )
+    end
+
+    it "flags a string an int-typed option cannot convert" do
+      v = lint_yaml(rule, <<-YAML)
+        ---
+        - name: Bad timeout
+          community.docker.docker_compose_v2:
+            project_src: /tmp/x
+            timeout: banana
+        YAML
+      v.size.must_equal(1)
+      v.first.message.must_equal(
+        %(argument 'timeout' is of type str and we were unable to convert to int: "'banana'" cannot be converted to an int)
+      )
+    end
+
+    it "flags required_one_of on a community module" do
+      v = lint_yaml(rule, <<-YAML)
+        ---
+        - name: Alternative without path
+          community.general.alternatives:
+            name: krikri-alt
+        YAML
+      v.size.must_equal(1)
+      v.first.message.must_equal("one of the following is required: path, family")
+    end
+
+    it "stays silent on mutually exclusive parameters, like upstream" do
+      v = lint_yaml(rule, <<-YAML)
+        ---
+        - name: Name and list together
+          ansible.builtin.dnf5:
+            name: sl
+            list: sl
         YAML
       v.must_be_empty
     end
