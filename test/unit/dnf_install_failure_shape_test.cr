@@ -817,3 +817,175 @@ describe "dnf-family fill_sack metadata load preempts every verdict (issue 1031)
     end
   end
 end
+
+# Issue #1055 (officel.mysql56, check phase): under --check this engine
+# reported "changed" for the role's `yum: name: mysql-community-server`
+# where real ansible fatal'd. Ansible's dnf module marks every spec and
+# resolves the transaction BEFORE its check-mode stop (it stops only
+# before do_transaction), so a package the repos cannot name fails the
+# task in check mode with the very shape the real install reports:
+#   fatal: [testhost]: FAILED! => {"changed": false, "failures": ["No
+#   package mysql-community-server available."], "msg": "Failed to
+#   install some of the specified packages", "rc": 1, "results": []}
+# Live-verified against ansible-core 2.21.6 on a Rocky 9 target with the
+# role's own enablerepo globs (which match no repo there either - real's
+# dnf backend warns and continues past them, so the failure is the
+# missing package). The check-mode resolution probe above fails this
+# case through the same parsers the real install uses; these pin its
+# exact shape.
+#
+# dnf/rpm are not on the spec host; everything runs against shimmed
+# binaries on PATH via the plugin's _environment (same method as the
+# issue-781/1019 tests) - no process-wide ENV mutation, so no serial!.
+# The dnf shim logs every invocation so the tests can prove check mode
+# RESOLVES the transaction (the --assumeno probe) instead of guessing
+# "changed", and it answers a resolvable probe with real dnf's own
+# abort shape ("Operation aborted.", exit 1) - which must not read as a
+# failure.
+private def with_dnf1055_shims(install_mode : String, available : Array(String), &)
+  bin_dir = File.join(Dir.tempdir, "krikri-dnf1055-#{Random.rand(1_000_000)}")
+  log = File.join(bin_dir, "calls.log")
+  FileUtils.mkdir_p(bin_dir)
+
+  rpm_shim = <<-'SH'
+    #!/bin/sh
+    if [ "$1" = "-qp" ]; then
+      [ -f "$4" ] || exit 1
+      printf '%s\n' "${KRIKRI_RPM_FILE_NEVRA:-}"
+      exit 0
+    fi
+    if [ "$2" = "--whatprovides" ]; then
+      exit 1
+    fi
+    qarg="$4"
+    [ -n "$qarg" ] || qarg="$2"
+    if [ -f "$qarg" ]; then
+      printf '%s\n' "${KRIKRI_RPM_FILE_NEVRA:-}"
+      exit 0
+    fi
+    for pair in ${KRIKRI_RPM_INSTALLED:-}; do
+      pkg="${pair%%=*}"; nevra="${pair#*=}"
+      [ "$qarg" = "$pkg" ] && { printf '%s\n' "$nevra"; exit 0; }
+    done
+    exit 1
+    SH
+
+  dnf_shim = <<-'SH'
+    #!/bin/sh
+    printf '%s\n' "$*" >> "${KRIKRI_DNF_LOG:?}"
+    case "$2/$3" in
+      "list/--available")
+        for pair in ${KRIKRI_DNF_AVAILABLE:-}; do
+          pkg="${pair%%=*}"; evr="${pair#*=}"
+          [ "$4" = "$pkg" ] && { printf 'Available Packages\n%s.x86_64 %s fakerepo\n' "$pkg" "$evr"; exit 0; }
+        done
+        exit 1
+        ;;
+    esac
+    for arg in "$@"; do
+      case "$arg" in
+        --enablerepo=*)
+          echo "Error: Unknown repo: '${arg#--enablerepo=}'" >&2
+          exit 1
+          ;;
+      esac
+    done
+    case "$1" in
+      install)
+        case "${KRIKRI_DNF_INSTALL_MODE:-missing}" in
+          missing)
+            echo "No match for argument: mysql-community-server"
+            echo "Error: Unable to find a match: mysql-community-server" >&2
+            exit 1
+            ;;
+          aborted)
+            echo "Operation aborted."
+            exit 1
+            ;;
+        esac
+        ;;
+    esac
+    echo "Nothing to do"
+    exit 0
+    SH
+
+  File.write(File.join(bin_dir, "rpm"), rpm_shim)
+  File.write(File.join(bin_dir, "dnf"), dnf_shim)
+  File.write(File.join(bin_dir, "yum"), dnf_shim)
+  {"rpm", "dnf", "yum"}.each { |bin| File.chmod(File.join(bin_dir, bin), 0o755) }
+
+  env = {
+    "PATH"                    => "#{bin_dir}:/usr/bin:/bin",
+    "KRIKRI_DNF_LOG"          => log,
+    "KRIKRI_DNF_INSTALL_MODE" => install_mode,
+    "KRIKRI_DNF_AVAILABLE"    => available.join(" "),
+    "KRIKRI_RPM_INSTALLED"    => "",
+    "KRIKRI_RPM_FILE_NEVRA"   => "tree-1.8.0-10.el9.x86_64",
+  }.to_json
+  yield env, log
+ensure
+  FileUtils.rm_rf(bin_dir) if bin_dir
+end
+
+describe "dnf/yum check mode - an unresolvable spec fails like the real install (issue 1055)" do
+  it "check mode fails a missing package with the install-failure shape, like real ansible" do
+    with_dnf1055_shims("missing", [] of String) do |env, log|
+      result = PluginSpecHelper.run("yum", {
+        "name"                => "mysql-community-server",
+        "state"               => "present",
+        "enablerepo"          => "mysql-community*,mysql-tools*,mysql56*",
+        "_ansible_check_mode" => "true",
+        "_environment"        => env,
+      }, vars: {"ansible_pkg_mgr" => "dnf"})
+
+      result["failed"].as_bool.must_equal(true)
+      result["changed"].as_bool.must_equal(false)
+      result["msg"].as_s.must_equal("Failed to install some of the specified packages")
+      result["failures"].as_a.map(&.as_s).must_equal(["No package mysql-community-server available."])
+      result["results"].as_a.must_equal([] of JSON::Any)
+      result["rc"].as_i.must_equal(1)
+      result.as_h.keys.first(5).must_equal(["msg", "failures", "results", "rc", "failed"])
+      # The verdict comes from RESOLVING, not from a guess - the probe
+      # ran its marks/resolve pass before the failure was known.
+      calls = File.exists?(log) ? File.read(log) : ""
+      calls.includes?("--assumeno").must_equal(true)
+    end
+  end
+
+  it "state latest fails a missing package in check mode the same way" do
+    with_dnf1055_shims("missing", [] of String) do |env, _|
+      result = PluginSpecHelper.run("dnf", {
+        "name"                => "mysql-community-server",
+        "state"               => "latest",
+        "_ansible_check_mode" => "true",
+        "_environment"        => env,
+      }, vars: {"ansible_pkg_mgr" => "dnf"})
+
+      result["failed"].as_bool.must_equal(true)
+      result["changed"].as_bool.must_equal(false)
+      result["msg"].as_s.must_equal("Failed to install some of the specified packages")
+      result["failures"].as_a.map(&.as_s).must_equal(["No package mysql-community-server available."])
+      result["results"].as_a.must_equal([] of JSON::Any)
+      result["rc"].as_i.must_equal(1)
+    end
+  end
+
+  it "a resolvable spec keeps the would-install shape - the probe's abort is not a failure" do
+    with_dnf1055_shims("aborted", ["chrony=4.8-1.el9"]) do |env, log|
+      result = PluginSpecHelper.run("dnf", {
+        "name"                => "chrony",
+        "state"               => "present",
+        "_ansible_check_mode" => "true",
+        "_environment"        => env,
+      }, vars: {"ansible_pkg_mgr" => "dnf"})
+
+      result["failed"]?.try(&.as_bool?).must_be_nil
+      result["changed"].as_bool.must_equal(true)
+      result["msg"].as_s.must_equal("Check mode: No changes made, but would have if not in check mode")
+      result["results"].as_a.map(&.as_s).must_equal(["Installed: chrony-4.8-1.el9.x86_64"])
+      result["rc"].as_i.must_equal(0)
+      calls = File.exists?(log) ? File.read(log) : ""
+      calls.includes?("--assumeno").must_equal(true)
+    end
+  end
+end

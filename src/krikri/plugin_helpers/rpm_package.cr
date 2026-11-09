@@ -1174,7 +1174,8 @@ module Krikri
         # --check: report what the transaction WOULD have done without
         # running it - but only after the resolution Ansible's module
         # runs before it stops (issue #1050: a DepsolveError real reports
-        # under --check used to read as a clean "would install" here; see
+        # under --check used to read as a clean "would install" here, and
+        # issue #1055 the same for a package the repos cannot name; see
         # check_mode_resolve_probe_failure).
         if check_mode?
           failure = check_mode_resolve_probe_failure(pending, options)
@@ -1292,7 +1293,11 @@ module Krikri
       # changes made" exit), so a goal the solver can't satisfy - `curl`
       # against the installed curl-minimal - fails the task with the
       # Depsolve Error block under --check exactly like the real
-      # install. The check-mode branches used to report the would-install
+      # install, and a spec the repos cannot name fails it with the
+      # per-spec "No package X available." failures the real install
+      # reports (issue #1055: officel.mysql56's mysql-community-server
+      # read as "changed" here where ansible fatal'd). The check-mode
+      # branches used to report the would-install
       # shape for anything pending without ever running that resolution,
       # so check mode ended changed (rc 0) where real ended failed. The
       # probe is the real install command plus --assumeno standing in for
@@ -1485,6 +1490,11 @@ module Krikri
         if check_mode?
           pending = to_install + to_update
           return with_installed_filename_results(transaction_result(false), names) if pending.empty?
+          # Same check-mode resolution as the present path's: real marks
+          # and resolves before stopping, so an unresolvable spec fails
+          # the task instead of reading as "would install" (dnf.py's
+          # `state: latest` path records the identical per-spec
+          # failures).
           failure = check_mode_resolve_probe_failure(pending, options)
           return failure if failure
           return with_installed_filename_results(check_mode_transaction_result(true, candidate_nevras(pending, states).map { |nevra| "Installed: #{nevra}" }), names)
