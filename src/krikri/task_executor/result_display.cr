@@ -1098,6 +1098,30 @@ module Krikri
       # executor passes here.
       return true if module_name.try { |name| name == "include_vars" || name == "_include_vars" || name.ends_with?(".include_vars") } &&
                      msg == "Task failed: Action failed: Unknown error."
+      # user's group-existence check (issue #1024, observed on
+      # laniakea.rstudio's no_log user task): real prints the block for
+      # user.py's plain "Group <g> does not exist" fail_json (live-
+      # verified vs 2.21.6), whose wording echoes the group name from
+      # the task's group:/groups: param. That name is task data, so -
+      # like copy's missing-parent check above - the block prints only
+      # when the param is a literal in the playbook source (no
+      # `{{ }}`/`{% %}`/`{# #}`): the echoed name is then a substring of
+      # source text, so the block reveals nothing the source doesn't
+      # already contain. A templated group may carry a secret and stays
+      # suppressed. The "Task failed: Module failed: " brief is optional
+      # for the same reason as the import-gate messages above (crash-
+      # mimicking plugins compose it into their own msg while a fail_json
+      # result carries the bare text).
+      if module_name.try { |name| name == "user" || name.ends_with?(".user") } && source_task &&
+         (match = msg.match(/\A(?:Task failed: Module failed: )?Group (.+) does not exist\z/))
+        group_name = match[1]
+        ["group", "groups"].each do |key|
+          raw = source_task.params[key]?
+          next unless raw
+          next if raw.includes?("{{") || raw.includes?("{%") || raw.includes?("{#")
+          return true if raw.includes?(group_name)
+        end
+      end
       !!(copy_task && NO_LOG_SAFE_MSGS.includes?(msg))
     end
 
