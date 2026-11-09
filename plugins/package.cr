@@ -222,6 +222,20 @@ module Krikri
           end
           return handle_deb(deb_param, [] of String, false, @params["lock_timeout"]?.try(&.to_i) || 60)
         end
+        # ansible-core's dnf module Base fill_sack()s every enabled repo
+        # before it resolves anything, so even a nameless `package:` on a
+        # dnf backend reaches that load before its "Nothing to do" - an
+        # unloadable repo fails the task with libdnf's bare metadata msg
+        # instead (issue #1031). update_cache-only carries its own
+        # makecache (whose failure #update_cache_only reports in the same
+        # bare-msg shape), and the apt backend has no such load.
+        unless update_cache
+          if (requested_package_manager || detect_package_manager()).in?("dnf", "yum", "dnf4", "dnf5", "yum4")
+            if failure = dnf_fill_sack_metadata_failure
+              return failure
+            end
+          end
+        end
         return update_cache ? update_cache_only : PluginResult.new(
           changed: false,
           failed: false,
@@ -602,7 +616,17 @@ module Krikri
 
       pre_update_mtime = package_manager == "apt" ? apt_cache_mtime(->remote_exec(String)) : 0
       result = package_manager == "apt" ? apt_get_update_with_retry(command, AptLockRetry::DEFAULT_UPDATE_CACHE_RETRIES, AptLockRetry::DEFAULT_UPDATE_CACHE_RETRY_MAX_DELAY, ->remote_exec(String)) : remote_exec(command)
-      return PluginResult.new(changed: false, failed: true, msg: "Failed to update package cache: #{result[:stderr]}") unless result[:exit_code] == 0
+      unless result[:exit_code] == 0
+        # ansible's fill_sack()-time failure surfaces as libdnf's bare
+        # metadata text - no "Failed to update package cache:" wrapper
+        # around the raw dump (issue #1031; same wording
+        # rpm_package's cache_failure_msg extracts for the dnf/yum
+        # modules' own update_cache path).
+        if metadata_msg = repo_metadata_failure_msg(result[:stdout] + "\n" + result[:stderr])
+          return repo_metadata_failure_result(metadata_msg)
+        end
+        return PluginResult.new(changed: false, failed: true, msg: "Failed to update package cache: #{result[:stderr]}")
+      end
 
       # Real dnf.py's own `update_cache_only` reports
       # `changed=result.get('changed', False)` from its internal
@@ -681,6 +705,34 @@ module Krikri
         return name if found.includes?(path)
       end
       nil
+    end
+
+    # Ansible's dnf module builds its dnf Base and fill_sack()s EVERY
+    # enabled repo before it resolves anything at all, so a repo whose
+    # repomd.xml cannot be downloaded fails the task with libdnf's bare
+    # metadata msg whatever the request was - state: absent, a nameless
+    # invocation, in --check too - and never reaches its own per-request
+    # verdicts. This module's dnf backend forms several of those verdicts
+    # without ever loading the repo metadata (the classification probes
+    # answer "No package X available." for names a dead repo hides, and
+    # `dnf remove` resolves from the installed set alone), so check mode
+    # ended per-spec failed/ok where ansible failed on the metadata for
+    # every item (issue #1031, aaditya2801.k8s_master's loop under
+    # --check). The probe is that metadata load and nothing more
+    # (`makecache`, the one spec-less command that loads every enabled
+    # repo's metadata the way fill_sack does); only its metadata verdict
+    # surfaces, so a host whose repos all load keeps every existing
+    # verdict and shape unchanged. Memoized: one probe per plugin process
+    # (one task), whatever the verdict sites ask.
+    @fill_sack_failure : PluginResult? = nil
+    @fill_sack_probed = false
+
+    private def dnf_fill_sack_metadata_failure : PluginResult?
+      return @fill_sack_failure if @fill_sack_probed
+      @fill_sack_probed = true
+      probe = remote_exec("dnf makecache || yum makecache")
+      msg = repo_metadata_failure_msg(probe[:stdout] + "\n" + probe[:stderr])
+      @fill_sack_failure = msg ? repo_metadata_failure_result(msg) : nil
     end
 
     # Issue #1019 (aaditya2801.k8s_master): a request whose specs are ALL
@@ -1226,7 +1278,18 @@ module Krikri
               names, gpg_opt)
             return failure if failure
           end
-          return dnf_missing_spec_failure(missing) unless missing.empty?
+          unless missing.empty?
+            # ansible's fill_sack() fails the task before its per-spec
+            # "No package X available." failures are ever recorded, so an
+            # unloadable repo's metadata msg beats that canned list - the
+            # classification probes above answer Missing without ever
+            # loading the repo metadata that cannot load here (issue
+            # #1031, the role's kubeadm/docker loop items under --check).
+            if failure = dnf_fill_sack_metadata_failure
+              return failure
+            end
+            return dnf_missing_spec_failure(missing)
+          end
           return dnf_check_mode_transaction_result(!results.empty?, results)
         end
         if is_installed
@@ -1286,6 +1349,13 @@ module Krikri
           end
         end
       when "absent"
+        # ansible's fill_sack() fails a removal request on an unloadable
+        # repo before its own remove logic runs - in --check too - where
+        # this case would otherwise plan (or no-op) the removal from
+        # rpm's view alone (issue #1031).
+        if failure = dnf_fill_sack_metadata_failure
+          return failure
+        end
         if @check_mode
           # Real's check-mode result (issue #753): "Removed: <installed
           # nevra>" entries for every owned RPM, "No match for argument:
@@ -1352,6 +1422,14 @@ module Krikri
             "if [ $rc -eq 100 ]; then exit 100; fi; " \
             "if [ $rc -ne 0 ]; then yum check-update#{check_arg} || exit $?; fi"
           )
+          # ansible's fill_sack() runs before its per-spec resolution, so
+          # an unloadable repo's metadata msg - which this check-update
+          # just printed - preempts every verdict below (issue #1031:
+          # `state: latest` reported "Nothing to do"/missing-spec verdicts
+          # where ansible failed on the metadata).
+          if metadata_msg = repo_metadata_failure_msg(check_update[:stdout] + "\n" + check_update[:stderr])
+            return repo_metadata_failure_result(metadata_msg)
+          end
           pending = dnf_check_update_rows(check_update[:stdout])
           installs = [] of String
           removals = [] of String
