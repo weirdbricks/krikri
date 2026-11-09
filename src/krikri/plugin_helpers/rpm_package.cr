@@ -1,6 +1,7 @@
 require "json"
 require "uri"
 require "./dnf_install_failures"
+require "./dnf_transaction_probe"
 require "./http_download"
 require "./fetch_tempfile"
 require "./multiext_split"
@@ -30,6 +31,7 @@ module Krikri
       # own dnf/yum shell-out needs the identical shape and can't include
       # this module (it also serves apt).
       include DnfInstallFailures
+      include DnfTransactionProbe
       include RpmSpecProbe
       # ----- shared execution path (moved verbatim from yum.cr, whose
       # install path was the more-refactored of the two; dnf.cr now
@@ -293,15 +295,17 @@ module Krikri
       end
 
       # Ansible's failure shape: msg, failures, results, rc, failed. The
-      # backend's own error text is what goes in `failures`.
-      private def failure_result(msg : String, failures : Array(String), rc : Int32 = 1) : PluginResult
+      # backend's own error text is what goes in `failures`; `results`
+      # carries the resolved transaction's entries where ansible's
+      # fail_json does (see DnfTransactionProbe), empty elsewhere.
+      private def failure_result(msg : String, failures : Array(String), rc : Int32 = 1, results : Array(String) = [] of String) : PluginResult
         PluginResult.new(
           changed: false,
           failed: true,
           msg: msg,
           include_empty_msg: true,
           failures: failures,
-          results: [] of String,
+          results: results,
           rc: rc,
           key_order: DNF_FAILURE_ORDER
         )
@@ -1165,7 +1169,7 @@ module Krikri
         if pending.empty?
           specs = classified[:already_installed].select { |pkg| classified[:states][pkg]? }
           unless specs.empty?
-            failure = run_install_batch(specs, "#{build_dnf_options(force_nobest: true)} --setopt=tsflags=test")[:failure]
+            failure = run_install_batch(specs, "#{build_dnf_options(force_nobest: true)} --setopt=tsflags=test", names)[:failure]
             return failure if failure
           end
           return transaction_result(false)
@@ -1178,7 +1182,7 @@ module Krikri
         # issue #1055 the same for a package the repos cannot name; see
         # check_mode_resolve_probe_failure).
         if check_mode?
-          failure = check_mode_resolve_probe_failure(pending, options)
+          failure = check_mode_resolve_probe_failure(pending, options, names)
           return failure if failure
           return check_mode_transaction_result(true, candidate_nevras(pending, classified[:states]).map { |nevra| "Installed: #{nevra}" })
         end
@@ -1189,7 +1193,7 @@ module Krikri
 
         # Install new packages
         unless to_install.empty?
-          outcome = run_install_batch(to_install, options)
+          outcome = run_install_batch(to_install, options, names)
           all_output << outcome[:output]
 
           failure = outcome[:failure]
@@ -1234,7 +1238,7 @@ module Krikri
       # fallback for that case (a real install must never silently
       # succeed); the check-mode resolution probe reads the same nil as
       # a clean resolution instead (see check_mode_resolve_probe_failure).
-      private def install_batch_failure(result : NamedTuple(exit_code: Int32, stdout: String, stderr: String), to_install : Array(String), options : String) : PluginResult?
+      private def install_batch_failure(result : NamedTuple(exit_code: Int32, stdout: String, stderr: String), to_install : Array(String), options : String, all_names : Array(String)) : PluginResult?
         # Ansible's dnf module reports a partially-unresolvable install
         # batch with its own canned msg ("Failed to install some of the
         # specified packages") and one "No package X available." entry
@@ -1282,7 +1286,11 @@ module Krikri
           if depsolve_failure = depsolve_retry_failure(failures, to_install, options, result)
             return depsolve_failure
           end
-          return failure_result("Failed to install some of the specified packages", failures, result[:exit_code])
+          # Ansible's fail_json for this shape carries the survivors'
+          # resolved transaction in `results` (issue #1020) - the same
+          # dnf-marking replay every other entry of this shape uses
+          # (see DnfTransactionProbe).
+          return failure_result("Failed to install some of the specified packages", failures, result[:exit_code], dnf_transaction_probe_results(all_names))
         end
         unknown_error_failure(result)
       end
@@ -1309,11 +1317,11 @@ module Krikri
       # class ansible itself reports surfaces - install_batch_failure
       # returns nil for the abort and for any output none of its parsers
       # claims, and that is a resolvable goal, never an invented failure.
-      private def check_mode_resolve_probe_failure(specs : Array(String), options : String) : PluginResult?
+      private def check_mode_resolve_probe_failure(specs : Array(String), options : String, all_names : Array(String)) : PluginResult?
         pkg_list = specs.map { |pth| quote_package(pth) }.join(" ")
         result = remote_exec_tolerating_unknown_repo("#{pkg_manager_binary} install #{options} --assumeno #{pkg_list}")
         return nil if result[:exit_code] == 0
-        install_batch_failure(result, specs, "#{options} --assumeno")
+        install_batch_failure(result, specs, "#{options} --assumeno", all_names)
       end
 
       private def classify_install_packages(names : Array(String), update_only : Bool) : NamedTuple(to_install: Array(String), to_update: Array(String), already_installed: Array(String), states: Hash(String, Bool))
@@ -1495,7 +1503,7 @@ module Krikri
           # the task instead of reading as "would install" (dnf.py's
           # `state: latest` path records the identical per-spec
           # failures).
-          failure = check_mode_resolve_probe_failure(pending, options)
+          failure = check_mode_resolve_probe_failure(pending, options, names)
           return failure if failure
           return with_installed_filename_results(check_mode_transaction_result(true, candidate_nevras(pending, states).map { |nevra| "Installed: #{nevra}" }), names)
         end
@@ -1505,7 +1513,7 @@ module Krikri
         all_output = [] of String
 
         unless to_install.empty?
-          outcome = run_install_batch(to_install, options)
+          outcome = run_install_batch(to_install, options, names)
           all_output << outcome[:output]
 
           failure = outcome[:failure]
@@ -1538,14 +1546,14 @@ module Krikri
         with_installed_filename_results(transaction_result(changed, installed), names)
       end
 
-      private def run_install_batch(to_install : Array(String), options : String) : BatchOutcome
+      private def run_install_batch(to_install : Array(String), options : String, all_names : Array(String)) : BatchOutcome
         pkg_list = to_install.map { |pth| quote_package(pth) }.join(" ")
         cmd = "#{pkg_manager_binary} install #{options} #{pkg_list}"
 
         result = remote_exec_tolerating_unknown_repo(cmd)
 
         if result[:exit_code] != 0
-          failure = install_batch_failure(result, to_install, options) ||
+          failure = install_batch_failure(result, to_install, options, all_names) ||
                     failure_result("Failed to install packages", error_lines(result), result[:exit_code])
           return {changed: false, message: nil, output: result[:stdout], failure: failure}
         end

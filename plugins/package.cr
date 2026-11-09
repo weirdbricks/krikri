@@ -82,6 +82,7 @@ module Krikri
     # and key order) is parsed by the same shared helper the dnf/yum
     # plugins use - one source of truth for a live-verified shape.
     include PluginHelpers::DnfInstallFailures
+    include PluginHelpers::DnfTransactionProbe
     include PluginHelpers::RpmSpecProbe
     property? check_mode : Bool
     # Resolved remote path of apt-get (see #apt_get_bin), nil until first
@@ -760,14 +761,14 @@ module Krikri
     # ordinary install path's own, so every failure shape - metadata,
     # depsolve, missing spec - reports exactly like the install this
     # request never needed.
-    private def dnf_present_noop_probe_failure(name : String, shell_pkg : String) : PluginResult?
+    private def dnf_present_noop_probe_failure(name : String, shell_pkg : String, names : Array(String)) : PluginResult?
       gpg_opt = true?(@params["disable_gpg_check"]?) ? "--nogpgcheck" : "--setopt=localpkg_gpgcheck=1"
       probe = remote_exec(
         "dnf install -y #{gpg_opt} --nobest --setopt=tsflags=test #{shell_pkg} || " \
         "yum install -y #{gpg_opt} --nobest --setopt=tsflags=test #{shell_pkg}"
       )
       return nil if probe[:exit_code] == 0
-      dnf_install_failure_result(name, probe)
+      dnf_install_failure_result(name, probe, names)
     end
 
     # Issue #1050 (kurron.resilio-sync, Rocky 9 --check): ansible's dnf
@@ -796,7 +797,7 @@ module Krikri
                         repo_metadata_failure_msg(output) || group_not_available_msg(output) ||
                         parse_dnf_install_failures(probe[:stdout], probe[:stderr])
       dnf_depsolve_retry_failure(probe, names, gpg_opt) ||
-        dnf_install_failure_result(name, probe)
+        dnf_install_failure_result(name, probe, names)
     end
 
     # The failure shape real ansible's dnf module reports for a transaction
@@ -807,7 +808,7 @@ module Krikri
     # branches because ansible fails them identically: a `state: latest`
     # for a nonexistent package is a failed task with rc 1, not a
     # changed: true success.
-    private def dnf_install_failure_result(name : String, install_result : NamedTuple(exit_code: Int32, stdout: String, stderr: String)) : PluginResult
+    private def dnf_install_failure_result(name : String, install_result : NamedTuple(exit_code: Int32, stdout: String, stderr: String), names : Array(String)) : PluginResult
       # Issue #329 (Rocky 9, `package: name: <https .rpm URL>` whose GPG
       # key isn't installed): ansible's dnf module validates the signature
       # of a downloaded rpm itself BEFORE the transaction and fails with
@@ -880,13 +881,20 @@ module Krikri
         )
       end
       if failures = parse_dnf_install_failures(install_result[:stdout], install_result[:stderr])
+        # Ansible's fail_json for this shape carries the survivors'
+        # resolved transaction in `results` (issue #1020:
+        # archf.packages' "installing default packages" reported the
+        # full "Installed: <nevra>"/"Removed: <nevra>" lists real's
+        # install_set/remove_set iterate, where this engine sent []) -
+        # the same dnf-marking replay the dnf/yum plugins use (see
+        # DnfTransactionProbe).
         PluginResult.new(
           changed: false,
           failed: true,
           msg: "Failed to install some of the specified packages",
           include_empty_msg: true,
           failures: failures,
-          results: [] of String,
+          results: dnf_transaction_probe_results(names),
           rc: install_result[:exit_code],
           key_order: PluginHelpers::DnfInstallFailures::DNF_INSTALL_FAILURE_ORDER
         )
@@ -1188,14 +1196,18 @@ module Krikri
     # resolution fails the task exactly like the real install would
     # (live-verified vs ansible-core 2.19.11 on Rocky 9). Same per-spec
     # canned wording and key order dnf_install_failure_result emits.
-    private def dnf_missing_spec_failure(missing : Array(String)) : PluginResult
+    private def dnf_missing_spec_failure(missing : Array(String), names : Array(String)) : PluginResult
       PluginResult.new(
         changed: false,
         failed: true,
         msg: "Failed to install some of the specified packages",
         include_empty_msg: true,
         failures: missing.map { |pkg| "No package #{pkg} available." },
-        results: [] of String,
+        # Same `results` computation as the install path's canned shape
+        # (issue #1020) - real's fail_json carries whatever
+        # response['results'] holds at its raise, which is the resolved
+        # transaction's entries when the survivors resolve to one.
+        results: dnf_transaction_probe_results(names),
         rc: 1,
         key_order: PluginHelpers::DnfInstallFailures::DNF_INSTALL_FAILURE_ORDER
       )
@@ -1261,7 +1273,7 @@ module Krikri
           results = names.select { |pkg| installed_status[pkg]? == DnfSpecResolution::Available }
             .map { |pkg| "Installed: #{available_nevras[pkg]? || pkg}" }.sort!
           if is_installed && !names.empty?
-            failure = dnf_present_noop_probe_failure(name, shell_pkg)
+            failure = dnf_present_noop_probe_failure(name, shell_pkg, names)
             return failure if failure
           end
           # A pending transaction resolves before the check-mode stop,
@@ -1288,13 +1300,13 @@ module Krikri
             if failure = dnf_fill_sack_metadata_failure
               return failure
             end
-            return dnf_missing_spec_failure(missing)
+            return dnf_missing_spec_failure(missing, names)
           end
           return dnf_check_mode_transaction_result(!results.empty?, results)
         end
         if is_installed
           if !names.empty?
-            failure = dnf_present_noop_probe_failure(name, shell_pkg)
+            failure = dnf_present_noop_probe_failure(name, shell_pkg, names)
             return failure if failure
           end
           PluginResult.new(
@@ -1345,7 +1357,7 @@ module Krikri
             # rest, so a depsolve failure WITH the missing-spec
             # failures list beats this CLI's missing-spec abort.
             dnf_depsolve_retry_failure(install_result, names, gpg_opt) ||
-              dnf_install_failure_result(name, install_result)
+              dnf_install_failure_result(name, install_result, names)
           end
         end
       when "absent"
@@ -1464,7 +1476,7 @@ module Krikri
               names, "")
             return failure if failure
           end
-          return dnf_missing_spec_failure(missing) unless missing.empty?
+          return dnf_missing_spec_failure(missing, names) unless missing.empty?
           return dnf_check_mode_transaction_result(!results.empty?, results)
         end
 
@@ -1493,7 +1505,7 @@ module Krikri
         # specified packages", failures ["No package libpng12 available."],
         # rc 1) - a nonzero dnf/yum exit is a failed task, never
         # changed: true.
-        return dnf_install_failure_result(name, update_result) if update_result[:exit_code] != 0
+        return dnf_install_failure_result(name, update_result, names) if update_result[:exit_code] != 0
 
         # Check if actually updated
         was_updated = !update_result[:stdout].includes?("Nothing to do")

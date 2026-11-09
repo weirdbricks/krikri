@@ -74,6 +74,14 @@ module Krikri
       "upgrade"
     end
 
+    # dnf5's module resolves through libdnf5 and reports ITS OWN results
+    # shapes, so the dnf4 bindings' transaction replay (issue #1020's
+    # results computation, DnfTransactionProbe) must not answer for this
+    # backend even on a host where the dnf4 bindings import too.
+    private def transaction_probe_dnf4? : Bool
+      false
+    end
+
     # dnf5's `list` takes flags (--installed/--available/--upgrades/
     # --extras/--obsoletes) where dnf/yum take the same words as
     # positional subcommands; any other scalar query is still a positional
