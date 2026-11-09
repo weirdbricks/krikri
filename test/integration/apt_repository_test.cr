@@ -1,5 +1,6 @@
 require "../minitest_helper"
 require "file_utils"
+require "http/server"
 
 # apt_repository writes to /etc/apt/sources.list.d/, which needs root -
 # the earlier specs exercise check_mode only (read-only, safe on a real
@@ -13,6 +14,30 @@ private def scratch_sources(tag : String) : {String, String}
   Dir.mkdir_p(list_d)
   {File.join(dir, "sources.list"), list_d}
 end
+
+# A tiny local stand-in for the Launchpad API (Crystal stdlib HTTP::Server,
+# no internet access): answers the metadata shape a live PPA returns
+# (200 + signing_key_fingerprint) for one known archive and 404 for
+# anything else - a deleted PPA's real answer. The specs point the
+# plugin's `_ppa_api_base` seam here so the metadata fetch (and its
+# failure shapes) is exercised for real without network access.
+private APT_REPO_LP_FINGERPRINT = "0123456789ABCDEF0123456789ABCDEF01234567"
+
+private APT_REPO_LP_TEST_SERVER = HTTP::Server.new do |context|
+  case context.request.path
+  when "/~nginx/+archive/stable"
+    context.response.status_code = 200
+    context.response.headers["Content-Type"] = "application/json"
+    context.response.print(%({"signing_key_fingerprint": "#{APT_REPO_LP_FINGERPRINT}"}))
+  else
+    context.response.status_code = 404
+  end
+end
+private APT_REPO_LP_TEST_ADDRESS = APT_REPO_LP_TEST_SERVER.bind_unused_port
+spawn { APT_REPO_LP_TEST_SERVER.listen }
+Fiber.yield
+
+private APT_REPO_LP_TEST_BASE = "http://#{APT_REPO_LP_TEST_ADDRESS}"
 
 describe "apt_repository plugin" do
   it "reports it would add a repository that isn't present yet (check mode, no real change)" do
@@ -59,21 +84,78 @@ describe "apt_repository plugin" do
   end
 
   # ppa: shorthand (see plugins/apt_repository.cr's own class doc for the
-  # full formula breakdown - expands to a real deb line, fetches a
-  # signing key from the real Launchpad API over HTTP, and exports it via
-  # gpg). The two paths below never reach the network at all - matching
-  # Ansible's own behavior exactly (check_mode and an
-  # already-satisfied state: absent both return before ever calling
-  # _get_ppa_info) - so they're safe to exercise for real, unlike a
-  # genuine PPA add/remove which would need real internet access and
-  # write access to /etc/apt/. The actual network+GPG path was verified
-  # by hand in a container instead - see git log.
-  it "expands ppa: to the exact real-Ansible deb line shape and reports it would add (check mode, no network)" do
+  # full formula breakdown - expands to a real deb line, fetches the PPA
+  # metadata from the Launchpad API over HTTP, and exports its signing
+  # key via gpg). Real Ansible's add_source calls _get_ppa_info - the
+  # metadata fetch - the moment the expanded line is not already one of
+  # the enabled sources, check mode included (only the key import is
+  # `if not self.module.check_mode`), and returns before it only for a
+  # line already present or state: absent. The specs below point the
+  # `_ppa_api_base` seam at the local stand-in server above so that fetch
+  # is exercised for real without internet access or /etc/apt writes; the
+  # actual network+GPG import path was verified by hand in a container
+  # instead - see git log.
+  it "expands ppa: to the exact real-Ansible deb line shape and reports it would add (check mode)" do
+    sources_list, list_d = scratch_sources("ppa-check")
+
     result = PluginSpecHelper.run("apt_repository", {
       "repo" => "ppa:nginx/stable", "codename" => "jammy", "_ansible_check_mode" => "true",
+      "_ppa_api_base" => APT_REPO_LP_TEST_BASE,
+      "_sources_list" => sources_list, "_sources_list_d" => list_d,
     })
 
     result["changed"].as_bool.must_equal(true)
+    result["repo"].as_s.must_equal("deb https://ppa.launchpadcontent.net/nginx/stable/ubuntu jammy main")
+  end
+
+  # Issue #1051 (marauderxtreme.local_system's "Activate all neat PPAs"):
+  # ppa:dawidd0811/neofetch was deleted upstream, and a check-mode run
+  # must fail on it exactly like a real one - Ansible fails the task with
+  # "failed to fetch PPA information, error was: HTTP Error 404: Not
+  # Found" even under --check (its metadata fetch is not check_mode-gated)
+  # and the failed task stops the play, where this engine reported
+  # changed and ran the whole tail of the play on its own.
+  it "fails a check-mode ppa: add when the Launchpad API answers 404 (issue #1051)" do
+    sources_list, list_d = scratch_sources("ppa-404-check")
+
+    result = PluginSpecHelper.run("apt_repository", {
+      "repo" => "ppa:dawidd0811/neofetch", "codename" => "jammy", "_ansible_check_mode" => "true",
+      "_ppa_api_base" => APT_REPO_LP_TEST_BASE,
+      "_sources_list" => sources_list, "_sources_list_d" => list_d,
+    })
+
+    result["changed"].as_bool.must_equal(false)
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("failed to fetch PPA information, error was: HTTP Error 404: Not Found")
+  end
+
+  it "fails a real ppa: add when the Launchpad API answers 404 before writing anything" do
+    sources_list, list_d = scratch_sources("ppa-404-real")
+
+    result = PluginSpecHelper.run("apt_repository", {
+      "repo" => "ppa:dawidd0811/neofetch", "codename" => "jammy",
+      "_ppa_api_base" => APT_REPO_LP_TEST_BASE,
+      "_sources_list" => sources_list, "_sources_list_d" => list_d,
+    })
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("failed to fetch PPA information, error was: HTTP Error 404: Not Found")
+    File.exists?(sources_list).must_equal(false)
+    Dir.glob(File.join(list_d, "*")).must_be_empty
+  end
+
+  it "answers ok for a check-mode ppa: whose line is already present without touching the API" do
+    sources_list, list_d = scratch_sources("ppa-present")
+    File.write(sources_list, "deb https://ppa.launchpadcontent.net/nginx/stable/ubuntu jammy main\n")
+
+    result = PluginSpecHelper.run("apt_repository", {
+      "repo" => "ppa:nginx/stable", "codename" => "jammy", "_ansible_check_mode" => "true",
+      "_ppa_api_base" => "http://127.0.0.1:1",
+      "_sources_list" => sources_list, "_sources_list_d" => list_d,
+    })
+
+    result["changed"].as_bool.must_equal(false)
+    result["state"].as_s.must_equal("present")
     result["repo"].as_s.must_equal("deb https://ppa.launchpadcontent.net/nginx/stable/ubuntu jammy main")
   end
 
@@ -92,7 +174,7 @@ describe "apt_repository plugin" do
   # still ends up with a valid deb line). The plugin detects the fallback
   # from the spec host's own /etc/os-release, so pin the expected codename
   # to that file and skip where a host has none.
-  it "falls back to the host codename when codename is an empty string (check mode, no network)" do
+  it "falls back to the host codename when codename is an empty string (check mode)" do
     host_codename = File.read("/etc/os-release").each_line
       .find(&.starts_with?("VERSION_CODENAME="))
       .try(&.split('=', 2)[1].strip.strip('"').presence)
@@ -106,6 +188,7 @@ describe "apt_repository plugin" do
       "repo"                => "ppa:nginx/stable",
       "codename"            => "",
       "_ansible_check_mode" => "true",
+      "_ppa_api_base"       => APT_REPO_LP_TEST_BASE,
       "_sources_list"       => sources_list,
       "_sources_list_d"     => list_d,
     })

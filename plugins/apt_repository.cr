@@ -232,8 +232,29 @@ module Krikri
       normalized = PluginHelpers::AptPpa.expand_line(ppa, codename)
       return remove(normalized, update_cache, check_mode) if state == "absent"
 
+      # Ansible's add_source resolves the PPA metadata through the
+      # Launchpad API the moment the expanded line is not already one of
+      # the enabled sources - check mode included: a deleted or renamed
+      # PPA fails EVERY run with "failed to fetch PPA information" before
+      # any other result is decided (live-verified against ansible-core
+      # 2.21.6: a --check run against ppa:dawidd0811/neofetch fails
+      # exactly like a real run, and the failed task then stops the play,
+      # where this engine sailed on with changed: true and ran the whole
+      # tail of the play on its own). Only the key import that fetch feeds
+      # is check_mode-gated in Ansible (`if not self.module.check_mode:`
+      # around it), so the fetch lives here, ahead of add's check-mode
+      # answer, while the import stays behind add's write gate.
+      fingerprint : String? = nil
+      unless find_source(normalized)
+        begin
+          fingerprint = fetch_ppa_signing_key(ppa)
+        rescue ex
+          return ppa_info_failure(ex)
+        end
+      end
+
       filename_source = PluginHelpers::AptPpa.filename_source(ppa, codename)
-      add(normalized, update_cache, check_mode, filename_source) { ensure_ppa_key(ppa, codename) }
+      add(normalized, update_cache, check_mode, filename_source) { ensure_ppa_key(ppa, codename, fingerprint) }
     end
 
     private def all_source_files : Array(String)
@@ -580,20 +601,27 @@ module Krikri
     # something to silently "fix" by deviating from what Ansible
     # actually runs (parity means matching real behavior, bugs
     # included) - see the compat verification note in git log.
-    private def ensure_ppa_key(ppa : PluginHelpers::AptPpa::Info, codename : String) : PluginResult?
-      fingerprint = begin
-        fetch_ppa_signing_key(ppa)
-      rescue ex
-        # Ansible's own wrapper around EVERY Launchpad fetch failure:
-        # "failed to fetch PPA information, error was: <error>" - the
-        # inner text is Python's exception string, so a socket read
-        # timeout reads "Connection failure: The read operation timed
-        # out" (real, round 5222000 warm PPA fetch against a timing-out
-        # network) where this engine's IO::TimeoutError says "Read
-        # timed out". fetch_ppa_signing_key raises the inner text only;
-        # the prefix is added exactly once, here.
-        inner = ex.message == "Read timed out" ? "Connection failure: The read operation timed out" : (ex.message || "unknown error")
-        return PluginResult.new(changed: false, failed: true, msg: "failed to fetch PPA information, error was: #{inner}")
+    # Ansible's own wrapper around EVERY Launchpad fetch failure:
+    # "failed to fetch PPA information, error was: <error>" - the
+    # inner text is Python's exception string, so a socket read
+    # timeout reads "Connection failure: The read operation timed
+    # out" (real, round 5222000 warm PPA fetch against a timing-out
+    # network) where this engine's IO::TimeoutError says "Read
+    # timed out", and an HTTP error reads urllib's str(HTTPError)
+    # ("HTTP Error 404: Not Found"). fetch_ppa_signing_key raises the
+    # inner text only; the prefix is added exactly once, here.
+    private def ppa_info_failure(ex : Exception) : PluginResult
+      inner = ex.message == "Read timed out" ? "Connection failure: The read operation timed out" : (ex.message || "unknown error")
+      PluginResult.new(changed: false, failed: true, msg: "failed to fetch PPA information, error was: #{inner}")
+    end
+
+    private def ensure_ppa_key(ppa : PluginHelpers::AptPpa::Info, codename : String, fingerprint : String?) : PluginResult?
+      unless fingerprint
+        begin
+          fingerprint = fetch_ppa_signing_key(ppa)
+        rescue ex
+          return ppa_info_failure(ex)
+        end
       end
 
       if apt_key = Process.find_executable("apt-key")
@@ -641,14 +669,32 @@ module Krikri
       @warnings << "TLS keyserver #{KEYSERVER} failed; fell back to cleartext #{KEYSERVER_FALLBACK} - the key material was not integrity-protected in transit"
     end
 
+    # `_ppa_api_base` is the Launchpad-API spec seam, same family as
+    # `_sources_list`/`_apt_get_paths`: it only rewrites the base the PPA
+    # metadata URL is built from, so the specs can drive the fetch (and
+    # its failure shapes) against a local server instead of the real
+    # Launchpad API. Playbooks never see it (Ansible has no such
+    # parameter, and anything unknown it would reject).
+    private def ppa_api_url(ppa : PluginHelpers::AptPpa::Info) : String
+      if base = @params["_ppa_api_base"]?
+        return "#{base.rstrip('/')}/~#{ppa.owner}/+archive/#{ppa.name}"
+      end
+      PluginHelpers::AptPpa.api_url(ppa)
+    end
+
     private def fetch_ppa_signing_key(ppa : PluginHelpers::AptPpa::Info) : String
-      uri = URI.parse(PluginHelpers::AptPpa.api_url(ppa))
+      uri = URI.parse(ppa_api_url(ppa))
       client = HTTP::Client.new(uri)
       client.connect_timeout = 10.seconds
       client.read_timeout = 10.seconds
 
       response = client.get(uri.request_target, headers: HTTP::Headers{"Accept" => "application/json"})
-      raise "HTTP #{response.status_code}" unless response.status_code == 200
+      # Ansible's fetch_url reports a non-200 as Python's own
+      # str(HTTPError), "HTTP Error <code>: <reason>" ("HTTP Error 404:
+      # Not Found" for a deleted PPA) - that exact text is what lands
+      # after ppa_info_failure's "failed to fetch PPA information, error
+      # was: " prefix.
+      raise "HTTP Error #{response.status_code}: #{response.status_message}" unless response.status_code == 200
 
       data = JSON.parse(response.body)
       data["signing_key_fingerprint"]?.try(&.as_s?) || raise "PPA response did not include a signing_key_fingerprint"
