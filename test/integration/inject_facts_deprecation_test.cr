@@ -317,6 +317,37 @@ describe "INJECT_FACTS_AS_VARS deprecation from a when: clause" do
     stderr.must_include("10         - ansible_architecture | length > 0\n")
   end
 
+  # mullholland.swap's "Enabling swap" gate (issue #1027): each of its
+  # three items reads the SAME fact, and real evaluates every item as its
+  # own templating operation with its own deprecate-tag audit context -
+  # one block per item, each at its own item token. Pinning every read at
+  # whichever item merely named the fact first collapsed all three
+  # Origins onto item 1, and the display's per-Origin dedupe dropped the
+  # rest (one block where real prints three).
+  it "prints one block per when: item reading the same fact, each at its own item token" do
+    stderr = run_playbook(<<-PLAYBOOK)
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        tasks:
+          - name: Enabling swap
+            ansible.builtin.command: /bin/true
+            changed_when: false
+            when:
+              - ansible_virtualization_type != "docker"
+              - ansible_virtualization_type != "containerd"
+              - ansible_virtualization_type != "container"
+      PLAYBOOK
+
+    stderr.scan(/DEPRECATION WARNING\]: INJECT_FACTS_AS_VARS/).size.must_equal(3)
+    stderr.must_include(":9:11\n")
+    stderr.must_include(":10:11\n")
+    stderr.must_include(":11:11\n")
+    stderr.must_include("9         - ansible_virtualization_type != \"docker\"\n")
+    stderr.must_include("11         - ansible_virtualization_type != \"container\"\n")
+    stderr.must_include("            ^ column 11")
+  end
+
   # YAML lets a block sequence's items sit at their parent key's own
   # indent, and Ansible-Security-Compliance's rhel7-role-C2S writes its
   # `when:` lists that way: real anchors each item's scalar token the same

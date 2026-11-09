@@ -251,10 +251,13 @@ describe "storage plugin registered key order (round 992003 kop_storage)" do
     keys["changed"].as_bool.must_equal(true)
     # The mount module's ansible.module_utils._text imports still deprecate
     # under ansible-core 2.21 (mount.py:229), and the controller appends
-    # those entries after every module key (issue #1000).
+    # those entries after every module key (issue #1000) - followed by the
+    # exit_json `warnings`-kwarg deprecation the ansible.posix 2.1.x module
+    # line triggers on every success (issue #1027).
     keys["deprecations"].as_a.map(&.["msg"].as_s).must_equal([
       "Importing 'to_bytes' from 'ansible.module_utils._text' is deprecated.",
       "Importing 'to_native' from 'ansible.module_utils._text' is deprecated.",
+      "Passing `warnings` to `exit_json` or `fail_json` is deprecated.",
     ])
   end
 

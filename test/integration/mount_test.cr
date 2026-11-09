@@ -106,16 +106,19 @@ describe "mount plugin" do
     result["msg"].as_s.must_include("path")
   end
 
-  # ansible.posix 2.2.0 dropped the `warnings` key ansible.posix 2.1.0
-  # passed to mount.py's single exit_json success exit (it warns through
-  # AnsibleModule.warn now), so ansible-core's _return_formatted has
-  # nothing to deprecate: no "Passing `warnings` to `exit_json`" entry and
-  # no such [DEPRECATION WARNING] display line. The module's own
-  # ansible.module_utils._text imports are a separate question and DO
-  # deprecate under ansible-core 2.21 - mount.py:229 imports to_bytes and
-  # to_native from that deprecated path - so those two entries are what a
-  # registered result carries (issue #1000, live-verified vs 2.21.6).
-  it "carries only the module's import deprecations on a successful result" do
+  # ansible.posix 2.1.x's mount.py passes its `warnings` list to mount.py's
+  # single exit_json success exit (args always carries warnings=[]), so
+  # ansible-core's _return_formatted has a `warnings` kwarg to deprecate on
+  # EVERY success - entry and [DEPRECATION WARNING] display line both
+  # (issue #1027, live-verified vs 2.21.6 + ansible.posix 2.1.0).
+  # ansible.posix 2.2.0 stopped passing the kwarg (warns through
+  # AnsibleModule.warn instead) and prints no such line (issue #906's
+  # 2.2.x env); this engine models the 2.1.x module line. The module's own
+  # ansible.module_utils._text imports deprecate under ansible-core 2.21
+  # on both module lines - mount.py:229 imports to_bytes and to_native from
+  # that deprecated path - and real records them BEFORE the exit_json one
+  # (issue #1000, live-verified vs 2.21.6).
+  it "carries the exit_json warnings deprecation after the module's import deprecations on a successful result" do
     fstab = fresh_fstab("deprecation.fstab")
 
     result = PluginSpecHelper.run("mount", {
@@ -126,10 +129,33 @@ describe "mount plugin" do
     result["deprecations"].as_a.map(&.["msg"].as_s).must_equal([
       "Importing 'to_bytes' from 'ansible.module_utils._text' is deprecated.",
       "Importing 'to_native' from 'ansible.module_utils._text' is deprecated.",
+      "Passing `warnings` to `exit_json` or `fail_json` is deprecated.",
     ])
-    result["_ansible_core_deprecations"].as_a.size.must_equal(2)
+    result["_ansible_core_deprecations"].as_a.size.must_equal(3)
   end
 
+  # The warnings entry's exact registered shape: ansible-core's
+  # _return_formatted builds it msg, collection_name, version, deprecator,
+  # with the deprecation's own removal version 2.23 (live-captured vs
+  # 2.21.6 + ansible.posix 2.1.0 through `register` and `{{ r | to_json }}`).
+  it "serializes the exit_json warnings deprecation entry in _return_formatted's key order" do
+    fstab = fresh_fstab("warnings-entry.fstab")
+
+    result = PluginSpecHelper.run("mount", {
+      "path" => "/mnt/dep-entry", "src" => "/dev/sdb1", "fstype" => "ext4", "state" => "present", "fstab" => fstab,
+    })
+
+    entry = result["deprecations"].as_a.last
+    entry.as_h.keys.must_equal(["msg", "collection_name", "version", "deprecator"])
+    entry["msg"].as_s.must_equal("Passing `warnings` to `exit_json` or `fail_json` is deprecated.")
+    entry["collection_name"].as_s.must_equal("ansible.builtin")
+    entry["version"].as_s.must_equal("2.23")
+    entry["deprecator"].as_h.must_equal({"resolved_name" => JSON::Any.new("ansible.builtin"), "type" => JSON::Any.new(nil)})
+  end
+
+  # fail_json passes msg only - no `warnings` kwarg, so no exit_json-kwargs
+  # deprecation either (live-verified vs 2.21.6 + ansible.posix 2.1.0) -
+  # a failure carries the import pair alone.
   it "carries only the module's import deprecations on a failed result too" do
     fstab = fresh_fstab("deprecation-fail.fstab")
 
