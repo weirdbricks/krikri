@@ -155,20 +155,24 @@ module Krikri
       # `r.ansible_facts.pkg_mgr` reference is. A task that pinned the
       # backend itself (use_backend:) never runs that fetch in real, and a
       # module result that ships its own ansible_facts (interpreter
-      # discovery) replaces the action plugin's on the wire, so neither
+      # discovery) replaces the action plugin's on the wire, so it never
       # surfaces here.
       #
-      # A FAILED module result must not carry the fetched fact at all
-      # (issue #894): the module's own failure payload - which in real
-      # carries either the interpreter-discovery fact or nothing once
-      # discovery has already run - replaces whatever the action attached,
-      # so real's failed results never show pkg_mgr (live-verified vs
-      # 2.15.13 on Rocky 9: the failed "Unsupported parameters" result
-      # shows {"discovered_interpreter_python": ...} or no ansible_facts
-      # key at all). The backend-resolution tuple failure keeps its own
-      # ansible_facts - real's action-level fatal carries it (#768).
+      # The attach rides FAILED results too (issue #1063): real's action
+      # sets `result['ansible_facts']` BEFORE running the backend module,
+      # and `result.update(module_result)` only replaces it when the
+      # payload ships an `ansible_facts` key of its own - so a dnf failure
+      # like "Failed to install some of the specified packages" carries
+      # the fetched fact whenever its payload has none (issue #1063's
+      # 2.21.5 capture, live-verified vs 2.21.6 on AL2023 where the failed
+      # fatal AND registered dicts both read {"pkg_mgr": "dnf"}). The two
+      # shapes without the fact are the payload-with-its-own-facts replace
+      # above and a fetch that never ran (the fact already known from
+      # vars); the earlier "failed results never carry it" reading (#894)
+      # over-generalized runs where one of those two applied. The
+      # backend-resolution tuple failure keeps its own ansible_facts -
+      # real's action-level fatal carries it (#768).
       def finalize_result(result : PluginResult) : PluginResult
-        return result if result.failed?
         return result unless backend_resolved_from_facts? && pkg_mgr_fact_fetched?
         return result if result.extra.has_key?("ansible_facts")
         result.extra["ansible_facts"] = JSON::Any.new({"pkg_mgr" => JSON::Any.new(pkg_mgr_fact)})
