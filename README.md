@@ -234,6 +234,14 @@ krikri-lint --list-rules
 See [KNOWN_MISSING.md](KNOWN_MISSING.md) for the rules it deliberately
 diverges on.
 
+`testing/lint/parity.py` is the parity harness: it runs both linters with
+parseable output over the same targets, diffs their (file, line, column, rule)
+triples, prints a `PARITY| matched=... krikri_only=... upstream_only=...
+unimplemented=...` line and, with `--json PATH`, the triples as records.
+`krikri-role-tester`'s loop runs it every cycle (step 0c) and files one issue
+per rule that goes one way, so a parity gap is worked like any other
+divergence instead of waiting for someone to read the weekly report.
+
 ---
 
 ## ✅ Testing

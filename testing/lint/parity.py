@@ -124,12 +124,24 @@ def main():
                 for line, col, rule in items:
                     print(f"    {line}:{col} {rule}")
 
+    print(f"PARITY| files={len(by_file)} matched={len(matched)} krikri_only={len(krikri_only)} "
+          f"upstream_only={len(real_gaps)} unimplemented={len(gaps)}")
+
     if args.json_out:
+        # Structured, one record per triple: krikri-role-triager --lint-parity
+        # files one issue per (kind, rule) group and krikri-fix-issues verifies
+        # the group is gone, so both need the fields, not a repr of a tuple.
+        triples = []
+        for kind, items in (("matched", matched), ("krikri_only", krikri_only),
+                            ("upstream_only", real_gaps), ("unimplemented", gaps)):
+            for path, line, col, rule in sorted(items):
+                triples.append({"kind": kind, "path": path, "line": line,
+                                "column": col, "rule": rule})
         Path(args.json_out).write_text(json.dumps({
-            "matched": sorted(map(str, matched)),
-            "krikri_only": sorted(map(str, krikri_only)),
-            "upstream_only": sorted(map(str, real_gaps)),
-            "unimplemented_upstream": sorted(map(str, gaps)),
+            "targets": targets,
+            "counts": {"matched": len(matched), "krikri_only": len(krikri_only),
+                       "upstream_only": len(real_gaps), "unimplemented": len(gaps)},
+            "triples": triples,
         }, indent=2))
 
     sys.exit(1 if real_gaps or krikri_only else 0)
