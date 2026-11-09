@@ -225,6 +225,10 @@ module Krikri
       # resolution for exactly that reason - a pre-state check would
       # break the absent no-op that Ansible still performs.
       if empty_path_failure = empty_path_result(path, state)
+        # Ansible warns about the unknown owner:/group: (its
+        # check_owner_exists runs before ensure_* ever fails) - ride the
+        # same warnings on this failure as on any other check-mode result.
+        attach_unknown_owner_group_warnings(empty_path_failure)
         return empty_path_failure
       end
 
@@ -266,6 +270,10 @@ module Krikri
       # unconditional merge.
       add_path_info(result, stat_path_for(result, path)) unless path_less_failure?(result)
       attach_file_warnings(result)
+      # Ansible's check_owner_exists/check_group_exists warn before the
+      # state handlers run, so their warnings ride EVERY check-mode result
+      # (failures included), whatever the state handler returned.
+      attach_unknown_owner_group_warnings(result)
       result
     end
 
@@ -430,11 +438,16 @@ module Krikri
     rescue ex : SelinuxContextError
       ex.result
     rescue ex
+      # The remaining raises are the owner:/group: LOOKUP failures
+      # ("chown failed: failed to look up user <name>"), which name the
+      # follow-resolved path exactly like the syscall failures above -
+      # basic.py's fail_json(path=...) carries the resolved target when
+      # the dest is a symlink and follow: is true.
       PluginResult.new(
         changed: false,
         failed: true,
         msg: ex.message || "Unknown error",
-        path: path
+        path: attribute_failure_target(path)
       )
     end
 
@@ -510,14 +523,12 @@ module Krikri
       end
 
       if @check_mode
-        result = PluginResult.new(
+        return PluginResult.new(
           changed: true,
           failed: false,
           msg: "",
           key_order: SUCCESS_KEY_ORDER
         )
-        attach_unknown_owner_group_warnings(result)
-        return result
       end
 
       create_directory(path)
@@ -743,6 +754,12 @@ module Krikri
 
       # Link doesn't exist or points to wrong target
       if @check_mode
+        # A dest that still exists (a wrong-target link) goes through
+        # Ansible's set_fs_attributes_if_different even in check mode, so
+        # the owner:/group: lookup fails on it exactly as a real run's
+        # would; a genuinely missing dest stays a plain "changed"
+        # (check_mode_owner_group_lookup!'s own existence gate).
+        check_mode_owner_group_lookup!(path)
         return PluginResult.new(
           changed: true,
           failed: false,
@@ -937,6 +954,11 @@ module Krikri
     # 2.19.11 via a registered `debug: msg="{{ h.dest }}"`).
     private def hard_link_existing_result(path : String, src : String) : PluginResult
       if @check_mode
+        # Ansible still runs the owner:/group: lookup on the linked dest
+        # and fails it when the name is unknown (its
+        # check_file_absent_if_check_mode only skips paths that don't
+        # exist) - issue #1041's check-mode class.
+        check_mode_owner_group_lookup!(path)
         return PluginResult.new(
           changed: false,
           failed: false,
@@ -1333,6 +1355,12 @@ module Krikri
       info = follow ? stat_follow(path) : lstat(path)
       return false unless info
 
+      # Check mode runs the same owner:/group: lookup the real apply does
+      # and fails it on an existing path (Ansible's
+      # check_file_absent_if_check_mode skips the lookup only for paths
+      # that don't exist yet) - issue #1041.
+      check_mode_owner_group_lookup!(path)
+
       # Check owner - owner: accepts a numeric uid string directly
       # (Ansible tolerates this, e.g. buluma.maven's own `group:
       # "0"` - see apply_single_file_attributes's identical numeric
@@ -1679,22 +1707,75 @@ module Krikri
       "[Errno #{errno}] #{String.new(LibC.strerror(errno))}: b'#{path}'"
     end
 
-    # Ansible's check mode still resolves owner:/group: via getpwnam/getgrnam
-    # and, instead of failing as a real run does, warns that the name is
-    # unknown (a role may create the user later in the real play).
+    # Ansible's check mode still resolves owner:/group: through
+    # getpwnam/getgrnam (getpwuid/getgrgid for a raw numeric id) and warns
+    # that the name is unknown (a role may create the user later in the
+    # real play) - file.py's check_owner_exists/check_group_exists, which
+    # main() runs for EVERY state but absent, on successes and failures
+    # alike. A name and a numeric id get their own text ("user <name>" vs
+    # "user with uid <id>"), and an explicit "" is falsy in Python so it
+    # warns nothing at all (it still fails the real lookup below - see
+    # resolve_uid).
     private def attach_unknown_owner_group_warnings(result : PluginResult) : Nil
+      return unless @check_mode
+      return if (@params["state"]? || "") == "absent"
       warnings = [] of JSON::Any
       if owner = requested_attr("owner")
-        if System::User.find_by?(name: owner).nil? && !owner.matches?(/\A\d+\z/)
-          warnings << JSON::Any.new("failed to look up user #{owner}. Create user up to this point in real play")
+        if text = unknown_owner_warning(owner)
+          warnings << JSON::Any.new(text)
         end
       end
       if group = requested_attr("group")
-        if System::Group.find_by?(name: group).nil? && !group.matches?(/\A\d+\z/)
-          warnings << JSON::Any.new("failed to look up group #{group}. Create group up to this point in real play")
+        if text = unknown_group_warning(group)
+          warnings << JSON::Any.new(text)
         end
       end
       result.extra["warnings"] = JSON::Any.new(warnings) unless warnings.empty?
+    end
+
+    private def unknown_owner_warning(owner : String) : String?
+      return nil if owner.empty?
+      if owner.matches?(/\A\d+\z/)
+        uid = owner.to_i
+        return nil unless System::User.find_by?(id: uid.to_s).nil?
+        "failed to look up user with uid #{uid}. Create user up to this point in real play"
+      else
+        return nil unless System::User.find_by?(name: owner).nil?
+        "failed to look up user #{owner}. Create user up to this point in real play"
+      end
+    end
+
+    private def unknown_group_warning(group : String) : String?
+      return nil if group.empty?
+      if group.matches?(/\A\d+\z/)
+        gid = group.to_i
+        return nil unless System::Group.find_by?(id: gid.to_s).nil?
+        "failed to look up group with gid #{gid}. Create group up to this point in real play"
+      else
+        return nil unless System::Group.find_by?(name: group).nil?
+        "failed to look up group #{group}. Create group up to this point in real play"
+      end
+    end
+
+    # The lookup half of Ansible's basic.py set_owner_if_different/
+    # set_group_if_different, which run even in check mode and FAIL the
+    # task whenever the target path EXISTS - their
+    # check_file_absent_if_check_mode only short-circuits the lookup for
+    # paths that don't exist yet (a real run would create those; a check
+    # run only pretends to). Issue #1041 (cogini.elixir-release "Create
+    # deploy dirs"): the deploy user is created earlier in the real play,
+    # so check mode over the dirs a real run already left behind must fail
+    # "chown failed: failed to look up user deploy" exactly like the real
+    # run does - the old changed: true verdict let the play run on through
+    # every later task ansible never reaches.
+    private def check_mode_owner_group_lookup!(path : String) : Nil
+      return unless @check_mode && File.exists?(path)
+      if owner = requested_attr("owner")
+        resolve_uid(owner)
+      end
+      if group = requested_attr("group")
+        resolve_gid(group)
+      end
     end
 
     private def resolve_uid(owner : String) : Int32
