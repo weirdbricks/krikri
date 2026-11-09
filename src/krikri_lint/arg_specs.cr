@@ -2,178 +2,184 @@ require "json"
 
 module Krikri
   module Lint
-    # Upstream parity: ansible-lint's args[module] (severity VERY_LOW,
-    # tags core/warning in practice; reports as warning). Validates task
-    # params against per-module argument specs, mirroring Ansible's
-    # argspec validation messages. Only core (ansible.builtin) modules
-    # get specs here - community modules are outside krikri's coverage
-    # bar (see AGENTS.md), and upstream's choices ordering is unstable
-    # between runs anyway (Python hash randomization).
+    # Upstream parity: ansible-lint's args[module] rule (a warning
+    # upstream) validates a task's module parameters against that
+    # module's own AnsibleModule argument spec. The specs are
+    # data/argspecs.json - the generated table the engine's own
+    # ArgspecValidator runs at task-execution time (ground truth = the
+    # installed ansible-core + collections, captured by
+    # scripts/gen_argspecs.py) - so the linter and the engine agree on
+    # every module krikri ships a plugin for, whatever spelling the task
+    # wrote.
     module ArgSpecs
-      record Spec,
-        params : Array(String),
-        aliases : Hash(String, Array(String)),
-        required : Array(String),
-        required_one_of : Array(Array(String)),
-        required_together : Array(Array(String)),
-        required_by : Hash(String, Array(String)),
-        choices : Hash(String, Array(String)),
-        list_choices : Hash(String, Array(String)),
-        booleans : Array(String),
-        # required_if entries: (param, value) => need any/all of `needed`.
-        required_if : Array(RequiredIf),
-        # Module-init-time defaults applied by AnsibleModule before
-        # validation (only the ones required_if depends on).
-        defaults : Hash(String, String)
+      extend self
 
-      record RequiredIf,
-        param : String,
-        value : String,
-        needed : Array(String),
-        any : Bool
+      TABLE = JSON.parse({{ read_file("#{__DIR__}/../../data/argspecs.json") }}).as_h
 
-      private def self.spec(params, aliases = {} of String => Array(String),
-                            required = [] of String,
-                            required_one_of = [] of Array(String),
-                            required_by = {} of String => Array(String),
-                            choices = {} of String => Array(String),
-                            list_choices = {} of String => Array(String),
-                            booleans = [] of String,
-                            required_together = [] of Array(String),
-                            required_if = [] of RequiredIf,
-                            defaults = {} of String => String)
-        Spec.new(params, aliases, required, required_one_of,
-          required_together, required_by, choices, list_choices, booleans,
-          required_if, defaults)
-      end
-
-      DB = {
-        "apt" => spec(
-          params: %w[allow_change_held_packages allow_downgrade allow_unauthenticated auto_install_module_deps autoclean autoremove cache_valid_time clean deb default_release dpkg_options fail_on_autoremove force force_apt_get install_recommends lock_timeout only_upgrade package policy_rc_d purge state update_cache update_cache_retries update_cache_retry_max_delay upgrade],
-          aliases: {"package" => ["name", "pkg"], "default_release" => ["default-release"], "install_recommends" => ["install-recommends"], "allow_downgrade" => ["allow-downgrade", "allow_downgrades", "allow-downgrades"], "allow_unauthenticated" => ["allow-unauthenticated"], "update_cache" => ["update-cache"]},
-          choices: {"state" => %w[absent build-dep fixed latest present], "upgrade" => %w[dist full no safe yes]},
-          booleans: %w[allow_change_held_packages allow_downgrade allow_unauthenticated auto_install_module_deps autoclean autoremove clean fail_on_autoremove force force_apt_get install_recommends only_upgrade purge update_cache],
-        ),
-        "apt_key" => spec(
-          params: %w[data file id key keyring keyserver state url validate_certs],
-          choices: {"state" => %w[absent present]},
-          booleans: %w[validate_certs],
-        ),
-        "cron" => spec(
-          params: %w[backup cron_file day disabled env hour insertafter insertbefore job minute month name special_time state user weekday],
-          required: %w[name],
-          choices: {"special_time" => %w[annually daily hourly monthly reboot weekly yearly], "state" => %w[present absent]},
-          booleans: %w[backup disabled env],
-          aliases: {"day" => ["dom"], "job" => ["value"], "weekday" => ["dow"]},
-        ),
-        "cronvar" => spec(
-          params: %w[backup cron_file insertafter insertbefore name state user value],
-          required: %w[name],
-          choices: {"state" => %w[absent present]},
-          booleans: %w[backup],
-        ),
-        "deb822_repository" => spec(
-          params: %w[allow_downgrade_to_insecure allow_insecure allow_weak architectures by_hash check_date check_valid_until components date_max_future enabled inrelease_path languages mode name pdiffs signed_by state suites targets trusted types uris],
-          required: %w[name],
-          choices: {"state" => %w[absent present]},
-          list_choices: {"types" => %w[deb deb-src]},
-          booleans: %w[allow_downgrade_to_insecure allow_insecure allow_weak by_hash check_date check_valid_until enabled pdiffs trusted],
-        ),
-        "debconf" => spec(
-          params: %w[name question unseen value vtype],
-          required: %w[name],
-          required_together: [%w[question vtype value]],
-          choices: {"vtype" => %w[boolean error multiselect note password seen select string text title]},
-          booleans: %w[unseen],
-          aliases: {"name" => ["pkg"], "question" => ["selection", "setting"], "value" => ["answer"]},
-        ),
-        "dpkg_selections" => spec(
-          params: %w[name selection],
-          required: %w[name selection],
-          choices: {"selection" => %w[install hold deinstall purge]},
-        ),
-        "expect" => spec(
-          params: %w[chdir command creates echo removes responses timeout],
-          required: %w[command responses],
-          booleans: %w[echo],
-        ),
-        "getent" => spec(
-          params: %w[database fail_key key service split],
-          required: %w[database],
-          booleans: %w[fail_key],
-        ),
-        "git" => spec(
-          params: %w[accept_hostkey accept_newhostkey archive archive_prefix bare clone depth dest executable force gpg_allowlist key_file recursive reference refspec remote repo separate_git_dir single_branch ssh_opts track_submodules umask update verify_commit version],
-          aliases: {"gpg_allowlist" => ["gpg_whitelist"], "repo" => ["name"]},
-          required: %w[dest repo],
-          booleans: %w[accept_hostkey accept_newhostkey bare clone force recursive single_branch track_submodules update verify_commit],
-        ),
-        "known_hosts" => spec(
-          params: %w[hash_host key name path state],
-          required: %w[name],
-          choices: {"state" => %w[absent present]},
-          booleans: %w[hash_host],
-          aliases: {"name" => ["host"]},
-        ),
-        "package_facts" => spec(
-          # manager is not validated by upstream (its choices check never
-          # runs through the mocked AnsibleModule init), so no choices here.
-          params: %w[manager strategy],
-          choices: {"strategy" => %w[first all]},
-        ),
-        "pip" => spec(
-          params: %w[break_system_packages chdir editable executable extra_args name requirements state umask version virtualenv virtualenv_command virtualenv_python virtualenv_site_packages],
-          required_one_of: [%w[name requirements]],
-          choices: {"state" => %w[absent forcereinstall latest present]},
-          booleans: %w[break_system_packages editable virtualenv_site_packages],
-        ),
-        "replace" => spec(
-          params: %w[after attributes backup before encoding group mode owner path regexp replace selevel serole setype seuser unsafe_writes validate],
-          aliases: {"path" => ["dest", "destfile", "name"], "attributes" => ["attr"]},
-          required: %w[path regexp],
-          booleans: %w[backup unsafe_writes],
-        ),
-        "rpm_key" => spec(
-          params: %w[fingerprint key state validate_certs],
-          required: %w[key],
-          choices: {"state" => %w[absent present]},
-          booleans: %w[validate_certs],
-        ),
-        "subversion" => spec(
-          params: %w[checkout dest executable export force in_place password repo revision switch update username validate_certs],
-          aliases: {"repo" => ["name", "repository"], "revision" => ["rev", "version"]},
-          required: %w[repo],
-          booleans: %w[checkout export force in_place switch update validate_certs],
-        ),
-        "systemd" => spec(
-          params: %w[daemon_reexec daemon_reload enabled force masked name no_block scope state],
-          required_by: {"state" => %w[name], "enabled" => %w[name], "masked" => %w[name]},
-          choices: {"scope" => %w[system user global], "state" => %w[reloaded restarted started stopped]},
-          booleans: %w[daemon_reexec daemon_reload enabled force masked no_block],
-          aliases: {"daemon_reexec" => ["daemon-reexec"], "daemon_reload" => ["daemon-reload"], "name" => ["service", "unit"]},
-        ),
-        "tempfile" => spec(
-          params: %w[path prefix state suffix],
-          choices: {"state" => %w[file directory]},
-        ),
-        "yum_repository" => spec(
-          params: %w[async attributes bandwidth baseurl cost countme deltarpm_metadata_percentage deltarpm_percentage description enabled enablegroups exclude failovermethod file gpgcakey gpgcheck gpgkey group http_caching include includepkgs ip_resolve keepalive metadata_expire metadata_expire_filter metalink mirrorlist mirrorlist_expire mode module_hotfixes name owner password priority protect proxy proxy_password proxy_username repo_gpgcheck reposdir retries s3_enabled selevel serole setype seuser skip_if_unavailable ssl_check_cert_permissions sslcacert sslclientcert sslclientkey sslverify state throttle timeout ui_repoid_vars unsafe_writes username],
-          aliases: {"attributes" => ["attr"], "sslcacert" => ["ca_cert"], "sslclientcert" => ["client_cert"], "sslclientkey" => ["client_key"], "exclude" => ["excludepkgs"], "sslverify" => ["validate_certs"]},
-          required: %w[name],
-          required_if: [
-            RequiredIf.new("state", "present", %w[baseurl mirrorlist metalink], true),
-            RequiredIf.new("state", "present", %w[description], false),
+      # community.libvirt.virt_net is registered only under its bare
+      # name (module_registry.cr), which scripts/gen_argspecs.py skips
+      # because it extracts dotted spellings only - so the generated
+      # table has no key for it. Transcribed here from the module's own
+      # AnsibleModule(...) call (the same capture the generator makes).
+      VIRT_NET = JSON.parse(<<-JSON)
+        {
+          "options": {
+            "name": {"aliases": ["network"]},
+            "state": {"type": "str", "choices": ["active", "inactive", "present", "absent"]},
+            "command": {"type": "str", "choices": ["create", "status", "start", "stop", "undefine", "destroy", "get_xml", "define", "modify", "list_nets", "facts", "info"]},
+            "uri": {"type": "str", "default": "qemu:///system"},
+            "xml": {"type": "str"},
+            "autostart": {"type": "bool"}
+          },
+          "mutually_exclusive": [],
+          "required_together": [],
+          "required_one_of": [],
+          "required_if": [
+            ["command", "create", ["name"]],
+            ["command", "status", ["name"]],
+            ["command", "start", ["name"]],
+            ["command", "stop", ["name"]],
+            ["command", "undefine", ["name"]],
+            ["command", "destroy", ["name"]],
+            ["command", "get_xml", ["name"]],
+            ["command", "define", ["name"]],
+            ["command", "modify", ["name"]]
           ],
-          defaults: {"state" => "present"},
-          choices: {"failovermethod" => %w[roundrobin priority], "http_caching" => %w[all packages none], "ip_resolve" => %w[4 6 IPv4 IPv6 whatever], "metadata_expire_filter" => %w[never read-only:past read-only:present read-only:future], "state" => %w[present absent]},
-          booleans: %w[async countme enabled enablegroups gpgcheck keepalive module_hotfixes protect repo_gpgcheck s3_enabled skip_if_unavailable ssl_check_cert_permissions sslverify unsafe_writes],
-        ),
+          "required_by": {}
+        }
+        JSON
+
+      # Modules upstream's args rule never validates: its load_plugin
+      # resolves the ACTION plugin first (whose file has no `main`, the
+      # rule's own gate), or the module file is a doc-only stub with no
+      # main of its own. Verified name by name against ansible-lint
+      # 25.2.1 (each probe keeps a known-good canary match alive).
+      # krikri's pseudo-modules (facts, py_module) land in the same
+      # skip: upstream cannot resolve them at all.
+      ACTION_ONLY = Set{
+        "add_host", "assemble", "assert", "async_status", "command",
+        "copy", "debug", "dnf", "facts", "fail", "fetch",
+        "gather_facts", "group_by", "package", "pause", "py_module",
+        "reboot", "script", "service", "set_fact", "set_stats", "shell",
+        "template", "unarchive", "uri", "wait_for_connection", "yum",
+        "synchronize",
       }
 
-      # bare names for the same modules when written without FQCN
-      def self.find(module_name : String) : Spec?
-        bare = module_name.sub("ansible.builtin.", "").sub("ansible.legacy.", "")
-        DB[bare]?
+      # Modules whose mocked module run RAISES inside ansible-lint's
+      # args rule ("Ignored exception from ArgsRule.matchtasks"), which
+      # loses every args match for the WHOLE file - nothing may be
+      # reported for a file containing one either. mount_facts' module
+      # code raises "'NoneType' object has no attribute '__dict__'" in
+      # the mocked context (verified with a canary probe).
+      CRASHES = Set{"mount_facts"}
+
+      # Same, but only for the bare spelling: bare `set_fact` resolves
+      # to ansible's set_fact ACTION plugin, whose `from . import
+      # VariableLayer` cannot load outside a package, while the FQCN
+      # spelling resolves to the doc stub and skips quietly (verified
+      # against the reference install's action plugins).
+      BARE_CRASHES = Set{"set_fact"}
+
+      # The table entry for a module name as a task wrote it: the exact
+      # key, then the ansible.builtin/ansible.legacy spelling of a bare
+      # name, then any registered spelling sharing the bare leaf (a bare
+      # name in a `collections:` scope). entry's key is what the module
+      # is registered under.
+      def find(module_name : String) : {String, JSON::Any}?
+        if entry = lookup(module_name)
+          return {module_name, entry}
+        end
+        bare = module_name.split(".").last
+        {"ansible.builtin.", "ansible.legacy."}.each do |prefix|
+          key = prefix + bare
+          if entry = lookup(key)
+            return {key, entry}
+          end
+        end
+        TABLE.each do |table_key, table_entry|
+          return {table_key, table_entry} if table_key.split(".").last == bare
+        end
+        nil
+      end
+
+      # Whether upstream's args rule skips this name outright, or takes
+      # the file's whole args output down with it.
+      def skip?(module_name : String) : Bool
+        leaf = module_name.split(".").last
+        ACTION_ONLY.includes?(leaf) ||
+          (BARE_CRASHES.includes?(leaf) && !module_name.includes?(".")) ||
+          CRASHES.includes?(leaf)
+      end
+
+      def crash?(module_name : String) : Bool
+        leaf = module_name.split(".").last
+        CRASHES.includes?(leaf) ||
+          (BARE_CRASHES.includes?(leaf) && !module_name.includes?("."))
+      end
+
+      private def lookup(key : String) : JSON::Any?
+        return VIRT_NET if key == "virt_net" || key == "community.libvirt.virt_net"
+        TABLE[key]?
+      end
+
+      # The options map in the module's own argument_spec DECLARATION
+      # order - ansible-core's validation walks the spec dict in that
+      # order, so the first failing option (not the JSON decode order)
+      # decides which message comes out. Crystal's JSON object decode
+      # preserves insertion order, which the generated table maintains.
+      def options(entry : JSON::Any) : Array(Tuple(String, JSON::Any))
+        (entry["options"]?.try(&.as_h?) || Hash(String, JSON::Any).new).to_a
+      end
+
+      # alias => canonical, for every alias the spec declares.
+      def alias_map(options : Array(Tuple(String, JSON::Any))) : Hash(String, String)
+        map = Hash(String, String).new
+        options.each do |name, spec|
+          if list = spec["aliases"]?.try(&.as_a?)
+            list.each do |alias_node|
+              map[alias_node.as_s] = name
+            end
+          end
+        end
+        map
+      end
+
+      # The option's declared type; ansible's implicit default is str.
+      def wanted_type(spec : JSON::Any) : String
+        spec["type"]?.try(&.as_s?) || "str"
+      end
+
+      def default_of(spec : JSON::Any) : JSON::Any?
+        spec["default"]?
+      end
+
+      # Non-null defaults, as _set_defaults' first pass materializes
+      # them before the required/type/value checks.
+      def defaults(options : Array(Tuple(String, JSON::Any))) : Hash(String, JSON::Any)
+        map = Hash(String, JSON::Any).new
+        options.each do |name, spec|
+          if value = spec["default"]?
+            map[name] = value unless value.raw.nil?
+          end
+        end
+        map
+      end
+
+      # Python "%s"-style rendering of a spec default / required_if
+      # trigger value (booleans print True/False, null prints None).
+      def literal(value : JSON::Any) : String
+        case raw = value.raw
+        when Bool   then raw ? "True" : "False"
+        when Nil    then "None"
+        when String then raw
+        else             value.to_s
+        end
+      end
+
+      # The message rendering of a choices list: declaration order,
+      # Python str() of each member (bools as True/False).
+      def choice_strings(choices : Array(JSON::Any)) : Array(String)
+        choices.map { |choice| literal(choice) }
       end
     end
   end
