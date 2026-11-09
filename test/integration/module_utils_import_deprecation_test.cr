@@ -60,6 +60,20 @@ describe "deprecated ansible.module_utils import warnings from native plugins" d
     result["deprecations"][0]["msg"].as_s.must_equal(
       "Importing 'to_native' from 'ansible.module_utils._text' is deprecated.")
   end
+
+  # The table models the ansible.posix 2.1.x sources: 2.2.x moved every
+  # catalogued module onto `common.text.converters`, whose imports
+  # deprecate nothing, so a run against a 2.2.x tree prints no import
+  # lines at all (issue #1060 - krikri printed the 2.1.x pair against a
+  # 2.2.x tree). The executor pins the release through the wire config's
+  # `collection_version` field.
+  it "carries no import deprecations when the resolved collection release is 2.2.x" do
+    result = PluginSpecHelper.run("mount", {} of String => String, collection_version: "2.2.2")
+
+    result["failed"].as_bool.must_equal(true)
+    result.as_h.has_key?("deprecations").must_equal(false)
+    result.as_h.has_key?("_ansible_core_deprecations").must_equal(false)
+  end
 end
 
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)

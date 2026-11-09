@@ -45,15 +45,19 @@ module Krikri
     DEFAULT_SYSCTL_FILE = "/etc/sysctl.conf"
 
     # ansible.posix.sysctl's very first act is importing `to_native` from
-    # `ansible.module_utils._text` (sysctl.py:108), which ansible-core
-    # turned into a shim whose __getattr__ deprecates that import. The
-    # deprecation is collected before any argument validation runs, so it
-    # rides EVERY result the module returns - the early "missing required
-    # argument" fail_json exits included - and prints on the console once
-    # per run (Display dedups the text) with the one-time "can be
-    # disabled" hint before the first one. Live-verified against
-    # ansible-core 2.21.6 + ansible.posix 2.2.2 (officel.sysctl-conf
-    # round 29902200, issue #992).
+    # `ansible.module_utils._text` (sysctl.py:108 in the 2.1.x sources),
+    # which ansible-core turned into a shim whose __getattr__ deprecates
+    # that import. The deprecation is collected before any argument
+    # validation runs, so it rides EVERY result the module returns - the
+    # early "missing required argument" fail_json exits included - and
+    # prints on the console once per run (Display dedups the text) with
+    # the one-time "can be disabled" hint before the first one.
+    # Live-verified against ansible-core 2.21.6 + the ansible.posix 2.1.x
+    # tree (officel.sysctl-conf round 29902200, issue #992). ansible.posix
+    # 2.2.x imports to_native from
+    # `ansible.module_utils.common.text.converters` (sysctl.py:134)
+    # instead and triggers nothing - so the entry rides only the 2.1.x
+    # module line, the release gate issue #1060's split calls for.
     MODULE_UTILS_TEXT_DEPRECATION_TEXT = "Importing 'to_native' from 'ansible.module_utils._text' is deprecated. " \
                                          "This feature will be removed from ansible-core version 2.24. " \
                                          "Use ansible.module_utils.common.text.converters instead."
@@ -65,6 +69,7 @@ module Krikri
     # builds - captured through `{{ r | to_json }}` rather than a -v dump,
     # which sorts alphabetically.
     def finalize_result(result : PluginResult) : PluginResult
+      return result unless resolved_collection_version_before?(2, 2, 0)
       result.extra["deprecations"] = JSON::Any.new([JSON::Any.new({
         "msg"             => JSON::Any.new("Importing 'to_native' from 'ansible.module_utils._text' is deprecated."),
         "collection_name" => JSON::Any.new("ansible.builtin"),

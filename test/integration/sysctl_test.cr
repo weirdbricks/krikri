@@ -270,4 +270,17 @@ describe "sysctl plugin" do
     result["_ansible_core_deprecations"].as_a.size.must_equal(1)
     result["deprecations"].as_a.size.must_equal(1)
   end
+
+  # The 2.1.x sysctl.py is the one that imports from the deprecated
+  # `_text` shim: ansible.posix 2.2.x takes `to_native` from
+  # `ansible.module_utils.common.text.converters` (sysctl.py:134),
+  # which deprecates nothing - so a 2.2.x run carries no entry at all,
+  # on any exit path (issue #1060's release split).
+  it "carries no import deprecation when the resolved collection release is 2.2.x" do
+    result = PluginSpecHelper.run("sysctl", {} of String => String, collection_version: "2.2.2")
+
+    result["failed"].as_bool.must_equal(true)
+    result.as_h.has_key?("deprecations").must_equal(false)
+    result.as_h.has_key?("_ansible_core_deprecations").must_equal(false)
+  end
 end

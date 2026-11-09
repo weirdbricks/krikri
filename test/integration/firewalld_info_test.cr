@@ -109,6 +109,34 @@ describe "firewalld_info plugin" do
       "Please note: zone:(krikri-spec-undefined-zone) have been ignored in the gathering process.")
   end
 
+  # The exit_json `warnings` deprecation models the 2.1.x module line,
+  # whose result passes `warnings` to exit_json - ansible.posix 2.2.x
+  # triggers no deprecation at all (issue #1060's release split, the
+  # same gate mount.cr's identical helper takes). Needs the full success
+  # path, so it lives wherever a running firewalld exists, like the
+  # shape specs above.
+  it "gates the exit_json warnings deprecation on the resolved collection release" do
+    skip "no firewalld python stack on this host" unless firewalld_python_stack?
+    skip "no running firewalld on this host" unless firewalld_daemon_running?
+
+    default_zone = `firewall-cmd --get-default-zone`.strip
+
+    legacy = PluginSpecHelper.run("firewalld_info", {"zones" => %(["#{default_zone}"])}, collection_version: "2.1.0")
+    falsey?(legacy["failed"]?.try(&.as_bool)).must_equal(true)
+    # The import deprecation rides ahead of the exit_json one (the
+    # imports happen before the module body), same as mount's order.
+    legacy["deprecations"].as_a.map(&.["msg"].as_s).must_equal([
+      "Importing 'to_native' from 'ansible.module_utils._text' is deprecated.",
+      "Passing `warnings` to `exit_json` or `fail_json` is deprecated.",
+    ])
+    legacy["_ansible_core_deprecations"].as_a.size.must_equal(2)
+
+    modern = PluginSpecHelper.run("firewalld_info", {"zones" => %(["#{default_zone}"])}, collection_version: "2.2.2")
+    falsey?(modern["failed"]?.try(&.as_bool)).must_equal(true)
+    modern.as_h.has_key?("deprecations").must_equal(false)
+    modern.as_h.has_key?("_ansible_core_deprecations").must_equal(false)
+  end
+
   it "collects the active zones when active_zones: true is given" do
     skip "no firewalld python stack on this host" unless firewalld_python_stack?
     skip "no running firewalld on this host" unless firewalld_daemon_running?

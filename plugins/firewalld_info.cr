@@ -119,30 +119,39 @@ module Krikri
         # data (issue #695) - a wide int must arrive as the bigint
         # marker instead of an "Invalid Int64" raise.
         data = Krikri::BigJson.parse(stdout.to_s)
-        unless data["ok"]?.try(&.as_bool?)
-          return PluginResult.new(changed: false, failed: true, msg: data["msg"].as_s)
-        end
-
-        # The module's exit_json kwargs/result insertion order. No msg key:
-        # a success exit_json never passes one.
-        result = PluginResult.new(
-          changed: false,
-          failed: false,
-          key_order: ["changed", "active_zones", "collected_zones", "undefined_zones", "warnings", "firewalld_info"],
-          active_zones: JSON::Any.new(active_zones),
-          collected_zones: data["collected_zones"],
-          undefined_zones: data["undefined_zones"],
-          warnings: data["warnings"],
-          firewalld_info: data["firewalld_info"],
-        )
-        add_exit_json_warnings_deprecation(result)
-        result
+        gathered_result(active_zones, data)
       rescue ex
         PluginResult.new(changed: false, failed: true,
           msg: "firewalld_info: failed to gather firewalld information: #{ex.message}")
       ensure
         FileUtils.rm_rf(work_dir)
       end
+    end
+
+    # The probe's parsed stdout turned into the module's result: the
+    # probe-level failure shape first, else the exit_json kwargs/result
+    # insertion order. No msg key on the success shape: a success
+    # exit_json never passes one.
+    private def gathered_result(active_zones : Bool, data : JSON::Any) : PluginResult
+      unless data["ok"]?.try(&.as_bool?)
+        return PluginResult.new(changed: false, failed: true, msg: data["msg"].as_s)
+      end
+
+      result = PluginResult.new(
+        changed: false,
+        failed: false,
+        key_order: ["changed", "active_zones", "collected_zones", "undefined_zones", "warnings", "firewalld_info"],
+        active_zones: JSON::Any.new(active_zones),
+        collected_zones: data["collected_zones"],
+        undefined_zones: data["undefined_zones"],
+        warnings: data["warnings"],
+        firewalld_info: data["firewalld_info"],
+      )
+      # Only the 2.1.x module line passes `warnings` to exit_json (see
+      # the helper's own comment) - a 2.2.x one triggers no deprecation,
+      # the same release gate mount.cr's identical helper takes.
+      add_exit_json_warnings_deprecation(result) if resolved_collection_version_before?(2, 2, 0)
+      result
     end
 
     private def python_imports?(interpreter : String, import_stmt : String) : Bool
@@ -157,7 +166,8 @@ module Krikri
     # module passes its `warnings` list to exit_json, which ansible-core
     # 2.19's _return_formatted deprecates outright; the structured entry
     # rides every SUCCESS result into registered vars, live-verified
-    # against 2.19.11).
+    # against 2.19.11). Called only for the 2.1.x module line, whose
+    # result carries that kwarg - see the gather path's own gate.
     CORE_WARNINGS_DEPRECATION_TEXT = "Passing `warnings` to `exit_json` or `fail_json` is deprecated. " \
                                      "This feature will be removed from ansible-core version 2.23. " \
                                      "Use `AnsibleModule.warn` instead."

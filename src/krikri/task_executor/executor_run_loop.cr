@@ -297,11 +297,13 @@ module Krikri
           # own banner - before its `when:` is even evaluated, so a skipped
           # task warns too (live-verified vs ansible-core 2.21.6) - and a
           # controller-side action plugin importing from a deprecated
-          # ansible.module_utils path warns there. synchronize's does (see
-          # ModuleUtilsDeprecations); emitting it here puts the lines between
-          # the play and this task's banners, once per run (Display dedups
-          # the text), exactly where real prints them.
-          ModuleUtilsDeprecations.action_plugin_text_import_deprecation_texts(task.module_name).each do |text|
+          # ansible.module_utils path warns there. synchronize's does on the
+          # 2.1.x release line (see ModuleUtilsDeprecations, whose release
+          # gate keeps the 2.2.x line silent); emitting it here puts the
+          # lines between the play and this task's banners, once per run
+          # (Display dedups the text), exactly where real prints them.
+          ModuleUtilsDeprecations.action_plugin_text_import_deprecation_texts(
+            task.module_name, CollectionIndex.module_provider_version(task.module_name)).each do |text|
             Krikri::ResultDisplay.emit_core_deprecation(text)
           end
           Krikri::OutputBanner.banner("TASK [#{task_role_prefix(task)}#{task_display_name}]")

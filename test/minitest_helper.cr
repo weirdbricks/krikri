@@ -231,9 +231,17 @@ module PluginSpecHelper
   # use_backend or the pkg_mgr fact, which real fetches on demand with a
   # filtered setup run when missing (issue #768). A spec wanting the
   # fact-less wire shape passes "ansible_pkg_mgr" => "" explicitly.
+  #
+  # `collection_version` pins the top-level config field the executor
+  # normally fills from the controller's collection tree (see
+  # build_plugin_config): a spec modeling a particular release line
+  # (ansible.posix 2.1.x vs 2.2.x, issue #1060) passes it; leaving it
+  # nil models the unpinned wire, where plugins default to the older
+  # line (BasePlugin#resolved_collection_version_before?).
   def self.run(name : String, params : Hash(String, String), vars : Hash(String, String) = {} of String => String, host_name : String = "localhost",
                chdir : String? = nil, before_input : Proc(Nil)? = nil,
-               umask : Int32? = nil, env : Hash(String, String)? = nil) : JSON::Any
+               umask : Int32? = nil, env : Hash(String, String)? = nil,
+               collection_version : String? = nil) : JSON::Any
     vars = with_rpm_backend_default(name, vars)
     binary = File.join(PLUGINS_DIR, name)
     raise "Plugin binary not found: #{binary} (run ./build.sh first)" unless File.exists?(binary)
@@ -246,6 +254,9 @@ module PluginSpecHelper
       },
       "params" => params,
       "vars"   => vars,
+      # The executor's own top-level field (build_plugin_config), nil
+      # when the spec pins no release.
+      "collection_version" => collection_version,
     }
 
     output = IO::Memory.new
@@ -265,7 +276,8 @@ module PluginSpecHelper
   # Ansible derives from the value's own type).
   def self.run_raw(name : String, params : Hash(String, JSON::Any), vars : Hash(String, String) = {} of String => String, host_name : String = "localhost",
                    chdir : String? = nil, before_input : Proc(Nil)? = nil,
-                   umask : Int32? = nil, env : Hash(String, String)? = nil) : JSON::Any
+                   umask : Int32? = nil, env : Hash(String, String)? = nil,
+                   collection_version : String? = nil) : JSON::Any
     vars = with_rpm_backend_default(name, vars)
     binary = File.join(PLUGINS_DIR, name)
     raise "Plugin binary not found: #{binary} (run ./build.sh first)" unless File.exists?(binary)
@@ -278,6 +290,9 @@ module PluginSpecHelper
       },
       "params" => params,
       "vars"   => vars,
+      # The executor's own top-level field (build_plugin_config), nil
+      # when the spec pins no release.
+      "collection_version" => collection_version,
     }
 
     output = IO::Memory.new

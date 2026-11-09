@@ -169,6 +169,45 @@ describe "mount plugin" do
     result["_ansible_core_deprecations"].as_a.size.must_equal(2)
   end
 
+  # The release the controller resolves decides which module line is
+  # modeled (issue #1060): ansible.posix 2.2.0 dropped BOTH the
+  # `warnings` kwarg and the `_text` imports (mount.py imports
+  # to_bytes/to_native from `common.text.converters` there), so a 2.2.x
+  # run has no deprecation at all and the result must carry neither the
+  # exit_json entry nor the import pair - this engine printed the 2.1.x
+  # set against a 2.2.x tree. The executor pins the release through the
+  # wire config's `collection_version` field (build_plugin_config).
+  it "carries no modeled deprecations when the resolved collection release is 2.2.x" do
+    fstab = fresh_fstab("release-2.2.fstab")
+
+    result = PluginSpecHelper.run("mount", {
+      "path" => "/mnt/dep-22", "src" => "/dev/sdb1", "fstype" => "ext4", "state" => "present", "fstab" => fstab,
+    }, collection_version: "2.2.2")
+
+    result["changed"].as_bool.must_equal(true)
+    result.as_h.has_key?("deprecations").must_equal(false)
+    result.as_h.has_key?("_ansible_core_deprecations").must_equal(false)
+  end
+
+  # And the 2.1.x set stays for a release pinned to that line - the same
+  # shape the unpinned runs above assert, now keyed off an explicit
+  # `collection_version` rather than the absence of one.
+  it "carries the full 2.1.x deprecation set when the resolved collection release pins that line" do
+    fstab = fresh_fstab("release-2.1.fstab")
+
+    result = PluginSpecHelper.run("mount", {
+      "path" => "/mnt/dep-21", "src" => "/dev/sdb1", "fstype" => "ext4", "state" => "present", "fstab" => fstab,
+    }, collection_version: "2.1.0")
+
+    result["changed"].as_bool.must_equal(true)
+    result["deprecations"].as_a.map(&.["msg"].as_s).must_equal([
+      "Importing 'to_bytes' from 'ansible.module_utils._text' is deprecated.",
+      "Importing 'to_native' from 'ansible.module_utils._text' is deprecated.",
+      "Passing `warnings` to `exit_json` or `fail_json` is deprecated.",
+    ])
+    result["_ansible_core_deprecations"].as_a.size.must_equal(3)
+  end
+
   it "omits src/fstype from the result when the task did not pass them (Ansible only copies non-None params)" do
     fstab = fresh_fstab("no-fstype-param.fstab")
 

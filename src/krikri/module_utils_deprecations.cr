@@ -1,4 +1,5 @@
 require "json"
+require "./collection_index"
 
 module Krikri
   # The deprecated `ansible.module_utils` imports real ansible-core 2.21 warns
@@ -26,6 +27,18 @@ module Krikri
   # through its own FQCN and through ansible.builtin's legacy redirect, and
   # every spelling warns. `patch` is deliberately absent: krikri has no patch
   # plugin, so a patch task never runs a module here.
+  #
+  # Every entry above was read off the ansible.posix 2.1.x sources:
+  # ansible.posix 2.2.0 moved all of these modules (and the synchronize
+  # action plugin) onto `ansible.module_utils.common.text.converters` and
+  # `collections.abc`, so a controller resolving the 2.2.x line has NO
+  # import deprecations to model - real prints nothing and this table
+  # must stay silent too (issue #1060, where krikri printed the 2.1.x
+  # lines against a 2.2.x tree). The methods therefore take the resolved
+  # release's version (CollectionIndex.module_provider_version) and model
+  # the table only for the 2.1.x line; an unknown version models it, the
+  # conservative default the engine hardcoded before the resolved release
+  # became visible.
   module ModuleUtilsDeprecations
     TEXT_IMPORT_DEPRECATIONS = {
       "acl"            => ["to_native"],
@@ -59,9 +72,11 @@ module Krikri
                                           "Use `collections.abc` from the Python standard library instead."
 
     # The `_text` symbols one module imports, in the module's own import order;
-    # empty for every name outside the table above.
-    def self.text_import_deprecation_symbols(name : String?) : Array(String)
+    # empty for every name outside the table above - and for every name when
+    # `collection_version` pins a 2.2.x-or-newer release (see the header).
+    def self.text_import_deprecation_symbols(name : String?, collection_version : String? = nil) : Array(String)
       return [] of String unless name
+      return [] of String unless deprecated_text_imports?(collection_version)
       TEXT_IMPORT_DEPRECATIONS[name.split(".").last?]? || [] of String
     end
 
@@ -70,8 +85,8 @@ module Krikri
     # help text joined onto one line (the help text is a separate `_messages`
     # field that only the console line merges in - see
     # text_import_deprecation_result_entries).
-    def self.text_import_deprecation_texts(name : String?) : Array(String)
-      text_import_deprecation_symbols(name).map do |symbol|
+    def self.text_import_deprecation_texts(name : String?, collection_version : String? = nil) : Array(String)
+      text_import_deprecation_symbols(name, collection_version).map do |symbol|
         "Importing '#{symbol}' from 'ansible.module_utils._text' is deprecated. " \
         "This feature will be removed from ansible-core version 2.24. " \
         "Use ansible.module_utils.common.text.converters instead."
@@ -83,8 +98,8 @@ module Krikri
     # resolves to ansible.builtin - `_text` is ansible-core's own
     # module_utils, not the importing module's collection - and the msg
     # carries no removal tail; only the console line does).
-    def self.text_import_deprecation_result_entries(name : String?) : Array(JSON::Any)
-      text_import_deprecation_symbols(name).map do |symbol|
+    def self.text_import_deprecation_result_entries(name : String?, collection_version : String? = nil) : Array(JSON::Any)
+      text_import_deprecation_symbols(name, collection_version).map do |symbol|
         deprecation_result_entry("Importing '#{symbol}' from 'ansible.module_utils._text' is deprecated.")
       end
     end
@@ -93,8 +108,9 @@ module Krikri
     # plugin: its `_text` imports in order, then the `_collections_compat`
     # module deprecation when it imports that too. Empty for every action
     # plugin krikri implements without one.
-    def self.action_plugin_text_import_deprecation_texts(name : String?) : Array(String)
+    def self.action_plugin_text_import_deprecation_texts(name : String?, collection_version : String? = nil) : Array(String)
       return [] of String unless name
+      return [] of String unless deprecated_text_imports?(collection_version)
       symbols = ACTION_PLUGIN_TEXT_IMPORT_DEPRECATIONS[name.split(".").last?]? || return [] of String
       texts = symbols.map do |symbol|
         "Importing '#{symbol}' from 'ansible.module_utils._text' is deprecated. " \
@@ -104,6 +120,13 @@ module Krikri
       # The one catalogued action plugin imports _collections_compat beside
       # _text (synchronize.py:26), in that order.
       texts + [COLLECTIONS_COMPAT_DEPRECATION_TEXT]
+    end
+
+    # Whether the resolved release still carries the deprecated imports
+    # this table models: ansible.posix 2.2.x carries none (see the
+    # header), so only the 2.1.x line - and an unpinned one - models them.
+    private def self.deprecated_text_imports?(collection_version : String?) : Bool
+      CollectionIndex.version_before?(collection_version, 2, 2, 0)
     end
 
     # One registered `deprecations` entry as ansible-core 2.21's
