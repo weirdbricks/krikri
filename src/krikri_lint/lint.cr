@@ -7,6 +7,13 @@ require "./file_discovery"
 require "./rule"
 require "./rule_registry"
 
+# The runner's syntax-check gate reuses the engine's controller-side
+# module resolution (CollectionIndex, whose library/action-plugin
+# lookups live in PythonFilterRunner) so "would this file fail
+# ansible's load?" gets the same answer krikri-playbook gives it.
+require "../krikri/collection_index"
+require "../krikri/python_filter_runner"
+
 require "./config"
 require "./noqa"
 require "./json_schema"
