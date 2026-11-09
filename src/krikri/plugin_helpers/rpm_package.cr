@@ -1116,8 +1116,13 @@ module Krikri
         end
 
         # --check: report what the transaction WOULD have done without
-        # running it (Ansible's module resolves the goal, then stops).
+        # running it - but only after the resolution Ansible's module
+        # runs before it stops (issue #1050: a DepsolveError real reports
+        # under --check used to read as a clean "would install" here; see
+        # check_mode_resolve_probe_failure).
         if check_mode?
+          failure = check_mode_resolve_probe_failure(pending, options)
+          return failure if failure
           return check_mode_transaction_result(true, candidate_nevras(pending, classified[:states]).map { |nevra| "Installed: #{nevra}" })
         end
 
@@ -1164,6 +1169,90 @@ module Krikri
         # "Already installed: ..." summary this used to build is a
         # krikri-only shape, dropped to match.
         transaction_result(changed, installed)
+      end
+
+      # The failure shape for a failed install batch - every failure
+      # class Ansible's own dnf module reports, or nil when the output
+      # matches none of them. run_install_batch keeps its raw-dump
+      # fallback for that case (a real install must never silently
+      # succeed); the check-mode resolution probe reads the same nil as
+      # a clean resolution instead (see check_mode_resolve_probe_failure).
+      private def install_batch_failure(result : NamedTuple(exit_code: Int32, stdout: String, stderr: String), to_install : Array(String), options : String) : PluginResult?
+        # Ansible's dnf module reports a partially-unresolvable install
+        # batch with its own canned msg ("Failed to install some of the
+        # specified packages") and one "No package X available." entry
+        # per requested spec (duplicates kept - dnf itself prints each
+        # missing spec once) parsed out of dnf's output - NOT the
+        # raw dnf stderr/stdout dump the fallback keeps for
+        # outputs nothing in parses (repo metadata/404-class errors).
+        # Ansible's dnf fails the GPG check with no per-spec failures
+        # list (the check raises before any is recorded) but still
+        # with results [] and rc 1 - 2.21's backend re-reports an
+        # empty-failures failure through fail_json(msg=, results=,
+        # rc=), giving its alphabetical key order (issue #980).
+        if gpg_msg = gpg_validation_failure_msg(result[:stdout] + "\n" + result[:stderr])
+          return PluginResult.new(changed: false, failed: true, msg: gpg_msg, results: [] of String, rc: 1, key_order: PluginHelpers::DnfInstallFailures::DNF_METADATA_FAILURE_ORDER)
+        end
+        # A bare depsolve error records no per-spec failure at all, so
+        # it goes through that same empty-failures fail_json wrapper:
+        # msg/results/rc and no failures key (issue #989; #216 saw the
+        # key only because its case also marked a spec unresolvable).
+        if depsolve_msg = depsolve_failure_msg(result[:stdout] + "\n" + result[:stderr])
+          return PluginResult.new(changed: false, failed: true, msg: depsolve_msg, results: [] of String, rc: result[:exit_code], key_order: PluginHelpers::DnfInstallFailures::DNF_DEPSOLVE_EMPTY_FAILURE_ORDER)
+        end
+        # A repo-metadata download failure (the repo's repomd.xml
+        # 404s) matches none of the parse lines and used to reach the
+        # error-lines dump below; ansible's module reports just
+        # libdnf's "Failed to download metadata for repo ..." text
+        # with neither a stderr nor a failures key (issue #267).
+        if metadata_msg = repo_metadata_failure_msg(result[:stdout] + "\n" + result[:stderr])
+          return PluginResult.new(changed: false, failed: true, msg: metadata_msg, results: [] of String, rc: result[:exit_code], key_order: PluginHelpers::DnfInstallFailures::DNF_METADATA_FAILURE_ORDER)
+        end
+        # An unknown group spec fails here the way ansible's module's own
+        # comps lookup does - "No group <spec> available.", msg/results/rc
+        # only (the module drops the empty failures list) - instead of the
+        # generic raw-dump fallback below (issue #958).
+        if group_msg = group_not_available_msg(result[:stdout] + "\n" + result[:stderr])
+          return PluginResult.new(changed: false, failed: true, msg: group_msg, results: [] of String, rc: result[:exit_code], key_order: PluginHelpers::DnfInstallFailures::DNF_METADATA_FAILURE_ORDER)
+        end
+        if failures = parse_dnf_install_failures(result[:stdout], result[:stderr], @requested_names)
+          # Ansible's module marks the missing specs into `failures`
+          # first and then STILL depsolves the survivors (issue #321)
+          # - a DepsolveError raised there beats the canned
+          # install-failure msg for that task. The CLI's own
+          # missing-spec abort hides that verdict, so the retry below
+          # goes and re-resolves without the specs it can't name.
+          if depsolve_failure = depsolve_retry_failure(failures, to_install, options, result)
+            return depsolve_failure
+          end
+          return failure_result("Failed to install some of the specified packages", failures, result[:exit_code])
+        end
+        unknown_error_failure(result)
+      end
+
+      # Issue #1050 (kurron.resilio-sync, Rocky 9 --check): ansible's dnf
+      # module resolves the whole transaction BEFORE its check-mode stop
+      # (dnf.py's base.resolve() runs ahead of the "Check mode: No
+      # changes made" exit), so a goal the solver can't satisfy - `curl`
+      # against the installed curl-minimal - fails the task with the
+      # Depsolve Error block under --check exactly like the real
+      # install. The check-mode branches used to report the would-install
+      # shape for anything pending without ever running that resolution,
+      # so check mode ended changed (rc 0) where real ended failed. The
+      # probe is the real install command plus --assumeno standing in for
+      # the check-mode stop: the goal marks and depsolves exactly like
+      # the module's resolve, then aborts at the confirmation prompt
+      # before any download or transaction step can touch the host
+      # (live-verified vs dnf 4 on Rocky 9: a resolvable goal ends
+      # "Operation aborted." rc 1 with nothing installed). Only a failure
+      # class ansible itself reports surfaces - install_batch_failure
+      # returns nil for the abort and for any output none of its parsers
+      # claims, and that is a resolvable goal, never an invented failure.
+      private def check_mode_resolve_probe_failure(specs : Array(String), options : String) : PluginResult?
+        pkg_list = specs.map { |pth| quote_package(pth) }.join(" ")
+        result = remote_exec_tolerating_unknown_repo("#{pkg_manager_binary} install #{options} --assumeno #{pkg_list}")
+        return nil if result[:exit_code] == 0
+        install_batch_failure(result, specs, "#{options} --assumeno")
       end
 
       private def classify_install_packages(names : Array(String), update_only : Bool) : NamedTuple(to_install: Array(String), to_update: Array(String), already_installed: Array(String), states: Hash(String, Bool))
@@ -1331,6 +1420,8 @@ module Krikri
         if check_mode?
           pending = to_install + to_update
           return with_installed_filename_results(transaction_result(false), names) if pending.empty?
+          failure = check_mode_resolve_probe_failure(pending, options)
+          return failure if failure
           return with_installed_filename_results(check_mode_transaction_result(true, candidate_nevras(pending, states).map { |nevra| "Installed: #{nevra}" }), names)
         end
 
@@ -1379,59 +1470,9 @@ module Krikri
         result = remote_exec_tolerating_unknown_repo(cmd)
 
         if result[:exit_code] != 0
-          # Ansible's dnf module reports a partially-unresolvable install
-          # batch with its own canned msg ("Failed to install some of the
-          # specified packages") and one "No package X available." entry
-          # per requested spec (duplicates kept - dnf itself prints each
-          # missing spec once) parsed out of dnf's output - NOT the
-          # raw dnf stderr/stdout dump the fallback below keeps for
-          # outputs nothing in parses (repo metadata/404-class errors).
-          # Ansible's dnf fails the GPG check with no per-spec failures
-          # list (the check raises before any is recorded) but still
-          # with results [] and rc 1 - 2.21's backend re-reports an
-          # empty-failures failure through fail_json(msg=, results=,
-          # rc=), giving its alphabetical key order (issue #980).
-          if gpg_msg = gpg_validation_failure_msg(result[:stdout] + "\n" + result[:stderr])
-            return {changed: false, message: nil, output: result[:stdout], failure: PluginResult.new(changed: false, failed: true, msg: gpg_msg, results: [] of String, rc: 1, key_order: PluginHelpers::DnfInstallFailures::DNF_METADATA_FAILURE_ORDER)}
-          end
-          # A bare depsolve error records no per-spec failure at all, so
-          # it goes through that same empty-failures fail_json wrapper:
-          # msg/results/rc and no failures key (issue #989; #216 saw the
-          # key only because its case also marked a spec unresolvable).
-          if depsolve_msg = depsolve_failure_msg(result[:stdout] + "\n" + result[:stderr])
-            return {changed: false, message: nil, output: result[:stdout], failure: PluginResult.new(changed: false, failed: true, msg: depsolve_msg, results: [] of String, rc: result[:exit_code], key_order: PluginHelpers::DnfInstallFailures::DNF_DEPSOLVE_EMPTY_FAILURE_ORDER)}
-          end
-          # A repo-metadata download failure (the repo's repomd.xml
-          # 404s) matches none of the parse lines and used to reach the
-          # error-lines dump below; ansible's module reports just
-          # libdnf's "Failed to download metadata for repo ..." text
-          # with neither a stderr nor a failures key (issue #267).
-          if metadata_msg = repo_metadata_failure_msg(result[:stdout] + "\n" + result[:stderr])
-            return {changed: false, message: nil, output: result[:stdout], failure: PluginResult.new(changed: false, failed: true, msg: metadata_msg, results: [] of String, rc: result[:exit_code], key_order: PluginHelpers::DnfInstallFailures::DNF_METADATA_FAILURE_ORDER)}
-          end
-          # An unknown group spec fails here the way ansible's module's own
-          # comps lookup does - "No group <spec> available.", msg/results/rc
-          # only (the module drops the empty failures list) - instead of the
-          # generic raw-dump fallback below (issue #958).
-          if group_msg = group_not_available_msg(result[:stdout] + "\n" + result[:stderr])
-            return {changed: false, message: nil, output: result[:stdout], failure: PluginResult.new(changed: false, failed: true, msg: group_msg, results: [] of String, rc: result[:exit_code], key_order: PluginHelpers::DnfInstallFailures::DNF_METADATA_FAILURE_ORDER)}
-          end
-          if failures = parse_dnf_install_failures(result[:stdout], result[:stderr], @requested_names)
-            # Ansible's module marks the missing specs into `failures`
-            # first and then STILL depsolves the survivors (issue #321)
-            # - a DepsolveError raised there beats the canned
-            # install-failure msg for that task. The CLI's own
-            # missing-spec abort hides that verdict, so the retry below
-            # goes and re-resolves without the specs it can't name.
-            if depsolve_failure = depsolve_retry_failure(failures, to_install, options, result)
-              return {changed: false, message: nil, output: result[:stdout], failure: depsolve_failure}
-            end
-            return {changed: false, message: nil, output: result[:stdout], failure: failure_result("Failed to install some of the specified packages", failures, result[:exit_code])}
-          end
-          if failure = unknown_error_failure(result)
-            return {changed: false, message: nil, output: result[:stdout], failure: failure}
-          end
-          return {changed: false, message: nil, output: result[:stdout], failure: failure_result("Failed to install packages", error_lines(result), result[:exit_code])}
+          failure = install_batch_failure(result, to_install, options) ||
+                    failure_result("Failed to install packages", error_lines(result), result[:exit_code])
+          return {changed: false, message: nil, output: result[:stdout], failure: failure}
         end
 
         # A requested name can be a virtual package already satisfied
