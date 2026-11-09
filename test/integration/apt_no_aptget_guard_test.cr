@@ -31,6 +31,38 @@ private GUARD_ERROR   = "[ERROR]: Task failed: Module failed: Error executing co
 private GUARD_FATAL   = %({"changed": false, "cmd": "update", "msg": "Error executing command.", "rc": 2, "stderr": "", "stderr_lines": [], "stdout": "", "stdout_lines": []})
 
 describe "apt: no-apt-get guard shape" do
+  # Issue #1035 (akoeb.common, round29903254): what `--check` must report
+  # for the role's own "Run apt dist upgrade" shape (`apt: upgrade=dist
+  # update_cache=yes`) on an apt-less host. Real apt.py's
+  # !HAVE_PYTHON_APT ladder fails check mode with the bare python3-apt
+  # refusal BEFORE the auto-install attempt the guard below mirrors, so
+  # none of that shape's cmd/rc keys, no warning and no cache keys appear
+  # (ansible's fail_json here is exactly {changed, msg}). `_apt_get_paths`
+  # forces the no-apt-get probe absent on a dev box that really has
+  # apt-get, and the PYTHONPATH stub makes the bindings probe (the
+  # absolute /usr/bin/python3, unshimable via PATH) fail the way a host
+  # without python3-apt does.
+  it "refuses akoeb.common's apt dist upgrade --check run with the python3-apt message (issue #1035)" do
+    stub_dir = PluginSpecHelper.tmp_path("no-python3-apt-stub-1035")
+    Dir.mkdir_p(stub_dir)
+    File.write(File.join(stub_dir, "apt.py"), %(raise ImportError("No module named 'apt'")\n))
+
+    result = PluginSpecHelper.run("apt", {
+      "upgrade"             => "dist",
+      "update_cache"        => "yes",
+      "_ansible_check_mode" => "true",
+      "_apt_get_paths"      => "/nonexistent-krikri-spec/apt-get,/nonexistent-krikri-spec/apt-get-local",
+    }, env: {"PYTHONPATH" => stub_dir})
+
+    result["failed"].as_bool.must_equal(true)
+    result["changed"].as_bool.must_equal(false)
+    result["msg"].as_s.must_equal("python3-apt must be installed to use check mode. If run normally this module can auto-install it, see the auto_install_module_deps option.")
+    result["cmd"]?.must_be_nil
+    result["rc"]?.must_be_nil
+    result["warnings"]?.must_be_nil
+    result["cache_updated"]?.must_be_nil
+  end
+
   it "matches ansible's run_command ENOENT failure (warning, error block, fatal JSON)" do
     unless PluginSpecHelper.container_cli_available?
       skip("podman unavailable")
