@@ -836,6 +836,80 @@ describe "unarchive plugin" do
     File.exists?(File.join(dest, "a.txt")).must_equal(false)
   end
 
+  it "skips under check mode with Ansible's gtar message instead of running, extracted or not" do
+    # Ansible's unarchive only dry-runs ZIP archives: for the tar family
+    # pick_handler's TgzArchive instantiation exits skipped=True under
+    # --check ("remote module (...) does not support check mode when
+    # using gtar") before the archive is ever read. nabello.install_
+    # pecl_php_extension's "Extract PECL PHP xdebug extension" task
+    # (round 29903295, issue #1054) showed `skipping:` where this
+    # plugin reported ok after really extracting.
+    dest = fresh_dest("check-tgz-skip")
+    result = PluginSpecHelper.run("unarchive", {
+      "src"                 => File.join(TMP_DIR, "archive.tar.gz"),
+      "dest"                => dest,
+      "_ansible_check_mode" => "true",
+    })
+
+    result["skipped"].as_bool.must_equal(true)
+    result["changed"].as_bool.must_equal(false)
+    result["msg"].as_s.must_equal("remote module (ansible.legacy.unarchive) does not support check mode when using gtar")
+    Dir.empty?(dest).must_equal(true)
+
+    # The round's own state: everything already extracted, nothing left
+    # to do. Still a skip under --check, never the ok this plugin used
+    # to report for it.
+    PluginSpecHelper.run("unarchive", {"src" => File.join(TMP_DIR, "archive.tar.gz"), "dest" => dest})
+    result = PluginSpecHelper.run("unarchive", {
+      "src"                 => File.join(TMP_DIR, "archive.tar.gz"),
+      "dest"                => dest,
+      "_ansible_check_mode" => "true",
+    })
+
+    result["skipped"].as_bool.must_equal(true)
+    result["changed"].as_bool.must_equal(false)
+  end
+
+  it "skips under check mode with the gtar message even when no handler can read the archive" do
+    # The check-mode exit fires inside pick_handler BEFORE the "Failed
+    # to find handler" failure (TgzArchive.__init__ runs before any
+    # can_handle_archive probe), so a garbage src SKIPS under --check
+    # where a real run fails.
+    dest = fresh_dest("check-garbage-skip")
+    garbage = File.join(TMP_DIR, "check-mode-garbage.bin")
+    File.write(garbage, "this is not an archive either")
+
+    result = PluginSpecHelper.run("unarchive", {"src" => garbage, "dest" => dest, "_ansible_check_mode" => "true"})
+
+    result["skipped"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("remote module (ansible.legacy.unarchive) does not support check mode when using gtar")
+  end
+
+  it "reports a zip's would-change verdict read-only under check mode" do
+    # real's check-mode zip path computes `changed = not
+    # check_results['unarchived']` and stops there (unarchive.py
+    # main()): no extraction, no extract_results key, and the
+    # owner/group/mode pass is gated `and not module.check_mode` - a
+    # dry run must not mutate anything on disk.
+    dest = fresh_dest("check-zip-read-only")
+    Dir.mkdir_p(File.join(dest, "src"))
+    File.write(File.join(dest, "src", "a.txt"), "stale")
+    File.chmod(File.join(dest, "src", "a.txt"), 0o644)
+
+    result = PluginSpecHelper.run("unarchive", {
+      "src"                 => File.join(TMP_DIR, "archive.zip"),
+      "dest"                => dest,
+      "mode"                => "0700",
+      "_ansible_check_mode" => "true",
+    })
+
+    result["changed"].as_bool.must_equal(true)
+    result["extract_results"]?.must_be_nil
+    File.read(File.join(dest, "src", "a.txt")).must_equal("stale")
+    File.exists?(File.join(dest, "src", "sub", "b.txt")).must_equal(false)
+    (File.info(File.join(dest, "src", "a.txt")).permissions.value & 0o777).must_equal(0o644)
+  end
+
   it "excludes a member matching exclude:" do
     dest = fresh_dest("exclude")
     result = PluginSpecHelper.run("unarchive", {"src" => File.join(TMP_DIR, "archive.tar.gz"), "dest" => dest, "exclude" => "sub/b.txt"})

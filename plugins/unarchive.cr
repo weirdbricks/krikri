@@ -420,6 +420,26 @@ module Krikri
       end
     end
 
+    private def check_mode? : Bool
+      true?(@params["_ansible_check_mode"]?)
+    end
+
+    # Whether real's pick_handler zip half would claim the archive:
+    # ZipArchive needs unzip AND zipinfo on PATH plus a clean `unzip -l
+    # <src>` (its can_handle_archive binaries tuple), ZipZArchive needs
+    # only unzip (its tuple names it twice) plus `unzip -Zl` announcing
+    # zipinfo support (unarchive.py: ZipZArchive#can_handle_archive).
+    # The check-mode gtar skip fires only when NEITHER handler claims
+    # the archive.
+    private def zip_handlers_can_handle?(src : String) : Bool
+      unzip = remote_exec("command -v unzip 2> /dev/null")
+      return false unless unzip[:exit_code] == 0 && !unzip[:stdout].strip.empty?
+      return false unless remote_exec("unzip -l #{shell_single_quote(src)} > /dev/null 2>&1")[:exit_code] == 0
+      zipinfo = remote_exec("command -v zipinfo 2> /dev/null")
+      return true if zipinfo[:exit_code] == 0 && !zipinfo[:stdout].strip.empty?
+      remote_exec("unzip -Zl")[:stdout].downcase.includes?("zipinfo")
+    end
+
     private def detect_handler(src : String) : Symbol?
       return :tar if remote_exec("tar tf #{shell_single_quote(src)} > /dev/null 2>&1")[:exit_code] == 0
       return :zip if remote_exec("unzip -l #{shell_single_quote(src)} > /dev/null 2>&1")[:exit_code] == 0
@@ -553,6 +573,31 @@ module Krikri
     end
 
     private def run(src : String, dest : String) : PluginResult
+      if skip = check_mode_skip_result(src)
+        return skip
+      end
+      handler = detect_handler(src)
+      return handler_missing_result(src) unless handler
+      extract_and_report(src, dest, handler)
+    end
+
+    # Check mode never reaches extraction, and for the tar family it
+    # never even reads the archive: pick_handler (unarchive.py) probes
+    # [ZipArchive, ZipZArchive] first, and the moment it instantiates
+    # TgzArchive (or any Tar* subclass) TgzArchive.__init__ exits
+    # skipped=True ("remote module (...) does not support check mode
+    # when using gtar"). That exit sits BEFORE the "Failed to find
+    # handler" failure, so under --check ANY archive the zip handlers
+    # cannot claim is a plain skip (nabello.install_pecl_php_extension
+    # round 29903295, issue #1054: ansible showed `skipping:` where
+    # this engine reported ok on the .tgz extract task).
+    private def check_mode_skip_result(src : String) : PluginResult?
+      return nil unless check_mode? && !zip_handlers_can_handle?(src)
+      PluginResult.new(changed: false, failed: false, skipped: true,
+        msg: "remote module (ansible.legacy.unarchive) does not support check mode when using gtar")
+    end
+
+    private def extract_and_report(src : String, dest : String, handler : Symbol) : PluginResult
       exclude = parse_list_param(@params["exclude"]?)
       include_files = parse_list_param(@params["include"]?)
       keep_newer = true?(@params["keep_newer"]?, default: false)
@@ -568,9 +613,6 @@ module Krikri
       # and missing.
       extra_opts = parse_list_param(@params["extra_opts"]?)
 
-      handler = detect_handler(src)
-      return handler_missing_result(src) unless handler
-
       outcome = extract_if_changed(src, dest, handler, exclude, include_files, keep_newer, extra_opts)
       if failure = outcome[:failure]
         return failure
@@ -578,15 +620,20 @@ module Krikri
       changed = outcome[:changed]
       extract_results = outcome[:extract_results]
 
-      if attr = apply_dest_attributes(dest, handler, src)
-        if error = attr[:error]
-          return error
+      # The owner/group/mode pass is gated `and not module.check_mode` in
+      # real's main() - under --check it neither touches the extracted
+      # paths nor ORs its fixups into `changed`.
+      unless check_mode?
+        if attr = apply_dest_attributes(dest, handler, src)
+          if error = attr[:error]
+            return error
+          end
+          # Real ORs every attribute fixup into the reported changed flag
+          # (set_fs_attributes_if_different's return value) - see
+          # apply_dest_attributes for why this must be able to flip a
+          # clean tar --diff to changed.
+          changed = changed || attr[:changed]
         end
-        # Real ORs every attribute fixup into the reported changed flag
-        # (set_fs_attributes_if_different's return value) - see
-        # apply_dest_attributes for why this must be able to flip a
-        # clean tar --diff to changed.
-        changed = changed || attr[:changed]
       end
       stat_fields = dest_stat_fields(dest)
 
@@ -649,6 +696,12 @@ module Krikri
     private def extract_if_changed(src : String, dest : String, handler : Symbol, exclude : Array(String), include_files : Array(String), keep_newer : Bool, extra_opts : Array(String)) : NamedTuple(changed: Bool, extract_results: JSON::Any?, failure: PluginResult?)
       changed = handler == :tar ? tar_changed?(src, dest, exclude, include_files, keep_newer, extra_opts) : zip_changed?(src, dest, exclude, include_files, keep_newer)
       return {changed: changed, extract_results: nil, failure: nil} unless changed
+      # Check mode reports the verdict only: real's main() sets
+      # `res_args['changed'] = not check_results['unarchived']` and never
+      # calls handler.unarchive(), so the would-be extraction command and
+      # its extract_results are absent from the result entirely (only the
+      # non-check changed path adds them).
+      return {changed: changed, extract_results: nil, failure: nil} if check_mode?
 
       extraction = handler == :tar ? extract_tar(src, dest, exclude, include_files, keep_newer, extra_opts) : extract_zip(src, dest, exclude, include_files, keep_newer)
       # Real unarchive.py collects the handler's {cmd, rc, out, err}
