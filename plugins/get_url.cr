@@ -99,11 +99,6 @@ module Krikri
       # "Source ... failed to transfer" while Ansible had the file
       # under the redirect target's own name).
       dest_is_dir = File.directory?(dest)
-      # Pre-request filename guess for the preflight-failure messaging
-      # below, the one path that reports before any response exists to
-      # derive the real name from. A request that comes back derives it
-      # like a real run does - Ansible HEADs the URL even under --check.
-      dest = File.join(dest, url_filename(request_url)) if dest_is_dir
 
       checksum = resolved_checksum(url, request_url, dest_param)
       return checksum if checksum.is_a?(PluginResult)
@@ -160,7 +155,12 @@ module Krikri
            client_key: @params["client_key"]?,
            use_gssapi: true?(@params["use_gssapi"]?, default: false),
          )
-        return preflight_failure_result(failure, url, dest)
+        # Real names its dest param on these pre-request failures - the
+        # directory-dest filename is only derived after a request
+        # completes, so a failed pre-request over a directory dest
+        # reports the DIRECTORY (live-verified against ansible-core
+        # 2.19.11 with a garbage ciphers list over a directory dest).
+        return preflight_failure_result(failure, url, dest_param)
       end
 
       if bad = invalid_header_name(user_headers)
@@ -462,6 +462,9 @@ module Krikri
     private def check_mode_result(tmp_path : String, dest : String, url : String, elapsed : Int32, info : PluginHelpers::HTTPDownload::Result) : PluginResult
       checksum_src = native_checksum(tmp_path, "sha1")
       checksum_dest = File.exists?(dest) ? native_checksum(dest, "sha1") : nil
+      # get_url.py drops the staged copy on this exit (os.remove(tmpsrc))
+      # before reporting - src still names it, but nothing is left behind.
+      File.delete(tmp_path) if File.exists?(tmp_path)
       # get_url.py: ('checksum_dest' not in result or
       # result['checksum_src'] != result['checksum_dest']) - the key is
       # always present (None), so a missing dest is changed outright and
