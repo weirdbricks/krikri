@@ -661,4 +661,111 @@ describe "INJECT_FACTS_AS_VARS deprecation" do
     stdout.must_include("\"msg\": \"hello\"")
     stderr.wont_include("INJECT_FACTS_AS_VARS")
   end
+
+  it "warns at a skipped block's when: clause that opens the task mapping" do
+    # Issue #1022, dubzland.nginx's `tasks/packages.yml`: a nameless
+    # block's `when:` can be the mapping's FIRST key, on the dash line
+    # itself. Real still warns when the clause skips the block, Origin'd
+    # at that line's value token (live-verified: 5:13 below), so the
+    # skip path's own scan has to read the anchor line's key too.
+    stdout, stderr = run(<<-PLAYBOOK)
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        tasks:
+          - when: ansible_os_family == 'NoSuchFamily'
+            block:
+              - name: inner
+                debug:
+                  msg: x
+      PLAYBOOK
+
+    stdout.must_include("TASK [inner]")
+    stdout.must_include("skipping: [localhost]")
+    stderr.must_include("[DEPRECATION WARNING]: #{FACT_DEPRECATION_TEXT}\n")
+    stderr.must_include(":5:13\n")
+    stderr.must_include("5     - when: ansible_os_family == 'NoSuchFamily'\n")
+    stderr.must_include("              ^ column 13")
+    stderr.scan(/DEPRECATION WARNING\]: #{Regex.escape(FACT_DEPRECATION_TEXT)}/).size.must_equal(1)
+  end
+
+  it "attributes a task vars: value's fact read to its own declaration" do
+    # Issue #1022, dubzland.nginx's `tasks/variables.yml`: a fact read
+    # inside a task-level `vars:` value warns at the value's own
+    # declaration, the same lazy templating real does for play vars
+    # (live-verified against 2.21.6: the `tv:` value token, 9:13 below).
+    stdout, stderr = run(<<-PLAYBOOK)
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        tasks:
+          - name: indirect read
+            debug:
+              msg: "{{ tv }}"
+            vars:
+              tv: "{{ ansible_os_family }}.yml"
+      PLAYBOOK
+
+    stdout.must_include("TASK [indirect read]")
+    stderr.must_include("[DEPRECATION WARNING]: #{FACT_DEPRECATION_TEXT}\n")
+    stderr.must_include(":9:13\n")
+    stderr.must_include("9         tv: \"{{ ansible_os_family }}.yml\"\n")
+    stderr.must_include("              ^ column 13")
+    stderr.scan(/DEPRECATION WARNING\]: #{Regex.escape(FACT_DEPRECATION_TEXT)}/).size.must_equal(1)
+  end
+
+  it "prints one block at the first fact-reading leaf of a task vars: container" do
+    # Issue #1022's exact shape: a `vars:` dict whose list holds TWO
+    # fact-reading templates is one templating operation in real, so only
+    # the first leaf's declaration gets the block (live-verified against
+    # 2.21.6: 11:15 below, nothing at the 12:15 sibling).
+    stdout, stderr = run(<<-PLAYBOOK)
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        tasks:
+          - name: container leaves
+            debug:
+              msg: "{{ params.files }}"
+            vars:
+              params:
+                files:
+                  - "{{ ansible_os_family }}-{{ ansible_distribution_release }}.yml"
+                  - "{{ ansible_os_family }}.yml"
+                  - "default.yml"
+      PLAYBOOK
+
+    stdout.must_include("TASK [container leaves]")
+    stderr.must_include(":11:15\n")
+    stderr.must_include("11             - \"{{ ansible_os_family }}-{{ ansible_distribution_release }}.yml\"\n")
+    stderr.must_include("^ column 15")
+    stderr.wont_include(":12:15")
+    stderr.scan(/DEPRECATION WARNING\]: #{Regex.escape(FACT_DEPRECATION_TEXT)}/).size.must_equal(1)
+  end
+
+  it "prints one block when one param consumes two fact-reading task vars" do
+    # The consuming RENDER is the templating operation: `msg: "{{ gv
+    # }}/{{ gw }}"` reads two values that each name a fact, and real
+    # prints one block at the first value's declaration while a second
+    # param consuming a second value gets its own (live-verified against
+    # 2.21.6).
+    stdout, stderr = run(<<-PLAYBOOK)
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        tasks:
+          - name: one render two values
+            debug:
+              msg: "{{ gv }}/{{ gw }}"
+            vars:
+              gv: "{{ ansible_os_family }}.yml"
+              gw: "{{ ansible_distribution }}.yml"
+      PLAYBOOK
+
+    stdout.must_include("TASK [one render two values]")
+    stderr.must_include(":9:13\n")
+    stderr.must_include("9         gv: \"{{ ansible_os_family }}.yml\"\n")
+    stderr.wont_include(":10:13")
+    stderr.scan(/DEPRECATION WARNING\]: #{Regex.escape(FACT_DEPRECATION_TEXT)}/).size.must_equal(1)
+  end
 end

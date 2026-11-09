@@ -74,6 +74,14 @@ module Krikri
                   # reproducible Origin stay silent.
                   Krikri::ResultDisplay.emit_play_hosts_deprecation(VarSubstitutor.play_hosts_read_origin) if name == "play_hosts"
                   emit_fact_deprecation(name)
+                  # A task `vars:` value that rendered eagerly at
+                  # vars-context build recorded its fact readings for the
+                  # render that CONSUMES it (see
+                  # VarSubstitutor.capture_var_deprecations) - this
+                  # resolution is that consuming render. Not during `vars`
+                  # dict materialization: resolving every name to build the
+                  # dict consumes nothing.
+                  VarSubstitutor.flush_pending_var_deprecations(name) unless JinjaVarResolver.materializing_vars?
                   convert(name)
                 elsif name == "omit"
                   KrikriJinja::AnyValue.new(Krikri::OMIT_SENTINEL)

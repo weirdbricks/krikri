@@ -2410,6 +2410,16 @@ module Krikri
     # still gets it - real keeps the first ACCESS, whichever fact it named.
     def self.emit_fact_deprecation(origin : String?) : Nil
       return unless origin
+      # A capture is open (a task `vars:` value rendering eagerly at
+      # vars-context build): the reading belongs to whichever render
+      # CONSUMES the value, so it is recorded against the value's name
+      # instead of displayed - see #capture_var_deprecations.
+      if captures = @@var_deprecation_captures[Fiber.current]?
+        unless captures.empty?
+          captures.last << origin
+          return
+        end
+      end
       # A deferred scope displays nothing unless its dynamic include ends up
       # skipped, so the operation record must not be spent on it: the tasks
       # that include loads re-evaluate the very same clause as an operation
@@ -2424,6 +2434,57 @@ module Krikri
         return unless @@tripped_fact_deprecation_ops.add?(op)
       end
       ResultDisplay.emit_top_level_fact_deprecation(origin)
+    end
+
+    # INJECT_FACTS_AS_VARS readings captured while a task's `vars:` values
+    # render eagerly at vars-context build (TaskExecutor#render_task_vars):
+    # ansible-core templates those values LAZILY, at whichever render
+    # CONSUMES the value, so the deprecation belongs to that consuming
+    # operation - `msg: "{{ d1 }}/{{ d2 }}"` prints ONE block at d1's own
+    # declaration even when both values read facts, while two params
+    # consuming one value each print one per param (live-verified vs
+    # 2.21.6; dubzland.nginx's `params` value printed at the first
+    # fact-reading leaf only, issue #1022). The eager render therefore
+    # only RECORDS each reading's Origin against the value's name here,
+    # and #flush_pending_var_deprecations replays the readings when the
+    # name next resolves - under the consuming operation's identity.
+    @@pending_var_deprecations = {} of String => Array(String)
+    @@var_deprecation_captures = {} of Fiber => Array(Array(String))
+
+    def self.capture_var_deprecations(name : String, & : -> T) : T forall T
+      buffer = [] of String
+      stack = (@@var_deprecation_captures[Fiber.current] ||= Array(Array(String)).new)
+      stack.push(buffer)
+      begin
+        yield
+      ensure
+        stack.pop
+        @@var_deprecation_captures.delete(Fiber.current) if stack.empty?
+        @@pending_var_deprecations[name] = buffer
+      end
+    end
+
+    # Whether this fiber is inside a capture (see #capture_var_deprecations):
+    # a nested lazy render (a task var reading another variable's value)
+    # contributes its readings to the open capture, and no pending list
+    # flushes mid-render.
+    def self.capturing_var_deprecations? : Bool
+      captures = @@var_deprecation_captures[Fiber.current]?
+      !(captures.nil? || captures.empty?)
+    end
+
+    # Replays the readings captured while *name*'s value rendered eagerly
+    # (see #capture_var_deprecations), now that a render is consuming the
+    # value. The pending list is consumed with them: a second use of the
+    # same value reads no facts again, and real templates the value once
+    # per consuming operation with the deprecate tag keeping the first
+    # access only.
+    def self.flush_pending_var_deprecations(name : String) : Nil
+      return if capturing_var_deprecations?
+      base = name.strip.split(/[.\[]/, 2)[0]
+      return if base.empty?
+      readings = @@pending_var_deprecations.delete(base) || return
+      readings.each { |origin| emit_fact_deprecation(origin) }
     end
 
     # Per-host registry of UNSAFE variable names - names whose current

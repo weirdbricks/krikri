@@ -325,6 +325,11 @@ module Krikri
         # name that is not exactly the deprecated alias never warns.
         Krikri::ResultDisplay.emit_play_hosts_deprecation(VarSubstitutor.play_hosts_read_origin) if value && name.strip == "play_hosts"
         emit_fact_deprecation(name.strip) if value
+        # A task `vars:` value that rendered eagerly at vars-context build
+        # recorded its fact readings for the render that CONSUMES it (see
+        # VarSubstitutor.capture_var_deprecations) - this resolution is
+        # that consuming render.
+        VarSubstitutor.flush_pending_var_deprecations(name.strip) if value
         value
       end
 
