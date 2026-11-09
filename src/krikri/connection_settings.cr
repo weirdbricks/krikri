@@ -59,7 +59,7 @@ module Krikri
       "ansible_password", "ansible_ssh_pass", "ansible_ssh_password",
       "ansible_port", "ansible_ssh_port",
       "ansible_host", "ansible_ssh_host",
-      "ansible_ssh_private_key_file",
+      "ansible_ssh_private_key_file", "ansible_private_key_file",
       "ansible_ssh_common_args", "ansible_ssh_extra_args",
       "ansible_become", "ansible_become_user",
       "ansible_become_password", "ansible_become_pass", "ansible_sudo_pass",
@@ -90,7 +90,17 @@ module Krikri
       conn_host = tiered_var(vars, host, "ansible_ssh_host") ||
                   tiered_var(vars, host, "ansible_host") ||
                   host.name
-      identity_file = tiered_var(vars, host, "ansible_ssh_private_key_file").presence
+      # The identity ladder is ansible's ssh.py private_key_file option
+      # exactly: both variable spellings (its vars list is
+      # [ansible_private_key_file, ansible_ssh_private_key_file] and the
+      # config manager keeps the LAST entry found, so the deprecated
+      # spelling outranks the canonical one - the same story as the
+      # user/host/port aliases above), then ANSIBLE_PRIVATE_KEY_FILE
+      # below every variable (issue #1067: the env form of ansible's
+      # PRIVATE_KEY_FILE setting was ignored entirely).
+      identity_file = tiered_var(vars, host, "ansible_ssh_private_key_file") ||
+                      tiered_var(vars, host, "ansible_private_key_file") ||
+                      configured_private_key_file
       password = Passwords.connection(vars, host)
       common_args = split_ssh_args(tiered_var(vars, host, "ansible_ssh_common_args"))
       extra_args = split_ssh_args(tiered_var(vars, host, "ansible_ssh_extra_args"))
@@ -108,15 +118,43 @@ module Krikri
     # (issue #679). Resolved from the process's own uid (falling back to
     # $USER), memoized - the same resolution PluginManager.local_username
     # uses for the local connection.
+    #
+    # ANSIBLE_REMOTE_USER - the env form of ansible's DEFAULT_REMOTE_USER
+    # setting - sits ABOVE that fallback and below every user variable
+    # (verified 2.21.6: an inventory ansible_user still wins over it,
+    # which is ConfigManager._loop_entries' vars-before-env order), so it
+    # is consulted on every call while only the uid lookup is memoized
+    # (issue #1067).
     @@default_connection_user : String? = nil
 
     def self.default_connection_user : String
+      if env_user = configured_remote_user
+        return env_user
+      end
       @@default_connection_user ||= begin
         System::User.find_by?(id: LibC.getuid.to_s).try(&.username) ||
         ENV["USER"]? || "root"
       rescue
         ENV["USER"]? || "root"
       end
+    end
+
+    # The two connection settings ansible resolves from its config
+    # (DEFAULT_REMOTE_USER / PRIVATE_KEY_FILE). This engine reads only
+    # the ENV forms of config settings by design - there is no
+    # ansible.cfg INI parsing at all (see ssh_manager.cr's
+    # strict_host_key_checking comment) - so exactly the env names
+    # ansible-config lists are honored. Presence-checked because
+    # ansible's ssh plugin only applies a TRUTHY value (`if self.user:` /
+    # `elif key := self.get_option('private_key_file')`): an empty
+    # variable is the same as none there, leaving ssh to pick its own
+    # default user/identities.
+    def self.configured_remote_user : String?
+      ENV["ANSIBLE_REMOTE_USER"]?.presence
+    end
+
+    def self.configured_private_key_file : String?
+      ENV["ANSIBLE_PRIVATE_KEY_FILE"]?.presence
     end
 
     # WHY: every connection key is resolved through the SAME two

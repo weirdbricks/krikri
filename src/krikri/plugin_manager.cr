@@ -882,7 +882,8 @@ module Krikri
     # Plugins that actually read the "vars" field of their config JSON -
     # everything else only ever reads the connection keys BasePlugin
     # itself pulls out (WIRE_VAR_KEYS below: ansible_connection/
-    # ansible_host/ansible_ssh_private_key_file/ansible_ssh_*_args),
+    # ansible_host/ansible_ssh_private_key_file/ansible_private_key_file/
+    # ansible_ssh_*_args),
     # confirmed by
     # `grep -l '@vars\[' plugins/*.cr` -> debug.cr and assert.cr only
     # (debug: `msg: "{{ var }}"` needs live lookup against the full vars
@@ -931,7 +932,8 @@ module Krikri
     # therefore still cannot resolve a password in-process; that gap is
     # outside issue #2's key/agent-auth scope.
     WIRE_VAR_KEYS = [
-      "ansible_connection", "ansible_host", "ansible_ssh_private_key_file",
+      "ansible_connection", "ansible_host",
+      "ansible_ssh_private_key_file", "ansible_private_key_file",
       "ansible_ssh_common_args", "ansible_ssh_extra_args",
       "playbook_dir", "ansible_pkg_mgr",
       # The interpreter keys the mysql_* plugins' driver gate probes with

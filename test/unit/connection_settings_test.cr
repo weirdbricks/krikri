@@ -14,17 +14,50 @@ private def jv(value : String) : JSON::Any
   JSON::Any.new(value)
 end
 
+# Pins the two config-env connection settings (the ANSIBLE_REMOTE_USER /
+# ANSIBLE_PRIVATE_KEY_FILE forms of ansible's DEFAULT_REMOTE_USER /
+# PRIVATE_KEY_FILE) to the given values for the duration of the block,
+# restoring the surrounding environment afterwards. Empty means unset,
+# exactly as ansible's ssh plugin treats it (`if self.user:` /
+# `elif key := self.get_option('private_key_file')`).
+private def with_config_env(remote_user : String, private_key_file : String, &)
+  previous_user = ENV["ANSIBLE_REMOTE_USER"]?
+  previous_key = ENV["ANSIBLE_PRIVATE_KEY_FILE"]?
+  ENV["ANSIBLE_REMOTE_USER"] = remote_user
+  ENV["ANSIBLE_PRIVATE_KEY_FILE"] = private_key_file
+  begin
+    yield
+  ensure
+    if previous_user
+      ENV["ANSIBLE_REMOTE_USER"] = previous_user
+    else
+      ENV.delete("ANSIBLE_REMOTE_USER")
+    end
+    if previous_key
+      ENV["ANSIBLE_PRIVATE_KEY_FILE"] = previous_key
+    else
+      ENV.delete("ANSIBLE_PRIVATE_KEY_FILE")
+    end
+  end
+end
+
 describe Krikri::ConnectionSettings do
+  # Several tests here pin/inspect the ANSIBLE_REMOTE_USER /
+  # ANSIBLE_PRIVATE_KEY_FILE environment (process-wide state).
+  serial!
+
   it "falls back to the host's inventory identity when no connection vars are set" do
-    host = conn_host("web1", "admin", 2222)
-    conn = Krikri::ConnectionSettings.resolve(host, nil)
-    conn.user.must_equal("admin")
-    conn.port.must_equal(2222)
-    conn.conn_host.must_equal("web1")
-    conn.identity_file.must_be_nil
-    conn.password.must_be_nil
-    conn.common_args.must_equal([] of String)
-    conn.extra_args.must_equal([] of String)
+    with_config_env("", "") do
+      host = conn_host("web1", "admin", 2222)
+      conn = Krikri::ConnectionSettings.resolve(host, nil)
+      conn.user.must_equal("admin")
+      conn.port.must_equal(2222)
+      conn.conn_host.must_equal("web1")
+      conn.identity_file.must_be_nil
+      conn.password.must_be_nil
+      conn.common_args.must_equal([] of String)
+      conn.extra_args.must_equal([] of String)
+    end
   end
 
   it "falls back to the local user, not root, when no user is set anywhere (issue #679)" do
@@ -35,9 +68,11 @@ describe Krikri::ConnectionSettings do
   end
 
   it "resolves the default connection user from the process's own uid" do
-    expected = System::User.find_by?(id: LibC.getuid.to_s).try(&.username) ||
-               ENV["USER"]? || "root"
-    Krikri::ConnectionSettings.default_connection_user.must_equal(expected)
+    with_config_env("", "") do
+      expected = System::User.find_by?(id: LibC.getuid.to_s).try(&.username) ||
+                 ENV["USER"]? || "root"
+      Krikri::ConnectionSettings.default_connection_user.must_equal(expected)
+    end
   end
 
   it "takes user/port/host/key/password/args from the task's vars first" do
@@ -140,6 +175,60 @@ describe Krikri::ConnectionSettings do
     c = Krikri::ConnectionSettings.resolve(host, {"ansible_ssh_private_key_file" => jv("/k")} of String => JSON::Any)
     a.fingerprint.wont_equal(b.fingerprint)
     a.fingerprint.wont_equal(c.fingerprint)
+  end
+
+  # ANSIBLE_REMOTE_USER / ANSIBLE_PRIVATE_KEY_FILE (issue #1067) - the
+  # env forms of ansible's DEFAULT_REMOTE_USER / PRIVATE_KEY_FILE. They
+  # sit BELOW every user/key variable and ABOVE the ssh defaults:
+  # ConfigManager resolves an option's vars tier before its env tier
+  # (verified 2.21.6 - an inventory ansible_user still wins over
+  # ANSIBLE_REMOTE_USER), and with nothing anywhere ssh picks its own
+  # default user/identities, so an env value is what gets used then.
+  describe "config env settings (issue #1067)" do
+    it "falls back to ANSIBLE_REMOTE_USER only when no user variable is set" do
+      with_config_env("envuser", "") do
+        conn = Krikri::ConnectionSettings.resolve(conn_host("web1"), nil)
+        conn.user.must_equal("envuser")
+        Krikri::ConnectionSettings.default_connection_user.must_equal("envuser")
+
+        host = conn_host("web1", nil, nil, {"ansible_user" => jv("invuser")} of String => JSON::Any)
+        Krikri::ConnectionSettings.resolve(host, nil).user.must_equal("invuser")
+
+        conn = Krikri::ConnectionSettings.resolve(conn_host("web1"),
+          {"ansible_ssh_user" => jv("taskuser")} of String => JSON::Any)
+        conn.user.must_equal("taskuser")
+      end
+    end
+
+    it "falls back to ANSIBLE_PRIVATE_KEY_FILE only when no key variable is set" do
+      with_config_env("", "/env/id_ed25519") do
+        Krikri::ConnectionSettings.resolve(conn_host("web1"), nil)
+          .identity_file.must_equal("/env/id_ed25519")
+
+        host = conn_host("web1", nil, nil, {"ansible_private_key_file" => jv("/inv/id_ecdsa")} of String => JSON::Any)
+        Krikri::ConnectionSettings.resolve(host, nil).identity_file.must_equal("/inv/id_ecdsa")
+
+        conn = Krikri::ConnectionSettings.resolve(conn_host("web1"),
+          {"ansible_ssh_private_key_file" => jv("/task/id_rsa")} of String => JSON::Any)
+        conn.identity_file.must_equal("/task/id_rsa")
+      end
+    end
+
+    it "honors the canonical ansible_private_key_file spelling, with the deprecated one beating it" do
+      with_config_env("", "") do
+        canonical = conn_host("web1", nil, nil, {"ansible_private_key_file" => jv("/inv/id_ecdsa")} of String => JSON::Any)
+        Krikri::ConnectionSettings.resolve(canonical, nil).identity_file.must_equal("/inv/id_ecdsa")
+
+        # ssh.py's vars list is [ansible_private_key_file,
+        # ansible_ssh_private_key_file] with last-entry-wins, so the
+        # deprecated spelling outranks the canonical one.
+        both = conn_host("web1", nil, nil, {
+          "ansible_private_key_file"     => jv("/inv/id_ecdsa"),
+          "ansible_ssh_private_key_file" => jv("/inv/id_rsa"),
+        } of String => JSON::Any)
+        Krikri::ConnectionSettings.resolve(both, nil).identity_file.must_equal("/inv/id_rsa")
+      end
+    end
   end
 
   describe "resolve_play" do
