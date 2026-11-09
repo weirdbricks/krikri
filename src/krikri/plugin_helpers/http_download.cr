@@ -51,7 +51,13 @@ module Krikri
         # getproxies_environment treats an unset var.
         http_proxy : String? = nil,
         https_proxy : String? = nil,
-        no_proxy : String? = nil
+        no_proxy : String? = nil,
+        # The request verb. Real fetch_url's `method` param: get_url only
+        # ever sends GET or HEAD, and a --check run always HEADs ("From
+        # Ansible 2.4 when run with --check, it will do a HEAD request to
+        # validate the URL"), which is why its staged copy is empty.
+        # urllib keeps the method across redirect hops.
+        method : String = "GET"
 
       # What the FINAL response of a redirect-following download looked
       # like: Ansible's get_url derives a directory-dest download's
@@ -202,7 +208,7 @@ module Krikri
         auth_attempted : Bool,
         jar : CookieJar,
       ) : Result
-        client.get(request_target, headers: headers) do |response|
+        client.exec(options.method, request_target, headers: headers) do |response|
           # The processor harvests each response's Set-Cookie into the
           # one jar BEFORE the redirect/auth decisions, so the next
           # request - whichever branch takes it - already carries them.
@@ -619,7 +625,11 @@ module Krikri
       # with str(ex) as the reason.
       private def self.write_body(response : HTTP::Client::Response, dest : String, scheme : String) : Nil
         File.open(dest, "w", 0o666) do |file|
-          IO.copy(response.body_io, file)
+          # A HEAD response has no body (python's http.client reads zero
+          # bytes for HEAD whatever Content-Length claims), so the staged
+          # file stays empty - the exact copy get_url.py's check-mode
+          # comparison sees.
+          IO.copy(response.body_io, file) if response.body_io?
         end
       rescue IO::TimeoutError
         raise FetchError.new(FetchError::Kind::ContentCopy, "", reason: read_timeout_reason(scheme))
@@ -700,6 +710,8 @@ module Krikri
           http_proxy: options.http_proxy,
           https_proxy: options.https_proxy,
           no_proxy: options.no_proxy,
+          # urllib's redirect_request keeps a redirected HEAD a HEAD
+          method: options.method,
         )
       end
 

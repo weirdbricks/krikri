@@ -99,9 +99,10 @@ module Krikri
       # "Source ... failed to transfer" while Ansible had the file
       # under the redirect target's own name).
       dest_is_dir = File.directory?(dest)
-      # Pre-request filename guess, check-mode messaging only: in check
-      # mode no request is made, so there's no final response to derive
-      # from (Ansible HEADs the URL for this; we keep the guess).
+      # Pre-request filename guess for the preflight-failure messaging
+      # below, the one path that reports before any response exists to
+      # derive the real name from. A request that comes back derives it
+      # like a real run does - Ansible HEADs the URL even under --check.
       dest = File.join(dest, url_filename(request_url)) if dest_is_dir
 
       checksum = resolved_checksum(url, request_url, dest_param)
@@ -166,19 +167,18 @@ module Krikri
         return PluginResult.new(changed: false, failed: true, msg: "Invalid header name #{python_bytes_repr(python_title(bad))}", url: url, status: -1)
       end
 
-      if true?(@params["_ansible_check_mode"]?)
-        result = PluginResult.new(changed: true, failed: false, msg: "would download #{request_url} to #{dest} (check mode)", dest: dest, key_order: SUCCESS_KEY_ORDER)
-        add_path_info(result, dest)
-        return result
-      end
-
       # tmp_dest is validated up front (real get_url's url_get does it
       # right before staging) so a bad tmp_dest fails before any request.
       if (tmp_dest_param = @params["tmp_dest"]?) && (tmp_error = staging_dir_error(tmp_dest_param))
         return tmp_error
       end
 
-      download_to_dest(url, request_url, dest_param, checksum, dest_is_dir, force, last_mod_time)
+      # --check still makes the request (Ansible HEADs the URL to
+      # validate it) and only skips the final move and attribute
+      # reconciliation - see #check_mode_result for the changed status it
+      # derives from the staged copy.
+      download_to_dest(url, request_url, dest_param, checksum, dest_is_dir, force, last_mod_time,
+        check_mode: true?(@params["_ansible_check_mode"]?))
     end
 
     # Parses the checksum: param (if any) into its {algorithm, hash}
@@ -298,10 +298,11 @@ module Krikri
       dest_is_dir = false,
       force = false,
       last_mod_time : Time? = nil,
+      check_mode = false,
     ) : PluginResult
       tmp_path = staging_path
       begin
-        download_to_dest_staged(tmp_path, url, request_url, dest_param, checksum, dest_is_dir, force, last_mod_time)
+        download_to_dest_staged(tmp_path, url, request_url, dest_param, checksum, dest_is_dir, force, last_mod_time, check_mode)
       ensure
         cleanup_staging_dir(tmp_path)
       end
@@ -316,10 +317,11 @@ module Krikri
       dest_is_dir = false,
       force = false,
       last_mod_time : Time? = nil,
+      check_mode = false,
     ) : PluginResult
       started = Time.utc
       info = begin
-        download(request_url, tmp_path, force, last_mod_time)
+        download(request_url, tmp_path, force, last_mod_time, check_mode)
       rescue ex : PluginHelpers::HTTPDownload::FetchError
         File.delete(tmp_path) if File.exists?(tmp_path)
         return not_modified_result(ex.info_msg, url, dest_param, elapsed_since(started)) if ex.status_code == 304
@@ -347,6 +349,11 @@ module Krikri
       if failure = destination_failure_result(tmp_path, dest, url, elapsed)
         return failure
       end
+
+      # Real get_url's check-mode exit sits BEFORE the checksum
+      # verification - a checksum mismatch never fails under --check -
+      # and before any move, see #check_mode_result.
+      return check_mode_result(tmp_path, dest, url, elapsed, info) if check_mode
 
       if checksum && (mismatch = checksum_mismatch_result(tmp_path, dest, url, checksum, elapsed))
         return mismatch
@@ -431,6 +438,40 @@ module Krikri
     private def not_modified_result(msg : String, url : String, dest : String, elapsed = 0) : PluginResult
       result = PluginResult.new(changed: false, failed: false,
         url: url, dest: dest, msg: msg, status_code: 304, elapsed: elapsed)
+      add_path_info(result, dest)
+      result
+    end
+
+    # Real get_url's `if module.check_mode:` exit, verbatim
+    # (get_url.py): changed is decided by comparing the STAGED copy's
+    # sha1 against dest's - and the check-mode request is a HEAD, so over
+    # http(s) that copy is EMPTY: a non-empty dest is changed: true even
+    # when its content matches the URL exactly (Ansible's own documented
+    # detail: "the changed status will reflect comparison to an empty
+    # source file", live-verified against ansible-core 2.21.6). Only a
+    # 304 (not_modified_result above) or an empty dest settles to
+    # changed: false. file:// and ftp:// sources stage their real content
+    # even here (urllib's file/ftp handlers ignore the request method),
+    # so those converge like a real run. NO status_code or md5sum on this
+    # exit - it precedes both in get_url.py. Found as issue #1032
+    # (adriano-di-giovanni.node-js's "download setup script" in a check
+    # phase): krikri skipped the request entirely and unconditionally
+    # reported changed: true, where Ansible's conditional HEAD answered
+    # 304 and reported ok - the recap then read changed=1 against
+    # Ansible's changed=0.
+    private def check_mode_result(tmp_path : String, dest : String, url : String, elapsed : Int32, info : PluginHelpers::HTTPDownload::Result) : PluginResult
+      checksum_src = native_checksum(tmp_path, "sha1")
+      checksum_dest = File.exists?(dest) ? native_checksum(dest, "sha1") : nil
+      # get_url.py: ('checksum_dest' not in result or
+      # result['checksum_src'] != result['checksum_dest']) - the key is
+      # always present (None), so a missing dest is changed outright and
+      # an existing one by the two hashes' inequality alone.
+      changed = checksum_src != checksum_dest
+      result = PluginResult.new(changed: changed, failed: false,
+        msg: "OK (#{info.headers["Content-Length"]? || "unknown"} bytes)",
+        checksum_dest: checksum_dest, checksum_src: checksum_src,
+        dest: dest, elapsed: elapsed, url: url, src: tmp_path,
+        key_order: SUCCESS_KEY_ORDER)
       add_path_info(result, dest)
       result
     end
@@ -799,7 +840,7 @@ module Krikri
       end
     end
 
-    private def download(url : String, tmp_path : String, force = false, last_mod_time : Time? = nil) : PluginHelpers::HTTPDownload::Result
+    private def download(url : String, tmp_path : String, force = false, last_mod_time : Time? = nil, check_mode = false) : PluginHelpers::HTTPDownload::Result
       # file:// is a legitimate source for Ansible's get_url too
       # (urllib's FileHandler): a local mirror, a previously-fetched
       # artifact, an offline install. Found via an ad-hoc CLI comparison
@@ -860,7 +901,11 @@ module Krikri
         return ftp_download(ftp, url, tmp_path, download_options(force, last_mod_time))
       end
 
-      PluginHelpers::HTTPDownload.download_with_info(url, tmp_path, download_options(force, last_mod_time))
+      # check_mode's HEAD lives HERE only: urllib's file/ftp handlers
+      # ignore the request method and return their content whatever it
+      # is, so those branches above stage the real bytes even under
+      # --check (see #check_mode_result).
+      PluginHelpers::HTTPDownload.download_with_info(url, tmp_path, download_options(force, last_mod_time, check_mode))
     end
 
     # file:// URL to a local path: nil when the URL isn't a file:// URL
@@ -1130,7 +1175,7 @@ module Krikri
       m[5].to_i * 256 + m[6].to_i
     end
 
-    private def download_options(force = false, last_mod_time : Time? = nil) : PluginHelpers::HTTPDownload::Options
+    private def download_options(force = false, last_mod_time : Time? = nil, check_mode = false) : PluginHelpers::HTTPDownload::Options
       PluginHelpers::HTTPDownload::Options.new(
         max_redirects: MAX_REDIRECTS,
         connect_timeout: timeout_span,
@@ -1147,6 +1192,9 @@ module Krikri
         client_key: @params["client_key"]?,
         ciphers: tls_ciphers,
         unredirected_headers: unredirected_headers,
+        # Ansible's --check verb: "it will do a HEAD request to validate
+        # the URL" (get_url.py's own docs).
+        method: check_mode ? "HEAD" : "GET",
       )
     end
 

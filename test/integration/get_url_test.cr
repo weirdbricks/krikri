@@ -149,6 +149,19 @@ private GET_URL_TEST_SERVER = HTTP::Server.new do |context|
       context.response.status_code = 200
       context.response.print(context.request.headers["X-Custom"]? || "no-custom-header")
     end
+  when "/head-only.txt"
+    # Answers 200 to HEAD but 405 to GET: pins the verb a check-mode
+    # request uses - Ansible HEADs the URL under --check (get_url.py:
+    # "From Ansible 2.4 when run with --check, it will do a HEAD request
+    # to validate the URL"), and that HEAD is also why the staged copy
+    # behind a check-mode 200 is empty.
+    if context.request.method == "HEAD"
+      context.response.status_code = 200
+      context.response.headers["Content-Length"] = FILE_CONTENT.bytesize.to_s
+      context.response.print(FILE_CONTENT)
+    else
+      context.response.status_code = 405
+    end
   when "/auth.txt"
     if context.request.headers["Authorization"]? == "Basic " + Base64.strict_encode("u1:p1")
       context.response.status_code = 200
@@ -809,13 +822,92 @@ describe "get_url plugin" do
     File.delete(dest) if dest && File.exists?(dest)
   end
 
-  it "reports changed without downloading under check_mode" do
+  it "reports changed without writing dest under check_mode" do
+    # Ansible still requests the URL under --check (a HEAD), then skips
+    # the move - a missing dest is always would-change.
     dest = File.tempname("get-url-spec")
 
     result = PluginSpecHelper.run("get_url", {"url" => "#{GET_URL_TEST_BASE}/file.txt", "dest" => dest, "_ansible_check_mode" => "true"})
 
     result["changed"].as_bool.must_equal(true)
     File.exists?(dest).must_equal(false)
+  end
+
+  it "settles to changed: false on a check_mode conditional GET answered 304 (issue #1032)" do
+    # Issue #1032 (adriano-di-giovanni.node-js's "download setup script"
+    # in a check phase): Ansible conditionally HEADs the URL under
+    # --check and settles to ok when the server answers 304, while krikri
+    # skipped the request entirely and always reported changed: true -
+    # the recap then read changed=1 against Ansible's changed=0.
+    dest = File.tempname("get-url-spec")
+    File.write(dest, FILE_CONTENT)
+    File.touch(dest, COND_TIME)
+
+    result = PluginSpecHelper.run("get_url", {"url" => "#{GET_URL_TEST_BASE}/conditional.txt", "dest" => dest, "_ansible_check_mode" => "true"})
+
+    result["changed"].as_bool.must_equal(false)
+    result["msg"].as_s.must_equal("HTTP Error 304: Not Modified")
+    result["status_code"].as_i.must_equal(304)
+    File.read(dest).must_equal(FILE_CONTENT)
+  ensure
+    File.delete(dest) if dest && File.exists?(dest)
+  end
+
+  it "compares dest against an EMPTY source on a check_mode 200, like Ansible's HEAD" do
+    # get_url.py's check-mode exit compares the staged copy's sha1
+    # against dest's - and the check-mode request is a HEAD, so that copy
+    # is empty (Ansible's own documented detail: "the changed status will
+    # reflect comparison to an empty source file", live-verified against
+    # ansible-core 2.21.6). A dest holding the URL's exact content still
+    # reports changed: true; only a 304 settles to changed: false. The
+    # result carries no status_code/md5sum - this exit precedes both.
+    dest = File.tempname("get-url-spec")
+    File.write(dest, FILE_CONTENT)
+
+    result = PluginSpecHelper.run("get_url", {"url" => "#{GET_URL_TEST_BASE}/file.txt", "dest" => dest, "_ansible_check_mode" => "true"})
+
+    result["changed"].as_bool.must_equal(true)
+    result["checksum_src"].as_s.must_equal(sha1_of(""))
+    result["checksum_dest"].as_s.must_equal(sha1_of(FILE_CONTENT))
+    result.as_h.keys.must_equal([
+      "msg", "changed", "checksum_dest", "checksum_src", "dest",
+      "elapsed", "url", "src", "uid", "gid", "owner", "group", "mode", "state", "size",
+    ])
+    File.read(dest).must_equal(FILE_CONTENT)
+  ensure
+    File.delete(dest) if dest && File.exists?(dest)
+  end
+
+  it "sends a real HEAD under check_mode, like Ansible's URL validation" do
+    # The fixture answers 200 to HEAD but 405 to GET, so this only passes
+    # with the verb Ansible itself uses for its check-mode validation.
+    dest = File.tempname("get-url-spec")
+
+    result = PluginSpecHelper.run("get_url", {"url" => "#{GET_URL_TEST_BASE}/head-only.txt", "dest" => dest, "_ansible_check_mode" => "true"})
+
+    falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+    result["msg"].as_s.must_equal("OK (#{FILE_CONTENT.bytesize} bytes)")
+    File.exists?(dest).must_equal(false)
+  ensure
+    File.delete(dest) if dest && File.exists?(dest)
+  end
+
+  it "compares real content for a file:// URL under check_mode (its handler ignores the method)" do
+    # urllib's FileHandler returns the file's bytes whatever the request
+    # method is, so the staged copy is the full content and check mode
+    # converges like a real run (live-verified vs ansible-core 2.21.6).
+    src = File.tempname("get-url-spec-src")
+    dest = File.tempname("get-url-spec")
+    File.write(src, FILE_CONTENT)
+    File.write(dest, FILE_CONTENT)
+
+    result = PluginSpecHelper.run("get_url", {"url" => "file://#{src}", "dest" => dest, "_ansible_check_mode" => "true"})
+
+    result["changed"].as_bool.must_equal(false)
+    falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+  ensure
+    File.delete(src) if src && File.exists?(src)
+    File.delete(dest) if dest && File.exists?(dest)
   end
 
   it "fails clearly on a 404" do
