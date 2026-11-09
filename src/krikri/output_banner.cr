@@ -12,8 +12,18 @@
   # (plugins/expect.cr, plugin_helpers/controlling_tty.cr) - fun
   # declarations unify by C symbol name, so the signatures must match
   # exactly inside one compilation unit.
+  #
+  # Variadic exactly like the real C prototype
+  # (`int ioctl(int, unsigned long, ...)`): Apple's arm64 ABI passes
+  # variadic arguments on the stack, so a fixed-arity binding puts the
+  # winsize pointer in x2 while macOS's ioctl reads it from the stack -
+  # the kernel then copyouts the winsize to whatever address that stack
+  # slot holds (silent 8-byte memory corruption) and the caller's struct
+  # stays uninitialized: the random per-run banner widths on macOS arm64
+  # (#1065). Linux is unaffected either way, which is why every
+  # pipe/file run and the Linux CI always looked right.
   lib LibC
-    fun ioctl(fd : Int, request : ULong, arg : ULong) : Int
+    fun ioctl(fd : Int, request : ULong, ...) : Int
   end
 {% end %}
 
