@@ -35,13 +35,17 @@ module Krikri
     # get_bin_path on the target: $PATH plus the sbin dirs real appends
     # when missing from PATH. Returns the first executable hit (absolute),
     # else nil; leaves the searched list in @searched_paths.
+    #
+    # Directories are never a hit (real's get_bin_path requires
+    # `not os.path.isdir`): an empty name would otherwise "match" any
+    # searchable directory via its own trailing slash.
     private def find_binary(name : String) : String?
       script = <<-SH
         found=""
         searched=""
         for d in $(printf '%s' "$PATH" | tr ':' ' ') #{EXTRA_BIN_DIRS.join(' ')}; do
           case ":$searched:" in *":$d:"*) ;; *) searched="${searched:+$searched:}$d" ;; esac
-          if [ -z "$found" ] && [ -x "$d/#{name}" ]; then found="$d/#{name}"; fi
+          if [ -z "$found" ] && [ ! -d "$d/#{name}" ] && [ -x "$d/#{name}" ]; then found="$d/#{name}"; fi
         done
         printf '%s\n%s' "$found" "$searched"
         SH
@@ -75,22 +79,26 @@ module Krikri
       # OSError shape from the FIRST command (the list probe), with
       # rc=errno and the space-joined command string (podman-diff
       # npm_edge_cases N7).
+      #
+      # The override gate is Python truthiness (`if kwargs['executable']:`)
+      # and split(' ') keeps empty words: an EMPTY value is no override at
+      # all and falls to the "npm" lookup (fubarhouse.pm2 templates
+      # `executable: "{{ which_npm.stdout }}"` from a check-mode-skipped
+      # `which npm` probe - issue #1045), and a whitespace-only one
+      # re-resolves the empty first word, which get_bin_path can never
+      # find (live-verified vs ansible: "" fails with "npm" in the
+      # message, " " with "" - this plugin crashed `exe_parts[0]` with
+      # "Index out of bounds" on both).
       global = true?(@params["global"]?)
       path = @params["path"]?
 
-      if exe = @params["executable"]?
-        exe_parts = exe.split(' ').reject(&.empty?)
-        unless exe_parts[0].includes?("/")
-          found = find_binary(exe_parts[0])
-          return PluginResult.new(changed: false, failed: true,
-            msg: PluginHelpers::GetBinPath.missing_executable_error(exe_parts[0], @searched_paths)) unless found
-          @npm_path = found
-          exe_parts = [found]
-        end
-      else
-        found = find_binary("npm")
+      exe = @params["executable"]?
+      exe_parts = (exe && !exe.empty?) ? exe.split(' ') : ["npm"]
+
+      unless exe_parts[0].includes?("/")
+        found = find_binary(exe_parts[0])
         return PluginResult.new(changed: false, failed: true,
-          msg: PluginHelpers::GetBinPath.missing_executable_error("npm", @searched_paths)) unless found
+          msg: PluginHelpers::GetBinPath.missing_executable_error(exe_parts[0], @searched_paths)) unless found
         @npm_path = found
         exe_parts = [found]
       end
@@ -98,13 +106,22 @@ module Krikri
       version = @params["version"]?
       name_version = version ? "#{name}@#{version}" : name
 
+      ci = true?(@params["ci"]?)
+      # The same _exec gate as #run_npm: with ci=true Ansible's FIRST call
+      # is the skipped `npm ci`, so in check mode NOTHING runs at all - no
+      # makedirs, no "path ... is not a directory" check, no exec surface
+      # (live-verified vs ansible: missing executable + ci + --check
+      # predicts `changed`, no error). For every other state the list
+      # probe runs even in check mode and keeps all three.
+      command_runs = !check_mode? || !ci
+
       # Real _exec: a given `path` is created when missing (os.makedirs)
       # and fails with "path {path} is not a directory" when it exists as
       # something else; it is passed to run_command as cwd.
-      if path && !remote_dir_exists?(path)
+      if command_runs && path && !remote_dir_exists?(path)
         remote_exec("mkdir -p #{Process.quote(path)}")
       end
-      if path && remote_file_exists?(path) && !remote_dir_exists?(path)
+      if command_runs && path && remote_file_exists?(path) && !remote_dir_exists?(path)
         return PluginResult.new(changed: false, failed: true, msg: "path #{path} is not a directory")
       end
 
@@ -114,10 +131,11 @@ module Krikri
       # so only an exec-start failure kills the task here) - a missing or
       # unexecutable `executable:` path surfaces run_command's OSError
       # shape with rc=errno and the space-joined FIRST command string.
-      ci = true?(@params["ci"]?)
       first_args = ci ? build_args(["ci"], name_version, global, mutating: true) : build_args(["list", "--json", "--long"], nil, global, mutating: false)
-      if failure = PluginHelpers::RunCommandFailure.exec_check(exe_parts[0])
-        return PluginHelpers::RunCommandFailure.exec_failure(exe_parts[0], failure[0], failure[1], (exe_parts + first_args).join(' '))
+      if command_runs
+        if failure = PluginHelpers::RunCommandFailure.exec_check(exe_parts[0])
+          return PluginHelpers::RunCommandFailure.exec_failure(exe_parts[0], failure[0], failure[1], (exe_parts + first_args).join(' '))
+        end
       end
 
       if ci
@@ -202,7 +220,15 @@ module Krikri
     end
 
     private def npm_binary : String
-      @params["executable"]? || @npm_path
+      # An EMPTY `executable:` is no override (the same truthiness gate as
+      # the resolution above) - quoting "" would exec nothing instead of
+      # the resolved npm.
+      exe = @params["executable"]?
+      (exe && !exe.empty?) ? exe : @npm_path
+    end
+
+    private def check_mode? : Bool
+      true?(@params["_ansible_check_mode"]?)
     end
 
     private def list(exe_parts : Array(String), name : String?, name_version : String?, global : Bool, path : String?) : {Array(String), Array(String)}
@@ -254,6 +280,13 @@ module Krikri
     # run_command's OSError shape with the SPACE-JOINED raw args as cmd
     # (Ansible's _clean_args - no shell quoting).
     private def run_npm(exe_parts : Array(String), subcommand : Array(String), name_version : String?, global : Bool, path : String?, mutating : Bool = true) : NamedTuple(exit_code: Int32, stdout: String, stderr: String)
+      # Ansible's _exec gate (`if not self.module.check_mode or
+      # (self.module.check_mode and run_in_check_mode)`): only the list
+      # probe runs in check mode - install/uninstall/ci are predicted
+      # (`changed` from the installed-set check) but never started, and
+      # the skipped run still counts as success.
+      return {exit_code: 0, stdout: "", stderr: ""} if mutating && check_mode?
+
       args = build_args(subcommand, name_version, global, mutating)
 
       cmd = "#{Process.quote(npm_binary)} #{args.map { |arg| Process.quote(arg) }.join(' ')}"
