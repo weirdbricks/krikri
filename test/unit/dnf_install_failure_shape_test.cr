@@ -26,6 +26,52 @@ require "../../src/krikri/plugin_helpers/dnf_install_failures"
 MISSING_PKG_STDOUT = "No match for argument: redhat-lsb-core\n"
 MISSING_PKG_STDERR = "Error: Unable to find a match: redhat-lsb-core\n"
 
+# Issue #1020 (archf.packages, round29903334, Rocky 9): ansible's
+# "Failed to install some of the specified packages" fail_json carries
+# `results` = the resolved transaction's own "Installed: <nevra>" /
+# "Removed: <nevra>" entries (base.transaction.install_set/.remove_set,
+# dependency closure included - the round's list ran past 250 entries),
+# where this engine sent []. The entries' order is CPython's set
+# iteration over the libdnf sack ids, so only the target's own
+# python-dnf can replay it (DnfTransactionProbe); these tests pin the
+# engine's side of that contract - whatever the probe answers is what
+# the fatal carries. The two entries below are live-captured from the
+# round's own ansible results list (its install_set head and its
+# remove_set tail).
+PROBE_RESULTS = [
+  "Installed: libstemmer-0-18.585svn.el9.x86_64",
+  "Removed: acl-2.3.1-4.el9.x86_64",
+]
+
+# with_failing_dnf_shim plus a `python3` shim standing in for the
+# target's python-dnf replay: the probe's answer is canned, so the
+# assertions can pin what the engine does with it.
+private def with_failing_dnf_shim_and_probe(stdout : String, stderr : String, &)
+  shim_dir = PluginSpecHelper.tmp_path("fake-dnf-probe")
+  Dir.mkdir_p(shim_dir)
+  script = "#!/bin/sh\ncat <<'KRIKRI_FAKE_DNF_EOF'\n#{stdout}KRIKRI_FAKE_DNF_EOF\n"
+  script += stderr.lines.map { |line| "echo '#{line.gsub("'", "'\\''")}' >&2" }.join("\n") + "\n" unless stderr.empty?
+  script += "exit 1\n"
+  File.write("#{shim_dir}/dnf", script)
+  File.chmod("#{shim_dir}/dnf", 0o755)
+  File.write("#{shim_dir}/yum", script)
+  File.chmod("#{shim_dir}/yum", 0o755)
+  probe_json = {"results" => PROBE_RESULTS}.to_json
+  File.write("#{shim_dir}/python3", "#!/bin/sh\necho '#{probe_json}'\n")
+  File.chmod("#{shim_dir}/python3", 0o755)
+  PluginSpecHelper::ENV_MUTEX.synchronize do
+    old_path = ENV["PATH"]?
+    ENV["PATH"] = "#{shim_dir}:#{old_path}"
+    begin
+      yield
+    ensure
+      old_path ? (ENV["PATH"] = old_path) : (ENV.delete("PATH"))
+    end
+  end
+ensure
+  FileUtils.rm_r(shim_dir) if shim_dir
+end
+
 MODULAR_STDOUT = "All matches were filtered out by modular filtering for argument: mysql-devel\n"
 MODULAR_STDERR = "Error: All matches for argument: mysql-devel were filtered out by modular filtering\n"
 
@@ -986,6 +1032,43 @@ describe "dnf/yum check mode - an unresolvable spec fails like the real install 
       result["rc"].as_i.must_equal(0)
       calls = File.exists?(log) ? File.read(log) : ""
       calls.includes?("--assumeno").must_equal(true)
+    end
+  end
+end
+
+describe "dnf failed-install results carry the resolved transaction (issue 1020)" do
+  serial!
+
+  it "reports the replayed transaction entries in the fatal results (dnf)" do
+    with_failing_dnf_shim_and_probe(MISSING_PKG_STDOUT, MISSING_PKG_STDERR) do
+      result = PluginSpecHelper.run("dnf",
+        {"name" => "redhat-lsb-core", "state" => "present"},
+        vars: {"ansible_pkg_mgr" => "dnf"})
+
+      result["failed"].as_bool.must_equal(true)
+      result["changed"].as_bool.must_equal(false)
+      result["msg"].as_s.must_equal("Failed to install some of the specified packages")
+      result["failures"].as_a.map(&.as_s).must_equal(["No package redhat-lsb-core available."])
+      result["results"].as_a.map(&.as_s).must_equal(PROBE_RESULTS)
+      result["rc"].as_i.must_equal(1)
+      result.as_h.keys.first(5).must_equal(["msg", "failures", "results", "rc", "failed"])
+    end
+  end
+
+  it "reports the replayed transaction entries in the fatal results (package: state latest)" do
+    # The round's own shape: archf.packages' `package: name={{common_pkgs}}
+    # state=latest` (issue #1020).
+    with_failing_dnf_shim_and_probe(MISSING_PKG_STDOUT, MISSING_PKG_STDERR) do
+      result = PluginSpecHelper.run("package",
+        {"name" => "redhat-lsb-core", "state" => "latest", "use" => "dnf"})
+
+      result["failed"].as_bool.must_equal(true)
+      result["changed"].as_bool.must_equal(false)
+      result["msg"].as_s.must_equal("Failed to install some of the specified packages")
+      result["failures"].as_a.map(&.as_s).must_equal(["No package redhat-lsb-core available."])
+      result["results"].as_a.map(&.as_s).must_equal(PROBE_RESULTS)
+      result["rc"].as_i.must_equal(1)
+      result.as_h.keys.first(5).must_equal(["msg", "failures", "results", "rc", "failed"])
     end
   end
 end
