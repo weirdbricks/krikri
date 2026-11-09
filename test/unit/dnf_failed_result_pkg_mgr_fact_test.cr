@@ -2,18 +2,23 @@ require "../minitest_helper"
 require "json"
 require "../../src/krikri/plugin_helpers/rpm_package"
 
-# Issue #894 (split from #889): on a fact-less play (gather_facts: false) the
-# dnf action's on-demand pkg_mgr fetch used to glue
-# `ansible_facts: {pkg_mgr: ...}` onto EVERY result, failures included. Real
-# ansible's failed module results never carry that fact: the module's own
-# failure payload - the interpreter-discovery fact on the first module
-# execution, nothing once discovery has already run - replaces whatever the
-# action attached (live-verified vs ansible-core 2.15.13 on Rocky 9, podman
-# SSH pair: the failed "Unsupported parameters" result shows
-# {"discovered_interpreter_python": "/usr/bin/python3"} or no ansible_facts
-# key at all, never pkg_mgr). The backend-resolution tuple failure is
-# different - real's ACTION-level fatal does carry the fact there (#768) -
-# but it builds its own ansible_facts and never reaches this path.
+# Issue #894/#1063 (both split from #889): on a fact-less play
+# (gather_facts: false) the dnf action's on-demand pkg_mgr fetch puts
+# `ansible_facts: {pkg_mgr: ...}` on the result - failures included. Real
+# sets that key BEFORE running the backend module, and
+# `result.update(module_result)` only replaces it when the module payload
+# ships an `ansible_facts` key of its own: the interpreter-discovery fact
+# on the host's very first module execution (which REPLACES the action's -
+# #894's captured shape), or nothing once the interpreter and pkg_mgr are
+# already known (no fetch runs then and no fact appears at all - #894's
+# other captured shape). #894 read those as "failed results never carry
+# pkg_mgr" and dropped the fact from failures; issue #1063's 2.21.5
+# capture (live-re-verified vs 2.21.6 on AL2023, podman SSH pair) shows
+# the fetch + no-discovery case carries {"pkg_mgr": "dnf"} on the FAILED
+# "Failed to install some of the specified packages" result exactly as on
+# success. The backend-resolution tuple failure is different - real's
+# ACTION-level fatal carries the fact there (#768) - but it builds its own
+# ansible_facts, which the key check exempts.
 #
 # The harness stubs the pkg_mgr fact as fetched-on-demand (from_vars false),
 # which a vars-pinned PluginSpecHelper.run cannot do: a pinned fact is
@@ -51,14 +56,36 @@ describe "dnf: fetched pkg_mgr fact on the result (issue 894)" do
     out.key_order.try(&.first?).must_equal("ansible_facts")
   end
 
-  it "does not attach the fetched pkg_mgr fact to a failed result" do
+  it "attaches the fetched pkg_mgr fact to a failed result with no facts of its own" do
     failed = Krikri::PluginResult.new(
       changed: false,
       failed: true,
       msg: "Unsupported parameters for (ansible.legacy.dnf) module: bgufix."
     )
     out = FinalizeResultHarness.new.finalize_result(failed)
-    out.extra.has_key?("ansible_facts").must_equal(false)
+    out.extra["ansible_facts"].as_h["pkg_mgr"].as_s.must_equal("dnf")
+  end
+
+  # Issue #1063: the "Failed to install some of the specified packages"
+  # failure (missing spec in a name list) carries the fetched fact in real
+  # 2.21.5/2.21.6 alongside its failures/results - krikri's failed result
+  # kept them but dropped the fact.
+  it "carries the fetched pkg_mgr fact on a failed install with failures and results (issue 1063)" do
+    failed = Krikri::PluginResult.new(
+      changed: false,
+      failed: true,
+      msg: "Failed to install some of the specified packages",
+      include_empty_msg: true,
+      failures: ["No package no-such-package-xyz available."],
+      results: ["Installed: tree-1.8.0-6.amzn2023.0.2.x86_64"],
+      rc: 1,
+      key_order: Krikri::PluginHelpers::RpmPackage::DNF_FAILURE_ORDER
+    )
+    out = FinalizeResultHarness.new.finalize_result(failed)
+    out.extra["ansible_facts"].as_h["pkg_mgr"].as_s.must_equal("dnf")
+    out.extra["failures"].as_a.map(&.as_s).must_equal(["No package no-such-package-xyz available."])
+    out.extra["results"].as_a.map(&.as_s).must_equal(["Installed: tree-1.8.0-6.amzn2023.0.2.x86_64"])
+    out.key_order.try(&.first?).must_equal("ansible_facts")
   end
 
   it "leaves a failed result's own ansible_facts untouched" do
