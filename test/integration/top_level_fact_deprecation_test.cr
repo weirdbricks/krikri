@@ -177,6 +177,103 @@ describe "INJECT_FACTS_AS_VARS deprecation" do
     stderr.scan(/DEPRECATION WARNING\]: #{Regex.escape(FACT_DEPRECATION_TEXT)}/).size.must_equal(1)
   end
 
+  it "attributes a nested value's leaf read to the leaf's own declaration" do
+    # Issue #1030, Turgon37.bind: `bind__zones_entry_default['SOA']['data']
+    # ['serial']`'s stored leaf is `{{ ansible_date_time.year~... }}` and a
+    # task param's subscript chain reads it - the param's own text names no
+    # fact, so real tags the warning with the nested LEAF's declaring
+    # position, the opening quote of the `serial:` scalar (live-verified
+    # against 2.21.6: line 8, column 19 below), not the `bind__zones_
+    # entry_default:` key line.
+    stdout, stderr, dir = run_files({"play.yml" => <<-PLAYBOOK})
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        vars:
+          bind__zones_entry_default:
+            SOA:
+              data:
+                serial: "{{
+                  ansible_date_time.year }}"
+        tasks:
+          - name: read the nested serial
+            set_fact:
+              _bind__zone_serial: "{{ bind__zones_entry_default['SOA']['data']['serial'] }}"
+      PLAYBOOK
+
+    stdout.must_include("TASK [read the nested serial]")
+    stderr.must_include("[DEPRECATION WARNING]: #{FACT_DEPRECATION_TEXT}\n")
+    stderr.must_include("Origin: #{File.join(dir, "play.yml")}:8:19\n")
+    stderr.must_include("6       SOA:\n")
+    stderr.must_include("8           serial: \"{{\n")
+    stderr.must_include("^ column 19")
+    stderr.scan(/DEPRECATION WARNING\]: #{Regex.escape(FACT_DEPRECATION_TEXT)}/).size.must_equal(1)
+  end
+
+  it "attributes a template file's nested-leaf read to the leaf's declaration" do
+    # The issue #1030 round's second operation: the zone template reads the
+    # same nested serial leaf from a .j2 file, and real still pins the
+    # warning at the leaf's declaration, not at the template file
+    # (live-verified against 2.21.6).
+    stdout, stderr, dir = run_files({
+      "play.yml" => <<-PLAYBOOK,
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        vars:
+          bind__zones_entry_default:
+            SOA:
+              data:
+                serial: "{{
+                  ansible_date_time.year }}"
+        tasks:
+          - name: render the serial into a file
+            template:
+              src: t.j2
+              dest: out.txt
+      PLAYBOOK
+      "templates/t.j2" => "serial={{ bind__zones_entry_default['SOA']['data']['serial'] }}\n",
+    })
+
+    stdout.must_include("TASK [render the serial into a file]")
+    stderr.must_include("Origin: #{File.join(dir, "play.yml")}:8:19\n")
+    stderr.wont_include("Origin: #{File.join(dir, "templates", "t.j2")}")
+    stderr.scan(/DEPRECATION WARNING\]: #{Regex.escape(FACT_DEPRECATION_TEXT)}/).size.must_equal(1)
+  end
+
+  it "prints one block when a param and a template file read the same leaf" do
+    # The issue #1030 round's exact flow: the set_fact param reads the
+    # nested leaf, then the zone template reads it again - real prints the
+    # block ONCE (the display dedups the whole formatted message), at the
+    # leaf's declaration.
+    _stdout, stderr, dir = run_files({
+      "play.yml" => <<-PLAYBOOK,
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        vars:
+          bind__zones_entry_default:
+            SOA:
+              data:
+                serial: "{{
+                  ansible_date_time.year }}"
+        tasks:
+          - name: read the nested serial
+            set_fact:
+              _bind__zone_serial: "{{ bind__zones_entry_default['SOA']['data']['serial'] }}"
+          - name: render the serial into a file
+            template:
+              src: t.j2
+              dest: out.txt
+      PLAYBOOK
+      "templates/t.j2" => "serial={{ bind__zones_entry_default['SOA']['data']['serial'] }}\n",
+    })
+
+    stderr.scan(/DEPRECATION WARNING\]: #{Regex.escape(FACT_DEPRECATION_TEXT)}/).size.must_equal(1)
+    stderr.must_include("Origin: #{File.join(dir, "play.yml")}:8:19\n")
+    stderr.scan(":8:19\n").size.must_equal(1)
+  end
+
   it "attributes a role default's fact read to the defaults file, not the task" do
     # The shape issue #961 was filed for, reproduced from
     # adzumatokaku.docker_role: a role default naming ansible_distribution,

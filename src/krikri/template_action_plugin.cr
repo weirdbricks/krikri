@@ -664,14 +664,27 @@ module Krikri
     # unrendered template text naming a gathered fact's top-level alias -
     # the warning a template file's READ of *name* draws, attributed to the
     # value's defining site rather than to the file (see the caller; issue
-    # #961). nil otherwise: no such value, a value with no template in it
-    # (nothing re-renders, so no fact is read), or a defining site the
-    # executor cannot place.
+    # #961). A container value whose nested leaf names the fact points at
+    # the LEAF's own declaration instead (real tags every stored value,
+    # nested scalars included - issue #1030, Turgon37.bind's
+    # `bind__zones_entry_default` whose `SOA.data.serial` leaf is the
+    # `{{ ansible_date_time.year~... }}` real Origin'd at defaults/main
+    # .yml:219:15). nil otherwise: no such value, a value with no template
+    # in it (nothing re-renders, so no fact is read), or a defining site
+    # the executor cannot place.
     private def re_rendered_var_fact_origin(name : String) : String?
-      return nil unless (raw = @vars[name]?.try(&.raw)).is_a?(String)
-      return nil unless raw.includes?("{{") || raw.includes?("{%")
-      return nil unless raw.scan(/ansible_[A-Za-z0-9_]+/).any? { |match| VarSubstitutor.top_level_fact_name?(match[0], @vars) }
-      VarSubstitutor.published_var_origin(@vars["inventory_hostname"]?.try(&.as_s?), name)
+      value = @vars[name]? || return nil
+      host_name = @vars["inventory_hostname"]?.try(&.as_s?)
+      case raw = value.raw
+      when String
+        return nil unless raw.includes?("{{") || raw.includes?("{%")
+        return nil unless raw.scan(/ansible_[A-Za-z0-9_]+/).any? { |match| VarSubstitutor.top_level_fact_name?(match[0], @vars) }
+        VarSubstitutor.published_var_origin(host_name, name)
+      when Hash, Array
+        components = VarSubstitutor.fact_leaf_components(value, @vars)
+        return nil unless components
+        VarSubstitutor.published_var_origin(host_name, name, components)
+      end
     end
 
     # Whether the parsed template contains a direct read of a name the

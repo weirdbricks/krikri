@@ -562,7 +562,7 @@ module Krikri
         # probe would otherwise leave the fact read attributed to the
         # template that merely read the variable.
         base_name = name.split(/[\.\[]/, 2)[0]
-        VarSubstitutor.push_preparing_var(substitutor.host_name, base_name, raw_value.raw.as?(String))
+        VarSubstitutor.push_preparing_var(substitutor.host_name, base_name, raw_value.raw.as?(String), raw_value)
         begin
           # A variable whose own stored value is `{{ }}` text bottoming out
           # at a name set nowhere (`phpmyadmin_mysql_password: "{{
@@ -853,7 +853,11 @@ module Krikri
         # container recursion), while every strict whole-structure caller
         # keeps the raise.
         begin
-          render_leaf_value(raw, value, substitutor)
+          # A nested leaf's own render is the value real templates at the
+          # moment a fact inside it is read - registered so the
+          # INJECT_FACTS_AS_VARS deprecation points at the leaf's own
+          # declaration (issue #1030).
+          VarSubstitutor.with_preparing_leaf(raw) { render_leaf_value(raw, value, substitutor) }
         rescue e : Krikri::UndefinedVariableError
           # The defer_unresolved carve-out (see the cheat-sheet comment on
           # #rerender_nested_templates below): out of a strict render that

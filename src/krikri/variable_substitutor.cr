@@ -2149,7 +2149,21 @@ module Krikri
     def self.fact_read_origin(name : String) : String?
       if stack = @@preparing_vars[Fiber.current]?
         stack.reverse_each do |preparing|
-          next unless preparing.text.try(&.includes?(name))
+          text = preparing.text
+          next unless text && text.includes?(name)
+          if preparing.leaf
+            # A nested leaf of a container value: real tags EVERY stored
+            # value with its own defining position, nested leaves
+            # included, so the warning points at the leaf's own
+            # declaration - the opening quote of the `serial: "{{ ... }}"`
+            # scalar, not the `bind__zones_entry_default:` key line
+            # (issue #1030, Turgon37.bind; live-verified against 2.21.6).
+            # An ambiguous or otherwise unplaceable leaf stays silent the
+            # way an unplaceable whole value does - never mislabel.
+            components = leaf_components(preparing.container, text)
+            return nil unless components
+            return published_var_origin(preparing.host_name, preparing.name, components)
+          end
           # A value whose own defining site krikri cannot place stays
           # silent: real points at the value, so the site that merely used
           # the variable would be a mis-attribution.
@@ -2172,12 +2186,16 @@ module Krikri
     # span's leading variable, the engine's per-name preparation) and
     # popped in an ensure. The innermost entry is the value real is
     # templating at the moment a fact inside it is read, which is the
-    # Origin its deprecation carries.
-    record PreparingVar, host_name : String?, name : String, text : String?
+    # Origin its deprecation carries. A CONTAINER entry (text nil) carries
+    # the whole value in *container* so the nested-leaf renders inside it
+    # can register themselves (see #with_preparing_leaf); a *leaf* entry is
+    # one of those renders, its *container* still the base variable's whole
+    # value, its *text* the leaf's own stored template.
+    record PreparingVar, host_name : String?, name : String, text : String?, container : JSON::Any? = nil, leaf : Bool = false
     @@preparing_vars = {} of Fiber => Array(PreparingVar)
 
-    def self.push_preparing_var(host_name : String?, name : String, text : String?) : Nil
-      (@@preparing_vars[Fiber.current] ||= Array(PreparingVar).new).push(PreparingVar.new(host_name, name, text))
+    def self.push_preparing_var(host_name : String?, name : String, text : String?, container : JSON::Any? = nil) : Nil
+      (@@preparing_vars[Fiber.current] ||= Array(PreparingVar).new).push(PreparingVar.new(host_name, name, text, container))
     end
 
     def self.pop_preparing_var : Nil
@@ -2187,22 +2205,101 @@ module Krikri
       @@preparing_vars.delete(fiber) if stack.empty?
     end
 
+    # Runs *block* with *text* registered as the nested leaf being
+    # re-rendered inside the container at the top of the preparing stack,
+    # so a top-level fact read inside it is attributed to the LEAF's own
+    # declaration (see #fact_read_origin). No-op outside a container's
+    # preparation (a top-level value's own text entry already carries the
+    # attribution), and gated on the `ansible_` prefix - only the
+    # top-level fact read deprecation consumes these entries, so the hot
+    # nested-leaf walk stays free of stack traffic for the 99% of leaves
+    # that can never read one.
+    def self.with_preparing_leaf(text : String, & : -> T) : T forall T
+      top = @@preparing_vars[Fiber.current]?.try(&.last?)
+      return yield unless top && top.text.nil? && top.container && !top.name.empty?
+      return yield unless text.includes?("ansible_")
+      (@@preparing_vars[Fiber.current] ||= Array(PreparingVar).new).push(PreparingVar.new(top.host_name, top.name, text, top.container, true))
+      begin
+        yield
+      ensure
+        pop_preparing_var
+      end
+    end
+
+    # The key/index path of the unique leaf inside *container* whose
+    # stored text is exactly *text* - which nested value the fiber is
+    # re-rendering right now. nil when no leaf (or more than one) holds
+    # that exact text: real's Origin is the REACHED leaf's own declaration,
+    # and a duplicate text is ambiguous between two declarations, so the
+    # read stays silent rather than mislabel one of them.
+    def self.leaf_components(container : JSON::Any?, text : String) : Array(String)?
+      found = [] of Array(String)
+      collect_leaf_components(container, text, [] of String, found)
+      found.size == 1 ? found[0] : nil
+    end
+
+    # The same path for the unique leaf whose stored template text NAMES
+    # one of the injected top-level facts - the static template-file scan's
+    # shape (TemplateActionPlugin#re_rendered_var_fact_origin), which
+    # knows the read name but not which leaf the render touched. nil when
+    # no leaf (or more than one) names a fact: several declarations are
+    # ambiguous, so the read stays silent rather than mislabel one.
+    def self.fact_leaf_components(container : JSON::Any?, vars : Hash(String, JSON::Any)) : Array(String)?
+      found = [] of Array(String)
+      collect_fact_leaf_components(container, vars, [] of String, found)
+      found.size == 1 ? found[0] : nil
+    end
+
+    private def self.collect_leaf_components(value : JSON::Any?, text : String, path : Array(String), found : Array(Array(String))) : Nil
+      case raw = value.try(&.raw)
+      when Array
+        raw.each_with_index do |item, index|
+          collect_leaf_components(item, text, path + [index.to_s], found)
+        end
+      when Hash
+        raw.each do |key, item|
+          collect_leaf_components(item, text, path + [key], found)
+        end
+      when String
+        found << path if raw == text
+      end
+    end
+
+    private def self.collect_fact_leaf_components(value : JSON::Any?, vars : Hash(String, JSON::Any), path : Array(String), found : Array(Array(String))) : Nil
+      case raw = value.try(&.raw)
+      when Array
+        raw.each_with_index do |item, index|
+          collect_fact_leaf_components(item, vars, path + [index.to_s], found)
+        end
+      when Hash
+        raw.each do |key, item|
+          collect_fact_leaf_components(item, vars, path + [key], found)
+        end
+      when String
+        return unless raw.includes?("{{") || raw.includes?("{%")
+        found << path if raw.scan(/ansible_[A-Za-z0-9_]+/).any? { |match| top_level_fact_name?(match[0], vars) }
+      end
+    end
+
     # Per-host resolver from a variable name to its defining Origin block,
     # published by TaskExecutor#build_vars_context (see
     # #register_var_origin_lookup): the task executor owns the layer
     # precedence, this module only needs the answer for the value being
-    # re-rendered.
-    @@var_origin_lookups = {} of String => (String -> String?)
+    # re-rendered. The second argument is the key/index path of a NESTED
+    # leaf inside that variable (empty for the whole value), whose own
+    # declaration is what ansible-core tags - see #leaf_components.
+    @@var_origin_lookups = {} of String => (String, Array(String) -> String?)
 
-    def self.register_var_origin_lookup(host_name : String, &block : String -> String?) : Nil
+    def self.register_var_origin_lookup(host_name : String, &block : String, Array(String) -> String?) : Nil
       @@var_origin_lookups[host_name] = block
     end
 
-    # The defining Origin block of *name*'s own stored value for *host* (see
+    # The defining Origin block of *name*'s own stored value - or of the
+    # nested leaf at *leaf* below it - for *host* (see
     # #register_var_origin_lookup), or nil when the executor cannot place it.
-    def self.published_var_origin(host_name : String?, name : String) : String?
+    def self.published_var_origin(host_name : String?, name : String, leaf : Array(String) = [] of String) : String?
       return nil unless host_name
-      @@var_origin_lookups[host_name]?.try(&.call(name))
+      @@var_origin_lookups[host_name]?.try(&.call(name, leaf))
     end
 
     # Whether the template being rendered by the CURRENT fiber site names
@@ -2882,13 +2979,24 @@ module Krikri
     # real ansible-core is templating at that moment - or nil for anything
     # else: not a leading name, a plain value, a resolved/unsafe value real
     # never re-renders (see #re_template_from_variable?), or a magic name.
+    # A container counts too: the span's walk re-renders its nested template
+    # leaves on the way to the access (issue #1030's `zed['SOA']['data']
+    # ['serial']`), and the leaf that actually renders registers itself (see
+    # VarSubstitutor.with_preparing_leaf).
     private def re_rendered_span_root(span : String) : String?
       root = span.lstrip[/\A[A-Za-z_][A-Za-z0-9_]*/]?
       return nil unless root
       return nil if NON_VAR_ROOT_NAMES.includes?(root)
       raw = @vars[root]?.try(&.raw)
-      return nil unless raw.is_a?(String) && (raw.includes?("{{") || raw.includes?("{%") || raw.includes?("{#"))
-      return nil if UnsafeValues.unsafe_text?(raw)
+      case raw
+      when String
+        return nil unless raw.includes?("{{") || raw.includes?("{%") || raw.includes?("{#")
+        return nil if UnsafeValues.unsafe_text?(raw)
+      when Hash, Array
+        nil
+      else
+        return nil
+      end
       return nil if VarSubstitutor.resolved_var_name?(@host_name, root)
       root
     end
@@ -2899,7 +3007,7 @@ module Krikri
     private def with_re_rendered_value(span : String, & : -> T) : T forall T
       root = re_rendered_span_root(span)
       return yield unless root
-      self.class.push_preparing_var(@host_name, root, @vars[root].raw.as?(String))
+      self.class.push_preparing_var(@host_name, root, @vars[root].raw.as?(String), @vars[root])
       begin
         yield
       ensure

@@ -397,7 +397,12 @@ module Krikri
         # ansible-core fails the task with "Recursive loop detected
         # in template" instead.
         Rerender.with_depth_guard do
-          rerender_if_templated_inner(raw, render_vars)
+          # This render is the value real templates at the moment a fact
+          # inside it is read - registered so the INJECT_FACTS_AS_VARS
+          # deprecation points at the nested leaf's own declaration when
+          # the value was reached through a container's subscript chain
+          # (issue #1030).
+          VarSubstitutor.with_preparing_leaf(raw) { rerender_if_templated_inner(raw, render_vars) }
         end
       end
 
