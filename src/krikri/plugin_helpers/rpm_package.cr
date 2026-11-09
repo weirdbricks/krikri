@@ -1080,12 +1080,44 @@ module Krikri
         classified = classify_install_packages(names, update_only)
         to_install = classified[:to_install]
         to_update = classified[:to_update]
+        pending = to_install + to_update
+
+        # Issue #1019 (aaditya2801.k8s_master): a request whose plain-name
+        # packages are ALL already installed is not an early ok. Ansible's
+        # dnf module builds its dnf Base and fill_sack()s every enabled
+        # repo before it resolves anything, so a repo whose repomd.xml
+        # cannot be downloaded fails the task with libdnf's bare metadata
+        # msg even though there is no transaction left to run - in --check
+        # too. Live-verified against ansible-core 2.21 on Rocky 10:
+        # `package: {name: iproute-tc, state: present}` with the role's
+        # unreachable kubernetes repo fails under ansible-playbook (also
+        # with a pre-existing repo file and --check) while this engine
+        # said ok without ever invoking dnf. The probe below is that
+        # metadata load and resolution and nothing more. dnf.py's present
+        # path marks NOTHING for a spec that is already installed - it
+        # never upgrades it - so --nobest pins the empty resolution it
+        # arrives at (plain `dnf install --best` of an installed-but-
+        # outdated name upgrades it, verified live, which would mutate
+        # the host behind an unchanged result), and --setopt=tsflags=test
+        # keeps even an unexpectedly non-empty resolution (a glob or a
+        # version constraint the probe's installed answer doesn't cover)
+        # from ever touching the host. Names counted as installed only
+        # because update_only skipped them are excluded (dnf WOULD install
+        # those), as are URL/file specs - the classification above already
+        # routes those into the batch (and has no repo-metadata answer to
+        # model in check mode).
+        if pending.empty?
+          specs = classified[:already_installed].select { |pkg| classified[:states][pkg]? }
+          unless specs.empty?
+            failure = run_install_batch(specs, "#{build_dnf_options(force_nobest: true)} --setopt=tsflags=test")[:failure]
+            return failure if failure
+          end
+          return transaction_result(false)
+        end
 
         # --check: report what the transaction WOULD have done without
         # running it (Ansible's module resolves the goal, then stops).
         if check_mode?
-          pending = to_install + to_update
-          return transaction_result(false) if pending.empty?
           return check_mode_transaction_result(true, candidate_nevras(pending, classified[:states]).map { |nevra| "Installed: #{nevra}" })
         end
 

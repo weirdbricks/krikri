@@ -545,8 +545,15 @@ describe "dnf plugin - same-name repo package vs a Provides: match (issue 280)" 
       result["changed"].as_bool.must_equal(false)
       result["msg"].as_s.must_equal("Nothing to do")
       # The probe finds no repo row, so the name stays 'installed' via
-      # its Provides: and no install transaction may run.
-      File.read_lines(log).must_equal(["-q list --available php-json"])
+      # its Provides: and no install transaction may run. Issue #1019:
+      # the no-op still runs dnf's own metadata load before it can know
+      # the transaction is empty (ansible's fill_sack() happens before
+      # any resolution) - a never-transacting probe (--nobest,
+      # --setopt=tsflags=test), not an install.
+      File.read_lines(log).must_equal([
+        "-q list --available php-json",
+        "install -y --setopt=localpkg_gpgcheck=1 --nobest --setopt=tsflags=test php-json",
+      ])
     end
   end
 
