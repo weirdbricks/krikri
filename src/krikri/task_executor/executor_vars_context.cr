@@ -616,6 +616,16 @@ module Krikri
       @set_facts[host.name]?.try(&.each_value { |value| UnsafeValues.mark_value(value) })
       @facts[host.name].each_value { |value| UnsafeValues.mark_value(value) }
       VarSubstitutor.set_resolved_var_names(host.name, resolved_var_names_for(host, registered, vars_context))
+
+      # Publish where each name's own stored value is defined, for the
+      # INJECT_FACTS_AS_VARS read deprecation of a fact reached only
+      # through another variable's value - ansible-core points that warning
+      # at the DEFINING site of the value that names the fact (see
+      # VarSubstitutor#fact_read_origin). Registered BEFORE the task-vars
+      # render below: that render reads facts through variable values and
+      # their declarations must resolve against THIS task, not whatever
+      # task the previous registration names.
+      VarSubstitutor.register_var_origin_lookup(host.name) { |name, leaf| re_rendered_value_origin_block(task, host, name, leaf) }
       render_task_vars(task, vars_context, host.name, loop_lenient: loop_lenient_vars)
 
       # connection: local (or any other connection: override) on this
@@ -685,13 +695,6 @@ module Krikri
       # - the `ansible_facts` dict spelling of the same facts
       # - the `ansible_facts` dict spelling of the same facts
       VarSubstitutor.set_resolved_var_names(host.name, resolved_var_names_for(host, registered, vars_context))
-
-      # Publish where each name's own stored value is defined, for the
-      # INJECT_FACTS_AS_VARS read deprecation of a fact reached only
-      # through another variable's value - ansible-core points that warning
-      # at the DEFINING site of the value that names the fact (see
-      # VarSubstitutor#fact_read_origin).
-      VarSubstitutor.register_var_origin_lookup(host.name) { |name, leaf| re_rendered_value_origin_block(task, host, name, leaf) }
 
       # Ansible's `vars` magic variable: a dict of every variable in
       # scope, most often used for a membership test rather than to read
@@ -1422,7 +1425,22 @@ module Krikri
         # preserves the same type-preserving bare-mustache path the
         # top-level case already uses.
         begin
-          vars_context[key] = render_task_var_value(raw, vars_context, host_name)
+          # The value renders HERE, eagerly, but ansible-core templates it
+          # lazily at the render that consumes it - so a fact read inside
+          # is attributed to this value's own declaration (the preparing
+          # entry, see VarSubstitutor#fact_read_origin) yet displayed only
+          # once the consuming render resolves the name, under that
+          # render's operation identity (VarSubstitutor.
+          # capture_var_deprecations - issue #1022, dubzland.nginx's
+          # `params` value read in a `first_found` lookup).
+          vars_context[key] = VarSubstitutor.capture_var_deprecations(key) do
+            VarSubstitutor.push_preparing_var(host_name, key, raw.raw.as?(String), raw)
+            begin
+              render_task_var_value(raw, vars_context, host_name)
+            ensure
+              VarSubstitutor.pop_preparing_var
+            end
+          end
         rescue e : VariableSubstitutor::FilterEngine::UnknownFilterError
           unless loop_lenient
             # An unknown filter name is NOT a legitimate raise-to-absent
@@ -1506,14 +1524,21 @@ module Krikri
       when String
         return value unless raw.includes?("{{")
 
-        if native = evaluate_bare_mustache_preserving_type(raw, vars_context)
-          return native
+        # A nested leaf of a container value registers itself as the value
+        # being re-rendered (see VarSubstitutor.with_preparing_leaf), so a
+        # fact read inside it lands at the LEAF's own declaration - issue
+        # #1022's `params.files[0]` pointing at the list item, not the
+        # `params:` key.
+        return VarSubstitutor.with_preparing_leaf(raw) do
+          if native = evaluate_bare_mustache_preserving_type(raw, vars_context)
+            native
+          else
+            substitutor = VarSubstitutor.new(vars: vars_context, host_name: host_name)
+            rendered = substitutor.substitute(raw)
+            parsed = (rendered.starts_with?('{') || rendered.starts_with?('[')) ? (JSON.parse(rendered) rescue nil) : nil
+            parsed || JSON::Any.new(rendered)
+          end
         end
-
-        substitutor = VarSubstitutor.new(vars: vars_context, host_name: host_name)
-        rendered = substitutor.substitute(raw)
-        parsed = (rendered.starts_with?('{') || rendered.starts_with?('[')) ? (JSON.parse(rendered) rescue nil) : nil
-        parsed || JSON::Any.new(rendered)
       else
         value
       end
@@ -5948,8 +5973,20 @@ module Krikri
       # dash line (keys = dash indent + 2), a nameless fallback's anchor
       # already IS a key line.
       task_key_indent = anchor.strip.starts_with?("- ") ? anchor_indent + 2 : anchor_indent
-      ((name_idx + 1)...lines.size).each do |idx|
-        line = lines[idx]
+      # A NAMELESS task's mapping can open with the clause key ON its own
+      # dash line (`- when: ...`, dubzland.nginx's tasks/packages.yml:8):
+      # real pins the Origin at that line's value token, but the scan
+      # below walks the keys after the anchor line. The anchor's own key
+      # therefore reads as an ordinary key line first, with the `- `
+      # counted as two indent columns - the same width as two spaces, so
+      # every value column stays unchanged.
+      scan_anchor = if anchor.strip.starts_with?("- ")
+                      "#{anchor[0...anchor_indent]}  #{anchor[(anchor_indent + 2)..]}"
+                    else
+                      anchor
+                    end
+      ((name_idx)...lines.size).each do |idx|
+        line = idx == name_idx ? scan_anchor : lines[idx]
         stripped = line.strip
         # The scan runs "to the next task", and Ansible's own display
         # locates the conditional at the task's own keyword regardless
