@@ -910,6 +910,84 @@ describe "get_url plugin" do
     File.delete(dest) if dest && File.exists?(dest)
   end
 
+  it "reports ok under check_mode when the conditional HEAD is answered 304" do
+    # Issue #1039 (awasilyev.tomcat-container's "Install dumb init",
+    # round 29903302): real get_url's --check run sends HEAD with
+    # If-Modified-Since (method = 'HEAD' if module.check_mode else 'GET'),
+    # and a converged dest short-circuits on the server's 304 to
+    # changed: false ("ok"). krikri made no request at all in check mode
+    # and unconditionally reported changed: true. The 304 exit is shared
+    # with the non-check conditional GET - the same url_get branch in
+    # get_url.py either way. Live-verified against ansible-core 2.19.11
+    # on the round's own GitHub release URL.
+    dest = File.tempname("get-url-spec")
+    File.write(dest, FILE_CONTENT)
+    File.touch(dest, COND_TIME)
+
+    result = PluginSpecHelper.run("get_url", {"url" => "#{GET_URL_TEST_BASE}/conditional.txt", "dest" => dest, "_ansible_check_mode" => "true"})
+
+    result["changed"].as_bool.must_equal(false)
+    result["msg"].as_s.must_equal("HTTP Error 304: Not Modified")
+    result["status_code"].as_i.must_equal(304)
+    result["checksum_src"]?.must_be_nil
+    File.read(dest).must_equal(FILE_CONTENT)
+  ensure
+    File.delete(dest) if dest && File.exists?(dest)
+  end
+
+  it "compares against an empty source under check_mode: a converged dest still reports changed" do
+    # get_url.py's check-mode 200 exit compares sha1 of the staged HEAD
+    # body (always EMPTY) against sha1(dest) - Ansible's documented
+    # "the changed status will reflect comparison to an empty source
+    # file" / "will report incorrect changed status" - so a dest that
+    # already matches the URL's content reports changed: true with
+    # checksum_src = sha1 of empty whenever the server answers 200 rather
+    # than 304. That exit also carries no status_code/md5sum keys and
+    # drops the staged file (get_url.py's os.remove(tmpsrc)). Live-
+    # verified against ansible-core 2.19.11 (issue #1039, with the dest
+    # aged past the server's Last-Modified so If-Modified-Since cannot
+    # short-circuit).
+    dest = File.tempname("get-url-spec")
+    File.write(dest, FILE_CONTENT)
+
+    result = PluginSpecHelper.run("get_url", {"url" => "#{GET_URL_TEST_BASE}/file.txt", "dest" => dest, "_ansible_check_mode" => "true"})
+
+    result["changed"].as_bool.must_equal(true)
+    result["checksum_src"].as_s.must_equal(sha1_of(""))
+    result["checksum_dest"].as_s.must_equal(sha1_of(FILE_CONTENT))
+    result["msg"].as_s.must_equal("OK (#{FILE_CONTENT.bytesize} bytes)")
+    result["status_code"]?.must_be_nil
+    result["md5sum"]?.must_be_nil
+    File.read(dest).must_equal(FILE_CONTENT)
+    File.exists?(result["src"].as_s).must_equal(false)
+  ensure
+    File.delete(dest) if dest && File.exists?(dest)
+  end
+
+  it "compares real content under check_mode for a file:// source, whose handler ignores the HEAD method" do
+    # Live-verified against ansible-core 2.19.11: check mode does request
+    # method HEAD, but urllib's FileHandler serves the whole file
+    # regardless of method, so a file:// copy whose dest already matches
+    # reports ok (changed: false, checksum_src == checksum_dest == the
+    # real content's sha1) where an http(s) source compares against the
+    # empty HEAD body instead.
+    src = File.tempname("get-url-spec-src")
+    File.write(src, FILE_CONTENT)
+    dest = File.tempname("get-url-spec")
+    File.write(dest, FILE_CONTENT)
+
+    result = PluginSpecHelper.run("get_url", {"url" => "file://#{src}", "dest" => dest, "_ansible_check_mode" => "true"})
+
+    result["changed"].as_bool.must_equal(false)
+    result["checksum_src"].as_s.must_equal(sha1_of(FILE_CONTENT))
+    result["checksum_dest"].as_s.must_equal(sha1_of(FILE_CONTENT))
+    result["msg"].as_s.must_equal("OK (#{FILE_CONTENT.bytesize} bytes)")
+    File.read(dest).must_equal(FILE_CONTENT)
+  ensure
+    File.delete(src) if src && File.exists?(src)
+    File.delete(dest) if dest && File.exists?(dest)
+  end
+
   it "fails clearly on a 404" do
     dest = File.tempname("get-url-spec")
 
@@ -2168,6 +2246,31 @@ describe "get_url plugin" do
       File.exists?(dest).must_equal(false)
     ensure
       File.delete(dest) if dest && File.exists?(dest)
+    end
+
+    it "reports a directory dest as the directory itself, before any filename derivation" do
+      # Real's pre-request failures fail_json with the module's own dest
+      # param - the directory-dest filename is only derived after a
+      # request completes - so a directory dest is named as the DIRECTORY.
+      # Live-verified against ansible-core 2.19.11 (a garbage ciphers
+      # list over a directory dest reports "dest": "<dir>", state:
+      # directory). krikri used to name an up-front filename guess
+      # (<dir>/<url basename>) here - the same wrong shape the
+      # download-failure spec pins the other way for the request path.
+      parent = PluginSpecHelper.tmp_path("geturl-dirdest-#{Random::Secure.hex(4)}")
+      dest_dir = File.join(parent, "dl")
+      Dir.mkdir_p(dest_dir)
+
+      result = PluginSpecHelper.run("get_url", {
+        "url" => "#{GET_URL_TEST_BASE}/file.txt", "dest" => dest_dir,
+        "ciphers" => %(["fdpfji", "ahatju"]),
+      })
+
+      result["failed"].as_bool.must_equal(true)
+      result["dest"].as_s.must_equal(dest_dir)
+      result["state"].as_s.must_equal("directory")
+    ensure
+      FileUtils.rm_rf(parent) if parent
     end
 
     it "accepts a ciphers list that selects something" do
