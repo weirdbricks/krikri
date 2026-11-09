@@ -515,7 +515,7 @@ module Krikri
       ignore_errors = resolve_task_ignore_errors(task, host: host)
       ResultDisplay.display_result(host, result, @diff_mode, ignore_errors: ignore_errors, module_name: task.module_name, delegate_target: delegate_display_target(task, host), source_task: task)
       ResultDisplay.update_stats(@results[host.name], result, ignore_errors)
-      @halted_hosts.add(host.name) if !errors.empty? && !ignore_errors
+      book_failure_halt(host) if !errors.empty? && !ignore_errors
     end
 
     # The failure shape for a validate-args var-value templating failure
@@ -535,7 +535,7 @@ module Krikri
       ignore_errors = resolve_task_ignore_errors(task, host: host)
       ResultDisplay.display_result(host, result, @diff_mode, ignore_errors: ignore_errors, module_name: task.module_name, delegate_target: delegate_display_target(task, host), source_task: task)
       ResultDisplay.update_stats(@results[host.name], result, ignore_errors)
-      @halted_hosts.add(host.name) unless ignore_errors
+      book_failure_halt(host) unless ignore_errors
     end
 
     # Real's validate_argument_spec action plugin rejects a non-mapping
@@ -557,7 +557,7 @@ module Krikri
       ignore_errors = resolve_task_ignore_errors(task, host: host)
       ResultDisplay.display_result(host, result, @diff_mode, ignore_errors: ignore_errors, module_name: task.module_name, delegate_target: delegate_display_target(task, host), source_task: task)
       ResultDisplay.update_stats(@results[host.name], result, ignore_errors)
-      @halted_hosts.add(host.name) unless ignore_errors
+      book_failure_halt(host) unless ignore_errors
     end
 
     # The Python class name real 2.19.11's datatag layer reports for a
@@ -704,7 +704,7 @@ module Krikri
       ignore_errors = resolve_task_ignore_errors(task, host: host)
       ResultDisplay.display_result(host, result, @diff_mode, ignore_errors: ignore_errors, module_name: task.module_name, delegate_target: delegate_display_target(task, host), source_task: task)
       ResultDisplay.update_stats(@results[host.name], result, ignore_errors)
-      @halted_hosts.add(host.name) unless ignore_errors
+      book_failure_halt(host) unless ignore_errors
     end
 
     # The [ERROR] block real 2.19.11 prints before the fatal line when the
@@ -1672,7 +1672,7 @@ module Krikri
           "changed" => JSON::Any.new(false),
           "failed"  => JSON::Any.new(true),
         } of String => JSON::Any), ignore_errors)
-        @halted_hosts.add(host.name) unless ignore_errors
+        book_failure_halt(host) unless ignore_errors
         # Real's loop aggregation still reports All items skipped as a
         # task-level FATAL for a debug: task (its failed item results
         # stay "skipped" to the aggregation), and only for one - a

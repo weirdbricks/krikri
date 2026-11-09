@@ -249,6 +249,25 @@ module Krikri
     # current play still stops for them) but are excluded from
     # krikri-playbook.cr's cross-play carry-forward the same way.
     getter cleared_error_hosts : Set(String)
+    # Hosts halted by a task failure whose block still owed a rescue:/
+    # always: chain at that moment (see @block_chain_depth). Ansible
+    # books a failure into _tqm._failed_hosts - the population its
+    # max_fail_percentage: threshold is measured against - only when the
+    # failure leaves the host with nothing left to run
+    # (_process_pending_results: `is_failed and state.run_state ==
+    # COMPLETE`); a mid-chain failure lands the host in RESCUE/ALWAYS
+    # instead and is NEVER booked, so it must not count toward the
+    # threshold even after the block's end re-halts the host. Verified
+    # against ansible-core 2.21.6: a failing block task with more body
+    # tasks to come never trips max_fail_percentage: at all - the body's
+    # later tasks (on the healthy hosts), the always: section and all
+    # later tasks still run.
+    @chain_pending_failures : Set(String) = Set(String).new
+    # Nesting depth of block body/rescue sections that still owe a
+    # rescue:/always: chain. A failure booking a halt while this is > 0
+    # is recorded in @chain_pending_failures instead of counting toward
+    # max_fail_percentage: (see above).
+    @block_chain_depth : Int32 = 0
     # Hosts a `meta: end_role` ended the calling role for, keyed by the
     # role's own filesystem root (task.role_path - the identity two tasks
     # of the same role invocation share). Every remaining task of that

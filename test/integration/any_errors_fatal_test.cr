@@ -34,6 +34,80 @@ ensure
   FileUtils.rm_rf(dir) if dir && Dir.exists?(dir)
 end
 
+# Issue #1062's shape: a block whose body fails mid-way under
+# max_fail_percentage:. Ansible runs the body's later tasks (on the
+# healthy hosts), the always: section and the play's later tasks - a
+# failure that leaves a rescue:/always: chain running is never booked
+# into _tqm._failed_hosts, the population the threshold is measured
+# against. Expectations from an ansible-core 2.21.6 run.
+private def run_block_play(keywords : String) : {Int32, Array(String)}
+  dir = File.tempname("aef")
+  Dir.mkdir_p(dir)
+  File.write(File.join(dir, "inv.ini"),
+    "[g]\nh1 ansible_connection=local\nh2 ansible_connection=local\nh3 ansible_connection=local\n")
+  File.write(File.join(dir, "pb.yml"), <<-YAML)
+    - hosts: all
+      gather_facts: false
+    #{keywords}
+      tasks:
+        - block:
+            - name: fail on h2 only
+              ansible.builtin.command: /bin/false
+              when: inventory_hostname == 'h2'
+            - name: later
+              ansible.builtin.debug: {msg: "LATER-{{ inventory_hostname }}"}
+          always:
+            - name: always
+              ansible.builtin.debug: {msg: "ALWAYS-{{ inventory_hostname }}"}
+        - name: after
+          ansible.builtin.debug: {msg: "AFTER-{{ inventory_hostname }}"}
+    YAML
+
+  stdout_io = IO::Memory.new
+  status = Process.run(BINARY, ["-i", "inv.ini", "pb.yml"],
+    output: stdout_io, error: stdout_io, chdir: dir)
+  {status.exit_code, stdout_io.to_s.scan(/(?:LATER|ALWAYS|AFTER)-h\d/).map(&.[0]).sort!}
+ensure
+  FileUtils.rm_rf(dir) if dir && Dir.exists?(dir)
+end
+
+# Same block under a rescue:, which recovers the failed host so it runs
+# the play's later tasks too (ansible-core 2.21.6: RESCUE-h2, and
+# AFTER-h2 joins AFTER-h1/h3).
+private def run_block_rescue_play(keywords : String) : {Int32, Array(String)}
+  dir = File.tempname("aef")
+  Dir.mkdir_p(dir)
+  File.write(File.join(dir, "inv.ini"),
+    "[g]\nh1 ansible_connection=local\nh2 ansible_connection=local\nh3 ansible_connection=local\n")
+  File.write(File.join(dir, "pb.yml"), <<-YAML)
+    - hosts: all
+      gather_facts: false
+    #{keywords}
+      tasks:
+        - block:
+            - name: fail on h2 only
+              ansible.builtin.command: /bin/false
+              when: inventory_hostname == 'h2'
+            - name: later
+              ansible.builtin.debug: {msg: "LATER-{{ inventory_hostname }}"}
+          rescue:
+            - name: rescue
+              ansible.builtin.debug: {msg: "RESCUE-{{ inventory_hostname }}"}
+          always:
+            - name: always
+              ansible.builtin.debug: {msg: "ALWAYS-{{ inventory_hostname }}"}
+        - name: after
+          ansible.builtin.debug: {msg: "AFTER-{{ inventory_hostname }}"}
+    YAML
+
+  stdout_io = IO::Memory.new
+  status = Process.run(BINARY, ["-i", "inv.ini", "pb.yml"],
+    output: stdout_io, error: stdout_io, chdir: dir)
+  {status.exit_code, stdout_io.to_s.scan(/(?:LATER|ALWAYS|AFTER|RESCUE)-h\d/).map(&.[0]).sort!}
+ensure
+  FileUtils.rm_rf(dir) if dir && Dir.exists?(dir)
+end
+
 describe "any_errors_fatal:" do
   # One host failing stops the play for ALL of them - no later task runs
   # anywhere, including on the hosts that were fine.
@@ -65,6 +139,25 @@ describe "max_fail_percentage:" do
 
   it "aborts on any failure at 0" do
     run_play("  max_fail_percentage: 0")[1].empty?.must_equal(true)
+  end
+
+  # Issue #1062: a failure inside a block that still owes a rescue:/
+  # always: chain never counts toward the threshold (Ansible books only
+  # chain-complete failures into _tqm._failed_hosts), so not even 0%
+  # aborts - the body's later tasks, the always: section and the play's
+  # later tasks all still run.
+  it "keeps the block chain and later tasks running after a mid-block failure" do
+    code, seen = run_block_play("  max_fail_percentage: 0")
+    code.must_equal(2)
+    seen.must_equal(["AFTER-h1", "AFTER-h3", "ALWAYS-h1", "ALWAYS-h2", "ALWAYS-h3", "LATER-h1", "LATER-h3"])
+  end
+
+  # The block's end re-halts the host its chain failed on, but that halt
+  # keeps the original failure's classification - and a rescue: that
+  # succeeds hands the host back to the play entirely.
+  it "lets rescue: recover the failed host and keeps the play going" do
+    seen = run_block_rescue_play("  max_fail_percentage: 0")[1]
+    seen.must_equal(["AFTER-h1", "AFTER-h2", "AFTER-h3", "ALWAYS-h1", "ALWAYS-h2", "ALWAYS-h3", "LATER-h1", "LATER-h3", "RESCUE-h2"])
   end
 end
 

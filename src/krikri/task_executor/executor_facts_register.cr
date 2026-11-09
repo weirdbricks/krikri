@@ -199,7 +199,7 @@ module Krikri
           @results[host.name]["failed"] += 1
           # A failed implicit setup halts the host like any failed task -
           # ansible-playbook runs none of the play's tasks on it afterwards.
-          @halted_hosts.add(host.name)
+          book_failure_halt(host)
         end
       end
     end
