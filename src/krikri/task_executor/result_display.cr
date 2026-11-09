@@ -2643,6 +2643,20 @@ module Krikri
     end
 
     def self.display_diff_entry(diff : JSON::Any) : Nil
+      # Ansible's callback _get_diff prints one "diff skipped: ..." line
+      # per skip marker (dst_binary, src_binary, dst_larger, src_larger -
+      # in that order) BEFORE any content diff, and a side carrying a
+      # marker has no content to diff at all (live-verified vs 2.21.6:
+      # copying a binary file with --diff prints just the skip line and
+      # still copies - issue #1064).
+      puts "diff skipped: destination file appears to be binary" if diff["dst_binary"]?
+      puts "diff skipped: source file appears to be binary" if diff["src_binary"]?
+      if (larger = diff["dst_larger"]?.try(&.as_i64?))
+        puts "diff skipped: destination file size is greater than #{larger}"
+      end
+      if (larger = diff["src_larger"]?.try(&.as_i64?))
+        puts "diff skipped: source file size is greater than #{larger}"
+      end
       # Content diff (copy, template)
       if diff["before"]? && diff["after"]? && diff["before"].as_s? && diff["after"].as_s?
         display_content_diff(diff)

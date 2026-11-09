@@ -43,22 +43,57 @@ module Krikri
     # empty string) when the dest did not exist yet. The headers are bare;
     # the callback adds "before: "/"after: " when printing (live-verified
     # vs ansible-core 2.19.11 and 2.21.6).
+    #
+    # A side _get_diff_data deems unprintable carries a skip marker INSTEAD
+    # of its content, in the content's place (live-verified vs 2.21.6):
+    # dst_binary/src_binary when the bytes hold a NUL byte (the dest side
+    # peeks only its first 8192 bytes - file.py's execute_diff_peek - the
+    # source side scans them all), dst_larger/src_larger past
+    # MAX_FILE_SIZE_FOR_DIFF. The callback prints "diff skipped: ..." per
+    # marker and no content diff. Embedding a binary side's raw bytes
+    # instead - as this did - was never merely a display bug: the plugin
+    # wire is JSON and raw binary is not valid UTF-8, so the daemon could
+    # not parse the module result and the task died _connection_failure
+    # BEFORE the copy ran at all (issue #1064: an .rpm copied with --diff).
     private def copy_diff(before_content : String, after_content : String, dest : String, after_header : String) : JSON::Any
-      entry = if File.exists?(dest)
-                {
-                  "before_header" => JSON::Any.new(dest),
-                  "before"        => JSON::Any.new(before_content),
-                  "after_header"  => JSON::Any.new(after_header),
-                  "after"         => JSON::Any.new(after_content),
-                }
-              else
-                {
-                  "before"       => JSON::Any.new(""),
-                  "after_header" => JSON::Any.new(after_header),
-                  "after"        => JSON::Any.new(after_content),
-                }
-              end
+      entry = {} of String => JSON::Any
+      if File.exists?(dest)
+        if contains_nul?(before_content, DIFF_PEEK_BYTES)
+          entry["dst_binary"] = JSON::Any.new(1)
+        elsif before_content.bytesize > MAX_FILE_SIZE_FOR_DIFF
+          entry["dst_larger"] = JSON::Any.new(MAX_FILE_SIZE_FOR_DIFF)
+        else
+          entry["before_header"] = JSON::Any.new(dest)
+          entry["before"] = JSON::Any.new(before_content)
+        end
+      else
+        entry["before"] = JSON::Any.new("")
+      end
+
+      if after_content.bytesize > MAX_FILE_SIZE_FOR_DIFF
+        entry["src_larger"] = JSON::Any.new(MAX_FILE_SIZE_FOR_DIFF)
+      elsif contains_nul?(after_content)
+        entry["src_binary"] = JSON::Any.new(1)
+      else
+        entry["after_header"] = JSON::Any.new(after_header)
+        entry["after"] = JSON::Any.new(after_content)
+      end
+
       JSON::Any.new([JSON::Any.new(entry)])
+    end
+
+    # MAX_FILE_SIZE_FOR_DIFF - ansible's `max_diff_size` config default
+    # (base.yml) - the exact number _get_diff_data stores in the marker.
+    private MAX_FILE_SIZE_FOR_DIFF = 104448_i64
+    # execute_diff_peek's guess window for the dest side.
+    private DIFF_PEEK_BYTES = 8192
+
+    # Byte-level (not char-level) because the whole point is content that
+    # is not valid UTF-8; optionally limited to the head, like the peek.
+    private def contains_nul?(content : String, limit : Int32 = Int32::MAX) : Bool
+      bytes = content.to_slice
+      bytes = bytes[0, Math.min(limit, bytes.size)]
+      bytes.any? { |byte| byte.zero? }
     end
 
     private CHANGED_KEY_ORDER   = %w[diff dest src md5sum checksum changed backup_file uid gid owner group mode state size failed]
