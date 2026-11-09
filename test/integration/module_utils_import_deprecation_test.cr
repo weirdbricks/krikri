@@ -1,5 +1,6 @@
 require "../minitest_helper"
 require "file_utils"
+require "../../src/krikri/module_utils_deprecations"
 
 # The deprecated ansible.module_utils import warnings ansible-core 2.21
 # raises while a collection module's payload imports, for the modules this
@@ -73,6 +74,115 @@ describe "deprecated ansible.module_utils import warnings from native plugins" d
     result["failed"].as_bool.must_equal(true)
     result.as_h.has_key?("deprecations").must_equal(false)
     result.as_h.has_key?("_ansible_core_deprecations").must_equal(false)
+  end
+
+  it "carries no import deprecations for a module whose installed source migrated off _text (issue #1061)" do
+    # ansible.posix 2.2.x moved mount.py's to_bytes/to_native import to
+    # ansible.module_utils.common.text.converters, so real prints no
+    # deprecation line and registers no entry for the same task
+    # (issue #1061) - the installed payload decides, not one modeled
+    # release. The fixture shadows any machine-wide ansible.posix through
+    # the child's own ANSIBLE_COLLECTIONS_PATH, so this holds on every
+    # controller.
+    root = PluginSpecHelper.tmp_path("module-utils-migrated-fixture")
+    modules = File.join(root, "ansible_collections", "ansible", "posix", "plugins", "modules")
+    FileUtils.mkdir_p(modules)
+    File.write(File.join(modules, "mount.py"),
+      "from ansible.module_utils.common.text.converters import to_bytes, to_native\n")
+
+    result = PluginSpecHelper.run("mount", {} of String => String, env: {"ANSIBLE_COLLECTIONS_PATH" => root})
+
+    result["failed"].as_bool.must_equal(true)
+    result["deprecations"]?.must_be_nil
+    result["_ansible_core_deprecations"]?.must_be_nil
+  end
+end
+
+describe "module_utils import deprecations follow the installed payload source" do
+  # Fixture-scoped: ANSIBLE_COLLECTIONS_PATH is re-pointed at a scratch
+  # ansible.posix tree (ENV is process-wide) and CollectionIndex rescans,
+  # so the assertions pin the payload shape instead of inheriting whatever
+  # this machine has installed - exclusive! rather than serial! alone for
+  # the same reason as collection_index_test.cr: every in-process parse
+  # reads that memoized scan.
+  exclusive!
+
+  @fixture_root : String = ""
+  @saved_collections_path : String?
+
+  before_each do
+    @fixture_root = PluginSpecHelper.tmp_path("module-utils-deprecation-fixture")
+    FileUtils.mkdir_p(File.join(@fixture_root, "ansible_collections", "ansible", "posix", "plugins", "modules"))
+    FileUtils.mkdir_p(File.join(@fixture_root, "ansible_collections", "ansible", "posix", "plugins", "action"))
+    @saved_collections_path = ENV["ANSIBLE_COLLECTIONS_PATH"]?
+    ENV["ANSIBLE_COLLECTIONS_PATH"] = @fixture_root
+    Krikri::CollectionIndex.reset!
+  end
+
+  after_each do
+    if saved = @saved_collections_path
+      ENV["ANSIBLE_COLLECTIONS_PATH"] = saved
+    else
+      ENV.delete("ANSIBLE_COLLECTIONS_PATH")
+    end
+    Krikri::CollectionIndex.reset!
+  end
+
+  it "derives the pair from an installed module source that still imports from _text" do
+    # ansible.posix 2.1.x's mount.py shape, parenthesized across lines the
+    # way real payloads spell it - one deprecation per name, in the
+    # payload's own order.
+    File.write(File.join(@fixture_root, "ansible_collections", "ansible", "posix", "plugins", "modules", "mount.py"),
+      "from ansible.module_utils._text import (\n    to_bytes,  # payload helper\n    to_native,\n)\n")
+
+    Krikri::ModuleUtilsDeprecations.text_import_deprecation_symbols("ansible.posix.mount").must_equal(["to_bytes", "to_native"])
+    Krikri::ModuleUtilsDeprecations.text_import_deprecation_symbols("mount").must_equal(["to_bytes", "to_native"])
+    Krikri::ModuleUtilsDeprecations.text_import_deprecation_result_entries("ansible.posix.mount").size.must_equal(2)
+  end
+
+  it "derives nothing from an installed module source that migrated off the deprecated path (issue #1061)" do
+    # The ansible.posix 2.2.x mount.py shape: same helpers, the new import
+    # path, so real warns nothing and neither may this engine.
+    File.write(File.join(@fixture_root, "ansible_collections", "ansible", "posix", "plugins", "modules", "mount.py"),
+      "from ansible.module_utils.common.text.converters import to_bytes, to_native\n")
+
+    Krikri::ModuleUtilsDeprecations.text_import_deprecation_symbols("ansible.posix.mount").must_equal([] of String)
+    Krikri::ModuleUtilsDeprecations.text_import_deprecation_texts("mount").must_equal([] of String)
+  end
+
+  it "derives the action plugin's lines in import order from its installed source" do
+    # ansible.posix 2.1.x's synchronize action plugin shape: to_text from
+    # the deprecated `_text` path, then the module-level `_collections_compat`
+    # deprecation, in that import order.
+    File.write(File.join(@fixture_root, "ansible_collections", "ansible", "posix", "plugins", "modules", "synchronize.py"),
+      "from ansible.module_utils._text import to_bytes, to_native\n")
+    File.write(File.join(@fixture_root, "ansible_collections", "ansible", "posix", "plugins", "action", "synchronize.py"),
+      "from ansible.module_utils._text import to_text\nfrom ansible.module_utils.common._collections_compat import MutableSequence\n")
+
+    Krikri::ModuleUtilsDeprecations.action_plugin_text_import_deprecation_texts("synchronize").must_equal([
+      "Importing 'to_text' from 'ansible.module_utils._text' is deprecated. " \
+      "This feature will be removed from ansible-core version 2.24. " \
+      "Use ansible.module_utils.common.text.converters instead.",
+      Krikri::ModuleUtilsDeprecations::COLLECTIONS_COMPAT_DEPRECATION_TEXT,
+    ])
+  end
+
+  it "derives nothing for an installed action plugin that migrated off the deprecated paths (issue #1061)" do
+    # ansible.posix 2.2.x's synchronize action plugin shape: collections.abc
+    # and common.text.converters, so loading it warns nothing.
+    File.write(File.join(@fixture_root, "ansible_collections", "ansible", "posix", "plugins", "modules", "synchronize.py"),
+      "from ansible.module_utils.common.text.converters import to_bytes, to_native\n")
+    File.write(File.join(@fixture_root, "ansible_collections", "ansible", "posix", "plugins", "action", "synchronize.py"),
+      "from collections.abc import MutableSequence\nfrom ansible.module_utils.common.text.converters import to_text\n")
+
+    Krikri::ModuleUtilsDeprecations.action_plugin_text_import_deprecation_texts("synchronize").must_equal([] of String)
+  end
+
+  it "keeps the modeled table for a module payload no installed collection ships" do
+    # A krikri-only controller has no payload to read and real cannot run
+    # the module at all, so the modeled pair stands (the issue #1000
+    # behavior).
+    Krikri::ModuleUtilsDeprecations.text_import_deprecation_symbols("totally.absent.mount").must_equal(["to_bytes", "to_native"])
   end
 end
 
