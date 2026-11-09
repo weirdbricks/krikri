@@ -548,4 +548,117 @@ describe "INJECT_FACTS_AS_VARS deprecation" do
     stderr.must_include("^ column 17")
     stderr.scan(/DEPRECATION WARNING\]: #{Regex.escape(FACT_DEPRECATION_TEXT)}/).size.must_equal(1)
   end
+
+  it "attributes a namespace-spelled include_vars path read to that argument's own value" do
+    # Issue #1021, dtoch56.prepare_host: `ansible.builtin.include_vars:
+    # "{{ ansible_os_family }}.yml"` carries its module namespace on the
+    # free-form directive, so the key-line scan that pins the read's
+    # Origin never matched the line and the whole block real prints at
+    # the path value's own token went missing. Live-verified against
+    # 2.21.6: Origin 6:37, the directive's value quote.
+    family = fact_value("ansible_os_family")
+    stdout, stderr, dir = run_files({
+      "play.yml" => <<-PLAYBOOK,
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        tasks:
+          - name: namespaced include_vars
+            ansible.builtin.include_vars: "{{ ansible_os_family }}.yml"
+      PLAYBOOK
+      "#{family}.yml" => "---\nstub_user: www-data\n",
+    })
+
+    stdout.must_include("TASK [namespaced include_vars]")
+    stdout.wont_include("FAILED")
+    stderr.scan(/DEPRECATION WARNING\]: #{Regex.escape(FACT_DEPRECATION_TEXT)}/).size.must_equal(1)
+    stderr.must_include("Origin: #{File.join(dir, "play.yml")}:6:37\n")
+    stderr.must_include("6       ansible.builtin.include_vars: \"{{ ansible_os_family }}.yml\"\n")
+    stderr.must_include("^ column 37")
+  end
+
+  it "warns at each when: item for a bare-key injected fact, pinned at the evaluated item" do
+    # Issue #1021, dtoch56.prepare_host: service_facts injects its result
+    # under the BARE cache key (`services`), and real tags that value like
+    # any `ansible_*` one - so its when: items each print their own block
+    # at their own item token (live-verified against 2.21.6: 13:11 and
+    # 14:11). The role's own `'... in services'` / `services[...][...]`
+    # pair is replaced by always-true items that name the same fact, so
+    # both items are evaluated on any host (the role's pair short-circuits
+    # on hosts without systemd-timesyncd) while still exercising the
+    # same-fact disambiguation - the `ntp_enabled | bool` item is the
+    # role's own and must stay silent.
+    stdout, stderr, dir = run_files({"play.yml" => <<-PLAYBOOK})
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        vars:
+          ntp_enabled: true
+        tasks:
+          - name: Populate service facts.
+            ansible.builtin.service_facts:
+          - name: Disable systemd-timesyncd.
+            ansible.builtin.command: /bin/true
+            when:
+              - ntp_enabled | bool
+              - 'services | length >= 0'
+              - 'services | string | length >= 0'
+      PLAYBOOK
+
+    stdout.must_include("TASK [Disable systemd-timesyncd.]")
+    stderr.scan(/DEPRECATION WARNING\]: #{Regex.escape(FACT_DEPRECATION_TEXT)}/).size.must_equal(2)
+    stderr.must_include("Origin: #{File.join(dir, "play.yml")}:13:11\n")
+    stderr.must_include("13         - 'services | length >= 0'\n")
+    stderr.must_include("Origin: #{File.join(dir, "play.yml")}:14:11\n")
+    stderr.must_include("14         - 'services | string | length >= 0'\n")
+    stderr.must_include("^ column 11")
+    stderr.wont_include(":12:11")
+  end
+
+  it "stays silent when a same-named play var shadows the injected fact" do
+    # real tags the injected VALUE, not the name: a play var (whose tier
+    # outranks the injected facts) resolves untagged, so reading it prints
+    # no block even though the fact store holds a `services` fact too
+    # (live-verified against 2.21.6 with a `services:` play var shadowing
+    # service_facts' own).
+    stdout, stderr = run(<<-PLAYBOOK)
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        vars:
+          services: shadow-value
+        tasks:
+          - name: Populate service facts.
+            ansible.builtin.service_facts:
+          - name: read shadowed bare name
+            ansible.builtin.debug:
+              msg: "{{ services }}"
+      PLAYBOOK
+
+    stdout.must_include("TASK [read shadowed bare name]")
+    stdout.must_include("\"msg\": \"shadow-value\"")
+    stderr.wont_include("INJECT_FACTS_AS_VARS")
+  end
+
+  it "stays silent for a set_fact-written name" do
+    # real's SET_FACT variable layer is untagged and outranks the
+    # injected-facts copy, so a name written by set_fact: prints no block
+    # however it is read - plain or cacheable, bare or `ansible_`-spelled
+    # (live-verified against 2.21.6).
+    stdout, stderr = run(<<-PLAYBOOK)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: produce
+            ansible.builtin.set_fact:
+              myfact: hello
+          - name: consume
+            ansible.builtin.debug:
+              msg: "{{ myfact }}"
+      PLAYBOOK
+
+    stdout.must_include("\"msg\": \"hello\"")
+    stderr.wont_include("INJECT_FACTS_AS_VARS")
+  end
 end

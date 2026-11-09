@@ -1896,7 +1896,12 @@ module Krikri
     # (a wrapped scalar can name the fact on a continuation line), and a
     # multi-item list with no naming item falls back to the key-line value
     # position rather than guessing which item real was evaluating.
-    def self.conditional_value_origin(path : String?, source_line : Int32, key : String, name : String? = nil) : String?
+    # *clause* is the item text real was actually templating, so it beats
+    # the name match: two items can name the SAME fact
+    # (dtoch56.prepare_host's `'"systemd-timesyncd.service" in services'`
+    # pair, issue #1021) and real pins each read at ITS OWN item's scalar
+    # token - only the evaluated clause disambiguates them.
+    def self.conditional_value_origin(path : String?, source_line : Int32, key : String, name : String? = nil, clause : String? = nil) : String?
       return nil unless path && source_line > 0 && File.file?(path)
 
       lines = File.read_lines(path)
@@ -1908,6 +1913,8 @@ module Krikri
 
       key_indent = key_line.size - key_line.lstrip.size
       items = [] of {Int32, Int32}
+      name_hit = nil
+      clause_hit = nil
       ((idx + 1)...lines.size).each do |val_idx|
         val_line = lines[val_idx]
         val_stripped = val_line.strip
@@ -1926,11 +1933,30 @@ module Krikri
         break if val_indent < key_indent
         break if val_indent == key_indent && !val_stripped.starts_with?("- ")
         next unless val_stripped.starts_with?("- ")
-        return ErrorBlock.origin_context(path, val_idx + 1, val_indent + 3) if name && val_line.includes?(name)
+        clause_hit ||= {val_idx, val_indent} if clause && item_scalar_equals?(val_stripped, clause)
+        name_hit ||= {val_idx, val_indent} if name && val_line.includes?(name)
         items << {val_idx, val_indent}
+      end
+      if hit = clause_hit || name_hit
+        return ErrorBlock.origin_context(path, hit[0] + 1, hit[1] + 3)
       end
       return ErrorBlock.origin_context(path, items.first[0] + 1, items.first[1] + 3) if items.size == 1
       param_value_origin(path, source_line, key)
+    end
+
+    # Whether a block-sequence ITEM's own scalar is exactly *clause* - the
+    # text real templated while the read fired. YAML quoting is stripped
+    # from the item (a single-quoted scalar doubles its internal quotes);
+    # a folded/literal or escape-laden shape never matches and falls back
+    # to the name-based pick.
+    private def self.item_scalar_equals?(val_stripped : String, clause : String) : Bool
+      scalar = val_stripped[2..].strip
+      if scalar.size >= 2 && scalar.starts_with?('\'') && scalar.ends_with?('\'')
+        scalar = scalar[1...-1].gsub("''", "'")
+      elsif scalar.size >= 2 && scalar.starts_with?('"') && scalar.ends_with?('"')
+        scalar = scalar[1...-1]
+      end
+      scalar == clause
     end
 
     # The line index of a task param's `<key>:` mapping key at or after
@@ -1944,10 +1970,15 @@ module Krikri
         prefix = line[0...at]
         # only a mapping key: nothing but whitespace/quotes before it - or,
         # for a key that opens a task's own mapping (`- name:`), the list
-        # dash itself.
+        # dash itself. A FREE-FORM action directive is its own key line
+        # and may carry the module's namespace (`ansible.builtin.
+        # include_vars: "{{ ansible_os_family }}.yml"`, dtoch56.prepare_host's
+        # tasks/ntp.yml - real pins the read on that directive's value,
+        # issue #1021), so a dotted namespace before the key matches too.
         stripped = prefix.strip
         next unless stripped.empty? || (stripped.size == 1 && {"'", '"'}.includes?(stripped)) ||
-                    (list_entry_key && stripped == "-")
+                    (list_entry_key && stripped == "-") ||
+                    stripped.matches?(/\A(?:-\s+)?(?:[A-Za-z0-9_]+\.)+\z/)
         return idx
       end
       nil

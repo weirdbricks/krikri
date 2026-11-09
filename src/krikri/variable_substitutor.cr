@@ -2117,8 +2117,10 @@ module Krikri
         end
         # A when:'s block-sequence item is its own YAML scalar (and its own
         # templating operation) in real, so the fact read is pinned at the
-        # ITEM that named it - see ResultDisplay.conditional_value_origin.
-        return ResultDisplay.conditional_value_origin(site.source_file, site.source_line, "when", name)
+        # ITEM that named it - the evaluated clause text picks it when more
+        # than one item names the same fact - see
+        # ResultDisplay.conditional_value_origin.
+        return ResultDisplay.conditional_value_origin(site.source_file, site.source_line, "when", name, site.text)
       end
       return unless site = current_task_param
       return site.origin if site.origin
@@ -2322,24 +2324,48 @@ module Krikri
       false
     end
 
-    # Whether *name* is one of the gathered facts' TOP-LEVEL
-    # `ansible_`-prefixed spellings - the aliases ansible-core 2.21
-    # deprecates (the INJECT_FACTS_AS_VARS default): reading one from a
-    # template prints the [DEPRECATION WARNING] naming the reading
-    # template's Origin, once per Origin, whichever template kind read it.
+    # Whether *name* is one of the gathered facts' TOP-LEVEL injected
+    # spellings - the names ansible-core 2.21 deprecates (the
+    # INJECT_FACTS_AS_VARS default): reading one from a template prints
+    # the [DEPRECATION WARNING] naming the reading template's Origin,
+    # once per Origin, whichever template kind read it.
     #
-    # The injected copy real tags is clean_facts(facts), which drops
-    # ansible_local plus every `ansible_*_interpreter` key before
-    # injecting, so those spellings never deprecate even though krikri's
-    # own fact store holds them (ansible_python_interpreter for a local
-    # connection) - live-verified against 2.21.6: `ansible_hostname`
-    # warns, `ansible_python_interpreter` and `ansible_host` do not.
+    # real tags every clean_facts(facts) VALUE whatever the fact key's
+    # shape, so the deprecated name IS that key: setup's `ansible_*` keys
+    # inject as `ansible_os_family`, while service_facts/package_facts
+    # inject their bare key (`services`), and reads of either spelling
+    # warn (dtoch56.prepare_host's `'"systemd-timesyncd.service" in
+    # services'`, issue #1021, live-verified vs 2.21.6). The
+    # `ansible_facts` dict spelling is namespace_facts' own untagged
+    # copy and never warns.
+    #
+    # clean_facts drops ansible_local plus every `ansible_*_interpreter`
+    # key before injecting, so those spellings never deprecate even
+    # though krikri's own fact store holds them (ansible_python_interpreter
+    # for a local connection) - live-verified against 2.21.6:
+    # `ansible_hostname` warns, `ansible_python_interpreter` and
+    # `ansible_host` do not.
+    #
+    # The tag rides the injected VALUE, so a same-named play/role var -
+    # which outranks the injected-facts tier - reads untagged and prints
+    # no block (live-verified vs 2.21.6: a `services:` play var shadowing
+    # service_facts' own stays silent). A scope carrying no copy of the
+    # name at all (the text-scan fallbacks) cannot tell the two apart and
+    # takes the name-level answer. A set_fact: write is the same shape of
+    # answer - real's own SET_FACT layer is untagged and wins over the
+    # injected copy whatever the name looks like (see #set_fact_var_name?).
     def self.top_level_fact_name?(name : String, vars : Hash(String, JSON::Any)) : Bool
-      return false unless name.starts_with?("ansible_") && name != "ansible_local"
+      return false if name == "ansible_local"
       return false if name.ends_with?("_interpreter")
+      return false if set_fact_var_name?(host_from_vars(vars), name)
       facts = vars["ansible_facts"]?.try(&.as_h?)
       return false unless facts
-      facts.has_key?(name["ansible_".size..])
+      injected = facts[name]? || (name.starts_with?("ansible_") ? facts[name["ansible_".size..]]? : nil)
+      return false unless injected
+      if (ctx = vars[name]?) && ctx != injected
+        return false
+      end
+      true
     end
 
     # ansible-core records at most ONE INJECT_FACTS_AS_VARS deprecation per
@@ -2454,6 +2480,25 @@ module Krikri
     def self.resolved_var_name?(host_name : String?, name : String) : Bool
       return false unless host_name
       @@resolved_var_names[host_name]?.try(&.includes?(name)) || false
+    end
+
+    # Names written by set_fact: for the host - real keeps those in its
+    # own SET_FACT variable layer, untagged and above the injected-facts
+    # copy, so reading one prints no INJECT_FACTS_AS_VARS block however
+    # the fact cache spells it (live-verified vs 2.21.6: plain and
+    # cacheable set_fact names, `ansible_`-prefixed included, all stay
+    # silent - cross_play_hostvars_test's `myfact`, issue #1021's
+    # investigation). The gathered-only facts still warn.
+    @@set_fact_var_names = Hash(String, Set(String)).new
+
+    def self.add_set_fact_var_name(host_name : String, name : String) : Nil
+      set = @@set_fact_var_names[host_name] ||= Set(String).new
+      set.add(name)
+    end
+
+    def self.set_fact_var_name?(host_name : String?, name : String) : Bool
+      return false unless host_name
+      @@set_fact_var_names[host_name]?.try(&.includes?(name)) || false
     end
 
     # The loop SOURCE this fiber is resolving right now: a top-level fact
