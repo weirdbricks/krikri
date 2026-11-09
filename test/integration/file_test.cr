@@ -629,6 +629,101 @@ describe "file plugin" do
       # "chown failed: failed to look up user <name>", basic.py:789).
       result["msg"].as_s.must_include("chgrp failed: failed to look up group nonexistent_group_xyz_abc")
     end
+
+    it "fails the owner lookup in check mode when the path already exists (issue #1041)" do
+      # Ansible's check mode only skips set_owner_if_different's lookup
+      # for paths that don't exist yet (basic.py
+      # check_file_absent_if_check_mode); on an existing path the lookup
+      # runs and fails "chown failed: failed to look up user <name>" just
+      # like the real run. cogini.elixir-release's "Create deploy dirs"
+      # (issue #1041) must fail its check-mode run this way - the old
+      # changed verdict let the play run on through 27 tasks ansible
+      # never reaches.
+      path = tmp_path("checkmode-existing-unknown-owner")
+      Dir.mkdir_p(path)
+      result = PluginSpecHelper.run("file", {"path" => path, "state" => "directory", "owner" => "nosuchuser734", "group" => "nosuchgroup734", "_ansible_check_mode" => "true"})
+
+      result["failed"].as_bool.must_equal(true)
+      result["changed"].as_bool.must_equal(false)
+      result["msg"].as_s.must_equal("chown failed: failed to look up user nosuchuser734")
+      result["path"].as_s.must_equal(path)
+      result["warnings"].as_a.map(&.as_s).must_equal([
+        "failed to look up user nosuchuser734. Create user up to this point in real play",
+        "failed to look up group nosuchgroup734. Create group up to this point in real play",
+      ])
+    end
+
+    it "fails the group lookup with Ansible's 'chgrp failed' wording in check mode on an existing path" do
+      path = tmp_path("checkmode-existing-unknown-group")
+      Dir.mkdir_p(path)
+      me = (System::User.find_by?(id: LibC.getuid.to_s) || raise "unexpected nil").username
+      result = PluginSpecHelper.run("file", {"path" => path, "state" => "directory", "owner" => me, "group" => "nosuchgroup734", "_ansible_check_mode" => "true"})
+
+      result["failed"].as_bool.must_equal(true)
+      result["msg"].as_s.must_equal("chgrp failed: failed to look up group nosuchgroup734")
+      result["path"].as_s.must_equal(path)
+    end
+
+    it "fails the owner lookup in check mode for state=touch on an existing file" do
+      path = tmp_path("checkmode-touch-existing-unknown-owner")
+      File.write(path, "x")
+      result = PluginSpecHelper.run("file", {"path" => path, "state" => "touch", "owner" => "nosuchuser734", "_ansible_check_mode" => "true"})
+
+      result["failed"].as_bool.must_equal(true)
+      result["msg"].as_s.must_equal("chown failed: failed to look up user nosuchuser734")
+      result["path"].as_s.must_equal(path)
+    end
+
+    it "fails the owner lookup in check mode on an already-linked hard link" do
+      src = tmp_path("checkmode-hard-src")
+      dest = tmp_path("checkmode-hard-dest")
+      File.write(src, "x")
+      File.link(src, dest)
+      result = PluginSpecHelper.run("file", {"path" => dest, "state" => "hard", "src" => src, "owner" => "nosuchuser734", "_ansible_check_mode" => "true"})
+
+      result["failed"].as_bool.must_equal(true)
+      result["msg"].as_s.must_equal("chown failed: failed to look up user nosuchuser734")
+      result["path"].as_s.must_equal(dest)
+    end
+
+    it "names the follow-resolved target on a check-mode owner lookup failure through a symlink" do
+      # basic.py's fail_json(path=...) carries the resolved target when
+      # the dest is a symlink and follow: is true, same as the chown
+      # syscall failures (issue #603).
+      target = tmp_path("checkmode-link-target")
+      link = tmp_path("checkmode-link")
+      File.write(target, "x")
+      File.symlink(target, link)
+      result = PluginSpecHelper.run("file", {"path" => link, "state" => "link", "src" => target, "owner" => "nosuchuser734", "_ansible_check_mode" => "true"})
+
+      result["failed"].as_bool.must_equal(true)
+      result["msg"].as_s.must_equal("chown failed: failed to look up user nosuchuser734")
+      result["path"].as_s.must_equal(target)
+    end
+
+    it "warns about an unknown numeric uid in check mode with the getpwuid wording" do
+      # file.py's check_owner_exists resolves a numeric owner through
+      # getpwuid and warns "failed to look up user with uid <id>..." -
+      # never a failure, the id itself is valid input.
+      path = tmp_path("checkmode-numeric-unknown-uid")
+      result = PluginSpecHelper.run("file", {"path" => path, "state" => "directory", "owner" => "402402", "_ansible_check_mode" => "true"})
+
+      falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+      result["changed"].as_bool.must_equal(true)
+      result["warnings"].as_a.map(&.as_s).must_equal([
+        "failed to look up user with uid 402402. Create user up to this point in real play",
+      ])
+    end
+
+    it "keeps an empty owner: silent on check-mode warnings (falsy in Python) but still fails the lookup" do
+      path = tmp_path("checkmode-empty-owner")
+      Dir.mkdir_p(path)
+      result = PluginSpecHelper.run("file", {"path" => path, "state" => "directory", "owner" => "", "_ansible_check_mode" => "true"})
+
+      result["failed"].as_bool.must_equal(true)
+      result["msg"].as_s.must_equal("chown failed: failed to look up user ")
+      result.as_h.has_key?("warnings").must_equal(false)
+    end
   end
 
   describe "recurse" do
