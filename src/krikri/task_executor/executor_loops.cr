@@ -707,7 +707,16 @@ module Krikri
         return LoopResolver.with_subelements(parsed, key)
       end
 
-      list = value.as_a? || [] of JSON::Any
+      # A dict source is legal subelements input here too: real's lookup
+      # accepts "a dict or a list" and converts a dict to the list of its
+      # VALUES (subelements.py iterates `for key in terms[0]` and appends
+      # `terms[0][key]`). Reading only the array shape made a plain
+      # `with_subelements: - "{{ zones }}"` over a name -> config mapping
+      # resolve to zero items, so Turgon37.bind's "Assert zones entries
+      # configuration" loop was skipped whole where Ansible asserted once
+      # per DNS entry (issue #1018). The filter-chain fallback below
+      # already handled the dict shape - this is the bare-variable path.
+      list = value.as_a? || value.as_h?.try(&.values) || [] of JSON::Any
 
       LoopResolver.with_subelements(list, key)
     end

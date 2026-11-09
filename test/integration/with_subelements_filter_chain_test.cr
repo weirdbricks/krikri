@@ -76,6 +76,58 @@ describe "with_subelements: with a filter-chain source" do
   end
 end
 
+# ansible-core's subelements lookup accepts "a dict or a list" as its first
+# term and converts a dict to the list of its VALUES (subelements.py:
+# `for key in terms[0]: elementlist.append(terms[0][key])`). krikri's
+# bare-variable path only read the array shape, so it resolved to zero
+# items and skipped the task whole - Turgon37.bind's `with_subelements: -
+# "{{ bind__zones }}" - entries` over its name -> zone-config mapping
+# (issue #1018: Ansible asserted 9 times, krikri `skipping`). The source
+# below is the role's own shape: a dict default built by combining dicts.
+describe "with_subelements: dict source" do
+  it "iterates the dict's values, one pair per subelement" do
+    playbook = File.tempname("with-subelements-dict", ".yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          zones_default:
+            localhost:
+              type: master
+              entries:
+                - {name: '@', type: NS}
+                - {name: '@', type: A}
+            '127.in-addr.arpa':
+              type: master
+              entries:
+                - {name: '@', type: NS}
+          zones_extra: {}
+          zones: '{{ zones_default | combine(zones_extra) }}'
+        tasks:
+          - name: manage
+            ansible.builtin.debug:
+              msg: "parent={{ item.0 | to_json }} entry={{ item.1.name }}"
+            with_subelements:
+              - '{{ zones }}'
+              - entries
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+
+    status.success?.must_equal(true)
+    output.to_s.wont_include("skipping: [localhost]")
+    # one item per subelement across both zone configs (2 + 1), not zero
+    output.to_s.scan("ok: [localhost] => (item=[").size.must_equal(3)
+    # item.0 is the parent zone config, with its subelement key removed
+    output.to_s.must_include(%(parent={\\"type\\": \\"master\\"} entry=@))
+    output.to_s.wont_include("skipped=1")
+  ensure
+    File.delete(playbook) if playbook && File.exists?(playbook)
+  end
+end
+
 # ansible-core's subelements lookup hands the task a parent COPY with
 # the subelement key REMOVED (live-verified against 2.19.11:
 # `msg="{{ item.0 | to_json }}"` over {"name": "s1", "kids": [...]} prints
