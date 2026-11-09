@@ -1913,11 +1913,18 @@ module Krikri
         val_stripped = val_line.strip
         next if val_stripped.empty? || val_stripped.starts_with?("#")
         val_indent = val_line.size - val_line.lstrip.size
-        # The clause list ends at the first line back at (or above) the
-        # key's own indent - the next keyword of this task, or the next
-        # task. Only DEEPER lines are the block sequence's items or a
-        # wrapped item's continuation.
-        break if val_indent <= key_indent
+        # The clause list ends at the first line LESS indented than the key
+        # (the next task), and at the key's own indent unless it opens a
+        # list item: YAML allows a block sequence's items to sit at their
+        # parent key's own indent (Ansible-Security-Compliance's
+        # rhel7-role-C2S writes `when:` lists this way), and real anchors
+        # such an item's own scalar token exactly like a deeper-indented
+        # one (tasks/main.yml:19:7 live-captured vs ansible-playbook 2.21,
+        # issue #1017 - stopping at the key's indent reported the `when:`
+        # key line's value position instead). Only DEEPER non-item lines
+        # are a wrapped item's continuation.
+        break if val_indent < key_indent
+        break if val_indent == key_indent && !val_stripped.starts_with?("- ")
         next unless val_stripped.starts_with?("- ")
         return ErrorBlock.origin_context(path, val_idx + 1, val_indent + 3) if name && val_line.includes?(name)
         items << {val_idx, val_indent}
