@@ -25,6 +25,14 @@ module Krikri
         ansible.builtin.import_role
       ]
 
+      # The subset of the inclusion/role-import actions that load at
+      # playbook-parse time. `ansible-playbook --syntax-check` follows
+      # only these (plus the `roles:`/`dependencies:` keywords), never
+      # the dynamic include_tasks/include_role - so the module names in
+      # dynamically included files never fail the check.
+      STATIC_INCLUSION_ACTIONS   = %w[import_tasks ansible.builtin.import_tasks]
+      STATIC_ROLE_IMPORT_ACTIONS = %w[import_role ansible.builtin.import_role]
+
       PLAY_KEYS      = %w[import_playbook ansible.builtin.import_playbook]
       ROLE_LIST_KEYS = %w[roles dependencies]
       TASK_LIST_KEYS = %w[tasks pre_tasks post_tasks handlers block rescue always]
@@ -102,6 +110,19 @@ module Krikri
         found.reject { |child| !File.exists?(child) }
       end
 
+      # The files `ansible-playbook --syntax-check` loads from one file:
+      # static imports only (see STATIC_*_ACTIONS), since dynamic
+      # inclusions resolve at run time and never enter the check. Used
+      # by SyntaxCheck to decide which files upstream's failed-file gate
+      # silences after a check failure.
+      def self.static_children(path : String) : Array(String)
+        file = PositionedFile.load(path)
+        return [] of String unless root = file.root
+        found = [] of String
+        static_walk(root, File.dirname(File.expand_path(path)), found)
+        found.reject { |child| !File.exists?(child) }
+      end
+
       private def self.walk(node : YAML::Nodes::Node, basedir : String, found : Array(String))
         case node
         when YAML::Nodes::Mapping
@@ -131,6 +152,39 @@ module Krikri
         elsif ROLE_IMPORT_ACTIONS.includes?(name)
           if (imported = imported_role_name(value))
             found.concat(role_files(basedir, imported))
+          end
+        end
+      end
+
+      private def self.static_walk(node : YAML::Nodes::Node, basedir : String, found : Array(String))
+        case node
+        when YAML::Nodes::Mapping
+          NodeUtil.each_entry(node) { |key, value| static_dispatch(key, value, basedir, found) }
+        when YAML::Nodes::Sequence
+          node.nodes.each { |item| static_walk(item, basedir, found) }
+        end
+      end
+
+      private def self.static_dispatch(key : YAML::Nodes::Node, value : YAML::Nodes::Node,
+                                       basedir : String, found : Array(String))
+        name = NodeUtil.scalar_value(key) || return
+        if TASK_LIST_KEYS.includes?(name)
+          static_walk(value, basedir, found)
+        elsif PLAY_KEYS.includes?(name)
+          if (playbook = NodeUtil.scalar_value(value)) &&
+             (playbook_path = resolve_playbook(basedir, playbook))
+            found << playbook_path
+          end
+        elsif ROLE_LIST_KEYS.includes?(name)
+          role_names(value).each { |role| found.concat(role_entry_files(basedir, role)) }
+        elsif STATIC_ROLE_IMPORT_ACTIONS.includes?(name)
+          if (imported = imported_role_name(value))
+            found.concat(role_entry_files(basedir, imported))
+          end
+        elsif STATIC_INCLUSION_ACTIONS.includes?(name)
+          if (included = include_file(value)) &&
+             (included_path = resolve_include(basedir, included))
+            found << included_path
           end
         end
       end
@@ -209,12 +263,7 @@ module Krikri
       end
 
       private def self.role_files(basedir : String, role : String) : Array(String)
-        return [] of String if role.empty? || role.includes?("{{")
-        # `ns.coll.role` lives in a collection, which is not this
-        # project's content; upstream skips those too.
-        return [] of String if role.count('.') >= 2
-
-        candidate = role_candidates(basedir, role).find { |dir| File.directory?(dir) }
+        candidate = role_dir(basedir, role)
         return [] of String unless candidate
 
         found = [] of String
@@ -223,6 +272,36 @@ module Krikri
           next unless File.directory?(dir)
           Dir.glob(File.join(dir, "**", "*.{yml,yaml}")).sort.each do |file|
             found << File.expand_path(file)
+          end
+        end
+        found
+      end
+
+      # The directory a bare role name resolves to (the candidate list
+      # above), or nil for a missing or templated role. An
+      # `ns.coll.role` is not resolved either: it lives in a collection,
+      # which is not this project's content; upstream skips those too.
+      def self.role_dir(basedir : String, role : String) : String?
+        return nil if role.empty? || role.includes?("{{")
+        return nil if role.count('.') >= 2
+        role_candidates(basedir, role).find { |dir| File.directory?(dir) }
+      end
+
+      # The files a role's syntax-check load starts from: its
+      # tasks/handlers/meta entry points. The rest of the role's content
+      # loads only when one of these imports it.
+      def self.role_entry_files(basedir : String, role : String) : Array(String)
+        return [] of String unless dir = role_dir(basedir, role)
+        entry_point_files(dir)
+      end
+
+      # Same, for a role directory the caller already resolved.
+      def self.entry_point_files(dir : String) : Array(String)
+        found = [] of String
+        %w[tasks handlers meta].each do |subdir|
+          %w[main.yml main.yaml].each do |main|
+            path = File.join(dir, subdir, main)
+            found << File.expand_path(path) if File.exists?(path)
           end
         end
         found

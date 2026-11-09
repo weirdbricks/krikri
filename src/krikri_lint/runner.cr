@@ -7,7 +7,7 @@ module Krikri
       def initialize(@registry, @config = LintConfig.new)
       end
 
-      def run(paths : Array(String)) : Array(Violation)
+      def run(paths : Array(String), targets : Array(String) = paths) : Array(Violation)
         rules = active_rules
         return [] of Violation if rules.empty?
 
@@ -16,23 +16,27 @@ module Krikri
         task_spans = {} of String => Array({Int32, Int32})
         task_names = {} of String => Hash(Int32, String)
         needs_tasks = rules.any?(&.task_scoped?)
+        # Upstream runs no rule at all on a file its playbook syntax
+        # check failed on, and krikri-lint has no syntax-check match to
+        # show for such a file (see SyntaxCheck).
+        syntax_check = SyntaxCheck.new(paths, targets)
         paths.each do |path|
           next if excluded?(path)
           file = PositionedFile.load(path)
+          next if syntax_check.silenced?(file)
           source = File.exists?(path) ? File.read(path) : ""
           noqa_maps[path] = Noqa.build_map(source)
-          tasks = TaskWalker.collect_tasks(file)
           # Collected once per file, on first need: the enclosing-task
           # spans a task-scoped rule's violations belong to, and the task
           # names those violations are described with.
           if needs_tasks && !task_spans.has_key?(path)
+            tasks = TaskWalker.collect_tasks(file)
             covered = YamlText.scalar_continuation_lines(file)
             task_spans[path] = tasks.map { |task| {task.line, task.end_line(covered)} }
             task_names[path] = tasks.each_with_object({} of Int32 => String) do |task, map|
               map[task.line] = task.display_name
             end
           end
-          next if syntax_check_fails?(file, tasks)
           rules.each do |rule|
             next unless rule.applies?(file)
             rule.check(file, violations)
@@ -118,85 +122,6 @@ module Krikri
           end
         end
         best
-      end
-
-      # Upstream's runner runs no rules at all on a file whose
-      # `ansible-playbook --syntax-check` fails (ansible-lint
-      # runner.py, phase 2): a task module name the controller cannot
-      # resolve dies at load with "couldn't resolve module/action", and
-      # then only that syntax-check match is reported for the file -
-      # every other match is suppressed. Verified against ansible-lint
-      # 25.2.1: an unnamed play around `krikri_ok:` reports only
-      # syntax-check[unknown-module], while the same play around
-      # `ansible.builtin.debug:` reports name[play]. syntax-check is an
-      # unimplemented upstream gap here, so such a file produces no
-      # violations at all.
-      private def syntax_check_fails?(file : PositionedFile, tasks : Array(LintTask)) : Bool
-        return false if tasks.empty?
-        path = File.expand_path(file.path)
-        role_path = role_root(path)
-        playbook_dir = File.dirname(path)
-        inherited = inherited_collections(file, role_path)
-        tasks.any? do |task|
-          name = task.module_name
-          # Legacy `action:`/`local_action:` directives resolve their
-          # module lazily at run time, so an unresolvable one does not
-          # fail the load (verified against ansible-lint 25.2.1: `action:
-          # unknown x=1` still reports name[play]); the directive key is
-          # not a module name and must not be resolved as one.
-          next false if name == "action" || name == "local_action"
-          collections = own_collections(task) || inherited
-          CollectionIndex.controller_resolves?(name, collections, role_path,
-            playbook_dir)[:resolves] == false
-        end
-      end
-
-      # A task's own `collections:` list replaces the inherited scope,
-      # the merge real applies (same as the engine's playbook_parser);
-      # nil when the task declares none.
-      private def own_collections(task : LintTask) : Array(String)?
-        entry = NodeUtil.entry(task.node, "collections") || return nil
-        string_list(entry[1])
-      end
-
-      # The play-level `collections:` lists plus the role's own
-      # meta/main.yml declaration, both folded into bare-name resolution
-      # by real.
-      private def inherited_collections(file : PositionedFile, role_path : String?) : Array(String)
-        names = CollectionIndex.role_meta_collections(role_path)
-        root = file.root
-        if TaskWalker.playbook_root?(file) && (list = root.try(&.as?(YAML::Nodes::Sequence)))
-          list.nodes.each do |item|
-            play = item.as?(YAML::Nodes::Mapping) || next
-            entry = NodeUtil.entry(play, "collections") || next
-            names += string_list(entry[1])
-          end
-        end
-        names
-      end
-
-      # A `collections:` value as real reads it: one name or a list.
-      private def string_list(node : YAML::Nodes::Node) : Array(String)
-        names = [] of String
-        case node
-        when YAML::Nodes::Scalar
-          names << node.value unless node.value.empty?
-        when YAML::Nodes::Sequence
-          node.nodes.each do |item|
-            if (scalar = item.as?(YAML::Nodes::Scalar)) && !scalar.value.empty?
-              names << scalar.value
-            end
-          end
-        end
-        names
-      end
-
-      # The role a role-tree file belongs to: its own `library/` and
-      # `action_plugins/` sources are part of real's name resolution.
-      private def role_root(path : String) : String?
-        parent = File.basename(File.dirname(path))
-        return nil unless %w[tasks handlers vars defaults meta].includes?(parent)
-        File.dirname(File.dirname(path))
       end
 
       private def active_rules : Array(Rule)
