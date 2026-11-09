@@ -2126,7 +2126,7 @@ module Krikri
       return site.origin if site.origin
       # A task's own `name:` opens its mapping (`- name:`), so the list
       # dash is part of that key's line prefix.
-      ResultDisplay.param_value_origin(site.source_file, site.source_line, site.key, list_entry_key: site.key == "name")
+      ResultDisplay.param_value_origin(site.source_file, site.source_line, site.key, list_entry_key: site.key == "name", text: site.text)
     end
 
     def self.play_hosts_read_origin : String?
@@ -2464,7 +2464,14 @@ module Krikri
         return "loop:#{site.source_file}:#{site.source_line}:#{site.key}"
       end
       if site = current_task_param
-        return "param:#{site.source_file}:#{site.source_line}:#{site.key}"
+        # The rendered TEXT is part of the identity the same way the when:
+        # clause's is: a task's own name: template and a module's own
+        # `name:` param are two separate operations in ansible-core -
+        # round 29903261's marauderxtreme.local_system printed one block
+        # at the name template and one at the user module's name: read -
+        # but both are recorded under the same (task line, "name") site
+        # here, so without the text the second read was deduped away.
+        return "param:#{site.source_file}:#{site.source_line}:#{site.key}:#{site.text}"
       end
       nil
     end

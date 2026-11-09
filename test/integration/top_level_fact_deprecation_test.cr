@@ -768,4 +768,34 @@ describe "INJECT_FACTS_AS_VARS deprecation" do
     stderr.wont_include(":10:13")
     stderr.scan(/DEPRECATION WARNING\]: #{Regex.escape(FACT_DEPRECATION_TEXT)}/).size.must_equal(1)
   end
+
+  it "prints one block for the task name template and one for a same-named module param" do
+    # Issue #1025, round 29903261's marauderxtreme.local_system: the user
+    # task's own name: template and its name: param each read a top-level
+    # fact, and ansible-core prints one block per render - the name's at
+    # the name's own value token (the role's tasks/prepare.yml:6:9), the
+    # param's at the param's (tasks/prepare.yml:8:11) - while krikri
+    # deduped the param's read away under the name render's (task line,
+    # "name") operation and placed any surviving read on the task name's
+    # token.
+    stdout, stderr = run(<<-PLAYBOOK)
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        tasks:
+          - name: "Ensure {{ ansible_user_id }} is in group sudo"
+            ansible.builtin.user:
+              name: "{{ ansible_user_id }}"
+              state: present
+      PLAYBOOK
+
+    stdout.must_include("TASK [Ensure ")
+    stderr.scan(/DEPRECATION WARNING\]: #{Regex.escape(FACT_DEPRECATION_TEXT)}/).size.must_equal(2)
+    stderr.must_include(":5:13\n")
+    stderr.must_include("5     - name: \"Ensure {{ ansible_user_id }} is in group sudo\"\n")
+    stderr.must_include("              ^ column 13")
+    stderr.must_include(":7:15\n")
+    stderr.must_include("7         name: \"{{ ansible_user_id }}\"\n")
+    stderr.must_include("                ^ column 15")
+  end
 end

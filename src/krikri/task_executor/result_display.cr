@@ -1885,11 +1885,17 @@ module Krikri
       param_value_origin(task.source_file, task.source_line, key)
     end
 
-    def self.param_value_origin(path : String?, source_line : Int32, key : String, list_entry_key : Bool = false) : String?
+    # *text* is the raw value being rendered when the caller knows it: a
+    # task's own `name:` and a module's own `name:` param are both
+    # "name:" keys near the task's line, and only the rendered text picks
+    # the right one (round 29903261's marauderxtreme.local_system: the
+    # user module's name: read points at the param's own value token
+    # 8:11 in ansible-core, never at the task name's token above it).
+    def self.param_value_origin(path : String?, source_line : Int32, key : String, list_entry_key : Bool = false, text : String? = nil) : String?
       return nil unless path && source_line > 0 && File.file?(path)
 
       lines = File.read_lines(path)
-      return nil unless idx = param_key_line_index(lines, source_line, key, list_entry_key)
+      return nil unless idx = param_key_line_index(lines, source_line, key, list_entry_key, text)
       line = lines[idx]
       needle = "#{key}:"
       col = line.index!(needle) + needle.size
@@ -2015,8 +2021,10 @@ module Krikri
 
     # The line index of a task param's `<key>:` mapping key at or after
     # *source_line*: nothing but whitespace/quotes may precede the key.
-    private def self.param_key_line_index(lines : Array(String), source_line : Int32, key : String, list_entry_key : Bool = false) : Int32?
+    private def self.param_key_line_index(lines : Array(String), source_line : Int32, key : String, list_entry_key : Bool = false, text : String? = nil) : Int32?
       needle = "#{key}:"
+      want = text ? strip_yaml_scalar_quotes(text.strip) : nil
+      fallback = nil
       ((source_line - 1)...lines.size).each do |idx|
         line = lines[idx]
         at = line.index(needle)
@@ -2033,9 +2041,22 @@ module Krikri
         next unless stripped.empty? || (stripped.size == 1 && {"'", '"'}.includes?(stripped)) ||
                     (list_entry_key && stripped == "-") ||
                     stripped.matches?(/\A(?:-\s+)?(?:[A-Za-z0-9_]+\.)+\z/)
-        return idx
+        # The rendered-text match wins when several `key:` lines qualify:
+        # a task's own `name:` opens the mapping while a module's `name:`
+        # param sits deeper in it, and each read belongs to the one whose
+        # value is the text being rendered.
+        return idx if want && strip_yaml_scalar_quotes(line[(at + needle.size)..].strip) == want
+        fallback ||= idx
       end
-      nil
+      fallback
+    end
+
+    private def self.strip_yaml_scalar_quotes(text : String) : String
+      if text.size >= 2 && ((text.starts_with?('"') && text.ends_with?('"')) ||
+         (text.starts_with?('\'') && text.ends_with?('\'')))
+        return text[1..-2]
+      end
+      text
     end
 
     # Public so TaskExecutor's own unreachable report (report_unreachable)
