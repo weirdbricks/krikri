@@ -118,6 +118,13 @@ module Krikri
     # apt.py's state choice list (2.14: includes build-dep and fixed).
     private APT_STATES = %w[absent build-dep fixed latest present]
 
+    # This plugin's underscore-prefixed spec seams (same family as
+    # apt_repository.cr's own `_apt_get_paths`/`_sources_list`): never
+    # set by real playbooks (Ansible has no such params and would reject
+    # them), only by the specs, which need to drive the no-apt-get and
+    # python3-apt-absent ladder paths on a dev box that really has both.
+    private SPEC_SEAMS = {"_policy_rc_d_path", "_apt_get_paths", "_python_apt_absent"}
+
     property? check_mode : Bool
 
     # Set true only when an `apt-get update` actually ran here and
@@ -207,17 +214,17 @@ module Krikri
       # verified against ansible-core 2.19's own output for this exact
       # task. check_mode/diff_mode/_verbosity/_environment are engine-
       # internal keys injected by the executor (see build_plugin_config),
-      # and _policy_rc_d_path/_apt_get_paths are this plugin's spec seams
-      # (the policy-rc.d path, and the no-apt-get gate's own probe paths)
-      # - none are part of Ansible's argument_spec, so none are rejected.
-      # (The seams need explicit exemptions: they are not in the shared
-      # INTERNAL list because they are this plugin's alone, and the
-      # specs that drive those paths pass them on every call.)
+      # and _policy_rc_d_path/_apt_get_paths/_python_apt_absent are this
+      # plugin's own spec seams (SPEC_SEAMS above) - none are part of
+      # Ansible's argument_spec, so none are rejected. (The seams need
+      # an explicit exemption: they are not in the shared INTERNAL
+      # list because they are this plugin's alone, and the
+      # policy_rc_d lifecycle specs pass _policy_rc_d_path on every call.)
       # Ansible collects unsupported params but reports them LAST in its
       # check order (mutually_exclusive -> ... -> unsupported), so the
       # mutually-exclusive/choices/bool checks below all beat a typo'd
       # parameter (see dnf.cr).
-      unsupported = unsupported_param_keys(@params, APT_SPEC).reject { |key| key.in?("_policy_rc_d_path", "_apt_get_paths") }
+      unsupported = unsupported_param_keys(@params, APT_SPEC).reject { |key| SPEC_SEAMS.includes?(key) }
       unsupported_rejection : PluginResult? = nil
       unless unsupported.empty?
         unsupported_rejection = unsupported_params_error(
@@ -276,6 +283,22 @@ module Krikri
       # unsupported-params is reported only after every other spec check
       return unsupported_rejection if unsupported_rejection
 
+      # The refusal is module-start-wide, not cache-flag-gated: real
+      # apt.py cannot even begin when the bindings are missing and it
+      # is in check mode, so a plain name install fails there too
+      # (check mode's only recovery would be the auto-install, which
+      # is a real host mutation). It must be evaluated BEFORE the
+      # no-apt-get guard below: apt.py's !HAVE_PYTHON_APT ladder fails
+      # with this refusal before it ever attempts the auto-install, so
+      # even on a host with no apt-get at all the check-mode task dies
+      # here and never reaches the auto-install whose ENOENT the guard
+      # mirrors (issue #1034: ajilraju.apache2 on Rocky - ansible
+      # reported this message where this engine reported the guard's
+      # "Error executing command" shape plus the auto-install warning).
+      if @check_mode && !python_apt_present?
+        return check_mode_no_python_apt_result
+      end
+
       # Ansible's apt module on a non-Debian-family host: it first
       # auto-installs its python3-apt dependency ("Updating cache and
       # auto-installing missing dependency: python3-apt" warning) via
@@ -286,11 +309,15 @@ module Krikri
       # absent path quietly reported "Package ... not installed" rc=0.
       # Check mode must never reach that attempt: real's !HAVE_PYTHON_APT
       # ladder fails fast with the python3-apt refusal instead (the
-      # module-start check below), because the auto-install is a real
+      # module-start check above), because the auto-install is a real
       # host mutation - so this ENOENT shape is a NORMAL-run-only
-      # outcome (issue #1033, agx.gbp on Rocky round29903240: ansible's
-      # --check output for this task is the refusal, where this guard
-      # used to answer with the shape below).
+      # outcome (issues #1033/#1034, agx.gbp and ajilraju.apache2 on
+      # Rocky: ansible's --check output for these tasks is the bare
+      # refusal, where this guard used to answer with the shape below).
+      # The module-start refusal fires first on bindings-less hosts;
+      # the @check_mode skip here also keeps this shape out of check
+      # output in the exotic bindings-present case, where the
+      # auto-install (whose failure this mirrors) would never run.
       unless @check_mode || apt_get_paths.any? { |path| File.exists?(path) }
         # Real run_command's ENOENT shape keeps the bare "Error executing
         # command." as the fatal msg while the [ERROR] block renders the
@@ -320,21 +347,6 @@ module Krikri
         return result
       end
 
-      # The refusal is module-start-wide, not cache-flag-gated: real
-      # apt.py cannot even begin when the bindings are missing and it
-      # is in check mode, so a plain name install fails there too
-      # (check mode's only recovery would be the auto-install, which
-      # is a real host mutation). Like every fail_json before the cache
-      # pass it carries no cache keys (issue #1033's loop-item lines are
-      # exactly {ansible_loop_var, changed, item, msg}).
-      if @check_mode && !python_apt_present?
-        @omit_cache_updated = true
-        return PluginResult.new(
-          changed: false,
-          failed: true,
-          msg: AptLockRetry::CHECK_MODE_NO_PYTHON_APT_MSG
-        )
-      end
       # Ansible's apt module auto-installs the python3-apt bindings
       # (with an `apt-get update` prefetch) at module start when missing
       # and then respawns - see AptLockRetry#apt_auto_install_python_apt
@@ -344,19 +356,16 @@ module Krikri
       # cache-refresh path forever instead of moving to the mtime-diff
       # path after the first apt task (found via geerlingguy.kubernetes,
       # rounds 65166/65311). Check mode skips this - Ansible fails
-      # fast in check mode instead (refusal mirrored inside the
-      # update-cache block below, where it has always lived here).
+      # fast in check mode instead (refusal mirrored at module start
+      # above).
       unless @check_mode
         explicitly_no_cache = @params["update_cache"]? ? !true?(@params["update_cache"]?) : false
-        if failure = apt_auto_install_python_apt(explicitly_no_cache, ->remote_exec(String))
+        if failure = apt_auto_install_python_apt(explicitly_no_cache, ->remote_exec(String), force_absent: true?(@params["_python_apt_absent"]?))
           # Real ansible's fail_json for the failed auto-install stage
           # carries the RAW command result (msg = stderr.rstrip, no custom
           # prefix) with NO cache_updated key - the module never got to
           # touch the cache - plus the warning it emitted before
-          # attempting the install (issue #522). apt's own arg validation
-          # rejects unknown params, so unlike package.cr there is no
-          # `_python_apt_absent` seam here: the absent path is only
-          # reachable on a genuinely bindings-less host.
+          # attempting the install (issue #522).
           @omit_cache_updated = true
           return apt_auto_install_failure_result(failure)
         end
@@ -492,16 +501,12 @@ module Krikri
 
       # Handle cache update
       if update_cache || has_cache_valid_time
-        # Ansible's apt module cannot run at all in check mode when
-        # it can't see the python3-apt bindings (its auto-install fallback
-        # is a real mutation, so check mode fails fast instead) - mirror
-        # that refusal. On hosts WITH python3-apt nothing changes here.
+        # Belt-and-braces repeat of the module-start refusal above (which
+        # already fails every check-mode + missing-bindings task before
+        # this point, exactly like apt.py's ladder). On hosts WITH
+        # python3-apt nothing changes here.
         if @check_mode && !python_apt_present?
-          return PluginResult.new(
-            changed: false,
-            failed: true,
-            msg: AptLockRetry::CHECK_MODE_NO_PYTHON_APT_MSG
-          )
+          return check_mode_no_python_apt_result
         end
         if should_update_cache?(cache_valid_time)
           if @check_mode
@@ -2309,7 +2314,26 @@ module Krikri
     end
 
     private def python_apt_present? : Bool
+      # `_python_apt_absent` (SPEC_SEAMS) forces the absent answer so a
+      # spec on a dev box that really has the bindings can still drive
+      # the check-mode refusal and auto-install paths end to end.
+      return false if true?(@params["_python_apt_absent"]?)
       apt_python_apt_present?(->remote_exec(String))
+    end
+
+    # apt.py's !HAVE_PYTHON_APT ladder's check-mode fail_json shape:
+    # bare {"changed": false, "msg": ...} - NO cache keys at all (the
+    # module never got to touch the cache; issue #1033's loop-item
+    # lines are exactly {ansible_loop_var, changed, item, msg}), so the
+    # cache-key backfill in #execute must be suppressed exactly like
+    # the ENOENT guard's exit.
+    private def check_mode_no_python_apt_result : PluginResult
+      @omit_cache_updated = true
+      PluginResult.new(
+        changed: false,
+        failed: true,
+        msg: AptLockRetry::CHECK_MODE_NO_PYTHON_APT_MSG
+      )
     end
 
     # Helper to convert string/bool to boolean

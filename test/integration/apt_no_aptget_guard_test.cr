@@ -1,4 +1,5 @@
 require "../minitest_helper"
+require "../../src/krikri/plugin_helpers/apt_lock_retry"
 require "file_utils"
 
 # Issue #18 (round 196 Oefenweb.dns on Rocky 9.6; azavea.duply,
@@ -101,6 +102,95 @@ describe "apt: no-apt-get guard shape" do
     out.must_include("fatal: [localhost]: FAILED! => #{GUARD_FATAL}")
     # the old shape backfilled cache_updated on this exit; real fail_json
     # carries no cache keys
+    out.wont_include("cache_updated")
+  end
+
+  # Issue #1034 (ajilraju.apache2 on Rocky, round 29903266, check
+  # phase): apt.py's !HAVE_PYTHON_APT ladder refuses in check mode
+  # BEFORE it ever attempts the python3-apt auto-install, so a
+  # check-mode task on an apt-less host fails with the bare
+  # {"changed": false, "msg": <refusal>} - no cmd/rc keys and no
+  # auto-install warning - where this engine returned the guard's
+  # ENOENT auto-install shape (the guard used to be evaluated before
+  # the refusal). The `_apt_get_paths`/`_python_apt_absent` seams force
+  # both host-state conditions (no apt-get, no python3-apt) on a dev
+  # box that really has them, so the ladder ORDER is provable without
+  # a container.
+  it "refuses in check mode before the no-apt-get guard (issue #1034)" do
+    result = PluginSpecHelper.run("apt", {
+      "name"                => "apache2",
+      "state"               => "present",
+      "update_cache"        => "true",
+      "_apt_get_paths"      => "/nonexistent-krikri-spec/apt-get,/nonexistent-krikri-spec/apt-get-local",
+      "_python_apt_absent"  => "true",
+      "_ansible_check_mode" => "true",
+    })
+
+    result["failed"].as_bool.must_equal(true)
+    result["changed"].as_bool.must_equal(false)
+    result["msg"].as_s.must_equal(Krikri::AptLockRetry::CHECK_MODE_NO_PYTHON_APT_MSG)
+    # real's ladder fail_json carries ONLY changed+msg: no cmd/rc from
+    # the ENOENT auto-install shape, no cache keys, no warning
+    result["cmd"]?.must_be_nil
+    result["rc"]?.must_be_nil
+    result["cache_updated"]?.must_be_nil
+    result["warnings"]?.must_be_nil
+  end
+
+  it "keeps the run_command ENOENT auto-install shape outside check mode" do
+    result = PluginSpecHelper.run("apt", {
+      "name"               => "apache2",
+      "state"              => "present",
+      "update_cache"       => "true",
+      "_apt_get_paths"     => "/nonexistent-krikri-spec/apt-get,/nonexistent-krikri-spec/apt-get-local",
+      "_python_apt_absent" => "true",
+    })
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("Error executing command.")
+    result["cmd"].as_s.must_equal("update")
+    result["rc"].as_i.must_equal(2)
+    result["warnings"].as_a.map(&.as_s).must_equal(
+      ["Updating cache and auto-installing missing dependency: python3-apt"])
+    result["cache_updated"]?.must_be_nil
+  end
+
+  it "matches ansible's check-mode refusal in the container (bare msg, no warning)" do
+    unless PluginSpecHelper.container_cli_available?
+      skip("podman unavailable")
+    end
+    output = IO::Memory.new
+    Process.run("podman", ["image", "exists", COMPAT_IMAGE], output: output, error: output)
+    skip("#{COMPAT_IMAGE} unavailable") unless $?.success?
+
+    work = PluginSpecHelper.tmp_path("apt-noaptget-check-work")
+    FileUtils.rm_rf(work)
+    FileUtils.mkdir_p(work)
+    File.write(File.join(work, "play.yml"), <<-YAML)
+      ---
+      - hosts: localhost
+        gather_facts: false
+        connection: local
+        tasks:
+          - name: apt on an apt-less host in check mode
+            ansible.builtin.apt:
+              name: bash
+              state: present
+      YAML
+
+    run_output = IO::Memory.new
+    Process.run("podman", [
+      "run", "--rm", "--name", "krikri-apt-noaptget-check-#{Process.pid}",
+      "-v", "#{File.dirname(BINARY)}:/kbin:ro",
+      "-v", "#{work}:/work",
+      COMPAT_IMAGE,
+      "sh", "-c", "/kbin/krikri-playbook -i localhost, -c local --check /work/play.yml",
+    ], output: run_output, error: run_output)
+    out = run_output.to_s
+
+    out.must_include("fatal: [localhost]: FAILED! => {\"changed\": false, \"msg\": \"#{Krikri::AptLockRetry::CHECK_MODE_NO_PYTHON_APT_MSG}\"}")
+    out.wont_include(GUARD_WARNING)
+    out.wont_include("Error executing command")
     out.wont_include("cache_updated")
   end
 end
