@@ -116,6 +116,25 @@ describe Krikri::ResultDisplay do
       out.must_include("-old")
       out.must_include("+new")
     end
+
+    # Ansible's callback _get_diff prints one "diff skipped: ..." line per
+    # skip marker and NO content diff for the side the marker replaced
+    # (live-verified vs 2.21.6 --diff, issue #1064): a binary-source copy
+    # prints just the source line even when the dest side was read.
+    it "prints only the skip line when a marker replaced one diff side" do
+      diff = JSON.parse(%([{"before_header": "/tmp/blob.bin", "before": "old\\n", "src_binary": 1}]))
+      out = capture_output { Krikri::ResultDisplay.display_diff(diff) }
+      out.must_equal("diff skipped: source file appears to be binary\n")
+    end
+
+    # _get_diff's marker order is dst_binary, src_binary, dst_larger,
+    # src_larger regardless of dict order, and the size lines quote the
+    # limit carried in the marker (live-verified vs 2.21.6 --diff).
+    it "prints the marker lines in _get_diff order with the size limit" do
+      diff = JSON.parse(%({"dst_larger": 104448, "src_binary": 1}))
+      out = capture_output { Krikri::ResultDisplay.display_diff(diff) }
+      out.must_equal("diff skipped: source file appears to be binary\ndiff skipped: destination file size is greater than 104448\n")
+    end
   end
 
   describe ".display_diff attribute diffs" do

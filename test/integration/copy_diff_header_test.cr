@@ -110,4 +110,88 @@ describe "copy diff headers" do
     # (headers included) must not appear.
     result["diff"].as_a.must_equal([] of JSON::Any)
   end
+
+  it "marks a binary source side with src_binary instead of its raw bytes" do
+    dir = PluginSpecHelper.tmp_path("copy-diff-src-binary")
+    FileUtils.mkdir_p(dir)
+    src = File.join(dir, "blob.bin")
+    File.write(src, "bin\u{0}lary")
+    dest = File.join(dir, "dest.bin")
+
+    result = PluginSpecHelper.run("copy", {
+      "src"           => src,
+      "dest"          => dest,
+      "_ansible_diff" => "true",
+    })
+
+    # _get_diff_data replaces the source content with a src_binary marker
+    # when it holds a NUL byte (live-verified vs 2.21.6). Raw binary bytes
+    # in the diff JSON are not valid UTF-8 and killed the whole task
+    # before the copy ran (issue #1064).
+    diff = result["diff"].as_a.first.as_h
+    diff["src_binary"].as_i64.must_equal(1)
+    diff.has_key?("after").must_equal(false)
+    diff.has_key?("after_header").must_equal(false)
+    diff["before"].as_s.must_equal("")
+  end
+
+  it "marks a binary destination side with dst_binary and keeps the source content" do
+    dir = PluginSpecHelper.tmp_path("copy-diff-dst-binary")
+    FileUtils.mkdir_p(dir)
+    dest = File.join(dir, "dest.bin")
+    File.write(dest, "old\u{0}dest")
+
+    result = PluginSpecHelper.run("copy", {
+      "content"       => "hello",
+      "dest"          => dest,
+      "_ansible_diff" => "true",
+    })
+
+    diff = result["diff"].as_a.first.as_h
+    diff["dst_binary"].as_i64.must_equal(1)
+    diff.has_key?("before").must_equal(false)
+    diff.has_key?("before_header").must_equal(false)
+    diff["after"].as_s.must_equal("hello")
+    diff["after_header"].as_s.must_equal(dest.to_s)
+  end
+
+  it "replaces an oversized source side with the src_larger marker" do
+    dir = PluginSpecHelper.tmp_path("copy-diff-src-larger")
+    FileUtils.mkdir_p(dir)
+    src = File.join(dir, "big.txt")
+    File.write(src, "a" * 104449)
+    dest = File.join(dir, "dest.txt")
+
+    result = PluginSpecHelper.run("copy", {
+      "src"           => src,
+      "dest"          => dest,
+      "_ansible_diff" => "true",
+    })
+
+    # Past MAX_FILE_SIZE_FOR_DIFF (_get_diff_data's limit, the marker
+    # stores the number the callback quotes), the content is dropped for
+    # an src_larger marker - live-verified vs 2.21.6, where an .rpm copy
+    # prints "diff skipped: source file size is greater than 104448".
+    diff = result["diff"].as_a.first.as_h
+    diff["src_larger"].as_i64.must_equal(104448)
+    diff.has_key?("after").must_equal(false)
+  end
+
+  it "replaces an oversized destination side with the dst_larger marker" do
+    dir = PluginSpecHelper.tmp_path("copy-diff-dst-larger")
+    FileUtils.mkdir_p(dir)
+    dest = File.join(dir, "big.txt")
+    File.write(dest, "a" * 104449)
+
+    result = PluginSpecHelper.run("copy", {
+      "content"       => "hello",
+      "dest"          => dest,
+      "_ansible_diff" => "true",
+    })
+
+    diff = result["diff"].as_a.first.as_h
+    diff["dst_larger"].as_i64.must_equal(104448)
+    diff.has_key?("before").must_equal(false)
+    diff["after"].as_s.must_equal("hello")
+  end
 end
