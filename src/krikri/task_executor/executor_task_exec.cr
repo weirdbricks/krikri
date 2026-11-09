@@ -2659,8 +2659,12 @@ module Krikri
     # template: use), then falls back to whatever's resolvable relative to
     # the controller's own cwd. A local connection needs the path resolved
     # (a role-relative name isn't meaningful relative to the plugin
-    # process's own cwd otherwise) but never staged - the plugin process
-    # already runs directly on the controller's filesystem in that case.
+    # process's own cwd otherwise) and STILL staged: real's action plugin
+    # runs its transferred copy even when controller == target
+    # (live-verified vs 2.19.11 over ansible_connection=local, issue
+    # #1016), so the script's own $0 - and every shell error line quoting
+    # it - reads the ansible-tmp staged path, never the controller-side
+    # source path.
     private def stage_script_src(task : Task, params : Hash(String, String), host : Host, vars_context : Hash(String, JSON::Any)) : Hash(String, String) | JSON::Any
       return params unless task.module_name == "ansible.builtin.script"
 
@@ -2707,6 +2711,16 @@ module Krikri
       end
 
       if PluginManager.local_connection?(host, vars_context)
+        if staged = stage_script_local_copy(resolved_local, vars_context)
+          resolved = params.dup
+          resolved["cmd"] = rest ? "#{staged[:file]} #{rest}" : staged[:file]
+          resolved["__cleanup_after_script"] = "true"
+          resolved["__script_tmp_dir"] = staged[:dir]
+          return resolved
+        end
+
+        # Staging failed - fall back to running the controller-side source
+        # in place rather than inventing a transfer failure of our own.
         resolved = params.dup
         resolved["cmd"] = rest ? "#{resolved_local} #{rest}" : resolved_local
         return resolved
@@ -2786,6 +2800,43 @@ module Krikri
       resolved["cmd"] = rest ? "#{remote_tmp} #{rest}" : remote_tmp
       resolved["__cleanup_after_script"] = "true"
       resolved
+    end
+
+    # The local-connection twin of the remote staging above (issue
+    # #1016): real's script action makes its per-task tmp dir through the
+    # SAME shell.mkdtemp one-shot script run over the connection's shell,
+    # and for ansible_connection=local that shell is this very machine -
+    # so running the same script here reproduces its `$(echo
+    # <remote_tmp>)` expansion and its umask 077 mkdir shape exactly.
+    # Returns nil on any staging failure so the caller falls back to
+    # running the controller-side source in place (no transfer failure of
+    # our own). The plugin's __script_tmp_dir cleanup removes the whole
+    # per-task dir, the same footprint real's action leaves (none).
+    private def stage_script_local_copy(resolved_local : String, vars_context : Hash(String, JSON::Any)) : NamedTuple(dir: String, file: String)?
+      mkdir_script = PluginHelpers::ScriptRemoteStaging.mkdir_script(
+        script_remote_tmp_base(vars_context),
+        PluginHelpers::ScriptRemoteStaging.tmp_dir_name
+      )
+
+      made = begin
+        output = IO::Memory.new
+        status = Process.run("/bin/sh", ["-c", mkdir_script], output: output, error: Process::Redirect::Close)
+        status.success? ? PluginHelpers::ScriptRemoteStaging.parsed_tmpdir(output.to_s) : nil
+      rescue
+        nil
+      end
+      return nil unless made
+
+      staged_file = "#{made}/#{File.basename(resolved_local)}"
+      begin
+        File.copy(resolved_local, staged_file)
+      rescue
+        # A copy that never completed: drop the half-staged dir so no
+        # partial footprint is left in ~/.ansible/tmp.
+        FileUtils.rm_rf(made)
+        return nil
+      end
+      {dir: made, file: staged_file}
     end
 
     # script:'s remote-staging tmp base: ansible_remote_tmp when the vars

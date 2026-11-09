@@ -1,4 +1,5 @@
 require "../minitest_helper"
+require "file_utils"
 
 # script: is an ACTION plugin in ansible-core: the action runs the
 # transferred file itself and returns its own result dict, so a non-zero
@@ -131,5 +132,43 @@ describe "script non-zero-exit Action failed header" do
   ensure
     File.delete(script) if script && File.exists?(script)
     File.delete(playbook) if playbook && File.exists?(playbook)
+  end
+
+  # Issue #1016 (kpg 000024-multi-script-happy): real's script action
+  # stages its transferred copy under the target's
+  # <remote_tmp>/ansible-tmp-<ts>-<pid>-<rand>/<basename> and runs THAT,
+  # over ansible_connection=local too (live-verified vs 2.19.11) - so the
+  # script's own $0, quoted by every shell error line, reads the staged
+  # path, never the controller-side source path. krikri ran the source in
+  # place and every failing script's stderr diverged.
+  it "runs a local script from its ansible-tmp staging copy so shell errors quote the staged path (issue #1016)" do
+    src_dir = File.tempname("script-local-staging")
+    Dir.mkdir_p(src_dir)
+    remote_tmp = File.join(src_dir, "remote_tmp")
+    fixture = File.join(src_dir, "src.txt")
+    File.write(fixture, "kpg\nsecond\n")
+    playbook = File.join(src_dir, "pb.yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        gather_facts: false
+        vars:
+          ansible_remote_tmp: #{remote_tmp}
+        tasks:
+          - name: failing fixture script
+            ansible.builtin.script:
+              cmd: #{fixture}
+            ignore_errors: true
+      YAML
+    output = IO::Memory.new
+    Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+    text = output.to_s
+
+    text.must_match(%r{"stderr": "#{Regex.escape(remote_tmp)}/ansible-tmp-[\d.\-]+/src\.txt: 1: kpg: not found})
+    refute(text.includes?(fixture))
+    # ansible's script.py removes the whole per-task tmp dir in its
+    # finally clause - the staged copy must leave no trace either.
+    Dir.children(remote_tmp).must_equal([] of String)
+  ensure
+    FileUtils.rm_rf(src_dir) if src_dir
   end
 end

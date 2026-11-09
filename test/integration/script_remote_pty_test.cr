@@ -83,7 +83,8 @@ describe "script plugin remote-pty simulation (issue #298)" do
     # No pty on a local connection: the streams stay separate, the
     # trailing \n stays (real's local capture strips nothing), and the
     # untouched controller-side script survives a markerless run's
-    # cleanup no-op (a local run never staged anything to clean).
+    # cleanup no-op (a markerless run is handed the real controller-side
+    # path, never a staged copy to clean).
     result["stdout"].as_s.must_equal("out-one\n")
     result["stderr"].as_s.must_equal("err-one\n")
     result["stdout_lines"].as_a.map(&.as_s).must_equal(["out-one"])
