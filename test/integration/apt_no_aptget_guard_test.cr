@@ -72,3 +72,94 @@ describe "apt: no-apt-get guard shape" do
     out.wont_include("cache_updated")
   end
 end
+
+# Regression spec for issue #1033 (agx.gbp on Rocky 9.6, round29903240,
+# --check phase): real apt.py's !HAVE_PYTHON_APT ladder fails CHECK mode
+# with the python3-apt message BEFORE ever attempting the auto-install
+# (it is a real host mutation), so the run_command ENOENT shape above is
+# a NORMAL-run-only outcome. The guard here used to answer a --check run
+# with that shape - "Error executing command." plus the auto-install
+# warning - where ansible's --check output was the bare python3-apt
+# refusal. `_apt_get_paths` (same seam family as apt_repository's) forces
+# the gate on a dev box that really has apt-get, and the python3-apt
+# probe (absolute /usr/bin/python3, unshimable via PATH) is pointed at a
+# stub `apt` module that raises on import via the child-only PYTHONPATH.
+describe "apt: no-apt-get guard check-mode refusal (issue #1033)" do
+  it "reports the python3-apt check-mode refusal, never the auto-install ENOENT shape" do
+    stub_dir = PluginSpecHelper.tmp_path("no-python3-apt-stub")
+    Dir.mkdir_p(stub_dir)
+    File.write(File.join(stub_dir, "apt.py"), %(raise ImportError("No module named 'apt'")\n))
+
+    result = PluginSpecHelper.run("apt", {
+      "name"                => "cowbuilder",
+      "state"               => "latest",
+      "_apt_get_paths"      => "/nonexistent-krikri-spec/apt-get,/nonexistent-krikri-spec/apt-get-local",
+      "_ansible_check_mode" => "true",
+    }, env: {"PYTHONPATH" => stub_dir})
+
+    result["failed"].as_bool.must_equal(true)
+    result["changed"].as_bool.must_equal(false)
+    result["msg"].as_s.must_equal("python3-apt must be installed to use check mode. If run normally this module can auto-install it, see the auto_install_module_deps option.")
+    # real's check-mode refusal is a bare fail_json: no cmd/rc from an
+    # auto-install that never runs under --check, no cache keys, no
+    # warning - exactly the four keys ansible's loop-item line dumps
+    # ({ansible_loop_var, changed, item, msg}).
+    result["cmd"]?.must_be_nil
+    result["rc"]?.must_be_nil
+    result["cache_updated"]?.must_be_nil
+    result["warnings"]?.must_be_nil
+  end
+
+  it "keeps the run_command ENOENT shape for a normal run" do
+    result = PluginSpecHelper.run("apt", {
+      "name"           => "cowbuilder",
+      "state"          => "latest",
+      "_apt_get_paths" => "/nonexistent-krikri-spec/apt-get,/nonexistent-krikri-spec/apt-get-local",
+    })
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("Error executing command.")
+    result["cmd"].as_s.must_equal("update")
+    result["rc"].as_i.must_equal(2)
+    result["warnings"].as_a.map(&.as_s).must_equal(["Updating cache and auto-installing missing dependency: python3-apt"])
+  end
+
+  it "reports the refusal in the engine console output under --check" do
+    unless PluginSpecHelper.container_cli_available?
+      skip("podman unavailable")
+    end
+    output = IO::Memory.new
+    Process.run("podman", ["image", "exists", COMPAT_IMAGE], output: output, error: output)
+    skip("#{COMPAT_IMAGE} unavailable") unless $?.success?
+
+    work = PluginSpecHelper.tmp_path("apt-noaptget-check-work")
+    FileUtils.rm_rf(work)
+    FileUtils.mkdir_p(work)
+    File.write(File.join(work, "play.yml"), <<-YAML)
+      ---
+      - hosts: localhost
+        gather_facts: false
+        connection: local
+        tasks:
+          - name: apt on an apt-less host
+            ansible.builtin.apt:
+              name: bash
+              state: present
+      YAML
+
+    run_output = IO::Memory.new
+    Process.run("podman", [
+      "run", "--rm", "--name", "krikri-apt-noaptget-check-#{Process.pid}",
+      "-v", "#{File.dirname(BINARY)}:/kbin:ro",
+      "-v", "#{work}:/work",
+      COMPAT_IMAGE,
+      "sh", "-c", "/kbin/krikri-playbook -i localhost, -c local /work/play.yml --check",
+    ], output: run_output, error: run_output)
+    out = run_output.to_s
+
+    out.must_include("[ERROR]: Task failed: Module failed: python3-apt must be installed to use check mode. If run normally this module can auto-install it, see the auto_install_module_deps option.")
+    out.wont_include(GUARD_WARNING)
+    out.wont_include(GUARD_ERROR)
+    out.wont_include(GUARD_FATAL)
+  end
+end
