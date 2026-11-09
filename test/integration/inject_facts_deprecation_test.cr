@@ -317,6 +317,49 @@ describe "INJECT_FACTS_AS_VARS deprecation from a when: clause" do
     stderr.must_include("10         - ansible_architecture | length > 0\n")
   end
 
+  # YAML lets a block sequence's items sit at their parent key's own
+  # indent, and Ansible-Security-Compliance's rhel7-role-C2S writes its
+  # `when:` lists that way: real anchors each item's scalar token the same
+  # as a deeper-indented one (tasks/main.yml:19:7 live-captured vs
+  # ansible-playbook 2.21, issue #1017), where this engine reported the
+  # `when:` key line's own value position (18:10) instead.
+  it "pins a same-indent block-sequence when: item's read at its own item token" do
+    dir = PluginSpecHelper.tmp_path("inject-facts-same-indent-#{Random::Secure.hex(4)}")
+    tasks_dir = File.join(dir, "roles", "c2s_like", "tasks")
+    FileUtils.mkdir_p(tasks_dir)
+    File.write(File.join(tasks_dir, "main.yml"), <<-YAML)
+      ---
+      -   name: gated by a top-level fact
+          debug:
+              msg: hi
+          tags:
+          - one
+          - two
+          when:
+          - (ansible_virtualization_role != "guest" or ansible_virtualization_type != "docker")
+      YAML
+    playbook = File.join(dir, "play.yml")
+    File.write(playbook, <<-PLAYBOOK)
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        roles:
+          - c2s_like
+      PLAYBOOK
+
+    stdout = IO::Memory.new
+    stderr = IO::Memory.new
+    Process.run(BINARY, ["-i", "localhost,", playbook], output: stdout, error: stderr, chdir: dir)
+
+    stderr.to_s.scan(/DEPRECATION WARNING\]: INJECT_FACTS_AS_VARS/).size.must_equal(1)
+    stderr.to_s.must_include("/roles/c2s_like/tasks/main.yml:9:7\n")
+    stderr.to_s.must_include("7     - two\n")
+    stderr.to_s.must_include("8     when:\n")
+    stderr.to_s.must_include("9     - (ansible_virtualization_role != \"guest\" or ansible_virtualization_type != \"docker\")\n")
+    stderr.to_s.must_include("\n        ^ column 7")
+    stderr.to_s.includes?(":8:10").must_equal(false)
+  end
+
   # A dynamic include's loaded tasks inherit the enclosing BLOCK's when:
   # through real's parent chain, so the block's fact read is reported after
   # the first included task's banner, Origin'd at the block's own clause
