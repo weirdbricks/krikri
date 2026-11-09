@@ -348,4 +348,66 @@ describe "failed no_log copy's [ERROR] block" do
     output.wont_include("Destination directory")
     output.must_include(%(fatal: [localhost]: FAILED! => {"censored": "the output has been hidden due to the fact that 'no_log: true' was specified for this result", "changed": false}))
   end
+
+  # user's group-existence check (issue #1024, observed on
+  # laniakea.rstudio's no_log user task on Ubuntu, whose `groups: wheel`
+  # names a group that does not exist there): real prints the block -
+  # user.py's own "Group <g> does not exist" wording, echoing the group
+  # name from the task's group:/groups: param - above the censored fatal
+  # line (live-verified vs 2.21.6). With a literal value that name is
+  # already in the playbook source, so the block prints like real's; a
+  # templated value may carry a secret, so its block stays suppressed
+  # (only the censored fatal line remains).
+  it "prints the block above the censored fatal for a no_log user failing on a literal missing group" do
+    output = run_playbook(<<-YAML)
+          - name: Create rstudio user and set rstudio password
+            user:
+              name: krikri1024gateuser
+              groups: krikri1024nosuchgroup
+              state: present
+            no_log: true
+            ignore_errors: true
+    YAML
+
+    output.must_include("[ERROR]: Task failed: Module failed: Group krikri1024nosuchgroup does not exist")
+    block_precedes_fatal?(output).must_equal(true, output)
+    output.must_include(%(fatal: [localhost]: FAILED! => {"censored": "the output has been hidden due to the fact that 'no_log: true' was specified for this result", "changed": false}))
+    output.must_include("...ignoring")
+  end
+
+  # The primary-group `group:` param fails with the same user.py wording
+  # and gets the same literal-only gate.
+  it "prints the block above the censored fatal for a no_log user failing on a literal missing primary group" do
+    output = run_playbook(<<-YAML)
+          - name: Create rstudio user in a missing primary group
+            user:
+              name: krikri1024gateuser
+              group: krikri1024nosuchgroup
+              state: present
+            no_log: true
+            ignore_errors: true
+    YAML
+
+    output.must_include("[ERROR]: Task failed: Module failed: Group krikri1024nosuchgroup does not exist")
+    block_precedes_fatal?(output).must_equal(true, output)
+    output.must_include(%(fatal: [localhost]: FAILED! => {"censored": "the output has been hidden due to the fact that 'no_log: true' was specified for this result", "changed": false}))
+    output.must_include("...ignoring")
+  end
+
+  it "keeps the block suppressed for a no_log user whose group is templated" do
+    output = run_playbook(<<-YAML)
+          - name: Create rstudio user and set rstudio password
+            user:
+              name: krikri1024gateuser
+              groups: "{{ 'krikri1024nosuchgroup' }}"
+              state: present
+            no_log: true
+            ignore_errors: true
+    YAML
+
+    output.wont_include("[ERROR]: Task failed:")
+    output.wont_include("krikri1024nosuchgroup")
+    output.must_include(%(fatal: [localhost]: FAILED! => {"censored": "the output has been hidden due to the fact that 'no_log: true' was specified for this result", "changed": false}))
+    output.must_include("...ignoring")
+  end
 end
