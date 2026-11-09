@@ -2249,7 +2249,7 @@ module Krikri
         initial_reason = apt_fetch_failure_reason(update_result)
         outcome = apt_fetch_failed_update_retry(update_cache_retries, update_cache_retry_max_delay, ->remote_exec(String),
           initial_reason: initial_reason,
-          initial_signature_failed: apt_fetch_reason_refused_repo?(initial_reason))
+          initial_trailing_refusal: apt_fetch_reason_trailing_refusal?(initial_reason))
         return nil if outcome[:recovered]
         # a fail_json exit carries no cache keys (the retvals assignment
         # in main() never runs) - suppress the engine-wide backfill

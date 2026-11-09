@@ -14,13 +14,14 @@ require "../minitest_helper"
 #   other top-level E: diagnostics). A standalone "W: GPG error ...
 #   NO_PUBKEY ..." warning is NOT one of them: python-apt raises only on
 #   a failed item, so a warning-only update exits 0 and succeeds. str()
-#   is the W:/E: diagnostic lines, marker-space stripped, ", "-joined;
-#   from the second failed attempt on, apt prepends its two
-#   untrusted-repo lines - but only once a repo has been REFUSED
-#   authentication: tolerated shapes (a [trusted=yes] repo's standalone
-#   GPG warning, allow-insecure W: warnings, plain index 404s) keep the
-#   identical unprefixed reason on every attempt, which is issue #665's
-#   real round. Round 5210000
+#   is the W:/E: diagnostic lines, marker-space stripped, ", "-joined,
+#   with each refused repo's two untrusted-repo lines placed after its
+#   "E: The repository ..." refusal - except at the text's tail, where
+#   they are trimmed and surface at the front of the NEXT attempt's text
+#   instead. Tolerated shapes (a [trusted=yes] repo's standalone GPG
+#   warning, allow-insecure W: warnings, plain index 404s) carry no
+#   refusal line and keep the identical unprefixed reason on every
+#   attempt, which is issue #665's real round. Round 5210000
 #   (artem_shestakov.nginx): real ansible-core 2.19.11 warned five
 #   times with this text and failed with "Failed to update apt cache
 #   after 5 retries: W:..., E:..." while krikri classified the case as
@@ -31,13 +32,13 @@ private class FetchRetryHarness
   getter calls : Array(String) = [] of String
 
   def run(retries : Int32, max_delay : Int32, result,
-          initial_reason : String = "", initial_signature_failed : Bool = false)
+          initial_reason : String = "", initial_trailing_refusal : Bool = false)
     exec = ->(command : String) {
       @calls << command
       result
     }
     apt_fetch_failed_update_retry(retries, max_delay, exec,
-      initial_reason: initial_reason, initial_signature_failed: initial_signature_failed)
+      initial_reason: initial_reason, initial_trailing_refusal: initial_trailing_refusal)
   end
 end
 
@@ -106,6 +107,24 @@ private MULTI_GPG_RESULT = {
   stdout:    "",
   stderr:    "W: GPG error: https://deb.debian.org/debian trixie InRelease: The following signatures couldn't be verified because the public key is not available: NO_PUBKEY 6ED0E7B82643E131 NO_PUBKEY 78DBA3BC47EF2265 NO_PUBKEY 762F67A0B2C39DE4\nE: The repository 'https://deb.debian.org/debian trixie InRelease' is not signed.\nW: GPG error: https://security.debian.org/debian-security trixie-security InRelease: The following signatures couldn't be verified because the public key is not available: NO_PUBKEY BDE6D2B9216EC7A8 NO_PUBKEY 8E9F831205B4BA95\nE: The repository 'https://security.debian.org/debian-security trixie-security InRelease' is not signed.\nW: GPG error: https://deb.debian.org/debian trixie-updates InRelease: The following signatures couldn't be verified because the public key is not available: NO_PUBKEY 6ED0E7B82643E131 NO_PUBKEY 78DBA3BC47EF2265\nE: The repository 'https://deb.debian.org/debian trixie-updates InRelease' is not signed.\n",
 }
+
+# Issue #1025, round 29903261 marauderxtreme.local_system's "Activate all
+# neat PPAs" failure, exactly as apt's CLI printed it: one refused repo
+# ("E: The repository ... does not have a Release file.") followed by a
+# second repo's mere legacy-keyring warning. Real ansible-core's five
+# attempt texts all read "E:..., W:Updating..., W:See..., W:keyring...":
+# the refusal's untrusted-repo pair sits right after its line even though
+# the next line is not another "W: GPG error ..." block start, and the
+# text ends on the keyring warning, so no attempt ever gains a front pair.
+private RELEASE_THEN_KEYRING_RESULT = {
+  exit_code: 100,
+  stdout:    "",
+  stderr:    "E: The repository 'https://ppa.launchpadcontent.net/hvr/ghc/ubuntu jammy Release' does not have a Release file.\nW: https://ppa.launchpadcontent.net/git-core/ppa/ubuntu/dists/jammy/InRelease: Key is stored in legacy trusted.gpg keyring (/etc/apt/trusted.gpg), see the DEPRECATION section in apt-key(8) for details.\n",
+}
+
+private def release_then_keyring_reason : String
+  "E:The repository 'https://ppa.launchpadcontent.net/hvr/ghc/ubuntu jammy Release' does not have a Release file., #{Krikri::AptLockRetry::APT_FETCH_SECURE_REPO_PREPEND}, W:https://ppa.launchpadcontent.net/git-core/ppa/ubuntu/dists/jammy/InRelease: Key is stored in legacy trusted.gpg keyring (/etc/apt/trusted.gpg), see the DEPRECATION section in apt-key(8) for details."
+end
 
 private def multi_gpg_blocks : Array(String)
   [
@@ -197,6 +216,15 @@ describe Krikri::AptLockRetry do
         "W:GPG error: http://127.0.0.1:8765/a stable InRelease: The following signatures couldn't be verified because the public key is not available: NO_PUBKEY 1105AB94A44953F4, E:The repository 'http://127.0.0.1:8765/a stable InRelease' is not signed., #{Krikri::AptLockRetry::APT_FETCH_SECURE_REPO_PREPEND}, W:GPG error: http://127.0.0.1:8765/e stable InRelease: The following signatures couldn't be verified because the public key is not available: NO_PUBKEY 1105AB94A44953F4"
       )
     end
+
+    # Issue #1025 (round 29903261): the pair follows the missing-Release
+    # refusal even though the next line is a different repo's keyring
+    # warning rather than another "W: GPG error ..." block start - krikri
+    # keyed the insertion on GPG block starts and quoted this shape's two
+    # CLI lines adjacent, with no pair anywhere.
+    it "inserts the pair after a missing-Release refusal followed by a keyring warning" do
+      Krikri::AptLockRetryTestProbe.new.apt_fetch_failure_reason(RELEASE_THEN_KEYRING_RESULT).must_equal(release_then_keyring_reason)
+    end
   end
 
   describe "#apt_fetch_attempt_reason" do
@@ -251,6 +279,24 @@ describe Krikri::AptLockRetry do
       outcome[0].must_equal(reason)
       outcome[1].must_equal(true)
     end
+
+    # Issue #1025 (round 29903261): the text ends on git-core's keyring
+    # warning rather than on a refusal, so nothing is left unspent and
+    # every attempt quotes the identical text - real ansible's five
+    # warnings and final msg carry no front pair anywhere.
+    it "keeps a keyring-warning-tailed reason unprefixed on every attempt" do
+      probe = Krikri::AptLockRetryTestProbe.new
+      reason = probe.apt_fetch_failure_reason(RELEASE_THEN_KEYRING_RESULT)
+      reason.must_equal(release_then_keyring_reason)
+
+      outcome = probe.apt_fetch_attempt_reason(reason, false)
+      outcome[0].must_equal(reason)
+      outcome[1].must_equal(false)
+
+      again = probe.apt_fetch_attempt_reason(reason, outcome[1])
+      again[0].must_equal(reason)
+      again[1].must_equal(false)
+    end
   end
 
   describe "#apt_fetch_reason_refused_repo? clearsigned" do
@@ -270,7 +316,7 @@ describe Krikri::AptLockRetry do
       harness = FetchRetryHarness.new
       outcome = harness.run(2, 0, GPG_RESULT,
         initial_reason: Krikri::AptLockRetryTestProbe.new.apt_fetch_failure_reason(GPG_RESULT),
-        initial_signature_failed: true)
+        initial_trailing_refusal: true)
       outcome[:recovered].must_equal(false)
       outcome[:warnings][0].must_equal("Failed to update cache after 1 retries due to W:GPG error: https://nginx.org/packages/ubuntu jammy InRelease: The following signatures couldn't be verified because the public key is not available: NO_PUBKEY 2FD21310B49F6B46, E:The repository 'https://nginx.org/packages/ubuntu jammy InRelease' is not signed., retrying")
       # the backoff delay carries a random jitter, so only the wording is pinned
@@ -333,7 +379,7 @@ describe Krikri::AptLockRetry do
       harness = FetchRetryHarness.new
       outcome = harness.run(2, 0, MULTI_GPG_RESULT,
         initial_reason: reason,
-        initial_signature_failed: true)
+        initial_trailing_refusal: true)
       outcome[:recovered].must_equal(false)
       outcome[:warnings][0].must_equal("Failed to update cache after 1 retries due to #{reason}, retrying")
       outcome[:warnings][2].must_equal("Failed to update cache after 2 retries due to #{Krikri::AptLockRetry::APT_FETCH_SECURE_REPO_PREPEND}, #{reason}, retrying")

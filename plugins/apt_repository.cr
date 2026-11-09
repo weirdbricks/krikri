@@ -368,11 +368,14 @@ module Krikri
           # NO_PUBKEY ..." warning exits 0 and the update succeeds, the
           # same changed outcome real ansible reports. The retry loop's
           # Cache().update() calls all run in ONE python-apt process, and
-          # from the second call onward an unauthenticated-repo reason
-          # gains the fixed two-line W: untrusted-repo prefix
-          # (AptLockRetry.apt_fetch_attempt_reason) - live-verified
-          # against ansible-core 2.19.11. The signed-repo
-          # retry shape is still caught (see
+          # a reason whose text ended on a refused repo's "E: The
+          # repository ..." line gains the fixed two-line W:
+          # untrusted-repo prefix at its front from the second call
+          # onward (AptLockRetry.apt_fetch_attempt_reason) -
+          # live-verified against ansible-core 2.19.11 and round 29903261
+          # (marauderxtreme.local_system), whose five identical texts end
+          # on git-core's keyring warning and gain no prefix at all. The
+          # signed-repo retry shape is still caught (see
           # AptLockRetry.apt_fetch_signature_failure?) - previously this
           # plugin classified signature-level failures as plain
           # nonzero-exit failures and failed fast with no retries where
@@ -534,7 +537,7 @@ module Krikri
       max_delay = int_param("update_cache_retry_max_delay", AptRepositoryCacheRetry::DEFAULT_UPDATE_CACHE_RETRY_MAX_DELAY)
       attempt = 0
       last_reason = ""
-      signature_failed = false
+      trailing_refusal = false
       # ansible computes randomize (secrets.randbelow(1000)/1000.0) once
       # before its loop, so one call's attempts all share the same jitter
       # rather than re-drawing it per attempt
@@ -545,7 +548,7 @@ module Krikri
           return {failed: false, last_reason: ""}
         end
         reason = apt_fetch_failure_reason(cache_result)
-        last_reason, signature_failed = apt_fetch_attempt_reason(reason, signature_failed)
+        last_reason, trailing_refusal = apt_fetch_attempt_reason(reason, trailing_refusal)
         @warnings << "Failed to update cache after #{attempt + 1} due to #{last_reason} retry, retrying"
         delay = apt_repository_retry_delay(attempt, max_delay, randomize)
         retry_sleep(delay)

@@ -178,86 +178,83 @@ module Krikri
     # (plain fetch failures), whose warnings and final msg stay empty - the
     # round-1100002-verified shape.
     #
-    # With SEVERAL failing repositories python-apt does not join their
-    # diagnostic blocks bare: each block ("W:GPG error ..." + "E:The
-    # repository ... is not signed.") is separated from the next by its two
-    # untrusted-repo lines ("W:Updating from such a repository ...",
-    # "W:See apt-secure(8) ..."), probed live in a GPG-broken trixie
-    # container - a three-repo first attempt's exception text was
-    # "W:GPG<r1>, E:<r1>, W:Updating..., W:See..., W:GPG<r2>, E:<r2>,
-    # W:Updating..., W:See..., W:GPG<r3>, E:<r3>" while the CLI stderr
-    # carries the same W:/E: lines with NO untrusted-repo lines at all.
-    # The CLI gives no way to tell those lines apart, so re-insert the
-    # pair at every GPG block start that follows a REFUSED block - one
-    # whose diagnostics carried the "E: The repository ..." refusal line
-    # (issue #408: real ansible's retry warnings quote one pair per
-    # refused repo, krikri used to quote none until its single
-    # from-attempt-2 prepend). Tolerated GPG blocks - a [trusted=yes]
-    # repo's "W: GPG error ..." warning carries no refusal line - get NO
-    # pair between them (live-verified in-process on jammy 22.04 with two
-    # such repos plus a 404: the two GPG lines sit directly adjacent in
-    # every attempt's text), so keying the insertion on the refusal line
-    # keeps those shapes unprefixed exactly as real ansible quotes them.
+    # Every REFUSED repo ("E: The repository ..." - apt's
+    # MessageInsecureRepository pushes the refusal error followed by the
+    # same two untrusted-repo notices, which python-apt reports as W:
+    # entries) has its pair directly after its refusal line - but the
+    # notices that end up at the very tail of the text are trimmed from
+    # it, so a refusal that is the text's LAST line carries no pair at
+    # all (probed live on noble and trixie: a single missing-Release repo
+    # quotes just its E: line, while round 29903261's
+    # marauderxtreme.local_system - a missing-Release repo whose text ends
+    # on git-core's legacy-keyring warning - quotes "E:..., W:Updating...,
+    # W:See..., W:keyring..." on all five attempts). The CLI stderr
+    # carries the same W:/E: lines with NO untrusted-repo lines at all,
+    # so re-insert the pair after every refusal line and drop it again
+    # when it lands at the tail.
+    #
+    # Tolerated shapes carry no refusal line - a [trusted=yes] repo's
+    # standalone "W: GPG error ..." warning, allow-insecure W: warnings,
+    # plain index 404s - and gain no pair anywhere (issue #665's repo
+    # family, live-verified: python-apt joins those lines directly, the
+    # two GPG lines sitting adjacent). The clearsigned shape (issue
+    # #712) prints an "E: The repository ... is not signed." line but
+    # through a path that pushes no untrusted-repo notices at all (real
+    # ansible quotes it bare on all five attempts), and
+    # apt_fetch_reason_refused_repo? counts it as not-refused, so it
+    # gains no pair either.
     def apt_fetch_failure_reason(result : NamedTuple(exit_code: Int32, stdout: String, stderr: String)) : String
       return "" unless apt_fetch_signature_failure?(result)
       combined = "#{result[:stdout]}\n#{result[:stderr]}"
       lines = combined.split('\n').select { |line| line.starts_with?("W:") || line.starts_with?("E:") }
         .map(&.sub(/\A([WE]): /, "\\1:"))
       separated = [] of String
-      prev_block_refused = false
       lines.each do |line|
-        if line.starts_with?("W:GPG error:")
-          separated << APT_FETCH_SECURE_REPO_PREPEND if prev_block_refused
-          prev_block_refused = false
-        elsif apt_fetch_reason_refused_repo?(line)
-          prev_block_refused = true
-        end
         separated << line
+        separated << APT_FETCH_SECURE_REPO_PREPEND if apt_fetch_reason_refused_repo?(line)
       end
+      separated.pop if separated.last? == APT_FETCH_SECURE_REPO_PREPEND
       separated.join(", ")
     end
 
-    # After a signature-failed attempt, apt marks the repo untrusted and
-    # every LATER python-apt update failure prepends these two diagnostic
-    # lines to the exception text (verified live: attempt 0 = GPG+E: lines
-    # only, attempts 1+ = the two secure-repo lines then the same GPG+E:
-    # lines, all ", "-joined). Emitted in python-apt's own marker form
-    # (no space after "W:").
+    # The two untrusted-repo notices apt pushes right after every refused
+    # repo's "E: The repository ..." error (MessageInsecureRepository),
+    # re-quoted at the front of the NEXT update's exception text whenever
+    # they were trimmed off the previous text's tail (see
+    # apt_fetch_failure_reason / apt_fetch_reason_trailing_refusal?).
+    # Emitted in python-apt's own marker form (no space after "W:").
     APT_FETCH_SECURE_REPO_PREPEND = "W:Updating from such a repository can't be done securely, and is therefore disabled by default., W:See apt-secure(8) manpage for repository creation and user configuration details."
 
     # One failed attempt's reason bookkeeping, shared by the apt and
     # apt_repository update-cache retry loops: returns the attempt's
-    # warning/final-msg text paired with the signature_failed flag for the
-    # NEXT attempt. The prepend decision uses the flag as it stood BEFORE
-    # this attempt - apt only marks a repo untrusted after its first failed
-    # update, so the very first failed attempt's text is quoted bare
-    # (verified against ansible-core 2.19.11: attempt 1's warn carries only
-    # the GPG/E: lines, the two untrusted-repo lines appear from attempt 2
-    # on). Encapsulated here so both loops structurally cannot compose the
-    # text from a flag that already includes the current attempt - the
-    # apt_repository loop used to do exactly that and warned with the
-    # prepend from its very first failure.
+    # warning/final-msg text paired with whether IT leaves an unspent
+    # untrusted-repo pair at its tail for the NEXT attempt (see
+    # apt_fetch_reason_trailing_refusal?). The prepend decision uses the
+    # PREVIOUS attempt's trailing state - the very first failed attempt's
+    # text is quoted bare (verified against ansible-core 2.19.11: attempt
+    # 1's warn carries only the GPG/E: lines, the two untrusted-repo lines
+    # appear from attempt 2 on). Encapsulated here so both loops
+    # structurally cannot compose the text from the CURRENT attempt's own
+    # state - the apt_repository loop used to do exactly that and warned
+    # with the prepend from its very first failure.
     #
-    # The flag turns on for a REFUSED repo only. apt marks a repo
-    # unauthenticated exactly when it refuses the repo's metadata with a
-    # top-level "E: The repository ..." line ("is not signed", "does not
-    # have a Release file" - both live-verified in-process to gain the
-    # pair from the next update on); the tolerated failure shapes never
-    # mark anything - a [trusted=yes] repo's standalone "W: GPG error ...
-    # NO_PUBKEY ..." warning, the allow-insecure "W: ... potentially
-    # dangerous" lines, and plain index 404s keep the identical unprefixed
-    # reason on every attempt (all live-verified in-process, jammy 22.04
-    # apt 2.4.14). That tolerated shape is exactly issue #665's real round
-    # (xe0nic.ansible_vprotect_server): both of the role's repos are `deb
-    # [trusted=yes]`, so real ansible warned with the same unprefixed
-    # mixed GPG-warning + 404 text five times and failed with it
-    # unprefixed, while the previous flag trigger (any non-empty reason)
-    # prefixed the later attempts and the final msg. The marking is
-    # in-process state: a separate `apt-get update` CLI process never
-    # prints the pair (live-verified, three consecutive CLI runs), so the
-    # prepend stays a synthesis and stays CLI-safe. The reason text
-    # arrives marker-space-stripped from apt_fetch_failure_reason
-    # ("E: The" -> "E:The"), which is why the probe has no space.
+    # The pair turns up only where a repo was REFUSED. The tolerated
+    # failure shapes never get one - a [trusted=yes] repo's standalone
+    # "W: GPG error ... NO_PUBKEY ..." warning, the allow-insecure "W:
+    # ... potentially dangerous" lines, and plain index 404s keep the
+    # identical unprefixed reason on every attempt (all live-verified
+    # in-process, jammy 22.04 apt 2.4.14). That tolerated shape is
+    # exactly issue #665's real round (xe0nic.ansible_vprotect_server):
+    # both of the role's repos are `deb [trusted=yes]`, so real ansible
+    # warned with the same unprefixed mixed GPG-warning + 404 text five
+    # times and failed with it unprefixed, while the previous flag
+    # trigger (any non-empty reason) prefixed the later attempts and the
+    # final msg. The pair placement is in-process state: a separate
+    # `apt-get update` CLI process never prints the pair (live-verified,
+    # three consecutive CLI runs), so the placement stays a synthesis and
+    # stays CLI-safe. The reason text arrives marker-space-stripped from
+    # apt_fetch_failure_reason ("E: The" -> "E:The"), which is why the
+    # probes have no space.
     def apt_fetch_reason_refused_repo?(reason : String) : Bool
       # An InRelease that fetched but is not a valid clearsigned file
       # ("E:Failed to fetch .../InRelease  Clearsigned file isn't valid,
@@ -269,9 +266,29 @@ module Krikri
       reason.includes?("E:The repository '")
     end
 
-    def apt_fetch_attempt_reason(reason : String, signature_failed_before : Bool) : {String, Bool}
-      last_reason = signature_failed_before && !reason.empty? ? "#{APT_FETCH_SECURE_REPO_PREPEND}, #{reason}" : reason
-      {last_reason, signature_failed_before || apt_fetch_reason_refused_repo?(reason)}
+    # Whether the text ENDS on a refusal line - i.e. that refusal's two
+    # untrusted-repo notices were trimmed off the tail (see
+    # apt_fetch_failure_reason) and surface at the front of the NEXT
+    # in-process update's exception text instead. Probed live on noble
+    # and trixie: a single missing-Release repo quotes just "E:..." on the
+    # first update and "W:Updating..., W:See..., E:..." on every later
+    # one, while round 29903261's marauderxtreme.local_system - whose text
+    # ends on git-core's keyring warning instead - quoted the identical
+    # text on all five attempts, no front pair ever. The clearsigned
+    # shape (issue #712) pushes no notices at all and stays bare on every
+    # attempt, hence the apt_fetch_reason_refused_repo? gate.
+    def apt_fetch_reason_trailing_refusal?(reason : String) : Bool
+      return false unless apt_fetch_reason_refused_repo?(reason)
+      reason.matches?(/E:The repository '[^']*' [^.]*\.\z/)
+    end
+
+    # See the bookkeeping comment above apt_fetch_reason_refused_repo?:
+    # prev_trailing_refusal is the PREVIOUS attempt's
+    # apt_fetch_reason_trailing_refusal?, and the returned flag is this
+    # attempt's own.
+    def apt_fetch_attempt_reason(reason : String, prev_trailing_refusal : Bool) : {String, Bool}
+      last_reason = prev_trailing_refusal && !reason.empty? ? "#{APT_FETCH_SECURE_REPO_PREPEND}, #{reason}" : reason
+      {last_reason, apt_fetch_reason_trailing_refusal?(reason)}
     end
 
     # apt.py's FetchFailedException retry loop verbatim: `for retry in
@@ -289,9 +306,10 @@ module Krikri
     # iteration 0's "after 1 retries" warn refers to that attempt - and
     # quotes ITS exception text when the failure was the SystemError-
     # wrapped signature class (see apt_fetch_failure_reason). Each later
-    # failed attempt warns with its own text, and once a repo has been
-    # refused authentication apt prepends the two untrusted-repo lines to
-    # every later attempt's text (APT_FETCH_SECURE_REPO_PREPEND).
+    # failed attempt warns with its own text, gaining the two
+    # untrusted-repo lines at the front whenever the previous attempt's
+    # text ended on a refusal and left its pair unspent
+    # (APT_FETCH_SECURE_REPO_PREPEND).
     # Returns recovered: true as soon as an attempt succeeds, with the
     # warnings emitted so far (they persist in the registered result
     # exactly like module.warn() texts do in Ansible) and last_reason -
@@ -300,11 +318,11 @@ module Krikri
     # empty for the bare-exception class).
     def apt_fetch_failed_update_retry(retries : Int32, retry_max_delay : Int32,
                                       exec_remote : Proc(String, NamedTuple(exit_code: Int32, stdout: String, stderr: String)),
-                                      initial_reason : String = "", initial_signature_failed : Bool = false,
+                                      initial_reason : String = "", initial_trailing_refusal : Bool = false,
                                       jitter : Float64 = rand(1000) / 1000.0)
       warnings = [] of String
       recovered = false
-      signature_failed = initial_signature_failed
+      trailing_refusal = initial_trailing_refusal
       last_reason = initial_reason
       warned_reason = initial_reason
       retries.times do |attempt|
@@ -323,7 +341,7 @@ module Krikri
           break
         end
         reason = apt_fetch_failure_reason(result)
-        last_reason, signature_failed = apt_fetch_attempt_reason(reason, signature_failed)
+        last_reason, trailing_refusal = apt_fetch_attempt_reason(reason, trailing_refusal)
         warned_reason = last_reason
       end
       {recovered: recovered, warnings: warnings, last_reason: last_reason}
