@@ -54,7 +54,7 @@ lib LibC
 
   fun poll(fds : Pollfd*, nfds : UInt64, timeout : Int32) : Int32
   fun setsid : PidT
-  fun ioctl(fd : Int, request : ULong, arg : ULong) : Int
+  fun ioctl(fd : Int, request : ULong, ...) : Int
 end
 
 # TIOCSCTTY (Linux asm-generic/ioctls.h) - makes the calling (session-

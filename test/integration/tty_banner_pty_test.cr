@@ -39,4 +39,42 @@ describe "playbook run under a pseudo-tty stdout" do
     text.must_include("TASK [say something]")
     text.wont_include("Arithmetic overflow")
   end
+
+  it "fills the terminal width in PLAY/TASK banners under a fixed-size pty (macOS arm64 ioctl ABI regression)" do
+    playbook = PluginSpecHelper.tmp_path("tty-banner-width.yml")
+    File.write(playbook, <<-YAML)
+      ---
+      - name: tty banner width
+        hosts: all
+        gather_facts: false
+        tasks:
+          - name: hello
+            ansible.builtin.debug:
+              msg: hi
+      YAML
+
+    # `stty cols` pins the pty width the way ansible is probed: the
+    # banner must fill it exactly (line length == columns), like
+    # ansible's Display.banner. On macOS arm64 the winsize ioctl used to
+    # pass its struct pointer in a register while the variadic libc
+    # ioctl reads it from the stack, so the width came back as random
+    # uninitialised memory and the banner was a different, too-long
+    # length every run (#1065).
+    output = IO::Memory.new
+    status = Process.run(
+      "script",
+      ["-qec", "stty cols 120 rows 50; #{BINARY} -i localhost, -c local #{playbook}", "/dev/null"],
+      output: output,
+      error: output,
+    )
+
+    status.exit_code.must_equal(0)
+    lines = output.to_s.gsub("\r", "").lines
+    play = lines.find { |line| line.starts_with?("PLAY [tty banner width]") }
+    task = lines.find { |line| line.starts_with?("TASK [hello]") }
+    play.wont_be_nil
+    task.wont_be_nil
+    play.not_nil!.size.must_equal(120)
+    task.not_nil!.size.must_equal(120)
+  end
 end
