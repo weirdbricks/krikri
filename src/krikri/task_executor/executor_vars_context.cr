@@ -110,16 +110,43 @@ module Krikri
     # that warning at the DEFINING site of the value that names the fact,
     # so a role default reports its own defaults/main.yml line and value
     # column, not the task param that merely read the variable
-    # (live-verified vs 2.21.6, issue #961). A layer var_origin_for cannot
-    # place (a runtime value, a CLI extra var) yields nil and the read stays
-    # silent rather than being mis-attributed.
-    private def re_rendered_value_origin_block(task : Task, host : Host, name : String) : String?
+    # (live-verified vs 2.21.6, issue #961). *leaf* is the key/index path
+    # of a NESTED leaf below that value (empty for the whole value) - real
+    # tags every stored value with its own defining position, nested
+    # scalars included, so a fact read inside a container's template leaf
+    # points at the LEAF's own declaration (issue #1030, Turgon37.bind's
+    # `bind__zones_entry_default['SOA']['data']['serial']`). A layer
+    # var_origin_for cannot place (a runtime value, a CLI extra var) yields
+    # nil and the read stays silent rather than being mis-attributed.
+    private def re_rendered_value_origin_block(task : Task, host : Host, name : String, leaf : Array(String) = [] of String) : String?
       origin = var_origin_for(task, host, name)
       return nil unless origin.is_a?(FileVarOrigin) && origin.column > 0 && File.file?(origin.path)
+      unless leaf.empty?
+        return nil unless pos = nested_value_leaf_pos(origin, leaf)
+        origin = FileVarOrigin.new(origin.path, pos[0], pos[1])
+      end
       # The warning printer adds the blank line after the block itself, so
       # the excerpt's own trailing newline has to go (real's Origin block is
       # followed by exactly one blank line).
       var_origin_block(origin).chomp
+    end
+
+    # The source position of the nested leaf at *components* below the
+    # value node *origin* marks, by descending the defining file's YAML
+    # source map key-by-key from that node - the same descent
+    # #templated_value_lineage_origin performs along a variable-access
+    # chain. nil when the map has no node there (or the file cannot be
+    # scanned), so an unplaceable leaf never mislabels its warning.
+    private def nested_value_leaf_pos(origin : FileVarOrigin, components : Array(String)) : YamlSourceMap::Pos?
+      map = YamlSourceMap.scan(File.read(origin.path))
+      current = map.path_at?(origin.line, origin.column) || return nil
+      components.each do |component|
+        current = "#{current}/#{component}"
+        return nil unless map.at?(current)
+      end
+      map.at?(current)
+    rescue
+      nil
     end
 
     # The file position real attributes a TEMPLATED include_role role-name
@@ -664,7 +691,7 @@ module Krikri
       # through another variable's value - ansible-core points that warning
       # at the DEFINING site of the value that names the fact (see
       # VarSubstitutor#fact_read_origin).
-      VarSubstitutor.register_var_origin_lookup(host.name) { |name| re_rendered_value_origin_block(task, host, name) }
+      VarSubstitutor.register_var_origin_lookup(host.name) { |name, leaf| re_rendered_value_origin_block(task, host, name, leaf) }
 
       # Ansible's `vars` magic variable: a dict of every variable in
       # scope, most often used for a membership test rather than to read
