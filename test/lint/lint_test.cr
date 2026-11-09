@@ -261,5 +261,36 @@ module Krikri::Lint
         File.delete(path)
       end
     end
+
+    it "runs no rules on a file whose module the controller cannot resolve" do
+      # Upstream runs no rules at all on a file whose
+      # `ansible-playbook --syntax-check` fails: an unnamed play around
+      # an unresolvable module reports only syntax-check[unknown-module]
+      # from ansible-lint 25.2.1 - no name[play], no name[missing], no
+      # yaml[*], nothing else.
+      dir = PluginSpecHelper.tmp_path("lint_syntax_gate")
+      FileUtils.mkdir_p(dir)
+      path = File.join(dir, "play.yml")
+      File.write(path, "---\n- hosts: all\n  tasks:\n" \
+                        + "    - name: P1\n      krikri_lint_unknown_mod:\n")
+      violations = Runner.new(RuleRegistry.default).run([path])
+      violations.must_be_empty
+    end
+
+    it "keeps linting when the module resolves from the playbook's library/ dir" do
+      # The same play around a module the controller CAN resolve - a
+      # playbook-private library/ source is part of the load-time
+      # lookup - reports name[play] from ansible-lint 25.2.1, so the
+      # syntax-check gate must not fire on it.
+      dir = PluginSpecHelper.tmp_path("lint_library_gate")
+      FileUtils.mkdir_p(File.join(dir, "library"))
+      File.write(File.join(dir, "library", "my_custom_mod.py"), "# fixture\n")
+      path = File.join(dir, "play.yml")
+      File.write(path, "---\n- hosts: all\n  tasks:\n" \
+                        + "    - name: P1\n      my_custom_mod:\n")
+      violations = Runner.new(RuleRegistry.default).run([path])
+      play_match = violations.find { |v| v.rule_id == "name[play]" }
+      raise "no name[play] violation" unless play_match
+    end
   end
 end
