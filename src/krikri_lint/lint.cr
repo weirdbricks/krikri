@@ -26,6 +26,7 @@ require "./runner"
 require "./console"
 require "./report"
 require "./imports"
+require "./syntax_check"
 
 module Krikri
   module Lint

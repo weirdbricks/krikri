@@ -218,7 +218,7 @@ module Krikri::Lint
 
     runner = Runner.new(registry, config)
     violations = begin
-      runner.run(files)
+      runner.run(files, targets)
     rescue ex
       STDERR.puts "krikri-lint: internal error: #{ex.message}"
       exit 3
@@ -266,7 +266,7 @@ module Krikri::Lint
         changed_set = Set.new(changed)
         post_yaml = Set({String, Int32, String, String, String, Int32}).new
         if changed.present?
-          runner.run(changed).each do |v|
+          runner.run(changed, targets).each do |v|
             post_yaml << v.report_key if v.rule_id.starts_with?("yaml[")
           end
         end

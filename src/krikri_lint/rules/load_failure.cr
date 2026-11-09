@@ -4,8 +4,9 @@ module Krikri
     # match is shown as a warning but still counts as a failure, and no
     # other rule runs on the file. Upstream's syntax-check rule is a
     # separate mechanism (it shells out to a real playbook syntax
-    # check, which needs module resolution krikri-lint does not have),
-    # so a YAML load failure is a load-failure here, not a syntax-check.
+    # check; krikri-lint resolves module names only for the failed-file
+    # gate in SyntaxCheck, never to emit a syntax-check match), so a
+    # YAML load failure is a load-failure here, not a syntax-check.
     class LoadFailureRule < Rule
       def id : String
         "load-failure"

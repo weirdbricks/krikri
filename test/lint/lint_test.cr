@@ -292,5 +292,91 @@ module Krikri::Lint
       play_match = violations.find { |v| v.rule_id == "name[play]" }
       raise "no name[play] violation" unless play_match
     end
+
+    it "reports nothing on a playbook whose module names the controller cannot resolve" do
+      # Upstream: the unresolvable `krikri_ok` fails ansible's playbook
+      # syntax check (syntax-check[unknown-module]) and no other rule
+      # runs on the file - verified against ansible-lint 25.2.1.
+      path = File.tempname("lintspec", ".yml")
+      File.write(path, "---\n- hosts: localhost\n  tasks:\n" \
+                        + "    - krikri_ok:\n" \
+                           + "    - ansible.builtin.debug:\n        msg: hi\n")
+      begin
+        violations = Runner.new(RuleRegistry.default).run([path])
+        violations.size.must_equal(0)
+      ensure
+        File.delete(path)
+      end
+    end
+
+    it "still reports a playbook whose module names resolve" do
+      path = File.tempname("lintspec", ".yml")
+      File.write(path, "---\n- hosts: localhost\n  tasks:\n" \
+                        + "    - ansible.builtin.ping:\n" \
+                           + "    - ansible.builtin.debug:\n        msg: hi\n")
+      begin
+        violations = Runner.new(RuleRegistry.default).run([path])
+        violations.count { |v| v.rule_id == "name[missing]" }.must_equal(2)
+      ensure
+        File.delete(path)
+      end
+    end
+
+    it "reports nothing on role files a targeted role's syntax check walks" do
+      dir = File.tempname("lintrole")
+      tasks_dir = File.join(dir, "roles", "myrole", "tasks")
+      Dir.mkdir_p(tasks_dir)
+      path = File.join(tasks_dir, "main.yml")
+      File.write(path, "---\n- krikri_ok:\n- ansible.builtin.debug:\n    msg: hi\n")
+      begin
+        violations = Runner.new(RuleRegistry.default)
+          .run([path], [File.join(dir, "roles", "myrole")])
+        violations.size.must_equal(0)
+      ensure
+        FileUtils.rm_rf(dir)
+      end
+    end
+
+    it "keeps reporting role files that no syntax check walks" do
+      # A sibling of main.yml loads only if main.yml imports it, so
+      # upstream's role syntax check never names it - verified against
+      # ansible-lint 25.2.1.
+      dir = File.tempname("lintrole")
+      tasks_dir = File.join(dir, "roles", "myrole", "tasks")
+      Dir.mkdir_p(tasks_dir)
+      path = File.join(tasks_dir, "extra.yml")
+      File.write(path, "---\n- krikri_ok:\n- ansible.builtin.debug:\n    msg: hi\n")
+      begin
+        violations = Runner.new(RuleRegistry.default)
+          .run([path], [File.join(dir, "roles", "myrole")])
+        violations.count { |v| v.rule_id == "name[missing]" }.must_equal(2)
+      ensure
+        FileUtils.rm_rf(dir)
+      end
+    end
+
+    it "keeps reporting an imported task file outside a role" do
+      # Upstream's check names the imported file but its failed-file
+      # marking misses imported task files outside a role, so the file
+      # (and the playbook importing it) keep reporting - verified
+      # against ansible-lint 25.2.1.
+      dir = File.tempname("lintimp")
+      Dir.mkdir(dir)
+      Dir.mkdir(File.join(dir, "tasks"))
+      path = File.join(dir, "tasks", "bad.yml")
+      File.write(path, "---\n- krikri_ok:\n- ansible.builtin.debug:\n    msg: hi\n")
+      play = File.join(dir, "site.yml")
+      File.write(play, "---\n- hosts: localhost\n  tasks:\n" \
+                        + "    - ansible.builtin.import_tasks: tasks/bad.yml\n")
+      begin
+        violations = Runner.new(RuleRegistry.default).run([play, path], [dir])
+        violations.count { |v| v.rule_id == "name[missing]" && v.path == path }
+          .must_equal(2)
+        violations.any? { |v| v.rule_id == "name[play]" && v.path == play }
+          .must_equal(true)
+      ensure
+        FileUtils.rm_rf(dir)
+      end
+    end
   end
 end
