@@ -74,10 +74,15 @@ private def with_apt_param_shims(dpkg_status : String, fail_apt : Bool = false, 
     [ -n "$2" ] || exit 0
     printf '%s:\n  Installed: (none)\n  Candidate: 1.0-1\n  Version table:\n' "$2"
   CACHE_SHIM
+  # apt.py's trailing apt-mark manual (mark_installed) must succeed like
+  # on a real root host - a real apt-mark fails on these fabricated
+  # names and that fail_json would preempt the shape under test.
+  File.write(File.join(dir, "apt-mark"), "#!/bin/sh\nexit 0\n")
   File.chmod(File.join(dir, "apt-get"), 0o755)
   File.chmod(File.join(dir, "dpkg-query"), 0o755)
   File.chmod(File.join(dir, "stat"), 0o755)
   File.chmod(File.join(dir, "apt-cache"), 0o755)
+  File.chmod(File.join(dir, "apt-mark"), 0o755)
   env = {
     "PATH"                 => "#{dir}:/usr/bin:/bin",
     "KRIKRI_APT_CALLS"     => log,

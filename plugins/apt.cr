@@ -150,6 +150,7 @@ module Krikri
     # default (normally install-recommends=yes) applies untouched.
     @dpkg_options = "force-confdef,force-confold"
     @apt_get_bin : String? = nil
+    @apt_mark_bin : String? = nil
     @policy_rc_d : Int32? = nil
     @purge = false
     @force = false
@@ -1333,6 +1334,7 @@ module Krikri
       already_installed = [] of String
       install_stdout = ""
       install_stderr = ""
+      install_failure : PluginResult? = nil
 
       # One batched dpkg-query round trip for the whole list (see
       # dpkg_installed_status), shared by the candidate probe and the
@@ -1519,7 +1521,7 @@ module Krikri
           # apt_fail_install_dpkgopt capture: [stdout, stderr, rc,
           # cache_updated, cache_update_time, failed, msg, stdout_lines,
           # stderr_lines]).
-          return PluginResult.new(
+          install_failure = PluginResult.new(
             changed: changed,
             failed: true,
             msg: "'#{install_cmd}' failed: #{install_result[:stderr]}",
@@ -1533,6 +1535,27 @@ module Krikri
           )
         end
       end
+
+      # apt.py's install() marks every requested spec's base name as
+      # manually installed on the way out of every exit it reaches -
+      # whether apt-get installed something, found everything already
+      # satisfied (the empty-command case just below), or failed - and
+      # mark_installed()'s own fail_json preempts that install result
+      # (the round-1794194103 grycap.weave NVIDIA.nvidia_driver capture:
+      # ansible reported "Command '/usr/bin/apt-mark manual ...'
+      # failed.", this engine reported apt-get's own failure).
+      #
+      # install_deb()'s dependency pre-install is the one caller left
+      # out: real marks those manual here and then AUTO again right
+      # after (mark_installed(manual=False)), and this engine does not
+      # implement the second half, so marking them manual here alone
+      # would leave a .deb's dependencies manual where apt had them auto.
+      unless build_dep || deb_deps
+        if mark_failure = apt_mark_manual_failure(packages)
+          return mark_failure
+        end
+      end
+      return install_failure if install_failure
 
       # Real apt.py's install(): an all-already-installed package list
       # builds an EMPTY apt-get command line (`packages = ''` after the
@@ -1591,6 +1614,49 @@ module Krikri
     # "N upgraded" summary line, joined into a single `prepared` string;
     # with no markers, everything. The diff-mode-only half of the
     # install path's always-present `diff` key (see above).
+
+    # apt.py's mark_installed(m, package_names, manual=True): one
+    # `apt-mark manual <names>` run over every requested spec's base
+    # name, whose failure is a fail_json of its own shape
+    # ("Command '<cmd>' failed." plus stdout/stderr/rc, no cache keys -
+    # mark_installed exits before main() appends them) that preempts the
+    # install result. Skipped in check mode for the same reason apt.py
+    # gates it on `not m.check_mode`: it mutates dpkg's extended_states.
+    private def apt_mark_manual_failure(packages : Array(String)) : PluginResult?
+      return nil if @check_mode
+      names = packages.map { |pkg| split_name_version(pkg)[0] }.reject(&.empty?)
+      return nil if names.empty?
+      mark_bin = apt_mark_bin
+      return nil if mark_bin.empty?
+      cmd = "#{mark_bin} manual #{names.map { |name| shell_single_quote(name) }.join(" ")}"
+      mark_result = remote_exec(cmd)
+      return nil if mark_result[:exit_code] == 0
+      # mark_installed() fails out of its own fail_json before main()
+      # appends cache_updated/cache_update_time - real's registered result
+      # carries neither.
+      @omit_cache_updated = true
+      PluginResult.new(
+        changed: false,
+        failed: true,
+        msg: "Command '#{mark_bin} manual #{names.join(" ")}' failed.",
+        stdout: mark_result[:stdout],
+        stderr: mark_result[:stderr],
+        rc: mark_result[:exit_code],
+        stdout_lines: PluginHelpers::AnsibleSplitlines.split(mark_result[:stdout]),
+        stderr_lines: PluginHelpers::AnsibleSplitlines.split(mark_result[:stderr]),
+        key_order: ["stdout", "stderr", "rc", "failed", "msg", "stdout_lines", "stderr_lines"]
+      )
+    end
+
+    # apt.py's get_bin_path("apt-mark") - empty when the host has no
+    # apt-mark at all, in which case real mark_installed() only warns and
+    # the install result stands.
+    private def apt_mark_bin : String
+      @apt_mark_bin ||= begin
+        probe = remote_exec("command -v apt-mark")
+        probe[:stdout].strip
+      end
+    end
 
     # Handle removing packages
     private def handle_remove(packages : Array(String), lock_timeout : Int32) : PluginResult
@@ -1753,6 +1819,16 @@ module Krikri
         )
       end
 
+      # Every requested spec, for apt.py's trailing mark_installed (see
+      # apt_mark_manual_failure): install() collects package_names from
+      # EVERY spec before any skip/continue, so the only_upgrade filter
+      # and wildcard resolution below must not narrow the mark list.
+      # Marked on the way out of every exit EXCEPT the resolution
+      # failures that return before apt.py's mark line (the empty-name,
+      # "no available installation candidate" and "No package matching"
+      # returns below), and never in check mode.
+      requested_specs = packages
+
       # only_upgrade: Ansible's install() skips packages that are
       # not installed at all when only_upgrade is set (`if not installed
       # and only_upgrade: continue` - only upgrades, never newly
@@ -1764,6 +1840,9 @@ module Krikri
           installed_status[base_name]?.try(&.[0]) || false
         end
         if packages.empty?
+          if mark_failure = apt_mark_manual_failure(requested_specs)
+            return mark_failure
+          end
           messages << "No packages upgraded (only_upgrade skips packages that are not installed)"
           return PluginResult.new(changed: false, failed: false, msg: messages.join(", "))
         end
@@ -1940,6 +2019,12 @@ module Krikri
         # fell through to success here (found via buluma.sensu-install,
         # where packagecloud's sensu/stable repo has no jammy candidate).
         if upgrade_result[:exit_code] != 0
+          # apt.py's install() runs its trailing mark_installed before
+          # returning even the rc!=0 data, and that fail_json preempts it
+          # (see apt_mark_manual_failure).
+          if mark_failure = apt_mark_manual_failure(requested_specs)
+            return mark_failure
+          end
           # Real install()'s rc!=0 failure msg: "'%s' failed: %s" over the
           # full apt-get command and stderr - the shape the round-2300027
           # git-core capture shows ("'/usr/bin/apt-get -y -o ... install
@@ -1984,6 +2069,10 @@ module Krikri
       msg = messages.empty? ? "No changes needed" : messages.join(", ")
       if @check_mode && changed
         msg += " (check mode)"
+      end
+
+      if mark_failure = apt_mark_manual_failure(requested_specs)
+        return mark_failure
       end
 
       # Real apt.py's state=latest flows through install() (its retvals

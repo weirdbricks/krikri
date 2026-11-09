@@ -43,9 +43,14 @@ private def with_bad_pin_shim(bad_pin : String, &)
     printf 'pkgname:\n  Installed: (none)\n  Candidate: 1.0-1\n  Version table:\n     1.0-1 500\n'
   CACHE_SHIM
   File.write(File.join(dir, "stat"), "#!/bin/sh\necho 100\n")
+  # apt.py's trailing apt-mark manual (mark_installed) must succeed like
+  # on a real root host - a real apt-mark fails on these fabricated
+  # names and that fail_json would preempt the shape under test.
+  File.write(File.join(dir, "apt-mark"), "#!/bin/sh\nexit 0\n")
   File.chmod(File.join(dir, "apt-get"), 0o755)
   File.chmod(File.join(dir, "apt-cache"), 0o755)
   File.chmod(File.join(dir, "stat"), 0o755)
+  File.chmod(File.join(dir, "apt-mark"), 0o755)
   env = {"PATH" => "#{dir}:/usr/bin:/bin", "KRIKRI_APT_CALLS" => log, "KRIKRI_APT_BAD_PIN" => bad_pin}.to_json
   yield env, log
 ensure
@@ -121,9 +126,11 @@ private def with_htop_policy_shim(&)
     printf 'htop:\n  Installed: (none)\n  Candidate: 3.4.1-5\n  Version table:\n     3.4.1-5 500\n        500 https://deb.debian.org/debian trixie/main amd64 Packages\n'
   CACHE_SHIM
   File.write(File.join(dir, "stat"), "#!/bin/sh\necho 100\n")
+  File.write(File.join(dir, "apt-mark"), "#!/bin/sh\nexit 0\n")
   File.chmod(File.join(dir, "apt-get"), 0o755)
   File.chmod(File.join(dir, "apt-cache"), 0o755)
   File.chmod(File.join(dir, "stat"), 0o755)
+  File.chmod(File.join(dir, "apt-mark"), 0o755)
   env = {"PATH" => "#{dir}:/usr/bin:/bin", "KRIKRI_APT_CALLS" => log}.to_json
   yield env, log
 ensure
@@ -190,10 +197,12 @@ private def with_latest_wildcard_shim(installed_version : String, &)
     printf 'bash:\n  Installed: (none)\n  Candidate: 5.2-1\n  Version table:\n     5.2-1 500\n'
   CACHE_SHIM
   File.write(File.join(dir, "stat"), "#!/bin/sh\necho 100\n")
+  File.write(File.join(dir, "apt-mark"), "#!/bin/sh\nexit 0\n")
   File.chmod(File.join(dir, "apt-get"), 0o755)
   File.chmod(File.join(dir, "dpkg-query"), 0o755)
   File.chmod(File.join(dir, "apt-cache"), 0o755)
   File.chmod(File.join(dir, "stat"), 0o755)
+  File.chmod(File.join(dir, "apt-mark"), 0o755)
   env = {"PATH" => "#{dir}:/usr/bin:/bin", "KRIKRI_APT_CALLS" => log, "KRIKRI_APT_INSTALLED" => installed_version}.to_json
   yield env, log
 ensure

@@ -69,6 +69,7 @@ module Krikri
     # AptLocale helper): probed once per invocation like Ansible's
     # get_best_parsable_locale, then reused by every apt command below.
     @apt_env_prefix : String? = nil
+    @apt_mark_bin : String? = nil
 
     private def apt_environment_prefix : String
       prefix = @apt_env_prefix
@@ -1701,6 +1702,12 @@ module Krikri
       trailing += " --allow-downgrades" if true?(@params["allow_downgrade"]?)
       trailing += " --allow-change-held-packages" if true?(@params["allow_change_held_packages"]?)
       install_cmd = "#{apt_get_bin} -y #{flags.join(" ")} install #{pkg_list}#{trailing}"
+      # apt.py's install() runs its trailing mark_installed before
+      # returning even the rc!=0 data, and that fail_json preempts it
+      # (see apt_mark_manual_failure).
+      if mark_failure = apt_mark_manual_failure(specs)
+        return mark_failure
+      end
       PluginResult.new(
         changed: false,
         failed: true,
@@ -1714,6 +1721,55 @@ module Krikri
         cache_update_time: apt_cache_mtime(->remote_exec(String)),
         key_order: ["stdout", "stderr", "rc", "cache_updated", "cache_update_time", "failed", "msg", "stdout_lines", "stderr_lines"]
       )
+    end
+
+    # apt.py's mark_installed(m, package_names, manual=True): one
+    # `apt-mark manual <names>` run over every requested spec's base
+    # name, whose failure is a fail_json of its own shape ("Command
+    # '<cmd>' failed." plus stdout/stderr/rc, no cache keys) that
+    # PREEMPTS the result this backend was about to return. `package:`
+    # forwards to the apt module in real ansible, so its install() runs
+    # the same trailing mark on the way out of every exit it reaches -
+    # whether apt-get installed something, found everything already
+    # satisfied, or failed. Duplicated from apt.cr's own
+    # apt_mark_manual_failure (the two dispatches are independent plugin
+    # binaries, so the helper is duplicated rather than shared - see
+    # dpkg_installed_status). Found on grycap.weave (round 1794194103,
+    # issue #1023's apt: half): ansible reported "Command '/usr/bin/
+    # apt-mark manual ...' failed." where this engine reported ok /
+    # apt-get's own failure. Skipped in check mode for the same reason
+    # apt.py gates it on `not m.check_mode`: it mutates dpkg's
+    # extended_states.
+    private def apt_mark_manual_failure(packages : Array(String)) : PluginResult?
+      return nil if @check_mode
+      names = packages.map { |pkg| split_name_version(pkg)[0] }.reject(&.empty?)
+      return nil if names.empty?
+      mark_bin = apt_mark_bin
+      return nil if mark_bin.empty?
+      cmd = "#{mark_bin} manual #{names.map { |name| shell_single_quote(name) }.join(" ")}"
+      mark_result = remote_exec(cmd)
+      return nil if mark_result[:exit_code] == 0
+      PluginResult.new(
+        changed: false,
+        failed: true,
+        msg: "Command '#{mark_bin} manual #{names.join(" ")}' failed.",
+        stdout: mark_result[:stdout],
+        stderr: mark_result[:stderr],
+        rc: mark_result[:exit_code],
+        stdout_lines: PluginHelpers::AnsibleSplitlines.split(mark_result[:stdout]),
+        stderr_lines: PluginHelpers::AnsibleSplitlines.split(mark_result[:stderr]),
+        key_order: ["stdout", "stderr", "rc", "failed", "msg", "stdout_lines", "stderr_lines"]
+      )
+    end
+
+    # apt.py's get_bin_path("apt-mark") - empty when the host has no
+    # apt-mark at all, in which case real mark_installed() only warns and
+    # the install result stands.
+    private def apt_mark_bin : String
+      @apt_mark_bin ||= begin
+        probe = remote_exec("command -v apt-mark")
+        probe[:stdout].strip
+      end
     end
 
     private def handle_apt(name : String, state : String, names : Array(String), pkg_tokens : String) : PluginResult
@@ -1841,6 +1897,12 @@ module Krikri
       case state
       when "present"
         if is_installed
+          # apt.py's install() still runs its trailing mark_installed for
+          # an all-already-satisfied list, and that fail_json preempts the
+          # unchanged-present exit (see apt_mark_manual_failure).
+          if mark_failure = apt_mark_manual_failure(apt_names)
+            return mark_failure
+          end
           # Ansible 2.19.11 registered order (live-verified, `{{ r | to_json }}`
           # via package: on this apt host): changed, cache_updated,
           # cache_update_time - NO msg (the apt module's unchanged-present
@@ -1901,6 +1963,9 @@ module Krikri
             # converged to changed: false on a warm rerun.
             summary = install_result[:stdout].match(/(\d+) upgraded, (\d+) newly installed/)
             had_no_effect = summary && summary[1] == "0" && summary[2] == "0"
+            if mark_failure = apt_mark_manual_failure(apt_names)
+              return mark_failure
+            end
             PluginResult.new(
               changed: !had_no_effect,
               failed: false,
@@ -2117,6 +2182,9 @@ module Krikri
         summary = upgrade_result[:stdout][/(\d+) upgraded, (\d+) newly installed/]?
         was_upgraded = summary ? summary.scan(/\d+/).sum(&.[0].to_i) > 0 : upgrade_result[:exit_code] == 0
 
+        if mark_failure = apt_mark_manual_failure(apt_names)
+          return mark_failure
+        end
         PluginResult.new(
           changed: was_upgraded,
           failed: false,

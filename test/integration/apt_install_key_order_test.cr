@@ -28,7 +28,11 @@ private def with_apt_shims(dpkg_status : String, install_output : String, &)
   File.write(File.join(dir, "dpkg-query"), "#!/bin/sh\necho \"$KRIKRI_DPKG_STATUS 1.0-1 $3\"\n")
   File.write(File.join(dir, "stat"), "#!/bin/sh\ndate +%s\n")
   File.write(File.join(dir, "apt-cache"), "#!/bin/sh\n[ -n \"$2\" ] || exit 0\nprintf '%s:\\n  Installed: (none)\\n  Candidate: 1.0-1\\n  Version table:\\n' \"$2\"\n")
-  {"apt-get", "dpkg-query", "stat", "apt-cache"}.each { |bin| File.chmod(File.join(dir, bin), 0o755) }
+  # apt.py's trailing apt-mark manual (mark_installed) must succeed like
+  # on a real root host - a real apt-mark fails on these fabricated
+  # names and that fail_json would preempt the shape under test.
+  File.write(File.join(dir, "apt-mark"), "#!/bin/sh\nexit 0\n")
+  {"apt-get", "dpkg-query", "stat", "apt-cache", "apt-mark"}.each { |bin| File.chmod(File.join(dir, bin), 0o755) }
   env = {
     "PATH"               => "#{dir}:/usr/bin:/bin",
     "KRIKRI_DPKG_STATUS" => dpkg_status,
