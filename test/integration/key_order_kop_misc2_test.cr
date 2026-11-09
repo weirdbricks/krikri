@@ -413,7 +413,13 @@ describe "round 994002 kop_misc2 registered key order" do
     # The undefine-on-missing-network shape needs `virsh` present (the
     # HAS_VIRT gate); a shim that always fails its probes stands in for
     # a libvirt daemon with no networks - the Ansible module's
-    # EntryNotFound path.
+    # EntryNotFound path. The registered shape trails a `deprecations`
+    # key: virt_net.py:142 imports to_native from the deprecated
+    # ansible.module_utils._text path at module level, so ansible-core
+    # 2.21's shim deprecates it before the body runs and the controller
+    # appends the entry after every module key (the round's 2.19.11
+    # capture predates that shim - the same re-capture issue #992 made
+    # for sysctl; re-verified against ansible-core 2.21.6 real).
     it "registers undefine, failed, changed with no changed on the wire" do
       shim_dir = PluginSpecHelper.tmp_path("kop-virsh-shim")
       Dir.mkdir_p(shim_dir)
@@ -432,7 +438,7 @@ describe "round 994002 kop_misc2 registered key order" do
             command: undefine
           register: KRIKRI_REGISTER
       YAML
-      value.as_h.keys.must_equal(["changed", "failed", "undefine"])
+      value.as_h.keys.must_equal(["changed", "failed", "undefine", "deprecations"])
       value["undefine"].as_nil.must_be_nil
       value["failed"].as_bool.must_equal(false)
       value["changed"].as_bool.must_equal(false)
@@ -548,7 +554,13 @@ describe "round 994002 kop_misc2 registered key order" do
     # krikri registered [changed, failed] with no msg at all. The
     # check-mode branch keeps NO msg (Ansible's conn.create/destroy exit
     # from inside the method there, round994002 virt_net_check), and an
-    # already-converged state keeps no msg either.
+    # already-converged state keeps no msg either. Every shape trails a
+    # `deprecations` key: virt_net.py:142 imports to_native from the
+    # deprecated ansible.module_utils._text path at module level, so
+    # ansible-core 2.21's shim deprecates it before the body runs and the
+    # controller appends the entry after every module key (the round's
+    # 2.19.11 captures predate that shim - the same re-capture issue #992
+    # made for sysctl; re-verified against ansible-core 2.21.6 real).
     private def stateful_virsh_shim_env
       shim_dir = PluginSpecHelper.tmp_path("kop-virsh-shim-state")
       Dir.mkdir_p(shim_dir)
@@ -608,7 +620,7 @@ describe "round 994002 kop_misc2 registered key order" do
             state: active
           register: KRIKRI_REGISTER
       YAML
-      value.as_h.keys.must_equal(["changed", "failed", "msg"])
+      value.as_h.keys.must_equal(["changed", "failed", "msg", "deprecations"])
       value["changed"].as_bool.must_equal(true)
       value["msg"].raw.must_equal(0_i64)
       value["failed"].as_bool.must_equal(false)
@@ -628,7 +640,7 @@ describe "round 994002 kop_misc2 registered key order" do
             state: active
           register: KRIKRI_REGISTER
       YAML
-      value.as_h.keys.must_equal(["changed", "failed"])
+      value.as_h.keys.must_equal(["changed", "failed", "deprecations"])
       value["changed"].as_bool.must_equal(false)
       value.as_h.has_key?("msg").must_equal(false)
     end
@@ -643,7 +655,7 @@ describe "round 994002 kop_misc2 registered key order" do
             state: inactive
           register: KRIKRI_REGISTER
       YAML
-      value.as_h.keys.must_equal(["changed", "failed", "msg"])
+      value.as_h.keys.must_equal(["changed", "failed", "msg", "deprecations"])
       value["changed"].as_bool.must_equal(true)
       value["msg"].raw.must_equal(0_i64)
     end
@@ -657,7 +669,7 @@ describe "round 994002 kop_misc2 registered key order" do
             state: absent
           register: KRIKRI_REGISTER
       YAML
-      value.as_h.keys.must_equal(["changed", "failed", "msg"])
+      value.as_h.keys.must_equal(["changed", "failed", "msg", "deprecations"])
       value["changed"].as_bool.must_equal(true)
       value["msg"].raw.must_equal(0_i64)
     end
@@ -671,7 +683,7 @@ describe "round 994002 kop_misc2 registered key order" do
             state: active
           register: KRIKRI_REGISTER
       YAML
-      value.as_h.keys.must_equal(["changed", "failed"])
+      value.as_h.keys.must_equal(["changed", "failed", "deprecations"])
       value["changed"].as_bool.must_equal(true)
     end
   end

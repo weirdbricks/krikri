@@ -2,7 +2,9 @@ require "base64"
 require "colorize"
 require "compress/gzip"
 require "json"
+require "yaml"
 require "./builtin_module_names_data"
+require "./python_filter_runner"
 
 # Controller collection-set awareness (real's module-name resolution,
 # discovered from the controller this engine runs on rather than
@@ -524,6 +526,29 @@ module Krikri
         current = target
       end
       current
+    end
+
+    # The installed collection's module payload file real's loader would
+    # execute for `name`, nil when no installed collection ships it. What
+    # that payload imports is only knowable from the installed file: the
+    # payload is versioned with the COLLECTION, not the engine -
+    # ansible.posix 2.1.x's mount.py imports to_bytes/to_native from the
+    # deprecated `ansible.module_utils._text` path while 2.2.x migrated
+    # the same import to ansible.module_utils.common.text.converters and
+    # warns nothing (issue #1061). Builtin payloads are deliberately not
+    # returned: they travel from the installed ansible-core, whose own
+    # modules never import from the deprecated path.
+    def self.module_source_file(name : String) : String?
+      parts = module_redirect_chain(name).split('.')
+      return nil if parts.size < 3
+      return nil if parts[0] == "ansible" && (parts[1] == "builtin" || parts[1] == "legacy")
+      leaf = parts[2..].join('.')
+      dirs = collection_dirs["#{parts[0]}.#{parts[1]}"]? || return nil
+      dirs.each do |dir|
+        path = File.join(dir, "plugins", "modules", "#{leaf}.py")
+        return path if File.file?(path)
+      end
+      nil
     end
 
     # One hop of the chain for `current`: the redirect entry that matches

@@ -115,9 +115,11 @@ describe "mount plugin" do
   # AnsibleModule.warn instead) and prints no such line (issue #906's
   # 2.2.x env); this engine models the 2.1.x module line. The module's own
   # ansible.module_utils._text imports deprecate under ansible-core 2.21
-  # on both module lines - mount.py:229 imports to_bytes and to_native from
-  # that deprecated path - and real records them BEFORE the exit_json one
-  # (issue #1000, live-verified vs 2.21.6).
+  # while the installed mount.py still imports from that deprecated path
+  # (2.1.x's mount.py:229 imports to_bytes and to_native there; 2.2.x
+  # migrated the import to common.text.converters and the engine follows
+  # the installed payload, issue #1061) - and real records them BEFORE the
+  # exit_json one (issue #1000, live-verified vs 2.21.6).
   it "carries the exit_json warnings deprecation after the module's import deprecations on a successful result" do
     fstab = fresh_fstab("deprecation.fstab")
 
