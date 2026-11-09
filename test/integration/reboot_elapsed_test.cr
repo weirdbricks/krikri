@@ -51,6 +51,49 @@ ensure
   FileUtils.rm_rf(dir) if dir && Dir.exists?(dir)
 end
 
+private def run_notified_reboot_playbook(extra_args : Array(String) = [] of String, inventory : String = INVENTORY)
+  dir = File.tempname("reboot-notify")
+  Dir.mkdir_p(dir)
+  File.write(File.join(dir, "site.yml"), <<-YAML)
+    - name: repro
+      hosts: all
+      gather_facts: false
+      tasks:
+        - name: reboot the box
+          ansible.builtin.reboot:
+          ignore_errors: true
+          notify: reboot handler
+      handlers:
+        - name: reboot handler
+          ansible.builtin.debug:
+            msg: reboot handler ran
+    YAML
+
+  output = IO::Memory.new
+  status = Process.run(BINARY, ["-i", inventory] + extra_args + [File.join(dir, "site.yml")],
+    output: output, error: output, chdir: dir)
+  {status, output.to_s}
+ensure
+  FileUtils.rm_rf(dir) if dir && Dir.exists?(dir)
+end
+
+describe "ansible.builtin.reboot's handler notification" do
+  it "does not fire the notified handler when the task fails under check mode" do
+    # A handler is notified only by a task that CHANGED; the local-connection
+    # refusal is a failure (ignore_errors just keeps the run going), so
+    # Ansible never runs the handler. Reporting `changed` here instead made
+    # krikri run it and diverge the whole play (issue #1008, kpg 000023).
+    status, output = run_notified_reboot_playbook(["--check"])
+
+    status.success?.must_equal(true)
+    output.must_include("Running ansible.builtin.reboot with local connection would reboot the control node.")
+    output.wont_include("RUNNING HANDLER [reboot handler]")
+    output.wont_include("reboot handler ran")
+    output.must_include("changed=0")
+    output.must_include("ignored=1")
+  end
+end
+
 describe "ansible.builtin.reboot's elapsed result field" do
   it "is present in check mode, so a registered rv.elapsed renders" do
     status, output = run_reboot_playbook(["--check"], NONLOCAL)
