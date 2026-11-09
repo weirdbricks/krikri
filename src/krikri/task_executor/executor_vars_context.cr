@@ -5787,10 +5787,16 @@ module Krikri
     # what real 2.21.6 reports for it (live-verified: `- ansible_os_family
     # == 'Debian'` under `that:` reports the item value's column).
     private def emit_assert_that_fact_deprecation(task : Task, raw : String, vars_context : Hash(String, JSON::Any), that_index : Int32) : Nil
-      return unless raw.scan(/ansible_[A-Za-z0-9_]+/).any? { |match| VarSubstitutor.top_level_fact_name?(match[0], vars_context) }
+      reads_fact = raw.scan(/ansible_[A-Za-z0-9_]+/).any? { |match| VarSubstitutor.top_level_fact_name?(match[0], vars_context) }
+      # The internal `vars`-dict read (issue #1028) is its own deprecate
+      # tag in ansible-core, so an item reading both classes prints one
+      # block per class at the same item Origin.
+      reads_vars_dict = VarSubstitutor.vars_dict_named_in_text?(raw)
+      return unless reads_fact || reads_vars_dict
       origin = conditional_deprecation_text(task, "that", raw, that_index, header: "", footer: "").chomp
       return if origin.empty?
-      ResultDisplay.emit_top_level_fact_deprecation(origin)
+      ResultDisplay.emit_top_level_fact_deprecation(origin) if reads_fact
+      ResultDisplay.emit_vars_dict_deprecation(origin) if reads_vars_dict
     end
 
     # A skipped block:'s `when:` is still a real evaluation in ansible -
@@ -5809,10 +5815,17 @@ module Krikri
     # (live-verified: `ansible_os_family is defined` in a playbook's only task).
     private def maybe_fact_alias_defined_deprecation(task : Task, raw : String, vars_context : Hash(String, JSON::Any)) : Nil
       return unless ConditionalEvaluator.whole_condition_is_defined_test?(raw)
-      return unless raw.scan(/ansible_[A-Za-z0-9_]+/).any? { |match| VarSubstitutor.top_level_fact_name?(match[0], vars_context) }
+      reads_fact = raw.scan(/ansible_[A-Za-z0-9_]+/).any? { |match| VarSubstitutor.top_level_fact_name?(match[0], vars_context) }
+      # Same lenient-is-defined gap for the internal `vars` dict read
+      # (`when: vars is defined`, `when: vars.x is defined` - issue #1028,
+      # live-verified against 2.21.6): real prints its own block, Origin'd
+      # at the same when: value token.
+      reads_vars_dict = VarSubstitutor.vars_dict_named_in_text?(raw)
+      return unless reads_fact || reads_vars_dict
       origin = conditional_deprecation_text(task, "when", raw, header: "", footer: "").chomp
       return if origin.empty?
-      ResultDisplay.emit_top_level_fact_deprecation(origin)
+      ResultDisplay.emit_top_level_fact_deprecation(origin) if reads_fact
+      ResultDisplay.emit_vars_dict_deprecation(origin) if reads_vars_dict
     end
 
     # The condition a skipped block evaluates can be a CHAIN - a block inside
@@ -5835,7 +5848,9 @@ module Krikri
       scope = {"ansible_facts" => JSON::Any.new(facts_dict_for(host.name))}
       inherited = block_task.block_inherited_when.try(&.origins)
       (block_task.when_condition_list || [raw]).each do |clause|
-        if clause.scan(/ansible_[A-Za-z0-9_]+/).any? { |match| VarSubstitutor.top_level_fact_name?(match[0], scope) }
+        reads_fact = clause.scan(/ansible_[A-Za-z0-9_]+/).any? { |match| VarSubstitutor.top_level_fact_name?(match[0], scope) }
+        reads_vars_dict = VarSubstitutor.vars_dict_named_in_text?(clause)
+        if reads_fact || reads_vars_dict
           origin = if pos = inherited.try(&.[clause]?)
                      ErrorBlock.origin_context(pos[0], pos[1], pos[2])
                    elsif pos = import_line_clause_origin(block_task, clause)
@@ -5843,7 +5858,10 @@ module Krikri
                    else
                      conditional_deprecation_text(block_task, "when", clause, header: "", footer: "").chomp
                    end
-          ResultDisplay.emit_top_level_fact_deprecation(origin) unless origin.empty?
+          unless origin.empty?
+            ResultDisplay.emit_top_level_fact_deprecation(origin) if reads_fact
+            ResultDisplay.emit_vars_dict_deprecation(origin) if reads_vars_dict
+          end
         end
         # Python's `and` short-circuits, so a clause past the first False one
         # is never templated and a fact read in it warns about nothing.

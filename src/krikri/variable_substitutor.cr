@@ -2182,6 +2182,33 @@ module Krikri
       deprecation_site_names?(name) ? current_deprecation_origin(name) : nil
     end
 
+    # The Origin block for one internal-`vars`-dict READ (see
+    # #emit_vars_dict_deprecation): mirrors #fact_read_origin's
+    # attribution, but the read is its own proof the site names the dict,
+    # so there is no text-scan gate on the final fallback - a direct
+    # `{{ vars }}` reports the render site itself, a read reached through
+    # another variable's value reports that value's declaration
+    # (live-verified against 2.21.6: `d1: "{{ vars.playbook_dir }}"` read
+    # as `{{ d1 }}` Origin's d1's own line, issue #1028).
+    def self.vars_dict_read_origin : String?
+      if stack = @@preparing_vars[Fiber.current]?
+        stack.reverse_each do |preparing|
+          text = preparing.text
+          next unless text && vars_dict_named_in_text?(text)
+          if preparing.leaf
+            components = leaf_components(preparing.container, text)
+            return nil unless components
+            return published_var_origin(preparing.host_name, preparing.name, components)
+          end
+          return published_var_origin(preparing.host_name, preparing.name)
+        end
+      end
+      if loop_site = current_loop_source_site
+        return ResultDisplay.loop_source_origin(loop_site.source_file, loop_site.source_line, loop_site.key, "vars")
+      end
+      current_deprecation_origin("vars")
+    end
+
     # Fiber-scoped stack of the variable values this fiber is re-rendering
     # right now - pushed by every entry point that renders ONE NAMED
     # variable's own stored template text (a task param's strict probe, a
@@ -2212,14 +2239,14 @@ module Krikri
     # so a top-level fact read inside it is attributed to the LEAF's own
     # declaration (see #fact_read_origin). No-op outside a container's
     # preparation (a top-level value's own text entry already carries the
-    # attribution), and gated on the `ansible_` prefix - only the
-    # top-level fact read deprecation consumes these entries, so the hot
-    # nested-leaf walk stays free of stack traffic for the 99% of leaves
-    # that can never read one.
+    # attribution), and gated on the `ansible_` prefix or a `vars`-dict
+    # read - only the top-level fact and `vars`-dict read deprecations
+    # consume these entries, so the hot nested-leaf walk stays free of
+    # stack traffic for the 99% of leaves that can never read one.
     def self.with_preparing_leaf(text : String, & : -> T) : T forall T
       top = @@preparing_vars[Fiber.current]?.try(&.last?)
       return yield unless top && top.text.nil? && top.container && !top.name.empty?
-      return yield unless text.includes?("ansible_")
+      return yield unless text.includes?("ansible_") || vars_dict_named_in_text?(text)
       (@@preparing_vars[Fiber.current] ||= Array(PreparingVar).new).push(PreparingVar.new(top.host_name, top.name, text, top.container, true))
       begin
         yield
@@ -2252,6 +2279,29 @@ module Krikri
       found.size == 1 ? found[0] : nil
     end
 
+    # The same path for the unique leaf whose stored template text READS
+    # the internal `vars` dict (see #vars_dict_named_in_text?) - the
+    # static template-file scan's shape
+    # (TemplateActionPlugin#re_rendered_var_vars_origin). nil when no leaf
+    # (or more than one) reads it: several declarations are ambiguous, so
+    # the read stays silent rather than mislabel one.
+    def self.vars_leaf_components(container : JSON::Any?) : Array(String)?
+      found = [] of Array(String)
+      collect_vars_leaf_components(container, [] of String, found)
+      found.size == 1 ? found[0] : nil
+    end
+
+    # Whether *text* READS the internal `vars` dict - the bare `vars` token
+    # outside any quoted span. Quoted occurrences are the `vars`/`varnames`
+    # LOOKUP's own name (`lookup('vars', ...)` reads a top-level variable,
+    # never the tagged dict) or plain prose, and ansible-core's warning
+    # fires only on the dict read itself (vars/manager.py's _DEPRECATE_VARS
+    # tag, consumed by an actual name resolution).
+    def self.vars_dict_named_in_text?(text : String) : Bool
+      no_strings = text.gsub(/'[^']*'|"[^"]*"/, " ")
+      no_strings.matches?(/(?<![A-Za-z0-9_.])vars(?![A-Za-z0-9_])/)
+    end
+
     private def self.collect_leaf_components(value : JSON::Any?, text : String, path : Array(String), found : Array(Array(String))) : Nil
       case raw = value.try(&.raw)
       when Array
@@ -2280,6 +2330,22 @@ module Krikri
       when String
         return unless raw.includes?("{{") || raw.includes?("{%")
         found << path if raw.scan(/ansible_[A-Za-z0-9_]+/).any? { |match| top_level_fact_name?(match[0], vars) }
+      end
+    end
+
+    private def self.collect_vars_leaf_components(value : JSON::Any?, path : Array(String), found : Array(Array(String))) : Nil
+      case raw = value.try(&.raw)
+      when Array
+        raw.each_with_index do |item, index|
+          collect_vars_leaf_components(item, path + [index.to_s], found)
+        end
+      when Hash
+        raw.each do |key, item|
+          collect_vars_leaf_components(item, path + [key], found)
+        end
+      when String
+        return unless raw.includes?("{{") || raw.includes?("{%")
+        found << path if vars_dict_named_in_text?(raw)
       end
     end
 
@@ -2416,7 +2482,7 @@ module Krikri
       # instead of displayed - see #capture_var_deprecations.
       if captures = @@var_deprecation_captures[Fiber.current]?
         unless captures.empty?
-          captures.last << origin
+          captures.last << -> { emit_fact_deprecation(origin) }
           return
         end
       end
@@ -2445,15 +2511,18 @@ module Krikri
     # consuming one value each print one per param (live-verified vs
     # 2.21.6; dubzland.nginx's `params` value printed at the first
     # fact-reading leaf only, issue #1022). The eager render therefore
-    # only RECORDS each reading's Origin against the value's name here,
-    # and #flush_pending_var_deprecations replays the readings when the
-    # name next resolves - under the consuming operation's identity.
-    @@pending_var_deprecations = {} of String => Array(String)
-    @@var_deprecation_captures = {} of Fiber => Array(Array(String))
+    # only RECORDS each reading against the value's name here, and
+    # #flush_pending_var_deprecations replays the readings when the name
+    # next resolves - under the consuming operation's identity. Each
+    # reading is stored as its own replay closure so the fact and
+    # `vars`-dict reads one value makes each re-emit as their own block
+    # kind (issue #1028).
+    @@pending_var_deprecations = {} of String => Array(Proc(Nil))
+    @@var_deprecation_captures = {} of Fiber => Array(Array(Proc(Nil)))
 
     def self.capture_var_deprecations(name : String, & : -> T) : T forall T
-      buffer = [] of String
-      stack = (@@var_deprecation_captures[Fiber.current] ||= Array(Array(String)).new)
+      buffer = [] of Proc(Nil)
+      stack = (@@var_deprecation_captures[Fiber.current] ||= Array(Array(Proc(Nil))).new)
       stack.push(buffer)
       begin
         yield
@@ -2484,7 +2553,71 @@ module Krikri
       base = name.strip.split(/[.\[]/, 2)[0]
       return if base.empty?
       readings = @@pending_var_deprecations.delete(base) || return
-      readings.each { |origin| emit_fact_deprecation(origin) }
+      readings.each(&.call)
+    end
+
+    # Emits the internal-`vars`-dict deprecation for a placeable Origin
+    # while keeping ansible's one-block-per-templating-operation record.
+    # The record is its OWN, not shared with the fact read above: one
+    # param reading both a top-level fact and `vars` prints BOTH blocks,
+    # one per tag class, in access order (live-verified against 2.21.6,
+    # issue #1028), while two `vars` accesses in one operation print the
+    # first one's block only. Same capture, deferral and nil-Origin rules
+    # as the fact read.
+    @@tripped_vars_dict_deprecation_ops = Set(String).new
+
+    def self.emit_vars_dict_deprecation(origin : String?) : Nil
+      return unless origin
+      return if suppress_vars_dict_deprecations?
+      # A capture is open (a task `vars:` value rendering eagerly at
+      # vars-context build): the reading belongs to whichever render
+      # CONSUMES the value - the block Origin's the value's own
+      # declaration, printed at the consuming render (live-verified vs
+      # 2.21.6) - so it is recorded instead of displayed, like the fact
+      # read above (issue #1022's replay machinery).
+      if captures = @@var_deprecation_captures[Fiber.current]?
+        unless captures.empty?
+          captures.last << -> { emit_vars_dict_deprecation(origin) }
+          return
+        end
+      end
+      if ResultDisplay.deferring_fact_deprecations?
+        ResultDisplay.emit_vars_dict_deprecation(origin)
+        return
+      end
+      if op = current_fact_deprecation_op
+        return unless @@tripped_vars_dict_deprecation_ops.add?(op)
+      end
+      ResultDisplay.emit_vars_dict_deprecation(origin)
+    end
+
+    # Runs *block* with `vars`-dict read deprecations silenced on this
+    # fiber. ansible-core templates a variable's value lazily at its USE,
+    # so a `vars` read inside a value the running template never touches
+    # prints nothing - while the template action's scope pre-render
+    # re-renders every value up front and would warn for all of them. The
+    # reads the template DOES make are re-detected on the parsed template
+    # instead (TemplateActionPlugin#re_rendered_var_vars_origin), the
+    # same split the fact read's eager-pre-render probe makes.
+    @@suppressed_vars_dict_deprecations = {} of Fiber => Int32
+
+    def self.suppress_vars_dict_read_deprecations(& : -> T) : T forall T
+      fiber = Fiber.current
+      depth = @@suppressed_vars_dict_deprecations[fiber]? || 0
+      @@suppressed_vars_dict_deprecations[fiber] = depth + 1
+      begin
+        yield
+      ensure
+        if depth == 0
+          @@suppressed_vars_dict_deprecations.delete(fiber)
+        else
+          @@suppressed_vars_dict_deprecations[fiber] = depth
+        end
+      end
+    end
+
+    def self.suppress_vars_dict_deprecations? : Bool
+      @@suppressed_vars_dict_deprecations[Fiber.current]?.try { |depth| depth > 0 } || false
     end
 
     # Per-host registry of UNSAFE variable names - names whose current

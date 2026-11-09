@@ -390,14 +390,17 @@ module Krikri
 
     # The buffer behind #begin_deferred_fact_deprecations: one entry per
     # open deferral scope on this fiber, so a nested scope pops back to its
-    # caller's buffer.
-    @@deferred_fact_deprecations = {} of Fiber => Array(Array(String))
+    # caller's buffer. Each held-back READ is stored as its own replay
+    # closure so it re-emits as its own block kind - a deferred `when:`
+    # reading both a top-level fact and the `vars` dict replays one block
+    # each, in the order they were read.
+    @@deferred_fact_deprecations = {} of Fiber => Array(Array(Proc(Nil)))
 
     def self.emit_top_level_fact_deprecation(origin : String?) : Nil
       return unless origin
       if buffers = @@deferred_fact_deprecations[Fiber.current]?
         unless buffers.empty?
-          buffers.last << origin
+          buffers.last << -> { emit_top_level_fact_deprecation(origin) }
           return
         end
       end
@@ -406,6 +409,33 @@ module Krikri
         origin.colorize(:light_magenta).to_s,
         "",
         "Use `ansible_facts[\"fact_name\"]` (no `ansible_` prefix) instead.".colorize(:light_magenta).to_s,
+        "",
+      ])
+    end
+
+    # The internal `vars` dictionary deprecation (ansible-core 2.21,
+    # vars/manager.py's _DEPRECATE_VARS tag on the `vars` magic dict and
+    # every value inside it): any template READ of the dict or one of its
+    # entries prints this block, deduplicated per distinct Origin per run
+    # exactly like the two reads above - the same template rendered twice,
+    # or by two hosts, prints once (live-verified against 2.21.6, issue
+    # #1028: ome.debug_dumpallvars' dumpall.j2 `{{ vars | ... }}`).
+    @@vars_dict_deprecation_origins = Set(String).new
+    VARS_DICT_DEPRECATION_TEXT = "The internal \"vars\" dictionary is deprecated. This feature will be removed from ansible-core version 2.24."
+
+    def self.emit_vars_dict_deprecation(origin : String?) : Nil
+      return unless origin
+      if buffers = @@deferred_fact_deprecations[Fiber.current]?
+        unless buffers.empty?
+          buffers.last << -> { emit_vars_dict_deprecation(origin) }
+          return
+        end
+      end
+      emit_or_defer_deprecation(@@vars_dict_deprecation_origins, origin, [
+        "[DEPRECATION WARNING]: #{VARS_DICT_DEPRECATION_TEXT}".colorize(:light_magenta).to_s,
+        origin.colorize(:light_magenta).to_s,
+        "",
+        "Use the `vars` and `varnames` lookups instead.".colorize(:light_magenta).to_s,
         "",
       ])
     end
@@ -421,7 +451,7 @@ module Krikri
     # printed a block). Hold the readings here until the verdict is known;
     # #finish_deferred_fact_deprecations drops them when the include runs.
     def self.begin_deferred_fact_deprecations : Nil
-      (@@deferred_fact_deprecations[Fiber.current] ||= Array(Array(String)).new) << [] of String
+      (@@deferred_fact_deprecations[Fiber.current] ||= Array(Array(Proc(Nil))).new) << [] of Proc(Nil)
     end
 
     # Whether a deferral scope is open on this fiber, so a caller can tell
@@ -435,10 +465,10 @@ module Krikri
       fiber = Fiber.current
       return unless buffers = @@deferred_fact_deprecations[fiber]?
       return if buffers.empty?
-      origins = buffers.pop
+      deferred = buffers.pop
       @@deferred_fact_deprecations.delete(fiber) if buffers.empty?
       return unless flush
-      origins.each { |origin| emit_top_level_fact_deprecation(origin) }
+      deferred.each(&.call)
     end
 
     # An action-plugin warning raised while validating task args (the

@@ -449,6 +449,30 @@ module Krikri
         if template_reads_name?(names_a_fact_through_its_value, template)
           VarSubstitutor.emit_fact_deprecation(var_value_origin)
         end
+        # The internal `vars`-dict deprecation (issue #1028,
+        # ome.debug_dumpallvars' dumpall.j2 `{{ vars | ... }}`): a direct
+        # `vars` name in the AST is the read itself, and a read of a
+        # variable whose own value reads the dict is attributed to that
+        # value's DEFINING site - the same split as the fact probe above,
+        # with one combined walk so the FIRST access in template order is
+        # the one that prints (ansible-core keeps the first access of the
+        # deprecate tag per templating operation: two values naming the
+        # dict read by one template print one block, at the first).
+        vars_dict_origin : String? = nil
+        first_vars_dict_read = ->(read : String) do
+          if read == "vars"
+            vars_dict_origin = ErrorBlock.origin_context(File.expand_path(template_path), 0, nil, show_content: false)
+            true
+          elsif (origin = re_rendered_var_vars_origin(read))
+            vars_dict_origin = origin
+            true
+          else
+            false
+          end
+        end
+        if template_reads_name?(first_vars_dict_read, template)
+          VarSubstitutor.emit_vars_dict_deprecation(vars_dict_origin)
+        end
       end
 
       engine = KrikriJinja.derive_engine(
@@ -687,6 +711,40 @@ module Krikri
       end
     end
 
+    # The same probe for the internal `vars`-dict deprecation (issue
+    # #1028): the Origin block of *name*'s own stored value when that
+    # value - or a value further down a forwarding chain - READS the
+    # `vars` dict (VarSubstitutor.vars_dict_named_in_text?). A chain
+    # attributes to the innermost value that names the dict, the same
+    # innermost-wins rule the fact reads follow (real templates the chain
+    # lazily and tags the reached value's own declaration); a container
+    # points at the unique naming leaf. nil when nothing names the dict,
+    # several candidates disagree, or the defining site cannot be placed -
+    # never mislabel.
+    private def re_rendered_var_vars_origin(name : String, seen : Set(String) = Set(String).new) : String?
+      return nil unless seen.add?(name)
+      value = @vars[name]? || return nil
+      host_name = @vars["inventory_hostname"]?.try(&.as_s?)
+      case raw = value.raw
+      when String
+        return nil unless raw.includes?("{{") || raw.includes?("{%")
+        return VarSubstitutor.published_var_origin(host_name, name) if VarSubstitutor.vars_dict_named_in_text?(raw)
+        origins = referenced_var_names(raw).compact_map { |ref| re_rendered_var_vars_origin(ref, seen) }.uniq!
+        origins.size == 1 ? origins[0] : nil
+      when Hash, Array
+        components = VarSubstitutor.vars_leaf_components(value)
+        return nil unless components
+        VarSubstitutor.published_var_origin(host_name, name, components)
+      end
+    end
+
+    # The stored variables a piece of template text references (quoted
+    # spans excluded - `lookup('vars', ...)` names a lookup, not a read).
+    private def referenced_var_names(text : String) : Array(String)
+      no_strings = text.gsub(/'[^']*'|"[^"]*"/, " ")
+      no_strings.scan(/[A-Za-z_][A-Za-z0-9_]*/).map(&.[0]).uniq!.select { |token| @vars.has_key?(token) }
+    end
+
     # Whether the parsed template contains a direct read of a name the
     # caller's *matcher* accepts - statement bodies are walked for nested
     # expressions, expressions for their operand/subexpression trees;
@@ -918,12 +976,24 @@ module Krikri
           # re-render in ITS OWN host's scope (Ansible's HostVarsVars
           # templar). The generic re-render below would have rendered
           # every entry with THIS host's vars.
-          vars[key] = VariableSubstitutor::JinjaRenderer.prepare_hostvars(value, substitutor, defer_unresolved: true, deferred_leaves: deferred_leaves)
+          # The re-renders are EAGER (every value, up front) while
+          # ansible-core templates a variable's value lazily at its USE:
+          # a `vars`-dict read inside a value this template never touches
+          # prints no deprecation in real (live-verified vs 2.21.6), so
+          # those reads are silenced here and re-detected on the parsed
+          # template for the names it actually reads (see
+          # #re_rendered_var_vars_origin).
+          prepared_hostvars = VarSubstitutor.suppress_vars_dict_read_deprecations do
+            VariableSubstitutor::JinjaRenderer.prepare_hostvars(value, substitutor, defer_unresolved: true, deferred_leaves: deferred_leaves)
+          end
+          vars[key] = prepared_hostvars
           next
         end
         unless VarSubstitutor.resolved_var_name?(host_name, key)
           begin
-            value = VariableSubstitutor::JinjaRenderer.rerender_nested_templates(value, substitutor, defer_unresolved: true, deferred_leaves: deferred_leaves)
+            value = VarSubstitutor.suppress_vars_dict_read_deprecations do
+              VariableSubstitutor::JinjaRenderer.rerender_nested_templates(value, substitutor, defer_unresolved: true, deferred_leaves: deferred_leaves)
+            end
           rescue Krikri::UndefinedVariableError
             # A role default that references an undefined variable stays raw;
             # only a template that actually uses it fails, like Ansible.

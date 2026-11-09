@@ -63,6 +63,14 @@ module Krikri
           return cached
         end
         value = if name == "vars"
+                  # ansible-core 2.21's internal-`vars`-dict deprecation
+                  # (vars/manager.py's _DEPRECATE_VARS tag on the dict and
+                  # every value inside it): resolving this name IS the
+                  # tagged dict read, so this is where real prints the
+                  # block - Origin'd at whatever value was being templated
+                  # at that moment (VarSubstitutor#vars_dict_read_origin),
+                  # issue #1028.
+                  VarSubstitutor.emit_vars_dict_deprecation(VarSubstitutor.vars_dict_read_origin)
                   build_vars_dict
                 elsif @raw_vars.has_key?(name)
                   # ansible-core 2.19.11 emits the play_hosts read
@@ -125,7 +133,23 @@ module Krikri
         begin
           @raw_vars.each_key do |key|
             next if key == "vars"
-            value = resolve(key)
+            # The materialization's own per-key fetch is NOT a read of the
+            # fetched name: the `vars`-dict copy of `play_hosts` is
+            # re-tagged with the vars deprecate tag in ansible-core 2.21
+            # (vars/manager.py), replacing the play_hosts one, so
+            # consuming the dict never warns about play_hosts - only a
+            # VALUE whose own template text reads the name does, and that
+            # read goes through the normal #resolve from the per-key
+            # preparation below (live-verified against 2.21.6: `{{
+            # vars | length }}` prints no play_hosts block, while a stored
+            # `d1: "{{ play_hosts }}"` inside the dumped dict prints one).
+            # The fetch also stays UNCACHED, so a later template READ of
+            # the name still resolves - and warns - like real.
+            value = if key == "play_hosts"
+                      @cache[key]? || convert(key)
+                    else
+                      resolve(key)
+                    end
             dict[key] = value if value && !value.raw.is_a?(KrikriJinja::Undefined)
           end
         ensure

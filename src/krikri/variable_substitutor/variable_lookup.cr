@@ -324,6 +324,11 @@ module Krikri
         # silent rather than mis-attribute the warning, and a resolved
         # name that is not exactly the deprecated alias never warns.
         Krikri::ResultDisplay.emit_play_hosts_deprecation(VarSubstitutor.play_hosts_read_origin) if value && name.strip == "play_hosts"
+        # ansible-core 2.21's internal-`vars`-dict deprecation (issue
+        # #1028): resolving the `vars` name IS the tagged dict read, so a
+        # param/when:/loop-source expression naming it prints the block -
+        # Origin'd like the two reads above.
+        VarSubstitutor.emit_vars_dict_deprecation(VarSubstitutor.vars_dict_read_origin) if value && name.strip == "vars"
         emit_fact_deprecation(name.strip) if value
         # A task `vars:` value that rendered eagerly at vars-context build
         # recorded its fact readings for the render that CONSUMES it (see
@@ -546,7 +551,12 @@ module Krikri
           rendered = ExpressionEvaluator.new(@vars).evaluate(part)
           parse_rendered_or_wrap(rendered)
         else
-          emit_fact_deprecation(part) if @vars.has_key?(part)
+          if @vars.has_key?(part)
+            emit_fact_deprecation(part)
+            # The `vars.x` shape of the internal-`vars`-dict read (issue
+            # #1028) - the base name resolution is the tagged dict access.
+            VarSubstitutor.emit_vars_dict_deprecation(VarSubstitutor.vars_dict_read_origin) if part == "vars"
+          end
           @vars[part]?
         end
       end
