@@ -66,6 +66,9 @@ module Krikri
         end
 
         gated = @params.has_key?("creates") || @params.has_key?("removes")
+        # ansible's script.py removes its tmp dir in a finally clause on
+        # EVERY path, so a staged copy must leave no trace here either.
+        cleanup
         return PluginResult.new(
           changed: gated,
           failed: false,
@@ -213,9 +216,10 @@ module Krikri
     end
 
     # Removes the staged copy left behind by TaskExecutor#
-    # stage_script_src (marker only set for a real remote connection - a
-    # local-connection run points `cmd` straight at the real controller-
-    # side script, never staged, and must not be deleted). New-style
+    # stage_script_src (marker set for every staged run: the remote
+    # transfer, and the local-connection ansible-tmp copy real stages too
+    # - issue #1016. A markerless run points `cmd` straight at the real
+    # controller-side script and must not be deleted). New-style
     # staging notes the whole per-task tmp dir (ansible's own action
     # removes the WRAPPED dir, not just the file), so the removed tree
     # is that dir. Old-style runs (only the file was noted) strip just
