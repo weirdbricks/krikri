@@ -86,7 +86,7 @@ MODULAR_STDERR = "Error: All matches for argument: mysql-devel were filtered out
 DEPSOLVE_STDERR = "Error: \n Problem: package perl-File-Temp-1:0.231.100-4.el9.noarch from appstream requires perl(Carp), but none of the providers can be installed\n  - conflicting requests\n  - package perl-Carp-1.50-460.el9.0.1.noarch from appstream is filtered out by exclude filtering\n(try to add '--skip-broken' to skip uninstallable packages or '--nobest' to use not only best candidate packages)\nError: \n Problem: package perl-File-Temp-1:0.231.100-4.el9.noarch from appstream requires perl(Carp), but none of the providers can be installed\n  - conflicting requests\n  - package perl-Carp-1.50-460.el9.0.1.noarch from appstream is filtered out by exclude filtering\n(try to add '--skip-broken' to skip uninstallable packages or '--nobest' to use not only best candidate packages)\n"
 DEPSOLVE_MSG    = "Depsolve Error occurred: \n Problem: package perl-File-Temp-1:0.231.100-4.el9.noarch from appstream requires perl(Carp), but none of the providers can be installed\n  - conflicting requests\n  - package perl-Carp-1.50-460.el9.0.1.noarch from appstream is filtered out by exclude filtering"
 
-private def with_failing_dnf_shim(stdout : String, stderr : String, &)
+private def with_failing_dnf_shim(stdout : String, stderr : String, probe_results : Array(String)? = nil, &)
   shim_dir = PluginSpecHelper.tmp_path("fake-dnf-fail")
   Dir.mkdir_p(shim_dir)
   script = "#!/bin/sh\ncat <<'KRIKRI_FAKE_DNF_EOF'\n#{stdout}KRIKRI_FAKE_DNF_EOF\n"
@@ -98,6 +98,14 @@ private def with_failing_dnf_shim(stdout : String, stderr : String, &)
   # an equally failing shim or the compound would exit 0.
   File.write("#{shim_dir}/yum", script)
   File.chmod("#{shim_dir}/yum", 0o755)
+  # The would-transaction probe shells out to the target's python-dnf
+  # (issue #1038); on the spec host no interpreter has the dnf module,
+  # so a canned python3 stands in for the probe's first candidate.
+  if probe_results
+    probe_json = {"results" => probe_results}.to_json
+    File.write("#{shim_dir}/python3", "#!/bin/sh\nprintf '%s\\n' '#{probe_json}'\n")
+    File.chmod("#{shim_dir}/python3", 0o755)
+  end
   PluginSpecHelper::ENV_MUTEX.synchronize do
     old_path = ENV["PATH"]?
     ENV["PATH"] = "#{shim_dir}:#{old_path}"
@@ -117,6 +125,24 @@ end
 
 describe "dnf/yum failed install - Ansible's per-spec failures shape (issue 19)" do
   serial!
+
+  it "carries the would-transaction results on the missing-spec failure (issue 1038)" do
+    with_failing_dnf_shim("No match for argument: no-such-pkg\n", "Error: Unable to find a match: no-such-pkg\n",
+      probe_results: ["Installed: vim-8.2.2637-26.el9_8.23.x86_64", "Installed: vim-common-2:8.2.2637-26.el9_8.23.noarch"]) do
+      result = PluginSpecHelper.run("dnf",
+        {"name" => "[\"vim\", \"no-such-pkg\"]", "state" => "present"},
+        vars: {"ansible_pkg_mgr" => "dnf"})
+
+      result["failed"].as_bool.must_equal(true)
+      result["msg"].as_s.must_equal("Failed to install some of the specified packages")
+      result["failures"].as_a.map(&.as_s).must_equal(["No package no-such-pkg available."])
+      result["results"].as_a.map(&.as_s).must_equal([
+        "Installed: vim-8.2.2637-26.el9_8.23.x86_64",
+        "Installed: vim-common-2:8.2.2637-26.el9_8.23.noarch",
+      ])
+      result["rc"].as_i.must_equal(1)
+    end
+  end
 
   it "reports one No package X available. entry for a missing spec (dnf)" do
     with_failing_dnf_shim(MISSING_PKG_STDOUT, MISSING_PKG_STDERR) do
