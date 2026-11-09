@@ -3139,6 +3139,15 @@ module Krikri
         },
         "params" => final_params,
         "vars"   => wire_vars,
+        # Read by the plugin binary (BasePlugin#resolved_collection_version):
+        # the release whose module source this task's name resolves to, from
+        # the CONTROLLER's own collection tree - the binary runs on the
+        # target and cannot see it. Plugins that model release-dependent
+        # module behavior (the ansible.posix 2.1.x-vs-2.2.x deprecation
+        # surface, issue #1060) decide from this; null when no release can
+        # be pinned (ansible-core's own modules, role-private library/
+        # sources, a collection tree without a MANIFEST.json).
+        "collection_version" => CollectionIndex.module_provider_version(task.module_name),
         # Read by PluginManager, not by the plugin binary itself - become:
         # wraps the *whole* plugin process (local spawn or the remote SSH
         # command) in `sudo -n -u <user> --`, rather than being something
@@ -3806,13 +3815,16 @@ module Krikri
       # argument validation, so a spec rejection like this one still carries
       # those deprecations - on the result (for register) and on the console
       # marker (live-verified vs 2.21.6: a `mount:` task missing src/fstype
-      # prints both import lines and registers both entries). Only
+      # prints both import lines and registers both entries) - when the
+      # resolved release still makes those imports (see
+      # Krikri::ModuleUtilsDeprecations' own 2.1.x-vs-2.2.x gate). Only
       # module-level failures take this path: an action-plugin-level one
       # never reaches the module at all.
       unless action_level_only
-        if texts = module_utils_import_deprecation_texts(task.module_name)
+        collection_version = CollectionIndex.module_provider_version(task.module_name)
+        if texts = module_utils_import_deprecation_texts(task.module_name, collection_version)
           result["deprecations"] = JSON::Any.new(
-            ModuleUtilsDeprecations.text_import_deprecation_result_entries(task.module_name))
+            ModuleUtilsDeprecations.text_import_deprecation_result_entries(task.module_name, collection_version))
           result["_ansible_core_deprecations"] = JSON::Any.new(texts.map { |text| JSON::Any.new(text) })
         end
       end
@@ -3820,10 +3832,10 @@ module Krikri
     end
 
     # Ansible-core 2.21's deprecated ansible.module_utils import warnings for
-    # one module, nil when it imports none (see
-    # Krikri::ModuleUtilsDeprecations).
-    private def module_utils_import_deprecation_texts(module_name : String) : Array(String)?
-      texts = ModuleUtilsDeprecations.text_import_deprecation_texts(module_name)
+    # one module, nil when it imports none - for this release line or at all
+    # (see Krikri::ModuleUtilsDeprecations).
+    private def module_utils_import_deprecation_texts(module_name : String, collection_version : String?) : Array(String)?
+      texts = ModuleUtilsDeprecations.text_import_deprecation_texts(module_name, collection_version)
       texts.empty? ? nil : texts
     end
 

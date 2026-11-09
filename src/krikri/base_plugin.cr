@@ -11,6 +11,7 @@ require "./ssh_manager"
 require "./connection_settings"
 require "./local_executor"
 require "./param_sentinels"
+require "./collection_index"
 require "./module_utils_deprecations"
 require "./plugin_helpers/strict_bool_params"
 require "./plugin_helpers/stat_fields"
@@ -509,6 +510,24 @@ module Krikri
     # Abstract method - must be implemented by subclasses
     abstract def execute : PluginResult
 
+    # The version of the installed collection release whose module source
+    # this task resolves to - a top-level config field the executor sets
+    # (see build_plugin_config) from the CONTROLLER's collection tree,
+    # because this binary runs on the target and cannot see it. nil when
+    # the executor could pin no release (ansible-core's own modules,
+    # role-private library/ sources, a tree without a MANIFEST.json).
+    def resolved_collection_version : String?
+      @config["collection_version"]?.try(&.as_s?)
+    end
+
+    # Whether the resolved collection release predates major.minor.patch
+    # (see CollectionIndex.version_before?); an unknown release counts as
+    # predating, so plugins keep modeling the older module line whenever
+    # the executor could not pin one.
+    def resolved_collection_version_before?(major : Int32, minor : Int32, patch : Int32 = 0) : Bool
+      CollectionIndex.version_before?(resolved_collection_version, major, minor, patch)
+    end
+
     # Last chance for a plugin to add the result keys Ansible's controller
     # appends after the module's own dict - community.postgresql's
     # deprecated-alias warnings (PluginHelpers::PostgresqlDeprecations) for
@@ -531,17 +550,19 @@ module Krikri
     # `warnings` deprecation, which real records after them) and deduped by
     # msg against what is already there, since a plugin that reproduces its
     # own import deprecation (sysctl) must keep exactly one entry: real
-    # answers each imported name once per run.
+    # answers each imported name once per run. Only the release line that
+    # still carries those imports gets them (ModuleUtilsDeprecations' own
+    # 2.1.x-vs-2.2.x gate, fed by resolved_collection_version).
     private def attach_module_utils_import_deprecations(result : PluginResult) : PluginResult
       # The module a table entry is keyed by is the one this binary
       # implements: the executor's own `_module_name` (the task's spelling)
       # when it is there, else the plugin binary's file name - every plugin
       # binary is a copy of the fat one, so its program name IS the module.
       module_name = @params["_module_name"]? || File.basename(PROGRAM_NAME)
-      texts = ModuleUtilsDeprecations.text_import_deprecation_texts(module_name)
+      texts = ModuleUtilsDeprecations.text_import_deprecation_texts(module_name, resolved_collection_version)
       return result if texts.empty?
 
-      entries = ModuleUtilsDeprecations.text_import_deprecation_result_entries(module_name)
+      entries = ModuleUtilsDeprecations.text_import_deprecation_result_entries(module_name, resolved_collection_version)
       existing_entries = result.extra["deprecations"]?.try(&.as_a?) || [] of JSON::Any
       fresh_entries = entries.reject do |entry|
         existing_entries.any? { |present| present["msg"]?.try(&.as_s?) == entry["msg"].as_s }

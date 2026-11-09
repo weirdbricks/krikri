@@ -190,15 +190,17 @@ module Krikri
     # anything the action already recorded (the imports happen first), and
     # are skipped when no module would have run at all - a skipped task, a
     # pass-through, or an unrescued crash - which real's own result shapes
-    # carry no deprecations for.
+    # carry no deprecations for - or when the resolved release no longer
+    # makes those imports (ModuleUtilsDeprecations' own release gate).
     private def self.attach_module_utils_import_deprecations(module_name : String, action_result : ActionResult) : Nil
       hash = action_result.final_result.try(&.as_h?)
       return unless hash
-      texts = ModuleUtilsDeprecations.text_import_deprecation_texts(module_name)
+      collection_version = CollectionIndex.module_provider_version(module_name)
+      texts = ModuleUtilsDeprecations.text_import_deprecation_texts(module_name, collection_version)
       return if texts.empty?
       return if module_never_ran?(hash)
 
-      prepend_deprecations(hash, ModuleUtilsDeprecations.text_import_deprecation_result_entries(module_name))
+      prepend_deprecations(hash, ModuleUtilsDeprecations.text_import_deprecation_result_entries(module_name, collection_version))
       prepend_core_deprecation_texts(hash, texts)
     end
 

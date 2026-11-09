@@ -54,6 +54,7 @@ module Krikri
     @@builtin_lookup_redirects_loaded = false
     @@collection_redirects = Hash(String, Hash(String, String)?).new
     @@role_meta_collections = Hash(String, Array(String)).new
+    @@collection_versions = Hash(String, String?).new
 
     # Test seam: forget everything scanned, so a spec can point
     # ANSIBLE_COLLECTIONS_PATH at a fixture and rescan (same pattern as
@@ -71,6 +72,7 @@ module Krikri
       @@builtin_lookup_redirects = nil
       @@builtin_lookup_redirects_loaded = false
       @@collection_redirects.clear
+      @@collection_versions.clear
     end
 
     # Directories that contain an `ansible_collections/` subtree, real's
@@ -211,6 +213,75 @@ module Krikri
     # Is the collection directory present under any search root?
     def self.installed?(namespace : String, collection : String) : Bool
       collection_dirs.has_key?("#{namespace}.#{collection}")
+    end
+
+    # The `version` of an installed collection's MANIFEST.json - the
+    # release `ansible-galaxy` wrote into the copy real's loader would
+    # import from (collection_dirs' first hit). nil when the collection
+    # is not installed or no version field is readable; a tree installed
+    # any other way (a raw git checkout, which carries galaxy.yml rather
+    # than a MANIFEST.json) reports nil rather than guessing.
+    def self.collection_version(fq : String) : String?
+      if @@collection_versions.has_key?(fq)
+        return @@collection_versions[fq]
+      end
+      version = nil
+      if dir = collection_dirs[fq]?.try(&.first?)
+        version = manifest_version(dir)
+      end
+      @@collection_versions[fq] = version
+      version
+    end
+
+    private def self.manifest_version(dir : String) : String?
+      path = File.join(dir, "MANIFEST.json")
+      return nil unless File.file?(path)
+      info = JSON.parse(File.read(path))["collection_info"]?
+      info.try { |entry| entry["version"]?.try(&.as_s?) }
+    rescue
+      nil
+    end
+
+    # The version of the collection release whose module source `name`
+    # resolves to, following the same redirect chain real's loader walks
+    # (bare `mount:` -> ansible.posix.mount through the builtin runtime
+    # table, the FQCN spellings straight through). A bare name with no
+    # redirect entry is matched against every installed collection's
+    # plugins/modules/. nil when the name resolves to ansible-core
+    # itself, to a role-private library/ module, or when no release
+    # version is readable - callers keep their existing modeling then
+    # (see version_before?'s unknown-version default).
+    def self.module_provider_version(name : String) : String?
+      return nil if name.empty? || name.includes?("{{")
+      resolved = module_redirect_chain(name)
+      parts = resolved.split('.')
+      if parts.size >= 3
+        return nil if parts[0] == "ansible" && (parts[1] == "builtin" || parts[1] == "legacy")
+        return collection_version("#{parts[0]}.#{parts[1]}")
+      end
+      collection_dirs.each do |collection_fq, collection_paths|
+        next unless collection_paths.any? { |path| collection_leaf_file?("modules", path, resolved) }
+        return collection_version(collection_fq)
+      end
+      nil
+    end
+
+    # Whether `version` (a collection release's MANIFEST.json `version`)
+    # predates major.minor.patch, comparing the numeric leading segments.
+    # An unknown/unparseable version counts as predating: the callers
+    # model the OLDER module line when they cannot pin the resolved
+    # release (ansible-core's own modules, role-private library/ sources,
+    # trees without a MANIFEST.json) - the same conservative default the
+    # engine hardcoded before the resolved release became visible.
+    def self.version_before?(version : String?, major : Int32, minor : Int32, patch : Int32 = 0) : Bool
+      return true unless version
+      numbers = version.split('.').map { |segment| segment.to_i? || 0 }
+      got_major = numbers[0]? || 0
+      got_minor = numbers[1]? || 0
+      got_patch = numbers[2]? || 0
+      return got_major < major if got_major != major
+      return got_minor < minor if got_minor != minor
+      got_patch < patch
     end
 
     # Could real's plugin loader resolve a BARE lookup plugin name

@@ -83,6 +83,37 @@ describe Krikri::CollectionIndex do
     result[:resolves].must_equal(false)
   end
 
+  # The release-version lookups the deprecation model's 2.1.x-vs-2.2.x
+  # gate rides on (issue #1060): the resolved module's collection
+  # release, read from the copy real's loader would import from, for
+  # both the FQCN spelling and a bare name matched by leaf.
+  it "reports the resolved module's collection release version" do
+    File.write(File.join(@fixture_root, "ansible_collections", "testns", "prov", "MANIFEST.json"),
+      %({"collection_info": {"namespace": "testns", "name": "prov", "version": "2.2.2"}}))
+
+    Krikri::CollectionIndex.module_provider_version("testns.prov.thing").must_equal("2.2.2")
+    Krikri::CollectionIndex.module_provider_version("thing").must_equal("2.2.2")
+    # The chain's end is the release that matters: testns.chain redirects
+    # `other` onto prov's module, whose own manifest pins 2.2.2.
+    Krikri::CollectionIndex.module_provider_version("testns.chain.other").must_equal("2.2.2")
+    # A name only ansible-core provides, or one no collection ships,
+    # pins no collection release at all.
+    Krikri::CollectionIndex.module_provider_version("ansible.builtin.copy").must_be_nil
+    Krikri::CollectionIndex.module_provider_version("no_such_module_xyzzy").must_be_nil
+  end
+
+  # The comparison the release gate uses: numeric leading segments, and
+  # an unknown/unparseable release counting as OLDER (the plugins keep
+  # modeling the 2.1.x module line whenever the executor cannot pin one).
+  it "compares release versions with an unknown release counting as older" do
+    Krikri::CollectionIndex.version_before?("2.1.0", 2, 2, 0).must_equal(true)
+    Krikri::CollectionIndex.version_before?("2.1.9", 2, 2, 0).must_equal(true)
+    Krikri::CollectionIndex.version_before?("2.2.0", 2, 2, 0).must_equal(false)
+    Krikri::CollectionIndex.version_before?("2.2.2", 2, 2, 0).must_equal(false)
+    Krikri::CollectionIndex.version_before?("12.5.0", 2, 2, 0).must_equal(false)
+    Krikri::CollectionIndex.version_before?(nil, 2, 2, 0).must_equal(true)
+  end
+
   it "follows the collection's own meta/runtime.yml redirect to a module file that exists" do
     result = Krikri::CollectionIndex.controller_resolves?("testns.chain.other")
     result[:resolves].must_equal(true)

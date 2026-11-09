@@ -1,4 +1,5 @@
 require "../minitest_helper"
+require "file_utils"
 
 # Runs the compiled binary against a real playbook: the deprecation
 # rendering lives in ResultDisplay (fed by a plugin's result marker),
@@ -105,6 +106,58 @@ describe "ansible.posix.mount's exit_json warnings deprecation display" do
       err.scan("[DEPRECATION WARNING]: #{line}").size.must_equal(1)
     end
     stdout.to_s.must_include("fatal: [localhost]: FAILED!")
+    status.success?.must_equal(true)
+  ensure
+    File.delete(playbook) if playbook && File.exists?(playbook)
+  end
+
+  # The other side of the 2.1.x-vs-2.2.x split (issue #1060): with an
+  # ansible.posix 2.2.x tree on the controller, real ansible prints NO
+  # deprecation at all for a mount task - the 2.2.x mount.py warns
+  # through AnsibleModule.warn and takes to_bytes/to_native from
+  # `common.text.converters`, so neither the exit_json `warnings`
+  # deprecation nor the _text import pair exists there (live-verified
+  # vs 2.21.6 + ansible.posix 2.2.2). krikri printed the 2.1.x set
+  # anyway because it modeled one module line unconditionally; the
+  # executor now pins the resolved release on the wire
+  # (build_plugin_config's `collection_version` field), which this
+  # end-to-end run is the only cover for.
+  it "prints no deprecation lines when the controller resolves an ansible.posix 2.2.x tree" do
+    root = PluginSpecHelper.tmp_path("posix-2.2.x-tree")
+    posix = File.join(root, "ansible_collections", "ansible", "posix")
+    FileUtils.mkdir_p(File.join(posix, "plugins", "modules"))
+    File.write(File.join(posix, "MANIFEST.json"),
+      %({"collection_info": {"namespace": "ansible", "name": "posix", "version": "2.2.2"}}))
+    # The FQCN only has to RESOLVE for the playbook to load - krikri
+    # runs its own native mount plugin, never this file.
+    File.write(File.join(posix, "plugins", "modules", "mount.py"), "# fixture module\n")
+
+    fstab = PluginSpecHelper.tmp_path("mount-release-2.2.fstab")
+    File.delete(fstab) if File.exists?(fstab)
+    playbook = File.tempname("mount-release-2.2", ".yml")
+    File.write(playbook, <<-YAML)
+      - name: repro
+        hosts: localhost
+        gather_facts: false
+        tasks:
+          - ansible.posix.mount:
+              path: /mnt/rel-two-two
+              src: /dev/sdb1
+              fstype: ext4
+              state: absent
+              fstab: #{fstab}
+      YAML
+
+    stdout = IO::Memory.new
+    stderr = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: stdout, error: stderr,
+      env: ENV.to_h.merge({"ANSIBLE_COLLECTIONS_PATH" => root}))
+
+    err = stderr.to_s
+    err.wont_include("[DEPRECATION WARNING]")
+    err.wont_include("Deprecation warnings can be disabled")
+    stdout.to_s.wont_include("DEPRECATION")
+    stdout.to_s.must_include("ok=1")
     status.success?.must_equal(true)
   ensure
     File.delete(playbook) if playbook && File.exists?(playbook)
