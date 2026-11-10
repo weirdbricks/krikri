@@ -203,6 +203,14 @@ krikri aims for byte-for-byte identical stdout/stderr/exit code to `ansible-play
   of strings, so **string-hash randomization** reorders them per process (every sample differs,
   even cold vs warm of one round) - unmatchable by design; krikri emits a fixed order
   (issue #255, earlier #112).
+- A `uri:` result carries the server's HTTP `Date` response header as `date` (uri.py merges every
+  response header into the result, `-` to `_` lowercased): the value is the server's per-request
+  wall-clock stamp. Two real Ansible runs of one playbook print different values, and even a single
+  run's five requests can straddle two seconds, so no two runs agree by construction (kpg issue
+  #1073's whole masked diff was this value and nothing else). Unmatchable by design; only the value
+  is masked, in `scripts/output_parity.sh` and `krikri-role-tester`'s `Compare` (`http-date`). The
+  generator has no mask for it yet, so `krikri-playbook-generator` still reports the shape as a
+  divergence.
 - `-vvv` module-execution mechanics lines (`ESTABLISH LOCAL CONNECTION ...`, `EXEC`/`PUT`,
   `Using module file ...`, `Pipelining is enabled.`): no interpreter, module file or staged tmp dir
   exists here, and those lines embed per-run random `ansible-tmp-<epoch>-<pid>-<random>` paths. Masked

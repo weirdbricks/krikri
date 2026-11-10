@@ -36,10 +36,18 @@ COOKIE_TEST_SERVER = HTTP::Server.new do |context|
     # Always 304 - real urllib raises HTTPError for it (no handler), so
     # fetch_url's jar-parsing lines never run.
     response.status_code = 304
+  when "/headers"
+    response.status_code = 200
+    response.headers["Content-Type"] = "text/plain"
+    response.headers["X-Kpg-Header"] = "kpg-header-value"
+    response.headers["Date"] = HEADERS_TEST_DATE
+    response.print("headers")
   else
     response.status_code = 404
   end
 end
+
+HEADERS_TEST_DATE = "Tue, 10 Nov 2026 03:48:47 GMT"
 
 COOKIE_TEST_ADDRESS = COOKIE_TEST_SERVER.bind_unused_port
 spawn { COOKIE_TEST_SERVER.listen }
@@ -103,5 +111,18 @@ describe "uri plugin cookies" do
     result["status"].as_i.must_equal(304)
     result.as_h.has_key?("cookies").must_equal(false)
     result.as_h.has_key?("cookies_string").must_equal(false)
+  end
+
+  it "echoes every response header lowercased with dashes as underscores" do
+    # uri.py merges the whole response header dict into the result
+    # (`ukey = key.replace("-", "_").lower()`), so the server's own Date
+    # stamp comes back byte-raw under `date` - the one value the parity
+    # harnesses mask, because it is the server's per-request clock and no
+    # two runs can agree on it. The key itself and every other field still
+    # compare byte for byte.
+    result = PluginSpecHelper.run("uri", {"url" => "#{COOKIE_BASE}/headers"})
+
+    result["x_kpg_header"].as_s.must_equal("kpg-header-value")
+    result["date"].as_s.must_equal(HEADERS_TEST_DATE)
   end
 end
