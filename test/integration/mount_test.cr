@@ -390,6 +390,32 @@ describe "mount plugin" do
     File.exists?(File.join(dir, "uybxfa")).must_equal(false)
   end
 
+  # Real mount.py's write_fstab() opens the fstab with a bare open('w') -
+  # no try/except - so an unwritable fstab ends the module with an
+  # uncaught PermissionError, rendered as str(OSError), not the engine's
+  # own File::OpenError sentence (live-verified vs 2.21.6 as non-root
+  # against /etc/fstab).
+  it "reports Ansible's uncaught-OSError shape when the fstab cannot be written" do
+    # root ignores the mode bits, so there is nothing to observe there.
+    skip "running as root: the mode bits do not deny the write" if PluginSpecHelper.running_as_root?
+
+    fstab = fresh_fstab("write-denied.fstab", "UUID=abc / ext4 errors=remount-ro 0 1\n")
+    File.chmod(fstab, 0o444)
+
+    result = PluginSpecHelper.run("mount", {
+      "path" => "/mnt/data", "src" => "/dev/sdb1", "fstype" => "ext4",
+      "state" => "present", "fstab" => fstab,
+    })
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal(
+      "Task failed: Module failed: [Errno 13] Permission denied: '#{fstab}'")
+    result["_ansible_error_detail"].as_s.must_equal(
+      "[Errno 13] Permission denied: '#{fstab}'")
+  ensure
+    File.chmod(fstab, 0o600) if fstab && File.exists?(fstab)
+  end
+
   # The same pre-state step's success side: a missing fstab under a
   # missing parent directory gets mkdir -p'd and touched before the
   # state handling runs - even in check mode (Ansible's creation block is

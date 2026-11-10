@@ -161,13 +161,47 @@ module Krikri
         end
       end
 
-      case state
-      when "present", "mounted" then run_present(path, state, fstab, check_mode)
-      when "unmounted"          then run_unmounted(path, check_mode)
-      when "remounted"          then ensure_remounted(path, check_mode)
-      when "ephemeral"          then ensure_ephemeral(path, check_mode)
-      else                           run_absent(path, state, fstab, check_mode)
+      begin
+        case state
+        when "present", "mounted" then run_present(path, state, fstab, check_mode)
+        when "unmounted"          then run_unmounted(path, check_mode)
+        when "remounted"          then ensure_remounted(path, check_mode)
+        when "ephemeral"          then ensure_ephemeral(path, check_mode)
+        else                           run_absent(path, state, fstab, check_mode)
+        end
+      rescue ex : FstabOpenCrash
+        PluginResult.new(changed: false, failed: true,
+          msg: "Task failed: Module failed: #{ex.detail}", _ansible_error_detail: ex.detail)
       end
+    end
+
+    # Real mount.py opens the fstab with a bare `open(...)` - 'w' in
+    # write_fstab(), 'r' in both the present and absent readers - with no
+    # try/except around it, so an fstab the module may not open ends the
+    # module with an UNCAUGHT OSError. The controller reports that under
+    # the generic "Task failed: Module failed: " brief as str(OSError),
+    # e.g. "[Errno 13] Permission denied: '/etc/fstab'" (live-verified vs
+    # 2.21.6 running non-root against /etc/fstab). Crystal's File::Error
+    # text ("Error opening file with mode 'w': ...") is a different
+    # sentence and would otherwise reach the fatal msg under the engine's
+    # "Plugin execution failed: " wrapper, which real never prints, so the
+    # reason travels out to run() as this exception and is rebuilt into
+    # the crash result there.
+    private class FstabOpenCrash < Exception
+      getter detail : String
+
+      def initialize(@detail : String)
+        super(@detail)
+      end
+    end
+
+    private def fstab_open_crash(error : File::Error, path : String) : FstabOpenCrash
+      detail = if errno = error.os_error
+                 "[Errno #{errno.value}] #{errno.message}: '#{path}'"
+               else
+                 error.message.to_s
+               end
+      FstabOpenCrash.new(detail)
     end
 
     # Real mount.py's own pre-state fstab creation (runs even in check
@@ -469,7 +503,11 @@ module Krikri
         # letting `lines.join` in write_fstab reproduce the file
         # byte-for-byte (same contract the old `cat ... | lines(chomp:
         # false)` satisfied).
-        File.read_lines(fstab, chomp: false)
+        begin
+          File.read_lines(fstab, chomp: false)
+        rescue error : File::Error
+          raise fstab_open_crash(error, fstab)
+        end
       else
         remote_exec("cat #{shell_single_quote(fstab)}")[:stdout].lines(chomp: false)
       end
@@ -478,7 +516,11 @@ module Krikri
     private def write_fstab(fstab : String, lines : Array(String)) : Nil
       content = lines.join
       if local_connection?
-        File.write(fstab, content)
+        begin
+          File.write(fstab, content)
+        rescue error : File::Error
+          raise fstab_open_crash(error, fstab)
+        end
       else
         tmp = File.tempname
         File.write(tmp, content)
