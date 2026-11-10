@@ -18,11 +18,11 @@ private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(__DIR__, "..", "fixtures", "inventory-explicit-localhost.ini")
 
-private def run_playbook(yaml : String)
+private def run_playbook(yaml : String, extra_args : Array(String) = [] of String)
   playbook = File.tempname("ignore-errors-recap", ".yml")
   File.write(playbook, yaml)
   output = IO::Memory.new
-  status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+  status = Process.run(BINARY, ["-i", INVENTORY] + extra_args + [playbook], output: output, error: output)
   {status, output.to_s}
 ensure
   File.delete(playbook) if playbook && File.exists?(playbook)
@@ -169,5 +169,104 @@ describe "PLAY RECAP tallying for implicit facts and ignored failures" do
     output.must_match(/changed=1\b/)
     output.must_match(/failed=0\b/)
     output.must_match(/ignored=1\b/)
+  end
+end
+
+# Issue #1112: a failing handler whose ignore_errors: resolves true must
+# behave exactly like a failing task's - print a bare "...ignoring" after
+# its fatal line and count ok + ignored in the recap, never failed. The
+# handler-result recording step (HandlerRunner#record_handler_result)
+# used to pass no ignore_errors at all to display_result/update_stats,
+# so the handler printed no "...ignoring" and the recap showed failed=1
+# where ansible-playbook shows ok+ignored (verified live against
+# ansible-core 2.21.6 for every shape below).
+describe "ignore_errors: on a failing handler counts ok+ignored like a task (issue #1112)" do
+  it "a failing handler with plain ignore_errors: true prints ...ignoring and counts ok+ignored" do
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        handlers:
+          - name: Failing handler
+            ansible.builtin.fail:
+              msg: handler failed on purpose
+            ignore_errors: true
+        tasks:
+          - name: Trigger the handler
+            ansible.builtin.command: /bin/true
+            changed_when: true
+            notify: Failing handler
+      YAML
+
+    status.success?.must_equal(true)
+    output.must_include("handler failed on purpose")
+    output.must_include("...ignoring")
+    output.must_match(/ok=2\b/)
+    output.must_match(/changed=1\b/)
+    output.must_match(/failed=0\b/)
+    output.must_match(/ignored=1\b/)
+  end
+
+  it "a failing looped handler under ignore_errors: prints ...ignoring once and counts ok+ignored" do
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        handlers:
+          - name: Failing looped handler
+            ansible.builtin.fail:
+              msg: "handler item {{ item }} failed on purpose"
+            loop:
+              - one
+              - two
+            ignore_errors: true
+        tasks:
+          - name: Trigger the handler
+            ansible.builtin.command: /bin/true
+            changed_when: true
+            notify: Failing looped handler
+      YAML
+
+    status.success?.must_equal(true)
+    output.must_include("(item=one)")
+    output.must_include("(item=two)")
+    # Ansible prints the suffix once for the whole handler, after the
+    # per-item failure lines - not per item.
+    output.scan("...ignoring").size.must_equal(1)
+    output.must_match(/ok=2\b/)
+    output.must_match(/failed=0\b/)
+    output.must_match(/ignored=1\b/)
+  end
+
+  it "the issue's check-mode repro (templated ignore_errors: '{{ ansible_check_mode }}') recaps ok=3 ignored=2" do
+    status, output = run_playbook(<<-YAML, ["--check"])
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        handlers:
+          - name: Failing handler
+            ansible.builtin.fail:
+              msg: handler failed on purpose
+            ignore_errors: "{{ ansible_check_mode }}"
+        tasks:
+          - name: Trigger the handler
+            ansible.builtin.command: /bin/true
+            changed_when: true
+            notify: Failing handler
+            check_mode: false
+          - name: Failing task with the same ignore_errors
+            ansible.builtin.fail:
+              msg: task failed on purpose
+            ignore_errors: "{{ ansible_check_mode }}"
+      YAML
+
+    status.success?.must_equal(true)
+    # Both failures are ignored in check mode - the task's suffix already
+    # printed before the fix, the handler's was the missing one.
+    output.scan("...ignoring").size.must_equal(2)
+    output.must_match(/ok=3\b/)
+    output.must_match(/changed=1\b/)
+    output.must_match(/failed=0\b/)
+    output.must_match(/ignored=2\b/)
   end
 end

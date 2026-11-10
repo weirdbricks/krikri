@@ -210,6 +210,14 @@ module Krikri
       name_resolver = ->(handler : Task, host : Host) : String {
         render_task_name_for_display(handler, host)
       }
+      # A failing handler caught by ignore_errors: records ok + ignored
+      # (and prints "...ignoring"), never failed - HandlerRunner needs
+      # the same live resolution execute_handler_internal's own halt
+      # decision uses, so a templated `ignore_errors: "{{
+      # ansible_check_mode }}"` follows the run's real mode (#1112).
+      ignore_errors_resolver = ->(handler : Task, host : Host) : Bool {
+        resolve_task_ignore_errors(handler, host: host)
+      }
 
       # Handlers whose templated name fails to render against the
       # PLAY-LEVEL variables are unusable (see
@@ -232,7 +240,7 @@ module Krikri
       # handlers. Ansible keeps failed=1 and rc=2 either way - the
       # flag only decides whether the handler runs.
       @handler_runner.run(execute_callback, @results, @diff_mode, name_resolver,
-        @force_handlers ? nil : @halted_hosts, unusable_handlers)
+        @force_handlers ? nil : @halted_hosts, unusable_handlers, ignore_errors_resolver)
     end
 
     # Execute a handler (internal - called via callback)
@@ -532,6 +540,13 @@ module Krikri
         } of String => JSON::Any
         aggregate["failed"] = JSON::Any.new(true) if any_failed
         ResultDisplay.display_result(host, JSON::Any.new(aggregate), resolve_task_diff_mode(handler, base_vars_context), module_name: handler.module_name, source_task: handler)
+      else
+        # A looped handler with ignore_errors: that had at least one item
+        # fail prints a single bare `...ignoring` after the per-item
+        # lines - Ansible prints it once for the whole handler, not per
+        # item (issue #1112; same rule the looped-task path's
+        # finish_looped_task applies).
+        puts "...ignoring".colorize(:red) if any_failed && resolve_task_ignore_errors(handler, base_vars_context)
       end
 
       JSON.parse({
