@@ -7,12 +7,15 @@ require "file_utils"
 # - with NO creates:/removes: gate, check mode reports "skipping:"
 #   (skipped=1 in the recap) with a full command-module result shape
 #   carrying "Command would have run if not in check mode";
-# - WITH a gate, the module runs its own gate logic even in check mode
-#   and returns an ORDINARY "ok" (changed: false, ok=1): the
-#   would-have-run shape when the gate would have let the command
-#   through, or the "Would not run command since ..." shape (note the
-#   check-mode wording - the ordinary run says "Did not run command
-#   since ...") when the gate would have held it back.
+# - WITH a gate, the module runs its own gate logic even in check mode.
+#   command.py sets r['changed'] = True BEFORE the check-mode branch and
+#   that branch only downgrades to skipped/changed=false when BOTH
+#   creates and removes are None - so the gated would-run result is
+#   CHANGED ("changed:", recap changed=1, handlers notified on the task
+#   fire), not an "ok" (issue #1071), and the "Would not run command
+#   since ..." shape (note the check-mode wording - the ordinary run
+#   says "Did not run command since ...") applies when the gate would
+#   have held it back.
 #
 # The gate-vs-skip split used to be missing entirely: every check-mode
 # invocation reported "skipping:", which shifted both engines' recap
@@ -48,7 +51,7 @@ describe "command/shell check-mode gating (creates:/removes:)" do
     output.wont_include("plain-check-probe")
   end
 
-  it "reports ok: (not skipping:) for a gated shell whose creates: file is missing under --check" do
+  it "reports changed: for a gated shell whose creates: file is missing under --check" do
     status, output = run_check_mode_playbook(<<-YAML, check: true)
           - name: gated would run
             ansible.builtin.shell: echo gated-check-probe
@@ -61,9 +64,51 @@ describe "command/shell check-mode gating (creates:/removes:)" do
 
     status.success?.must_equal(true)
     output.must_include("Command would have run if not in check mode")
+    output.must_include("changed: [localhost]")
     output.wont_include("skipping:")
     output.must_match(/ok=2\b/)
+    output.must_match(/changed=1\b/)
     output.must_match(/skipped=0\b/)
+  end
+
+  it "fires handlers notified on a gated shell would-run under --check" do
+    # issue #1071: the changed verdict is what arms notify in check
+    # mode - real ran the handler, this engine didn't while it reported
+    # the would-run as unchanged.
+    status, output = run_check_mode_playbook(<<-YAML, check: true)
+          - name: gated would run
+            ansible.builtin.shell: echo handler-check-probe
+            args:
+              creates: #{__DIR__}/definitely-missing-#{Random::Secure.hex(4)}.txt
+            notify: check mode handler
+        handlers:
+          - name: check mode handler
+            debug:
+              msg: handler fired
+      YAML
+
+    status.success?.must_equal(true)
+    output.must_include("RUNNING HANDLER")
+    output.must_include("handler fired")
+    output.must_match(/changed=1\b/)
+  end
+
+  it "reports changed: for a gated command would-run under --check" do
+    status, output = run_check_mode_playbook(<<-YAML, check: true)
+          - name: gated command would run
+            ansible.builtin.command: echo gated-command-check-probe
+            args:
+              creates: #{__DIR__}/definitely-missing-#{Random::Secure.hex(4)}.txt
+            register: probe
+          - debug:
+              var: probe
+      YAML
+
+    status.success?.must_equal(true)
+    output.must_include("Command would have run if not in check mode")
+    output.must_include("changed: [localhost]")
+    output.wont_include("skipping:")
+    output.must_match(/changed=1\b/)
   end
 
   it "uses the Would not run wording when the creates: gate holds under --check" do

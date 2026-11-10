@@ -277,11 +277,15 @@ module Krikri
       # ansible-core 2.19.4's own `--check` output for this exact case.
       # The `skipping:` verdict only applies when NO creates:/removes:
       # gate is present - see command.cr's identical fix (live-verified
-      # against 2.19.11) for the full gate-vs-skip breakdown.
+      # against 2.19.11) for the full gate-vs-skip breakdown. A gated
+      # would-run is CHANGED (command.py sets r['changed'] = True before
+      # the check-mode branch and only clears it to skipped when BOTH
+      # creates and removes are None), so handlers notified on the task
+      # fire in check mode like real's (issue #1071).
       if @check_mode
         gated = @params.has_key?("creates") || @params.has_key?("removes")
         return PluginResult.new(
-          changed: false,
+          changed: gated,
           failed: false,
           msg: "Command would have run if not in check mode",
           skipped: !gated,
