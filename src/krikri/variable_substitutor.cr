@@ -2220,6 +2220,7 @@ module Krikri
       if loop_site = current_loop_source_site
         return ResultDisplay.loop_source_origin(loop_site.source_file, loop_site.source_line, loop_site.key, name)
       end
+      STDERR.puts "DBG fact_read_origin name=#{name} names?=#{deprecation_site_names?(name)} when_site=#{current_when_site.inspect} param=#{current_task_param.inspect} tpl=#{current_template_file.inspect} preparing=#{@@preparing_vars[Fiber.current]?.try(&.size)}"
       deprecation_site_names?(name) ? current_deprecation_origin(name) : nil
     end
 
@@ -2554,6 +2555,7 @@ module Krikri
     # the operation's block, so a later placeable read in the same operation
     # still gets it - real keeps the first ACCESS, whichever fact it named.
     def self.emit_fact_deprecation(origin : String?) : Nil
+      STDERR.puts "DBG emit_fact_deprecation origin=#{origin.inspect} op=#{current_fact_deprecation_op.inspect}"
       return unless origin
       return if suppress_eager_scope_deprecations?
       # A capture is open (a task `vars:` value rendering eagerly at

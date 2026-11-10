@@ -1145,6 +1145,7 @@ module Krikri
       # createcluster's missing conf.txt, issue #774).
       raise LoopLookupError.new(ex.message || "lookup failed", origin_known: true)
     rescue ex : UndefinedVariableError
+      STDERR.puts "DBG loop undefined rescue when=#{task.when_condition.inspect}"
       if when_condition = task.when_condition
         # Ansible evaluates the task's own when: BEFORE the loop source
         # is ever templated, and WHAT the when: itself references decides
@@ -1200,8 +1201,14 @@ module Krikri
           # `when: "tinc_boot_entry_group | length"` (reddec.tinc_boot,
           # issue #808) and `with_items: "{{ no_such_list }}"` +
           # `when: "x | length"` both report the loop error.
-          !ConditionalEvaluator.evaluate(substitutor.substitute(when_condition), vars_context, strict: true, raise_undefined: true)
-        rescue err : ConditionalEvaluator::UndefinedVariableError | UndefinedVariableError
+          # Through evaluate_when, not a bare substitute+evaluate: real
+          # evaluates the conditional as a real templating operation even
+          # when the loop source already raised, so its fact reads print
+          # their INJECT_FACTS_AS_VARS deprecation before the loop error is
+          # re-raised (brentwg.docker's import-line
+          # `when: ansible_os_family == ...`, issue #1089).
+          !evaluate_when(when_condition, vars_context, host, substitutor, task)
+        rescue err : WhenEvaluationError
           when_undefined_name_is_loop_var?(err.message) && when_tolerates_undefined?(when_condition)
         rescue
           false
