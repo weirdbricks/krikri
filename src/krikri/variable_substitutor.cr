@@ -1010,6 +1010,32 @@ module Krikri
     "'#{expr.split(/[\.\[]/, 2)[0]}' is undefined"
   end
 
+  # The error real ansible raises when the undefined reference inside
+  # *expr* was CONSUMED as a subscript key/index before an `is defined`-
+  # family test could see it; nil when every undefined in *expr* merely
+  # PROPAGATES to the tested value, which those tests do tolerate.
+  # `d['missing']` and `hostvars['h']['missing']` stay undefined (the test
+  # answers, the task skips), but `hostvars[groups['nope'][0]]` and
+  # `d[d['missing']]` fail: ansible evaluates the key sub-expression
+  # strictly and reports the missing KEY's own dict miss (live-verified
+  # vs 2.19.11, round 29905151 / issue #1103 - a role gating
+  # `hostvars[groups['k8s_master'][0]]['loadbalancer'] is not defined`
+  # hard-fails where treating it as undefined silently skipped the task.
+  # A literal key never consumes anything, so a miss behind one still
+  # propagates.
+  def self.consumed_undefined_message(expr : String, vars : Hash(String, JSON::Any)) : String?
+    top_level_bracket_contents(expr.strip).each do |content|
+      top_level_operand_pieces(content).each do |piece|
+        piece = piece.strip
+        next unless piece.matches?(PLAIN_CHAIN_SHAPE)
+        if missing_key = dict_attribute_miss_name(piece, vars)
+          return dict_attribute_miss_message(missing_key, @@miss_type)
+        end
+      end
+    end
+    nil
+  end
+
   # Bracket contents of every top-level `[...]` in *expr*, depth-tracked
   # over both bracket flavors so subscripts nested inside another
   # subscript or a call don't split the outer one in half, and
