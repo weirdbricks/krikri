@@ -674,7 +674,13 @@ module Krikri
             next
           end
           unless when_result
-            suffix = " => (item=#{resolve_task_no_log(handler, vars_context) ? "(censored due to no_log)" : include_item_display_label(handler, item, vars_context, host)}) "
+            # A raw-truthy no_log that resolves false still censors the
+            # item result, so its label is lost before real renders it (see
+            # #skipped_loop_item_censored_label) - ask for the label only
+            # when nothing censors it.
+            shown = skipped_loop_item_censored_label(handler, vars_context) ||
+                    include_item_display_label(handler, item, vars_context, host)
+            suffix = " => (item=#{shown}) "
             unless Krikri::Oneline.enabled?
               puts "skipping: [#{host.name}]#{suffix}#{Krikri::ResultDisplay.skip_line_suffix(handler.when_condition, item)}".colorize(:cyan)
             end
@@ -895,7 +901,15 @@ module Krikri
 
         unless when_result
           connection_host = host.name
-          suffix = (item = vars_context["item"]?) ? " => (item=#{include_item_display_label(handler, item, vars_context, host)}) " : ""
+          item = vars_context["item"]?
+          # A raw-truthy no_log that resolves false still censors the item
+          # result, so its label is lost before real renders it (see
+          # #skipped_loop_item_censored_label).
+          shown = if item
+                    skipped_loop_item_censored_label(handler, vars_context) ||
+                      include_item_display_label(handler, item, vars_context, host)
+                  end
+          suffix = shown ? " => (item=#{shown}) " : ""
           unless Krikri::Oneline.enabled? && item
             puts Krikri::Oneline.skip_line(connection_host, "#{suffix}#{Krikri::ResultDisplay.skip_line_suffix(handler.when_condition, item)}").colorize(:cyan)
           end

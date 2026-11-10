@@ -1357,11 +1357,13 @@ module Krikri
     private def included_line_item_label(task : Task, item_label : String?, label_value : JSON::Any? = nil, vars_context : Hash(String, JSON::Any)? = nil) : String?
       if item_label
         # A LOOPED include's label censors on the raw no_log keyword (any
-        # templated value, even one resolving false) - the per-iteration
-        # task copy ansible builds for each loop item never gets no_log
-        # post-validated, so IncludedFile.process_include_results sees the
-        # raw truthy template string (issue #613, live-verified vs 2.19).
-        return "(censored due to no_log)" if task.no_log_expr || task.no_log?
+        # templated value, even one resolving false, and equally a quoted
+        # "false") - the per-iteration task copy ansible builds for each
+        # loop item never gets no_log post-validated, so
+        # IncludedFile.process_include_results sees the raw truthy value
+        # (issue #613, live-verified vs 2.19; issue #1088 added the
+        # quoted-string spelling).
+        return "(censored due to no_log)" if task.no_log_raw_truthy?
         # Ansible's v2_playbook_on_include then adds ` => (item=...)` only
         # `if label:` - the PYTHON truthiness of the label OBJECT, so a
         # falsy loop item ({}, [], "", 0, false, None) prints the included:

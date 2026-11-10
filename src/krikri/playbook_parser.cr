@@ -191,6 +191,15 @@ module Krikri
     # in TaskExecutor#resolve_task_no_log against live vars, same
     # deferred-evaluation shape ignore_errors_expr/check_mode_expr use.
     property no_log_expr : String?
+    # Python truthiness of the RAW `no_log:` value (issue #1088): a quoted
+    # "false" and ANY templated string are truthy, a literal false/0 is not.
+    # Ansible records a when:-false loop item's result BEFORE no_log gets
+    # post-validated, and its callback export censors that result on this
+    # raw value - so `no_log: "{{ flag }}"` with flag false still censors,
+    # which strips the item label and makes the default callback print
+    # `(item=None)`. Separate from no_log?/no_log_expr because the plain
+    # quoted-string spelling is neither one.
+    property? no_log_raw_truthy : Bool = false
     # True when the task wrote its own `no_log:` (nearest scope wins over a
     # block's no_log: that its children inherit).
     property? no_log_explicit : Bool = false
@@ -4831,6 +4840,7 @@ module Krikri
           unless child.no_log_explicit?
             child.no_log = block.no_log?
             child.no_log_expr = block.no_log_expr
+            child.no_log_raw_truthy = block.no_log_raw_truthy?
           end
           inherit_no_log(child)
         end
@@ -5399,6 +5409,7 @@ module Krikri
       task.ignore_errors_expr = template_expression(task_hash["ignore_errors"]?)
       task.no_log = parse_become_value(task_hash["no_log"]?) || false
       task.no_log_expr = template_expression(task_hash["no_log"]?)
+      task.no_log_raw_truthy = raw_python_truthy?(task_hash["no_log"]?)
       task.no_log_explicit = !task_hash["no_log"]?.nil?
       task.ignore_unreachable = parse_become_value(task_hash["ignore_unreachable"]?) || false
       task.throttle = task_hash["throttle"]?.try { |tv_blk| safe_yaml_to_string(tv_blk).to_i? } || 0
@@ -8677,6 +8688,25 @@ module Krikri
       when String
         return true if raw.strip.starts_with?("{{")
         raw.strip.downcase.in?("true", "yes", "1")
+      end
+    end
+
+    # Python truthiness of a RAW keyword value, before any boolean
+    # conversion - ansible's callback export censors a skipped loop item's
+    # result on `task.no_log` exactly as written, so `no_log: "false"` (a
+    # non-empty string, and equally any `{{ ... }}` template) censors while
+    # a literal `no_log: false` or `no_log: 0` does not (issue #1088,
+    # live-verified vs 2.21.6).
+    private def self.raw_python_truthy?(yaml : YAML::Any?) : Bool
+      case raw = yaml.try(&.raw)
+      when Nil    then false
+      when Bool   then raw
+      when Int    then raw != 0
+      when Float  then raw != 0.0
+      when String then !raw.empty?
+      when Array  then !raw.empty?
+      when Hash   then !raw.empty?
+      else             true
       end
     end
 

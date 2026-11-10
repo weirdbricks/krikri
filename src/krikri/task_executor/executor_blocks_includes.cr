@@ -2525,7 +2525,8 @@ module Krikri
 
         unless when_result
           connection_host = host.name
-          suffix = item_label ? " => (item=#{item_label}) " : ""
+          shown = skipped_loop_item_censored_label(task, vars_context) || item_label
+          suffix = shown ? " => (item=#{shown}) " : ""
           # A looped include's per-item skip lines drop under oneline (the
           # aggregate line carries them); a plain skip renders the bare
           # `host | SKIPPED` shape.
@@ -3317,7 +3318,8 @@ module Krikri
 
         unless when_result
           connection_host = host.name
-          suffix = item_label ? " => (item=#{item_label}) " : ""
+          shown = skipped_loop_item_censored_label(task, vars_context) || item_label
+          suffix = shown ? " => (item=#{shown}) " : ""
           unless Krikri::Oneline.enabled? && item_label
             puts Krikri::Oneline.skip_line(connection_host, "#{suffix}#{Krikri::ResultDisplay.skip_line_suffix(task.when_condition)}").colorize(:cyan)
           end
