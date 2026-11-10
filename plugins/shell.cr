@@ -279,16 +279,37 @@ module Krikri
       # gate is present - see command.cr's identical fix (live-verified
       # against 2.19.11) for the full gate-vs-skip breakdown. A gated
       # would-run is CHANGED (command.py sets r['changed'] = True before
-      # the check-mode branch and only clears it to skipped when BOTH
-      # creates and removes are None), so handlers notified on the task
-      # fire in check mode like real's (issue #1071).
+      # the check-mode branch and only clears it to skipped when NEITHER
+      # gate param exists), so handlers notified on the task fire in
+      # check mode like real's (issue #1070/#1071). The gated result
+      # carries NO skipped key at all (real only sets skipped=True in
+      # that neither-param case - this engine used to report a spurious
+      # "skipped": false readable off a registered var where real's is
+      # undefined; live-verified vs real ansible-playbook --check).
       if @check_mode
         gated = @params.has_key?("creates") || @params.has_key?("removes")
+        if gated
+          return PluginResult.new(
+            changed: true,
+            failed: false,
+            msg: "Command would have run if not in check mode",
+            cmd: cmd,
+            rc: 0,
+            stdout: "",
+            stdout_lines: [] of String,
+            stderr: "",
+            stderr_lines: [] of String,
+            start: nil,
+            end: nil,
+            delta: nil,
+            key_order: SUCCESS_KEY_ORDER
+          )
+        end
         return PluginResult.new(
-          changed: gated,
+          changed: false,
           failed: false,
           msg: "Command would have run if not in check mode",
-          skipped: !gated,
+          skipped: true,
           cmd: cmd,
           rc: 0,
           stdout: "",

@@ -294,27 +294,50 @@ module Krikri
       # against ansible-core 2.19.4's own `--check` output).
       #
       # The `skipping:` verdict only applies when NO creates:/removes:
-      # gate is present. With a gate (live-verified against 2.19.11), the
+      # gate is present. With a gate (live-verified against 2.19.11 and
+      # against a real `ansible-playbook --check` on this host), the
       # module runs its own gate logic even in check mode: when the gate
-      # would have let the command through, command.py has already set
-      # `r['changed'] = True` BEFORE the check-mode branch and the branch
-      # only sets skipped=True/changed=False when BOTH creates and removes
-      # are None - so the gated would-run result is CHANGED ("changed:",
-      # recap changed=1), not an "ok" - the module never ran anything in
-      # check mode, but ansible still counts the would-be run as changed,
-      # and handlers notified on the task fire (issue #1071: a check-mode
-      # `shell:` with `creates:` diverged - this engine said "ok",
-      # ansible said "changed" and ran the handler). Reporting the
-      # would-run case as "skipping:" shifted both engines' recap
-      # counters (real ok=4/skipped=3, this engine ok=3/skipped=4 on the
-      # same playbook).
+      # would have let the command through, real command.py sets
+      # r['changed'] = True BEFORE its check-mode branch and only reverts
+      # it (adding skipped: true) when NEITHER gate param exists - so the
+      # gated would-run case reports changed: true ("Command would have
+      # run if not in check mode", recap changed=1), not an "ok" - the
+      # module never ran anything in check mode, but ansible still counts
+      # the would-be run as changed, and handlers notified on the task
+      # fire (issue #1070/#1071: this engine used to say "ok" where
+      # ansible said "changed" and ran the handler). The gated result
+      # carries NO skipped key at all (real only sets skipped=True in the
+      # neither-param case - a spurious "skipped": false was readable off
+      # a registered var where real's is undefined); only the "Would not
+      # run command since ..." shapes (the check-mode wording - the
+      # ordinary run says "Did not run command since ...") stay
+      # changed: false. Reporting the would-run case as "skipping:"
+      # shifted both engines' recap counters (real ok=4/skipped=3, this
+      # engine ok=3/skipped=4 on the same playbook).
       if @check_mode
         gated = @params.has_key?("creates") || @params.has_key?("removes")
+        if gated
+          return with_executable_warning(PluginResult.new(
+            changed: true,
+            failed: false,
+            msg: "Command would have run if not in check mode",
+            cmd: cmd_list,
+            rc: 0,
+            stdout: "",
+            stdout_lines: [] of String,
+            stderr: "",
+            stderr_lines: [] of String,
+            start: nil,
+            end: nil,
+            delta: nil,
+            key_order: SUCCESS_KEY_ORDER
+          ))
+        end
         return with_executable_warning(PluginResult.new(
-          changed: gated,
+          changed: false,
           failed: false,
           msg: "Command would have run if not in check mode",
-          skipped: !gated,
+          skipped: true,
           cmd: cmd_list,
           rc: 0,
           stdout: "",

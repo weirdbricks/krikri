@@ -7,20 +7,24 @@ require "file_utils"
 # - with NO creates:/removes: gate, check mode reports "skipping:"
 #   (skipped=1 in the recap) with a full command-module result shape
 #   carrying "Command would have run if not in check mode";
-# - WITH a gate, the module runs its own gate logic even in check mode.
-#   command.py sets r['changed'] = True BEFORE the check-mode branch and
-#   that branch only downgrades to skipped/changed=false when BOTH
-#   creates and removes are None - so the gated would-run result is
-#   CHANGED ("changed:", recap changed=1, handlers notified on the task
-#   fire), not an "ok" (issue #1071), and the "Would not run command
-#   since ..." shape (note the check-mode wording - the ordinary run
-#   says "Did not run command since ...") applies when the gate would
-#   have held it back.
+# - WITH a gate, the module runs its own gate logic even in check
+#   mode: when the gate would have let the command through, the result
+#   is changed: true (recap changed=1, verdict "changed:") carrying the
+#   would-have-run shape and NO skipped key at all (real command.py
+#   sets changed=True before its check-mode branch and only reverts it
+#   when neither gate param exists), and handlers notified on the task
+#   fire; the "Would not run command since ..." shapes (note the
+#   check-mode wording - the ordinary run says "Did not run command
+#   since ...") when the gate would have held it back stay
+#   changed: false.
 #
 # The gate-vs-skip split used to be missing entirely: every check-mode
 # invocation reported "skipping:", which shifted both engines' recap
 # counters on the same playbook (real ok=4/skipped=3 vs this engine
-# ok=3/skipped=4) and misreported a gated task's verdict.
+# ok=3/skipped=4) and misreported a gated task's verdict. The gated
+# would-run case then also reported ok/changed: false (spurious
+# "skipped": false) where real reports changed: true - live-verified
+# against real ansible-playbook --check on this host (issue #1070).
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(__DIR__, "..", "fixtures", "inventory-explicit-localhost.ini")
@@ -51,30 +55,55 @@ describe "command/shell check-mode gating (creates:/removes:)" do
     output.wont_include("plain-check-probe")
   end
 
-  it "reports changed: for a gated shell whose creates: file is missing under --check" do
+  it "reports changed: (not ok:) for a gated shell whose creates: file is missing under --check" do
+    removes_marker = File.tempname("gated-removes-probe")
+    File.write(removes_marker, "x")
+
     status, output = run_check_mode_playbook(<<-YAML, check: true)
           - name: gated would run
             ansible.builtin.shell: echo gated-check-probe
             args:
               creates: #{__DIR__}/definitely-missing-#{Random::Secure.hex(4)}.txt
+              removes: #{removes_marker}
             register: probe
           - debug:
-              var: probe
+              msg: "{{ probe.changed }} {{ probe.skipped | default('no-skipped-key') }}"
       YAML
 
     status.success?.must_equal(true)
-    output.must_include("Command would have run if not in check mode")
     output.must_include("changed: [localhost]")
     output.wont_include("skipping:")
-    output.must_match(/ok=2\b/)
+    output.must_include("True no-skipped-key")
     output.must_match(/changed=1\b/)
     output.must_match(/skipped=0\b/)
+  ensure
+    File.delete(removes_marker) if removes_marker && File.exists?(removes_marker)
+  end
+
+  it "reports the same changed: true would-run shape for a gated command under --check" do
+    removes_marker = File.tempname("gated-removes-probe")
+    File.write(removes_marker, "x")
+
+    status, output = run_check_mode_playbook(<<-YAML, check: true)
+          - name: gated would run
+            ansible.builtin.command: echo gated-check-probe
+            args:
+              creates: #{__DIR__}/definitely-missing-#{Random::Secure.hex(4)}.txt
+              removes: #{removes_marker}
+      YAML
+
+    status.success?.must_equal(true)
+    output.must_include("changed: [localhost]")
+    output.wont_include("skipping:")
+    output.must_match(/changed=1\b/)
+  ensure
+    File.delete(removes_marker) if removes_marker && File.exists?(removes_marker)
   end
 
   it "fires handlers notified on a gated shell would-run under --check" do
-    # issue #1071: the changed verdict is what arms notify in check
-    # mode - real ran the handler, this engine didn't while it reported
-    # the would-run as unchanged.
+    # The changed verdict is what arms notify in check mode - real ran
+    # the handler, this engine didn't while it reported the would-run as
+    # unchanged (issue #1071).
     status, output = run_check_mode_playbook(<<-YAML, check: true)
           - name: gated would run
             ansible.builtin.shell: echo handler-check-probe
@@ -90,24 +119,6 @@ describe "command/shell check-mode gating (creates:/removes:)" do
     status.success?.must_equal(true)
     output.must_include("RUNNING HANDLER")
     output.must_include("handler fired")
-    output.must_match(/changed=1\b/)
-  end
-
-  it "reports changed: for a gated command would-run under --check" do
-    status, output = run_check_mode_playbook(<<-YAML, check: true)
-          - name: gated command would run
-            ansible.builtin.command: echo gated-command-check-probe
-            args:
-              creates: #{__DIR__}/definitely-missing-#{Random::Secure.hex(4)}.txt
-            register: probe
-          - debug:
-              var: probe
-      YAML
-
-    status.success?.must_equal(true)
-    output.must_include("Command would have run if not in check mode")
-    output.must_include("changed: [localhost]")
-    output.wont_include("skipping:")
     output.must_match(/changed=1\b/)
   end
 
