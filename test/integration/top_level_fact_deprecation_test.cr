@@ -348,6 +348,49 @@ describe "INJECT_FACTS_AS_VARS deprecation" do
     stdout.must_include("docker-ce.repo")
   end
 
+  it "attributes a loop source's leaf read to the leaf's own declaration" do
+    # Issue #1092, mullholland.gitlab_runner: `with_items: "{{ gitlab_
+    # runner_configs }}"` hands the loop a defaults list whose two `name:`
+    # leaves hold the SAME template text, both reading ansible_distribution.
+    # Real tags each leaf with its own declaring position and keeps only a
+    # fact's first access per templating operation, so both items report the
+    # FIRST leaf (defaults/main.yml:3:11 below) - live-verified against
+    # 2.21.6.
+    stdout, stderr, dir = run_files({
+      "play.yml" => <<-PLAYBOOK,
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        roles:
+          - lr
+      PLAYBOOK
+      "roles/lr/defaults/main.yml" => <<-YAML,
+        ---
+        gitlab_runner_configs:
+          - name: "{{ inventory_hostname }}/{{ ansible_distribution }}"
+            executor: docker
+          - name: "{{ inventory_hostname }}/{{ ansible_distribution }}"
+            executor: docker
+        YAML
+      "roles/lr/tasks/main.yml" => <<-YAML,
+        ---
+        - name: show each config name
+          ansible.builtin.debug:
+            msg: "{{ item.name }}"
+          with_items: "{{ gitlab_runner_configs }}"
+        YAML
+    })
+
+    defaults = File.join(dir, "roles", "lr", "defaults", "main.yml")
+    stdout.must_include("TASK [lr : show each config name]")
+    stdout.scan(/\(item=\{'name': 'localhost\//).size.must_equal(2)
+    stderr.must_include("[DEPRECATION WARNING]: #{FACT_DEPRECATION_TEXT}\n")
+    stderr.must_include("Origin: #{defaults}:3:11\n")
+    stderr.must_include("3   - name: \"{{ inventory_hostname }}/{{ ansible_distribution }}\"\n")
+    stderr.must_include("^ column 11")
+    stderr.scan(/DEPRECATION WARNING\]: #{Regex.escape(FACT_DEPRECATION_TEXT)}/).size.must_equal(1)
+  end
+
   it "attributes a template file's indirect read to the value, not the file" do
     # A `.j2` that reads a variable whose own value names a fact: real's
     # Origin is the value's declaration, not the template file (different

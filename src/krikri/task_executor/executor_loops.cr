@@ -1665,7 +1665,9 @@ module Krikri
         # render, so it is skipped and the values are marked instead (see
         # loop_items_derive_from_unsafe_data?). Author-template items always
         # get their first render.
-        rendered_items = unsafe_items ? loop_items : loop_items.map { |item| deep_render_item(item, vars_context, host_name) }
+        rendered_items = VarSubstitutor.with_preparing_loop_source_container(task.loop_template, vars_context, host_name) do
+          unsafe_items ? loop_items : loop_items.map { |item| deep_render_item(item, vars_context, host_name) }
+        end
         mark_unsafe_loop_items(rendered_items) if unsafe_items
         rendered_items
       rescue ex : UndefinedVariableError
