@@ -3833,6 +3833,19 @@ module Krikri
           "failed"  => false,
         }.to_json)
       end
+      # wait_for_connection's action plugin runs its int() conversions of the
+      # four numeric args BEFORE its check-mode return, so a non-numeric value
+      # still fails under --check (the plugin binary owns that exact failure);
+      # only once the conversions succeed does it return dict(skipped=True) -
+      # ahead of the option rejection, so a typo'd option like `slepe` skips
+      # under --check instead of failing "Invalid options for ..." (issue
+      # #1084, live-verified vs 2.21.6; the registered shape is the bare
+      # {skipped, failed, changed} - no msg).
+      if check_mode && action_level_only &&
+         task.module_name == "ansible.builtin.wait_for_connection" &&
+         wait_for_connection_int_args_convertible?(params)
+        return JSON.parse({"skipped" => true, "failed" => false, "changed" => false}.to_json)
+      end
       failure = ArgspecValidator.validate(action_name, task.module_name, params, vars_context)
       return nil unless failure
       # The pre-action hook (action_level_only) takes only the
@@ -3932,6 +3945,17 @@ module Krikri
     private def module_utils_import_deprecation_texts(module_name : String, collection_version : String?) : Array(String)?
       texts = ModuleUtilsDeprecations.text_import_deprecation_texts(module_name, collection_version)
       texts.empty? ? nil : texts
+    end
+
+    # Whether wait_for_connection's four numeric args would all survive the
+    # action plugin's int() conversion (plugins/wait_for_connection.cr's
+    # int_arg uses the same to_i? probe, so hook and plugin can never
+    # disagree about which failures survive check mode).
+    private def wait_for_connection_int_args_convertible?(params : Hash(String, String)) : Bool
+      {"connect_timeout", "delay", "sleep", "timeout"}.all? do |name|
+        value = params[name]?
+        value.nil? || !value.to_i?.nil?
+      end
     end
 
     # Whether Ansible's copy ACTION plugin leaves the copy MODULE unexecuted
