@@ -113,4 +113,55 @@ describe "-v/-vv/-vvv and ansible_verbosity" do
   ensure
     File.delete(playbook) if playbook && File.exists?(playbook)
   end
+
+  it "threads the -v level into a custom module's module._verbosity" do
+    # Issue #1108: a library/ module reading `module._verbosity` (the
+    # gpg_key module does exactly this) died with "'AnsibleModule'
+    # object has no attribute '_verbosity'"; real basic.py always
+    # carries the PASS_VARS attribute and it holds the play's actual
+    # -v level (plugins/action/__init__.py passes display.verbosity),
+    # so the reported value must track the flag, not a hardcoded 0.
+    dir = PluginSpecHelper.tmp_path("verbosity-module-#{Random::Secure.hex(4)}")
+    FileUtils.mkdir_p(File.join(dir, "library"))
+    playbook = File.join(dir, "repro.yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: custom module reads module._verbosity
+            verb:
+      YAML
+    File.write(File.join(dir, "library", "verb.py"), <<-PYTHON)
+      #!/usr/bin/python
+      from ansible.module_utils.basic import AnsibleModule
+
+      def main():
+          module = AnsibleModule(argument_spec={})
+          module.exit_json(changed=False, verbosity=module._verbosity)
+
+      main()
+      PYTHON
+
+    # No -v at all: the issue's exact repro ran ok (it failed outright
+    # before the attribute existed).
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+    status.success?.must_equal(true)
+    output.to_s.must_match(/ok=1\b/)
+
+    # At -v+ the result JSON echoes the reported level, which must
+    # track the flag. (Only shown at -v or higher, same as real; the
+    # dump is one line at -vv and pretty-printed at -vvv+, both exactly
+    # like real's _dump_results, so assert the value, not the shape.)
+    {
+      {["-vv"], %("verbosity": 2)},
+      {["-vvv"], %("verbosity": 3)},
+    }.each do |(flags, expected)|
+      output = IO::Memory.new
+      status = Process.run(BINARY, flags + ["-i", INVENTORY, playbook], output: output, error: output)
+      status.success?.must_equal(true)
+      output.to_s.must_include(expected)
+    end
+  end
 end

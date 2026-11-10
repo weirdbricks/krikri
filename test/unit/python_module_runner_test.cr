@@ -243,6 +243,19 @@ describe Krikri::PythonModuleRunner do
     args["diff_mode"]?.must_be_nil
   end
 
+  it "ships the run's verbosity as _ansible_verbosity, not a hardcoded 0" do
+    # Real's action layer passes display.verbosity with every module
+    # call (plugins/action/__init__.py: "module_args['_ansible_verbosity']
+    # = display.verbosity") - a hardcoded 0 made module._verbosity read
+    # 0 even under -vv (issue #1108).
+    args = JSON.parse(Krikri::PythonModuleRunner.build_module_args(
+      {"name" => "x"}, check_mode: false, module_name: "verb", verbosity: 2))
+    args["_ansible_verbosity"].as_i.must_equal(2)
+    args = JSON.parse(Krikri::PythonModuleRunner.build_module_args(
+      {"name" => "x"}, check_mode: false, module_name: "verb"))
+    args["_ansible_verbosity"].as_i.must_equal(0)
+  end
+
   it "builds the old-style key=value argv" do
     # Ansible's old-style (non-AnsibleModule) protocol passes
     # _ansible_* special vars as ordinary key=value pairs in the argv
@@ -1032,6 +1045,39 @@ describe Krikri::PythonModuleRunner do
     parsed = Krikri::PythonModuleRunner.parse_module_output(stdout_io.to_s).not_nil!
     parsed["got"]["Name"].as_s.must_equal("demo")
     parsed["diff"].as_bool.must_equal(false)
+  end
+
+  it "shim exposes AnsibleModule._verbosity from _ansible_verbosity, defaulting to 0" do
+    skip("python3 not available") unless File.exists?("/usr/bin/python3")
+    # A custom module reads `module._verbosity` for the play's -v level
+    # (the gpg_key module does exactly this); real basic.py always
+    # carries the PASS_VARS attribute - `_verbosity` from
+    # `_ansible_verbosity`, default 0 (assigned raw, 'verbosity' is not
+    # in PASS_BOOLS). Without it the module died with "'AnsibleModule'
+    # object has no attribute '_verbosity'" before it could report
+    # anything (issue #1108).
+    work_dir = File.join(Dir.tempdir, "krikri-shim-spec-#{Random.rand(1_000_000)}")
+    Dir.mkdir_p(work_dir)
+    Krikri::PythonModuleRunner.write_module_utils_bundle(work_dir)
+    module_path = File.join(work_dir, "verb.py")
+    File.write(module_path, "from ansible.module_utils.basic import AnsibleModule\n" \
+                            "module = AnsibleModule(argument_spec={})\n" \
+                            "module.exit_json(changed=False, verbosity=module._verbosity)\n")
+    stdout_io = IO::Memory.new
+    status = Process.run("/usr/bin/python3", [module_path],
+      input: IO::Memory.new(%({"ANSIBLE_MODULE_ARGS": {"_ansible_verbosity": 2}})),
+      output: stdout_io, error: Process::Redirect::Close)
+    status.success?.must_equal(true)
+    parsed = Krikri::PythonModuleRunner.parse_module_output(stdout_io.to_s).not_nil!
+    parsed["verbosity"].as_i.must_equal(2)
+
+    # An args payload without the key keeps the real default of 0.
+    default_io = IO::Memory.new
+    Process.run("/usr/bin/python3", [module_path],
+      input: IO::Memory.new(%({"ANSIBLE_MODULE_ARGS": {}})),
+      output: default_io, error: Process::Redirect::Close)
+    FileUtils.rm_r(work_dir)
+    Krikri::PythonModuleRunner.parse_module_output(default_io.to_s).not_nil!["verbosity"].as_i.must_equal(0)
   end
 
   it "shim supports AnsibleModule.log() for role-private modules that call it" do

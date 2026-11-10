@@ -3999,7 +3999,7 @@ module Krikri
         substituted_params.each do |key, value|
           typed_params[key] = bigint_typed_param_text(task, key, value, vars_context)
         end
-        py_params["module_args"] = PythonModuleRunner.build_module_args(typed_params, check_mode, module_name)
+        py_params["module_args"] = PythonModuleRunner.build_module_args(typed_params, check_mode, module_name, @verbosity)
       else
         py_params["kv_argv"] = PythonModuleRunner.build_kv_argv(substituted_params).to_json
       end
