@@ -1928,13 +1928,14 @@ module Krikri
     # module produced, and a connection-level failure books the task
     # UNREACHABLE ("Failed to connect to the host via ssh: <ssh stderr>" -
     # the host is dropped from the rest of the play, the run exits 4). That
-    # second connection attempt is real's second net for a host that goes
-    # down while a task runs: aguamala.reboot-and-wait-for's `command:
-    # shutdown -r now` idiom (issue #400) takes its own ssh session down,
-    # and real's task-end cleanup - a fresh connection attempted after the
-    # module result - is what turned that task into UNREACHABLE carrying the
-    # ssh error, where this engine's module result (rc 0, `changed`) stood
-    # alone and the play ran on into the role's wait_for task (exit 2).
+    # second exec is real's second net for a host that goes down while a
+    # task runs: aguamala.reboot-and-wait-for's `command: shutdown -r now`
+    # idiom (issue #400) takes its own ssh session down, and real's
+    # task-end cleanup - one more exec over that same connection, which
+    # with the master's session gone ssh can only serve by dialing fresh -
+    # is what turned that task into UNREACHABLE carrying the ssh error,
+    # where this engine's module result (rc 0, `changed`) stood alone and
+    # the play ran on into the role's wait_for task (exit 2).
     #
     # krikri creates no per-task remote tmpdir (its plugin binaries are
     # pre-uploaded; batch dirs are swept by their own script), so the exec
@@ -1960,30 +1961,43 @@ module Krikri
       # back out as `ok:`, halting nothing).
       return result if result["unreachable"]?.try(&.as_bool?) == true
       conn = ConnectionSettings.resolve(host, vars)
+      task_end_cleanup_failure_result(result, task_end_remote_cleanup(conn))
+    end
+
+    # The one ssh exec Ansible's task-end tmpdir cleanup becomes here
+    # (see #apply_task_end_remote_cleanup for why it exists at all).
+    # Public as a spec seam: the connection it rides is the part that has
+    # to stay pinned, and no spec can dial a host.
+    #
+    # It rides the task's own pooled ControlMaster, never a forced fresh
+    # dial: real's `_remove_tmp_path` reuses the connection its module just
+    # used, so it never authenticates a second time. `ControlPath=none`
+    # re-dials instead, which turns a module that merely closed the host to
+    # NEW logins into an UNREACHABLE the module never produced - live
+    # benchmark round 29905183, SoInteractive.sshd (#1086): its
+    # `PermitRootLogin no` sshd_config + `restart sshd` handler leaves the
+    # established session perfectly usable (real runs the whole role to
+    # rc 0), while the forced re-dial got `root@host: Permission denied`.
+    # A host that really does die during the module still books
+    # UNREACHABLE here - with the master's session gone, ssh's
+    # `ControlMaster=auto` falls back to a fresh dial by itself, and that
+    # dial's failure is what the cleanup reports (issue #400).
+    def self.task_end_remote_cleanup(conn : ConnectionSettings) : NamedTuple(exit_code: Int32, stdout: String, stderr: String)
       # Ansible's own tmpdir shape (ansible-tmp-<epoch>-<pid>-<rand> under
       # the connection user's ~/.ansible/tmp, ~ expanded remote-side). The
       # random tail keeps a hostile pre-creation impractical, and `rm -f -r`
       # on a never-existing path is a silent rc 0 - the transport failure is
       # the only signal this exec can produce, which is the point.
       path = "~/.ansible/tmp/ansible-tmp-#{Time.utc.to_unix}-#{Process.pid}-#{Random::Secure.hex(12)}"
-      cleanup = SSHManager.exec(
+      SSHManager.exec(
         conn.conn_host,
         conn.user,
         "rm -f -r #{path}/ > /dev/null 2>&1",
         conn.port,
         identity_file: conn.identity_file,
         extra_args: conn.ssh_extra_options,
-        # A fresh end-to-end connection, not a ride-along on the pooled
-        # master: real's own cleanup goes fresh exactly when its module took
-        # the master's session down with it (the `command: shutdown -r now`
-        # idiom), and that fresh connect is what carries the task's fatal
-        # ssh error. This engine's module completes before the host dies, so
-        # its master is still standing here - riding it would answer from
-        # the stale local pipe and mask the very death the cleanup exists
-        # to detect, diverging from real's UNREACHABLE booking.
-        fresh_connection: true
+        fresh_connection: false
       )
-      task_end_cleanup_failure_result(result, cleanup)
     end
 
     # The task-end cleanup's verdict, kept pure so the replacement decision

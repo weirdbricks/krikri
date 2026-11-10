@@ -1,5 +1,8 @@
 require "../minitest_helper"
 require "../../src/krikri/plugin_manager"
+require "../../src/krikri/connection_settings"
+require "../../src/krikri/host"
+require "../../src/krikri/shell"
 
 # The task-end remote tmpdir cleanup's verdict (issue #400,
 # aguamala.reboot-and-wait-for): Ansible ends every non-async remote module
@@ -62,6 +65,65 @@ describe "Krikri::PluginManager task_end_cleanup_failure_result (task_end_cleanu
       result = Krikri::PluginManager.task_end_cleanup_failure_result(module_result, cleanup)
       result["unreachable"].as_bool?.must_equal(true)
       result["msg"].as_s?.must_equal("Failed to connect to the host via ssh: connection lost")
+    end
+  end
+
+  # Issue #1086 (SoInteractive.sshd, benchmark round 29905183): Ansible's
+  # `_remove_tmp_path` runs over the connection the module just used, so a
+  # role that closes the host to NEW logins while the established session
+  # keeps working (that role writes `PermitRootLogin no` and restarts sshd
+  # from a handler) still finishes rc 0 in real. The cleanup exec used to
+  # pass `fresh_connection: true` (`ControlPath=none`, a real end-to-end
+  # dial), so the very next exec re-authenticated - `root@host: Permission
+  # denied` - and the handler's successful `changed` became UNREACHABLE,
+  # dropping the host and exiting 4.
+  describe "PluginManager task_end_remote_cleanup connection choice (task_end_cleanup_test.cr)" do
+    serial! # prepends a fake `ssh` to the process-wide PATH
+
+    it "rides the task's pooled ControlMaster instead of dialing its own connection" do
+      shim_dir = PluginSpecHelper.tmp_path("fake-ssh-task-end-cleanup")
+      argv_log = PluginSpecHelper.tmp_path("fake-ssh-task-end-cleanup-argv")
+      FileUtils.rm_r(shim_dir) if File.exists?(shim_dir)
+      File.delete(argv_log) if File.exists?(argv_log)
+      Dir.mkdir_p(shim_dir)
+      # One line per invocation: its argv, space-joined.
+      File.write("#{shim_dir}/ssh", "#!/bin/sh\necho \"$*\" >> #{Krikri::Shell.single_quote(argv_log)}\nexit 0\n")
+      File.chmod("#{shim_dir}/ssh", 0o755)
+
+      host = Krikri::Host.new("testhost", "root", 2222)
+      host.vars = {
+        "ansible_host"                 => JSON::Any.new("192.0.2.10"),
+        "ansible_ssh_private_key_file" => JSON::Any.new("/keys/id_ed25519"),
+        "ansible_ssh_common_args"      => JSON::Any.new("-o IdentitiesOnly=yes"),
+      } of String => JSON::Any
+      conn = Krikri::ConnectionSettings.resolve(host, host.vars)
+
+      PluginSpecHelper::ENV_MUTEX.synchronize do
+        old_path = ENV["PATH"]?
+        ENV["PATH"] = "#{shim_dir}:#{old_path}"
+        begin
+          2.times { Krikri::PluginManager.task_end_remote_cleanup(conn) }
+        ensure
+          old_path ? (ENV["PATH"] = old_path) : (ENV.delete("PATH"))
+        end
+      end
+
+      invocations = File.read(argv_log).lines.reject(&.empty?)
+      invocations.size.must_equal(2)
+      control_paths = invocations.map do |line|
+        line.split(' ').find { |arg| arg.starts_with?("ControlPath=") }
+      end
+      control_paths.each do |path|
+        # `ControlPath=none` is OpenSSH's own spelling for "dial a brand
+        # new connection" - the exact argv that broke #1086.
+        path.to_s.starts_with?("ControlPath=#{Krikri::SSHManager.control_path_dir}/").must_equal(true)
+      end
+      # ... and the same pooled socket both times, so a second cleanup (or
+      # the next task) never re-authenticates either.
+      control_paths.uniq.size.must_equal(1)
+      invocations.each do |line|
+        line.includes?("rm -f -r ~/.ansible/tmp/ansible-tmp-").must_equal(true)
+      end
     end
   end
 end
