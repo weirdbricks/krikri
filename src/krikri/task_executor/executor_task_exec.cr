@@ -3742,6 +3742,23 @@ module Krikri
       # Python whose spec we don't know - nothing to validate against.
       return nil if task.unavailable_module
       action_name = task.action_name || task.module_name
+      # uri is the one module krikri ships whose Ansible side opts out of
+      # check mode at the ACTION layer (`_supports_check_mode = False` in
+      # plugins/action/uri.py), so ActionBase.run raises AnsibleActionSkip
+      # before the action plugin body - before the src: staging and
+      # form-multipart guard that uri_action_failure emulates below, and
+      # long before the module's own argument-spec validation. Under
+      # --check an invalid bool:, a missing url: or an unreachable src:
+      # therefore skips instead of failing (live-verified vs 2.21.6; the
+      # registered result is exactly {changed, failed, skipped, msg}).
+      if check_mode && action_level_only && task.module_name == "ansible.builtin.uri"
+        return JSON.parse({
+          "skipped" => true,
+          "msg"     => "This action (#{action_name}) does not support check mode.",
+          "changed" => false,
+          "failed"  => false,
+        }.to_json)
+      end
       failure = ArgspecValidator.validate(action_name, task.module_name, params, vars_context)
       return nil unless failure
       # The pre-action hook (action_level_only) takes only the

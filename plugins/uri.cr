@@ -63,6 +63,19 @@ module Krikri
     MAX_REDIRECTS = 10
 
     def execute : PluginResult
+      # uri's own Ansible action plugin opts out of check mode
+      # (`_supports_check_mode = False` in plugins/action/uri.py), so
+      # ActionBase.run raises AnsibleActionSkip before the action body
+      # runs - ahead of the controller-side src: staging and of every
+      # module-side check below. An invalid bool: or a missing url:
+      # therefore never fails under --check; it skips (live-verified vs
+      # 2.21.6, registered result {changed, failed, skipped, msg}).
+      if true?(@params["_ansible_check_mode"]?)
+        invoked = @params["_module_name"]? || "ansible.builtin.uri"
+        return PluginResult.new(changed: false, failed: false, msg: "This action (#{invoked}) does not support check mode.", skipped: true,
+          key_order: ["skipped", "msg", "changed"])
+      end
+
       validate_bool_params!
       url = @params["url"]?
       return PluginResult.new(changed: false, failed: true, msg: "missing required argument: url") unless url
@@ -189,13 +202,6 @@ module Krikri
           # directory src).
           return PluginResult.new(changed: false, failed: true, msg: "Unable to open source file #{src}", elapsed: 0)
         end
-      end
-
-      if true?(@params["_ansible_check_mode"]?)
-        # Ansible's registered uri check-mode skip runs skipped, msg, changed
-        # (live-verified vs 2.19.11 via `{{ r | to_json }}`).
-        return PluginResult.new(changed: false, failed: false, msg: "Skipped: uri module does not support check mode", skipped: true,
-          key_order: ["skipped", "msg", "changed"])
       end
 
       start = Time.instant
