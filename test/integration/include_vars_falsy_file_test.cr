@@ -1,22 +1,25 @@
 require "../minitest_helper"
 require "file_utils"
 
-# include_vars: file argument that resolves to a FALSY native value
-# (issue #850, bodsch.mpd).
+# include_vars: FREE-FORM value that resolves to a falsy native value
+# (issue #850, bodsch.mpd; issue #1085, 5u623l20.pgsql).
 #
 # bodsch.mpd's `include_vars: "{{ lookup('first_found', params) }}"`
 # (skip: true, no candidate on Rocky 9) hands include_vars an empty
-# LIST. Ansible's AnsibleFileNotFound renders the quoted
-# "Could not find or access '<X>'" head ONLY for a truthy file_name -
-# a falsy one gets the bare "Could not find file" - while the
-# "Searched in:" list is built from the value's str() ("[]"), so the
-# paths text is identical either way. krikri used to flatten the
-# whole-expression value to its "[]" string first and always quoted it.
-#
-# Live-verified vs 2.19.11 (free-form _raw_params form):
-#   {{ lookup('first_found', params) }} (skip, no match) -> "Could not
-#     find file" + Searched in: <base>/vars/[], <base>/[] (x2)
-#   {{ false }} -> "Could not find file" + Searched in: .../vars/False
+# LIST, and 5u623l20.pgsql's identical free-form form does the same on
+# any distribution it ships no vars/ file for. Under ansible-core 2.19
+# the task-arg templating stringified `_raw_params` ("[]"/"False") and
+# the plugin ended in AnsibleFileNotFound's bare "Could not find file"
+# head - the shape #850 was fixed against. 2.21's templating keeps the
+# native value, so _set_args' falsy branch leaves the list/bool itself in
+# source_file and _find_needle dies in os.path.join; a TRUTHY non-string
+# dies one line earlier on _set_args' own .rstrip('\n').
+# Live-verified vs 2.21.6 (free-form _raw_params form):
+#   {{ lookup('first_found', params) }} (skip, no match) -> join()
+#     argument must be str, bytes, or os.PathLike object, not
+#     '_AnsibleTaggedList'
+#   {{ false }} -> join() argument must be str, bytes, or os.PathLike
+#     object, not 'bool'
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
@@ -28,14 +31,14 @@ private def run_falsy_include_vars(playbook : String) : String
   output.to_s
 end
 
-private def falsy_include_vars_message(output : String) : String
-  line = output.each_line.find { |text_line| text_line.includes?("FAILED! => {") }
-  raise "no FAILED! line in output:\n#{output}" unless line
-  JSON.parse(line.sub(/\A.*FAILED! => /, ""))["message"].as_s
+private def falsy_include_vars_error(output : String) : String
+  line = output.each_line.find { |text_line| text_line.starts_with?("[ERROR]: Task failed: ") }
+  raise "no [ERROR] line in output:\n#{output}" unless line
+  line.sub("[ERROR]: Task failed: ", "")
 end
 
-describe "include_vars file argument resolving to a falsy native value" do
-  it "renders the bare Could not find file head for an empty first_found skip result" do
+describe "include_vars free-form value resolving to a falsy native value" do
+  it "crashes an empty first_found skip result in os.path.join, like _find_needle" do
     src_dir = File.tempname("include-vars-falsy")
     Dir.mkdir_p(File.join(src_dir, "vars"))
     File.write(File.join(src_dir, "pb.yml"), <<-YAML)
@@ -57,15 +60,14 @@ describe "include_vars file argument resolving to a falsy native value" do
       YAML
 
     output = run_falsy_include_vars(File.join(src_dir, "pb.yml"))
-    message = falsy_include_vars_message(output)
-    message.must_equal(
-      "Could not find file\nSearched in:\n\t#{src_dir}/vars/[]\n\t#{src_dir}/[]\n\t" \
-      "#{src_dir}/vars/[]\n\t#{src_dir}/[] on the Ansible Controller.")
+    falsy_include_vars_error(output).must_equal(
+      "join() argument must be str, bytes, or os.PathLike object, not '_AnsibleTaggedList'")
+    output.wont_include("Searched in")
   ensure
     FileUtils.rm_rf(src_dir) if src_dir
   end
 
-  it "renders the bare Could not find file head for a falsy scalar whole-expression value" do
+  it "crashes a falsy scalar whole-expression value in os.path.join, like _find_needle" do
     src_dir = File.tempname("include-vars-falsy-scalar")
     Dir.mkdir_p(src_dir)
     File.write(File.join(src_dir, "pb.yml"), <<-YAML)
@@ -79,10 +81,9 @@ describe "include_vars file argument resolving to a falsy native value" do
       YAML
 
     output = run_falsy_include_vars(File.join(src_dir, "pb.yml"))
-    message = falsy_include_vars_message(output)
-    message.must_equal(
-      "Could not find file\nSearched in:\n\t#{src_dir}/vars/False\n\t#{src_dir}/False\n\t" \
-      "#{src_dir}/vars/False\n\t#{src_dir}/False on the Ansible Controller.")
+    falsy_include_vars_error(output).must_equal(
+      "join() argument must be str, bytes, or os.PathLike object, not 'bool'")
+    output.wont_include("Searched in")
   ensure
     FileUtils.rm_rf(src_dir) if src_dir
   end

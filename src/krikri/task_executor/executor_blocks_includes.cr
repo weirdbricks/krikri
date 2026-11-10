@@ -1226,6 +1226,20 @@ module Krikri
       # The file may be chosen by with_first_found (exposed as `item`) or
       # given directly; either way it is templated.
       substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
+      # Free-form `include_vars: "{{ ... }}"` is Ansible's _raw_params, and
+      # mod_args hands the action whatever the template resolved to - not
+      # necessarily text. _set_args then calls `.rstrip('\n')` on the value
+      # when it is truthy and leaves a falsy one untouched, so a non-string
+      # reaches the path code and crashes it (see
+      # include_vars_free_form_type_crash). 5u623l20.pgsql hits this on any
+      # distribution it ships no vars/ file for: its
+      # `lookup('first_found', ..., skip=true)` resolves to an empty tagged
+      # list, which real fails in os.path.join (issue #1085); krikri
+      # stringified it and searched for a file literally named "[]".
+      if crash = include_vars_free_form_type_crash(substitutor, task)
+        finish_include_vars_arg_failure(task, host, crash)
+        return
+      end
       candidate = begin
         render_include_vars_path(substitutor, task, task.include_vars_origin_key, task.include_vars_file || "")
       rescue ex : UndefinedVariableError | FirstFoundLookupError
@@ -1934,6 +1948,40 @@ module Krikri
       when Array(JSON::Any)        then native.empty?
       when Hash(String, JSON::Any) then native.empty?
       else                              false
+      end
+    end
+
+    # The failure Ansible's include_vars action produces when a FREE-FORM
+    # value (its _raw_params) templates to a non-string, or nil when it is
+    # text/native-undetectable. _set_args rstrips a truthy value and leaves
+    # a falsy one alone - the truthy case dies on
+    # `'_AnsibleTaggedList' object has no attribute 'rstrip'`, the falsy one
+    # reaches _find_needle and dies in os.path.join (live-verified vs
+    # 2.21.6 for list/dict/int/bool/float, both branches).
+    private def include_vars_free_form_type_crash(substitutor : VarSubstitutor, task : Task) : String?
+      return nil unless task.include_vars_origin_key == "include_vars"
+      raw = task.include_vars_file || ""
+      return nil unless (raw.split("{{").size - 1) == 1 && (raw.split("}}").size - 1) == 1
+      stripped = raw.strip
+      return nil unless stripped.starts_with?("{{") && stripped.ends_with?("}}")
+      value = begin
+        substitutor.evaluate_structured_strict(stripped[2..-3].strip)
+      rescue
+        return nil
+      end
+      return nil unless value
+      type_name = case value.raw
+                  when Array(JSON::Any)        then "_AnsibleTaggedList"
+                  when Hash(String, JSON::Any) then "_AnsibleTaggedDict"
+                  when Bool                    then "bool"
+                  when Int64                   then "_AnsibleTaggedInt"
+                  when Float64                 then "_AnsibleTaggedFloat"
+                  else                              return nil
+                  end
+      if KrikriJinjaFilters.py_truthy(value)
+        "'#{type_name}' object has no attribute 'rstrip'"
+      else
+        "join() argument must be str, bytes, or os.PathLike object, not '#{type_name}'"
       end
     end
 

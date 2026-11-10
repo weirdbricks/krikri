@@ -200,6 +200,35 @@ describe "include_vars with a non-string file:/dir: literal" do
     output.wont_include("PLAY [")
   end
 
+  it "crashes a free-form value that TEMPLATES to a non-string, on the value's own type" do
+    # A free-form include_vars: is Ansible's _raw_params: mod_args keeps
+    # whatever the template resolved to, so a resolve-to-list reaches
+    # _set_args as a list (a truthy one dies on .rstrip, a falsy one in
+    # os.path.join) instead of becoming a path - 5u623l20.pgsql's own
+    # `lookup('first_found', ..., skip=true)` resolves to an empty list on
+    # any distribution it ships no vars/ file for (issue #1085).
+    _, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - include_vars: "{{ lookup('ansible.builtin.first_found', params) }}"
+            vars:
+              params:
+                files: [nosuch-vars.yml]
+                skip: true
+            ignore_errors: true
+          - include_vars: "{{ [1] }}"
+            ignore_errors: true
+    YAML
+
+    output.must_include("[ERROR]: Task failed: join() argument must be str, bytes, or os.PathLike object, not '_AnsibleTaggedList'")
+    output.must_include(%("msg": "Task failed: join() argument must be str, bytes, or os.PathLike object, not '_AnsibleTaggedList'"))
+    output.must_include("[ERROR]: Task failed: '_AnsibleTaggedList' object has no attribute 'rstrip'")
+    output.must_match(/ignored=2/)
+    output.wont_include("Searched in")
+  end
+
   it "still accepts the ordinary string file form" do
     _, output = run_playbook(
       <<-YAML,
