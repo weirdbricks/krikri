@@ -579,3 +579,78 @@ describe "INJECT_FACTS_AS_VARS deprecation from a when: clause" do
     (stderr.index!("main.yml:3:9") < stderr.index!("setup-RedHat.yml:8:9")).must_equal(true)
   end
 end
+
+# The template action hands the engine its whole variable scope up front, so
+# it re-renders every stored value eagerly - while ansible-core templates a
+# value lazily at the render that consumes it. A value nothing consumes must
+# therefore stay silent (issue #1091, msterhuj.victoriametrics_single's
+# `go_arch`, live-verified against 2.21.6).
+describe "INJECT_FACTS_AS_VARS deprecation from a template task's variable scope" do
+  private def template_role_dir(name : String) : String
+    dir = PluginSpecHelper.tmp_path("#{name}-#{Random::Secure.hex(4)}")
+    FileUtils.mkdir_p(File.join(dir, "roles", "vm_like", "vars"))
+    FileUtils.mkdir_p(File.join(dir, "roles", "vm_like", "defaults"))
+    FileUtils.mkdir_p(File.join(dir, "roles", "vm_like", "tasks"))
+    FileUtils.mkdir_p(File.join(dir, "roles", "vm_like", "templates"))
+    File.write(File.join(dir, "roles", "vm_like", "vars", "main.yml"), <<-YAML)
+      ---
+      go_arch_map:
+        i386: '386'
+        x86_64: 'amd64'
+        aarch64: 'arm64'
+
+      go_arch: "{{ go_arch_map[ansible_architecture] | default(ansible_architecture) }}"
+      YAML
+    File.write(File.join(dir, "roles", "vm_like", "defaults", "main.yml"), <<-YAML)
+      ---
+      vm_like_repo_url: "https://example.invalid/releases"
+      vm_like_download_url: "{{ vm_like_repo_url }}/{{ go_arch }}-v1.0.0.tar.gz"
+      YAML
+    File.write(File.join(dir, "roles", "vm_like", "tasks", "main.yml"), <<-YAML)
+      ---
+      - name: keep the play alive
+        ansible.builtin.debug:
+          msg: done
+
+      - name: render a config file
+        ansible.builtin.template:
+          src: "config.j2"
+          dest: "#{dir}/rendered.txt"
+          mode: "0644"
+      YAML
+    File.write(File.join(dir, "play.yml"), <<-PLAYBOOK)
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        roles:
+          - vm_like
+      PLAYBOOK
+    dir
+  end
+
+  it "stays silent for a scope value the template never consumes" do
+    dir = template_role_dir("inject-facts-template-silent")
+    File.write(File.join(dir, "roles", "vm_like", "templates", "config.j2"), "hello\n")
+
+    stdout = IO::Memory.new
+    stderr = IO::Memory.new
+    Process.run(BINARY, ["-i", "localhost,", File.join(dir, "play.yml")], output: stdout, error: stderr, chdir: dir)
+
+    stdout.to_s.must_include("TASK [vm_like : render a config file]")
+    stderr.to_s.wont_include("INJECT_FACTS_AS_VARS")
+  end
+
+  it "warns at the forwarding chain's innermost fact declaration when the template reads it" do
+    dir = template_role_dir("inject-facts-template-chain")
+    File.write(File.join(dir, "roles", "vm_like", "templates", "config.j2"), "{{ vm_like_download_url }}\n")
+
+    stdout = IO::Memory.new
+    stderr = IO::Memory.new
+    Process.run(BINARY, ["-i", "localhost,", File.join(dir, "play.yml")], output: stdout, error: stderr, chdir: dir)
+
+    stderr = stderr.to_s
+    stderr.scan(/DEPRECATION WARNING\]: INJECT_FACTS_AS_VARS/).size.must_equal(1)
+    stderr.must_include("Origin: #{File.join(dir, "roles", "vm_like", "vars", "main.yml")}:7:10\n")
+    stderr.must_include("Use `ansible_facts[\"fact_name\"]` (no `ansible_` prefix) instead.")
+  end
+end

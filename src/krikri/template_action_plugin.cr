@@ -702,17 +702,24 @@ module Krikri
     # nested scalars included - issue #1030, Turgon37.bind's
     # `bind__zones_entry_default` whose `SOA.data.serial` leaf is the
     # `{{ ansible_date_time.year~... }}` real Origin'd at defaults/main
-    # .yml:219:15). nil otherwise: no such value, a value with no template
-    # in it (nothing re-renders, so no fact is read), or a defining site
-    # the executor cannot place.
-    private def re_rendered_var_fact_origin(name : String) : String?
+    # .yml:219:15). A value that forwards through another value attributes
+    # to the innermost value naming the fact, the same chain rule the
+    # `vars`-dict probe follows: the scope's eager pre-render is silent (see
+    # #prepare_template_vars_json), so this probe is the only thing left to
+    # print a fact reading a template reaches through a forwarding chain.
+    # nil otherwise: no such value, a value with no template in it (nothing
+    # re-renders, so no fact is read), several chain candidates that
+    # disagree, or a defining site the executor cannot place.
+    private def re_rendered_var_fact_origin(name : String, seen : Set(String) = Set(String).new) : String?
+      return nil unless seen.add?(name)
       value = @vars[name]? || return nil
       host_name = @vars["inventory_hostname"]?.try(&.as_s?)
       case raw = value.raw
       when String
         return nil unless raw.includes?("{{") || raw.includes?("{%")
-        return nil unless raw.scan(/ansible_[A-Za-z0-9_]+/).any? { |match| VarSubstitutor.top_level_fact_name?(match[0], @vars) }
-        VarSubstitutor.published_var_origin(host_name, name)
+        return VarSubstitutor.published_var_origin(host_name, name) if raw.scan(/ansible_[A-Za-z0-9_]+/).any? { |match| VarSubstitutor.top_level_fact_name?(match[0], @vars) }
+        origins = referenced_var_names(raw).compact_map { |ref| re_rendered_var_fact_origin(ref, seen) }.uniq!
+        origins.size == 1 ? origins[0] : nil
       when Hash, Array
         components = VarSubstitutor.fact_leaf_components(value, @vars)
         return nil unless components
@@ -1003,12 +1010,13 @@ module Krikri
           # every entry with THIS host's vars.
           # The re-renders are EAGER (every value, up front) while
           # ansible-core templates a variable's value lazily at its USE:
-          # a `vars`-dict read inside a value this template never touches
-          # prints no deprecation in real (live-verified vs 2.21.6), so
-          # those reads are silenced here and re-detected on the parsed
-          # template for the names it actually reads (see
+          # a `vars`-dict or top-level fact read inside a value this
+          # template never touches prints no deprecation in real (live-
+          # verified vs 2.21.6), so those reads are silenced here and
+          # re-detected on the parsed template for the names it actually
+          # reads (see #re_rendered_var_fact_origin /
           # #re_rendered_var_vars_origin).
-          prepared_hostvars = VarSubstitutor.suppress_vars_dict_read_deprecations do
+          prepared_hostvars = VarSubstitutor.suppress_eager_scope_deprecations do
             VariableSubstitutor::JinjaRenderer.prepare_hostvars(value, substitutor, defer_unresolved: true, deferred_leaves: deferred_leaves)
           end
           vars[key] = prepared_hostvars
@@ -1016,7 +1024,7 @@ module Krikri
         end
         unless VarSubstitutor.resolved_var_name?(host_name, key)
           begin
-            value = VarSubstitutor.suppress_vars_dict_read_deprecations do
+            value = VarSubstitutor.suppress_eager_scope_deprecations do
               VariableSubstitutor::JinjaRenderer.rerender_nested_templates(value, substitutor, defer_unresolved: true, deferred_leaves: deferred_leaves)
             end
           rescue Krikri::UndefinedVariableError
