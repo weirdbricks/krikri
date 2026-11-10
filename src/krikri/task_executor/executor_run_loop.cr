@@ -2338,7 +2338,7 @@ module Krikri
 
       # Action-only directives: pre-action validation gate (see
       # execute_task_once's identical hook).
-      if violation = argspec_validation_result(task, substituted_params, vars_context, action_level_only: true)
+      if violation = argspec_validation_result(task, substituted_params, vars_context, action_level_only: true, check_mode: resolve_task_check_mode(task, vars_context))
         return apply_changed_failed_when(task, violation, vars_context, host)
       end
 
@@ -2924,7 +2924,7 @@ module Krikri
       # post-action hook below handles every module-level spec. Placed
       # before the controller-side pseudo-module branches (group_by)
       # so their action-level "Invalid options" check is not preempted.
-      if violation = argspec_validation_result(task, substituted_params, vars_context, action_level_only: true)
+      if violation = argspec_validation_result(task, substituted_params, vars_context, action_level_only: true, check_mode: resolve_task_check_mode(task, vars_context))
         return apply_changed_failed_when(task, violation, vars_context, host)
       end
 

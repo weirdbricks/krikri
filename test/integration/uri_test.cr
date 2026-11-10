@@ -344,6 +344,16 @@ describe "uri plugin" do
     result["skipped"].as_bool.must_equal(true)
   end
 
+  it "skips under check_mode before validating its own args, live-verified against Ansible" do
+    # uri's action plugin opts out of check mode at the ACTION layer, so
+    # Ansible never reaches the module's argument validation under
+    # --check: an unconvertible bool: skips instead of failing there.
+    result = PluginSpecHelper.run("uri", {"url" => "#{URI_BASE}/text", "remote_src" => "utmcwq", "_ansible_check_mode" => "true"})
+    falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+    result["skipped"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("This action (ansible.builtin.uri) does not support check mode.")
+  end
+
   it "writes the response body to dest: and reports changed, real bug found live-verifying prometheus.prometheus.node_exporter" do
     # `dest:` writing was entirely unimplemented (the plugin's own doc
     # comment said so outright) - prometheus.prometheus._common's own
