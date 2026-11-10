@@ -5,8 +5,9 @@ require "../../src/krikri/task_executor/result_display"
 # chain shapes: the module-level pick_handler failure (raised by
 # AnsibleModule.fail_json inside unarchive.py, so real renders the generic
 # "Module failed." chain) and the controller-side src miss raised by the
-# action plugin itself (single collapsed segment). Live-verified against
-# ansible-core 2.19.11.
+# action plugin itself (the collapsed header plus the chained not-found
+# event under its own caused-by section). Live-verified against
+# ansible-core 2.21.6.
 describe "unarchive task_error_chain shapes" do
   UNARCHIVE_HANDLER_MSG = %(Failed to find handler for "/tmp/x.tar". Make sure the required command to extract the file is installed.) +
                           %(\nCommand "/usr/bin/unzip" could not handle archive: boom)
@@ -55,6 +56,25 @@ describe "unarchive task_error_chain shapes" do
     cause.msg.must_equal("Source '/x.tar' failed to transfer")
     cause.chain.must_be_nil
     Krikri::ErrorBlock.brief_message(chain).must_equal("Task failed: Source '/x.tar' failed to transfer")
+  end
+
+  it "splits the controller-side not-found event out with its help paragraph" do
+    # ansible-core 2.21 moved the remote_src sentence off the message into
+    # AnsibleFileNotFound's help text, which stops the not-found event
+    # collapsing into the header: real prints the header, the bare "Task
+    # failed." segment, then the caused-by text and the advice as its own
+    # paragraph (live-verified vs 2.21.6).
+    not_found = "Could not find or access '/x.tar'\nSearched in:\n\t/pb/files/x.tar on the Ansible Controller."
+    chain = Krikri::ResultDisplay.task_error_chain("ansible.builtin.unarchive", "Task failed: #{not_found}", "Origin: /pb.yml:6")
+    text = Krikri::ErrorBlock.format_event(chain)
+
+    chain.msg.must_equal("Task failed.")
+    cause = chain.chain.as(Krikri::ErrorBlock::Node)
+    cause.msg.must_equal(not_found)
+    cause.help_text.must_equal(Krikri::ResultDisplay::CONTROLLER_FILE_NOT_FOUND_HELP)
+    text.must_include("\nTask failed.\nOrigin: /pb.yml:6\n")
+    text.must_include("\n<<< caused by >>>\n\n#{not_found}\n\n")
+    text.must_include("\nIf you are using a module and expect the file to exist on the remote, see the remote_src option.\n")
   end
 
   it "uses the generic Module-failed chain for the module's own missing-src gate" do

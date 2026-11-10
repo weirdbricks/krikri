@@ -1493,6 +1493,14 @@ module Krikri
       if result["_ansible_action_level"]?.try(&.as_bool?) == true
         root = ErrorBlock::Node.new("Task failed.", source_context: origin)
         cause = ErrorBlock::Node.new(msg)
+        # An action plugin that fails the controller-side src lookup
+        # (assemble's remote_src: false) chains the loader's
+        # AnsibleFileNotFound as its cause: real prints that event's help
+        # text as a paragraph of its own, which also keeps the block from
+        # collapsing into the single header segment.
+        if msg.starts_with?("Could not find or access '") && msg.ends_with?(" on the Ansible Controller.")
+          cause.help_text = CONTROLLER_FILE_NOT_FOUND_HELP
+        end
         # The template action's undefined-chain marker (the executor
         # resolved the failing VALUE's own DEFINITION - `server_ip: "{{
         # bind_addr }}"` - and carries its rendered Origin block): real
@@ -2210,9 +2218,12 @@ module Krikri
         root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(msg))
       when "unarchive"
         # Ansible's unarchive action raises a non-contributing AnsibleError
-        # for a controller-side src miss (live-verified: the fatal msg
-        # carries the "Task failed: " brief prefix itself and the block
-        # is the single collapsed segment).
+        # for a controller-side src miss: the fatal msg carries the
+        # "Task failed: " brief prefix itself and its chained
+        # AnsibleFileNotFound contributes the not-found event with the
+        # remote_src help paragraph, which splits the block (the
+        # caused-by section disappears without that help text, since
+        # everything else collapses into the header).
         if msg.starts_with?("Failed to find handler for ") || msg.starts_with?("Failure downloading ") ||
            msg.starts_with?("failed to unpack ") ||
            (msg.starts_with?("Source '") && msg.ends_with?("' does not exist"))
@@ -2227,7 +2238,11 @@ module Krikri
           root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new("Module failed.").with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(msg)))
         else
           inner = msg.starts_with?("Task failed: ") ? msg["Task failed: ".size..] : msg
-          root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(inner))
+          if inner.starts_with?("Could not find or access '") && inner.ends_with?(" on the Ansible Controller.")
+            root.with_chain(ErrorBlock::DIRECT_CAUSE, true, controller_file_not_found_node(inner))
+          else
+            root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(inner))
+          end
         end
       when "script"
         if msg.starts_with?("Could not find or access '")
@@ -2275,20 +2290,26 @@ module Krikri
         # way (issue #919).
         root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new("Action failed.").with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(msg)))
       else
-        # copy:'s controller-side src miss (both the remote-host variant,
-        # whose fatal msg carries the "Task failed: " brief prefix, and
-        # the local-connection variant, whose fatal msg carries the
-        # "Unexpected AnsibleActionFail error: " prefix itself - both
-        # live-verified): the chain is the collapsed
-        # "Unexpected AnsibleActionFail error." shape carrying Ansible's
-        # full not-found text (now including the Searched-in list). The
-        # not-found msg itself ends at " on the Ansible Controller." -
-        # 2.21 moved the remote_src sentence to exception help text, off
-        # the message.
-        if (msg.starts_with?("Task failed: Could not find or access '") ||
-           msg.starts_with?("Unexpected AnsibleActionFail error: Could not find or access '"))
-          not_found = msg.sub(/\A(?:Task failed: |Unexpected AnsibleActionFail error: )/, "")
-          root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new("Unexpected AnsibleActionFail error.").with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(not_found)))
+        # A controller-side src miss no module-specific case above routed.
+        # copy's action plugin re-raises the loader's AnsibleFileNotFound
+        # as an empty-message AnsibleActionFail (`raise
+        # AnsibleActionFail(result=result) from ex`), so its chain keeps
+        # the "Unexpected AnsibleActionFail error." middle segment. The
+        # not-found event carries AnsibleFileNotFound's help text, which
+        # prints as its own paragraph and stops the event collapsing into
+        # the header - so the "<<< caused by >>>" section exists at all
+        # (Ansible's message_lines puts the sentence on the not-found line
+        # for an absolute src, below the Searched-in list otherwise).
+        if msg.starts_with?("Unexpected AnsibleActionFail error: Could not find or access '")
+          not_found = msg["Unexpected AnsibleActionFail error: ".size..]
+          root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new("Unexpected AnsibleActionFail error.").with_chain(ErrorBlock::DIRECT_CAUSE, true, controller_file_not_found_node(not_found)))
+        elsif msg.starts_with?("Task failed: Could not find or access '") && msg.ends_with?(" on the Ansible Controller.")
+          root.with_chain(ErrorBlock::DIRECT_CAUSE, true, controller_file_not_found_node(msg["Task failed: ".size..]))
+        elsif msg.starts_with?("Task failed: Could not find or access '")
+          # uri's action still spells the remote_src sentence inside msg
+          # (the pre-2.21 shape); adding the help text there would repeat
+          # it, so that spelling keeps its old collapsed chain.
+          root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new("Unexpected AnsibleActionFail error.").with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(msg["Task failed: ".size..])))
         elsif module_name.try(&.ends_with?(".copy")) &&
               {"src and content are mutually exclusive", "src (or content) is required", "dest is required"}.includes?(msg)
           # copy's action-level src/content conflict (raised before
@@ -2299,6 +2320,17 @@ module Krikri
           root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new("Module failed.").with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(msg)))
         end
       end
+    end
+
+    # Ansible's AnsibleFileNotFound class-level help text. Real prints it as
+    # the chained not-found event's help paragraph - and an event with help
+    # text never collapses into the header segment, which is what produces
+    # the block's multi-segment shape (live-verified vs 2.21.6: copy's src
+    # miss and unarchive's controller-side miss both print it).
+    CONTROLLER_FILE_NOT_FOUND_HELP = "If you are using a module and expect the file to exist on the remote, see the remote_src option."
+
+    private def self.controller_file_not_found_node(msg : String) : ErrorBlock::Node
+      ErrorBlock::Node.new(msg, help_text: CONTROLLER_FILE_NOT_FOUND_HELP)
     end
 
     # The failed-final-rename detail's one safe split: the atoms neither the

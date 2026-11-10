@@ -75,9 +75,9 @@ end
 describe "copy task_error_chain shapes" do
   it "keeps the Unexpected-AnsibleActionFail chain for the src miss without the remote_src hint" do
     # 2.21 moved the "If you are using a module ... remote_src option"
-    # sentence off the not-found message, so the gate that routes copy's
-    # src miss can no longer key on the hint's presence - the message
-    # prefix alone decides (issue #927).
+    # sentence off the not-found message into AnsibleFileNotFound's help
+    # text, so the gate that routes copy's src miss can no longer key on
+    # the hint's presence - the message prefix alone decides (issue #927).
     msg = "Unexpected AnsibleActionFail error: Could not find or access 'missing.txt'\nSearched in:\n\t/pb/files/missing.txt\n\t/pb/missing.txt on the Ansible Controller."
     chain = Krikri::ResultDisplay.task_error_chain("ansible.builtin.copy", msg, "Origin: /pb.yml:6")
 
@@ -86,5 +86,22 @@ describe "copy task_error_chain shapes" do
     middle.msg.must_equal("Unexpected AnsibleActionFail error.")
     cause = middle.chain.as(Krikri::ErrorBlock::Node)
     cause.msg.must_equal("Could not find or access 'missing.txt'\nSearched in:\n\t/pb/files/missing.txt\n\t/pb/missing.txt on the Ansible Controller.")
+  end
+
+  it "splits copy's not-found event out under the caused-by section" do
+    # The not-found event carries AnsibleFileNotFound's help text, and an
+    # event with help text never collapses into the header - so real
+    # prints the collapsed header, the "Task failed: Unexpected
+    # AnsibleActionFail error." segment, then the not-found text with the
+    # remote_src advice appended (live-verified vs 2.21.6).
+    msg = "Unexpected AnsibleActionFail error: Could not find or access '/root/cluster/subnet.env' on the Ansible Controller."
+    chain = Krikri::ResultDisplay.task_error_chain("ansible.builtin.copy", msg, "Origin: /pb.yml:6")
+    text = Krikri::ErrorBlock.format_event(chain)
+
+    text.must_include("Task failed: Unexpected AnsibleActionFail error.\nOrigin: /pb.yml:6")
+    text.must_include("\n<<< caused by >>>\n\n")
+    text.must_include("Could not find or access '/root/cluster/subnet.env' on the Ansible Controller. If you are using a module and expect the file to exist on the remote, see the remote_src option.")
+    chain.chain.as(Krikri::ErrorBlock::Node).chain.as(Krikri::ErrorBlock::Node)
+      .help_text.must_equal(Krikri::ResultDisplay::CONTROLLER_FILE_NOT_FOUND_HELP)
   end
 end
