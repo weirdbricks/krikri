@@ -241,6 +241,42 @@ describe "INJECT_FACTS_AS_VARS deprecation" do
     stderr.scan(/DEPRECATION WARNING\]: #{Regex.escape(FACT_DEPRECATION_TEXT)}/).size.must_equal(1)
   end
 
+  it "ignores a loop target that shadows a same-named injected fact" do
+    # Issue #1087, Turgon37.sssd: sssd.conf.j2 iterates
+    # `{% for domain in sssd__domains %}` while the gathered facts inject
+    # `ansible_domain`, and real's template resolves `{{ domain }}` to the
+    # loop binding - no INJECT_FACTS_AS_VARS block at the file (live-
+    # verified against 2.21.6). The sibling template's direct fact read
+    # proves the walk still finds the reads real warns about.
+    stdout, stderr, dir = run_files({
+      "play.yml" => <<-PLAYBOOK,
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        vars:
+          domains:
+            - example.com
+        tasks:
+          - name: loop shadows the fact
+            ansible.builtin.template:
+              src: loop.j2
+              dest: loop.txt
+          - name: direct fact read
+            ansible.builtin.template:
+              src: direct.j2
+              dest: direct.txt
+      PLAYBOOK
+      "loop.j2"   => "{% for domain in domains %}[domain/{{ domain }}]\n{% endfor %}",
+      "direct.j2" => "domain={{ ansible_domain }}\n",
+    })
+
+    stdout.must_include("TASK [loop shadows the fact]")
+    stdout.must_include("TASK [direct fact read]")
+    stderr.wont_include("Origin: #{File.join(dir, "loop.j2")}")
+    stderr.must_include("Origin: #{File.join(dir, "direct.j2")}\n")
+    stderr.scan(/DEPRECATION WARNING\]: #{Regex.escape(FACT_DEPRECATION_TEXT)}/).size.must_equal(1)
+  end
+
   it "prints one block when a param and a template file read the same leaf" do
     # The issue #1030 round's exact flow: the set_fact param reads the
     # nested leaf, then the zone template reads it again - real prints the
