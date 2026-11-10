@@ -1903,7 +1903,7 @@ module Krikri
       return nil unless path && source_line > 0 && File.file?(path)
 
       lines = File.read_lines(path)
-      return nil unless idx = param_key_line_index(lines, source_line, key, list_entry_key, text)
+      return free_form_param_origin(path, lines, source_line, key) unless idx = param_key_line_index(lines, source_line, key, list_entry_key, text)
       line = lines[idx]
       needle = "#{key}:"
       col = line.index!(needle) + needle.size
@@ -1911,6 +1911,37 @@ module Krikri
         col += 1
       end
       ErrorBlock.origin_context(path, idx + 1, col + 1)
+    end
+
+    # A module called in its free-form key=value form (`fail: msg="..."`,
+    # `debug: msg="..."`) writes the param inside the action directive's
+    # own scalar, where the `<key>:` line scan finds nothing. Real anchors
+    # the read at that `<key>=` token, on the directive's own line
+    # (fabiohbarbosa.synapse's failing `fail: msg="... {{ ansible_
+    # distribution }} ..."` reported 9:9 - across the colon, at the
+    # `msg=`; issue #1089, live-verified against 2.21.6).
+    private def self.free_form_param_origin(path : String, lines : Array(String), source_line : Int32, key : String) : String?
+      needle = "#{key}="
+      task_indent = source_line > 0 && source_line <= lines.size ? lines[source_line - 1].size - lines[source_line - 1].lstrip.size : 0
+      ((source_line - 1)...lines.size).each do |idx|
+        line = lines[idx]
+        # Stop at the next task: a free-form directive belongs to THIS
+        # task's own mapping block.
+        if idx > source_line - 1
+          indent = line.size - line.lstrip.size
+          break if indent <= task_indent && line.lstrip.starts_with?("- ")
+        end
+        at = line.index(needle)
+        next unless at
+        colon = line.index(':')
+        next unless colon && colon < at
+        directive = line[0...colon].strip
+        # Only a module/action directive, never an arbitrary value that
+        # happens to contain "<key>=" somewhere in the scalar.
+        next unless directive.matches?(/\A(?:-\s+)?(?:[A-Za-z0-9_]+\.)*[A-Za-z0-9_]+\z/)
+        return ErrorBlock.origin_context(path, idx + 1, at + 1)
+      end
+      nil
     end
 
     # The Origin of a top-level fact read inside a LOOP SOURCE. Ansible
@@ -1973,7 +2004,10 @@ module Krikri
       return nil unless path && source_line > 0 && File.file?(path)
 
       lines = File.read_lines(path)
-      return nil unless idx = param_key_line_index(lines, source_line, key)
+      # No `<key>:` line at all: a free-form key=value action directive
+      # (`fail: msg="..."`), which param_value_origin can place at its
+      # `<key>=` token.
+      return param_value_origin(path, source_line, key) unless idx = param_key_line_index(lines, source_line, key)
       key_line = lines[idx]
       needle = "#{key}:"
       rest = key_line[(key_line.index!(needle) + needle.size)..]

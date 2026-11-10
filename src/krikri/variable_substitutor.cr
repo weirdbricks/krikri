@@ -2152,7 +2152,15 @@ module Krikri
       return site.origin if site.origin
       # A task's own `name:` opens its mapping (`- name:`), so the list
       # dash is part of that key's line prefix.
-      ResultDisplay.param_value_origin(site.source_file, site.source_line, site.key, list_entry_key: site.key == "name", text: site.text)
+      if site.key == "name"
+        return ResultDisplay.param_value_origin(site.source_file, site.source_line, site.key, list_entry_key: true, text: site.text)
+      end
+      # A block-sequence param value is its own set of YAML scalars, and
+      # real tags each of them, so a fact read inside one is pinned at the
+      # ITEM that named it - `debug: msg: [...]` containing the fact
+      # reported the list item's token, not the `msg:` key's value
+      # position (fabiohbarbosa.synapse's role banner, issue #1089).
+      ResultDisplay.conditional_value_origin(site.source_file, site.source_line, site.key, name, site.text)
     end
 
     def self.play_hosts_read_origin : String?
@@ -2217,10 +2225,18 @@ module Krikri
       # that named the fact, not to the loop keyword's own value token -
       # real renders the items through the templar and tags the element
       # (mullholland.ntp's with_first_found candidates, issue #956).
+      # The clause being EVALUATED wins over that site: ansible resolves a
+      # loop source's undefined-variable failure by evaluating the task's
+      # conditional BEFORE it re-raises, and that evaluation is its own
+      # templating operation (brentwg.docker's import-line `when:` reading
+      # a fact while its with_items source is undefined, issue #1089).
+      if current_when_site
+        return current_deprecation_origin(name) if deprecation_site_names?(name)
+        return nil
+      end
       if loop_site = current_loop_source_site
         return ResultDisplay.loop_source_origin(loop_site.source_file, loop_site.source_line, loop_site.key, name)
       end
-      STDERR.puts "DBG fact_read_origin name=#{name} names?=#{deprecation_site_names?(name)} when_site=#{current_when_site.inspect} param=#{current_task_param.inspect} tpl=#{current_template_file.inspect} preparing=#{@@preparing_vars[Fiber.current]?.try(&.size)}"
       deprecation_site_names?(name) ? current_deprecation_origin(name) : nil
     end
 
@@ -2555,7 +2571,6 @@ module Krikri
     # the operation's block, so a later placeable read in the same operation
     # still gets it - real keeps the first ACCESS, whichever fact it named.
     def self.emit_fact_deprecation(origin : String?) : Nil
-      STDERR.puts "DBG emit_fact_deprecation origin=#{origin.inspect} op=#{current_fact_deprecation_op.inspect}"
       return unless origin
       return if suppress_eager_scope_deprecations?
       # A capture is open (a task `vars:` value rendering eagerly at

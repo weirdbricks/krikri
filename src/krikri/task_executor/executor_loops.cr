@@ -1145,7 +1145,6 @@ module Krikri
       # createcluster's missing conf.txt, issue #774).
       raise LoopLookupError.new(ex.message || "lookup failed", origin_known: true)
     rescue ex : UndefinedVariableError
-      STDERR.puts "DBG loop undefined rescue when=#{task.when_condition.inspect}"
       if when_condition = task.when_condition
         # Ansible evaluates the task's own when: BEFORE the loop source
         # is ever templated, and WHAT the when: itself references decides
