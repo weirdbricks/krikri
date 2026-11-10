@@ -3003,6 +3003,27 @@ module Krikri
         result = attempt_body ? attempt_body.call : execute_task_once(task, host, vars_context, item_label: item_label, exec_host: exec_host, defer_loop_stats: defer_loop_stats)
         break unless result
 
+        # Ansible applies a run's own ansible_facts as each attempt
+        # RETURNS (the action plugin writes them inside handler.run, so
+        # the next until: evaluation already sees the fact the attempt
+        # just set - live-verified vs 2.21.6: set_fact with `until: _p
+        # is defined` succeeds on attempt 1), and the write targets the
+        # delegate_facts: delegate exactly like the plain path's
+        # fact_host rule. This retry core was the only place facts were
+        # never merged at all - a single until:/retries: task lost its
+        # set_fact entirely (issue #1110: the next task's
+        # hostvars['localhost'] read found nothing).
+        fact_target = (task.delegate_facts? && task.delegate_to) ? exec_host : host
+        merge_ansible_facts(fact_target, result, task.module_name.ends_with?("set_fact"), task)
+        # A fact applied to the task's own host is visible under its bare
+        # name for the rest of the task (the next attempt's until:
+        # check), the same running-context carry execute_looped_task does
+        # between items; a delegate_facts: fact stays off the origin's
+        # bare names exactly as in real.
+        if fact_target == host && (facts = result["ansible_facts"]?) && (facts_hash = facts.as_h?)
+          facts_hash.each { |key, value| vars_context[key] = value }
+        end
+
         # An action-level failure (the result's _ansible_action_level marker,
         # e.g. unarchive's missing-dest check) is an EXCEPTION in Ansible's
         # executor: it propagates out of handler.run() and escapes the whole
