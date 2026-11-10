@@ -211,6 +211,14 @@ krikri aims for byte-for-byte identical stdout/stderr/exit code to `ansible-play
   is masked, in `scripts/output_parity.sh` and `krikri-role-tester`'s `Compare` (`http-date`). The
   generator has no mask for it yet, so `krikri-playbook-generator` still reports the shape as a
   divergence.
+- A `copy:`/`template:` `validate:` command's stderr is echoed raw, and a validator like `haproxy`
+  prefixes every ALERT line with the PID of the process that parsed the config
+  (`[ALERT]    (590) : parsing [...]`). That PID is assigned by the kernel to whichever validator
+  process each engine spawns, so it differs between any two executions of the SAME engine: two real
+  Ansible runs of one `validate:` task printed `(4175548)` and `(4182901)`, and issue #1090's whole
+  emmetog.haproxy diff was that number and nothing else. Unmatchable by design; only the digits are
+  masked, in `scripts/output_parity.sh` (the krikri-role-tester side needs its own
+  `Compare::MASKS` entry, which the mask pass adds).
 - `-vvv` module-execution mechanics lines (`ESTABLISH LOCAL CONNECTION ...`, `EXEC`/`PUT`,
   `Using module file ...`, `Pipelining is enabled.`): no interpreter, module file or staged tmp dir
   exists here, and those lines embed per-run random `ansible-tmp-<epoch>-<pid>-<random>` paths. Masked
