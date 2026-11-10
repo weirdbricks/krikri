@@ -549,21 +549,25 @@ module Krikri
     # stands down - see the include branch's comment), with *failed*
     # true and *tasks* empty.
     #
-    # The two fatal shapes are live-verified vs 2.19.11 for a HANDLER's
+    # The two fatal shapes are live-verified for a HANDLER's
     # include_tasks: and are byte-identical to the regular-task path's:
-    #   missing file  -> the "[ERROR]: Could not find or access ..."
-    #                    block plus {"changed": false, "include": ...,
-    #                    "reason": ...} (fail_include_tasks_file_not_found)
+    #   missing file  -> the 2.21 "[ERROR]: Unable to retrieve file
+    #                    contents ..." block on STDOUT plus
+    #                    {"changed": false, "msg": ...}
+    #                    (fail_include_tasks_file_not_found)
     #   non-list file -> plain "[ERROR]: included task files must contain
-    #                    a list of tasks" plus the same include/reason
-    #                    fatal line
+    #                    a list of tasks" plus an include/reason fatal
+    #                    line (2.19 shape; 2.21 also adds the Origin block
+    #                    and narrows the dump to msg - not fixed here)
     private def load_handler_include_file(handler : Task, host : Host, vars_context : Hash(String, JSON::Any)) : {String, Array(Task), Bool}
       path_substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
-      file_rel = path_substitutor.substitute(handler.include_file.as(String))
+      file_rel = with_include_tasks_path_site(handler) do
+        path_substitutor.substitute(handler.include_file.as(String))
+      end
       resolved_path = PlaybookParser.resolve_include_path(file_rel, handler.include_file_dir.as(String), File.expand_path(@playbook_dir))
 
       unless File.exists?(resolved_path)
-        fail_include_tasks_file_not_found(handler, host, resolved_path, file_rel)
+        fail_include_tasks_file_not_found(handler, host, resolved_path)
         return {resolved_path, [] of Task, true}
       end
 

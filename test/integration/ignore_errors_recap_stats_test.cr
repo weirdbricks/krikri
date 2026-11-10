@@ -50,20 +50,21 @@ describe "ignore_errors: on a controller-side failure counts as ok+ignored, not 
     output.must_match(/ignored=1\b/)
   end
 
-  it "include_tasks: on a missing file fails fatally even under ignore_errors: (Ansible 2.19.11)" do
-    # Live-verified against ansible-core 2.19.11 (this expectation
-    # used to claim ok+ignored and "still going" - wrong): an
-    # include_tasks: whose file resolves nowhere is a fatal include
-    # failure that ignore_errors: does NOT apply to - the play halts for
-    # the host, failed=1 ignored=0, rc=2, with the DataLoader error block
-    # on stderr and the two-key fatal dump on stdout.
+  it "include_tasks: on a missing file fails fatally even under ignore_errors: (Ansible 2.21.6)" do
+    # Live-verified against ansible-core 2.21.6 (this expectation used to
+    # claim ok+ignored and "still going" - wrong): an include_tasks: whose
+    # file resolves nowhere is a fatal include failure that ignore_errors:
+    # does NOT apply to - the play halts for the host, failed=1 ignored=0,
+    # rc=2, with the DataLoader error block on stdout and the msg-only
+    # fatal dump after it.
+    missing = "/nonexistent/does-not-exist-#{Random.rand(1_000_000)}.yml"
     status, output = run_playbook(<<-YAML)
       - hosts: localhost
         connection: local
         gather_facts: false
         tasks:
           - name: include a file that doesn't exist
-            include_tasks: "/nonexistent/does-not-exist-#{Random.rand(1_000_000)}.yml"
+            include_tasks: "#{missing}"
             ignore_errors: true
           - name: still runs after
             debug:
@@ -74,7 +75,7 @@ describe "ignore_errors: on a controller-side failure counts as ok+ignored, not 
     output.wont_include("still going")
     output.must_match(/failed=1\b/)
     output.must_match(/ignored=0\b/)
-    output.must_include("{\"changed\": false, \"include\": \"/nonexistent/does-not-exist-")
+    output.must_include("{\"changed\": false, \"msg\": \"Unable to retrieve file contents. Could not find or access '#{missing}'")
   end
 
   it "include_vars: on a missing file, WITHOUT ignore_errors:, still fails and halts" do

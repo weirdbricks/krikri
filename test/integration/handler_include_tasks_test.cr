@@ -266,15 +266,17 @@ describe "handler include_tasks display" do
       YAML
 
     status, output = run_fixture(dir)
-    # ansible-core 2.19.11: rc=2, failed=1, the "[ERROR]: Could not find
-    # or access ..." block plus the {"changed": false, "include": ...,
-    # "reason": ...} fatal line - the same shape a regular task's
-    # include_tasks: gets.
+    # ansible-core 2.21.6: rc=2, failed=1, the "[ERROR]: Unable to
+    # retrieve file contents. Could not find or access ..." block plus the
+    # {"changed": false, "msg": ...} fatal line - the same shape a regular
+    # task's include_tasks: gets.
     status.exit_code.must_equal(2)
     output.must_include("RUNNING HANDLER [missing file handler]")
-    output.must_include("Could not find or access 'FIXDIR/nope.yml' on the Ansible Controller")
+    output.must_include("Unable to retrieve file contents. Could not find or access 'FIXDIR/nope.yml' on the Ansible Controller: " \
+                        "[Errno 2] No such file or directory: 'FIXDIR/nope.yml'")
     output.wont_include("Included tasks file not found")
-    output.must_include("\"reason\": \"Could not find or access 'FIXDIR/nope.yml'")
+    output.must_include("\"msg\": \"Unable to retrieve file contents. Could not find or access 'FIXDIR/nope.yml'")
+    output.wont_include("\"reason\":")
     output.must_include("localhost                  : ok=1    changed=1    unreachable=0    failed=1")
   end
 
