@@ -89,6 +89,13 @@ module Krikri
     # `name: "Restart {{ _common_service_name }}"`) - matching against
     # the raw, unrendered `handler.name` (as this used to) never equals
     # any real notify: string.
+    # *ignore_errors_resolver* resolves a handler's (possibly templated)
+    # `ignore_errors:` against its real scope, threaded the same way
+    # (mirrors TaskExecutor#resolve_task_ignore_errors): a failing
+    # handler caught by it must print "...ignoring" and count ok +
+    # ignored in the recap, never failed (issue #1112) - the same
+    # resolution execute_handler_internal's own halt decision uses, so
+    # display, stats and halting can never disagree.
     # *halted_hosts* - hosts a prior task already failed on (unrescued,
     # no ignore_errors:) for this run. Ansible never runs a
     # halted host's own notified handlers at the end-of-play flush -
@@ -110,6 +117,7 @@ module Krikri
       name_resolver : Proc(Task, Host, String)? = nil,
       halted_hosts : Set(String)? = nil,
       unusable_handlers : Set(Task)? = nil,
+      ignore_errors_resolver : Proc(Task, Host, Bool)? = nil,
     )
       return unless any_notified?
 
@@ -183,7 +191,8 @@ module Krikri
           @hosts.each do |host|
             run_handler_on_host(handler, handler_index, host, pass,
               execute_callback, results, diff_mode, name_resolver, halted_hosts,
-              attachments[host.name], already_ran[host.name], second_pass[host.name], bannered)
+              ignore_errors_resolver, attachments[host.name], already_ran[host.name],
+              second_pass[host.name], bannered)
           end
         end
 
@@ -211,6 +220,7 @@ module Krikri
                                     diff_mode : Bool,
                                     name_resolver : Proc(Task, Host, String)?,
                                     halted_hosts : Set(String)?,
+                                    ignore_errors_resolver : Proc(Task, Host, Bool)?,
                                     attached : Set(Int32),
                                     already_ran : Set(String),
                                     second_pass : Set(String),
@@ -280,7 +290,8 @@ module Krikri
       # contradictory "ok:" line right underneath, and
       # #update_stats would count it toward "ok" instead of
       # "skipped" in the recap.
-      record_handler_result(result, results[host.name], host, handler, diff_mode)
+      record_handler_result(result, results[host.name], host, handler, diff_mode,
+        handler_ignore_errors(handler, host, ignore_errors_resolver))
 
       true
     end
@@ -325,11 +336,29 @@ module Krikri
       !already_ran.includes?(rendered_name) && attached.includes?(handler_index)
     end
 
+    # A failing handler caught by ignore_errors: must print its
+    # "...ignoring" and count ok + ignored, never failed, in the recap
+    # exactly like a regular task's ignored failure (issue #1112).
+    # Resolved through the threaded resolver against the handler's real
+    # scope - the same resolution execute_handler_internal's halt
+    # decision already uses - so a templated `ignore_errors: "{{
+    # ansible_check_mode }}"` follows the live value, not the parse-time
+    # guess; without a resolver the guess stands.
+    private def handler_ignore_errors(handler : Task, host : Host,
+                                      ignore_errors_resolver : Proc(Task, Host, Bool)?) : Bool
+      if resolver = ignore_errors_resolver
+        resolver.call(handler, host)
+      else
+        handler.ignore_errors?
+      end
+    end
+
     # Records one handler result: a when:-skipped handler, a looped
     # handler that already printed its own per-item lines, or an
     # ordinary one that still needs displaying.
     private def record_handler_result(result : JSON::Any, stats : Hash(String, Int32),
-                                      host : Host, handler : Task, diff_mode : Bool) : Nil
+                                      host : Host, handler : Task, diff_mode : Bool,
+                                      ignore_errors : Bool) : Nil
       if result["handler_unreachable_counted"]?.try(&.as_bool)
         # The unreachable was already booked (fatal report, unreachable
         # stat, host halted) inside TaskExecutor#execute_handler_internal -
@@ -353,7 +382,7 @@ module Krikri
         # its own per-item result lines - only the stats (from
         # its changed:/failed: aggregate across every item) still
         # need recording here, not a second summary display line.
-        ResultDisplay.update_stats(stats, result)
+        ResultDisplay.update_stats(stats, result, ignore_errors)
       else
         # no_log: a handler is as capable of holding a secret as
         # any other task, and this is the non-looped handler's
@@ -364,8 +393,8 @@ module Krikri
         # sites - see resolve_task_no_log there), so a templated value
         # still falls back to the parse-time guess here specifically -
         # same pre-existing gap as before this fix, not a regression.
-        ResultDisplay.display_result(host, result, diff_mode, no_log: handler.no_log?, module_name: handler.module_name, source_task: handler)
-        ResultDisplay.update_stats(stats, result)
+        ResultDisplay.display_result(host, result, diff_mode, ignore_errors: ignore_errors, no_log: handler.no_log?, module_name: handler.module_name, source_task: handler)
+        ResultDisplay.update_stats(stats, result, ignore_errors)
       end
     end
 

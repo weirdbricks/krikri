@@ -240,4 +240,53 @@ describe Krikri::HandlerRunner do
 
     results[host.name]["ok"].must_equal(1)
   end
+
+  it "counts a failed handler caught by ignore_errors: as ok+ignored, not failed" do
+    # Issue #1112: the recording step dropped the handler's
+    # ignore_errors: entirely (display_result/update_stats got no such
+    # value), so the "...ignoring" line ansible prints never appeared
+    # and the recap counted failed=1 where ansible counts ok + ignored.
+    host = make_host
+    handler = make_handler("failing handler")
+    handler.ignore_errors = true
+    runner = Krikri::HandlerRunner.new([handler], [host])
+    runner.notify(host, "failing handler")
+
+    results = {host.name => {"ok" => 0, "changed" => 0, "failed" => 0, "skipped" => 0, "rescued" => 0, "ignored" => 0}}
+    callback = ->(_handler : Krikri::Task, _host : Krikri::Host) {
+      JSON.parse({"changed" => false, "failed" => true, "msg" => "handler failed on purpose"}.to_json)
+    }
+    runner.run(callback, results, false)
+
+    results[host.name]["failed"].must_equal(0)
+    results[host.name]["ok"].must_equal(1)
+    results[host.name]["ignored"].must_equal(1)
+  end
+
+  it "resolves a templated ignore_errors: through the threaded resolver, not the parse-time guess" do
+    # Issue #1112's shape: `ignore_errors: "{{ ansible_check_mode }}"`.
+    # The parse-time guess defaults templated values to TRUE, which is
+    # wrong on a normal (non-check) run where ansible does NOT ignore -
+    # only the live resolution threaded in from TaskExecutor can follow
+    # the run's real mode, and the recording step must obey it.
+    host = make_host
+    handler = make_handler("failing handler")
+    handler.ignore_errors_expr = "{{ ansible_check_mode }}"
+    handler.ignore_errors = true
+    runner = Krikri::HandlerRunner.new([handler], [host])
+    runner.notify(host, "failing handler")
+
+    results = {host.name => {"ok" => 0, "changed" => 0, "failed" => 0, "skipped" => 0, "rescued" => 0, "ignored" => 0}}
+    callback = ->(_handler : Krikri::Task, _host : Krikri::Host) {
+      JSON.parse({"changed" => false, "failed" => true}.to_json)
+    }
+    # Runtime resolution says FALSE (a normal run): the failure must
+    # count failed even though the parse-time guess says ignore.
+    resolver = ->(_task : Krikri::Task, _host : Krikri::Host) { false }
+    runner.run(callback, results, false, nil, nil, nil, resolver)
+
+    results[host.name]["failed"].must_equal(1)
+    results[host.name]["ok"].must_equal(0)
+    results[host.name]["ignored"].must_equal(0)
+  end
 end
