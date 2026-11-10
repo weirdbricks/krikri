@@ -254,11 +254,18 @@ module Krikri
     # `"['a','b']"` becomes a real array for the module, the way
     # Ansible passes typed args. Plus Ansible's own reserved
     # `_ansible_*` keys a new-style module's AnsibleModule reads.
-    def build_module_args(params : Hash(String, String), check_mode : Bool, module_name : String) : String
+    def build_module_args(params : Hash(String, String), check_mode : Bool, module_name : String, verbosity : Int32 = 0) : String
       args = Hash(String, JSON::Any).new
       args["_ansible_check_mode"] = JSON::Any.new(check_mode)
       args["_ansible_diff"] = JSON::Any.new(false)
-      args["_ansible_verbosity"] = JSON::Any.new(0_i64)
+      # Ansible's action layer passes the run's verbosity with every
+      # module call (plugins/action/__init__.py: "module_args['_ansible_verbosity']
+      # = display.verbosity"), and real basic.py promotes it into the
+      # self._verbosity attribute (PASS_VARS 'verbosity', default 0) -
+      # a custom module reads the play's -v level back as
+      # module._verbosity (issue #1108), so it must be the REAL level,
+      # never the hardcoded 0 this used to ship.
+      args["_ansible_verbosity"] = JSON::Any.new(verbosity.to_i64)
       # Ansible's action base adds the invoked module's short name to the
       # args (plugins/action/__init__.py: "module_args['_ansible_module_name']
       # = module_name"), and real basic.py promotes it into self._name
@@ -477,6 +484,14 @@ module Krikri
               # "'AnsibleModule' object has no attribute '_diff'" before
               # it ever looked at its params (issue #955).
               self._diff = bool(raw_args.pop('_ansible_diff', False))
+              # Real basic.py's PASS_VARS always exposes `_verbosity`
+              # (from `_ansible_verbosity`, default 0) on the instance -
+              # assigned raw, 'verbosity' is not in PASS_BOOLS - and
+              # modules read the play's -v level back as
+              # module._verbosity. Without the attribute a custom module
+              # reading it died with "'AnsibleModule' object has no
+              # attribute '_verbosity'" (issue #1108).
+              self._verbosity = raw_args.pop('_ansible_verbosity', 0)
               self._apply_argument_spec(raw_args)
               # Real basic.py closes __init__ with this same gate
               # (basic.py: "if self.check_mode and not
