@@ -251,7 +251,16 @@ module Krikri
       # same shape Jinja2's lexer itself uses). Done AFTER
       # render_template's own trailing-newline normalization so the
       # appended final newline obeys the sequence too.
-      if newline_sequence != "\n"
+      #
+      # Only for content Ansible's templating engine would actually
+      # compile: a string holding no template syntax is handed back
+      # byte-for-byte (its is_possibly_template gate bypasses the Jinja
+      # lexer, and with it this normalization) - live-verified against
+      # 2.21.6, where newline_sequence: "\r" on a plain `A\nB\n` source
+      # still writes LF bytes while the same body with one `{{ }}` added
+      # comes out fully CR-converted (kpg issue #1072: the difference
+      # surfaced in a failed copy deployment's reported source checksum).
+      if newline_sequence != "\n" && template_engine_would_render?(template_content)
         rendered_content = rendered_content.split(/\r\n|\r|\n/).join(newline_sequence)
       end
 
@@ -1106,6 +1115,21 @@ module Krikri
     private def delimiter_param(name : String, default : String) : String
       raw = @params[name]?
       (raw.nil? || raw.empty?) ? default : raw
+    end
+
+    # Whether Ansible's templating engine would compile *content* at all -
+    # its is_possibly_template gate: a literal leading `#jinja2:` override
+    # header, or one of the variable/block/comment START markers anywhere
+    # in the text. Anything else is handed back untouched, so no Jinja
+    # behavior (the newline_sequence normalization included) can apply to
+    # it. The markers are the task's own delimiter params, not bare
+    # Jinja2 defaults, because Ansible merges them into the same override
+    # set the gate consults.
+    private def template_engine_would_render?(content : String) : Bool
+      return true if content.starts_with?("#jinja2:")
+      [delimiter_param("variable_start_string", "{{"),
+       delimiter_param("block_start_string", "{%"),
+       delimiter_param("comment_start_string", "{#")].any? { |marker| content.includes?(marker) }
     end
 
     # Ansible's _find_needle search for a bare relative template src

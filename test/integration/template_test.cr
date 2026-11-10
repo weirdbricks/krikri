@@ -253,6 +253,41 @@ describe "template plugin param coverage" do
     it "converts the whole rendered output to CR with newline_sequence: \"\\r\"" do
       src = tmp_path("nl_cr.j2")
       dest = tmp_path("nl_cr.out")
+      # The body has to hold template syntax: Ansible hands a source with
+      # none back untouched (no Jinja compile, so no newline
+      # normalization) - see the marker-free spec below.
+      File.write(src, "A\nB {{ 1 }}\n")
+
+      playbook = File.tempname("template-param-spec", ".yml")
+      File.write(playbook, <<-YAML)
+        - hosts: localhost
+          connection: local
+          gather_facts: false
+          tasks:
+            - name: render
+              ansible.builtin.template:
+                src: #{src}
+                dest: #{dest}
+                newline_sequence: "\\r"
+        YAML
+
+      run_playbook(playbook)
+
+      File.read(dest).must_equal("A\rB 1\r")
+    ensure
+      File.delete(src) if src && File.exists?(src)
+      File.delete(dest) if dest && File.exists?(dest)
+      File.delete(playbook) if playbook && File.exists?(playbook)
+    end
+
+    it "leaves a source with no template syntax untouched (issue #1072)" do
+      # Live-verified vs ansible-core 2.21.6: `newline_sequence: "\r"` on
+      # a body holding neither a `#jinja2:` header nor a variable/block/
+      # comment start marker writes the LF bytes verbatim. The copy
+      # delegation then reports the SOURCE's own checksum, which is where
+      # kpg's unarchive-chaos playbook showed the divergence.
+      src = tmp_path("nl_plain.j2")
+      dest = tmp_path("nl_plain.out")
       File.write(src, "A\nB\n")
 
       playbook = File.tempname("template-param-spec", ".yml")
@@ -270,7 +305,7 @@ describe "template plugin param coverage" do
 
       run_playbook(playbook)
 
-      File.read(dest).must_equal("A\rB\r")
+      File.read(dest).must_equal("A\nB\n")
     ensure
       File.delete(src) if src && File.exists?(src)
       File.delete(dest) if dest && File.exists?(dest)
