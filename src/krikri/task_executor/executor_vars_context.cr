@@ -2614,6 +2614,26 @@ module Krikri
       ConditionalEvaluator.evaluate(rendered, vars) rescue task.no_log?
     end
 
+    # The `(item=...)` label real's default callback prints for a skipped
+    # loop item, when that label is NOT the item's own rendering - nil when
+    # the caller must render it normally. A when:-false skip is recorded
+    # BEFORE the task's no_log is post-validated, and ansible-core censors
+    # that item result on the RAW no_log value - so `no_log: "{{ a_flag }}"`
+    # with a_flag false censors too, stripping both `item` and
+    # `_ansible_item_label` from the result; the callback's label lookup
+    # then finds nothing and prints `(item=None)`. A no_log that really
+    # resolves true keeps its `_ansible_no_log` marker and shows
+    # `(censored due to no_log)` instead. Neither case renders a
+    # loop_control.label at all, so callers must skip that work too
+    # (live-verified vs 2.21.6, issue #1088: geerlingguy.mysql's
+    # `no_log: "{{ mysql_hide_passwords }}"`, false by default, printed
+    # `(item=None)` where krikri printed the item).
+    private def skipped_loop_item_censored_label(task : Task, vars_context : Hash(String, JSON::Any)? = nil) : String?
+      return "(censored due to no_log)" if resolve_task_no_log(task, vars_context)
+      return "None" if task.no_log_raw_truthy?
+      nil
+    end
+
     # ── issue #317: a templated no_log: whose variable is UNDEFINED ──
     #
     # ansible-core 2.19 strictly templates every task keyword before the

@@ -101,7 +101,7 @@ describe "no_log censoring on looped include item labels" do
     output.wont_include("templated-false-item")
   end
 
-  it "prints the raw loop item on a skipping line for a templated no_log that resolves false" do
+  it "censors the loop item on a skipping line for a templated no_log that resolves false" do
     _status, output = run_include_playbook(<<-YAML)
       - hosts: localhost
         connection: local
@@ -117,8 +117,32 @@ describe "no_log censoring on looped include item labels" do
               - skip-plain-item
       YAML
 
-    output.must_include("(item=skip-plain-item)")
+    # The skip is recorded before no_log is post-validated, so real still
+    # censors the item result on the RAW templated value and its label
+    # lookup falls through to None (issue #1088, live-verified vs 2.21.6).
+    output.must_include("skipping: [localhost] => (item=None)")
+    output.wont_include("skip-plain-item")
     output.wont_include("censored due to no_log")
+  end
+
+  # A quoted "false" is a non-empty string to ansible, so the pre-
+  # validation censoring treats it exactly like the templated spelling
+  # (issue #1088, live-verified vs 2.21.6).
+  it "censors the loop item on an included line for a quoted string no_log" do
+    _status, output = run_include_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: quoted-false include
+            include_tasks: "{{ INCLUDE_PATH }}"
+            no_log: "false"
+            loop:
+              - quoted-false-item
+      YAML
+
+    output.must_include("(item=(censored due to no_log))")
+    output.wont_include("quoted-false-item")
   end
 end
 

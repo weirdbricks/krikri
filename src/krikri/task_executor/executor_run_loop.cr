@@ -1397,7 +1397,7 @@ module Krikri
         # with no loop it prints a bare `skipping: [host]` even under no_log
         # (there is no item to censor), while loop items print the censored
         # item because the item can itself be the secret.
-        shown = item_label ? (resolve_task_no_log(task) ? "(censored due to no_log)" : item_label) : nil
+        shown = item_label ? (skipped_loop_item_censored_label(task) || item_label) : nil
         suffix = shown ? " => (item=#{shown}) " : ""
         if Krikri::Oneline.enabled?
           # A plain skip renders the bare `host | SKIPPED` line; a loop

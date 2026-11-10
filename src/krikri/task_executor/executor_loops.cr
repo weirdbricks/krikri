@@ -2381,7 +2381,7 @@ module Krikri
         # interleaves with the executed items exactly as Ansible does.
         if (skipped = skipped_items[idx]?)
           connection_host = host.name
-          shown = resolve_task_no_log(task, base_vars_context) ? "(censored due to no_log)" : skipped.label
+          shown = skipped_loop_item_censored_label(task, base_vars_context) || skipped.label
           # Same module-keyed -v dump rule the skipped-block printer uses
           # (see skipped_loop_item_suffix_for): debug shows the short
           # {false_condition, item} dump, everything else the full cleaned

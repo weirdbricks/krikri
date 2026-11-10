@@ -1679,7 +1679,11 @@ module Krikri
       # Only a loop_control.label needs the (expensive) per-item context;
       # without one the label is just the item's own Python repr.
       label_base_context = task.loop_label ? build_vars_context(task, host) : nil
-      no_log = resolve_task_no_log(task, vars_context)
+      # Real templates the skipped member's no_log: even when nothing shows
+      # its label, so a deprecation that templating raises still prints
+      # (the per-item label helper re-resolves it, but a zero-item loop
+      # would otherwise never do so).
+      resolve_task_no_log(task, vars_context)
       is_debug = debug_module?(task)
       # Real templates each item's loop_control.label even on this block-
       # skip path (the inherited when: is evaluated per item, then the
@@ -1692,18 +1696,23 @@ module Krikri
       # the failure entirely (krikri printed plain skipping lines, rc=0,
       # where real failed the task, rc=2). Skipped under no_log: the
       # label never renders there at all (an unrendered label could echo
-      # the secret it hides), so there is no failure to detect either.
+      # the secret it hides), so there is no failure to detect either. A
+      # raw-truthy no_log that resolves false censors the item result too
+      # (see #skipped_loop_item_censored_label), which likewise loses the
+      # label before real can render it.
       any_label_failed = false
       rendered_items.each_with_index do |item, idx|
         label_error = nil.as(Krikri::TaskExecutor::LoopLabelError?)
-        shown = no_log ? "(censored due to no_log)" : begin
-          begin
-            loop_item_strict_label(task, item, idx, rendered_items, label_base_context, host)
-          rescue ex : Krikri::TaskExecutor::LoopLabelError
-            label_error = ex
-            "None"
-          end
-        end
+        shown = if censored = skipped_loop_item_censored_label(task, vars_context)
+                  censored
+                else
+                  begin
+                    loop_item_strict_label(task, item, idx, rendered_items, label_base_context, host)
+                  rescue ex : Krikri::TaskExecutor::LoopLabelError
+                    label_error = ex
+                    "None"
+                  end
+                end
         if label_error
           any_label_failed = true
           # The failed line's item label follows real's callback fallback:
