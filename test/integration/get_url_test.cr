@@ -255,6 +255,19 @@ def sha1_of(content : String) : String
   OpenSSL::Digest.new("SHA1").update(content).final.hexstring
 end
 
+# A stand-in for the target's Python, answering the only probe get_url's
+# check-mode download makes of it (sys.version_info). Pinning the version
+# through ansible_python_interpreter is what lets a spec choose the
+# stdlib whose redirect behaviour real ansible's module would run under,
+# independent of whatever Python the suite itself is running on.
+private def fake_python_reporting_version(major : Int32, minor : Int32) : String
+  path = PluginSpecHelper.tmp_path("get-url-spec-python-#{major}-#{minor}")
+  FileUtils.mkdir_p(File.dirname(path))
+  File.write(path, "#!/bin/sh\nprintf '#{major} #{minor}\\n'\n")
+  File.chmod(path, 0o755)
+  path
+end
+
 # A minimal in-process FTP server standing in for the real one the
 # ovh-kernel round hit (ftp.ovh.net): USER/PASS/TYPE/PASV/RETR/QUIT is
 # the whole command surface get_url's FTP path drives, so the specs
@@ -873,6 +886,52 @@ describe "get_url plugin" do
       "msg", "changed", "checksum_dest", "checksum_src", "dest",
       "elapsed", "url", "src", "uid", "gid", "owner", "group", "mode", "state", "size",
     ])
+    File.read(dest).must_equal(FILE_CONTENT)
+  ensure
+    File.delete(dest) if dest && File.exists?(dest)
+  end
+
+  it "stages the FULL body for a redirected check_mode HEAD on a pre-3.13 Python" do
+    # Issue #1101 (devsoul.codeception's "Install Codeception.":
+    # http://codeception.com/codecept.phar 301 -> https, ubuntu 22.04 /
+    # python 3.10). Real get_url's module runs under the target's own
+    # Python, and only 3.13's urllib keeps a redirected HEAD a HEAD -
+    # before that, HTTPRedirectHandler.redirect_request builds the
+    # follow-up Request without a method, so it goes out as a GET and the
+    # staged copy holds the WHOLE body. That makes the check-mode
+    # checksum comparison against an already-converged dest report ok,
+    # where krikri (keeping the HEAD, so staging nothing) called it
+    # changed and diverged.
+    dest = File.tempname("get-url-spec")
+    File.write(dest, FILE_CONTENT)
+
+    result = PluginSpecHelper.run("get_url", {"url" => "#{GET_URL_TEST_BASE}/redirect.txt", "dest" => dest, "_ansible_check_mode" => "true"},
+      {"ansible_python_interpreter" => fake_python_reporting_version(3, 10)})
+
+    result["changed"].as_bool.must_equal(false)
+    result["checksum_src"].as_s.must_equal(sha1_of(FILE_CONTENT))
+    result["checksum_dest"].as_s.must_equal(sha1_of(FILE_CONTENT))
+    falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+    File.read(dest).must_equal(FILE_CONTENT)
+  ensure
+    File.delete(dest) if dest && File.exists?(dest)
+  end
+
+  it "keeps the HEAD across a redirect on Python 3.13, so a converged dest still reports changed" do
+    # The other side of issue #1101: 3.13's redirect_request passes the
+    # original method on, so the redirected request is still a HEAD and
+    # the staged copy stays empty - Ansible then reports changed for a
+    # dest that already matches. Both halves must hold, or krikri would
+    # trade the old divergence for its mirror image on 3.13 targets.
+    dest = File.tempname("get-url-spec")
+    File.write(dest, FILE_CONTENT)
+
+    result = PluginSpecHelper.run("get_url", {"url" => "#{GET_URL_TEST_BASE}/redirect.txt", "dest" => dest, "_ansible_check_mode" => "true"},
+      {"ansible_python_interpreter" => fake_python_reporting_version(3, 13)})
+
+    result["changed"].as_bool.must_equal(true)
+    result["checksum_src"].as_s.must_equal(sha1_of(""))
+    result["checksum_dest"].as_s.must_equal(sha1_of(FILE_CONTENT))
     File.read(dest).must_equal(FILE_CONTENT)
   ensure
     File.delete(dest) if dest && File.exists?(dest)

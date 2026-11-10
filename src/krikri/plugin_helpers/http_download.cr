@@ -56,8 +56,16 @@ module Krikri
         # ever sends GET or HEAD, and a --check run always HEADs ("From
         # Ansible 2.4 when run with --check, it will do a HEAD request to
         # validate the URL"), which is why its staged copy is empty.
-        # urllib keeps the method across redirect hops.
-        method : String = "GET"
+        method : String = "GET",
+        # Whether the target's urllib re-issues a redirected HEAD as a GET.
+        # Only Python 3.13's HTTPRedirectHandler.redirect_request builds
+        # the follow-up Request with the original method; every earlier
+        # stdlib leaves method= unset there, so that Request defaults to
+        # GET and downloads the whole body. get_url's --check exit compares
+        # the staged body's sha1 against dest's, so the two behaviours
+        # disagree about whether a converged dest is ok or changed (issue
+        # #1101) - the caller asks the target's own interpreter.
+        redirected_head_becomes_get : Bool = false
 
       # What the FINAL response of a redirect-following download looked
       # like: Ansible's get_url derives a directory-dest download's
@@ -689,15 +697,22 @@ module Krikri
       # redirect). The remaining headers, and the auth credentials they
       # were derived from, carry over untouched.
       private def self.redirect_options(options : Options) : Options
-        return options if options.unredirected_headers.empty?
+        # A redirected request's verb: urllib only carries a HEAD over to
+        # the next hop on Python 3.13+ (see Options#redirected_head_becomes_get),
+        # where every earlier stdlib rebuilds the Request as a GET.
+        hop_method = options.redirected_head_becomes_get && options.method == "HEAD" ? "GET" : options.method
 
-        stripped = options.headers.dup
-        options.unredirected_headers.each { |name| stripped.delete(name) }
+        headers = options.headers
+        unless options.unredirected_headers.empty?
+          headers = options.headers.dup
+          options.unredirected_headers.each { |name| headers.delete(name) }
+        end
+
         Options.new(
           max_redirects: options.max_redirects,
           connect_timeout: options.connect_timeout,
           read_timeout: options.read_timeout,
-          headers: stripped,
+          headers: headers,
           verify_tls: options.verify_tls,
           username: options.username,
           password: options.password,
@@ -710,8 +725,8 @@ module Krikri
           http_proxy: options.http_proxy,
           https_proxy: options.https_proxy,
           no_proxy: options.no_proxy,
-          # urllib's redirect_request keeps a redirected HEAD a HEAD
-          method: options.method,
+          method: hop_method,
+          redirected_head_becomes_get: options.redirected_head_becomes_get,
         )
       end
 

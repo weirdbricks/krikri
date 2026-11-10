@@ -7,6 +7,7 @@ require "socket"
 require "../src/krikri/base_plugin"
 require "../src/krikri/python_literal"
 require "../src/krikri/plugin_helpers/http_download"
+require "../src/krikri/plugin_helpers/python_lib_gate"
 require "../src/krikri/plugin_helpers/url_preflight"
 require "../src/krikri/plugin_helpers/url_mask"
 
@@ -1198,7 +1199,42 @@ module Krikri
         # Ansible's --check verb: "it will do a HEAD request to validate
         # the URL" (get_url.py's own docs).
         method: check_mode ? "HEAD" : "GET",
+        # A redirected check-mode HEAD is no longer a HEAD under the
+        # older-stdlib urllib real ansible runs its module with - see
+        # #redirected_head_is_get?.
+        redirected_head_becomes_get: check_mode && redirected_head_is_get?,
       )
+    end
+
+    # Real get_url runs under the target's own Python, and urllib only
+    # learned to keep a redirected HEAD a HEAD in 3.13
+    # (HTTPRedirectHandler.redirect_request builds the follow-up Request
+    # with method= from there on; before that the argument is absent and
+    # the Request defaults to GET). A --check run whose URL redirects
+    # therefore stages the WHOLE body instead of the empty HEAD one, and
+    # get_url's checksum comparison then settles a converged dest to
+    # changed: false. Issue #1101: devsoul.codeception's
+    # http://codeception.com/codecept.phar (301 -> https) on ubuntu
+    # 22.04 / python 3.10 reported ok under Ansible, changed under
+    # krikri, which kept HEAD across the hop.
+    private def redirected_head_is_get? : Bool
+      python = Krikri.interpreter_from_vars(@vars) || Krikri.discovered_target_python
+      return false unless python
+
+      io = IO::Memory.new
+      status = Process.run(python, {"-c", "import sys; print(sys.version_info[0], sys.version_info[1])"},
+        output: io, error: Process::Redirect::Close)
+      return false unless status.success?
+
+      parts = io.to_s.strip.split
+      return false unless parts.size == 2
+
+      {parts[0].to_i, parts[1].to_i} < {3, 13}
+    rescue
+      # An interpreter that cannot even be spawned (a bogus
+      # ansible_python_interpreter) tells us nothing; keep the modern
+      # stdlib's HEAD across the hop.
+      false
     end
 
     # http.client.putheader rejects a name whose first char is ':' or
