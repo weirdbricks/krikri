@@ -2178,7 +2178,22 @@ module Krikri
       if stack = @@preparing_vars[Fiber.current]?
         stack.reverse_each do |preparing|
           text = preparing.text
-          next unless text && text.includes?(name)
+          if text.nil?
+            # A container whose leaves are being rendered in declaration
+            # order (a loop source written as one bare variable reference,
+            # see #with_preparing_loop_source_container): the read belongs
+            # to the FIRST leaf naming the fact, exactly the access real
+            # records first (mullholland.gitlab_runner's two identical
+            # `name:` templates both report defaults/main.yml:55:11,
+            # issue #1092; live-verified against 2.21.6).
+            if preparing.ordered && (container = preparing.container) && !preparing.name.empty?
+              if components = named_leaf_components(container, name)
+                return published_var_origin(preparing.host_name, preparing.name, components)
+              end
+            end
+            next
+          end
+          next unless text.includes?(name)
           if preparing.leaf
             # A nested leaf of a container value: real tags EVERY stored
             # value with its own defining position, nested leaves
@@ -2246,7 +2261,7 @@ module Krikri
     # can register themselves (see #with_preparing_leaf); a *leaf* entry is
     # one of those renders, its *container* still the base variable's whole
     # value, its *text* the leaf's own stored template.
-    record PreparingVar, host_name : String?, name : String, text : String?, container : JSON::Any? = nil, leaf : Bool = false
+    record PreparingVar, host_name : String?, name : String, text : String?, container : JSON::Any? = nil, leaf : Bool = false, ordered : Bool = false
     @@preparing_vars = {} of Fiber => Array(PreparingVar)
 
     def self.push_preparing_var(host_name : String?, name : String, text : String?, container : JSON::Any? = nil) : Nil
@@ -2291,6 +2306,19 @@ module Krikri
       found = [] of Array(String)
       collect_leaf_components(container, text, [] of String, found)
       found.size == 1 ? found[0] : nil
+    end
+
+    # The path of the FIRST leaf, in declaration order, whose own template
+    # text names *name* - for a container render that starts at its first
+    # leaf, so the earliest declaration is the one real reached first and
+    # keeps the deprecation for (see #fact_read_origin). The name must
+    # stand alone: `ansible_distribution` does not match inside
+    # `ansible_distribution_major_version`.
+    def self.named_leaf_components(container : JSON::Any?, name : String) : Array(String)?
+      pattern = /(?<![A-Za-z0-9_.])#{Regex.escape(name)}(?![A-Za-z0-9_])/
+      found = [] of Array(String)
+      collect_named_leaf_components(container, pattern, [] of String, found)
+      found.first?
     end
 
     # The same path for the unique leaf whose stored template text NAMES
@@ -2356,6 +2384,24 @@ module Krikri
       when String
         return unless raw.includes?("{{") || raw.includes?("{%")
         found << path if raw.scan(/ansible_[A-Za-z0-9_]+/).any? { |match| top_level_fact_name?(match[0], vars) }
+      end
+    end
+
+    private def self.collect_named_leaf_components(value : JSON::Any?, pattern : Regex, path : Array(String), found : Array(Array(String))) : Nil
+      case raw = value.try(&.raw)
+      when Array
+        raw.each_with_index do |item, index|
+          collect_named_leaf_components(item, pattern, path + [index.to_s], found)
+        end
+      when Hash
+        raw.each do |key, item|
+          collect_named_leaf_components(item, pattern, path + [key], found)
+        end
+      when String
+        return unless raw.includes?("{{") || raw.includes?("{%")
+        # Only a bare identifier is a fact READ: a quoted occurrence is
+        # prose (`vars_dict_named_in_text?`'s own rule).
+        found << path if raw.gsub(/'[^']*'|"[^"]*"/, " ").matches?(pattern)
       end
     end
 
@@ -2755,6 +2801,48 @@ module Krikri
 
     def self.current_loop_source_site : LoopSourceSite?
       @@loop_source_sites[Fiber.current]?.try(&.last?)
+    end
+
+    # Registers the CONTAINER a loop source written as one bare `{{ name }}`
+    # reference hands to the loop, for the duration of its items' render.
+    # Real gives the loop those leaves still tagged with their DEFINING
+    # positions, so rendering an item reads the fact inside the leaf whose
+    # own declaration the warning reports (defaults/main.yml:55:11 for
+    # mullholland.gitlab_runner's `gitlab_runner_configs` list, issue
+    # #1092) - not the loop keyword's value token, which names only the
+    # variable. Any other source text (a literal list, a filter chain, a
+    # lookup, a dotted reference) reaches leaves this cannot place, so it
+    # keeps the loop-site attribution.
+    def self.with_preparing_loop_source_container(
+      template : String?, vars : Hash(String, JSON::Any), host_name : String?, & : -> T
+    ) : T forall T
+      name = loop_source_container_var(template, vars, host_name)
+      return yield unless name
+      # ordered: the caller renders the container's items leaf by leaf from
+      # its first element, so a read belongs to the earliest leaf naming it.
+      (@@preparing_vars[Fiber.current] ||= Array(PreparingVar).new).push(
+        PreparingVar.new(host_name, name, nil, vars[name], false, true)
+      )
+      begin
+        yield
+      ensure
+        pop_preparing_var
+      end
+    end
+
+    # The container variable a loop SOURCE that is exactly one bare
+    # `{{ name }}` span reads, or nil (see
+    # #with_preparing_loop_source_container).
+    def self.loop_source_container_var(template : String?, vars : Hash(String, JSON::Any), host_name : String?) : String?
+      return nil unless template
+      text = template.strip
+      return nil unless text.starts_with?("{{") && text.ends_with?("}}")
+      name = text[2..-3].strip
+      return nil unless name.matches?(/\A[A-Za-z_][A-Za-z0-9_]*\z/)
+      value = vars[name]?
+      return nil unless value && (value.as_a? || value.as_h?)
+      return nil if resolved_var_name?(host_name, name)
+      name
     end
 
     # Snapshot of every host's unsafe-name registry - the serialized form
