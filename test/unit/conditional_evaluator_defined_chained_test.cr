@@ -101,4 +101,60 @@ describe "Krikri::ConditionalEvaluator (conditional_evaluator_defined_chained_te
       Krikri::ConditionalEvaluator.evaluate("a.b is defined", vars).must_equal(false)
     end
   end
+
+  # Issue #1103, jedimt.kubernetes_create_cluster gating its kubeadm-init
+  # task on `hostvars[groups['k8s_master'][0]]['loadbalancer'] is not
+  # defined` against an inventory with no k8s_master group: real ansible
+  # hard-fails the task ("... has no attribute 'k8s_master'") because the
+  # group lookup is CONSUMED as hostvars' key before the defined test can
+  # answer, while krikri called it undefined and skipped. Only a miss that
+  # propagates all the way to the tested value is tolerated.
+  describe "undefined consumed as a subscript key (issue #1103)" do
+    def cluster_vars
+      {
+        "groups" => JSON::Any.new({
+          "all" => JSON::Any.new([JSON::Any.new("testhost")] of JSON::Any),
+        } of String => JSON::Any),
+        "hostvars" => JSON::Any.new({
+          "testhost" => JSON::Any.new({"loadbalancer" => JSON::Any.new("lb.example")} of String => JSON::Any),
+        } of String => JSON::Any),
+      } of String => JSON::Any
+    end
+
+    it "raises the consumed key's dict miss for is not defined" do
+      assert_raises_message(Krikri::ConditionalEvaluator::UndefinedVariableError, /^object of type 'dict' has no attribute 'k8s_master'$/) do
+        Krikri::ConditionalEvaluator.evaluate(
+          "hostvars[groups['k8s_master'][0]]['loadbalancer'] is not defined",
+          cluster_vars, raise_undefined: true)
+      end
+    end
+
+    it "raises the same miss for the is defined spelling" do
+      assert_raises_message(Krikri::ConditionalEvaluator::UndefinedVariableError, /^object of type 'dict' has no attribute 'k8s_master'$/) do
+        Krikri::ConditionalEvaluator.evaluate(
+          "hostvars[groups['k8s_master'][0]]['loadbalancer'] is defined",
+          cluster_vars, raise_undefined: true)
+      end
+    end
+
+    it "raises when the consumed key is the outer subscript's whole operand" do
+      assert_raises_message(Krikri::ConditionalEvaluator::UndefinedVariableError, /^object of type 'dict' has no attribute 'nope'$/) do
+        Krikri::ConditionalEvaluator.evaluate(
+          "hostvars[groups['nope'][0]] is defined", cluster_vars, raise_undefined: true)
+      end
+    end
+
+    it "keeps a miss that only reaches the tested value lenient" do
+      vars = cluster_vars
+      Krikri::ConditionalEvaluator.evaluate("groups['k8s_master'] is not defined", vars, raise_undefined: true).must_equal(true)
+      Krikri::ConditionalEvaluator.evaluate("hostvars['testhost']['missing'] is not defined", vars, raise_undefined: true).must_equal(true)
+      Krikri::ConditionalEvaluator.evaluate("hostvars[groups['all'][0]]['missing'] is not defined", vars, raise_undefined: true).must_equal(true)
+      Krikri::ConditionalEvaluator.evaluate("hostvars[groups['all'][0]]['loadbalancer'] is defined", vars, raise_undefined: true).must_equal(true)
+    end
+
+    it "keeps lenient (non-task-level) callers answering undefined" do
+      Krikri::ConditionalEvaluator.evaluate(
+        "hostvars[groups['k8s_master'][0]]['loadbalancer'] is not defined", cluster_vars).must_equal(true)
+    end
+  end
 end

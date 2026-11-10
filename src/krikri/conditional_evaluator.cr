@@ -919,18 +919,21 @@ module Krikri
       # ansible-playbook 2.19.11: an existing name -> True/task runs, a
       # missing one -> False/task skips).
       call_shaped_operand = condition.includes?("(")
-      if condition.includes?(" is not undefined") && !call_shaped_operand
-        var_name = condition.gsub(" is not undefined", "").strip
-        return !defined_operand?(vars, var_name)
-      elsif condition.includes?(" is undefined") && !call_shaped_operand
-        var_name = condition.gsub(" is undefined", "").strip
-        return !defined_operand?(vars, var_name)
-      elsif condition.includes?(" is defined") && !call_shaped_operand
-        var_name = condition.gsub(" is defined", "").strip
-        return defined_operand?(vars, var_name)
-      elsif condition.includes?(" is not defined") && !call_shaped_operand
-        var_name = condition.gsub(" is not defined", "").strip
-        return !defined_operand?(vars, var_name)
+      defined_test =
+        if condition.includes?(" is not undefined") && !call_shaped_operand
+          {condition.gsub(" is not undefined", "").strip, false}
+        elsif condition.includes?(" is undefined") && !call_shaped_operand
+          {condition.gsub(" is undefined", "").strip, false}
+        elsif condition.includes?(" is defined") && !call_shaped_operand
+          {condition.gsub(" is defined", "").strip, true}
+        elsif condition.includes?(" is not defined") && !call_shaped_operand
+          {condition.gsub(" is not defined", "").strip, false}
+        end
+      if defined_test
+        operand, positive = defined_test
+        resolved = defined_operand?(vars, operand)
+        raise_consumed_undefined!(operand, vars, resolved) if raise_undefined
+        return positive ? resolved : !resolved
       end
 
       # Handle 'is mapping' / 'is sequence' (plus each "is not ..."
@@ -2232,6 +2235,24 @@ module Krikri
         rescue
           false
         end
+      end
+    end
+
+    # An `is defined`-family test is lenient only about an undefined that
+    # PROPAGATES to the value it tests - one ansible's own template
+    # evaluation could carry that far. An undefined CONSUMED as a subscript
+    # key/index fails the task first, before the test ever runs: round
+    # 29905151, jedimt.kubernetes_create_cluster's
+    # `hostvars[groups['k8s_master'][0]]['loadbalancer'] is not defined`
+    # hard-fails "object of type 'dict' has no attribute 'k8s_master'" where
+    # answering "undefined" skipped the task and left the whole role's
+    # remaining tasks running against a cluster that was never created.
+    # Only strict (task-level when:/assert:) callers raise - the lenient
+    # changed_when:/until: paths keep their long-standing skip.
+    private def self.raise_consumed_undefined!(operand : String, vars : Hash(String, JSON::Any), resolved : Bool) : Nil
+      return if resolved
+      if msg = Krikri.consumed_undefined_message(operand, vars)
+        raise UndefinedVariableError.new(msg)
       end
     end
 
