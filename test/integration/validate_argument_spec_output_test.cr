@@ -187,6 +187,36 @@ describe "validate_argument_spec output parity" do
     output.must_include("ignored=1")
   end
 
+  it "registers the passing inline task's result for later tasks (issue #1079)" do
+    status, output = run_playbook("pb.yml", {
+      "pb.yml" => "- hosts: all\n  gather_facts: false\n  tasks:\n    - name: Validating arguments\n      ansible.builtin.validate_argument_spec:\n        argument_spec:\n          a: {type: str}\n        provided_arguments:\n          a: hello\n      register: val\n    - name: gated on the register\n      ansible.builtin.debug:\n        msg: \"{{ val.msg }}\"\n      when: val is not skipped\n",
+    })
+
+    # The kpg generator's register + when pairs (issue #1079) died with
+    # "'val' is undefined" because only display/stats ran and the registered
+    # var was never stored. Real registers the action's full return - msg
+    # ("The arg spec validation passed") and validate_args_context included -
+    # even though the ok line itself stays bare.
+    status.exit_code.must_equal(0)
+    output.must_include("The arg spec validation passed")
+    output.must_include("failed=0")
+  end
+
+  it "registers the failing inline task's result under ignore_errors (issue #1079)" do
+    status, output = run_playbook("pb.yml", {
+      "pb.yml" => "- hosts: all\n  gather_facts: false\n  tasks:\n    - name: Validating arguments\n      ansible.builtin.validate_argument_spec:\n        argument_spec:\n          a: {type: str, required: true}\n      register: val\n      ignore_errors: true\n    - name: reads the registered failure\n      ansible.builtin.debug:\n        msg: \"{{ val.failed }}\"\n",
+    })
+
+    # A failed-but-ignored validation still registers (failed: true - the
+    # kpg generator's follow-up tasks read the failure instead of an
+    # undefined var), so the later task renders true rather than erroring.
+    status.exit_code.must_equal(0)
+    output.must_include("\"msg\": true")
+    output.must_include("...ignoring")
+    output.must_include("failed=0")
+    output.must_include("ignored=1")
+  end
+
   it "rejects an inline provided key the spec does not declare" do
     _, output = run_playbook("pb.yml", {
       "pb.yml" => "- hosts: all\n  gather_facts: false\n  tasks:\n    - name: Validating arguments\n      ansible.builtin.validate_argument_spec:\n        argument_spec:\n          a: {type: str, required: true}\n        provided_arguments:\n          b: nope\n      ignore_errors: true\n",
