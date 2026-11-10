@@ -186,3 +186,49 @@ describe "Krikri::PluginManager (plugin_manager_local_connection_test.cr)" do
     end
   end
 end
+
+# Issue #1109: /var/tmp gets swept mid-run (systemd-tmpfiles on
+# long-lived hosts), taking an already-staged become plugin binary with
+# it. The engine trusted its per-process staging memo blindly and the
+# next become task failed outright with
+# "Error executing process: '/var/tmp/.krikri-playbook-.../plugins/command':
+# No such file or directory" - while ansible-playbook, which stages a
+# fresh copy for every task, runs the same playbook fine. The wipe task
+# removes the SHARED per-user staging dir other tests' local become
+# children exec from, a genuinely host-visible mutation, hence
+# exclusive! (like the PATH-blanking specs).
+describe "a local become staging dir wiped mid-run (issue #1109)" do
+  exclusive!
+
+  it "re-stages the plugin binary and completes the run instead of failing the task" do
+    # become_user is pinned to the invoking user (what the issue's repro
+    # resolves via lookup('env', 'USER') - interpolated here so the test
+    # never depends on $USER being set) and become_flags: '--login' pins
+    # the one-shot local exec path, the only local path that stages.
+    user = Krikri::PluginManager.local_username || raise "cannot determine invoking user"
+    recap = issue684_recap(run_playbook_issue684(<<-YAML, "localhost ansible_connection=local"))
+      - hosts: all
+        gather_facts: false
+        tasks:
+          - name: become run stages the plugin binary
+            command: echo staged
+            become: true
+            become_user: '#{user}'
+            become_flags: '--login'
+
+          - name: target plugin cache is wiped
+            shell: rm -rf /var/tmp/.krikri-playbook-*
+
+          - name: become run after the cache is gone
+            command: echo again
+            become: true
+            become_user: '#{user}'
+            become_flags: '--login'
+      YAML
+
+    recap.must_include("ok=3")
+    recap.must_include("changed=3")
+    recap.must_include("unreachable=0")
+    recap.must_include("failed=0")
+  end
+end

@@ -2872,7 +2872,14 @@ module Krikri
       staging_base = "/var/tmp/.krikri-playbook-#{staging_dir_tag(local_username || "u#{LibC.getuid}")}"
       staging_dir = File.join(staging_base, "plugins")
       staged_path = File.join(staging_dir, File.basename(source_path))
-      return staged_path if @@staged_local_plugins.includes?(plugin_name)
+      # The memo alone is not enough: /var/tmp gets swept mid-run
+      # (systemd-tmpfiles on long-lived hosts - issue #1109), taking an
+      # already-staged binary with it. Trusting the record then fails the
+      # task with an inscrutable "No such file or directory" where ansible,
+      # which stages a fresh copy for every task, runs fine - so verify the
+      # binary is still there and re-stage on a miss, the local counterpart
+      # of the ssh path's #recover_missing_plugin!.
+      return staged_path if @@staged_local_plugins.includes?(plugin_name) && File.exists?(staged_path)
 
       refuse = ->(reason : String) {
         raise "Refusing to use local plugin staging dir #{staging_base}: #{reason}. " \
