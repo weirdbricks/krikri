@@ -354,6 +354,26 @@ describe "uri plugin" do
     result["msg"].as_s.must_equal("This action (ansible.builtin.uri) does not support check mode.")
   end
 
+  it "skips in check_mode before any argument can fail it, whatever its type or spelling" do
+    # Ansible raises its check-mode skip (ActionBase#run's AnsibleActionSkip)
+    # before uri's action plugin and before AnsibleModule validates any
+    # argument, so a really broken task - a non-boolean `use_proxy`, a typo'd
+    # option - registers a plain skip under --check (live-verified vs
+    # ansible-core 2.21.6). Validating the bools first made a real Ansible
+    # skip come out as a task failure.
+    result = PluginSpecHelper.run("uri", {
+      "url"                 => "#{URI_BASE}/text",
+      "use_proxy"           => "kknczu",
+      "decompress"          => "kknczu",
+      "edcompress"          => "false",
+      "_ansible_check_mode" => "true",
+    })
+    falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+    result["changed"].as_bool.must_equal(false)
+    result["skipped"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("This action (ansible.builtin.uri) does not support check mode.")
+  end
+
   it "writes the response body to dest: and reports changed, real bug found live-verifying prometheus.prometheus.node_exporter" do
     # `dest:` writing was entirely unimplemented (the plugin's own doc
     # comment said so outright) - prometheus.prometheus._common's own
