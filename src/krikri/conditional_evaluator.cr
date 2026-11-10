@@ -454,6 +454,7 @@ module Krikri
       # keyword - Python/W3C tokenization agrees, and spaces must never
       # appear there.
       condition = normalize_boolean_operator_spacing(condition)
+      condition = normalize_in_operator_spacing(condition)
       # A single call only strips ONE layer of enclosing parens. An
       # already-parenthesized when:-list item (`- (a or b)`) gets wrapped
       # in another layer by condition_to_string's per-clause `(#{clause})`
@@ -2795,6 +2796,111 @@ module Krikri
 
     private def self.boolean_word_char?(ch : Char) : Bool
       ch.ascii_alphanumeric? || ch == '_'
+    end
+
+    # Insert whitespace around a whitespace-free `in`/`not in` operator
+    # token (`'present'in item.state`): real Python/Jinja lexing treats
+    # `in` as a keyword wherever it stands, so no surrounding whitespace
+    # is required (caduri.ohmyzsh issue #1100's `when: "item.state is
+    # not defined or 'present'in item.state"` is valid Jinja2 and
+    # ansible-core 2.19.11 evaluates the membership test for every loop
+    # item), but the literal " in "/" not in " paddings the in-router
+    # and #evaluate_in below split on are then absent, the whole
+    # condition fell through to the bare-variable fallback and failed
+    # the task as "''present'in item.state' is undefined" (exit 2)
+    # where Ansible ran it (exit 0). Where NOT to touch: inside quoted
+    # literals (a quoted 'in' is an operand, never a keyword), after a
+    # word character on the `in` side (that means the sequence is part
+    # of an identifier - `print`, `min` - not a keyword), and a `not`
+    # with no whitespace before its `in` (that is the identifier
+    # `notin` in both Python and Jinja, never the operator pair).
+    # Idempotent: re-normalizing an already-spaced copy produces it
+    # unchanged, which matters because evaluate_measured recurses after
+    # splitting and re-enters this whole path.
+    private def self.normalize_in_operator_spacing(condition : String) : String
+      return condition unless condition.matches?(/\bin\b/)
+
+      chars = condition.chars
+      String.build do |buf|
+        in_quote = false
+        quote_char = ' '
+        escaped = false
+        # Last byte emitted into buf; a space that belongs to the input
+        # and one that was inserted here leave the same state, so this
+        # doubles as "no duplicate space" tracking.
+        last_char = ' '
+        i = 0
+        while i < chars.size
+          ch = chars[i]
+          if in_quote
+            buf << ch
+            if escaped
+              escaped = false
+            elsif ch == '\\'
+              escaped = true
+            elsif ch == quote_char
+              in_quote = false
+            end
+            last_char = ch
+            i += 1
+            next
+          end
+
+          if ch == '"' || ch == '\''
+            in_quote = true
+            quote_char = ch
+            escaped = false
+            buf << ch
+            last_char = ch
+            i += 1
+            next
+          end
+
+          if i + 3 <= chars.size && chars[i] == 'n' && chars[i + 1] == 'o' && chars[i + 2] == 't' &&
+             (i == 0 || !boolean_word_char?(chars[i - 1]))
+            j = i + 3
+            while j < chars.size && chars[j].ascii_whitespace?
+              j += 1
+            end
+            if j > i + 3 && j + 2 <= chars.size && chars[j] == 'i' && chars[j + 1] == 'n' &&
+               (j + 2 == chars.size || !boolean_word_char?(chars[j + 2]))
+              if last_char != ' '
+                buf << ' '
+              end
+              buf << "not in"
+              next_idx = j + 2
+              if next_idx < chars.size && !chars[next_idx].ascii_whitespace?
+                buf << ' '
+                last_char = ' '
+              else
+                last_char = 'n'
+              end
+              i = next_idx
+              next
+            end
+          elsif i + 2 <= chars.size && chars[i] == 'i' && chars[i + 1] == 'n' &&
+                (i == 0 || !boolean_word_char?(chars[i - 1])) &&
+                (i + 2 == chars.size || !boolean_word_char?(chars[i + 2]))
+            if last_char != ' '
+              buf << ' '
+            end
+            buf << "in"
+            next_idx = i + 2
+            if next_idx < chars.size && !chars[next_idx].ascii_whitespace?
+              buf << ' '
+              last_char = ' '
+            else
+              last_char = 'n'
+            end
+            i = next_idx
+            next
+          end
+
+          buf << ch
+          last_char = ch
+          i += 1
+        end
+      end
     end
 
     private def self.matches_type_test?(vars : Hash(String, JSON::Any), var_name : String, test_name : String) : Bool
