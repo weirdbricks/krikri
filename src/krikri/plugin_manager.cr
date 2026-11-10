@@ -17,6 +17,7 @@ require "./task_executor/output_routing"
 require "./action_plugin_manager"
 require "./timing_profile"
 require "./become_messages"
+require "./ssh_unreachable_msg"
 
 module Krikri
   # Issue #1 (arch awareness) - raised when a remote target reports a
@@ -1912,7 +1913,7 @@ module Krikri
       detail = ex.message.to_s.strip
       JSON.parse({
         "changed"     => false,
-        "msg"         => "Failed to connect to the host via ssh: #{detail}",
+        "msg"         => SSHUnreachableMsg.unreachable_msg(detail, vars, host),
         "stderr"      => detail,
         "unreachable" => true,
       }.to_json)
@@ -1999,6 +2000,10 @@ module Krikri
     def self.task_end_cleanup_failure_result(module_result : JSON::Any, cleanup : NamedTuple(exit_code: Int32, stdout: String, stderr: String)) : JSON::Any
       return module_result unless SSHManager.connection_level_failure?(cleanup[:exit_code], cleanup[:stderr], cleanup[:stdout])
       detail = {cleanup[:stderr], cleanup[:stdout]}.map(&.strip).find { |text| !text.empty? } || "connection lost"
+      # The plain lead even under pipelining (SSHUnreachableMsg's other
+      # shape): real's cleanup exec is an in_data-less exec_command, so its
+      # 255 exits through _handle_error, never the pipelined "Data could not
+      # be sent" wrap.
       JSON.parse({
         "changed"     => false,
         "failed"      => true,
@@ -2031,12 +2036,16 @@ module Krikri
     #   says explicitly why the task was not retried. `ignore_errors:`
     #   applies to this shape exactly as Ansible's own module-produced-
     #   garbage failure would.
-    def self.daemon_dispatch_unknown_result(ex : SSHManager::DaemonDispatchUnknownError) : JSON::Any
+    # *pipelining*/*connection_host* carry the ssh dispatch's pipelining
+    # setting and connection host so the transport-lost msg can take
+    # ansible's pipelined lead (SSHUnreachableMsg); the local daemon's
+    # caller and the pure seam keep the plain lead defaults.
+    def self.daemon_dispatch_unknown_result(ex : SSHManager::DaemonDispatchUnknownError, pipelining : Bool = false, connection_host : String = "") : JSON::Any
       if ex.transport_lost?
         detail = ex.message.to_s.lines.first?.to_s
         return JSON.parse({
           "changed"     => false,
-          "msg"         => "Failed to connect to the host via ssh: #{detail}",
+          "msg"         => SSHUnreachableMsg.unreachable_msg(detail, pipelining, connection_host),
           "stderr"      => detail,
           "unreachable" => true,
         }.to_json)
@@ -2153,7 +2162,7 @@ module Krikri
           # the task instead. `_connection_failure` keeps
           # failed_when:/changed_when: from reinterpreting a result no
           # module actually produced (see apply_changed_failed_when).
-          return daemon_dispatch_unknown_result(ex)
+          return daemon_dispatch_unknown_result(ex, SSHUnreachableMsg.pipelining_enabled?(vars), host.connection_host)
         rescue
           # Fall through to the per-task path below.
         end

@@ -59,7 +59,13 @@ private def run_play(playbook : String) : {Process::Status, String}
   pb = File.join(dir, "pb.yml")
   File.write(pb, playbook)
   output = IO::Memory.new
-  status = Process.run(BINARY, ["-i", inv, pb, "-T", "5"], output: output, error: output, chdir: dir)
+  # Pins ansible's DEFAULT (pipelining off) unreachable lead: a developer's
+  # ambient ANSIBLE_PIPELINING would flip the engine to the pipelined
+  # "Data could not be sent" wrapper (SSHUnreachableMsg).
+  env = ENV.to_h
+  env.delete("ANSIBLE_PIPELINING")
+  env.delete("ANSIBLE_SSH_PIPELINING")
+  status = Process.run(BINARY, ["-i", inv, pb, "-T", "5"], output: output, error: output, chdir: dir, env: env)
   {status, output.to_s}
 ensure
   FileUtils.rm_r(dir) if dir && Dir.exists?(dir)

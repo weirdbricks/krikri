@@ -2463,7 +2463,7 @@ module Krikri
           # brief segment for an ssh origin, the chain for a local one
           # (see loop_unreachable_error_node for real's two shapes).
           if unreachable_task_result?(result) && !Krikri::Oneline.enabled? && !resolve_task_no_log(task, base_vars_context)
-            unreachable_msg = unreachable_loop_item_msg(result)
+            unreachable_msg = unreachable_loop_item_msg(result, base_vars_context, host)
             if result_h = result.as_h?
               # ansible's converted item result carries no transport
               # stderr and no module invocation (the module never ran);
@@ -2749,9 +2749,9 @@ module Krikri
     # of it - ansible's exception there is raised by the ssh connection
     # plugin, so the detail is just its `ssh: ...` line (the same detail
     # the non-looped report_unreachable path extracts).
-    private def unreachable_loop_item_msg(result : JSON::Any) : String
+    private def unreachable_loop_item_msg(result : JSON::Any, vars_context : Hash(String, JSON::Any)?, host : Host) : String
       detail = ssh_transport_detail(result["stderr"]?.try(&.as_s?) || result["msg"]?.try(&.as_s?) || "")
-      "Task failed: Failed to connect to the host via ssh: #{detail}"
+      "Task failed: #{SSHUnreachableMsg.unreachable_msg(detail, vars_context, host)}"
     end
 
     # A LOOPED task's templated notify: resolves PER ITEM. ansible-core

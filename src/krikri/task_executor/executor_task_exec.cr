@@ -1264,6 +1264,10 @@ module Krikri
         # cleanup working and reports FAILED with the timeout message -
         # that path below stays as it always was.
         if ssh_error = TaskExecutor.reboot_wait_unreachable_error(last_result, last_attempt_timed_out, connection_host, conn.port)
+          # The plain lead even under pipelining (SSHUnreachableMsg's other
+          # shape): the failure stands in for ansible's task-end tmpdir
+          # cleanup exec, which carries no pipelined stdin, so its 255
+          # exits through _handle_error's plain raise.
           timed_out_unreachable = {
             "changed"     => false,
             "unreachable" => true,
