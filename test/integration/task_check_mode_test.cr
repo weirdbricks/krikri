@@ -126,4 +126,61 @@ describe "task-level check_mode:" do
     # Rendered as Python's "False", matching Ansible's own output.
     output.must_include("MAGIC=[False]")
   end
+
+  # Ansible only skips a task before argument validation when the module
+  # ships an action plugin declaring _supports_check_mode = False (uri).
+  # A module dispatched through the plain `normal` action - tempfile,
+  # wait_for and community.mysql's - really runs its AnsibleModule init
+  # under --check, which validates the argument spec FIRST and only then
+  # hits basic.py's supports_check_mode exit_json gate: so a typo'd
+  # option still fails the task under --check (live-verified against
+  # 2.21.6). krikri skipped those tasks outright, which also broke any
+  # later `is not skipped` gate on the registered result.
+  it "fails a typo'd option on a no-check-mode module under --check" do
+    status, output = run_playbook(<<-YAML, ["--check"])
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: tempfile with a typo'd option
+            ansible.builtin.tempfile:
+              prefix: tmp_
+              prefix_bogus: tmp_
+            register: tf
+            ignore_errors: true
+          - name: follow-up gated on the failed task
+            ansible.builtin.debug:
+              msg: follow-up-ran
+            when: tf is not skipped
+      YAML
+
+    status.exit_code.must_equal(0)
+    output.must_include(%("msg": "Unsupported parameters for (ansible.builtin.tempfile) module: prefix_bogus. Supported parameters include: path, prefix, state, suffix."))
+    output.wont_include("does not support check mode")
+    output.must_include("follow-up-ran")
+  end
+
+  # The action-plugin skip uri does have is still honoured: Ansible never
+  # validates uri's module arguments under --check, whatever they are.
+  it "skips uri under --check without validating its arguments" do
+    status, output = run_playbook(<<-YAML, ["--check"])
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: uri with a typo'd option
+            ansible.builtin.uri:
+              url: http://127.0.0.1:1/
+              bogus_param: 1
+            register: resp
+            ignore_errors: true
+          - name: report
+            ansible.builtin.debug:
+              msg: "URI_SKIPPED=[{{ resp.skipped | default(false) }}]"
+      YAML
+
+    status.exit_code.must_equal(0)
+    output.wont_include("Unsupported parameters")
+    output.must_include("URI_SKIPPED=[True]")
+  end
 end

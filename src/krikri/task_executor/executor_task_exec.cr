@@ -3724,11 +3724,18 @@ module Krikri
     # inside the module's own AnsibleModule init - i.e. after the action
     # plugin stage, before any module-side file access - which is exactly
     # where the two callers of this hook sit.
-    # Core modules whose Ansible module source declares
-    # supports_check_mode=False (and whose plugin mirrors the skip).
-    NO_CHECK_MODE_MODULES = %w[
-      ansible.builtin.uri ansible.builtin.wait_for ansible.builtin.tempfile
-      community.mysql.mysql_query community.mysql.mysql_variables
+    # Modules that ship an ACTION plugin declaring _supports_check_mode =
+    # False: ActionBase#run raises AnsibleActionSkip for those before the
+    # module binary is ever dispatched, so not even the module's own
+    # argument validation runs (uri, live-verified against 2.21.6: an
+    # unsupported parameter or a bogus status_code element SKIPS under
+    # --check). A module WITHOUT such an action plugin - tempfile,
+    # wait_for and community.mysql's - does run its AnsibleModule init
+    # under --check: basic.py validates the argument spec first and only
+    # then hits its supports_check_mode exit_json gate, so those modules'
+    # spec rejections must still fire in check mode.
+    ACTION_SKIPS_CHECK_MODE_MODULES = %w[
+      ansible.builtin.uri
     ]
 
     private def argspec_validation_result(
@@ -3778,13 +3785,13 @@ module Krikri
       # --check too.
       return nil if check_mode && !action_level_only &&
                     task.module_name == "ansible.builtin.template" && !remote_src_param?(params)
-      # Modules that do not support check mode never reach their
-      # AnsibleModule init under --check (2.19's action layer raises
-      # AnsibleActionSkip "This action (...) does not support check mode."
-      # before any argument validation - live-verified vs 2.19.11: uri
-      # with an invalid status_code element SKIPS under --check instead
-      # of failing), so their module-level spec checks are skipped too.
-      return nil if check_mode && !action_level_only && NO_CHECK_MODE_MODULES.includes?(task.module_name)
+      # A module whose ACTION plugin declares _supports_check_mode = False
+      # never reaches its AnsibleModule init under --check (ActionBase#run
+      # raises AnsibleActionSkip "This action (...) does not support check
+      # mode." before any argument validation), so its module-level spec
+      # checks are skipped too. Modules without such an action plugin are
+      # NOT in this set: their module binary runs and validates first.
+      return nil if check_mode && !action_level_only && ACTION_SKIPS_CHECK_MODE_MODULES.includes?(task.module_name)
       # ... and outside check mode the copy MODULE only runs when the
       # bytes actually have to move. See copy_module_never_runs?.
       return nil if !action_level_only && copy_module_never_runs?(task, params, check_mode)
