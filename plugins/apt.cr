@@ -1321,6 +1321,56 @@ module Krikri
       installed_version == provider_candidate ? nil : provider_candidate
     end
 
+    # Real package_status()'s virtual-name resolution for the installed
+    # split: a name the apt cache only knows as virtual (apt-cache
+    # policy's "Candidate: (none)", i.e. no versions of its own) that
+    # exactly one package Provides: counts as INSTALLED when that lone
+    # provider is, at the provider's own version. Ansible then keeps the
+    # name off the apt-get command line entirely, so a satisfied virtual
+    # name is "ok" even in check mode (live-verified vs
+    # ansible-playbook 2.21.6: a libparted2 whose provider libparted2t64
+    # is installed is ok). dpkg_installed_status only ever records the
+    # requested names themselves and a purely virtual name never has a
+    # dpkg record of its own, so without this every check-mode run went
+    # on to run apt-get --simulate and report changed for a package apt
+    # already satisfies (issue #1102, fede2cr.alfresco52's libglu-dev,
+    # provided solely by libglu1-mesa-dev).
+    #
+    # Everything else keeps real's own split: a real-but-absent package's
+    # Provides: relationship is irrelevant, and a virtual name with more
+    # than one provider is upstream's "let apt-get sort it out" bare-spec
+    # path (which does reach apt-get, hence changed in check mode).
+    private def with_virtual_provider_installs(installed_status : Hash(String, {Bool, String?, String}), base_names : Array(String)) : Hash(String, {Bool, String?, String})
+      missing = base_names.uniq.select do |name|
+        next false if name.empty?
+        status = installed_status[name]?
+        status.nil? || !status[0]
+      end
+      return installed_status if missing.empty?
+
+      candidates = apt_candidates_batch(missing)
+      virtual = missing.select do |name|
+        candidate = candidates[name]?
+        candidate && candidate[0] && candidate[1].nil?
+      end
+      return installed_status if virtual.empty?
+
+      providers = apt_reverse_provides_batch(virtual)
+      lone_providers = virtual.compact_map do |name|
+        found = providers[name]? || [] of String
+        found.size == 1 ? {name, found[0]} : nil
+      end
+      return installed_status if lone_providers.empty?
+
+      provider_status = dpkg_installed_status(lone_providers.map(&.[1]).uniq!)
+      lone_providers.each do |(name, provider)|
+        status = provider_status[provider]?
+        next unless status && status[0]
+        installed_status[name] = status
+      end
+      installed_status
+    end
+
     # Handle installing packages. build_dep: is real apt.py's
     # state=build-dep (install() with build_dep=True: every spec goes to
     # `apt-get build-dep` verbatim, no installed-status short-circuit);
@@ -1354,8 +1404,12 @@ module Krikri
 
       # One batched dpkg-query round trip for the whole list (see
       # dpkg_installed_status), shared by the candidate probe and the
-      # to_install split below.
+      # to_install split below. build-dep never consults installed-ness
+      # (real install() hands every spec straight to apt-get there).
       installed_status = dpkg_installed_status(packages)
+      unless build_dep
+        installed_status = with_virtual_provider_installs(installed_status, packages.map { |pkg| split_name_version(pkg)[0] })
+      end
 
       # Ansible's install() resolves each spec against the apt cache
       # BEFORE running apt-get, failing on the first spec it can't
