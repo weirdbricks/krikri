@@ -84,6 +84,80 @@ describe "INJECT_FACTS_AS_VARS deprecation from a when: clause" do
     stderr.must_include("Use `ansible_facts[\"fact_name\"]` (no `ansible_` prefix) instead.")
   end
 
+  # Real evaluates the task's conditional BEFORE it re-raises an undefined
+  # loop source, so the clause's fact read still warns - and does so as its
+  # OWN templating operation, not as part of the loop source. brentwg.docker's
+  # import-line `when: ansible_os_family == 'RedHat'` gating a
+  # `with_items: "{{ docker_packages_old }}"` import lost the block entirely
+  # because this engine failed on the loop source first (issue #1089,
+  # live-verified against ansible-core 2.21.6: the warning prints before the
+  # [ERROR] block, Origin'd at the clause value token).
+  it "warns for a when: clause even when the loop source above it is undefined" do
+    stderr = run_playbook(<<-PLAYBOOK)
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        tasks:
+          - name: loop over an undefined list
+            debug:
+              msg: "{{ item }}"
+            when: ansible_os_family | length > 0
+            with_items: "{{ no_such_list }}"
+      PLAYBOOK
+
+    stderr.scan(/DEPRECATION WARNING\]: INJECT_FACTS_AS_VARS/).size.must_equal(1)
+    stderr.must_include(":8:13\n")
+    stderr.must_include("8       when: ansible_os_family | length > 0\n")
+    stderr.must_include("              ^ column 13")
+  end
+
+  # A block-sequence param value is a set of independent YAML scalars, and
+  # real pins the read at the ITEM that named the fact, not at the param's
+  # key line (fabiohbarbosa.synapse's role banner, issue #1089,
+  # live-verified against 2.21.6: 5:9 - the banner item - where this engine
+  # reported 3:9, the `msg:` key).
+  it "pins a fact read inside a block-sequence param value at its own item" do
+    stderr = run_playbook(<<-PLAYBOOK)
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        tasks:
+          - name: banner
+            debug:
+              msg:
+                - "***************************************"
+                - "Running for {{ ansible_distribution }}"
+                - "***************************************"
+      PLAYBOOK
+
+    stderr.must_include(":9:13\n")
+    stderr.must_include("9           - \"Running for {{ ansible_distribution }}\"\n")
+    stderr.must_include("^ column 13")
+    stderr.includes?(":7:11").must_equal(false)
+  end
+
+  # A module called in its free-form key=value form writes its params inside
+  # the action directive's own scalar, so the `<key>:` line scan finds
+  # nothing. Real still warns for a fact the value reads, anchored at the
+  # `<key>=` token on the directive's line - fabiohbarbosa.synapse's failing
+  # `fail: msg="... {{ ansible_distribution }} ..."` reported 9:9 (issue
+  # #1089, live-verified against 2.21.6).
+  it "places a free-form action param's fact read at its key= token" do
+    stderr = run_playbook(<<-PLAYBOOK)
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        tasks:
+          - name: unsupported
+            fail: msg="Role not compatibility for {{ ansible_distribution }}"
+      PLAYBOOK
+
+    stderr.must_include("INJECT_FACTS_AS_VARS")
+    stderr.must_include(":6:13\n")
+    stderr.must_include("6       fail: msg=\"Role not compatibility for {{ ansible_distribution }}\"\n")
+    stderr.must_include("              ^ column 13")
+  end
+
   it "attributes a role task file's filtered when: Origin to the clause value token" do
     # The cockpit shape: the clause lives in the role's own tasks/main.yml
     # and filters the fact before comparing, so the Origin must point into
