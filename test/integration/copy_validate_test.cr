@@ -170,4 +170,48 @@ describe "copy: with validate:" do
     File.delete(src) if src && File.exists?(src)
     File.delete(dest) if dest && File.exists?(dest)
   end
+
+  it "echoes a failing validate: command's stderr raw, PID prefix included" do
+    dest = File.tempname("copy-validate-stderr-dest")
+    playbook = File.tempname("copy-validate-stderr", ".yml")
+    validator = File.tempname("copy-validate-stderr-validator", ".sh")
+    # haproxy's config check prefixes every ALERT with the PID of the
+    # process that parsed the config, and Ansible hands that stderr
+    # through unstripped - so krikri must too, prefix and all. That
+    # shape is what scripts/output_parity.sh's [ALERT] pid mask anchors
+    # on (see KNOWN_MISSING.md): if the prefix were ever trimmed or
+    # rewritten here, the mask would silently stop matching and the
+    # per-run PID would look like a real divergence again.
+    File.write(validator, <<-SH)
+      #!/bin/sh
+      echo "[ALERT]    ($$) : parsing [$1] : bad directive" >&2
+      exit 1
+      SH
+    File.chmod(validator, 0o755)
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: copy
+            ansible.builtin.copy:
+              content: "hello world\\n"
+              dest: #{dest}
+              validate: "#{validator} %s"
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+
+    status.success?.must_equal(false)
+    output.to_s.must_include("\"msg\": \"failed to validate\"")
+    # Twice: once in the merged `stderr` string and once as the only
+    # `stderr_lines` entry, both keeping the validator's own prefix.
+    output.to_s.scan(/\[ALERT\]    \(\d+\) : parsing \[[^\]]+\] : bad directive/).size.must_equal(2)
+    File.exists?(dest).must_equal(false)
+  ensure
+    File.delete(playbook) if playbook && File.exists?(playbook)
+    File.delete(validator) if validator && File.exists?(validator)
+    File.delete(dest) if dest && File.exists?(dest)
+  end
 end

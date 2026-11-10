@@ -144,6 +144,18 @@ MASKS=(
   # #1073's masked diff was this value and nothing else). Only the value
   # is masked; the `date` key and every field around it still compare.
   "s/(\"date\": \")(Mon|Tue|Wed|Thu|Fri|Sat|Sun), [0-9]{2} (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) [0-9]{4} [0-9]{2}:[0-9]{2}:[0-9]{2} GMT\"/\1<TIME>\"/g"
+  # Fourteenth entry, same class: a copy:/template: validate: command's
+  # stderr is passed through raw and unstripped, and haproxy's
+  # config-check ALERT lines prefix every message with the PID of the
+  # process that parsed the config (`[ALERT]    (590) : parsing [...]`).
+  # That PID is assigned by the kernel to whichever validator process
+  # the engine happens to spawn, so it differs between any two
+  # executions of the SAME engine - two real ansible runs of one
+  # validate: task printed 4175548 and 4182901, and emmetog.haproxy's
+  # whole role-level diff was this number and nothing else. Only the
+  # digits are masked; the `[ALERT]` tag, its spacing and the rest of
+  # the validator's own message still compare byte for byte.
+  "s/(\\[ALERT\\] +)\\(([0-9]+)\\)/\\1(<PID>)/g"
 )
 
 mask() {
