@@ -754,6 +754,14 @@ module Krikri
     # Python str() of it. nil for every ordinary (string) path.
     property include_file_native : JSON::Any?
     property include_file_dir : String?
+    # The include_tasks: path VALUE's own source position (line, column),
+    # from the parse-time source map. ansible tags each YAML value with
+    # its defining position, so a top-level fact read reached from the
+    # path prints the INJECT_FACTS_AS_VARS deprecation Origin'd at that
+    # value - the free-form scalar, or the mapping form's `file:` value
+    # (live-verified vs 2.21.6, shifteoops.apache_role's
+    # `include_tasks: "setup-{{ ansible_os_family }}.yml"`, issue #1093).
+    property include_file_origin : {Int32, Int32}?
     # meta: - only set when module_name == "_meta". Holds the meta action
     # ("clear_facts"); see TaskExecutor#execute_meta.
     property meta_action : String?
@@ -1047,6 +1055,7 @@ module Krikri
       @include_file = nil
       @include_file_native = nil
       @include_file_dir = nil
+      @include_file_origin = nil
       @include_vars = nil
       @include_vars_file = nil
       @include_vars_name = nil
@@ -3704,6 +3713,21 @@ module Krikri
           include_file_native_value(include_tasks_value), source_file, source_map, source_prefix, index, handler)
         include_tasks_task.has_explicit_name = !name.nil?
         include_tasks_task.written_action = include_tasks_written
+        if source_map
+          # The value the deprecation's Origin points at: the free-form
+          # scalar's own token, or the mapping form's file: (an explicit
+          # _raw_params wins over file:, matching check_options).
+          directive_prefix = "#{task_source_prefix(source_prefix, index)}/#{include_tasks_written}"
+          dict = include_tasks_value.as_h?
+          value_path = if dict && dict.has_key?("_raw_params")
+                         "#{directive_prefix}/_raw_params"
+                       elsif dict && dict.has_key?("file")
+                         "#{directive_prefix}/file"
+                       else
+                         directive_prefix
+                       end
+          include_tasks_task.include_file_origin = source_map.at?(value_path) || source_map.at?(directive_prefix)
+        end
         return include_tasks_task
       end
 

@@ -181,7 +181,9 @@ module Krikri
         substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
         no_log_by_host[host.name] = resolve_task_no_log(task, vars_context)
         file_rel = begin
-          substitutor.substitute(task.include_file.as(String), strict: true)
+          with_include_tasks_path_site(task) do
+            substitutor.substitute(task.include_file.as(String), strict: true)
+          end
         rescue ex : UndefinedVariableError
           # Ansible fails the include task at task-args finalization when
           # its path template references an undefined variable, before any
@@ -194,7 +196,7 @@ module Krikri
         resolved_path = PlaybookParser.resolve_include_path(file_rel, task.include_file_dir.as(String), File.expand_path(@playbook_dir))
 
         unless File.exists?(resolved_path)
-          fail_include_tasks_file_not_found(task, host, resolved_path, file_rel)
+          fail_include_tasks_file_not_found(task, host, resolved_path)
           next
         end
 
@@ -680,6 +682,28 @@ module Krikri
       roots << Dir.current
 
       first_existing(roots, candidate)
+    end
+
+    # Runs the block with an include_tasks: path VALUE registered as the
+    # current templating site. ansible tags each YAML value with its own
+    # defining position, so a top-level fact read reached from the path
+    # prints the INJECT_FACTS_AS_VARS deprecation Origin'd there - the
+    # free-form scalar, or the mapping form's file: value (live-verified vs
+    # 2.21.6, shifteoops.apache_role's
+    # `include_tasks: "setup-{{ ansible_os_family }}.yml"`, issue #1093).
+    # This render never goes through #substitute_task_params, so without
+    # the site the read stayed silent (the same gap include_vars: had,
+    # issue #974).
+    private def with_include_tasks_path_site(task : Task, & : -> T) : T forall T
+      origin = if (pos = task.include_file_origin) && (path = task.source_file)
+                 ErrorBlock.origin_context(File.expand_path(path), pos[0], pos[1])
+               end
+      VarSubstitutor.set_current_task_param(task.source_file, task.source_line, "include_tasks", task.include_file, origin: origin)
+      begin
+        yield
+      ensure
+        VarSubstitutor.pop_current_task_param
+      end
     end
 
     # Renders include_vars's own path argument (the free-form statement's
@@ -2643,7 +2667,9 @@ module Krikri
 
       substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
       file_rel = begin
-        substitutor.substitute(task.include_file.as(String), strict: true)
+        with_include_tasks_path_site(task) do
+          substitutor.substitute(task.include_file.as(String), strict: true)
+        end
       rescue ex : UndefinedVariableError
         # Same undefined-path failure shape as the batched include path
         # above (live-verified vs 2.19.11). Returns :ok because the
@@ -2655,7 +2681,7 @@ module Krikri
       resolved_path = PlaybookParser.resolve_include_path(file_rel, task.include_file_dir.as(String), File.expand_path(@playbook_dir))
 
       unless File.exists?(resolved_path)
-        fail_include_tasks_file_not_found(task, host, resolved_path, file_rel)
+        fail_include_tasks_file_not_found(task, host, resolved_path)
         return :ok
       end
 
@@ -2930,32 +2956,30 @@ module Krikri
     end
 
     # include_tasks: whose file resolves nowhere at run time -
-    # Ansible's own fatal include shape (live-verified vs 2.19.11):
-    # STDERR gets the DataLoader error block (no Origin), STDOUT gets
-    # the fatal dump with the as-written file under "include:", the
-    # task counts as failed only - ignore_errors: does NOT apply
-    # (live-verified: failed=1 ignored=0 with ignore_errors: true) -
-    # and the play halts for the host (rc=2).
-    private def fail_include_tasks_file_not_found(task : Task, host : Host, resolved_path : String, rendered_file : String) : Nil
-      message = "Could not find or access '#{resolved_path}' on the Ansible Controller: Unable to retrieve file contents.\n" \
-                "Could not find or access '#{resolved_path}' on the Ansible Controller.\n" \
-                "If you are using a module and expect the file to exist on the remote, see the remote_src option: [Errno 2] No such file or directory: '#{resolved_path}'"
-      ErrorBlock.emit_stderr(ErrorBlock::Node.new(message))
+    # ansible-core 2.21's own fatal include shape (live-verified vs
+    # 2.21.6): the DataLoader's AnsibleFileNotFound is a TASK failure, so
+    # the default callback's `_handle_exception` renders its event on
+    # STDOUT (`display_failed_stderr` defaults to False) as ONE
+    # "[ERROR]:" line folding the chained OSError and the help text in,
+    # and the result dump carries only changed+msg - the brief message,
+    # head and OSError joined with ": ", no help text and no `include`
+    # key. The task counts as failed only - ignore_errors: does NOT
+    # apply (live-verified: failed=1 ignored=0 with ignore_errors: true)
+    # - and the play halts for the host (rc=2).
+    private def fail_include_tasks_file_not_found(task : Task, host : Host, resolved_path : String) : Nil
+      node = ErrorBlock::Node.new(
+        "Unable to retrieve file contents. Could not find or access '#{resolved_path}' on the Ansible Controller.",
+        help_text: "If you are using a module and expect the file to exist on the remote, see the remote_src option.")
+      node.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new("[Errno 2] No such file or directory: '#{resolved_path}'"))
+      ErrorBlock.emit(node)
+      message = ErrorBlock.brief_message(node)
       connection_host = host.name
-      # Real echoes the file path under "include" as the playbook wrote
-      # it: a non-string literal keeps its own JSON type there
-      # (`"include": 21`) even though the path it resolved from was that
-      # literal's Python str(), so the parser-supplied native value wins
-      # whenever there is one.
-      # A templated path is echoed RENDERED (`prepare-Rocky.yml`), not as
-      # written.
-      include_json = task.include_file_native.try(&.to_json) || rendered_file.to_json
       if Krikri::Oneline.enabled?
-        puts "#{connection_host} | FAILED! => #{ResultDisplay.dump_oneline_json(JSON.parse({"changed" => false, "include" => task.include_file_native || JSON.parse(rendered_file.to_json), "reason" => message}.to_json))}".colorize(:red)
+        puts "#{connection_host} | FAILED! => #{ResultDisplay.dump_oneline_json(JSON.parse({"changed" => false, "msg" => message}.to_json))}".colorize(:red)
       else
         delegate_target = delegate_display_target(task, host)
         fatal_host_label = delegate_target ? "#{host.name} -> #{delegate_target}" : connection_host
-        puts "fatal: [#{fatal_host_label}]: FAILED! => {\"changed\": false, \"include\": #{include_json}, \"reason\": #{message.to_json}}".colorize(:red)
+        puts "fatal: [#{fatal_host_label}]: FAILED! => {\"changed\": false, \"msg\": #{message.to_json}}".colorize(:red)
       end
       @results[host.name]["failed"] += 1
       halt_if_failed(task, host, true, force_halt: true)
