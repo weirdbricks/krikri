@@ -87,4 +87,31 @@ describe "include_vars free-form value resolving to a falsy native value" do
   ensure
     FileUtils.rm_rf(src_dir) if src_dir
   end
+
+  it "keeps the top-level fact read's deprecation on a truthy non-string crash" do
+    # The type probe is the only render a crashing value ever gets, so it
+    # must be the read that prints the INJECT_FACTS_AS_VARS block - real
+    # templating _raw_params prints it once, at the value, and only then
+    # dies on .rstrip (live-verified vs 2.21.6).
+    src_dir = File.tempname("include-vars-typed-fact")
+    Dir.mkdir_p(src_dir)
+    File.write(File.join(src_dir, "pb.yml"), <<-YAML)
+      - hosts: localhost
+        gather_facts: true
+        connection: local
+        tasks:
+          - name: truthy non-string fact
+            ansible.builtin.include_vars: "{{ ansible_env }}"
+            ignore_errors: true
+      YAML
+
+    output = run_falsy_include_vars(File.join(src_dir, "pb.yml"))
+    falsy_include_vars_error(output).must_equal(
+      "'_AnsibleTaggedDict' object has no attribute 'rstrip'")
+    output.scan(/INJECT_FACTS_AS_VARS/).size.must_equal(1)
+    output.must_include("Origin: #{src_dir}/pb.yml:")
+    output.wont_include("Searched in")
+  ensure
+    FileUtils.rm_rf(src_dir) if src_dir
+  end
 end

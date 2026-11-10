@@ -1964,10 +1964,20 @@ module Krikri
       return nil unless (raw.split("{{").size - 1) == 1 && (raw.split("}}").size - 1) == 1
       stripped = raw.strip
       return nil unless stripped.starts_with?("{{") && stripped.ends_with?("}}")
+      # This evaluation STANDS IN for the render real would make of
+      # _raw_params, and rendering is what fires a top-level fact read's
+      # deprecation - so the probe has to be that site too. The crash path
+      # never reaches render_include_vars_path, so without it a
+      # `include_vars: "{{ ansible_env }}"` lost the deprecation block real
+      # prints right before `'_AnsibleTaggedDict' object has no attribute
+      # 'rstrip'` (live-verified vs 2.21.6, Origin'd at the value itself).
       value = begin
+        VarSubstitutor.set_current_task_param(task.source_file, task.source_line, "include_vars", raw)
         substitutor.evaluate_structured_strict(stripped[2..-3].strip)
       rescue
         return nil
+      ensure
+        VarSubstitutor.pop_current_task_param
       end
       return nil unless value
       type_name = case value.raw
