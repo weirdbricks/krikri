@@ -179,7 +179,14 @@ module Krikri
       # "skipping:" and a recap skipped= bump - and no validation happens at
       # all, so invalid arguments can't fail a validation that never ran.
       begin
-        return unless when_passes?(task, vars_context, host)
+        unless when_passes?(task, vars_context, host)
+          # A when:-false task still sets its register: (to the skipped
+          # shape, like every other task - live-verified vs 2.19.11), so a
+          # later `when: <reg> is not skipped` sees the var, not an
+          # undefined-name error.
+          register_skip_result(task, host)
+          return
+        end
       rescue ex : WhenEvaluationError
         swallow_when_error(task, host, ex)
         return
@@ -505,6 +512,29 @@ module Krikri
                    "_ansible_validate_args_error_emitted" => JSON::Any.new(true),
                  } of String => JSON::Any)
                end
+
+      # Real registers the action's own result on a user-written
+      # validate_argument_spec task (live-verified vs 2.19.11: changed /
+      # failed / msg / validate_args_context on success, the full failure
+      # dict incl. argument_errors + argument_spec_data on failure) - the
+      # role-synthesized form never carries register:, so only the inline
+      # form ever lands here. The display-visible success result omits
+      # msg/validate_args_context, so the registered copy carries them
+      # explicitly (issue #1080: a later `when: <reg> is not skipped`
+      # died on the undefined register).
+      if register_name = task.register
+        registered = if errors.empty?
+                       JSON::Any.new({
+                         "changed"               => JSON::Any.new(false),
+                         "failed"                => JSON::Any.new(false),
+                         "msg"                   => JSON::Any.new("The arg spec validation passed"),
+                         "validate_args_context" => JSON::Any.new(validate_args_context_hash(task)),
+                       } of String => JSON::Any)
+                     else
+                       result
+                     end
+        register_result(host, register_name, registered) unless register_name.empty?
+      end
 
       # Display/stats flow through the same pipeline as every other task
       # result so a failed validation shows Ansible's one-line

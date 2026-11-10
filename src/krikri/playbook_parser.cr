@@ -5506,6 +5506,18 @@ module Krikri
       end
 
       parse_common_task_attributes(task, task_hash, play, handler ? "Handler" : "Task", source_file, source_map, source_prefix, source_index)
+      # register: is NOT part of parse_common_task_attributes - every
+      # parser sets it in its own tail (the generic task parser does, at
+      # its line ~4456). This one used to drop it, so a user-written
+      # validate_argument_spec task's register: stayed undefined and a
+      # later `when: <reg> is not skipped` died on the undefined name
+      # (issue #1080, live-verified vs 2.19.11: the action's own result
+      # is registered like any other task's).
+      task.register = task_hash["register"]?.try do |v|
+        register_value = safe_yaml_to_string(v)
+        validate_register_name(register_value, source_file, source_map, task_source_prefix(source_prefix, source_index))
+        register_value
+      end
       task
     end
 

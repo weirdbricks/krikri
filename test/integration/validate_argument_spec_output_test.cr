@@ -114,6 +114,44 @@ describe "validate_argument_spec output parity" do
     output.must_include("failed=0")
   end
 
+  it "registers the passing inline task's result so a later when: can read it" do
+    # Real 2.19.11 registers the action's own result (changed/failed/msg/
+    # validate_args_context) on a user-written validate_argument_spec task
+    # - issue #1080: the register used to stay undefined, killing a later
+    # `when: <reg> is not skipped` with an undefined-name error.
+    status, output = run_playbook("pb.yml", {
+      "pb.yml" => "- hosts: all\n  gather_facts: false\n  tasks:\n    - name: Validating arguments\n      ansible.builtin.validate_argument_spec:\n        argument_spec: {}\n      register: kpg_task_0\n      ignore_errors: true\n    - name: Wait for connection\n      ansible.builtin.debug:\n        msg: ran\n      when: kpg_task_0 is not skipped\n",
+    })
+
+    status.exit_code.must_equal(0)
+    output.must_include("ok: [localhost]")
+    output.must_include("\"msg\": \"ran\"")
+    output.must_include("failed=0")
+    output.wont_include("'kpg_task_0' is undefined")
+  end
+
+  it "carries msg and validate_args_context in the registered success shape" do
+    status, output = run_playbook("pb.yml", {
+      "pb.yml" => "- hosts: all\n  gather_facts: false\n  tasks:\n    - name: Validating arguments\n      ansible.builtin.validate_argument_spec:\n        argument_spec: {}\n      register: res\n    - ansible.builtin.debug:\n        var: res\n",
+    })
+
+    status.exit_code.must_equal(0)
+    output.must_include(%q("changed": false))
+    output.must_include(%q("failed": false))
+    output.must_include(%q("msg": "The arg spec validation passed"))
+    output.must_include(%q("validate_args_context": {}))
+  end
+
+  it "registers the skipped shape when the inline task's when: is false" do
+    status, output = run_playbook("pb.yml", {
+      "pb.yml" => "- hosts: all\n  gather_facts: false\n  tasks:\n    - name: Validating arguments\n      ansible.builtin.validate_argument_spec:\n        argument_spec: {}\n      register: res\n      when: false\n    - ansible.builtin.debug:\n        var: res\n      when: res is not skipped\n      ignore_errors: true\n",
+    })
+
+    status.exit_code.must_equal(0)
+    output.must_include("skipping: [localhost]")
+    output.wont_include("'res' is undefined")
+  end
+
   it "satisfies an inline required option from a play var (combine_vars semantics)" do
     status, output = run_playbook("pb.yml", {
       "pb.yml" => "- hosts: all\n  gather_facts: false\n  vars:\n    a: from_var\n  tasks:\n    - name: Validating arguments\n      ansible.builtin.validate_argument_spec:\n        argument_spec:\n          a: {type: str, required: true}\n    - ansible.builtin.debug:\n        msg: after\n",
