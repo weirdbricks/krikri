@@ -2509,6 +2509,7 @@ module Krikri
     # still gets it - real keeps the first ACCESS, whichever fact it named.
     def self.emit_fact_deprecation(origin : String?) : Nil
       return unless origin
+      return if suppress_eager_scope_deprecations?
       # A capture is open (a task `vars:` value rendering eagerly at
       # vars-context build): the reading belongs to whichever render
       # CONSUMES the value, so it is recorded against the value's name
@@ -2601,7 +2602,7 @@ module Krikri
 
     def self.emit_vars_dict_deprecation(origin : String?) : Nil
       return unless origin
-      return if suppress_vars_dict_deprecations?
+      return if suppress_eager_scope_deprecations?
       # A capture is open (a task `vars:` value rendering eagerly at
       # vars-context build): the reading belongs to whichever render
       # CONSUMES the value - the block Origin's the value's own
@@ -2624,33 +2625,37 @@ module Krikri
       ResultDisplay.emit_vars_dict_deprecation(origin)
     end
 
-    # Runs *block* with `vars`-dict read deprecations silenced on this
-    # fiber. ansible-core templates a variable's value lazily at its USE,
-    # so a `vars` read inside a value the running template never touches
-    # prints nothing - while the template action's scope pre-render
-    # re-renders every value up front and would warn for all of them. The
-    # reads the template DOES make are re-detected on the parsed template
-    # instead (TemplateActionPlugin#re_rendered_var_vars_origin), the
-    # same split the fact read's eager-pre-render probe makes.
-    @@suppressed_vars_dict_deprecations = {} of Fiber => Int32
+    # Runs *block* with the deprecations a variable VALUE's own render
+    # draws silenced on this fiber - the top-level fact alias read and the
+    # `vars`-dict read alike. ansible-core templates a variable's value
+    # lazily at its USE, so a read inside a value the running template
+    # never touches prints nothing - while the template action's scope
+    # pre-render re-renders every value up front and would warn for all of
+    # them (issue #1091, msterhuj.victoriametrics_single's `go_arch`:
+    # `{{ go_arch_map[ansible_architecture] | default(...) }}` is only
+    # reached through a default the warm run's skipped install never
+    # uses). The reads the template DOES make are re-detected on the
+    # parsed template instead (TemplateActionPlugin#re_rendered_var_fact_origin
+    # and #re_rendered_var_vars_origin).
+    @@suppressed_eager_scope_deprecations = {} of Fiber => Int32
 
-    def self.suppress_vars_dict_read_deprecations(& : -> T) : T forall T
+    def self.suppress_eager_scope_deprecations(& : -> T) : T forall T
       fiber = Fiber.current
-      depth = @@suppressed_vars_dict_deprecations[fiber]? || 0
-      @@suppressed_vars_dict_deprecations[fiber] = depth + 1
+      depth = @@suppressed_eager_scope_deprecations[fiber]? || 0
+      @@suppressed_eager_scope_deprecations[fiber] = depth + 1
       begin
         yield
       ensure
         if depth == 0
-          @@suppressed_vars_dict_deprecations.delete(fiber)
+          @@suppressed_eager_scope_deprecations.delete(fiber)
         else
-          @@suppressed_vars_dict_deprecations[fiber] = depth
+          @@suppressed_eager_scope_deprecations[fiber] = depth
         end
       end
     end
 
-    def self.suppress_vars_dict_deprecations? : Bool
-      @@suppressed_vars_dict_deprecations[Fiber.current]?.try { |depth| depth > 0 } || false
+    def self.suppress_eager_scope_deprecations? : Bool
+      @@suppressed_eager_scope_deprecations[Fiber.current]?.try { |depth| depth > 0 } || false
     end
 
     # Per-host registry of UNSAFE variable names - names whose current
