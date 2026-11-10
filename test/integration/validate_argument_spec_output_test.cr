@@ -161,6 +161,32 @@ describe "validate_argument_spec output parity" do
     output.must_include("\"msg\": \"after\"")
   end
 
+  it "registers a passing inline task's result for a later when: gate (issue #1081)" do
+    status, output = run_playbook("pb.yml", {
+      "pb.yml" => "- hosts: all\n  gather_facts: false\n  tasks:\n    - name: Validating arguments\n      ansible.builtin.validate_argument_spec:\n        argument_spec: {}\n        provided_arguments: {}\n      register: kpg_task_0\n      ignore_errors: true\n    - name: gated on register\n      ansible.builtin.debug:\n        msg: ran\n      when: kpg_task_0 is not skipped\n    - ansible.builtin.debug:\n        var: kpg_task_0\n",
+    })
+
+    status.exit_code.must_equal(0)
+    # The registered var must exist for the when: - krikri used to leave it
+    # undefined and fail the gate with "'kpg_task_0' is undefined".
+    output.wont_include("'kpg_task_0' is undefined")
+    output.must_include("\"msg\": \"ran\"")
+    # Real's registered passing shape carries the msg the display omits
+    # (live-verified vs 2.19.11).
+    output.must_include("\"msg\": \"The arg spec validation passed\"")
+  end
+
+  it "registers a failing inline task's result under ignore_errors for a later when: gate" do
+    status, output = run_playbook("pb.yml", {
+      "pb.yml" => "- hosts: all\n  gather_facts: false\n  tasks:\n    - name: Validating arguments\n      ansible.builtin.validate_argument_spec:\n        argument_spec:\n          a: {type: str, required: true}\n      register: kpg_task_1\n      ignore_errors: true\n    - name: gated on register\n      ansible.builtin.debug:\n        msg: ran\n      when: kpg_task_1 is not skipped\n",
+    })
+
+    status.exit_code.must_equal(0)
+    output.wont_include("'kpg_task_1' is undefined")
+    output.must_include("\"msg\": \"ran\"")
+    output.must_include("ignored=1")
+  end
+
   it "rejects an inline provided key the spec does not declare" do
     _, output = run_playbook("pb.yml", {
       "pb.yml" => "- hosts: all\n  gather_facts: false\n  tasks:\n    - name: Validating arguments\n      ansible.builtin.validate_argument_spec:\n        argument_spec:\n          a: {type: str, required: true}\n        provided_arguments:\n          b: nope\n      ignore_errors: true\n",

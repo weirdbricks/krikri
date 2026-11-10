@@ -546,6 +546,31 @@ module Krikri
       ResultDisplay.display_result(host, result, @diff_mode, ignore_errors: ignore_errors, module_name: task.module_name, delegate_target: delegate_display_target(task, host), source_task: task)
       ResultDisplay.update_stats(@results[host.name], result, ignore_errors)
       book_failure_halt(host) if !errors.empty? && !ignore_errors
+      # A register: on a user-written validate_argument_spec task still gets
+      # set like any other task's - issue #1081's next-task
+      # `when: kpg_task_0 is not skipped` reads the var a bare ok just
+      # produced, and krikri used to leave it undefined there. The passing
+      # registered shape keeps the action's full result - the msg real
+      # registers ("The arg spec validation passed") and validate_args_context
+      # included, live-verified vs 2.19.11's registered debug-var shape - even
+      # though the display-visible result above omits the msg (the callback
+      # never surfaces it under the ok line). register_result backfills
+      # changed/failed and the failing shape's exception placeholder.
+      if register_name = task.register
+        unless register_name.empty?
+          registered = if errors.empty?
+                         JSON::Any.new({
+                           "changed"               => JSON::Any.new(false),
+                           "failed"                => JSON::Any.new(false),
+                           "msg"                   => JSON::Any.new("The arg spec validation passed"),
+                           "validate_args_context" => JSON::Any.new(validate_args_context_hash(task)),
+                         } of String => JSON::Any)
+                       else
+                         result
+                       end
+          register_result(host, register_name, registered)
+        end
+      end
     end
 
     # The failure shape for a validate-args var-value templating failure
@@ -566,6 +591,7 @@ module Krikri
       ResultDisplay.display_result(host, result, @diff_mode, ignore_errors: ignore_errors, module_name: task.module_name, delegate_target: delegate_display_target(task, host), source_task: task)
       ResultDisplay.update_stats(@results[host.name], result, ignore_errors)
       book_failure_halt(host) unless ignore_errors
+      register_validate_args_result(task, host, result)
     end
 
     # Real's validate_argument_spec action plugin rejects a non-mapping
@@ -588,6 +614,7 @@ module Krikri
       ResultDisplay.display_result(host, result, @diff_mode, ignore_errors: ignore_errors, module_name: task.module_name, delegate_target: delegate_display_target(task, host), source_task: task)
       ResultDisplay.update_stats(@results[host.name], result, ignore_errors)
       book_failure_halt(host) unless ignore_errors
+      register_validate_args_result(task, host, result)
     end
 
     # The Python class name real 2.19.11's datatag layer reports for a
@@ -604,6 +631,16 @@ module Krikri
       when Array(JSON::Any) then "ansible.module_utils._internal._datatag._AnsibleTaggedList"
       else                       "ansible.module_utils._internal._datatag._AnsibleTaggedStr"
       end
+    end
+
+    # register: on a user-written validate_argument_spec task still lands
+    # even on a failure path (see execute_validate_argument_spec's register
+    # comment) - real registers the failed result, so later tasks can read
+    # it under ignore_errors:.
+    private def register_validate_args_result(task : Task, host : Host, result : JSON::Any) : Nil
+      register_name = task.register
+      return if register_name.nil? || register_name.empty?
+      register_result(host, register_name, result)
     end
 
     # The failure for a REACHED mapping-form `action:`/`local_action:`

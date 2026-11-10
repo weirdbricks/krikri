@@ -5505,6 +5505,17 @@ module Krikri
         end
       end
 
+      # Same dedicated-parser register gap include_vars: had (see its
+      # comment): a register: on a user-written validate_argument_spec task
+      # was silently dropped - task.register stayed nil, so the executor
+      # never bound the var and any later `when: <name> is not skipped`
+      # raised "'<name>' is undefined" (issue #1081).
+      task.register = task_hash["register"]?.try do |v|
+        register_value = safe_yaml_to_string(v)
+        validate_register_name(register_value, source_file, source_map, task_source_prefix(source_prefix, source_index))
+        register_value
+      end
+
       parse_common_task_attributes(task, task_hash, play, handler ? "Handler" : "Task", source_file, source_map, source_prefix, source_index)
       # register: is NOT part of parse_common_task_attributes - every
       # parser sets it in its own tail (the generic task parser does, at
