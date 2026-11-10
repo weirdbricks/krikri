@@ -116,6 +116,10 @@ describe "copy/script/unarchive controller-side src miss parity" do
     status.success?.must_equal(true)
     output.must_include("Unexpected AnsibleActionFail error: Could not find or access 'missing_file.txt'\nSearched in:\n\t#{dir}/files/missing_file.txt\n\t#{dir}/missing_file.txt\n\t#{dir}/files/missing_file.txt\n\t#{dir}/missing_file.txt on the Ansible Controller.")
     output.must_include("fatal: [localhost]: FAILED! => {\"changed\": false, \"msg\": \"Unexpected AnsibleActionFail error: Could not find or access 'missing_file.txt'\\nSearched in:")
+    # the chained AnsibleFileNotFound prints its own caused-by segment
+    # carrying the remote_src advice (live-verified vs 2.21.6)
+    output.must_include("\nTask failed: Unexpected AnsibleActionFail error.\nOrigin: ")
+    output.must_include("\nIf you are using a module and expect the file to exist on the remote, see the remote_src option.\n")
   end
 
   it "fails a missing relative script src on the controller with Ansible's wording" do
@@ -193,7 +197,10 @@ describe "copy/script/unarchive controller-side src miss parity" do
     status.success?.must_equal(true)
     output.must_include("Task failed: Could not find or access '68.tar.gz'\nSearched in:\n\t#{dir}/files/68.tar.gz\n\t#{dir}/68.tar.gz\n\t#{dir}/files/68.tar.gz\n\t#{dir}/68.tar.gz on the Ansible Controller.")
     output.must_include("fatal: [localhost]: FAILED! => {\"changed\": false, \"msg\": \"Task failed: Could not find or access '68.tar.gz'\\nSearched in:")
-    # collapsed: no caused-by chain
-    output.wont_include("<<< caused by >>>")
+    # the chained AnsibleFileNotFound splits out under caused-by with the
+    # remote_src advice as its own paragraph (live-verified vs 2.21.6)
+    output.must_include("\nTask failed.\nOrigin: ")
+    output.must_include("\n<<< caused by >>>\n\nCould not find or access '68.tar.gz'\nSearched in:")
+    output.must_include("\nIf you are using a module and expect the file to exist on the remote, see the remote_src option.\n")
   end
 end
