@@ -1188,6 +1188,18 @@ module Krikri
         # issue #1055 the same for a package the repos cannot name; see
         # check_mode_resolve_probe_failure).
         if check_mode?
+          # `update_only` with `state: present`: an installed name is only
+          # changed when an upgrade is actually available - see
+          # check_mode_update_probe (real says ok with msg "Nothing to do"
+          # for an already-latest batch, --check too).
+          unless to_update.empty?
+            probe = check_mode_update_probe(to_update, options)
+            failure = probe[:failure]
+            return failure if failure
+            to_update = [] of String unless probe[:pending]
+            pending = to_install + to_update
+            return transaction_result(false) if pending.empty?
+          end
           failure = check_mode_resolve_probe_failure(pending, options, names)
           return failure if failure
           return check_mode_transaction_result(true, candidate_nevras(pending, classified[:states]).map { |nevra| "Installed: #{nevra}" })
@@ -1329,6 +1341,30 @@ module Krikri
         result = remote_exec_tolerating_unknown_repo("#{pkg_manager_binary} install #{options} --assumeno #{pkg_list}")
         return nil if result[:exit_code] == 0
         install_batch_failure(result, specs, "#{options} --assumeno", all_names)
+      end
+
+      # The update-shaped twin of the probe above (`state: latest`, or
+      # `update_only` with `state: present`): real resolves the whole goal
+      # BEFORE its check-mode stop, so an already-installed name only reads
+      # changed when an upgrade is actually available - an already-at-latest
+      # batch resolves to dnf's empty transaction and reads ok (issue #1098:
+      # acandid.bind's "Install DNS packages", bind/bind-utils already
+      # latest, read changed under --check where ansible said ok). The probe
+      # is the real update command plus --assumeno standing in for the
+      # check-mode stop: a batch with an available upgrade aborts at the
+      # confirmation prompt (rc 1, "Operation aborted.", nothing upgraded -
+      # live-verified vs dnf4 on Rocky 9), an already-latest batch exits 0.
+      # Only failure classes ansible itself reports surface -
+      # install_batch_failure's output parsers, since a metadata/depsolve
+      # error fails the task in --check exactly like the real update - so a
+      # non-zero exit none of them claims is the abort, i.e. updates
+      # pending, never an invented failure.
+      private def check_mode_update_probe(to_update : Array(String), options : String) : NamedTuple(pending: Bool, failure: PluginResult?)
+        pkg_list = to_update.map { |pth| quote_package(pth) }.join(" ")
+        result = remote_exec_tolerating_unknown_repo("#{pkg_manager_binary} #{update_verb} #{options} --assumeno #{pkg_list}")
+        return {pending: false, failure: nil} if result[:exit_code] == 0
+        failure = install_batch_failure(result, to_update, "#{options} --assumeno", to_update)
+        failure ? {pending: false, failure: failure} : {pending: true, failure: nil}
       end
 
       private def classify_install_packages(names : Array(String), update_only : Bool) : NamedTuple(to_install: Array(String), to_update: Array(String), already_installed: Array(String), states: Hash(String, Bool))
@@ -1503,6 +1539,14 @@ module Krikri
         end
 
         if check_mode?
+          # An installed name under `state: latest` is only changed when an
+          # upgrade is actually available - see check_mode_update_probe.
+          unless to_update.empty?
+            probe = check_mode_update_probe(to_update, options)
+            failure = probe[:failure]
+            return failure if failure
+            to_update = [] of String unless probe[:pending]
+          end
           pending = to_install + to_update
           return with_installed_filename_results(transaction_result(false), names) if pending.empty?
           # Same check-mode resolution as the present path's: real marks
@@ -1510,8 +1554,10 @@ module Krikri
           # the task instead of reading as "would install" (dnf.py's
           # `state: latest` path records the identical per-spec
           # failures).
-          failure = check_mode_resolve_probe_failure(pending, options, names)
-          return failure if failure
+          unless to_install.empty?
+            failure = check_mode_resolve_probe_failure(to_install, options, names)
+            return failure if failure
+          end
           return with_installed_filename_results(check_mode_transaction_result(true, candidate_nevras(pending, states).map { |nevra| "Installed: #{nevra}" }), names)
         end
 
