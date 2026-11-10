@@ -295,18 +295,23 @@ module Krikri
       #
       # The `skipping:` verdict only applies when NO creates:/removes:
       # gate is present. With a gate (live-verified against 2.19.11), the
-      # module runs its own gate logic even in check mode and returns an
-      # ordinary "ok" (changed: false) result - "Command would have run
-      # if not in check mode" when the gate would have let it through
-      # (recap ok=1, not skipped=1), or the "Would not run command
-      # since ..." shape from the branches above when the gate would
-      # have held it back. Reporting the would-run case as "skipping:"
-      # shifted both engines' recap counters (real ok=4/skipped=3, this
-      # engine ok=3/skipped=4 on the same playbook).
+      # module runs its own gate logic even in check mode: when the gate
+      # would have let the command through, command.py has already set
+      # `r['changed'] = True` BEFORE the check-mode branch and the branch
+      # only sets skipped=True/changed=False when BOTH creates and removes
+      # are None - so the gated would-run result is CHANGED ("changed:",
+      # recap changed=1), not an "ok" - the module never ran anything in
+      # check mode, but ansible still counts the would-be run as changed,
+      # and handlers notified on the task fire (issue #1071: a check-mode
+      # `shell:` with `creates:` diverged - this engine said "ok",
+      # ansible said "changed" and ran the handler). Reporting the
+      # would-run case as "skipping:" shifted both engines' recap
+      # counters (real ok=4/skipped=3, this engine ok=3/skipped=4 on the
+      # same playbook).
       if @check_mode
         gated = @params.has_key?("creates") || @params.has_key?("removes")
         return with_executable_warning(PluginResult.new(
-          changed: false,
+          changed: gated,
           failed: false,
           msg: "Command would have run if not in check mode",
           skipped: !gated,
