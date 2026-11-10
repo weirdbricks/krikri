@@ -126,4 +126,61 @@ describe "delegate_to: localhost" do
     output.must_include("survived")
     output.must_include("PLAY RECAP")
   end
+
+  # Issue #1110 (follow-up to #755): the until:/retries: attempt loop
+  # never merged a run's ansible_facts at all, so a set_fact whose task
+  # also carried retries:/until: lost its fact - the next task's
+  # hostvars['localhost'] read had nothing to serve. Real Ansible
+  # applies each attempt's facts as that attempt returns (2.21.6,
+  # live-verified).
+  it "keeps a delegate_facts: set_fact readable through hostvars when the task has retries/until" do
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: Set a fact on localhost
+            ansible.builtin.set_fact:
+              _v: hello
+            delegate_to: localhost
+            delegate_facts: true
+            register: r
+            retries: 3
+            delay: 1
+            until: r is not failed
+          - name: Read it back
+            ansible.builtin.debug:
+              msg: "{{ hostvars['localhost']['_v'] | default('MISSING') }}"
+      YAML
+    status.exit_code.must_equal(0)
+    output.must_include(%("msg": "hello"))
+    output.wont_include("MISSING")
+  end
+
+  # Same root cause, bare-name half: real's attempt loop applies each
+  # attempt's facts BEFORE evaluating until: (2.21.6, live-verified:
+  # `until: _p is defined` on a set_fact of _p succeeds on attempt 1,
+  # no FAILED - RETRYING line), so the fact must reach the task's own
+  # variable context mid-loop, not only the fact store after it.
+  it "applies an attempt's set_fact before evaluating until: on the same attempt" do
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: Set a fact and wait for it
+            ansible.builtin.set_fact:
+              _p: probe
+            register: rp
+            retries: 3
+            delay: 1
+            until: _p is defined
+          - name: Attempt count readback
+            ansible.builtin.debug:
+              msg: "attempts={{ rp.attempts | default('NO_ATTEMPTS_KEY') }}"
+      YAML
+    status.exit_code.must_equal(0)
+    output.must_include(%("msg": "attempts=1"))
+    output.wont_include("FAILED - RETRYING")
+  end
 end
