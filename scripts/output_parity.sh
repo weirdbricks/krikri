@@ -136,6 +136,14 @@ MASKS=(
   # else compared.
   "s/(\"atime\": )[0-9]+\\.[0-9]+/\1<ATIME>/g"
   "s/(\"mtime\": )[0-9]+\\.[0-9]+/\1<MTIME>/g"
+  # Thirteenth entry, same class: a uri result carries every response
+  # header (uri.py merges them into the result, '-' to '_' lowercased),
+  # so its `date` key is the server's own response Date - a per-request
+  # wall-clock stamp, so no two runs agree by construction (two real
+  # ansible runs of one playbook print different values, and kpg issue
+  # #1073's masked diff was this value and nothing else). Only the value
+  # is masked; the `date` key and every field around it still compare.
+  "s/(\"date\": \")(Mon|Tue|Wed|Thu|Fri|Sat|Sun), [0-9]{2} (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) [0-9]{4} [0-9]{2}:[0-9]{2}:[0-9]{2} GMT\"/\1<TIME>\"/g"
 )
 
 mask() {
