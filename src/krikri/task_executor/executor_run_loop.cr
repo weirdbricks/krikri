@@ -2015,7 +2015,7 @@ module Krikri
         detail = ex.message.to_s.lines.first?.to_s
         unreachable = JSON.parse({
           "changed"     => false,
-          "msg"         => "Failed to connect to the host via ssh: #{detail}",
+          "msg"         => SSHUnreachableMsg.unreachable_msg(detail, host.vars, host),
           "stderr"      => detail,
           "unreachable" => true,
         }.to_json)
@@ -2499,7 +2499,7 @@ module Krikri
         detail = ex.message.to_s.lines.first?.to_s
         return JSON.parse({
           "changed"     => false,
-          "msg"         => "Failed to connect to the host via ssh: #{detail}",
+          "msg"         => SSHUnreachableMsg.unreachable_msg(detail, vars_context, host),
           "stderr"      => detail,
           "unreachable" => true,
         }.to_json)

@@ -32,7 +32,13 @@ private def run_playbook(inventory : String, yaml : String) : {Process::Status, 
   playbook = File.join(dir, "play.yml")
   File.write(playbook, yaml)
   output = IO::Memory.new
-  status = Process.run(BINARY, ["-i", inv, playbook], output: output, error: output)
+  # Pins ansible's DEFAULT (pipelining off) unreachable lead: a developer's
+  # ambient ANSIBLE_PIPELINING would flip the engine to the pipelined
+  # "Data could not be sent" wrapper (SSHUnreachableMsg).
+  env = ENV.to_h
+  env.delete("ANSIBLE_PIPELINING")
+  env.delete("ANSIBLE_SSH_PIPELINING")
+  status = Process.run(BINARY, ["-i", inv, playbook], output: output, error: output, env: env)
   {status, output.to_s}
 end
 
@@ -116,7 +122,10 @@ describe "delegated task to a host not in the inventory (issue #102)" do
           - k650
       YAML
     output = IO::Memory.new
-    status = Process.run(BINARY, ["-i", File.join(dir, "inv.ini"), File.join(dir, "pb.yml")], output: output, error: output, chdir: dir)
+    env = ENV.to_h
+    env.delete("ANSIBLE_PIPELINING")
+    env.delete("ANSIBLE_SSH_PIPELINING")
+    status = Process.run(BINARY, ["-i", File.join(dir, "inv.ini"), File.join(dir, "pb.yml")], output: output, error: output, chdir: dir, env: env)
 
     status.exit_code.must_equal(4)
     text = output.to_s

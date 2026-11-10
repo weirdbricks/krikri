@@ -37,7 +37,11 @@ module Krikri
       # the task asked to keep out of the output.
       detail = ssh_error.try { |err| ssh_transport_detail(err) } ||
                @unreachable_ssh_errors[host.name]? || connection_host
-      inner = "Failed to connect to the host via ssh: #{detail}"
+      # The lead is pipelining-dependent (SSHUnreachableMsg): ansible's ssh
+      # plugin only reaches the "Data could not be sent" wrap when the
+      # failing exec carried pipelined module data. Only the host's own var
+      # layer is consulted here - this path has no task vars context.
+      inner = SSHUnreachableMsg.unreachable_msg(detail, host.vars, host)
       msg = "Task failed: #{inner}"
       msg = "" if no_log
       report = String.build do |io|
@@ -47,7 +51,7 @@ module Krikri
           # The delegated label rides the host slot the same way the
           # default callback's fatal line carries it.
           host_label = delegate_target ? "#{host.name} -> #{delegate_target}" : host.name
-          detail_msg = no_log ? "" : "Failed to connect to the host via ssh: #{detail}"
+          detail_msg = no_log ? "" : SSHUnreachableMsg.unreachable_msg(detail, host.vars, host)
           io << "#{host_label} | UNREACHABLE!: #{detail_msg}".colorize(:red)
           io << "\n"
         else
@@ -1086,7 +1090,7 @@ module Krikri
         detail = ex.message.to_s.lines.first?.to_s
         return JSON.parse({
           "changed"     => false,
-          "msg"         => "Failed to connect to the host via ssh: #{detail}",
+          "msg"         => SSHUnreachableMsg.unreachable_msg(detail, vars, exec_host),
           "stderr"      => detail,
           "unreachable" => true,
         }.to_json)
