@@ -1402,6 +1402,23 @@ describe Krikri::VariableSubstitutor::FilterEngine do
     result.as_a.map(&.as_s).must_equal(["a"])
   end
 
+  it "regex_search returns one list element per group_ref argument, not just the first" do
+    # Ansible's regex_search takes `*args` group refs and returns one
+    # capture PER argument (ansible-core 2.21's own filter/core.py, and
+    # the issue-1111 repro against 2.21.5: '\\g<epoch>', '\\g<major>',
+    # ... is [null, "7", "84", "6"] while '\\2', '\\3' is ["7", "84"]).
+    # Only the first ref arg used to be read, so the datadog.dd agent's
+    # parse-version.yml (six refs on one call) got a one-element list
+    # back and computed an empty package version from it. A group that
+    # did not participate still yields nil in its own slot.
+    result = engine.apply(s("7.84.6"), %(regex_search('(?:(?<epoch>[0-9]+):)?(?<major>[0-9]+)\\.(?<minor>[0-9]+)\\.(?<bugfix>[0-9]+)', '\\g<epoch>', '\\g<major>', '\\g<minor>', '\\g<bugfix>')))
+    result.as_a.size.must_equal(4)
+    result.as_a[0].raw.must_be_nil
+    result.as_a[1..].map(&.as_s).must_equal(["7", "84", "6"])
+    result = engine.apply(s("7.84.6"), %(regex_search('(?:(?<epoch>[0-9]+):)?(?<major>[0-9]+)\\.(?<minor>[0-9]+)\\.(?<bugfix>[0-9]+)', '\\2', '\\3')))
+    result.as_a.map(&.as_s).must_equal(["7", "84"])
+  end
+
   it "regex_search raises on a group_ref the pattern has no such group for" do
     # Ansible: match.group(5) raises IndexError, surfacing as "no
     # such group" - the old copies silently returned [""] (hand-rolled)

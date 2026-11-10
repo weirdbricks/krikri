@@ -843,7 +843,7 @@ module Krikri
             {"key_name" => key_name, "value_name" => value_name},
           )
         when "regex_search"
-          # regex_search(pattern, group_ref='') - Ansible's own
+          # regex_search(pattern, *group_refs) - Ansible's own
           # filter (not standard Jinja2): searches *pattern* anywhere in
           # value (Python re.search, not a full match). No match at all
           # resolves to Python None/JSON null - matching Ansible
@@ -868,13 +868,18 @@ module Krikri
           # registration (jinja_filters.cr) calls too - previously TWO
           # independently-maintained copies that had each found and
           # fixed the group_ref bugs separately (see FilterCore's
-          # comment for the full arbitrated contract). Ansible
-          # takes multiline/ignorecase as kwargs, so kwarg-shaped args
+          # comment for the full arbitrated contract). Every positional
+          # arg after the pattern is a group ref and contributes one
+          # element of the returned list (Ansible's `*args` shape -
+          # datadog.dd's parse-version.yml passes six refs on one call
+          # and reads all six; only the first used to be collected here,
+          # issue #1111). Ansible takes multiline/ignorecase as kwargs,
+          # so kwarg-shaped args
           # are excluded from the positional group-ref slot here.
           args = split_top_level_args(filter_args)
           positional = args.reject { |arg| arg.strip.match(/^(multiline|ignorecase)\s*=/) }
           pattern = positional[0]?.try { |arg| as_string(resolve_expression(arg)) } || ""
-          group_ref = positional[1]?.try { |arg| as_string(resolve_expression(arg)) }
+          group_refs = positional[1..]?.try(&.map { |arg| as_string(resolve_expression(arg)) }) || [] of String
           options = Regex::Options::None
           if kw = parse_kwarg_expr(filter_args, "multiline")
             # Python re.M only moves ^/$ to line boundaries - NOT
@@ -891,7 +896,7 @@ module Krikri
             options |= Regex::Options::IGNORE_CASE if truthy?(kw)
           end
 
-          case result = FilterCore.regex_search(as_string(value), pattern, group_ref, options)
+          case result = FilterCore.regex_search(as_string(value), pattern, group_refs, options)
           when String
             JSON::Any.new(result)
           when Array

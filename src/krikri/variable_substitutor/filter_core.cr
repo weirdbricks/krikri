@@ -71,34 +71,40 @@ module Krikri
         Regex.escape(s)
       end
 
-      # regex_search(value, pattern, group_ref=nil) - Python re.search
+      # regex_search(value, pattern, *group_refs) - Python re.search
       # semantics: the first match of *pattern* anywhere in *value*, or nil
       # (Python None / JSON null - Ansible's own no-match return) when
-      # nothing matches. With a group_ref the match's captured group text is
-      # returned wrapped in a one-element LIST (Ansible wraps every
-      # group reference; see the nginxinc.nginx `| first` repro in the
-      # jinja_filters.cr comment history). The group_ref grammar is
-      # Ansible's own: `\1`-style capture-group INDICES (only the first
-      # `\d+` run counts, so `'\1\2'` resolves group 1 - live-verified
-      # against ansible-core 2.19.11) and `\g<name>`-style named references;
-      # anything else raises ("Unknown argument", as Ansible does), and
-      # a reference to a group the pattern doesn't have raises too ("no such
-      # group"). A group that exists but didn't participate yields nil in
-      # the returned list (Python's match.group() -> None), NOT an empty
-      # string. Empty/nil group_ref means "no group reference" -> the whole
+      # nothing matches. EVERY group-ref argument yields one element of the
+      # returned LIST - Ansible's own `regex_search(value, regex, *args)`
+      # appends one capture per ref arg (ansible-core 2.21's own
+      # filter/core.py), live-verified with 2.21.5: `regex_search(re,
+      # '\\2', '\\3')` is `["7", "84"]`, not just the first. Only the
+      # first ref arg used to be read, so the datadog.dd agent's
+      # parse-version.yml (six `\\g<...>` refs on one call) got a
+      # one-element list and computed an empty package version from it.
+      # The group_ref grammar is Ansible's own: `\1`-style capture-group
+      # INDICES (only the first `\d+` run counts, so `'\1\2'` resolves
+      # group 1 - live-verified against ansible-core 2.19.11) and
+      # `\g<name>`-style named references; anything else raises ("Unknown
+      # argument", as Ansible does), and a reference to a group the pattern
+      # doesn't have raises too ("no such group"). A group that exists but
+      # didn't participate yields nil in the returned list (Python's
+      # match.group() -> None), NOT an empty string. No group refs (or the
+      # tolerated single empty one) means "no group reference" -> the whole
       # match. *options* carries the multiline/ignorecase kwargs
       # Ansible's regex_search accepts.
-      def self.regex_search(s : String, pattern : String, group_ref : String? = nil, options : Regex::Options = Regex::Options::None) : String | Array(String?) | Nil
+      def self.regex_search(s : String, pattern : String, group_refs : Array(String) = [] of String, options : Regex::Options = Regex::Options::None) : String | Array(String?) | Nil
         match = s.match(cached_regex(pattern, options))
         return nil unless match
-        ref = group_ref || ""
-        return match[0] if ref.empty?
-        if named = ref.match(/^\\g<(\S+)>/).try(&.[1])
-          [group_capture(match, named, ref)]
-        elsif index_match = ref.match(/^\\(\d+)/)
-          [group_capture(match, index_match[1].to_i, ref)]
-        else
-          raise "regex_search: Unknown argument '#{ref}' (only \\1-style group indices and \\g<name> named references are accepted, as in Ansible)"
+        return match[0] if group_refs.empty? || (group_refs.size == 1 && group_refs.first.empty?)
+        group_refs.map do |ref|
+          if named = ref.match(/^\\g<(\S+)>/).try(&.[1])
+            group_capture(match, named, ref)
+          elsif index_match = ref.match(/^\\(\d+)/)
+            group_capture(match, index_match[1].to_i, ref)
+          else
+            raise "regex_search: Unknown argument '#{ref}' (only \\1-style group indices and \\g<name> named references are accepted, as in Ansible)"
+          end
         end
       end
 

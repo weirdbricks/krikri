@@ -127,6 +127,17 @@ describe "template engine canary" do
     crinja_render("{{ 'a' | regex_search('(a)|(b)', '\\\\2') }}").must_equal("[None]")
   end
 
+  it "regex_search returns one list element per group_ref argument on the Crinja path (issue #1111)" do
+    # Ansible's regex_search takes `*args` group refs and returns one
+    # capture PER argument (the datadog.dd agent's parse-version.yml
+    # passes six `\\g<...>` refs on one call and reads all six); only
+    # the first ref used to reach the shared FilterCore, so the extra
+    # captures were dropped and the role computed an empty version
+    # (issue #1111).
+    crinja_render("{{ '7.84.6' | regex_search('(?:(?<epoch>[0-9]+):)?(?<major>[0-9]+)\\\\.(?<minor>[0-9]+)\\\\.(?<bugfix>[0-9]+)', '\\\\g<epoch>', '\\\\g<major>', '\\\\g<minor>', '\\\\g<bugfix>') }}").must_equal("[None, '7', '84', '6']")
+    crinja_render("{{ '7.84.6' | regex_search('(?:(?<epoch>[0-9]+):)?(?<major>[0-9]+)\\\\.(?<minor>[0-9]+)\\\\.(?<bugfix>[0-9]+)', '\\\\2', '\\\\3') }}").must_equal("['7', '84']")
+  end
+
   it "regex_search honors the ignorecase/multiline kwargs on the Crinja path" do
     crinja_render("{{ 'HELLO' | regex_search('hello', ignorecase=True) }}").must_equal("HELLO")
     crinja_render("{{ 'x\\nend: 42' | regex_search('^end: (\\\\d+)', '\\\\1', multiline=True) }}").must_equal("['42']")
