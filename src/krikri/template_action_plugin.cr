@@ -764,7 +764,15 @@ module Krikri
     # constants never count, so a name merely mentioned in prose or inside
     # a quoted literal is not a read. The catch-all `else` keeps an engine
     # adding a node type here from crashing a render over a deprecation
-    # scan.
+    # scan. Bound names (see #bound_name_matcher) never count either: the
+    # construct's own body resolves them to the binding, not to the
+    # injected fact of the same spelling.
+    private def bound_name_matcher(matcher : String -> Bool, bound : Enumerable(String)) : String -> Bool
+      names = bound.to_set
+      return matcher if names.empty?
+      ->(name : String) { !names.includes?(name) && matcher.call(name) }
+    end
+
     private def template_reads_name?(matcher : String -> Bool, node : KrikriJinja::Nodes::Node) : Bool
       case node
       when KrikriJinja::Nodes::NameNode
@@ -780,10 +788,18 @@ module Krikri
         node.branches.any? { |(test, body)| template_reads_name?(matcher, test) || any_node_reads_name?(matcher, body) } ||
           (node.orelse.try { |orelse| any_node_reads_name?(matcher, orelse) } || false)
       when KrikriJinja::Nodes::ForNode
+        # A for target shadows a same-named injected fact for the loop's
+        # own body and else block only (Jinja2 loop variables do not leak
+        # past the loop): real's template reads the binding there, so
+        # `{% for domain in domains %}{{ domain }}` prints no
+        # INJECT_FACTS_AS_VARS block even though the facts inject
+        # `ansible_domain` (issue #1087, Turgon37.sssd's sssd.conf.j2,
+        # live-verified against 2.21.6).
+        body_matcher = bound_name_matcher(matcher, node.targets.map(&.name))
         template_reads_name?(matcher, node.iter) ||
           (node.test.try { |test| template_reads_name?(matcher, test) } || false) ||
-          any_node_reads_name?(matcher, node.body) ||
-          (node.orelse.try { |orelse| any_node_reads_name?(matcher, orelse) } || false)
+          any_node_reads_name?(body_matcher, node.body) ||
+          (node.orelse.try { |orelse| any_node_reads_name?(body_matcher, orelse) } || false)
       when KrikriJinja::Nodes::SetNode
         template_reads_name?(matcher, node.expr) ||
           (node.attr_target.try { |target| template_reads_name?(matcher, target) } || false) ||
@@ -794,17 +810,17 @@ module Krikri
         any_node_reads_name?(matcher, node.body)
       when KrikriJinja::Nodes::MacroNode
         node.params.any? { |param| (default = param[1]) && template_reads_name?(matcher, default) } ||
-          any_node_reads_name?(matcher, node.body)
+          any_node_reads_name?(bound_name_matcher(matcher, node.params.map(&.[0])), node.body)
       when KrikriJinja::Nodes::CallNode
         template_reads_name?(matcher, node.macro_expr) ||
           exprs_read_names?(matcher, node.args) ||
           node.kwargs.any? { |kwarg| template_reads_name?(matcher, kwarg[1]) } ||
-          (node.body.try { |body| any_node_reads_name?(matcher, body) } || false)
+          (node.body.try { |body| any_node_reads_name?(bound_name_matcher(matcher, node.call_params), body) } || false)
       when KrikriJinja::Nodes::FilterBlockNode
         template_reads_name?(matcher, node.filter) || any_node_reads_name?(matcher, node.body)
       when KrikriJinja::Nodes::WithNode
         node.bindings.any? { |binding| template_reads_name?(matcher, binding[1]) } ||
-          any_node_reads_name?(matcher, node.body)
+          any_node_reads_name?(bound_name_matcher(matcher, node.bindings.map(&.[0])), node.body)
       when KrikriJinja::Nodes::IncludeNode, KrikriJinja::Nodes::ExtendsNode, KrikriJinja::Nodes::ImportNode
         template_reads_name?(matcher, node.template)
       when KrikriJinja::Nodes::ListExprNode, KrikriJinja::Nodes::TupleExprNode
