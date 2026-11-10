@@ -19,7 +19,9 @@ require "../minitest_helper"
 #              registered shape is failed, changed, exception, msg with
 #              that int() TypeError text and no url/status/elapsed/
 #              redirected; a request failure (connection refused) keeps
-#              the full shape but in Ansible's fail_json key order.
+#              the full shape but in Ansible's fail_json key order; under
+#              --check the task skips before any argument or `src:` check
+#              can fail it.
 #   until    - the registered result of an until: task carries an
 #              attempts int (the successful 1-based attempt, or the
 #              retries value when the loop runs out) and an exhausted
@@ -32,8 +34,10 @@ private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-ex
 
 # Runs a play whose registered `r` is copied through `{{ r | to_json }}`
 # into a file (avoiding the display layer's escaping) and returns both
-# the parsed dump and the full console output.
-private def run_registered_dump(tasks : String) : {JSON::Any, String}
+# the parsed dump and the full console output. The dump task itself is
+# exempted from check mode: a --check run must still write the file, or
+# there would be nothing to read back.
+private def run_registered_dump(tasks : String, args : Array(String) = [] of String) : {JSON::Any, String}
   dump = PluginSpecHelper.tmp_path("gap-fixes-dump-#{Random::Secure.hex(4)}.json")
   playbook = File.tempname("gap-fixes", ".yml")
   File.write(playbook, <<-YAML)
@@ -47,11 +51,12 @@ private def run_registered_dump(tasks : String) : {JSON::Any, String}
             content: |-
               {{ r | to_json }}
             dest: #{dump}
+          check_mode: false
     YAML
   output = IO::Memory.new
   # Warnings go to stderr; capture it too so output checks see the full
   # console text.
-  status = Process.run(BINARY, ["-i", INVENTORY, playbook], input: Process::Redirect::Close, output: output, error: output)
+  status = Process.run(BINARY, ["-i", INVENTORY, playbook] + args, input: Process::Redirect::Close, output: output, error: output)
   status.success?.must_equal(true)
   {JSON.parse(File.read(dump)), output.to_s}
 ensure
@@ -155,6 +160,43 @@ describe "uri failure shapes" do
     result["redirected"].as_bool.must_equal(false)
     result["failed"].as_bool.must_equal(true)
     result["msg"].as_s.must_match(/^Status code was -1 and not \[200\]: Request failed: /)
+  end
+
+  # Ansible's ActionBase#run raises its check-mode skip before uri's action
+  # plugin and before AnsibleModule validates any argument, so under --check
+  # a task that fails an ordinary run - here a non-boolean `use_proxy`, a
+  # typo'd option and a `creates:` that never exists - registers a plain
+  # skip instead (live-verified vs ansible-core 2.21.6).
+  it "registers Ansible's check-mode skip for a task whose arguments are broken" do
+    result, _output = run_registered_dump(<<-T, ["--check"])
+      - ansible.builtin.uri:
+          creates: #{PluginSpecHelper.tmp_path("uri-never-created")}
+          url: http://127.0.0.1:1/
+          use_proxy: kknczu
+          edcompress: false
+        register: r
+        ignore_errors: true
+      T
+    result["failed"].as_bool.must_equal(false)
+    result["changed"].as_bool.must_equal(false)
+    result["skipped"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("This action (ansible.builtin.uri) does not support check mode.")
+  end
+
+  # The same skip also preempts uri's controller-side action plugin checks
+  # (its `src:` staging among them), which fail an ordinary run.
+  it "skips under --check instead of failing uri's controller-side src check" do
+    missing = PluginSpecHelper.tmp_path("uri-missing-#{Random::Secure.hex(4)}.txt")
+    result, _output = run_registered_dump(<<-T, ["--check"])
+      - ansible.builtin.uri:
+          url: http://127.0.0.1:1/
+          src: #{missing}
+        register: r
+        ignore_errors: true
+      T
+    result["failed"].as_bool.must_equal(false)
+    result["skipped"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("This action (ansible.builtin.uri) does not support check mode.")
   end
 end
 
