@@ -5965,9 +5965,19 @@ module Krikri
 
       # assert's `that:` items point their Origin at the item's own
       # scalar line:column, found by the item-position scan, not at the
-      # `key:` line's value token the way when:/until: do.
+      # `key:` line's value token the way when:/until: do. A task with
+      # DUPLICATE `that:` keys collapses to a single surviving condition
+      # ("Using last defined value only"), so the item index no longer
+      # counts YAML occurrences and the positional scan would label the
+      # FIRST key's line where real pins the Origin on the value that
+      # survived - the LAST one (fogartyp.ora-host's double `that:`,
+      # issue #1136). Matching the condition's own text first lands on
+      # the surviving line; shapes the text can't be found in (folded
+      # list form, escaped scalars) fall back to the positional scan,
+      # which is exact for every single-`that:` task.
       located_key = if that_index
-                      if pos = ResultDisplay.assert_that_position(lines, name_idx, that_index)
+                      if pos = (that_inline_value_position(lines, name_idx, raw) ||
+                                ResultDisplay.assert_that_position(lines, name_idx, that_index))
                         {pos[0] - 1, pos[1]}
                       end
                     else
@@ -5981,6 +5991,35 @@ module Krikri
         io << origin_context_block(path, lines, key_idx + 1, column)
         io << footer
       end
+    end
+
+    # The inline `that: <value>` line whose value IS the given condition
+    # text (1-based line, 1-based value column) - the surviving value's
+    # own position under duplicate `that:` keys. Only inline scalar
+    # values match; a folded list form has its items on "- " lines and
+    # returns nil for the positional fallback to handle.
+    private def that_inline_value_position(lines : Array(String), name_idx : Int32, raw : String) : {Int32, Int32}?
+      needle = raw.strip
+      return nil if needle.empty?
+      ((name_idx)...lines.size).each do |idx|
+        line = lines[idx]
+        key_at = line.index("that:")
+        next unless key_at && line[0...key_at].strip.empty?
+        rest = line[(key_at + 5)..]
+        next if rest.strip.empty?
+        value = rest.lstrip
+        # A YAML scalar wrapped in ONE matching quote pair loses its
+        # quotes before the comparison - the parsed condition has none
+        # (same tolerance locate_conditional_origin's item branch uses).
+        quoted = value.size >= 2 &&
+                 (value.starts_with?('"') && value.ends_with?('"') ||
+                  value.starts_with?('\'') && value.ends_with?('\''))
+        text = quoted ? value[1..-2] : value
+        next unless text.strip == needle
+        column = key_at + 5 + (rest.size - rest.lstrip.size) + 1
+        return {idx + 1, column}
+      end
+      nil
     end
 
     # Whether *conditional* carries a quoted string literal ('...' or

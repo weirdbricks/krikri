@@ -404,22 +404,14 @@ module Krikri
       # Only the operand classes Python cross-compares numerically - a
       # String is deliberately absent, because Python never treats a
       # string as a number: `'7' == 7` is False, and `'7' < 7` is a
-      # TypeError. Numeric strings get parsed only in the two-raw-strings
-      # ordering cascade (#numeric_or_nil), where Python's own
-      # str-vs-str ordering already applies.
+      # TypeError. Ordering comparisons never parse a String either -
+      # two numeric strings order lexicographically, the way Python's
+      # own str-vs-str ordering applies (issue #1136).
       private def equality_numeric_or_nil(value : JSON::Any) : Float64?
         case raw = value.raw
         when Int64   then raw.to_f64
         when Float64 then raw
         when Bool    then raw ? 1.0 : 0.0
-        end
-      end
-
-      private def numeric_or_nil(value : JSON::Any) : Float64?
-        case raw = value.raw
-        when Int64   then raw.to_f64
-        when Float64 then raw
-        when String  then raw.to_f64?
         end
       end
 
@@ -435,9 +427,9 @@ module Krikri
       #
       # Deliberately KEPT lenient (pre-existing, load-bearing for real
       # roles whose values are strings from module stdout): two raw
-      # Strings compare as strings (int/float-parsable pairs numerically
-      # first, exactly as before), matching Python's own lexicographic
-      # str-vs-str ordering. But a String paired with a real number is
+      # Strings compare lexicographically, matching Python's own
+      # str-vs-str ordering (never numerically - issue #1136). But a
+      # String paired with a real number is
       # never parsed as a number: ansible fails `'10' >= 1` (a role
       # default compared to a numeric literal, issue #219) with "'>=' not
       # supported between instances of '_AnsibleTaggedStr' and 'int'".
@@ -478,15 +470,13 @@ module Krikri
           end
         end
 
-        # Two raw strings: keep the historical numeric-first cascade for
-        # numeric-string pairs, lexicographic for anything else (Python's
-        # own str-vs-str semantics).
+        # Two raw strings: Python's own str-vs-str semantics - always
+        # lexicographic, never numeric ('24.04' >= '6.4' is False because
+        # '2' < '6'; fogartyp.ora-host's version gate, issue #1136 - the
+        # old numeric-first cascade answered it True where real ansible's
+        # assert fails the task). A numeric-string against a REAL number
+        # was already refused above, like Python's TypeError (issue #219).
         if left.raw.is_a?(String) && right.raw.is_a?(String) && !lbig && !rbig
-          left_num = numeric_or_nil(left)
-          right_num = numeric_or_nil(right)
-          if left_num && right_num
-            return (left_num <=> right_num) || 0
-          end
           return left.as_s <=> right.as_s
         end
 

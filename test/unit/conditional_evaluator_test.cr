@@ -131,6 +131,22 @@ describe Krikri::ConditionalEvaluator do
       v = vars({"count" => 5_i64} of String => JSON::Any::Type)
       Krikri::ConditionalEvaluator.evaluate("count >= 6", v).must_equal(false)
     end
+
+    it "orders two numeric strings lexicographically like Python str-vs-str" do
+      # Real ansible fails fogartyp.ora-host's version gate
+      # `ansible_distribution_version >= '6.4'` on ubuntu 24.04: Jinja
+      # compares two strings by text ('2' < '6'), never numerically
+      # (issue #1136) - the old parse-as-number cascade answered True
+      # and kept running tasks ansible's assert stops.
+      v = vars({"ansible_distribution_version" => "24.04"} of String => JSON::Any::Type)
+      Krikri::ConditionalEvaluator.evaluate(
+        "ansible_distribution_version >= '6.4'", v
+      ).must_equal(false)
+      v["ansible_distribution_version"] = JSON::Any.new("7")
+      Krikri::ConditionalEvaluator.evaluate(
+        "ansible_distribution_version >= '6.4'", v
+      ).must_equal(true)
+    end
   end
 
   describe "arithmetic operators in a bare when:/assert: value" do

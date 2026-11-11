@@ -39,10 +39,13 @@ describe Krikri::VariableSubstitutor::ComparisonEvaluator do
     # Jinja2/Python raises TypeError on (and ansible-playbook fails
     # the task) - found by bin/differential_fuzz against the krikri-jinja
     # engine, which already raises exactly what Jinja2 3.1.6 raises.
-    # Deliberately KEPT lenient: two raw strings (int/float-parsable
-    # pairs numerically first, exactly as before - module stdout values
-    # are strings in real roles). A string is never parsed as a number
-    # against a real-number operand: ansible fails a role default
+    # Deliberately KEPT lenient: two raw strings compare, but always
+    # LEXICOGRAPHICALLY like Python's own str-vs-str ordering (module
+    # stdout values are strings in real roles) - the old numeric-first
+    # cascade answered `'24.04' >= '6.4'` numerically (True) where real
+    # ansible's assert fails it because '2' < '6' (issue #1136,
+    # fogartyp.ora-host). A string is never parsed as a number against
+    # a real-number operand either: ansible fails a role default
     # `'10' >= 1` (issue #219) the way Python does.
 
     it "raises on a container vs number ordering comparison" do
@@ -52,6 +55,20 @@ describe Krikri::VariableSubstitutor::ComparisonEvaluator do
       assert_raises_message(Krikri::VariableSubstitutor::ComparisonTypeError, /'<=' not supported between instances of 'dict' and 'float'/) do
         evaluator.evaluate("dict_simple <= 6.6")
       end
+    end
+
+    it "orders two numeric strings lexicographically like Python str-vs-str" do
+      # Real ansible fails fogartyp.ora-host's version gate
+      # `ansible_distribution_version >= '6.4'` on ubuntu 24.04: Jinja
+      # compares the two strings by text ('2' < '6'), never numerically
+      # (issue #1136) - the old numeric-first cascade answered True and
+      # ran tasks ansible's assert stops.
+      v = Hash(String, JSON::Any).new
+      v["ansible_distribution_version"] = JSON::Any.new("24.04")
+      evaluator = Krikri::VariableSubstitutor::ComparisonEvaluator.new(v)
+      evaluator.evaluate("ansible_distribution_version >= '6.4'").must_equal("false")
+      v["ver"] = JSON::Any.new("7")
+      evaluator.evaluate("ver >= '6.4'").must_equal("true")
     end
 
     it "raises on an ordering comparison against an undefined variable" do
