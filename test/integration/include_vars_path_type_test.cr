@@ -255,6 +255,38 @@ describe "include_vars with a non-string file:/dir: literal" do
     text.wont_include("'r' is undefined")
   end
 
+  it "registers the arg-validation failure like any other task failure" do
+    # live-verified vs ansible-playbook 2.21.6: with register:+ignore_errors:,
+    # the invalid-option failure still DEFINES the registered var
+    # ({changed, exception, failed, msg}) - a later task's
+    # `when: r is not skipped` then evaluates true and runs. Without the
+    # register the later task fails on an undefined name instead
+    # (issue #1126: kpg 000033-multi-include_vars-chaos).
+    _, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - include_vars:
+              file: vars.yml
+              hsah_behaviour: merge
+            register: r
+            ignore_errors: true
+          - debug:
+              var: r
+          - debug:
+              msg: ran
+            when: r is not skipped
+    YAML
+
+    output.must_include("[ERROR]: Task failed: hsah_behaviour is not a valid option in include_vars")
+    output.must_include(%("exception": "(traceback unavailable)"))
+    output.must_include(%("failed": true))
+    output.must_include(%("msg": "Task failed: hsah_behaviour is not a valid option in include_vars"))
+    output.must_include(%("msg": "ran"))
+    output.must_match(/ignored=1/)
+  end
+
   it "aborts the whole playbook on a non-string free-form value, like Ansible's mod_args" do
     _, output = run_playbook(<<-YAML)
       - hosts: localhost
