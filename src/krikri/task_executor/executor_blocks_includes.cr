@@ -193,6 +193,7 @@ module Krikri
           fail_include_tasks_undefined_var(task, host, ex)
           next
         end
+        raise_include_tasks_non_string_file_crash(task) if task.include_file_native
         resolved_path = PlaybookParser.resolve_include_path(file_rel, task.include_file_dir.as(String), File.expand_path(@playbook_dir))
 
         unless File.exists?(resolved_path)
@@ -2690,6 +2691,7 @@ module Krikri
         fail_include_tasks_undefined_var(task, host, ex)
         return :ok
       end
+      raise_include_tasks_non_string_file_crash(task) if task.include_file_native
       resolved_path = PlaybookParser.resolve_include_path(file_rel, task.include_file_dir.as(String), File.expand_path(@playbook_dir))
 
       unless File.exists?(resolved_path)
@@ -2919,6 +2921,11 @@ module Krikri
       # file's own non-mapping `vars:` is the whole-run rc=4 refusal
       # (issue #815), not a per-task failure.
       raise ex
+    rescue ex : IncludeTasksNonStringFileError
+      # Same whole-run abort bypass: real's uncaught strategy-side
+      # TypeError takes the run down from a looped include too, never a
+      # per-item degradation.
+      raise ex
     rescue ex
       fail_include(task, host, "Failed to load included tasks: #{ex.message}")
       :ok
@@ -2995,6 +3002,23 @@ module Krikri
       end
       @results[host.name]["failed"] += 1
       halt_if_failed(task, host, true, force_halt: true)
+    end
+
+    # include_tasks: whose file: was written as a non-string YAML literal
+    # (`file: 32`) - real's uncaught path_dwim TypeError at include-result
+    # processing time (see Krikri::IncludeTasksNonStringFileError). The
+    # crash fires after the TASK banner (it happens mid-strategy in real)
+    # and before any path resolution - whatever file the stringified value
+    # would have resolved to (issue #1125).
+    private def raise_include_tasks_non_string_file_crash(task : Task) : Nil
+      return unless native = task.include_file_native
+      type_name = case native.raw
+                  when Int64   then "_AnsibleTaggedInt"
+                  when Float64 then "_AnsibleTaggedFloat"
+                  else              "bool"
+                  end
+      raise Krikri::IncludeTasksNonStringFileError.new(
+        Krikri::PlaybookParser.include_tasks_non_string_file_crash_render(type_name))
     end
 
     # include_role: whose named role resolves nowhere - Ansible's

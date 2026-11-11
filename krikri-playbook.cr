@@ -1505,6 +1505,15 @@ playbook.plays.each_with_index do |play, _play_index|
       # comment.
       Krikri::ErrorBlock.emit_rendered_stderr(ex.render)
       exit 1
+    rescue ex : Krikri::IncludeTasksNonStringFileError
+      # A non-string include_tasks: file: value is real's uncaught
+      # path_dwim TypeError at include-result processing time: the
+      # [ERROR] line plus BOTH Python tracebacks on STDERR and rc=250,
+      # after the TASK banner and with no recap (live-verified vs 2.21.6,
+      # issue #1125). The crash was counterfeited verbatim at the raise
+      # site; print it byte for byte.
+      STDERR.print ex.render
+      exit 250
     rescue ex : Krikri::HandlerNotFoundError
       # Ansible aborts the whole run at the notifying task, prints
       # this one line, and exits 1 with NO play recap (verified against

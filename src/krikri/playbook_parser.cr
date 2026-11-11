@@ -1856,6 +1856,30 @@ module Krikri
     end
   end
 
+  # Raised at RUN time when a dynamic `include_tasks:` declares its
+  # `file:` as a non-string YAML literal (the mapping form - the
+  # free-form scalar is refused by mod_args at load time). Real
+  # ansible-playbook (2.21.6) gets past load and the TASK banner, then
+  # dies in the linear strategy's include-result processing with an
+  # UNCAUGHT Python TypeError: its DataLoader.path_dwim runs len() over
+  # the tagged scalar in parsing/quoting.py, the run prints "[ERROR]:
+  # Unexpected Exception, this is probably a bug: object of type
+  # '<type>' has no len()" followed by BOTH Python tracebacks on STDERR
+  # and exits 250 with NO recap - whatever file the stringified value
+  # would have resolved to (live-verified in a fresh container, issue
+  # #1125). Same crash class as the play-level static import's
+  # (StaticImportNonStringFileError) but a different strategy/run-time
+  # frame stack, so it counterfeits its own render
+  # (include_tasks_non_string_file_crash_render).
+  class IncludeTasksNonStringFileError < Exception
+    getter render : String
+
+    def initialize(render : String)
+      @render = render
+      super(render.lines[0])
+    end
+  end
+
   # Raised at PARSE time when a task's `register:` value is not a legal
   # variable-name identifier. ansible-playbook validates the RAW
   # string (it never templates the value - `register: '{{ x }}'` is
@@ -6282,6 +6306,48 @@ module Krikri
 
     private def self.trace_marks(indent : Int32, tildes : Int32, carets : Int32) : String
       " " * indent + ("~" * tildes) + ("^" * carets) + "\n"
+    end
+
+    # The stderr block real ansible-playbook prints when a dynamic
+    # include_tasks:'s `file:` value is a non-string scalar (an int, a
+    # float, a bool): load and the TASK banner pass, then the linear
+    # strategy's include-result processing feeds the tagged scalar to
+    # DataLoader.path_dwim, which runs len() over it in
+    # parsing/quoting.py; the TypeError escapes uncaught and the process
+    # dies with the "[ERROR]: Unexpected Exception, this is probably a
+    # bug:" line plus BOTH Python tracebacks on STDERR and rc=250, with
+    # NO recap and no per-host result line - live-verified vs 2.21.6 in
+    # a fresh container (issue #1125). The frames are fixed for the
+    # release (the strategy-side stack below the CLI entry differs from
+    # the static import's playbook-load stack; the path_dwim tail and
+    # the second traceback are shared with it). The install path is the
+    # kpg podman image's (debian:trixie-slim, pip-installed
+    # ansible-core 2.21.6); the tilde/caret runs are Python 3.13's
+    # PEP 657 anchors, captured per line.
+    def self.include_tasks_non_string_file_crash_render(type_name : String) : String
+      pkg = "/usr/local/lib/python3.13/dist-packages/ansible"
+      len_event = "object of type '#{type_name}' has no len()"
+      event = "Unexpected Exception, this is probably a bug: #{len_event}"
+      String.build do |io|
+        io << "[ERROR]: " << event << "\n\n"
+        io << "Traceback (most recent call last):\n"
+        io << trace_frame(pkg, "cli/__init__.py", 663, "cli_executor", "exit_code = cli.run()")
+        io << trace_frame(pkg, "cli/playbook.py", 152, "run", "results = pbex.run()")
+        io << trace_frame(pkg, "executor/playbook_executor.py", 179, "run", "result = self._tqm.run(play=play)")
+        io << trace_frame(pkg, "executor/task_queue_manager.py", 403, "run", "play_return = strategy.run(iterator, play_context)")
+        io << trace_frame(pkg, "plugins/strategy/linear.py", 241, "run", "included_files = IncludedFile.process_include_results(\n        results,\n    ...<2 lines>...\n        variable_manager=self._variable_manager\n    )")
+        io << trace_frame(pkg, "playbook/included_file.py", 196, "process_include_results", "include_file = loader.path_dwim(include_utr.include_file)")
+        io << trace_frame(pkg, "parsing/dataloader.py", 237, "path_dwim", "given = unquote(given)")
+        io << trace_frame(pkg, "parsing/quoting.py", 27, "unquote", "if is_quoted(data):")
+        io << trace_marks(7, 9, 6)
+        io << trace_frame(pkg, "parsing/quoting.py", 22, "is_quoted", "return len(data) > 1 and data[0] == data[-1] and data[0] in ('\"', \"'\") and data[-2] != '\\\\'")
+        io << trace_marks(11, 3, 6)
+        io << "TypeError: " << len_event << "\n\n"
+        io << "The above exception was the direct cause of the following exception:\n\n"
+        io << "Traceback (most recent call last):\n"
+        io << trace_frame(pkg, "cli/__init__.py", 672, "cli_executor", "raise AnsibleError(\"Unexpected Exception, this is probably a bug.\") from ex")
+        io << "ansible.errors.AnsibleError: " << event << "\n\n"
+      end
     end
 
     # The native value of an include directive's file path when the

@@ -408,6 +408,72 @@ describe "PlaybookParser include directive argument validation" do
     end
   end
 
+  it "keeps a non-string include_tasks file literal native for the run-time crash check" do
+    path = write_playbook(PluginSpecHelper.tmp_path("incdir_include_int_file"), <<-YAML)
+        - name: t1
+          ansible.builtin.include_tasks:
+            file: 32
+      YAML
+
+    # Unlike the static import_tasks: (which dies at playbook-load), a
+    # non-string include_tasks: file: passes load - real's crash happens
+    # in the linear strategy's include-result processing, after the TASK
+    # banner. Parse must therefore succeed and keep the literal's native
+    # type for the executor's run-time check to key on (issue #1125).
+    play = Krikri::PlaybookParser.parse(File.expand_path(path)).plays[0]
+    play.tasks[0].include_file_native.try(&.raw).must_equal(32)
+  end
+
+  it "counterfeits Ansible's uncaught path_dwim TypeError crash for a non-string include_tasks file value" do
+    pkg = "/usr/local/lib/python3.13/dist-packages/ansible"
+    # Real (2.21.6) gets past the TASK banner, then its linear strategy's
+    # include-result processing feeds the _AnsibleTaggedInt to
+    # path_dwim, whose len() TypeError escapes uncaught: [ERROR] line
+    # plus both tracebacks on STDERR, rc=250, no recap and no per-host
+    # result line - whatever file the stringified value would have
+    # resolved to (live-verified in a fresh kpg container, issue #1125).
+    # Pinned byte for byte against that container's stderr. Same
+    # path_dwim tail as the static import's crash, but the strategy-side
+    # stack above it differs.
+    Krikri::PlaybookParser.include_tasks_non_string_file_crash_render("_AnsibleTaggedInt").must_equal(([
+      "[ERROR]: Unexpected Exception, this is probably a bug: object of type '_AnsibleTaggedInt' has no len()",
+      "",
+      "Traceback (most recent call last):",
+      "  File \"#{pkg}/cli/__init__.py\", line 663, in cli_executor",
+      "    exit_code = cli.run()",
+      "  File \"#{pkg}/cli/playbook.py\", line 152, in run",
+      "    results = pbex.run()",
+      "  File \"#{pkg}/executor/playbook_executor.py\", line 179, in run",
+      "    result = self._tqm.run(play=play)",
+      "  File \"#{pkg}/executor/task_queue_manager.py\", line 403, in run",
+      "    play_return = strategy.run(iterator, play_context)",
+      "  File \"#{pkg}/plugins/strategy/linear.py\", line 241, in run",
+      "    included_files = IncludedFile.process_include_results(",
+      "        results,",
+      "    ...<2 lines>...",
+      "        variable_manager=self._variable_manager",
+      "    )",
+      "  File \"#{pkg}/playbook/included_file.py\", line 196, in process_include_results",
+      "    include_file = loader.path_dwim(include_utr.include_file)",
+      "  File \"#{pkg}/parsing/dataloader.py\", line 237, in path_dwim",
+      "    given = unquote(given)",
+      "  File \"#{pkg}/parsing/quoting.py\", line 27, in unquote",
+      "    if is_quoted(data):",
+      " " * 7 + "~" * 9 + "^" * 6,
+      "  File \"#{pkg}/parsing/quoting.py\", line 22, in is_quoted",
+      "    return len(data) > 1 and data[0] == data[-1] and data[0] in ('\"', \"'\") and data[-2] != '\\\\'",
+      " " * 11 + "~" * 3 + "^" * 6,
+      "TypeError: object of type '_AnsibleTaggedInt' has no len()",
+      "",
+      "The above exception was the direct cause of the following exception:",
+      "",
+      "Traceback (most recent call last):",
+      "  File \"#{pkg}/cli/__init__.py\", line 672, in cli_executor",
+      "    raise AnsibleError(\"Unexpected Exception, this is probably a bug.\") from ex",
+      "ansible.errors.AnsibleError: Unexpected Exception, this is probably a bug: object of type '_AnsibleTaggedInt' has no len()",
+    ]).join("\n") + "\n\n")
+  end
+
   it "keeps the missing-file render for a block-nested import, whose real traceback frames differ" do
     block_path = write_playbook(PluginSpecHelper.tmp_path("incdir_import_int_block"), <<-YAML)
         - block:

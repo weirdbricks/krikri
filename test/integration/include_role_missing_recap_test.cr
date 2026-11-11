@@ -139,13 +139,15 @@ describe "include_tasks: naming a file that doesn't exist" do
     FileUtils.rm_rf(src_dir)
   end
 
-  it "stringifies a non-string literal file path into the missing-file error" do
-    # Real 2.21.6 CRASHES on this shape (the DataLoader's path_dwim runs
-    # len() over the _AnsibleTaggedInt, rc=250 - see KNOWN_MISSING.md's
-    # own note for the import_tasks: variant); what must hold is that the
-    # literal is stringified into the path the error names ("21", and a
-    # bool's "True" capitalization).
-    {21 => "21", true => "True"}.each do |literal, path_text|
+  it "counterfeits real's uncaught path_dwim TypeError crash on a non-string literal file path" do
+    # Real 2.21.6 CRASHES on this shape: the linear strategy's include-result
+    # processing feeds the tagged scalar to DataLoader.path_dwim, whose
+    # len() raises uncaught - both tracebacks on STDERR, rc=250, no recap
+    # and no per-host line (issue #1125). The stringified value never
+    # reaches a file lookup, so whatever path "21" (or a bool's "True")
+    # would have resolved to is as invisible to the output as the crash's
+    # absence of any missing-file error.
+    {21 => "_AnsibleTaggedInt", true => "bool"}.each do |literal, type_name|
       src_dir = File.tempname("include-tasks-missing-literal")
       Dir.mkdir_p(src_dir)
 
@@ -159,13 +161,16 @@ describe "include_tasks: naming a file that doesn't exist" do
               ansible.builtin.include_tasks: {file: #{literal}}
       YAML
 
-      output = `cd #{src_dir} && #{BINARY} -i #{INVENTORY} pb.yml 2>&1`
-      exit_code = $?.exit_code
+      stdout = IO::Memory.new
+      stderr = IO::Memory.new
+      status = Process.run(BINARY, ["-i", INVENTORY, "pb.yml"], output: stdout, error: stderr, chdir: src_dir)
 
-      output.must_include("Unable to retrieve file contents. Could not find or access '#{src_dir}/#{path_text}' on the Ansible Controller")
-      output.must_include(%("msg": "Unable to retrieve file contents. ))
-      output.wont_include(%("include":))
-      exit_code.must_equal(2)
+      stdout.to_s.must_include("TASK [include missing]")
+      stdout.to_s.wont_include("Unable to retrieve file contents.")
+      stdout.to_s.wont_include("PLAY RECAP")
+      stderr.to_s.must_include("[ERROR]: Unexpected Exception, this is probably a bug: object of type '#{type_name}' has no len()")
+      stderr.to_s.must_include("TypeError: object of type '#{type_name}' has no len()")
+      status.exit_code.must_equal(250)
 
       FileUtils.rm_rf(src_dir)
     end
