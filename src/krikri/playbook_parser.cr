@@ -1831,6 +1831,31 @@ module Krikri
     end
   end
 
+  # Raised at PARSE time when a play-level `import_tasks:` (task or
+  # handler section) declares its `file:` as a non-string YAML scalar -
+  # an int, a float or a bool. Real ansible-playbook (2.21.6) dies there
+  # with an UNCAUGHT Python TypeError: its own DataLoader.path_dwim runs
+  # len() over the tagged scalar in parsing/quoting.py, the run prints
+  # "[ERROR]: Unexpected Exception, this is probably a bug: object of
+  # type '<type>' has no len()" followed by BOTH Python tracebacks on
+  # STDERR and exits 250 - before any play output - whatever file the
+  # stringified value would have resolved to (live-verified in a fresh
+  # container, issues #934/#945/#1122). The frames are fixed for the
+  # release (only the play.py entry differs between the tasks section and
+  # the handlers section), so the crash is counterfeited verbatim
+  # (static_import_non_string_file_crash_render) instead of reporting the
+  # stringified path the way the string form's missing-file error does.
+  # Role tasks, blocks and nested imports load through different
+  # helpers.py frames and keep the old missing-file render.
+  class StaticImportNonStringFileError < Exception
+    getter render : String
+
+    def initialize(render : String)
+      @render = render
+      super(render.lines[0])
+    end
+  end
+
   # Raised at PARSE time when a task's `register:` value is not a legal
   # variable-name identifier. ansible-playbook validates the RAW
   # string (it never templates the value - `register: '{{ x }}'` is
@@ -2328,6 +2353,9 @@ module Krikri
             # Same bypass - a missing import target is fatal the way
             # Ansible is, not a soft warning. See that class's own comment.
             raise ex
+          rescue ex : StaticImportNonStringFileError
+            # Same bypass - see that class's own comment.
+            raise ex
           rescue ex : RoleTasksFromFileError
             # Same bypass - a static import_role: whose tasks_from: points
             # at a file the role does not have refuses the WHOLE playbook
@@ -2389,6 +2417,9 @@ module Krikri
           # own comment.
           raise ex
         rescue ex : StaticImportMissingFileError
+          # Same bypass, same reason - see that class's own comment.
+          raise ex
+        rescue ex : StaticImportNonStringFileError
           # Same bypass, same reason - see that class's own comment.
           raise ex
         rescue ex : RoleTasksFromFileError
@@ -2921,6 +2952,9 @@ module Krikri
         rescue ex : StaticImportMissingFileError
           # Same bypass - see that class's own comment.
           raise ex
+        rescue ex : StaticImportNonStringFileError
+          # Same bypass - see that class's own comment.
+          raise ex
         rescue ex : RoleTasksFromFileError
           # Same bypass - a static import_role:'s missing tasks_from:
           # target is ansible-core's own playbook-load refusal (rc=4),
@@ -3124,6 +3158,13 @@ module Krikri
         written_directive_key(hash, "import_tasks"), import_value,
         source_file, source_map, source_prefix, source_index)
       raise "import_tasks: missing a file path" unless file_rel
+
+      # Real dies at path_dwim on a non-string file: value BEFORE any file
+      # existence check - the crash fires whatever the stringified value
+      # would have resolved to (issue #1122).
+      if crash_render = static_import_non_string_file_crash(import_value, source_prefix, role_path, handler)
+        raise StaticImportNonStringFileError.new(crash_render)
+      end
 
       # import_tasks:'s file path is templated against whatever's known
       # at PARSE time (role defaults/vars/invocation vars - never
@@ -6117,6 +6158,130 @@ module Krikri
         help_text: "If you are using a module and expect the file to exist on the remote, see the remote_src option.")
       node.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new("[Errno 2] No such file or directory: '#{resolved_path}'"))
       "[ERROR]: " + ErrorBlock.format_event(node)
+    end
+
+    # The counterfeited traceback for a non-string import_tasks: file:
+    # value (StaticImportNonStringFileError), or nil when the context is
+    # one whose real traceback frames this render does not cover (role
+    # tasks, blocks, nested imports - they load through different
+    # helpers.py frames and keep the missing-file render) or the value is
+    # not one of the scalars real crashes on. Real reaches path_dwim only
+    # through the mapping form's file: argument (the free-form scalar is
+    # refused earlier by mod_args), so only that key triggers it.
+    private def self.static_import_non_string_file_crash(import_value : YAML::Any, source_prefix : String, role_path : String?, handler : Bool) : String?
+      return nil if role_path
+      section = if handler && source_prefix.ends_with?("/handlers")
+                  :handlers
+                elsif !handler && source_prefix.ends_with?("/pre_tasks")
+                  :pre_tasks
+                elsif !handler && source_prefix.ends_with?("/post_tasks")
+                  :post_tasks
+                elsif !handler && source_prefix.ends_with?("/tasks")
+                  :tasks
+                else
+                  return nil
+                end
+      return nil unless (dict = import_value.as_h?) && (file_yaml = dict["file"]?)
+      type_name = case file_yaml.raw
+                  when Int64   then "_AnsibleTaggedInt"
+                  when Float64 then "_AnsibleTaggedFloat"
+                  when Bool    then "bool"
+                  else              return nil
+                  end
+      static_import_non_string_file_crash_render(type_name, section)
+    end
+
+    # The stderr block real ansible-playbook prints when a play-level
+    # static import's `file:` value is a non-string scalar (an int, a
+    # float, a bool): its own DataLoader.path_dwim runs len() over the
+    # tagged scalar in parsing/quoting.py, the TypeError escapes uncaught,
+    # and the process dies with the "[ERROR]: Unexpected Exception, this
+    # is probably a bug:" line plus BOTH Python tracebacks on STDERR and
+    # rc=250, before any play output - live-verified vs 2.21.6 in a fresh
+    # container (issues #934/#945/#1122). The frames are fixed for the
+    # release; only the play.py entry differs between the
+    # tasks/pre_tasks/post_tasks path (its _load_* frame followed by the
+    # shared _load frame) and the handlers path (a single _load_handlers
+    # frame, no _load). The install path is the kpg podman image's
+    # (debian:trixie-slim, pip-installed ansible-core 2.21.6); the tilde/
+    # caret runs are Python 3.13's PEP 657 anchors, captured per line.
+    private def self.static_import_non_string_file_crash_render(type_name : String, section : Symbol) : String
+      pkg = "/usr/local/lib/python3.13/dist-packages/ansible"
+      len_event = "object of type '#{type_name}' has no len()"
+      event = "Unexpected Exception, this is probably a bug: #{len_event}"
+      section_frames = case section
+                       when :handlers
+                         "  File \"#{pkg}/playbook/play.py\", line 205, in _load_handlers\n" \
+                         "    load_list_of_blocks(ds=ds, play=self, use_handlers=True, variable_manager=self._variable_manager, loader=self._loader),\n" \
+                         "#{trace_marks(4, 19, 99)}"
+                       else
+                         line, fn = case section
+                                    when :pre_tasks  then {192, "_load_pre_tasks"}
+                                    when :post_tasks then {195, "_load_post_tasks"}
+                                    else                  {189, "_load_tasks"}
+                                    end
+                         "  File \"#{pkg}/playbook/play.py\", line #{line}, in #{fn}\n" \
+                         "    return self._load(attr, ds)\n" \
+                         "#{trace_marks(11, 10, 10)}" \
+                         "  File \"#{pkg}/playbook/play.py\", line 184, in _load\n" \
+                         "    return load_list_of_blocks(ds=ds, play=self, variable_manager=self._variable_manager, loader=self._loader)\n"
+                       end
+      String.build do |io|
+        io << "[ERROR]: " << event << "\n\n"
+        io << "Traceback (most recent call last):\n"
+        io << trace_frame(pkg, "cli/__init__.py", 663, "cli_executor", "exit_code = cli.run()")
+        io << trace_frame(pkg, "cli/playbook.py", 152, "run", "results = pbex.run()")
+        io << trace_frame(pkg, "executor/playbook_executor.py", 100, "run", "pb = Playbook.load(playbook_path, variable_manager=self._variable_manager, loader=self._loader)")
+        io << trace_frame(pkg, "playbook/__init__.py", 50, "load", "pb._load_playbook_data(file_name=file_name, variable_manager=variable_manager)")
+        io << trace_marks(4, 22, 56)
+        io << trace_frame(pkg, "playbook/__init__.py", 105, "_load_playbook_data", "entry_obj = Play.load(entry, variable_manager=variable_manager, loader=self._loader, vars=vars)")
+        io << trace_frame(pkg, "playbook/play.py", 153, "load", "return p.load_data(data, variable_manager=variable_manager, loader=loader)")
+        io << trace_marks(11, 11, 56)
+        io << trace_frame(pkg, "playbook/base.py", 178, "load_data", "setattr(self, name, method(name, ds[name]))")
+        io << trace_marks(24, 6, 16)
+        io << section_frames
+        io << "  File \"#{pkg}/playbook/helpers.py\", line 67, in load_list_of_blocks\n"
+        io << "    Block.load(\n"
+        io << trace_marks(4, 10, 1)
+        io << "        b,\n"
+        io << trace_marks(8, 0, 2)
+        io << "    ...<6 lines>...\n"
+        io << "        loader=loader,\n"
+        io << trace_marks(8, 0, 14)
+        io << "    )\n"
+        io << trace_marks(4, 0, 1)
+        io << trace_frame(pkg, "playbook/block.py", 88, "load", "return b.load_data(data, variable_manager=variable_manager, loader=loader)")
+        io << trace_marks(11, 11, 56)
+        io << trace_frame(pkg, "playbook/base.py", 178, "load_data", "setattr(self, name, method(name, ds[name]))")
+        io << trace_marks(24, 6, 16)
+        io << trace_frame(pkg, "playbook/block.py", 130, "_load_block", "return self._load(attr, ds)")
+        io << trace_marks(11, 10, 10)
+        io << "  File \"#{pkg}/playbook/block.py\", line 116, in _load\n"
+        io << "    return load_list_of_tasks(\n"
+        io << "        ds,\n"
+        io << "    ...<6 lines>...\n"
+        io << "        use_handlers=self._use_handlers,\n"
+        io << "    )\n"
+        io << trace_frame(pkg, "playbook/helpers.py", 207, "load_list_of_tasks", "include_file = loader.path_dwim(include_target)")
+        io << trace_frame(pkg, "parsing/dataloader.py", 237, "path_dwim", "given = unquote(given)")
+        io << trace_frame(pkg, "parsing/quoting.py", 27, "unquote", "if is_quoted(data):")
+        io << trace_marks(7, 9, 6)
+        io << trace_frame(pkg, "parsing/quoting.py", 22, "is_quoted", "return len(data) > 1 and data[0] == data[-1] and data[0] in ('\"', \"'\") and data[-2] != '\\\\'")
+        io << trace_marks(11, 3, 6)
+        io << "TypeError: " << len_event << "\n\n"
+        io << "The above exception was the direct cause of the following exception:\n\n"
+        io << "Traceback (most recent call last):\n"
+        io << trace_frame(pkg, "cli/__init__.py", 672, "cli_executor", "raise AnsibleError(\"Unexpected Exception, this is probably a bug.\") from ex")
+        io << "ansible.errors.AnsibleError: " << event << "\n\n"
+      end
+    end
+
+    private def self.trace_frame(pkg : String, rel : String, line : Int32, fn : String, source : String) : String
+      "  File \"#{pkg}/#{rel}\", line #{line}, in #{fn}\n    #{source}\n"
+    end
+
+    private def self.trace_marks(indent : Int32, tildes : Int32, carets : Int32) : String
+      " " * indent + ("~" * tildes) + ("^" * carets) + "\n"
     end
 
     # The native value of an include directive's file path when the

@@ -30,7 +30,7 @@ deleted from here.
 Do not re-litigate without new evidence - and if new evidence turns up, open an issue rather than
 arguing with the note in place.
 
-### A non-string `import_tasks:` file value crashes real Ansible; not imitated
+### A non-string `import_tasks:` file value crashes real Ansible; imitated only for play-level tasks and handlers
 
 A static import whose target is not a string, in the mapping form
 (`import_tasks: {file: 46}`), makes real `ansible-playbook` (2.19.11 and 2.21.6) die at
@@ -39,13 +39,15 @@ playbook-load time with an uncaught Python `TypeError`: its own `DataLoader.path
 `[ERROR]: Unexpected Exception, this is probably a bug: object of type '_AnsibleTaggedInt' has no len()`
 followed by the two full Python tracebacks and exits 250 - before any play output. The free-form
 form (`import_tasks: 5`) is caught by Ansible's own type check (`unexpected parameter type in
-action: <class '..._AnsibleTaggedInt'>`), so this is a gap in that one code path, not playbook
-semantics, and no playbook can observe the difference beyond "the run failed". krikri stringifies
-the value, reports the same missing file real names for a string value
-(`[ERROR]: Unable to retrieve file contents. Could not find or access '<dir>/46' ...`) and exits 1
-instead of counterfeiting ansible's traceback, whose text names its own installation paths and
-source line numbers. The mapping form's render is pinned by a spec
-(`test/unit/include_directive_args_test.cr`). Issues #934, #945.
+action: <class '..._AnsibleTaggedInt'>`). krikri counterfeits that whole crash byte for byte
+against 2.21.6 (rc=250 included) when the import is a play's task, pre-task, post-task or
+handler (`StaticImportNonStringFileError`, issue #1122): the frames are fixed for the release,
+only the play.py entry differs between the tasks and handlers sections. Imports in the contexts
+whose frames that render does not cover - a role's tasks, a block-nested import, a nested import
+inside another statically imported file; each loads through different `helpers.py` frames - still
+report the stringified value's missing-file error (`Unable to retrieve file contents. Could not
+find or access '<dir>/46' ...`) at rc=1, i.e. they diverge the way the whole class did before
+#1122. Issues #934, #945, #1122.
 
 ### Fact gathering does not need Python on the target
 

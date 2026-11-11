@@ -264,27 +264,183 @@ describe "PlaybookParser include directive argument validation" do
     ex.render.wont_include("Origin:")
   end
 
-  it "reports a non-string import_tasks file value as the missing file, not Ansible's crash" do
-    root = PluginSpecHelper.tmp_path("incdir_import_int_file")
-    path = write_playbook(root, <<-YAML)
+  it "counterfeits Ansible's uncaught path_dwim TypeError crash for a non-string import_tasks file value" do
+    path = write_playbook(PluginSpecHelper.tmp_path("incdir_import_int_file"), <<-YAML)
         - name: t1
           ansible.builtin.import_tasks:
             file: 46
       YAML
 
-    ex = assert_raises(Krikri::StaticImportMissingFileError) do
+    ex = assert_raises(Krikri::StaticImportNonStringFileError) do
       Krikri::PlaybookParser.parse(File.expand_path(path))
     end
-    resolved = File.expand_path("46", root)
-    # Real ansible-playbook dies here instead: an uncaught Python TypeError
-    # (its own path_dwim runs len() over the _AnsibleTaggedInt) with a full
-    # traceback and rc=250. KNOWN_MISSING.md records why that is not
-    # imitated; what must hold is that the value is stringified into the
-    # path it resolves to.
-    ex.render.must_equal(
-      "[ERROR]: Unable to retrieve file contents. Could not find or access '#{resolved}' on the Ansible Controller: " \
-      "[Errno 2] No such file or directory: '#{resolved}' " \
-      "If you are using a module and expect the file to exist on the remote, see the remote_src option.\n")
+    # Real ansible-playbook (2.21.6) dies here with an uncaught Python
+    # TypeError - its own path_dwim runs len() over the _AnsibleTaggedInt -
+    # printing the [ERROR] line plus both tracebacks, rc=250, before any
+    # play output, whatever file the stringified value would have resolved
+    # to (live-verified in a fresh kpg container, issues #934/#945/#1122).
+    # Pinned byte for byte against that container's stderr.
+    pkg = "/usr/local/lib/python3.13/dist-packages/ansible"
+    ex.render.must_equal(([
+      "[ERROR]: Unexpected Exception, this is probably a bug: object of type '_AnsibleTaggedInt' has no len()",
+      "",
+      "Traceback (most recent call last):",
+      "  File \"#{pkg}/cli/__init__.py\", line 663, in cli_executor",
+      "    exit_code = cli.run()",
+      "  File \"#{pkg}/cli/playbook.py\", line 152, in run",
+      "    results = pbex.run()",
+      "  File \"#{pkg}/executor/playbook_executor.py\", line 100, in run",
+      "    pb = Playbook.load(playbook_path, variable_manager=self._variable_manager, loader=self._loader)",
+      "  File \"#{pkg}/playbook/__init__.py\", line 50, in load",
+      "    pb._load_playbook_data(file_name=file_name, variable_manager=variable_manager)",
+      " " * 4 + "~" * 22 + "^" * 56,
+      "  File \"#{pkg}/playbook/__init__.py\", line 105, in _load_playbook_data",
+      "    entry_obj = Play.load(entry, variable_manager=variable_manager, loader=self._loader, vars=vars)",
+      "  File \"#{pkg}/playbook/play.py\", line 153, in load",
+      "    return p.load_data(data, variable_manager=variable_manager, loader=loader)",
+      " " * 11 + "~" * 11 + "^" * 56,
+      "  File \"#{pkg}/playbook/base.py\", line 178, in load_data",
+      "    setattr(self, name, method(name, ds[name]))",
+      " " * 24 + "~" * 6 + "^" * 16,
+      "  File \"#{pkg}/playbook/play.py\", line 189, in _load_tasks",
+      "    return self._load(attr, ds)",
+      " " * 11 + "~" * 10 + "^" * 10,
+      "  File \"#{pkg}/playbook/play.py\", line 184, in _load",
+      "    return load_list_of_blocks(ds=ds, play=self, variable_manager=self._variable_manager, loader=self._loader)",
+      "  File \"#{pkg}/playbook/helpers.py\", line 67, in load_list_of_blocks",
+      "    Block.load(",
+      " " * 4 + "~" * 10 + "^" * 1,
+      "        b,",
+      " " * 8 + "^" * 2,
+      "    ...<6 lines>...",
+      "        loader=loader,",
+      " " * 8 + "^" * 14,
+      "    )",
+      " " * 4 + "^" * 1,
+      "  File \"#{pkg}/playbook/block.py\", line 88, in load",
+      "    return b.load_data(data, variable_manager=variable_manager, loader=loader)",
+      " " * 11 + "~" * 11 + "^" * 56,
+      "  File \"#{pkg}/playbook/base.py\", line 178, in load_data",
+      "    setattr(self, name, method(name, ds[name]))",
+      " " * 24 + "~" * 6 + "^" * 16,
+      "  File \"#{pkg}/playbook/block.py\", line 130, in _load_block",
+      "    return self._load(attr, ds)",
+      " " * 11 + "~" * 10 + "^" * 10,
+      "  File \"#{pkg}/playbook/block.py\", line 116, in _load",
+      "    return load_list_of_tasks(",
+      "        ds,",
+      "    ...<6 lines>...",
+      "        use_handlers=self._use_handlers,",
+      "    )",
+      "  File \"#{pkg}/playbook/helpers.py\", line 207, in load_list_of_tasks",
+      "    include_file = loader.path_dwim(include_target)",
+      "  File \"#{pkg}/parsing/dataloader.py\", line 237, in path_dwim",
+      "    given = unquote(given)",
+      "  File \"#{pkg}/parsing/quoting.py\", line 27, in unquote",
+      "    if is_quoted(data):",
+      " " * 7 + "~" * 9 + "^" * 6,
+      "  File \"#{pkg}/parsing/quoting.py\", line 22, in is_quoted",
+      "    return len(data) > 1 and data[0] == data[-1] and data[0] in ('\"', \"'\") and data[-2] != '\\\\'",
+      " " * 11 + "~" * 3 + "^" * 6,
+      "TypeError: object of type '_AnsibleTaggedInt' has no len()",
+      "",
+      "The above exception was the direct cause of the following exception:",
+      "",
+      "Traceback (most recent call last):",
+      "  File \"#{pkg}/cli/__init__.py\", line 672, in cli_executor",
+      "    raise AnsibleError(\"Unexpected Exception, this is probably a bug.\") from ex",
+      "ansible.errors.AnsibleError: Unexpected Exception, this is probably a bug: object of type '_AnsibleTaggedInt' has no len()",
+    ]).join("\n") + "\n\n")
+  end
+
+  it "swaps the play.py frame for _load_handlers when the import is a handler" do
+    pkg = "/usr/local/lib/python3.13/dist-packages/ansible"
+    tasks_path = write_playbook(PluginSpecHelper.tmp_path("incdir_import_int_handler_tasks"), <<-YAML)
+        - name: t1
+          ansible.builtin.import_tasks:
+            file: 46
+      YAML
+    tasks_ex = assert_raises(Krikri::StaticImportNonStringFileError) do
+      Krikri::PlaybookParser.parse(File.expand_path(tasks_path))
+    end
+
+    handler_root = PluginSpecHelper.tmp_path("incdir_import_int_handler")
+    FileUtils.rm_rf(handler_root) if Dir.exists?(handler_root)
+    Dir.mkdir_p(handler_root)
+    handler_path = File.join(handler_root, "site.yml")
+    File.write(handler_path, <<-YAML)
+        - name: play
+          hosts: all
+          gather_facts: false
+          handlers:
+            - name: h1
+              ansible.builtin.import_tasks:
+                file: 46
+      YAML
+    handler_ex = assert_raises(Krikri::StaticImportNonStringFileError) do
+      Krikri::PlaybookParser.parse(File.expand_path(handler_path))
+    end
+    # Real loads a play's handlers through play.py's _load_handlers, whose
+    # single frame (with its own call line and anchor) replaces the tasks
+    # path's _load_tasks + _load pair (live-verified vs 2.21.6).
+    handler_ex.render.must_equal(tasks_ex.render.sub(
+      "  File \"#{pkg}/playbook/play.py\", line 189, in _load_tasks\n" \
+      "    return self._load(attr, ds)\n" +
+      (" " * 11 + "~" * 10 + "^" * 10 + "\n") +
+      "  File \"#{pkg}/playbook/play.py\", line 184, in _load\n" \
+      "    return load_list_of_blocks(ds=ds, play=self, variable_manager=self._variable_manager, loader=self._loader)\n",
+      "  File \"#{pkg}/playbook/play.py\", line 205, in _load_handlers\n" \
+      "    load_list_of_blocks(ds=ds, play=self, use_handlers=True, variable_manager=self._variable_manager, loader=self._loader),\n" +
+      (" " * 4 + "~" * 19 + "^" * 99 + "\n")))
+  end
+
+  it "names the value's tagged Python type in the crash (float/bool)" do
+    {"4.6" => "_AnsibleTaggedFloat", "true" => "bool"}.each do |literal, type_name|
+      path = write_playbook(PluginSpecHelper.tmp_path("incdir_import_int_type_#{type_name}"), <<-YAML)
+          - name: t1
+            ansible.builtin.import_tasks:
+              file: #{literal}
+        YAML
+      ex = assert_raises(Krikri::StaticImportNonStringFileError) do
+        Krikri::PlaybookParser.parse(File.expand_path(path))
+      end
+      ex.render.includes?("TypeError: object of type '#{type_name}' has no len()").must_equal(true)
+    end
+  end
+
+  it "keeps the missing-file render for a block-nested import, whose real traceback frames differ" do
+    block_path = write_playbook(PluginSpecHelper.tmp_path("incdir_import_int_block"), <<-YAML)
+        - block:
+            - ansible.builtin.import_tasks:
+                file: 46
+      YAML
+    # A block-nested import loads through an extra helpers.py Block.load
+    # frame whose traceback this render does not counterfeit; real still
+    # crashes there, but the stringified missing-file render is kept.
+    assert_raises(Krikri::StaticImportMissingFileError) do
+      Krikri::PlaybookParser.parse(File.expand_path(block_path))
+    end
+  end
+
+  it "keeps the missing-file render for a role task import, whose real traceback frames differ" do
+    root = PluginSpecHelper.tmp_path("incdir_import_int_role")
+    tasks_dir = File.join(root, "roles", "r", "tasks")
+    Dir.mkdir_p(tasks_dir)
+    File.write(File.join(tasks_dir, "main.yml"), "- ansible.builtin.import_tasks:\n    file: 46\n")
+    role_path = File.join(root, "site.yml")
+    File.write(role_path, <<-YAML)
+        - name: play
+          hosts: all
+          gather_facts: false
+          roles:
+            - r
+      YAML
+    # A role's tasks load through a role-aware path_dwim_relative frame
+    # whose traceback this render does not counterfeit; real still crashes
+    # there, but the stringified missing-file render is kept.
+    assert_raises(Krikri::StaticImportMissingFileError) do
+      Krikri::PlaybookParser.parse(File.expand_path(role_path))
+    end
   end
 
   it "reports a missing role include against the playbook dir, not the role tasks dir" do

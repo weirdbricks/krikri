@@ -929,6 +929,14 @@ rescue ex : Krikri::StaticImportMissingFileError
   # included).
   STDERR.print ex.render
   exit 1
+rescue ex : Krikri::StaticImportNonStringFileError
+  # A non-string import_tasks: file: value is real's uncaught path_dwim
+  # TypeError: the [ERROR] line plus BOTH Python tracebacks on STDERR and
+  # rc=250, before any play output (live-verified vs 2.21.6, issue
+  # #1122). The crash was counterfeited verbatim at the raise site; print
+  # it byte for byte.
+  STDERR.print ex.render
+  exit 250
 rescue ex : Krikri::VaultFileError
   # A vault-encrypted file a play loads (a role's vars/main.yml, ...)
   # that no supplied vault secret can open is Ansible's DataLoader
