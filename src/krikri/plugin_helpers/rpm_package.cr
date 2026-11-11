@@ -2,6 +2,7 @@ require "json"
 require "uri"
 require "./dnf_install_failures"
 require "./dnf_transaction_probe"
+require "./facts_gatherer"
 require "./http_download"
 require "./fetch_tempfile"
 require "./multiext_split"
@@ -185,11 +186,52 @@ module Krikri
         true
       end
 
+      # WHICH fact the payload carries: when the on-demand fetch ran, real's
+      # action instance has usually ALSO run interpreter discovery, and that
+      # fact replaces the pkg_mgr one on the backend module's payload.
+      # Discovery runs on the FETCH itself (the host's first module
+      # execution) and `_execute_module` then stamps
+      # `ansible_facts.discovered_interpreter_python` onto EVERY module
+      # result of that action instance (the key is never reset) - so the
+      # backend module's payload carries its own ansible_facts and
+      # `result.update(module_result)` REPLACES the action's {"pkg_mgr": ...}
+      # with exactly that one key. Live-verified vs 2.21.6 on a Rocky 10
+      # podman pair: both the failed unsupported-params fatal AND a
+      # successful registered result read
+      # {"discovered_interpreter_python": "/usr/bin/python3.12"} (issue
+      # #1113, the same signature #894 split from). modify_module only
+      # raises InterpreterDiscoveryRequiredError for an unset or auto*
+      # interpreter, so two shapes keep the action's pkg_mgr fact instead:
+      # a configured ansible_python_interpreter (#1063's AL2023 capture -
+      # the role-tester inventories pin the interpreter), and a host whose
+      # discovery already ran earlier in the run (the fact persisted from
+      # that first task's result; #894's later-task shape, where the fetch
+      # still runs and the pkg_mgr fact survives).
+      private def module_payload_ansible_facts : JSON::Any
+        return JSON::Any.new({"pkg_mgr" => JSON::Any.new(pkg_mgr_fact)}) unless interpreter_discovery_runs?
+        JSON::Any.new({"discovered_interpreter_python" => JSON::Any.new(discovered_interpreter_path)})
+      end
+
+      private def interpreter_discovery_runs? : Bool
+        return false if @vars["discovered_interpreter_python"]?.try(&.as_s?)
+        interpreter = @vars["ansible_python_interpreter"]?.try(&.as_s?)
+        return true if interpreter.nil? || interpreter.empty?
+        interpreter.starts_with?("auto")
+      end
+
+      # Runs ansible's discovery bootstrap on the machine this plugin
+      # executes on - the same "the plugin RUNS ON the target" premise the
+      # pkg_mgr probe above relies on, so the value matches what real's
+      # discover_interpreter resolves through the connection.
+      protected def discovered_interpreter_path : String
+        FactsGatherer.discover_python_interpreter[0]
+      end
+
       def finalize_result(result : PluginResult) : PluginResult
         return result unless attaches_pkg_mgr_fact?
         return result unless backend_resolved_from_facts? && pkg_mgr_fact_fetched?
         return result if result.extra.has_key?("ansible_facts")
-        result.extra["ansible_facts"] = JSON::Any.new({"pkg_mgr" => JSON::Any.new(pkg_mgr_fact)})
+        result.extra["ansible_facts"] = module_payload_ansible_facts
         if order = result.key_order
           result.key_order = ["ansible_facts"] + order
         end
