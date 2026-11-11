@@ -1261,10 +1261,19 @@ module Krikri
     # `recurse: true`'s own `changed` check - walks the whole tree
     # (mirroring `walk_apply_attributes`'s own walk exactly, so the
     # decision and the eventual apply agree on what "recursive" means),
-    # short-circuiting on the first entry that needs anything. A
-    # symlink skips the mode check (`skip_mode: true`) for the same
-    # lchmod-doesn't-exist reason `update_attributes_if_needed`'s own
-    # doc comment gives for `state: link`.
+    # short-circuiting on the first entry that needs anything. A symlink
+    # entry does NOT skip the mode check: the walk hands the link's own path
+    # to set_fs_attributes_if_different, whose set_mode_if_different compares
+    # os.lstat's always-0777 link bits against the requested mode and returns
+    # changed in check mode BEFORE any chmod (basic.py:894). The real run's
+    # chmod dance follows the link and then restores the target, a net
+    # no-op that still reports changed - so any requested mode other than
+    # 0777 marks every symlink entry changed on EVERY run, check mode
+    # included. Found benchmarking kurron.php-developer (issue #1152): the
+    # JDK tarballs leave ~200 symlinks inside /usr/lib/jvm, so ansible's
+    # check-mode "Create privileged folders" (mode: 0755, recurse: yes) says
+    # changed on the converged host while this engine, skipping the link's
+    # mode, said ok.
     # Entries are checked with lstat semantics (follow: false) even when
     # the task's follow: default is true: Ansible's recursive_set_attributes
     # (file.py) swaps each walked entry's path into the top-level file_args
@@ -1290,7 +1299,7 @@ module Krikri
         next unless info
         is_symlink = info.symlink?
         is_dir = info.directory? && !is_symlink
-        return true if update_attributes_if_needed(child_path, is_directory: is_dir, skip_mode: is_symlink, follow: false)
+        return true if update_attributes_if_needed(child_path, is_directory: is_dir, follow: false)
         return true if is_symlink && follow_symlinks? && symlink_target_needs_update?(dir, child, seen_targets)
         return true if is_dir && recursive_attributes_need_update?(child_path, seen_targets)
       end
@@ -1319,7 +1328,11 @@ module Krikri
       return false if seen_targets.includes?(target_key)
       seen_targets << target_key
       file_type = target_stat.st_mode & LibC::S_IFMT
-      return true if update_attributes_if_needed(target, is_directory: file_type == LibC::S_IFDIR, skip_mode: file_type == LibC::S_IFLNK, follow: false)
+      # The resolved target path goes through the same
+      # set_fs_attributes_if_different as any walked entry, so a target that
+      # is itself a symlink gets the same always-0777 lstat mode compare (no
+      # skip) - same verdict rule as the walk entry itself, above.
+      return true if update_attributes_if_needed(target, is_directory: file_type == LibC::S_IFDIR, follow: false)
       file_type == LibC::S_IFDIR && recursive_attributes_need_update?(target, seen_targets)
     end
 

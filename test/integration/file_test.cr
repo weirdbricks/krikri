@@ -409,6 +409,36 @@ describe "file plugin" do
       result["changed"].as_bool.must_equal(true)
       (File.info(nested).permissions.value & 0o777).must_equal(0o755)
     end
+
+    it "reports changed for a symlink inside an otherwise converged recursed directory, check mode included (issue #1152)" do
+      # kurron.php-developer: the JDK tarballs leave ~200 symlinks (lstat
+      # 0777) inside /usr/lib/jvm, so on the check phase against the
+      # converged host ansible's "Create privileged folders" (mode: 0755,
+      # recurse: yes) reports changed - the walk hands the link's own path
+      # to set_fs_attributes_if_different, whose set_mode_if_different
+      # compares the link's own lstat bits and returns changed BEFORE any
+      # chmod. The real run is equally non-idempotent: its chmod follows
+      # the link, then restores the target, a net no-op that still reports
+      # changed. Verified against ansible-playbook 2.21.6 before being
+      # encoded here.
+      path = tmp_path("recurse-link-mode-dir")
+      Dir.mkdir_p(path)
+      File.chmod(path, 0o755)
+      nested = File.join(path, "nested.txt")
+      File.write(nested, "hi")
+      File.chmod(nested, 0o755)
+      link = File.join(path, "nested-link")
+      File.symlink("nested.txt", link)
+
+      check = PluginSpecHelper.run("file", {"path" => path, "state" => "directory", "mode" => "0755", "recurse" => "yes", "_ansible_check_mode" => "true"})
+      falsey?(check["failed"]?.try(&.as_bool)).must_equal(true)
+      check["changed"].as_bool.must_equal(true)
+
+      real = PluginSpecHelper.run("file", {"path" => path, "state" => "directory", "mode" => "0755", "recurse" => "yes"})
+      falsey?(real["failed"]?.try(&.as_bool)).must_equal(true)
+      real["changed"].as_bool.must_equal(true)
+      (File.info(link, follow_symlinks: false).permissions.value & 0o777).must_equal(0o777)
+    end
   end
 
   describe "state=link" do
