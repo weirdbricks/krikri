@@ -1563,6 +1563,25 @@ describe "get_url plugin" do
       FileUtils.rm_rf(root) if root
     end
 
+    it "fails a bare relative dest with Ansible's empty-dirname 'Destination  does not exist'" do
+      # os.path.dirname("47") is "" (no separator at all), and "" is not a
+      # directory - real get_url fails AFTER the download with "Destination
+      #  does not exist" (empty interpolation, live-verified) instead of
+      # treating the dest as relative to "." and succeeding (issue #1120).
+      dir = PluginSpecHelper.tmp_path("geturl-reldst-#{Random::Secure.hex(4)}")
+      Dir.mkdir_p(dir)
+
+      result = PluginSpecHelper.run("get_url", {"url" => "#{GET_URL_TEST_BASE}/file.txt", "dest" => "47"}, chdir: dir)
+
+      result["failed"].as_bool.must_equal(true)
+      result["msg"].as_s.must_equal("Destination  does not exist")
+      result["dest"].as_s.must_equal("47")
+      result["checksum_dest"].raw.nil?.must_equal(true)
+      File.exists?(File.join(dir, "47")).must_equal(false)
+    ensure
+      FileUtils.rm_rf(dir) if dir
+    end
+
     it "reports a failed CHECKSUM url fetch against the checksum url, like Ansible's own url_get call" do
       dest = File.tempname("get-url-spec")
 
