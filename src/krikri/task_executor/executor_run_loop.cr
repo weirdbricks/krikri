@@ -4989,15 +4989,18 @@ module Krikri
         block_when_origins(block_task))
       # The CHILDREN's condition list must keep the clauses SEPARATE (the
       # block's own clauses prepended to each child's), never just the merged
-      # string: real evaluates each parent-chain clause as its own templating
-      # operation on every child, so a fact read in the block's `when:` warns
-      # once, Origin'd at the BLOCK's clause site - the same block for every
-      # child, deduplicated to one (afpacket.devops_tools, issue #1144). A
-      # child that only got the merged string re-read the fact under its OWN
-      # when: site instead, printing one mislabeled block per child. A block
-      # with a when: list already carries the full accumulated list (outer
-      # clauses prepended by its own parent's inheritance); a scalar-when
-      # block has none, so its own chain stands in.
+      # STRING: real evaluates the parent chain per child as INDEPENDENT
+      # conditionals, each parent-chain clause its own templating operation
+      # at its own recorded origin, so a fact read in the block's `when:`
+      # warns once, Origin'd at the BLOCK's own when: value token - the same
+      # block for every child, deduplicated to one (afpacket.devops_tools,
+      # issues #1130 and #1144; live-verified vs 2.21.6). A child that only
+      # got the merged string re-read the fact under its OWN when: site
+      # instead, printing one mislabeled INJECT_FACTS_AS_VARS block per
+      # child, Origin'd at each child's when: token. A block with a when:
+      # list already carries the full accumulated list (outer clauses
+      # prepended by its own parent's inheritance); a scalar-when block has
+      # none, so its own chain stands in.
       inherit_when_condition(condition, block_task.when_condition_list || chain, tasks)
       tasks.each { |nested_task| nested_task.block_inherited_when = inherited }
     end
