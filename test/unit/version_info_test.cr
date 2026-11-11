@@ -153,7 +153,7 @@ describe "Krikri::RUNTIME_DEPENDENCY_FORK_NOTES" do
 
     expect(str_starts_with?(notes["krikri-jinja"], " (weirdbricks/krikri-jinja, tag v"))
     expect(str_starts_with?(notes["krikri-xml"], " (weirdbricks/krikri-xml, tag v")).must_equal(true).must_equal(true)
-    notes["krikri-aws-signer"].must_equal(" (weirdbricks/krikri-aws-signer, tag v0.1.0)")
+    notes["krikri-aws-signer"].must_equal(" (weirdbricks/krikri-aws-signer, tag v0.3.0)")
     notes["mysql"].must_equal(" (weirdbricks/crystal-mysql fork, tag crystal-ansible-0.9.341)")
     notes["docr"].must_equal(" (weirdbricks/docr fork, commit c90ea8d)")
     notes["bz2"].must_equal(" (weirdbricks/bz2.cr fork)")
