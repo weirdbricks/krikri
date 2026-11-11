@@ -52,6 +52,19 @@ module Krikri
 
     include PluginHelpers::RpmPackage
 
+    # Real's dnf5 module runs under the controller's `normal` action plugin
+    # (upstream ansible-core ships no plugins/action/dnf5.py), which never
+    # fetches the pkg_mgr fact - unlike `dnf:`/`yum:`, whose dnf action
+    # plugin attaches `ansible_facts: {pkg_mgr: ...}` to the dispatched
+    # module's result (issues #844/#1063/#768). A dnf5 task's result carries
+    # no ansible_facts in real, success or failure, even on a
+    # gather_facts: false host (issue #1114's podman kpg diffs: real's
+    # failed python3-libdnf5 bootstrap fatal had no ansible_facts where
+    # krikri added {"pkg_mgr": "apt"}).
+    private def attaches_pkg_mgr_fact? : Bool
+      false
+    end
+
     private def pkg_manager_binary : String
       "dnf5"
     end

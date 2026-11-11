@@ -172,7 +172,21 @@ module Krikri
       # over-generalized runs where one of those two applied. The
       # backend-resolution tuple failure keeps its own ansible_facts -
       # real's action-level fatal carries it (#768).
+      # Only the module invocations real ansible routes through its dnf
+      # ACTION plugin (`dnf:`, and `yum:` via its redirect to dnf) ever
+      # carry this attach: upstream ships no plugins/action/dnf5.py, so the
+      # dnf5 MODULE runs under the controller's `normal` action, which
+      # fetches no pkg_mgr fact and attaches none - a dnf5 task's
+      # registered and failed dicts carry no ansible_facts even on a
+      # gather_facts: false host (issue #1114's podman kpg diffs vs
+      # ansible). Includers whose real counterpart is NOT action-dispatched
+      # override this to false.
+      private def attaches_pkg_mgr_fact? : Bool
+        true
+      end
+
       def finalize_result(result : PluginResult) : PluginResult
+        return result unless attaches_pkg_mgr_fact?
         return result unless backend_resolved_from_facts? && pkg_mgr_fact_fetched?
         return result if result.extra.has_key?("ansible_facts")
         result.extra["ansible_facts"] = JSON::Any.new({"pkg_mgr" => JSON::Any.new(pkg_mgr_fact)})
