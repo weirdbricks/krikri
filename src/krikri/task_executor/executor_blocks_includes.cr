@@ -3474,6 +3474,18 @@ module Krikri
       substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
       role_name = substitutor.substitute(task.include_role_name.as(String))
 
+      # A templated tasks_from: renders against the import's runtime vars
+      # exactly like the role name above (real resolves it before loading;
+      # passed through raw, the loader hunted for a tasks file literally
+      # named `{{ ... }}`, found none, and the whole role loaded as zero
+      # tasks - the import's registered result then never existed for
+      # later when: checks). Same render the task-listing path applies
+      # (task_lister.cr); a value that does not render stays as written.
+      runtime_tasks_from = task.include_role_tasks_from
+      if runtime_tasks_from && runtime_tasks_from.includes?("{{")
+        runtime_tasks_from = (substitutor.substitute(runtime_tasks_from) rescue runtime_tasks_from)
+      end
+
       inherited = include_inherited_play(task)
       # The play's `collections:` reach the role's not-found search-path
       # display (live-verified vs 2.19.11: the prefix shows for an
@@ -3525,7 +3537,7 @@ module Krikri
           task.is_static_import? ? task.tags : [] of String,
           inherited,
           task.include_role_dir.as(String),
-          task.include_role_tasks_from,
+          runtime_tasks_from,
           child_parent_names,
           child_parent_paths,
           child_parent_defaults,

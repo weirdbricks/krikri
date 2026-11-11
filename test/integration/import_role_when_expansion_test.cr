@@ -100,6 +100,48 @@ describe "import_role: with when: expands and propagates onto every one of the r
     FileUtils.rm_rf(src_dir) if src_dir
   end
 
+  it "resolves a templated tasks_from: at runtime instead of loading the role as zero tasks" do
+    # Real renders import_role:'s tasks_from: against the import's vars
+    # before loading the role (live-verified vs 2.21.6 with
+    # `tasks_from: '{{ ''main'' }}'`: the role's tasks run, recap ok=2).
+    # Passed through raw, the loader hunted for a tasks file literally
+    # named `{{ ''main'' }}`, silently loaded zero tasks, and the role
+    # vanished from the run entirely (recap ok=1) - found by
+    # krikri-playbook-generator (issue #1123, seed 1794383670).
+    src_dir = File.tempname("import-role-templated-tasks-from")
+    Dir.mkdir_p(File.join(src_dir, "roles", "inner", "tasks"))
+    File.write(File.join(src_dir, "roles", "inner", "tasks", "entry.yml"), <<-YAML)
+      - name: inner task one
+        debug:
+          msg: one
+      YAML
+
+    playbook = File.join(src_dir, "pb.yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: import inner
+            import_role:
+              name: inner
+              tasks_from: '{{ ''entry'' }}'
+          - name: plain task after the import
+            debug:
+              msg: two
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output, chdir: src_dir)
+
+    status.success?.must_equal(true)
+    output.to_s.must_include("TASK [inner : inner task one]")
+    output.to_s.must_include("TASK [plain task after the import]")
+    output.to_s.must_match(/ok=2\b/)
+  ensure
+    FileUtils.rm_rf(src_dir) if src_dir
+  end
+
   it "does not evaluate a child's own when: (which would raise on an unregistered var) once the parent gate is false - short-circuit AND" do
     # Guards the "parent when: PREPENDED not appended" ordering
     # (playbook_parser.cr's try_parse_import_tasks already documents
