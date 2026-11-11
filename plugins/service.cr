@@ -127,6 +127,12 @@ module Krikri
     # module.warn() precedes whatever exit_json/fail_json the module
     # takes, so it rides failures too.
     @systemd_init_script_warning : String? = nil
+    # True when `use: service` named Ansible's generic service module and
+    # that module's own detection landed on systemd. The result then keeps
+    # the generic module's shape (no `status` dict, no UNUSED_PARAMS
+    # warnings) instead of the systemd module's - the action plugin
+    # dispatched to `service`, not `systemd`.
+    @generic_service_module = false
 
     def initialize(config : JSON::Any)
       super(config)
@@ -143,6 +149,15 @@ module Krikri
     # service module there, an obscure edge not worth the divergence risk.)
     private def systemd_unused_param_warnings : Array(String)?
       return nil unless @manager == Manager::Systemd
+      # `use: service` runs the generic service module even when it detects
+      # systemd itself; arguments/pattern/sleep/runlevel are real options
+      # there (the action plugin only strips them for the systemd MODULE's
+      # UNUSED_PARAMS), so warning about them would invent output Ansible
+      # never prints. Live-verified against ansible-core 2.19.11 on this
+      # systemd host: `service: {name: systemd-journald, state: started,
+      # enabled: true, arguments: --test-arg, sleep: 5, pattern: journal,
+      # use: service}` succeeds with no warnings.
+      return nil if @generic_service_module
 
       warnings = SYSTEMD_UNUSED_PARAMS.compact_map do |param|
         next nil unless @params.has_key?(param)
@@ -252,6 +267,26 @@ module Krikri
         msg += " (check mode)"
       end
 
+      if @manager == Manager::Systemd && @generic_service_module
+        # `use: service` runs the generic service module even after it
+        # detects systemd, so the registered result is that module's, not
+        # the systemd module's: its exit_json passes only name, [enabled],
+        # [state] and changed on success - no status dict and no msg.
+        # Live-verified against ansible-core 2.19.11 on this systemd host:
+        # `service: {name: systemd-journald, state: started, enabled:
+        # true, use: service}` registers exactly {name, changed, enabled,
+        # state, failed}.
+        result = PluginResult.new(
+          changed: changed,
+          failed: false,
+          name: name,
+          key_order: ["name", "changed", "enabled", "state"],
+        )
+        result.extra["enabled"] = JSON.parse(@result_enabled.to_json) unless @result_enabled.nil?
+        result.extra["state"] = JSON.parse(@result_state.to_json) unless @result_state.nil?
+        return with_systemd_warnings(result)
+      end
+
       if @manager == Manager::Systemd
         # Ansible 2.19.11's registered `service` result on a systemd host IS
         # the systemd module's result (the action plugin dispatches to
@@ -333,8 +368,20 @@ module Krikri
       case use_param
       when "systemd"
         return use_systemd(name)
-      when "sysvinit", "service"
+      when "sysvinit"
         return use_sysv(name)
+      when "service"
+        # `use: service` names Ansible's GENERIC service module, not the
+        # sysvinit one, and that module runs is_systemd_managed() FIRST.
+        # An explicit `use:` beats the ansible_service_mgr fact, so the
+        # fact is deliberately not consulted here. Mapping "service" onto
+        # the SysV-only chain (init script + update-rc.d/insserv/chkconfig)
+        # failed on systemd hosts with fail_if_missing's "Could not find
+        # the requested service <name>: host" for any unit without an
+        # /etc/init.d script (datadog.dd.agent's "Ensure datadog-agent is
+        # running", #1157).
+        @generic_service_module = true
+        return use_detected_service(name, systemd, upstart_conf)
       when "openrc"
         return use_openrc
       when "upstart"
@@ -365,6 +412,18 @@ module Krikri
         return use_systemd(name)
       end
 
+      use_detected_service(name, systemd, upstart_conf)
+    end
+
+    # Ansible's generic `service` module's own detection chain
+    # (LinuxService.get_service_tools), in its order: systemd first when
+    # systemctl exists AND is_systemd_managed() agrees, then upstart (an
+    # initctl + /etc/init/<name>.conf pair), then OpenRC (any rc-service),
+    # then the SysV init-script chain. The auto path takes this same chain
+    # for every ansible_service_mgr fact value other than systemd (that is
+    # where Ansible's action plugin lands on the generic service module),
+    # so the fact-less use: service path and the auto path share it.
+    private def use_detected_service(name : String, systemd : Bool, upstart_conf : Bool) : String?
       if systemd && @tools["systemctl"]?
         use_systemd(name)
       elsif upstart_conf && @tools["initctl"]?

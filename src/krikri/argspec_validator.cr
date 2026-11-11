@@ -329,7 +329,7 @@ module Krikri
       # a dest that is not a directory here defers to the plugin's own failure.
       return SpecOutcome.new(nil, false) if defers_to_unarchive_action?(module_name, params)
 
-      print_name, entry, spec_owner = resolve_entry(action_name, module_name, entry, vars_context)
+      print_name, entry, spec_owner = resolve_entry(action_name, module_name, entry, params, vars_context)
       return SpecOutcome.new(nil, false) unless entry
 
       params = strip_service_unused_params(module_name, spec_owner, params)
@@ -782,7 +782,7 @@ module Krikri
       non_string_lists : Hash(String, JSON::Any),
       vars_context : Hash(String, JSON::Any),
     ) : Failure?
-      print_name, entry, spec_owner = resolve_entry(action_name, module_name, entry, vars_context)
+      print_name, entry, spec_owner = resolve_entry(action_name, module_name, entry, params, vars_context)
       return nil unless entry
 
       params = strip_service_unused_params(module_name, spec_owner, params)
@@ -1029,8 +1029,8 @@ module Krikri
     # effective entry, and the FQCN whose declaration-ordered options the
     # spec checks walk (a fact-delegated target owns the order, not the
     # action spelling).
-    private def resolve_entry(action_name : String, module_name : String, entry : JSON::Any, vars_context : Hash(String, JSON::Any)) : {String, JSON::Any?, String}
-      if delegated = resolve_fact_delegate(action_name, module_name, entry, vars_context)
+    private def resolve_entry(action_name : String, module_name : String, entry : JSON::Any, params : Hash(String, String), vars_context : Hash(String, JSON::Any)) : {String, JSON::Any?, String}
+      if delegated = resolve_fact_delegate(action_name, module_name, entry, params, vars_context)
         return delegated
       end
 
@@ -1047,9 +1047,34 @@ module Krikri
 
     # The fact-delegating half of resolve_entry, or nil for a spec that
     # isn't fact-delegated at all.
-    private def resolve_fact_delegate(action_name : String, module_name : String, entry : JSON::Any, vars_context : Hash(String, JSON::Any)) : {String, JSON::Any?, String}?
+    private def resolve_fact_delegate(action_name : String, module_name : String, entry : JSON::Any, params : Hash(String, String), vars_context : Hash(String, JSON::Any)) : {String, JSON::Any?, String}?
       fact_delegate = entry["fact_delegate"]?
       return nil unless fact_delegate
+
+      # An explicit `use:` names the backend module itself and wins over
+      # the fact in Ansible's action plugin (service.py resolves `use`
+      # first and only gathers ansible_service_mgr when it is "auto"). A
+      # use: value with no spec-table entry of its own (openrc, upstart,
+      # ...) falls back to the generic module behind the delegating
+      # action, whose spec is the delegating entry's own. Live-verified vs
+      # ansible-core 2.19.11: `service: {use: service, force: true}` fails
+      # with "Unsupported parameters for (ansible.legacy.service) module:
+      # force. Supported parameters include: arguments, enabled, name,
+      # pattern, runlevel, sleep, state (args)."
+      if (use = params["use"]?.try(&.downcase)) && use != "auto"
+        generic_name = module_name.split(".").last
+        # Ansible's has_plugin() accepts both a short name and an FQCN; an
+        # empty use: names no module at all (`not module`).
+        unless use.empty?
+          short = use.split(".").last
+          target = short == generic_name ? module_name : "ansible.builtin.#{short}"
+          if target_entry = table[target]?
+            return {"ansible.legacy.#{short}", merge_consumed_keys(entry, target_entry), target}
+          end
+        end
+        return {"ansible.legacy.#{generic_name}", entry, module_name}
+      end
+
       fact = fact_delegate["fact"].as_s
       fact_value = delegating_fact(fact, vars_context)
       target = fact_delegate["map"].as_h[fact_value]?.try(&.as_s)
