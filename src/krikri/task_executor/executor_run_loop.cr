@@ -2024,7 +2024,18 @@ module Krikri
         return interpreted
       end
 
-      resent = interpret_batch_script(host, conn, resend.map { |idx| steps[idx] })
+      # The re-send continues on the daemon path when one can serve it
+      # (issue #1158): the recovery above re-uploaded the missing
+      # binaries AND dropped the daemon circuit breaker's stale
+      # "won't start" stamp (PluginManager.drop_stale_plugin_beliefs -
+      # that stamp exists only because the spawn handshake failed
+      # against the very binary that was missing), so this prefers the
+      # daemon exactly like the group's first attempt did - one pipe
+      # round trip, and a daemon that is now up serves every later group
+      # without another spawn. The script transport stays the fallback
+      # with the identical result shape (absent index = never ran).
+      resend_steps = resend.map { |idx| steps[idx] }
+      resent = try_daemon_batch(host, conn, resend_steps, vars) || interpret_batch_script(host, conn, resend_steps)
       resend.each_with_index do |idx, pos|
         if result = resent[pos]?
           interpreted[idx] = result

@@ -2107,79 +2107,10 @@ module Krikri
       # second(s)" after 37 s). The exec itself is still bounded.
       started = task_timeout ? Time.instant : nil
 
-      # Perf items 1-3: try the
-      # persistent daemon connection first when opted in and eligible -
-      # on a failure that means the request never went out (never
-      # established, broken pipe on the write, target rebooted mid-play
-      # and the old pipe is stale) this rescues and falls through to the
-      # proven per-task path below unchanged, for THIS one call - see
-      # SSHManager.daemon_send's own comment for why that's the entire
-      # reconnect story, not just a stopgap. The one failure that must
-      # NOT fall through is a request that WAS sent but whose response
-      # was lost or unparseable (DaemonDispatchUnknownError): the module
-      # may already have run inside the daemon, and the one-shot path
-      # below would execute it a SECOND time - fatal for a
-      # non-idempotent task - so that case fails the task instead.
-      #
-      # The path handed to `daemon_send` as "where to start the daemon
-      # FROM" is deliberately THIS plugin's own already-uploaded
-      # hardlink (`ensure_uploaded` above just guaranteed it exists),
-      # not a separate literal `.fat-plugin` name - that name is a
-      # LOCAL build artifact only (`build.sh`'s own canonical filename
-      # before per-module hardlinks get materialized); nothing ever
-      # uploads or names a remote file that literally - confirmed live,
-      # not assumed, chasing a real regression this exact mistake caused
-      # (every daemon start failed against a nonexistent remote path,
-      # paying a wasted SSH attempt on top of the normal per-task
-      # fallback on EVERY call). Once started, the SAME daemon process
-      # can dispatch ANY of the 81 fat-plugin modules regardless of
-      # which hardlink name launched it - the dispatch table is compiled
-      # into the binary itself, not read off the filesystem - so this
-      # path only matters the very first time a host needs a daemon;
-      # every later call for a DIFFERENT module on the same host reuses
-      # the cached process without re-touching this argument at all.
-      # Perf item 1: a `become:` task uses a
-      # daemon of its own, spawned as become_user - so the daemon_user
-      # here is the become_user for a privileged task and nil for an
-      # unprivileged one, which is exactly SSHManager's daemon key.
-      # `become_user` has already been validated against
-      # `valid_become_user?` by whoever resolved become for this task
-      # (see #resolve_become and #remote_plugin_target's own note) -
-      # required, because it is interpolated into the daemon's own ssh
-      # command line the same way the one-shot target string is.
-      daemon_user = become_needed?(become, become_user || "root", conn.user) ? (become_user || "root") : nil
-
-      # A `timeout:` task bypasses the daemon (its in-flight module cannot
-      # be killed without killing the daemon, and a dispatched-or-not
-      # classification would be lost) - same gate as the local daemon's.
-      if @@daemon_enabled && task_timeout.nil? && daemon_eligible?(plugin_name, become, become_flags) &&
-         !SSHManager.daemon_unavailable?(connection_host, conn.user, conn.port, daemon_user,
-           SSHManager.connection_sig(conn.identity_file, extra_args, conn.password))
-        begin
-          return SSHManager.daemon_send(
-            connection_host,
-            conn.user,
-            conn.port,
-            "#{remote_plugin_dir(conn.user)}/#{simple_plugin_name(plugin_name)}",
-            simple_plugin_name(plugin_name),
-            JSON.parse(config),
-            identity_file: conn.identity_file,
-            become_user: daemon_user,
-            become_password: Passwords.become(vars, host),
-            extra_args: extra_args
-          )
-        rescue ex : SSHManager::DaemonDispatchUnknownError
-          # The request reached the daemon but its response did not come
-          # back intact - the module may have executed, and its result is
-          # unknown. Silently re-running it over the one-shot path below
-          # would double-apply a possibly non-idempotent action, so fail
-          # the task instead. `_connection_failure` keeps
-          # failed_when:/changed_when: from reinterpreting a result no
-          # module actually produced (see apply_changed_failed_when).
-          return daemon_dispatch_unknown_result(ex, SSHUnreachableMsg.pipelining_enabled?(vars), host.connection_host)
-        rescue
-          # Fall through to the per-task path below.
-        end
+      # Perf items 1-3: the daemon leg first - see #try_daemon_dispatch
+      # for the full reasoning (fallback contract, spawn path, keying).
+      if daemon_result = try_daemon_dispatch(plugin_name, config, host, vars, become, become_user, become_flags, task_timeout, conn)
+        return daemon_result
       end
 
       target = remote_plugin_target(plugin_name, become, become_user, conn.user, Passwords.become(vars, host), become_flags)
@@ -2263,6 +2194,18 @@ module Krikri
       # genuinely broken target still fails instead of looping.
       if missing_remote_binary?(interpreted, target, remote_plugin_dir(conn.user))
         recover_missing_plugin!(host, plugin_name, vars)
+        # The binary is back, so continue on the daemon path (issue
+        # #1158) rather than proving it with one more per-task ssh exec:
+        # the recovery also dropped the stale circuit-breaker stamp the
+        # failed daemon handshake left (see drop_stale_plugin_beliefs),
+        # so this attempt gets a fresh spawn and - once that daemon is
+        # up - every later dispatch rides the pipe exactly like a warm
+        # run. Re-running is safe: the exec above failed with the binary
+        # MISSING, so the module never ran. The one-shot retry below
+        # stays as the fallback with the same single-retry bound.
+        if daemon_result = try_daemon_dispatch(plugin_name, config, host, vars, become, become_user, become_flags, task_timeout, conn)
+          return daemon_result
+        end
         # The re-upload is krikri-only transfer time too (see above): the
         # retry exec gets a fresh `timeout:` budget, not the first one's
         # leftover.
@@ -2285,6 +2228,103 @@ module Krikri
       end
 
       interpreted
+    end
+
+    # Perf items 1-3: the persistent daemon connection's own dispatch leg
+    # of #execute_remote_plugin_transport, extracted so the post-recovery
+    # retry (issue #1158) can take the exact same leg after a missing
+    # plugin binary has been re-uploaded. Returns the module's own JSON
+    # result, the DaemonDispatchUnknownError verdict (a result the
+    # caller must return as-is and never retry anywhere), or nil when the
+    # caller should fall through to the one-shot/script path.
+    #
+    # On a failure that means the request never went out (never
+    # established, broken pipe on the write, target rebooted mid-play
+    # and the old pipe is stale) this rescues and returns nil, letting
+    # the proven per-task path handle THIS one call - see
+    # SSHManager.daemon_send's own comment for why that's the entire
+    # reconnect story, not just a stopgap. The one failure that must
+    # NOT fall through is a request that WAS sent but whose response
+    # was lost or unparseable (DaemonDispatchUnknownError): the module
+    # may already have run inside the daemon, and the one-shot path
+    # would execute it a SECOND time - fatal for a non-idempotent task -
+    # so that case becomes a failed (or unreachable) task instead.
+    #
+    # The path handed to `daemon_send` as "where to start the daemon
+    # FROM" is deliberately THIS plugin's own already-uploaded hardlink
+    # (the caller's `ensure_uploaded` just guaranteed it exists), not a
+    # separate literal `.fat-plugin` name - that name is a LOCAL build
+    # artifact only (`build.sh`'s own canonical filename before
+    # per-module hardlinks get materialized); nothing ever uploads or
+    # names a remote file that literally - confirmed live, not assumed,
+    # chasing a real regression this exact mistake caused (every daemon
+    # start failed against a nonexistent remote path, paying a wasted
+    # SSH attempt on top of the normal per-task fallback on EVERY call).
+    # Once started, the SAME daemon process can dispatch ANY of the 81
+    # fat-plugin modules regardless of which hardlink name launched it -
+    # the dispatch table is compiled into the binary itself, not read
+    # off the filesystem - so this path only matters the very first time
+    # a host needs a daemon; every later call for a DIFFERENT module on
+    # the same host reuses the cached process without re-touching this
+    # argument at all.
+    #
+    # Perf item 1: a `become:` task uses a daemon of its own, spawned as
+    # become_user - so the daemon_user here is the become_user for a
+    # privileged task and nil for an unprivileged one, which is exactly
+    # SSHManager's daemon key. `become_user` has already been validated
+    # against `valid_become_user?` by whoever resolved become for this
+    # task (see #resolve_become and #remote_plugin_target's own note) -
+    # required, because it is interpolated into the daemon's own ssh
+    # command line the same way the one-shot target string is.
+    #
+    # A `timeout:` task bypasses the daemon (its in-flight module cannot
+    # be killed without killing the daemon, and a dispatched-or-not
+    # classification would be lost) - same gate as the local daemon's.
+    # Public as a spec seam.
+    def self.try_daemon_dispatch(
+      plugin_name : String,
+      config : String,
+      host : Host,
+      vars : Hash(String, JSON::Any),
+      become : Bool,
+      become_user : String?,
+      become_flags : String?,
+      task_timeout : Int64?,
+      conn : ConnectionSettings,
+    ) : JSON::Any?
+      return nil unless @@daemon_enabled && task_timeout.nil? && daemon_eligible?(plugin_name, become, become_flags)
+
+      extra_args = conn.ssh_extra_options
+      daemon_user = become_needed?(become, become_user || "root", conn.user) ? (become_user || "root") : nil
+      return nil if SSHManager.daemon_unavailable?(conn.conn_host, conn.user, conn.port, daemon_user,
+                      SSHManager.connection_sig(conn.identity_file, extra_args, conn.password))
+
+      begin
+        SSHManager.daemon_send(
+          conn.conn_host,
+          conn.user,
+          conn.port,
+          "#{remote_plugin_dir(conn.user)}/#{simple_plugin_name(plugin_name)}",
+          simple_plugin_name(plugin_name),
+          JSON.parse(config),
+          identity_file: conn.identity_file,
+          become_user: daemon_user,
+          become_password: Passwords.become(vars, host),
+          extra_args: extra_args
+        )
+      rescue ex : SSHManager::DaemonDispatchUnknownError
+        # The request reached the daemon but its response did not come
+        # back intact - the module may have executed, and its result is
+        # unknown. Silently re-running it over the one-shot path would
+        # double-apply a possibly non-idempotent action, so fail the
+        # task instead. `_connection_failure` keeps failed_when:/
+        # changed_when: from reinterpreting a result no module actually
+        # produced (see apply_changed_failed_when).
+        daemon_dispatch_unknown_result(ex, SSHUnreachableMsg.pipelining_enabled?(vars), host.connection_host)
+      rescue
+        # Nothing provably dispatched - the caller's per-task fallback.
+        nil
+      end
     end
 
     # The `_task_timeout` marker result a deadline kill turns into: the
@@ -2385,24 +2425,45 @@ module Krikri
     # every module the group needs.
     def self.recover_missing_plugins!(host : Host, plugin_names : Array(String), vars : Hash(String, JSON::Any)) : Nil
       conn = ConnectionSettings.resolve(host, vars)
-      host_key = conn.spec_key
       simple_names = plugin_names.map { |name| simple_plugin_name(name) }.uniq!
 
-      invalidate_host_state(host_key)
-      if set = @@uploaded_plugins[host_key]?
-        simple_names.each { |name| set.delete(name) }
-      end
+      drop_stale_plugin_beliefs(conn, simple_names)
       upload_plugins_to_host(host, simple_names, conn)
     end
 
     private def self.recover_missing_plugin!(host : Host, plugin_name : String, vars : Hash(String, JSON::Any)) : Nil
       conn = ConnectionSettings.resolve(host, vars)
-      host_key = conn.spec_key
       simple_name = simple_plugin_name(plugin_name)
 
-      invalidate_host_state(host_key)
-      @@uploaded_plugins[host_key]?.try(&.delete(simple_name))
+      drop_stale_plugin_beliefs(conn, [simple_name])
       upload_plugins_to_host(host, [simple_name], conn)
+    end
+
+    # Everything this process came to believe about *conn*'s target
+    # holding the named plugin binaries is wrong - a /var/tmp sweep
+    # (systemd-tmpfiles on long-lived hosts), a host rebuilt behind the
+    # same address, a hardening role remounting /tmp mid-play - and the
+    # caller is about to prove it by uploading for real.
+    #
+    # Three stale beliefs rest on the same "the binary is there"
+    # premise and all three die with it: the controller-side host-state
+    # record (so the next run re-verifies), this process's own
+    # uploaded-plugin memo, and the daemon circuit breaker's "this
+    # connection's daemon cannot start" stamp (issue #1158). That stamp
+    # exists only because the daemon spawn handshake failed against the
+    # very binary that was missing - leaving it in place kept the whole
+    # run on the per-task ssh path (the ~2x slower
+    # first-run-after-a-sweep of that issue) even after the binary was
+    # back and the daemon would have started fine. Public as a spec
+    # seam.
+    def self.drop_stale_plugin_beliefs(conn : ConnectionSettings, simple_names : Array(String)) : Nil
+      host_key = conn.spec_key
+      invalidate_host_state(host_key)
+      if set = @@uploaded_plugins[host_key]?
+        simple_names.each { |name| set.delete(name) }
+      end
+      SSHManager.clear_daemon_failures(conn.conn_host, conn.user, conn.port,
+        SSHManager.connection_sig(conn.identity_file, conn.ssh_extra_options, conn.password))
     end
 
     # Resolves a plugin's remote path (`remote_plugin_dir/<simple name>`)
