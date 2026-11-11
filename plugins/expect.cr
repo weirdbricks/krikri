@@ -262,7 +262,9 @@ module Krikri
       ret = LibPty.openpty(pointerof(amaster), pointerof(aslave), Pointer(LibC::Char).null, Pointer(Void).null, Pointer(Void).null)
       return PluginResult.new(changed: false, failed: true, msg: "failed to allocate a pty (openpty errno #{Errno.value})") if ret != 0
 
-      setup_slave_echo(aslave, echo)
+      slave_io = IO::FileDescriptor.new(aslave)
+      IO::FileDescriptor.set_blocking(aslave, true)
+      setup_slave_echo(slave_io, echo)
 
       pid = LibC.fork
       case pid
@@ -277,7 +279,12 @@ module Krikri
       # `when 0` branch above always exits/execs and never falls through
       # to here).
       child_pid = pid
-      LibC.close(aslave)
+      # Close the parent's slave end through its IO wrapper, never with a
+      # raw LibC.close: an IO::FileDescriptor's GC finalizer closes its fd
+      # again, so a raw close first lets that finalizer later close an
+      # unrelated fd that has since reused the number (seen as
+      # "Error closing file (.../zoneinfo/...): Bad file descriptor").
+      slave_io.close rescue nil
 
       master_io = IO::FileDescriptor.new(amaster)
       IO::FileDescriptor.set_blocking(amaster, true)
@@ -339,9 +346,7 @@ module Krikri
     # is NOT echoed back into the captured output - turn off the pty's
     # canonical-mode local echo unless the task explicitly asked for it
     # (echo: true), matching pexpect's own `setecho()` behavior.
-    private def setup_slave_echo(aslave : LibC::Int, echo : Bool) : Nil
-      slave_io = IO::FileDescriptor.new(aslave)
-      IO::FileDescriptor.set_blocking(aslave, true)
+    private def setup_slave_echo(slave_io : IO::FileDescriptor, echo : Bool) : Nil
       echo ? slave_io.echo! : slave_io.noecho!
     end
 
@@ -358,6 +363,10 @@ module Krikri
     # reinterpreted by /bin/sh - the shlex-split argv execs directly with
     # chdir as the child's cwd.
     private def child_exec(args : Array(String), aslave : LibC::Int, amaster : LibC::Int, chdir : String?) : Nil
+      # No GC between fork and exec: the parent's IO::FileDescriptor
+      # wrappers for the pty fds are inherited across fork(), and a
+      # finalizer firing here would close fds the child still uses.
+      GC.disable
       LibC.setsid
       LibC.ioctl(aslave, TIOCSCTTY, 0)
       LibC.dup2(aslave, 0)
