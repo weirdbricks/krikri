@@ -449,6 +449,28 @@ describe Krikri::ArgspecValidator do
       vars({"ansible_service_mgr" => JSON::Any.new("systemd")})).must_be_nil
   end
 
+  it "validates an explicit use: service against the generic module, not the fact's systemd one" do
+    # Ansible's service action plugin resolves `use` before the fact: an
+    # explicit use: names the module whose spec validates the task, so a
+    # `use: service` task on a systemd host is checked against the generic
+    # service module's own argspec (live-verified vs 2.19.11: `force` is
+    # rejected as a service option, `arguments` is accepted).
+    failure = Krikri::ArgspecValidator.validate(
+      "service", "ansible.builtin.service",
+      {"use" => "service", "name" => "systemd-journald", "state" => "started", "force" => "true"},
+      vars({"ansible_service_mgr" => JSON::Any.new("systemd")}))
+    failure.as(Failure).msg.must_equal(
+      "Unsupported parameters for (ansible.legacy.service) module: force. " \
+      "Supported parameters include: arguments, enabled, name, pattern, runlevel, " \
+      "sleep, state (args).")
+
+    Krikri::ArgspecValidator.validate(
+      "service", "ansible.builtin.service",
+      {"use" => "service", "name" => "systemd-journald", "state" => "started",
+       "arguments" => "--test-arg", "sleep" => "5", "pattern" => "journald"},
+      vars({"ansible_service_mgr" => JSON::Any.new("systemd")})).must_be_nil
+  end
+
   it "rewrites a bool value to a choices option's single boolean overlap (apt upgrade: true)" do
     Krikri::ArgspecValidator.validate(
       "apt", "ansible.builtin.apt",
