@@ -2071,9 +2071,18 @@ module Krikri
       # the helper is duplicated rather than shared).
       apt_names = names
       installed_status = dpkg_installed_status(apt_names)
+      # A `NAME=VER` pin is part of the installed question: apt.py's
+      # package_status() fnmatches the installed version against the pin,
+      # so `libssl-dev=1.0.2k-1~bpo8+1` on a host with a different
+      # libssl-dev installed is NOT already-satisfied - it proceeds to
+      # apt.py's own candidate resolution, which fails with
+      # "no available installation candidate for NAME=VER" (issue #1128,
+      # live-verified against ansible-playbook 2.19). Base-name-only here
+      # reported the pinned spec ok and skipped that failure entirely.
       is_installed = apt_names.all? do |pkg|
-        base_name = pkg.split('=').first
-        installed_status[base_name]?.try { |pair| pair[0] } || false
+        base_name, pinned_version = split_name_version(pkg)
+        installed, installed_ver = installed_status[base_name]?.try { |pair| pair } || {false, nil}
+        installed && (pinned_version.nil? || ((iv = installed_ver) && version_pin_matches?(pinned_version, iv)))
       end
       shell_pkg = pkg_tokens
       # Matches apt.cr's own lock_timeout retry (default 60s, same
@@ -2129,14 +2138,31 @@ module Krikri
             # apt-get run, so there is no rc/stderr to report and the
             # registered result carries neither key (issue #1040,
             # live-verified in check mode - ansible prints
-            # {"changed": false, "msg": ...} alone).
+            # {"changed": false, "msg": ...} alone). An unresolvable
+            # VERSION pin fails the same pre-apt-get resolution with its
+            # own "no available installation candidate for NAME=VER"
+            # carrying the cache keys (live-verified in check mode,
+            # issue #1128) - the same failure the non-check-mode branch
+            # below maps, so it must win over the name-miss mapping here
+            # too (the simulate call folds stderr into stdout via 2>&1,
+            # so the E: line lives in stdout).
+            folded = sim[:stdout] + sim[:stderr]
+            if bad_version = apt_unresolvable_version_name(folded, names)
+              return PluginResult.new(
+                changed: false,
+                failed: true,
+                msg: "no available installation candidate for #{bad_version}",
+                cache_updated: false,
+                cache_update_time: apt_cache_mtime(->remote_exec(String)),
+                key_order: %w[cache_updated cache_update_time failed msg]
+              )
+            end
             return PluginResult.new(
               changed: false,
               failed: true,
               # apt.py names the first unresolvable list member, not the
-              # whole joined name it was handed. The simulate call folds
-              # stderr into stdout (2>&1), so the E: lines live in stdout.
-              msg: no_package_msg(apt_first_missing_name(sim[:stdout] + sim[:stderr], names) || name)
+              # whole joined name it was handed.
+              msg: no_package_msg(apt_first_missing_name(folded, names) || name)
             )
           end
 
