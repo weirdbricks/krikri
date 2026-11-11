@@ -225,4 +225,54 @@ describe "jinja constant embedded-template warning blocks" do
   ensure
     FileUtils.rm_rf(src_dir) if src_dir
   end
+
+  it "points an assert that: item's origin at the surviving value under duplicate keys (issue #1136)" do
+    # fogartyp.ora-host carries TWO `that:` keys on one assert; ansible
+    # warns "Using last defined value only" and pins each evaluated
+    # item's warning Origin on the LAST key's value (the one that
+    # survived the duplicate-key collapse), while the collapsed
+    # one-item condition list made the positional index scan label the
+    # FIRST key's line. Byte-compared vs ansible-core 2.19.11 on the
+    # role: both the constant-template warning and the fact-injection
+    # deprecation report line 11's value, never line 10's.
+    src_dir = File.tempname("jinja-const-warn-dup-that")
+    Dir.mkdir_p(src_dir)
+    File.write(File.join(src_dir, "pb.yml"), <<-YAML)
+      ---
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          ansible_distribution_version: "7"
+          os_min_supported_version: "6.4"
+        tasks:
+          - assert:
+              that: "ansible_os_family == 'Debian'"
+              that: "ansible_distribution_version >= '{{ os_min_supported_version }}'"
+      YAML
+
+    stdout = IO::Memory.new
+    stderr = IO::Memory.new
+    Process.run(BINARY, ["-i", INVENTORY, "pb.yml", "--check"], output: stdout, error: stderr, chdir: src_dir)
+
+    lines = File.read_lines(File.join(src_dir, "pb.yml"))
+    pb_path = File.expand_path(File.join(src_dir, "pb.yml"))
+    # Line 11 is the second (surviving) `that:`; its value starts at the
+    # `"` after `that: ` (column 15 on the 8-space-indent line).
+    expected = "#{WARNING_LINE}\n" \
+               "Origin: #{pb_path}:11:15\n\n" \
+               " 9 #{lines[8]}\n" \
+               "10 #{lines[9]}\n" \
+               "11 #{lines[10]}\n" \
+               "#{" " * 17}^ column 15\n\n" \
+               "Use inline expressions, for example: `when: \"{{ a_var }}\" == 42` becomes `when: a_var == 42`\n\n"
+    stderr.to_s.must_include(expected)
+    # The collapse must not label the FIRST key's value either.
+    stderr.to_s.wont_include("Origin: #{pb_path}:10:")
+    # Last-value-wins means only the version condition was evaluated -
+    # the family check never ran, like ansible's assert.
+    stdout.to_s.must_include("All assertions passed")
+  ensure
+    FileUtils.rm_rf(src_dir) if src_dir
+  end
 end

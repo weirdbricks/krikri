@@ -4571,19 +4571,23 @@ module Krikri
         return left <=> right
       end
 
-      # Try to parse as numbers
-      if left_num = left.to_s.to_i64?
-        if right_num = right.to_s.to_i64?
-          return left_num <=> right_num
-        end
+      # A String operand never parses as a number: Python's own
+      # str-vs-str ordering is always lexicographic ('24.04' >= '6.4' is
+      # False because '2' < '6' - fogartyp.ora-host's version gate,
+      # issue #1136, where the parse-as-number cascade here answered
+      # True and ran tasks real ansible's assert stops), and
+      # str-vs-number was already refused by #ordering_type_check!
+      # above (issue #219).
+      if left.is_a?(String) || right.is_a?(String)
+        return left.to_s <=> right.to_s
       end
 
-      # Neither side parsed as an integer - try float (`zsh_version.stdout
-      # | float < 5.1`: the left side is a real Float64-valued string from
-      # the `float` filter, the right a bare float literal). Checked only
-      # after the integer attempt above so two genuine integers still
-      # compare via Int64 <=> (avoids any float-precision surprise on
-      # large values) exactly as before this case was added.
+      # Neither side is a String - try float (`zsh_version.stdout
+      # | float < 5.1`: the left side a Float64 from the `float` filter,
+      # the right a bare float literal). Checked only after the integer
+      # attempt above so two genuine integers still compare via
+      # Int64 <=> (avoids any float-precision surprise on large values)
+      # exactly as before this case was added.
       left_f = left.to_s.to_f64?
       right_f = right.to_s.to_f64?
       if left_f && right_f
