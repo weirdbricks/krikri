@@ -272,6 +272,16 @@ module Krikri
           # resolve to nil, running the task once with `item` undefined).
           hash_result = (JSON.parse(result).as_h? rescue nil)
           unless hash_result
+            # A filter chain that resolved to a LIST (e.g. over a
+            # list-of-dicts variable) rides the lookup's own term
+            # semantics - each element is one dictionary term - exactly
+            # like the direct-resolution path below; a non-list scalar
+            # keeps the type refusal.
+            if (resolved_list = structured_loop_source_value(bare, vars_context) ||
+                                (Krikri.parse_json_or_python_literal(result) rescue nil)) &&
+               (list_result = resolved_list.as_a?)
+              return dict_lookup_terms(list_result)
+            end
             # A with_dict: source that resolves to a NON-dictionary fails
             # in ansible-core with the dict LOOKUP plugin's own type
             # error (live-verified matrix vs 2.19.11: `with_dict: "{{
@@ -468,28 +478,18 @@ module Krikri
             raise LoopLookupError.new(
               "The lookup plugin 'dict' failed: the 'dict' lookup plugin expects a dictionary, " \
               "got '#{python_str(value)}' of type <class '#{python_type_name(value)}'>)")
-          elsif (arr = value.as_a?) && arr.empty? && !task.loop_template_array_wrapped?
-            # The bare-scalar source shape (`with_dict: "{{ var }}"`, NO
-            # YAML list wrapper - buluma.rsyslog's own `rsyslog_rsyslog_
-            # d_files: []` default, round 180): Ansible templates the
-            # bare scalar into the lookup's TERMS LIST itself, so a
-            # resolution that IS an empty list means zero terms, zero
-            # loop items, task reported "skipping". The original fix's
-            # `dict([])`-succeeds story is correct for exactly this
-            # shape - live-verified against ansible-core 2.19.11.
-            hash = {} of String => JSON::Any
-          elsif task.loop_template_array_wrapped?
+          elsif value.as_a? && task.loop_template_array_wrapped?
             # The list-wrapped source shape (`with_dict:\n  - "{{ git_
             # users }}"` - volker-raschek.git, round 812006): there the
             # explicit YAML list is itself ONE lookup TERM, and
             # ansible-core 2.19's lookup/dict.py requires every term to
-            # be a Mapping, so an empty-list resolution HARD-FAILS the
+            # be a Mapping, so a list resolution HARD-FAILS the
             # task ("The lookup plugin 'dict' failed: the 'dict' lookup
             # plugin expects a dictionary, got '[]' of type ...)").
             # Live-verified against ansible-core 2.19.11 that the two
             # shapes really diverge this way (bare scalar skips,
             # list-wrapped fails) - previously BOTH hit the empty-list
-            # leniency above and silently skipped where Ansible
+            # leniency below and silently skipped where Ansible
             # fails. The type name Ansible prints is a 2.19-internal
             # lazy-templating container class not reproducible here;
             # "list" is the direct `dict()` equivalent.
@@ -502,6 +502,16 @@ module Krikri
             raise LoopLookupError.new(
               "The lookup plugin 'dict' failed: the 'dict' lookup plugin expects a dictionary, " \
               "got '#{python_str(value)}' of type <class '#{python_type_name(value)}'>)")
+          elsif arr = value.as_a?
+            # The BARE source shape (`with_dict: "{{ var }}"`, no YAML
+            # list wrapper) resolving to a LIST: the resolution IS the
+            # lookup's terms, so each element is one dictionary term and
+            # a non-dictionary element fails at the lookup's own refusal
+            # - the same semantics the literal list form gets (see the
+            # parse-time branch / resolve_loop_dict_terms). An empty
+            # resolution is zero terms, zero items, task "skipping"
+            # (round 180's buluma.rsyslog empty-default shape).
+            return dict_lookup_terms(arr)
           end
         end
         return nil unless hash
@@ -953,6 +963,41 @@ module Krikri
         end
       end
       LoopResolver.with_nested(lists)
+    end
+
+    # The dict lookup plugin's own term semantics (lookup/dict.py: every
+    # term must be a Mapping, each contributes one {'key','value'} entry per
+    # key, and the lookup validates every term BEFORE any item is produced -
+    # so one non-dictionary term fails the whole task, never a partial
+    # iteration). Shared by the literal with_dict:-as-list path
+    # (resolve_loop_dict_terms) and the runtime templated-source path in
+    # resolve_loop_template.
+    private def dict_lookup_terms(terms : Array(JSON::Any)) : Array(JSON::Any)
+      items = [] of JSON::Any
+      terms.each do |term|
+        term_hash = term.as_h?
+        unless term_hash
+          # Real 2.21.6 words a string term's type as its internal
+          # tagged-string class (same convention the templated-source
+          # non-dict refusals use); there is no trailing period.
+          dict_type = term.raw.is_a?(String) ? "ansible.module_utils._internal._datatag._AnsibleTaggedStr" : python_type_name(term)
+          raise LoopLookupError.new(
+            "The lookup plugin 'dict' failed: the 'dict' lookup plugin expects a dictionary, " \
+            "got '#{python_str(term)}' of type <class '#{dict_type}'>)")
+        end
+        items.concat(LoopResolver.with_dict(term_hash.transform_keys(&.to_s)))
+      end
+      items
+    end
+
+    # A literal `with_dict:` LIST that contains a non-dictionary element
+    # (parse-time branch in PlaybookParser): the elements are the dict
+    # lookup's terms, validated here where the LoopLookupError channel
+    # (bodyless Origin: <unknown> block, bare registered msg) lives.
+    private def resolve_loop_dict_terms(task : Task) : Array(JSON::Any)?
+      terms = task.loop_dict_terms
+      return nil unless terms && (arr = terms.as_a?)
+      dict_lookup_terms(arr)
     end
 
     # with_together: resolve each raw source string exactly as

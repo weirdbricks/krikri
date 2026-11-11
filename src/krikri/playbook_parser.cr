@@ -501,6 +501,14 @@ module Krikri
     # role defaults both to empty lists), so the raw source strings are
     # kept here and resolved + zipped by TaskExecutor#resolve_loop_together.
     property loop_together_sources : Array(String)?
+    # with_dict: given as a LIST whose elements are not all dictionaries.
+    # The list is the dict lookup plugin's own terms, and a non-Mapping term
+    # fails the task at runtime with that lookup's type refusal (a shaped
+    # [ERROR] block only the executor can emit), so an all-dictionary list
+    # resolves at parse time but this shape keeps the raw terms for
+    # TaskExecutor#resolve_loop_dict_terms, like loop_nested_sources's
+    # defer-until-runtime design.
+    property loop_dict_terms : JSON::Any?
     # with_subelements: the raw list template (usually a `{{ registered_var
     # .results }}` reference) and the subelement key. Both kept verbatim and
     # resolved at execution time once the variable context + registered vars
@@ -4726,6 +4734,30 @@ module Krikri
         hash = Hash(String, JSON::Any).new
         with_dict.each { |k, v| hash[k.to_s] = JSON.parse(v.to_json) }
         task.loop_items = LoopResolver.with_dict(hash)
+      elsif with_dict_terms = task_hash["with_dict"]?.try(&.as_a?)
+        # with_dict: given as a LIST (damianlewis.octobercms's own
+        # configure-app.yml): the list goes to the dict LOOKUP plugin as its
+        # terms, so each element is one dictionary whose entries each become
+        # a {'key','value'} item (live-verified vs ansible-core 2.21.6: a
+        # list of single-key dicts iterates one item per element, a
+        # multi-key dict one item per entry). The old parse only recognized
+        # the hash form, so the list form fell through every branch and the
+        # task ran ONCE with `item` unbound ("'item' is undefined" at arg
+        # finalization) where real iterates the elements.
+        if with_dict_terms.all?(&.as_h?)
+          task.loop_items = with_dict_terms.flat_map do |term|
+            entries = Hash(String, JSON::Any).new
+            term.as_h.each { |k, v| entries[k.to_s] = JSON.parse(v.to_json) }
+            LoopResolver.with_dict(entries)
+          end
+        else
+          # A non-dictionary term fails the WHOLE task at the dict lookup's
+          # own type refusal - the lookup validates every term before any
+          # item is produced, so the task never runs partially, and the
+          # error's bodyless Origin: <unknown> block is executor-shaped.
+          # Keep the raw terms and defer, like loop_nested_sources above.
+          task.loop_dict_terms = JSON.parse(with_dict_terms.to_json)
+        end
       elsif with_nested = task_hash["with_nested"]?.try(&.as_a?)
         # A scalar entry containing {{ }} is a templated SOURCE (usually a
         # whole-list variable reference), not a literal one-item list - its
