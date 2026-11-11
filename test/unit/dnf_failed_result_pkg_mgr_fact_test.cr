@@ -46,7 +46,7 @@ private class FinalizeResultHarness
   end
 end
 
-# Issue #1113 (same signature as #894): on a fact-less host with the
+# Issue #1113/#1116 (same signature as #894): on a fact-less host with the
 # default (unset/auto) interpreter, real's dnf action instance runs
 # interpreter discovery on its on-demand setup fetch and then stamps
 # discovered_interpreter_python onto the backend module's payload - which
@@ -63,7 +63,7 @@ private class DiscoveryHarness < FinalizeResultHarness
   end
 end
 
-describe "dnf: fetched pkg_mgr fact vs interpreter discovery on the payload (issue 1113)" do
+describe "dnf: fetched pkg_mgr fact vs interpreter discovery on the payload (issue 1113, 1116)" do
   it "replaces the fetched pkg_mgr fact with the discovery fact on a failed result when discovery runs" do
     failed = Krikri::PluginResult.new(
       changed: false,
@@ -75,6 +75,24 @@ describe "dnf: fetched pkg_mgr fact vs interpreter discovery on the payload (iss
     out.extra["ansible_facts"].as_h["discovered_interpreter_python"].as_s
       .must_equal("/usr/bin/python3.12")
     out.extra["ansible_facts"].as_h["pkg_mgr"]?.must_be_nil
+  end
+
+  # Issue #1116's exact fatal: an unsupported-params dnf task on a
+  # fact-less host with the default interpreter used to serialize
+  # {"ansible_facts": {"pkg_mgr": "dnf"}} on the wire where real's
+  # discovery-replaced payload carries only discovered_interpreter_python.
+  it "serializes the unsupported-params fatal under discovery with no pkg_mgr on the wire" do
+    failed = Krikri::PluginResult.new(
+      changed: false,
+      failed: true,
+      msg: "Unsupported parameters for (ansible.legacy.dnf) module: exclude_bogus."
+    )
+    res = DiscoveryHarness.new.finalize_result(failed)
+    wire = JSON.parse(res.to_json)
+    facts = wire["ansible_facts"].as_h
+    facts.keys.must_equal(["discovered_interpreter_python"])
+    facts["discovered_interpreter_python"].as_s.must_equal("/usr/bin/python3.12")
+    res.to_json.includes?("pkg_mgr").must_equal(false)
   end
 
   it "replaces the fetched pkg_mgr fact with the discovery fact on a successful result too" do

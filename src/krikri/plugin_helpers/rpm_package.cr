@@ -199,7 +199,7 @@ module Krikri
       # podman pair: both the failed unsupported-params fatal AND a
       # successful registered result read
       # {"discovered_interpreter_python": "/usr/bin/python3.12"} (issue
-      # #1113, the same signature #894 split from). modify_module only
+      # #1113/#1116, the same signature #894 split from). modify_module only
       # raises InterpreterDiscoveryRequiredError for an unset or auto*
       # interpreter, so two shapes keep the action's pkg_mgr fact instead:
       # a configured ansible_python_interpreter (#1063's AL2023 capture -
