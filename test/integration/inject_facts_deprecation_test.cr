@@ -652,6 +652,59 @@ describe "INJECT_FACTS_AS_VARS deprecation from a when: clause" do
     stderr.must_include("Origin: #{File.join(tasks_dir, "setup-RedHat.yml")}:8:9\n")
     (stderr.index!("main.yml:3:9") < stderr.index!("setup-RedHat.yml:8:9")).must_equal(true)
   end
+
+  # Issue #1099 (brentwg.docker): the same import clause, but the imported
+  # file holds plain tasks rather than a block: - every one of them inherits
+  # the False clause, yet real 2.21.6 prints the deprecation exactly once, at
+  # the import's own `when:` token, and never at the imported file (verified
+  # in normal and --check mode alike). The role's main.yml carries a task
+  # before the import, so the Origin is not at line 1.
+  it "prints one deprecation for an import clause inherited by plain imported tasks" do
+    dir = PluginSpecHelper.tmp_path("inject-facts-import-plain-#{Random::Secure.hex(4)}")
+    tasks_dir = File.join(dir, "roles", "docker_like", "tasks")
+    FileUtils.mkdir_p(tasks_dir)
+    File.write(File.join(tasks_dir, "main.yml"), <<-YAML)
+      ---
+      - name: keep the play alive
+        ansible.builtin.debug:
+          msg: done
+
+      # Perform OS-specific family tasks
+      - import_tasks: setup-RedHat.yml
+        when: ansible_os_family == 'RedHat'
+      YAML
+    File.write(File.join(tasks_dir, "setup-RedHat.yml"), <<-YAML)
+      ---
+      - name: redhat only step one
+        ansible.builtin.debug:
+          msg: one
+
+      - name: redhat only step two
+        ansible.builtin.debug:
+          msg: two
+      YAML
+    playbook = File.join(dir, "play.yml")
+    File.write(playbook, <<-PLAYBOOK)
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        roles:
+          - docker_like
+      PLAYBOOK
+
+    stdout = IO::Memory.new
+    stderr = IO::Memory.new
+    Process.run(BINARY, ["-i", "localhost,", playbook], output: stdout, error: stderr, chdir: dir)
+
+    stdout.to_s.must_include("skipping: [localhost]")
+    stderr = stderr.to_s
+    stderr.scan(/DEPRECATION WARNING\]: INJECT_FACTS_AS_VARS/).size.must_equal(1)
+    stderr.must_include("Origin: #{File.join(tasks_dir, "main.yml")}:8:9\n")
+    stderr.must_include("7 - import_tasks: setup-RedHat.yml\n")
+    stderr.must_include("8   when: ansible_os_family == 'RedHat'\n")
+    stderr.must_include("          ^ column 9")
+    stderr.wont_include("setup-RedHat.yml:")
+  end
 end
 
 # The template action hands the engine its whole variable scope up front, so

@@ -17138,7 +17138,7 @@ Local probe roles, not Galaxy roles: each probed task registers its result and d
 | `azavea.pptpd` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29905201, 0.9.2584 debug, ansible-core 2.21.6). |
 | `azmodude.visual-studio-code` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29905177, 0.9.2584 debug, ansible-core 2.21.6). |
 | `bitfinity-nl.samba4-ad-member` | ubuntu | ✅ Clean (round29905165, 0.9.2584 debug, ansible-core 2.21.6). |
-| `brentwg.docker` | rocky | ❌ Divergent - issue #1099 (round29905202, 0.9.2584 debug, ansible-core 2.21.6). |
+| `brentwg.docker` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical after re-verify (round29905875, 0.9.2604 debug, ansible-core 2.21.6); #1099's missing deprecation block was #1089's root cause (fact read in an imported task's inherited `when:`), fixed in 0.9.2600. Times: cold py 4.02s vs cr 2.43s; warm py 2.70s vs cr 0.42s. |
 | `caduri.ohmyzsh` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29905148, 0.9.2584 debug, ansible-core 2.21.6). |
 | `calvinbui.ansible_hauk` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29905175, 0.9.2584 debug, ansible-core 2.21.6). |
 | `cans.pip-configure` | ubuntu | ✅ Clean (round29905133, 0.9.2584 debug, ansible-core 2.21.6). |
@@ -17161,7 +17161,7 @@ Local probe roles, not Galaxy roles: each probed task registers its result and d
 | `entercloudsuite.auditbeat` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29905152, 0.9.2584 debug, ansible-core 2.21.6). |
 | `entercloudsuite.icinga2-master` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29905142, 0.9.2584 debug, ansible-core 2.21.6). |
 | `fabiohbarbosa.docker` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29905135, 0.9.2584 debug, ansible-core 2.21.6). |
-| `fabiohbarbosa.synapse` | rocky | ❌ Divergent - issue #1099 (round29905138, 0.9.2584 debug, ansible-core 2.21.6). |
+| `fabiohbarbosa.synapse` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical after re-verify (round29905876, 0.9.2604 debug, ansible-core 2.21.6); #1099's missing block was #1089's free-form `msg=` Origin fix, 0.9.2600. Times: cold py 4.10s vs cr 2.07s; warm py 2.07s vs cr 0.32s. |
 | `fede2cr.alfresco52` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29905123, 0.9.2584 debug, ansible-core 2.21.6). |
 | `fogartyp.ora-common` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29905189, 0.9.2584 debug, ansible-core 2.21.6). |
 | `grdavies.nutanix_role_prism_pulse` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29905125, 0.9.2584 debug, ansible-core 2.21.6). |
@@ -17179,7 +17179,7 @@ Local probe roles, not Galaxy roles: each probed task registers its result and d
 | `mrlesmithjr.elkstack` | ubuntu | ✅ Clean (round29905209, 0.9.2584 debug, ansible-core 2.21.6). |
 | `mrlesmithjr.powerdns` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29905192, 0.9.2584 debug, ansible-core 2.21.6). |
 | `msterhuj.victoriametrics_single` | rocky | ❌ Divergent - issue #1091 (round29905128, 0.9.2584 debug, ansible-core 2.21.6). |
-| `mullholland.gitlab_runner` | ubuntu | ❌ Divergent - issue #1099 (round29905161, 0.9.2584 debug, ansible-core 2.21.6). |
+| `mullholland.gitlab_runner` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical after re-verify once gitlab-runner's own pid/correlation_id run-to-run noise is masked (round29905877, 0.9.2604 debug, ansible-core 2.21.6); #1099's missing block was #1089's block-sequence item Origin fix, 0.9.2600. Times: cold py 194.19s vs cr 168.69s; warm py 26.56s vs cr 11.84s. |
 | `mullholland.mount` | rocky | ✅ Clean (round29905162, 0.9.2584 debug, ansible-core 2.21.6). |
 | `mullholland.proxmox_pbs` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29905147, 0.9.2584 debug, ansible-core 2.21.6). |
 | `mullholland.vault` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29905145, 0.9.2584 debug, ansible-core 2.21.6). |
