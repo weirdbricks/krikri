@@ -541,7 +541,13 @@ module Krikri
                 "Destination #{dest} is not readable"
               end
             else
-              dest_dir = File.dirname(dest)
+              # Python's os.path.dirname, not Crystal's File.dirname: for a
+              # bare relative dest ("47") os.path.dirname is "" - not a
+              # directory, so real get_url fails with "Destination  does
+              # not exist" (empty interpolation, live-verified) - while
+              # File.dirname yields "." (cwd), which passes every check
+              # below and reports the download as changed (issue #1120).
+              dest_dir = PluginHelpers::ArchivePaths.python_dirname(dest)
               if !Dir.exists?(dest_dir)
                 "Destination #{dest_dir} does not exist"
               elsif !File::Info.writable?(dest_dir)
