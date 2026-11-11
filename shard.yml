@@ -29,9 +29,9 @@ dependencies:
   bz2:
     github: weirdbricks/bz2.cr
     version: 0.1.0
-  awscr-signer:
-    github: taylorfinnell/awscr-signer
-    tag: v0.10.0
+  krikri-aws-signer:
+    github: weirdbricks/krikri-aws-signer
+    tag: v0.1.0
   krikri-xml:
     github: weirdbricks/krikri-xml
     tag: v0.3.0

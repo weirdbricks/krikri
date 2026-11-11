@@ -4,10 +4,6 @@ shards:
     git: https://github.com/crystal-ameba/ameba.git
     version: 1.7.0
 
-  awscr-signer:
-    git: https://github.com/taylorfinnell/awscr-signer.git
-    version: 0.10.0+git.commit.91324fe3e9192507a22a36fd205cd022135b41b4
-
   bz2:
     git: https://github.com/weirdbricks/bz2.cr.git
     version: 0.1.0
@@ -23,6 +19,10 @@ shards:
   docr:
     git: https://github.com/weirdbricks/docr.git
     version: 0.1.4+git.commit.c90ea8d6a0c5eb9f842ac0da098a1718ecca66ca
+
+  krikri-aws-signer:
+    git: https://github.com/weirdbricks/krikri-aws-signer.git
+    version: 0.1.0+git.commit.d36284185dfd12172146f0960f0ddbb957d51200
 
   krikri-jinja:
     git: https://github.com/weirdbricks/krikri-jinja.git

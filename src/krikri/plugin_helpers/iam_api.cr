@@ -2,7 +2,7 @@ require "json"
 require "http/client"
 require "uri"
 require "krikri-xml"
-require "awscr-signer"
+require "krikri-aws-signer"
 require "./ec2_api"
 
 module Krikri
@@ -113,7 +113,7 @@ module Krikri
           "Content-Type" => "application/x-www-form-urlencoded",
         }, body)
 
-        signer = Awscr::Signer::Signers::V4.new("iam", SIGNING_REGION, credentials.access_key, credentials.secret_key, credentials.session_token)
+        signer = KrikriAwsSigner::Signer.new("iam", SIGNING_REGION, credentials.access_key, credentials.secret_key, credentials.session_token)
         signer.sign(request)
 
         response = HTTP::Client.post("https://#{IAM_ENDPOINT}/", headers: request.headers, body: body)

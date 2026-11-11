@@ -2,7 +2,7 @@ require "json"
 require "http/client"
 require "uri"
 require "krikri-xml"
-require "awscr-signer"
+require "krikri-aws-signer"
 
 module Krikri
   module PluginHelpers
@@ -196,7 +196,7 @@ module Krikri
           "Content-Type" => "application/x-www-form-urlencoded",
         }, body)
 
-        signer = Awscr::Signer::Signers::V4.new("ec2", region, credentials.access_key, credentials.secret_key, credentials.session_token)
+        signer = KrikriAwsSigner::Signer.new("ec2", region, credentials.access_key, credentials.secret_key, credentials.session_token)
         signer.sign(request)
 
         response = HTTP::Client.new(host, tls: true).exec(request)

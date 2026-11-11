@@ -3,7 +3,7 @@ require "json"
 require "krikri-xml"
 require "http/client"
 require "uri"
-require "awscr-signer"
+require "krikri-aws-signer"
 require "./vault"
 require "./host"
 require "./conditional_evaluator"
@@ -21,7 +21,7 @@ module Krikri
   # a supported name is handled here.
   #
   # aws_ec2 talks to the real EC2 API with SigV4-signed HTTP (via
-  # awscr-signer) rather than shelling out to the `aws` CLI: Ansible
+  # krikri-aws-signer) rather than shelling out to the `aws` CLI: Ansible
   # only needs boto3 on the controller, and this needs nothing but the two
   # credential environment variables. The DescribeInstances response is
   # parsed from XML and mapped to hosts, then run through the same
@@ -161,7 +161,7 @@ module Krikri
         "Content-Type" => "application/x-www-form-urlencoded",
       }, params.to_s)
 
-      signer = Awscr::Signer::Signers::V4.new("ec2", region, access_key, secret_key, session_token)
+      signer = KrikriAwsSigner::Signer.new("ec2", region, access_key, secret_key, session_token)
       signer.sign(request)
 
       response = HTTP::Client.new(host, tls: true).exec(request)

@@ -524,7 +524,7 @@ because anyone intends to fix them.
   out to a CLI tool". Revisit only if a specific need justifies it.
 - YAML-defined inventory plugins (`plugin:` sources): `host_list`, `ini`, `yaml`, `constructed` and
   `amazon.aws.aws_ec2` are implemented via `src/krikri/inventory_plugins.cr`; aws_ec2 talks to the real
-  EC2 API with SigV4 through the vendored `awscr-signer` shard, credentials from the standard `AWS_*`
+  EC2 API with SigV4 through the `krikri-aws-signer` shard, credentials from the standard `AWS_*`
   environment variables. Deliberate approximations: default `hostnames` order is `ip-address`,
   `private-ip-address`, `instance-id`; constructed `filters` are AND-combined `key=value` / bare-key /
   `*` / `!`-negation entries, not Ansible's richer condition syntax; keyed_groups with a dict value make

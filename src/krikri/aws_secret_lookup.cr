@@ -2,7 +2,7 @@ require "json"
 require "base64"
 require "http/client"
 require "uri"
-require "awscr-signer"
+require "krikri-aws-signer"
 
 module Krikri
   # Native amazon.aws.aws_secret lookup (Secrets Manager GetSecretValue) -
@@ -138,7 +138,7 @@ module Krikri
         "X-Amz-Target" => target,
       }, body)
 
-      signer = Awscr::Signer::Signers::V4.new("secretsmanager", region,
+      signer = KrikriAwsSigner::Signer.new("secretsmanager", region,
         credentials.access_key, credentials.secret_key, credentials.session_token)
       signer.sign(request)
 
