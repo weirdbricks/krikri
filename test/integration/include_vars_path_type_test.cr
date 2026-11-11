@@ -216,6 +216,45 @@ describe "include_vars with a non-string file:/dir: literal" do
     text.must_include(extensions)
   end
 
+  it "registers the failed result of an unknown-option typo, like Ansible" do
+    # Ansible's register runs on the failed result before ignore_errors
+    # consults it (live-verified vs 2.19.11: the registered var is
+    # {changed: false, exception: "(traceback unavailable)", failed: true,
+    # msg: "Task failed: ..."}), so a later `when: r is not skipped`
+    # sees the var DEFINED and runs - it must not fail on an undefined
+    # var the way it did before this registered (kpg multi-task #33).
+    scratch = PluginSpecHelper.tmp_path("include-vars-arg-fail-register")
+    FileUtils.mkdir_p(scratch)
+    playbook = File.join(scratch, "play.yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: typo task
+            include_vars:
+              file: vars.yml
+              hsah_behaviour: merge
+            register: r
+            ignore_errors: true
+          - name: dump register
+            debug:
+              msg: "failed={{ r.failed }} msg={{ r.msg }}"
+          - name: when on register
+            debug:
+              msg: when-ran
+            when: r is not skipped
+      YAML
+    output = IO::Memory.new
+    Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output, chdir: scratch)
+    text = output.to_s
+
+    text.must_include("failed=True msg=Task failed: hsah_behaviour is not a valid option in include_vars")
+    text.must_include("when-ran")
+    text.must_match(/ignored=1/)
+    text.wont_include("'r' is undefined")
+  end
+
   it "aborts the whole playbook on a non-string free-form value, like Ansible's mod_args" do
     _, output = run_playbook(<<-YAML)
       - hosts: localhost
