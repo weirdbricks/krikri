@@ -1735,6 +1735,28 @@ module Krikri
     end
   end
 
+  # A role's vars/main.yml or defaults/main.yml whose parsed top level is
+  # anything but a mapping (a list, a scalar - e.g. an INI-shaped file YAML
+  # folds into one long string, exactly what CSCfi.sssd ships as its
+  # defaults/main.yml, issue #1129) is ansible-core's own AnsibleParserError
+  # at Role load (role/__init__.py's `_load_role_data`): the whole run
+  # refuses with the single stderr line
+  #   [ERROR]: The <vars|defaults>/main.yml file for role '<name>' must
+  #   contain a dictionary of variables
+  # and rc=4 before any play output - no Origin block is printed even
+  # though ansible-core knows the file it read (live-verified vs 2.21.6,
+  # both the play-level `roles:` and the include_role: variants). The
+  # <subdir>/main.yml wording is hardcoded in ansible-core even when the
+  # actual file is main.yaml or a main/ directory of files. Carries the
+  # rendered stderr line for krikri-playbook.cr to print verbatim.
+  class RoleVarsNotDictError < Exception
+    getter render : String
+
+    def initialize(@render : String)
+      super(render.lines.first?.try(&.lchop("[ERROR]: ")) || "role vars file must contain a dictionary of variables")
+    end
+  end
+
   # Ansible's `import_tasks:`/`import_role:` are genuinely STATIC,
   # parse-time constructs - the templated file/role path may reference
   # vars/vars_files/extra-vars only, never facts (which don't exist yet
@@ -2401,6 +2423,11 @@ module Krikri
             # the import line itself is Ansible's own load refusal (rc=4,
             # issue #815).
             raise ex
+          rescue ex : RoleVarsNotDictError
+            # Same bypass - a statically imported role whose vars/ or
+            # defaults/ entry point is not a mapping is ansible-core's
+            # own role-load refusal (rc=4, issue #1129).
+            raise ex
           rescue ex
             puts "Warning: Failed to import playbook '#{import_path}': #{ex.message}".colorize(:yellow)
           end
@@ -2516,6 +2543,12 @@ module Krikri
           # block, a handler or a roles: entry is Ansible's own
           # playbook-load refusal (rc=4, issue #815), not a per-play
           # soft-skip.
+          raise ex
+        rescue ex : RoleVarsNotDictError
+          # Same bypass - a role (play-level, a meta dependency, or a
+          # statically imported one) whose vars/ or defaults/ entry
+          # point is not a mapping is ansible-core's own role-load
+          # refusal (rc=4, issue #1129), not a per-play soft-skip.
           raise ex
         rescue ex
           puts "Warning: Failed to parse play #{index + 1}: #{ex.message}".colorize(:yellow)

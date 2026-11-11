@@ -156,6 +156,13 @@ module Krikri
       # splices it through include_role's RUNTIME path - the parse-time
       # preload below is the only static hook, so the warning fires here.
       PythonFilterRunner.warn_unloadable_role_callback_plugins(role_dir, ansible_collection_name_for(name))
+      # The static import's role load refuses the WHOLE playbook at load
+      # time for a non-mapping vars//defaults/ entry point (rc=4, issue
+      # #1129) - the same validation a play-level roles: entry gets in
+      # load_role, raised here because real compiles the import's Role at
+      # playbook load, before any play output.
+      validate_role_vars_dir(name, role_dir, "vars", vars_from)
+      validate_role_vars_dir(name, role_dir, "defaults")
       # Real compiles the static import's Role (including its vars_from:
       # vars file) into the play's per-role vars cache at playbook load,
       # BEFORE any task runs - so another load of the same role in the
@@ -525,6 +532,13 @@ module Krikri
       # already effectively absolute-equivalent for File.exists?, masking
       # this everywhere else it's been benchmarked so far).
       role_dir = File.expand_path(role_dir)
+
+      # ansible-core's vars/ then defaults/ Mapping validation at role
+      # load (rc=4 whole-run refusal, issue #1129) - before meta
+      # dependencies load, matching real's load order inside
+      # _load_role_data.
+      validate_role_vars_dir(name, role_dir, "vars", vars_from)
+      validate_role_vars_dir(name, role_dir, "defaults")
 
       # ansible_collection_name - only set when this role was actually
       # invoked via its full `namespace.collection.role` FQCN (a real
@@ -1517,6 +1531,78 @@ module Krikri
         load_vars_file(path).each { |key, value| result[key] = value }
       end
       result
+    end
+
+    # ansible-core's `Role._load_role_data` validates each role's own vars/
+    # and defaults/ entry point at role load (vars/ FIRST, then defaults/):
+    # the merged top level must be a mapping (or empty) or the run refuses
+    # with "The <subdir>/main.yml file for role '<name>' must contain a
+    # dictionary of variables" and rc=4 before any play output (issue
+    # #1129: CSCfi.sssd ships an INI-shaped defaults/main.yml that YAML
+    # folds into a single string; this engine silently loaded it as an
+    # empty defaults hash and ran the role to completion instead). Called
+    # in load_role BEFORE meta dependencies load, matching real's
+    # vars -> defaults -> metadata/dependencies order - a role that is
+    # both bad itself and depends on a bad role reports ITS OWN file.
+    # vars_from: swaps the vars/ entry file the same way it swaps the
+    # loaded vars (issue #128); the dir-of-files form merges each file's
+    # data, where a truthy non-mapping REPLACES the accumulated value -
+    # so the LAST non-empty file decides dict-ness, and that is the only
+    # thing ansible's Mapping check ever sees. Python truthiness gates
+    # every assignment: nil and empty containers/strings are skipped.
+    def self.validate_role_vars_dir(role_name : String, role_dir : String, subdir : String, vars_from : String? = nil) : Nil
+      last_data = last_non_empty_vars_data(role_vars_entry_files(role_dir, subdir, vars_from))
+      return if last_data.nil? || last_data.is_a?(Hash)
+
+      # real reports the role's SHORT name here even for a collection
+      # role - RoleInclude splits the FQCN into _role_name/_role_collection
+      # at resolution, and the message only formats _role_name
+      # (live-verified vs 2.21.6: `testcoll.coll.badr` reports 'badr').
+      display_name = if collection_name = ansible_collection_name_for(role_name)
+                       role_name[(collection_name.size + 1)..]
+                     else
+                       role_name
+                     end
+      raise RoleVarsNotDictError.new(
+        "[ERROR]: The #{subdir}/main.yml file for role '#{display_name}' must contain a dictionary of variables\n")
+    end
+
+    # The vars-style entry files ansible's `_load_role_yaml(subdir, allow_dir:
+    # true)` reads for a role: vars_from: names exactly one vars/ file, the
+    # single main.* form exactly one, and the main/ directory form every
+    # *.yml/*.yaml/*.json inside it in sorted order.
+    private def self.role_vars_entry_files(role_dir : String, subdir : String, vars_from : String?) : Array(String)
+      if vars_from
+        entry_path = resolve_role_vars_path(role_dir, vars_from)
+        File.exists?(entry_path) ? [entry_path] : [] of String
+      elsif found = find_main_file(File.join(role_dir, subdir))
+        [found]
+      else
+        main_dir_files(File.join(role_dir, subdir, "main"))
+      end
+    end
+
+    # A main/ directory of vars-style files in merge (sorted) order - empty
+    # when the directory does not exist.
+    private def self.main_dir_files(main_dir : String) : Array(String)
+      return [] of String unless Dir.exists?(main_dir)
+
+      (Dir.glob(File.join(main_dir, "*.yml")) + Dir.glob(File.join(main_dir, "*.yaml")) + Dir.glob(File.join(main_dir, "*.json"))).sort
+    end
+
+    # The LAST file's parsed top level that Python would call truthy - nil
+    # when none is. A truthy non-mapping REPLACES the accumulated merge
+    # value in ansible's dir-of-files loading, so the last non-empty file
+    # decides dict-ness, and that is the only thing the Mapping check ever
+    # sees. Empty containers/strings are falsy in Python, exactly like nil.
+    private def self.last_non_empty_vars_data(files : Array(String)) : YAML::Any::Type?
+      last_data = nil
+      files.each do |file_path|
+        raw = cached_yaml(file_path).raw
+        next if raw.nil? || (raw.is_a?(String) && raw.empty?) || (raw.is_a?(Array) && raw.empty?) || (raw.is_a?(Hash) && raw.empty?)
+        last_data = raw
+      end
+      last_data
     end
 
     # Origins for #load_vars_file_main's result - same file discovery,

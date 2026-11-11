@@ -891,6 +891,18 @@ rescue ex : Krikri::PlaybookParser::NonDictVarsError
   # (issue #815, lullis.certbot_nginx).
   STDERR.print ex.render
   exit 4
+rescue ex : Krikri::RoleVarsNotDictError
+  # A role's vars/main.yml or defaults/main.yml whose parsed top level
+  # is not a mapping is ansible-core's own role-load AnsibleParserError:
+  # the single [ERROR] line on STDERR, NO Origin block, rc=4 before any
+  # play output for a play-level roles: entry (live-verified vs 2.21.6,
+  # issue #1129 - CSCfi.sssd's INI-shaped defaults/main.yml). For an
+  # include_role: real still prints banners up to the include task, then
+  # dies with this same line and no result line or recap; the raise site
+  # (the include executor or the role loader during parse) re-raises
+  # past its own per-host failure handling for exactly this.
+  STDERR.print ex.render
+  exit 4
 rescue ex : Krikri::RoleNotFoundError
   # A `roles:` entry (play-level or a role's own meta/main.yml
   # dependency) naming a role not found on disk is Ansible's own
@@ -1581,6 +1593,15 @@ playbook.plays.each_with_index do |play, _play_index|
       # (rc=4, no recap, live-verified vs 2.19.11 for an
       # include_tasks:-loaded file's bad vars). The render was built at
       # the raise site (issue #815).
+      STDERR.print ex.render
+      exit 4
+    rescue ex : Krikri::RoleVarsNotDictError
+      # Same whole-run abort discovered by a runtime include_role:'s
+      # role load: the vars//defaults/ entry point not being a mapping
+      # is ansible-core's role-load AnsibleParserError (rc=4, issue
+      # #1129 - live-verified vs 2.21.6: the [ERROR] line on stderr,
+      # banners up to the include task, no result line, no recap). The
+      # render was built at the raise site.
       STDERR.print ex.render
       exit 4
     end
