@@ -86,10 +86,16 @@ module Krikri::FiletreeLookup
 
     # Real dwim checks the role's files/ dir first; fall back to the role
     # root itself for the `{% raw %}`-style sources that live elsewhere
-    # under the role. First EXISTING candidate wins; a source that exists
-    # nowhere still returns the primary candidate so the walk below
-    # yields the same empty result os.walk would.
+    # under the role. Candidates are normalized BEFORE the existence
+    # check: a "../"-relative source (ipr-cnrs.xymon_server's default
+    # xymon_server__etc_src = '../templates/etc/xymon', issue #1137) only
+    # exists once ".." is collapsed - un-normalized,
+    # "<role>/files/../templates/etc/xymon" fails Dir.exists? whenever
+    # the role ships no files/ directory, and the walk silently yielded
+    # nothing where real ansible dwimmed the tree (verified: real's item
+    # root was <role>/templates/etc/xymon).
     candidates = [File.join(role_path, "files", source), File.join(role_path, source)]
+      .map { |candidate| File.expand_path(candidate) }
     found = candidates.find { |candidate| Dir.exists?(candidate) }
     found || candidates.first
   end
@@ -113,14 +119,21 @@ module Krikri::FiletreeLookup
       dir = current.empty? ? root : File.join(root, current)
       next unless Dir.exists?(dir)
 
-      # os.walk makes no ordering guarantee, but every real consumer
-      # either gates on state or sorts downstream - deterministic
-      # (sorted) order here keeps renders reproducible without changing
-      # any real behavior.
+      # os.walk makes no ordering guarantee WITHIN a level, but the real
+      # lookup consumes it as `for root, dirs, files in os.walk(...)` and
+      # yields every level's DIRECTORIES before its files - order that is
+      # directly visible in a looped task's item= output (real ansible
+      # walked ipr-cnrs.xymon_server's hosts.d directory ahead of the
+      # alphabetically-earlier hosts.cfg.j2 file, issue #1137). Sorting
+      # within each group keeps renders deterministic without changing
+      # that dirs-first grouping.
       subdirs = [] of String
+      dir_entries = [] of Tuple(String, String)
+      file_entries = [] of Tuple(String, String)
       Dir.children(dir).sort!.each do |child|
         child_rel = current.empty? ? child : File.join(current, child)
-        state = entry_state(File.join(dir, child))
+        abspath = File.join(dir, child)
+        state = entry_state(abspath)
         next if state.empty?
 
         subdirs << child_rel if state == "directory"
@@ -128,12 +141,19 @@ module Krikri::FiletreeLookup
         next if seen.includes?(child_rel)
         seen << child_rel
 
-        if props = file_props(root, child_rel, File.join(dir, child))
-          entries << props
+        if state == "directory"
+          dir_entries << {child_rel, abspath}
+        else
+          file_entries << {child_rel, abspath}
         end
       end
 
       queue.concat(subdirs)
+      (dir_entries + file_entries).each do |(child_rel, abspath)|
+        if props = file_props(root, child_rel, abspath)
+          entries << props
+        end
+      end
     end
   end
 

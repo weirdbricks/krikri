@@ -3987,4 +3987,25 @@ describe Krikri::PlaybookParser do
       task.loop_filetree.wont_be_nil
     end
   end
+
+  describe "with_filetree: bare-spelling parsing" do
+    # Regression: ipr-cnrs.xymon_server (round 29907002, issue #1137)
+    # spells the keyword bare - `with_filetree:` - and Ansible resolves
+    # that to community.general's filetree lookup. It used to fall through
+    # to the generic lookup-loop fallback, which has no filetree
+    # implementation, so the task died with "The lookup plugin 'filetree'
+    # was not found." instead of iterating the tree.
+    it "parses the bare spelling into loop_filetree, raw" do
+      task = single_task(<<-YAML)
+        - name: Create templates config skeleton
+          ansible.builtin.file:
+            path: "/etc/xymon/{{ item.path }}"
+            state: directory
+          with_filetree: "{{ role_path }}/templates/etc/xymon"
+          when: item.state == 'directory'
+        YAML
+
+      task.loop_filetree.must_equal(["{{ role_path }}/templates/etc/xymon"])
+    end
+  end
 end
