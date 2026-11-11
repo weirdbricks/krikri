@@ -22,13 +22,17 @@ require "../../src/krikri/plugin_helpers/rpm_package"
 #
 # The harness stubs the pkg_mgr fact as fetched-on-demand (from_vars false),
 # which a vars-pinned PluginSpecHelper.run cannot do: a pinned fact is
-# from-vars and skips the attach entirely.
+# from-vars and skips the attach entirely. The interpreter is pinned so the
+# pkg_mgr-shape specs below exercise the configured-interpreter branch -
+# real only keeps the action's pkg_mgr fact on the payload when discovery
+# never ran (#1063's AL2023 capture ran under a pinned interpreter); the
+# auto-interpreter discovery-replacement shape has its own harness below.
 private class FinalizeResultHarness
   include Krikri::PluginHelpers::RpmPackage
 
   def initialize
     @params = {"use_backend" => "auto"} of String => String
-    @vars = Hash(String, JSON::Any).new
+    @vars = {"ansible_python_interpreter" => JSON::Any.new("/usr/bin/python3")} of String => JSON::Any
     @pkg_mgr_fact = "dnf"
     @pkg_mgr_fact_from_vars = false
   end
@@ -39,6 +43,76 @@ private class FinalizeResultHarness
 
   def pkg_manager_binary : String
     "dnf"
+  end
+end
+
+# Issue #1113 (same signature as #894): on a fact-less host with the
+# default (unset/auto) interpreter, real's dnf action instance runs
+# interpreter discovery on its on-demand setup fetch and then stamps
+# discovered_interpreter_python onto the backend module's payload - which
+# REPLACES the action's pkg_mgr fact on the wire. The discovery probe is
+# stubbed so the asserted path is deterministic.
+private class DiscoveryHarness < FinalizeResultHarness
+  def initialize(vars : Hash(String, JSON::Any) = {} of String => JSON::Any)
+    super()
+    @vars = vars
+  end
+
+  protected def discovered_interpreter_path : String
+    "/usr/bin/python3.12"
+  end
+end
+
+describe "dnf: fetched pkg_mgr fact vs interpreter discovery on the payload (issue 1113)" do
+  it "replaces the fetched pkg_mgr fact with the discovery fact on a failed result when discovery runs" do
+    failed = Krikri::PluginResult.new(
+      changed: false,
+      failed: true,
+      msg: "Unsupported parameters for (ansible.legacy.dnf) module: allow_dwongrade."
+    )
+    out = DiscoveryHarness.new.finalize_result(failed)
+    out.extra["ansible_facts"].as_h.size.must_equal(1)
+    out.extra["ansible_facts"].as_h["discovered_interpreter_python"].as_s
+      .must_equal("/usr/bin/python3.12")
+    out.extra["ansible_facts"].as_h["pkg_mgr"]?.must_be_nil
+  end
+
+  it "replaces the fetched pkg_mgr fact with the discovery fact on a successful result too" do
+    ok = Krikri::PluginResult.new(
+      changed: false,
+      failed: false,
+      msg: "Nothing to do",
+      include_empty_msg: true,
+      key_order: ["msg", "changed", "results", "rc", "failed"]
+    )
+    out = DiscoveryHarness.new.finalize_result(ok)
+    out.extra["ansible_facts"].as_h["discovered_interpreter_python"].as_s
+      .must_equal("/usr/bin/python3.12")
+    out.extra["ansible_facts"].as_h["pkg_mgr"]?.must_be_nil
+  end
+
+  it "keeps the fetched pkg_mgr fact when the interpreter is configured" do
+    failed = Krikri::PluginResult.new(
+      changed: false,
+      failed: true,
+      msg: "Unsupported parameters for (ansible.legacy.dnf) module: allow_dwongrade."
+    )
+    pinned = DiscoveryHarness.new({"ansible_python_interpreter" => JSON::Any.new("/usr/bin/python3")})
+    out = pinned.finalize_result(failed)
+    out.extra["ansible_facts"].as_h["pkg_mgr"].as_s.must_equal("dnf")
+    out.extra["ansible_facts"].as_h["discovered_interpreter_python"]?.must_be_nil
+  end
+
+  it "keeps the fetched pkg_mgr fact when discovery already ran earlier in the run" do
+    failed = Krikri::PluginResult.new(
+      changed: false,
+      failed: true,
+      msg: "Unsupported parameters for (ansible.legacy.dnf) module: allow_dwongrade."
+    )
+    discovered = DiscoveryHarness.new({"discovered_interpreter_python" => JSON::Any.new("/usr/bin/python3.10")})
+    out = discovered.finalize_result(failed)
+    out.extra["ansible_facts"].as_h["pkg_mgr"].as_s.must_equal("dnf")
+    out.extra["ansible_facts"].as_h["discovered_interpreter_python"]?.must_be_nil
   end
 end
 
