@@ -114,6 +114,67 @@ describe "dnf5: libdnf5 python-bindings bootstrap (issue #767)" do
     FileUtils.rm_r(shim_dir)
   end
 
+  # Issue #1114 (kpg podman): real's dnf5 module runs under the controller's
+  # `normal` action plugin - upstream ships no action/dnf5.py - so nothing
+  # ever fetches the pkg_mgr fact and neither the failed bootstrap fatal nor
+  # a success result carries `ansible_facts`, even on a gather_facts: false
+  # host. The dnf/yum modules DO carry it (their dnf action plugin attaches
+  # the fetched fact, issues #844/#1063); dnf5 must not.
+  it "attaches no ansible_facts pkg_mgr to the bootstrap failure result" do
+    shim_dir = PluginSpecHelper.tmp_path("dnf5-no-fact-on-failure")
+    Dir.mkdir_p(shim_dir)
+    dnf_script = <<-SH
+      #!/bin/sh
+      echo "Error: Unable to find a match: python3-libdnf5" >&2
+      exit 1
+      SH
+    File.write("#{shim_dir}/dnf", dnf_script)
+    File.chmod("#{shim_dir}/dnf", 0o755)
+
+    result = PluginSpecHelper.run("dnf5",
+      {"name"           => "sed",
+       "state"          => "present",
+       "_libdnf5_probe" => "absent"},
+      vars: {"ansible_pkg_mgr" => ""},
+      env: {"PATH" => "#{shim_dir}:#{ENV["PATH"]}"})
+
+    result["failed"].as_bool.must_equal(true)
+    result["ansible_facts"]?.must_be_nil
+
+    FileUtils.rm_r(shim_dir)
+  end
+
+  it "attaches no ansible_facts pkg_mgr to a successful result either" do
+    shim_dir = PluginSpecHelper.tmp_path("dnf5-no-fact-on-success")
+    Dir.mkdir_p(shim_dir)
+    dnf_script = <<-SH
+      #!/bin/sh
+      echo "Last metadata expiration check: 0:01:07 ago on Tue Nov  3 11:21:56 2026."
+      echo "Installed: python3-libdnf5-5.2.0.0-1.el10.noarch"
+      exit 0
+      SH
+    File.write("#{shim_dir}/dnf", dnf_script)
+    File.chmod("#{shim_dir}/dnf", 0o755)
+    dnf5_script = <<-SH
+      #!/bin/sh
+      exit 0
+      SH
+    File.write("#{shim_dir}/dnf5", dnf5_script)
+    File.chmod("#{shim_dir}/dnf5", 0o755)
+
+    result = PluginSpecHelper.run("dnf5",
+      {"update_cache"   => "true",
+       "_libdnf5_probe" => "absent-then-present"},
+      vars: {"ansible_pkg_mgr" => ""},
+      env: {"PATH" => "#{shim_dir}:#{ENV["PATH"]}"})
+
+    result.as_h.has_key?("failed").must_equal(false)
+    result["msg"].as_s.must_equal("Cache updated")
+    result["ansible_facts"]?.must_be_nil
+
+    FileUtils.rm_r(shim_dir)
+  end
+
   it "reports run_command's OSError shape when no dnf binary exists" do
     # An empty PATH: the bootstrap's bare `dnf` never starts, which real
     # surfaces as run_command's caught OSError - rc=errno (2), empty
