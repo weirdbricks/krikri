@@ -161,6 +161,27 @@ describe Krikri::FiletreeLookup do
       FileUtils.rm_rf(root) if root
     end
 
+    it "yields a level's directories before its files even when a file sorts first" do
+      # Real filetree consumes os.walk as `for root, dirs, files in ...`
+      # and emits each level's directories ahead of its files: real
+      # ansible walked ipr-cnrs.xymon_server's hosts.d directory ahead of
+      # the alphabetically-earlier hosts.cfg.j2 (issue #1137) - the old
+      # plain-sorted walk reversed that, reordering looped-task item=
+      # output.
+      root = File.tempname("filetree-root")
+      Dir.mkdir_p(File.join(root, "hosts.d"))
+      File.write(File.join(root, "hosts.cfg.j2"), "cfg")
+      File.write(File.join(root, "hosts.d", "common.cfg.j2"), "common")
+
+      entries = Krikri::FiletreeLookup.resolve([root], nil)
+
+      entries.map { |e| ft_s(e, "path") }.must_equal([
+        "hosts.d", "hosts.cfg.j2", File.join("hosts.d", "common.cfg.j2"),
+      ])
+    ensure
+      FileUtils.rm_rf(root) if root
+    end
+
     it "dwims a relative source against the role's files/ directory" do
       role_path = File.tempname("filetree-role")
       Dir.mkdir_p(File.join(role_path, "files", "config"))
@@ -174,6 +195,26 @@ describe Krikri::FiletreeLookup do
       # "app.conf", not "config/app.conf".
       entries.size.must_equal(1)
       entries[0]["path"].as_s.must_equal("app.conf")
+    ensure
+      FileUtils.rm_rf(role_path) if role_path
+    end
+
+    it "normalizes a ../ source against the role root when no files/ dir exists" do
+      # ipr-cnrs.xymon_server (issue #1137) walks '../templates/etc/xymon'
+      # and ships no files/ directory - real ansible's dwim collapsed the
+      # ".." and found <role>/templates/etc/xymon (its item root said
+      # exactly that), while the un-normalized candidate
+      # <role>/files/../templates/etc/xymon never existed, so the walk
+      # silently yielded nothing.
+      role_path = File.tempname("filetree-role")
+      Dir.mkdir_p(File.join(role_path, "templates", "etc", "xymon"))
+      File.write(File.join(role_path, "templates", "etc", "xymon", "hosts.cfg"), "x")
+
+      entries = Krikri::FiletreeLookup.resolve(["../templates/etc/xymon"], role_path)
+
+      entries.size.must_equal(1)
+      entries[0]["path"].as_s.must_equal("hosts.cfg")
+      entries[0]["root"].as_s.must_equal(File.join(role_path, "templates", "etc", "xymon"))
     ensure
       FileUtils.rm_rf(role_path) if role_path
     end

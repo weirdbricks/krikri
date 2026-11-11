@@ -2068,6 +2068,13 @@ module Krikri
         "with_dict", "with_fileglob", "with_file", "with_first_found", "with_nested", "with_together", "with_sequence",
         "with_flattened", "with_community.general.flattened", "with_subelements", "with_indexed_items", "until", "retries", "delay",
         "with_community.general.filetree",
+        # Bare `with_filetree:` - Ansible resolves the bare legacy spelling
+        # to community.general's filetree lookup (ipr-cnrs.xymon_server's
+        # "Ensure /etc directory structure exists" tasks), and it used to
+        # fall through to the generic lookup-loop fallback, which has no
+        # filetree implementation: the task died with "The lookup plugin
+        # 'filetree' was not found." where real ansible iterated the tree.
+        "with_filetree",
         "loop_control", "notify", "changed_when", "failed_when", "delegate_to", "delegate_facts", "run_once", "connection",
         # `collections:` - a real task keyword (the collections a task's
         # bare module names resolve through, play/block/task scope),
@@ -3740,6 +3747,7 @@ module Krikri
       loop with_items with_dict with_nested with_together with_indexed_items
       with_sequence with_first_found with_fileglob with_file with_subelements
       with_flattened with_community.general.flattened with_community.general.filetree
+      with_filetree
     ]
 
     # Finds the FIRST `with_<lookup>:` task key that no dedicated branch
@@ -4847,7 +4855,12 @@ module Krikri
       elsif with_subelements = task_hash["with_subelements"]?.try(&.as_a?)
         task.loop_subelements_list = with_subelements[0]?.try { |v| safe_yaml_to_string(v) }
         task.loop_subelements_key = with_subelements[1]?.try { |v| safe_yaml_to_string(v) }
-      elsif with_filetree = task_hash["with_community.general.filetree"]?
+        # Both spellings of the filetree loop keyword: the collection-qualified
+        # form and the bare legacy one (Ansible resolves a bare `with_filetree:`
+        # to community.general's filetree lookup through the collections search
+        # path - ipr-cnrs.xymon_server spells it bare and previously died with
+        # "The lookup plugin 'filetree' was not found.", issue #1137).
+      elsif with_filetree = task_hash["with_community.general.filetree"]? || task_hash["with_filetree"]?
         # The directories to walk - an array of sources, or one scalar
         # source (real filetree accepts both, mirroring
         # with_community.general.flattened's own scalar form). Sources are
