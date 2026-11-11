@@ -1189,7 +1189,21 @@ module Krikri
         if pending.empty?
           specs = classified[:already_installed].select { |pkg| classified[:states][pkg]? }
           unless specs.empty?
-            failure = run_install_batch(specs, "#{build_dnf_options(force_nobest: true)} --setopt=tsflags=test", names)[:failure]
+            # The probe models real's "mark nothing for an installed spec,
+            # resolve the empty goal" flow (issue #1019) - but the goal
+            # filters real configures on the Base (security/bugfix/exclude)
+            # never bite that resolve, because no spec is ever marked.
+            # The CLI probe names the installed specs itself, so dnf DOES
+            # apply them to its named goal and aborts with "Unable to find
+            # a match" for an installed-but-filtered package where real
+            # reports the "Nothing to do" no-op: kpg 000013-multi-dnf-chaos
+            # (security: true beside the installed bash) fatal'd
+            # "No package bash available." here while ansible said ok
+            # (live-verified Rocky 10: `dnf install --security bash` and
+            # `dnf install --exclude=bash bash` on installed bash both
+            # exit 1, the bare install exits 0). The probe therefore runs
+            # without them.
+            failure = run_install_batch(specs, "#{build_dnf_options(force_nobest: true, goal_filters: false)} --setopt=tsflags=test", names)[:failure]
             return failure if failure
           end
           return transaction_result(false)
@@ -2022,7 +2036,7 @@ module Krikri
         output.each_line.map(&.strip).select { |line| line.starts_with?("Upgraded:") || line.starts_with?("Installed:") }.reject(&.empty?).to_a
       end
 
-      private def build_dnf_options(force_nobest : Bool = false) : String
+      private def build_dnf_options(force_nobest : Bool = false, goal_filters : Bool = true) : String
         options = [] of String
 
         # Always use -y for non-interactive
@@ -2068,12 +2082,17 @@ module Krikri
           options << "--setopt=localpkg_gpgcheck=1"
         end
 
-        # Security/bugfix updates
-        if true?(@params["security"]?)
+        # Security/bugfix updates. Skipped for the already-installed no-op
+        # resolution probe (goal_filters: false): real marks nothing for a
+        # spec that is installed and resolves an EMPTY goal, where the
+        # advisory filters are inert - but the CLI probe names the specs
+        # itself, so dnf's filter drops every match and fails (see the
+        # probe site below).
+        if goal_filters && true?(@params["security"]?)
           options << "--security"
         end
 
-        if true?(@params["bugfix"]?)
+        if goal_filters && true?(@params["bugfix"]?)
           options << "--bugfix"
         end
 
@@ -2168,8 +2187,14 @@ module Krikri
         # exactly like enablerepo/disablerepo already are above). Quoted
         # so a glob like `kernel*` reaches dnf without the target shell
         # expanding it.
-        string_list_param("exclude").each do |pkg|
-          options << "--exclude=#{shell_single_quote(pkg)}"
+        # Per-transaction excludes are goal filters too: skipped for the
+        # no-op probe for the same reason as --security/--bugfix above
+        # (an excluded-but-installed spec is unmarked in real, and the
+        # CLI probe's own named goal would filter it out instead).
+        if goal_filters
+          string_list_param("exclude").each do |pkg|
+            options << "--exclude=#{shell_single_quote(pkg)}"
+          end
         end
 
         # Alternate install root, relative to which all packages install
