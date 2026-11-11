@@ -91,6 +91,20 @@ module Krikri
         return failure
       end
 
+      # expect.py passes no supports_check_mode to its AnsibleModule, so
+      # basic.py's __init__ gate (check_mode and not supports_check_mode)
+      # exits with skipped=true before the module body ever runs - the
+      # command must not execute under --check, and the registered result
+      # is "skipped" (so `kpg_task_0 is not skipped` and friends see a
+      # skipped task). basic.py fails argument-spec validation BEFORE this
+      # gate ("Fail for validation errors, even in check mode"), so it
+      # sits after preflight/validate_bool_params! and before the module
+      # body - the same shape tempfile.cr's gate uses.
+      if true?(@params["_ansible_check_mode"]?)
+        invoked = @params["_module_name"]? || "ansible.builtin.expect"
+        return PluginResult.new(changed: false, failed: false, msg: "remote module (#{invoked}) does not support check mode", skipped: true)
+      end
+
       # Real expect.py's own check_type_int(timeout), right after its
       # pexpect import gate (krikri has no gate - see preflight) and
       # BEFORE the empty-command check: `timeout` is

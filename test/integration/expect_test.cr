@@ -183,6 +183,33 @@ describe "expect plugin" do
     end
   end
 
+  it "skips under _ansible_check_mode without running the command, with basic.py's gate wording" do
+    marker = PluginSpecHelper.tmp_path("expect-check-mode-marker")
+    result = PluginSpecHelper.run("expect", {
+      "command"             => "/bin/touch #{marker}",
+      "responses"           => "{}",
+      "_ansible_check_mode" => "true",
+      "_module_name"        => "ansible.builtin.expect",
+    })
+
+    falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+    result["skipped"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("remote module (ansible.builtin.expect) does not support check mode")
+    File.exists?(marker).must_equal(false)
+  end
+
+  it "still fails argument validation under _ansible_check_mode (basic.py fails validation errors even in check mode)" do
+    result = PluginSpecHelper.run("expect", {
+      "command"             => "/bin/true",
+      "_ansible_check_mode" => "true",
+      "_module_name"        => "ansible.builtin.expect",
+    })
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("missing required arguments: responses")
+    result["skipped"]?.must_be_nil
+  end
+
   it "runs the child as its own session leader with the pty as controlling terminal" do
     result = PluginSpecHelper.run("expect", {
       "command"   => %q(/bin/bash -c 'read -p "go? " x; echo "sid=$(ps -o sid= -p $$ | tr -d " ") pid=$$"'),
