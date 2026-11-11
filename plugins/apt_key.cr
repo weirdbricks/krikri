@@ -146,6 +146,16 @@ module Krikri
     end
 
     private def add_key : PluginResult
+      # apt_key.py declares supports_check_mode=True, and its add path is
+      # gated on `if not module.check_mode` AFTER the membership decision:
+      # in check mode it still resolves the key id and lists the keyring,
+      # but neither the keyserver fetch, the apt-key add, the missing-
+      # material failure nor the post-add verification ever run, and the
+      # task exits changed=true with no `after` - so a dead keyserver
+      # (cowops.debian-mysql's pgp.mit.edu, issue #1146) never turns a
+      # check-mode run fatal.
+      check_mode = true?(@params["_ansible_check_mode"]?)
+
       url = @params["url"]?
       data = @params["data"]?
       file_path = @params["file"]?
@@ -205,6 +215,7 @@ module Krikri
         return PluginResult.new(changed: false, failed: true, msg: "Unable to list public keys") unless before_keys
 
         unless key_id_in_keys?(parsed, before_keys)
+          return apt_key_result(true, raw_id, parsed, before_keys, nil) if check_mode
           if keyserver
             if failure = import_key_from_keyserver(keyserver, parsed[:key_id])
               return failure
@@ -602,6 +613,11 @@ module Krikri
     end
 
     private def remove_key : PluginResult
+      # Same check-mode gate as add_key: apt_key.py's remove path sets
+      # changed=true when the key is listed and skips the actual
+      # `apt-key del` (and its after re-list) under check mode.
+      check_mode = true?(@params["_ansible_check_mode"]?)
+
       key_id = @params["id"]?
       key_id = nil if key_id.try(&.empty?)
 
@@ -656,6 +672,8 @@ module Krikri
       unless key_id_in_keys?(parsed, before_keys)
         return apt_key_result(false, key_id, parsed, before_keys, nil)
       end
+
+      return apt_key_result(true, key_id, parsed, before_keys, nil) if check_mode
 
       result = remote_exec("apt-key #{keyring_flag}del #{shell_single_quote(parsed[:short_key_id])}")
       unless result[:exit_code] == 0

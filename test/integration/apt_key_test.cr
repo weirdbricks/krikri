@@ -666,4 +666,69 @@ describe "apt_key plugin" do
     end
     File.delete(state) rescue nil
   end
+
+  it "check mode: reports changed without fetching from the keyserver (cowops.debian-mysql, issue #1146)" do
+    # apt_key.py supports check mode fully and gates its whole add path
+    # on `if not module.check_mode` AFTER the membership decision: a
+    # check-mode run still resolves the id and lists the keyring, but
+    # the keyserver fetch, the apt-key add, the missing-material failure
+    # and the post-add verification never run - the task exits
+    # changed=true with no `after`. Krikri used to run the real fetch in
+    # check mode, so a dead keyserver (the role's pgp.mit.edu) turned a
+    # check-mode run fatal where ansible-playbook reported changed. The
+    # double exits 1 on --recv, so a success result here proves no
+    # fetch ran.
+    state = apt_key_spec_state_file
+    with_apt_key_shim(state) do
+      result = PluginSpecHelper.run("apt_key",
+        {"state" => "present", "keyserver" => "keyserver.ubuntu.com", "id" => FAKE_KEY_ID, "_ansible_check_mode" => "true"})
+
+      result["changed"].as_bool.must_equal(true)
+      falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+      # apt_key.py's check-mode r dict: [changed, id, short_id, fp,
+      # key_id, before] - after is only set once an add really ran.
+      result.as_h.keys.must_equal(["changed", "id", "short_id", "fp", "key_id", "before"])
+      File.exists?(state).must_equal(false)
+    end
+    File.delete(state) rescue nil
+  end
+
+  it "check mode: reports changed for state: absent without deleting the key" do
+    # Same gate on the remove path: changed=true when the key is listed,
+    # but `apt-key del` (and its after re-list) are skipped in check
+    # mode. The double exits 1 on del, so a success result here proves
+    # the del never ran.
+    state = apt_key_spec_state_file
+    File.write(state, "pub  2048R/#{FAKE_KEY_ID} 2020-01-01\n")
+    with_apt_key_shim(state) do
+      result = PluginSpecHelper.run("apt_key",
+        {"state" => "absent", "id" => FAKE_KEY_ID, "_ansible_check_mode" => "true"})
+
+      result["changed"].as_bool.must_equal(true)
+      falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+      result.as_h.keys.must_equal(["changed", "id", "short_id", "fp", "key_id", "before"])
+      File.read(state).must_equal("pub  2048R/#{FAKE_KEY_ID} 2020-01-01\n")
+    end
+    File.delete(state) rescue nil
+  end
+
+  it "check mode: reports changed without running apt-key add when material is given" do
+    # With data: and no id:, ansible's check-mode run still derives the
+    # key id from the material (gpg --with-colons is read-only) and
+    # lists the keyring, but never runs the add - so the shim's state
+    # file (written only by its add branch) must not come into
+    # existence.
+    state = apt_key_spec_state_file
+    with_apt_key_shim(state) do
+      result = PluginSpecHelper.run("apt_key",
+        {"state" => "present", "data" => VALID_KEY_ASC, "_ansible_check_mode" => "true"})
+
+      result["changed"].as_bool.must_equal(true)
+      falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+      result["id"].as_s.must_equal("E07A3F141278AEBD")
+      result.as_h.keys.must_equal(["changed", "id", "short_id", "fp", "key_id", "before"])
+      File.exists?(state).must_equal(false)
+    end
+    File.delete(state) rescue nil
+  end
 end
