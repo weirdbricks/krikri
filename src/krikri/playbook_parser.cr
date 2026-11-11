@@ -3291,6 +3291,18 @@ module Krikri
       # list form silently dropped a scalar, so a `tags: never` import ran
       # on an ordinary no-`--tags` invocation where real Ansible skips it.
       import_tags = hash["tags"]?.try { |tags_yaml| flatten_tag_list(tags_yaml) } || [] of String
+      # The import line's ignore_errors: is inherited by every task the
+      # import statically inlines, exactly like the when:/tags:/notify:
+      # propagation just below - real's FieldAttribute inherit rule
+      # applies the statement's keywords to each inlined child (the
+      # child's own explicit ignore_errors: wins). Without this, a
+      # when:-failing inlined task under an `ignore_errors: true`
+      # import printed the fatal line and booked failed+=1 where real
+      # prints "...ignoring" and books ok+=1/ignored+=1 with exit 0
+      # (issue #1121, live-verified vs 2.19.11).
+      import_ignore = hash["ignore_errors"]?.try { |v| parse_ignore_errors(v) }
+      import_ignore_expr = template_expression(hash["ignore_errors"]?)
+      import_ignore_written = !hash["ignore_errors"]?.nil?
       # A `notify:` on the import_tasks: line itself - like when:/tags:
       # just below, Ansible propagates it onto every task the
       # import statically inlines, so each one independently notifies
@@ -3453,6 +3465,16 @@ module Krikri
           task.notify = ((task.notify || [] of String) + import_notify).uniq
         end
         import_vars.each { |key, value| task.vars[key] = value }
+        # Only when the import line itself wrote ignore_errors: - a nil
+        # value must not clobber an ignore_errors: the child inherited
+        # from the play (same precedence reasoning as
+        # apply_play_ignore_errors: the nearest definition wins).
+        if import_ignore_written
+          unless task.ignore_errors_explicit?
+            task.ignore_errors = import_ignore || false
+            task.ignore_errors_expr = import_ignore_expr
+          end
+        end
         # The import line's delegate_to: fills the gap only - a child
         # task that sets its own keeps it (see import_delegate above).
         if import_delegate && task.delegate_to.nil?

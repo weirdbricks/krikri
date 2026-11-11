@@ -3587,6 +3587,24 @@ module Krikri
 
       apply_include_attrs(task, included_tasks)
 
+      # The import statement's own ignore_errors: rides real's static
+      # keyword inheritance onto every loaded task (live-verified vs
+      # 2.19.11, issue #1121: a failing role task under an
+      # `import_role: ... ignore_errors: true` prints "...ignoring" and
+      # books ok+=1/ignored+=1, not a fatal). Only for a STATIC import -
+      # a dynamic include_role:'s keywords do not reach its children -
+      # and only when the statement itself wrote ignore_errors:, so a
+      # play-level inherited value isn't clobbered and a child's own
+      # explicit ignore_errors: wins.
+      if task.is_static_import? && task.ignore_errors_explicit?
+        included_tasks.each do |included_task|
+          unless included_task.ignore_errors_explicit?
+            included_task.ignore_errors = task.ignore_errors?
+            included_task.ignore_errors_expr = task.ignore_errors_expr
+          end
+        end
+      end
+
       # Same parent-when-PREPENDED propagation import_tasks: already
       # applies to its own flattened tasks (playbook_parser.cr's
       # try_parse_import_tasks - see that code's own comment on why
