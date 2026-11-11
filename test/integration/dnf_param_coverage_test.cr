@@ -583,6 +583,35 @@ describe "dnf plugin - same-name repo package vs a Provides: match (issue 280)" 
   end
 end
 
+# Issue #1115 (kpg 000013-multi-dnf-chaos, Rocky 10 podman): `dnf: name:
+# bash, state: present, security: true, exclude: [...]` on a host where
+# bash is already installed. Real marks nothing for the installed spec
+# and resolves an EMPTY goal, so the advisory/exclude filters configured
+# on the Base never bite and the task reads ok ("Nothing to do"). This
+# engine's no-op resolution probe names the installed spec on the CLI
+# itself, where dnf DOES apply those filters to the named goal
+# (`dnf install --security bash` and `dnf install --exclude=bash bash`
+# on installed bash both exit 1 "Unable to find a match: bash",
+# live-verified Rocky 10) and the task fatal'd with
+# "No package bash available." - so the probe runs without them.
+describe "dnf plugin - no-op resolution probe vs goal filters (issue 1115)" do
+  it "keeps the security/bugfix/exclude goal filters out of the installed-package no-op probe" do
+    with_issue280_pkg_managers(provides: ["bash"], available: [] of String) do |log|
+      result = PluginSpecHelper.run("dnf", {
+        "name"     => "bash",
+        "state"    => "present",
+        "security" => "true",
+        "bugfix"   => "true",
+        "exclude"  => "bash",
+      }, vars: {"ansible_pkg_mgr" => "dnf"})
+      falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+      result["msg"].as_s.must_equal("Nothing to do")
+      File.read_lines(log).last.must_equal(
+        "install -y --setopt=localpkg_gpgcheck=1 --nobest --setopt=tsflags=test bash")
+    end
+  end
+end
+
 # Issue #299 (Rocky 9, sthdev.update_packages, round round29880181):
 # `name: '*'+state: latest` is ansible's base.upgrade_all() branch
 # (dnf.py), which resolves with the dnf Python API's conf.best=False
