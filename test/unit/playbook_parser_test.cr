@@ -1328,6 +1328,44 @@ describe Krikri::PlaybookParser do
       items.map(&.["key"].as_s).must_equal(["one", "two"])
     end
 
+    it "parses a with_dict: LIST of dicts into per-element key/value loop_items" do
+      # damianlewis.octobercms's configure-app.yml: the list is the dict
+      # lookup's terms, so each element contributes its own {'key','value'}
+      # items - the old parse only recognized the hash form and left the
+      # task with no loop at all (ran once, 'item' undefined).
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.debug:
+            msg: "{{ item.key }}={{ item.value }}"
+          with_dict:
+            - name: "x"
+            - timezone: "y"
+        YAML
+
+      items = task.loop_items.as(Array(JSON::Any))
+      items.map(&.["key"].as_s).must_equal(["name", "timezone"])
+      items.map(&.["value"].as_s).must_equal(["x", "y"])
+    end
+
+    it "defers a with_dict: LIST with a non-dictionary term to the executor" do
+      # The dict lookup validates every term before producing any item, so
+      # the typed refusal is a runtime failure - the parse keeps the raw
+      # terms for the executor's LoopLookupError channel.
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.debug:
+            msg: "{{ item }}"
+          with_dict:
+            - name: 1
+            - scalar
+        YAML
+
+      task.loop_items.must_be_nil
+      terms = task.loop_dict_terms.as(JSON::Any).as_a
+      terms.size.must_equal(2)
+      terms[1].as_s.must_equal("scalar")
+    end
+
     it "parses with_nested: into a cartesian-product loop" do
       task = single_task(<<-YAML)
         - name: t

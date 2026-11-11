@@ -689,7 +689,8 @@ module Krikri
       # every one of the five loop-resolution call sites uses.
       begin
         loop_items = resolve_loop_items_or_raise(task, host, loop_vars_context) do
-          task.loop_items || resolve_first_found(task, host, loop_vars_context) ||
+          task.loop_items || resolve_loop_dict_terms(task) ||
+            resolve_first_found(task, host, loop_vars_context) ||
             resolve_fileglob(task, host, loop_vars_context, shared: loop_shared_sub) ||
             resolve_with_file(task, host, loop_vars_context, shared: loop_shared_sub) ||
             resolve_loop_template(task, loop_vars_context) ||
