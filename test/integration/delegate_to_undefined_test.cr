@@ -188,6 +188,41 @@ describe "undefined delegate_to: variable" do
     output.must_include("failed=1")
   end
 
+  # Issue #1135 (farynam.mfitbs_openvpn_easyrsa): the same delegate_to:-
+  # before-when: ordering also applies when the LOOP SOURCE is undefined -
+  # the when:-False skip gate for an undefined loop source (the Case A
+  # rule on resolve_loop_items_or_raise) must not shield a failing
+  # delegate template. Real templates delegate_to: before the conditional
+  # regardless, so the role's "Create certificate for a client"
+  # (with_items: "{{ groups['client'] }}" with no client group,
+  # delegate_to: "{{ easy_rsa_host }}" undefined, when: False on Ubuntu)
+  # is a fatal with the raw-delegate label, aborting the play - krikri
+  # used to skip this task and only fail on the NEXT task's delegate.
+  it "fails a looped task on its delegate even when an undefined loop source plus False when: would skip it" do
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: looped delegate behind undefined-group when
+            ansible.builtin.debug:
+              msg: "SHOULD-NOT-PRINT"
+            when: groups['client'] is defined and inventory_hostname in groups['client']
+            delegate_to: "{{ easy_rsa_host }}"
+            with_items: "{{ groups['client'] }}"
+          - name: sentinel
+            ansible.builtin.debug:
+              msg: "SENTINEL-OK"
+      YAML
+
+    status.exit_code.must_equal(2)
+    output.must_include("'easy_rsa_host' is undefined")
+    output.must_include("fatal: [localhost -> {{ easy_rsa_host }}]: FAILED!")
+    output.wont_include("SENTINEL-OK")
+    output.must_include("failed=1")
+    output.must_include("skipped=0")
+  end
+
   it "still delegates to a defined templated target" do
     status, output = run_playbook(<<-YAML)
       - hosts: localhost

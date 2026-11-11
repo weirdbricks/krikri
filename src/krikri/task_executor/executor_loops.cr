@@ -1145,6 +1145,29 @@ module Krikri
       # createcluster's missing conf.txt, issue #774).
       raise LoopLookupError.new(ex.message || "lookup failed", origin_known: true)
     rescue ex : UndefinedVariableError
+      # Real templates delegate_to: BEFORE the task's when: is ever
+      # evaluated (task_executor.py's _calculate_delegate_to runs at the
+      # top of _execute_internal, ahead of the conditional), so even on an
+      # undefined loop source - where the when: verdict decides between
+      # the skip below and the loop error raised further down - a
+      # delegate_to: that itself fails to template fails the TASK with the
+      # delegate's own error first, never a skip. farynam.mfitbs_openvpn_
+      # easyrsa's "Create certificate for a client" (with_items:
+      # "{{ groups['client'] }}" undefined, delegate_to:
+      # "{{ easy_rsa_host }}" undefined, when: False because the role's
+      # own ansible_distribution gate is Ubuntu): real prints the delegate
+      # [ERROR] chain with the raw-delegate fatal label and aborts the
+      # play; krikri used to take the when:-False skip here and only die
+      # on the NEXT task's delegate (round29906940, issue #1135). An empty
+      # render keeps the skip: real's templated delegate becomes None and
+      # the when: then decides exactly as before.
+      if task.delegate_to
+        begin
+          resolve_delegate_host(task, host, vars_context, strict: true)
+        rescue err : WhenEvaluationError
+          raise err unless err.is_a?(EmptyDelegateError)
+        end
+      end
       if when_condition = task.when_condition
         # Ansible evaluates the task's own when: BEFORE the loop source
         # is ever templated, and WHAT the when: itself references decides
