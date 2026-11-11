@@ -410,4 +410,80 @@ describe "failed no_log copy's [ERROR] block" do
     output.must_include(%(fatal: [localhost]: FAILED! => {"censored": "the output has been hidden due to the fact that 'no_log: true' was specified for this result", "changed": false}))
     output.must_include("...ignoring")
   end
+
+  # assert's failing fail_msg (issue #1131, ax-bzh.authentik's no_log
+  # "Validate required variables" task): real prints the block - the
+  # assert action's own "Action failed: <fail_msg>" wording - above the
+  # censored fatal line (live-verified vs 2.21.6, including the default
+  # "Assertion failed"). With a literal fail_msg that text is already in
+  # the playbook source, so the block prints like real's; a templated
+  # fail_msg may carry a secret (real leaks the rendered value), so its
+  # block stays suppressed (only the censored fatal line remains).
+  it "prints the block above the censored fatal for a no_log assert with a literal fail_msg" do
+    output = run_playbook(<<-YAML)
+          - name: Validate required variables
+            ansible.builtin.assert:
+              that:
+                - krikri1131_var is defined
+              fail_msg: "Required krikri1131 variables not set"
+              quiet: true
+            no_log: true
+            ignore_errors: true
+    YAML
+
+    output.must_include("[ERROR]: Task failed: Action failed: Required krikri1131 variables not set")
+    block_precedes_fatal?(output).must_equal(true, output)
+    output.must_include(%(fatal: [localhost]: FAILED! => {"censored": "the output has been hidden due to the fact that 'no_log: true' was specified for this result", "changed": false}))
+    output.must_include("...ignoring")
+  end
+
+  it "prints the block for a no_log assert failing with the default fail_msg" do
+    output = run_playbook(<<-YAML)
+          - name: assert with no fail_msg
+            ansible.builtin.assert:
+              that:
+                - false
+              quiet: true
+            no_log: true
+            ignore_errors: true
+    YAML
+
+    output.must_include("[ERROR]: Task failed: Action failed: Assertion failed")
+    block_precedes_fatal?(output).must_equal(true, output)
+    output.must_include("...ignoring")
+  end
+
+  it "prints the block for a no_log assert using the msg alias with a literal value" do
+    output = run_playbook(<<-YAML)
+          - name: assert with msg alias
+            ansible.builtin.assert:
+              that:
+                - false
+              msg: "krikri1131 alias message"
+              quiet: true
+            no_log: true
+            ignore_errors: true
+    YAML
+
+    output.must_include("[ERROR]: Task failed: Action failed: krikri1131 alias message")
+    block_precedes_fatal?(output).must_equal(true, output)
+  end
+
+  it "keeps the block suppressed for a no_log assert whose fail_msg is templated" do
+    output = run_playbook(<<-YAML)
+          - name: assert with templated fail_msg
+            ansible.builtin.assert:
+              that:
+                - false
+              fail_msg: "pw is {{ 'krikri1131secret' }}"
+              quiet: true
+            no_log: true
+            ignore_errors: true
+    YAML
+
+    output.wont_include("[ERROR]: Task failed:")
+    output.wont_include("krikri1131secret")
+    output.must_include(%(fatal: [localhost]: FAILED! => {"censored": "the output has been hidden due to the fact that 'no_log: true' was specified for this result", "changed": false}))
+    output.must_include("...ignoring")
+  end
 end

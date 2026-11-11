@@ -1154,6 +1154,28 @@ module Krikri
           return true if raw.includes?(group_name)
         end
       end
+      # assert's failing fail_msg (issue #1131, ax-bzh.authentik's no_log
+      # "Validate required variables" task): real prints the block above
+      # the censored fatal with the raw fail_msg - the assert ACTION's
+      # AnsibleActionFail event is displayed even though the result itself
+      # is censored (live-verified vs 2.21.6, including the default
+      # "Assertion failed" wording when no fail_msg was given). Like
+      # copy's dest (#644) and user's group (#1024), that text is task
+      # data, so the block prints only when the param is a literal in the
+      # playbook source (no `{{ }}`/`{% %}`/`{# #}`): the echoed text is
+      # then a substring of source text, so the block reveals nothing the
+      # source doesn't already contain. A templated fail_msg may carry a
+      # secret (real leaks the RENDERED value here) and stays suppressed.
+      if module_name.try { |name| name == "assert" || name.ends_with?(".assert") }
+        return true if msg == "Assertion failed" && source_task &&
+                       !source_task.params.has_key?("fail_msg") &&
+                       !source_task.params.has_key?("msg")
+        ["fail_msg", "msg"].each do |key|
+          next unless source_task && (raw = source_task.params[key]?)
+          next if raw.includes?("{{") || raw.includes?("{%") || raw.includes?("{#")
+          return true if msg == raw
+        end
+      end
       !!(copy_task && NO_LOG_SAFE_MSGS.includes?(msg))
     end
 
@@ -1165,7 +1187,8 @@ module Krikri
     # the `when:` value's own Origin), or no_log hides the result -
     # except the messages no_log_error_block_allowed? clears (copy's
     # fixed required-argument texts, debconf's get_bin_path miss,
-    # command/shell's non-zero return code), the classes whose
+    # command/shell's non-zero return code, assert's literal fail_msg),
+    # the classes whose
     # uncensored block carries no secret (see above).
     private def self.emit_task_error_block(source_task : Task?, result : JSON::Any, msg : String, loop_item : JSON::Any? = nil) : Nil
       return unless source_task
