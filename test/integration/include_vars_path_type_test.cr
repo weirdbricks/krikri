@@ -127,6 +127,35 @@ describe "include_vars with a non-string file:/dir: literal" do
     invalid.must_include("[ERROR]: Task failed: files_macthing is not a valid option in include_vars")
   end
 
+  it "registers the failed arg-validation result so a later when: on it skips, not errors" do
+    # issue #1124: real's register fires for the failed action-validation
+    # result too ({changed, failed, exception, msg}), so with ignore_errors:
+    # the play continues and `when: r is succeeded` evaluates false - the
+    # next task skips. This engine left the register undefined and the
+    # when: itself failed ('r' is undefined) where real had a skipped task.
+    _, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - include_vars:
+              file: vars.yml
+              hash_behaviour_bogus: merge
+            register: r
+            ignore_errors: true
+          - debug:
+              msg: should-not-run
+            when: r is succeeded
+    YAML
+
+    output.must_include("[ERROR]: Task failed: hash_behaviour_bogus is not a valid option in include_vars")
+    output.must_include("skipping: [localhost]")
+    output.wont_include("'r' is undefined")
+    output.must_match(/ok=1/)
+    output.must_match(/skipped=1/)
+    output.must_match(/ignored=1/)
+  end
+
   it "keeps the arg-validation chain two-segment, Origin'd at the offending option" do
     # include_vars.py raises its argument-validation failures with the
     # offending VALUE as the exception's obj, so ansible's caused-by event
