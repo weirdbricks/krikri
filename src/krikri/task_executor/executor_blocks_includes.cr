@@ -1702,6 +1702,18 @@ module Krikri
         return
       end
 
+      # real registers the failed result like any other task failure
+      # (live-verified vs 2.21.6: include_vars: with an invalid action
+      # argument + register:+ignore_errors: leaves the register DEFINED as
+      # {changed, failed, exception, msg} - the AnsibleActionFail shape -
+      # so a later `when: reg is succeeded` evaluates against a failed
+      # result and skips, where an undefined register instead poisoned the
+      # when: itself, issue #1124). register_result dups the hash before
+      # reordering/stripping, so the display below still sees the private
+      # _ansible_* markers.
+      if register_name = task.register
+        register_result(host, register_name, result_json) unless register_name.empty?
+      end
       ResultDisplay.display_result(host, result_json, @diff_mode, ignore_errors: task.ignore_errors?, no_log: include_vars_no_log?(task, host), module_name: task.module_name, delegate_target: delegate_display_target(task, host), source_task: task)
       include_vars_failure_stats(task, host)
     end
