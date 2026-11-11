@@ -715,6 +715,29 @@ module Krikri
       @@daemon_failures.delete({host, user, port, become_user, sig})
     end
 
+    # Drop the failure stamps of EVERY daemon key on one connection (all
+    # become_user variants share the underlying ssh session and the same
+    # target-side plugin staging dir, so one stamp on any of them is the
+    # same "this connection's daemon cannot start" belief). Used when
+    # that belief turns out to be STALE: issue #1158, where a /var/tmp
+    # sweep on the target removed the plugin binaries, the daemon spawn
+    # handshake failed on the missing binary and #spawn_daemon stamped
+    # the key permanently unavailable, and the whole run then paid the
+    # per-task ssh path for every remaining task - about 2x slower on a
+    # real host - even after the missing-binary recovery had re-uploaded
+    # the binary and the daemon would have started fine. PluginManager's
+    # #drop_stale_plugin_beliefs calls this alongside dropping the stale
+    # "the binary is there" records the same wrong belief produced.
+    # Deliberately NOT #clear_daemon_for_spec: no resident daemon exists
+    # to kill (the handshake that stamped the failure never produced
+    # one), and a daemon that IS running serves from its own already-
+    # loaded binary and must keep running.
+    def self.clear_daemon_failures(host : String, user : String, port : Int32?, sig : String = "") : Nil
+      @@daemon_failures.reject! do |key, _|
+        key[0] == host && key[1] == user && key[2] == port && key[4] == sig
+      end
+    end
+
     # Raised when a daemon request WAS sent (the frame was fully written
     # into the pipe) but no usable response came back - a timeout waiting
     # for the response, a truncated/malformed frame, an unparseable one.
