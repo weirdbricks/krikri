@@ -2887,7 +2887,7 @@ module Krikri
       # module is the 2.19.11-observed exception (module resolved before
       # arg templating) handled by the guard above. Same bookkeeping
       # when_passes? would have performed.
-      if (unavailable = task.unavailable_module) && python_module_source_for(task).nil?
+      if (unavailable = task.unavailable_module) && python_module_source_for(task).nil? && !k8s_import_gate_module?(task)
         # The exit-4 accounting for an unported module registers HERE,
         # after arg finalization succeeded (and only for a module that will
         # NOT run - a role-private library/ source dispatches below and is
@@ -3349,7 +3349,7 @@ module Krikri
       # when_passes? let it through (see its own comment), so a python
       # module behind a false when: still skips normally.
       if task.unavailable_module && (py_source = python_module_source_for(task))
-        result = execute_python_module(task, py_source, substituted_params, exec_host, dispatch_vars, wire_vars, become, become_user, substituted_become_user, substituted_env, dispatch_timeout, substituted_become_flags)
+        result = execute_python_module(task, File.read(py_source), substituted_params, exec_host, dispatch_vars, wire_vars, become, become_user, substituted_become_user, substituted_env, dispatch_timeout, substituted_become_flags)
         if period = marker_task_timeout(result)
           return task_timeout_result(period)
         end
@@ -3361,6 +3361,37 @@ module Krikri
         # controller-side result would carry under the setting's
         # resolution (see InvocationInjection).
         result = InvocationInjection.strip(result) unless InvocationInjection.enabled?(vars_context)
+        return apply_changed_failed_when(task, result, vars_context, host)
+      end
+
+      # An unported `k8s` reference (kubernetes.core.k8s and its renames)
+      # runs the synthesized import gate on the target instead of taking
+      # the unavailable-module skip above: the module family imports the
+      # `kubernetes` client at MODULE level, so on a target without it
+      # real ansible fails the task with basic.py's missing_required_lib
+      # text before touching a cluster - a failed task, never a skip
+      # (thoth-station.external_janusgraph_service, issue #1155). When the
+      # gate reports the library importable, the module would go on to
+      # talk to a cluster this engine cannot reach either, so the designed
+      # unavailable-module skip applies from here - registration included,
+      # exactly where the skip above would have done it.
+      if (unavailable = task.unavailable_module) && python_module_source_for(task).nil? &&
+         K8S_IMPORT_GATE_MODULES.includes?(unavailable)
+        result = execute_python_module(task, PythonModuleRunner.k8s_import_gate_source, substituted_params, exec_host, dispatch_vars, wire_vars, become, become_user, substituted_become_user, substituted_env, dispatch_timeout, substituted_become_flags)
+        if period = marker_task_timeout(result)
+          return task_timeout_result(period)
+        end
+        result = InvocationInjection.strip(result) unless InvocationInjection.enabled?(vars_context)
+        if result.as_h?.try(&.has_key?("_krikri_k8s_lib_present"))
+          reachable_unavailable_modules << unavailable
+          # A LOOPED caller (defer_loop_stats) must not print or book-keep
+          # here: like the skip above, its "skipping:" line prints from
+          # finish_looped_task in iteration order, and the nil sentinel is
+          # what its per-item bookkeeping consumes.
+          return nil if defer_loop_stats
+          perform_skip(task, host, item_label, defer_stats: defer_loop_stats, defer_display: false, item: nil)
+          return nil
+        end
         return apply_changed_failed_when(task, result, vars_context, host)
       end
 
@@ -3828,16 +3859,17 @@ module Krikri
       structured.as_s
     end
 
-    # Dispatches an unavailable-module task that has a role-private
-    # `library/<name>.py` source through the py_module plugin. The
+    # Dispatches an unavailable-module task through the py_module plugin,
+    # given the module's SOURCE TEXT - a role-private `library/<name>.py`
+    # file's contents (the caller reads it, so the synthesized k8s import
+    # gate dispatches through the exact same path with no temp file). The
     # source travels embedded in the plugin config (base64) so the
     # normal upload-and-execute transport works unchanged for remote
     # hosts; the module's argument dict mirrors Ansible's typed
     # JSON args for new-style modules (the params the parser already
     # JSON-encoded come back as real arrays/dicts for the module).
-    private def execute_python_module(task : Task, source_path : String, substituted_params : Hash(String, String), exec_host : Host, vars_context : Hash(String, JSON::Any), wire_vars : Hash(String, JSON::Any), become : Bool, become_user : String?, substituted_become_user : String?, substituted_env : Hash(String, String)? = nil, task_timeout : Int64? = nil, become_flags : String? = nil) : JSON::Any
+    private def execute_python_module(task : Task, source_text : String, substituted_params : Hash(String, String), exec_host : Host, vars_context : Hash(String, JSON::Any), wire_vars : Hash(String, JSON::Any), become : Bool, become_user : String?, substituted_become_user : String?, substituted_env : Hash(String, String)? = nil, task_timeout : Int64? = nil, become_flags : String? = nil) : JSON::Any
       module_name = PythonModuleRunner.short_name(task.unavailable_module || task.module_name)
-      source_text = File.read(source_path)
       # Ansible's modularizer rewrites the legacy boilerplate marker
       # into the import that pulls AnsibleModule in BEFORE style
       # detection, so the marker-bearing module ships as new-style
@@ -4113,6 +4145,23 @@ module Krikri
         task.role_path,
         @playbook_dir
       ) || action_plugin_source_for(task)
+    end
+
+    # The spellings of the kubernetes.core.k8s module an unported task can
+    # carry (the bare short name real roles overwhelmingly write, plus the
+    # collection's own and pre-rename FQCNs). Each dispatches the
+    # synthesized k8s import gate (PythonModuleRunner.k8s_import_gate_source)
+    # instead of the unavailable-module skip, because the family fails at
+    # MODULE level on a target without the `kubernetes` client library - a
+    # failed task in real, never a skip (issue #1155). A role-private
+    # `library/k8s.py` still wins: the gate only fires when no source for
+    # the name resolves.
+    K8S_IMPORT_GATE_MODULES = Set{"k8s", "kubernetes.core.k8s", "community.kubernetes.k8s"}
+
+    private def k8s_import_gate_module?(task : Task) : Bool
+      return false unless (name = task.unavailable_module)
+      python_module_source_for(task).nil? &&
+        K8S_IMPORT_GATE_MODULES.includes?(name)
     end
 
     # The runtime counterpart of collection_index.local_action_plugin?:
