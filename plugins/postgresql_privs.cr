@@ -246,6 +246,10 @@ module Krikri
         password: login[:password],
         unix_socket: login[:unix_socket],
         dbname: p.login_db,
+        sslmode: login[:ssl_mode],
+        ca_cert: login[:ca_cert],
+        ssl_cert: login[:ssl_cert],
+        ssl_key: login[:ssl_key],
       )
 
       PluginHelpers::PostgresqlConnection.open(uri, @params) do |database|

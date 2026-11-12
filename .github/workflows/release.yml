@@ -78,7 +78,7 @@ jobs:
               pcre2-dev pcre2-static \
               openssl-dev openssl-libs-static \
               bzip2-dev bzip2-static \
-              xz-dev xz-libs \
+              xz-dev xz-libs xz-static \
               zlib-dev zlib-static \
               gc-dev gc-static \
               libunwind-dev libunwind-static \
@@ -94,6 +94,19 @@ jobs:
             # flag fixes this too).
             shards install --without-development
             ./build.sh --release --static
+            # The build must be fully static: these binaries are shipped to
+            # targets that only guarantee libc, and a dependency that quietly
+            # fell back to a shared object would break them at exec time.
+            # Alpine ships liblzma.a in its own xz-static package (xz-dev has
+            # only the .so), so assert the result rather than trusting the
+            # package list.
+            for f in bin/krikri-playbook bin/krikri bin/krikri-lint bin/differential_fuzz bin/plugins/*; do
+              file \"\$f\" | grep -Eq 'statically linked|static-pie linked' || {
+                echo \"release binary is not static: \$f\"
+                file \"\$f\"
+                exit 1
+              }
+            done
             # -al (hardlink, not copy): bin/plugins/.fat-plugin is
             # hardlinked under 96 plugin names sharing one inode - a
             # plain 'cp -r' doesn't preserve that and turns each name

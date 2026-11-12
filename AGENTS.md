@@ -69,6 +69,11 @@ scripts/minitest.sh                 # the full minitest suite under test/ (defau
 scripts/minitest.sh -- -p 4         # same suite on 4 worker fibers
 scripts/minitest.sh test/unit/foo_test.cr   # one file
 scripts/minitest.sh -- -n /pattern/ # a subset by test-name regex
+scripts/db_tests.sh                 # live PostgreSQL/MySQL suites against throwaway
+                                     #   podman containers (the ones that otherwise
+                                     #   skip silently when no server is listening)
+scripts/deps_audit.sh               # pinned shard versions vs newest upstream tags;
+                                     #   --check exits 1 when a tag/version pin is behind
 ameba                               # lint
 ```
 
@@ -97,6 +102,12 @@ unattended.
 ~230s suite) and skip unless `KRIKRI_DOCKER_TESTS=1`. CI always sets it;
 `krikri-fix-issues` sets it when a fix touches docker code. Run them locally with
 `KRIKRI_DOCKER_TESTS=1 scripts/minitest.sh`.
+
+**Live database tests are opt-in too, and skip silently**: `postgresql_live_test.cr`,
+`postgresql_privs_live_test.cr` and `mysql_auth_test.cr` skip themselves when no
+server is listening on 127.0.0.1:15432 / :33306, so the normal suite never exercises a
+real driver. Use `scripts/db_tests.sh` (podman) before and after any change to the
+mysql/pg helpers, a driver pin, or the TLS parameters; it fails instead of skipping.
 
 **Parallel-safety rules** (required for `-- -p N`; full detail in
 `test/minitest_helper.cr`):

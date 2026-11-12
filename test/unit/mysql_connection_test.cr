@@ -214,8 +214,59 @@ describe Krikri::PluginHelpers::MysqlConnection do
       end
     end
 
-    it "always disables TLS, since the mysql shard's own default (preferred) doesn't fall back to plaintext on a failed handshake" do
+    it "keeps TLS disabled when no TLS parameter is given (PyMySQL's own default)" do
       Krikri::PluginHelpers::MysqlConnection.build_uri.must_include("ssl-mode=disabled")
+      Krikri::PluginHelpers::MysqlConnection.tls_options({} of String => String).mode.must_equal("disabled")
+    end
+
+    it "requires TLS without verification when only a client cert/key is given" do
+      tls = Krikri::PluginHelpers::MysqlConnection.tls_options({
+        "client_cert" => "/etc/mysql/client.pem",
+        "client_key"  => "/etc/mysql/client-key.pem",
+      })
+      tls.mode.must_equal("required")
+      tls.client_cert.must_equal("/etc/mysql/client.pem")
+      tls.client_key.must_equal("/etc/mysql/client-key.pem")
+    end
+
+    it "verifies the chain and hostname when ca_cert is given (PyMySQL's default)" do
+      tls = Krikri::PluginHelpers::MysqlConnection.tls_options({"ca_cert" => "/etc/mysql/ca.pem"})
+      tls.mode.must_equal("verify-identity")
+      tls.ca_cert.must_equal("/etc/mysql/ca.pem")
+    end
+
+    it "verifies the chain but not the hostname when check_hostname is false" do
+      tls = Krikri::PluginHelpers::MysqlConnection.tls_options({
+        "ca_cert"        => "/etc/mysql/ca.pem",
+        "check_hostname" => "False",
+      })
+      tls.mode.must_equal("verify-ca")
+    end
+
+    it "accepts the real module's ssl_ca/ssl_cert/ssl_key aliases" do
+      tls = Krikri::PluginHelpers::MysqlConnection.tls_options({
+        "ssl_ca"   => "/etc/mysql/ca.pem",
+        "ssl_cert" => "/etc/mysql/client.pem",
+        "ssl_key"  => "/etc/mysql/client-key.pem",
+      })
+      tls.mode.must_equal("verify-identity")
+      tls.ca_cert.must_equal("/etc/mysql/ca.pem")
+      tls.client_cert.must_equal("/etc/mysql/client.pem")
+      tls.client_key.must_equal("/etc/mysql/client-key.pem")
+    end
+
+    it "passes the TLS material into the URI as the shard's query params" do
+      tls = Krikri::PluginHelpers::MysqlConnection.tls_options({
+        "ca_cert"     => "/etc/mysql/ca.pem",
+        "client_cert" => "/etc/mysql/client.pem",
+        "client_key"  => "/etc/mysql/client-key.pem",
+      })
+      uri = URI.parse(Krikri::PluginHelpers::MysqlConnection.build_uri(host: "db.example.com", tls: tls))
+      params = uri.query_params
+      params["ssl-mode"].must_equal("verify-identity")
+      params["ssl-ca"].must_equal("/etc/mysql/ca.pem")
+      params["ssl-cert"].must_equal("/etc/mysql/client.pem")
+      params["ssl-key"].must_equal("/etc/mysql/client-key.pem")
     end
 
     it "passes the initial database as a query param, not a URI path" do
