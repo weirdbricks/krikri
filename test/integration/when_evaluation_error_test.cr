@@ -552,6 +552,43 @@ describe "ignore_errors: on an ordinary (non-when-related) task failure" do
     File.delete(playbook) if playbook && File.exists?(playbook)
   end
 
+  # Issue #1148 (dtoch56.upgrade_packages' Reboot task, check mode): the
+  # same registered result reached through a filter chain (`reboot_required
+  # | default(false)` - the skipped dict is defined, so the default never
+  # substitutes and Jinja's `and` passes the dict through as the whole
+  # expression's verdict) used to be reported as type 'str', because the
+  # filter-chain delegation renders to text and json_any_to_value's
+  # Hash-less branch stringifies the dict before the strict gate sees it.
+  # Real 2.19 keeps the dict value and reports 'dict' - live-verified.
+  it "labels a filter-chain dict conditional with the dict type like the bare variable" do
+    playbook = File.tempname("when-filterchain-dict-origin", ".yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          upgrade_packages_reboot_if_needed: true
+        tasks:
+          - name: make skipped reg
+            ansible.builtin.command: "true"
+            register: reboot_required
+            when: false
+          - name: filter chain dict conditional
+            ansible.builtin.debug:
+              msg: hi
+            when: upgrade_packages_reboot_if_needed and reboot_required | default(false)
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, "--check", playbook], output: output, error: output)
+
+    status.success?.must_equal(false)
+    output.to_s.must_include("was derived from value of type 'dict' at '#{File.expand_path(playbook)}:14:13'", output.to_s)
+    output.to_s.must_include(%({"msg": "Task failed: A 'when' expression failed: Conditional result (True) was derived from value of type 'dict' at '#{File.expand_path(playbook)}:14:13'. Conditionals must have a boolean result."}), output.to_s)
+  ensure
+    File.delete(playbook) if playbook && File.exists?(playbook)
+  end
+
   it "labels a CLI -e conditional value with the option label" do
     playbook = File.tempname("when-ivar-origin", ".yml")
     File.write(playbook, <<-YAML)

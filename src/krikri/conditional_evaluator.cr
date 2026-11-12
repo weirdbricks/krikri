@@ -4040,6 +4040,42 @@ module Krikri
           end
           parsed = structured if structured && structured.raw.is_a?(String)
         end
+        # A filter chain that RESOLVES to a dict (`reboot_required |
+        # default(false)` with the name bound to a registered task result
+        # - in check mode the registered result is the skipped dict, so
+        # dtoch56.upgrade_packages' `when:
+        # upgrade_packages_reboot_if_needed and reboot_required |
+        # default(false)` lands here, issue #1148) keeps that dict as
+        # its strict-conditional verdict in ansible-core 2.19: "Conditional
+        # result (True) was derived from value of type 'dict'". This
+        # delegation's render-to-text detour stringifies the dict here
+        # (json_any_to_value's Hash-less else branch), and the strict
+        # String gate in #evaluate_truthiness then mis-reported 'str' for
+        # the very same truthy value. Raise the dict verdict at this one
+        # point the type is still known, exactly as the bare-variable
+        # container arm in #evaluate_truthiness already does; every
+        # non-strict caller keeps the stringified passthrough.
+        #
+        # The text render alone cannot tell a dict result from a STRING
+        # whose text merely parses as JSON (`x | trim` over a variable
+        # holding a JSON document stays a str in real Jinja, and the
+        # strict gate must keep reporting 'str' for it), so the verdict
+        # is confirmed against Crinja's own structured result - the
+        # authoritative type - and the stringified passthrough is kept
+        # whenever Crinja disagrees or cannot evaluate the chain at all.
+        if strict && !allow_broken_conditionals? && parsed.raw.as?(Hash)
+          structured_dict = begin
+            structured = evaluator.evaluate_structured(expr)
+            structured && structured.raw.as?(Hash)
+          rescue
+            nil
+          end
+          if structured_dict
+            raise ConditionalBooleanError.new(
+              "Conditional result (#{structured_dict.empty? ? "False" : "True"}) was derived from value of type 'dict'. " \
+              "Conditionals must have a boolean result.")
+          end
+        end
         return json_any_to_value(parsed)
       end
 
