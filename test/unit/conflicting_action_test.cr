@@ -23,6 +23,29 @@ describe "conflicting action statement detection" do
     ex.render.as(String).lines.first.must_equal("[ERROR]: conflicting action statements: ansible.builtin.debug, any_bogus_keyword")
   end
 
+  it "names a legacy key before the module when the legacy key comes first in the task" do
+    # ansible's load-time parse runs mod_args with
+    # skip_action_validation=True, so the first unrecognized key becomes
+    # the action and the conflict message follows task-key order:
+    # alekseenkoss77.influxdb-backup's `sudo_user:` above `file:` reported
+    # "sudo_user, file", not "file, sudo_user".
+    content = "---\n- name: p\n  hosts: web1\n  tasks:\n    - name: Create backups directory\n      sudo_user: deploy\n      file: path=/home/deploy/backups state=directory\n"
+    ex = assert_raises(Krikri::ConflictingActionStatementsError) do
+      Krikri::PlaybookParser.parse_string(content)
+    end
+    ex.message.must_equal("conflicting action statements: sudo_user, file")
+  end
+
+  it "names the module before the legacy key when the module comes first in the task" do
+    # The same conflict with the module key written first - ansible still
+    # reports in task-key order ("file, sudo_user", live-verified vs 2.21.6).
+    content = "---\n- name: p\n  hosts: web1\n  tasks:\n    - name: Create backups directory\n      file: path=/home/deploy/backups state=directory\n      sudo_user: deploy\n"
+    ex = assert_raises(Krikri::ConflictingActionStatementsError) do
+      Krikri::PlaybookParser.parse_string(content)
+    end
+    ex.message.must_equal("conflicting action statements: file, sudo_user")
+  end
+
   it "raises the conflict for a dict-valued unknown key after the action" do
     content = "---\n- name: p\n  hosts: web1\n  tasks:\n    - name: d1\n      ansible.builtin.debug:\n        msg: hi\n      foo_bar:\n        a: b\n"
     ex = assert_raises(Krikri::ConflictingActionStatementsError) do
