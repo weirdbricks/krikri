@@ -41,7 +41,9 @@ private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-ex
 
 # The lazy-path specs here pin the round-811000 flow for modules krikri
 # hasn't ported (kubernetes.core.helm_repository,
-# junipernetworks.junos.junos_netconf, containers.podman.podman_container)
+# junipernetworks.junos.junos_netconf - containers.podman.podman_container
+# belonged to this list until issue #1156 ported its pre-execution
+# surface)
 # - a flow that only applies when the CONTROLLER can resolve the name. A
 # controller without those collections refuses them at playbook load
 # before any lazy path can apply, so the spawned binary gets a
@@ -52,8 +54,7 @@ private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-ex
 # community.docker.docker_compose) refuse regardless of the fixture.
 private def fixture_collections_root : String
   root = PluginSpecHelper.tmp_path("unresolved-module-collections")
-  {"kubernetes/core/helm_repository", "junipernetworks/junos/junos_netconf",
-   "containers/podman/podman_container"}.each do |leaf|
+  {"kubernetes/core/helm_repository", "junipernetworks/junos/junos_netconf"}.each do |leaf|
     dir = File.join(root, "ansible_collections", File.dirname(leaf), "plugins", "modules")
     FileUtils.mkdir_p(dir)
     File.write(File.join(dir, File.basename(leaf) + ".py"), "#!/usr/bin/python\n")
@@ -284,7 +285,9 @@ describe "unresolvable module names hard-stop the run (UnresolvedModuleError)" d
     # ansible-playbook: all three run/skip cleanly, green recap.
     # The old parse-time hard-stop killed the whole play before the
     # first task; the fixed engine must run the earlier task, skip the
-    # gated one, and still execute the later one.
+    # gated one, and still execute the later one. The module under the
+    # gate is kubernetes.core.helm_repository since issue #1156 ported
+    # containers.podman.podman_container's pre-execution surface.
     status, output = run_playbook(<<-YAML)
       - hosts: localhost
         connection: local
@@ -293,7 +296,7 @@ describe "unresolvable module names hard-stop the run (UnresolvedModuleError)" d
           - name: earlier unrelated task
             ansible.builtin.debug: msg=before
           - name: manage podman containers (unimplemented module, false gate)
-            containers.podman.podman_container:
+            kubernetes.core.helm_repository:
               name: foo
             when: podman_containers is defined and podman_containers | length > 0
           - name: later unrelated task
@@ -312,6 +315,11 @@ describe "unresolvable module names hard-stop the run (UnresolvedModuleError)" d
     # the run must still fail - exit 4 from the end-of-run
     # unavailable-modules check, with the play's tasks and recap
     # showing first (Ansible would fail the task itself mid-run).
+    # containers.podman.podman_container used to be the module here
+    # (round 811000's shape); it is a real ported plugin since issue
+    # #1156, so the pinned flow runs on kubernetes.core.helm_repository
+    # (same fixture-shipped unresolvable-for-real name the task-path
+    # specs above use).
     status, output = run_playbook(<<-YAML)
       - hosts: localhost
         connection: local
@@ -323,7 +331,7 @@ describe "unresolvable module names hard-stop the run (UnresolvedModuleError)" d
           - name: earlier unrelated task
             ansible.builtin.debug: msg=before
           - name: manage podman containers (unimplemented module, true gate)
-            containers.podman.podman_container:
+            kubernetes.core.helm_repository:
               name: foo
             when: podman_containers is defined and podman_containers | length > 0
       YAML

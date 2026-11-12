@@ -566,6 +566,16 @@ because anyone intends to fix them.
   `playbook_parser.cr`'s `ACTION_DIRECTIVE_KEYS` branch.
 - `docker_*`'s `api_version:` pin - not implemented, not planned: `docr` uses unversioned endpoint URLs
   throughout, and they negotiate fine against current Docker/Podman.
+- `containers.podman.podman_container` (issue #1156) - ported surface: the AnsibleModule argument
+  validation (1.17.0 spec), main()'s present/created-without-image check, and the
+  `get_bin_path(executable, required=True)` probe real runs before ANY state's work, check mode or
+  not - so a host without podman fatals the task with real's
+  `Failed to find required executable "podman" in paths: ...` (that failure was the whole observable
+  divergence; the graceful skip + engine-limit exit 4 it used to get is gone). Everything AFTER a
+  successful probe is deliberately unported: the container management behind every state and the
+  quadlet unit-file generation (real drives `podman`/writes `/etc/containers/systemd/*.container`).
+  The plugin answers a plain ok there, so on a host WITH podman krikri reports ok where real reports
+  the real work's changed/ok - revisit if a round lands on a podman-present host.
 - `meta:` - every action in Ansible's `meta` choices list is supported (`clear_facts`, `flush_handlers`,
   `end_host`, `end_play`, `clear_host_errors`, `noop`, `refresh_inventory`, `end_batch`, `end_role`,
   `reset_connection`), each matched to Ansible's observed behavior. Non-obvious ones: `end_play` and
