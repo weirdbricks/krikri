@@ -347,6 +347,15 @@ module Krikri
       # PluginManager.simple_plugin_name - it's not one of the
       # collection-search namespaces below.
       "containers.podman.podman_image",
+      # podman_container (issue #1156): thulium_drake.gitea_runner's
+      # state=quadlet task - the ported surface is the module's
+      # argument validation plus the get_bin_path executable probe real
+      # runs before ANY state's work (so a host without podman fails
+      # the task like real instead of the graceful unavailable-module
+      # skip + engine-limit exit 4); everything after a successful
+      # probe is deliberately not ported (see plugins/podman_container.cr
+      # and KNOWN_MISSING.md).
+      "containers.podman.podman_container",
       # iam_user_info (0.9.947): IAM user lookup over the signed Query
       # API (deekayen.iam_access_simulation round 300141 calls it) - the
       # same direct-API contract as the ec2_* cluster, via its own

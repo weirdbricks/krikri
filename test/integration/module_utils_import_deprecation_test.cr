@@ -184,6 +184,88 @@ describe "module_utils import deprecations follow the installed payload source" 
     # behavior).
     Krikri::ModuleUtilsDeprecations.text_import_deprecation_symbols("totally.absent.mount").must_equal(["to_bytes", "to_native"])
   end
+
+  it "keeps the modeled podman_container pair until its own migration boundary (issue #1156)" do
+    # The SSH-round shape: the plugin binary runs on the TARGET, where no
+    # collection is installed and only the controller-pinned wire version
+    # can decide. Real ships the payload from the controller, so its
+    # lines depend on the resolved release: containers.podman 1.18.2 and
+    # older open podman_container_lib.py with the _text pair, 1.19.0
+    # moved it to common.text.converters (source-verified against the
+    # tagged releases) - the ansible.posix 2.2.0 boundary alone would
+    # model the pair for every 1.x release, forever.
+    Krikri::ModuleUtilsDeprecations.text_import_deprecation_symbols("totally.absent.podman_container")
+      .must_equal(["to_bytes", "to_native"])
+    Krikri::ModuleUtilsDeprecations.text_import_deprecation_symbols("totally.absent.podman_container", "1.17.0")
+      .must_equal(["to_bytes", "to_native"])
+    Krikri::ModuleUtilsDeprecations.text_import_deprecation_symbols("totally.absent.podman_container", "1.18.2")
+      .must_equal(["to_bytes", "to_native"])
+    Krikri::ModuleUtilsDeprecations.text_import_deprecation_symbols("totally.absent.podman_container", "1.19.0")
+      .must_equal([] of String)
+    Krikri::ModuleUtilsDeprecations.text_import_deprecation_symbols("totally.absent.podman_container", "1.21.2")
+      .must_equal([] of String)
+  end
+
+  it "follows a module payload's collection-internal module_utils imports (containers.podman's podman_container)" do
+    # podman_container.py itself imports nothing deprecated; its
+    # module_utils/podman/podman_container_lib.py opens with the
+    # to_bytes/to_native pair, and real's shim deprecates when the
+    # module's import of THAT file runs (issue #1156's remaining
+    # trailer block). The module file's core `ansible.module_utils.basic`
+    # import is deliberately not followed - ansible-core's own tree is
+    # the clean side.
+    base = File.join(@fixture_root, "ansible_collections", "containers", "podman")
+    FileUtils.mkdir_p(File.join(base, "plugins", "modules"))
+    FileUtils.mkdir_p(File.join(base, "plugins", "module_utils", "podman"))
+    File.write(File.join(base, "plugins", "modules", "podman_container.py"),
+      "from ansible.module_utils.basic import AnsibleModule  # noqa: F402\n" \
+      "from ..module_utils.podman.podman_container_lib import PodmanManager  # noqa: F402\n")
+    File.write(File.join(base, "plugins", "module_utils", "podman", "podman_container_lib.py"),
+      "from ansible.module_utils._text import to_bytes, to_native  # noqa: F402\n")
+
+    Krikri::ModuleUtilsDeprecations.text_import_deprecation_symbols("containers.podman.podman_container")
+      .must_equal(["to_bytes", "to_native"])
+  end
+
+  it "follows absolute same-collection module_utils imports in execution order across the chain" do
+    # real executes imports depth-first at each statement: the lib's
+    # first statement pulls common (whose own _text import fires
+    # to_bytes first), then the lib's own import fires to_native.
+    # common's import back into the loading lib re-hits the module
+    # already executing and adds nothing - the import machinery runs a
+    # module once per process.
+    base = File.join(@fixture_root, "ansible_collections", "containers", "podman", "plugins")
+    FileUtils.mkdir_p(File.join(base, "modules"))
+    FileUtils.mkdir_p(File.join(base, "module_utils", "podman"))
+    File.write(File.join(base, "modules", "podman_container.py"),
+      "from ansible_collections.containers.podman.plugins.module_utils.podman.podman_container_lib import PodmanManager\n")
+    File.write(File.join(base, "module_utils", "podman", "podman_container_lib.py"),
+      "from ansible_collections.containers.podman.plugins.module_utils.podman.common import LooseVersion\n" \
+      "from ansible.module_utils._text import to_native\n")
+    File.write(File.join(base, "module_utils", "podman", "common.py"),
+      "from ansible_collections.containers.podman.plugins.module_utils.podman.podman_container_lib import lower_keys\n" \
+      "from ansible.module_utils._text import to_bytes\n")
+
+    Krikri::ModuleUtilsDeprecations.text_import_deprecation_symbols("containers.podman.podman_container")
+      .must_equal(["to_bytes", "to_native"])
+  end
+
+  it "follows nothing when the imported chain migrated off the deprecated path" do
+    # containers.podman 1.21.x's shape: the same lib, importing from
+    # ansible.module_utils.common.text.converters - real warns nothing
+    # and neither may this engine, whatever the module file itself
+    # spells.
+    base = File.join(@fixture_root, "ansible_collections", "containers", "podman", "plugins")
+    FileUtils.mkdir_p(File.join(base, "modules"))
+    FileUtils.mkdir_p(File.join(base, "module_utils", "podman"))
+    File.write(File.join(base, "modules", "podman_container.py"),
+      "from ..module_utils.podman.podman_container_lib import PodmanManager\n")
+    File.write(File.join(base, "module_utils", "podman", "podman_container_lib.py"),
+      "from ansible.module_utils.common.text.converters import to_bytes, to_native\n")
+
+    Krikri::ModuleUtilsDeprecations.text_import_deprecation_symbols("containers.podman.podman_container")
+      .must_equal([] of String)
+  end
 end
 
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
