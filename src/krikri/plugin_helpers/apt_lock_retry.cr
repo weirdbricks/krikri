@@ -1,4 +1,6 @@
 require "./apt_repository_cache_retry"
+require "./python_lib_gate"
+require "../shell"
 
 module Krikri
   # Helpers for the `apt` plugin's dpkg-lock-contention retry behavior
@@ -390,18 +392,38 @@ module Krikri
       result[:stdout].strip.to_i
     end
 
-    # Can the target's Python see the python3-apt bindings? Same two
-    # interpreters Ansible's apt module probes
+    # Can the target's Python see the python3-apt bindings? The
+    # interpreter the MODULE would run under is consulted first: real
+    # apt.py's module-level `import apt` runs under exactly that
+    # interpreter (ansible_python_interpreter when pinned, else the
+    # interpreter discovery recorded in discovered_interpreter_python,
+    # else the INTERPRETER_FALLBACK scan - see Krikri.interpreter_from_
+    # vars), and only when that import fails does apt.py probe the two
+    # system interpreters
     # (probe_interpreters_for_module(['/usr/bin/python3', '/usr/bin/python'],
     # 'apt')) before deciding whether to auto-install python3-apt and
-    # respawn under an interpreter that can see it - see apt.cr's own
-    # `#execute` for the long comment on which changed-reporting path
-    # that decides.
-    def apt_python_apt_present?(exec_remote : Proc(String, NamedTuple(exit_code: Int32, stdout: String, stderr: String)))
-      result = exec_remote.call(
-        "/usr/bin/python3 -c 'import apt' 2>/dev/null || " \
-        "/usr/bin/python -c 'import apt' 2>/dev/null"
-      )
+    # respawn under an interpreter that can see it. A target whose
+    # bindings are visible only from the module's own interpreter (e.g.
+    # /usr/bin/python3.10 with python3-apt but no usable
+    # /usr/bin/python3) therefore still counts as present, exactly as
+    # real's module run does - see apt.cr's own `#execute` for the long
+    # comment on which changed-reporting path that decides. Found via
+    # ajgarlag.logstash's check phase (round 29908288): ansible's
+    # check-mode apt task resolved its cache under the discovered
+    # interpreter ("No package matching 'openjdk-7-jre-headless' is
+    # available") while this probe only looked at the two literals and
+    # answered absent, failing the task with the check-mode refusal
+    # instead.
+    def apt_python_apt_present?(exec_remote : Proc(String, NamedTuple(exit_code: Int32, stdout: String, stderr: String)),
+                                vars : Hash(String, JSON::Any)? = nil) : Bool
+      interpreters = [] of String
+      if python = Krikri.interpreter_from_vars(vars) || Krikri.discovered_target_python
+        interpreters << python
+      end
+      interpreters << "/usr/bin/python3"
+      interpreters << "/usr/bin/python"
+      probes = interpreters.uniq.map { |interpreter| "#{Shell.quote_arg(interpreter)} -c 'import apt' 2>/dev/null" }
+      result = exec_remote.call(probes.join(" || "))
       result[:exit_code] == 0
     end
 
@@ -446,8 +468,9 @@ module Krikri
     # what actually runs on the host is unchanged.
     def apt_auto_install_python_apt(skip_prefetch : Bool,
                                     exec_remote : Proc(String, AptLockRetry::AptCmdResult),
-                                    force_absent : Bool = false) : NamedTuple(result: AptLockRetry::AptCmdResult, cmd: String)?
-      return nil if !force_absent && apt_python_apt_present?(exec_remote)
+                                    force_absent : Bool = false,
+                                    vars : Hash(String, JSON::Any)? = nil) : NamedTuple(result: AptLockRetry::AptCmdResult, cmd: String)?
+      return nil if !force_absent && apt_python_apt_present?(exec_remote, vars)
 
       unless skip_prefetch
         result = exec_remote.call("apt-get update")
@@ -514,9 +537,10 @@ module Krikri
     # because the bindings are absent, else nil (not check mode, or the
     # bindings are already there and nothing needs installing).
     def apt_check_mode_python_apt_refusal(check_mode : Bool,
-                                          exec_remote : Proc(String, NamedTuple(exit_code: Int32, stdout: String, stderr: String))) : String?
+                                          exec_remote : Proc(String, NamedTuple(exit_code: Int32, stdout: String, stderr: String)),
+                                          vars : Hash(String, JSON::Any)? = nil) : String?
       return nil unless check_mode
-      return nil if apt_python_apt_present?(exec_remote)
+      return nil if apt_python_apt_present?(exec_remote, vars)
       CHECK_MODE_NO_PYTHON_APT_MSG
     end
 
@@ -536,8 +560,9 @@ module Krikri
     # hardcoded `changed: true` for apt unconditionally, Ansible's
     # `ok`/`changed: false` on an already-fresh mirror).
     def apt_cache_refresh_changed?(pre_mtime : Int32, post_mtime : Int32,
-                                   exec_remote : Proc(String, NamedTuple(exit_code: Int32, stdout: String, stderr: String)))
-      return false unless apt_python_apt_present?(exec_remote)
+                                   exec_remote : Proc(String, NamedTuple(exit_code: Int32, stdout: String, stderr: String)),
+                                   vars : Hash(String, JSON::Any)? = nil)
+      return false unless apt_python_apt_present?(exec_remote, vars)
       post_mtime != pre_mtime
     end
 

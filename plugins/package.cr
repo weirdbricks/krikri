@@ -586,11 +586,11 @@ module Krikri
       # delegates to it, so mirror the same refusal apt.cr's own
       # update-cache block already carries.
       if package_manager == "apt"
-        if refusal = apt_check_mode_python_apt_refusal(@check_mode, ->remote_exec(String))
+        if refusal = apt_check_mode_python_apt_refusal(@check_mode, ->remote_exec(String), @vars)
           return PluginResult.new(changed: false, failed: true, msg: refusal)
         end
         unless @check_mode
-          if failure = apt_auto_install_python_apt(false, ->remote_exec(String))
+          if failure = apt_auto_install_python_apt(false, ->remote_exec(String), vars: @vars)
             # Raw fail_json shape (msg = stderr.rstrip, no prefix, no
             # cache_updated key) plus the pre-failure warning - shared
             # with apt.cr so the shape can't drift (issue #522).
@@ -652,7 +652,7 @@ module Krikri
       # regression round 30001 closed there. Found again via
       # robertdebock.update_package_cache on a mirror that was already
       # current: Ansible reported `ok`, this module `changed`.
-      changed = package_manager == "apt" && apt_cache_refresh_changed?(pre_update_mtime, apt_cache_mtime(->remote_exec(String)), ->remote_exec(String))
+      changed = package_manager == "apt" && apt_cache_refresh_changed?(pre_update_mtime, apt_cache_mtime(->remote_exec(String)), ->remote_exec(String), @vars)
       PluginResult.new(changed: changed, failed: false, msg: "Package cache updated")
     end
 
@@ -1972,7 +1972,7 @@ module Krikri
       # python3-apt is missing (its only recovery is a real host
       # mutation), no matter what the task asked for - `package:`
       # forwards to apt, so mirror that refusal before anything else.
-      if refusal = apt_check_mode_python_apt_refusal(@check_mode, ->remote_exec(String))
+      if refusal = apt_check_mode_python_apt_refusal(@check_mode, ->remote_exec(String), @vars)
         return PluginResult.new(changed: false, failed: true, msg: refusal)
       end
       # Real apt.py auto-installs the python3-apt bindings at module start
@@ -1995,7 +1995,7 @@ module Krikri
       # forcing the absent path on a dev box that really has the bindings.
       unless @check_mode
         explicitly_no_cache = @params["update_cache"]? ? !true?(@params["update_cache"]?) : false
-        if failure = apt_auto_install_python_apt(explicitly_no_cache, ->remote_exec(String), force_absent: true?(@params["_python_apt_absent"]?))
+        if failure = apt_auto_install_python_apt(explicitly_no_cache, ->remote_exec(String), force_absent: true?(@params["_python_apt_absent"]?), vars: @vars)
           # Raw fail_json shape (msg = stderr.rstrip, no prefix, no
           # cache_updated key) plus the pre-failure warning - shared
           # with apt.cr so the shape can't drift (issue #522).

@@ -283,6 +283,41 @@ describe "apt lock-contention retry helpers (round 153 follow-up, 0.9.502)" do
       stub = StubExec.new([{exit_code: 1, stdout: "", stderr: ""}])
       HostClass.new.apt_python_apt_present?(->(c : String) { stub.call(c) }).must_equal(false)
     end
+
+    # apt.py's module-level `import apt` runs under the interpreter the
+    # MODULE runs under first, and only when that fails does it probe
+    # /usr/bin/python3 and /usr/bin/python - a target whose bindings are
+    # visible only from the discovered/pinned interpreter still counts as
+    # present (found via ajgarlag.logstash's check phase, round 29908288:
+    # ansible resolved its cache under the discovered interpreter while
+    # this probe only looked at the two literals and answered absent,
+    # failing the task with the check-mode python3-apt refusal).
+    it "probes the module's own interpreter before the two system literals" do
+      stub = StubExec.new([{exit_code: 1, stdout: "", stderr: ""}])
+      probed = [] of String
+      recorder = ->(c : String) {
+        probed << c
+        stub.call(c)
+      }
+      vars = {"discovered_interpreter_python" => JSON::Any.new("/usr/bin/python3.10")}
+      HostClass.new.apt_python_apt_present?(recorder, vars).must_equal(false)
+      probed.size.must_equal(1)
+      probed.first.starts_with?("/usr/bin/python3.10 -c 'import apt' 2>/dev/null").must_equal(true)
+      probed.first.must_include("|| /usr/bin/python3 -c 'import apt'")
+      probed.first.must_include("|| /usr/bin/python -c 'import apt'")
+    end
+
+    it "prefers a pinned ansible_python_interpreter over the discovery fallback" do
+      stub = StubExec.new([{exit_code: 0, stdout: "", stderr: ""}])
+      probed = [] of String
+      recorder = ->(c : String) {
+        probed << c
+        stub.call(c)
+      }
+      vars = {"ansible_python_interpreter" => JSON::Any.new("/opt/venv/bin/python")}
+      HostClass.new.apt_python_apt_present?(recorder, vars).must_equal(true)
+      probed.first.starts_with?("/opt/venv/bin/python -c 'import apt'").must_equal(true)
+    end
   end
 
   describe "#apt_cache_mtime" do

@@ -70,7 +70,7 @@ private def run_over_ssh(playbook_body : Array(String)) : {Process::Status, Stri
   playbook = PluginSpecHelper.tmp_path("task-timeout-ssh-#{Random::Secure.hex(4)}.yml")
   File.write(playbook, playbook_body.join("\n") + "\n")
   inventory = PluginSpecHelper.tmp_path("task-timeout-ssh-#{Random::Secure.hex(4)}.ini")
-  File.write(inventory, "[target]\ntarget ansible_connection=ssh ansible_host=#{SSHD_HOST} ansible_user=#{SSHD_USER} ansible_port=#{SSHD_PORT} ansible_ssh_private_key_file=#{SSHD_KEY} ansible_ssh_common_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5'\n")
+  File.write(inventory, "[target]\ntarget ansible_connection=ssh ansible_host=#{SSHD_HOST} ansible_user=#{SSHD_USER} ansible_port=#{SSHD_PORT} ansible_ssh_private_key_file=#{SSHD_KEY} ansible_ssh_common_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o IdentitiesOnly=yes -o ConnectTimeout=5'\n")
   output = IO::Memory.new
   started = Time.instant
   status = Process.run(BINARY, ["-i", inventory, playbook], output: output, error: output, input: IO::Memory.new)
