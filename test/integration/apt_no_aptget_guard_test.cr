@@ -155,6 +155,71 @@ describe "apt: no-apt-get guard shape" do
     result["cache_updated"]?.must_be_nil
   end
 
+  # Issue #1172 (timstaley.base on Rocky, round29908315): with
+  # update_cache=no apt.py's !HAVE_PYTHON_APT ladder SKIPS the `apt-get
+  # update` prefetch - the warning is the other variant ("Auto-installing
+  # missing dependency without updating cache") and the install attempt's
+  # None binary is silently dropped by run_command (`if x is not None` in
+  # basic.py), so coreutils' `install` becomes argv[0] and executes via
+  # PATH, dying on the unknown -y flag (rc 1, real stderr) instead of the
+  # prefetch's apt-get ENOENT (rc 2, empty stderr). The install runs for
+  # real here - the dev box's coreutils, exactly like Rocky's - and is
+  # deterministic (invalid option aborts before any operand work), so no
+  # host mutation.
+  it "matches ansible's update_cache=no auto-install failure shape (issue #1172)" do
+    result = PluginSpecHelper.run("apt", {
+      "name"           => "aptitude",
+      "state"          => "present",
+      "update_cache"   => "false",
+      "_apt_get_paths" => "/nonexistent-krikri-spec/apt-get,/nonexistent-krikri-spec/apt-get-local",
+    })
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("install: invalid option -- 'y'\nTry 'install --help' for more information.")
+    result["cmd"].as_s.must_equal(%(install python3-apt -y -q '-o "Dpkg::Options::=--force-confdef" -o "Dpkg::Options::=--force-confold" -o DPkg::Lock::Timeout=60'))
+    result["rc"].as_i.must_equal(1)
+    result["stderr"].as_s.must_equal("install: invalid option -- 'y'\nTry 'install --help' for more information.\n")
+    result["stderr_lines"].as_a.map(&.as_s).must_equal([
+      "install: invalid option -- 'y'",
+      "Try 'install --help' for more information.",
+    ])
+    result["stdout"].as_s.must_equal("")
+    result["stdout_lines"].as_a.map(&.as_s).must_equal([] of String)
+    result["warnings"].as_a.map(&.as_s).must_equal(
+      ["Auto-installing missing dependency without updating cache: python3-apt"])
+    result["cache_updated"]?.must_be_nil
+  end
+
+  # The same branch's OSError sibling (issue #1172's code path): a host
+  # whose PATH holds no `install` binary either (busybox-only images)
+  # fails at execvp, so run_command's OSError handler shapes the result
+  # (the prefetch-ENOENT shape with b'install' as the failed exec name)
+  # instead of the check_rc stderr shape the install run produces on
+  # coreutils hosts. The PATH stub makes both the probe and the would-be
+  # exec see no install; nothing runs, so no host mutation.
+  it "falls back to the run_command OSError shape when no install binary exists (issue #1172)" do
+    stub_dir = PluginSpecHelper.tmp_path("no-install-stub-1172")
+    Dir.mkdir_p(stub_dir)
+
+    result = PluginSpecHelper.run("apt", {
+      "name"           => "aptitude",
+      "state"          => "present",
+      "update_cache"   => "false",
+      "_apt_get_paths" => "/nonexistent-krikri-spec/apt-get,/nonexistent-krikri-spec/apt-get-local",
+    }, env: {"PATH" => stub_dir})
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("Error executing command.")
+    result["cmd"].as_s.must_equal(%(install python3-apt -y -q '-o "Dpkg::Options::=--force-confdef" -o "Dpkg::Options::=--force-confold" -o DPkg::Lock::Timeout=60'))
+    result["rc"].as_i.must_equal(2)
+    result["stdout"].as_s.must_equal("")
+    result["stderr"].as_s.must_equal("")
+    result["_ansible_error_detail"].as_s.must_equal("Error executing command: [Errno 2] No such file or directory: b'install'")
+    result["warnings"].as_a.map(&.as_s).must_equal(
+      ["Auto-installing missing dependency without updating cache: python3-apt"])
+    result["cache_updated"]?.must_be_nil
+  end
+
   it "matches ansible's check-mode refusal in the container (bare msg, no warning)" do
     unless PluginSpecHelper.container_cli_available?
       skip("podman unavailable")
