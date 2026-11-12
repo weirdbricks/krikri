@@ -211,7 +211,7 @@ module Krikri
         return PluginResult.new(changed: false, failed: true, msg: "Invalid key_id") unless parsed
         raw_id = key_id
 
-        before_keys = all_keys
+        before_keys = all_keys(parsed[:short_format])
         return PluginResult.new(changed: false, failed: true, msg: "Unable to list public keys") unless before_keys
 
         unless key_id_in_keys?(parsed, before_keys)
@@ -236,7 +236,7 @@ module Krikri
           # Verify it actually landed - apt-key add exits 0 even when the
           # key doesn't show up in the listing (see the class doc's
           # expired-key discussion for the real acandid.jenkins case).
-          after_keys = all_keys
+          after_keys = all_keys(parsed[:short_format])
           return PluginResult.new(changed: true, failed: true, msg: "Unable to list public keys") unless after_keys
 
           unless key_id_in_keys?(parsed, after_keys)
@@ -531,7 +531,10 @@ module Krikri
     # every pub/sub line that mentions "expired" - deliberately, so an
     # expired key never counts as installed (which is exactly why
     # Ansible's post-add verification fails for one, see the class doc).
-    private def parse_output_for_keys(output : String) : Array(String)
+    # Its short_format tail (shorten_key_ids) reduces EVERY id to its
+    # last 8 hex chars - only on the keyring-listing path, never on the
+    # get_key_id_from_file path (its default short_format=False).
+    private def parse_output_for_keys(output : String, short_format : Bool = false) : Array(String)
       found = [] of String
       output.each_line do |line|
         next unless line.starts_with?("pub") || line.starts_with?("sub")
@@ -545,6 +548,13 @@ module Krikri
           fields = line.split(':')
           found << fields[4] if fields.size > 4 && !fields[4].empty?
         end
+      end
+      # Ansible shortens only a non-empty list (`if found and
+      # short_format`); empty stays empty either way. Its slice
+      # (`key[-8:]`) is a no-op on anything shorter than 8 chars -
+      # Crystal's `key[-8..]` would raise, so the guard mirrors it.
+      if short_format && !found.empty?
+        found = found.map { |key| key.size > 8 ? key[-8..] : key }
       end
       found
     end
@@ -572,12 +582,18 @@ module Krikri
 
     # Ansible.builtin.apt_key's all_keys, mirrored: every key id in
     # the effective keyring, via `apt-key adv --list-public-keys
-    # --keyid-format=long` + parse_output_for_keys. Returns nil when the
-    # listing itself fails (Ansible fails the task with "Unable to
-    # list public keys"). Returns an empty list without touching apt-key
-    # at all when a keyring: file doesn't exist yet - see the comment in
-    # #key_present? for the empty-keybox side effect being avoided.
-    private def all_keys : Array(String)?
+    # --keyid-format=long` + parse_output_for_keys - and, like it, the
+    # list is shortened to last-8 ids whenever the module runs in
+    # short_format (an 8-char id: - the shortening lands in the
+    # before/after arrays of every result, success or failure, which is
+    # the shape ansible reports; cowops.debian-mysql's 8-char MySQL id
+    # showed krikri's unshortened 16-char ids in those arrays, issue
+    # #1132). Returns nil when the listing itself fails (Ansible fails
+    # the task with "Unable to list public keys"). Returns an empty
+    # list without touching apt-key at all when a keyring: file doesn't
+    # exist yet - see the comment in #key_present? for the
+    # empty-keybox side effect being avoided.
+    private def all_keys(short_format : Bool) : Array(String)?
       if keyring = @params["keyring"]?
         exists = remote_exec("test -e #{shell_single_quote(keyring)}")
         return [] of String if exists[:exit_code] != 0
@@ -586,27 +602,21 @@ module Krikri
       result = remote_exec("apt-key #{keyring_flag}adv --list-public-keys --keyid-format=long 2>/dev/null")
       return nil if result[:exit_code] != 0
 
-      parse_output_for_keys(result[:stdout])
+      parse_output_for_keys(result[:stdout], short_format)
     end
 
-    # Ansible.builtin.apt_key never compares an 8-char short id
-    # against the raw listing: its all_keys passes short_format into
-    # parse_output_for_keys, whose shorten_key_ids reduces EVERY listed
-    # key to its last 8 hex chars before the membership check - the
-    # short id is by definition the last 8 chars of the 16-char long id
-    # (or 40-char fingerprint) that --keyid-format=long prints. Exact
-    # equality against the unshortened listing therefore can never match
-    # a short id, and ANY short-format id: failed post-add verification
-    # even after a real, successful add (found live via
-    # mrlesmithjr.docker's id: 0EBFCD88 from download.docker.com and
-    # alannix_lw.lacework_agent_ansible_role's id: EE0CC692 from
-    # keyserver.ubuntu.com). An ends-with match is the same comparison
-    # without pre-shortening, and also covers mixed-length listings (the
-    # colon-format fallback can put a full 40-char fingerprint in the
-    # same array as 16-char long ids) plus a hypothetical 8-char element
-    # (trivial exact match). Both sides are already uppercase hex
-    # (parse_key_id uppercases; gpg prints uppercase), but upcasing here
-    # costs nothing and keeps the comparison case-insensitive.
+    # Ansible.builtin.apt_key compares the wanted id against the
+    # all_keys listing, which its parse_output_for_keys has already
+    # shortened when the module runs in short_format (an 8-char id:) -
+    # the short id is by definition the last 8 chars of the 16-char
+    # long id (or 40-char fingerprint) that --keyid-format=long prints.
+    # The ends-with match is the same comparison without assuming the
+    # list was pre-shortened, and also covers mixed-length listings (a
+    # 40-char fingerprint element beside 16-char long ids) plus a
+    # hypothetical 8-char element (trivial exact match). Both sides are
+    # already uppercase hex (parse_key_id uppercases; gpg prints
+    # uppercase), but upcasing here costs nothing and keeps the
+    # comparison case-insensitive.
     private def key_id_in_keys?(parsed : NamedTuple(key_id: String, fingerprint: String, short_key_id: String, short_format: Bool), keys : Array(String)) : Bool
       wanted = parsed[:short_format] ? parsed[:short_key_id] : parsed[:fingerprint]
       keys.any? { |key| key.upcase.ends_with?(wanted) }
@@ -666,7 +676,7 @@ module Krikri
       # helper is only called on Ansible's add path... which never calls it
       # either), membership check via key_id_in_keys?, del by SHORT id,
       # then an after re-list only when a key was actually removed.
-      before_keys = all_keys
+      before_keys = all_keys(parsed[:short_format])
       return PluginResult.new(changed: false, failed: true, msg: "Unable to list public keys") unless before_keys
 
       unless key_id_in_keys?(parsed, before_keys)
@@ -680,7 +690,7 @@ module Krikri
         return PluginResult.new(changed: false, failed: true, msg: "apt-key del failed: #{result[:stderr]}")
       end
 
-      after_keys = all_keys
+      after_keys = all_keys(parsed[:short_format])
       return PluginResult.new(changed: true, failed: true, msg: "Unable to list public keys") unless after_keys
       if key_id_in_keys?(parsed, after_keys)
         return PluginResult.new(changed: true, failed: true, msg: "apt-key did not return an error, but the key was not removed (check that the id is correct and *not* a subkey)")
