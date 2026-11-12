@@ -374,3 +374,152 @@ describe "role-local test plugins receiving integers wider than Int64" do
     FileUtils.rm_rf(root) if root
   end
 end
+
+# The load's own import deprecations (issue #1180): ansible-core 2.21's
+# `ansible.module_utils._text` shim deprecates every name a plugin file
+# imports from it AT IMPORT - for a file that loads fine and for one
+# whose import later dies - and real's task-result display prints those
+# [DEPRECATION WARNING] lines (behind the one-time "can be disabled"
+# hint) right after the load's "Skipping plugin" warning block.
+# constrict0r.develmicro's check run (round 29908360) lost exactly those
+# three lines: its unify module never runs under --check, so the broken
+# test_plugins/util.py load was real's only source for them.
+describe "role-local test_plugins import deprecation display (issue #1180)" do
+  it "prints the load's warnings first and the fired shim deprecations second, in load order" do
+    root = File.tempname("test-plugins-import-deprecations")
+    begin
+      Dir.mkdir_p(File.join(root, "roles", "myrole", "test_plugins"))
+      Dir.mkdir_p(File.join(root, "roles", "myrole", "tasks"))
+      # The multi-file shape, live-verified vs ansible-playbook 2.21.6:
+      # both broken files' pre-failure `_text` imports deprecate, so does
+      # the good file's (a successful import fires the shim the same
+      # way), and the display shows every [WARNING] before every
+      # deprecation, files in sorted-name order (aaa, good, zzz).
+      File.write(File.join(root, "roles", "myrole", "test_plugins", "aaa_broken.py"), <<-PYTHON)
+        from ansible.module_utils._text import to_bytes
+        from collections import Sequence
+
+
+        class TestModule(object):
+            def tests(self):
+                return {"aaa_broken": lambda value: True}
+        PYTHON
+      File.write(File.join(root, "roles", "myrole", "test_plugins", "good.py"), <<-PYTHON)
+        from ansible.module_utils._text import to_text
+
+
+        class TestModule(object):
+            def tests(self):
+                return {"probe": lambda value: True}
+        PYTHON
+      File.write(File.join(root, "roles", "myrole", "test_plugins", "zzz_broken.py"), <<-PYTHON)
+        from ansible.module_utils._text import to_native
+        from collections import Sequence
+
+
+        class TestModule(object):
+            def tests(self):
+                return {"zzz_broken": lambda value: True}
+        PYTHON
+      File.write(File.join(root, "roles", "myrole", "tasks", "main.yml"), <<-YAML)
+        - name: use the role's test plugin
+          ansible.builtin.debug:
+            msg: "probe result"
+          when: "1 is probe"
+        YAML
+
+      File.write(File.join(root, "pb.yml"), <<-YAML)
+        - hosts: localhost
+          connection: local
+          gather_facts: false
+          roles:
+            - myrole
+        YAML
+      # --check is where round 29908360 saw the loss: the unify module
+      # never runs, so the plugin load is the only source of the lines.
+      io = IO::Memory.new
+      status = Process.run(BINARY, ["-i", INVENTORY, "--check", "pb.yml"], output: io, error: io, chdir: root)
+      output = io.to_s
+
+      status.success?.must_equal(true, output)
+      output.must_include(%("msg": "probe result"), output)
+      test_plugins = File.join(root, "roles", "myrole", "test_plugins")
+      hint = "[WARNING]: Deprecation warnings can be disabled by setting `deprecation_warnings=False` in ansible.cfg."
+      to_bytes_text = "Importing 'to_bytes' from 'ansible.module_utils._text' is deprecated. " \
+                      "This feature will be removed from ansible-core version 2.24. " \
+                      "Use ansible.module_utils.common.text.converters instead."
+      to_text_text = "Importing 'to_text' from 'ansible.module_utils._text' is deprecated. " \
+                     "This feature will be removed from ansible-core version 2.24. " \
+                     "Use ansible.module_utils.common.text.converters instead."
+      to_native_text = "Importing 'to_native' from 'ansible.module_utils._text' is deprecated. " \
+                       "This feature will be removed from ansible-core version 2.24. " \
+                       "Use ansible.module_utils.common.text.converters instead."
+      aaa_idx = output.index("[WARNING]: Skipping plugin (#{File.join(test_plugins, "aaa_broken.py")}), cannot load: cannot import name 'Sequence' from 'collections'")
+      zzz_idx = output.index("[WARNING]: Skipping plugin (#{File.join(test_plugins, "zzz_broken.py")}), cannot load: cannot import name 'Sequence' from 'collections'")
+      hint_idx = output.index(hint)
+      bytes_idx = output.index(to_bytes_text)
+      text_idx = output.index(to_text_text)
+      native_idx = output.index(to_native_text)
+      flunk("expected the load's warnings then its deprecations in sorted-file order within:\n#{output}") unless aaa_idx && zzz_idx && hint_idx && bytes_idx && text_idx && native_idx &&
+                                                                                                                 aaa_idx < zzz_idx && zzz_idx < hint_idx && hint_idx < bytes_idx &&
+                                                                                                                 bytes_idx < text_idx && text_idx < native_idx
+    ensure
+      FileUtils.rm_rf(root) if root
+    end
+  end
+
+  it "prints the trailer block constrict0r.develmicro's check run lost beside its unloadable util.py" do
+    root = File.tempname("test-plugins-issue-1180")
+    begin
+      Dir.mkdir_p(File.join(root, "roles", "myrole", "test_plugins"))
+      Dir.mkdir_p(File.join(root, "roles", "myrole", "tasks"))
+      # constrict0r.unify's test_plugins/util.py verbatim shape (round
+      # 29908360): the two `_text` shim imports execute - and deprecate -
+      # before `from collections import Sequence` kills the import, and
+      # real still prints both lines behind the hint after the load's
+      # "Skipping plugin" warning, --check runs included.
+      File.write(File.join(root, "roles", "myrole", "test_plugins", "util.py"), <<-PYTHON)
+        from ansible.module_utils._text import to_bytes
+        from ansible.module_utils._text import to_text
+        from collections import Sequence
+
+
+        class TestModule(object):
+            def tests(self):
+                return {"variable_empty": lambda value: value == ""}
+        PYTHON
+      File.write(File.join(root, "roles", "myrole", "tasks", "main.yml"), <<-YAML)
+        - name: evaluate a when that needs the role's test plugin
+          ansible.builtin.debug:
+            msg: "never reached"
+          when: "1 is variable_empty"
+        YAML
+
+      status, output = run_playbook(root, <<-YAML)
+        - hosts: localhost
+          connection: local
+          gather_facts: false
+          roles:
+            - myrole
+        YAML
+
+      status.success?.must_equal(false, output)
+      output.must_include("No test named 'variable_empty'", output)
+      hint = "[WARNING]: Deprecation warnings can be disabled by setting `deprecation_warnings=False` in ansible.cfg."
+      to_bytes_text = "Importing 'to_bytes' from 'ansible.module_utils._text' is deprecated. " \
+                      "This feature will be removed from ansible-core version 2.24. " \
+                      "Use ansible.module_utils.common.text.converters instead."
+      to_text_text = "Importing 'to_text' from 'ansible.module_utils._text' is deprecated. " \
+                     "This feature will be removed from ansible-core version 2.24. " \
+                     "Use ansible.module_utils.common.text.converters instead."
+      skip_idx = output.index("[WARNING]: Skipping plugin (#{File.join(root, "roles", "myrole", "test_plugins", "util.py")}), cannot load: cannot import name 'Sequence' from 'collections'")
+      hint_idx = output.index(hint)
+      bytes_idx = output.index(to_bytes_text)
+      text_idx = output.index(to_text_text)
+      flunk("expected Skipping plugin -> hint -> to_bytes -> to_text within:\n#{output}") unless skip_idx && hint_idx && bytes_idx && text_idx &&
+                                                                                                 skip_idx < hint_idx && hint_idx < bytes_idx && bytes_idx < text_idx
+    ensure
+      FileUtils.rm_rf(root) if root
+    end
+  end
+end
