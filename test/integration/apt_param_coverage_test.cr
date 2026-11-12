@@ -131,6 +131,14 @@ end
 # DPkg::Lock::Timeout=60 install tree=2.0.2-1`.
 DEFAULT_DPKG_OPTIONS = "-o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold -o DPkg::Lock::Timeout=60"
 
+# The upgrade-command specs below pin the apt-get backend - what a host
+# WITHOUT aptitude gets - so any `upgrade: yes` run passes
+# `_aptitude_paths` pointing at a path that never exists: real apt.py
+# prefers aptitude for safe/yes/full whenever it is installed, and a
+# dev/CI box that happens to have one would otherwise reroute the
+# upgrade onto the real binary instead of this file's shimmed apt-get.
+private NO_APTITUDE = "/nonexistent/krikri-spec-no-aptitude"
+
 describe "apt plugin - name: parsing (empty names, repr-looking strings)" do
   # ansible-playbook 2.19.11, live-verified in check mode
   # (2026-09-13): `apt: {name: ""}` fails with "No package matching ''
@@ -415,6 +423,7 @@ describe "apt plugin - parameter coverage" do
     it "does not pass only_upgrade or allow_change_held_packages on upgrade (upgrade() takes neither)" do
       with_apt_param_shims("ii") do |env, log|
         result = PluginSpecHelper.run("apt", {
+          "_aptitude_paths"            => NO_APTITUDE,
           "upgrade"                    => "yes",
           "only_upgrade"               => "true",
           "allow_change_held_packages" => "true",
