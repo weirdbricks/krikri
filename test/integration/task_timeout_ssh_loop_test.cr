@@ -40,11 +40,21 @@ require "socket"
 #   podman run -d --name kkt-sshd -p 127.0.0.1:2224:22 ubuntu:22.04 \
 #     sh -c 'while :; do sleep 3600; done'
 #   podman exec kkt-sshd bash -c 'apt-get update \
-#     && apt-get install -y openssh-server python3 \
-#     && mkdir -p /root/.ssh && chmod 700 /root/.ssh'
+#     && apt-get install -y openssh-server python3 libyaml-0-2 \
+#     && mkdir -p /root/.ssh && chmod 700 /root/.ssh \
+#     && echo "MaxAuthTries 30" >> /etc/ssh/sshd_config'
 #   podman cp /tmp/kkt-key.pub kkt-sshd:/root/.ssh/authorized_keys
 #   podman exec kkt-sshd ssh-keygen -A
+#   podman exec kkt-sshd mkdir -p /run/sshd
 #   podman exec -d kkt-sshd /usr/sbin/sshd -D
+#
+# libyaml-0-2 is not optional: every krikri plugin binary links it
+# (krikri-role-tester's own podman images install it for the same
+# reason), so a remote without it dies in the dynamic loader on every
+# plugin upload. MaxAuthTries 30 keeps the default 6 from being
+# exhausted by a controller's agent-loaded keys before the explicit
+# identity is offered (the IdentitiesOnly=yes inventory arg keeps the
+# test's own connections immune either way).
 #
 # The same shape runs against any sshd reachable at
 # KRIKRI_TEST_SSHD_HOST/PORT with KRIKRI_TEST_SSHD_KEY authorized for

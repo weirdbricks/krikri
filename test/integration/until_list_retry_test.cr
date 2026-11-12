@@ -4,11 +4,14 @@ private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 
-private def run_playbook(yaml : String)
+private def run_playbook(yaml : String, check : Bool = false)
   playbook = File.tempname("until-list-retry", ".yml")
   File.write(playbook, yaml)
+  args = ["-i", INVENTORY]
+  args << "--check" if check
+  args << playbook
   output = IO::Memory.new
-  status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+  status = Process.run(BINARY, args, output: output, error: output)
   {status, output.to_s}
 ensure
   File.delete(playbook) if playbook && File.exists?(playbook)
@@ -55,5 +58,33 @@ describe "until: list-form retry loop" do
     ensure
       File.delete(counter) if counter && File.exists?(counter)
     end
+  end
+
+  it "retries each failing item independently in check mode too" do
+    status, output = run_playbook(<<-YAML, check: true)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: fail per item
+            ansible.builtin.fail:
+              msg: boom
+            loop:
+              - one
+              - two
+            register: result
+            retries: 3
+            until: '"failed" not in result'
+            delay: 0
+      YAML
+
+    status.exit_code.must_equal(2)
+    # Real's per-item attempt loop runs under --check as well (issue
+    # #1175): every item gets its own FAILED - RETRYING lines and its
+    # own attempts key - the pre-fix check-mode gate skipped the loop
+    # entirely, so a check-mode run dropped both.
+    output.scan("FAILED - RETRYING: [localhost]: fail per item").size.must_equal(6)
+    output.must_include(%(failed: [localhost] (item=one) => {"ansible_loop_var": "item", "attempts": 3, "changed": false, "item": "one", "msg": "boom"}))
+    output.must_include(%(failed: [localhost] (item=two) => {"ansible_loop_var": "item", "attempts": 3, "changed": false, "item": "two", "msg": "boom"}))
   end
 end

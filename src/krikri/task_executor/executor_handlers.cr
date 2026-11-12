@@ -773,11 +773,12 @@ module Krikri
     # (issue #620, live-verified vs real ansible-playbook). Kept here
     # rather than in execute_handler_internal so a looped handler retries
     # each loop item independently, the way Ansible's per-item attempt
-    # loop does. The check-mode guard mirrors the regular-task call site
-    # (executor_run_loop's own until: dispatch): check mode never runs
-    # attempts, so there is nothing to retry.
+    # loop does. No check-mode guard: real's handler attempt loop runs
+    # under --check too (issue #1175, live-verified vs 2.21.6: a handler
+    # with until:/retries: prints FAILED - RETRYING lines and a fatal
+    # with the attempts key in check mode).
     private def execute_handler_plugin_once(handler : Task, host : Host, vars_context : Hash(String, JSON::Any)) : JSON::Any
-      if (until_condition = handler.until_condition) && !resolve_task_check_mode(handler, vars_context) && !handler_skipped_before_attempt?(handler, host, vars_context)
+      if (until_condition = handler.until_condition) && !handler_skipped_before_attempt?(handler, host, vars_context)
         result = run_until_retries(handler, host, vars_context, until_condition, attempt_body: -> { execute_handler_plugin_attempt(handler, host, vars_context) })
         # A handler attempt always returns a result (never nil), but the
         # shared core is typed for the regular-task body's nilable return.
