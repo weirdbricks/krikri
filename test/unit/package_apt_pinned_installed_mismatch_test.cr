@@ -93,4 +93,23 @@ describe "package:/apt version pin vs installed version mismatch" do
       result.as_h.has_key?("cache_update_time").must_equal(true)
     end
   end
+
+  # apt.py claims updated_cache unconditionally in check mode once the
+  # refresh was due (`if module.check_mode or updated_cache_time !=
+  # post_cache_update_time: updated_cache = True`) - the update itself is
+  # skipped, but every result main() decorates with the cache keys carries
+  # cache_updated: true (live-verified vs ansible-playbook --check with
+  # update_cache: true, AAROC.AAROC_fg-api's "Ensure system prerequisites"
+  # failure line, issue #1142).
+  it "claims the due cache refresh on the check-mode pin failure like real" do
+    with_pinned_mismatch_shims(PluginSpecHelper.tmp_path("pin-mismatch-check-due-shims")) do
+      result = PluginSpecHelper.run("package",
+        {"name" => "#{PIN_MISMATCH_NAME}=#{PIN_MISMATCH_PIN}", "state" => "present", "use" => "apt",
+         "update_cache" => "true", "_ansible_check_mode" => "true"})
+
+      result["failed"].as_bool.must_equal(true)
+      result["msg"].as_s.must_equal("no available installation candidate for #{PIN_MISMATCH_NAME}=#{PIN_MISMATCH_PIN}")
+      result["cache_updated"].as_bool.must_equal(true)
+    end
+  end
 end

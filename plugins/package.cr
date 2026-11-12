@@ -2049,6 +2049,16 @@ module Krikri
       # Computed BEFORE the refresh call below: its nil return can't
       # distinguish ran from skipped.
       cache_refreshed = !@check_mode && (update_cache || cache_valid_time > 0) && apt_cache_stale?(cache_valid_time, ->remote_exec(String))
+      # apt.py claims updated_cache unconditionally in check mode whenever the
+      # refresh was DUE (`if module.check_mode or updated_cache_time !=
+      # post_cache_update_time: updated_cache = True`): check mode skips the
+      # update itself but still decorates every result main() attaches the
+      # cache keys to with cache_updated: true (live-verified: the
+      # round-29907028 check phase's "no available installation candidate"
+      # failure carries it - issue #1142). Without a refresh request (no
+      # update_cache:/cache_valid_time:) the claim stays false, real's
+      # updated_cache = False default.
+      check_cache_claimed = @check_mode && (update_cache || cache_valid_time > 0) && apt_cache_stale?(cache_valid_time, ->remote_exec(String))
       if failure = apt_update_cache_before_operation(
            update_cache, cache_valid_time,
            @params["update_cache_retries"]?.try(&.to_i) || AptLockRetry::DEFAULT_UPDATE_CACHE_RETRIES,
@@ -2152,7 +2162,10 @@ module Krikri
                 changed: false,
                 failed: true,
                 msg: "no available installation candidate for #{bad_version}",
-                cache_updated: false,
+                # real's check-mode updated_cache claim (see
+                # check_cache_claimed above), not this backend's own
+                # did-the-refresh-run (it never runs in check mode).
+                cache_updated: check_cache_claimed,
                 cache_update_time: apt_cache_mtime(->remote_exec(String)),
                 key_order: %w[cache_updated cache_update_time failed msg]
               )
