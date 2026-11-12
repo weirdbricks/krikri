@@ -26,8 +26,10 @@ module Krikri
   #   auto_install_module_deps (no-op by architecture - a native Crystal
   #   plugin has no python3-apt dependency for it to govern),
   #   default_release, dpkg_options, fail_on_autoremove, force,
-  #   force_apt_get (no-op by construction - this plugin always shells
-  #   out to apt-get, it has no aptitude path to steer away from),
+  #   force_apt_get (steers backend selection: real apt.py prefers
+  #   aptitude for safe/yes/full upgrades whenever aptitude is installed,
+  #   and force_apt_get is what pins it back onto apt-get - see
+  #   run_upgrade_backend),
   #   install_recommends, only_upgrade, policy_rc_d, purge.
   #
   # Examples:
@@ -121,9 +123,10 @@ module Krikri
     # This plugin's underscore-prefixed spec seams (same family as
     # apt_repository.cr's own `_apt_get_paths`/`_sources_list`): never
     # set by real playbooks (Ansible has no such params and would reject
-    # them), only by the specs, which need to drive the no-apt-get and
-    # python3-apt-absent ladder paths on a dev box that really has both.
-    private SPEC_SEAMS = {"_policy_rc_d_path", "_apt_get_paths", "_python_apt_absent"}
+    # them), only by the specs, which need to drive the no-apt-get,
+    # python3-apt-absent and aptitude-backend paths on a dev box that
+    # really has (or lacks) the real binaries.
+    private SPEC_SEAMS = {"_policy_rc_d_path", "_apt_get_paths", "_python_apt_absent", "_aptitude_paths"}
 
     property? check_mode : Bool
 
@@ -157,10 +160,12 @@ module Krikri
     # default (normally install-recommends=yes) applies untouched.
     @dpkg_options = "force-confdef,force-confold"
     @apt_get_bin : String? = nil
+    @aptitude_bin : String? = nil
     @apt_mark_bin : String? = nil
     @policy_rc_d : Int32? = nil
     @purge = false
     @force = false
+    @force_apt_get = false
     @fail_on_autoremove = false
     @only_upgrade = false
     @allow_unauthenticated = false
@@ -433,9 +438,10 @@ module Krikri
       # install_recommends/-o APT::Install-Recommends=..., and
       # dpkg_options (comma-separated, each expanded to its own -o
       # Dpkg::Options::=--<opt> exactly like apt.py's
-      # expand_dpkg_options). `force_apt_get` and
-      # `auto_install_module_deps` are documented no-ops here (see the
-      # class comment above).
+      # expand_dpkg_options). `auto_install_module_deps` is a documented
+      # no-op here; `force_apt_get` is load-bearing for upgrade modes -
+      # it is what keeps real apt.py on apt-get instead of aptitude.
+      @force_apt_get = true?(@params["force_apt_get"]?)
       @dpkg_options = @params["dpkg_options"]? || "force-confdef,force-confold"
       @policy_rc_d = @params["policy_rc_d"]?.try(&.to_i?)
       @policy_rc_d_path = @params["_policy_rc_d_path"]? || "/usr/sbin/policy-rc.d"
@@ -783,70 +789,53 @@ module Krikri
         end
       end
 
-      # `upgrade: safe|yes|dist|full` with no `name:` -
-      # Ansible's apt module maps safe/yes to a plain
-      # `apt-get upgrade --with-new-pkgs` and dist/full to
-      # `apt-get dist-upgrade`, with `--auto-remove` appended when
-      # `autoremove: yes` is also given (see the cleanup block above).
-      # The task registers this result and computes its own
-      # `changed_when` from `.stdout` (`'0 upgraded, 0 newly installed,
-      # 0 to remove' not in apt_upgrade_response.stdout`), so the raw
-      # command output has to actually reach the registered var's
-      # `stdout` field, not just inform `changed`/`msg` here - passed
-      # through via the `stdout:` kwarg the same way the package-install
-      # path below already does.
+      # `upgrade: safe|yes|dist|full` with no `name:` - dispatched through
+      # run_upgrade_backend, which mirrors apt.py's upgrade(): aptitude is
+      # preferred for safe/yes/full whenever it is installed, dist always
+      # stays on apt-get. The task registers this result and computes its
+      # own `changed_when` from `.stdout`, so the raw command output has
+      # to actually reach the registered var's `stdout` field, not just
+      # inform `changed`/`msg` here - passed through via the `stdout:`
+      # kwarg the same way the package-install path below already does.
       upgrade_stdout = ""
       upgrade_stderr = ""
       upgrade_zero_effect = false
+      upgrade_warnings = [] of String
       if upgrade
-        dist = upgrade == "dist" || upgrade == "full"
-        # Real upgrade()'s EXACT command format: "%s -y %s %s %s %s %s %s
-        # %s" over (apt_cmd_path, dpkg_options, force_yes,
-        # fail_on_autoremove, allow_unauthenticated, allow_downgrade,
-        # check_arg, upgrade_command) - the empty flag fields KEEP their
+        # Real upgrade()'s EXACT command format lives in
+        # run_upgrade_backend - the empty flag fields KEEP their
         # separators, and upgrade_command itself carries a trailing space
-        # whenever autoremove is unset ("dist-upgrade " / "upgrade
-        # --with-new-pkgs "). That exact string is what Ansible's failure
-        # msg quotes ("'%s %s' failed: %s" over APT_GET_CMD and
-        # upgrade_command), so the spacing is load-bearing for wording
-        # parity, not cosmetics. Like install(), the command RUNS in
-        # check mode too - with --simulate - and its output is the
-        # registered stdout (round-99500x apt_check_upgrade capture).
-        subcmd = dist ? "dist-upgrade" : "upgrade --with-new-pkgs"
-        upgrade_command = "#{subcmd} #{autoremove ? "--auto-remove" : ""}"
-        cmd = "#{apt_get_bin} -y #{real_dpkg_options(lock_timeout)} #{@force ? "--force-yes" : ""} #{@fail_on_autoremove ? "--no-remove" : ""} #{@allow_unauthenticated ? "--allow-unauthenticated" : ""} #{@allow_downgrade ? "--allow-downgrades" : ""} #{@check_mode ? "--simulate" : ""} #{upgrade_command}"
-        cmd += " -t #{naive_single_quote(@default_release.not_nil!)}" if @default_release
-
-        # `apt-get upgrade`/`dist-upgrade` contend for the dpkg lock -
-        # wrap with lock_timeout retry (same rationale as the
-        # autoremove/autoclean wrap above), inside the same
-        # policy-rc.d lifecycle Ansible's upgrade() uses.
-        result = with_policy_rc_d { apt_with_lock_retry("#{apt_environment_prefix} #{cmd}", lock_timeout, ->remote_exec(String)) }
-        if result[:exit_code] != 0
+        # whenever autoremove is unset on the apt-get paths
+        # ("dist-upgrade " / "upgrade --with-new-pkgs "). That exact
+        # string is what Ansible's failure msg quotes ("'%s %s' failed:
+        # %s" over the resolved apt_cmd and upgrade_command), so the
+        # spacing is load-bearing for wording parity, not cosmetics. Like
+        # install(), the command RUNS in check mode too - with --simulate
+        # - and its output is the registered stdout (round-99500x
+        # apt_check_upgrade capture).
+        run = run_upgrade_backend(upgrade, autoremove, lock_timeout)
+        if run[:exit_code] != 0
           # Real upgrade() failure: fail_json(msg="'%s %s' failed: %s"
           # % (apt_cmd, upgrade_command, err), stdout=out, rc=rc) - NO
           # stderr key at all (round-99500x capture).
-          return PluginResult.new(
+          failure = PluginResult.new(
             changed: false,
             failed: true,
-            msg: "'#{apt_get_bin} #{upgrade_command}' failed: #{result[:stderr]}",
-            stdout: result[:stdout],
-            rc: result[:exit_code],
+            msg: "'#{run[:apt_cmd]} #{run[:upgrade_command]}' failed: #{run[:stderr]}",
+            stdout: run[:stdout],
+            rc: run[:exit_code],
             key_order: ["stdout", "rc", "failed", "msg"]
           )
+          attach_upgrade_warnings(failure, run[:warnings])
+          return failure
         end
 
-        upgrade_stdout = result[:stdout]
-        upgrade_stderr = result[:stderr]
-        # Ansible screenscrapes APT_GET_ZERO - "\n0 upgraded, 0
-        # newly installed, 0 to remove" with a LEADING newline. The
-        # previous check here omitted the newline, so any summary
-        # whose upgraded-count ends in 0 ("10 upgraded, 0 newly
-        # installed, 0 to remove ...") matched the zero-string at
-        # offset 1 and falsely reported a no-op upgrade.
-        upgrade_zero_effect = result[:stdout].includes?("\n0 upgraded, 0 newly installed, 0 to remove")
+        upgrade_stdout = run[:stdout]
+        upgrade_stderr = run[:stderr]
+        upgrade_zero_effect = run[:zero_effect]
         changed = !upgrade_zero_effect
-        messages << result[:stdout]
+        messages << run[:stdout]
+        upgrade_warnings = run[:warnings]
       end
 
       # `deb:` - install a local .deb file (or a URL, downloaded first),
@@ -906,7 +895,7 @@ module Krikri
             # anything else is exit_json(changed=True, msg=out,
             # stdout=out, stderr=err, diff=diff).
             exit_keys = upgrade_zero_effect ? ["changed", "msg", "stdout", "stderr", "stdout_lines", "stderr_lines"] : ["changed", "msg", "stdout", "stderr", "diff", "stdout_lines", "stderr_lines"]
-            return PluginResult.new(
+            upgraded_result = PluginResult.new(
               changed: changed,
               failed: false,
               msg: msg,
@@ -915,6 +904,8 @@ module Krikri
               diff: upgrade_zero_effect ? nil : apt_install_diff(upgrade_stdout),
               key_order: exit_keys
             )
+            attach_upgrade_warnings(upgraded_result, upgrade_warnings)
+            return upgraded_result
           end
           return PluginResult.new(
             changed: changed,
@@ -993,7 +984,7 @@ module Krikri
             # anything else is exit_json(changed=True, msg=out,
             # stdout=out, stderr=err, diff=diff).
             exit_keys = upgrade_zero_effect ? ["changed", "msg", "stdout", "stderr", "stdout_lines", "stderr_lines"] : ["changed", "msg", "stdout", "stderr", "diff", "stdout_lines", "stderr_lines"]
-            return PluginResult.new(
+            upgraded_result = PluginResult.new(
               changed: changed,
               failed: false,
               msg: msg,
@@ -1002,6 +993,8 @@ module Krikri
               diff: upgrade_zero_effect ? nil : apt_install_diff(upgrade_stdout),
               key_order: exit_keys
             )
+            attach_upgrade_warnings(upgraded_result, upgrade_warnings)
+            return upgraded_result
           end
           return PluginResult.new(
             changed: changed,
@@ -1836,43 +1829,38 @@ module Krikri
     # reports a clean upgrade. Found via MonolithProjects.system_update's
     # own "Update Debian/Ubuntu system" task (round 601048).
     private def handle_wildcard_latest(messages : Array(String), autoremove : Bool, lock_timeout : Int32) : PluginResult
-      # Same real-upgrade() command shape as the `upgrade:` block above
-      # (identical format string, `upgrade --with-new-pkgs <autoremove>`
-      # upgrade_command included).
-      upgrade_command = "upgrade --with-new-pkgs #{autoremove ? "--auto-remove" : ""}"
-      cmd = "#{apt_get_bin} -y #{real_dpkg_options(lock_timeout)} #{@force ? "--force-yes" : ""} #{@fail_on_autoremove ? "--no-remove" : ""} #{@allow_unauthenticated ? "--allow-unauthenticated" : ""} #{@allow_downgrade ? "--allow-downgrades" : ""} #{@check_mode ? "--simulate" : ""} #{upgrade_command}"
-      cmd += " -t #{naive_single_quote(@default_release.not_nil!)}" if @default_release
-
-      result = with_policy_rc_d { apt_with_lock_retry("#{apt_environment_prefix} #{cmd}", lock_timeout, ->remote_exec(String)) }
-      if result[:exit_code] != 0
-        return PluginResult.new(
+      # apt.py's main() calls upgrade(module, 'yes', ...) here - the SAME
+      # dispatch run_upgrade_backend implements, aptitude included.
+      run = run_upgrade_backend("yes", autoremove, lock_timeout)
+      if run[:exit_code] != 0
+        failure = PluginResult.new(
           changed: false,
           failed: true,
-          msg: "'#{apt_get_bin} #{upgrade_command}' failed: #{result[:stderr]}",
-          stdout: result[:stdout],
-          rc: result[:exit_code],
+          msg: "'#{run[:apt_cmd]} #{run[:upgrade_command]}' failed: #{run[:stderr]}",
+          stdout: run[:stdout],
+          rc: run[:exit_code],
           key_order: ["stdout", "rc", "failed", "msg"]
         )
+        attach_upgrade_warnings(failure, run[:warnings])
+        return failure
       end
 
-      # Same APT_GET_ZERO screenscrape as the `upgrade:` command path
-      # above - a leading-newline match so a summary whose upgraded
-      # count ends in 0 ("10 upgraded, 0 newly installed, 0 to remove")
-      # doesn't false-match at an inner offset.
-      zero_effect = result[:stdout].includes?("\n0 upgraded, 0 newly installed, 0 to remove")
-      messages << result[:stdout]
+      zero_effect = run[:zero_effect]
+      messages << run[:stdout]
       # Real apt.py's upgrade(): exit_json(changed=True, msg=out,
-      # stdout=out, stderr=err, diff=diff) or its APT_GET_ZERO no-effect
-      # exit without diff (round-99500x captures).
-      PluginResult.new(
+      # stdout=out, stderr=err, diff=diff) or its no-effect exit without
+      # diff (round-99500x captures).
+      wildcard_result = PluginResult.new(
         changed: !zero_effect,
         failed: false,
         msg: messages.join(", "),
-        stdout: result[:stdout],
-        stderr: result[:stderr],
-        diff: zero_effect ? nil : apt_install_diff(result[:stdout]),
+        stdout: run[:stdout],
+        stderr: run[:stderr],
+        diff: zero_effect ? nil : apt_install_diff(run[:stdout]),
         key_order: zero_effect ? ["changed", "msg", "stdout", "stderr", "stdout_lines", "stderr_lines"] : ["changed", "msg", "stdout", "stderr", "diff", "stdout_lines", "stderr_lines"]
       )
+      attach_upgrade_warnings(wildcard_result, run[:warnings])
+      wildcard_result
     end
 
     # Handle upgrading packages to latest
@@ -2213,6 +2201,119 @@ module Krikri
         path = probe[:stdout].strip
         path.empty? ? "apt-get" : path
       end
+    end
+
+    # Real apt.py's APTITUDE_CMD: get_bin_path("aptitude", False) -
+    # resolved absolute path, or nil when the host has no aptitude at
+    # all. `_aptitude_paths` is a spec seam (same underscore-prefixed
+    # family as `_apt_get_paths`, never set by real playbooks) letting a
+    # spec point the probe at a fake binary; each override path is
+    # probed with `test -x` since `command -v` only finds PATH entries.
+    private def aptitude_bin : String?
+      if override = @params["_aptitude_paths"]?
+        return override.split(',').map(&.strip).reject(&.empty?).find do |path|
+          remote_exec("test -x #{shell_single_quote(path)}")[:exit_code] == 0
+        end
+      end
+      unless probed = @aptitude_bin
+        probe = remote_exec("command -v aptitude")
+        probed = probe[:stdout].strip.presence
+        @aptitude_bin = probed
+      end
+      probed
+    end
+
+    # apt.py's upgrade(): the backend is NOT always apt-get. main()
+    # resolves APTITUDE_CMD once (`get_bin_path("aptitude", False)`) and
+    # sets `use_apt_get = p['force_apt_get']`, forced true only when
+    # aptitude is absent - so with aptitude installed, safe/yes run
+    # `aptitude safe-upgrade` and full runs `aptitude full-upgrade`,
+    # while dist ALWAYS stays on `apt-get dist-upgrade`. The two
+    # backends disagree on the result, not just the command: aptitude's
+    # own zero-effect summary is APTITUDE_ZERO ("\n0 packages upgraded,
+    # 0 newly installed, 0 to remove"), its force flag is
+    # "--assume-yes --allow-untrusted", it takes neither --no-remove nor
+    # --allow-downgrades (apt.py warns and drops both), and its command
+    # string never carries the `--auto-remove` suffix the apt-get
+    # branches fold in. thermistor.common's base packages install
+    # aptitude, so its WARM `upgrade: safe` runs through aptitude while
+    # the COLD run (aptitude not yet installed) used apt-get - and the
+    # two binaries treat Ubuntu phased updates OPPOSITELY (apt-get
+    # defers them, aptitude installs them regardless), which is exactly
+    # the warm-run ansible=changed / krikri=ok divergence of issue
+    # #1141. Returns everything the two upgrade call sites need: the
+    # resolved binary (quoted verbatim by the failure msg), the exact
+    # upgrade_command string, the raw run, the zero-effect screenscrape
+    # verdict for whichever backend ran, and any aptitude-only warnings.
+    private def run_upgrade_backend(mode : String, autoremove : Bool, lock_timeout : Int32) : NamedTuple(
+      apt_cmd: String, upgrade_command: String, exit_code: Int32, stdout: String,
+      stderr: String, zero_effect: Bool, warnings: Array(String))
+      warnings = [] of String
+      # dist NEVER routes through aptitude (real upgrade(): the dist
+      # branch is checked before the aptitude selection and hardcodes
+      # APT_GET_CMD).
+      if (aptitude = mode == "dist" ? nil : (@force_apt_get ? nil : aptitude_bin))
+        apt_cmd = aptitude
+        upgrade_command = mode == "full" ? "full-upgrade" : "safe-upgrade"
+        # Real upgrade()'s aptitude branches: both unsupported flags are
+        # dropped with a warn, never passed to the binary.
+        warnings << "APTITUDE does not support '--no-remove', ignoring the 'fail_on_autoremove' parameter." if @fail_on_autoremove
+        warnings << "APTITUDE does not support '--allow-downgrades', ignoring the 'allow_downgrade' parameter." if @allow_downgrade
+        force_flag = @force ? "--assume-yes --allow-untrusted" : ""
+        fail_flag = ""
+        unauth_flag = @allow_unauthenticated ? "--allow-unauthenticated" : ""
+        downgrade_flag = ""
+        zero_marker = "\n0 packages upgraded, 0 newly installed, 0 to remove"
+      else
+        apt_cmd = apt_get_bin
+        upgrade_command = (mode == "dist" || mode == "full") ? "dist-upgrade" : "upgrade --with-new-pkgs"
+        # "%s %s" % (upgrade_command, autoremove): the empty autoremove
+        # field keeps the format string's trailing space, and that exact
+        # string is what the failure msg quotes.
+        upgrade_command += autoremove ? " --auto-remove" : " "
+        force_flag = @force ? "--force-yes" : ""
+        fail_flag = @fail_on_autoremove ? "--no-remove" : ""
+        unauth_flag = @allow_unauthenticated ? "--allow-unauthenticated" : ""
+        downgrade_flag = @allow_downgrade ? "--allow-downgrades" : ""
+        zero_marker = "\n0 upgraded, 0 newly installed, 0 to remove"
+      end
+
+      # Real upgrade()'s EXACT command format: "%s -y %s %s %s %s %s %s
+      # %s" over (apt_cmd_path, dpkg_options, force_yes,
+      # fail_on_autoremove, allow_unauthenticated, allow_downgrade,
+      # check_arg, upgrade_command) - the empty flag fields KEEP their
+      # separators. Like install(), the command RUNS in check mode too -
+      # with --simulate - and its output is the registered stdout
+      # (round-99500x apt_check_upgrade capture).
+      cmd = "#{apt_cmd} -y #{real_dpkg_options(lock_timeout)} #{force_flag} #{fail_flag} #{unauth_flag} #{downgrade_flag} #{@check_mode ? "--simulate" : ""} #{upgrade_command}"
+      cmd += " -t #{naive_single_quote(@default_release.not_nil!)}" if @default_release
+
+      # The upgrade contenders for the dpkg lock like every other apt op
+      # - wrap with lock_timeout retry, inside the same policy-rc.d
+      # lifecycle Ansible's upgrade() uses.
+      result = with_policy_rc_d { apt_with_lock_retry("#{apt_environment_prefix} #{cmd}", lock_timeout, ->remote_exec(String)) }
+
+      # The zero screenscrape uses a LEADING-newline match (both
+      # markers): a summary whose upgraded-count merely ends in 0 ("10
+      # upgraded, 0 newly installed, 0 to remove ...") must not
+      # false-match at an inner offset.
+      zero_effect = result[:stdout].includes?(zero_marker)
+      {
+        apt_cmd:         apt_cmd,
+        upgrade_command: upgrade_command,
+        exit_code:       result[:exit_code],
+        stdout:          result[:stdout],
+        stderr:          result[:stderr],
+        zero_effect:     zero_effect,
+        warnings:        warnings,
+      }
+    end
+
+    # module.warn() attaches to whatever result the module eventually
+    # exits with, so the aptitude-only upgrade warnings ride on the
+    # upgrade result itself (success or failure alike).
+    private def attach_upgrade_warnings(result : PluginResult, warnings : Array(String)) : Nil
+      result.extra["warnings"] = JSON.parse(warnings.to_json) unless warnings.empty?
     end
 
     # The flags Ansible's install() places BEFORE the package list

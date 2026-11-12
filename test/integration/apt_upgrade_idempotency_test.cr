@@ -26,6 +26,12 @@ require "file_utils"
 # summary in $KRIKRI_APT_UPGRADE_OUT (exit 0); `stat` reports a static
 # mtime so the cache-update probe never sees movement. Yields the
 # `_environment` JSON param and the call-log path.
+#
+# These specs pin the apt-get backend - what a host WITHOUT aptitude
+# gets - so every run passes `_aptitude_paths` pointing at a path that
+# never exists: real apt.py prefers aptitude for safe/yes/full whenever
+# it is installed, and a dev/CI box that happens to have one would
+# otherwise reroute these upgrades onto the real binary.
 private def with_upgrade_shim(upgrade_output : String, &)
   dir = File.join(Dir.tempdir, "krikri-apt-upgrade-#{Random.rand(1_000_000)}")
   log = File.join(dir, "calls.log")
@@ -57,14 +63,17 @@ private def zero_upgrade_output : String
   "Reading package lists...\nBuilding dependency tree...\nReading state information...\nCalculating upgrade...\n0 upgraded, 0 newly installed, 0 to remove and 0 not upgraded.\n"
 end
 
+private NO_APTITUDE = "/nonexistent/krikri-spec-no-aptitude"
+
 describe "apt plugin upgrade: idempotency" do
   it "reports changed: false when the upgrade is a genuine no-op (0 upgraded) and does not run a standalone autoremove" do
     with_upgrade_shim(zero_upgrade_output) do |env, log|
       result = PluginSpecHelper.run("apt", {
-        "upgrade"      => "full",
-        "update_cache" => "true",
-        "autoremove"   => "true",
-        "_environment" => env,
+        "_aptitude_paths" => NO_APTITUDE,
+        "upgrade"         => "full",
+        "update_cache"    => "true",
+        "autoremove"      => "true",
+        "_environment"    => env,
       })
 
       result["changed"].as_bool.must_equal(false)
@@ -77,9 +86,10 @@ describe "apt plugin upgrade: idempotency" do
   it "reports changed: true when the upgrade output shows packages were upgraded (even a count ending in 0)" do
     with_upgrade_shim("Reading package lists...\nCalculating upgrade...\nThe following packages will be upgraded:\n  libc6\n10 upgraded, 0 newly installed, 0 to remove and 0 not upgraded.\n") do |env, _log|
       result = PluginSpecHelper.run("apt", {
-        "upgrade"      => "full",
-        "update_cache" => "true",
-        "_environment" => env,
+        "_aptitude_paths" => NO_APTITUDE,
+        "upgrade"         => "full",
+        "update_cache"    => "true",
+        "_environment"    => env,
       })
 
       result["changed"].as_bool.must_equal(true)
@@ -89,9 +99,10 @@ describe "apt plugin upgrade: idempotency" do
   it "reports changed: false for upgrade: dist on a no-op run" do
     with_upgrade_shim(zero_upgrade_output) do |env, _log|
       result = PluginSpecHelper.run("apt", {
-        "upgrade"      => "dist",
-        "update_cache" => "true",
-        "_environment" => env,
+        "_aptitude_paths" => NO_APTITUDE,
+        "upgrade"         => "dist",
+        "update_cache"    => "true",
+        "_environment"    => env,
       })
 
       result["changed"].as_bool.must_equal(false)
@@ -101,9 +112,10 @@ describe "apt plugin upgrade: idempotency" do
   it "reports changed: false for upgrade: yes on a no-op run and uses --with-new-pkgs" do
     with_upgrade_shim(zero_upgrade_output) do |env, log|
       result = PluginSpecHelper.run("apt", {
-        "upgrade"      => "yes",
-        "update_cache" => "true",
-        "_environment" => env,
+        "_aptitude_paths" => NO_APTITUDE,
+        "upgrade"         => "yes",
+        "update_cache"    => "true",
+        "_environment"    => env,
       })
 
       result["changed"].as_bool.must_equal(false)
