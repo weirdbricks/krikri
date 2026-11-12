@@ -568,6 +568,41 @@ describe Krikri::TaskBatcher do
         "with file", "after with file",
       ])
     end
+
+    # Real bug found benchmarking ipr-cnrs.xymon_server (round 29907002,
+    # issue #1151): a with_filetree: source is a raw directory spec that
+    # only resolves when the loop path runs, but loop_filetree was missing
+    # from needs_runtime_loop_source?, so the role's three with_filetree:
+    # tasks batched together with the following plain `service:` task. The
+    # group's batch build died on the first loop member's unbound
+    # `{{ item.* }}` args, the script never ran, and the trailing
+    # non-looped member (the only member that would ever read this mixed
+    # group's cache, since each looped member executes through its own loop
+    # path and never consults the group) got no cache entry and printed
+    # "skipping:" where Ansible ran it (check phase: krikri skipped=2,
+    # ansible skipped=1, exit 0 both).
+    it "keeps a with_filetree: task (the ipr-cnrs.xymon_server shape) out of the next task's group" do
+      groups = plan_play(<<-YAML)
+        - hosts: all
+          gather_facts: false
+          tasks:
+            - name: Ensure /etc directory structure exists
+              ansible.builtin.file:
+                path: '/etc/xymon/{{ item.path }}'
+                state: directory
+              with_filetree: '{{ xymon_server__etc_src }}'
+              when: item.state == 'directory'
+
+            - name: Manage Xymon server service
+              ansible.builtin.service:
+                name: xymon
+                state: started
+        YAML
+
+      groups.map(&.size).must_equal([1, 1])
+      groups.first.first.must_equal("Ensure /etc directory structure exists")
+      groups[1].first.must_equal("Manage Xymon server service")
+    end
   end
 
   it "keeps raw: in a group of its own - only the solo path reproduces Ansible's capture" do
