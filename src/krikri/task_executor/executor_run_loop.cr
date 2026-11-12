@@ -808,11 +808,35 @@ module Krikri
       # execute_task_once share this one instance.
       shared_sub ||= VarSubstitutor.new(vars: vars_context, host_name: host.name)
 
-      result = execute_task_once(task, host, vars_context, exec_host: exec_host, shared: shared_sub)
-      return unless result
-
-      fact_host = (task.delegate_facts? && task.delegate_to) ? exec_host : host
-      finish_single_task(task, host, result, fact_host, vars_context: vars_context, exec_host: exec_host)
+      # Real wraps each task's execution in a DeferredWarningContext
+      # (executor/task_executor.py's _execute), so a deprecation raised
+      # while it runs - an INJECT_FACTS_AS_VARS read templating the task's
+      # own args - rides the result and displays after the module's own
+      # warnings (issue #1138), not at read time. The window stays open
+      # into finish_single_task: the result display flushes it at the
+      # callback's deprecation point, and finish_single_task's early-output
+      # branches (UNREACHABLE, plugin self-skip, adhoc) flush it before
+      # their own lines, where real shows it too.
+      ResultDisplay.begin_task_deprecation_capture
+      begin
+        result = execute_task_once(task, host, vars_context, exec_host: exec_host, shared: shared_sub)
+        if result
+          fact_host = (task.delegate_facts? && task.delegate_to) ? exec_host : host
+          finish_single_task(task, host, result, fact_host, vars_context: vars_context, exec_host: exec_host)
+        else
+          # A nil result (when:-false / unavailable-module skip) printed its
+          # skipping line inside when_passes?, whose own replay already
+          # emptied the window - drop it here.
+          ResultDisplay.flush_task_deprecation_capture_for_display
+        end
+      ensure
+        # An exception escaping the execution still closes the window,
+        # replaying its reads where they would have printed at read time;
+        # on every reached path the display (or an early-output branch of
+        # finish_single_task) already consumed the window, so this only
+        # ever replays what nothing showed.
+        ResultDisplay.flush_task_deprecation_capture_for_display
+      end
     end
 
     # The task-failure shape a failed delegate_to: template produces
@@ -1394,6 +1418,11 @@ module Krikri
       # print is deferred and emitted by execute_task when it consumes the
       # nil (skipped) result from the batch cache, in proper task order.
       unless defer_display
+        # A solo skip's own fact reads (the clause itself, templated no_log:)
+        # print before the skipping line - real displays the captured blocks
+        # with the skipped result, ahead of it. Batch members (defer_display)
+        # keep theirs in the build capture, emitted at consumption.
+        ResultDisplay.replay_open_task_deprecation_capture
         # Ansible only adds the `=> (item=...)` suffix when a loop item exists;
         # with no loop it prints a bare `skipping: [host]` even under no_log
         # (there is no item to censor), while loop items print the censored
@@ -1743,15 +1772,37 @@ module Krikri
       # needed. A member with no entry at all (the script halted before
       # reaching it) still yields nil, exactly as `cache[task]?` did.
       result = cache.delete(task).try(&.[0])
+      # The when:-raise chain shape below must be known before the captured
+      # output is emitted: its held deprecations print before the chain
+      # block, where real's exception rendering follows the deprecations.
+      chain_failure_msg = result && result["failed"]?.try(&.as_bool?) == true ? result["msg"]?.try(&.as_s?) : nil
+      chain_needed = chain_failure_msg.is_a?(String) && conditional_evaluation_failure?(chain_failure_msg)
       # Same "when the task is reached, not at batch-build time" rule for
       # the output captured during when: evaluation and step preparation
       # (issue #489's warnings, issue #979's read deprecations): the
       # consumed entry's text prints here, under this task's own banner
       # just before its result display; entries for never-reached tasks are
       # never printed.
+      #
+      # Issue #1138: real's callback displays a task's deprecations AFTER
+      # every warning its result carries, so a member whose result will be
+      # displayed prints only the plain warning text here and hands the
+      # held deprecation blocks to the display point
+      # (defer_captured_deprecations_for_display); a skipped member (nil
+      # result, no display) keeps the full order - its blocks print before
+      # its own skipping line.
       if host_warnings = @batch_captured_warnings[host.name]?
         if captured = host_warnings.delete(task)
-          captured.emit
+          if result
+            captured.emit_warnings_only
+            if chain_needed
+              captured.pending_deprecations.each { |pending| ResultDisplay.replay_deprecation(pending) }
+            else
+              ResultDisplay.defer_captured_deprecations_for_display(captured.pending_deprecations)
+            end
+          else
+            captured.emit
+          end
         end
         @batch_captured_warnings.delete(host.name) if host_warnings.empty?
       end
@@ -1759,9 +1810,8 @@ module Krikri
       # without its [ERROR] chain: ansible prints that block just before the
       # task's fatal line, so it is emitted here, when the task is reached,
       # not at batch-build time (which would precede earlier members' output).
-      if result && result["failed"]?.try(&.as_bool?) == true &&
-         (msg = result["msg"]?.try(&.as_s?)) && conditional_evaluation_failure?(msg)
-        emit_when_error_chain(task, msg, host, cause_text: result["_ansible_conditional_cause"]?.try(&.as_s?))
+      if chain_needed
+        emit_when_error_chain(task, chain_failure_msg.to_s, host, cause_text: result.try(&.["_ansible_conditional_cause"]?).try(&.as_s?))
       end
       {true, result}
     end
@@ -2722,6 +2772,9 @@ module Krikri
         # result's (already per-item-origin-decorated) msg. The chain
         # dedups identical repeats only.
         unless defer_when_chain
+          # The clause's own fact reads print before the [ERROR] chain -
+          # real's exception rendering follows the deprecations.
+          ResultDisplay.replay_open_task_deprecation_capture
           emit_when_error_chain(task, ex.message || "", host, loop_item: loop_item, loop_index: loop_index, cause_text: ex.cause_text)
         end
         return when_error_result(ex, task, host, loop_item: loop_item, loop_index: loop_index)
