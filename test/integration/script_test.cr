@@ -174,6 +174,43 @@ describe "script plugin" do
     result["stdout"].as_s.must_equal("from-raw-params\n")
   end
 
+  # Real's script ACTION plugin validates chdir controller-side, BEFORE its
+  # check-mode branch (live-verified against ansible-core 2.21.6): a relative
+  # chdir fails the task even under --check, where this plugin's old flow
+  # answered the plain unsupported-mode skip (found by krikri-playbook-
+  # generator, playbook 000025-multi-script-chaos: `chdir: 78`).
+  it "under check mode fails a non-absolute chdir instead of skipping" do
+    path = sc_path("script_cm_chdir_rel.sh")
+    File.write(path, "#!/bin/sh\nexit 0\n")
+    File.chmod(path, 0o755)
+
+    result = PluginSpecHelper.run("script", {"cmd" => path, "chdir" => "78", "_ansible_check_mode" => "true"})
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("chdir 78 must be an absolute path for a Unix-aware remote node")
+    result["_ansible_action_level"].as_bool.must_equal(true)
+  ensure
+    File.delete(path) if path && File.exists?(path)
+  end
+
+  # Real validates chdir AFTER the creates:/removes: gates, so a holding gate
+  # still skips a task with an invalid chdir (both modes).
+  it "skips a HOLDING creates: gate before the chdir validation under check mode" do
+    path = sc_path("script_cm_chdir_gate.sh")
+    File.write(path, "#!/bin/sh\nexit 0\n")
+    File.chmod(path, 0o755)
+    gate = sc_path("script_cm_chdir_gate_marker")
+    File.write(gate, "exists")
+
+    result = PluginSpecHelper.run("script", {"cmd" => path, "chdir" => "78", "creates" => gate, "_ansible_check_mode" => "true"})
+
+    result["skipped"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("#{gate} exists, matching creates option")
+  ensure
+    File.delete(gate) if gate && File.exists?(gate)
+    File.delete(path) if path && File.exists?(path)
+  end
+
   it "fails with the required_one_of message when neither cmd: nor _raw_params: is given" do
     result = PluginSpecHelper.run("script", {"chdir" => sc_path("raw-params-cwd")})
 
