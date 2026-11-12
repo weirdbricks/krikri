@@ -43,6 +43,22 @@ describe "failed final rename error split" do
     Krikri::ErrorBlock.brief_message(chain).must_equal("Task failed: Module failed: " + msg)
   end
 
+  it "renders the errno segment with no empty Sub-Event box" do
+    # Real gates the Sub-Event box on Python truthiness (`if event.events:`),
+    # so the errno node's empty events list - used only as a collapse
+    # barrier - prints no box at all (issue #1164's role round: krikri
+    # emitted a bare "+--[ End Sub-Event ]---" after the errno segment
+    # where ansible 2.19.11 printed nothing between it and the fatal line).
+    msg = "Unable to make b'/r/source' into to '/etc/hosts', failed final rename from '/etc/.ansible_tmpabcdefghosts': [Errno 16] Device or resource busy: b'/etc/.ansible_tmpabcdefghosts' -> b'/etc/hosts'"
+    rendered = Krikri::ErrorBlock.format_event(
+      Krikri::ResultDisplay.task_error_chain("ansible.builtin.template", msg, "Origin: /pb.yml:6")
+    )
+
+    rendered.includes?("End Sub-Event").must_equal(false)
+    rendered.includes?("<<< caused by >>>").must_equal(true)
+    rendered.includes?("[Errno 16] Device or resource busy").must_equal(true)
+  end
+
   it "ignores unrelated messages" do
     Krikri::ResultDisplay.failed_final_rename_split("something else: [Errno 2] x").must_be_nil
   end
