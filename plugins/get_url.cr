@@ -149,8 +149,16 @@ module Krikri
       # dest that already matches its checksum: short-circuits with ok
       # even for a scheme-less URL that would have failed had it been
       # requested at all.
+      #
+      # The ascii-encode failure position counts the request line's method
+      # prefix ("HEAD " is one char longer than "GET "), so the preflight
+      # needs the same HEAD/GET split #download_options makes for the
+      # request itself - get_url.py: `method = 'HEAD' if module.check_mode
+      # else 'GET'`.
+      check_mode = true?(@params["_ansible_check_mode"]?)
       if failure = PluginHelpers::URLPreflight.check(
            request_url,
+           method: check_mode ? "HEAD" : "GET",
            ciphers: tls_ciphers,
            client_cert: @params["client_cert"]?,
            client_key: @params["client_key"]?,
@@ -179,7 +187,7 @@ module Krikri
       # reconciliation - see #check_mode_result for the changed status it
       # derives from the staged copy.
       download_to_dest(url, request_url, dest_param, checksum, dest_is_dir, force, last_mod_time,
-        check_mode: true?(@params["_ansible_check_mode"]?))
+        check_mode: check_mode)
     end
 
     # Parses the checksum: param (if any) into its {algorithm, hash}

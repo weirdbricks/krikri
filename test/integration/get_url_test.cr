@@ -1176,6 +1176,32 @@ describe "get_url plugin" do
       File.delete(dest) if dest && File.exists?(dest)
     end
 
+    it "counts the check-mode HEAD request line in the ascii-encode failure position" do
+      # get_url.py: `method = 'HEAD' if module.check_mode else 'GET'` - the
+      # UnicodeEncodeError position counts the whole request line, so
+      # --check's "HEAD <target> HTTP/1.1" reports positions one higher
+      # than the GET request line for the same target. This is the exact
+      # inofix.acme-tiny-sign URL from round29908300, where ansible-playbook
+      # said "position 35" under --check while a GET-position-only
+      # emulation said 34.
+      dest = File.tempname("get-url-spec")
+
+      result = PluginSpecHelper.run("get_url", {
+        "url"                 => "https://raw.githubusercontent.com/diafygi/acme-tiny/master/acme\u{a0}tiny.py",
+        "dest"                => dest,
+        "_ansible_check_mode" => "true",
+      })
+
+      result["failed"].as_bool.must_equal(true)
+      result["msg"].as_s.must_equal("'ascii' codec can't encode character '\\xa0' in position 35: ordinal not in range(128)")
+      result["url"].as_s.must_equal("https://raw.githubusercontent.com/diafygi/acme-tiny/master/acme\u{a0}tiny.py")
+      result["status"].as_i.must_equal(-1)
+      result["dest"]?.must_be_nil
+      result["elapsed"]?.must_be_nil
+    ensure
+      File.delete(dest) if dest && File.exists?(dest)
+    end
+
     it "reports Python's ascii-encode failure for a run of non-ASCII characters in the request target" do
       dest = File.tempname("get-url-spec")
 
