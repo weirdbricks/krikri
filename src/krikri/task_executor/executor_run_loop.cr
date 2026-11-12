@@ -4979,7 +4979,18 @@ module Krikri
         chain.size == 1 ? chain.first : chain.map { |clause| "(#{clause})" }.join(" and "),
         chain,
         block_when_origins(block_task))
-      inherit_when_condition(condition, block_task.when_condition_list, tasks)
+      # The CHILDREN's condition list must keep the clauses SEPARATE (the
+      # block's own clauses prepended to each child's), never just the merged
+      # string: real evaluates each parent-chain clause as its own templating
+      # operation on every child, so a fact read in the block's `when:` warns
+      # once, Origin'd at the BLOCK's clause site - the same block for every
+      # child, deduplicated to one (afpacket.devops_tools, issue #1144). A
+      # child that only got the merged string re-read the fact under its OWN
+      # when: site instead, printing one mislabeled block per child. A block
+      # with a when: list already carries the full accumulated list (outer
+      # clauses prepended by its own parent's inheritance); a scalar-when
+      # block has none, so its own chain stands in.
+      inherit_when_condition(condition, block_task.when_condition_list || chain, tasks)
       tasks.each { |nested_task| nested_task.block_inherited_when = inherited }
     end
 

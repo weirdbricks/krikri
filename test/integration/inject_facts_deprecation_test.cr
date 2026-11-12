@@ -578,6 +578,46 @@ describe "INJECT_FACTS_AS_VARS deprecation from a when: clause" do
     stderr.includes?("/inner.yml:7:").must_equal(false)
   end
 
+  # The RUNNING half of the same inheritance: real evaluates the block's
+  # when: as its own clause on every child (afpacket.devops_tools's
+  # `when: ansible_os_family == "RedHat"` wrapping per-tool blocks, issue
+  # #1144), so the fact read warns once, Origin'd at the BLOCK's clause
+  # site - never once per child at each child's own `when:` token, which
+  # is what a merged-into-one-string condition produced (live-verified
+  # vs 2.21.6: one block, under the first child's banner).
+  it "keeps the block's clause Origin for a running block's children" do
+    stderr = run_playbook(<<-PLAYBOOK)
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        vars:
+          serverless: true
+          helm: true
+        tasks:
+          - name: redhat only
+            block:
+              - name: package dependencies
+                debug:
+                  msg: pkg
+                when: serverless|bool
+
+              - name: helm step
+                debug:
+                  msg: helm
+                when: helm|bool
+            when: ansible_os_family | length > 0
+      PLAYBOOK
+
+    stderr.scan(/DEPRECATION WARNING\]: INJECT_FACTS_AS_VARS/).size.must_equal(1)
+    # The outer block's own `when:` value token (line 19, column 13) - not
+    # the children's clause tokens at 13:17 / 18:17.
+    stderr.must_include(":19:13\n")
+    stderr.must_include("when: ansible_os_family | length > 0\n")
+    stderr.must_include("              ^ column 13")
+    stderr.includes?(":13:17").must_equal(false)
+    stderr.includes?(":18:17").must_equal(false)
+  end
+
   # Issue #995 (roxxers.certbot): the role's tasks/main.yml gates
   # `import_tasks: setup-RedHat.yml` on `ansible_os_family == 'RedHat'`
   # and that imported file is a block:. The import's clause is evaluated
