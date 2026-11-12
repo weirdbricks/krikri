@@ -4108,6 +4108,28 @@ module Krikri
     end
 
     private def scan_inner_expression_refs(expr : String) : Nil
+      # Jinja evaluates an inline ternary's arms LAZILY - only the arm the
+      # condition selects ever renders. Same rule issue #210 already
+      # encoded for the strict path's dotted-chain probes
+      # (`user_group.base if user_group is defined else user_name` names
+      # 'user_name', never the guard-routed access arm): a
+      # linux-system-roles.mssql arg-spec default
+      # `{{ ad_integration_user if ad_integration_user is defined else
+      # mssql_ad_sql_user }}` with ad_integration_user unset renders the
+      # ELSE arm on real ansible and must not be failed on the then-arm's
+      # undefined root here. When the condition provably selects one arm,
+      # scan only the condition and that arm; otherwise scan the whole
+      # expression exactly as before.
+      if (ternary = split_top_level_ternary(expr)) &&
+         (arm = ternary_scan_arm(ternary[1]))
+        scan_ident_refs_strict(ternary[1])
+        scan_ident_refs_strict(ternary[arm])
+        return
+      end
+      scan_ident_refs_strict(expr)
+    end
+
+    private def scan_ident_refs_strict(expr : String) : Nil
       regions = quoted_string_regions(expr)
       expr.scan(STRICT_REF_IDENT_REGEX) do |mat|
         next if in_quoted_region?(regions, mat.begin(0))
@@ -4115,6 +4137,77 @@ module Krikri
         scan_inner_ref_failure(mat[0])
       end
     end
+
+    # Splits *expr* on a top-level (outside quotes/brackets) ` if ` ...
+    # ` else ` into {truthy, condition, falsy}, or nil when the expression
+    # is not a ternary. Same delimiters ExpressionEvaluator#split_ternary
+    # uses: the first top-level ` if ` and the first ` else ` after it.
+    private def split_top_level_ternary(expr : String) : {String, String, String}?
+      if_idx = top_level_keyword_pos(expr, " if ") || return nil
+      else_idx = top_level_keyword_pos(expr, " else ", if_idx + 4) || return nil
+      truthy = expr[0...if_idx].strip
+      cond = expr[(if_idx + 4)...else_idx].strip
+      falsy = expr[(else_idx + 6)..].strip
+      (truthy.empty? || cond.empty? || falsy.empty?) ? nil : {truthy, cond, falsy}
+    end
+
+    # Index of *keyword* outside quotes and brackets/parens, scanning from
+    # *from*. Quote-aware (unlike split_top_level) because an ` if ` inside
+    # a string literal is text, not a delimiter.
+    private def top_level_keyword_pos(expr : String, keyword : String, from : Int32 = 0) : Int32?
+      regions = quoted_string_regions(expr)
+      depth = 0
+      i = from
+      while i < expr.size
+        if (region = regions.find { |(start, stop)| i >= start && i < stop })
+          i = region[1]
+          next
+        end
+        case expr[i]
+        when '(', '[', '{'
+          depth += 1
+        when ')', ']', '}'
+          depth -= 1
+        else
+          return i if depth == 0 && expr[i, keyword.size]? == keyword
+        end
+        i += 1
+      end
+      nil
+    end
+
+    # Which arm of a top-level inline ternary the condition provably
+    # selects, read statically off the same `X is defined`-family guards
+    # block_tag_defined_guards parses out of block tags: a pure and-
+    # conjunction (no top-level ` or ` - any or-branch could be the true
+    # one) whose every clause is one of the four defined/undefined test
+    # spellings has a statically known outcome. Returns 0 for the truthy
+    # arm, 2 for the falsy arm, nil when the outcome is undecidable (the
+    # caller then scans the whole expression as before).
+    private def ternary_scan_arm(cond : String) : Int32?
+      cond_no_strings = strip_string_literals(cond)
+      return nil unless split_top_level(cond_no_strings, " or ").size == 1
+      split_top_level(cond_no_strings, " and ").each do |clause|
+        trimmed = clause.strip
+        while trimmed.starts_with?('(') && trimmed.ends_with?(')')
+          trimmed = trimmed[1..-2].strip
+        end
+        if m = trimmed.match(TERNARY_DEFINED_GUARD)
+          # `X is defined` with X absent: the conjunct is false, Jinja's
+          # and short-circuits, the condition is false - the truthy arm
+          # never renders.
+          return 2 unless @vars.has_key?(block_tag_ref_root(m[1]))
+        elsif m = trimmed.match(TERNARY_UNDEFINED_GUARD)
+          return 2 if @vars.has_key?(block_tag_ref_root(m[1]))
+        else
+          return nil
+        end
+      end
+      0
+    end
+
+    TERNARY_DEFINED_GUARD   = /\A([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*|\[(?:-?\d+|'[^']*'|"[^"]*")\])*)\s+is\s+(?:not\s+undefined|defined)\z/
+    TERNARY_UNDEFINED_GUARD = /\A([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*|\[(?:-?\d+|'[^']*'|"[^"]*")\])*)\s+is\s+(?:not\s+defined|undefined)\z/
 
     STRICT_REF_IDENT_REGEX = /\b[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*|\[[^\[\]]+\])*/
 

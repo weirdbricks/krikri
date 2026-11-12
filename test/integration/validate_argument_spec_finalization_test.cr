@@ -16,7 +16,7 @@ private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 
-private def run_role_roleplay(play_vars : String = "") : {Process::Status, String}
+private def run_role_roleplay(play_vars : String = "", spec_default : String = "\"{{ no_such_var }}\"") : {Process::Status, String}
   dir = File.tempname("argspec-final", ".d")
   Dir.mkdir(dir)
   role = File.join(dir, "roles", "argspec270")
@@ -35,7 +35,7 @@ private def run_role_roleplay(play_vars : String = "") : {Process::Status, Strin
             required: true
           second_opt:
             type: str
-            default: "{{ no_such_var }}"
+            default: #{spec_default}
     YAML
   )
   File.write(File.join(role, "tasks", "main.yml"), "---\n- name: past validation\n  ansible.builtin.debug:\n    msg: \"PAST-VALIDATION\"\n")
@@ -103,6 +103,24 @@ describe "validate_argument_spec role-spec finalization templating failure" do
     output.must_include("Task failed: Finalization of task args for 'ansible.builtin.validate_argument_spec' failed: Error while resolving value for 'argument_spec': 'no_such_var' is undefined")
     output.wont_include("PAST-VALIDATION")
     output.must_include("failed=1")
+  end
+
+  it "renders the else arm of an is-defined-guarded ternary spec default" do
+    # Real Jinja evaluates an inline ternary's arms lazily - with the guard
+    # variable unset, `X if X is defined else Y` renders the ELSE arm and
+    # never names X (linux-system-roles.mssql's mssql_ad_kerberos_user
+    # default, issue #1170); the strict spec scan used to blame the
+    # never-rendered then-arm's root and fail the validation task.
+    status, output = run_role_roleplay(
+      play_vars: "vars:\n    first_opt: x\n    fallback_var: resolved\n",
+      spec_default: "\"{{ no_such_var if no_such_var is defined else fallback_var }}\""
+    )
+
+    status.success?.must_equal(true)
+    output.must_include("PAST-VALIDATION")
+    output.wont_include("'no_such_var' is undefined")
+    output.must_include("failed=0")
+    output.wont_include("Finalization of task args for 'ansible.builtin.validate_argument_spec'")
   end
 
   it "passes the role through untouched when every spec default resolves" do
