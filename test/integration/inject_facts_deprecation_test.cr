@@ -1066,3 +1066,87 @@ describe "INJECT_FACTS_AS_VARS deprecation from a first_found lookup's param ren
     stderr.scan(/DEPRECATION WARNING\]: INJECT_FACTS_AS_VARS/).size.must_equal(1)
   end
 end
+
+# Jinja2 resolves the names a frame loads when the frame is ENTERED
+# (compiler.py's enter_frame hoists the resolve() calls) and the
+# deprecation tag fires when the tagged value is ACCESSED - so a fact read
+# in a `{% for %}` body warns only when the loop really iterates and an
+# uncalled macro's body warns never, while a root-frame read warns even
+# when the render dies before its expression runs. bramford.apt-sources'
+# sources.list.j2 reads `ansible_distribution_release` inside
+# `{% for repo in apt_sources_repos %}` and, off Debian/Ubuntu hosts, the
+# render dies on the undefined iterable at the loop header with the body
+# frame never entered - real prints no block at the file (issue #1179,
+# previously #1097, live-verified against 2.21.6).
+describe "INJECT_FACTS_AS_VARS deprecation and a template's unentered frames" do
+  private def run_template_file(template_text : String) : {String, String}
+    dir = PluginSpecHelper.tmp_path("inject-facts-frames-#{Random::Secure.hex(4)}")
+    FileUtils.mkdir_p(dir)
+    template = File.join(dir, "t.j2")
+    File.write(template, template_text)
+    playbook = File.join(dir, "play.yml")
+    File.write(playbook, <<-PLAYBOOK)
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        tasks:
+          - name: render t.j2
+            ansible.builtin.template:
+              src: #{template}
+              dest: #{File.join(dir, "out.txt")}
+              mode: "0644"
+      PLAYBOOK
+    stdout = IO::Memory.new
+    stderr = IO::Memory.new
+    Process.run(BINARY, ["-i", "localhost,", playbook], output: stdout, error: stderr, chdir: dir)
+    {stdout.to_s, stderr.to_s}
+  end
+
+  it "stays silent when the render dies at the loop header before its body" do
+    stdout, stderr = run_template_file("{% for repo in apt_sources_repos %}\n" \
+                                       "{% if repo != ansible_distribution_release %}x{% endif %}\n" \
+                                       "{% endfor %}\n")
+
+    stdout.must_include("'apt_sources_repos' is undefined")
+    stderr.includes?("INJECT_FACTS_AS_VARS").must_equal(false)
+  end
+
+  it "stays silent for a for body that never iterates" do
+    _stdout, stderr = run_template_file("{% for x in [] %}{{ ansible_distribution }}{% endfor %}ok\n")
+
+    stderr.includes?("INJECT_FACTS_AS_VARS").must_equal(false)
+  end
+
+  it "warns for a for body the loop really enters" do
+    _stdout, stderr = run_template_file("{% for x in ['a'] %}{{ ansible_distribution }}{% endfor %}ok\n")
+
+    stderr.scan(/DEPRECATION WARNING\]: INJECT_FACTS_AS_VARS/).size.must_equal(1)
+    stderr.must_include("Origin: ")
+  end
+
+  it "stays silent for a macro body the template never calls" do
+    _stdout, stderr = run_template_file("{% macro m() %}{{ ansible_distribution }}{% endmacro %}ok\n")
+
+    stderr.includes?("INJECT_FACTS_AS_VARS").must_equal(false)
+  end
+
+  it "stays silent for a loop inside a branch that never runs" do
+    _stdout, stderr = run_template_file("{% if false %}{% for x in ['a'] %}{{ ansible_distribution }}{% endfor %}{% endif %}ok\n")
+
+    stderr.includes?("INJECT_FACTS_AS_VARS").must_equal(false)
+  end
+
+  it "stays silent for a loop the render dies before reaching" do
+    stdout, stderr = run_template_file("{{ totally_undefined_var }}{% for x in ['a'] %}{{ ansible_distribution }}{% endfor %}\n")
+
+    stdout.must_include("'totally_undefined_var' is undefined")
+    stderr.includes?("INJECT_FACTS_AS_VARS").must_equal(false)
+  end
+
+  it "warns for a root-frame read in a branch that never runs" do
+    _stdout, stderr = run_template_file("{% if false %}{{ ansible_distribution }}{% endif %}ok\n")
+
+    stderr.scan(/DEPRECATION WARNING\]: INJECT_FACTS_AS_VARS/).size.must_equal(1)
+    stderr.must_include("Origin: ")
+  end
+end
