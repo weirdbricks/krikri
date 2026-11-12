@@ -994,60 +994,18 @@ build_fat_plugin() {
     done
 }
 
-# Launch the parallel pool: every stale main executable plus the fat
-# plugin binary (its builder is the function just defined above). All
-# are independent `crystal build` invocations; the cap is enforced by
-# launch_bg, and every build has its own CRYSTAL_CACHE_DIR.
-echo ""
-for task in "${MAIN_BUILDS[@]}"; do
-    IFS='|' read -r name source binary <<< "$task"
-    launch_bg build_main_exec "$name" "$source" "$binary"
-done
-launch_bg build_fat_plugin
-wait
-
-# Report per-binary results in the original serial-build format:
-# mains first, in their original order, then the fat binary - exiting
-# on the first failure exactly as the serial build did (later failures
-# were simply never reached before; their compiler output is captured
-# in $STATUS_DIR if it becomes relevant).
-for task in "${MAIN_BUILDS[@]}"; do
-    IFS='|' read -r name source binary <<< "$task"
-    if [ -f "$STATUS_DIR/main-$name.fail" ]; then
-        echo ""
-        if [ "$name" = "krikri-playbook" ]; then
-            echo -e "${RED}❌ Build failed for main executable${NC}"
-        else
-            echo -e "${RED}❌ Build failed for $name${NC}"
-        fi
-        echo ""
-        cat "$STATUS_DIR/main-$name.fail"
-        echo ""
-        exit 1
-    fi
-    case "$name" in
-        krikri-playbook) echo -e "${GREEN}✅ Main executable built: $OUTPUT_DIR/krikri-playbook${NC}" ;;
-        krikri)          echo -e "${GREEN}✅ krikri built: $OUTPUT_DIR/krikri${NC}" ;;
-        krikri-lint)     echo -e "${GREEN}✅ krikri-lint built: $OUTPUT_DIR/krikri-lint${NC}" ;;
-    esac
-done
-
-if [ -f "$STATUS_DIR/FAT_BUILD.fail" ]; then
-    echo ""
-    echo -e "${RED}❌ Build failed for fat plugin binary${NC}"
-    echo ""
-    cat "$STATUS_DIR/FAT_BUILD.fail"
-    echo ""
-    exit 1
-fi
-echo ""
-
+# Standalone-plugin staleness scan: which of the 5 remaining
+# independent binaries need a rebuild (cheap mtime checks, no
+# compilation). Runs before the pool is launched, not after it drains -
+# these builds are just as independent as the main executables, so
+# leaving them to a second stage appended ~11s (the two largest, debug
+# and assert, are ~11s each) to the end of every post-edit build even
+# though the pool's own long pole is the ~21s main executable they
+# could have been overlapping with. They share launch_bg's cap with the
+# mains; a failure is still reported last, in the original order.
 PLUGIN_COUNT=0
 TO_BUILD=()
 
-# First pass: figure out which plugins need a rebuild (cheap mtime checks,
-# no compilation) so the actual `crystal build` invocations below can run
-# in parallel instead of one at a time.
 for plugin in "${STANDALONE_PLUGINS[@]}"; do
     SOURCE="plugins/$plugin.cr"
 
@@ -1092,101 +1050,133 @@ done
 
 REBUILT_COUNT=${#TO_BUILD[@]}
 
+# archive/mysql_db/postgresql_db all use the bz2 shard's real
+# libbz2 C binding (Compress::BZ2::Writer/Reader), which links
+# -lbz2 dynamically by default. libbz2.so.1.0 ships in Ubuntu's
+# base image but NOT in a base/minimal RHEL-family (Rocky/CentOS/
+# Alma) one - found live benchmarking a Rocky 9.6 target (0.9.474):
+# all three crashed at plugin-execution time with "error while
+# loading shared libraries: libbz2.so.1.0: cannot open shared
+# object file", even for a task never touching a .bz2 path at all
+# (a shared-library load failure happens at process start, before
+# main() ever runs). `-Wl,-Bstatic -lbz2 -Wl,-Bdynamic` statically
+# links just libbz2 (confirmed via `ldd` - no libbz2.so entry
+# remains) while leaving every other dynamic dependency (openssl,
+# pcre2, glibc itself) untouched, matching this codebase's existing
+# "glibc is a non-issue, no full static/musl build needed" stance -
+# this fixes the one specific library that WAS missing rather than
+# switching the whole build to static linking.
+BZ2_STATIC_PLUGINS="archive mysql_db postgresql_db"
+
+build_one_plugin() {
+    local plugin="$1"
+    local source="plugins/$plugin.cr"
+    local binary="$PLUGINS_DIR/$plugin"
+
+    local link_flags=()
+    # Skipped under --static or on Darwin - see the fat-plugin build's
+    # own comment above for why.
+    if [ "$STATIC" != true ] && [ "$IS_DARWIN" != true ] && [[ " $BZ2_STATIC_PLUGINS " == *" $plugin "* ]]; then
+        # Must stay one argument (crystal splits --link-flags' OWN
+        # value on whitespace internally) - an unquoted expansion
+        # here would let bash split it into three separate argv
+        # entries first, breaking the build.
+        link_flags=("--link-flags=-Wl,-Bstatic -lbz2 -Wl,-Bdynamic")
+    fi
+
+    # Each parallel job gets its own persistent CRYSTAL_CACHE_DIR
+    # (under $CACHE_DIR_ROOT, keyed per target) - concurrent
+    # `crystal build` invocations sharing one cache dir can race on
+    # the compiler's own temp/object files (seen as a spurious "you've
+    # found a bug in the Crystal compiler" /
+    # errno.cr "No such file or directory" mid-codegen under real
+    # parallel load - not an actual bug in any of these plugins).
+    # Persistent (not mktemp-per-run) because cache warmth is worth
+    # ~100s per big release rebuild - see the CACHE_DIR_ROOT comment
+    # up top. A failed build wipes its own dir so a corrupt cache
+    # can't poison the next run.
+    if OUTPUT=$(CRYSTAL_CACHE_DIR="$CACHE_DIR_ROOT/cache-$plugin" crystal build "$source" -o "$binary" $BUILD_FLAGS "${link_flags[@]}" 2>&1); then
+        chmod +x "$binary"
+        strip_release_binary "$binary"
+        echo -e "   ${GREEN}✓${NC} $plugin"
+    else
+        echo -e "   ${RED}✗${NC} $plugin"
+        printf '%s\n' "$OUTPUT" > "$STATUS_DIR/$plugin.fail"
+        rm -rf "$CACHE_DIR_ROOT/cache-$plugin"
+    fi
+}
+
+# Launch the parallel pool: every stale main executable, the fat plugin
+# binary (its builder is the function just defined above) and every
+# stale standalone plugin. All are independent `crystal build`
+# invocations; the cap is enforced by launch_bg, and every build has its
+# own CRYSTAL_CACHE_DIR.
+echo ""
+for task in "${MAIN_BUILDS[@]}"; do
+    IFS='|' read -r name source binary <<< "$task"
+    launch_bg build_main_exec "$name" "$source" "$binary"
+done
+launch_bg build_fat_plugin
 if [ "$REBUILT_COUNT" -gt 0 ]; then
-    JOBS=$PARALLEL_JOBS
-    echo -e "   ${YELLOW}Building $REBUILT_COUNT plugin(s) (up to $JOBS in parallel)...${NC}"
-
-    # STATUS_DIR is already set up (with its EXIT trap) at the top of
-    # the script - the per-plugin cache dirs and .fail files share it
-    # with the main-executable/fat-binary pool above.
-
-    # archive/mysql_db/postgresql_db all use the bz2 shard's real
-    # libbz2 C binding (Compress::BZ2::Writer/Reader), which links
-    # -lbz2 dynamically by default. libbz2.so.1.0 ships in Ubuntu's
-    # base image but NOT in a base/minimal RHEL-family (Rocky/CentOS/
-    # Alma) one - found live benchmarking a Rocky 9.6 target (0.9.474):
-    # all three crashed at plugin-execution time with "error while
-    # loading shared libraries: libbz2.so.1.0: cannot open shared
-    # object file", even for a task never touching a .bz2 path at all
-    # (a shared-library load failure happens at process start, before
-    # main() ever runs). `-Wl,-Bstatic -lbz2 -Wl,-Bdynamic` statically
-    # links just libbz2 (confirmed via `ldd` - no libbz2.so entry
-    # remains) while leaving every other dynamic dependency (openssl,
-    # pcre2, glibc itself) untouched, matching this codebase's existing
-    # "glibc is a non-issue, no full static/musl build needed" stance -
-    # this fixes the one specific library that WAS missing rather than
-    # switching the whole build to static linking.
-    BZ2_STATIC_PLUGINS="archive mysql_db postgresql_db"
-
-    build_one_plugin() {
-        local plugin="$1"
-        local source="plugins/$plugin.cr"
-        local binary="$PLUGINS_DIR/$plugin"
-
-        local link_flags=()
-        # Skipped under --static or on Darwin - see the fat-plugin build's
-        # own comment above for why.
-        if [ "$STATIC" != true ] && [ "$IS_DARWIN" != true ] && [[ " $BZ2_STATIC_PLUGINS " == *" $plugin "* ]]; then
-            # Must stay one argument (crystal splits --link-flags' OWN
-            # value on whitespace internally) - an unquoted expansion
-            # here would let bash split it into three separate argv
-            # entries first, breaking the build.
-            link_flags=("--link-flags=-Wl,-Bstatic -lbz2 -Wl,-Bdynamic")
-        fi
-
-        # Each parallel job gets its own persistent CRYSTAL_CACHE_DIR
-        # (under $CACHE_DIR_ROOT, keyed per target) - concurrent
-        # `crystal build` invocations sharing one cache dir can race on
-        # the compiler's own temp/object files (seen as a spurious "you've
-        # found a bug in the Crystal compiler" /
-        # errno.cr "No such file or directory" mid-codegen under real
-        # parallel load - not an actual bug in any of these plugins).
-        # Persistent (not mktemp-per-run) because cache warmth is worth
-        # ~100s per big release rebuild - see the CACHE_DIR_ROOT comment
-        # up top. A failed build wipes its own dir so a corrupt cache
-        # can't poison the next run.
-        if OUTPUT=$(CRYSTAL_CACHE_DIR="$CACHE_DIR_ROOT/cache-$plugin" crystal build "$source" -o "$binary" $BUILD_FLAGS "${link_flags[@]}" 2>&1); then
-            chmod +x "$binary"
-            # Release-mode strip: see the main strip_release_binary
-            # definition above for the rationale. Inlined here (and not
-            # called via the parent script's function) because this
-            # builder runs in an xargs-forked subshell per plugin, and
-            # the parent's function isn't visible there even with
-            # `export -f` (export -f only re-exports the name, not the
-            # current BUILD_MODE / STRIP_AVAILABLE captured closures).
-            # Cheap, identical behavior.
-            if [ "$BUILD_MODE" = "release" ] && [ "$STRIP_AVAILABLE" = "true" ] && [ -f "$binary" ]; then
-                strip $STRIP_FLAGS "$binary" 2>/dev/null
-            fi
-            echo -e "   ${GREEN}✓${NC} $plugin"
-        else
-            echo -e "   ${RED}✗${NC} $plugin"
-            printf '%s\n' "$OUTPUT" > "$STATUS_DIR/$plugin.fail"
-            rm -rf "$CACHE_DIR_ROOT/cache-$plugin"
-        fi
-    }
-    export -f build_one_plugin
-    export PLUGINS_DIR BUILD_FLAGS STATUS_DIR RED GREEN YELLOW NC BZ2_STATIC_PLUGINS BUILD_MODE STRIP_AVAILABLE STATIC STRIP_FLAGS IS_DARWIN CACHE_DIR_ROOT
-
-    printf '%s\n' "${TO_BUILD[@]}" | xargs -P "$JOBS" -I{} bash -c 'build_one_plugin "$@"' _ {}
-
-    FAILED=()
+    echo -e "   ${YELLOW}Building $REBUILT_COUNT plugin(s) (up to $PARALLEL_JOBS in parallel)...${NC}"
     for plugin in "${TO_BUILD[@]}"; do
-        [ -f "$STATUS_DIR/$plugin.fail" ] && FAILED+=("$plugin")
+        launch_bg build_one_plugin "$plugin"
     done
+fi
+wait
 
-    if [ ${#FAILED[@]} -gt 0 ]; then
+# Report per-binary results in the original serial-build format:
+# mains first, in their original order, then the fat binary - exiting
+# on the first failure exactly as the serial build did (later failures
+# were simply never reached before; their compiler output is captured
+# in $STATUS_DIR if it becomes relevant).
+for task in "${MAIN_BUILDS[@]}"; do
+    IFS='|' read -r name source binary <<< "$task"
+    if [ -f "$STATUS_DIR/main-$name.fail" ]; then
         echo ""
-        echo -e "${RED}❌ Build failed for: ${FAILED[*]}${NC}"
+        if [ "$name" = "krikri-playbook" ]; then
+            echo -e "${RED}❌ Build failed for main executable${NC}"
+        else
+            echo -e "${RED}❌ Build failed for $name${NC}"
+        fi
         echo ""
-        for plugin in "${FAILED[@]}"; do
-            echo -e "${RED}--- $plugin ---${NC}"
-            cat "$STATUS_DIR/$plugin.fail"
-            echo ""
-        done
-        echo -e "${YELLOW}Fix the error(s) above and run ./build.sh again${NC}"
+        cat "$STATUS_DIR/main-$name.fail"
+        echo ""
         exit 1
     fi
+    case "$name" in
+        krikri-playbook) echo -e "${GREEN}✅ Main executable built: $OUTPUT_DIR/krikri-playbook${NC}" ;;
+        krikri)          echo -e "${GREEN}✅ krikri built: $OUTPUT_DIR/krikri${NC}" ;;
+        krikri-lint)     echo -e "${GREEN}✅ krikri-lint built: $OUTPUT_DIR/krikri-lint${NC}" ;;
+    esac
+done
+
+if [ -f "$STATUS_DIR/FAT_BUILD.fail" ]; then
+    echo ""
+    echo -e "${RED}❌ Build failed for fat plugin binary${NC}"
+    echo ""
+    cat "$STATUS_DIR/FAT_BUILD.fail"
+    echo ""
+    exit 1
+fi
+echo ""
+
+FAILED=()
+for plugin in "${TO_BUILD[@]}"; do
+    [ -f "$STATUS_DIR/$plugin.fail" ] && FAILED+=("$plugin")
+done
+
+if [ ${#FAILED[@]} -gt 0 ]; then
+    echo ""
+    echo -e "${RED}❌ Build failed for: ${FAILED[*]}${NC}"
+    echo ""
+    for plugin in "${FAILED[@]}"; do
+        echo -e "${RED}--- $plugin ---${NC}"
+        cat "$STATUS_DIR/$plugin.fail"
+        echo ""
+    done
+    echo -e "${YELLOW}Fix the error(s) above and run ./build.sh again${NC}"
+    exit 1
 fi
 
 echo ""
