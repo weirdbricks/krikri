@@ -44,6 +44,21 @@ describe Krikri::PluginHelpers::PostgresqlConnection do
       uri.must_equal("postgres:/postgres?host=%2Fvar%2Frun%2Fpostgresql&sslmode=disable")
     end
 
+    it "passes the full TLS set through as libpq query params" do
+      uri = Krikri::PluginHelpers::PostgresqlConnection.build_uri(
+        host: "db.example.com",
+        sslmode: "verify-full",
+        ca_cert: "/etc/postgresql/root.crt",
+        ssl_cert: "/etc/postgresql/client.crt",
+        ssl_key: "/etc/postgresql/client.key",
+      )
+      params = URI.parse(uri).query_params
+      params["sslmode"].must_equal("verify-full")
+      params["sslrootcert"].must_equal("/etc/postgresql/root.crt")
+      params["sslcert"].must_equal("/etc/postgresql/client.crt")
+      params["sslkey"].must_equal("/etc/postgresql/client.key")
+    end
+
     it "builds a unix socket URI via the host query param, ignoring host/port" do
       uri = Krikri::PluginHelpers::PostgresqlConnection.build_uri(
         host: "ignored", port: "9999", user: "postgres", unix_socket: "/var/run/postgresql"
@@ -91,6 +106,29 @@ describe Krikri::PluginHelpers::PostgresqlConnection do
       resolved[:port].must_equal("5432")
       resolved[:user].must_equal("canonical-user")
       resolved[:unix_socket].must_equal("/canonical/socket")
+    end
+
+    it "resolves the TLS params, including ca_cert's ssl_rootcert alias" do
+      resolved = Krikri::PluginHelpers::PostgresqlConnection.resolve_login_params({
+        "ssl_mode"     => "require",
+        "ssl_rootcert" => "/ca.crt",
+        "ssl_cert"     => "/client.crt",
+        "ssl_key"      => "/client.key",
+      })
+
+      resolved[:ssl_mode].must_equal("require")
+      resolved[:ca_cert].must_equal("/ca.crt")
+      resolved[:ssl_cert].must_equal("/client.crt")
+      resolved[:ssl_key].must_equal("/client.key")
+    end
+
+    it "prefers the canonical ca_cert over the ssl_rootcert alias" do
+      resolved = Krikri::PluginHelpers::PostgresqlConnection.resolve_login_params({
+        "ca_cert"      => "/canonical-ca.crt",
+        "ssl_rootcert" => "/aliased-ca.crt",
+      })
+
+      resolved[:ca_cert].must_equal("/canonical-ca.crt")
     end
   end
 

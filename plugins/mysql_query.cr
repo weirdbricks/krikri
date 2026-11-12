@@ -157,6 +157,7 @@ module Krikri
         unix_socket: @params["login_unix_socket"]?,
         config_file: @params["config_file"]? || "~/.my.cnf",
         db: @params["login_db"]?,
+        tls: PluginHelpers::MysqlConnection.tls_options(@params),
       )
 
       query_results = [] of JSON::Any

@@ -267,6 +267,39 @@ module Krikri
         end
       end
 
+      # TLS material a mysql_* task asked for. Ansible's own modules accept
+      # `client_cert`/`client_key`/`ca_cert` (aliases `ssl_cert`/`ssl_key`/
+      # `ssl_ca`) plus `check_hostname`; PyMySQL only enables TLS when at
+      # least one of them is set, so with no TLS param the connection stays
+      # plaintext. This mirrors PyMySQL 2.2.8's `_create_ssl_ctx`:
+      #   - no ca: CERT_NONE (encrypt, do not verify) -> "required"
+      #   - ca: CERT_REQUIRED, hostname checked unless check_hostname=false
+      #     -> "verify-identity" / "verify-ca"
+      record TlsOptions,
+        mode : String = "disabled",
+        ca_cert : String? = nil,
+        client_cert : String? = nil,
+        client_key : String? = nil
+
+      def self.tls_options(params : Hash(String, String)) : TlsOptions
+        ca_cert = params["ca_cert"]?.presence || params["ssl_ca"]?.presence
+        client_cert = params["client_cert"]?.presence || params["ssl_cert"]?.presence
+        client_key = params["client_key"]?.presence || params["ssl_key"]?.presence
+        check_hostname = params["check_hostname"]?.presence
+        no_hostname_check = check_hostname.try(&.downcase).in?("false", "no", "0", "off")
+
+        mode =
+          if ca_cert
+            no_hostname_check ? "verify-ca" : "verify-identity"
+          elsif client_cert || client_key || check_hostname
+            "required"
+          else
+            "disabled"
+          end
+
+        TlsOptions.new(mode, ca_cert, client_cert, client_key)
+      end
+
       def self.build_uri(
         host : String? = nil,
         port : String? = nil,
@@ -275,6 +308,7 @@ module Krikri
         unix_socket : String? = nil,
         config_file : String? = nil,
         db : String? = nil,
+        tls : TlsOptions = TlsOptions.new,
       ) : String
         defs = option_file_defaults(config_file)
 
@@ -298,24 +332,16 @@ module Krikri
         uri.user = user || defs[:user] || ENV["USER"]? || "root"
         uri.password = password || defs[:password] if password || defs[:password]
 
-        # The underlying mysql shard's own default (ssl-mode=preferred)
-        # unconditionally attempts TLS whenever the server's handshake
-        # capability flags claim SSL support - which a real MariaDB/MySQL
-        # server does whenever it was *compiled* with OpenSSL, even if no
-        # cert/key was ever configured and SSL is actually disabled
-        # (have_ssl: DISABLED). Against exactly that (common, valid) server
-        # config, "preferred" doesn't fall back to plaintext on failure (a
-        # documented limitation of the vendored shard itself) - it just
-        # crashes with a confusing "SSL_connect: ... wrong version number"
-        # instead of connecting. There's no login_*/ssl_* param exposed for
-        # TLS configuration anywhere in this codebase's mysql_db/mysql_user
-        # plugins, so there's no way for a caller to opt out short of this -
-        # explicitly disable it here instead.
-        # SECURITY NOTE (deliberate, compatibility-preserving divergence):
-        # Ansible's PyMySQL connection defaults to ssl-mode=preferred,
-        # so mysql_* traffic is TLS when the server supports it. Here it is
-        # always plaintext for TCP until the vendored shard grows working
-        # TLS - known, documented, NOT fixed so behavior stays shippable.
+        # The shard's own default (ssl-mode=preferred) is not used: its
+        # Preferred mode does not fall back to plaintext when a server
+        # advertises SSL in the handshake but cannot complete one (a
+        # MariaDB compiled with OpenSSL but `have_ssl: DISABLED`), so it
+        # raises a confusing "SSL_connect: ... wrong version number"
+        # instead of connecting. PyMySQL does not negotiate "preferred"
+        # either - no TLS params means a plaintext connection, and any
+        # explicit param makes TLS required - so `tls_options` decides the
+        # mode from the task's own parameters and this is always explicit.
+        #
         # The initial database (login_db) rides in the query string rather
         # than the URI path on purpose: for unix-socket connections the
         # shard reads the socket path FROM uri.path, so a `/dbname` path
@@ -325,7 +351,16 @@ module Krikri
         # (2026-09-13): mysql_query silently dropped login_db, so every
         # unqualified query failed with "No database selected".
         query_params = URI::Params.new
-        query_params["ssl-mode"] = "disabled"
+        query_params["ssl-mode"] = tls.mode
+        if ca = tls.ca_cert
+          query_params["ssl-ca"] = ca
+        end
+        if cert = tls.client_cert
+          query_params["ssl-cert"] = cert
+        end
+        if key = tls.client_key
+          query_params["ssl-key"] = key
+        end
         query_params["database"] = db if db && !db.empty?
         uri.query = query_params.to_s
 

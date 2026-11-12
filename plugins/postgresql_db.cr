@@ -148,6 +148,10 @@ module Krikri
         password: login[:password],
         unix_socket: login[:unix_socket],
         dbname: @params["maintenance_db"]? || "postgres",
+        sslmode: login[:ssl_mode],
+        ca_cert: login[:ca_cert],
+        ssl_cert: login[:ssl_cert],
+        ssl_key: login[:ssl_key],
       )
     end
 

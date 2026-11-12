@@ -133,6 +133,7 @@ module Krikri
         password: @params["login_password"]?,
         unix_socket: @params["login_unix_socket"]?,
         config_file: @params["config_file"]? || "~/.my.cnf",
+        tls: PluginHelpers::MysqlConnection.tls_options(@params),
       )
 
       DB.open(uri) do |dbcon|

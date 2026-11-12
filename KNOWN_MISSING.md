@@ -20,9 +20,10 @@ deleted from here.
   user's podman API socket. If `podman.socket` is "listening" but `/run/user/$UID/podman/podman.sock`
   is missing (seen after a tmpfiles sweep), run `systemctl --user restart podman.socket`.
 - One `statvfs` test can flake under parallel workers (passes alone).
-- The PostgreSQL live tests need a throwaway **postgres:16** server on port 15432
-  (`podman run -d --name krikri-pg16 -p 127.0.0.1:15432:5432 -e POSTGRES_PASSWORD=rootpass
-  docker.io/library/postgres:16`).
+- The live PostgreSQL/MySQL tests need throwaway servers; `scripts/db_tests.sh` starts
+  postgres:17 on 127.0.0.1:15432 and mysql:8.4 on 127.0.0.1:33306, runs the three live
+  suites and tears them down (they skip silently without a server, so use the script
+  rather than a bare `scripts/minitest.sh` when touching the DB drivers).
 - `docker_image_build`'s nonexistent-`path` test skips where `docker` is podman's shim.
 
 ## Deliberate limits (decided, not defects)
@@ -126,6 +127,26 @@ the same code path the same-arch run has always used. Decided 2026-10-11.
   SO_ERROR, so the caught errno was never the verdict real's blocking socket reports.)
   Every other docker failure surface (SDK and CLI) is verified -
   see issue #6. Decided 2026-10-10.
+
+### Both SQL drivers wire TLS but cannot enforce every verification mode
+
+The mysql/pg helpers now pass each module's real TLS parameters through
+(`client_cert`/`client_key`/`ca_cert`/`check_hostname` for mysql,
+`ssl_mode`/`ca_cert`/`ssl_cert`/`ssl_key` for postgresql). Two verification
+details remain the vendored drivers' limits:
+
+- `crystal-pg` (`will/crystal-pg` 0.30/0.31) builds its client TLS context with
+  `VerifyMode::NONE`, so `sslmode=verify-ca`/`verify-full` currently encrypt
+  but do not verify the chain. Passing `ca_cert` still reaches the driver as
+  `sslrootcert`.
+- The mysql shard's `VerifyCA` mode also verifies the hostname, because
+  Crystal's `OpenSSL::SSL::Socket::Client(hostname:)` always installs an
+  X509 host check when verification is on. So `ca_cert` + `check_hostname:
+  false` (PyMySQL: chain-only) is stricter here than in real Ansible.
+
+Both require driver changes (a fork release for mysql, an upstream patch for
+pg). Decided 2026-11-11: wire what the drivers support, do not silently
+pretend to verify.
 
 ### `password_mechanism=sshpass` is not implemented (askpass is always the fallback)
 

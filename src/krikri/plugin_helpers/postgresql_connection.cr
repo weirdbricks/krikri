@@ -268,6 +268,32 @@ module Krikri
         end
       end
 
+      # community.postgresql's own params_map: ssl_mode/sslmode,
+      # ca_cert/sslrootcert, ssl_cert/sslcert, ssl_key/sslkey. crystal-pg's
+      # ConnInfo reads all four out of the URI query (`handle_sslparam`).
+      # Its verify-ca/verify-full modes do not actually verify the chain yet
+      # (its TLS context is VerifyMode::NONE); see KNOWN_MISSING.md.
+      record TlsOptions,
+        sslmode : String? = nil,
+        ca_cert : String? = nil,
+        ssl_cert : String? = nil,
+        ssl_key : String? = nil do
+        def add_to(params : URI::Params) : Nil
+          if value = sslmode
+            params["sslmode"] = value
+          end
+          if value = ca_cert
+            params["sslrootcert"] = value
+          end
+          if value = ssl_cert
+            params["sslcert"] = value
+          end
+          if value = ssl_key
+            params["sslkey"] = value
+          end
+        end
+      end
+
       def self.build_uri(
         host : String? = nil,
         port : String? = nil,
@@ -276,6 +302,9 @@ module Krikri
         unix_socket : String? = nil,
         dbname : String? = nil,
         sslmode : String? = nil,
+        ca_cert : String? = nil,
+        ssl_cert : String? = nil,
+        ssl_key : String? = nil,
       ) : String
         path = "/#{dbname || "postgres"}"
 
@@ -308,7 +337,7 @@ module Krikri
         # `postgres_port: 6543`) needs to reach it via this query param
         # too, not just the URI's host:port pair.
         params["port"] = port if port && unix_socket
-        params["sslmode"] = sslmode if sslmode
+        TlsOptions.new(sslmode, ca_cert, ssl_cert, ssl_key).add_to(params)
         uri.query = params.to_s unless params.to_s.empty?
 
         uri.to_s
@@ -642,13 +671,17 @@ module Krikri
       # establish connection`, confirmed via direct debug instrumentation
       # against a live host - the same URI, built by hand with the
       # correct port included, connected via `psql` immediately).
-      def self.resolve_login_params(params : Hash(String, String)) : {host: String?, port: String?, user: String?, password: String?, unix_socket: String?}
+      def self.resolve_login_params(params : Hash(String, String)) : {host: String?, port: String?, user: String?, password: String?, unix_socket: String?, ssl_mode: String?, ca_cert: String?, ssl_cert: String?, ssl_key: String?}
         {
           host:        params["login_host"]? || params["host"]?,
           port:        params["login_port"]? || params["port"]?,
           user:        params["login_user"]? || params["login"]?,
           password:    params["login_password"]?,
           unix_socket: params["login_unix_socket"]? || params["unix_socket"]?,
+          ssl_mode:    params["ssl_mode"]?,
+          ca_cert:     params["ca_cert"]? || params["ssl_rootcert"]?,
+          ssl_cert:    params["ssl_cert"]?,
+          ssl_key:     params["ssl_key"]?,
         }
       end
     end
