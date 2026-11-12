@@ -465,7 +465,12 @@ module Krikri
       # the whole property dict once (its `result['status']`), and this
       # plugin reuses the same output for both the enabled:/state:
       # decisions (LoadState/ActiveState) and the registered status dict.
-      remote_exec("#{cmd} show #{shell_single_quote(name)} 2>/dev/null")[:stdout].to_s.each_line do |line|
+      # stderr is kept rather than silenced: the generic service
+      # module's own not-found message formats it in (see
+      # #missing_unit_message), so dropping it would shorten the message
+      # Ansible prints.
+      show = remote_exec("#{cmd} show #{shell_single_quote(name)}")
+      show[:stdout].to_s.each_line do |line|
         key, sep, value = line.partition('=')
         next unless sep == "="
         @systemd_status[key] = value
@@ -475,14 +480,12 @@ module Krikri
         end
       end
 
-      # fail_if_missing, the systemd module's own copy: a unit that
-      # neither systemd nor /etc/init.d knows about is reported by name
-      # ("Could not find the requested service nope: host") rather than
-      # left to whatever systemctl says about the missing unit. Verified
-      # against ansible-core 2.19 on a real systemd host - the generic
-      # `service` module and the `systemd` module share this message, so
-      # a typo'd service name reads the same either side of the
-      # init-system split.
+      # A unit that neither systemd nor /etc/init.d knows about is
+      # reported by name rather than left to whatever systemctl says
+      # about the missing unit - the systemd module through its own copy
+      # of fail_if_missing ("Could not find the requested service nope:
+      # host"), the generic service module through its own message (see
+      # #missing_unit_message, issue #1159).
       is_systemd_unit = !@systemd_load_state.empty? && @systemd_load_state != "not-found"
       # systemd_service.py's module-level warn: the unit resolves only as
       # a SysV init script (its sysv_exists tests os.access X_OK on
@@ -499,10 +502,59 @@ module Krikri
         @systemd_init_script_warning = "The service (#{name}) is actually an init script but the system is managed by systemd"
       end
       if !is_systemd_unit && @svc_initscript.nil?
-        return "Could not find the requested service #{name}: host"
+        return missing_unit_message(name, show[:stderr].to_s)
       end
 
       nil
+    end
+
+    # Ansible reports a missing unit with the wording of whichever
+    # service-manager module its action plugin dispatched to, and on a
+    # systemd host the two wordings differ (issue #1159, live-verified
+    # against ansible-core 2.21.6):
+    # - the systemd module fails via module_utils fail_if_missing:
+    #   "Could not find the requested service %s: %s" over (name,
+    #   'host'). That is what the plain `service:` (auto) path gets
+    #   too, because there the action plugin dispatches to the systemd
+    #   module on a systemd host.
+    # - the GENERIC service module (what an explicit `use: service`
+    #   runs) never reaches fail_if_missing on this branch: its
+    #   get_systemd_status_dict() checks `systemctl show` for
+    #   LoadState=not-found and fails with its own
+    #   'systemd could not find the requested service "%r": %s' over the
+    #   unit name's Python repr and that command's stderr
+    #   (modules/service.py).
+    private def missing_unit_message(name : String, show_stderr : String) : String
+      return "Could not find the requested service #{name}: host" unless @generic_service_module
+      %(systemd could not find the requested service "#{python_repr_string(name)}": #{show_stderr})
+    end
+
+    # Python's repr() of a str, for the `%r` in the generic service
+    # module's not-found message: quotes with ' unless the string holds
+    # ' and no ", escapes the quote char, backslashes and control bytes
+    # (\n/\r/\t, lowercase \xNN otherwise) - the same rules Python's own
+    # repr applies, and the ones Krikri::ResultDisplay.python_repr uses
+    # for loop labels.
+    private def python_repr_string(raw : String) : String
+      quote = raw.includes?("'") && !raw.includes?('"') ? '"' : '\''
+      escaped = String.build do |io|
+        raw.each_char do |char|
+          case char
+          when '\\'  then io << "\\\\"
+          when '\n'  then io << "\\n"
+          when '\r'  then io << "\\r"
+          when '\t'  then io << "\\t"
+          when quote then io << '\\' << char
+          else
+            if char.ord < 0x20 || char.ord == 0x7f
+              io << "\\x" << char.ord.to_s(16).rjust(2, '0')
+            else
+              io << char
+            end
+          end
+        end
+      end
+      "#{quote}#{escaped}#{quote}"
     end
 
     private def use_openrc : String?
