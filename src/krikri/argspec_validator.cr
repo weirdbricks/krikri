@@ -1240,11 +1240,21 @@ module Krikri
     # Ansible's list case.
     private def str_or_list_type_error(name : String, raw : String, native : JSON::Any?) : String?
       tail = "a string or list of strings is required"
-      if list = (JSON.parse(raw) rescue nil).try(&.as_a?)
+      # A NATIVE_TYPED_PREFIX wire value (parse_module_params's assert
+      # branch for a list literal, the executor's whole-span structural
+      # evaluation for a templated one) carries the JSON of the native
+      # value Ansible validated - decode it first so a marked list is
+      # Ansible's list case (`fail_msg: [1, 'a']` fails with the wrapped
+      # TypeError, live-verified vs 2.21.6) and a marked scalar reports
+      # its real type instead of passing as a str.
+      typed = if raw.starts_with?(Krikri::NATIVE_TYPED_PREFIX)
+                (JSON.parse(raw[Krikri::NATIVE_TYPED_PREFIX.size..]) rescue nil)
+              end
+      if list = (typed || (JSON.parse(raw) rescue nil)).try(&.as_a?)
         return nil if list.all?(&.as_s?)
         return "argument '#{name}' is of type list and we were unable to convert to str_or_list_of_str: #{tail}"
       end
-      kind = case native.try(&.raw)
+      kind = case (native || typed).try(&.raw)
              when Int64, Int32 then "int"
              when Float64      then "float"
              when Bool         then "bool"

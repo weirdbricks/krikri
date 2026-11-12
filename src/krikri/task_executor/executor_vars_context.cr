@@ -3078,13 +3078,21 @@ module Krikri
         # its own. Popping in the begin's ensure keeps the stack
         # consistent through the strict-undefined rescues too.
         VarSubstitutor.set_current_task_param(task.source_file, task.source_line, key, value) if task
-        debug_msg = key == "msg" && module_name == "ansible.builtin.debug"
+        # debug's msg and assert's fail_msg/msg/success_msg ride Ansible's
+        # action into result['msg'] VERBATIM, so their container/native
+        # values must keep their type across this strings-only wire - the
+        # same whole-span structural typing set_fact (native_containers)
+        # gets, and the same per-leaf container rendering the parse-time
+        # literal marking (parse_module_params's debug/assert branches)
+        # asks for.
+        native_msg_param = (key == "msg" && module_name == "ansible.builtin.debug") ||
+                           (module_name == "ansible.builtin.assert" && key.in?({"fail_msg", "msg", "success_msg"}))
         begin
           # inside the begin: native_typed_value's strict-undefined check must
           # get the same "Error while resolving value for '<key>'" wrapper
-          native_typed = if debug_msg && (msg_container = native_typed_msg_container(stripped_value))
+          native_typed = if native_msg_param && (msg_container = native_typed_msg_container(stripped_value))
                            # A parse-time literal list/dict msg (NATIVE_TYPED_PREFIX JSON
-                           # from parse_module_params's debug branch) renders its leaves
+                           # from parse_module_params's debug/assert branches) renders its leaves
                            # HERE, per-leaf: Ansible templates each list item as its own
                            # string, so mixed-text items ("The OS is {{ os_arch }}") keep
                            # their surrounding literal text instead of being flattened
@@ -3094,7 +3102,7 @@ module Krikri
                            # same rescue chain as every other msg shape.
                            render_debug_msg_container(substitutor, msg_container)
                          else
-                           (native_containers || debug_msg) && whole_single_span ? native_typed_value(substitutor, stripped_value) : nil
+                           (native_containers || native_msg_param) && whole_single_span ? native_typed_value(substitutor, stripped_value) : nil
                          end
           unless native_typed
             # A set_fact param whose parse-time wire is a JSON container
