@@ -17,6 +17,11 @@ require "./error_block"
 # (a single-file spec compile, or a suite shard whose first test file
 # required it).
 require "../become_messages"
+# The deprecation hint below claims Krikri::DeprecationHint's process-wide
+# once-flag; the parse-time emitters (playbook_parser, executor_vars_context)
+# require it directly, but a compile whose file slice pulls only this file
+# (a suite shard, the fat plugin) would otherwise die on "undefined constant".
+require "../deprecation_hint"
 
 module Krikri
   # A module result's "failed" flag read the way Ansible's Python
@@ -301,12 +306,11 @@ module Krikri
     end
 
     # Core-emitted deprecation lines already printed this run (real
-    # Display._deprecated dedups on the formatted message) and the
-    # one-time "Deprecation warnings can be disabled" hint Ansible prints
-    # before the first deprecation of a run - both shared across every
-    # deprecation source, exactly like Ansible's Display state.
+    # Display._deprecated dedups on the formatted message); the one-time
+    # "Deprecation warnings can be disabled" hint Ansible prints before the
+    # first deprecation of a run is claimed through DeprecationHint.claim so
+    # the parse-time emitters share the same single-hint-per-run flag.
     @@deprecation_texts = Set(String).new
-    @@deprecation_hint_seen = false
 
     # One core-side param deprecation (the module bootstrap's
     # removed_in_version warning, or a result's `_ansible_core_deprecations`
@@ -348,10 +352,8 @@ module Krikri
     # block that actually prints, so a batch member the play never reaches
     # cannot spend it (see #emit_or_defer_deprecation).
     private def self.emit_deprecation_hint : Nil
-      unless @@deprecation_hint_seen
-        @@deprecation_hint_seen = true
-        emit_warning_stderr("[WARNING]: Deprecation warnings can be disabled by setting `deprecation_warnings=False` in ansible.cfg.".colorize(:light_magenta).to_s)
-      end
+      return unless Krikri::DeprecationHint.claim
+      emit_warning_stderr("[WARNING]: Deprecation warnings can be disabled by setting `deprecation_warnings=False` in ansible.cfg.".colorize(:light_magenta).to_s)
     end
 
     # The `play_hosts` magic variable's READ deprecation (ansible-core
