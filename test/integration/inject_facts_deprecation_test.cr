@@ -217,6 +217,35 @@ describe "INJECT_FACTS_AS_VARS deprecation from a when: clause" do
     stderr.scan(/DEPRECATION WARNING\]: INJECT_FACTS_AS_VARS/).size.must_equal(1)
   end
 
+  # The disable-hint is one-per-RUN across every deprecation kind (real
+  # Display dedups it process-wide). The parse-time action-mapping warning
+  # and the executor's INJECT_FACTS warning kept separate once-flags, so a
+  # run hitting both printed the hint twice - farynam.mfitbs_openvpn_easyrsa
+  # in check mode, issue #1149.
+  it "prints the disable hint once when parse-time and executor deprecations share a run" do
+    stderr = run_playbook(<<-PLAYBOOK)
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        tasks:
+          - name: mapping form local_action
+            local_action:
+              module: file
+              path: /tmp/krikri-hint-once-check
+              state: directory
+            when: false
+          - name: gated by a top-level fact
+            debug:
+              msg: hi
+            when: ansible_os_family | length > 0
+      PLAYBOOK
+
+    stderr.must_include("[WARNING]: Deprecation warnings can be disabled by setting `deprecation_warnings=False` in ansible.cfg.")
+    stderr.must_include("[DEPRECATION WARNING]: Using a mapping for `action` is deprecated.")
+    stderr.must_include("[DEPRECATION WARNING]: INJECT_FACTS_AS_VARS default to `True` is deprecated, top-level facts will not be auto injected after the change.")
+    stderr.scan(/Deprecation warnings can be disabled/).size.must_equal(1)
+  end
+
   it "does not warn for a magic ansible_* variable that is not a top-level fact" do
     stderr = run_playbook(<<-PLAYBOOK)
       - hosts: localhost
