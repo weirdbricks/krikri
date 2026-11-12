@@ -660,6 +660,27 @@ describe "file plugin" do
       result["msg"].as_s.must_include("chgrp failed: failed to look up group nonexistent_group_xyz_abc")
     end
 
+    it "reports the chown-already-applied owner when a later group lookup fails (issue #1166)" do
+      # Ansible's set_fs_attributes_if_different runs set_owner_if_different
+      # to completion (chown included) before set_group_if_different looks
+      # the group up, so a task with a resolvable owner and an unresolvable
+      # group name fails with the chown already on disk - fail_json's
+      # exit-time add_path_info then reports the NEW owner
+      # (basserselim.upstart, round29908311: real reports owner nobody /
+      # uid 65534; resolving both names up front left the failure reporting
+      # the pre-chown root / uid 0). The chown to nobody only mutates as
+      # root, hence the gate.
+      skip "must run as root for the owner chown to actually apply" unless PluginSpecHelper.running_as_root?
+      nobody = System::User.find_by?(name: "nobody") || skip("no nobody user on this host")
+      path = tmp_path("group-lookup-failure-after-chown")
+      result = PluginSpecHelper.run("file", {"path" => path, "state" => "directory", "owner" => "nobody", "group" => "nonexistent_group_xyz_abc"})
+
+      result["failed"].as_bool.must_equal(true)
+      result["msg"].as_s.must_include("chgrp failed: failed to look up group nonexistent_group_xyz_abc")
+      result["uid"].as_i64.must_equal(nobody.id.to_i64)
+      result["owner"].as_s.must_equal("nobody")
+    end
+
     it "fails the owner lookup in check mode when the path already exists (issue #1041)" do
       # Ansible's check mode only skips set_owner_if_different's lookup
       # for paths that don't exist yet (basic.py
