@@ -665,7 +665,16 @@ elif [ ! -f "$LINT_BINARY" ]; then
     NEEDS_BUILD=true
 elif [ "$LINT_SOURCE" -nt "$LINT_BINARY" ]; then
     NEEDS_BUILD=true
-elif find src/krikri_lint -name '*.cr' -newer "$LINT_BINARY" -print -quit 2>/dev/null | grep -q .; then
+elif find src -name '*.cr' -newer "$LINT_BINARY" -print -quit | grep -q .; then
+    # All of src/, not just src/krikri_lint: krikri-lint.cr also requires
+    # src/krikri/version.cr, unsafe_values.cr, yaml_bigint.cr,
+    # stdio_pipe_guard.cr, bigint_json.cr, collection_index.cr,
+    # builtin_module_names_data.cr, param_sentinels.cr,
+    # python_filter_runner.cr, spawn_error.cr, controller_python.cr and
+    # task_executor/output_routing.cr (12 of its 33 src files live outside
+    # src/krikri_lint/), so a subtree-only scan kept serving a stale lint
+    # binary - while printing "up to date" - after edits to any of them.
+    # The wider scan costs ~3ms over this tree's ~300 .cr files.
     NEEDS_BUILD=true
 elif [ -d lib ] && find lib -name '*.cr' -newer "$LINT_BINARY" -print -quit | grep -q .; then
     NEEDS_BUILD=true
@@ -696,7 +705,14 @@ elif [ ! -f "$FUZZ_BINARY" ]; then
     NEEDS_BUILD=true
 elif [ "$FUZZ_SOURCE" -nt "$FUZZ_BINARY" ]; then
     NEEDS_BUILD=true
-elif find src/krikri/differential_fuzz -name '*.cr' -newer "$FUZZ_BINARY" -print -quit 2>/dev/null | grep -q .; then
+elif find src -name '*.cr' -newer "$FUZZ_BINARY" -print -quit | grep -q .; then
+    # All of src/, not just src/krikri/differential_fuzz: runner.cr
+    # requires ../variable_substitutor, which pulls in 63 of the 65 src
+    # files this binary is built from - both evaluators, filters/,
+    # lookups/, krikri_jinja_filters.cr, jinja_datetime.cr and more.
+    # The subtree-only scan therefore missed exactly the edits this tool
+    # exists to check: after touching an evaluator, a fuzz run reported
+    # "no divergence" from a binary compiled against the old one.
     NEEDS_BUILD=true
 elif [ -d lib ] && find lib -name '*.cr' -newer "$FUZZ_BINARY" -print -quit | grep -q .; then
     NEEDS_BUILD=true
