@@ -114,7 +114,14 @@ module Krikri
 
       base_dir = File.dirname(path)
       unless Dir.exists?(base_dir)
-        return failure("The directory #{base_dir} does not exist or the file is not a directory")
+        # The real module's pre-generation isdir check fail_json's with
+        # name=base_dir beside the msg (openssl_privatekey.py), so the
+        # failure JSON carries a "name" key too - dhach.acme_letsencrypt's
+        # --check run dies here on /etc/letsencrypt, which the role's
+        # file: state=directory task only simulates in check mode.
+        return PluginResult.new(changed: false, failed: true,
+          msg: "The directory #{base_dir} does not exist or the file is not a directory",
+          name: base_dir)
       end
 
       existing = File.exists?(path)

@@ -125,6 +125,20 @@ describe "openssl_privatekey plugin" do
     expect(str_ends_with?(result["msg"].as_s, "got: nonsense")).must_equal(true)
   end
 
+  # The real module's pre-generation isdir check fail_json's with
+  # name=base_dir beside the msg, so the failure JSON carries "name" as
+  # well - dhach.acme_letsencrypt's --check run dies on exactly this
+  # failure (its directory task only simulates in check mode) and the
+  # fatal line's JSON must match byte for byte.
+  it "carries the missing base directory in the failure result's name key" do
+    path = PluginSpecHelper.tmp_path("missing-dir", "account.key")
+    result = PluginSpecHelper.run("openssl_privatekey", {"path" => path})
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("The directory #{File.dirname(path)} does not exist or the file is not a directory")
+    result["name"].as_s.must_equal(File.dirname(path))
+  end
+
   it "writes Ed25519 keys as PKCS#8, the only format they have" do
     path = key_path("ed.key")
     result = PluginSpecHelper.run("openssl_privatekey", {"path" => path, "type" => "Ed25519"})
