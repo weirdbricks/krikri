@@ -192,6 +192,29 @@ describe "script plugin" do
     result["msg"].as_s.must_equal("parameters are mutually exclusive: _raw_params|cmd")
   end
 
+  # Issue #1160 (kpg 000025-multi-script-chaos): real's script ACTION
+  # rejects a non-absolute chdir with an AnsibleActionFail BEFORE the
+  # transfer/run - changed: false with the action's own message, never
+  # the remote shell's "cd: No such file or directory" non-zero rc.
+  it "fails a relative chdir with the action's absolute-path message instead of running" do
+    path = sc_path("script_chdir_relative.sh")
+    File.write(path, "#!/bin/sh\necho should-never-run\n")
+    File.chmod(path, 0o755)
+
+    result = PluginSpecHelper.run("script", {"cmd" => path, "chdir" => "78"})
+
+    result["failed"].as_bool.must_equal(true)
+    result["changed"].as_bool.must_equal(false)
+    result["msg"].as_s.must_equal("chdir 78 must be an absolute path for a Unix-aware remote node")
+    # No rc/stdout/stderr: the script action failed before any execution.
+    falsey?(result["rc"]?).must_equal(true)
+    falsey?(result["stdout"]?).must_equal(true)
+    # The controller-side raise marker the display and the until:/retries:
+    # escape route on - without it the failure renders through the generic
+    # "Module failed:" chain.
+    result["_ansible_action_level"].as_bool.must_equal(true)
+  end
+
   it "fails clearly when the script path doesn't exist" do
     result = PluginSpecHelper.run("script", {"cmd" => sc_path("does-not-exist.sh")})
 

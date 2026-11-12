@@ -3119,9 +3119,15 @@ module Krikri
         # 2.19.11).
         if result_hash = result.as_h?
           action_plugin_name = task.action_name || task.module_name
+          # script's action-level results split two ways (both marked by
+          # the plugin/shape_script_result): the non-zero-exit failure is
+          # a RETURNED dict (carries rc) and retries like any module
+          # failure, while a controller-side raise (e.g. the relative
+          # chdir AnsibleActionFail) has no rc and escapes the attempt
+          # loop like any other action exception.
           action_level = result_hash["_ansible_action_level"]?.try(&.as_bool?) == true &&
-                         !SCRIPT_MODULES.includes?(action_plugin_name) &&
-                         !DICT_FAILURE_ACTION_PLUGINS.includes?(action_plugin_name)
+                         !DICT_FAILURE_ACTION_PLUGINS.includes?(action_plugin_name) &&
+                         !(SCRIPT_MODULES.includes?(action_plugin_name) && result_hash.has_key?("rc"))
           finalization = result_hash["_ansible_finalization_failure"]?.try(&.as_bool?) == true
           # A when:-EVALUATION error (broken strict conditional, unknown
           # filter/test in a clause) is the third escape shape: real
