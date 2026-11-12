@@ -417,12 +417,25 @@ module Krikri
     end
 
     # The loop-source half of needs_controller_control_flow?'s original
-    # condition, extracted verbatim (see that method's comment for the
-    # gantsign.sdkman bug each field guards against).
+    # condition (see that method's comment for the gantsign.sdkman bug each
+    # field guards against).
+    #
+    # loop_filetree: a with_filetree: source is a raw directory spec (often
+    # `{{ role_path }}/templates/etc/xymon`) that only resolves against the
+    # variable context (and the role's own path) when the loop path runs,
+    # exactly the sdkman shape above. ipr-cnrs.xymon_server batched its
+    # three with_filetree: tasks together with the following plain
+    # `service:` task; the group's batch build died on the first loop
+    # member's unbound `{{ item.* }}` args, the script never ran, and the
+    # trailing non-looped member (the only member that would ever read
+    # this mixed group's cache, since each looped member executes through
+    # its own loop path and never consults the group) got no cache entry
+    # and printed "skipping:" where Ansible ran the task (issue #1151).
     private def self.needs_runtime_loop_source?(task : Task) : Bool
       !!(task.loop_items || task.loop_fileglob || task.loop_template_kind ||
         task.loop_nested_sources || task.loop_together_sources || task.loop_flattened ||
-        task.loop_subelements_list || task.loop_first_found || task.loop_file)
+        task.loop_subelements_list || task.loop_first_found || task.loop_file ||
+        task.loop_filetree)
     end
 
     # failed_when: alone (with or without changed_when:) - see
