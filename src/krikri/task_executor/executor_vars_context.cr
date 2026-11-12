@@ -3894,6 +3894,19 @@ module Krikri
     end
 
     private def finalization_module_name(task : Task) : String
+      # A bare name served by a role's / the playbook's own `library/`
+      # module resolves as a legacy FILE plugin BEFORE any collection
+      # redirect is consulted, and a legacy resolution has no collection
+      # to name: ansible's `resolved_fqcn` (what this message reports,
+      # ansible-core 2.19+ Task#_post_validate_args) stays the name
+      # exactly as written (issue #1140: superlumic.superlumic-osx-defaults
+      # ships library/osx_defaults, and its arg-finalization failure says
+      # 'osx_defaults', not 'community.general.osx_defaults').
+      raw = task.module_name
+      if !raw.includes?('.') &&
+         CollectionIndex.library_module?(raw, task.role_path, File.expand_path(@playbook_dir))
+        return raw
+      end
       name = PlaybookParser.resolve_module_name(task.module_name) ||
              fallback_finalization_module_name(task.module_name)
       # Ansible names a redirected module by its redirect target in this
