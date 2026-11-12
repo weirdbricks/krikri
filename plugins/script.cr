@@ -65,6 +65,13 @@ module Krikri
           return skip
         end
 
+        # Real order (action/script.py): gate skip, then the chdir
+        # absolute-path rejection, then the check-mode exit - so a check
+        # mode task with a bad chdir fails on the chdir, not the skip.
+        if fail = chdir_absolute_path_failure
+          return fail
+        end
+
         gated = @params.has_key?("creates") || @params.has_key?("removes")
         # ansible's script.py removes its tmp dir in a finally clause on
         # EVERY path, so a staged copy must leave no trace here either.
@@ -80,6 +87,17 @@ module Krikri
       if skip = skip_reason
         cleanup
         return skip
+      end
+
+      # Real's script ACTION rejects a relative chdir outright: any chdir
+      # not starting with "/" raises AnsibleActionFail BEFORE the transfer
+      # and the run (action/script.py), so the result is changed: false
+      # with the action's own message - never the remote shell's "cd: No
+      # such file or directory" non-zero rc (issue #1160). The check is on
+      # the raw value: real does not tilde-expand it either, so a `~/x`
+      # chdir fails the same way.
+      if fail = chdir_absolute_path_failure
+        return fail
       end
 
       unless remote_file_exists?(script_path)
@@ -236,6 +254,21 @@ module Krikri
       end
       script_path = (@params["cmd"]? || @params["_raw_params"]? || "").strip.split(/\s+/, 2).first?
       remote_exec("rm -f #{shell_quote(script_path)}") if script_path
+    end
+
+    # The action-side chdir validation shared by normal and check mode
+    # runs: nil unless the task carries a non-empty, non-absolute chdir.
+    private def chdir_absolute_path_failure : PluginResult?
+      raw = @params["chdir"]?.presence
+      return nil if raw.nil? || raw.starts_with?("/")
+      cleanup
+      PluginResult.new(changed: false, failed: true,
+        msg: "chdir #{raw} must be an absolute path for a Unix-aware remote node",
+        # Real's action RAISES AnsibleActionFail here (a controller-side
+        # raise, not a module fail_json), so the [ERROR] block carries no
+        # "Module failed." middle segment and the raise escapes an
+        # until:/retries: attempt loop like any other action exception.
+        _ansible_action_level: true)
     end
 
     # Real script.py's own gate (live-verified against ansible-core

@@ -171,4 +171,65 @@ describe "script non-zero-exit Action failed header" do
   ensure
     FileUtils.rm_rf(src_dir) if src_dir
   end
+
+  # Issue #1160 (kpg 000025-multi-script-chaos): real's script action
+  # RAISES AnsibleActionFail on a relative chdir (action/script.py,
+  # before the transfer/run) - the [ERROR] brief is the bare action-raise
+  # header (no "Module failed." middle), the fatal dump is
+  # {"changed": false, "msg": ...} and the recap books changed=0, unlike
+  # the returned-dict non-zero-exit failure whose run shape this file's
+  # first tests pin.
+  it "fails a relative chdir with the bare action-raise header (issue #1160)" do
+    playbook = File.tempname("script-chdir-relative", ".yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        gather_facts: false
+        tasks:
+          - name: relative chdir
+            ansible.builtin.script:
+              chdir: 78
+              cmd: /bin/echo hi
+            ignore_errors: true
+      YAML
+    output = IO::Memory.new
+    Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+    text = output.to_s
+
+    text.must_include("[ERROR]: Task failed: chdir 78 must be an absolute path for a Unix-aware remote node")
+    text.must_include(%(FAILED! => {"changed": false, "msg": "chdir 78 must be an absolute path for a Unix-aware remote node"}))
+    text.must_include("ignored=1")
+    refute(text.includes?("Module failed: chdir 78"))
+    refute(text.includes?("non-zero return code"))
+  ensure
+    File.delete(playbook) if playbook && File.exists?(playbook)
+  end
+
+  # The raise escapes real's attempt loop (it propagates out of
+  # handler.run(), unlike the RETURNED non-zero-exit dict this file's
+  # until/retries test pins): no RETRYING lines and no attempts key.
+  it "does not retry a relative-chdir failure under until/retries (issue #1160)" do
+    playbook = File.tempname("script-chdir-until", ".yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        gather_facts: false
+        tasks:
+          - name: relative chdir until
+            ansible.builtin.script:
+              chdir: 78
+              cmd: /bin/echo hi
+            until: false
+            retries: 2
+            delay: 0
+            ignore_errors: true
+      YAML
+    output = IO::Memory.new
+    Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+    text = output.to_s
+
+    text.must_include("[ERROR]: Task failed: chdir 78 must be an absolute path for a Unix-aware remote node")
+    refute(text.includes?("RETRYING"))
+    refute(text.includes?("\"attempts\""))
+  ensure
+    File.delete(playbook) if playbook && File.exists?(playbook)
+  end
 end
