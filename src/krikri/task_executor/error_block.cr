@@ -172,8 +172,14 @@ module Krikri
         # An event that captured CHILD events prints them under a boxed
         # "Sub-Event N of M" listing after its own message (real's
         # gather_facts failure: the action's caused-by event carries each
-        # failed fact module's own error this way).
-        if children = event.events
+        # failed fact module's own error this way). Real gates this on
+        # Python truthiness (`if event.events:`), so an event whose
+        # events list is EMPTY - the failed-final-rename errno node and
+        # the looped-unreachable ssh node use an empty list only as a
+        # collapse barrier - prints NO box, not even the End line
+        # (issue #1164: krikri printed a bare "+--[ End Sub-Event ]---"
+        # after the errno segment where real printed nothing).
+        if (children = event.events) && !children.empty?
           segment += format_event_children("Sub-Event", children.map { |child| format_event_verbose_message(child) })
         end
         segments << segment
