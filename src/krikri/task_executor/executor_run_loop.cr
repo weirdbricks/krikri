@@ -4604,18 +4604,42 @@ module Krikri
             hash["failed"] = JSON::Any.new(failed_when_result)
             # TaskExecutor: result['failed_when_result'] = <verdict> whenever failed_when: is set
             hash["failed_when_result"] = JSON::Any.new(failed_when_result)
-            # a module failure that failed_when: overrides to "not failed" keeps its
-            # traceback marker under the suppressed-exception key. 2.21
-            # exports that field for EVERY suppressed module failure -
-            # including a fail_json result that never carried an
-            # `exception` key (live-verified vs 2.21.6: a suppressed `fail:`
-            # register reads changed,failed,msg,failed_when_result,
+            # UnifiedTaskResult.set_failed_when_result suppresses the
+            # result's existing exception for EVERY failed_when: evaluation
+            # ("The use of any failed_when expression will suppress the
+            # existing value of `exception`"), regardless of the verdict -
+            # moving it under failed_when_suppressed_exception. 2.21 exports
+            # that field for EVERY suppressed module failure - including a
+            # fail_json result that never carried an `exception` key
+            # (live-verified vs 2.21.6: a suppressed `fail:` register reads
+            # changed,failed,msg,failed_when_result,
             # failed_when_suppressed_exception) - so synthesize the same
             # placeholder the real failure path uses when there is nothing
-            # to move.
-            if !failed_when_result && module_failed
-              suppressed = hash.delete("exception")
-              hash["failed_when_suppressed_exception"] = suppressed || JSON::Any.new("(traceback unavailable)")
+            # to move. The result's own `exception` key only ever holds
+            # block-display mimicry text (the command plugin's errno line),
+            # never a real traceback, and real's default
+            # DISPLAY_TRACEBACK=[never] exports "(traceback unavailable)"
+            # for EVERY suppressed ErrorSummary - so the moved value never
+            # reaches the dump (live-verified vs 2.21.6, issue #1133: the
+            # suppressed `php installer` failure dumps the placeholder).
+            if module_failed
+              hash.delete("exception")
+              hash["failed_when_suppressed_exception"] = JSON::Any.new("(traceback unavailable)")
+            end
+            # A True verdict REPLACES the result's exception with a fixed
+            # "A 'failed_when' expression evaluated to 'True'." event, so on
+            # a module failure the [ERROR] block shows that wording while
+            # the dumped msg stays the module's own (live-verified vs
+            # 2.21.6, issue #1133: damianlewis.octobercms' `php installer`
+            # missing-binary failure under a stdout failed_when:). The
+            # detail marker hands the block its text; an action-level
+            # failure's own _ansible_action_level marker (assert:, whose
+            # replaced exception keeps the "Action failed." middle) is
+            # left alone, while a plain module failure carries none and
+            # keeps the "Module failed." middle segment the module-failure
+            # chain uses.
+            if failed_when_result && module_failed
+              hash["_ansible_error_detail"] = JSON::Any.new("A 'failed_when' expression evaluated to 'True'.")
             end
             # A failed_when:-failed result with NO msg key finalizes through
             # AnsibleActionCapturedError.normalize_result_exception, whose
@@ -4623,7 +4647,10 @@ module Krikri
             # the bare "Action failed." block (live-verified vs 2.19.11). The
             # markers route the display through the generic action-level
             # chain, the same shape include_vars' own action failure uses.
-            if failed_when_result && !hash.has_key?("msg")
+            # A module failure never enters it: its replaced exception
+            # (above) keeps the module-failure chain and the module's own
+            # msg in the dump.
+            if failed_when_result && !module_failed && !hash.has_key?("msg")
               hash["msg"] = JSON::Any.new("Task failed: Action failed: Unknown error.")
               hash["_ansible_action_level"] = JSON::Any.new(true)
               hash["_ansible_error_detail"] = JSON::Any.new("Action failed: Unknown error.")
