@@ -1526,14 +1526,6 @@ module Krikri
       # walk_apply_attributes): basic.py's per-entry setters lstat/lchown the
       # entry itself, symlink or not.
       follow = follow_symlinks? if follow.nil?
-      uid = -1
-      gid = -1
-      if owner = requested_attr("owner")
-        uid = resolve_uid(owner)
-      end
-      if group = requested_attr("group")
-        gid = resolve_gid(group)
-      end
       # A requested owner:/group: that doesn't resolve to a real system
       # user/group must FAIL the task - Ansible's own file module
       # raises "chown failed: failed to look up user/group <name>"
@@ -1558,12 +1550,33 @@ module Krikri
       # only tried a name lookup, so `group: "0"` (a real, common,
       # numeric-ID idiom) always raised "failed to look up group 0"
       # even though the id itself is perfectly valid.
+      # Owner chown runs BEFORE the group is ever resolved: basic.py's
+      # set_fs_attributes_if_different calls set_owner_if_different to
+      # completion (chown included) before set_group_if_different even
+      # looks the group name up, so a task with a resolvable owner and a
+      # group name the host can't resolve fails with the chown ALREADY
+      # applied on disk - fail_json's exit-time add_path_info then
+      # reports the new owner (issue #1166, basserselim.upstart
+      # "create pid directory", owner: nobody, group: nogroup on a host
+      # without nogroup: real reports owner nobody/uid 65534; resolving
+      # both names up front left the path root-owned and the failure
+      # reported the pre-chown root/uid 0).
       if owner = requested_attr("owner")
         uid = resolve_uid(owner)
+        begin
+          File.chown(path, uid: uid, gid: -1, follow_symlinks: follow)
+        rescue ex : File::Error
+          raise AttributeSyscallError.new("chown", ex)
+        end
       end
 
       if group = requested_attr("group")
         gid = resolve_gid(group)
+        begin
+          File.chown(path, uid: -1, gid: gid, follow_symlinks: follow)
+        rescue ex : File::Error
+          raise AttributeSyscallError.new("chown", ex)
+        end
       end
 
       # Crystal's File.chown defaults `follow_symlinks: false`, which is
@@ -1594,11 +1607,6 @@ module Krikri
       # Ansible-equivalent task failures too and must also propagate
       # past this method; the swallowing rescues belong only to
       # walk_apply_attributes and the recursive changed-check.
-      begin
-        File.chown(path, uid: uid, gid: gid, follow_symlinks: follow) if uid != -1 || gid != -1
-      rescue ex : File::Error
-        raise AttributeSyscallError.new("chown", ex)
-      end
 
       if mode = @params["mode"]?
         begin
