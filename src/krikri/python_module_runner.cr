@@ -232,6 +232,59 @@ module Krikri
       source.includes?(MODULE_COMMON_MARKER) ? source.gsub(MODULE_COMMON_MARKER, "from ansible.module_utils.basic import *") : source
     end
 
+    # The synthesized gate module for an unported `k8s` reference
+    # (kubernetes.core.k8s and its renames - real roles overwhelmingly write
+    # the bare short name). The module family imports the `kubernetes`
+    # client library at MODULE level, so on a target without it real
+    # ansible fails the task with basic.py's missing_required_lib text
+    # before the module ever looks at its arguments or a cluster - a
+    # failure that has nothing to do with the cluster it would talk to
+    # afterwards. Running this gate on the TARGET (through the same
+    # py_module transport a role-private library/ module takes) reproduces
+    # that failure with the target's OWN hostname and interpreter - the two
+    # values the message embeds - instead of the unavailable-module skip
+    # (thoth-station.external_janusgraph_service, issue #1155). Its imports
+    # of the deprecated ansible.module_utils._text helpers are the
+    # collection's own, so the shim's per-name __getattr__ deprecations
+    # (issue #1000) reproduce the run's [DEPRECATION WARNING] lines. When
+    # the library IS importable the gate reports a sentinel instead: the
+    # module would then go on to talk to a cluster, which this engine does
+    # not implement, so the caller falls back to the designed
+    # unavailable-module skip.
+    def self.k8s_import_gate_source : String
+      <<-PYTHON
+        #!/usr/bin/python3
+        import platform
+        import sys
+
+        from ansible.module_utils._text import to_native, to_bytes, to_text
+        from ansible.module_utils.basic import AnsibleModule
+
+        try:
+            import kubernetes
+            KUBERNETES_IMPORTABLE = True
+        except ImportError:
+            KUBERNETES_IMPORTABLE = False
+
+
+        def main():
+            # The module family supports check mode (real runs it under
+            # --check, which is where its import failure shows), so the
+            # shim's own supports_check_mode gate must not skip the body.
+            module = AnsibleModule(argument_spec={}, supports_check_mode=True)
+            if not KUBERNETES_IMPORTABLE:
+                module.fail_json(msg="Failed to import the required Python library (kubernetes) on %s's Python %s. "
+                                     "Please read the module documentation and install it in the appropriate location. "
+                                     "If the required library is installed, but Ansible is using the wrong Python "
+                                     "interpreter, please consult the documentation on ansible_python_interpreter"
+                                     % (platform.node(), sys.executable))
+            module.exit_json(changed=False, _krikri_k8s_lib_present=True)
+
+
+        main()
+        PYTHON
+    end
+
     # Ansible refuses to ship a module payload whose first line is
     # not a `#!` interpreter line: ActionBase._execute_module's
     # `if not module_shebang and module_style != 'binary'` guard raises
