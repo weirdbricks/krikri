@@ -77,6 +77,17 @@ scripts/deps_audit.sh               # pinned shard versions vs newest upstream t
 ameba                               # lint
 ```
 
+**Put `mold` on `PATH`**: Crystal links via `cc` and, with no flags or
+code changes on our side, prefers `mold`/`ld.lld` when one is found
+(`use_modern_linker` in the compiler). Measured on this tree (Crystal
+1.22.2, mold 2.37.1): warm `krikri-playbook` link 2.2s -> 0.7s (build
+12.5s -> 10.5s), whole-suite test binary link 12.0s -> 2.3s (40.8s ->
+29.7s), fat plugin 3.5s -> 1.5s. `./build.sh` total barely moves
+(~38s either way) because its long pole is the standalone plugin
+builds, not linking. A user-local install is enough (no root):
+download the static `mold-<ver>-x86_64-linux.tar.gz` release, put
+`mold` and `ld.mold` in `~/.local/bin`; removing them reverts to `ld`.
+
 **Test framework**: the whole suite is
 [minitest.cr](https://github.com/ysbaddaden/minitest.cr) under `test/`
 (`unit/`, `integration/`, `lint/`; `describe`/`it` with
