@@ -58,6 +58,29 @@ private def run_batched_playbook(playbook_text : String) : {String, String}
   {stdout.to_s, stderr.to_s}
 end
 
+# Same shape with a role alongside the playbook, so a first_found lookup can
+# chain through the role's own vars/main.yml the way real roles spell it.
+private def run_batched_role_playbook(role_name : String, role_vars : String, role_tasks : String, playbook_text : String) : {String, String, String}
+  dir = PluginSpecHelper.tmp_path("inject-facts-ffrole-#{Random::Secure.hex(4)}")
+  role_dir = File.join(dir, "roles", role_name)
+  FileUtils.mkdir_p(File.join(role_dir, "vars"))
+  FileUtils.mkdir_p(File.join(role_dir, "tasks"))
+  File.write(File.join(role_dir, "vars", "main.yml"), role_vars)
+  File.write(File.join(role_dir, "tasks", "main.yml"), role_tasks)
+  playbook = File.join(dir, "play.yml")
+  File.write(playbook, playbook_text)
+  inventory = File.join(dir, "inv.ini")
+  File.write(inventory, "[target]\ntarget ansible_connection=ssh ansible_host=#{DEPR_SSHD_HOST} " \
+                        "ansible_user=#{DEPR_SSHD_USER} ansible_port=#{DEPR_SSHD_PORT} " \
+                        "ansible_ssh_private_key_file=#{DEPR_SSHD_KEY} " \
+                        "ansible_ssh_common_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null " \
+                        "-o IdentitiesOnly=yes -o ConnectTimeout=5'\n")
+  stdout = IO::Memory.new
+  stderr = IO::Memory.new
+  Process.run(BINARY, ["-i", inventory, playbook], output: stdout, error: stderr, chdir: dir)
+  {stdout.to_s, stderr.to_s, File.join(role_dir, "vars", "main.yml")}
+end
+
 describe "INJECT_FACTS_AS_VARS deprecation from a when: clause" do
   it "attributes the Origin to the when: value token and prints the help hint" do
     stderr = run_playbook(<<-PLAYBOOK)
@@ -903,5 +926,73 @@ describe "INJECT_FACTS_AS_VARS deprecation vs a module's own warnings" do
     warning_at = stderr.index!("[WARNING]: Skipped")
     deprecation_at = stderr.index!("[DEPRECATION WARNING]: INJECT_FACTS_AS_VARS")
     (warning_at < deprecation_at).must_equal(true)
+  end
+end
+
+# Issue #1169 (idiv_biodiversity.nsswitch, round 29908264): the role's
+# `lookup('first_found', __nsswitch_template)` chains through role vars whose
+# values read top-level facts. The lookup's internal param renderer hardcoded
+# the host identity "localhost", so on any REMOTE target every per-host Origin
+# attribution inside that render missed (the origin lookup registry is keyed
+# by the calling host) and the whole block stayed silent where real printed
+# it - on a local connection the host happened to BE localhost and the same
+# role printed the block, which is why every local repro passed.
+describe "INJECT_FACTS_AS_VARS deprecation from a first_found lookup's param rendering" do
+  it "warns on a remote host when the lookup's candidates chain through fact-reading role vars" do
+    skip "no reachable test sshd (see this file's header for the throwaway setup)" unless depr_sshd_reachable?
+
+    role_vars = <<-VARS
+      ---
+      __ff_distro: >-
+        {{ ansible_distribution | lower }}
+
+      __ff_first:
+        - '{{ __ff_distro }}'
+        - 'exists'
+
+      __ff_template:
+        files: >-
+          {{
+            __ff_first |
+              map('regex_replace', '^', 'ff_') |
+              map('regex_replace', '$', '.yml') |
+              list
+          }}
+        paths:
+          - files
+      VARS
+    role_tasks = <<-TASKS
+      ---
+      - name: find os file
+        ansible.builtin.template:
+          src: '{{ lookup("first_found", __ff_template) }}'
+          dest: /tmp/krikri-1169-ff.txt
+          mode: '0644'
+      TASKS
+    playbook = <<-PLAYBOOK
+      - hosts: target
+        become: true
+        gather_facts: true
+        roles:
+          - ff_like_nsswitch
+      PLAYBOOK
+
+    stdout, stderr, role_vars_path = run_batched_role_playbook("ff_like_nsswitch", role_vars, role_tasks, playbook)
+
+    # The role ships no matching template, so the lookup exhausts and fails
+    # the task exactly like idiv_biodiversity.nsswitch's round run did - the
+    # deprecation block must still print (real printed it ahead of the
+    # failure).
+    stdout.must_include("TASK [ff_like_nsswitch : find os file]")
+    stdout.must_include("No file was found when using first_found")
+    stderr.must_include("[DEPRECATION WARNING]: INJECT_FACTS_AS_VARS default to `True` is deprecated, top-level facts will not be auto injected after the change. This feature will be removed from ansible-core version 2.24.")
+    stderr.must_include("[WARNING]: Deprecation warnings can be disabled by setting `deprecation_warnings=False` in ansible.cfg.")
+    # The block is Origin'd at the fact-reading value's own declaration in the
+    # role's vars file (real live-verified vs 2.21.6 on the original role:
+    # vars/main.yml:7:20, the `__nsswitch_distro` line - here the same
+    # declaration sits at 2:14).
+    stderr.must_include("Origin: #{role_vars_path}:2:14\n")
+    stderr.must_include("2 __ff_distro: >-\n")
+    stderr.scan(/DEPRECATION WARNING\]: INJECT_FACTS_AS_VARS/).size.must_equal(1)
   end
 end

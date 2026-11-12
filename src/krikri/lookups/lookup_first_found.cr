@@ -162,7 +162,21 @@ module Krikri
         end
         return "undefined" unless params_hash
 
-        renderer = VarSubstitutor.new(vars: @vars, host_name: "localhost")
+        # The lookup renders against the CALLING HOST's vars (ansible
+        # templates a lookup's args in the host's scope), so the renderer's
+        # host identity must be the calling host's - hardcoding "localhost"
+        # here made every per-host attribution keyed on the host name miss on
+        # any remote target: an INJECT_FACTS_AS_VARS fact read inside a
+        # candidate rendered no Origin block at all (krikri stayed silent
+        # where real printed the warning - issue #1169,
+        # idiv_biodiversity.nsswitch's `lookup('first_found',
+        # __nsswitch_template)` over SSH), and a candidate naming
+        # `{{ inventory_hostname }}` rendered the literal "localhost"
+        # instead of the managed host's name. The two-arg constructor
+        # already derives the right host from the context's
+        # inventory_hostname (falling back to "localhost" only when the
+        # context carries none, the parse-time shape).
+        renderer = VarSubstitutor.new(vars: @vars)
         files = lookup_array(render_first_found_param(params_hash["files"]?, renderer))
         paths_raw = params_hash["paths"]?
         paths = paths_raw ? lookup_array(render_first_found_param(paths_raw, renderer)) : nil
