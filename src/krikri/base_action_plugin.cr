@@ -211,7 +211,7 @@ module Krikri
     # nesting) - used by every final-result action plugin
     # (action_plugins/*.cr) so each one only needs to name its own extra
     # fields, not re-derive this shape.
-    def self.plugin_result_json(changed : Bool, failed : Bool, msg : String, extra : Hash(String, JSON::Any) = Hash(String, JSON::Any).new, key_order : Array(String)? = nil, include_empty_msg : Bool = false) : JSON::Any
+    def self.plugin_result_json(changed : Bool, failed : Bool, msg : String | JSON::Any, extra : Hash(String, JSON::Any) = Hash(String, JSON::Any).new, key_order : Array(String)? = nil, include_empty_msg : Bool = false) : JSON::Any
       h = Hash(String, JSON::Any).new
       h["changed"] = JSON::Any.new(changed)
       # Unlike a module's own wire result (PluginResult#to_json), these
@@ -224,9 +224,16 @@ module Krikri
       # include_empty_msg opt-out mirrors the module wire's
       # include_empty_msg (real fail_json/exit_json always emit the msg
       # key when the caller passed one, even as "") for the actions whose
-      # Ansible module did exactly that (synchronize).
+      # Ansible module did exactly that (synchronize). A NATIVE-typed msg
+      # (assert's list-valued fail_msg/success_msg, which Ansible assigns
+      # into result['msg'] verbatim) carries its own type and is always
+      # present; only the string form follows the empty rule.
       h["failed"] = JSON::Any.new(failed)
-      h["msg"] = JSON::Any.new(msg) unless msg.empty? && !include_empty_msg
+      if msg.is_a?(JSON::Any)
+        h["msg"] = msg
+      else
+        h["msg"] = JSON::Any.new(msg) unless msg.empty? && !include_empty_msg
+      end
       extra.each { |k, v| h[k] = v }
       # Same wire-key reorder PluginResult#key_order gives module results
       # (see its comment): when *key_order* is set, the listed keys emit

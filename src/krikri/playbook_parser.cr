@@ -7822,6 +7822,21 @@ module Krikri
             # marked here - the executor's whole-span structural evaluation
             # owns their type, as for every other module.
             params[key.to_s] = Krikri::NATIVE_TYPED_PREFIX + value.to_json
+          elsif module_name == "ansible.builtin.assert" && key.to_s.in?({"fail_msg", "msg", "success_msg"}) && value.as_a?
+            # assert's fail_msg/msg/success_msg (spec type
+            # str_or_list_of_str) keep a LIST native the same way debug's
+            # msg container above does: Ansible's assert action assigns
+            # `result['msg'] = fail_msg` verbatim, so a list-valued one
+            # fails with {"msg": ["a", "b"]} and the [ERROR] chain reprs
+            # it "['a', 'b']" (live-verified vs 2.21.6 on
+            # linux-system-roles.mssql's own EULA assert, issue #1184 -
+            # the generic comma-join below fused the lines into one
+            # string). NATIVE_TYPED_PREFIX rather than bare JSON text so
+            # a literal STRING that merely looks like a list ('["a"]')
+            # stays the string Ansible keeps. Templated WHOLE values are
+            # never marked here - the executor's whole-span structural
+            # evaluation owns their type, as for debug's msg.
+            params[key.to_s] = Krikri::NATIVE_TYPED_PREFIX + value.to_json
           elsif module_name == "ansible.builtin.fail" && key.to_s == "msg" && (value.raw.is_a?(Hash) || value.raw.is_a?(Array))
             # fail: msg keeps CONTAINER literals native too: Ansible's fail
             # action puts the task arg into result['msg'] verbatim, so

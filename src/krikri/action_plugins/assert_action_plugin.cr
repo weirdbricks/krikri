@@ -1,5 +1,6 @@
 require "json"
 require "../base_action_plugin"
+require "../param_sentinels"
 require "../plugin_helpers/strict_bool_params"
 require "../conditional_evaluator"
 require "../variable_substitutor"
@@ -234,7 +235,7 @@ module Krikri
     end
 
     private def failure_result(failing : String, failing_index : Int32) : ActionResult
-      fail_msg = @params["fail_msg"]? || @params["msg"]? || "Assertion failed"
+      fail_msg = msg_argument("fail_msg") || msg_argument("msg") || "Assertion failed"
       # a bare YAML bool item (`that: [false]`) is reported as the bool itself
       assertion = failing == "false" ? JSON::Any.new(false) : (failing == "true" ? JSON::Any.new(true) : JSON::Any.new(failing))
       extra = {"assertion" => assertion, "evaluated_to" => JSON::Any.new(false)}
@@ -257,7 +258,7 @@ module Krikri
     # nothing and prints a bare `ok: [host]` (both live-verified against
     # ansible-core 2.19.11).
     private def success_result : ActionResult
-      success_msg = @params["success_msg"]? || "All assertions passed"
+      success_msg = msg_argument("success_msg") || "All assertions passed"
       extra = if true?(@params["quiet"]?)
                 {"_ansible_quiet" => JSON::Any.new(true)}
               else
@@ -267,6 +268,25 @@ module Krikri
       # (live-verified vs 2.19.11 via `{{ r | to_json }}`).
       ActionResult.final(ActionResult.plugin_result_json(false, false, success_msg, extra,
         key_order: ["changed", "msg", "failed"]))
+    end
+
+    # The msg argument Ansible's assert action assigns into result['msg']
+    # VERBATIM (`result['msg'] = fail_msg`, no str() coercion): a
+    # NATIVE_TYPED_PREFIX wire value (how the parser/executor carry a
+    # list-valued fail_msg/success_msg - live-verified vs 2.21.6 on
+    # linux-system-roles.mssql's EULA assert, issue #1184: the fatal dump
+    # keeps the real list and the [ERROR] chain reprs it "['a', 'b']")
+    # decodes back to the container it was; a plain string stays a string,
+    # and a marked STRING stays the str Ansible keeps.
+    private def msg_argument(key : String) : String | JSON::Any?
+      raw = @params[key]? || return nil
+      if raw.starts_with?(Krikri::NATIVE_TYPED_PREFIX)
+        parsed = JSON.parse(raw[Krikri::NATIVE_TYPED_PREFIX.size..]) rescue nil
+        if parsed
+          return parsed.as_s? || parsed
+        end
+      end
+      raw
     end
 
     private def true?(value : String?, default : Bool = false) : Bool
