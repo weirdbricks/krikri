@@ -48,6 +48,25 @@ describe LineEditor do
       lines.must_equal(["en \n"])
       changed.must_equal(false)
     end
+
+    it "matches through the Python-accepted '[::]' class PCRE2 alone refuses (issue #1173: zhan9san.jenkins)" do
+      # Real Ansible's Python re reads '[::]' as a literal colon class, so
+      # this regexp matches nothing on stock nginx.conf (the '[...]' in the
+      # line is not '::80;') - the exact-line fallback is what fires.
+      lines, changed, found = LineEditor.remove_matching(
+        ["listen       [::]:80 default_server;\n"], nil,
+        "^\\s*listen       [::]:80;")
+      lines.must_equal(["listen       [::]:80 default_server;\n"])
+      changed.must_equal(false)
+      found.must_equal(0)
+    end
+
+    it "gives the rewritten '[::]' class the same membership Python does" do
+      lines, changed, found = LineEditor.remove_matching(["a:b\n", "a-b\n"], nil, "a[::]b")
+      lines.must_equal(["a-b\n"])
+      changed.must_equal(true)
+      found.must_equal(1)
+    end
   end
 
   describe ".ensure_present" do

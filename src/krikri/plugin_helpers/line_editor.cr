@@ -1,3 +1,5 @@
+require "./python_pattern"
+
 module Krikri
   module PluginHelpers
     # LineEditor - pure line-matching/insertion logic for the lineinfile
@@ -22,10 +24,9 @@ module Krikri
     module LineEditor
       def self.matches_regexp?(line : String, pattern : String?) : Bool
         return false unless pattern
-        regex = Regex.new(pattern)
+        regex = compile_pattern(pattern)
+        return false unless regex
         !!(line =~ regex)
-      rescue
-        false
       end
 
       # --- lineinfile entry points: lines carry their terminator ----------
@@ -46,9 +47,16 @@ module Krikri
         end
       end
 
+      # Compiled the way Python's re would: through PythonPattern.scan,
+      # whose output is what the validation pass (regex_compile_error in
+      # lineinfile/replace) already accepted - a raw Regex.new here would
+      # diverge from that pass and re-hit the PCRE2-only rejections the
+      # scan defuses (e.g. a top-level '[::]' class). A pattern Python's
+      # own parser rejects keeps its raw form here and still fails to
+      # compile - the same rescue-nil fallback as before.
       private def self.compile_pattern(pattern : String?) : Regex?
         return nil unless pattern
-        Regex.new(pattern)
+        Regex.new(Krikri::PythonPattern.scan(pattern).translated)
       rescue
         nil
       end
