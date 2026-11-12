@@ -14,7 +14,7 @@ shards:
 
   db:
     git: https://github.com/crystal-lang/crystal-db.git
-    version: 0.14.0
+    version: 0.15.0
 
   docr:
     git: https://github.com/weirdbricks/docr.git
@@ -30,7 +30,7 @@ shards:
 
   krikri-xml:
     git: https://github.com/weirdbricks/krikri-xml.git
-    version: 0.3.0+git.commit.dd0bfa2966bca2326818011f7b24dbf19c4fe2a5
+    version: 0.3.1+git.commit.bdb21ad6daf17e624c3758a3dbbd8e8ed8782338
 
   minitest:
     git: https://github.com/ysbaddaden/minitest.cr.git
@@ -38,11 +38,11 @@ shards:
 
   mysql:
     git: https://github.com/weirdbricks/crystal-mysql.git
-    version: 0.17.0+git.commit.6262d0f5ce2be82182b8c356d90b2fb9303d059d
+    version: 0.18.0+git.commit.260f81816c816dd22ed1ee729bb23497aff28b2b
 
   pg:
     git: https://github.com/will/crystal-pg.git
-    version: 0.30.0
+    version: 0.31.0
 
   xz:
     git: https://github.com/naqvis/xz.cr.git

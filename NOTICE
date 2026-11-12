@@ -25,5 +25,5 @@ scripts/gen_print_names.py).
 
 Third-party libraries
 ---------------------
-Crystal shard dependencies keep their own licenses (MIT at the time of writing);
-see shard.yml and lib/.
+Crystal shard dependencies keep their own licenses (MIT or BSD-3-Clause at the
+time of writing); see shard.yml and lib/.
