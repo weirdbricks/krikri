@@ -743,6 +743,60 @@ describe "role-local filter_plugins file that fails to import" do
   end
 end
 
+describe "role-local filter_plugins import-time deprecations" do
+  it "shows a broken file's import-time deprecations after its skip warning (round 29908360)" do
+    root = File.tempname("filter-import-deprecations")
+    begin
+      Dir.mkdir_p(File.join(root, "filter_plugins"))
+      broken = File.join(root, "filter_plugins", "util.py")
+      good = File.join(root, "filter_plugins", "good.py")
+      # The filter-side twin of round 29908360's test-plugin shape
+      # (constrict0r.unify's util.py): a plugin file importing the
+      # deprecated ansible.module_utils._text names before an import
+      # that fails - ansible displays one [DEPRECATION WARNING] per
+      # imported name plus the one-time "deprecation_warnings=False"
+      # hint after the "Skipping plugin" line.
+      File.write(broken, <<-PYTHON)
+        from ansible.module_utils._text import to_bytes
+        from ansible.module_utils._text import to_text
+        from collections import Sequence
+
+
+        class FilterModule(object):
+            def filters(self):
+                return {"noop": self.noop}
+
+            def noop(self, value):
+                return value
+        PYTHON
+      File.write(good, <<-PYTHON)
+        class FilterModule(object):
+            def filters(self):
+                return {"double": lambda x: x * 2}
+        PYTHON
+
+      status, output = run_playbook(root, <<-YAML)
+        - hosts: localhost
+          connection: local
+          gather_facts: false
+          tasks:
+            - name: the play's first filter-using templating
+              ansible.builtin.debug:
+                msg: "{{ 21 | double }}"
+        YAML
+
+      status.success?.must_equal(true, output)
+      output.must_include("42", output)
+      output.scan("Skipping plugin").size.must_equal(1, output)
+      output.scan("[DEPRECATION WARNING]: Importing 'to_bytes' from 'ansible.module_utils._text' is deprecated. This feature will be removed from ansible-core version 2.24. Use ansible.module_utils.common.text.converters instead.").size.must_equal(1, output)
+      output.scan("[DEPRECATION WARNING]: Importing 'to_text' from 'ansible.module_utils._text' is deprecated. This feature will be removed from ansible-core version 2.24. Use ansible.module_utils.common.text.converters instead.").size.must_equal(1, output)
+      output.scan("[WARNING]: Deprecation warnings can be disabled by setting `deprecation_warnings=False` in ansible.cfg.").size.must_equal(1, output)
+    ensure
+      FileUtils.rm_rf(root) if root
+    end
+  end
+end
+
 describe "a wrapper-level introspection failure is not cached as an empty name set" do
   exclusive! # ENV["PATH"] is process-wide: no other test may overlap the blank window
 
