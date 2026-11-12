@@ -365,7 +365,7 @@ module Krikri
       # above).
       unless @check_mode
         explicitly_no_cache = @params["update_cache"]? ? !true?(@params["update_cache"]?) : false
-        if failure = apt_auto_install_python_apt(explicitly_no_cache, ->remote_exec(String), force_absent: true?(@params["_python_apt_absent"]?))
+        if failure = apt_auto_install_python_apt(explicitly_no_cache, ->remote_exec(String), force_absent: true?(@params["_python_apt_absent"]?), vars: @vars)
           # Real ansible's fail_json for the failed auto-install stage
           # carries the RAW command result (msg = stderr.rstrip, no custom
           # prefix) with NO cache_updated key - the module never got to
@@ -1863,6 +1863,61 @@ module Krikri
       wildcard_result
     end
 
+    # apt.py's install() cache resolution for state: latest (the
+    # state=present handler above mirrors the same walk): every spec is
+    # resolved against the apt cache BEFORE anything runs, and that
+    # resolution is not check-mode gated - install() runs the same cache
+    # lookup for state=latest as for present, so a name apt-cache has
+    # never heard of fails "No package matching 'X' is available" before
+    # any apt-get call (no cache_* keys), not apt-get's "has no
+    # installation candidate", in normal AND check mode alike. Returns
+    # the failure for the first unsatisfiable name, else the resolved
+    # specs - each plain name pinned to its candidate ("name=candidate"),
+    # the way real install() pins version_installable onto the apt-get
+    # command line.
+    private def resolve_latest_specs(packages : Array(String)) : PluginResult | Array(String)
+      spec_list = [] of String
+      packages.each do |pkg|
+        base_name, pinned_version = split_name_version(pkg)
+        resolvable, candidate = apt_candidate(base_name)
+        # A name that is only referenced by other packages' dependencies
+        # still prints an `apt-cache policy` stanza ("Candidate: (none)"),
+        # but python-apt sees no versions and no providers, so it is a
+        # miss too.
+        unknown = !resolvable
+        if !unknown && candidate.nil? && pinned_version.nil?
+          no_providers = (apt_reverse_provides_batch([base_name])[base_name]? || [] of String).empty?
+          unknown = no_providers && !(dpkg_installed_status([base_name])[base_name]?.try(&.[0]) || false)
+        end
+        if pinned_version.nil? && unknown
+          return PluginResult.new(
+            changed: false,
+            failed: true,
+            msg: no_package_msg(base_name)
+          )
+        end
+        version = pinned_version || candidate
+        unless pinned_version || version || !resolvable
+          # A purely virtual name (Candidate: (none)) with state=latest:
+          # real package_status() resolves it through its providers - a
+          # LONE provider that is already installed contributes its own
+          # candidate as version_installable when the installed version
+          # differs, and main() pins THAT onto the requested (virtual)
+          # name: "git-core=1:2.34.1-1ubuntu1.17". apt-get then refuses a
+          # version pin on a virtual name and the task FAILS, exactly as
+          # captured in iroquoisorg.tools round 2300027 ("E: Version
+          # '1:2.34.1-1ubuntu1.17' for 'git-core' was not found") - this
+          # engine used to pass the bare virtual name through, letting
+          # apt-get silently upgrade the provider and report changed.
+          # Multi-provider or not-installed-provider virtual names take
+          # real's "let apt sort it out" bare-spec path (unchanged).
+          version = virtual_provider_pin(base_name)
+        end
+        spec_list << (version ? "#{base_name}=#{version}" : base_name)
+      end
+      spec_list
+    end
+
     # Handle upgrading packages to latest
     private def handle_latest(packages : Array(String), messages : Array(String), changed : Bool, lock_timeout : Int32) : PluginResult
       # Same empty-name hard failure Ansible's apt module produces
@@ -1953,6 +2008,23 @@ module Krikri
         end
       end
 
+      # Ansible's install() resolves every spec against the apt cache
+      # BEFORE it runs anything, and that resolution is not check-mode
+      # gated: a name apt-cache has never heard of fails "No package
+      # matching 'X' is available" (no cache_* keys) before any apt-get
+      # call in normal AND check mode alike (live-verified vs
+      # ansible-playbook 2.21.6 - ajgarlag.logstash's "installing JAVA
+      # package", round 29908288: ansible's --check output fails the
+      # task with that message where this engine's check-mode simulate
+      # run below reported "already at latest version" and ok). Resolved
+      # up here so the check-mode branch fails the same way; normal mode
+      # hands the resolved specs to its apt-get line below.
+      resolved_specs = resolve_latest_specs(active_packages)
+      if resolved_specs.is_a?(PluginResult)
+        return resolved_specs
+      end
+      spec_list = resolved_specs
+
       # Every wildcard-pinned package was already installed at a version
       # its glob matches: nothing is left for apt-get (or the check-mode
       # simulate run) to act on at all - the same "already at latest
@@ -2006,48 +2078,6 @@ module Krikri
         # install tree=2.0.2-1`). The plugin previously built its own
         # `apt-get install -y <opts> <flags> <name>` line, which no real
         # capture or apt.py format string produces.
-        spec_list = active_packages.map do |pkg|
-          base_name, pinned_version = split_name_version(pkg)
-          resolvable, candidate = apt_candidate(base_name)
-          # install() runs the same cache lookup for state=latest as for
-          # present: a name apt-cache has never heard of fails with
-          # "No package matching 'X' is available" before any apt-get call
-          # (no cache_* keys), not apt-get's "has no installation candidate".
-          # A name that is only referenced by other packages' dependencies
-          # still prints an `apt-cache policy` stanza ("Candidate: (none)"),
-          # but python-apt sees no versions and no providers, so it is a
-          # miss too.
-          unknown = !resolvable
-          if !unknown && candidate.nil? && pinned_version.nil?
-            no_providers = (apt_reverse_provides_batch([base_name])[base_name]? || [] of String).empty?
-            unknown = no_providers && !(dpkg_installed_status([base_name])[base_name]?.try(&.[0]) || false)
-          end
-          if pinned_version.nil? && unknown
-            return PluginResult.new(
-              changed: false,
-              failed: true,
-              msg: no_package_msg(base_name)
-            )
-          end
-          version = pinned_version || candidate
-          unless pinned_version || version || !resolvable
-            # A purely virtual name (Candidate: (none)) with state=latest:
-            # real package_status() resolves it through its providers - a
-            # LONE provider that is already installed contributes its own
-            # candidate as version_installable when the installed version
-            # differs, and main() pins THAT onto the requested (virtual)
-            # name: "git-core=1:2.34.1-1ubuntu1.17". apt-get then refuses a
-            # version pin on a virtual name and the task FAILS, exactly as
-            # captured in iroquoisorg.tools round 2300027 ("E: Version
-            # '1:2.34.1-1ubuntu1.17' for 'git-core' was not found") - this
-            # engine used to pass the bare virtual name through, letting
-            # apt-get silently upgrade the provider and report changed.
-            # Multi-provider or not-installed-provider virtual names take
-            # real's "let apt sort it out" bare-spec path (unchanged).
-            version = virtual_provider_pin(base_name)
-          end
-          version ? "#{base_name}=#{version}" : base_name
-        end
         pkg_list = spec_list.map { |spec| naive_single_quote(spec) }.join(" ")
         # Real install()'s EXACT eight-slot format (same construction the
         # state=present path below mirrors): the `fixed` and `check_arg`
@@ -2473,7 +2503,7 @@ module Krikri
       # spec on a dev box that really has the bindings can still drive
       # the check-mode refusal and auto-install paths end to end.
       return false if true?(@params["_python_apt_absent"]?)
-      apt_python_apt_present?(->remote_exec(String))
+      apt_python_apt_present?(->remote_exec(String), @vars)
     end
 
     # apt.py's !HAVE_PYTHON_APT ladder's check-mode fail_json shape:

@@ -81,4 +81,26 @@ describe "apt with a name that has no candidate and no providers (issue 221)" do
       File.exists?(log).must_equal(false)
     end
   end
+
+  # apt.py's install() resolves the name in check mode too - state=latest
+  # used to skip straight to its check-mode simulate run and report
+  # "already at latest version" (ok) where real fails the task before any
+  # apt-get call (live-verified vs ansible-playbook 2.21.6: the
+  # ajgarlag.logstash check phase, round 29908288 - ansible's --check
+  # output for "installing JAVA package" is exactly this failure).
+  it "fails state=latest in check mode with no candidate and no providers, before apt-get" do
+    with_apt_unknown_name_shims do |env, log|
+      result = PluginSpecHelper.run("apt", {
+        "name"                => "virtualbox-5.2",
+        "state"               => "latest",
+        "_ansible_check_mode" => "true",
+        "_environment"        => env,
+      })
+
+      result["failed"].as_bool.must_equal(true)
+      result["msg"].as_s.must_equal("No package matching 'virtualbox-5.2' is available")
+      result.as_h.has_key?("cache_updated").must_equal(false)
+      File.exists?(log).must_equal(false)
+    end
+  end
 end
