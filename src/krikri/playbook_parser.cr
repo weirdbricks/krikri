@@ -4057,6 +4057,17 @@ module Krikri
       module_name = nil
       module_params = nil
       legacy_conflict_key = nil
+      # ansible's load-time task parse runs mod_args with
+      # skip_action_validation=True, which makes the FIRST unrecognized
+      # key the action and any second one the conflict - so the message
+      # names them in task-key order: `sudo_user:` above `file:` reports
+      # "sudo_user, file", not "file, sudo_user"
+      # (alekseenkoss77.influxdb-backup). An action:/local_action:
+      # directive is resolved before that walk, so its module always
+      # leads the message regardless of where the legacy key sits
+      # (mrlesmithjr.lsi-megaraid).
+      legacy_key_first = false
+      module_from_directive = false
 
       task_hash.each do |key, value|
         key_str = key.to_s
@@ -4072,6 +4083,7 @@ module Krikri
               "unexpected parameter type in action: <class '#{class_name}'>",
               source_file, source_map, task_source_prefix(source_prefix, index)))
           end
+          legacy_key_first = module_name.nil?
           legacy_conflict_key = key_str
         elsif key_str == "static"
           # `static:` is a pre-2.x include-timeout hint that ansible-core
@@ -4159,6 +4171,7 @@ module Krikri
       templated_action_site = nil.as({String, Int32, Int32}?)
       if (directive_key = module_name) && ACTION_DIRECTIVE_KEYS.includes?(directive_key)
         action_directive_form = true
+        module_from_directive = true
         is_local_action = module_name.includes?("local_action")
         if (mp = module_params) && (s = mp.as_s?)
           tokens = s.strip.split(/\s+/, 2)
@@ -4245,10 +4258,12 @@ module Krikri
       end
 
       if module_name && legacy_conflict_key
+        first_name = module_from_directive || !legacy_key_first ? module_name : legacy_conflict_key
+        second_name = first_name == module_name ? legacy_conflict_key : module_name
         raise ConflictingActionStatementsError.new(
-          "conflicting action statements: #{module_name}, #{legacy_conflict_key}",
+          "conflicting action statements: #{first_name}, #{second_name}",
           origin_error_render(
-            "conflicting action statements: #{module_name}, #{legacy_conflict_key}",
+            "conflicting action statements: #{first_name}, #{second_name}",
             source_file, source_map, task_source_prefix(source_prefix, index)))
       end
 
