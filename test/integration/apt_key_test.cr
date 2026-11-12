@@ -139,6 +139,33 @@ done
 exit 1
 SH
 
+# The pgp.mit.edu coin-flip's rc-0 face (issue #1132): the recv "wins"
+# - exit 0, "Executing:" line and all - but adds nothing to the state,
+# so the post-add verification finds the key absent, exactly like the
+# round's own ansible-side run did.
+private APT_KEY_RECV_OK_NO_ADD_SHIM = <<-'SH'
+#!/bin/bash
+STATE="${KRIKRI_APT_KEY_STATE:?}"
+args=("$@")
+for i in "${!args[@]}"; do
+  case "${args[$i]}" in
+    adv)
+      rest=("${args[@]:$((i+1))}")
+      if [[ "${rest[*]}" == *--list-public-keys* ]]; then
+        [ -f "$STATE" ] && cat "$STATE"
+        exit 0
+      fi
+      if [[ "${rest[*]}" == *--recv* ]]; then
+        echo "Executing: /tmp/apt-key-gpghome.wxdEHDAZLE/gpg.1.sh --no-tty --keyserver pgp.mit.edu --recv 5072E1F5"
+        echo "Warning: apt-key is deprecated. Manage keyring files in trusted.gpg.d instead (see apt-key(8))." >&2
+        exit 0
+      fi
+      ;;
+  esac
+done
+exit 1
+SH
+
 # The same recv failure, but with the per-invocation gpg home real
 # apt-key builds (`mktemp -d /tmp/apt-key-gpghome.XXXXXXXXXX`), which
 # the shim records so the spec can pin the passthrough without
@@ -610,6 +637,35 @@ describe "apt_key plugin" do
     File.delete(state) rescue nil
   end
 
+  it "reports shortened before/after when the keyserver add exits 0 but the key never lands (8-char id, issue #1132)" do
+    # The actual cowops.debian-mysql shape: pgp.mit.edu flakily answers
+    # an --recv with rc 0 but no key (the round's own ansible side hit
+    # exactly this - after == before, task failed with the
+    # verification message), and with an 8-char id: apt_key.py runs in
+    # short_format, so the before/after it reports are the listed ids
+    # shortened to their last 8 chars ("EFE21092", not
+    # "D94AA3F0EFE21092"). Krikri reported the unshortened 16-char
+    # long ids in those arrays - a deterministic output gap that shows
+    # up whenever either engine hits the rc-0 side of the keyserver's
+    # coin flip. The double answers --recv with rc 0 and never adds.
+    state = apt_key_spec_state_file
+    File.write(state, "pub  2048R/D94AA3F0EFE21092 2020-01-01\n")
+    with_apt_key_shim_body(APT_KEY_RECV_OK_NO_ADD_SHIM, state) do
+      result = PluginSpecHelper.run("apt_key", {"state" => "present", "keyserver" => "pgp.mit.edu", "id" => "5072E1F5"})
+
+      result["failed"].as_bool.must_equal(true)
+      result["changed"].as_bool.must_equal(true)
+      result["msg"].as_s.must_equal("apt-key did not return an error, but failed to add the key (check that the id is correct and *not* a subkey)")
+      result["id"].as_s.must_equal("5072E1F5")
+      result["short_id"].as_s.must_equal("5072E1F5")
+      result["fp"].as_s.must_equal("5072E1F5")
+      result["key_id"].as_s.must_equal("5072E1F5")
+      result["before"].as_a.map(&.as_s).must_equal(["EFE21092"])
+      result["after"].as_a.map(&.as_s).must_equal(["EFE21092"])
+    end
+    File.delete(state) rescue nil
+  end
+
   it "recognizes a key already present when id: is an 8-char short id (changed: false, no re-add)" do
     # The listing (--keyid-format=long) only ever yields 16-char long ids
     # (or 40-char fingerprints via the colon-format fallback), and an
@@ -630,12 +686,16 @@ describe "apt_key plugin" do
       falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
       # Real apt_key.py's success shape (live-verified 2.19.11): the r
       # dict [changed, id, short_id, fp, key_id, before] with no msg
-      # key - id stays the RAW 8-char id, before is the parsed listing.
+      # key - id stays the RAW 8-char id, before is the parsed listing
+      # shortened to last-8 ids (short_format, issue #1132: ansible's
+      # round output showed before/after as ["EFE21092", ...], the
+      # last-8 forms, never the 16-char long ids --keyid-format=long
+      # prints).
       result["id"].as_s.must_equal("CAFEF00D")
       result["short_id"].as_s.must_equal("CAFEF00D")
       result["fp"].as_s.must_equal("CAFEF00D")
       result["key_id"].as_s.must_equal("CAFEF00D")
-      result["before"].as_a.map(&.as_s).must_equal([FAKE_KEY_ID])
+      result["before"].as_a.map(&.as_s).must_equal(["CAFEF00D"])
       result.as_h.keys.must_equal(["changed", "id", "short_id", "fp", "key_id", "before"])
     end
     File.delete(state) rescue nil
@@ -656,12 +716,12 @@ describe "apt_key plugin" do
       falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
       # Real apt_key.py's success shape (live-verified 2.19.11): the r
       # dict [changed, id, short_id, fp, key_id, before, after] with no
-      # msg key - after present because an add ran, and carries the
-      # re-listed 16-char long id.
+      # msg key - after present because an add ran, shortened to its
+      # last-8 form like before (issue #1132).
       result["id"].as_s.must_equal("1278AEBD")
       result["short_id"].as_s.must_equal("1278AEBD")
       result["before"].as_a.must_be_empty
-      result["after"].as_a.map(&.as_s).must_equal(["E07A3F141278AEBD"])
+      result["after"].as_a.map(&.as_s).must_equal(["1278AEBD"])
       result.as_h.keys.must_equal(["changed", "id", "short_id", "fp", "key_id", "before", "after"])
     end
     File.delete(state) rescue nil
