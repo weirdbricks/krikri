@@ -546,6 +546,50 @@ module Krikri
         name.starts_with?("/")
     end
 
+    # A LOCAL rpm-file spec - real's dnf.py filename handling keys off
+    # the `.rpm` suffix (with `://` naming a fetched URL instead, whose
+    # results entry is a random fetch temp path this engine never
+    # invents). Every "what would dnf do with this FILE" answer below
+    # applies to these and nothing else.
+    private def local_rpm_file?(name : String) : Bool
+      stripped = name.strip
+      stripped.ends_with?(".rpm") &&
+        !stripped.starts_with?("http://") &&
+        !stripped.starts_with?("https://") &&
+        !stripped.starts_with?("ftp://")
+    end
+
+    # The full NEVRA (epoch where present) the rpm FILE's own header
+    # carries, nil when the header cannot be read. Plain `rpm -q <path>`
+    # cannot answer this: rpm treats a path argument as a package FILE
+    # to query and reports the header's NEVRA with exit 0 whether or not
+    # that package is installed (see handle_dnf's own comment).
+    private def rpm_file_header_nevra(pkg : String) : String?
+      path = pkg.strip.lchop("file://")
+      result = remote_exec("rpm -qp --qf '#{DNF_NEVRA_QF}' #{shell_single_quote(path)} 2>/dev/null")
+      nevra = result[:stdout].strip
+      return nil if result[:exit_code] != 0 || nevra.empty? || nevra.includes?('\n')
+      nevra
+    end
+
+    # An rpm FILE whose own header NEVRA is already installed resolves
+    # to dnf's EMPTY transaction - "Nothing to do", changed: false, in
+    # check mode exactly as in a real run (issue #781, the same verdict
+    # rpm_package.cr's own rpm_file_already_installed? carries for the
+    # dnf:/yum: plugins; issue #1187's zhan9san.jenkins, whose
+    # /tmp/jenkins-*.rpm was already installed at the very NEVRA its
+    # header carried - ansible-playbook --check said ok where this
+    # engine's check-mode plan said changed). The lookup compares the
+    # full NEVRA, because `rpm -q` parses only a name-version-release
+    # spec - an "epoch:name-..." spelling is read as a literal NAME and
+    # matches nothing - and an epoch-only difference must still count
+    # as a different package to dnf.
+    private def rpm_file_already_installed?(pkg : String) : Bool
+      nevra = rpm_file_header_nevra(pkg) || return false
+      result = remote_exec("rpm -q --qf '#{DNF_NEVRA_QF}' #{shell_single_quote(nevra.sub(/\A\d+:/, ""))} 2>/dev/null")
+      result[:exit_code] == 0 && result[:stdout].strip == nevra
+    end
+
     # update_cache: true with no name: - just refresh the package
     # manager's own index, matching Ansible's own cache-refresh-
     # only idiom for package:/apt:.
@@ -1196,6 +1240,37 @@ module Krikri
       )
     end
 
+    # The check-mode planning facts the present/latest branches share
+    # for rpm-file specs: real's "Installed <filename>" results entries
+    # (one per local file spec, in `name:` order, appended whether or
+    # not the transaction has anything else to do - issue #844,
+    # live-verified vs 2.15.13) and the specs that still enter the plan
+    # (a file whose own header NEVRA is already installed resolves to
+    # dnf's empty transaction and drops out - see
+    # rpm_file_already_installed?).
+    private def dnf_check_mode_file_plan(names : Array(String)) : NamedTuple(file_entries: Array(String), pending_specs: Array(String))
+      noop_files = names.select { |pkg| local_rpm_file?(pkg) && rpm_file_already_installed?(pkg) }
+      file_entries = names.select { |pkg| local_rpm_file?(pkg) }.map { |pkg| "Installed #{pkg.strip}" }
+      {file_entries: file_entries, pending_specs: names - noop_files}
+    end
+
+    # One "Installed: <nevra>" entry for a spec the transaction would
+    # install. A local rpm FILE names its own header NEVRA - real's
+    # entry is the package the file resolves to, never the path
+    # (live-verified vs 2.15.13: `package: name:
+    # /tmp/tmux-3.2a-5.el9.x86_64.rpm state: present` under --check
+    # reports results ["Installed /tmp/tmux-3.2a-5.el9.x86_64.rpm",
+    # "Installed: tmux-3.2a-5.el9.x86_64"]). Anything else keeps the
+    # resolved available NEVRA (or the bare spec when nothing else
+    # names it).
+    private def dnf_check_mode_install_entry(pkg : String, available_nevras : Hash(String, String)) : String
+      if local_rpm_file?(pkg)
+        nevra = rpm_file_header_nevra(pkg)
+        return "Installed: #{nevra}" if nevra
+      end
+      "Installed: #{available_nevras[pkg]? || pkg}"
+    end
+
     # The failure shape real's dnf module reports when a requested spec
     # resolves to nothing - in CHECK mode too, where the transaction
     # resolution fails the task exactly like the real install would
@@ -1275,9 +1350,27 @@ module Krikri
           # check mode exactly like the real install does - the module's
           # transaction resolution runs before any check-mode stop.
           missing = names.select { |pkg| installed_status[pkg]? == DnfSpecResolution::Missing }
-          results = names.select { |pkg| installed_status[pkg]? == DnfSpecResolution::Available }
-            .map { |pkg| "Installed: #{available_nevras[pkg]? || pkg}" }.sort!
-          if is_installed && !names.empty?
+          # The file-plan comments carry the whole issue #781/#844/#1187
+          # story: an already-installed rpm FILE is a no-op, and every
+          # file spec keeps real's "Installed <filename>" entry.
+          plan = dnf_check_mode_file_plan(names)
+          results = plan[:pending_specs].select { |pkg| installed_status[pkg]? == DnfSpecResolution::Available }
+            .map { |pkg| dnf_check_mode_install_entry(pkg, available_nevras) }.sort!
+          # The noop probe (issue #1019's metadata load) models real
+          # resolving an already-satisfied request; mirror rpm_package's
+          # gate - only installed plain-name specs get it, a file spec
+          # classified out above has no probe of its own (check mode has
+          # no repo state to model a metadata failure inside the
+          # would-be plan).
+          resolved = plan[:pending_specs].all? do |pkg|
+            status = installed_status[pkg]?
+            status == DnfSpecResolution::Installed || status == DnfSpecResolution::Virtual
+          end
+          plain_installed = plan[:pending_specs].any? do |pkg|
+            !url_or_file?(pkg) &&
+              (installed_status[pkg]? == DnfSpecResolution::Installed || installed_status[pkg]? == DnfSpecResolution::Virtual)
+          end
+          if resolved && plain_installed
             failure = dnf_present_noop_probe_failure(name, shell_pkg, names)
             return failure if failure
           end
@@ -1307,7 +1400,7 @@ module Krikri
             end
             return dnf_missing_spec_failure(missing, names)
           end
-          return dnf_check_mode_transaction_result(!results.empty?, results)
+          return dnf_check_mode_transaction_result(!results.empty?, plan[:file_entries] + results)
         end
         if is_installed
           if !names.empty?
@@ -1450,16 +1543,25 @@ module Krikri
           pending = dnf_check_update_rows(check_update[:stdout])
           installs = [] of String
           removals = [] of String
+          # Same file-plan facts as the present branch: an rpm file
+          # whose own header NEVRA is already installed is "same as
+          # installed" under `state: latest` too (real's dnf.py routes
+          # filenames through the identical install path in both states
+          # - live-verified vs 2.15.13: `state: latest` on an
+          # already-installed /tmp/*.rpm reports the same "Nothing to
+          # do" no-op), and every local file spec keeps its "Installed
+          # <filename>" results entry (issue #844).
+          plan = dnf_check_mode_file_plan(names)
           if wildcard_latest
             pending.each do |row_name, new_nevra|
               installs << "Installed: #{new_nevra}"
               removals << "Removed: #{dnf_installed_nevra(row_name)}"
             end
           else
-            names.each do |pkg|
+            plan[:pending_specs].each do |pkg|
               case installed_status[pkg]?
               when DnfSpecResolution::Available
-                installs << "Installed: #{available_nevras[pkg]? || pkg}"
+                installs << dnf_check_mode_install_entry(pkg, available_nevras)
               when DnfSpecResolution::Installed
                 if row = pending.find { |row_name, _| dnf_spec_matches?(pkg, row_name) }
                   installs << "Installed: #{row[1]}"
@@ -1482,7 +1584,7 @@ module Krikri
             return failure if failure
           end
           return dnf_missing_spec_failure(missing, names) unless missing.empty?
-          return dnf_check_mode_transaction_result(!results.empty?, results)
+          return dnf_check_mode_transaction_result(!results.empty?, plan[:file_entries] + results)
         end
 
         # Ansible's `package:` module delegates straight to
