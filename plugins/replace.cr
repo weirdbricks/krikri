@@ -371,9 +371,14 @@ module Krikri
       end
 
       # Apply any requested attribute changes (owner/group/mode), matching
-      # Ansible which also sets them even on a no-matches run
-      # (check mode never writes).
-      attr_changed = @check_mode ? false : apply_attributes(path)
+      # Ansible which also sets them even on a no-matches run. Check mode
+      # never writes, but check_file_attrs still runs there, and basic.py's
+      # set_*_if_different helpers report the WOULD-BE drift (each returns
+      # True at its `if self.check_mode` gate, before mutating), so the
+      # drift is detected, not skipped: a --check replace task whose regexp
+      # matches nothing but whose mode: drifts is "changed" in real Ansible
+      # (issue #1161).
+      attr_changed = @check_mode ? would_change_attributes(path) : apply_attributes(path)
 
       # Ansible's result carries ONLY rc/msg/changed (+diff in diff mode,
       # +backup_file when a backup was actually taken) - no path echo,
@@ -855,6 +860,48 @@ module Krikri
     rescue File::Error
       # A chown/chmod failure (e.g. not running as root/owner) shouldn't
       # fail the whole task - matches copy.cr's own identical rescue.
+      false
+    end
+
+    # Check-mode mirror of apply_attributes: reports whether the task's
+    # mode:/owner:/group: WOULD change the file, without touching it -
+    # real replace.py's check_file_attrs runs in check mode too, and
+    # basic.py's set_mode_if_different/set_owner_if_different/
+    # set_group_if_different each "return True" at their `if
+    # self.check_mode` gate (live-verified vs 2.21.6: a --check replace
+    # whose regexp matches nothing but whose mode: drifts answers
+    # changed=true, msg "ownership, perms or SE linux context changed").
+    # Owner/group names resolve before the mode arithmetic so an
+    # unresolvable name still fails the task like the non-check path
+    # (basic.py looks the name up before its own check-mode gate); a mode
+    # string this engine cannot resolve neither applies (the non-check
+    # chmod(1) subprocess just no-ops) nor drifts.
+    private def would_change_attributes(path : String) : Bool
+      info = File.info?(path, follow_symlinks: false)
+      return false unless info
+
+      changed = false
+
+      if owner = @params["owner"]?
+        changed = info.owner_id.to_i != resolve_owner_uid(owner) || changed
+      end
+
+      if group = @params["group"]?
+        changed = info.group_id.to_i != resolve_group_gid(group) || changed
+      end
+
+      if mode = @params["mode"]?
+        current = info.permissions.value.to_i & 0o7777
+        target = if mode =~ /\A0?[0-7]{3,4}\z/
+                   mode.to_i(8)
+                 else
+                   resolve_symbolic_mode(current, mode)
+                 end
+        changed = current != target || changed
+      end
+
+      changed
+    rescue InvalidModeError
       false
     end
 
