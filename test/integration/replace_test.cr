@@ -254,6 +254,51 @@ describe "replace plugin" do
     File.read(path).must_equal("a=1\n")
   end
 
+  it "reports the would-be attrs drift as changed in check mode even with no regexp match (issue #1161)" do
+    # Real replace.py's check_file_attrs runs in check mode too, and
+    # basic.py's set_mode_if_different/set_owner_if_different/
+    # set_group_if_different each "return True" at their `if
+    # self.check_mode` gate - so a --check task whose regexp matches
+    # nothing but whose mode: drifts answers changed=true with the bare
+    # suffix msg (live-verified vs 2.21.6). This engine used to force the
+    # attrs drift to false in check mode and answered ok. Nothing may be
+    # written: the file keeps its content and its 0644 mode.
+    path = fresh_file("check_attrs_drift.conf", "key = value\nkpg setting = on\n")
+    File.chmod(path, 0o644)
+
+    result = PluginSpecHelper.run("replace", {"path" => path, "regexp" => "^second", "replace" => "x", "mode" => "0600", "group" => "root", "_ansible_check_mode" => "true"})
+
+    result["changed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("ownership, perms or SE linux context changed")
+    File.read(path).must_equal("key = value\nkpg setting = on\n")
+    (File.info(path, follow_symlinks: false).permissions.value & 0o777).must_equal(0o644)
+  end
+
+  it "reports the would-be attrs drift alongside the replacement count in check mode" do
+    # Same check_file_attrs path with a content match on top: the msg is
+    # the "N replacements made and <suffix>" combination, and the file is
+    # still left untouched.
+    path = fresh_file("check_attrs_and_content.conf", "gpgcheck=0\n")
+    File.chmod(path, 0o644)
+
+    result = PluginSpecHelper.run("replace", {"path" => path, "regexp" => "^gpgcheck", "replace" => "gpgcheck=1", "mode" => "0600", "_ansible_check_mode" => "true"})
+
+    result["changed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("1 replacements made and ownership, perms or SE linux context changed")
+    File.read(path).must_equal("gpgcheck=0\n")
+    (File.info(path, follow_symlinks: false).permissions.value & 0o777).must_equal(0o644)
+  end
+
+  it "stays ok in check mode when the requested attrs already match (issue #1161)" do
+    path = fresh_file("check_attrs_match.conf", "a=1\n")
+    File.chmod(path, 0o600)
+
+    result = PluginSpecHelper.run("replace", {"path" => path, "regexp" => "^nomatch", "replace" => "x", "mode" => "0600", "_ansible_check_mode" => "true"})
+
+    result["changed"].as_bool.must_equal(false)
+    result["msg"].as_s.must_equal("")
+  end
+
   it "creates a timestamped backup and reports backup_file when backup: yes" do
     path = fresh_file("backup.conf", "gpgcheck=0\n")
 
