@@ -146,10 +146,29 @@ module Krikri
     private def self.open_class(ctx : Context)
       chars = ctx.chars
       i = ctx.index
-      ctx.in_class = true
-      ctx.class_start = i
+      # PCRE2 probes '[' + ':'/'.'/'=' + ... + 'terminator]' at the TOP
+      # level and refuses the whole pattern as a POSIX class/collating/
+      # equivalence reference ("POSIX named classes are supported only
+      # within a class", zhan9san.jenkins's `regexp: '^\s*listen
+      # [::]:80;'`), where Python just opens a literal class - Python's
+      # tokenizer never looks for POSIX syntax outside a class. Escaping
+      # the member char defuses the PCRE2 misread without changing the
+      # Python membership; the rewrite is recorded so a later PCRE2
+      # compile error still maps back to source offsets.
+      if lead = posix_misread_lead?(chars, i, ctx.size)
+        ctx.in_class = true
+        ctx.class_start = i
+        ctx.rewrites << {ctx.builder_chars, 3, i}
+        ctx.append('[')
+        ctx.append('\\')
+        ctx.append(lead)
+        ctx.index = i + 2
+        return
+      end
       # ']' as the first class member (after an optional ^) is
       # literal, exactly as Python's tokenizer treats it
+      ctx.in_class = true
+      ctx.class_start = i
       j = i + 1
       j += 1 if chars[j]? == '^'
       j += 1 if chars[j]? == ']'
@@ -158,6 +177,33 @@ module Krikri
         i += 1
       end
       ctx.index = i
+    end
+
+    # The lead char (':', '.' or '=') when PCRE2's top-level
+    # POSIX-syntax probe (check_posix_syntax) fires for the class opening
+    # at chars[open], nil when the '[' parses as a plain class in both
+    # engines. The probe takes the char after '[' as its terminator, then
+    # scans forward - honouring backslash escapes, stopping at the first
+    # unescaped ']' - for 'terminator]'. Verified against PCRE2 10.x via
+    # Crystal Regex: '[:a[b]:]' and '[:a]b:]' compile (the probe aborts at
+    # the bare ']'), '[:\]:]' does not (the escape is skipped), '[.:]' and
+    # '[=:]' do (the probe needs the terminator+']' pair, not just ']').
+    private def self.posix_misread_lead?(chars : Array(Char), open : Int32, size : Int32) : Char?
+      lead = chars[open + 1]?
+      return nil unless lead == ':' || lead == '.' || lead == '='
+      j = open + 2
+      while j < size
+        case chars[j]
+        when '\\'
+          j += 2
+        when ']'
+          return nil
+        else
+          return lead if chars[j] == lead && chars[j + 1]? == ']'
+          j += 1
+        end
+      end
+      nil
     end
 
     private def self.scan_group(ctx : Context)
