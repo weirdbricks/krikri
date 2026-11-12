@@ -810,3 +810,58 @@ describe "INJECT_FACTS_AS_VARS deprecation from a template task's variable scope
     stderr.must_include("Use `ansible_facts[\"fact_name\"]` (no `ansible_` prefix) instead.")
   end
 end
+
+# Issue #1138 (nekeal.postgresql_db, round 29907013): real's TaskExecutor
+# runs each task inside a DeferredWarningContext, so a deprecation raised
+# while the task runs - here an INJECT_FACTS_AS_VARS read templating the
+# task's own args - displays at the result's display point, AFTER every
+# warning the module's own result carries (the callback's _handle_warnings
+# prints warnings first, then deprecations; live-verified against 2.21.6
+# with a `find:` task whose paths template reads a fact and whose run
+# warns about an inaccessible path). Krikri printed the block at read
+# time, before the module ever ran, ahead of the module's [WARNING] line.
+describe "INJECT_FACTS_AS_VARS deprecation vs a module's own warnings" do
+  it "displays the module's [WARNING] before the arg-templating [DEPRECATION WARNING] block" do
+    stderr = run_playbook(<<-PLAYBOOK)
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        tasks:
+          - name: Find configs
+            ansible.builtin.find:
+              paths: "/nonexistent-krikri-1138/{{ 'cfg' if ansible_python.version.major == 3 else 'other' }}"
+              patterns: "*.conf"
+      PLAYBOOK
+
+    # The find module's own access-issue warning comes back in its result
+    # and must print before the deprecation block the args' fact read
+    # produced.
+    stderr.must_include("[WARNING]: Skipped '/nonexistent-krikri-1138/cfg' path due to this access issue")
+    warning_at = stderr.index!("[WARNING]: Skipped")
+    deprecation_at = stderr.index!("[DEPRECATION WARNING]: INJECT_FACTS_AS_VARS")
+    (warning_at < deprecation_at).must_equal(true)
+    # The block still lands with its task - before the run ends.
+    stderr.must_include("Use `ansible_facts[\"fact_name\"]` (no `ansible_` prefix) instead.")
+  end
+
+  it "does the same for a batched member over ssh" do
+    skip "no reachable test sshd (see this file's header for the throwaway setup)" unless depr_sshd_reachable?
+
+    stdout, stderr = run_batched_playbook(<<-PLAYBOOK)
+      - hosts: target
+        gather_facts: true
+        tasks:
+          - name: first member succeeds
+            ansible.builtin.command: /bin/true
+          - name: Find configs
+            ansible.builtin.find:
+              paths: "/nonexistent-krikri-1138/{{ 'cfg' if ansible_python.version.major == 3 else 'other' }}"
+              patterns: "*.conf"
+      PLAYBOOK
+
+    stdout.must_include("TASK [Find configs]")
+    warning_at = stderr.index!("[WARNING]: Skipped")
+    deprecation_at = stderr.index!("[DEPRECATION WARNING]: INJECT_FACTS_AS_VARS")
+    (warning_at < deprecation_at).must_equal(true)
+  end
+end

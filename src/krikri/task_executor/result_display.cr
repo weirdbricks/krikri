@@ -270,6 +270,23 @@ module Krikri
         end
       end
 
+      # Issue #1138: the batch build's held deprecation blocks must display
+      # AFTER the task's module warnings, where real's callback puts them -
+      # so a consuming result emits only the plain warning text here and
+      # hands the held blocks to the display point via
+      # ResultDisplay.defer_captured_deprecations_for_display. A skipped
+      # member (no result, no display) keeps #emit's full order: its blocks
+      # print before its own skipping line.
+      def emit_warnings_only : Nil
+        capture.parts.each do |part|
+          STDERR.print part unless part.is_a?(PendingDeprecation)
+        end
+      end
+
+      def pending_deprecations : Array(PendingDeprecation)
+        capture.parts.select(PendingDeprecation)
+      end
+
       def text : String
         String.build do |io|
           capture.parts.each { |part| io << part if part.is_a?(String) }
@@ -371,13 +388,15 @@ module Krikri
 
     def self.emit_play_hosts_deprecation(origin : String?) : Nil
       return unless origin
-      emit_or_defer_deprecation(@@play_hosts_deprecation_origins, origin, [
+      lines = [
         "[DEPRECATION WARNING]: The `play_hosts` magic variable is deprecated. This feature will be removed from ansible-core version 2.23.".colorize(:light_magenta).to_s,
         origin.colorize(:light_magenta).to_s,
         "",
         "Use `ansible_play_batch` instead.".colorize(:light_magenta).to_s,
         "",
-      ])
+      ]
+      return if hold_task_deprecation(@@play_hosts_deprecation_origins, origin, lines)
+      emit_or_defer_deprecation(@@play_hosts_deprecation_origins, origin, lines)
     end
 
     # The INJECT_FACTS_AS_VARS deprecation (ansible-core 2.21): reading a
@@ -406,13 +425,15 @@ module Krikri
           return
         end
       end
-      emit_or_defer_deprecation(@@top_level_fact_deprecation_origins, origin, [
+      lines = [
         "[DEPRECATION WARNING]: #{TOP_LEVEL_FACT_DEPRECATION_TEXT}".colorize(:light_magenta).to_s,
         origin.colorize(:light_magenta).to_s,
         "",
         "Use `ansible_facts[\"fact_name\"]` (no `ansible_` prefix) instead.".colorize(:light_magenta).to_s,
         "",
-      ])
+      ]
+      return if hold_task_deprecation(@@top_level_fact_deprecation_origins, origin, lines)
+      emit_or_defer_deprecation(@@top_level_fact_deprecation_origins, origin, lines)
     end
 
     # The internal `vars` dictionary deprecation (ansible-core 2.21,
@@ -433,13 +454,15 @@ module Krikri
           return
         end
       end
-      emit_or_defer_deprecation(@@vars_dict_deprecation_origins, origin, [
+      lines = [
         "[DEPRECATION WARNING]: #{VARS_DICT_DEPRECATION_TEXT}".colorize(:light_magenta).to_s,
         origin.colorize(:light_magenta).to_s,
         "",
         "Use the `vars` and `varnames` lookups instead.".colorize(:light_magenta).to_s,
         "",
-      ])
+      ]
+      return if hold_task_deprecation(@@vars_dict_deprecation_origins, origin, lines)
+      emit_or_defer_deprecation(@@vars_dict_deprecation_origins, origin, lines)
     end
 
     # ansible-core captures every warning and deprecation raised while a task
@@ -471,6 +494,78 @@ module Krikri
       @@deferred_fact_deprecations.delete(fiber) if buffers.empty?
       return unless flush
       deferred.each(&.call)
+    end
+
+    # Fiber-scoped stack of task-execution capture windows. Real's
+    # TaskExecutor runs every task inside a DeferredWarningContext
+    # (executor/task_executor.py's _execute), so a Display.deprecated raised
+    # while a task runs - most often an INJECT_FACTS_AS_VARS read while
+    # templating the task's own args - is never displayed when it happens:
+    # it rides the task result and the callback displays it at the result's
+    # display point, AFTER every warning the result carries (callback/
+    # __init__.py's _handle_warnings prints the warnings list first, then
+    # the deprecations; live-verified against 2.21.6: an `apt:` task whose
+    # templated args read a fact prints the module's python3-apt [WARNING]
+    # line first and the [DEPRECATION WARNING] block second - issue #1138,
+    # nekeal.postgresql_db). Krikri's read-time emission put the block
+    # before the module ever ran, ahead of those warnings. A window is held
+    # as PendingDeprecation entries so the run-wide per-kind dedupe claims
+    # at replay time, like every other held-back deprecation; windows are
+    # opened only around the solo module execution path (and seeded for
+    # batch members at consumption), so every path with its own placement
+    # contract (skips, when: failures, includes) replays, drops or never
+    # opens - their output is unchanged.
+    @@task_deprecation_captures = {} of Fiber => Array(Array(PendingDeprecation))
+
+    def self.begin_task_deprecation_capture : Nil
+      (@@task_deprecation_captures[Fiber.current] ||= Array(Array(PendingDeprecation)).new) << [] of PendingDeprecation
+    end
+
+    # Routes a deprecation block into the innermost open capture window
+    # instead of printing it; returns true when held. The include-deferral
+    # check in the emitters runs first, so an include's held-back reads
+    # keep their own drop/flush contract (issue #974).
+    private def self.hold_task_deprecation(dedupe : Set(String), key : String, lines : Array(String)) : Bool
+      return false unless (frames = @@task_deprecation_captures[Fiber.current]?) && !frames.empty?
+      frames.last << PendingDeprecation.new(dedupe, key, lines)
+      true
+    end
+
+    # Replays and clears whatever the innermost open window has held,
+    # WITHOUT closing it - used where the held blocks must still land
+    # before the window's own next line (a when:-false skip print, a
+    # when:-failure [ERROR] chain), positions real shows them at too.
+    def self.replay_open_task_deprecation_capture : Nil
+      return unless frames = @@task_deprecation_captures[Fiber.current]?
+      return if frames.empty?
+      buffer = frames.last
+      buffer.each { |pending| replay_deprecation(pending) }
+      buffer.clear
+    end
+
+    # Pops and replays the innermost window's held blocks: the display
+    # point's hook (called after every warning the result itself carries,
+    # where real's callback shows them) and the early-output branches'
+    # cleanup (UNREACHABLE reports, plugin self-skips), which must not leak
+    # a window into a later task's display.
+    def self.flush_task_deprecation_capture_for_display : Nil
+      fiber = Fiber.current
+      return unless frames = @@task_deprecation_captures[fiber]?
+      return if frames.empty?
+      pending = frames.pop
+      @@task_deprecation_captures.delete(fiber) if frames.empty?
+      pending.each { |entry| replay_deprecation(entry) }
+    end
+
+    # Seeds a fresh window with deprecation blocks captured elsewhere (a
+    # batch member's build-time StderrCapture entries): the member's result
+    # display flushes them after its module warnings, exactly where real's
+    # callback displays them. Must be immediately followed by that display
+    # (or finish_single_task's early-output flush) - nothing else pops
+    # these frames.
+    def self.defer_captured_deprecations_for_display(pending : Array(PendingDeprecation)) : Nil
+      return if pending.empty?
+      (@@task_deprecation_captures[Fiber.current] ||= Array(Array(PendingDeprecation)).new) << pending.dup
     end
 
     # An action-plugin warning raised while validating task args (the
@@ -664,6 +759,14 @@ module Krikri
         result = JSON::Any.new(top.reject("_ansible_discovery_warning"))
       end
       emit_debug_template_error_warning(source_task, result, loop_item)
+
+      # Real's callback displays a task's captured deprecations after every
+      # warning the result carries (_handle_warnings prints warnings first,
+      # then deprecations): flush the task-execution capture window here so
+      # a read deprecation held while the task ran - issue #1138's
+      # INJECT_FACTS_AS_VARS block read while the args templated - lands
+      # after the module's own [WARNING] lines, where real puts it.
+      flush_task_deprecation_capture_for_display
 
       # Console lines a controller-side action plugin produced ITSELF
       # rather than through the result (pause's "Pausing for N seconds"

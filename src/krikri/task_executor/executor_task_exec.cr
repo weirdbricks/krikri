@@ -1425,6 +1425,12 @@ module Krikri
       # recap'd `unreachable=1 failed=0` and halted the host at
       # Gathering Facts, this engine booked `failed=2` and ran on.
       if unreachable_task_result?(result)
+        # A held deprecation window (a batch member's, seeded at
+        # consumption - issue #1138) must not leak into a later task's
+        # display: real shows the blocks with this result, ahead of the
+        # UNREACHABLE line. A solo window was already replayed at
+        # execution's end, so this is a no-op there.
+        ResultDisplay.flush_task_deprecation_capture_for_display
         # The fatal line carries the `-> delegate` label for a delegated
         # task (CallbackBase.host_label) even though the unreachable is
         # booked on the origin host.
@@ -1454,6 +1460,9 @@ module Krikri
       # Ansible correctly shows these as `skipping:` and counts
       # them under `skipped=`, not `ok=`.
       if result["skipped"]?.try(&.as_bool) == true
+        # Same early-output cleanup as the unreachable branch above: real
+        # shows held deprecation blocks ahead of the skip line.
+        ResultDisplay.flush_task_deprecation_capture_for_display
         puts Krikri::Oneline.skip_line(host.name, Krikri::ResultDisplay.skip_result_suffix(result)).colorize(:cyan)
         @results[host.name]["skipped"] += 1
         return
@@ -1488,6 +1497,11 @@ module Krikri
       else
         ResultDisplay.display_result(host, result, resolve_task_diff_mode(task, vars_context), ignore_errors: ignore_errors, no_log: no_log, module_name: task.module_name, delegate_target: exec_host && exec_host != host ? exec_host.name : nil, source_task: task)
       end
+      # A non-adhoc display already consumed the held deprecation window at
+      # its own flush point (inside display_result, after the module's
+      # warnings); the adhoc shape has no such point, so drop any window
+      # here rather than leak it into a later task's display.
+      ResultDisplay.flush_task_deprecation_capture_for_display
       ResultDisplay.update_stats(@results[host.name], result, ignore_errors)
       halt_if_failed(task, host, failed, result)
     end
