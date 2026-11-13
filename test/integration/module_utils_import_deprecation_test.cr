@@ -178,6 +178,30 @@ describe "module_utils import deprecations follow the installed payload source" 
     Krikri::ModuleUtilsDeprecations.action_plugin_text_import_deprecation_texts("synchronize").must_equal([] of String)
   end
 
+  it "derives an action plugin's deprecated ansible.errors import ahead of its _text one (issue #1198)" do
+    # ansible.posix 2.1.x's patch action plugin opens with
+    # `from ansible.errors import ... _AnsibleActionDone ...` and then
+    # imports to_native from `_text`; ansible-core 2.21's errors
+    # __getattr__ deprecates that name too, so real prints both lines when
+    # it loads the plugin - even for the when:-skipped patch task a static
+    # import leaves behind (live-verified vs 2.21.6). krikri printed only
+    # the `_text` line.
+    File.write(File.join(@fixture_root, "ansible_collections", "ansible", "posix", "plugins", "modules", "patch.py"),
+      "from ansible.module_utils._text import to_native\n")
+    File.write(File.join(@fixture_root, "ansible_collections", "ansible", "posix", "plugins", "action", "patch.py"),
+      "from ansible.errors import AnsibleError, AnsibleAction, _AnsibleActionDone, AnsibleActionFail\n" \
+      "from ansible.module_utils._text import to_native\n")
+
+    Krikri::ModuleUtilsDeprecations.action_plugin_text_import_deprecation_texts("patch").must_equal([
+      "Importing '_AnsibleActionDone' is deprecated. " \
+      "This feature will be removed from ansible-core version 2.23. " \
+      "Return directly from action plugins instead.",
+      "Importing 'to_native' from 'ansible.module_utils._text' is deprecated. " \
+      "This feature will be removed from ansible-core version 2.24. " \
+      "Use ansible.module_utils.common.text.converters instead.",
+    ])
+  end
+
   it "keeps the modeled table for a module payload no installed collection ships" do
     # A krikri-only controller has no payload to read and real cannot run
     # the module at all, so the modeled pair stands (the issue #1000
