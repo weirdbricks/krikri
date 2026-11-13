@@ -414,80 +414,25 @@ module Krikri
 
       template_vars = prepare_template_vars_json(template_path)
 
-      # The play_hosts read deprecation: this render hands the engine its
-      # whole variable scope up front with no per-read resolver hook, so
-      # the read is detected on the PARSED template instead - a direct
-      # `play_hosts` name in the AST is a read, an attribute access
-      # (`x.play_hosts`) or a string/comment occurrence is not.
-      # ansible-core 2.19.11's Origin here is the template file alone, no
-      # line/column.
-      #
-      # The top-level fact alias read deprecation shares the walk and that
-      # same file-only Origin (live-verified against 2.21.6: `{{
-      # ansible_os_family }}` in a .j2 renders the
-      # INJECT_FACTS_AS_VARS block with `Origin: <file>` and no excerpt -
-      # keyed per file, so two hosts rendering the same template warn
-      # once).
-      if template = parsed_template
-        if template_reads_name?(->(name : String) { name == "play_hosts" }, template)
-          Krikri::ResultDisplay.emit_play_hosts_deprecation(
-            ErrorBlock.origin_context(File.expand_path(template_path), 0, nil, show_content: false)
-          )
-        end
-        if template_reads_name?(->(name : String) { VarSubstitutor.top_level_fact_name?(name, template_vars) }, template)
-          VarSubstitutor.emit_fact_deprecation(
-            ErrorBlock.origin_context(File.expand_path(template_path), 0, nil, show_content: false)
-          )
-        end
-        # A read reached only through another variable's own value: real
-        # templates that value lazily when the file reads the variable, so
-        # the warning points at the value's DEFINING site - a role
-        # default's defaults/main.yml line - and not at this file (issue
-        # #961, live-verified against 2.21.6). Only names the file actually
-        # reads are tested, so the scope's eager pre-render cannot produce
-        # a warning for a value this template never uses.
-        var_value_origin : String? = nil
-        names_a_fact_through_its_value = ->(read : String) do
-          if (origin = re_rendered_var_fact_origin(read))
-            var_value_origin = origin
-            true
-          else
-            false
-          end
-        end
-        if template_reads_name?(names_a_fact_through_its_value, template)
-          VarSubstitutor.emit_fact_deprecation(var_value_origin)
-        end
-        # The internal `vars`-dict deprecation (issue #1028,
-        # ome.debug_dumpallvars' dumpall.j2 `{{ vars | ... }}`): a direct
-        # `vars` name in the AST is the read itself, and a read of a
-        # variable whose own value reads the dict is attributed to that
-        # value's DEFINING site - the same split as the fact probe above,
-        # with one combined walk so the FIRST access in template order is
-        # the one that prints (ansible-core keeps the first access of the
-        # deprecate tag per templating operation: two values naming the
-        # dict read by one template print one block, at the first).
-        vars_dict_origin : String? = nil
-        first_vars_dict_read = ->(read : String) do
-          if read == "vars"
-            vars_dict_origin = ErrorBlock.origin_context(File.expand_path(template_path), 0, nil, show_content: false)
-            true
-          elsif (origin = re_rendered_var_vars_origin(read))
-            vars_dict_origin = origin
-            true
-          else
-            false
-          end
-        end
-        if template_reads_name?(first_vars_dict_read, template)
-          VarSubstitutor.emit_vars_dict_deprecation(vars_dict_origin)
-        end
-      end
+      # The read deprecations this file's AST names used to print right
+      # here, before the render. Real trips them DURING the render: jinja2
+      # resolves every name in a frame's prologue up front (a top-level
+      # dead `{% if %}` branch's names included), but names inside a
+      # `{% for %}`/macro frame only resolve when that frame actually
+      # runs, so a render that dies before a loop frame ran trips nothing
+      # (issue #1167, live-verified against 2.21.6: bramford.apt-sources'
+      # sources.list.j2 raised "'apt_sources_repos' is undefined" and
+      # printed NO INJECT_FACTS_AS_VARS block for the loop body's
+      # `ansible_distribution_release` reads). Emission therefore waits
+      # for the render outcome - see #emit_template_deprecation_probes.
 
       engine = KrikriJinja.derive_engine(
         build_template_loader(template_path), options,
         KrikriJinja.ansible_strict_undefined, JinjaHostContext.new(template_vars)
       )
+      @template_render_attempted = false
+      @template_render_compile_checked = false
+      rendered : String? = nil
       begin
         # Ansible/Jinja2 compile the WHOLE template before any of it runs,
         # so every filter name in a non-soft frame is resolved at compile
@@ -506,8 +451,9 @@ module Krikri
         if template = parsed_template
           validate_template_filters(engine, template)
         end
-        compile_checked = true
-        render_once(engine, content, template_vars)
+        @template_render_compile_checked = true
+        @template_render_attempted = true
+        rendered = render_once(engine, content, template_vars)
       rescue ex : KrikriJinja::TemplateError
         # A role-local `filter_plugins/*.py` filter is resolved on demand
         # and registered on this render's own engine, then the render is
@@ -518,7 +464,7 @@ module Krikri
         # (Aisbergg.networkmanager's `value is list`, round 2300110).
         filter_name = KrikriJinjaFilters.unknown_filter_name(ex)
         if filter_name && KrikriJinjaFilters.ensure_python_filter(filter_name, template_vars, engine)
-          render_once(engine, content, template_vars)
+          rendered = render_once(engine, content, template_vars)
         elsif filter_name
           # Still unknown after the role-local plugin chance: real fails
           # at compile time with the uncaught TemplateAssertionError
@@ -527,10 +473,10 @@ module Krikri
           # conditional expression) that reached evaluation is real's
           # RENDER-time failure wording instead (live-verified vs
           # 2.19.11, issue #660) - it only ever errors once evaluated, so
-          # a false if keeps the task passing. compile_checked is set
-          # before the first render, so it is false only for an error
+          # a false if keeps the task passing. @template_render_compile_checked is
+          # set before the first render, so it is false only for an error
           # raised by validate_template_filters above.
-          @render_error_unknown_filter = if compile_checked
+          @render_error_unknown_filter = if @template_render_compile_checked
                                            "Error rendering template: No filter named '#{filter_name}' found."
                                          else
                                            "Syntax error in template: No filter named '#{filter_name}'."
@@ -538,7 +484,7 @@ module Krikri
           raise ex
         elsif test_name = KrikriJinjaFilters.unknown_test_name(ex)
           if KrikriJinjaFilters.ensure_python_test(test_name, template_vars, engine)
-            render_once(engine, content, template_vars)
+            rendered = render_once(engine, content, template_vars)
           else
             raise ex
           end
@@ -546,6 +492,10 @@ module Krikri
           raise ex
         end
       end
+      # The render completed (first attempt or after a filter/test retry):
+      # every frame whose code ran is covered by the full AST walk.
+      emit_template_deprecation_probes(parsed_template, template_vars, template_path, failed: false)
+      rendered
     rescue ex : Jinja2DirectiveError
       # The template's own `#jinja2:` directive line failed validation
       # (see #extract_jinja2_directive) - carried separately from
@@ -574,9 +524,13 @@ module Krikri
       @render_error_not_iterable = not_iterable_ansible_wording(ex)
       @render_error_undefined = ex.kind == KrikriJinja::ErrorKind::Undefined
       @render_error = ansible_wording(ex, line_prefix: !@render_error_undefined)
+      # A failed render still trips what the top-level frame's prologue
+      # resolved before the failure (see #emit_template_deprecation_probes).
+      emit_template_deprecation_probes(parsed_template, template_vars, template_path, failed: true) if @template_render_attempted
       nil
     rescue ex
       @render_error = ex.message
+      emit_template_deprecation_probes(parsed_template, template_vars, template_path, failed: true) if @template_render_attempted
       nil
     end
 
@@ -761,6 +715,97 @@ module Krikri
       no_strings.scan(/[A-Za-z_][A-Za-z0-9_]*/).map(&.[0]).uniq!.select { |token| @vars.has_key?(token) }
     end
 
+    # The read deprecations a template file's AST names: a `play_hosts`
+    # read, a top-level fact alias (directly or through another
+    # variable's own unrendered value) and the internal `vars` dict.
+    # Emission waits for the render outcome because real trips them
+    # DURING the render: jinja2 compiles each frame's names into a
+    # prologue resolved when the frame's code starts - at top level that
+    # covers every name in the file (a dead `{% if %}` branch, a name
+    # after a later failure, live-verified against 2.21.6 and stock
+    # Jinja 3.1.6 compiled code) - but a `{% for %}`/macro frame's names
+    # only resolve when that frame actually runs, so a render that dies
+    # before a loop frame ran trips nothing (issue #1167:
+    # bramford.apt-sources' sources.list.j2 raised on an undefined
+    # `{% for %}` iterable and real printed NO INJECT_FACTS_AS_VARS block
+    # for the loop body's fact reads). On success the full AST walk
+    # covers every frame whose code ran; on a render failure only the
+    # top-level frame's prologue reads are emitted. Two frames real
+    # trips but this approximation cannot see stay open: a loop that ran
+    # and THEN failed, and a successful render whose loop iterable was
+    # empty (the static walk cannot count iterations).
+    private def emit_template_deprecation_probes(template : KrikriJinja::Nodes::TemplateNode?,
+                                                 template_vars : Hash(String, JSON::Any)?,
+                                                 template_path : String, failed : Bool) : Nil
+      return unless template && template_vars
+
+      skip_frames = failed
+      file_origin = ErrorBlock.origin_context(File.expand_path(template_path), 0, nil, show_content: false)
+
+      # The play_hosts read deprecation: this render hands the engine its
+      # whole variable scope up front with no per-read resolver hook, so
+      # the read is detected on the PARSED template instead - a direct
+      # `play_hosts` name in the AST is a read, an attribute access
+      # (`x.play_hosts`) or a string/comment occurrence is not.
+      # ansible-core 2.19.11's Origin here is the template file alone, no
+      # line/column.
+      if template_reads_name?(->(name : String) { name == "play_hosts" }, template, skip_frames)
+        Krikri::ResultDisplay.emit_play_hosts_deprecation(file_origin)
+      end
+      # The top-level fact alias read deprecation shares the walk and that
+      # same file-only Origin (live-verified against 2.21.6: `{{
+      # ansible_os_family }}` in a .j2 renders the
+      # INJECT_FACTS_AS_VARS block with `Origin: <file>` and no excerpt -
+      # keyed per file, so two hosts rendering the same template warn
+      # once).
+      if template_reads_name?(->(name : String) { VarSubstitutor.top_level_fact_name?(name, template_vars) }, template, skip_frames)
+        VarSubstitutor.emit_fact_deprecation(file_origin)
+      end
+      # A read reached only through another variable's own value: real
+      # templates that value lazily when the file reads the variable, so
+      # the warning points at the value's DEFINING site - a role
+      # default's defaults/main.yml line - and not at this file (issue
+      # #961, live-verified against 2.21.6). Only names the file actually
+      # reads are tested, so the scope's eager pre-render cannot produce
+      # a warning for a value this template never uses.
+      var_value_origin : String? = nil
+      names_a_fact_through_its_value = ->(read : String) do
+        if (origin = re_rendered_var_fact_origin(read))
+          var_value_origin = origin
+          true
+        else
+          false
+        end
+      end
+      if template_reads_name?(names_a_fact_through_its_value, template, skip_frames)
+        VarSubstitutor.emit_fact_deprecation(var_value_origin)
+      end
+      # The internal `vars`-dict deprecation (issue #1028,
+      # ome.debug_dumpallvars' dumpall.j2 `{{ vars | ... }}`): a direct
+      # `vars` name in the AST is the read itself, and a read of a
+      # variable whose own value reads the dict is attributed to that
+      # value's DEFINING site - the same split as the fact probe above,
+      # with one combined walk so the FIRST access in template order is
+      # the one that prints (ansible-core keeps the first access of the
+      # deprecate tag per templating operation: two values naming the
+      # dict read by one template print one block, at the first).
+      vars_dict_origin : String? = nil
+      first_vars_dict_read = ->(read : String) do
+        if read == "vars"
+          vars_dict_origin = file_origin
+          true
+        elsif (origin = re_rendered_var_vars_origin(read))
+          vars_dict_origin = origin
+          true
+        else
+          false
+        end
+      end
+      if template_reads_name?(first_vars_dict_read, template, skip_frames)
+        VarSubstitutor.emit_vars_dict_deprecation(vars_dict_origin)
+      end
+    end
+
     # Whether the parsed template contains a direct read of a name the
     # caller's *matcher* accepts - statement bodies are walked for nested
     # expressions, expressions for their operand/subexpression trees;
@@ -780,7 +825,8 @@ module Krikri
       ->(name : String) { !names.includes?(name) && matcher.call(name) }
     end
 
-    private def template_reads_name?(matcher : String -> Bool, node : KrikriJinja::Nodes::Node) : Bool
+    private def template_reads_name?(matcher : String -> Bool, node : KrikriJinja::Nodes::Node,
+                                     skip_frames : Bool = false) : Bool
       case node
       when KrikriJinja::Nodes::NameNode
         matcher.call(node.name)
@@ -788,12 +834,17 @@ module Krikri
            KrikriJinja::Nodes::InTestNode
         false
       when KrikriJinja::Nodes::TemplateNode
-        any_node_reads_name?(matcher, node.body)
+        any_node_reads_name?(matcher, node.body, skip_frames)
       when KrikriJinja::Nodes::OutputNode, KrikriJinja::Nodes::DoNode
-        template_reads_name?(matcher, node.expr)
+        template_reads_name?(matcher, node.expr, skip_frames)
       when KrikriJinja::Nodes::IfNode
-        node.branches.any? { |(test, body)| template_reads_name?(matcher, test) || any_node_reads_name?(matcher, body) } ||
-          (node.orelse.try { |orelse| any_node_reads_name?(matcher, orelse) } || false)
+        # An `{% if %}` is transparent for name resolution: jinja2 hoists
+        # every name under it - dead branches included - into its
+        # ENCLOSING frame's prologue, so a skipped_frames walk still
+        # descends here (live-verified: `{% if false %}{{ fact }}{% endif %}`
+        # trips the deprecation even though the branch never runs).
+        node.branches.any? { |(test, body)| template_reads_name?(matcher, test, skip_frames) || any_node_reads_name?(matcher, body, skip_frames) } ||
+          (node.orelse.try { |orelse| any_node_reads_name?(matcher, orelse, skip_frames) } || false)
       when KrikriJinja::Nodes::ForNode
         # A for target shadows a same-named injected fact for the loop's
         # own body and else block only (Jinja2 loop variables do not leak
@@ -802,78 +853,104 @@ module Krikri
         # INJECT_FACTS_AS_VARS block even though the facts inject
         # `ansible_domain` (issue #1087, Turgon37.sssd's sssd.conf.j2,
         # live-verified against 2.21.6).
+        # A skipped_frames walk (a render that failed before the loop
+        # frame could run) keeps only the iterable, which jinja2 resolves
+        # in the ENCLOSING frame's prologue - names under test/body/else
+        # resolve per iteration, so a render that died first trips
+        # nothing for them.
         body_matcher = bound_name_matcher(matcher, node.targets.map(&.name))
-        template_reads_name?(matcher, node.iter) ||
-          (node.test.try { |test| template_reads_name?(matcher, test) } || false) ||
-          any_node_reads_name?(body_matcher, node.body) ||
-          (node.orelse.try { |orelse| any_node_reads_name?(body_matcher, orelse) } || false)
+        template_reads_name?(matcher, node.iter, skip_frames) ||
+          (!skip_frames &&
+            ((node.test.try { |test| template_reads_name?(matcher, test) } || false) ||
+              any_node_reads_name?(body_matcher, node.body) ||
+              (node.orelse.try { |orelse| any_node_reads_name?(body_matcher, orelse) } || false)))
       when KrikriJinja::Nodes::SetNode
-        template_reads_name?(matcher, node.expr) ||
-          (node.attr_target.try { |target| template_reads_name?(matcher, target) } || false) ||
-          (node.body.try { |body| any_node_reads_name?(matcher, body) } || false) ||
-          exprs_read_names?(matcher, node.filter_args) ||
-          node.filter_kwargs.any? { |kwarg| template_reads_name?(matcher, kwarg[1]) }
-      when KrikriJinja::Nodes::BlockNode, KrikriJinja::Nodes::AutoescapeNode
-        any_node_reads_name?(matcher, node.body)
+        template_reads_name?(matcher, node.expr, skip_frames) ||
+          (node.attr_target.try { |target| template_reads_name?(matcher, target, skip_frames) } || false) ||
+          (node.body.try { |body| any_node_reads_name?(matcher, body, skip_frames) } || false) ||
+          exprs_read_names?(matcher, node.filter_args, skip_frames) ||
+          node.filter_kwargs.any? { |kwarg| template_reads_name?(matcher, kwarg[1], skip_frames) }
+      when KrikriJinja::Nodes::AutoescapeNode
+        any_node_reads_name?(matcher, node.body, skip_frames)
+      when KrikriJinja::Nodes::BlockNode
+        # A `{% block %}` tag compiles to its own render level in real
+        # (its names never join the enclosing frame's prologue), so a
+        # failed render's prologue walk does not descend into one.
+        skip_frames ? false : any_node_reads_name?(matcher, node.body)
       when KrikriJinja::Nodes::MacroNode
-        node.params.any? { |param| (default = param[1]) && template_reads_name?(matcher, default) } ||
-          any_node_reads_name?(bound_name_matcher(matcher, node.params.map(&.[0])), node.body)
+        if skip_frames
+          false
+        else
+          node.params.any? { |param| (default = param[1]) && template_reads_name?(matcher, default) } ||
+            any_node_reads_name?(bound_name_matcher(matcher, node.params.map(&.[0])), node.body)
+        end
       when KrikriJinja::Nodes::CallNode
-        template_reads_name?(matcher, node.macro_expr) ||
-          exprs_read_names?(matcher, node.args) ||
-          node.kwargs.any? { |kwarg| template_reads_name?(matcher, kwarg[1]) } ||
-          (node.body.try { |body| any_node_reads_name?(bound_name_matcher(matcher, node.call_params), body) } || false)
+        # The call-site expression (macro name and arguments) resolves in
+        # the enclosing frame; a `{% call %}` block body is a macro frame
+        # of its own.
+        template_reads_name?(matcher, node.macro_expr, skip_frames) ||
+          exprs_read_names?(matcher, node.args, skip_frames) ||
+          node.kwargs.any? { |kwarg| template_reads_name?(matcher, kwarg[1], skip_frames) } ||
+          (!skip_frames &&
+            (node.body.try { |body| any_node_reads_name?(bound_name_matcher(matcher, node.call_params), body) } || false))
       when KrikriJinja::Nodes::FilterBlockNode
-        template_reads_name?(matcher, node.filter) || any_node_reads_name?(matcher, node.body)
+        # jinja2 hoists a filter/set block's body names into the
+        # enclosing frame's prologue, same as `{% with %}` - live-verified
+        # against stock Jinja 3.1.6 - so both modes descend.
+        template_reads_name?(matcher, node.filter, skip_frames) || any_node_reads_name?(matcher, node.body, skip_frames)
       when KrikriJinja::Nodes::WithNode
-        node.bindings.any? { |binding| template_reads_name?(matcher, binding[1]) } ||
-          any_node_reads_name?(bound_name_matcher(matcher, node.bindings.map(&.[0])), node.body)
+        node.bindings.any? { |binding| template_reads_name?(matcher, binding[1], skip_frames) } ||
+          any_node_reads_name?(bound_name_matcher(matcher, node.bindings.map(&.[0])), node.body, skip_frames)
       when KrikriJinja::Nodes::IncludeNode, KrikriJinja::Nodes::ExtendsNode, KrikriJinja::Nodes::ImportNode
-        template_reads_name?(matcher, node.template)
+        # The include machinery resolves its template name at runtime,
+        # outside the enclosing frame's prologue.
+        skip_frames ? false : template_reads_name?(matcher, node.template)
       when KrikriJinja::Nodes::ListExprNode, KrikriJinja::Nodes::TupleExprNode
-        exprs_read_names?(matcher, node.items)
+        exprs_read_names?(matcher, node.items, skip_frames)
       when KrikriJinja::Nodes::ConcatNode
-        exprs_read_names?(matcher, node.parts)
+        exprs_read_names?(matcher, node.parts, skip_frames)
       when KrikriJinja::Nodes::DictExprNode
-        exprs_read_names?(matcher, node.keys) || exprs_read_names?(matcher, node.values)
+        exprs_read_names?(matcher, node.keys, skip_frames) || exprs_read_names?(matcher, node.values, skip_frames)
       when KrikriJinja::Nodes::BinOpNode
-        template_reads_name?(matcher, node.left) || template_reads_name?(matcher, node.right)
+        template_reads_name?(matcher, node.left, skip_frames) || template_reads_name?(matcher, node.right, skip_frames)
       when KrikriJinja::Nodes::UnaryOpNode
-        template_reads_name?(matcher, node.operand)
+        template_reads_name?(matcher, node.operand, skip_frames)
       when KrikriJinja::Nodes::CompareNode
-        template_reads_name?(matcher, node.left) || exprs_read_names?(matcher, node.comparators)
+        template_reads_name?(matcher, node.left, skip_frames) || exprs_read_names?(matcher, node.comparators, skip_frames)
       when KrikriJinja::Nodes::FilterNode, KrikriJinja::Nodes::TestNode
-        template_reads_name?(matcher, node.target) ||
-          exprs_read_names?(matcher, node.args) ||
-          node.kwargs.any? { |kwarg| template_reads_name?(matcher, kwarg[1]) }
+        template_reads_name?(matcher, node.target, skip_frames) ||
+          exprs_read_names?(matcher, node.args, skip_frames) ||
+          node.kwargs.any? { |kwarg| template_reads_name?(matcher, kwarg[1], skip_frames) }
       when KrikriJinja::Nodes::GetattrNode
-        template_reads_name?(matcher, node.obj)
+        template_reads_name?(matcher, node.obj, skip_frames)
       when KrikriJinja::Nodes::GetitemNode
-        template_reads_name?(matcher, node.obj) || template_reads_name?(matcher, node.key)
+        template_reads_name?(matcher, node.obj, skip_frames) || template_reads_name?(matcher, node.key, skip_frames)
       when KrikriJinja::Nodes::SliceNode
-        template_reads_name?(matcher, node.obj) ||
-          (node.start.try { |expr| template_reads_name?(matcher, expr) } || false) ||
-          (node.stop.try { |expr| template_reads_name?(matcher, expr) } || false) ||
-          (node.step.try { |expr| template_reads_name?(matcher, expr) } || false)
+        template_reads_name?(matcher, node.obj, skip_frames) ||
+          (node.start.try { |expr| template_reads_name?(matcher, expr, skip_frames) } || false) ||
+          (node.stop.try { |expr| template_reads_name?(matcher, expr, skip_frames) } || false) ||
+          (node.step.try { |expr| template_reads_name?(matcher, expr, skip_frames) } || false)
       when KrikriJinja::Nodes::CallExprNode
-        template_reads_name?(matcher, node.func) ||
-          exprs_read_names?(matcher, node.args) ||
-          node.kwargs.any? { |kwarg| template_reads_name?(matcher, kwarg[1]) }
+        template_reads_name?(matcher, node.func, skip_frames) ||
+          exprs_read_names?(matcher, node.args, skip_frames) ||
+          node.kwargs.any? { |kwarg| template_reads_name?(matcher, kwarg[1], skip_frames) }
       when KrikriJinja::Nodes::CondExprNode
-        template_reads_name?(matcher, node.test) ||
-          template_reads_name?(matcher, node.truthy) ||
-          (node.falsy.try { |expr| template_reads_name?(matcher, expr) } || false)
+        template_reads_name?(matcher, node.test, skip_frames) ||
+          template_reads_name?(matcher, node.truthy, skip_frames) ||
+          (node.falsy.try { |expr| template_reads_name?(matcher, expr, skip_frames) } || false)
       else
         false
       end
     end
 
-    private def any_node_reads_name?(matcher : String -> Bool, body : Array(KrikriJinja::Nodes::Node)) : Bool
-      body.any? { |child| template_reads_name?(matcher, child) }
+    private def any_node_reads_name?(matcher : String -> Bool, body : Array(KrikriJinja::Nodes::Node),
+                                     skip_frames : Bool = false) : Bool
+      body.any? { |child| template_reads_name?(matcher, child, skip_frames) }
     end
 
-    private def exprs_read_names?(matcher : String -> Bool, exprs : Array(KrikriJinja::Nodes::ExprNode)) : Bool
-      exprs.any? { |expr| template_reads_name?(matcher, expr) }
+    private def exprs_read_names?(matcher : String -> Bool, exprs : Array(KrikriJinja::Nodes::ExprNode),
+                                  skip_frames : Bool = false) : Bool
+      exprs.any? { |expr| template_reads_name?(matcher, expr, skip_frames) }
     end
 
     # Engine-scope conversion for the template render's variable loading.

@@ -874,6 +874,76 @@ describe "INJECT_FACTS_AS_VARS deprecation from a template task's variable scope
   end
 end
 
+# Issue #1167 (bramford.apt-sources, round 29908271): real trips the
+# top-level fact deprecation DURING the template render, and jinja2
+# resolves a frame's names only when that frame's code starts - a
+# top-level dead `{% if %}` branch's name joins the prologue (still
+# warns), while a `{% for %}` body's names resolve per iteration, so a
+# render that dies on an undefined iterable before the first iteration
+# prints NO block for them (live-verified against 2.21.6 and Jinja
+# 3.1.6's compiled code). Krikri keyed the whole probe off the static
+# AST and warned for the loop body's `ansible_distribution_release`
+# reads real never reached.
+describe "INJECT_FACTS_AS_VARS deprecation vs a render that dies before a loop frame ran" do
+  private def failing_render_playbook_dir(name : String, template_text : String) : String
+    dir = PluginSpecHelper.tmp_path("#{name}-#{Random::Secure.hex(4)}")
+    FileUtils.mkdir_p(dir)
+    File.write(File.join(dir, "fact.j2"), template_text)
+    File.write(File.join(dir, "play.yml"), <<-PLAYBOOK)
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        tasks:
+          - name: render
+            ansible.builtin.template:
+              src: fact.j2
+              dest: #{dir}/rendered.txt
+            ignore_errors: true
+      PLAYBOOK
+    dir
+  end
+
+  it "prints no block when the render dies on an undefined loop iterable" do
+    dir = failing_render_playbook_dir("inject-facts-loop-fail", <<-TEMPLATE)
+      {% for repo in apt_sources_repos %}
+      {% if repo != ansible_distribution_release + "-backports" %}
+      deb http://example.invalid {{ repo }} main
+      {% endif %}
+      {% endfor %}
+      TEMPLATE
+
+    stdout = IO::Memory.new
+    stderr = IO::Memory.new
+    Process.run(BINARY, ["-i", "localhost,", File.join(dir, "play.yml")], output: stdout, error: stderr, chdir: dir)
+
+    stdout.to_s.must_include("'apt_sources_repos' is undefined")
+    stderr.to_s.wont_include("INJECT_FACTS_AS_VARS")
+  end
+
+  it "still prints the block for a top-level read that ran before a later failure" do
+    dir = failing_render_playbook_dir("inject-facts-top-fail", "{{ ansible_os_family }}{{ also_missing }}\n")
+
+    stdout = IO::Memory.new
+    stderr = IO::Memory.new
+    Process.run(BINARY, ["-i", "localhost,", File.join(dir, "play.yml")], output: stdout, error: stderr, chdir: dir)
+
+    stderr.to_s.scan(/DEPRECATION WARNING\]: INJECT_FACTS_AS_VARS/).size.must_equal(1)
+    stderr.to_s.must_include("Origin: #{File.join(dir, "fact.j2")}\n")
+  end
+
+  it "still prints the block for a dead-branch read when the render succeeds" do
+    dir = failing_render_playbook_dir("inject-facts-dead-branch", "{% if false %}{{ ansible_os_family }}{% endif %}\n")
+
+    stdout = IO::Memory.new
+    stderr = IO::Memory.new
+    Process.run(BINARY, ["-i", "localhost,", File.join(dir, "play.yml")], output: stdout, error: stderr, chdir: dir)
+
+    stdout.to_s.must_include("TASK [render]")
+    stderr.to_s.scan(/DEPRECATION WARNING\]: INJECT_FACTS_AS_VARS/).size.must_equal(1)
+    stderr.to_s.must_include("Origin: #{File.join(dir, "fact.j2")}\n")
+  end
+end
+
 # Issue #1138 (nekeal.postgresql_db, round 29907013): real's TaskExecutor
 # runs each task inside a DeferredWarningContext, so a deprecation raised
 # while the task runs - here an INJECT_FACTS_AS_VARS read templating the
