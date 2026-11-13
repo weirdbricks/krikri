@@ -232,6 +232,7 @@ module Krikri
       # live-verified) and after the src: read.
       if failure = PluginHelpers::URLPreflight.check(
            url,
+           method: method,
            ciphers: tls_ciphers,
            ca_path: @params["ca_path"]?,
            client_cert: @params["client_cert"]?,

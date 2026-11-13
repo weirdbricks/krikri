@@ -78,8 +78,15 @@ module Krikri
       # into ("all ciphers are joined in order with ':'", get_url's own
       # docs) - nil or empty means "don't set them", in which case
       # Ansible skips set_ciphers entirely.
+      #
+      # The `method` is the HTTP verb the request line would carry. It is
+      # part of the string Python ASCII-encodes (and so of the reported
+      # failure position), and it is not always GET: get_url HEADs the URL
+      # under --check (get_url.py's `method = 'HEAD' if module.check_mode
+      # else 'GET'`), uri uses its method: param.
       def self.check(
         url : String,
+        method : String = "GET",
         ciphers : String? = nil,
         ca_path : String? = nil,
         client_cert : String? = nil,
@@ -103,7 +110,7 @@ module Krikri
         end
 
         control_character_failure(url, type).try { |failure| return failure }
-        non_ascii_target_failure(url, type).try { |failure| return failure }
+        non_ascii_target_failure(url, type, method).try { |failure| return failure }
 
         nil
       end
@@ -132,13 +139,17 @@ module Krikri
       # all: http.client's putrequest encodes the whole request line as
       # ASCII and the encode raises UnicodeEncodeError, which fetch_url's
       # catch-all folds into the same info dict as the ValueError above -
-      # {msg, url, status: -1}, no dest/elapsed. Verified against real
-      # ansible-core: "https://h/a\u{a0}b.py" fails with
-      # "'ascii' codec can't encode character '\xa0' in position 34:
-      # ordinal not in range(128)" and the request line is
-      # "GET <target> HTTP/1.1", so the reported position is the target's
-      # char index plus the 4-char "GET " prefix.
-      private def self.non_ascii_target_failure(url : String, type : String?) : Failure?
+      # {msg, url, status: -1}, no dest/elapsed. The request line is
+      # "<method> <target> HTTP/1.1", so the reported position is the
+      # target's char index plus the method AND its trailing space - NOT a
+      # fixed "GET " prefix. Verified against real ansible-core: the
+      # inofix.acme-tiny-sign NBSP URL
+      # ("https://raw.githubusercontent.com/diafygi/acme-tiny/master/acme\u{a0}tiny.py")
+      # reports "position 35" under --check, where the GET request line
+      # for the same target reports 34 - get_url.py's
+      # `method = 'HEAD' if module.check_mode else 'GET'` alone explains
+      # the one (round29908300).
+      private def self.non_ascii_target_failure(url : String, type : String?, method : String) : Failure?
         return nil unless type == "http" || type == "https"
         target = request_target(url)
         chars = target.chars
@@ -148,13 +159,14 @@ module Krikri
         while stop + 1 < chars.size && chars[stop + 1].ord > 0x7f
           stop += 1
         end
-        position = 4 + start
+        prefix = method.size + 1
+        position = prefix + start
         if start == stop
           Failure.new(Kind::UnknownUrlType,
             "'ascii' codec can't encode character '#{python_char_repr(chars[start])}' in position #{position}: ordinal not in range(128)")
         else
           Failure.new(Kind::UnknownUrlType,
-            "'ascii' codec can't encode characters in position #{position}-#{4 + stop}: ordinal not in range(128)")
+            "'ascii' codec can't encode characters in position #{position}-#{prefix + stop}: ordinal not in range(128)")
         end
       end
 

@@ -815,6 +815,22 @@ describe "uri plugin" do
       result["msg"].as_s.must_equal(
         "Status code was -1 and not [200]: Connection failure: ('No cipher can be selected.',)")
     end
+
+    it "puts the request method's own length in the ascii-encode failure position" do
+      # Python's UnicodeEncodeError position counts the request line
+      # "<method> <target> HTTP/1.1", so uri's method: param (uri.py
+      # uppercases it and hands it to fetch_url as the verb) shifts the
+      # reported position - "POST /a\xa0b HTTP/1.1" reports 7 where the GET
+      # request line for the same target reports 6.
+      result = PluginSpecHelper.run("uri", {
+        "url"    => "https://127.0.0.1:1/a\u{a0}b",
+        "method" => "POST",
+      })
+
+      result["failed"].as_bool.must_equal(true)
+      result["msg"].as_s.must_equal("'ascii' codec can't encode character '\\xa0' in position 7: ordinal not in range(128)")
+      result["status"].as_i.must_equal(-1)
+    end
   end
 
   # The module-side twin of the uri action plugin's non-mapping
