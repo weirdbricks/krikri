@@ -127,6 +127,36 @@ describe "facts plugin" do
     end
   end
 
+  describe "ansible_userspace_architecture fact" do
+    # dtoch56.test (issue #1196) printed "Architecture: amd64" where real
+    # ansible printed "x86_64": Ansible's PlatformFactCollector never asks
+    # dpkg/rpm for the distro arch name - it maps platform.machine() plus
+    # the interpreter's word size, and only x86_64/Solaris-i86 machines
+    # define this fact at all (live-verified vs 2.21.6).
+    it "follows Ansible's machine/bits mapping, never the dpkg/rpm arch name" do
+      result = PluginSpecHelper.run("facts", {} of String => String)
+      facts = result["ansible_facts"]
+      machine = facts["ansible_machine"].as_s
+      bits = facts["ansible_userspace_bits"]?.try(&.as_s)
+
+      case machine
+      when "x86_64"
+        facts["ansible_architecture"].as_s.must_equal("x86_64")
+        if bits == "32"
+          facts["ansible_userspace_architecture"].as_s.must_equal("i386")
+        else
+          facts["ansible_userspace_architecture"].as_s.must_equal("x86_64")
+        end
+      when "i386", "i486", "i586", "i686", "i86pc"
+        facts["ansible_architecture"].as_s.must_equal("i386")
+        facts["ansible_userspace_architecture"].as_s.must_equal(bits == "64" ? "x86_64" : "i386")
+      else
+        facts["ansible_architecture"].as_s.must_equal(machine)
+        facts["ansible_userspace_architecture"]?.must_be_nil
+      end
+    end
+  end
+
   describe "become method failure" do
     # Real bug found in adarnimrod.openbsd-bootstrap (issue #395):
     # When ansible_become_method is set to a non-empty value (e.g. "sudo"),

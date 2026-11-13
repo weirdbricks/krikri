@@ -92,6 +92,35 @@ BLOCK
     stdout_text.must_include(%("msg": "[1, 2]"))
   end
 
+  # dtoch56.test (issue #1196) printed "" for a list msg element that was a
+  # for-loop over an empty list; real ansible prints null there. Its
+  # node-list concat is None when a template produces no output nodes at
+  # all, while a span that renders empty (`{{ '' }}`) still owns its "".
+  it "renders a block-tag-only or comment-only list msg element as null" do
+    stdout_text, _ = run_krikri(<<-YAML)
+      - hosts: localhost
+        gather_facts: false
+        vars: {flags: []}
+        tasks:
+          - debug:
+              msg:
+                - "Arch: {{ 'x86_64' }}"
+                - "{% for flag in flags %}CPU flag {{ flag }}: {% endfor %}"
+                - "{{ '' }}"
+                - "{# nothing #}"
+                - "literal text"
+      YAML
+    stdout_text.must_include(<<-'BLOCK')
+    "msg": [
+        "Arch: x86_64",
+        null,
+        "",
+        null,
+        "literal text"
+    ]
+BLOCK
+  end
+
   it "registers a list msg as a real list for later tasks" do
     stdout_text, _ = run_krikri(<<-YAML)
       - hosts: localhost

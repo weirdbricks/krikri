@@ -1191,16 +1191,6 @@ module Krikri
 
       arch = uname_ok ? String.new(utsname.machine.to_unsafe).strip : ""
       facts["ansible_machine"] = arch unless arch.empty?
-      facts["ansible_architecture"] = arch unless arch.empty?
-
-      # dpkg/rpm give a distro-specific userspace arch name (e.g. "amd64" vs
-      # "x86_64") that can't be derived from uname alone, so this still shells
-      # out - but without the extra `/bin/sh -c` layer, and falling back to the
-      # already-computed `arch` above instead of forking `uname -m` again.
-      userspace = capture("dpkg", ["--print-architecture"])
-      userspace = capture("rpm", ["--eval", "%{_arch}"]) if userspace.empty?
-      userspace = arch if userspace.empty?
-      facts["ansible_userspace_architecture"] = userspace unless userspace.empty?
 
       # ansible_userspace_bits ("64" / "32") - Ansible derives this from
       # getconf LONG_BIT (found via gantsign.ansible-role-golang's
@@ -1210,6 +1200,23 @@ module Krikri
       long_bits = "64" if long_bits.empty? && arch =~ /64/
       long_bits = "32" if long_bits.empty? && !arch.empty?
       facts["ansible_userspace_bits"] = long_bits unless long_bits.empty?
+
+      # PlatformFactCollector never asks dpkg/rpm for the distro's arch name
+      # ("amd64"): it reports uname's machine for `architecture` and, only on
+      # x86_64 and Solaris-i86 kernels, x86_64 or i386 for
+      # `userspace_architecture` from the interpreter's own word size. Every
+      # other machine leaves `userspace_architecture` UNDEFINED, so it is not
+      # synthesized from a package-manager probe. dtoch56.test printed dpkg's
+      # "amd64" where Ansible printed "x86_64" (issue #1196).
+      facts["ansible_architecture"] = arch unless arch.empty?
+      if arch == "x86_64"
+        facts["ansible_userspace_architecture"] = "x86_64" if long_bits == "64"
+        facts["ansible_userspace_architecture"] = "i386" if long_bits == "32"
+      elsif arch.matches?(/^i[3456]86$/) || arch == "i86pc"
+        facts["ansible_architecture"] = "i386"
+        facts["ansible_userspace_architecture"] = "x86_64" if long_bits == "64"
+        facts["ansible_userspace_architecture"] = "i386" if long_bits == "32"
+      end
     end
 
     # Whether libselinux.so.1 - the shared library Ansible's
