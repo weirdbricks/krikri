@@ -3196,8 +3196,10 @@ module Krikri
     # `\x1b[0;36m`, never as the raw ESC byte. Python quotes with ' unless
     # the string holds ' and no ", and escapes control bytes as \n/\r/\t or
     # lowercase \xNN. Backslashes double first so the escapes inserted
-    # afterwards survive untouched.
-    private def self.python_repr_string(raw : String) : String
+    # afterwards survive untouched. Shared with the `register:` refusal,
+    # whose "Invalid variable name ..." text comes from f'{name!r}' in
+    # ansible-core's validate_variable_name (issue #1218).
+    def self.python_repr_string(raw : String) : String
       quote = raw.includes?("'") && !raw.includes?("\"") ? "\"" : "'"
       escaped = String.build do |io|
         raw.each_char do |char|

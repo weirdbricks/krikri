@@ -555,6 +555,47 @@ describe Krikri::PlaybookParser do
       playbook.plays[0].tasks[0].register.must_equal("result_2")
     end
 
+    it "reports an invalid register: value through Python's repr()" do
+      # ansible-core's validate_variable_name builds its message from
+      # f'name {str(name)!r}', so the rejected name itself is repr'd:
+      # devnullcake.redhat-subscription's `register: registration\`
+      # (round round29909875, issue #1218) fails with 'registration\\',
+      # the backslash doubled, and a name holding a single quote comes
+      # back in double quotes (live-verified vs ansible-core 2.21.6).
+      rules = "Variable names must be strings starting with a letter or underscore character, " \
+              "and contain only letters, numbers and underscores."
+
+      ex = assert_raises(Krikri::InvalidRegisterError) do
+        Krikri::PlaybookParser.validate_register_name("registration\\")
+      end
+      ex.message.must_equal("Invalid 'register' specified: Invalid variable name 'registration\\\\'. #{rules}")
+
+      ex = assert_raises(Krikri::InvalidRegisterError) do
+        Krikri::PlaybookParser.validate_register_name("foo'")
+      end
+      ex.message.must_equal("Invalid 'register' specified: Invalid variable name \"foo'\". #{rules}")
+
+      root = PluginSpecHelper.tmp_path("playbook_parser_register_repr_spec")
+      FileUtils.rm_rf(root) if Dir.exists?(root)
+      Dir.mkdir_p(root)
+      path = File.join(root, "site.yml")
+      File.write(path, "- hosts: localhost\n" \
+                       "  connection: local\n" \
+                       "  gather_facts: false\n" \
+                       "  tasks:\n" \
+                       "    - name: bad register\n" \
+                       "      ansible.builtin.debug:\n" \
+                       "        msg: hi\n" \
+                       "      register: registration\\\n")
+
+      ex = assert_raises(Krikri::InvalidRegisterError) do
+        Krikri::PlaybookParser.parse(File.expand_path(path))
+      end
+      render = ex.render.as(String)
+      render.includes?("[ERROR]: Invalid 'register' specified: Invalid variable name 'registration\\\\'.").must_equal(true)
+      render.includes?("\nInvalid variable name 'registration\\\\'.\n").must_equal(true)
+    end
+
     it "aborts the whole playbook parse for a removed ansible.builtin.include: task, not just skips it" do
       # Real bug found benchmarking robertdebock.awx (round 162):
       # ansible-core removed the `include:` action entirely after

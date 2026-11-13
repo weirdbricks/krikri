@@ -2241,7 +2241,12 @@ module Krikri
     def self.validate_register_name(value : String, source_file : String? = nil, source_map : YamlSourceMap? = nil, prefix : String = "") : Nil
       return if register_identifier?(value)
 
-      message = "Invalid 'register' specified: Invalid variable name '#{value}'. " \
+      # ansible-core's validate_variable_name reports the rejected name as
+      # f'name {str(name)!r}', so a backslash in it prints doubled
+      # (devnullcake.redhat-subscription's `register: registration\`,
+      # issue #1218) and a name holding ' switches to double quotes.
+      quoted = ResultDisplay.python_repr_string(value)
+      message = "Invalid 'register' specified: Invalid variable name #{quoted}. " \
                 "Variable names must be strings starting with a letter or underscore character, " \
                 "and contain only letters, numbers and underscores."
       # Ansible prints the Origin of the register VALUE (the opening
@@ -2254,7 +2259,7 @@ module Krikri
       if source_file && source_map && (pos = source_map.at?("#{prefix}/register"))
         origin = ErrorBlock.origin_context(File.expand_path(source_file), pos[0], pos[1])
         cause_node = ErrorBlock::Node.new(
-          "Invalid variable name '#{value}'.",
+          "Invalid variable name #{quoted}.",
           source_context: origin,
           help_text: "Variable names must be strings starting with a letter or underscore character, " \
                      "and contain only letters, numbers and underscores.")
