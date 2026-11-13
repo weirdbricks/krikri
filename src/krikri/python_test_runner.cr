@@ -2,6 +2,11 @@ require "json"
 require "./bigint_json"
 require "./spawn_error"
 require "./controller_python"
+# emit_display_deprecations funnels the wrapper's replayed import-time
+# deprecations through ResultDisplay.emit_core_deprecation (run-wide dedup
+# plus the one-time "deprecation_warnings=False" hint) - a leaf-file require,
+# so a compile that pulls only this file still defines the constant.
+require "./task_executor/result_display"
 
 # Runner for role-local custom TEST plugins - a role's own
 # `test_plugins/*.py` (and the playbook-adjacent `test_plugins/`),
@@ -128,6 +133,11 @@ module Krikri
               emit_skip_warning(path, error)
             end
           end
+          # Ansible shows a file's import-time deprecations after its
+          # "Skipping plugin" line (both captured in the task's
+          # DeferredWarningContext and flushed together at its exit), so the
+          # replayed text follows the skip warning here too.
+          emit_display_deprecations(result)
           @@names_cache[path] = {mtime, set}
         end
         set.each { |set_name| names << set_name }
@@ -160,6 +170,10 @@ module Krikri
         raise TestError.new("test plugin wrapper failed to spawn: #{ex.message}")
       end
       raise TestError.new("test plugin wrapper produced no result (is python3 available?)") unless result
+      # The call path re-imports the plugin files in a fresh process, so a
+      # first dispatch before any "list" introspection still reports the
+      # import's deprecations (the run-wide dedup keeps it one-per-text).
+      emit_display_deprecations(result)
       unless result["ok"]?.try(&.as_bool?)
         detail = result["error"]?.try(&.as_s?) || "unknown error"
         raise TestError.new("custom test '#{name}' failed: #{detail}")
@@ -183,6 +197,23 @@ module Krikri
 
     private def emit_spawn_warning(path : String, error : String) : Nil
       warning_sink.puts "[WARNING]: Test plugin introspection failed (#{File.expand_path(path)}): #{error}"
+    end
+
+    # The wrapper replays a plugin file's IMPORT-time deprecations (the
+    # classic `from ansible.module_utils._text import to_bytes` - round
+    # 29908360, constrict0r.develmicro) through ansible's own Display and
+    # ships the text back as its "display" field, because a wrapper process
+    # is not ansible's controller: module_utils' deprecate() only reaches
+    # stderr via Display inside the ansible-playbook process, and in the
+    # bare wrapper they would pile up invisibly in
+    # module_utils.common.warnings._global_deprecations exactly where real
+    # ansible's output has them.
+    private def emit_display_deprecations(result : JSON::Any) : Nil
+      text = result["display"]?.try(&.as_s?) || return
+      text.each_line do |line|
+        next unless line.starts_with?("[DEPRECATION WARNING]: ")
+        ResultDisplay.emit_core_deprecation(line.lchop("[DEPRECATION WARNING]: "))
+      end
     end
 
     # Runs the wrapper script below against one request. Returns the
@@ -243,12 +274,62 @@ module Krikri
     # protocol - only the LAST line of stdout is parsed.
     WRAPPER = <<-PYTHON
       import importlib.util
+      import io
       import json
       import os
       import sys
 
 
       _loaded = []
+
+      try:
+          from ansible.module_utils.common import warnings as _ansible_warnings
+      except Exception:
+          _ansible_warnings = None
+
+
+      def _display_deprecations():
+          # Ansible shows a plugin import's module-level deprecations
+          # (`from ansible.module_utils._text import to_bytes`) through its
+          # own Display: module_utils' deprecate() reaches stderr only via
+          # Display inside the ansible-playbook process, so replay the
+          # entries the import left in _global_deprecations through the real
+          # Display.deprecated (hint, wording and dedup included) with
+          # stderr captured, and ship the text back in the response.
+          if _ansible_warnings is None:
+              return ""
+          try:
+              entries = list(_ansible_warnings._global_deprecations)
+          except Exception:
+              return ""
+          if not entries:
+              return ""
+          try:
+              from ansible.utils.display import Display
+          except Exception:
+              return ""
+          buffer = io.StringIO()
+          old_stderr = sys.stderr
+          sys.stderr = buffer
+          try:
+              display = Display()
+              for entry in entries:
+                  display.deprecated(
+                      msg=entry.event.msg, version=entry.version,
+                      date=entry.date, deprecator=entry.deprecator,
+                      help_text=entry.event.help_text)
+          except Exception:
+              return ""
+          finally:
+              sys.stderr = old_stderr
+          return buffer.getvalue()
+
+
+      def _respond(body, dumps_kwargs):
+          display = _display_deprecations()
+          if display:
+              body["display"] = display
+          sys.stdout.write(json.dumps(body, **dumps_kwargs))
 
 
       def _load_plugin(path):
@@ -342,15 +423,13 @@ module Krikri
           payload = json.loads(sys.stdin.read())
           names, skipped = _load_all(payload.get("paths", []))
           if payload.get("action") == "list":
-              sys.stdout.write(json.dumps(
-                  {"ok": True, "names": sorted(names), "skipped": skipped}))
+              _respond({"ok": True, "names": sorted(names), "skipped": skipped}, {})
               return
           name = payload.get("name")
           func = names.get(name)
           if func is None:
-              sys.stdout.write(json.dumps(
-                  {"ok": False, "kind": "not_found",
-                   "error": "no test named %s in the given plugin files" % name}))
+              _respond({"ok": False, "kind": "not_found",
+                        "error": "no test named %s in the given plugin files" % name}, {})
               return
           if _is_pass_context(func):
               call_args = [_StubContext(payload.get("vars") or {})]
@@ -359,15 +438,18 @@ module Krikri
           call_args.append(payload.get("value"))
           call_args.extend(payload.get("args") or [])
           result = func(*call_args, **(payload.get("kwargs") or {}))
-          sys.stdout.write(json.dumps({"ok": True, "result": result}, default=_serialize))
+          _respond({"ok": True, "result": result}, {"default": _serialize})
 
 
       try:
           main()
       except Exception as exc:
-          sys.stdout.write(json.dumps(
-              {"ok": False, "kind": "error",
-               "error": "%s: %s" % (type(exc).__name__, exc)}))
+          body = {"ok": False, "kind": "error",
+                  "error": "%s: %s" % (type(exc).__name__, exc)}
+          display = _display_deprecations()
+          if display:
+              body["display"] = display
+          sys.stdout.write(json.dumps(body))
       PYTHON
   end
 end

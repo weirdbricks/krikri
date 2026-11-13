@@ -249,6 +249,64 @@ describe "role-local test_plugins file that fails to import" do
       "cannot import name 'Sequence' from 'collections' (#{collections_py})"
     )
   end
+
+  it "shows a broken file's import-time deprecations after its skip warning (round 29908360)" do
+    root = File.tempname("test-plugins-import-deprecations")
+    begin
+      Dir.mkdir_p(File.join(root, "test_plugins"))
+      broken = File.join(root, "test_plugins", "util.py")
+      good = File.join(root, "test_plugins", "good.py")
+      # constrict0r.unify's test_plugins/util.py (round 29908360,
+      # constrict0r.develmicro) imports the deprecated
+      # ansible.module_utils._text names BEFORE failing on
+      # `from collections import Sequence`; ansible displayed one
+      # [DEPRECATION WARNING] per imported name plus the one-time
+      # "deprecation_warnings=False" hint right after the "Skipping
+      # plugin" line, where krikri dropped them entirely.
+      File.write(broken, <<-PYTHON)
+        from ansible.module_utils._text import to_bytes
+        from ansible.module_utils._text import to_text
+        from collections import Sequence
+
+
+        class TestModule(object):
+            def tests(self):
+                return {"variable_empty": self.variable_empty}
+
+            def variable_empty(self, value):
+                return value == ""
+        PYTHON
+      File.write(good, <<-PYTHON)
+        class TestModule(object):
+            def tests(self):
+                return {"is_good": lambda value: True}
+        PYTHON
+
+      status, output = run_playbook(root, <<-YAML)
+        - hosts: localhost
+          connection: local
+          gather_facts: false
+          tasks:
+            - name: use the directory's loadable test
+              ansible.builtin.debug:
+                msg: "{{ 'x' is is_good }}"
+        YAML
+
+      status.success?.must_equal(true, output)
+      output.must_include("\"msg\": true", output)
+      # One "Skipping plugin" line per unloadable file, and the two
+      # import deprecations plus the disable hint exactly once across
+      # the run - Display dedups the formatted deprecation message
+      # process-wide, and the wrapper re-imports the files on every
+      # subsequent call dispatch.
+      output.scan("Skipping plugin").size.must_equal(1, output)
+      output.scan("[DEPRECATION WARNING]: Importing 'to_bytes' from 'ansible.module_utils._text' is deprecated. This feature will be removed from ansible-core version 2.24. Use ansible.module_utils.common.text.converters instead.").size.must_equal(1, output)
+      output.scan("[DEPRECATION WARNING]: Importing 'to_text' from 'ansible.module_utils._text' is deprecated. This feature will be removed from ansible-core version 2.24. Use ansible.module_utils.common.text.converters instead.").size.must_equal(1, output)
+      output.scan("[WARNING]: Deprecation warnings can be disabled by setting `deprecation_warnings=False` in ansible.cfg.").size.must_equal(1, output)
+    ensure
+      FileUtils.rm_rf(root) if root
+    end
+  end
 end
 
 # Integers wider than Int64 (issue #695): a role-local TEST plugin must
