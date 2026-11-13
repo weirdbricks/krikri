@@ -3760,7 +3760,22 @@ module Krikri
         # onto a handler DEFINITION would be a behavior Ansible
         # doesn't have, not a fix for anything seen live.
         import_when_list = task.when_condition_list
+        # The import line's own when: token positions (recorded at parse
+        # time, see parse_include_role) travel to every loaded task so a
+        # failing inherited clause still prints real's [ERROR] chain with
+        # its "caused by" Origin in the importing file (issue #1231) - the
+        # role's own file has no such clause to locate.
+        import_when_origins = task.imported_when_origins
+        inherited_origin = import_when_origins.try { |origins| origins[import_when]? }
         included_tasks.each do |included_task|
+          if import_when_origins
+            child_origins = included_task.imported_when_origins ||= Hash(String, {String, Int32, Int32}).new
+            import_when_origins.each { |text, origin| child_origins[text] = origin }
+          end
+          if inherited_origin && included_task.when_condition.nil? &&
+             included_task.when_condition_list.nil? && included_task.inherited_when_origin.nil?
+            included_task.inherited_when_origin = inherited_origin
+          end
           included_task.when_condition = included_task.when_condition ? "(#{import_when}) and (#{included_task.when_condition})" : import_when
           # Same always-list rule as the parser's import_tasks: path
           # (round 5210000, clouddrove.ansible_role_common): import-when

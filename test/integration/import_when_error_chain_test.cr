@@ -179,4 +179,51 @@ describe "when: statically-imported conditional failure chain" do
   ensure
     FileUtils.rm_rf(root) if root
   end
+
+  # A STATIC import_role:'s when: is stamped onto each task the role
+  # contributes at RUN time (the role is not loaded at parse time), so the
+  # clause has no position in the task's own file to locate. Real still
+  # prints the two-record [ERROR] chain, its "caused by" Origin at the
+  # import line's when: token in the PLAYBOOK (issue #1231, live-verified
+  # vs 2.21.6).
+  it "prints real's chain for a static import_role: when: failure" do
+    root = PluginSpecHelper.tmp_path("import-role-when-chain")
+    role_dir = File.join(root, "j1231")
+    FileUtils.mkdir_p(File.join(role_dir, "tasks"))
+    main_file = File.join(role_dir, "tasks", "main.yml")
+    File.write(main_file, <<-YAML)
+      ---
+      - name: kpg fixture role task
+        debug:
+          msg: ran
+      YAML
+    playbook = File.join(root, "pb.yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        gather_facts: false
+        connection: local
+        tasks:
+          - name: Import role
+            import_role:
+              name: j1231
+            when: kpg_task_0 is succeeded
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", File.join(__DIR__, "..", "fixtures", "inventory-localhost-local.ini"), playbook],
+      output: output, error: output, input: IO::Memory.new,
+      env: {"ANSIBLE_ROLES_PATH" => root})
+
+    text = output.to_s
+    status.success?.must_equal(false)
+    text.must_include("[ERROR]: Task failed: A 'when' expression failed: Error while evaluating conditional: 'kpg_task_0' is undefined")
+    # first link: the role task's own mapping, in the ROLE's file
+    text.must_include("Task failed.\nOrigin: #{main_file}:2:3\n\n1 ---\n2 - name: kpg fixture role task\n    ^ column 3")
+    # second link: the import_role: line's when: VALUE token, in the play
+    text.must_include("<<< caused by >>>\n\nA 'when' expression failed: Error while evaluating conditional: 'kpg_task_0' is undefined\nOrigin: #{playbook}:8:13\n\n6       import_role:\n7         name: j1231\n8       when: kpg_task_0 is succeeded\n              ^ column 13")
+    text.must_include("fatal: [localhost]: FAILED! => {\"msg\": \"Task failed: A 'when' expression failed: Error while evaluating conditional: 'kpg_task_0' is undefined\"}")
+    text.wont_include("Unhandled exception")
+  ensure
+    FileUtils.rm_rf(root) if root
+  end
 end

@@ -7658,6 +7658,33 @@ module Krikri
       parse_common_task_attributes(task, task_hash, play, "IncludeRole", source_file, source_map, source_prefix, source_index)
       apply_become_keywords(task, task_hash, play)
 
+      # A STATIC import_role:'s own `when:` clause positions, recorded the
+      # same way import_tasks: records them (see try_parse_import_tasks):
+      # real evaluates the import's clauses before each task the role
+      # contributes, and a failing one labels the conditional-failure
+      # chain's "caused by" Origin at the import line's value token in the
+      # IMPORTING file - the role's own files hold no such clause to
+      # locate (issue #1231). The runtime role load copies these onto
+      # every included task.
+      if is_static && source_file && source_map && task.when_condition
+        origin_prefix = task_source_prefix(source_prefix, source_index)
+        origin_path = File.expand_path(source_file)
+        import_when_origins = nil
+        if (when_yaml = task_hash["when"]?) && (when_items = when_yaml.as_a?)
+          parsed_origins = Hash(String, {String, Int32, Int32}).new
+          when_items.each_with_index do |item, item_idx|
+            clause = safe_yaml_to_string(item).strip
+            next if clause.empty?
+            next unless (pos = source_map.at?("#{origin_prefix}/when/#{item_idx}"))
+            parsed_origins[clause] = {origin_path, pos[0], pos[1]}
+          end
+          import_when_origins = parsed_origins unless parsed_origins.empty?
+        elsif (when_pos_scalar = source_map.at?("#{origin_prefix}/when"))
+          import_when_origins = {task.when_condition.as(String) => {origin_path, when_pos_scalar[0], when_pos_scalar[1]}}
+        end
+        task.imported_when_origins = import_when_origins if import_when_origins
+      end
+
       if template_loop = find_loop_template(task_hash)
         task.loop_template_kind = template_loop[0]
         task.loop_template = template_loop[1]
