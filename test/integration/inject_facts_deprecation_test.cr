@@ -1277,3 +1277,82 @@ describe "INJECT_FACTS_AS_VARS deprecation and a template's unentered frames" do
     stderr.must_include("Origin: ")
   end
 end
+
+# ansible-core tags the deprecated fact's VALUE, not just its name, and a
+# loop source only holds such a value when an item's own template was one
+# bare `{{ ansible_<fact> }}` reference. Every later read of that item
+# therefore trips the deprecation again, in that read's own templating
+# operation - issue #1221, msltwtf.docker: its `docker_users` default is a
+# one-element list holding `"{{ ansible_user_id }}"`, and the role's
+# `user:` task with `name: "{{ item }}"` printed two more blocks after the
+# loop source's own (live-verified against 2.21.6).
+describe "INJECT_FACTS_AS_VARS deprecation from a loop item that is a fact value" do
+  it "warns at the loop source, the task param and the item label" do
+    stderr = run_playbook(<<-PLAYBOOK)
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        vars:
+          docker_users: ["{{ ansible_user_id }}"]
+        tasks:
+          - name: add users
+            debug:
+              msg: "{{ item }}"
+            loop: "{{ docker_users }}"
+      PLAYBOOK
+
+    stderr.scan(/INJECT_FACTS_AS_VARS default to `True`/).size.must_equal(3)
+    # The loop source's own render: the leaf's declaration.
+    stderr.must_match(/:5:20\n/)
+    # The task param's read of `item`.
+    stderr.must_match(/:9:14\n/)
+    stderr.must_include("msg: \"{{ item }}\"")
+    stderr.must_include("^ column 14")
+    # The label render: the loop variable's NAME is the template, and a
+    # default `item` spelling carries no Origin.
+    stderr.must_include("[DEPRECATION WARNING]: While processing 'item': INJECT_FACTS_AS_VARS")
+    stderr.must_include("Origin: <unknown>\n\nitem\n")
+  end
+
+  it "origins the item label block at loop_control.loop_var" do
+    stderr = run_playbook(<<-PLAYBOOK)
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        tasks:
+          - name: renamed loop var
+            debug:
+              msg: "{{ u }}"
+            loop:
+              - "{{ ansible_user_id }}"
+            loop_control:
+              loop_var: u
+      PLAYBOOK
+
+    stderr.scan(/INJECT_FACTS_AS_VARS default to `True`/).size.must_equal(3)
+    stderr.must_match(/:9:11\n/)
+    stderr.must_match(/:7:14\n/)
+    # An explicitly named loop variable is a real YAML scalar ansible tags,
+    # so the block keeps the plain headline and points at its token.
+    stderr.must_match(/:11:19\n/)
+    stderr.must_include("loop_var: u")
+    stderr.includes?("While processing 'u'").must_equal(false)
+  end
+
+  it "warns once for a mixed-text item, which builds a fresh untagged value" do
+    stderr = run_playbook(<<-PLAYBOOK)
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        tasks:
+          - name: mixed item
+            debug:
+              msg: "{{ item }}"
+            loop:
+              - "{{ ansible_user_id }}-x"
+      PLAYBOOK
+
+    stderr.scan(/DEPRECATION WARNING\]: INJECT_FACTS_AS_VARS/).size.must_equal(1)
+    stderr.must_match(/:9:11\n/)
+  end
+end

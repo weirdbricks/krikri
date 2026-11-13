@@ -1697,7 +1697,7 @@ module Krikri
       end
 
       rendered_items = begin
-        render_loop_items_strict_or_raise(task, loop_items, loop_vars_context, host.name)
+        render_loop_items_strict_or_raise(task, loop_items, loop_vars_context, host.name, [] of Bool)
       rescue
         nil
       end
@@ -2077,6 +2077,7 @@ module Krikri
           # it (render_loop_items_strict_or_raise's rescue).
           native = begin
             VarSubstitutor.enter_strict_span if strict
+            VarSubstitutor.note_bare_fact_reference(stripped[2..-3].strip, vars_context)
             VariableSubstitutor::VariableLookup.new(vars_context).resolve(stripped[2..-3].strip)
           ensure
             VarSubstitutor.exit_strict_span if strict

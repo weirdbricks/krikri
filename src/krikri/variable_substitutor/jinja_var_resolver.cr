@@ -120,6 +120,10 @@ module Krikri
       # templating at that moment (VarSubstitutor#fact_read_origin).
       private def emit_fact_deprecation(name : String) : Nil
         return if JinjaVarResolver.materializing_vars?
+        # See VarSubstitutor#emit_loop_item_fact_deprecation: a loop item
+        # that IS a deprecated fact's own value trips the deprecation again
+        # on every read, at this operation's own site.
+        VarSubstitutor.emit_loop_item_fact_deprecation(name)
         return unless VarSubstitutor.top_level_fact_name?(name, @raw_vars)
         VarSubstitutor.emit_fact_deprecation(VarSubstitutor.fact_read_origin(name))
       end

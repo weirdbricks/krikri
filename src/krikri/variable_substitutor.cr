@@ -2573,6 +2573,144 @@ module Krikri
       nil
     end
 
+    # Fiber-scoped probes behind #with_fact_read_probe: the loop executor
+    # needs to know whether an ITEM's own value ended up being a deprecated
+    # fact's VALUE (ansible tags the value, not the name), because every
+    # later read of such an item trips the deprecation again in that read's
+    # own templating operation (see #emit_loop_item_fact_deprecation).
+    class FactReadProbe
+      property? tethered : Bool = false
+    end
+
+    @@fact_read_probes = {} of Fiber => Array(FactReadProbe)
+
+    # Runs *block* with a fact-read probe open, returning its value and
+    # whether it resolved a bare reference to a top-level fact's value.
+    def self.with_fact_read_probe(& : -> T) : {T, Bool} forall T
+      fiber = Fiber.current
+      probe = FactReadProbe.new
+      probes = (@@fact_read_probes[fiber] ||= Array(FactReadProbe).new)
+      probes.push(probe)
+      begin
+        result = yield
+        {result, probe.tethered?}
+      ensure
+        probes.pop
+        @@fact_read_probes.delete(fiber) if probes.empty?
+      end
+    end
+
+    # Marks the value being resolved by the open probe as a deprecated
+    # fact's own value. *expression* is the WHOLE template text if the
+    # render covered one bare `{{ name }}` span, nil for anything else
+    # (mixed literal text, a filter chain, a dotted access) - those build a
+    # fresh value ansible never tags.
+    def self.note_bare_fact_reference(expression : String?, vars : Hash(String, JSON::Any)) : Nil
+      return unless expression
+      return unless expression.matches?(/\A[A-Za-z_][A-Za-z0-9_]*\z/)
+      return unless top_level_fact_name?(expression, vars)
+      @@fact_read_probes[Fiber.current]?.try(&.last?).try(&.tethered = true)
+    end
+
+    # #note_bare_fact_reference for a whole template STRING: only a single
+    # `{{ <bare name> }}` span hands back the fact's own value, while mixed
+    # text or a filter chain builds a fresh untagged one.
+    def self.note_bare_fact_template(template : String, vars : Hash(String, JSON::Any)) : Nil
+      @@fact_read_probes[Fiber.current]?.try(&.last?).try(&.tethered = true) if bare_fact_template?(template, vars)
+    end
+
+    def self.bare_fact_template?(template : String, vars : Hash(String, JSON::Any)) : Bool
+      stripped = template.strip
+      return false unless stripped.starts_with?("{{") && stripped.ends_with?("}}") && stripped.scan("{{").size == 1
+      expression = stripped[2..-3].strip
+      expression.matches?(/\A[A-Za-z_][A-Za-z0-9_]*\z/) && top_level_fact_name?(expression, vars)
+    end
+
+    # Set when a loop source was an explicit one-element array around a bare
+    # top-level fact reference (`loop: ["{{ ansible_user_id }}"]`): its
+    # single item IS the deprecated fact value, so later reads of it trip
+    # the deprecation again (see #emit_loop_item_fact_deprecation). The
+    # DIRECT scalar form (`loop: "{{ ansible_interfaces }}"`) iterates the
+    # fact's own elements instead, which carry no tag.
+    @@loop_source_fact_tether = {} of Fiber => Bool
+
+    def self.mark_loop_source_fact_tether(template : String, vars : Hash(String, JSON::Any)) : Nil
+      @@loop_source_fact_tether[Fiber.current] = bare_fact_template?(template, vars)
+    end
+
+    def self.take_loop_source_fact_tether : Bool
+      @@loop_source_fact_tether.delete(Fiber.current) || false
+    end
+
+    # Cleared at every loop-source resolution so a source that RESOLVES
+    # without being executed (a when:-false block's skip printer) cannot
+    # leave the mark behind for the next task's loop.
+    def self.clear_loop_source_fact_tether : Nil
+      @@loop_source_fact_tether.delete(Fiber.current)
+    end
+
+    # One loop iteration's own state for the deferred fact reads below:
+    # *loop_var* is the name the item is bound under, *pending* whether the
+    # item's value IS a deprecated fact's own value (see
+    # #emit_loop_item_fact_deprecation).
+    class LoopItemFactState
+      getter loop_var : String
+      property? pending : Bool
+
+      def initialize(@loop_var : String, @pending : Bool = false)
+      end
+    end
+
+    @@loop_item_fact_states = {} of Fiber => Array(LoopItemFactState)
+
+    def self.push_loop_item_fact_state(loop_var : String) : LoopItemFactState
+      state = LoopItemFactState.new(loop_var)
+      (@@loop_item_fact_states[Fiber.current] ||= Array(LoopItemFactState).new).push(state)
+      state
+    end
+
+    def self.pop_loop_item_fact_state : Nil
+      fiber = Fiber.current
+      return unless stack = @@loop_item_fact_states[fiber]?
+      stack.pop
+      @@loop_item_fact_states.delete(fiber) if stack.empty?
+    end
+
+    def self.loop_item_fact_pending=(pending : Bool) : Nil
+      @@loop_item_fact_states[Fiber.current]?.try(&.last?).try(&.pending = pending)
+    end
+
+    # Emits the INJECT_FACTS_AS_VARS deprecation for a READ of the loop
+    # variable itself when the item bound to it IS a deprecated fact's own
+    # value: ansible tags the VALUE (not just the name), so every read of
+    # an item that a bare `{{ ansible_<fact> }}` reference produced trips
+    # the deprecation again, inside THAT templating operation - the block
+    # carries the operation's own Origin (a task param's value token, a
+    # when: clause's), not the loop source's (live-verified against 2.21.6
+    # on an item of `"{{ ansible_user_id }}"` read from debug's msg:, a
+    # when: and a loop_control.label). Returns true when it emitted.
+    def self.emit_loop_item_fact_deprecation(name : String) : Bool
+      state = @@loop_item_fact_states[Fiber.current]?.try(&.last?)
+      return false unless state && state.pending? && state.loop_var == name
+      origin = current_deprecation_origin(name) || loop_item_read_value_origin
+      return false unless origin
+      emit_fact_deprecation(origin)
+      true
+    end
+
+    # The declaration of the VALUE whose own template is being re-rendered
+    # right now, for a loop-item read that rides no render site (a task
+    # `vars:` value renders eagerly at the context build, its own
+    # declaration being the Origin ansible shows for a read inside it).
+    private def self.loop_item_read_value_origin : String?
+      return nil unless stack = @@preparing_vars[Fiber.current]?
+      stack.reverse_each do |preparing|
+        next if preparing.text.nil?
+        return published_var_origin(preparing.host_name, preparing.name)
+      end
+      nil
+    end
+
     # Emits the INJECT_FACTS_AS_VARS deprecation for a placeable Origin while
     # keeping ansible's one-block-per-templating-operation record. A read
     # whose Origin krikri cannot place (nil) stays silent and does not spend
