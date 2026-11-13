@@ -2153,7 +2153,7 @@ module Krikri
       # A task's own `name:` opens its mapping (`- name:`), so the list
       # dash is part of that key's line prefix.
       if site.key == "name"
-        return ResultDisplay.param_value_origin(site.source_file, site.source_line, site.key, list_entry_key: true, text: site.text)
+        return ResultDisplay.param_value_origin(site.source_file, site.source_line, site.key, text: site.text)
       end
       # A block-sequence param value is its own set of YAML scalars, and
       # real tags each of them, so a fact read inside one is pinned at the

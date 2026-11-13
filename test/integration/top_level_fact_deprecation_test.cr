@@ -486,6 +486,37 @@ describe "INJECT_FACTS_AS_VARS deprecation" do
     stderr.scan(/DEPRECATION WARNING\]: #{Regex.escape(FACT_DEPRECATION_TEXT)}/).size.must_equal(2)
   end
 
+  it "attributes an unnamed task's dash-line action read to that argument's own value" do
+    # Issue #1202, capitanh.rapiddeploy_ansible_role: its role task is
+    # written `- include_vars: "{{ansible_os_family}}-vars.yml"`, so the
+    # action directive sits on the task's own list-entry line. The read
+    # keeps that shape's Origin (real anchors it on the value, 2.21.6)
+    # instead of going silent, which is what an unnamed task used to do:
+    # the key-line scan only accepted the list dash for `name:`.
+    family = fact_value("ansible_os_family")
+    stdout, stderr, dir = run_files({
+      "play.yml" => <<-PLAYBOOK,
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        tasks:
+          - include_vars: "{{ ansible_os_family }}-vars.yml"
+          - debug: msg="{{ ansible_os_family }}"
+      PLAYBOOK
+      "#{family}-vars.yml" => "---\nstub_user: www-data\n",
+    })
+
+    stdout.wont_include("FAILED")
+    stderr.must_include("Origin: #{File.join(dir, "play.yml")}:5:21\n")
+    stderr.must_include("5     - include_vars: \"{{ ansible_os_family }}-vars.yml\"\n")
+    stderr.must_include("^ column 21")
+    # A free-form module call's param stays its `msg=` token on that line.
+    stderr.must_include("Origin: #{File.join(dir, "play.yml")}:6:14\n")
+    stderr.must_include("6     - debug: msg=\"{{ ansible_os_family }}\"\n")
+    stderr.must_include("^ column 14")
+    stderr.scan(/DEPRECATION WARNING\]: #{Regex.escape(FACT_DEPRECATION_TEXT)}/).size.must_equal(2)
+  end
+
   it "attributes a failing include_tasks path read to that argument's own value" do
     # Issue #1093, shifteoops.apache_role: `include_tasks: "setup-{{
     # ansible_os_family }}.yml"` reads the fact while the executor

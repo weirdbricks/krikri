@@ -2048,11 +2048,11 @@ module Krikri
     # the right one (round 29903261's marauderxtreme.local_system: the
     # user module's name: read points at the param's own value token
     # 8:11 in ansible-core, never at the task name's token above it).
-    def self.param_value_origin(path : String?, source_line : Int32, key : String, list_entry_key : Bool = false, text : String? = nil) : String?
+    def self.param_value_origin(path : String?, source_line : Int32, key : String, text : String? = nil) : String?
       return nil unless path && source_line > 0 && File.file?(path)
 
       lines = File.read_lines(path)
-      return free_form_param_origin(path, lines, source_line, key) unless idx = param_key_line_index(lines, source_line, key, list_entry_key, text)
+      return free_form_param_origin(path, lines, source_line, key) unless idx = param_key_line_index(lines, source_line, key, text)
       line = lines[idx]
       needle = "#{key}:"
       col = line.index!(needle) + needle.size
@@ -2211,8 +2211,9 @@ module Krikri
     end
 
     # The line index of a task param's `<key>:` mapping key at or after
-    # *source_line*: nothing but whitespace/quotes may precede the key.
-    private def self.param_key_line_index(lines : Array(String), source_line : Int32, key : String, list_entry_key : Bool = false, text : String? = nil) : Int32?
+    # *source_line*: nothing but whitespace/quotes (or the list dash opening
+    # the task's own mapping) may precede the key.
+    private def self.param_key_line_index(lines : Array(String), source_line : Int32, key : String, text : String? = nil) : Int32?
       needle = "#{key}:"
       want = text ? strip_yaml_scalar_quotes(text.strip) : nil
       fallback = nil
@@ -2221,16 +2222,19 @@ module Krikri
         at = line.index(needle)
         next unless at
         prefix = line[0...at]
-        # only a mapping key: nothing but whitespace/quotes before it - or,
-        # for a key that opens a task's own mapping (`- name:`), the list
-        # dash itself. A FREE-FORM action directive is its own key line
-        # and may carry the module's namespace (`ansible.builtin.
+        # only a mapping key: nothing but whitespace/quotes before it, or the
+        # list dash that opens the task's own mapping (`- include_vars:
+        # "{{ansible_os_family}}-vars.yml"` - real pins the fact read on
+        # that directive's value, issue #1202, and an unnamed task writes
+        # its action on the dash line far more often than `name:` does).
+        # A FREE-FORM action directive is its own key line and may carry the
+        # module's namespace (`ansible.builtin.
         # include_vars: "{{ ansible_os_family }}.yml"`, dtoch56.prepare_host's
         # tasks/ntp.yml - real pins the read on that directive's value,
         # issue #1021), so a dotted namespace before the key matches too.
         stripped = prefix.strip
         next unless stripped.empty? || (stripped.size == 1 && {"'", '"'}.includes?(stripped)) ||
-                    (list_entry_key && stripped == "-") ||
+                    stripped == "-" ||
                     stripped.matches?(/\A(?:-\s+)?(?:[A-Za-z0-9_]+\.)+\z/)
         # The rendered-text match wins when several `key:` lines qualify:
         # a task's own `name:` opens the mapping while a module's `name:`
