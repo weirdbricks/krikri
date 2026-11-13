@@ -517,6 +517,40 @@ describe "INJECT_FACTS_AS_VARS deprecation" do
     stderr.scan(/DEPRECATION WARNING\]: #{Regex.escape(FACT_DEPRECATION_TEXT)}/).size.must_equal(2)
   end
 
+  it "attributes an unnamed role task's dash-line include_vars read to the role's own file" do
+    # Issue #1194, capitanh.rapiddeploy_ansible_role: its roles/.../
+    # tasks/main.yml line 3 is `- include_vars: "{{ansible_os_family}}-vars.yml"`,
+    # and real anchors the warning on that scalar's value - 3:17, the
+    # opening quote - inside the ROLE's file, never the playbook's.
+    family = fact_value("ansible_os_family")
+    stdout, stderr, dir = run_files({
+      "play.yml" => <<-PLAYBOOK,
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        roles:
+          - cr
+      PLAYBOOK
+      "roles/cr/tasks/main.yml" => <<-YAML,
+        ---
+        # OS specific config
+        - include_vars: "{{ansible_os_family}}-vars.yml"
+        - debug: msg="{{ stub_user }}"
+        YAML
+      "roles/cr/vars/#{family}-vars.yml" => "---\nstub_user: www-data\n",
+    })
+
+    role_tasks = File.join(dir, "roles", "cr", "tasks", "main.yml")
+    stdout.must_include("TASK [cr : include_vars]")
+    stdout.must_include("www-data")
+    stdout.wont_include("FAILED")
+    stderr.must_include("[DEPRECATION WARNING]: #{FACT_DEPRECATION_TEXT}\n")
+    stderr.must_include("Origin: #{role_tasks}:3:17\n")
+    stderr.must_include("3 - include_vars: \"{{ansible_os_family}}-vars.yml\"\n")
+    stderr.must_include("^ column 17")
+    stderr.scan(/DEPRECATION WARNING\]: #{Regex.escape(FACT_DEPRECATION_TEXT)}/).size.must_equal(1)
+  end
+
   it "attributes a failing include_tasks path read to that argument's own value" do
     # Issue #1093, shifteoops.apache_role: `include_tasks: "setup-{{
     # ansible_os_family }}.yml"` reads the fact while the executor

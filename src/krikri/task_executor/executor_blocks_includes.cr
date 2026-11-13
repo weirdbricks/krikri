@@ -726,7 +726,7 @@ module Krikri
       roots << @playbook_dir
       roots << Dir.current
 
-      first_existing(roots, candidate)
+      first_existing_include_vars(roots, candidate)
     end
 
     # Runs the block with an include_tasks: path VALUE registered as the
