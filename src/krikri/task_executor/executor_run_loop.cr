@@ -777,7 +777,12 @@ module Krikri
         return
       end
 
-      if (until_condition = task.until_condition) && !resolve_task_check_mode(task, vars_context)
+      # No check-mode gate here: real's attempt loop runs under --check too
+      # (issue #1175, live-verified vs 2.21.6: adipriyantobpn.repo-remi's
+      # yum task prints five FAILED - RETRYING lines and a fatal with the
+      # attempts key in check mode, and a skipped check-mode result with an
+      # until: that passes on its check-mode return registers attempts: 1).
+      if until_condition = task.until_condition
         execute_task_with_retries(task, host, vars_context, until_condition, exec_host)
         return
       end

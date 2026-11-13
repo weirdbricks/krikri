@@ -145,4 +145,45 @@ describe "handler until/retries" do
   ensure
     FileUtils.rm_rf(tempdir) if tempdir
   end
+
+  it "retries a failing handler in check mode with FAILED - RETRYING lines and an attempts key" do
+    tempdir = File.tempname("handler-until-check").tap { |dir| Dir.mkdir(dir) }
+    playbook = File.join(tempdir, "site.yml")
+    File.write(playbook, <<-YAML)
+      ---
+      - hosts: localhost
+        gather_facts: false
+        tasks:
+          - name: trigger the handler
+            ansible.builtin.file:
+              path: #{File.join(tempdir, "touched")}
+              state: touch
+            changed_when: true
+            notify: Run flaky installer
+        handlers:
+          - name: Run flaky installer
+            ansible.builtin.fail:
+              msg: boom
+            register: result
+            until:
+              - result is not failed
+            retries: 2
+            delay: 0
+      YAML
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, "--check", playbook], output: output, error: output)
+    text = output.to_s
+
+    # Real's handler attempt loop runs under --check too (issue #1175,
+    # live-verified vs 2.21.6): the same per-attempt RETRYING lines
+    # under the RUNNING HANDLER banner and a fatal carrying attempts -
+    # the pre-fix check-mode guard skipped the handler's retries as
+    # well as a regular task's.
+    text.must_include("FAILED - RETRYING: [localhost]: Run flaky installer (1 retries left).")
+    text.must_include("FAILED - RETRYING: [localhost]: Run flaky installer (0 retries left).")
+    text.must_include(%(fatal: [localhost]: FAILED! => {"attempts": 2, "changed": false, "msg": "boom"}))
+    status.exit_code.must_equal(2)
+  ensure
+    FileUtils.rm_rf(tempdir) if tempdir
+  end
 end

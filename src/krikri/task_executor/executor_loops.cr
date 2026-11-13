@@ -2047,7 +2047,12 @@ module Krikri
                          if label_error
                            next loop_label_failure_result(task, item, label_error)
                          end
-                         result = if (until_condition = task.until_condition) && !resolve_task_check_mode(task, vars_context)
+                         # No check-mode gate here: real's per-item attempt
+                         # loop runs under --check too (issue #1175,
+                         # live-verified vs 2.21.6: a looped yum task's items
+                         # each print their FAILED - RETRYING lines and carry
+                         # the attempts key in check mode).
+                         result = if until_condition = task.until_condition
                                     # Ansible retries each loop item
                                     # independently under until:/retries: - the
                                     # loop_items branch used to return before the
@@ -3058,6 +3063,25 @@ module Krikri
           return retry_keyword_failure_result(task, host, vars_context, ex)
         end
       end
+      # A check-mode ACTION-level skip is Ansible's AnsibleActionSkip
+      # (ActionBase#run's _supports_check_mode=False gate raises it
+      # before the action body - uri under --check), and the raise
+      # leaves the whole for-attempt loop before it can retry: one run,
+      # no FAILED - RETRYING lines and no attempts key, whatever the
+      # until: says (live-verified vs 2.21.6: uri + `until: 1 == 2` +
+      # retries: 2 under --check just prints "skipping:" once). A
+      # module's own returned skipped: result (command's check-mode
+      # "would have run" skip, wait_for_connection's action-body skip)
+      # is NOT this class - real retries and stamps that one like any
+      # other result.
+      if resolve_task_check_mode(task, vars_context) && ACTION_SKIPS_CHECK_MODE_MODULES.includes?(task.module_name)
+        result = attempt_body ? attempt_body.call : execute_task_once(task, host, vars_context, item_label: item_label, exec_host: exec_host, defer_loop_stats: defer_loop_stats)
+        if result && register_name && !register_name.empty?
+          register_result(host, register_name, result)
+          vars_context[register_name] = @registered_vars[host.name][register_name]
+        end
+        return result
+      end
       total_runs = 1 + (retries_value < 0 ? 0 : retries_value)
       # Real clamps a negative delay to 1.
       delay = delay_value < 0 ? 1 : delay_value
@@ -3326,6 +3350,22 @@ module Krikri
       result = run_until_retries(task, host, vars_context, until_condition, exec_host)
 
       return unless result
+
+      # A skipped result whose until: passed (a check-mode module skip,
+      # an action-level check-mode skip) shows as Ansible's bare
+      # "skipping:" line and books the skipped counter - the same branch
+      # finish_single_task takes for one (live-verified vs 2.21.6:
+      # `command:` under --check with a passing until: prints
+      # "skipping: [localhost]" and recap skipped=1, its attempts key
+      # living on the registered result only). A skipped result whose
+      # until: EXHAUSTED is failed by the retry core and falls through
+      # to the fatal display below, exactly like real.
+      if result["skipped"]?.try(&.as_bool) == true && !Krikri.result_failed_flag(result)
+        ResultDisplay.flush_task_deprecation_capture_for_display
+        puts Krikri::Oneline.skip_line(host.name, Krikri::ResultDisplay.skip_result_suffix(result)).colorize(:cyan)
+        @results[host.name]["skipped"] += 1
+        return
+      end
 
       changed = result["changed"]?.try(&.as_bool) || false
       failed = Krikri.result_failed_flag(result)
