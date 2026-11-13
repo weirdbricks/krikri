@@ -1200,7 +1200,7 @@ describe "pip plugin" do
     end
   end
 
-  it "runs forcereinstall as 'install --upgrade --force-reinstall' like Ansible's state_map" do
+  it "runs forcereinstall as 'install -U --force-reinstall' like Ansible's state_map" do
     # JonasPammer.pip's cold run (issue #380): state: forcereinstall fell
     # through to a bare `pip install pip>=22`, which - the constraint
     # already satisfied - printed "Requirement already satisfied" and
@@ -1237,7 +1237,7 @@ describe "pip plugin" do
       })
 
       result["failed"]?.try(&.as_bool).wont_equal(true)
-      File.read(marker).must_include("--upgrade --force-reinstall pip>=22")
+      File.read(marker).must_include("-U --force-reinstall pip>=22")
       result["changed"].as_bool.must_equal(true)
     ensure
       FileUtils.rm_rf(shim_dir)

@@ -70,7 +70,7 @@ module Krikri
   # pre-check short-circuits it, matching Ansible's freeze-comparison
   # changed detection, which likewise reports ok whenever a rerun
   # converges to what is already installed. `latest` always
-  # invokes `pip install --upgrade` and inspects its own output for
+  # invokes `pip install -U` and inspects its own output for
   # "Requirement already up-to-date" vs. an actual install/upgrade,
   # matching Ansible's own PipModule. `forcereinstall` likewise mirrors
   # Ansible's state_map entry ['install', '-U', '--force-reinstall']: it
@@ -625,20 +625,26 @@ module Krikri
           return executable
         end
 
-        unless remote_exec("sh -c #{Shell.single_quote("command -v #{executable}")}")[:exit_code] == 0
+        found = remote_exec("sh -c #{Shell.single_quote("command -v #{executable}")}")
+        unless found[:exit_code] == 0
           return PluginResult.new(changed: false, failed: true, msg: "Unable to find any of #{executable} to use.  pip needs to be installed.")
         end
-        return executable
+        # get_bin_path returns the PATH-resolved absolute path and that
+        # resolved path is what Ansible publishes in the `cmd` of a
+        # failing install - reporting the bare name krikri diverged on
+        # (agarthetiger.ansible_mini_pitft, issue #1215).
+        return found[:stdout].strip
       end
 
       if interpreter = discover_pip_module_interpreter
         return "#{interpreter} -m pip"
       end
 
-      unless remote_exec("sh -c 'command -v pip3'")[:exit_code] == 0
+      found = remote_exec("sh -c 'command -v pip3'")
+      unless found[:exit_code] == 0
         return PluginResult.new(changed: false, failed: true, msg: "Unable to find any of pip3 to use.  pip needs to be installed.")
       end
-      "pip3"
+      found[:stdout].strip
     end
 
     # One shell loop over the `-m pip` candidate interpreters (a single
@@ -1095,12 +1101,12 @@ module Krikri
       # both makes a genuine multi-package `name:` list actually work
       # (was previously passed as one bogus comma-glued "package") and
       # makes each element shell-safe again. `-r <file>` and a bare
-      # `--upgrade`/`extra_args` are never comma-joined so they pass
+      # `-U`/`extra_args` are never comma-joined so they pass
       # through the `elsif spec` branch above and are handled directly
       # below, one per name.
       quoted_target = quoted_install_target(target, requirements, editable)
       argv = install_argv(pip_bin, upgrade, force_reinstall, extra, requirements, target, editable)
-      cmd = with_umask(with_chdir("#{break_system_packages_env}#{quoted_command(pip_bin)} install #{upgrade ? "--upgrade " : ""}#{force_reinstall ? "--force-reinstall " : ""}#{extra_tokens(extra)} #{quoted_target}".strip))
+      cmd = with_umask(with_chdir("#{break_system_packages_env}#{quoted_command(pip_bin)} install #{upgrade ? "-U " : ""}#{force_reinstall ? "--force-reinstall " : ""}#{extra_tokens(extra)} #{quoted_target}".strip))
       result = remote_exec(cmd)
 
       unless result[:exit_code] == 0
@@ -1139,7 +1145,7 @@ module Krikri
     private def install_argv(pip_bin : String, upgrade : Bool, force_reinstall : Bool, extra : String, requirements : String?, target : String, editable : Bool = false) : Array(String)
       argv_target = requirements ? target.split(' ').reject(&.empty?) : split_requirements(target)
       argv_target = argv_target.flat_map { |tval| editable ? ["-e", tval] : [tval] } if editable && requirements.nil?
-      pip_bin.split(' ').reject(&.empty?) + ["install"] + (upgrade ? ["--upgrade"] : [] of String) + (force_reinstall ? ["--force-reinstall"] : [] of String) + extra.split(' ').reject(&.empty?) + argv_target
+      pip_bin.split(' ').reject(&.empty?) + ["install"] + (upgrade ? ["-U"] : [] of String) + (force_reinstall ? ["--force-reinstall"] : [] of String) + extra.split(' ').reject(&.empty?) + argv_target
     end
 
     # ansible's _fail reports only cmd (the argv it ran) and msg, and
