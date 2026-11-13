@@ -190,6 +190,24 @@ describe "cron plugin" do
     File.exists?(tmp_path("cron-no-crontab.txt")).must_equal(false)
   end
 
+  it "reports a missing crontab binary before a missing job" do
+    # cron.py main() constructs CronTab (whose __init__ resolves crontab
+    # with get_bin_path(required=True)) before running its own "You must
+    # specify 'job'" check, so a task with neither a job nor a crontab
+    # binary must report the binary failure (round 1794605461, dnf chaos).
+    empty_dir = tmp_path("cron-empty-path-dir-order")
+    Dir.mkdir_p(empty_dir)
+
+    result = PluginSpecHelper.run("cron", {
+      "name" => "no job",
+      "cron_file" => tmp_path("cron-no-binary-no-job.txt"), "user" => "root",
+    }, env: {"PATH" => empty_dir})
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_include(%(Failed to find required executable "crontab"))
+    result["msg"].as_s.wont_include("You must specify 'job'")
+  end
+
   describe "env: yes" do
     it "writes a NAME=\"value\" line at the top of the file" do
       path = tmp_path("cron-env-create.txt")
