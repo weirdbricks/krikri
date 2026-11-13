@@ -227,8 +227,13 @@ module Krikri
     # with "Error rendering expression: '>=' not supported between
     # instances of '_AnsibleTaggedStr' and 'int'" (issue #219: a role
     # default `'10'` asserted `| default(0) >= 1`). assert: and when:
-    # each rescue it and frame it as an expression render error.
+    # each rescue it and frame it as an expression render error; a module
+    # ARGUMENT that hits it is framed as ansible's "Error rendering
+    # template: <msg>" finalization failure instead. Like every other
+    # template-origin failure it carries the failing `{{ }}` span
+    # (TemplatedOriginSpan) for that chain's innermost Origin.
     class OrderingTypeError < Exception
+      include TemplatedOriginSpan
     end
 
     # Raised (before any substitution) when a conditional expression
