@@ -3372,7 +3372,7 @@ module Krikri
         play.become_flags = saved_become_flags
       end
 
-      import_when = hash["when"]?.try { |v| condition_to_string(v) }
+      import_when = hash["when"]?.try { |v| optional_condition_to_string(v) }
       import_when_list = hash["when"]?.try { |v| condition_to_list(v) }
       # Per-clause import when: positions (issue #328): real evaluates the
       # import's clauses FIRST against each inlined task, so its
@@ -4960,7 +4960,7 @@ module Krikri
       # attempt, and the final (now-idempotent, changed: false) attempt's
       # result silently replaced attempt 1's real changed: true (round
       # 979035, buluma.moodle).
-      task.until_condition = task_hash["until"]?.try { |v| condition_to_string(v) }
+      task.until_condition = task_hash["until"]?.try { |v| optional_condition_to_string(v) }
       # retries:/delay: as Jinja templates (collivier.xtesting's
       # jenkins-wait wrapper does retries: "{{ ((jenkins_wait | int) / 5)
       # | int }}") are stored raw for the executor to render: turning the
@@ -4974,8 +4974,8 @@ module Krikri
       task.delay_template = delay_raw unless delay_raw.nil? || delay_raw.to_i?
 
       # Parse changed_when / failed_when
-      task.changed_when = task_hash["changed_when"]?.try { |v| condition_to_string(v) }
-      task.failed_when = task_hash["failed_when"]?.try { |v| condition_to_string(v) }
+      task.changed_when = task_hash["changed_when"]?.try { |v| optional_condition_to_string(v) }
+      task.failed_when = task_hash["failed_when"]?.try { |v| optional_condition_to_string(v) }
 
       # Parse delegate_to / run_once
       task.delegate_to = task_hash["delegate_to"]?.try { |v| safe_yaml_to_string(v) }
@@ -5594,7 +5594,7 @@ module Krikri
     end
 
     private def self.parse_common_task_attributes(task : Task, task_hash : Hash(YAML::Any, YAML::Any), play : Play? = nil, vars_kind : String = "Task", source_file : String? = nil, source_map : YamlSourceMap? = nil, source_prefix : String = "", source_index : Int32 = 0) : Nil
-      task.when_condition = task_hash["when"]?.try { |v| condition_to_string(v) }
+      task.when_condition = task_hash["when"]?.try { |v| optional_condition_to_string(v) }
       task.when_condition_list = task_hash["when"]?.try { |v| condition_to_list(v) }
       # A templated ignore_errors: keeps its parse-time guess in
       # task.ignore_errors (see parse_ignore_errors below) AND its raw
@@ -5872,8 +5872,8 @@ module Krikri
       # role) kept halting the play where ansible-playbook's own
       # failed_when: override applies to include_vars:'s own
       # file-not-found failure like any other task result.
-      task.changed_when = task_hash["changed_when"]?.try { |v| condition_to_string(v) }
-      task.failed_when = task_hash["failed_when"]?.try { |v| condition_to_string(v) }
+      task.changed_when = task_hash["changed_when"]?.try { |v| optional_condition_to_string(v) }
+      task.failed_when = task_hash["failed_when"]?.try { |v| optional_condition_to_string(v) }
 
       # delegate_to: never reached this dedicated parser either - the
       # generic #parse_task path parses it, but include_vars: tasks were
@@ -6068,7 +6068,7 @@ module Krikri
       # conditional per host) surfaced it: a when:-gated `meta: end_host`
       # silently ran for EVERY host regardless of the condition. Verified
       # against ansible-playbook, which does honor when: here.
-      task.when_condition = task_hash["when"]?.try { |v| condition_to_string(v) }
+      task.when_condition = task_hash["when"]?.try { |v| optional_condition_to_string(v) }
       task.when_condition_list = task_hash["when"]?.try { |v| condition_to_list(v) }
 
       # Task-level `vars:` on a meta: task - the same block the ordinary
@@ -7186,7 +7186,7 @@ module Krikri
         vars_yaml.each { |key, value| vars[key.to_s] = Vault.maybe_decrypt_json(Vault.yaml_value_to_json(value)) }
         task.include_apply_vars = vars
       end
-      task.include_apply_when = args["when"]?.try { |v| condition_to_string(v) }
+      task.include_apply_when = args["when"]?.try { |v| optional_condition_to_string(v) }
       task.include_apply_when_list = args["when"]?.try { |v| condition_to_list(v) }
       if tags_yaml = args["tags"]?
         task.include_apply_tags = flatten_tag_list(tags_yaml)
@@ -8886,6 +8886,23 @@ module Krikri
       end
 
       safe_yaml_to_string(yaml)
+    end
+
+    # Ansible's conditional keywords (`when:`/`until:`/`changed_when:`/
+    # `failed_when:`) treat an explicit YAML null - or a list holding no
+    # clause at all - as "keyword not given" and keep the field's default,
+    # while an empty STRING is a broken expression they refuse ("Empty
+    # conditional expressions are not allowed"). krikri routed the null
+    # through condition_to_string, whose empty result ConditionalEvaluator
+    # then failed on with "'' is undefined": devops_cmp.ansible_nodejs
+    # writes a bare `when:` (an editing leftover) on its "Download
+    # Node.js" task, which ansible runs and krikri died on in check mode
+    # (issue #1204).
+    def self.optional_condition_to_string(yaml : YAML::Any) : String?
+      return nil if yaml.raw.nil?
+      return nil if (list = yaml.as_a?) && list.all? { |item| item.raw.nil? }
+
+      condition_to_string(yaml)
     end
 
     # The same when:-list, kept as its own per-item condition strings for

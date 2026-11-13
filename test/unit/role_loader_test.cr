@@ -338,6 +338,25 @@ describe Krikri::RoleLoader do
     kept.map(&.name).must_equal(["tagged role task"])
   end
 
+  # A bare `when:` on a roles: entry is YAML null, which ansible treats as
+  # the keyword being absent (verified against ansible-playbook 2.19) -
+  # the role's tasks must stay ungated rather than inherit an empty
+  # condition the evaluator fails on (issue #1204).
+  it "leaves a role's tasks ungated when the roles: entry has a bare when:" do
+    build_role("null_gated") do |role|
+      role.tasks(<<-YAML)
+        - name: ungated task
+          ansible.builtin.debug:
+            msg: hi
+        YAML
+    end
+
+    tasks, _ = Krikri::RoleLoader.load_roles(roles_yaml("- role: null_gated\n  when:\n"), fresh_play, roles_root)
+
+    tasks.first.when_condition.must_be_nil
+    tasks.first.when_condition_list.must_be_nil
+  end
+
   it "puts a dependency's when: ahead of a dependency task's own multi-item when: list" do
     build_role("guarded_dep") { |role| role.tasks(<<-YAML) }
       - name: probe
