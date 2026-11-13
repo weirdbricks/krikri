@@ -3900,7 +3900,13 @@ module Krikri
       end
     end
 
-    private def scan_block_tag_refs(cond_no_strings : String, loop_var : String?, active_guarantee : Set(String) = Set(String).new, active_loop_vars : Set(String) = Set(String).new) : Nil
+    private def scan_block_tag_refs(cond_no_strings : String, loop_var : String?, active_guarantee : Set(String) = Set(String).new, active_loop_vars : Set(String) = Set(String).new, branch_skipped : Bool = false) : Nil
+      # Jinja never renders a branch an enclosing loop's statically decided
+      # iterable rules out (an empty iterable's body, or a non-empty one's
+      # `{% else %}`), so a reference that only that branch would evaluate
+      # is never undefined in real ansible-playbook - do not raise for it
+      # (issue #1205).
+      return if branch_skipped
       cond_no_strings.scan(SCAN_STRICT_BLOCK_TAG_REF) do |mat|
         ident = mat[0]
         root = block_tag_ref_root(ident)
@@ -4313,8 +4319,45 @@ module Krikri
       # Ansible/Jinja2 renders it fine (round 813222,
       # pluggero.burpsuite).
       property loop_vars : Set(String)
+      # Whether this frame's CURRENT branch is one Jinja can never render: a
+      # `{% for %}` over a statically empty iterable has no body to run, and
+      # one over a statically non-empty iterable has no `{% else %}` to run.
+      # A skipped branch is never evaluated, so this scan must not raise for
+      # an undefined reference that only lives there (issue #1205:
+      # dtoch56.test's `{% for flag in cpu_flags_to_check %}` over the role's
+      # own empty default, whose body reads the never-registered
+      # `cpu_flags`; ansible-playbook rendered that msg element as null).
+      property? branch_skipped : Bool
+      # :empty / :nonempty / :unknown - static_iterable_state's answer for
+      # this `:for` frame's iterable (only meaningful on a `:for` frame).
+      property iterable_state : Symbol
 
-      def initialize(@kind : Symbol, @guaranteed_defined : Set(String) = Set(String).new, @loop_vars : Set(String) = Set(String).new)
+      def initialize(@kind : Symbol, @guaranteed_defined : Set(String) = Set(String).new,
+                     @loop_vars : Set(String) = Set(String).new,
+                     @iterable_state : Symbol = :unknown, @branch_skipped : Bool = false)
+      end
+    end
+
+    # :empty when *expr* is statically an iterable that yields nothing,
+    # :nonempty when it statically yields at least one item, :unknown
+    # otherwise. Only decidable shapes are answered - an empty literal, or a
+    # bare variable whose current value is an empty container or empty
+    # string - so the loop-body scan is skipped only where Jinja itself
+    # would never render that body. A non-empty string stays :unknown: it
+    # may be an unrendered template whose own render decides the real body.
+    private def static_iterable_state(expr : String) : Symbol
+      text = expr.strip
+      return :empty if text == "[]" || text == "{}" || text == "\"\"" || text == "''"
+      return :unknown unless text.matches?(/\A[A-Za-z_][A-Za-z0-9_]*\z/)
+      value = @vars[text]?
+      return :unknown unless value
+      case raw = value.raw
+      when Array, Hash
+        raw.empty? ? :empty : :nonempty
+      when String
+        raw.empty? ? :empty : :unknown
+      else
+        :unknown
       end
     end
 
@@ -4348,8 +4391,14 @@ module Krikri
           # is-defined guarantees carry over into this branch. An
           # outer frame's guarantee (already a separate stack entry)
           # is untouched.
-          if (top = stack.last?) && top.kind == :if
-            top.guaranteed_defined = Set(String).new
+          if (top = stack.last?)
+            if top.kind == :if
+              top.guaranteed_defined = Set(String).new
+            elsif top.kind == :for
+              # A for-loop's `{% else %}` is the exact mirror of its body:
+              # it renders only when the iterable yielded nothing.
+              top.branch_skipped = top.iterable_state == :nonempty
+            end
           end
           i = close + 2
           next
@@ -4396,7 +4445,8 @@ module Krikri
         # only this pre-scan's inherited-from-outer-frames-only guarantee
         # was missing the same-clause case.
         own_guards = block_tag_defined_guards(cond_no_strings)
-        scan_block_tag_refs(cond_no_strings, loop_var, active_guarantee | own_guards, active_loop_vars)
+        scan_block_tag_refs(cond_no_strings, loop_var, active_guarantee | own_guards, active_loop_vars,
+          stack.any?(&.branch_skipped?))
 
         if stripped.starts_with?("if ")
           stack.push(BlockTagFrame.new(:if, own_guards))
@@ -4410,7 +4460,9 @@ module Krikri
           # passed to scan_block_tag_refs only covers the for tag's OWN
           # condition (`for ext in unsorted` itself), not the body.
           frame_loop_vars = loop_var ? Set(String).new(loop_var.split(',').map(&.strip)) : Set(String).new
-          stack.push(BlockTagFrame.new(:for, loop_vars: frame_loop_vars))
+          iterable_state = static_iterable_state(cond)
+          stack.push(BlockTagFrame.new(:for, loop_vars: frame_loop_vars, iterable_state: iterable_state,
+            branch_skipped: iterable_state == :empty))
         end
         i = close + 2
       end
