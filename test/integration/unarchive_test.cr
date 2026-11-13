@@ -27,6 +27,13 @@ private TMP_DIR = begin
   File.symlink("real.txt", File.join(dir, "symlink_src", "link.txt"))
   `cd #{File.join(dir, "symlink_src")} && zip -qy #{File.join(dir, "symlink.zip")} real.txt link.txt`
 
+  # A zip whose members sit under a directory - mullholland.rclone's own
+  # rclone-<version>-linux-amd64/rclone shape (issue #1200), the fixture
+  # extra_opts: ['-j', '-o'] exists to junk down to basenames.
+  Dir.mkdir_p(File.join(dir, "nested_zip_src", "rclone-v1.76.0-linux-amd64"))
+  File.write(File.join(dir, "nested_zip_src", "rclone-v1.76.0-linux-amd64", "rclone"), "binary")
+  `cd #{File.join(dir, "nested_zip_src")} && zip -qr #{File.join(dir, "nested.zip")} rclone-v1.76.0-linux-amd64`
+
   # A GitHub-release-shaped archive: everything nested one level down
   # inside a single top-level directory (`myproject-1.0/...`), the shape
   # extra_opts: ['--strip-components=1'] exists to flatten.
@@ -797,6 +804,27 @@ describe "unarchive plugin" do
     result = PluginSpecHelper.run("unarchive", {"src" => File.join(TMP_DIR, "symlink.zip"), "dest" => dest})
 
     result["changed"].as_bool.must_equal(false)
+  end
+
+  it "forwards extra_opts to unzip, so -j junks member paths down to basenames" do
+    # Regression (issue #1200): extra_opts was documented as tar-only and
+    # never reached unzip, so mullholland.rclone's own
+    # `extra_opts: [-j, -o]` unpacked the release zip into
+    # /tmp/rclone-v<version>-linux-amd64/rclone instead of the /tmp/rclone
+    # the role's next `copy: src=/tmp/rclone` task needed - krikri failed
+    # that task with "Source /tmp/rclone not found" where ansible-playbook
+    # succeeded. Ansible's ZipArchive#unarchive extends `[unzip, '-o']` with
+    # extra_opts, so they apply to the extraction itself.
+    dest = fresh_dest("zip-extra-opts-junk-paths")
+    result = PluginSpecHelper.run("unarchive", {
+      "src"        => File.join(TMP_DIR, "nested.zip"),
+      "dest"       => dest,
+      "extra_opts" => "-j,-o",
+    })
+
+    result["changed"].as_bool.must_equal(true)
+    File.read(File.join(dest, "rclone")).must_equal("binary")
+    File.exists?(File.join(dest, "rclone-v1.76.0-linux-amd64")).must_equal(false)
   end
 
   it "reports changed on a zip rerun whose member mtime diverges from the zip timestamp" do

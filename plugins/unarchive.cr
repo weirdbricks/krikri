@@ -86,10 +86,13 @@ module Krikri
   # check - an approximation, documented as such.
   #
   # - extra_opts: raw flags passed straight through to `tar` (e.g.
-  #   `--strip-components=1`) - NOT forwarded to `unzip` for zip archives
-  #   (Ansible's own extra_opts only ever documents tar-oriented
-  #   flags in practice; zip's own flag syntax is different enough that
-  #   passing the same list through would usually just error).
+  #   `--strip-components=1`) AND to `unzip` for zip archives, exactly as
+  #   Ansible does (unarchive.py's ZipArchive#unarchive extends
+  #   `[unzip, '-o']` with extra_opts). Not forwarding them to unzip left
+  #   mullholland.rclone's `extra_opts: [-j, -o]` extraction nested under
+  #   the archive's own top-level directory instead of junked to basenames
+  #   (issue #1200): the role's later `copy: src=/tmp/rclone` then failed
+  #   with "Source /tmp/rclone not found" where Ansible succeeded.
   #
   # remote_src (default false, Ansible's own default too) - a
   # controller-side src: path is transparently SCP'd to a remote scratch
@@ -703,7 +706,7 @@ module Krikri
       # non-check changed path adds them).
       return {changed: changed, extract_results: nil, failure: nil} if check_mode?
 
-      extraction = handler == :tar ? extract_tar(src, dest, exclude, include_files, keep_newer, extra_opts) : extract_zip(src, dest, exclude, include_files, keep_newer)
+      extraction = handler == :tar ? extract_tar(src, dest, exclude, include_files, keep_newer, extra_opts) : extract_zip(src, dest, exclude, include_files, keep_newer, extra_opts)
       # Real unarchive.py collects the handler's {cmd, rc, out, err}
       # return into res_args BEFORE deciding how to report it, so the
       # same dict rides both the success result and the failure
@@ -1119,7 +1122,7 @@ module Krikri
       LibC.mktime(pointerof(tm))
     end
 
-    private def extract_zip(src : String, dest : String, exclude : Array(String), include_files : Array(String), keep_newer : Bool) : NamedTuple(cmd: String, exit_code: Int32, stdout: String, stderr: String)
+    private def extract_zip(src : String, dest : String, exclude : Array(String), include_files : Array(String), keep_newer : Bool, extra_opts : Array(String) = [] of String) : NamedTuple(cmd: String, exit_code: Int32, stdout: String, stderr: String)
       overwrite_flag = keep_newer ? "-n" : "-o"
       # No -q: Ansible invokes plain `unzip -o src -d dest`, and
       # Info-ZIP unzip exits 1 (warning) when it has to sanitize a
@@ -1129,7 +1132,13 @@ module Krikri
       # outright - and krikri's post-extraction attribute pass then ran
       # over the raw (unsanitized) member names. Matching Ansible's
       # exact invocation means matching its exact failure.
-      cmd = "unzip #{overwrite_flag} -d #{shell_single_quote(command_dest(dest))} #{shell_single_quote(src)}#{zip_flags(exclude, include_files)}"
+      #
+      # extra_opts sit right after the overwrite flag, the same slot
+      # real's ZipArchive#unarchive gives them (`unzip -o <extra_opts>
+      # <src> ...`). unzip applies these to its own extraction, so `-j`
+      # really does junk member paths down to basenames here.
+      opts = extra_opts.map { |opt| " #{shell_single_quote(opt)}" }.join
+      cmd = "unzip #{overwrite_flag}#{opts} -d #{shell_single_quote(command_dest(dest))} #{shell_single_quote(src)}#{zip_flags(exclude, include_files)}"
       result = remote_exec(cmd)
       {cmd: cmd, exit_code: result[:exit_code], stdout: result[:stdout], stderr: result[:stderr]}
     end
