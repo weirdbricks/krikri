@@ -1513,7 +1513,7 @@ module Krikri
         notify_handlers(task, host, notify_list)
       end
 
-      ignore_errors = resolve_task_ignore_errors(task, vars_context)
+      ignore_errors = resolve_failure_ignore_errors(task, result, vars_context)
       no_log = resolve_task_no_log(task, vars_context)
       # A batch-prepared finalization failure carries its [ERROR] chain
       # block stashed on the result (see stash_finalization_error_block) -
@@ -1531,7 +1531,7 @@ module Krikri
       # here rather than leak it into a later task's display.
       ResultDisplay.flush_task_deprecation_capture_for_display
       ResultDisplay.update_stats(@results[host.name], result, ignore_errors)
-      halt_if_failed(task, host, failed, result)
+      halt_if_failed(task, host, failed, result, ignore_errors: ignore_errors)
     end
 
     # Marks `host` as halted (no further tasks in this play run for it)

@@ -339,7 +339,7 @@ module Krikri
       end
 
       result = if ex = when_error
-                 when_error_result(ex, handler, host)
+                 when_error_result(ex, handler, host, pre_keyword_failure: true)
                elsif items = loop_items
                  if handler.include_tasks?
                    execute_handler_include_loop(handler, host, vars_context, items)
@@ -413,7 +413,7 @@ module Krikri
       # `meta: flush_handlers` that triggered it, diverging from
       # Ansible's own recap (extra ok:/changed:/failed: entries for
       # tasks Ansible never even attempted).
-      halt_if_failed(handler, host, Krikri.result_failed_flag(result)) unless resolve_task_ignore_errors(handler, host: host)
+      halt_if_failed(handler, host, Krikri.result_failed_flag(result), ignore_errors: resolve_failure_ignore_errors(handler, result, host: host))
 
       result
     end
@@ -730,7 +730,10 @@ module Krikri
         # One aggregate failure for the whole looped include, not one per
         # raising item (same rule #execute_include_tasks' loop branch
         # applies; that path's comment carries the byte-verification).
-        if resolve_task_ignore_errors(handler)
+        # A raising when: predates keyword post-validation, so only a
+        # literal ignore_errors: applies (Task#ignore_errors_before_
+        # keyword_templating?).
+        if handler.ignore_errors_before_keyword_templating?
           @results[host.name]["ok"] += 1
           @results[host.name]["ignored"] += 1
         else
@@ -857,7 +860,7 @@ module Krikri
           begin
             reached = evaluate_when_items(handler, vars_context, host)
           rescue ex : WhenEvaluationError
-            return when_error_result(ex, handler, host)
+            return when_error_result(ex, handler, host, pre_keyword_failure: true)
           end
         end
         # A mapping-form `action:`/`local_action:` handler whose module
@@ -916,7 +919,7 @@ module Krikri
           # handler) exactly like the substitute_task_params rescue just
           # below - same shape when_error_result already builds for
           # execute_task_once.
-          return when_error_result(ex, handler, host)
+          return when_error_result(ex, handler, host, pre_keyword_failure: true)
         end
 
         unless when_result

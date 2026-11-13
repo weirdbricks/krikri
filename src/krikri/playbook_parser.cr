@@ -333,6 +333,23 @@ module Krikri
     # overrides the guess, the same deferred-evaluation shape
     # check_mode_expr/become_expr use).
     property ignore_errors_expr : String?
+
+    # `ignore_errors:` as ansible applies it to a failure raised BEFORE the
+    # task's keywords are post-validated - a `when:` or loop-source
+    # evaluation error. ansible's strategy copies the attribute onto a
+    # result only when it is already a real boolean (TaskContext.
+    # _record_result's `isinstance(..., bool)` guard, whose own comment
+    # calls out template failures), and a templated value only becomes one
+    # during that post-validation, which these failures never reach. So
+    # only a literal boolean counts here, never a re-rendered template:
+    # hwwilliams.epel's `ignore_errors: "{{ ansible_check_mode }}"` task
+    # raised in its `when:` under --check on both engines, but real
+    # recapped `failed=1 ignored=0` while krikri printed "...ignoring" and
+    # ran the next task (issue #1227).
+    def ignore_errors_before_keyword_templating? : Bool
+      ignore_errors_expr.nil? && ignore_errors?
+    end
+
     property? check_mode : Bool?
     # Raw `{{ ... }}` text when check_mode: is a templated expression
     # rather than a literal boolean - same deferred-evaluation shape
