@@ -2043,15 +2043,15 @@ module Krikri
     # Stores just the param's source position (not the Task object):
     # the plugin binaries compile this templating engine without the
     # playbook parser, so Task is not a type the whole program shares.
-    record TemplatedParamSite, source_file : String?, source_line : Int32, key : String, text : String? = nil, origin : String? = nil
+    record TemplatedParamSite, source_file : String?, source_line : Int32, key : String, text : String? = nil, origin : String? = nil, free_form : Bool = false
     @@templated_task_param = {} of Fiber => Array(TemplatedParamSite)
 
     # *origin* is the formatted Origin block when the caller already knows
     # the exact token the read belongs to (a task's templated action name,
     # whose directive can sit on the task's own `- action: ...` line, where
     # the key-based text scan below finds nothing) - it wins over the scan.
-    def self.set_current_task_param(source_file : String?, source_line : Int32, key : String, text : String? = nil, origin : String? = nil) : Nil
-      (@@templated_task_param[Fiber.current] ||= Array(TemplatedParamSite).new).push(TemplatedParamSite.new(source_file, source_line, key, text, origin))
+    def self.set_current_task_param(source_file : String?, source_line : Int32, key : String, text : String? = nil, origin : String? = nil, free_form : Bool = false) : Nil
+      (@@templated_task_param[Fiber.current] ||= Array(TemplatedParamSite).new).push(TemplatedParamSite.new(source_file, source_line, key, text, origin, free_form))
     end
 
     def self.pop_current_task_param : Nil
@@ -2561,6 +2561,12 @@ module Krikri
         return "loop:#{site.source_file}:#{site.source_line}:#{site.key}"
       end
       if site = current_task_param
+        # A free-form `k=v k2=v2` directive is ONE templating operation in
+        # ansible: the whole args scalar renders as a single template, so
+        # only the FIRST param's fact read gets the block (live-verified
+        # against 2.21.6: one line naming two different facts in two k=v
+        # params prints one block, at the first param's token, issue #1223).
+        return "param:freeform:#{site.source_file}:#{site.source_line}" if site.free_form
         # The rendered TEXT is part of the identity the same way the when:
         # clause's is: a task's own name: template and a module's own
         # `name:` param are two separate operations in ansible-core -
@@ -3007,6 +3013,35 @@ module Krikri
         yield
       ensure
         pop_preparing_var
+      end
+    end
+
+    # The same registration for the INDEPENDENT sources of a
+    # with_nested:/with_together: task: each one is its own templated term
+    # list, and a term that is exactly one bare `{{ name }}` reference
+    # hands its container's leaves to the cartesian product/zip still
+    # tagged, exactly like the single loop_template above. Real then
+    # reports the read at the leaf's declaration where the loop source
+    # does not name the fact itself (issue #1223's with_nested over a
+    # role default holding `- "{{ ansible_user_id }}"`, live-verified
+    # against 2.21.6).
+    def self.with_preparing_loop_source_containers(
+      templates : Array(String), vars : Hash(String, JSON::Any), host_name : String?, & : -> T
+    ) : T forall T
+      pushed = 0
+      templates.each do |template|
+        name = loop_source_container_var(template, vars, host_name)
+        next unless name
+        (@@preparing_vars[Fiber.current] ||= Array(PreparingVar).new).push(
+          PreparingVar.new(host_name, name, nil, vars[name], false, true)
+        )
+        pushed += 1
+      end
+      return yield if pushed == 0
+      begin
+        yield
+      ensure
+        pushed.times { pop_preparing_var }
       end
     end
 

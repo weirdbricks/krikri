@@ -3104,7 +3104,7 @@ module Krikri
         # lookup-arg constants, and the evaluator has no task context of
         # its own. Popping in the begin's ensure keeps the stack
         # consistent through the strict-undefined rescues too.
-        VarSubstitutor.set_current_task_param(task.source_file, task.source_line, key, value) if task
+        VarSubstitutor.set_current_task_param(task.source_file, task.source_line, key, value, free_form: task.module_args_string_form?) if task
         # debug's msg and assert's fail_msg/msg/success_msg ride Ansible's
         # action into result['msg'] VERBATIM, so their container/native
         # values must keep their type across this strings-only wire - the
