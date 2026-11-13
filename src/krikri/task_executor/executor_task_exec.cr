@@ -2089,53 +2089,31 @@ module Krikri
           # would hand back the literal, unparsed "{{ ... }}" text as
           # the loop item's "native" value.
           if native
-            if (raw2 = native.raw).is_a?(String) && raw2.includes?("{{")
-              # RECURSE (round165: buluma.confluence) rather than
-              # falling through to the generic #substitute path below,
-              # which always stringifies - correct for exactly ONE
-              # level of indirection (`role_var: "{{ inner_var }}"`,
-              # the common case), but a SECOND level (`role_var: "{{
-              # _lookup[some_key] }}"`, itself resolving to another
-              # unrendered "{{ }}" string, geerlingguy/buluma's own
-              # release -> version -> download-dict indirection chain)
-              # needs another #deep_render_item pass to preserve the
-              # final dict's native Hash type instead of collapsing it
-              # to a JSON-text STRING. Found live benchmarking buluma.
-              # confluence: `loop: ["{{ confluence_download }}", "{{
-              # postgresql_jdbc_download }}"]` (a real 2+-element loop -
-              # a SINGLE-element array of one bare `{{ }}` expression
-              # takes an entirely different, already-correct path via
-              # #find_loop_template's own single-element special case,
-              # which is why this only ever surfaced with 2+ items) -
-              # `item` ended up bound to the STRINGIFIED dict text
-              # instead of a real Hash, so `item.checksum` (a genuine
-              # nested-hash dotted lookup) correctly reported
-              # "undefined" against a value that was never actually a
-              # Hash to begin with.
-              return deep_render_item(JSON::Any.new(raw2), vars_context, host_name, depth + 1, strict: strict)
+            # A loop item that is exactly one bare `{{ name }}` reference
+            # hands back *name*'s own stored value, and the render here is
+            # the lazy one ansible-core performs at that moment - so a
+            # top-level fact read inside it deprecates at that value's own
+            # declaration, not at the loop keyword's line. This pathway
+            # resolves the name directly (VariableLookup, no engine-side
+            # variable preparation), so the value has to be registered here
+            # or the read is attributed to an enclosing loop-source
+            # container whose leaves cannot place it (jgeusebroek.mariadb's
+            # `mariadb_python_client: "{% if ansible_distribution_major_version
+            # ... %}"`, issue #1219). Only a plain name is registered: a
+            # dotted/indexed reference renders a nested LEAF, whose own
+            # declaration this record cannot name.
+            ref = stripped[2..-3].strip
+            if ref.matches?(/\A[A-Za-z_][A-Za-z0-9_]*\z/) &&
+               (native_text = native.raw.as?(String)) &&
+               (native_text.includes?("{{") || native_text.includes?("{%") || native_text.includes?("{#"))
+              VarSubstitutor.push_preparing_var(host_name, ref, native_text, native)
+              begin
+                return render_resolved_loop_item(native, vars_context, host_name, depth, strict)
+              ensure
+                VarSubstitutor.pop_preparing_var
+              end
             end
-            # A plain VARIABLE reference resolving to a container whose
-            # string leaves are still unrendered templates (the real
-            # shape behind issue 245: `envfiles_list: ["{{ _
-            # envfile_default }}"]`, _envfile_default in vars/main.yml
-            # holding `path: "{{ envfile_path_default }}"`) handed the
-            # stored value back EXACTLY as written - the loop item was
-            # bound with literal `{{ x }}` text where ansible-core's own
-            # loop-source templating has every nested leaf RENDERED
-            # before iteration (real's item header prints
-            # item={'path': '/etc/environment', ...}). Rerendering those
-            # leaves with the same engine-side recursive pass variable
-            # preparation uses keeps the resolved container's native
-            # type; a side-effecting leaf still runs exactly once (the
-            # pass evaluates each leaf itself, never via substitute's
-            # re-render probe twice). With strict: false such a leaf
-            # keeps its raw form instead of failing, matching this
-            # method's pre-existing leniency for mixed-text leaves.
-            return VariableSubstitutor::JinjaRenderer.rerender_nested_templates(
-              native,
-              VarSubstitutor.new(vars: vars_context, host_name: host_name),
-              defer_unresolved: !strict,
-            )
+            return render_resolved_loop_item(native, vars_context, host_name, depth, strict)
           end
 
           # `native` is nil here for anything past a bare/dotted
@@ -2205,6 +2183,58 @@ module Krikri
       else
         item
       end
+    end
+
+    # Renders the value a loop item's bare `{{ name }}` reference resolved
+    # to (see #deep_render_item), keeping its native type.
+    private def render_resolved_loop_item(native : JSON::Any, vars_context : Hash(String, JSON::Any), host_name : String, depth : Int32, strict : Bool) : JSON::Any
+      if (raw2 = native.raw).is_a?(String) && raw2.includes?("{{")
+        # RECURSE (round165: buluma.confluence) rather than
+        # falling through to the generic #substitute path below,
+        # which always stringifies - correct for exactly ONE
+        # level of indirection (`role_var: "{{ inner_var }}"`,
+        # the common case), but a SECOND level (`role_var: "{{
+        # _lookup[some_key] }}"`, itself resolving to another
+        # unrendered "{{ }}" string, geerlingguy/buluma's own
+        # release -> version -> download-dict indirection chain)
+        # needs another #deep_render_item pass to preserve the
+        # final dict's native Hash type instead of collapsing it
+        # to a JSON-text STRING. Found live benchmarking buluma.
+        # confluence: `loop: ["{{ confluence_download }}", "{{
+        # postgresql_jdbc_download }}"]` (a real 2+-element loop -
+        # a SINGLE-element array of one bare `{{ }}` expression
+        # takes an entirely different, already-correct path via
+        # #find_loop_template's own single-element special case,
+        # which is why this only ever surfaced with 2+ items) -
+        # `item` ended up bound to the STRINGIFIED dict text
+        # instead of a real Hash, so `item.checksum` (a genuine
+        # nested-hash dotted lookup) correctly reported
+        # "undefined" against a value that was never actually a
+        # Hash to begin with.
+        return deep_render_item(JSON::Any.new(raw2), vars_context, host_name, depth + 1, strict: strict)
+      end
+      # A plain VARIABLE reference resolving to a container whose
+      # string leaves are still unrendered templates (the real
+      # shape behind issue 245: `envfiles_list: ["{{ _
+      # envfile_default }}"]`, _envfile_default in vars/main.yml
+      # holding `path: "{{ envfile_path_default }}"`) handed the
+      # stored value back EXACTLY as written - the loop item was
+      # bound with literal `{{ x }}` text where ansible-core's own
+      # loop-source templating has every nested leaf RENDERED
+      # before iteration (real's item header prints
+      # item={'path': '/etc/environment', ...}). Rerendering those
+      # leaves with the same engine-side recursive pass variable
+      # preparation uses keeps the resolved container's native
+      # type; a side-effecting leaf still runs exactly once (the
+      # pass evaluates each leaf itself, never via substitute's
+      # re-render probe twice). With strict: false such a leaf
+      # keeps its raw form instead of failing, matching this
+      # method's pre-existing leniency for mixed-text leaves.
+      VariableSubstitutor::JinjaRenderer.rerender_nested_templates(
+        native,
+        VarSubstitutor.new(vars: vars_context, host_name: host_name),
+        defer_unresolved: !strict,
+      )
     end
 
     # Substitute variables in task parameters
