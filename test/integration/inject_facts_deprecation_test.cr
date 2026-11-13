@@ -240,6 +240,54 @@ describe "INJECT_FACTS_AS_VARS deprecation from a when: clause" do
     stderr.scan(/DEPRECATION WARNING\]: INJECT_FACTS_AS_VARS/).size.must_equal(1)
   end
 
+  # ansible compiles a conditional as a Jinja expression, and jinja2's
+  # expression frame resolves every name it loads before any operator runs
+  # - so a fact named in an arm that a false first operand short-circuits
+  # is read anyway. andyceo.users' ssh task (`when: users.ssh.fetch_key
+  # and users.ssh.deploy_key_user and ansible_hostname != item`, both role
+  # defaults false) printed the block on real 2.21.6 where this engine's
+  # hand-rolled operator split never reached the second operand (issue
+  # #1225, live-verified against the role on real hosts and locally).
+  it "warns for a fact an earlier operand short-circuits, once for the loop" do
+    stderr = run_playbook(<<-PLAYBOOK)
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        tasks:
+          - name: deploy to every other host
+            debug:
+              msg: "{{ item }}"
+            loop: [testhost, otherhost]
+            when: false and ansible_os_family == "Debian"
+      PLAYBOOK
+
+    stderr.scan(/DEPRECATION WARNING\]: INJECT_FACTS_AS_VARS/).size.must_equal(1)
+    stderr.must_include(":9:13\n")
+    stderr.must_include("7         msg: \"{{ item }}\"\n")
+    stderr.must_include("8       loop: [testhost, otherhost]\n")
+    stderr.must_include("9       when: false and ansible_os_family == \"Debian\"\n")
+    stderr.must_include("              ^ column 13")
+  end
+
+  # The eager read and the evaluation's own read of the same clause belong
+  # to ONE templating operation, so the shared deprecate tag keeps the
+  # first - two facts named in an `or`, both really read, still print one
+  # block (live-verified vs 2.21.6).
+  it "prints one block when the eager fact read is reached again by the evaluation" do
+    stderr = run_playbook(<<-PLAYBOOK)
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        tasks:
+          - name: two facts in one clause
+            debug:
+              msg: hi
+            when: ansible_os_family == "Debian" or ansible_hostname == "otherhost"
+      PLAYBOOK
+
+    stderr.scan(/DEPRECATION WARNING\]: INJECT_FACTS_AS_VARS/).size.must_equal(1)
+  end
+
   # The disable-hint is one-per-RUN across every deprecation kind (real
   # Display dedups it process-wide). The parse-time action-mapping warning
   # and the executor's INJECT_FACTS warning kept separate once-flags, so a
