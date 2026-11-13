@@ -312,6 +312,115 @@ if [ "$parallel_given" = false ]; then
   set -- "$@" -p "$fibers"
 fi
 
+# Kills a process and everything it spawned. The shard's `timeout` wrapper is
+# not a process-group leader, so a plain `kill` would leave the test binary
+# and the plugin children it is holding behind.
+kill_tree() {
+  local parent="$1" child
+  for child in $(pgrep -P "$parent" 2>/dev/null || true); do
+    kill_tree "$child"
+  done
+  kill -KILL "$parent" 2>/dev/null || true
+}
+
+# Prints a pid and every process below it: the shard is launched as
+# `timeout -> test binary -> plugin children`, and the interesting thread is
+# rarely the outermost (timeout just sits in sigsuspend).
+process_tree() {
+  local pid="$1" child
+  echo "$pid"
+  for child in $(pgrep -P "$pid" 2>/dev/null || true); do
+    process_tree "$child"
+  done
+}
+
+# Everything worth knowing about a shard that stopped making progress, in one
+# file: where each OS thread is blocked, what it is running, and the log tail.
+dump_stall() {
+  # Outside RUN_TMP: that whole tree is removed by the EXIT trap, and the
+  # report is the only thing worth keeping after a stall.
+  local i="$1" pid="$2" silent="$3" node thread
+  local out="$RUN_TMP-stall-shard_$i.txt"
+  local -a dump_cmd
+  local pids
+  pids=$(process_tree "$pid")
+  {
+    echo "shard $i: no output for ${silent}s (pid $pid) at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    echo "--- process tree"
+    ps -o pid,ppid,stat,%cpu,wchan:24,args -p "$(echo "$pids" | tr ' ' ',')" 2>/dev/null || true
+    echo "--- OS threads: state and wchan (what each one is blocked in)"
+    for node in $pids; do
+      for thread in /proc/"$node"/task/*; do
+        [ -r "$thread/wchan" ] || continue
+        echo "  pid $node tid $(basename "$thread")  state $(awk '{print $3}' "$thread/stat" 2>/dev/null)  wchan $(cat "$thread/wchan" 2>/dev/null)"
+      done
+    done
+    if command -v eu-stack >/dev/null 2>&1; then
+      dump_cmd=(eu-stack -p)
+    elif command -v gdb >/dev/null 2>&1; then
+      dump_cmd=(gdb -batch -ex 'thread apply all bt' -p)
+    else
+      dump_cmd=()
+    fi
+    echo "--- stacks"
+    if [ ${#dump_cmd[@]} -eq 0 ]; then
+      echo "neither eu-stack nor gdb on PATH: thread stacks unavailable"
+    fi
+    for node in $pids; do
+      if [ ${#dump_cmd[@]} -eq 0 ]; then break; fi
+      echo "== pid $node: $(tr '\0' ' ' < /proc/"$node"/cmdline 2>/dev/null | cut -c1-200)"
+      "${dump_cmd[@]}" "$node" 2>&1 || true
+    done
+    echo "--- shard log tail"
+    tail -n 40 "$RUN_TMP/shard_$i.log" 2>/dev/null || true
+  } >"$out" 2>&1
+}
+
+# A shard that stops printing is hung, not slow: the suite's slowest ordinary
+# test is ~10s, while the process-level watchdog only fires at
+# MINITEST_TIMEOUT (600s) - a whole run wasted, with the evidence gone
+# (issue #1189: three shards froze, and the only clue was the child processes
+# blocked on full stdout pipes). Follow each shard's log growth instead, and
+# on a stall dump what the shard and its threads are doing and kill it, so the
+# run fails in minutes with something to work from.
+watch_shards_for_stalls() {
+  local default_stall=120 stall i pid size now alive
+  [ -n "${KRIKRI_SLOW_TESTS:-}" ] && default_stall=600
+  stall="${KRIKRI_STALL_SECONDS:-$default_stall}"
+  [ "${KRIKRI_NO_STALL_WATCHDOG:-0}" = "1" ] && return 0
+  { [ "$stall" -gt 0 ]; } 2>/dev/null || return 0
+  local -a last_size=() last_change=()
+  now=$(date +%s)
+  for ((i=0; i<shards; i++)); do
+    last_size[$i]=-1
+    last_change[$i]="$now"
+  done
+  while :; do
+    sleep 5
+    alive=0
+    now=$(date +%s)
+    for ((i=0; i<shards; i++)); do
+      pid="${shard_pids[$i]}"
+      kill -0 "$pid" 2>/dev/null || continue
+      alive=1
+      size=$(stat -c %s "$RUN_TMP/shard_$i.log" 2>/dev/null || echo 0)
+      if [ "$size" != "${last_size[$i]}" ]; then
+        last_size[$i]="$size"
+        last_change[$i]="$now"
+        continue
+      fi
+      if [ $(( now - last_change[i] )) -ge "$stall" ]; then
+        dump_stall "$i" "$pid" "$(( now - last_change[i] ))"
+        echo "test: shard $i stalled: no output for $(( now - last_change[i] ))s - killed, diagnostics in $RUN_TMP-stall-shard_$i.txt" >&2
+        kill_tree "$pid"
+        : > "$RUN_TMP/shard_$i.stalled"
+        last_change[$i]="$now"
+      fi
+    done
+    [ "$alive" -eq 1 ] || break
+  done
+}
+
 # ---- sharded path: N processes, one binary, test-level slices ----
 if [ "$shards" -ge 2 ]; then
   build_start=$(date +%s)
@@ -334,18 +443,25 @@ if [ "$shards" -ge 2 ]; then
 
   echo "test: running $shards shards in parallel ($fibers fibers each, one binary)" >&2
   run_start=$(date +%s)
+  # `exec`, so $! is the shard itself (not a wrapper subshell) and the stall
+  # watchdog can inspect the pid that actually runs the tests.
+  shard_pids=()
   for ((i=0; i<shards; i++)); do
     s_log="$RUN_TMP/shard_$i.log"
     (
       export TMPDIR="$RUN_TMP/s$i"
       mkdir -p "$TMPDIR"
       export MINITEST_SLICE_MAP="$slice_map" MINITEST_SLICE_INDEX="$i" MINITEST_SLICE_COUNT="$shards"
-      crc=0
-      timeout -k 5 "${MINITEST_TIMEOUT:-600}" "$BINARY" "$@" >"$s_log" 2>&1 || crc=$?
-      echo "$crc" > "$RUN_TMP/shard_$i.rc"
-    ) &
+      exec timeout -k 5 "${MINITEST_TIMEOUT:-600}" "$BINARY" "$@"
+    ) >"$s_log" 2>&1 &
+    shard_pids[$i]=$!
   done
-  wait
+  watch_shards_for_stalls
+  for ((i=0; i<shards; i++)); do
+    crc=0
+    wait "${shard_pids[$i]}" || crc=$?
+    echo "$crc" > "$RUN_TMP/shard_$i.rc"
+  done
   run_s=$(( $(date +%s) - run_start ))
   compact_timings
 
@@ -357,7 +473,7 @@ if [ "$shards" -ge 2 ]; then
   for ((i=0; i<shards; i++)); do
     s_log="$RUN_TMP/shard_$i.log"
     crc=$(cat "$RUN_TMP/shard_$i.rc")
-    summary=$(grep -E '^[0-9]+ (tests|runs),' "$s_log" | tail -1)
+    summary=$(grep -E '^[0-9]+ (tests|runs),' "$s_log" | tail -1 || true)
     echo "shard $i: exit=$crc  ${summary:-<no summary - see $s_log>}" >&2
     if [ -n "$summary" ]; then
       total_tests=$(( total_tests + $(echo "$summary" | sed -E 's/^([0-9]+).*/\1/') ))
@@ -366,15 +482,20 @@ if [ "$shards" -ge 2 ]; then
       errs=$(echo "$summary" | sed -E 's/.* ([0-9]+) errors,.*/\1/' | grep -E '^[0-9]+$' || echo 0)
       total_errors=$(( total_errors + errs ))
     fi
-    finished=$(grep -oE 'Finished in [0-9:.]+' "$s_log" | tail -1 | awk '{print $3}')
+    finished=$(grep -oE 'Finished in [0-9:.]+' "$s_log" | tail -1 | awk '{print $3}' || true)
     if [ -n "$finished" ]; then
       secs=$(echo "$finished" | clock_seconds)
       if [ "$secs" -gt "$slowest" ]; then slowest=$secs; fi
     fi
     if [ "$crc" -ne 0 ]; then
       rc_total=$crc
-      echo "--- shard $i output (last 120 lines; full log: $s_log) ---" >&2
-      tail -n 120 "$s_log" >&2
+      if [ -f "$RUN_TMP/shard_$i.stalled" ]; then
+        echo "--- shard $i stalled until killed (full report: $RUN_TMP-stall-shard_$i.txt) ---" >&2
+        cat "$RUN_TMP-stall-shard_$i.txt" >&2 2>/dev/null || true
+      else
+        echo "--- shard $i output (last 120 lines; full log: $s_log) ---" >&2
+        tail -n 120 "$s_log" >&2
+      fi
     fi
   done
 

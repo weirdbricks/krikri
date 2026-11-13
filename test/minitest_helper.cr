@@ -37,6 +37,25 @@ module PluginSpecHelper
   @@tmp_mutex = Mutex.new
   @@tmp_dir_by_fiber = {} of Fiber => String
 
+  # Which test each worker fiber is running, and since when. A shard that
+  # stops printing is otherwise a blank hang (issue #1189: 470s at 0.2% CPU
+  # with nothing in the log); naming the test in flight turns the next one
+  # into a report instead of a mystery. Report-only - a fiber cannot be
+  # killed from outside, and the shell runner's own stall watchdog is what
+  # bounds the run.
+  @@test_by_fiber = {} of Fiber => {String, Time::Instant}
+  @@reported_stalls = Set(String).new
+  @@stall_watchdog_started = false
+
+  # A test longer than this with no sibling finishing is reported. The
+  # suite's slowest ordinary test is ~10s; the opt-in KRIKRI_SLOW_TESTS
+  # one is deliberately ~4 minutes, so it raises the bar instead of
+  # tripping it.
+  TEST_STALL_REPORT_SECONDS = begin
+    default = ENV["KRIKRI_SLOW_TESTS"]? ? "600" : "120"
+    (ENV["KRIKRI_TEST_STALL_SECONDS"]? || default).to_i
+  end
+
   # MINITEST_TIMINGS=<file> appends one "<seconds>\t<serial|parallel>\t<test>\t<run>" line per
   # test as it finishes (appended, not written at exit: minitest's own at_exit hook runs the
   # tests, so a hook registered here would fire before them). Serial tests are timed inside
@@ -118,16 +137,48 @@ module PluginSpecHelper
     end
   end
 
-  def self.begin_test_tmp : Nil
+  def self.begin_test_tmp(name : String) : Nil
     dir = File.join(TEST_TMP_BASE, "p", Random::Secure.hex(8))
     FileUtils.rm_rf(dir)
     FileUtils.mkdir_p(dir)
-    @@tmp_mutex.synchronize { @@tmp_dir_by_fiber[Fiber.current] = dir }
+    @@tmp_mutex.synchronize do
+      @@tmp_dir_by_fiber[Fiber.current] = dir
+      @@test_by_fiber[Fiber.current] = {name, Time.instant}
+      unless @@stall_watchdog_started
+        @@stall_watchdog_started = true
+        spawn { stall_watchdog }
+      end
+    end
   end
 
   def self.end_test_tmp : Nil
-    dir = @@tmp_mutex.synchronize { @@tmp_dir_by_fiber.delete(Fiber.current) }
+    dir = @@tmp_mutex.synchronize do
+      @@test_by_fiber.delete(Fiber.current)
+      @@tmp_dir_by_fiber.delete(Fiber.current)
+    end
     FileUtils.rm_rf(dir) if dir
+  end
+
+  private def self.stall_watchdog : Nil
+    loop do
+      sleep 5.seconds
+      next if TEST_STALL_REPORT_SECONDS <= 0
+      now = Time.instant
+      stalled = [] of {String, Int32, Int32}
+      @@tmp_mutex.synchronize do
+        in_flight = @@test_by_fiber.size
+        @@test_by_fiber.each do |_fiber, (name, started)|
+          elapsed = (now - started).total_seconds
+          next if elapsed < TEST_STALL_REPORT_SECONDS
+          next if @@reported_stalls.includes?(name)
+          @@reported_stalls << name
+          stalled << {name, elapsed.to_i, in_flight}
+        end
+      end
+      stalled.each do |(name, elapsed, in_flight)|
+        STDERR.puts "test: still running after #{elapsed}s with #{in_flight} test(s) in flight: #{name}"
+      end
+    end
   end
 
   def self.tmp_path(*parts : String) : String
@@ -656,7 +707,7 @@ class Minitest::Spec
     # A test filtered out by -n never executes, and recording it as 0.00s would
     # let one filtered run erase the shard balancer's weights.
     return unless should_run?(name)
-    PluginSpecHelper.begin_test_tmp
+    PluginSpecHelper.begin_test_tmp("#{self.class.name}##{name}")
     if exclusive?
       PluginSpecHelper.enter_exclusive
       begin
