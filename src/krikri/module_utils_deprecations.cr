@@ -95,6 +95,30 @@ module Krikri
                                           "This feature will be removed from ansible-core version 2.24. " \
                                           "Use `collections.abc` from the Python standard library instead."
 
+    # The `ansible.errors` names ansible-core 2.21 deprecates through that
+    # module's own __getattr__, the `_text` shim's twin: Display merges the
+    # entry's help text into the console line instead of the help text
+    # field `_messages` keeps. An action plugin importing one prints the
+    # line when real loads it - ansible.posix 2.1.x's patch.py imports
+    # `_AnsibleActionDone` ahead of its own `_text` import, and a
+    # `when:`-skipped patch task still loads the plugin, so the pair leads
+    # that task's banner (issue #1198). The names belong to ansible-core,
+    # not to the importing collection, and the removal versions are its
+    # own.
+    ERRORS_IMPORT_DEPRECATIONS = {
+      "_AnsibleActionDone"     => {"version" => "2.23", "help_text" => "Return directly from action plugins instead."},
+      "AnsibleFilterTypeError" => {"version" => "2.23", "help_text" => "Import 'AnsibleTypeError' instead."},
+    }
+
+    # The console line for one `ansible.errors` shim symbol, formatted the
+    # way Display.deprecated merges msg, removal tail and help text.
+    private def self.errors_import_deprecation_text(symbol : String) : String
+      entry = ERRORS_IMPORT_DEPRECATIONS[symbol]
+      "Importing '#{symbol}' is deprecated. " \
+      "This feature will be removed from ansible-core version #{entry["version"]}. " \
+      "#{entry["help_text"]}"
+    end
+
     # The `_text` symbols one module imports, in the module's own import
     # order; empty for every name outside the installed payload and the
     # fallback table alike - and for every name when `collection_version`
@@ -130,21 +154,26 @@ module Krikri
     end
 
     # The console texts real prints when it loads one controller-side action
-    # plugin: its `_text` imports in order, then the `_collections_compat`
-    # module deprecation when it imports that too (the scanner preserves the
-    # two kinds' relative order, which synchronize's own import order
-    # establishes). The action plugin real loads for a name ships beside the
-    # module payload in the same collection; a collection whose install
-    # carries no plugins/action/<leaf>.py loads no action plugin at all, so
-    # nothing warns. Empty for every action plugin krikri implements without
-    # one - and for every name when `collection_version` pins a
-    # 2.2.x-or-newer release (see the header).
+    # plugin: its deprecated `ansible.errors` and `_text` imports in source
+    # order, then the `_collections_compat` module deprecation when it
+    # imports that too (the scanner preserves the kinds' relative order,
+    # which synchronize's and patch's own import orders establish). The
+    # action plugin real loads for a name ships beside the module payload
+    # in the same collection; a collection whose install carries no
+    # plugins/action/<leaf>.py loads no action plugin at all, so nothing
+    # warns. Empty for every action plugin krikri implements without one -
+    # and for every name when `collection_version` pins a 2.2.x-or-newer
+    # release (see the header).
     def self.action_plugin_text_import_deprecation_texts(name : String?, collection_version : String? = nil) : Array(String)
       return [] of String unless name
       return [] of String unless deprecated_text_imports?(name, collection_version)
       if events = installed_action_events(name)
         return events.map do |kind, symbol|
-          kind == "text" ? text_import_deprecation_text(symbol) : COLLECTIONS_COMPAT_DEPRECATION_TEXT
+          case kind
+          when "text"   then text_import_deprecation_text(symbol)
+          when "errors" then errors_import_deprecation_text(symbol)
+          else               COLLECTIONS_COMPAT_DEPRECATION_TEXT
+          end
         end
       end
       symbols = ACTION_PLUGIN_TEXT_IMPORT_DEPRECATIONS[name.split(".").last?]? || return [] of String
@@ -247,15 +276,13 @@ module Krikri
       events
     end
 
-    # The `from ansible.module_utils._text import <names>` events for
-    # one statement, shared by the module-file walk above and the
-    # action-plugin scan: parenthesized and backslash-continued clauses
-    # span lines (comment-free - a '#' inside the clause is a comment in
-    # an import statement); returns the events and the line index past
-    # the statement.
-    private def self.text_import_clause_events(clause : String, lines : Array(String), index : Int32) : {Array(Tuple(String, String)), Int32}
-      deprecatable = {"codecs", "to_bytes", "to_text", "to_native", "binary_type", "text_type", "PY3"}
-      events = [] of Tuple(String, String)
+    # The names one `from <module> import <clause>` statement pulls in,
+    # shared by the `_text`, `ansible.errors` and action-plugin scans:
+    # parenthesized and backslash-continued clauses span lines
+    # (comment-free - a '#' inside the clause is a comment in an import
+    # statement); returns the names and the line index past the statement.
+    private def self.import_clause_names(clause : String, lines : Array(String), index : Int32) : {Array(String), Int32}
+      names = [] of String
       clause = clause.split('#', 2).first
       while index < lines.size &&
             (clause.count('(') > clause.count(')') || clause.rstrip.ends_with?('\\'))
@@ -264,11 +291,27 @@ module Krikri
       end
       clause.split(',').each do |piece|
         if md = piece.match(/\b[A-Za-z_][A-Za-z0-9_]*/)
-          symbol = md[0]
-          events << {"text", symbol} if deprecatable.includes?(symbol)
+          names << md[0]
         end
       end
-      {events, index}
+      {names, index}
+    end
+
+    # The `from ansible.module_utils._text import <names>` events for
+    # one statement, shared by the module-file walk above and the
+    # action-plugin scan.
+    private def self.text_import_clause_events(clause : String, lines : Array(String), index : Int32) : {Array(Tuple(String, String)), Int32}
+      deprecatable = {"codecs", "to_bytes", "to_text", "to_native", "binary_type", "text_type", "PY3"}
+      names, index = import_clause_names(clause, lines, index)
+      {names.select { |symbol| deprecatable.includes?(symbol) }.map { |symbol| {"text", symbol} }, index}
+    end
+
+    # The `from ansible.errors import <names>` events for one statement,
+    # action-plugin scan only: `ansible.errors` is controller-side, so no
+    # module payload can import from it.
+    private def self.errors_import_clause_events(clause : String, lines : Array(String), index : Int32) : {Array(Tuple(String, String)), Int32}
+      names, index = import_clause_names(clause, lines, index)
+      {names.select { |symbol| ERRORS_IMPORT_DEPRECATIONS.has_key?(symbol) }.map { |symbol| {"errors", symbol} }, index}
     end
 
     # The installed module_utils file one import statement pulls in from
@@ -346,14 +389,14 @@ module Krikri
       nil
     end
 
-    # The deprecated module_utils import events one payload source holds, in
-    # source order: {"text", symbol} per name imported from
-    # `ansible.module_utils._text`, {"compat", ""} per `_collections_compat`
-    # import. Only names the real shim can serve are counted - its
-    # __getattr__ raises AttributeError for anything else BEFORE deprecating,
-    # so real prints no line for them either. A bare
-    # `import ansible.module_utils._text` is not an event (no attribute is
-    # accessed at import, so nothing deprecates), while a bare
+    # The deprecated import events one payload source holds, in source
+    # order: {"errors", symbol} per deprecated `ansible.errors` name,
+    # {"text", symbol} per name imported from `ansible.module_utils._text`,
+    # {"compat", ""} per `_collections_compat` import. Only names the real
+    # shims can serve are counted - their __getattr__ raises AttributeError
+    # for anything else BEFORE deprecating, so real prints no line for them
+    # either. A bare `import ansible.module_utils._text` is not an event (no
+    # attribute is accessed at import, so nothing deprecates), while a bare
     # `import ... _collections_compat` is one (the module deprecates itself
     # on import).
     private def self.deprecated_import_events(source : String) : Array(Tuple(String, String))
@@ -366,6 +409,11 @@ module Krikri
         if line =~ /^\s*import\s+ansible\.module_utils\.common\._collections_compat\b/ ||
            line =~ /^\s*from\s+ansible\.module_utils\.common\._collections_compat\s+import\b/
           events << {"compat", ""}
+          next
+        end
+        if match = /^\s*from\s+ansible\.errors\s+import\s+(.+)$/.match(line)
+          clause_events, index = errors_import_clause_events(match[1], lines, index)
+          events += clause_events
           next
         end
         if match = /^\s*from\s+ansible\.module_utils\._text\s+import\s+(.+)$/.match(line)
