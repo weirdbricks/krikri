@@ -375,6 +375,15 @@ module Krikri
     # become plugin's fixed argument set); templating happens at execution
     # time, like become_user's.
     property become_flags : String?
+    # The file/line/col of become-family keyword VALUE tokens this task
+    # did not write itself but took from an ambient default - an
+    # import_tasks: line's become:/become_user:/become_flags: (see
+    # Play#inherited_become_origins). ansible labels a keyword-templating
+    # failure's "caused by" Origin at the line that actually wrote the
+    # value, so an inlined task failing on an inherited `become_user: "{{
+    # vino_user }}"` points at the importing file's token, not at its own
+    # mapping (issue #1213).
+    property inherited_become_origins : Hash(String, {String, Int32, Int32})? = nil
     property tags : Array(String)
     # Context tags this task carries from OUTSIDE itself - the play's own
     # tags, every enclosing block's tags, a roles:/import_ * invocation's
@@ -1158,6 +1167,15 @@ module Krikri
     property? become : Bool
     property become_user : String?
     property become_flags : String?
+    # Source positions of the become-family keyword values the CURRENT
+    # parse window carries as ambient defaults, keyed by keyword name. Only
+    # an import_tasks: line sets it (inside the same save/set/restore
+    # window that makes its become-family keywords the default for the
+    # tasks it inlines); a task that takes a keyword's value from this
+    # layer copies the entry onto itself (Task#inherited_become_origins) so
+    # a keyword-templating failure points its chain at the line that
+    # actually wrote the value.
+    property inherited_become_origins : Hash(String, {String, Int32, Int32})? = nil
     property? gather_facts : Bool
     # Whether the play actually wrote a `gather_facts:` key, as opposed to
     # defaulting to true. Only --gathering explicit needs the distinction:
@@ -3356,9 +3374,17 @@ module Krikri
       saved_become = play.become?
       saved_become_user = play.become_user
       saved_become_flags = play.become_flags
+      saved_become_origins = play.inherited_become_origins
       play.become = resolve_become(hash, play)
       play.become_user = hash["become_user"]?.try { |v| safe_yaml_to_string(v) } || play.become_user
       play.become_flags = hash["become_flags"]?.try { |v| safe_yaml_to_string(v) } || play.become_flags
+      # The import line's own become-family keywords become the ambient
+      # default for the tasks it inlines, so their value tokens' positions
+      # must travel with them: real labels an inlined task's keyword
+      # failure at the line that actually wrote the value (this very
+      # import line), even though the failing task's mapping lives in the
+      # imported file (issue #1213, Alex2357.enable-vino).
+      play.inherited_become_origins = merge_become_origins(saved_become_origins, ambient_become_origins(hash, source_file, source_map, source_prefix, source_index))
       # ensure-restore, not fall-through-restore: if the child parse
       # raises (a parse error, or a nested import), the play's become
       # must still be restored - a clobbered play.become would silently
@@ -3370,6 +3396,7 @@ module Krikri
         play.become = saved_become
         play.become_user = saved_become_user
         play.become_flags = saved_become_flags
+        play.inherited_become_origins = saved_become_origins
       end
 
       import_when = hash["when"]?.try { |v| optional_condition_to_string(v) }
@@ -4665,10 +4692,7 @@ module Krikri
       task.diff_mode_expr = template_expression(task_hash["diff"]?)
       task.check_mode_invalid = invalid_bool_keyword_text(task_hash["check_mode"]?)
       task.diff_mode_invalid = invalid_bool_keyword_text(task_hash["diff"]?)
-      task.become = resolve_become(task_hash, play)
-      task.become_expr = become_expr(task_hash)
-      task.become_user = task_hash["become_user"]?.try { |v| safe_yaml_to_string(v) } || play.become_user
-      task.become_flags = task_hash["become_flags"]?.try { |v| safe_yaml_to_string(v) } || play.become_flags
+      apply_become_keywords(task, task_hash, play)
 
       # Parse environment: - Ansible's per-task env-var-setting
       # keyword, used throughout konstruktoid-hardening (PATH overrides
@@ -6749,9 +6773,15 @@ module Krikri
       saved_become = play.become?
       saved_become_user = play.become_user
       saved_become_flags = play.become_flags
+      saved_become_origins = play.inherited_become_origins
       play.become = resolve_become(task_hash, play)
       play.become_user = task_hash["become_user"]?.try { |v| safe_yaml_to_string(v) } || play.become_user
       play.become_flags = task_hash["become_flags"]?.try { |v| safe_yaml_to_string(v) } || play.become_flags
+      # A block that writes its OWN become-family keyword shadows the
+      # ambient value an enclosing import_tasks: line contributed - its
+      # children take the block's value, whose token lives in the same
+      # file they do, so the shadowed entry must not label their chains.
+      play.inherited_become_origins = drop_written_become_origins(saved_become_origins, task_hash)
 
       # Same ambient-inheritance pattern as become: above, for the
       # block's own check_mode: (Ansible's precedence task > block
@@ -6819,6 +6849,7 @@ module Krikri
         play.become = saved_become
         play.become_user = saved_become_user
         play.become_flags = saved_become_flags
+        play.inherited_become_origins = saved_become_origins
         play.check_mode = saved_check_mode
         play.check_mode_expr = saved_check_mode_expr
         play.task_timeout = saved_task_timeout
@@ -6908,10 +6939,7 @@ module Krikri
       # failing rescue task under `ignore_errors: true` is ignored too.
       inherit_ignore_errors(task)
       inherit_no_log(task)
-      task.become = resolve_become(task_hash, play)
-      task.become_expr = become_expr(task_hash)
-      task.become_user = task_hash["become_user"]?.try { |v| safe_yaml_to_string(v) } || play.become_user
-      task.become_flags = task_hash["become_flags"]?.try { |v| safe_yaml_to_string(v) } || play.become_flags
+      apply_become_keywords(task, task_hash, play)
 
       # A block's own `vars:` is inherited by every task nested inside it
       # (Ansible scoping) - was never parsed at all here, so it
@@ -7203,10 +7231,7 @@ module Krikri
       parse_include_apply(task, directive(task_hash, "include_tasks").try(&.as_h?).try(&.["apply"]?))
 
       parse_common_task_attributes(task, task_hash, play, handler ? "HandlerTaskInclude" : "TaskInclude", source_file, source_map, source_prefix, source_index)
-      task.become = resolve_become(task_hash, play)
-      task.become_expr = become_expr(task_hash)
-      task.become_user = task_hash["become_user"]?.try { |v| safe_yaml_to_string(v) } || play.become_user
-      task.become_flags = task_hash["become_flags"]?.try { |v| safe_yaml_to_string(v) } || play.become_flags
+      apply_become_keywords(task, task_hash, play)
 
       # register: on the include statement itself - real's TaskInclude
       # carries it like any task and registers the include's own result
@@ -7609,10 +7634,7 @@ module Krikri
       parse_include_apply(task, role_args["apply"]?)
 
       parse_common_task_attributes(task, task_hash, play, "IncludeRole", source_file, source_map, source_prefix, source_index)
-      task.become = resolve_become(task_hash, play)
-      task.become_expr = become_expr(task_hash)
-      task.become_user = task_hash["become_user"]?.try { |v| safe_yaml_to_string(v) } || play.become_user
-      task.become_flags = task_hash["become_flags"]?.try { |v| safe_yaml_to_string(v) } || play.become_flags
+      apply_become_keywords(task, task_hash, play)
 
       if template_loop = find_loop_template(task_hash)
         task.loop_template_kind = template_loop[0]
@@ -9127,6 +9149,60 @@ module Krikri
     private def self.resolve_become(task_hash : Hash(YAML::Any, YAML::Any), play : Play) : Bool
       given = parse_become_value(task_hash["become"]?)
       given.nil? ? play.become? : given
+    end
+
+    # The become-family keywords Ansible resolves task > block > role >
+    # play, and whose values an import_tasks: line passes down to the tasks
+    # it inlines.
+    BECOME_FAMILY_KEYWORDS = %w[become become_user become_flags]
+
+    # Every become-family keyword a task/block/import mapping WROTE, paired
+    # with its value token's position in *source_file*. Used to record the
+    # ambient layer a parse window installs and to drop the entries an
+    # inner statement shadows with its own value.
+    private def self.ambient_become_origins(task_hash : Hash(YAML::Any, YAML::Any), source_file : String?, source_map : YamlSourceMap?, source_prefix : String, source_index : Int32) : Hash(String, {String, Int32, Int32})?
+      return nil unless source_file && source_map
+      prefix = task_source_prefix(source_prefix, source_index)
+      origins = Hash(String, {String, Int32, Int32}).new
+      BECOME_FAMILY_KEYWORDS.each do |keyword|
+        next unless task_hash[keyword]?
+        next unless pos = source_map.at?("#{prefix}/#{keyword}")
+        origins[keyword] = {File.expand_path(source_file), pos[0], pos[1]}
+      end
+      origins.empty? ? nil : origins
+    end
+
+    # The ambient become-origin layer of an inner parse window: the outer
+    # window's entries stay for the keywords the inner statement did not
+    # write (an outer import's become_user: still reaches a doubly-inlined
+    # task), while the inner statement's own values replace them.
+    private def self.merge_become_origins(inherited : Hash(String, {String, Int32, Int32})?, written : Hash(String, {String, Int32, Int32})?) : Hash(String, {String, Int32, Int32})?
+      return inherited unless written
+      return written unless inherited
+      inherited.merge(written)
+    end
+
+    # Drops the ambient entries a statement's OWN become-family keywords
+    # shadow - the task/block wrote its own value, so the chain must point
+    # at that value (locatable in its own file) rather than at the line the
+    # shadowed ambient value came from.
+    private def self.drop_written_become_origins(origins : Hash(String, {String, Int32, Int32})?, task_hash : Hash(YAML::Any, YAML::Any)) : Hash(String, {String, Int32, Int32})?
+      return nil unless origins
+      kept = origins.reject { |keyword, _| task_hash[keyword]? }
+      kept.empty? ? nil : kept
+    end
+
+    # A task's become-family keyword resolution: its own written value
+    # wins, otherwise the enclosing parse window's ambient default applies
+    # (play, or a block/import_tasks: statement that set one). The
+    # inherited layer's source positions ride along for the keywords the
+    # task took from it.
+    private def self.apply_become_keywords(task : Task, task_hash : Hash(YAML::Any, YAML::Any), play : Play) : Nil
+      task.become = resolve_become(task_hash, play)
+      task.become_expr = become_expr(task_hash)
+      task.become_user = task_hash["become_user"]?.try { |v| safe_yaml_to_string(v) } || play.become_user
+      task.become_flags = task_hash["become_flags"]?.try { |v| safe_yaml_to_string(v) } || play.become_flags
+      task.inherited_become_origins = drop_written_become_origins(play.inherited_become_origins, task_hash)
     end
 
     # Companion to #resolve_become: the raw `{{ ... }}` text of a
