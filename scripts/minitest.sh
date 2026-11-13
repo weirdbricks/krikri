@@ -68,6 +68,16 @@ cleanup_run_tmp() {
 }
 trap cleanup_run_tmp EXIT
 
+# A playbook that never exits used to freeze its whole shard: the spec's
+# Process.run waits for the child and for every holder of its captured
+# pipes, and nothing in the engine bounds a local plugin or a grandchild
+# that inherited them (issue #1189 - three shards silent for 470s while
+# their playbooks sat at 0.2% CPU). Bound every playbook the suite spawns;
+# on expiry it reports its own process tree and exits 124, so the spec
+# fails naming the playbook instead of hanging. Inherited by the shards
+# (they export their own env) and by the single-file path below.
+export KRIKRI_PLAYBOOK_DEADLINE_SECONDS="${KRIKRI_PLAYBOOK_DEADLINE_SECONDS:-120}"
+
 # The caller's ANSIBLE_* settings leak into every krikri-playbook the suite
 # spawns: a developer shell with ANSIBLE_CACHE_PLUGIN=...pickle made
 # cross-play hostvars reads pass locally (served from the pickle cache)
@@ -348,11 +358,11 @@ dump_stall() {
     echo "shard $i: no output for ${silent}s (pid $pid) at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
     echo "--- process tree"
     ps -o pid,ppid,stat,%cpu,wchan:24,args -p "$(echo "$pids" | tr ' ' ',')" 2>/dev/null || true
-    echo "--- OS threads: state and wchan (what each one is blocked in)"
+    echo "--- OS threads: state, wchan and syscall (what each one is blocked in)"
     for node in $pids; do
       for thread in /proc/"$node"/task/*; do
         [ -r "$thread/wchan" ] || continue
-        echo "  pid $node tid $(basename "$thread")  state $(awk '{print $3}' "$thread/stat" 2>/dev/null)  wchan $(cat "$thread/wchan" 2>/dev/null)"
+        echo "  pid $node tid $(basename "$thread")  state $(awk '{print $3}' "$thread/stat" 2>/dev/null)  wchan $(cat "$thread/wchan" 2>/dev/null)  syscall $(cat "$thread/syscall" 2>/dev/null || echo "?")"
       done
     done
     if command -v eu-stack >/dev/null 2>&1; then

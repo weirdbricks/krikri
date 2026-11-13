@@ -15,6 +15,7 @@ require "./src/krikri/stdio_pipe_guard"
 require "./src/krikri/output_banner"
 require "./src/krikri/profile_tasks"
 require "./src/krikri/oneline_output"
+require "./src/krikri/playbook_deadline"
 require "./src/krikri/run_options"
 require "./src/krikri/task_executor/output_routing"
 
@@ -604,6 +605,9 @@ end
 # the krikri-only CLI switches land on the same internal enabled flags.
 Krikri::ProfileTasks.enable if profile_tasks_enabled
 Krikri::Oneline.enable if oneline_enabled
+# Test-suite-only wall-clock bound (KRIKRI_PLAYBOOK_DEADLINE_SECONDS, see
+# the file): off unless the runner sets it.
+Krikri::PlaybookDeadline.install
 
 extra_vars = {} of String => JSON::Any
 extra_var_origins = {} of String => Krikri::VarOrigin

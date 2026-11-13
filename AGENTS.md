@@ -151,7 +151,13 @@ reports every test that has been running longer than
 `KRIKRI_TEST_STALL_SECONDS` (default 120) as `test: still running after Ns
 ...: <describe>#<test>` in its shard log - that names the culprit whenever the
 event loop is still alive. Set `KRIKRI_NO_STALL_WATCHDOG=1` for a run that
-legitimately has no output for minutes.
+legitimately has no output for minutes. Every playbook the suite spawns is
+also bounded: `KRIKRI_PLAYBOOK_DEADLINE_SECONDS` (exported by the runner,
+default 120) makes `krikri-playbook` report its own process tree, kill
+everything it spawned and exit 124 when a run outlives it, so a single stuck
+spec fails with the playbook named instead of freezing the shard (a spec's
+`Process.run` waits for the child AND for every holder of its captured
+pipes, and nothing else bounds a wedged local plugin).
 
 **Parallel-safety rules** (required for `-- -p N`; full detail in
 `test/minitest_helper.cr`):
