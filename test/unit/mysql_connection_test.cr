@@ -468,27 +468,33 @@ describe Krikri::PluginHelpers::MysqlConnection do
         end
       end
     end
+  end
+
+  # HOME/USER are process-global and ENV_MUTEX only serializes
+  # serial-vs-serial, so a non-serial test keeps reading them through the
+  # window (issue #1191). build_uri resolves "~" from this process's own
+  # ENV, so the override cannot go to a child: quiesce the process instead.
+  describe "config_file ~ expansion from a substituted HOME" do
+    exclusive!
 
     it "expands a leading ~ in the config_file using $HOME (matches os.path.expanduser)" do
-      PluginSpecHelper::ENV_MUTEX.synchronize do
-        original_user = ENV["USER"]?
-        original_home = ENV["HOME"]?
-        ENV["USER"] = "specuser"
-        home = File.join(Dir.tempdir, "crystal_ansible_spec_home_#{Random.rand(100_000)}")
-        Dir.mkdir_p(home)
-        ENV["HOME"] = home
-        File.write(File.join(home, ".my.cnf"), "[client]\nuser=\"root\"\npassword=\"tildehome\"\n")
-        begin
-          # DEFAULT_OPTION_FILE is "~/.my.cnf" - must resolve via $HOME, not
-          # against the CWD (Crystal's File.expand_path does not expand ~).
-          uri = Krikri::PluginHelpers::MysqlConnection.build_uri(config_file: "~/.my.cnf")
-          uri.must_equal("mysql://root:tildehome@localhost:3306?ssl-mode=disabled")
-        ensure
-          File.delete?(File.join(home, ".my.cnf"))
-          Dir.delete?(home)
-          ENV["USER"] = original_user if original_user
-          ENV["HOME"] = original_home if original_home
-        end
+      original_user = ENV["USER"]?
+      original_home = ENV["HOME"]?
+      ENV["USER"] = "specuser"
+      home = File.join(Dir.tempdir, "crystal_ansible_spec_home_#{Random.rand(100_000)}")
+      Dir.mkdir_p(home)
+      ENV["HOME"] = home
+      File.write(File.join(home, ".my.cnf"), "[client]\nuser=\"root\"\npassword=\"tildehome\"\n")
+      begin
+        # DEFAULT_OPTION_FILE is "~/.my.cnf" - must resolve via $HOME, not
+        # against the CWD (Crystal's File.expand_path does not expand ~).
+        uri = Krikri::PluginHelpers::MysqlConnection.build_uri(config_file: "~/.my.cnf")
+        uri.must_equal("mysql://root:tildehome@localhost:3306?ssl-mode=disabled")
+      ensure
+        File.delete?(File.join(home, ".my.cnf"))
+        Dir.delete?(home)
+        ENV["USER"] = original_user if original_user
+        ENV["HOME"] = original_home if original_home
       end
     end
   end

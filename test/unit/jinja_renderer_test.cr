@@ -1012,10 +1012,14 @@ describe Krikri::VariableSubstitutor::JinjaRenderer do
     Dir.delete(dir_path)
   end
 
-  it "expanduser/expandvars expand ~ and $VAR from the controller's environment" do
-    # ENV is process-global: hold ENV_MUTEX so concurrent tests that read
-    # HOME (e.g. the command plugin's expanduser specs) never see this.
-    PluginSpecHelper::ENV_MUTEX.synchronize do
+  # HOME (and the expandvars var below) are process-global, and ENV_MUTEX
+  # only serializes serial-vs-serial: a non-serial test keeps reading them
+  # right through the window (issue #1191). This one test therefore takes
+  # the whole process for its window instead.
+  describe "expanduser/expandvars from a substituted environment" do
+    exclusive!
+
+    it "expanduser/expandvars expand ~ and $VAR from the controller's environment" do
       v = Hash(String, JSON::Any).new
       renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
       original_home = ENV["HOME"]?
@@ -1025,8 +1029,6 @@ describe Krikri::VariableSubstitutor::JinjaRenderer do
         ENV["CRYSTAL_ANSIBLE_SPEC_CRINJA_EXPANDVAR"] = "hello"
         renderer.render(%({{ "v=$CRYSTAL_ANSIBLE_SPEC_CRINJA_EXPANDVAR" | expandvars }})).must_equal("v=hello")
       ensure
-        # Restore - later specs (the CLI integration suite's async: jobs)
-        # spawn binaries that inherit this process's HOME.
         ENV.delete("CRYSTAL_ANSIBLE_SPEC_CRINJA_EXPANDVAR")
         original_home ? (ENV["HOME"] = original_home) : ENV.delete("HOME")
       end

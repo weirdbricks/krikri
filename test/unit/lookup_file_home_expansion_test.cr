@@ -13,7 +13,10 @@ require "../../src/krikri/krikri_jinja_filters"
 # evaluator) or returned nil (krikri-jinja path) where ansible-playbook
 # reads the file fine (issue #52, andrewrothstein.ssh-user-keygen).
 describe "lookup file ~ expansion" do
-  serial! # sets/restores HOME (process-wide ENV)
+  # HOME is resolved in-process here, so the override cannot go to a
+  # child and ENV_MUTEX is not enough (a non-serial test keeps reading it -
+  # issue #1191): quiesce the process for the window.
+  exclusive!
 
   it "expands a leading ~/ against HOME before the role-relative search, both evaluators" do
     home = PluginSpecHelper.tmp_path("lookup_home_expansion_home")

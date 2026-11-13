@@ -340,7 +340,10 @@ end
 # lookup` pair. Ignoring them made real ansible find a plugin krikri
 # reported as "The lookup plugin 'X' was not found.".
 describe "PythonLookupRunner configured lookup plugin roots (#778)" do
-  serial! # ENV["ANSIBLE_LOOKUP_PLUGINS"]/["HOME"] are process-wide
+  # ENV["ANSIBLE_LOOKUP_PLUGINS"]/["HOME"] are process-wide and read
+  # in-process here, so ENV_MUTEX is not enough (a non-serial test keeps
+  # reading them - issue #1191): quiesce the process for the window.
+  exclusive!
 
   it "finds a plugin under a directory named by ANSIBLE_LOOKUP_PLUGINS" do
     root = PluginSpecHelper.tmp_path("pylookup-env-root")

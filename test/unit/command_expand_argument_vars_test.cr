@@ -37,20 +37,18 @@ describe "command: per-token tilde and variable expansion" do
     skip "no home directory for current user" unless current_home
     fake_home = File.tempname("krikri-cmd-expand")
     Dir.mkdir_p(fake_home)
-    PluginSpecHelper::ENV_MUTEX.synchronize do
-      previous = ENV["HOME"]?
-      begin
-        ENV["HOME"] = fake_home
-        result = PluginSpecHelper.run("command", {
-          "cmd" => "printf %s ~/inside",
-        })
+    begin
+      # The expansion happens in the plugin process, so the override belongs
+      # to the CHILD: this process's HOME is process-global and a non-serial
+      # test keeps reading it concurrently (issue #1191).
+      result = PluginSpecHelper.run("command", {
+        "cmd" => "printf %s ~/inside",
+      }, env: {"HOME" => fake_home})
 
-        result["rc"].as_i.must_equal(0)
-        result["stdout"].as_s.must_equal(File.join(fake_home, "inside"))
-      ensure
-        previous ? (ENV["HOME"] = previous) : ENV.delete("HOME")
-        FileUtils.rm_r(fake_home)
-      end
+      result["rc"].as_i.must_equal(0)
+      result["stdout"].as_s.must_equal(File.join(fake_home, "inside"))
+    ensure
+      FileUtils.rm_r(fake_home)
     end
   end
 

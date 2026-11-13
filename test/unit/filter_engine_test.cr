@@ -1114,10 +1114,14 @@ describe Krikri::VariableSubstitutor::FilterEngine do
     engine.apply(s("hello"), "sha1").as_s.must_equal("aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d")
   end
 
-  it "expanduser expands a leading ~" do
-    # ENV is process-global: hold ENV_MUTEX so concurrent tests that read
-    # HOME (e.g. the command plugin's expanduser specs) never see this.
-    PluginSpecHelper::ENV_MUTEX.synchronize do
+  # HOME is process-global and ENV_MUTEX only serializes serial-vs-serial,
+  # while a non-serial test keeps reading HOME right through the window
+  # (issue #1191). Expanding `~` from a substituted HOME needs the whole
+  # process quiesced, which is what exclusive! provides.
+  describe "expanduser from a substituted HOME" do
+    exclusive!
+
+    it "expanduser expands a leading ~" do
       original_home = ENV["HOME"]?
       ENV["HOME"] = "/home/testuser"
       begin
@@ -1125,8 +1129,6 @@ describe Krikri::VariableSubstitutor::FilterEngine do
         engine.apply(s("~"), "expanduser").as_s.must_equal("/home/testuser")
         engine.apply(s("/already/absolute"), "expanduser").as_s.must_equal("/already/absolute")
       ensure
-        # Restore - later specs (the CLI integration suite's async: jobs)
-        # spawn binaries that inherit this process's HOME.
         original_home ? (ENV["HOME"] = original_home) : ENV.delete("HOME")
       end
     end

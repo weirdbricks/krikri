@@ -157,19 +157,20 @@ describe "file plugin" do
     end
 
     it "expands a leading ~ in path using $HOME (Ansible's file module is type: path)" do
-      original_home = ENV["HOME"]?
       home = File.join(Dir.tempdir, "crystal_ansible_spec_home_#{Random.rand(100_000)}")
       Dir.mkdir_p(home)
-      ENV["HOME"] = home
       begin
-        result = PluginSpecHelper.run("file", {"path" => "~/tilde_touched.txt", "state" => "touch"})
+        # The override goes to the plugin CHILD: this process's HOME is
+        # process-global, and a non-serial test keeps reading it concurrently
+        # (issue #1191).
+        result = PluginSpecHelper.run("file", {"path" => "~/tilde_touched.txt", "state" => "touch"},
+          env: {"HOME" => home})
 
         result["changed"].as_bool.must_equal(true)
         falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
         File.exists?(File.join(home, "tilde_touched.txt")).must_equal(true)
       ensure
         FileUtils.rm_rf(home)
-        ENV["HOME"] = original_home if original_home
       end
     end
   end

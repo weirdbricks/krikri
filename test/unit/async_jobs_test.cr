@@ -18,7 +18,10 @@ ensure
 end
 
 describe Krikri::AsyncJobs do
-  serial! # sets ANSIBLE_ASYNC_DIR / HOME (process-wide ENV)
+  # ANSIBLE_ASYNC_DIR / HOME are process-global and the dir is resolved
+  # in-process, so the override cannot go to a child and ENV_MUTEX is not
+  # enough (a non-serial test keeps reading it - issue #1191): quiesce.
+  exclusive!
 
   it "generates unique job ids" do
     jids = Array.new(20) { Krikri::AsyncJobs.generate_jid }
