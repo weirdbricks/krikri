@@ -3745,6 +3745,15 @@ module Krikri
     # there, not at the key (same convention timeout_keyword_value_origin
     # applies to timeout:).
     private def keyword_value_origin(task : Task, keyword : String) : String?
+      # A value the task INHERITED from an import_tasks: line (become:/
+      # become_user:/become_flags:) is not written in the task's own file
+      # at all - real labels its chain at the importing file's value
+      # token, which the parser recorded when it inlined the task (issue
+      # #1213).
+      if inherited = task.inherited_become_origins.try(&.[keyword]?)
+        path, line, column = inherited
+        return ErrorBlock.origin_context(path, line, column)
+      end
       path = task.source_file
       return nil unless path && task.source_line > 0 && File.file?(path)
       lines = File.read_lines(path)
