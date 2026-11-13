@@ -176,11 +176,14 @@ describe Krikri::PythonModuleRunner do
   # A stand-in "interpreter" that never runs the module: it answers with
   # the marker below, so a spec can tell WHICH interpreter the plugin
   # picked without depending on the pythons this host happens to have.
+  # It drains stdin first, as a real interpreter reading the new-style
+  # args blob does - an unread stdin let the double exit mid-write and
+  # raced into a spurious EPIPE failure (issue #1188).
   it "runs the module under the interpreter the task's vars name (issue #1005)" do
     dir = PluginSpecHelper.tmp_path("py-module-interpreter-vars")
     Dir.mkdir_p(dir)
     interpreter = File.join(dir, "pinned-python")
-    File.write(interpreter, "#!/bin/sh\nprintf '%s\\n' '{\"changed\": false, \"ran_by\": \"pinned\"}'\n")
+    File.write(interpreter, "#!/bin/sh\ncat >/dev/null\nprintf '%s\\n' '{\"changed\": false, \"ran_by\": \"pinned\"}'\n")
     File.chmod(interpreter, 0o755)
 
     # Real resolves a python module's interpreter from the task's vars
@@ -204,7 +207,7 @@ describe Krikri::PythonModuleRunner do
     dir = PluginSpecHelper.tmp_path("py-module-interpreter-auto")
     Dir.mkdir_p(dir)
     discovered = File.join(dir, "discovered-python")
-    File.write(discovered, "#!/bin/sh\nprintf '%s\\n' '{\"changed\": false, \"ran_by\": \"discovered\"}'\n")
+    File.write(discovered, "#!/bin/sh\ncat >/dev/null\nprintf '%s\\n' '{\"changed\": false, \"ran_by\": \"discovered\"}'\n")
     File.chmod(discovered, 0o755)
 
     # `ansible_python_interpreter: auto` (and auto_silent/auto_legacy)
@@ -220,6 +223,39 @@ describe Krikri::PythonModuleRunner do
     }, vars: {"ansible_python_interpreter" => "auto", "discovered_interpreter_python" => discovered})
 
     result["ran_by"].as_s.must_equal("discovered")
+  end
+
+  # A double that closes its own stdin and answers anyway - a module may
+  # ignore the args blob entirely, and ansible's `_load_params` is only
+  # reached by the modules that ask for it. Writing the blob then fails
+  # with EPIPE once the child is gone, which used to fail the whole task
+  # with "py_module failed: write ...: Broken pipe" instead of judging
+  # the run on its output (issue #1188).
+  it "judges a module run on its output when the child never reads its args (issue #1188)" do
+    dir = PluginSpecHelper.tmp_path("py-module-closed-stdin")
+    Dir.mkdir_p(dir)
+    interpreter = File.join(dir, "closed-stdin-python")
+    File.write(interpreter, <<-'SH')
+      #!/bin/sh
+      exec 0<&-
+      sleep 0.05
+      printf '%s\n' '{"changed": false, "ran_by": "closed-stdin"}'
+      SH
+    File.chmod(interpreter, 0o755)
+
+    # The blob is longer than a pipe buffer, so the parent's write cannot
+    # finish before the child has closed its read end: the EPIPE is
+    # certain here, not a race that only shows up under load.
+    result = PluginSpecHelper.run("py_module", {
+      "module_name"         => "whichpy",
+      "module_source"       => Base64.strict_encode("#!/usr/bin/python\nprint('never runs')\n"),
+      "new_style"           => "true",
+      "module_args"         => {"blob" => "x" * 200_000}.to_json,
+      "_ansible_check_mode" => "false",
+    }, vars: {"ansible_python_interpreter" => interpreter})
+
+    expect(falsey?(result["failed"]?)).must_equal(true)
+    result["ran_by"].as_s.must_equal("closed-stdin")
   end
 
   # ---- argument building ----

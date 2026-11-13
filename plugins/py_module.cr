@@ -286,8 +286,18 @@ module Krikri
         input: stdin_payload ? Process::Redirect::Pipe : Process::Redirect::Close
       )
       if stdin_payload
-        process.input.print(stdin_payload)
-        process.input.close
+        # A child that never reads the blob (a module that ignores its
+        # args, a marker-only interpreter double, or one that answered
+        # and exited first) closes the pipe under this write, which
+        # raises EPIPE. That is not the task's outcome: what the module
+        # printed and exited with is, and those are read below as usual
+        # (issue #1188).
+        begin
+          process.input.print(stdin_payload)
+        rescue IO::Error
+        ensure
+          process.input.close rescue nil
+        end
       end
       status = process.wait
       rc = status.exit_code

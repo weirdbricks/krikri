@@ -24,10 +24,13 @@ require "file_utils"
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 
+# Drains stdin first: a real interpreter reads the new-style args blob
+# from it, and leaving it unread lets the double exit while krikri is
+# still writing, which raced into a spurious EPIPE failure (issue #1188).
 private def write_marker_interpreter(bin : String, name : String, marker : String) : String
   Dir.mkdir_p(bin)
   path = File.join(bin, name)
-  File.write(path, "#!/bin/sh\nprintf '%s\\n' '{\"changed\": false, \"executable\": \"#{marker}\"}'\n")
+  File.write(path, "#!/bin/sh\ncat >/dev/null\nprintf '%s\\n' '{\"changed\": false, \"executable\": \"#{marker}\"}'\n")
   File.chmod(path, 0o755)
   path
 end
