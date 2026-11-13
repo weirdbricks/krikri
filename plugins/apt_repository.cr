@@ -37,10 +37,11 @@ module Krikri
   #   backoff cap in seconds (default 12) when that update fails -
   #   Ansible's own retry semantics, see
   #   PluginHelpers::AptRepositoryCacheRetry
-  # - install_python_apt: a no-op on hosts WITH apt-get (krikri is native,
-  #   python-apt is never needed there); on an apt-less target it selects
-  #   which message the no-apt-get gate fails with, the way ansible-core
-  #   2.19.11's main() ladder does (see that gate's comment in #execute)
+  # - install_python_apt: gates the python3-apt auto-install real's
+  #   module-start ladder performs on hosts without the bindings (default
+  #   true); on an apt-less target it also selects which message the
+  #   ladder fails with, the way ansible-core 2.19.11's main() ladder does
+  #   (see that ladder's comment in #execute)
   # - validate_certs: accepted, documented no-op (see the class doc below
   #   for why)
   # - mode: applied to the resulting file
@@ -84,12 +85,14 @@ module Krikri
   # traffic on an already-added PPA for meaningfully less code, and
   # Ansible's own PPA idempotency check (a source-line match,
   # implemented below) already means the whole key-fetch path is never
-  # even reached on a rerun. `install_python_apt` stays a no-op on any
-  # host WITH apt-get: krikri never imports python-apt, and - exactly
-  # like Ansible's install_python_apt() once get_bin_path('apt-get')
-  # comes up empty - installs nothing either (the param exists in Ansible
-  # purely to gate that auto-install); on an apt-less host it instead
-  # selects the no-apt-get gate's message, see #execute's ladder comment.
+  # even reached on a rerun. `install_python_apt` gates the same
+  # module-start auto-install real performs when the bindings are missing
+  # and apt-get exists (`apt-get update`, then
+  # `apt-get install python3-apt -y -q`) - a real, persistent host
+  # mutation whose effect later tasks can observe, so it cannot be
+  # skipped just because krikri itself never imports python-apt; on an
+  # apt-less host it instead selects the ladder's message, see #execute's
+  # ladder comment.
   # `validate_certs` is an accepted-as-documented
   # no-op: the plugin's one HTTPS fetch (the Launchpad API call above) always
   # verifies certificates via native `HTTP::Client`, which has no
@@ -171,10 +174,18 @@ module Krikri
       #   on a Rocky with nothing newer): Krikri.target_python_executable.
       # All three are bare fail_json results ({"changed": false,
       # "msg": ...}, no cmd/rc). Where apt-get DOES exist real's ladder
-      # instead auto-installs python-apt and respawns - nothing krikri
-      # needs to mirror, since its own implementation runs with no
-      # python-apt at all.
-      unless apt_get_paths.any? { |path| File.exists?(path) }
+      # instead auto-installs python-apt and respawns. That install is a
+      # real, PERSISTENT host mutation, not an internal detail: a host
+      # that starts without the bindings has them from the next task on,
+      # which is observable (e.g. a later `apt:` task in check mode
+      # resolves the cache and fails "No package matching ..." where a
+      # bindings-less host fails with apt.py's own refusal). Krikri is
+      # native and needs no bindings itself, so skipping the install left
+      # its hosts bindings-less for the rest of the run - found via
+      # deveth0.oracle-java (round 29909286), whose apt_repository task
+      # fails identically in both engines' cold run while only real's
+      # host ends that run with python3-apt installed.
+      unless python_apt_present?
         if check_mode
           return PluginResult.new(
             changed: false,
@@ -189,12 +200,17 @@ module Krikri
             msg: "python3-apt is not installed, and install_python_apt is False"
           )
         end
-        python = Krikri.target_python_executable || "/usr/bin/python3"
-        return PluginResult.new(
-          changed: false,
-          failed: true,
-          msg: "python3-apt must be installed and visible from #{python}."
-        )
+        if failure = auto_install_python_apt
+          return failure
+        end
+        unless python_apt_present?
+          python = Krikri.target_python_executable || "/usr/bin/python3"
+          return PluginResult.new(
+            changed: false,
+            failed: true,
+            msg: "python3-apt must be installed and visible from #{python}."
+          )
+        end
       end
       repo = @params["repo"]?
       unless repo
@@ -277,17 +293,53 @@ module Krikri
       @params["_sources_list_d"]? || SOURCES_LIST_D
     end
 
-    # `_apt_get_paths` is the no-apt-get gate's own seam - the
-    # comma-separated paths its File.exists? probe checks - so a spec can
-    # force the gate to fire even on a dev box that actually has apt-get
-    # (the same host-package-state independence the retry specs get from
-    # _sources_list/_sources_list_d).
+    # `_apt_get_paths` (comma-separated) is the python3-apt ladder's own
+    # seam: the paths its File.exists? probe checks (deciding whether the
+    # bindings can be auto-installed at all, and which binary to run for
+    # it), so a spec can drive the ladder even on a dev box that actually
+    # has apt-get (the same host-package-state independence the retry
+    # specs get from _sources_list/_sources_list_d).
     private def apt_get_paths : Array(String)
       if override = @params["_apt_get_paths"]?
         override.split(',').map(&.strip).reject(&.empty?)
       else
         APT_GET_PATHS
       end
+    end
+
+    # Real apt_repository's module-level `import apt` runs under the
+    # interpreter the module itself runs under, and only a failed import
+    # makes it probe /usr/bin/python3 and /usr/bin/python (see
+    # AptLockRetry#apt_python_apt_present?). `_python_apt_absent` forces
+    # the absent answer so a spec on a dev box that really has the
+    # bindings can still drive the ladder below.
+    private def python_apt_present? : Bool
+      return false if true?(@params["_python_apt_absent"]?)
+      apt_python_apt_present?(->remote_exec(String), @vars)
+    end
+
+    # apt_repository's install_python_apt(): real resolves apt-get through
+    # get_bin_path, so an apt-less target skips the install entirely (nil
+    # here), and otherwise runs a single `apt-get update` followed by
+    # `apt-get install python3-apt -y -q`. No retries and no warning,
+    # unlike apt.py's own auto-install, and a failed command becomes
+    # fail_json with only that command's stripped stderr.
+    private def auto_install_python_apt : PluginResult?
+      apt_get = apt_get_paths.find { |path| File.exists?(path) }
+      return nil unless apt_get
+      update = remote_exec("#{Shell.quote_arg(apt_get)} update")
+      return auto_install_python_apt_failure(update) if update[:exit_code] != 0
+      install = remote_exec("#{Shell.quote_arg(apt_get)} install python3-apt -y -q")
+      return auto_install_python_apt_failure(install) if install[:exit_code] != 0
+      nil
+    end
+
+    private def auto_install_python_apt_failure(result : NamedTuple(exit_code: Int32, stdout: String, stderr: String)) : PluginResult
+      PluginResult.new(
+        changed: false,
+        failed: true,
+        msg: "Failed to auto-install python3-apt. Error was: '#{result[:stderr].strip}'"
+      )
     end
 
     private def file_contains_line?(file : String, line : String) : Bool

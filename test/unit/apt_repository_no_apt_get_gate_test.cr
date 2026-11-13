@@ -8,15 +8,18 @@ require "../minitest_helper"
 # installed and visible from <sys.executable>." - while the guard here
 # used to report apt.py's own exec-failure shape (`cmd: update`, msg
 # "Error executing command.", `rc: 2`, keys real's apt_repository never
-# produces in this path). `_apt_get_paths` (comma-separated) forces that
-# gate to fire even on a dev box that really has apt-get - `_`-prefixed
-# params are spec-seam-only (Ansible has no such params and would reject
-# them in a real playbook).
+# produces in this path). `_apt_get_paths` (comma-separated) forces the
+# ladder to fire even on a dev box that really has apt-get, and
+# `_python_apt_absent` forces the probe to answer absent even on a dev
+# box that really has the bindings - `_`-prefixed params are
+# spec-seam-only (Ansible has no such params and would reject them in a
+# real playbook).
 describe "apt_repository python3-apt gate (no apt-get)" do
   it "fails check mode with the can-auto-install message" do
     result = PluginSpecHelper.run("apt_repository", {
       "repo"                => "deb https://packages.totally-fake-example.com/repo stable main",
       "_apt_get_paths"      => "/nonexistent-krikri-spec/apt-get,/nonexistent-krikri-spec/apt-get-local",
+      "_python_apt_absent"  => "true",
       "_ansible_check_mode" => "true",
     })
 
@@ -29,6 +32,7 @@ describe "apt_repository python3-apt gate (no apt-get)" do
     result = PluginSpecHelper.run("apt_repository", {
       "repo"               => "deb https://packages.totally-fake-example.com/repo stable main",
       "_apt_get_paths"     => "/nonexistent-krikri-spec/apt-get",
+      "_python_apt_absent" => "true",
       "install_python_apt" => "false",
     })
 
@@ -38,8 +42,9 @@ describe "apt_repository python3-apt gate (no apt-get)" do
 
   it "points at the discovered target python in the default install_python_apt case" do
     result = PluginSpecHelper.run("apt_repository", {
-      "repo"           => "deb https://packages.totally-fake-example.com/repo stable main",
-      "_apt_get_paths" => "/nonexistent-krikri-spec/apt-get",
+      "repo"               => "deb https://packages.totally-fake-example.com/repo stable main",
+      "_apt_get_paths"     => "/nonexistent-krikri-spec/apt-get",
+      "_python_apt_absent" => "true",
     })
 
     result["failed"].as_bool.must_equal(true)
