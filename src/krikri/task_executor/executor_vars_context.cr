@@ -2837,7 +2837,16 @@ module Krikri
          (structured = VariableSubstitutor::Rerender.whole_span_structured(substitutor.vars, stripped))
         return structured
       end
-      JSON::Any.new(substitutor.substitute(raw, strict: true, output: true))
+      rendered = substitutor.substitute(raw, strict: true, output: true)
+      # Real ansible renders a msg element that produces ZERO output nodes
+      # (block tags or comments only, no literal text, no `{{ }}` spans) to
+      # None, so a list msg dumps `null` there, not "". Same gate as the
+      # other three zero-node sites (GitHub issue #388): an emptiness coming
+      # from spans themselves (`{{ '' }}`) keeps the "" those spans own.
+      # dtoch56.test's own for-loop CPU-flag element is the real case
+      # (issue #1196).
+      return JSON::Any.new(nil) if (raw.includes?("{%") || raw.includes?("{#")) && rendered == ""
+      JSON::Any.new(rendered)
     end
 
     # Whole-single-span template leaves of a JSON-container set_fact
