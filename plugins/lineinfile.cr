@@ -503,25 +503,154 @@ module Krikri
 
       begin
         File.rename(temp_file, dest)
-      rescue ex
-        File.delete(temp_file) if File.exists?(temp_file)
-        if true?(@params["unsafe_writes"]?)
-          begin
-            unless File.exists?(dest)
-              create_staging_temp(dest, staging_temp_mode(dest, 0o644, preserve_dest_mode: false))
-            end
-            bytes, encode_failure = PluginHelpers::TextFileIO.encode(content, file_encoding)
-            return PluginResult.new(changed: false, failed: true, msg: encode_failure) if encode_failure
-            File.write(dest, bytes, perm: 0o600)
-          rescue ex
-            return PluginResult.new(changed: false, failed: true, msg: "Failed to write file (unsafe_writes fallback): #{ex.message}")
-          end
-          return relabel_written_file(dest, secontext)
+      rescue ex : File::Error
+        # Real's atomic_move never reports a softer local failure for a
+        # rename it cannot land - it either works around (a stage next to
+        # dest) or crashes the whole MODULE (issue #1171: EBUSY replacing
+        # /etc/hosts, a container bind mount, made krikri's own "Failed to
+        # move file to destination" wording diverge from real's crash).
+        if failure = atomic_move_workaround(temp_file, dest, content, secontext, ex)
+          File.delete(temp_file) if File.exists?(temp_file)
+          return failure
         end
-        return PluginResult.new(changed: false, failed: true, msg: "Failed to move file to destination: #{ex.message}")
       end
 
       relabel_written_file(dest, secontext)
+    end
+
+    # The errnos real's atomic_move works around (basic.py: EPERM/EXDEV/
+    # EACCES/ETXTBSY/EBUSY); any other first-rename errno crashes
+    # immediately, as real's "Could not replace" does.
+    private ATOMIC_MOVE_WORKAROUND_ERRNOS = [1, 13, 16, 18, 26]
+
+    # AnsibleModule.atomic_move's rename ladder (module_utils/basic.py):
+    # a stage mkstemp'd NEXT to dest (`.ansible_tmp` + an 8-char
+    # Python-tempfile run + dest's own basename - the name matters for
+    # output parity, the crash detail names it), the module tmpfile moved
+    # into it, then the final rename. When even that cannot land (EBUSY
+    # replacing /etc/hosts, a container bind mount - the round's observed
+    # case), real crashes the whole module with "Unable to make ...
+    # failed final rename from ..." rather than reporting a softer local
+    # failure; atomic_move_crash below mirrors that wording. unsafe_writes
+    # keeps real's escape hatches: a direct in-place dest write (for the
+    # stage-creation and move failures, and - real's inner handler is
+    # EBUSY-only here - the final rename). Returns nil on success.
+    private def atomic_move_workaround(temp_file : String, dest : String, content : String, secontext : Array(String?)?, ex : File::Error) : PluginResult?
+      module_tmp_source = module_tmp_source_path
+      errno = ex.os_error.try(&.value)
+      unless errno && ATOMIC_MOVE_WORKAROUND_ERRNOS.includes?(errno)
+        return atomic_move_crash(
+          "Could not replace '#{dest}' with '#{module_tmp_source}'.",
+          python_os_error_text(ex, module_tmp_source, dest))
+      end
+
+      stage_path = File.join(File.dirname(dest), ".ansible_tmp#{ansible_tmp_random(8)}#{File.basename(dest)}")
+      begin
+        File.write(stage_path, "")
+      rescue ex : File::Error
+        if true?(@params["unsafe_writes"]?)
+          return unsafe_write_fallback(dest, content, secontext)
+        end
+        return atomic_move_crash(
+          "The destination directory '#{File.dirname(dest)}' is not writable by the current user.",
+          python_os_error_text(ex, stage_path))
+      end
+
+      begin
+        FileUtils.mv(temp_file, stage_path)
+      rescue ex : File::Error
+        File.delete(stage_path) if File.exists?(stage_path)
+        if true?(@params["unsafe_writes"]?)
+          return unsafe_write_fallback(dest, content, secontext)
+        end
+        return atomic_move_crash(
+          "Failed to replace '#{dest}' with '#{module_tmp_source}'.",
+          python_os_error_text(ex, module_tmp_source, stage_path))
+      end
+
+      begin
+        File.rename(stage_path, dest)
+      rescue ex : File::Error
+        File.delete(stage_path) if File.exists?(stage_path)
+        if true?(@params["unsafe_writes"]?) && ex.os_error.try(&.value) == 16
+          return unsafe_write_fallback(dest, content, secontext)
+        end
+        return atomic_move_crash(
+          "Unable to make '#{module_tmp_source}' into to '#{dest}', failed final rename from '#{stage_path}'.",
+          python_os_error_text(ex, stage_path, dest))
+      end
+      nil
+    end
+
+    # Real's _unsafe_writes escape hatch - a direct, non-atomic in-place
+    # write of dest (preserving dest's inode, so hardlinks see the new
+    # content). nil on success.
+    private def unsafe_write_fallback(dest : String, content : String, secontext : Array(String?)?) : PluginResult?
+      begin
+        unless File.exists?(dest)
+          create_staging_temp(dest, staging_temp_mode(dest, 0o644, preserve_dest_mode: false))
+        end
+        bytes, encode_failure = PluginHelpers::TextFileIO.encode(content, file_encoding)
+        return PluginResult.new(changed: false, failed: true, msg: encode_failure) if encode_failure
+        File.write(dest, bytes, perm: 0o600)
+      rescue ex
+        return PluginResult.new(changed: false, failed: true, msg: "Failed to write file (unsafe_writes fallback): #{ex.message}")
+      end
+      relabel_written_file(dest, secontext)
+    end
+
+    # The crash shape for an atomic_move failure: real's module crash
+    # wrapper collapses the raise's exception chain into one brief joined
+    # with _text_utils.concat_message's ": " join (the outer message's
+    # trailing period stripped), which is what the fatal msg echoes; the
+    # [ERROR] block splits the pair back out under "<<< caused by >>>" via
+    # ResultDisplay.failed_final_rename_split - the same shapes
+    # template.cr/authorized_key.cr ride for their own rename ladders.
+    private def atomic_move_crash(detail : String, cause_text : String?) : PluginResult
+      joined = detail.empty? ? cause_text.to_s : "#{detail.rstrip(". ")}: #{cause_text}"
+      PluginResult.new(changed: false, failed: true,
+        msg: "Task failed: Module failed: #{joined}",
+        _ansible_error_detail: joined)
+    end
+
+    # The module tmpfile path real's crash details echo: the module staged
+    # its new content as a mkstemp `tmp` + 8-random file inside the action
+    # plugin's per-run tmp dir, then handed it to atomic_move. Only the
+    # run-unique parts are masked in comparisons (krikri-role-tester's
+    # ANSIBLE_REMOTE_TMP), so the head must match real's shape - same
+    # convention template.cr echoes for its own crash.
+    private def module_tmp_source_path : String
+      File.join(ansible_tmp_run_dir, "tmp#{ansible_tmp_random(8)}")
+    end
+
+    # The per-run tmp directory real's action plugin creates on the target
+    # before the module runs: ~/.ansible/tmp/ansible-tmp-<epoch float>-<pid>-
+    # <random>, under the remote user's home (Ansible's remote_tmp default).
+    private def ansible_tmp_run_dir : String
+      random = Random.rand(100_000_000_000_000..999_999_999_999_999)
+      expand_tilde("~/.ansible/tmp/ansible-tmp-#{sprintf("%.7f", Time.local.to_unix_f)}-#{Process.pid}-#{random}")
+    end
+
+    # Python's tempfile candidate alphabet (lowercase/digits/underscore) -
+    # what both the module tmpfile's and the stage's random runs draw from.
+    private ATOMIC_TMP_RANDOM_CHARS = "abcdefghijklmnopqrstuvwxyz0123456789_"
+
+    private def ansible_tmp_random(count : Int) : String
+      String.build(count) do |io|
+        count.times { io << ATOMIC_TMP_RANDOM_CHARS[Random::Secure.rand(ATOMIC_TMP_RANDOM_CHARS.size)] }
+      end
+    end
+
+    # The [Errno N] text the way Python's str(OSError) renders it, from the
+    # failing rename's own errno - never spelled out: the wording the kernel
+    # hands back (EBUSY's "Device or resource busy" onto a bind mount, ...)
+    # is what real echoed, and os.rename's failure carries both byte paths
+    # in its repr (b'<from>' -> b'<to>').
+    private def python_os_error_text(ex : File::Error, from_path : String, to_path : String? = nil) : String
+      errno = ex.os_error
+      base = errno.is_a?(Errno) ? "[Errno #{errno.value}] #{errno.message}" : ex.message.to_s
+      return "#{base}: b'#{from_path}' -> b'#{to_path}'" if to_path
+      "#{base}: b'#{from_path}'"
     end
 
     # Runs the validate: command (with %s substituted by the staged
