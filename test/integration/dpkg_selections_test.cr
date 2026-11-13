@@ -6,6 +6,12 @@ require "../minitest_helper"
 #    got: bogus" (choices in the argument_spec's declaration order)
 #   "missing required arguments: selection" (plural, even for one param)
 describe "dpkg_selections plugin" do
+  # The missing-package probe and the set-selection step shell out to the
+  # host's real dpkg, so a concurrently running spec's PATH shim would make
+  # both answer for the wrong binary. The shim specs serialize among
+  # themselves, so this one has to opt in too.
+  serial!
+
   it "fails with real-Ansible wording for an invalid selection" do
     result = PluginSpecHelper.run("dpkg_selections", {"name" => "bash", "selection" => "bogus"})
 

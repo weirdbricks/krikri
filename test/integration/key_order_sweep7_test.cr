@@ -101,6 +101,11 @@ describe "make plugin result key order (sweep7)" do
 end
 
 describe "package plugin result key order (sweep7)" do
+  # These pin the shape of a real apt run, so a concurrently running spec's
+  # PATH shim (the apt/dpkg specs serialize among themselves) would make the
+  # playbook report for shimmed binaries instead of the host's.
+  serial!
+
   # Ansible 2.19.11's package: action plugin delegates to apt on this host,
   # so the registered shape IS apt's. Live-verified (unprivileged:
   # unchanged paths + check mode, whose --simulate runs need no root):

@@ -797,6 +797,87 @@ describe "INJECT_FACTS_AS_VARS deprecation from a when: clause" do
     stderr.must_include("          ^ column 9")
     stderr.wont_include("setup-RedHat.yml:")
   end
+
+  # afpacket.devops_tools (issue #1130): a block:'s own when: reads the fact
+  # and each child carries its own when:. Real evaluates the block clause
+  # per child as the FIRST conditional of the child's parent chain, so the
+  # deprecation prints ONCE, Origin'd at the block's own when: value token
+  # - never at the children's when: tokens (live-verified vs 2.21.6).
+  # krikri used to hand running children only the merged condition STRING,
+  # pinning the read at each child's own when: position.
+  it "keeps a running block when:'s fact read at the block's own when: token" do
+    stderr = run_playbook(<<-PLAYBOOK)
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        vars:
+          serverless: True
+          helm: True
+        tasks:
+          - block:
+              - name: one
+                debug:
+                  msg: hello
+                when: serverless|bool
+
+              - name: two
+                debug:
+                  msg: world
+                when: helm
+
+              - name: three
+                debug:
+                  msg: three
+            when: ansible_os_family == "Debian"
+      PLAYBOOK
+
+    stderr.scan(/DEPRECATION WARNING\]: INJECT_FACTS_AS_VARS/).size.must_equal(1)
+    stderr.must_include("Origin: ")
+    stderr.must_include(":22:13\n")
+    stderr.must_include("22       when: ansible_os_family == \"Debian\"\n")
+    stderr.must_include("               ^ column 13")
+    stderr.includes?(":12:17").must_equal(false)
+    stderr.includes?(":17:17").must_equal(false)
+    stderr.includes?("when: serverless|bool").must_equal(false)
+  end
+
+  # The same shape with a failing child: the block clause's read is still
+  # the one real records (the child's own clause reads no fact), so the
+  # block prints once here too, Origin'd at the block's own when: token.
+  it "keeps the block's Origin when a block child's own when: fails" do
+    dir = PluginSpecHelper.tmp_path("inject-facts-block-child-skip-#{Random::Secure.hex(4)}")
+    FileUtils.mkdir_p(dir)
+    playbook = File.join(dir, "play.yml")
+    File.write(playbook, <<-PLAYBOOK)
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        vars:
+          serverless: True
+          helm: False
+        tasks:
+          - block:
+              - name: runs
+                debug:
+                  msg: hello
+                when: serverless|bool
+
+              - name: skipped
+                debug:
+                  msg: world
+                when: helm
+            when: ansible_os_family == "Debian"
+      PLAYBOOK
+
+    stdout = IO::Memory.new
+    stderr = IO::Memory.new
+    Process.run(BINARY, ["-i", "localhost,", playbook], output: stdout, error: stderr, chdir: dir)
+
+    stdout.to_s.must_include("skipping: [localhost]")
+    stderr.to_s.scan(/DEPRECATION WARNING\]: INJECT_FACTS_AS_VARS/).size.must_equal(1)
+    stderr.to_s.must_include(":18:13\n")
+    stderr.to_s.must_include("18       when: ansible_os_family == \"Debian\"\n")
+  end
 end
 
 # The template action hands the engine its whole variable scope up front, so
