@@ -239,6 +239,69 @@ describe "Krikri::VarSubstitutor (variable_substitutor_blocktag_undefined_test.c
         sub.substitute("{% set y = genuinely_undefined_var %}{{ y }}", strict: true)
       end
     end
+
+    it "does not raise for an undefined ref inside a for-loop over an empty list (issue #1205)" do
+      # dtoch56.test's own defaults set cpu_flags_to_check: [], and its
+      # debug task renders `{% for flag in cpu_flags_to_check %}...{% if
+      # flag in cpu_flags.stdout %}` while cpu_flags is registered nowhere
+      # (the registering task is skipped). Jinja never runs that body, so
+      # ansible-playbook renders the element as null; this scan used to
+      # raise "'cpu_flags' is undefined" and fail the whole task.
+      v = {
+        "cpu_flags_to_check" => JSON.parse("[]"),
+      } of String => JSON::Any
+      sub = Krikri::VarSubstitutor.new(vars: v)
+      sub.substitute(
+        "{% for flag in cpu_flags_to_check %}CPU flag {{ flag }}: {% if flag in cpu_flags.stdout %}yes{% else %}no{% endif %}{% endfor %}",
+        strict: true
+      ).must_equal("")
+    end
+
+    it "does not raise for an empty list literal as a for-loop iterable" do
+      v = {} of String => JSON::Any
+      sub = Krikri::VarSubstitutor.new(vars: v)
+      sub.substitute("{% for flag in [] %}{% if flag in nosuch.stdout %}y{% endif %}{% endfor %}", strict: true)
+        .must_equal("")
+    end
+
+    it "still raises for that same ref when the for-loop's list is not empty" do
+      # The carve-out above must not swallow the real case: a loop that
+      # does run evaluates its body, so ansible-playbook fails exactly
+      # like this scan does.
+      v = {
+        "cpu_flags_to_check" => JSON.parse(%(["sse3"])),
+      } of String => JSON::Any
+      sub = Krikri::VarSubstitutor.new(vars: v)
+      assert_raises_message(Krikri::UndefinedVariableError, /'cpu_flags' is undefined/) do
+        sub.substitute(
+          "{% for flag in cpu_flags_to_check %}{% if flag in cpu_flags.stdout %}yes{% endif %}{% endfor %}",
+          strict: true
+        )
+      end
+    end
+
+    it "still scans an empty for-loop's {% else %} branch, which is the branch that runs" do
+      # Live-verified vs ansible-core 2.21.6: `{% for x in [] %}...{% else
+      # %}{% if nosuch %}...{% endif %}{% endfor %}` fails the task with
+      # "'nosuch' is undefined" - the else body is exactly what renders.
+      v = {} of String => JSON::Any
+      sub = Krikri::VarSubstitutor.new(vars: v)
+      assert_raises_message(Krikri::UndefinedVariableError, /'nosuch' is undefined/) do
+        sub.substitute("{% for x in [] %}y{% else %}{% if nosuch %}n{% endif %}{% endfor %}", strict: true)
+      end
+    end
+
+    it "does not scan a non-empty for-loop's {% else %} branch" do
+      # Mirror case, live-verified vs ansible-core 2.21.6: with a non-empty
+      # iterable the else body never renders, so its undefined ref is fine
+      # and the loop renders its body instead.
+      v = {
+        "nonempty" => JSON.parse(%([1])),
+      } of String => JSON::Any
+      sub = Krikri::VarSubstitutor.new(vars: v)
+      sub.substitute("{% for x in nonempty %}y{% else %}{% if nosuch %}n{% endif %}{% endfor %}", strict: true)
+        .must_equal("y")
+    end
   end
 
   describe "strict block-tag missing dict key consumed by a slice (issue #113)" do
