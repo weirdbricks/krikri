@@ -988,4 +988,80 @@ describe "INJECT_FACTS_AS_VARS deprecation" do
     stderr.must_include("7         name: \"{{ ansible_user_id }}\"\n")
     stderr.must_include("                ^ column 15")
   end
+
+  it "attributes a command-family free-form read to the directive's value token" do
+    # Issue #1201, softasap.sa-mailhog: a `shell: |` whose script embeds
+    # `{{ ansible_service_mgr }}`, followed by a `when:` clause reading a
+    # second fact. Real stores the whole free string as `_raw_params`,
+    # tagged at the value's first token - the literal block's `|` - and
+    # prints one block for it and one for the clause; krikri printed only
+    # the clause's because the free-form `cmd` param had no `<key>=`
+    # token to anchor its read at.
+    stdout, stderr = run(<<-PLAYBOOK)
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        tasks:
+          - name: detect init system
+            shell: |
+              echo {{ ansible_service_mgr }}
+            changed_when: false
+          - name: install tools
+            debug:
+              msg: hi
+            when: ansible_os_family == 'Debian'
+      PLAYBOOK
+
+    stdout.must_include("TASK [detect init system]")
+    stderr.scan(/DEPRECATION WARNING\]: #{Regex.escape(FACT_DEPRECATION_TEXT)}/).size.must_equal(2)
+    stderr.must_include(":6:14\n")
+    stderr.must_include("4   tasks:\n")
+    stderr.must_include("5     - name: detect init system\n")
+    stderr.must_include("6       shell: |\n")
+    stderr.must_include("               ^ column 14")
+    stderr.must_include(":12:13\n")
+  end
+
+  it "attributes a free-form key=value param read to its key token, not a task name spelling it" do
+    # A task's own `- name:` opens its mapping rather than calling a
+    # module, so a name whose text happens to spell `msg=` must not be
+    # taken for the free-form directive: real anchors the read at the
+    # `msg=` token on the module's own line (live-verified against
+    # 2.21.6).
+    stdout, stderr = run(<<-PLAYBOOK)
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        tasks:
+          - name: announce msg=opening
+            debug: msg="{{ ansible_os_family }}"
+      PLAYBOOK
+
+    stdout.must_include("TASK [announce msg=opening]")
+    stderr.scan(/DEPRECATION WARNING\]: #{Regex.escape(FACT_DEPRECATION_TEXT)}/).size.must_equal(1)
+    stderr.must_include(":6:14\n")
+    stderr.must_include("6       debug: msg=\"{{ ansible_os_family }}\"\n")
+    stderr.must_include("               ^ column 14")
+  end
+
+  it "attributes a free-form action:'s command read to the inline module token" do
+    # `_normalize_old_style_args` turns the rest of an `action: <module>
+    # <args>` value into `_raw_params`, so the read is tagged where that
+    # value opens - the module token (live-verified against 2.21.6).
+    stdout, stderr = run(<<-PLAYBOOK)
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        tasks:
+          - name: inlined shell
+            action: shell echo {{ ansible_service_mgr }}
+            changed_when: false
+      PLAYBOOK
+
+    stdout.must_include("TASK [inlined shell]")
+    stderr.scan(/DEPRECATION WARNING\]: #{Regex.escape(FACT_DEPRECATION_TEXT)}/).size.must_equal(1)
+    stderr.must_include(":6:15\n")
+    stderr.must_include("6       action: shell echo {{ ansible_service_mgr }}\n")
+    stderr.must_include("                ^ column 15")
+  end
 end

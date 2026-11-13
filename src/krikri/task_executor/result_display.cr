@@ -2062,13 +2062,30 @@ module Krikri
       ErrorBlock.origin_context(path, idx + 1, col + 1)
     end
 
-    # A module called in its free-form key=value form (`fail: msg="..."`,
+    # The command-family modules whose free-form task arg is one raw
+    # command line instead of `key=value` params. PlaybookParser's own
+    # RAW_COMMAND_MODULES is the parser's authority, but plugin, fuzz and
+    # single-file spec compiles pull this file WITHOUT the parser, so the
+    # short names are repeated here rather than required.
+    RAW_COMMAND_FREE_FORM_MODULES = {"command", "shell", "script", "raw"}
+
+    # A module called in its free-form form (`fail: msg="..."`,
     # `debug: msg="..."`) writes the param inside the action directive's
     # own scalar, where the `<key>:` line scan finds nothing. Real anchors
-    # the read at that `<key>=` token, on the directive's own line
-    # (fabiohbarbosa.synapse's failing `fail: msg="... {{ ansible_
+    # a plain value read at that `<key>=` token, on the directive's own
+    # line (fabiohbarbosa.synapse's failing `fail: msg="... {{ ansible_
     # distribution }} ..."` reported 9:9 - across the colon, at the
     # `msg=`; issue #1089, live-verified against 2.21.6).
+    # A command-family directive is the exception: its whole value is
+    # Ansible's single `_raw_params` argument, so every read inside it -
+    # the `cmd=` spelling included - is tagged at the value's first token
+    # (issue #1201: softasap.sa-mailhog's `shell: |` block reading
+    # `ansible_service_mgr` reported 3:12, the `|`, with no `<key>=`
+    # anywhere on that line). An `action:`/`local_action:` directive
+    # naming one of those modules inline anchors at the module token
+    # instead, the value `_normalize_old_style_args` turns into
+    # `_raw_params` (live-verified against 2.21.6: `action: shell echo {{ x }}`
+    # reports the `shell` token).
     private def self.free_form_param_origin(path : String, lines : Array(String), source_line : Int32, key : String) : String?
       needle = "#{key}="
       task_indent = source_line > 0 && source_line <= lines.size ? lines[source_line - 1].size - lines[source_line - 1].lstrip.size : 0
@@ -2080,14 +2097,33 @@ module Krikri
           indent = line.size - line.lstrip.size
           break if indent <= task_indent && line.lstrip.starts_with?("- ")
         end
-        at = line.index(needle)
-        next unless at
         colon = line.index(':')
-        next unless colon && colon < at
+        next unless colon
         directive = line[0...colon].strip
         # Only a module/action directive, never an arbitrary value that
-        # happens to contain "<key>=" somewhere in the scalar.
+        # happens to contain "<key>=" somewhere in the scalar. A task's
+        # own `- name:` opens its mapping rather than calling a module, so
+        # a name whose text spells "<key>=" (issue #1201's
+        # `- name: G free-form cmd=`) must not be mistaken for the call.
         next unless directive.matches?(/\A(?:-\s+)?(?:[A-Za-z0-9_]+\.)*[A-Za-z0-9_]+\z/)
+        short = directive.sub(/\A-\s+/, "").split('.').last?
+        next if short == "name"
+        rest = line[(colon + 1)..]
+        # The value token's own 1-based column: just past the colon and
+        # the whitespace that follows it.
+        value_col = colon + 1 + (rest.size - rest.lstrip.size) + 1
+        if key == "cmd" && short && RAW_COMMAND_FREE_FORM_MODULES.includes?(short)
+          return nil if rest.strip.empty?
+          return ErrorBlock.origin_context(path, idx + 1, value_col)
+        end
+        if key == "cmd" && (short == "action" || short == "local_action") && !rest.strip.empty?
+          token = rest.lstrip.split(/\s+/, 2).first?
+          if token && RAW_COMMAND_FREE_FORM_MODULES.includes?(token.split('.').last)
+            return ErrorBlock.origin_context(path, idx + 1, value_col)
+          end
+        end
+        at = line.index(needle)
+        next unless at && colon < at
         return ErrorBlock.origin_context(path, idx + 1, at + 1)
       end
       nil
