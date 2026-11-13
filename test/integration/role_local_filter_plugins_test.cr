@@ -1111,3 +1111,65 @@ describe "role-local filters carrying integers wider than Int64" do
     FileUtils.rm_rf(root) if root
   end
 end
+
+# The filter load's own import deprecations (issue #1180's test-side
+# twin): ansible-core 2.21's `ansible.module_utils._text` shim deprecates
+# every name a plugin file imports from it AT IMPORT - including the
+# names an unloadable file imported before its failing statement - and
+# real's task-result display prints those [DEPRECATION WARNING] lines
+# (behind the one-time "can be disabled" hint) right after the load's
+# "Skipping plugin" warning block.
+describe "role-local filter_plugins import deprecation display (issue #1180)" do
+  it "prints the load's warnings first and the fired shim deprecations second" do
+    root = File.tempname("filter-plugins-import-deprecations")
+    begin
+      Dir.mkdir_p(File.join(root, "roles", "myrole", "filter_plugins"))
+      Dir.mkdir_p(File.join(root, "roles", "myrole", "tasks"))
+      File.write(File.join(root, "roles", "myrole", "filter_plugins", "util.py"), <<-PYTHON)
+        from ansible.module_utils._text import to_bytes
+        from ansible.module_utils._text import to_text
+        from collections import Sequence
+
+
+        class FilterModule(object):
+            def filters(self):
+                return {"to_toml": lambda value: value}
+        PYTHON
+      File.write(File.join(root, "roles", "myrole", "filter_plugins", "good.py"), <<-PYTHON)
+        class FilterModule(object):
+            def filters(self):
+                return {"double": lambda x: x * 2}
+        PYTHON
+      File.write(File.join(root, "roles", "myrole", "tasks", "main.yml"), <<-YAML)
+        - name: use a custom filter
+          ansible.builtin.debug:
+            msg: "{{ 10 | double }}"
+        YAML
+
+      status, output = run_playbook(root, <<-YAML)
+        - hosts: localhost
+          connection: local
+          gather_facts: false
+          roles:
+            - myrole
+        YAML
+
+      status.success?.must_equal(true, output)
+      hint = "[WARNING]: Deprecation warnings can be disabled by setting `deprecation_warnings=False` in ansible.cfg."
+      to_bytes_text = "Importing 'to_bytes' from 'ansible.module_utils._text' is deprecated. " \
+                      "This feature will be removed from ansible-core version 2.24. " \
+                      "Use ansible.module_utils.common.text.converters instead."
+      to_text_text = "Importing 'to_text' from 'ansible.module_utils._text' is deprecated. " \
+                     "This feature will be removed from ansible-core version 2.24. " \
+                     "Use ansible.module_utils.common.text.converters instead."
+      skip_idx = output.index("[WARNING]: Skipping plugin (#{File.join(root, "roles", "myrole", "filter_plugins", "util.py")}), cannot load: cannot import name 'Sequence' from 'collections'")
+      hint_idx = output.index(hint)
+      bytes_idx = output.index(to_bytes_text)
+      text_idx = output.index(to_text_text)
+      flunk("expected Skipping plugin -> hint -> to_bytes -> to_text within:\n#{output}") unless skip_idx && hint_idx && bytes_idx && text_idx &&
+                                                                                                 skip_idx < hint_idx && hint_idx < bytes_idx && bytes_idx < text_idx
+    ensure
+      FileUtils.rm_rf(root) if root
+    end
+  end
+end

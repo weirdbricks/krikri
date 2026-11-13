@@ -570,10 +570,14 @@ module Krikri
     # Every direct `.py` child under a plugin directory. Ansible loads
     # ALL files in a plugin directory, not name-matched ones, so there
     # is no per-filter filename check here the way a module's
-    # `library/<name>.py` lookup has.
+    # `library/<name>.py` lookup has. Sorted like Ansible's PluginLoader
+    # enumerates a plugin directory (live-verified vs 2.21.6 with two
+    # unloadable files created in reverse order): the scan order is the
+    # order the load's [WARNING]/[DEPRECATION WARNING] lines print in,
+    # and last-import-wins name precedence follows it.
     private def py_sources_in(root : String) : Array(String)
       sources = [] of String
-      Dir.each_child(root) do |entry|
+      Dir.children(root).sort!.each do |entry|
         next unless entry.ends_with?(".py")
         path = File.join(root, entry)
         sources << path if File.file?(path)
@@ -725,6 +729,7 @@ module Krikri
     # the "Skipping plugin" warning once-per-process like Ansible's.
     def filter_names(sources : Array(String)) : Set(String)
       names = Set(String).new
+      deprecations = [] of String
       sources.each do |path|
         mtime = (File.info(path).modification_time.to_unix_ms rescue nil)
         next unless mtime
@@ -758,15 +763,17 @@ module Krikri
               emit_skip_warning(path, error)
             end
           end
-          # Ansible shows a file's import-time deprecations after its
-          # "Skipping plugin" line (both captured in the task's
-          # DeferredWarningContext and flushed together at its exit), so the
-          # replayed text follows the skip warning here too.
-          emit_display_deprecations(result)
+          # Real prints every [WARNING] of the load pass first and the
+          # deprecations second: the deprecations are buffered and emitted
+          # after the whole scan, in the sorted file order they fired in
+          # (live-verified vs 2.21.6 with two unloadable files beside one
+          # good file - issue #1180).
+          deprecations.concat(display_deprecation_lines(result))
           @@names_cache[path] = {mtime, set}
         end
         set.each { |set_name| names << set_name }
       end
+      deprecations.each { |line| ResultDisplay.emit_core_deprecation(line) }
       names
     end
 
@@ -833,11 +840,22 @@ module Krikri
     # module_utils.common.warnings._global_deprecations exactly where real
     # ansible's output has them.
     private def emit_display_deprecations(result : JSON::Any) : Nil
-      text = result["display"]?.try(&.as_s?) || return
+      display_deprecation_lines(result).each do |line|
+        ResultDisplay.emit_core_deprecation(line)
+      end
+    end
+
+    # The [DEPRECATION WARNING] texts in the wrapper's replayed display
+    # text, without the prefix - the list pass batches them so they print
+    # after the pass's [WARNING] lines, as real's display orders them.
+    private def display_deprecation_lines(result : JSON::Any) : Array(String)
+      text = result["display"]?.try(&.as_s?) || return [] of String
+      lines = [] of String
       text.each_line do |line|
         next unless line.starts_with?("[DEPRECATION WARNING]: ")
-        ResultDisplay.emit_core_deprecation(line.lchop("[DEPRECATION WARNING]: "))
+        lines << line.lchop("[DEPRECATION WARNING]: ")
       end
+      lines
     end
 
     # Runs the wrapper script below against one request. Returns the
