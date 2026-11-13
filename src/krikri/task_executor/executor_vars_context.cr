@@ -2001,6 +2001,14 @@ module Krikri
       # the vars hash itself.
       if current && parts[0] == "play_hosts"
         ResultDisplay.emit_play_hosts_deprecation(VarSubstitutor.play_hosts_read_origin)
+      elsif current && VarSubstitutor.top_level_fact_name?(parts[0], vars_context)
+        # Resolving this loop-source template IS ansible's template read of
+        # the name, so a top-level fact named here warns at the loop source's
+        # own token (the list element for `loop: ["{{ ansible_user_id }}"]`,
+        # the keyword's value for `loop: "{{ ansible_interfaces }}"`) - the
+        # read used to go straight to the variable context, printing nothing
+        # (issue #1221).
+        VarSubstitutor.emit_fact_deprecation(VarSubstitutor.fact_read_origin(parts[0]))
       end
       parts[1..].each do |part|
         break unless current

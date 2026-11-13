@@ -345,6 +345,10 @@ module Krikri
       # real was templating at that moment
       # (VarSubstitutor#fact_read_origin).
       private def emit_fact_deprecation(name : String) : Nil
+        # A loop item that IS a deprecated fact's own value trips the
+        # deprecation again on every read, at this operation's site (see
+        # VarSubstitutor#emit_loop_item_fact_deprecation).
+        VarSubstitutor.emit_loop_item_fact_deprecation(name)
         return unless VarSubstitutor.top_level_fact_name?(name, @vars)
         VarSubstitutor.emit_fact_deprecation(VarSubstitutor.fact_read_origin(name))
       end
@@ -390,6 +394,8 @@ module Krikri
       private def rerender_if_templated(value : JSON::Any) : JSON::Any
         return value unless (raw = value.raw).is_a?(String) && templated_value?(raw)
         return value if UnsafeValues.unsafe_text?(raw)
+
+        VarSubstitutor.note_bare_fact_template(raw, @vars)
 
         # Inside a hostvars entry (see @origin) the value belongs to the
         # OTHER host and re-renders in its scope, not the reading host's.

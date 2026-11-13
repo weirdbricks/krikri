@@ -445,6 +445,24 @@ module Krikri
       emit_or_defer_deprecation(@@top_level_fact_deprecation_origins, origin, lines)
     end
 
+    # The same block when the reading template carries no Origin at all -
+    # ansible-core's DeprecatedAccessAuditContext then says so in the
+    # headline and prints the template itself as the excerpt (issue #1221:
+    # the loop-item label templating resolves the loop variable's NAME as a
+    # bare template, which a default `item` spelling leaves untagged).
+    def self.emit_unplaced_top_level_fact_deprecation(name : String) : Nil
+      origin = "Origin: <unknown>\n\n#{name}\n"
+      lines = [
+        "[DEPRECATION WARNING]: While processing '#{name}': #{TOP_LEVEL_FACT_DEPRECATION_TEXT}".colorize(:light_magenta).to_s,
+        origin.colorize(:light_magenta).to_s,
+        "",
+        "Use `ansible_facts[\"fact_name\"]` (no `ansible_` prefix) instead.".colorize(:light_magenta).to_s,
+        "",
+      ]
+      return if hold_task_deprecation(@@top_level_fact_deprecation_origins, origin, lines)
+      emit_or_defer_deprecation(@@top_level_fact_deprecation_origins, origin, lines)
+    end
+
     # The internal `vars` dictionary deprecation (ansible-core 2.21,
     # vars/manager.py's _DEPRECATE_VARS tag on the `vars` magic dict and
     # every value inside it): any template READ of the dict or one of its

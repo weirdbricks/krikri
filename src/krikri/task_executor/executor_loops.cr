@@ -184,6 +184,10 @@ module Krikri
       end
 
       value = resolve_template_value(template, vars_context)
+      # A one-element-array source around a bare fact reference resolves to
+      # that fact's own (deprecated) value, which the single iteration then
+      # re-reads later - ansible tags the value, not the name (issue #1221).
+      VarSubstitutor.mark_loop_source_fact_tether(template, vars_context) if value && task.loop_template_array_wrapped?
 
       # A complex template - `with_items: "{{ some_list | default([]) |
       # map(attribute='path') | difference(another | list) }}"` (used by
@@ -1129,6 +1133,10 @@ module Krikri
     end
 
     private def resolve_loop_items_or_raise(task : Task, host : Host, vars_context : Hash(String, JSON::Any), & : -> Array(JSON::Any)?) : Array(JSON::Any)?
+      # A source that resolves but is never executed (a when:-false block's
+      # skip printer) must not leave its one-element-array fact tether for
+      # the next task's loop to pick up.
+      VarSubstitutor.clear_loop_source_fact_tether
       # While the loop's own value renders (scalar template, lookup terms,
       # per-candidate first_found strings), register WHERE that value sits
       # in the playbook file under its YAML keyword so the embedded-template
@@ -1735,6 +1743,8 @@ module Krikri
       loop_items : Array(JSON::Any),
       vars_context : Hash(String, JSON::Any),
       host_name : String,
+      pending_fact_reads : Array(Bool),
+      source_tether : Bool = false,
     ) : Array(JSON::Any)?
       begin
         unsafe_items = loop_items_derive_from_unsafe_data?(task, host_name)
@@ -1743,8 +1753,23 @@ module Krikri
         # render, so it is skipped and the values are marked instead (see
         # loop_items_derive_from_unsafe_data?). Author-template items always
         # get their first render.
+        #
+        # Each item's render is probed for whether its value ENDED UP being
+        # a deprecated fact's own value, since ansible tags the value and
+        # every later read of such an item warns again (see
+        # VarSubstitutor#emit_loop_item_fact_deprecation). Its own first
+        # render is the block at the item's declaration.
         rendered_items = VarSubstitutor.with_preparing_loop_source_container(task.loop_template, vars_context, host_name) do
-          unsafe_items ? loop_items : loop_items.map { |item| deep_render_item(item, vars_context, host_name) }
+          if unsafe_items
+            loop_items.each { pending_fact_reads << source_tether }
+            loop_items
+          else
+            loop_items.map do |item|
+              rendered, read_fact = VarSubstitutor.with_fact_read_probe { deep_render_item(item, vars_context, host_name) }
+              pending_fact_reads << (read_fact || source_tether)
+              rendered
+            end
+          end
         end
         mark_unsafe_loop_items(rendered_items) if unsafe_items
         rendered_items
@@ -1841,8 +1866,10 @@ module Krikri
       # render sees the alias-free snapshot (Ansible's own scoping,
       # see #synthesize_legacy_ssh_aliases), while the per-iteration
       # task-arg context below keeps the full one.
+      pending_fact_reads = [] of Bool
+      source_tether = VarSubstitutor.take_loop_source_fact_tether
       rendered_items = with_loop_source_site(task) do
-        render_loop_items_strict_or_raise(task, loop_items, loop_source_vars_context(task, host, base_vars_context), host.name)
+        render_loop_items_strict_or_raise(task, loop_items, loop_source_vars_context(task, host, base_vars_context), host.name, pending_fact_reads, source_tether)
       end
       if rendered_items.nil?
         # Strict item templating failed but the task's own when: evaluates
@@ -1855,7 +1882,19 @@ module Krikri
         register_skip_result(task, host)
         return
       end
-      rendered_items = flatten_with_items_one_level(rendered_items) if task.loop_items_needs_flatten?
+      if task.loop_items_needs_flatten?
+        aligned = [] of Bool
+        rendered_items.each_with_index do |item, idx|
+          flag = pending_fact_reads[idx]? || false
+          if inner = item.as_a?
+            inner.size.times { aligned << flag }
+          else
+            aligned << flag
+          end
+        end
+        rendered_items = flatten_with_items_one_level(rendered_items)
+        pending_fact_reads = aligned
+      end
 
       # Per-item fact target, for delegate_to:/delegate_facts: - only ever
       # diverges from `host` in the non-batched branch below (batching is
@@ -1884,208 +1923,218 @@ module Krikri
       # one-at-a-time path collects its results before finishing too.
       # finish_looped_task detects the failing items off the result msg.
       skipped_items = Hash(Int32, SkippedLoopItem).new
-      item_results = if loop_batch_eligible?(task, host, exec_host, base_vars_context)
-                       execute_looped_task_batched(task, host, base_vars_context, rendered_items, skipped_items)
+      # Both paths render each iteration's when:/args/loop_control.label in
+      # this fiber, in iteration order, so the per-item fact state below can
+      # ride one frame whose flag is set per item (see
+      # VarSubstitutor#emit_loop_item_fact_deprecation).
+      VarSubstitutor.push_loop_item_fact_state(task.loop_var || "item")
+      item_results = begin
+        if loop_batch_eligible?(task, host, exec_host, base_vars_context)
+          execute_looped_task_batched(task, host, base_vars_context, rendered_items, skipped_items, pending_fact_reads)
+        else
+          # A running (not re-dup'd-from-base) vars_context
+          # carries each iteration's ansible_facts forward
+          # into the next - Ansible does the same for
+          # set_fact:, and dev-sec os_hardening's own account-
+          # list building depends on it: `set_fact:
+          # system_users: "{{ system_users | default([]) +
+          # [item] }}"` inside a loop needs iteration N to see
+          # iteration N-1's accumulated list, not the loop's
+          # starting value every time.
+          running_vars_context = base_vars_context.dup
+          loop_var = task.loop_var
+          index_var = task.index_var
+          rendered_items.map_with_index do |item, idx|
+            vars_context = running_vars_context.dup
+            VarSubstitutor.loop_item_fact_pending = (pending_fact_reads[idx]? || false)
+            # loop_control.loop_var REPLACES "item" -
+            # ansible-core binds the item ONLY under the custom
+            # name (`item | default('x')` reads unset alongside
+            # a loop_var; live-verified against 2.19.11), and
+            # its registered per-item results carry the custom
+            # key, never "item". Binding both made krikri see an
+            # "item" Ansible fails as undefined.
+            vars_context["item"] = item unless loop_var
+            vars_context[loop_var] = item if loop_var
+            vars_context[index_var] = JSON::Any.new(idx.to_i64) if index_var
+            vars_context["ansible_loop"] = ansible_loop_vars(loop_items, idx.to_i) if task.loop_extended?
+
+            # A task-level vars: that references `item`
+            # (linux-system-roles/kernel_settings' own
+            # `vars: {new_item: "{{ {item.name: new_value}
+            # }}"}` on a looped set_fact:) was only ever
+            # rendered *once*, by build_vars_context, before
+            # this loop even started - when `item` was still
+            # unbound. Every iteration then reused that same
+            # first (wrong) rendered value instead of
+            # recomputing it against its own item. Restoring
+            # task.vars' original unrendered text before each
+            # iteration's render_task_vars call fixes this;
+            # cheap enough even for a task whose vars: don't
+            # reference item at all (identical result either
+            # way), so no need to detect which case this is.
+            #
+            # `task.vars` also carries an inherited "item"/
+            # loop_var binding when this task lives inside an
+            # include_tasks: file whose OWN include statement
+            # was itself looped (execute_include_tasks
+            # propagates the outer iteration's item into
+            # every included task's `vars` so a non-looped
+            # included task can still see it - see the
+            # comment there). When the included task ALSO has
+            # its own `loop:`, blindly re-applying every
+            # `task.vars` key here clobbered the fresh,
+            # correct inner-loop "item"/loop_var binding set
+            # two lines above with that stale OUTER value,
+            # right before this same key would otherwise have
+            # been used to render/execute the task - `{{ item
+            # }}` (or a custom loop_var) inside the included
+            # task's own loop resolved to the outer include's
+            # item on every inner iteration instead of the
+            # inner loop's real one. Found via robertdebock.
+            # diskspace's own `mount.yml`, `include_tasks:`d
+            # in a loop with `loop_var: mount`, whose own
+            # `mount | Check space available` task loops
+            # `ansible_facts['mounts']` under the default
+            # `item` - the disk-space assertion never once
+            # matched a real mount entry, so the whole role's
+            # actual purpose (failing on low disk space)
+            # silently never fired. The loop's own binding
+            # must always win over an inherited one for the
+            # same key.
+            task.vars.each do |key, raw_value|
+              next if key == "item" || key == loop_var || key == index_var
+              vars_context[key] = raw_value
+            end
+            # A filter failure with `item` now BOUND is the real
+            # verdict (the pre-loop render was made lenient for
+            # looped tasks - see build_vars_context's
+            # loop_lenient_vars comment), including a genuinely
+            # unknown filter: channel it as WhenEvaluationError
+            # so the execute_looped_task call site's existing
+            # degrade-to-one-clean-failed-task rescue reports it
+            # instead of crashing the process out of the map.
+            begin
+              render_task_vars(task, vars_context, host.name)
+            rescue ex : VariableSubstitutor::FilterEngine::UnknownFilterError
+              raise WhenEvaluationError.new(ex.message)
+            end
+
+            # delegate_to: templated against the loop variable
+            # itself (geerlingguy.kubernetes' own "Set the
+            # kubeadm join command globally.": `delegate_to:
+            # "{{ item }}"`, `with_items: "{{ groups['all'] }}"`)
+            # must be re-resolved per iteration, against THIS
+            # item's own vars_context - the outer `exec_host`
+            # passed into this method was resolved once, before
+            # the loop ever bound "item", so a templated
+            # delegate_to always saw it as undefined and
+            # resolved to a host literally named "undefined"
+            # (crashing the SSH connection outright, not just
+            # producing a wrong result).
+            # strict: true - the loop variable IS bound in this
+            # item's vars_context, so a delegate_to:
+            # referencing a genuinely undefined var fails the
+            # task here (as WhenEvaluationError, caught by the
+            # execute_looped_task call site's degrade-to-one-
+            # clean-failed-task rescue) instead of resolving a
+            # Host literally named "undefined".
+            item_exec_host = task.delegate_to ? resolve_delegate_host(task, host, vars_context, strict: true) : exec_host
+            fact_hosts[idx] = item_exec_host if task.delegate_facts? && task.delegate_to
+            delegate_hosts[idx] = item_exec_host if task.delegate_to
+
+            # A label that fails to template turns the item into
+            # a FAILED result (ansible-core templats the label
+            # for the item's result line and surfaces the
+            # failure there); the when: still evaluates first,
+            # and a False conditional's skip context rides
+            # along in the failed result (observed real shape:
+            # `failed: [h] (item=None) => {..., skip_reason,
+            # false_condition}`; round 5250000,
+            # veselahouba.openvpn).
+            label_error = nil.as(Krikri::TaskExecutor::LoopLabelError?)
+            item_label = begin
+              item_label_for(task, item, vars_context, host)
+            rescue ex : Krikri::TaskExecutor::LoopLabelError
+              label_error = ex
+              "None"
+            end
+            # A when:-false item defers its "skipping:" line to
+            # finish_looped_task like the batched path does: the
+            # executed items are displayed there too, so printing the
+            # skip inline here would put every skip ahead of them
+            # (Ansible prints in iteration order).
+            if task.when_condition
+              passes = begin
+                # defer_unavailable_module: a when:-passing item on
+                # an unported module must NOT skip here - Ansible
+                # finalizes the args AFTER the when: and BEFORE the
+                # module resolves, per item, so an undefined
+                # variable in the args is a failed item ("Task
+                # failed: Finalization of task args ... failed"),
+                # not a silent skip (round 5460184, CiscoUcs.ucs:
+                # every looped ucs_timezone/ucs_ntp_server task
+                # carries `hostname: "{{ ucs_hostname }}"` with
+                # that var undefined - real fails the first such
+                # task and halts the host, krikri skipped every
+                # one and only died later on a genuinely
+                # unresolvable module name in a deeper role).
+                # execute_task_once re-evaluates the when: with the
+                # same defer and owns both the finalization and
+                # the skip.
+                when_passes?(task, vars_context, host, item_label: item_label, defer_stats: true, defer_display: true, item: item, defer_unavailable_module: true)
+              rescue WhenEvaluationError
+                true # execute_task_once re-evaluates and turns the raise into a real failed result
+              end
+              unless passes
+                if label_error
+                  next loop_label_failure_result(task, item, label_error, skip_condition: @last_false_condition)
+                end
+                skipped_items[idx] = SkippedLoopItem.new(item_label, @last_false_condition)
+                next nil
+              end
+            end
+            if label_error
+              next loop_label_failure_result(task, item, label_error)
+            end
+            # No check-mode gate here: real's per-item attempt
+            # loop runs under --check too (issue #1175,
+            # live-verified vs 2.21.6: a looped yum task's items
+            # each print their FAILED - RETRYING lines and carry
+            # the attempts key in check mode).
+            result = if until_condition = task.until_condition
+                       # Ansible retries each loop item
+                       # independently under until:/retries: - the
+                       # loop_items branch used to return before the
+                       # until branch in execute_task, silently
+                       # dropping retries for looped tasks.
+                       run_until_retries(task, host, vars_context, until_condition, item_exec_host, defer_loop_stats: true, item_label: item_label)
                      else
-                       # A running (not re-dup'd-from-base) vars_context
-                       # carries each iteration's ansible_facts forward
-                       # into the next - Ansible does the same for
-                       # set_fact:, and dev-sec os_hardening's own account-
-                       # list building depends on it: `set_fact:
-                       # system_users: "{{ system_users | default([]) +
-                       # [item] }}"` inside a loop needs iteration N to see
-                       # iteration N-1's accumulated list, not the loop's
-                       # starting value every time.
-                       running_vars_context = base_vars_context.dup
-                       loop_var = task.loop_var
-                       index_var = task.index_var
-                       rendered_items.map_with_index do |item, idx|
-                         vars_context = running_vars_context.dup
-                         # loop_control.loop_var REPLACES "item" -
-                         # ansible-core binds the item ONLY under the custom
-                         # name (`item | default('x')` reads unset alongside
-                         # a loop_var; live-verified against 2.19.11), and
-                         # its registered per-item results carry the custom
-                         # key, never "item". Binding both made krikri see an
-                         # "item" Ansible fails as undefined.
-                         vars_context["item"] = item unless loop_var
-                         vars_context[loop_var] = item if loop_var
-                         vars_context[index_var] = JSON::Any.new(idx.to_i64) if index_var
-                         vars_context["ansible_loop"] = ansible_loop_vars(loop_items, idx.to_i) if task.loop_extended?
-
-                         # A task-level vars: that references `item`
-                         # (linux-system-roles/kernel_settings' own
-                         # `vars: {new_item: "{{ {item.name: new_value}
-                         # }}"}` on a looped set_fact:) was only ever
-                         # rendered *once*, by build_vars_context, before
-                         # this loop even started - when `item` was still
-                         # unbound. Every iteration then reused that same
-                         # first (wrong) rendered value instead of
-                         # recomputing it against its own item. Restoring
-                         # task.vars' original unrendered text before each
-                         # iteration's render_task_vars call fixes this;
-                         # cheap enough even for a task whose vars: don't
-                         # reference item at all (identical result either
-                         # way), so no need to detect which case this is.
-                         #
-                         # `task.vars` also carries an inherited "item"/
-                         # loop_var binding when this task lives inside an
-                         # include_tasks: file whose OWN include statement
-                         # was itself looped (execute_include_tasks
-                         # propagates the outer iteration's item into
-                         # every included task's `vars` so a non-looped
-                         # included task can still see it - see the
-                         # comment there). When the included task ALSO has
-                         # its own `loop:`, blindly re-applying every
-                         # `task.vars` key here clobbered the fresh,
-                         # correct inner-loop "item"/loop_var binding set
-                         # two lines above with that stale OUTER value,
-                         # right before this same key would otherwise have
-                         # been used to render/execute the task - `{{ item
-                         # }}` (or a custom loop_var) inside the included
-                         # task's own loop resolved to the outer include's
-                         # item on every inner iteration instead of the
-                         # inner loop's real one. Found via robertdebock.
-                         # diskspace's own `mount.yml`, `include_tasks:`d
-                         # in a loop with `loop_var: mount`, whose own
-                         # `mount | Check space available` task loops
-                         # `ansible_facts['mounts']` under the default
-                         # `item` - the disk-space assertion never once
-                         # matched a real mount entry, so the whole role's
-                         # actual purpose (failing on low disk space)
-                         # silently never fired. The loop's own binding
-                         # must always win over an inherited one for the
-                         # same key.
-                         task.vars.each do |key, raw_value|
-                           next if key == "item" || key == loop_var || key == index_var
-                           vars_context[key] = raw_value
-                         end
-                         # A filter failure with `item` now BOUND is the real
-                         # verdict (the pre-loop render was made lenient for
-                         # looped tasks - see build_vars_context's
-                         # loop_lenient_vars comment), including a genuinely
-                         # unknown filter: channel it as WhenEvaluationError
-                         # so the execute_looped_task call site's existing
-                         # degrade-to-one-clean-failed-task rescue reports it
-                         # instead of crashing the process out of the map.
-                         begin
-                           render_task_vars(task, vars_context, host.name)
-                         rescue ex : VariableSubstitutor::FilterEngine::UnknownFilterError
-                           raise WhenEvaluationError.new(ex.message)
-                         end
-
-                         # delegate_to: templated against the loop variable
-                         # itself (geerlingguy.kubernetes' own "Set the
-                         # kubeadm join command globally.": `delegate_to:
-                         # "{{ item }}"`, `with_items: "{{ groups['all'] }}"`)
-                         # must be re-resolved per iteration, against THIS
-                         # item's own vars_context - the outer `exec_host`
-                         # passed into this method was resolved once, before
-                         # the loop ever bound "item", so a templated
-                         # delegate_to always saw it as undefined and
-                         # resolved to a host literally named "undefined"
-                         # (crashing the SSH connection outright, not just
-                         # producing a wrong result).
-                         # strict: true - the loop variable IS bound in this
-                         # item's vars_context, so a delegate_to:
-                         # referencing a genuinely undefined var fails the
-                         # task here (as WhenEvaluationError, caught by the
-                         # execute_looped_task call site's degrade-to-one-
-                         # clean-failed-task rescue) instead of resolving a
-                         # Host literally named "undefined".
-                         item_exec_host = task.delegate_to ? resolve_delegate_host(task, host, vars_context, strict: true) : exec_host
-                         fact_hosts[idx] = item_exec_host if task.delegate_facts? && task.delegate_to
-                         delegate_hosts[idx] = item_exec_host if task.delegate_to
-
-                         # A label that fails to template turns the item into
-                         # a FAILED result (ansible-core templats the label
-                         # for the item's result line and surfaces the
-                         # failure there); the when: still evaluates first,
-                         # and a False conditional's skip context rides
-                         # along in the failed result (observed real shape:
-                         # `failed: [h] (item=None) => {..., skip_reason,
-                         # false_condition}`; round 5250000,
-                         # veselahouba.openvpn).
-                         label_error = nil.as(Krikri::TaskExecutor::LoopLabelError?)
-                         item_label = begin
-                           item_label_for(task, item, vars_context, host)
-                         rescue ex : Krikri::TaskExecutor::LoopLabelError
-                           label_error = ex
-                           "None"
-                         end
-                         # A when:-false item defers its "skipping:" line to
-                         # finish_looped_task like the batched path does: the
-                         # executed items are displayed there too, so printing the
-                         # skip inline here would put every skip ahead of them
-                         # (Ansible prints in iteration order).
-                         if task.when_condition
-                           passes = begin
-                             # defer_unavailable_module: a when:-passing item on
-                             # an unported module must NOT skip here - Ansible
-                             # finalizes the args AFTER the when: and BEFORE the
-                             # module resolves, per item, so an undefined
-                             # variable in the args is a failed item ("Task
-                             # failed: Finalization of task args ... failed"),
-                             # not a silent skip (round 5460184, CiscoUcs.ucs:
-                             # every looped ucs_timezone/ucs_ntp_server task
-                             # carries `hostname: "{{ ucs_hostname }}"` with
-                             # that var undefined - real fails the first such
-                             # task and halts the host, krikri skipped every
-                             # one and only died later on a genuinely
-                             # unresolvable module name in a deeper role).
-                             # execute_task_once re-evaluates the when: with the
-                             # same defer and owns both the finalization and
-                             # the skip.
-                             when_passes?(task, vars_context, host, item_label: item_label, defer_stats: true, defer_display: true, item: item, defer_unavailable_module: true)
-                           rescue WhenEvaluationError
-                             true # execute_task_once re-evaluates and turns the raise into a real failed result
-                           end
-                           unless passes
-                             if label_error
-                               next loop_label_failure_result(task, item, label_error, skip_condition: @last_false_condition)
-                             end
-                             skipped_items[idx] = SkippedLoopItem.new(item_label, @last_false_condition)
-                             next nil
-                           end
-                         end
-                         if label_error
-                           next loop_label_failure_result(task, item, label_error)
-                         end
-                         # No check-mode gate here: real's per-item attempt
-                         # loop runs under --check too (issue #1175,
-                         # live-verified vs 2.21.6: a looped yum task's items
-                         # each print their FAILED - RETRYING lines and carry
-                         # the attempts key in check mode).
-                         result = if until_condition = task.until_condition
-                                    # Ansible retries each loop item
-                                    # independently under until:/retries: - the
-                                    # loop_items branch used to return before the
-                                    # until branch in execute_task, silently
-                                    # dropping retries for looped tasks.
-                                    run_until_retries(task, host, vars_context, until_condition, item_exec_host, defer_loop_stats: true, item_label: item_label)
-                                  else
-                                    execute_task_once(task, host, vars_context, item_label: item_label, exec_host: item_exec_host, defer_loop_stats: true, loop_item: item, loop_index: idx, defer_when_chain: true)
-                                  end
-                         # A nil from a looped execute_task_once call on an
-                         # unported module is the arg-finalized unavailable
-                         # skip (execute_task_once returns nil silently for a
-                         # looped caller so this site owns the bookkeeping with
-                         # the item bound) - record it like the when:-false
-                         # flow above so the "skipping:" line prints from
-                         # finish_looped_task in iteration order.
-                         if result.nil? && task.unavailable_module && python_module_source_for(task).nil?
-                           perform_skip(task, host, item_label, defer_stats: true, defer_display: true, item: item)
-                           skipped_items[idx] = SkippedLoopItem.new(item_label, nil)
-                           next nil
-                         end
-                         if result && (facts = result["ansible_facts"]?) && (facts_hash = facts.as_h?)
-                           facts_hash.each { |key, value| running_vars_context[key] = value }
-                         end
-                         result
-                       end
+                       execute_task_once(task, host, vars_context, item_label: item_label, exec_host: item_exec_host, defer_loop_stats: true, loop_item: item, loop_index: idx, defer_when_chain: true)
                      end
+            # A nil from a looped execute_task_once call on an
+            # unported module is the arg-finalized unavailable
+            # skip (execute_task_once returns nil silently for a
+            # looped caller so this site owns the bookkeeping with
+            # the item bound) - record it like the when:-false
+            # flow above so the "skipping:" line prints from
+            # finish_looped_task in iteration order.
+            if result.nil? && task.unavailable_module && python_module_source_for(task).nil?
+              perform_skip(task, host, item_label, defer_stats: true, defer_display: true, item: item)
+              skipped_items[idx] = SkippedLoopItem.new(item_label, nil)
+              next nil
+            end
+            if result && (facts = result["ansible_facts"]?) && (facts_hash = facts.as_h?)
+              facts_hash.each { |key, value| running_vars_context[key] = value }
+            end
+            result
+          end
+        end
+      ensure
+        VarSubstitutor.pop_loop_item_fact_state
+      end
 
-      finish_looped_task(task, host, rendered_items, item_results, fact_hosts, base_vars_context, delegate_hosts, skipped_items)
+      finish_looped_task(task, host, rendered_items, item_results, fact_hosts, base_vars_context, delegate_hosts, skipped_items, pending_fact_reads)
     end
 
     # Whether execute_looped_task can send every surviving item through
@@ -2167,6 +2216,7 @@ module Krikri
       base_vars_context : Hash(String, JSON::Any),
       loop_items : Array(JSON::Any),
       skipped_items : Hash(Int32, SkippedLoopItem),
+      pending_fact_reads : Array(Bool),
     ) : Array(JSON::Any?)
       item_results = Array(JSON::Any?).new(loop_items.size, nil)
       item_contexts = Hash(Int32, Hash(String, JSON::Any)).new
@@ -2177,6 +2227,7 @@ module Krikri
 
       loop_items.each_with_index do |item, idx|
         vars_context = base_vars_context.dup
+        VarSubstitutor.loop_item_fact_pending = (pending_fact_reads[idx]? || false)
         # Same loop_var-replaces-item rule as the one-at-a-time path above.
         vars_context["item"] = item unless loop_var
         vars_context[loop_var] = item if loop_var
@@ -2298,6 +2349,30 @@ module Krikri
     # itself, evaluated against THIS item's bindings).
     private record SkippedLoopItem, label : String, false_condition : String?
 
+    # The INJECT_FACTS_AS_VARS block ansible prints while it LABELS a loop
+    # item whose bound value IS a deprecated fact's own value (live-verified
+    # against 2.21.6, issue #1221). A loop_control.label is rendered as its
+    # own template, so the block carries the label's VALUE token; without
+    # one ansible resolves the loop variable's NAME as a bare identifier
+    # template (`resolve_variable_expression`), which carries an Origin only
+    # when the task spelled out `loop_var:` - otherwise the untagged name
+    # prints the "While processing 'item'" form with `Origin: <unknown>` and
+    # the name itself as the excerpt.
+    private def emit_loop_item_label_fact_deprecation(task : Task) : Nil
+      loop_var = task.loop_var || "item"
+      if label = task.loop_label
+        return unless label.matches?(/(?<![A-Za-z0-9_.])#{Regex.escape(loop_var)}(?![A-Za-z0-9_])/)
+        origin = ResultDisplay.param_value_origin(task.source_file, task.source_line, "label", text: label)
+        VarSubstitutor.emit_fact_deprecation(origin)
+        return
+      end
+      if task.loop_var && (origin = ResultDisplay.param_value_origin(task.source_file, task.source_line, "loop_var", text: task.loop_var))
+        VarSubstitutor.emit_fact_deprecation(origin)
+      else
+        ResultDisplay.emit_unplaced_top_level_fact_deprecation(loop_var)
+      end
+    end
+
     # One loop item's display label: the loop_control.label rendered
     # against a context carrying THIS item (plus loop_var/index_var/
     # ansible_loop and the task's own vars: re-rendered per item), or the
@@ -2412,7 +2487,7 @@ module Krikri
     # both the batched and one-at-a-time paths) so register:/notify:/
     # stats/halt bookkeeping stays byte-identical regardless of which
     # transport produced the results.
-    private def finish_looped_task(task : Task, host : Host, loop_items : Array(JSON::Any), item_results : Array(JSON::Any?), fact_hosts : Array(Host)? = nil, base_vars_context : Hash(String, JSON::Any)? = nil, delegate_hosts : Array(Host)? = nil, skipped_items : Hash(Int32, SkippedLoopItem) = Hash(Int32, SkippedLoopItem).new) : Nil
+    private def finish_looped_task(task : Task, host : Host, loop_items : Array(JSON::Any), item_results : Array(JSON::Any?), fact_hosts : Array(Host)? = nil, base_vars_context : Hash(String, JSON::Any)? = nil, delegate_hosts : Array(Host)? = nil, skipped_items : Hash(Int32, SkippedLoopItem) = Hash(Int32, SkippedLoopItem).new, pending_fact_reads : Array(Bool)? = nil) : Nil
       results = [] of JSON::Any
       any_changed = false
       any_failed = false
@@ -2467,6 +2542,12 @@ module Krikri
       # host" precedent for banner rendering.
       label_base_context = task.loop_label ? (base_vars_context || build_vars_context(task, host)) : nil
       loop_items.each_with_index do |item, idx|
+        # ansible labels the item AFTER it ran, by templating the loop
+        # variable's own NAME (or loop_control.label) as a fresh template -
+        # reading an item that IS a deprecated fact's own value trips the
+        # deprecation there, so this block lands after the item's when:/args
+        # blocks and before its line. See #emit_loop_item_label_fact_deprecation.
+        emit_loop_item_label_fact_deprecation(task) if pending_fact_reads.try(&.[idx]?)
         # A per-item `when:`-false iteration (batched path only - the
         # one-at-a-time path prints its own skips inline in execute_task_
         # once): print it here, in iteration order, so the "skipping:" line
