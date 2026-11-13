@@ -1992,6 +1992,16 @@ module Krikri
 
       parts = match[1].split(".")
       current = vars_context[parts[0]]?
+      # ansible renders a loop source's own value through the templar, so a
+      # bare `{{ play_hosts }}` source is a READ of the deprecated magic
+      # variable and deprecates at the source element (live-verified vs
+      # 2.21.6: `with_items: - "{{ play_hosts }}"` reports the list item's
+      # scalar before the task's output). Every other templated value
+      # reaches the variable resolver that emits this; this fast path reads
+      # the vars hash itself.
+      if current && parts[0] == "play_hosts"
+        ResultDisplay.emit_play_hosts_deprecation(VarSubstitutor.play_hosts_read_origin)
+      end
       parts[1..].each do |part|
         break unless current
         current = current.as_h?.try(&.[part]?)
