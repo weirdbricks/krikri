@@ -1139,6 +1139,16 @@ module Krikri
           raise WhenEvaluationError.new("Task failed: #{WHEN_EXPRESSION_FAILED_PREFIX}Syntax error in template: #{ex.message}")
         end
 
+        # ansible resolves every name the clause's Jinja expression mentions
+        # before evaluating its operators, so a top-level fact in an arm a
+        # false first operand short-circuits still prints its
+        # INJECT_FACTS_AS_VARS block (issue #1225). A whole `is defined`
+        # test is already covered by maybe_fact_alias_defined_deprecation,
+        # whose Origin must win.
+        unless ConditionalEvaluator.whole_condition_is_defined_test?(when_condition)
+          VarSubstitutor.emit_condition_fact_deprecations(substituted_condition, vars_context)
+        end
+
         begin
           # strict: true - a task `when:` must end in a real boolean on
           # ansible-core 2.19 (see ConditionalEvaluator#evaluate_truthiness);

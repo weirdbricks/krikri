@@ -346,6 +346,72 @@ module Krikri
       !no_strings.includes?(" and ") && !no_strings.includes?(" or ")
     end
 
+    # The variable names a conditional expression MENTIONS, in appearance
+    # order. ansible compiles a conditional as a Jinja expression, and
+    # jinja2 opens that expression's frame by resolving every name it loads
+    # BEFORE any operator runs - so a name in an arm `and`/`or`
+    # short-circuits is still read (live-verified against 2.21.6:
+    # `when: false and ansible_hostname` prints the INJECT_FACTS_AS_VARS
+    # block even though the first operand is false). This evaluator's
+    # hand-rolled operator split never resolves such an arm, so this list
+    # is what lets the executor trip the reads jinja2 would.
+    #
+    # Empty when the engine's parser rejects the text: this evaluator's
+    # lenient grammar accepts shapes jinja2 does not, and the reads that
+    # really happen still warn through their own resolution.
+    def self.referenced_names(condition : String) : Array(String)
+      expr = KrikriJinja.default_engine.parsed_expression(condition)
+      names = [] of String
+      collect_expr_names(expr, names)
+      names
+    rescue
+      [] of String
+    end
+
+    private def self.collect_expr_names(expr : KrikriJinja::Nodes::ExprNode, names : Array(String)) : Nil
+      case expr
+      when KrikriJinja::Nodes::NameNode
+        names << expr.name
+      when KrikriJinja::Nodes::ListExprNode, KrikriJinja::Nodes::TupleExprNode
+        expr.items.each { |item| collect_expr_names(item, names) }
+      when KrikriJinja::Nodes::DictExprNode
+        expr.keys.each { |key| collect_expr_names(key, names) }
+        expr.values.each { |value| collect_expr_names(value, names) }
+      when KrikriJinja::Nodes::BinOpNode
+        collect_expr_names(expr.left, names)
+        collect_expr_names(expr.right, names)
+      when KrikriJinja::Nodes::UnaryOpNode
+        collect_expr_names(expr.operand, names)
+      when KrikriJinja::Nodes::CompareNode
+        collect_expr_names(expr.left, names)
+        expr.comparators.each { |comparator| collect_expr_names(comparator, names) }
+      when KrikriJinja::Nodes::CondExprNode
+        collect_expr_names(expr.test, names)
+        collect_expr_names(expr.truthy, names)
+        expr.falsy.try { |falsy| collect_expr_names(falsy, names) }
+      when KrikriJinja::Nodes::FilterNode, KrikriJinja::Nodes::TestNode
+        collect_expr_names(expr.target, names)
+        expr.args.each { |arg| collect_expr_names(arg, names) }
+        expr.kwargs.each { |kwarg| collect_expr_names(kwarg[1], names) }
+      when KrikriJinja::Nodes::GetattrNode
+        collect_expr_names(expr.obj, names)
+      when KrikriJinja::Nodes::GetitemNode
+        collect_expr_names(expr.obj, names)
+        collect_expr_names(expr.key, names)
+      when KrikriJinja::Nodes::SliceNode
+        collect_expr_names(expr.obj, names)
+        expr.start.try { |start| collect_expr_names(start, names) }
+        expr.stop.try { |stop| collect_expr_names(stop, names) }
+        expr.step.try { |step| collect_expr_names(step, names) }
+      when KrikriJinja::Nodes::CallExprNode
+        collect_expr_names(expr.func, names)
+        expr.args.each { |arg| collect_expr_names(arg, names) }
+        expr.kwargs.each { |kwarg| collect_expr_names(kwarg[1], names) }
+      when KrikriJinja::Nodes::ConcatNode
+        expr.parts.each { |part| collect_expr_names(part, names) }
+      end
+    end
+
     def self.evaluate(condition : String, vars : Hash(String, JSON::Any), strict : Bool = false, raise_undefined : Bool = false) : Bool
       # Ansible's per-access laziness applies to `when:` exactly as it
       # does to module-arg finalization (issue #422:

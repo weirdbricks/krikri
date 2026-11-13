@@ -2745,6 +2745,23 @@ module Krikri
       ResultDisplay.emit_top_level_fact_deprecation(origin)
     end
 
+    # The top-level fact reads a conditional expression makes eagerly:
+    # ansible compiles the clause as a Jinja expression and jinja2's
+    # expression frame resolves every name it loads up front, so a fact
+    # named in an arm `and`/`or` short-circuits is read anyway (issue
+    # #1225, andyceo.users' `when: users.ssh.fetch_key and ... and
+    # ansible_hostname != item` warns on real hosts with both ssh vars
+    # false). This engine's hand-rolled operator split never reaches the
+    # short-circuited operand, so the reads real trips are emitted here
+    # before evaluation; the per-operation record keeps a later real read
+    # of the same clause from printing a second block.
+    def self.emit_condition_fact_deprecations(condition : String, vars : Hash(String, JSON::Any)) : Nil
+      ConditionalEvaluator.referenced_names(condition).each do |name|
+        next unless top_level_fact_name?(name, vars)
+        emit_fact_deprecation(fact_read_origin(name))
+      end
+    end
+
     # INJECT_FACTS_AS_VARS readings captured while a task's `vars:` values
     # render eagerly at vars-context build (TaskExecutor#render_task_vars):
     # ansible-core templates those values LAZILY, at whichever render

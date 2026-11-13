@@ -76,11 +76,16 @@ private def ssh_base_args : Array(String)
    "#{SSHD_USER}@#{SSHD_HOST}"]
 end
 
+# Empty when the target cannot report one: this spec promises to SKIP on
+# an unusable sshd (see this file's header), and an ssh that cannot
+# authenticate emits no arch - only its stderr. Folding that text into the
+# "arch" produced a `bin/plugins-<stderr>` path (slashes and all), so the
+# spec failed and littered the repo tree instead of skipping.
 private def target_arch : String
   io = IO::Memory.new
-  err = IO::Memory.new
-  Process.run("ssh", ssh_base_args + ["uname -m"], output: io, error: err)
-  Krikri::PluginManager.normalize_arch(io.to_s.presence || "SSH-ERR:#{err.to_s.strip.gsub(/\s+/, " ")}")
+  status = Process.run("ssh", ssh_base_args + ["uname -m"], output: io, error: Process::Redirect::Close)
+  return "" unless status.success?
+  Krikri::PluginManager.normalize_arch(io.to_s)
 end
 
 private def ssh_exec(command : String) : String
@@ -115,7 +120,8 @@ describe "plugin arch awareness over ssh (issue #1)" do
     skip "no reachable test sshd (see this file's header for the throwaway setup)" unless sshd_reachable?
 
     arch = target_arch
-    skip "target reports #{arch}, the controller's own arch - see this file's header" if arch.empty? || arch == controller_arch
+    skip "the test target did not report an arch over ssh - see this file's header" if arch.empty?
+    skip "target reports #{arch}, the controller's own arch - see this file's header" if arch == controller_arch
 
     source = File.join(PROJECT_ROOT, "bin", "plugins", "command")
     skip "plugin binaries not built (run ./build.sh first)" unless File.exists?(source)
@@ -161,7 +167,8 @@ describe "plugin arch awareness over ssh (issue #1)" do
     skip "no reachable test sshd (see this file's header for the throwaway setup)" unless sshd_reachable?
 
     arch = target_arch
-    skip "target reports #{arch}, the controller's own arch - see this file's header" if arch.empty? || arch == controller_arch
+    skip "the test target did not report an arch over ssh - see this file's header" if arch.empty?
+    skip "target reports #{arch}, the controller's own arch - see this file's header" if arch == controller_arch
 
     arch_dir = File.join(PROJECT_ROOT, "bin", "plugins-#{arch}")
     begin
