@@ -445,4 +445,52 @@ describe "deprecated ansible.module_utils import warnings in play output" do
     stdout.to_s.must_include("ok: [localhost] => {")
     stdout.to_s.must_include("2 2")
   end
+
+  # Real's linear/free strategy loads every task's action plugin class while
+  # iterating, block children included, so a collection action plugin inside
+  # a `when:`-guarded block warns exactly like a top-level one - the plugin
+  # is loaded before the block's condition is even consulted (issue #1207:
+  # juju4.squid's ansible.posix.patch sits in such a block). The warnings are
+  # stderr lines and the banners stdout ones, so a single merged capture
+  # cannot assert their relative position without racing the two streams;
+  # emission before the banner is what the code does, asserted here through
+  # the lines being present for a task that never runs.
+  it "warns about a block-nested action plugin's imports when the block is skipped" do
+    root = PluginSpecHelper.tmp_path("module-utils-import-deprecation-block")
+    Dir.mkdir_p(root)
+    playbook = File.join(root, "nested.yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        gather_facts: false
+        connection: local
+        tasks:
+          - name: a block
+            when: false
+            block:
+              - name: sync inside a skipped block
+                ansible.posix.synchronize:
+                  src: #{root}/src/
+                  dest: #{root}/dest/
+      YAML
+
+    stdout = IO::Memory.new
+    stderr = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: stdout, error: stderr)
+    err = stderr.to_s
+    out = stdout.to_s
+
+    status.success?.must_equal(true)
+    err.must_include("[WARNING]: Deprecation warnings can be disabled by setting `deprecation_warnings=False` in ansible.cfg.")
+    action_text = "Importing 'to_text' from 'ansible.module_utils._text' is deprecated. " \
+                  "This feature will be removed from ansible-core version 2.24. " \
+                  "Use ansible.module_utils.common.text.converters instead."
+    compat_text = "The `ansible.module_utils.common._collections_compat` module is deprecated. " \
+                  "This feature will be removed from ansible-core version 2.24. " \
+                  "Use `collections.abc` from the Python standard library instead."
+    err.must_include(action_text)
+    err.must_include(compat_text)
+    err.scan(action_text).size.must_equal(1)
+    out.must_include("TASK [sync inside a skipped block]")
+    out.must_include("skipping: [localhost]")
+  end
 end

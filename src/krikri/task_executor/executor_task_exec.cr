@@ -1563,6 +1563,7 @@ module Krikri
           next
         end
 
+        emit_action_plugin_import_deprecations(nested_task)
         Krikri::OutputBanner.banner("#{task_banner_kind} [#{task_role_prefix(nested_task)}#{render_task_name_for_display(nested_task, host)}]")
         # A skipped block's inherited when: IS evaluated per child in real
         # (once per child task's own conditional check), so a deprecation
