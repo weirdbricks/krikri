@@ -378,7 +378,7 @@ module Krikri
       # parse_role_entry nor load_role/load_meta_dependencies had any
       # notion of a `when:` on a role entry at all - it silently
       # dropped through as a role VAR named "when" instead of a gate.
-      role_when = hash["when"]?.try { |cond| PlaybookParser.condition_to_string(cond) }
+      role_when = hash["when"]?.try { |cond| PlaybookParser.optional_condition_to_string(cond) }
 
       # `timeout:` on a roles: entry is a valid TASK keyword in real
       # ansible-core (live-verified vs 2.19.11: `roles: [- role: r,

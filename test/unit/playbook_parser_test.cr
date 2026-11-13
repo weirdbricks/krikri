@@ -1628,6 +1628,73 @@ describe Krikri::PlaybookParser do
     end
   end
 
+  describe "conditional keywords explicitly set to null" do
+    # Verified against ansible-playbook 2.19: a bare `when:` (YAML null),
+    # an empty list, and a list of only nulls all mean "keyword not given"
+    # and the task runs; an explicitly empty STRING is refused instead
+    # ("Empty conditional expressions are not allowed"). devops_cmp.
+    # ansible_nodejs writes a bare `when:` on its "Download Node.js" task,
+    # and krikri used to fail that task with "'' is undefined" where
+    # ansible ran it (issue #1204).
+    it "treats a bare when: as no condition at all" do
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.debug:
+            msg: hi
+          when:
+        YAML
+
+      task.when_condition.must_be_nil
+      task.when_condition_list.must_be_nil
+    end
+
+    it "treats an empty when: list, and a list of only nulls, as no condition" do
+      empty_list = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.debug:
+            msg: hi
+          when: []
+        YAML
+
+      null_list = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.debug:
+            msg: hi
+          when:
+            -
+        YAML
+
+      empty_list.when_condition.must_be_nil
+      null_list.when_condition.must_be_nil
+    end
+
+    it "keeps an explicitly empty when: string for the evaluator to refuse" do
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.debug:
+            msg: hi
+          when: ""
+        YAML
+
+      task.when_condition.must_equal("")
+    end
+
+    it "treats bare until:/changed_when:/failed_when: as not given" do
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.command: /bin/true
+          register: result
+          until:
+          changed_when:
+          failed_when:
+        YAML
+
+      task.until_condition.must_be_nil
+      task.changed_when.must_be_nil
+      task.failed_when.must_be_nil
+    end
+  end
+
   describe "delegate_to / run_once parsing" do
     it "parses delegate_to as a string" do
       task = single_task(<<-YAML)
