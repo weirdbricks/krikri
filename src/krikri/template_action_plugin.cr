@@ -414,22 +414,18 @@ module Krikri
 
       template_vars = prepare_template_vars_json(template_path)
 
-      # The read deprecations this file's AST names used to print right
-      # here, before the render. Real trips them DURING the render: jinja2
-      # resolves every name in a frame's prologue up front (a top-level
-      # dead `{% if %}` branch's names included), but names inside a
-      # `{% for %}`/macro frame only resolve when that frame actually
-      # runs, so a render that dies before a loop frame ran trips nothing
-      # (issue #1167, live-verified against 2.21.6: bramford.apt-sources'
-      # sources.list.j2 raised "'apt_sources_repos' is undefined" and
-      # printed NO INJECT_FACTS_AS_VARS block for the loop body's
-      # `ansible_distribution_release` reads). Emission therefore waits
-      # for the render outcome - see #emit_template_deprecation_probes.
-
+      # The read deprecations this file's AST names trip are emitted once
+      # the render outcome is known (see
+      # #emit_template_deprecation_probes); the gate that emission walks
+      # needs this render's own engine and scope up front (see
+      # #prepare_frame_gate).
       engine = KrikriJinja.derive_engine(
         build_template_loader(template_path), options,
         KrikriJinja.ansible_strict_undefined, JinjaHostContext.new(template_vars)
       )
+      if template = parsed_template
+        prepare_frame_gate(engine, template_vars, template)
+      end
       @template_render_attempted = false
       @template_render_compile_checked = false
       rendered : String? = nil
@@ -728,18 +724,20 @@ module Krikri
     # before a loop frame ran trips nothing (issue #1167:
     # bramford.apt-sources' sources.list.j2 raised on an undefined
     # `{% for %}` iterable and real printed NO INJECT_FACTS_AS_VARS block
-    # for the loop body's fact reads). On success the full AST walk
-    # covers every frame whose code ran; on a render failure only the
-    # top-level frame's prologue reads are emitted. Two frames real
-    # trips but this approximation cannot see stay open: a loop that ran
-    # and THEN failed, and a successful render whose loop iterable was
-    # empty (the static walk cannot count iterations).
+    # for the loop body's fact reads). The gate these probes walk follows
+    # frame entry on the render's own engine - loop iterables are
+    # evaluated and branch tests answered - so a successful render covers
+    # exactly the frames whose code ran. A render that died before a
+    # nested frame entered is caught by the same walk when the gate can
+    # evaluate the dying expression itself; a death inside a filter, call
+    # or loop filter it does not evaluate is covered by `failed`, which
+    # keeps every nested frame silent (see #probe_walk). Still open: a
+    # loop that ran and THEN failed deeper inside its body.
     private def emit_template_deprecation_probes(template : KrikriJinja::Nodes::TemplateNode?,
                                                  template_vars : Hash(String, JSON::Any)?,
                                                  template_path : String, failed : Bool) : Nil
       return unless template && template_vars
 
-      skip_frames = failed
       file_origin = ErrorBlock.origin_context(File.expand_path(template_path), 0, nil, show_content: false)
 
       # The play_hosts read deprecation: this render hands the engine its
@@ -749,7 +747,7 @@ module Krikri
       # (`x.play_hosts`) or a string/comment occurrence is not.
       # ansible-core 2.19.11's Origin here is the template file alone, no
       # line/column.
-      if template_reads_name?(->(name : String) { name == "play_hosts" }, template, skip_frames)
+      if probe_walk(->(name : String) { name == "play_hosts" }, template, failed)
         Krikri::ResultDisplay.emit_play_hosts_deprecation(file_origin)
       end
       # The top-level fact alias read deprecation shares the walk and that
@@ -758,7 +756,7 @@ module Krikri
       # INJECT_FACTS_AS_VARS block with `Origin: <file>` and no excerpt -
       # keyed per file, so two hosts rendering the same template warn
       # once).
-      if template_reads_name?(->(name : String) { VarSubstitutor.top_level_fact_name?(name, template_vars) }, template, skip_frames)
+      if probe_walk(->(name : String) { VarSubstitutor.top_level_fact_name?(name, template_vars) }, template, failed)
         VarSubstitutor.emit_fact_deprecation(file_origin)
       end
       # A read reached only through another variable's own value: real
@@ -777,7 +775,7 @@ module Krikri
           false
         end
       end
-      if template_reads_name?(names_a_fact_through_its_value, template, skip_frames)
+      if probe_walk(names_a_fact_through_its_value, template, failed)
         VarSubstitutor.emit_fact_deprecation(var_value_origin)
       end
       # The internal `vars`-dict deprecation (issue #1028,
@@ -801,7 +799,7 @@ module Krikri
           false
         end
       end
-      if template_reads_name?(first_vars_dict_read, template, skip_frames)
+      if probe_walk(first_vars_dict_read, template, failed)
         VarSubstitutor.emit_vars_dict_deprecation(vars_dict_origin)
       end
     end
@@ -826,7 +824,7 @@ module Krikri
     end
 
     private def template_reads_name?(matcher : String -> Bool, node : KrikriJinja::Nodes::Node,
-                                     skip_frames : Bool = false) : Bool
+                                     bound : Set(String) = Set(String).new) : Bool
       case node
       when KrikriJinja::Nodes::NameNode
         matcher.call(node.name)
@@ -834,17 +832,56 @@ module Krikri
            KrikriJinja::Nodes::InTestNode
         false
       when KrikriJinja::Nodes::TemplateNode
-        any_node_reads_name?(matcher, node.body, skip_frames)
+        any_node_reads_name?(matcher, node.body, bound)
       when KrikriJinja::Nodes::OutputNode, KrikriJinja::Nodes::DoNode
-        template_reads_name?(matcher, node.expr, skip_frames)
+        gate_note_crash(node.expr, bound)
+        template_reads_name?(matcher, node.expr, bound)
       when KrikriJinja::Nodes::IfNode
-        # An `{% if %}` is transparent for name resolution: jinja2 hoists
-        # every name under it - dead branches included - into its
-        # ENCLOSING frame's prologue, so a skipped_frames walk still
-        # descends here (live-verified: `{% if false %}{{ fact }}{% endif %}`
-        # trips the deprecation even though the branch never runs).
-        node.branches.any? { |(test, body)| template_reads_name?(matcher, test, skip_frames) || any_node_reads_name?(matcher, body, skip_frames) } ||
-          (node.orelse.try { |orelse| any_node_reads_name?(matcher, orelse, skip_frames) } || false)
+        # A branch that never runs still counts its reads (the enclosing
+        # frame's entry hoisted them) but hosts no entered frame of its
+        # own - same as real, whose `{% if false %}{% for x in ['a'] %}{%
+        # endfor %}{% endif %}` never resolves the loop body's names
+        # (live-verified against 2.21.6). A test the gate cannot answer
+        # keeps every branch after it in play.
+        reached = gate_reached?
+        any_taken = false
+        unknown_test = false
+        node.branches.each do |(test, body)|
+          return true if template_reads_name?(matcher, test, bound)
+          taken_before = any_taken
+          branch_live =
+            if !reached || taken_before
+              false
+            elsif unknown_test
+              true
+            else
+              verdict = (value = gate_eval_pure(test, bound)) ? gate_truthy?(value) : nil
+              if verdict.nil?
+                unknown_test = true
+                true
+              else
+                any_taken = true if verdict
+                verdict
+              end
+            end
+          previous = @gate_live
+          @gate_live = branch_live
+          begin
+            return true if any_node_reads_name?(matcher, body, bound)
+          ensure
+            @gate_live = previous
+          end
+        end
+        orelse_live = reached && !any_taken
+        (node.orelse.try do |orelse|
+          previous = @gate_live
+          @gate_live = orelse_live
+          begin
+            any_node_reads_name?(matcher, orelse, bound)
+          ensure
+            @gate_live = previous
+          end
+        end || false)
       when KrikriJinja::Nodes::ForNode
         # A for target shadows a same-named injected fact for the loop's
         # own body and else block only (Jinja2 loop variables do not leak
@@ -853,104 +890,430 @@ module Krikri
         # INJECT_FACTS_AS_VARS block even though the facts inject
         # `ansible_domain` (issue #1087, Turgon37.sssd's sssd.conf.j2,
         # live-verified against 2.21.6).
-        # A skipped_frames walk (a render that failed before the loop
-        # frame could run) keeps only the iterable, which jinja2 resolves
-        # in the ENCLOSING frame's prologue - names under test/body/else
-        # resolve per iteration, so a render that died first trips
-        # nothing for them.
+        # The iterable resolves in the ENCLOSING frame's prologue; the
+        # loop test, body and else frame only resolve when they run, so
+        # the gate answers body/else entry from the iterable itself and a
+        # failed render (which may have died inside something the gate
+        # cannot evaluate) keeps only the iterable.
         body_matcher = bound_name_matcher(matcher, node.targets.map(&.name))
-        template_reads_name?(matcher, node.iter, skip_frames) ||
-          (!skip_frames &&
-            ((node.test.try { |test| template_reads_name?(matcher, test) } || false) ||
-              any_node_reads_name?(body_matcher, node.body) ||
-              (node.orelse.try { |orelse| any_node_reads_name?(body_matcher, orelse) } || false)))
+        body_bound = bound + node.targets.map(&.name).to_set
+        body_entered, else_entered =
+          @gate_render_failed ? {false, false} : for_frames_entered(node, bound)
+        template_reads_name?(matcher, node.iter, bound) ||
+          ((body_entered && (node.test.try { |test| template_reads_name?(matcher, test, bound) } || false)) ||
+            (body_entered && any_node_reads_name?(body_matcher, node.body, body_bound)) ||
+            (else_entered && (node.orelse.try { |orelse| any_node_reads_name?(body_matcher, orelse, body_bound) } || false)))
       when KrikriJinja::Nodes::SetNode
-        template_reads_name?(matcher, node.expr, skip_frames) ||
-          (node.attr_target.try { |target| template_reads_name?(matcher, target, skip_frames) } || false) ||
-          (node.body.try { |body| any_node_reads_name?(matcher, body, skip_frames) } || false) ||
-          exprs_read_names?(matcher, node.filter_args, skip_frames) ||
-          node.filter_kwargs.any? { |kwarg| template_reads_name?(matcher, kwarg[1], skip_frames) }
+        gate_note_crash(node.expr, bound)
+        template_reads_name?(matcher, node.expr, bound) ||
+          (node.attr_target.try { |target| template_reads_name?(matcher, target, bound) } || false) ||
+          (node.body.try { |body| any_node_reads_name?(matcher, body, bound + node.targets.to_set) } || false) ||
+          exprs_read_names?(matcher, node.filter_args, bound) ||
+          node.filter_kwargs.any? { |kwarg| template_reads_name?(matcher, kwarg[1], bound) }
       when KrikriJinja::Nodes::AutoescapeNode
-        any_node_reads_name?(matcher, node.body, skip_frames)
+        any_node_reads_name?(matcher, node.body, bound)
       when KrikriJinja::Nodes::BlockNode
         # A `{% block %}` tag compiles to its own render level in real
         # (its names never join the enclosing frame's prologue), so a
         # failed render's prologue walk does not descend into one.
-        skip_frames ? false : any_node_reads_name?(matcher, node.body)
+        @gate_render_failed ? false : any_node_reads_name?(matcher, node.body, bound)
       when KrikriJinja::Nodes::MacroNode
-        if skip_frames
-          false
-        else
-          node.params.any? { |param| (default = param[1]) && template_reads_name?(matcher, default) } ||
-            any_node_reads_name?(bound_name_matcher(matcher, node.params.map(&.[0])), node.body)
+        return false if @gate_render_failed
+        return false unless macro_body_entered?(node)
+        # The body runs at the macro's CALL site, not here - its crashes
+        # say nothing about the statements after this definition, so the
+        # gate's crash note stays off inside it.
+        previous_macro = @gate_in_macro
+        @gate_in_macro = true
+        begin
+          node.params.any? { |param| (default = param[1]) && template_reads_name?(matcher, default, bound) } ||
+            any_node_reads_name?(bound_name_matcher(matcher, node.params.map(&.[0])), node.body, bound + node.params.map(&.[0]).to_set)
+        ensure
+          @gate_in_macro = previous_macro
         end
       when KrikriJinja::Nodes::CallNode
         # The call-site expression (macro name and arguments) resolves in
         # the enclosing frame; a `{% call %}` block body is a macro frame
         # of its own.
-        template_reads_name?(matcher, node.macro_expr, skip_frames) ||
-          exprs_read_names?(matcher, node.args, skip_frames) ||
-          node.kwargs.any? { |kwarg| template_reads_name?(matcher, kwarg[1], skip_frames) } ||
-          (!skip_frames &&
-            (node.body.try { |body| any_node_reads_name?(bound_name_matcher(matcher, node.call_params), body) } || false))
+        template_reads_name?(matcher, node.macro_expr, bound) ||
+          exprs_read_names?(matcher, node.args, bound) ||
+          node.kwargs.any? { |kwarg| template_reads_name?(matcher, kwarg[1], bound) } ||
+          (!@gate_render_failed &&
+            (node.body.try { |body| any_node_reads_name?(bound_name_matcher(matcher, node.call_params), body, bound + node.call_params.to_set) } || false))
       when KrikriJinja::Nodes::FilterBlockNode
         # jinja2 hoists a filter/set block's body names into the
         # enclosing frame's prologue, same as `{% with %}` - live-verified
         # against stock Jinja 3.1.6 - so both modes descend.
-        template_reads_name?(matcher, node.filter, skip_frames) || any_node_reads_name?(matcher, node.body, skip_frames)
+        template_reads_name?(matcher, node.filter, bound) || any_node_reads_name?(matcher, node.body, bound)
       when KrikriJinja::Nodes::WithNode
-        node.bindings.any? { |binding| template_reads_name?(matcher, binding[1], skip_frames) } ||
-          any_node_reads_name?(bound_name_matcher(matcher, node.bindings.map(&.[0])), node.body, skip_frames)
+        node.bindings.any? { |binding| template_reads_name?(matcher, binding[1], bound) } ||
+          any_node_reads_name?(bound_name_matcher(matcher, node.bindings.map(&.[0])), node.body, bound + node.bindings.map(&.[0]).to_set)
       when KrikriJinja::Nodes::IncludeNode, KrikriJinja::Nodes::ExtendsNode, KrikriJinja::Nodes::ImportNode
         # The include machinery resolves its template name at runtime,
         # outside the enclosing frame's prologue.
-        skip_frames ? false : template_reads_name?(matcher, node.template)
+        @gate_render_failed ? false : template_reads_name?(matcher, node.template, bound)
       when KrikriJinja::Nodes::ListExprNode, KrikriJinja::Nodes::TupleExprNode
-        exprs_read_names?(matcher, node.items, skip_frames)
+        exprs_read_names?(matcher, node.items, bound)
       when KrikriJinja::Nodes::ConcatNode
-        exprs_read_names?(matcher, node.parts, skip_frames)
+        exprs_read_names?(matcher, node.parts, bound)
       when KrikriJinja::Nodes::DictExprNode
-        exprs_read_names?(matcher, node.keys, skip_frames) || exprs_read_names?(matcher, node.values, skip_frames)
+        exprs_read_names?(matcher, node.keys, bound) || exprs_read_names?(matcher, node.values, bound)
       when KrikriJinja::Nodes::BinOpNode
-        template_reads_name?(matcher, node.left, skip_frames) || template_reads_name?(matcher, node.right, skip_frames)
+        template_reads_name?(matcher, node.left, bound) || template_reads_name?(matcher, node.right, bound)
       when KrikriJinja::Nodes::UnaryOpNode
-        template_reads_name?(matcher, node.operand, skip_frames)
+        template_reads_name?(matcher, node.operand, bound)
       when KrikriJinja::Nodes::CompareNode
-        template_reads_name?(matcher, node.left, skip_frames) || exprs_read_names?(matcher, node.comparators, skip_frames)
+        template_reads_name?(matcher, node.left, bound) || exprs_read_names?(matcher, node.comparators, bound)
       when KrikriJinja::Nodes::FilterNode, KrikriJinja::Nodes::TestNode
-        template_reads_name?(matcher, node.target, skip_frames) ||
-          exprs_read_names?(matcher, node.args, skip_frames) ||
-          node.kwargs.any? { |kwarg| template_reads_name?(matcher, kwarg[1], skip_frames) }
+        template_reads_name?(matcher, node.target, bound) ||
+          exprs_read_names?(matcher, node.args, bound) ||
+          node.kwargs.any? { |kwarg| template_reads_name?(matcher, kwarg[1], bound) }
       when KrikriJinja::Nodes::GetattrNode
-        template_reads_name?(matcher, node.obj, skip_frames)
+        template_reads_name?(matcher, node.obj, bound)
       when KrikriJinja::Nodes::GetitemNode
-        template_reads_name?(matcher, node.obj, skip_frames) || template_reads_name?(matcher, node.key, skip_frames)
+        template_reads_name?(matcher, node.obj, bound) || template_reads_name?(matcher, node.key, bound)
       when KrikriJinja::Nodes::SliceNode
-        template_reads_name?(matcher, node.obj, skip_frames) ||
-          (node.start.try { |expr| template_reads_name?(matcher, expr, skip_frames) } || false) ||
-          (node.stop.try { |expr| template_reads_name?(matcher, expr, skip_frames) } || false) ||
-          (node.step.try { |expr| template_reads_name?(matcher, expr, skip_frames) } || false)
+        template_reads_name?(matcher, node.obj, bound) ||
+          (node.start.try { |expr| template_reads_name?(matcher, expr, bound) } || false) ||
+          (node.stop.try { |expr| template_reads_name?(matcher, expr, bound) } || false) ||
+          (node.step.try { |expr| template_reads_name?(matcher, expr, bound) } || false)
       when KrikriJinja::Nodes::CallExprNode
-        template_reads_name?(matcher, node.func, skip_frames) ||
-          exprs_read_names?(matcher, node.args, skip_frames) ||
-          node.kwargs.any? { |kwarg| template_reads_name?(matcher, kwarg[1], skip_frames) }
+        template_reads_name?(matcher, node.func, bound) ||
+          exprs_read_names?(matcher, node.args, bound) ||
+          node.kwargs.any? { |kwarg| template_reads_name?(matcher, kwarg[1], bound) }
       when KrikriJinja::Nodes::CondExprNode
-        template_reads_name?(matcher, node.test, skip_frames) ||
-          template_reads_name?(matcher, node.truthy, skip_frames) ||
-          (node.falsy.try { |expr| template_reads_name?(matcher, expr, skip_frames) } || false)
+        template_reads_name?(matcher, node.test, bound) ||
+          template_reads_name?(matcher, node.truthy, bound) ||
+          (node.falsy.try { |expr| template_reads_name?(matcher, expr, bound) } || false)
       else
         false
       end
     end
 
     private def any_node_reads_name?(matcher : String -> Bool, body : Array(KrikriJinja::Nodes::Node),
-                                     skip_frames : Bool = false) : Bool
-      body.any? { |child| template_reads_name?(matcher, child, skip_frames) }
+                                     bound : Set(String) = Set(String).new) : Bool
+      body.any? { |child| template_reads_name?(matcher, child, bound) }
     end
 
     private def exprs_read_names?(matcher : String -> Bool, exprs : Array(KrikriJinja::Nodes::ExprNode),
-                                  skip_frames : Bool = false) : Bool
-      exprs.any? { |expr| template_reads_name?(matcher, expr, skip_frames) }
+                                  bound : Set(String) = Set(String).new) : Bool
+      exprs.any? { |expr| template_reads_name?(matcher, expr, bound) }
+    end
+
+    # Jinja2's compiler hoists the `resolve()` call of every name a frame
+    # loads to that frame's ENTRY (compiler.py's enter_frame), and the
+    # deprecation tag fires when the tagged value is ACCESSED - so a read
+    # inside a `{% for %}` body only warns when the loop really iterates,
+    # an uncalled macro's body warns never, a frame under a branch that
+    # never runs or after the spot the render dies at warns never, and a
+    # root-frame read warns even when the render dies before its
+    # expression runs (all live-verified against 2.21.6). bramford.
+    # apt-sources' sources.list.j2 reads `ansible_distribution_release`
+    # inside `{% for repo in apt_sources_repos %}`; off Debian/Ubuntu
+    # hosts the render dies on the undefined iterable at the loop header,
+    # the body frame never enters, and real prints no
+    # INJECT_FACTS_AS_VARS block at the file where this engine printed one
+    # (issue #1179, previously #1097).
+    @frame_gate_engine : KrikriJinja::Engine? = nil
+    @frame_gate_scope : Hash(String, KrikriJinja::AnyValue)? = nil
+    @frame_gate_names : Set(String)? = nil
+    @frame_gate_bound = Set(String).new
+    @for_entry_memo = {} of KrikriJinja::Nodes::ForNode => {Bool, Bool}
+
+    # Walk-position state for the same gate. @gate_dead sticks once the
+    # render has died at an earlier spot (nothing after it runs);
+    # @gate_live is the branch context a statement sits in, restored when
+    # the branch walk ends; @gate_in_macro suppresses crash detection
+    # inside macro bodies (they run at their CALL site, not where the
+    # definition sits); @gate_render_failed is set for the walk a failed
+    # render emits, where a nested frame the gate could not prove entered
+    # (a death inside a filter or call the gate does not evaluate) must
+    # stay silent. Every unknown answer keeps the old warn-everything
+    # behavior - only provably unentered frames are dropped.
+    @gate_dead = false
+    @gate_live = true
+    @gate_in_macro = false
+    @gate_render_failed = false
+
+    # Names that only exist inside the render's runtime context (loop
+    # bindings and macro specials) or that reach controller-side effects
+    # (lookups): an expression naming one is never probed standalone.
+    GATE_CONTEXT_NAMES = Set{"loop", "super", "self", "caller", "varargs",
+                             "kwargs", "namespace", "lookup", "query"}
+
+    # One deprecation probe walk: resets the frame gate's walk-position
+    # state and scans the whole template for a read the matcher accepts.
+    private def probe_walk(matcher : String -> Bool, template : KrikriJinja::Nodes::TemplateNode,
+                           failed : Bool = false) : Bool
+      previous_dead, previous_live, previous_macro, previous_failed =
+        @gate_dead, @gate_live, @gate_in_macro, @gate_render_failed
+      @gate_dead, @gate_live, @gate_in_macro, @gate_render_failed = false, true, false, failed
+      begin
+        template_reads_name?(matcher, template)
+      ensure
+        @gate_dead, @gate_live, @gate_in_macro, @gate_render_failed =
+          previous_dead, previous_live, previous_macro, previous_failed
+      end
+    end
+
+    # Arms the frame-entry gate for one render: the engine and scope the
+    # render itself will use (so the gate's answers match it exactly), and
+    # every name the template reads anywhere. A macro body counts as
+    # entered when its name appears in that set somewhere - an
+    # over-approximation of a real call, which is the safe direction here:
+    # it keeps today's warn-everything behavior for shapes the gate cannot
+    # prove dead.
+    private def prepare_frame_gate(engine : KrikriJinja::Engine,
+                                   template_vars : Hash(String, JSON::Any),
+                                   template : KrikriJinja::Nodes::TemplateNode) : Nil
+      @frame_gate_engine = engine
+      @frame_gate_scope = template_vars.transform_values { |value| engine_scope_value(value) }
+      @gate_render_failed = false
+      bound = Set(String).new
+      collect_frame_bound_names(template.body, bound)
+      @frame_gate_bound = bound
+      names = Set(String).new
+      probe_walk(->(name : String) { names << name; false }, template)
+      @frame_gate_names = names
+      @for_entry_memo.clear
+    end
+
+    # Every name a statement in this template binds for the render's own
+    # scope: a `{% set %}` target, an `{% import %}` alias, a loop/with/
+    # call target, a macro param. The gate must never probe an expression
+    # naming one - real resolves it to the binding, while standalone
+    # evaluation against the pre-render scope reads an undefined the
+    # render never sees, marks the render dead, and drops deprecations
+    # the template really prints (live-verified against 2.21.6: `{% set
+    # x = 1 %}{{ x }}{% for i in ['a'] %}{{ ansible_distribution }}{%
+    # endfor %}` warns, and only the set made this engine silent). A set
+    # under a branch that may never run counts too: that only keeps the
+    # warn-everything answer for a name the gate cannot prove.
+    private def collect_frame_bound_names(nodes : Array(KrikriJinja::Nodes::Node), bound : Set(String)) : Nil
+      nodes.each do |node|
+        case node
+        when KrikriJinja::Nodes::SetNode
+          bound.concat(node.targets)
+          node.body.try { |body| collect_frame_bound_names(body, bound) }
+        when KrikriJinja::Nodes::ForNode
+          collect_target_names(node.targets, bound)
+          collect_frame_bound_names(node.body, bound)
+          node.orelse.try { |orelse| collect_frame_bound_names(orelse, bound) }
+        when KrikriJinja::Nodes::IfNode
+          node.branches.each { |(_, branch)| collect_frame_bound_names(branch, bound) }
+          node.orelse.try { |orelse| collect_frame_bound_names(orelse, bound) }
+        when KrikriJinja::Nodes::MacroNode
+          bound.concat(node.params.map(&.[0]))
+          collect_frame_bound_names(node.body, bound)
+        when KrikriJinja::Nodes::WithNode
+          bound.concat(node.bindings.map(&.[0]))
+          collect_frame_bound_names(node.body, bound)
+        when KrikriJinja::Nodes::CallNode
+          bound.concat(node.call_params)
+          node.body.try { |body| collect_frame_bound_names(body, bound) }
+        when KrikriJinja::Nodes::ImportNode
+          bound.concat(node.names.map(&.[1]))
+        when KrikriJinja::Nodes::BlockNode, KrikriJinja::Nodes::AutoescapeNode,
+             KrikriJinja::Nodes::FilterBlockNode
+          collect_frame_bound_names(node.body, bound)
+        end
+      end
+    end
+
+    # A tuple-unpacking loop target (`{% for k, v in dict %}`) binds its
+    # children too.
+    private def collect_target_names(targets : Array(KrikriJinja::TargetSpec), bound : Set(String)) : Nil
+      targets.each do |target|
+        bound << target.name
+        target.children.try { |children| collect_target_names(children, bound) }
+      end
+    end
+
+    private def macro_body_entered?(node : KrikriJinja::Nodes::MacroNode) : Bool
+      names = @frame_gate_names || return true
+      names.includes?(node.name)
+    end
+
+    # Whether the statements the walk is at are ones the render can still
+    # reach: false once it died earlier, or inside a branch that never
+    # runs. Root-frame reads count regardless (their names resolve at the
+    # root frame's entry), this only gates nested-frame entry.
+    private def gate_reached? : Bool
+      @gate_live && !@gate_dead
+    end
+
+    # Whether the render enters this loop's body frame (at least one
+    # iteration) and its else frame (zero iterations) - the frames whose
+    # entry hoists their reads. A `{% for x in xs if test %}` filter is
+    # ignored, so a body the filter empties still counts: only provably
+    # unentered frames are dropped.
+    private def for_frames_entered(node : KrikriJinja::Nodes::ForNode, bound : Set(String)) : {Bool, Bool}
+      memoized = @for_entry_memo[node]?
+      return memoized if memoized
+
+      engine = @frame_gate_engine
+      scope = @frame_gate_scope
+      entry =
+        if !gate_reached? || engine.nil? || scope.nil?
+          {false, false}
+        elsif gate_impure?(node.iter, bound)
+          # The iterable reads a name an enclosing frame binds (a nested
+          # loop's outer item) or calls into a lookup, which standalone
+          # evaluation cannot reproduce - keep the count-everything
+          # behavior.
+          {true, true}
+        else
+          iter_frame_entry(engine, scope, node)
+        end
+      @for_entry_memo[node] = entry
+      entry
+    end
+
+    private def iter_frame_entry(engine : KrikriJinja::Engine, scope : Hash(String, KrikriJinja::AnyValue),
+                                 node : KrikriJinja::Nodes::ForNode) : {Bool, Bool}
+      iter = begin
+        engine.evaluate_parsed(node.iter, scope)
+      rescue error : KrikriJinja::TemplateError
+        # An undefined iterable raises the same Undefined kind the render
+        # dies on at this very header (the #1179 shape): neither frame
+        # enters and nothing after the loop runs either. Any other failure
+        # is left to the count-everything behavior rather than risking
+        # silencing a read real warns about.
+        if error.kind == KrikriJinja::ErrorKind::Undefined
+          @gate_dead = true
+          return {false, false}
+        end
+        return {true, true}
+      rescue
+        return {true, true}
+      end
+
+      # Mirrors the engine's own render_for itemization, only for
+      # emptiness: body entered iff at least one item exists, else frame
+      # entered iff none does.
+      items =
+        case raw = iter.raw
+        when Array                       then raw.size
+        when Hash                        then raw.size
+        when String                      then raw.size
+        when KrikriJinja::TupleValue     then raw.items.size
+        when KrikriJinja::GeneratorValue then raw.materialize.size
+        when KrikriJinja::Undefined      then 0
+        else
+          # render_for raises "<Type> is not iterable" at this header for
+          # every other value - the loop never runs.
+          @gate_dead = true
+          return {false, false}
+        end
+      items > 0 ? {true, false} : {false, true}
+    end
+
+    # Notes the render's death at *expr* when the expression is a shape
+    # this gate can evaluate for itself: only probe-able expressions (no
+    # calls, no filters/tests - those can run controller-side effects or
+    # live in role-local plugins) naming nothing the render binds at
+    # runtime. Anything else keeps walking as if still reached.
+    private def gate_note_crash(expr : KrikriJinja::Nodes::ExprNode, bound : Set(String)) : Nil
+      return unless gate_reached?
+      gate_eval_pure(expr, bound)
+    end
+
+    # Evaluates a probe-able expression on the render's own engine and
+    # scope; nil when the gate cannot speak for it. A strict-undefined
+    # result raises the same kind the render dies on - statements after
+    # this expression never run (live-verified against 2.21.6: a template
+    # `{{ missing }}{% for x in ['a'] %}{{ ansible_x }}{% endfor %}` stays
+    # silent where the loop alone warns).
+    private def gate_eval_pure(expr : KrikriJinja::Nodes::ExprNode, bound : Set(String)) : KrikriJinja::AnyValue?
+      return nil if @gate_in_macro || gate_impure?(expr, bound)
+      engine = @frame_gate_engine
+      scope = @frame_gate_scope
+      return nil unless engine && scope
+      begin
+        engine.evaluate_parsed(expr, scope)
+      rescue error : KrikriJinja::TemplateError
+        @gate_dead = true if error.kind == KrikriJinja::ErrorKind::Undefined
+        nil
+      rescue
+        nil
+      end
+    end
+
+    # Whether standalone evaluation of *expr* could misrepresent the
+    # render: it names something the runtime binds (or a lookup), or it
+    # contains a node kind whose evaluation this gate does not vouch for.
+    private def gate_impure?(expr : KrikriJinja::Nodes::ExprNode, bound : Set(String)) : Bool
+      return true unless gate_probe_expr?(expr)
+      template_reads_name?(->(name : String) {
+        bound.includes?(name) || @frame_gate_bound.includes?(name) || GATE_CONTEXT_NAMES.includes?(name)
+      }, expr)
+    end
+
+    # The expression kinds whose evaluation is side-effect-free and
+    # self-contained: names, literals, attribute/key access and the
+    # operators over them. Filters, tests and calls are excluded - a
+    # role-local filter or a lookup runs controller-side work - except
+    # `pytruthy`, this engine's own pure truthiness wrapper around every
+    # `{% if %}`/`{% elif %}` condition (see #rewrite_crinja_compat).
+    private def gate_probe_expr?(expr : KrikriJinja::Nodes::ExprNode) : Bool
+      case expr
+      when KrikriJinja::Nodes::ConstNode, KrikriJinja::Nodes::NameNode
+        true
+      when KrikriJinja::Nodes::FilterNode
+        expr.name == "pytruthy" && gate_probe_expr?(expr.target) &&
+          expr.args.all? { |arg| gate_probe_expr?(arg) } &&
+          expr.kwargs.all? { |kwarg| gate_probe_expr?(kwarg[1]) }
+      when KrikriJinja::Nodes::GetattrNode
+        gate_probe_expr?(expr.obj)
+      when KrikriJinja::Nodes::GetitemNode
+        gate_probe_expr?(expr.obj) && gate_probe_expr?(expr.key)
+      when KrikriJinja::Nodes::SliceNode
+        gate_probe_expr?(expr.obj) &&
+          gate_probe_optional?(expr.start) &&
+          gate_probe_optional?(expr.stop) &&
+          gate_probe_optional?(expr.step)
+      when KrikriJinja::Nodes::BinOpNode
+        gate_probe_expr?(expr.left) && gate_probe_expr?(expr.right)
+      when KrikriJinja::Nodes::UnaryOpNode
+        gate_probe_expr?(expr.operand)
+      when KrikriJinja::Nodes::CompareNode
+        gate_probe_expr?(expr.left) && expr.comparators.all? { |comparator| gate_probe_expr?(comparator) }
+      when KrikriJinja::Nodes::CondExprNode
+        gate_probe_expr?(expr.test) && gate_probe_expr?(expr.truthy) &&
+          gate_probe_optional?(expr.falsy)
+      when KrikriJinja::Nodes::ListExprNode, KrikriJinja::Nodes::TupleExprNode
+        expr.items.all? { |item| gate_probe_expr?(item) }
+      when KrikriJinja::Nodes::DictExprNode
+        expr.keys.all? { |key| gate_probe_expr?(key) } && expr.values.all? { |value| gate_probe_expr?(value) }
+      when KrikriJinja::Nodes::ConcatNode
+        expr.parts.all? { |part| gate_probe_expr?(part) }
+      else
+        false
+      end
+    end
+
+    # An absent optional subexpression constrains nothing.
+    private def gate_probe_optional?(expr : KrikriJinja::Nodes::ExprNode?) : Bool
+      return true if expr.nil?
+      gate_probe_expr?(expr)
+    end
+
+    # Truthiness for a gate-evaluated branch test, with only clearly
+    # falsy values answered false - everything else counts as true so an
+    # undecided branch keeps today's warn-everything behavior.
+    private def gate_truthy?(value : KrikriJinja::AnyValue) : Bool
+      case raw = value.raw
+      when Nil                     then false
+      when Bool                    then raw
+      when Int64, Float64          then raw != 0
+      when String                  then !raw.empty?
+      when Array                   then !raw.empty?
+      when Hash                    then !raw.empty?
+      when KrikriJinja::TupleValue then !raw.items.empty?
+      when KrikriJinja::Undefined  then false
+      else
+        true
+      end
     end
 
     # Engine-scope conversion for the template render's variable loading.
