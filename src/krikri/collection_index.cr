@@ -254,16 +254,24 @@ module Krikri
     # version is readable - callers keep their existing modeling then
     # (see version_before?'s unknown-version default).
     def self.module_provider_version(name : String) : String?
+      module_provider_collection(name).try { |collection_fq| collection_version(collection_fq) }
+    end
+
+    # The collection whose module source `name` resolves to (its FQCN
+    # `namespace.collection`), following the same redirect chain real's
+    # loader walks. nil when the name resolves to ansible-core itself or
+    # to a role-private library/ module.
+    def self.module_provider_collection(name : String) : String?
       return nil if name.empty? || name.includes?("{{")
       resolved = module_redirect_chain(name)
       parts = resolved.split('.')
       if parts.size >= 3
         return nil if parts[0] == "ansible" && (parts[1] == "builtin" || parts[1] == "legacy")
-        return collection_version("#{parts[0]}.#{parts[1]}")
+        return "#{parts[0]}.#{parts[1]}"
       end
       collection_dirs.each do |collection_fq, collection_paths|
         next unless collection_paths.any? { |path| collection_leaf_file?("modules", path, resolved) }
-        return collection_version(collection_fq)
+        return collection_fq
       end
       nil
     end

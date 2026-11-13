@@ -30,19 +30,24 @@ module Krikri
   # 2.2.2 migrated the import that mount.py:229's `import to_bytes, to_native`
   # still spells in 2.1.0). The methods therefore take the resolved release's
   # version (CollectionIndex.module_provider_version, pinned on the plugin
-  # wire) and model nothing for the 2.2.x-or-newer line; an unknown version
-  # models, the conservative default the engine hardcoded before the resolved
-  # release became visible. Inside that gate the installed module/action
-  # source decides exactly which names warn (CollectionIndex knows where
-  # real's loader would find it) - including names no table below catalogues,
-  # like community.libvirt's virt_net.py:142 to_native import - and the
-  # tables model one 2.1.x release's payload only for controllers that ship
-  # no such file at all, krikri-only hosts where real cannot run the module
-  # either. Live-verified against ansible-core 2.21.6 plus both ansible.posix
-  # lines' module sources.
+  # wire) and model nothing once that collection's own known migration
+  # boundary is reached - per collection, since amazon.aws through 11.2.x
+  # still imports from the deprecated path while its 11.3.0 line migrated,
+  # and no blanket ansible.posix cutoff can tell the two apart (issue
+  # #1199). An unknown version models, the conservative default the engine
+  # hardcoded before the resolved release became visible. Inside that gate
+  # the installed module/action source decides exactly which names warn
+  # (CollectionIndex knows where real's loader would find it) - including
+  # names no table below catalogues, like community.libvirt's
+  # virt_net.py:142 to_native import - and the tables model one release
+  # line's payload for the plugin binaries that run where no collection
+  # tree is visible (a remote TARGET, and krikri-only controllers where
+  # real cannot run the module either). Live-verified against ansible-core
+  # 2.21.6 plus the ansible.posix 2.1.x/2.2.x, containers.podman
+  # 1.18.x/1.19.x, and amazon.aws 10.1.1-11.2.0 module sources.
   module ModuleUtilsDeprecations
     # The `_text` imports of the module payloads this engine runs without
-    # python, for controllers with no installed collection file to read
+    # python, for plugin binaries with no installed collection file to read
     # (see the intro). Keyed by the bare trailing segment because real
     # reaches the same module through its own FQCN and through
     # ansible.builtin's legacy redirect, and every spelling warns.
@@ -57,6 +62,24 @@ module Krikri
       "seboolean"        => ["to_text"],
       "synchronize"      => ["to_bytes", "to_native"],
       "sysctl"           => ["to_native"],
+      # amazon.aws through 11.2.x's shared module_utils import chain, in
+      # the order the payload's own imports translate into (live-verified
+      # against 2.21.6 plus 10.1.1 and 11.2.0: each list below is exactly
+      # the registered `deprecations` sequence, duplicates included - the
+      # console collapses them by text, the result does not). These
+      # native plugins run on the TARGET, which has no amazon.aws tree
+      # for the installed-payload scan, so the pair real bundles from
+      # the controller's collection can only come from this table
+      # (issue #1199: ec2_vpc_net_info's task lost its to_native/to_text
+      # lines on a remote host).
+      "ec2_ami_info"        => ["to_native", "to_native", "to_native", "to_native", "to_text", "to_native", "to_text"],
+      "ec2_instance"        => ["to_native", "to_native", "to_native", "to_native", "to_native", "to_text", "to_native", "to_text", "to_native"],
+      "ec2_key"             => ["to_bytes", "to_native", "to_native", "to_native", "to_native", "to_text", "to_native", "to_text"],
+      "ec2_metadata_facts"  => ["to_text"],
+      "ec2_security_group"  => ["to_text", "to_native", "to_native", "to_native", "to_native", "to_text", "to_native", "to_text"],
+      "ec2_vpc_net_info"    => ["to_native", "to_native", "to_native", "to_native", "to_text", "to_native", "to_text"],
+      "ec2_vpc_subnet_info" => ["to_native", "to_native", "to_native", "to_native", "to_text", "to_native", "to_text"],
+      "iam_user_info"       => ["to_native", "to_native", "to_native", "to_native", "to_text", "to_native"],
     }
 
     # Fallback-table modules whose collection moved the deprecated
@@ -64,11 +87,22 @@ module Krikri
     # mapped to the FIRST release that no longer carries them
     # (source-verified against the tagged releases: containers.podman's
     # podman_container_lib.py opens with the `_text` pair through 1.18.2
-    # and imports common.text.converters from 1.19.0 on - issue #1156).
+    # and imports common.text.converters from 1.19.0 on - issue #1156;
+    # amazon.aws 11.2.0 still imports from `_text` everywhere, 11.3.0
+    # moved every module and module_utils file onto
+    # common.text.converters).
     # The 2.2.0 gate alone would model the pair for every 1.x release
     # forever, including the ones real is silent on.
     LATER_MIGRATION_BOUNDARIES = {
-      "podman_container" => {1, 19, 0},
+      "podman_container"    => {1, 19, 0},
+      "ec2_ami_info"        => {11, 3, 0},
+      "ec2_instance"        => {11, 3, 0},
+      "ec2_key"             => {11, 3, 0},
+      "ec2_metadata_facts"  => {11, 3, 0},
+      "ec2_security_group"  => {11, 3, 0},
+      "ec2_vpc_net_info"    => {11, 3, 0},
+      "ec2_vpc_subnet_info" => {11, 3, 0},
+      "iam_user_info"       => {11, 3, 0},
     }
 
     # ansible.posix's synchronize ACTION plugin imports to_text from the
@@ -184,14 +218,31 @@ module Krikri
     end
 
     # Whether the resolved release can still carry the deprecated imports
-    # this code models for `name`: ansible.posix 2.2.x carries none (see
-    # the header), so only its 2.1.x line - and an unpinned one - models
-    # them, and a module with its own LATER_MIGRATION_BOUNDARIES entry
-    # stops at its own boundary instead (containers.podman 1.19.0).
+    # this code models for `name`. Only a collection whose own catalogued
+    # line migrated the import at a known release stops modeling it:
+    # ansible.posix 2.2.x moved them (see the header) and containers.podman
+    # moved podman_container_lib.py at 1.19.0 (LATER_MIGRATION_BOUNDARIES).
+    # Every other collection's version says nothing here - amazon.aws
+    # through 11.2.x still imports from the deprecated path (issue #1199),
+    # so a blanket 2.2.0 cutoff would silence the lines real prints for
+    # it.
     private def self.deprecated_text_imports?(name : String, collection_version : String?) : Bool
-      return false unless CollectionIndex.version_before?(collection_version, 2, 2, 0)
       if boundary = LATER_MIGRATION_BOUNDARIES[name.split(".").last?]?
         return CollectionIndex.version_before?(collection_version, boundary[0], boundary[1], boundary[2])
+      end
+      # Resolving the module's collection reads the controller's tree, and
+      # the plugin process this runs in can have lost its own starting
+      # directory (Dir.glob raises there - the command plugin's chdir:
+      # case, see installed_payload_events). The answer only picks which
+      # migration boundary applies, so an unreadable tree models like an
+      # unknown collection rather than crashing the task.
+      collection = begin
+        CollectionIndex.module_provider_collection(name)
+      rescue
+        nil
+      end
+      if collection == "ansible.posix"
+        return CollectionIndex.version_before?(collection_version, 2, 2, 0)
       end
       true
     end
@@ -259,6 +310,21 @@ module Krikri
       while index < lines.size
         line = lines[index]
         index += 1
+        # `if typing.TYPE_CHECKING:` blocks never execute at run time, so
+        # their imports warn nothing in real (botocore.py keeps
+        # `from .modules import AnsibleAWSModule` there, issue #1199:
+        # scanning it moved the payload's own to_native ahead of the
+        # ones its live import chain fires first, and an import that
+        # only exists under TYPE_CHECKING would add a phantom line).
+        if match = /^(\s*)if\s+(?:typing\.)?TYPE_CHECKING\s*:/.match(line)
+          indent = match[1].size
+          while index < lines.size
+            candidate = lines[index]
+            break unless candidate.strip.empty? || candidate.size - candidate.lstrip.size > indent
+            index += 1
+          end
+          next
+        end
         if line =~ /^\s*import\s+ansible\.module_utils\.common\._collections_compat\b/ ||
            line =~ /^\s*from\s+ansible\.module_utils\.common\._collections_compat\s+import\b/
           events << {"compat", ""}

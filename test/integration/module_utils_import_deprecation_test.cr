@@ -62,6 +62,41 @@ describe "deprecated ansible.module_utils import warnings from native plugins" d
       "Importing 'to_native' from 'ansible.module_utils._text' is deprecated.")
   end
 
+  it "carries amazon.aws's payload import deprecations where the target sees no collection tree (issue #1199)" do
+    # The native ec2_vpc_net_info binary runs on the TARGET, which has no
+    # amazon.aws tree to scan, so only the modeled table can reproduce
+    # what real bundles from the controller: its payload imports to_native
+    # through the shared module_utils chain and to_text from tagging.py
+    # (live-verified against 2.21.6 + amazon.aws 10.1.1 - the registered
+    # `deprecations` sequence keeps every repeat, the console collapses
+    # them by text). An empty collections path is that target shape.
+    root = PluginSpecHelper.tmp_path("module-utils-aws-target")
+    Dir.mkdir_p(root)
+    result = PluginSpecHelper.run("ec2_vpc_net_info", {} of String => String,
+      collection_version: "10.1.1", env: {"ANSIBLE_COLLECTIONS_PATH" => root})
+
+    result["failed"].as_bool.must_equal(true)
+    native = "Importing 'to_native' from 'ansible.module_utils._text' is deprecated. " \
+             "This feature will be removed from ansible-core version 2.24. " \
+             "Use ansible.module_utils.common.text.converters instead."
+    text = "Importing 'to_text' from 'ansible.module_utils._text' is deprecated. " \
+           "This feature will be removed from ansible-core version 2.24. " \
+           "Use ansible.module_utils.common.text.converters instead."
+    result["_ansible_core_deprecations"].as_a.map(&.as_s).must_equal([native, native, native, native, text, native, text])
+    result["deprecations"].as_a.size.must_equal(7)
+  end
+
+  it "carries no amazon.aws import deprecations once its resolved release migrated (11.3.0)" do
+    root = PluginSpecHelper.tmp_path("module-utils-aws-migrated-target")
+    Dir.mkdir_p(root)
+    result = PluginSpecHelper.run("ec2_vpc_net_info", {} of String => String,
+      collection_version: "11.3.0", env: {"ANSIBLE_COLLECTIONS_PATH" => root})
+
+    result["failed"].as_bool.must_equal(true)
+    result["deprecations"]?.must_be_nil
+    result["_ansible_core_deprecations"]?.must_be_nil
+  end
+
   # The table models the ansible.posix 2.1.x sources: 2.2.x moved every
   # catalogued module onto `common.text.converters`, whose imports
   # deprecate nothing, so a run against a 2.2.x tree prints no import
@@ -289,6 +324,48 @@ describe "module_utils import deprecations follow the installed payload source" 
 
     Krikri::ModuleUtilsDeprecations.text_import_deprecation_symbols("containers.podman.podman_container")
       .must_equal([] of String)
+  end
+
+  it "scopes the 2.2.0 migration gate to ansible.posix (issue #1199)" do
+    # amazon.aws 10.x's payload still imports to_native even though its
+    # release number is far past ansible.posix's 2.2.0 boundary - a
+    # blanket version gate silenced every collection whose version is
+    # >= 2.2.0 and lost real's lines on the mateothegreat.aws_vpc_delete
+    # round.
+    base = File.join(@fixture_root, "ansible_collections", "amazon", "aws", "plugins")
+    FileUtils.mkdir_p(File.join(base, "modules"))
+    FileUtils.mkdir_p(File.join(base, "module_utils"))
+    File.write(File.join(base, "modules", "ec2_vpc_net_info.py"),
+      "from ..module_utils.modules import AnsibleAWSModule\n")
+    File.write(File.join(base, "module_utils", "modules.py"),
+      "from ansible.module_utils._text import to_native\n")
+
+    Krikri::ModuleUtilsDeprecations.text_import_deprecation_symbols("amazon.aws.ec2_vpc_net_info", "11.2.0")
+      .must_equal(["to_native"])
+    Krikri::ModuleUtilsDeprecations.text_import_deprecation_symbols("amazon.aws.ec2_vpc_net_info", "11.3.0")
+      .must_equal([] of String)
+  end
+
+  it "skips imports real never executes under a TYPE_CHECKING guard (issue #1199)" do
+    # botocore.py keeps `from .modules import AnsibleAWSModule` inside
+    # `if typing.TYPE_CHECKING:`, which is False at run time - following
+    # it reordered (and could add) the payload's real import
+    # deprecations.
+    base = File.join(@fixture_root, "ansible_collections", "containers", "podman", "plugins")
+    FileUtils.mkdir_p(File.join(base, "modules"))
+    FileUtils.mkdir_p(File.join(base, "module_utils", "podman"))
+    File.write(File.join(base, "modules", "podman_container.py"),
+      "from ..module_utils.podman.podman_container_lib import PodmanManager\n")
+    File.write(File.join(base, "module_utils", "podman", "podman_container_lib.py"),
+      "if typing.TYPE_CHECKING:\n" \
+      "    from .common import LooseVersion\n" \
+      "\n" \
+      "from ansible.module_utils._text import to_native\n")
+    File.write(File.join(base, "module_utils", "podman", "common.py"),
+      "from ansible.module_utils._text import to_bytes\n")
+
+    Krikri::ModuleUtilsDeprecations.text_import_deprecation_symbols("containers.podman.podman_container")
+      .must_equal(["to_native"])
   end
 end
 
