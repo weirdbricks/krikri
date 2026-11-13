@@ -20,7 +20,12 @@ module Krikri
     # silently answering where Ansible fails (found by
     # bin/differential_fuzz against the krikri-jinja engine, which already
     # raises exactly what Jinja2 3.1.6 raises).
+    #
+    # Carries the failing `{{ }}` span like every other template-origin
+    # failure (TemplatedOriginSpan), so the args-finalization chain can
+    # point its innermost Origin at the value token ansible points at.
     class ComparisonTypeError < Exception
+      include TemplatedOriginSpan
     end
 
     # ComparisonEvaluator - Handles boolean comparison expressions

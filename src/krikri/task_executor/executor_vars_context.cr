@@ -3212,6 +3212,24 @@ module Krikri
             raise resolving_value_error(key, py.template_text, e)
           end
           raise e
+        rescue e : ConditionalEvaluator::OrderingTypeError | VariableSubstitutor::ComparisonTypeError
+          # An ordering comparison (`<`, `<=`, `>`, `>=`) between a string
+          # and a number is Python's TypeError, and real ansible-core
+          # 2.19.11 wraps every such render failure as "Error rendering
+          # template: <msg>" inside the arg-finalization chain - e.g.
+          # PeterMosmans.ansible-role-letsencrypt's
+          # `ansible_distribution_version|int >= '14.04'`:
+          #
+          #   Task failed: Finalization of task args for
+          #   'ansible.builtin.set_fact' failed: Error while resolving
+          #   value for 'virtual_env': Error rendering template: '>=' not
+          #   supported between instances of 'int' and 'str'
+          #
+          # (live-verified 2.19.11, both operand orders). These classes
+          # are not UndefinedVariableErrors, so without this clause they
+          # escaped the finalization ladder entirely and the task failed
+          # with the bare TypeError text alone.
+          raise resolving_value_error(key, "Error rendering template: #{e.message}", e)
         rescue e : Exception
           # Same routing for any LOOKUP plugin's failure ("The lookup
           # plugin 'file' failed: Unable to access ..."); everything
