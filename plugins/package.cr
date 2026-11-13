@@ -1074,6 +1074,18 @@ module Krikri
             available[pkg] = row[1]
           elsif probe[:provides]
             statuses[pkg] = DnfSpecResolution::Virtual
+          elsif !@check_mode
+            # Only the check-mode branches read the Available-vs-Missing
+            # verdict for a spec this host neither has nor provides: the
+            # install transaction resolves it either way, exactly like
+            # ansible hands its whole name list to a single in-process
+            # depsolve. The repo-wide provides probe below is a full dnf
+            # CLI startup per unresolvable name, and inside an async job
+            # those extra seconds pushed the until:/retries: poll loop
+            # over another 5s boundary - "FAILED - RETRYING" lines and an
+            # attempts value real ansible's one resolve never reaches
+            # (issue #1217, daixijun.toolkit's async `package:` task).
+            statuses[pkg] = DnfSpecResolution::Missing
           elsif (provides_nevra = dnf_available_provides_nevra(pkg))
             statuses[pkg] = DnfSpecResolution::Available
             available[pkg] = provides_nevra
@@ -1118,6 +1130,10 @@ module Krikri
       elsif has_glob
         statuses[pkg] = DnfSpecResolution::Available
         available[pkg] = pkg
+      elsif !@check_mode
+        # Same check-mode-only repo probe as classify_dnf_names' batch
+        # path (issue #1217): the install transaction resolves the spec.
+        statuses[pkg] = DnfSpecResolution::Missing
       elsif (provides_nevra = dnf_available_provides_nevra(pkg))
         statuses[pkg] = DnfSpecResolution::Available
         available[pkg] = provides_nevra

@@ -242,3 +242,34 @@ describe "package plugin - same-name repo package vs a Provides: match (issue 73
     end
   end
 end
+
+# Issue #1217 (daixijun.toolkit): the async `package:` job's until:/
+# retries: poll loop printed extra "FAILED - RETRYING" lines and a higher
+# attempts value than real ansible. The job spent those extra seconds
+# asking the repos a question only this engine's own CHECK-MODE branches
+# read: ansible hands the whole name list to one in-process depsolve, so
+# the real install already decides a spec's fate, while each per-spec
+# `dnf -q provides` here is a full dnf CLI startup (~0.6-1.3s) and every
+# one of them pushed the 5s poll loop nearer another boundary.
+describe "package plugin - repo availability probes are check-mode only (issue 1217)" do
+  it "installs an unresolvable name without a per-spec repo probe" do
+    with_package732_pkg_managers(available: [] of String) do |log|
+      result = PluginSpecHelper.run("package", {"name" => "definitely-not-in-any-repo", "state" => "present", "use" => "dnf"})
+      falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+      result["changed"].as_bool.must_equal(true)
+      File.read_lines(log).must_equal([
+        "-q list --available definitely-not-in-any-repo",
+        "install -y --setopt=localpkg_gpgcheck=1 definitely-not-in-any-repo",
+      ])
+    end
+  end
+
+  it "still asks the repos about an unresolvable name under check mode" do
+    with_package732_pkg_managers(available: [] of String) do |log|
+      result = PluginSpecHelper.run("package", {"name" => "definitely-not-in-any-repo", "state" => "present",
+                                                "_ansible_check_mode" => "true", "use" => "dnf"})
+      result["failed"].as_bool.must_equal(true)
+      File.read_lines(log).must_include("-q provides definitely-not-in-any-repo")
+    end
+  end
+end
