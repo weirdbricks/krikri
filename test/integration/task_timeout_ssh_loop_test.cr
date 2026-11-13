@@ -80,7 +80,14 @@ private def run_over_ssh(playbook_body : Array(String)) : {Process::Status, Stri
   playbook = PluginSpecHelper.tmp_path("task-timeout-ssh-#{Random::Secure.hex(4)}.yml")
   File.write(playbook, playbook_body.join("\n") + "\n")
   inventory = PluginSpecHelper.tmp_path("task-timeout-ssh-#{Random::Secure.hex(4)}.ini")
-  File.write(inventory, "[target]\ntarget ansible_connection=ssh ansible_host=#{SSHD_HOST} ansible_user=#{SSHD_USER} ansible_port=#{SSHD_PORT} ansible_ssh_private_key_file=#{SSHD_KEY} ansible_ssh_common_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o IdentitiesOnly=yes -o ConnectTimeout=5'\n")
+  # IdentitiesOnly=yes: on a machine with a session ssh-agent (a desktop
+  # login has one, holding many keys), ssh offers every agent key before
+  # this spec's own key and the throwaway sshd's MaxAuthTries disconnects
+  # the client with "Too many authentication failures" before the right
+  # key is ever tried - real ansible-playbook fails the same connection
+  # identically (live-verified). Pinning the spec's key as the only
+  # identity keeps the run independent of whatever the ambient agent holds.
+  File.write(inventory, "[target]\ntarget ansible_connection=ssh ansible_host=#{SSHD_HOST} ansible_user=#{SSHD_USER} ansible_port=#{SSHD_PORT} ansible_ssh_private_key_file=#{SSHD_KEY} ansible_ssh_common_args='-o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5'\n")
   output = IO::Memory.new
   started = Time.instant
   status = Process.run(BINARY, ["-i", inventory, playbook], output: output, error: output, input: IO::Memory.new)
@@ -90,11 +97,27 @@ ensure
   File.delete(inventory) if inventory && File.exists?(inventory)
 end
 
+# krikri's plugin upload over ssh carries a known intermittent
+# UNREACHABLE race (the upload fails with scp's "dest open ...: Failure"
+# on the freshly created upload dir) - krikri-role-tester works around it
+# with same-host retries, up to KRIKRI_RETRIES (see its runner), and this
+# spec asserts the per-item deadline rather than that race, so a run that
+# reports UNREACHABLE is re-run the same way instead of failing on it.
+private def run_over_ssh_retrying_unreachable(playbook_body : Array(String)) : {Process::Status, String, Time::Span}
+  result = run_over_ssh(playbook_body)
+  2.times do
+    break unless result[1].includes?("UNREACHABLE")
+    sleep(((rand(9) + 1) / 10.0).seconds)
+    result = run_over_ssh(playbook_body)
+  end
+  result
+end
+
 describe "task timeout keyword over ssh (loop batching exclusion)" do
   it "enforces the deadline per loop item on the remote path" do
     skip "no reachable test sshd (see this file's header for the throwaway setup)" unless sshd_reachable?
 
-    status, output, elapsed = run_over_ssh([
+    status, output, elapsed = run_over_ssh_retrying_unreachable([
       "- hosts: target",
       "  gather_facts: false",
       "  tasks:",
@@ -105,7 +128,7 @@ describe "task timeout keyword over ssh (loop batching exclusion)" do
       "      ignore_errors: true",
     ])
 
-    status.success?.must_equal(true)
+    status.success?.must_equal(true, output)
     # The under-budget item passes (sleep 1 against a 4 s budget)...
     output.includes?("changed: [target] => (item=1)").must_equal(true, output)
     # ...and the over-budget item fails with real's exact per-item shape

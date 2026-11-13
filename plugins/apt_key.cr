@@ -2,9 +2,11 @@
 
 require "json"
 require "http/status"
+require "base64"
 require "../src/krikri/base_plugin"
 require "../src/krikri/plugin_helpers/ansible_splitlines"
 require "../src/krikri/plugin_helpers/apt_locale"
+require "../src/krikri/plugin_helpers/python_lib_gate"
 
 module Krikri
   # Apt_key plugin - imports/removes a GPG key into apt's legacy trusted
@@ -458,6 +460,35 @@ module Krikri
           if reason = {6 => "[Errno -2] Name or service not known", 7 => "[Errno 111] Connection refused", 28 => "timed out"}[result[:exit_code]]?
             return PluginResult.new(changed: false, failed: true, msg: "Failed to download key at #{url}: Request failed: <urlopen error #{reason}>")
           end
+          # A TLS rejection (curl 60 - bad chain, expired cert, wrong
+          # name) is where Ansible reports fetch_url's URLError branch:
+          # "Request failed: <urlopen error [SSL: CERTIFICATE_VERIFY_FAILED]
+          # certificate verify failed: <reason> (_ssl.c:<line>)>" (issue
+          # #1186, racqspace.cert_manager's "Add helm key to apt" against
+          # https://baltocdn.com/helm/signing.asc, where krikri leaked
+          # curl's own multi-line stderr instead). The trailing
+          # (_ssl.c:<line>) is a CPython SOURCE LINE number that varies per
+          # interpreter build - the same "unable to get local issuer
+          # certificate" reads (_ssl.c:1147) on round 29902240's rocky
+          # host's python and (_ssl.c:1000) on round 29908330's ubuntu one
+          # - so no constant can match every target: the failed fetch is
+          # re-run under the target's own python and its str() rides
+          # through verbatim, which is literally the text fetch_url's
+          # URLError branch reports.
+          if result[:exit_code] == 60
+            if text = python_urlopen_error_text(current)
+              return PluginResult.new(changed: false, failed: true, msg: "Failed to download key at #{url}: Request failed: #{text}")
+            end
+            # No python there to word it (ansible could not have run on
+            # such a target either): rebuild the same shape from curl's
+            # own "SSL certificate problem: <reason>" line - libcrypto's
+            # X509_verify_cert_error_string, word for word the <reason>
+            # CPython prints - under the line number http_download.cr
+            # already pins for want of a live interpreter.
+            if reason = curl_ssl_problem_reason(result[:stderr])
+              return PluginResult.new(changed: false, failed: true, msg: "Failed to download key at #{url}: Request failed: <urlopen error [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: #{reason} (_ssl.c:1147)>")
+            end
+          end
           return PluginResult.new(changed: false, failed: true, msg: "Failed to fetch key from #{url}: #{result[:stderr]}")
         end
 
@@ -488,6 +519,71 @@ module Krikri
         break
       end
       nil
+    end
+
+    # The "<urlopen error ...>" text Python's urllib raises when it
+    # re-fetches *url* on the target, or nil when no interpreter there
+    # can answer. Exactly what ansible's fetch_url catches in its URLError
+    # branch ("Request failed: %s" % e), so the caller drops it into the
+    # same message without guessing Python's wording - which matters most
+    # for certificate rejections, where the text embeds that build's own
+    # CPython source line number (see the curl-60 branch above).
+    private def python_urlopen_error_text(url : String) : String?
+      # base64 keeps the -c script free of quotes/metacharacters of its
+      # own: it rides through remote_exec's shell path untouched (same
+      # trick as DnfTransactionProbe's probe).
+      wrapped = "import base64;exec(base64.b64decode(\"#{Base64.strict_encode(URLOPEN_PROBE_PROGRAM)}\"))"
+      urlopen_probe_interpreters.each do |interpreter|
+        result = remote_exec("#{interpreter} -c '#{wrapped}' #{shell_single_quote(url)}", timeout: 60)
+        # 0 = the probe ran and the fetch raised a urlopen-shaped error
+        # (its text on stdout); 1 = it ran but the fetch raised no such
+        # error - that verdict is authoritative, so stop rather than
+        # consult another interpreter. Anything else (127: no such
+        # interpreter) is this candidate failing to run at all.
+        next unless result[:exit_code] == 0 || result[:exit_code] == 1
+        text = result[:stdout].strip
+        return text if text.starts_with?("<urlopen error ")
+        return nil
+      end
+      nil
+    end
+
+    # Runs urlopen and prints str() of whatever it raised - urllib's own
+    # "<urlopen error ...>" wrapping included - or exits 1 for anything
+    # that is not one (a scheme urllib refuses before opening, a fetch
+    # that even succeeded because this target's CA store differs from
+    # curl's).
+    URLOPEN_PROBE_PROGRAM = <<-PYTHON
+      import sys
+      import urllib.request
+
+      try:
+          urllib.request.urlopen(sys.argv[1], timeout=30)
+      except Exception as e:
+          text = str(e)
+          if text.startswith("<urlopen error "):
+              sys.stdout.write(text)
+              sys.exit(0)
+      sys.exit(1)
+      PYTHON
+
+    # The interpreters to probe with: the one this task's vars pin for its
+    # python modules (python_lib_gate's ansible ladder) is the interpreter
+    # ansible's own fetch_url would run under, so its source line numbers
+    # are the ones ansible prints; the unpinned case falls back to
+    # ansible's own interpreter-discovery order.
+    private def urlopen_probe_interpreters : Array(String)
+      pinned = Krikri.interpreter_from_vars(@vars)
+      (pinned ? [pinned] : [] of String) + Krikri::INTERPRETER_FALLBACK
+    end
+
+    # libcrypto's own reason text out of curl's "(60) SSL certificate
+    # problem: <reason>" line - X509_verify_cert_error_string, which
+    # CPython's ssl module prints word for word as the <reason> of its
+    # "[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed" error.
+    private def curl_ssl_problem_reason(stderr : String) : String?
+      first = stderr.lines.first? || return nil
+      first[/\Acurl: \(60\) SSL certificate problem: (.+)/, 1]?
     end
 
     # Extracts the first key id from the ASCII-armored/binary key
