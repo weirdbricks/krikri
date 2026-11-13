@@ -359,6 +359,36 @@ describe "INJECT_FACTS_AS_VARS deprecation from a when: clause" do
     stderr.to_s.wont_include("Origin: #{playbook}:7:")
   end
 
+  # A loop source written as one bare `{{ name }}` hands the loop the
+  # container's own leaves, and a leaf that merely REFERENCES another
+  # variable is rendered lazily by ansible-core at that point - so the fact
+  # read inside that inner value reports the INNER value's own declaration.
+  # jgeusebroek.mariadb's `mariadb_python_client: "{% if
+  # ansible_distribution_major_version ... %}"` reached from
+  # `with_items: '{{ mariadb_packages }}'` printed no block at all here
+  # (issue #1219; the 2.21.6 block is at the client value's opening quote).
+  it "attributes a fact read inside a loop item's referenced variable to that value's declaration" do
+    stderr = run_playbook(<<-PLAYBOOK)
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        vars:
+          client: "{% if ansible_distribution_major_version < '8' %}MySQL-python{% else %}python3-PyMySQL{% endif %}"
+          packages: ["MariaDB-server", "{{ client }}"]
+        tasks:
+          - name: loop over the packages
+            debug:
+              msg: "{{ item }}"
+            with_items: "{{ packages }}"
+      PLAYBOOK
+
+    stderr.must_include("Origin: ")
+    stderr.must_include(":5:13\n")
+    stderr.must_include("5     client: \"{% if ansible_distribution_major_version < '8' %}MySQL-python{% else %}python3-PyMySQL{% endif %}\"\n")
+    stderr.must_include("              ^ column 13")
+    stderr.scan(/DEPRECATION WARNING\]: INJECT_FACTS_AS_VARS/).size.must_equal(1)
+  end
+
   # Issue #979 (6nsh.zabbix_proxy, ginsys.nginx / round 29902182): a batch
   # group's later members are evaluated and prepared during batch-build -
   # their when:, and for a template: the whole file render - so a fact read
