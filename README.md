@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.2662-blue)](https://github.com/weirdbricks/krikri)
+[![Version](https://img.shields.io/badge/version-0.9.2664-blue)](https://github.com/weirdbricks/krikri)
 [![Compatibility](https://img.shields.io/badge/ansible--core-2.21.6-brightgreen)](#-what-is-krikri)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 [![Homebrew](https://img.shields.io/badge/homebrew-tap-blue)](#install-via-homebrew-macoslinux-prebuilt-binaries)
@@ -13,9 +13,14 @@
 
 krikri parses and runs **standard Ansible playbook YAML directly** -
 the same syntax you already write, unmodified. There's no Python, no
-`ansible-core`, no `pip`, and no collections directory anywhere in the
-picture, on either the controller or the target - it's one compiled binary
+`ansible-core`, no `pip`, and no collections install required, on either
+the controller or the target - it's one compiled binary
 (`krikri-playbook`) plus a directory of small compiled module binaries.
+When the controller *does* have ansible-core or collections installed,
+krikri reads them as reference data only (real's module-name resolution,
+collection releases, deprecation source) so it refuses a playbook exactly
+where real would; no collection module is ever run in place of a native
+plugin.
 
 Three binaries ship: `krikri-playbook` (runs playbooks, the
 `ansible-playbook` equivalent), `krikri` (ad-hoc commands, the `ansible`
@@ -24,11 +29,11 @@ equivalent) and `krikri-lint` (the `ansible-lint` equivalent).
 | By the numbers | |
 |---|---|
 | Compatibility target | ansible-core 2.21.6 (byte-for-byte console output) |
-| Real Galaxy roles tested on real hosts | 8,000+ ([status per role](ROLES_TESTED.md)) |
+| Real Galaxy roles tested on real hosts | 12,000+ ([status per role](ROLES_TESTED.md)) |
 | Open gaps | [GitHub issues](https://github.com/weirdbricks/krikri/issues) |
 | Deliberate scope cuts | [KNOWN_MISSING.md](KNOWN_MISSING.md) |
-| Third-party collection modules natively ported | 80 |
-| Automated tests | 8,700+ passing |
+| Third-party collection modules natively ported | 92 |
+| Automated tests | 10,800+ passing |
 | Cold run vs. `ansible-playbook` | 2.36x faster |
 | Warm run vs. `ansible-playbook` | 7.17x faster |
 | Fastest of the three benchmarked engines | 57 of 61 roles (93%) |
@@ -247,10 +252,11 @@ divergence instead of waiting for someone to read the weekly report.
 ## ✅ Testing
 
 ```bash
-# Full minitest suite (test/ - unit, integration, lint)
+# Full minitest suite (test/ - unit, integration, lint; time-sharded onto
+# 6 worker processes by measured test weight)
 scripts/minitest.sh
 
-# Same suite on 4 parallel worker fibers (faster; tests are parallel-safe)
+# Same suite on 4 worker fibers per shard (default is 8)
 scripts/minitest.sh -- -p 4
 
 # Ansible compatibility harness - runs the same playbooks through

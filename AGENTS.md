@@ -77,6 +77,9 @@ scripts/db_tests.sh                 # live PostgreSQL/MySQL suites against throw
                                      #   skip silently when no server is listening)
 scripts/deps_audit.sh               # pinned shard versions vs newest upstream tags;
                                      #   --check exits 1 when a tag/version pin is behind
+python3 scripts/gen_builtin_runtime_data.py --check
+                                     # baked ansible-core name/redirect tables vs the
+                                     #   installed package; regenerate after a target bump
 ameba                               # lint
 ```
 

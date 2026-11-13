@@ -380,7 +380,7 @@ module Krikri
     # installation is discoverable - the caller must then not refuse.
     def self.builtin_module?(leaf : String) : Bool?
       if ansible_pkg_dirs.empty?
-        # No ansible-core on this controller: the baked 2.19.11 data is
+        # No ansible-core on this controller: the baked 2.21.6 data is
         # the truth (same reason as builtin_redirects's fallback). The
         # baked name set is the modules/ FILES plus every
         # ansible_builtin_runtime.yml redirect key - but a redirect key
@@ -452,7 +452,7 @@ module Krikri
         return table
       end
       # No ansible-core installation discoverable: fall back to the
-      # BAKED-IN 2.19.11 tables (krikri replaces ansible-core on this
+      # BAKED-IN 2.21.6 tables (krikri replaces ansible-core on this
       # controller - its redirect truth is the same data the missing
       # package would carry; round 5440000's confirm roles ran because
       # this fallback used to return nil and every refusal degraded to
@@ -480,7 +480,7 @@ module Krikri
     # hop real's loader takes a bare name through before any target
     # collection's own meta/runtime.yml (and its tombstones) is
     # consulted. nil when the name has no builtin-runtime redirect; the
-    # baked 2.19.11 table is the fallback when no ansible-core
+    # baked 2.21.6 table is the fallback when no ansible-core
     # installation is discoverable, same as builtin_redirects.
     def self.builtin_module_redirect(name : String) : String?
       builtin_redirects("modules").try(&.[name]?)
