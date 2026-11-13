@@ -62,13 +62,16 @@ library shards (krikri-jinja, krikri-xml, ...) stay MIT; GPL krikri may use them
                                      #   and a debug binary runs ~1.8x slower wall-clock on identical work -
                                      #   `krikri-role-tester` warns (not refuses) when it detects one, and records
                                      #   the build type, commit and a stale-binary check in the run's `versions.txt`
-scripts/minitest.sh                 # the full minitest suite under test/ (defaults to
-                                     #   8 worker fibers; the suite is IO/sleep-bound, so
-                                     #   tests genuinely overlap; parallel-safety rules in
-                                     #   test/minitest_helper.cr)
-scripts/minitest.sh -- -p 4         # same suite on 4 worker fibers
+scripts/minitest.sh                 # the full minitest suite under test/ (6 shard
+                                     #   processes by default, 8 fibers each, one shared
+                                     #   binary; --shard N / KRIKRI_TEST_SHARDS to change it;
+                                     #   parallel-safety rules in test/minitest_helper.cr)
+scripts/minitest.sh -- -p 4         # same suite on 4 worker fibers per shard
 scripts/minitest.sh test/unit/foo_test.cr   # one file
 scripts/minitest.sh -- -n /pattern/ # a subset by test-name regex
+scripts/minitest_stats.sh           # slowest tests, shard imbalance for 2/4/6/8
+                                     #   shards, recent run history; --publish refreshes
+                                     #   the tracked weight baseline + history
 scripts/db_tests.sh                 # live PostgreSQL/MySQL suites against throwaway
                                      #   podman containers (the ones that otherwise
                                      #   skip silently when no server is listening)
@@ -99,14 +102,30 @@ entrypoint (`.minitest_all.cr`, gitignored), builds one hash-gated binary
 script runs that file directly, and anything after `--` goes to
 `Minitest.run`.
 
+**Full-suite sharding is per TEST, on one shared binary**: every shard process
+runs the same `.minitest_all.bin` and takes its share through
+`MINITEST_SLICE_MAP` (see `PluginSpecHelper::Slice` in
+`test/minitest_helper.cr`), so changing the shard count costs no compile. The
+assignment comes from `scripts/minitest_stats.sh` using measured per-test
+seconds; a test it has never measured is hashed onto a shard rather than
+skipped. Splitting by FILE (the old scheme, one compiled binary per shard) could
+never balance - one file's tests all landed on one shard, and a single file once
+weighed more than a sixth of the suite - and N concurrent ~2.4GB compiles is
+what made a shard count above two unsafe on a 16GB box. Keep `-p` at 8: more
+fibers per shard are on one OS thread, and `-p 24` was measured turning the
+plugin watchdog's starvation into "hung for 180s and was killed" failures. Per-run
+wall/build/failure numbers land in the gitignored `.minitest_runs.tsv`;
+`scripts/minitest_stats.sh --publish` promotes the newest line into
+`test/minitest_runs.tsv` and refreshes `test/minitest_weights.tsv`.
+
 **One compile-or-suite at a time on this host**: full-suite runs (not
 single-file ones) hold the host compile lock
-`${KRIKRI_COMPILE_LOCK:-$HOME/.cache/krikri-compile.lock}` across the shard
-builds AND the run, waiting for it if something else holds it. Stacked
+`${KRIKRI_COMPILE_LOCK:-$HOME/.cache/krikri-compile.lock}` across the suite
+build AND the run, waiting for it if something else holds it. Stacked
 crystal compilers (a second suite, or krikri-role-tester's fix-issues
 builds and quick suites, which take the same lock) OOM'd the desktop;
 build the same discipline into anything that compiles or runs the suite
-unattended.
+unattended. (A sharded run is one compile, not one per shard.)
 
 **Live docker tests are off by default**: the `docker_compose_v2` and
 `docker_container published_ports` tests bring real podman/compose projects up (~135s of a

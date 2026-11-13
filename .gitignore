@@ -80,12 +80,19 @@ __pycache__/
 /.minitest_all.bin
 /.minitest_all.hash
 
-# scripts/minitest.sh's sharded-mode entrypoints/binaries/hashes (--shard N)
+# scripts/minitest.sh's per-test timing records (the shard balancer's raw
+# input; the reduced baseline that ships is test/minitest_weights.tsv)
+/.minitest_timings.tsv
+
+# scripts/minitest.sh's run history (promote a line into the tracked
+# test/minitest_runs.tsv with scripts/minitest_stats.sh --publish)
+/.minitest_runs.tsv
+
+# scripts/minitest.sh used to compile one binary per shard (--shard N);
+# every shard runs the shared .minitest_all.bin now. Left ignored so an old
+# checkout's leftovers do not show up as untracked files.
 /.minitest_shard_*.cr
 /.minitest_shard_*.bin
 /.minitest_shard_*.hash
-
-# scripts/minitest.sh's per-test timing records (shard-balancing weights)
-/.minitest_timings.tsv
 
 /ws

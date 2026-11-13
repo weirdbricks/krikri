@@ -17,21 +17,28 @@
 #   scripts/minitest.sh -- -n /pattern/       # args after -- go to the binary
 #
 # Parallelism: the full suite defaults to 6 OS processes (`--shard N`, or
-# KRIKRI_TEST_SHARDS), each running its slice of the test files with -p 8
-# worker fibers on ONE OS thread (CRYSTAL_WORKERS=1). Sharding by process is
-# what actually uses the extra cores: within one process the fibers all
-# share a single OS thread, so CPU-bound work (process spawns, parsing)
-# serializes - 4 processes x -p 8 measured ~47% faster wall-clock than one
-# process at -p 8 (41s vs 77s). The old "N=6 added nothing" measurement was
-# made with count-based shard weights; re-measured interleaved against
-# --shard 4 after the switch to measured-time weights, 6 was faster in
-# every contemporaneous pairing (~5-11s, more under ambient load). Each
-# shard needs its own compiled
-# binary (the entrypoint only requires its own slice of test files), built
-# concurrently and hash-gated like the single binary; the tradeoff is that a
-# source change now costs N compiles instead of one (~45s parallel vs ~15s),
-# which is still small next to the suite itself. KRIKRI_TEST_SHARDS=1 or
-# --shard 1 falls back to the original single-process path below.
+# KRIKRI_TEST_SHARDS), each running its tests with -p 8 worker fibers on ONE
+# OS thread (CRYSTAL_WORKERS=1 - more threads hit GC double-free aborts, see
+# below). Sharding by process is what actually uses the extra cores: within one
+# process the fibers share a single OS thread, so CPU-bound work (process
+# spawns, parsing) serializes. The processes no longer each need their own
+# compile: every shard runs the SAME .minitest_all.bin and takes its share of
+# the tests through MINITEST_SLICE_MAP (PluginSpecHelper::Slice), so a source
+# change costs one compile no matter the shard count.
+#
+# Which tests a shard takes is decided per TEST, not per file, by
+# scripts/minitest_stats.sh from measured weight (longest first onto the
+# lightest shard). Splitting by file could not balance - one file's tests all
+# land on one shard and test/integration/diff_mode_test.cr alone once carried a
+# sixth of the suite's measured time - and a shard that got such a file ran for
+# ~5 minutes while five others idled. Tests with no measurement yet (new ones)
+# are hashed onto a shard, so nothing is dropped and no warm-up run is needed.
+# The weighting statistics - and the warning about what a loaded run does to a
+# wall-clock measurement - live in scripts/minitest_stats.sh. Keep the fiber
+# count per shard at 8: -p 24 was measured turning the plugin watchdog's
+# starvation into "hung for 180s and was killed" failures.
+#
+# KRIKRI_TEST_SHARDS=1 or --shard 1 falls back to the single-process path below.
 #
 # The tests must then be parallel-safe both within a shard and across shard
 # processes: per-test tmp state comes from PluginSpecHelper.tmp_path (scoped
@@ -195,28 +202,6 @@ done < <(find "$ROOT/src" "$ROOT/plugins" "$ROOT/lib" -name '*.cr' | sort)
 cd "$ROOT"
 export CRYSTAL_WORKERS="${CRYSTAL_WORKERS:-1}"
 
-# Per-test wall-clock timings, recorded by run_one in test/minitest_helper.cr
-# and fed back as the NEXT full run's shard weights (see the sharded path).
-# After each run the file is compacted to one max-per-name line, so it stays
-# small and - crucially - stable between source changes: a changed timings
-# file changes the shard assignment, which changes the hashed entrypoints
-# and forces N recompiles. Max-over-runs is monotone, so weights only drift
-# when a test genuinely got slower; whole-second quantization in the weights
-# script absorbs the rest of the jitter.
-MINITEST_TIMINGS_PATH="$ROOT/.minitest_timings.tsv"
-touch "$MINITEST_TIMINGS_PATH"
-export MINITEST_TIMINGS="$MINITEST_TIMINGS_PATH"
-
-# Compact to one max-per-name record (same rule as minitest_timings.sh's
-# summarizer). Run after every full-suite invocation - both paths below.
-compact_timings() {
-  local tmp
-  tmp=$(mktemp)
-  awk -F'\t' '{ t = $1 + 0; m[$3] = (t > m[$3] + 0 ? t : m[$3] + 0) }
-    END { for (k in m) print m[k] + 0 "\tparallel\t" k }' "$MINITEST_TIMINGS_PATH" > "$tmp"
-  mv "$tmp" "$MINITEST_TIMINGS_PATH"
-}
-
 # `crystal run` used to strip the conventional `--` separator before the
 # program saw ARGV; the bare binary doesn't, and OptionParser stops at it,
 # so a leading -- would silently disable every option after it. shard_args
@@ -226,175 +211,186 @@ if [ ${#shard_args[@]} -gt 0 ] && [ "${shard_args[0]}" = "--" ]; then
 fi
 set -- ${shard_args[@]+"${shard_args[@]}"}
 
-# ---- sharded path: N OS processes, each with its own entrypoint/binary ----
+# Per-test wall-clock timings, recorded by run_one in test/minitest_helper.cr
+# and read back by scripts/minitest_stats.sh to decide what runs where. One
+# line per test per run: "<seconds>\t<serial|parallel>\t<test>\t<run>".
+MINITEST_TIMINGS_PATH="${MINITEST_TIMINGS:-$ROOT/.minitest_timings.tsv}"
+MINITEST_RUNS_KEPT="${MINITEST_RUNS_KEPT:-3}"
+RUN_HISTORY="${MINITEST_RUN_HISTORY:-$ROOT/.minitest_runs.tsv}"
+# Only a WHOLE-suite run may write statistics: anything after `--` (typically
+# `-n /pattern/`) runs a subset, and recording its 0.00s non-runs would both
+# poison the weights and prune real runs out of the file.
+if [ $# -eq 0 ]; then
+  touch "$MINITEST_TIMINGS_PATH"
+  export MINITEST_TIMINGS="$MINITEST_TIMINGS_PATH"
+  # One id shared by every shard process, so the balancer groups by run.
+  export MINITEST_RUN_ID="${MINITEST_RUN_ID:-$(date +%s)-$$}"
+  RECORD_TIMINGS=1
+else
+  RECORD_TIMINGS=0
+fi
+
+# Keep only the newest MINITEST_RUNS_KEPT runs' records. The balancer takes the
+# MAX within a run (a test is recorded several times per run and only one of
+# those records does the work) and the MIN across these runs: a loaded run
+# inflates every record it touched, measured at up to ~2000x (0.14s recorded as
+# 273s), and inflation only ever goes one way, so the smallest value is the
+# closest thing to the test's own cost. Max-ever - what this used to keep - made
+# one such sample permanent, which is how a 10-test file ended up outweighing a
+# sixth of the suite.
+compact_timings() {
+  [ "$RECORD_TIMINGS" = 1 ] || return 0
+  [ -s "$MINITEST_TIMINGS_PATH" ] || return 0
+  local tmp
+  tmp=$(mktemp)
+  awk -F'\t' -v kept="$MINITEST_RUNS_KEPT" '
+    { run = ($4 == "" ? "-" : $4)
+      if (!(run in seen)) { seen[run] = 1; order[++n] = run }
+      line[NR] = $0; r[NR] = run }
+    END {
+      first = (n > kept ? n - kept + 1 : 1)
+      for (i = first; i <= n; i++) keep[order[i]] = 1
+      for (i = 1; i <= NR; i++) if (r[i] in keep) print line[i]
+    }' "$MINITEST_TIMINGS_PATH" > "$tmp"
+  mv "$tmp" "$MINITEST_TIMINGS_PATH"
+}
+
+# "00:06:46.505734533" -> 406
+clock_seconds() {
+  awk -F'[.:]' '{ print $1 * 3600 + $2 * 60 + $3 }'
+}
+
+# The whole suite in ONE binary: minitest registers its tests in-process, so a
+# single entrypoint has to require every test file. Every shard runs this same
+# binary and picks its own tests (MINITEST_SLICE_MAP, see
+# PluginSpecHelper::Slice). Per-shard binaries meant N ~2.4GB crystal builds at
+# once, which is what made a shard count above two unpalatable on the 16GB dev
+# box, and they still could not balance (see scripts/minitest_stats.sh).
+hash=$(cat "${files[@]}" "${support_files[@]}" "${source_files[@]}" "$ROOT/shard.lock" | sha256sum | cut -d' ' -f1)
+
+build_test_binary() {
+  if [ -f "$HASHFILE" ] && [ "$(cat "$HASHFILE")" = "$hash" ] && [ -x "$BINARY" ]; then
+    return 0
+  fi
+  tmp_ep="$ENTRYPOINT.tmp"
+  : > "$tmp_ep"
+  for file in "${files[@]}"; do
+    printf 'require "./%s"\n' "${file#"$ROOT"/}" >> "$tmp_ep"
+  done
+  mv "$tmp_ep" "$ENTRYPOINT"
+  # Hash first, binary second - but a failed build drops BOTH, or the next run
+  # would "validate" against the hash and silently execute stale code.
+  echo "$hash" > "$HASHFILE"
+  if ! (cd "$ROOT" && crystal build --no-debug "$ENTRYPOINT" -o "$BINARY"); then
+    rm -f "$BINARY" "$HASHFILE"
+    return 1
+  fi
+}
+
+# Default fiber count: 8. The workers share ONE OS thread per process
+# (CRYSTAL_WORKERS=1 above), so this is about overlapping waits, not cores.
+# Raising it was measured: -p 24 on four shards turned the plugin watchdog's
+# starvation into "plugin ... hung for 180s and was killed" failures, so the
+# per-shard fiber count stays where it is and extra parallelism comes from more
+# shard PROCESSES. An explicit -p/--parallel on the command line wins.
+fibers=8
+parallel_given=false
+prev_was_p=false
+for arg in "$@"; do
+  if [ "$prev_was_p" = true ]; then
+    fibers="$arg"
+    prev_was_p=false
+    continue
+  fi
+  case "$arg" in
+    -p|--parallel)   parallel_given=true; prev_was_p=true ;;
+    -p[0-9]*)        parallel_given=true; fibers="${arg#-p}" ;;
+    --parallel=*)    parallel_given=true; fibers="${arg#--parallel=}" ;;
+  esac
+done
+if [ "$parallel_given" = false ]; then
+  set -- "$@" -p "$fibers"
+fi
+
+# ---- sharded path: N processes, one binary, test-level slices ----
 if [ "$shards" -ge 2 ]; then
-  # Default per-shard fiber count: 8 (measured 41s vs 45s at -p 4; -p 12
-  # and CRYSTAL_WORKERS=2 added nothing). An explicit -p/--parallel on the
-  # command line wins and applies to every shard.
-  parallel_given=false
-  for arg in "$@"; do
-    case "$arg" in
-      -p|--parallel) parallel_given=true ;;
-      -p[0-9]*)      parallel_given=true ;;
-    esac
-  done
-  if [ "$parallel_given" = false ]; then
-    set -- "$@" -p 8
-  fi
+  build_start=$(date +%s)
+  build_test_binary || exit 1
+  build_s=$(( $(date +%s) - build_start ))
 
-  # Balance the shards by measured weight, not by file count: a plain
-  # round-robin leaves the slowest shard ~29% heavier than the lightest
-  # (2632 vs 2051 tests), and the wall time IS the slowest shard. Weight
-  # each file by the measured seconds of its tests (from the timings file
-  # the previous run wrote; minitest_file_weights.sh reconstructs test
-  # names per file the way minitest builds them, and falls back to the
-  # seconds-per-test average times it-count for anything unmeasured - or
-  # to pure it-counts, one awk pass, when no timings exist yet) and assign
-  # heaviest-file-to-lightest-shard (LPT). Deterministic: the file
-  # list is sorted and ties break on path, so the same sources + timings
-  # always produce the same assignment - which matters because the assignment is
-  # baked into each shard's hashed entrypoint.
-  if [ -s "$MINITEST_TIMINGS_PATH" ]; then
-    mapfile -t weighted < <(scripts/minitest_file_weights.sh "$MINITEST_TIMINGS_PATH" "${files[@]}")
+  # Assign every MEASURED test to a shard by measured weight (LPT). A test with
+  # no measurement - added since the last publish - is hashed onto a shard by
+  # run_one instead of being skipped, so nothing is ever dropped and a cold
+  # checkout needs no warm-up run.
+  slice_dir="$RUN_TMP/slices"
+  slice_map="$slice_dir/map.tsv"
+  if ! scripts/minitest_stats.sh --slices "$shards" "$slice_dir" >/dev/null 2>"$RUN_TMP/slices.log"; then
+    echo "test: slice assignment failed - every shard will hash-scatter all tests" >&2
+    cat "$RUN_TMP/slices.log" >&2
   else
-    mapfile -t weighted < <(awk '
-      FNR == 1 { if (seen) print cnt "\t" prev; prev = FILENAME; cnt = 0; seen = 1 }
-      /^[[:space:]]*it[[:space:]]/ { cnt++ }
-      END { if (seen) print cnt "\t" prev }
-    ' "${files[@]}" | sort -t$'\t' -k1,1nr -k2,2)
+    sed 's/^stats: /test: /' "$RUN_TMP/slices.log" >&2 || true
   fi
-  shard_weights=()
-  shard_flists=()
-  shard_counts=()
-  for ((i=0; i<shards; i++)); do
-    shard_weights[$i]=0
-    shard_counts[$i]=0
-    shard_flists[$i]=""
-  done
-  while IFS=$'\t' read -r cnt fpath; do
-    best=0
-    for ((i=1; i<shards; i++)); do
-      if (( shard_weights[$i] < shard_weights[$best] )); then best=$i
-      # equal-weight tie-break on fewest files: zero-weight files would
-      # otherwise all pile onto one shard (weight 0 + weight 0 = 0)
-      elif (( shard_weights[$i] == shard_weights[$best] && shard_counts[$i] < shard_counts[$best] )); then best=$i
-      fi
-    done
-    shard_weights[$best]=$(( shard_weights[$best] + cnt ))
-    shard_counts[$best]=$(( shard_counts[$best] + 1 ))
-    shard_flists[$best]+="$fpath"$'\n'
-  done < <(printf '%s\n' "${weighted[@]}")
+  [ -s "$slice_map" ] || : > "$slice_map"
 
-  shard_pids=()
-  shard_built=()
+  echo "test: running $shards shards in parallel ($fibers fibers each, one binary)" >&2
+  run_start=$(date +%s)
   for ((i=0; i<shards; i++)); do
-    s_ep="$ROOT/.minitest_shard_${i}.cr"
-    s_bin="$ROOT/.minitest_shard_${i}.bin"
-    s_hash="$ROOT/.minitest_shard_${i}.hash"
-    s_tmp_ep="$s_ep.tmp"
-    : > "$s_tmp_ep"
-    reqs=()
-    while IFS= read -r f; do
-      reqs+=("${f#"$ROOT"/}")
-    done < <(printf '%s' "${shard_flists[$i]}" | sort)
-    for req in "${reqs[@]}"; do
-      printf 'require "./%s"\n' "$req" >> "$s_tmp_ep"
-    done
-    mv "$s_tmp_ep" "$s_ep"
-    # Same hash discipline as the single binary below: the shard's own file
-    # slice, the non-_test.cr support files, all compiled sources and
-    # shard.lock.
-    s_h=$( (printf '%s\n' "${reqs[@]}"; cat "${support_files[@]}" "${source_files[@]}" "$ROOT/shard.lock") | sha256sum | cut -d' ' -f1)
-    shard_built[$i]=0
-    if [ ! -f "$s_hash" ] || [ "$(cat "$s_hash")" != "$s_h" ] || [ ! -x "$s_bin" ]; then
-      # Hash first, binary second; on build failure drop BOTH or the next
-      # run would "validate" against the hash and run stale code.
-      echo "$s_h" > "$s_hash"
-      ( crystal build --no-debug "$s_ep" -o "$s_bin" ) >"$RUN_TMP/build_$i.log" 2>&1 &
-      shard_pids[$i]=$!
-      shard_built[$i]=1
-    fi
-  done
-
-  build_failed=0
-  for ((i=0; i<shards; i++)); do
-    if [ "${shard_built[$i]}" = 1 ]; then
-      if ! wait "${shard_pids[$i]}"; then
-        echo "test: shard $i BUILD FAILED:" >&2
-        tail -20 "$RUN_TMP/build_$i.log" >&2
-        rm -f "$ROOT/.minitest_shard_${i}.bin" "$ROOT/.minitest_shard_${i}.hash"
-        build_failed=1
-      fi
-    fi
-  done
-  [ "$build_failed" = 0 ] || exit 1
-
-  echo "test: running $shards shards in parallel" >&2
-  for ((i=0; i<shards; i++)); do
-    s_bin="$ROOT/.minitest_shard_${i}.bin"
     s_log="$RUN_TMP/shard_$i.log"
     (
       export TMPDIR="$RUN_TMP/s$i"
       mkdir -p "$TMPDIR"
+      export MINITEST_SLICE_MAP="$slice_map" MINITEST_SLICE_INDEX="$i" MINITEST_SLICE_COUNT="$shards"
       crc=0
-      timeout -k 5 "${MINITEST_TIMEOUT:-600}" "$s_bin" "$@" >"$s_log" 2>&1 || crc=$?
+      timeout -k 5 "${MINITEST_TIMEOUT:-600}" "$BINARY" "$@" >"$s_log" 2>&1 || crc=$?
       echo "$crc" > "$RUN_TMP/shard_$i.rc"
     ) &
   done
   wait
+  run_s=$(( $(date +%s) - run_start ))
   compact_timings
 
   rc_total=0
+  total_tests=0
+  total_fails=0
+  total_errors=0
+  slowest=0
   for ((i=0; i<shards; i++)); do
     s_log="$RUN_TMP/shard_$i.log"
     crc=$(cat "$RUN_TMP/shard_$i.rc")
     summary=$(grep -E '^[0-9]+ (tests|runs),' "$s_log" | tail -1)
     echo "shard $i: exit=$crc  ${summary:-<no summary - see $s_log>}" >&2
+    if [ -n "$summary" ]; then
+      total_tests=$(( total_tests + $(echo "$summary" | sed -E 's/^([0-9]+).*/\1/') ))
+      fails=$(echo "$summary" | sed -E 's/.* ([0-9]+) failures,.*/\1/' | grep -E '^[0-9]+$' || echo 0)
+      total_fails=$(( total_fails + fails ))
+      errs=$(echo "$summary" | sed -E 's/.* ([0-9]+) errors,.*/\1/' | grep -E '^[0-9]+$' || echo 0)
+      total_errors=$(( total_errors + errs ))
+    fi
+    finished=$(grep -oE 'Finished in [0-9:.]+' "$s_log" | tail -1 | awk '{print $3}')
+    if [ -n "$finished" ]; then
+      secs=$(echo "$finished" | clock_seconds)
+      if [ "$secs" -gt "$slowest" ]; then slowest=$secs; fi
+    fi
     if [ "$crc" -ne 0 ]; then
       rc_total=$crc
       echo "--- shard $i output (last 120 lines; full log: $s_log) ---" >&2
       tail -n 120 "$s_log" >&2
     fi
   done
+
+  # One line per run: enough to tell "the shard count helped" from "that run
+  # happened to land well" weeks later. --publish promotes it into the repo.
+  if [ "$RECORD_TIMINGS" = 1 ]; then
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+      "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)" \
+      "$shards" "$fibers" "$total_tests" "$total_fails" "$total_errors" "$build_s" "$run_s" "$slowest" >> "$RUN_HISTORY"
+  fi
+  echo "test: $shards shards x $fibers fibers: $total_tests tests, $total_fails failures, $total_errors errors, build ${build_s}s, run ${run_s}s, slowest shard ${slowest}s (scripts/minitest_stats.sh)" >&2
   exit "$rc_total"
 fi
 
 # ---- single-process path (shards=1): one entrypoint, one binary ----
-
-hash=$(cat "${files[@]}" "${support_files[@]}" "${source_files[@]}" "$ROOT/shard.lock" | sha256sum | cut -d' ' -f1)
-
-if [ ! -f "$HASHFILE" ] || [ "$(cat "$HASHFILE")" != "$hash" ] || [ ! -f "$BINARY" ]; then
-  tmp_ep="$ROOT/.minitest_all.cr.tmp"
-  : > "$tmp_ep"
-  for file in "${files[@]}"; do
-    printf 'require "./%s"\n' "${file#"$ROOT"/}" >> "$tmp_ep"
-  done
-  mv "$tmp_ep" "$ENTRYPOINT"
-  # Hash first, binary second - but if the build fails, drop BOTH the
-  # recorded hash and the previous binary, or the next run would
-  # "validate" against the hash and silently execute stale code.
-  echo "$hash" > "$HASHFILE"
-  if ! (cd "$ROOT" && crystal build --no-debug "$ENTRYPOINT" -o "$BINARY"); then
-    rm -f "$BINARY" "$HASHFILE"
-    exit 1
-  fi
-fi
-
-# Default parallelism: 8 worker fibers. The suite is IO/sleep-bound, so
-# the sleeps genuinely overlap and wall time drops ~35% vs -p 4 (measured:
-# 1m25s vs 2m00s); the workers stay on ONE OS thread (CRYSTAL_WORKERS=1
-# above), so this costs no extra cores. An explicit -p/--parallel on the
-# command line wins.
-parallel_given=false
-for arg in "$@"; do
-  case "$arg" in
-    -p|--parallel) parallel_given=true ;;
-    -p[0-9]*)      parallel_given=true ;;
-  esac
-done
-if [ "$parallel_given" = false ]; then
-  set -- "$@" -p 8
-fi
+build_test_binary || exit 1
 
 # Not exec: the EXIT trap has to run after the suite to remove its TMPDIR.
 rc=0

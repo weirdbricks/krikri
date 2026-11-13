@@ -152,6 +152,14 @@ describe Krikri::VariableSubstitutor::FilterCore do
     it "password_hash lets libxcrypt clamp rounds instead of rejecting them" do
       expect(str_starts_with?(core.password_hash("hello", "sha512", "mysalt", rounds: JSON::Any.new(999i64)),
         "$6$rounds=1000$")).must_equal(true)
+    end
+
+    # The upper clamp only shows up at rounds >= 1e9, and sha512-crypt's cost is
+    # linear in rounds: a real derivation there takes ~4 minutes of one core, which
+    # made this ONE test the whole suite's critical path (scripts/minitest_stats.sh
+    # ranked it first, far above everything else). Opt in to check it for real.
+    it "password_hash clamps rounds above libxcrypt's maximum" do
+      skip("set KRIKRI_SLOW_TESTS=1; a 1e9-round sha512-crypt costs ~4 minutes") unless ENV["KRIKRI_SLOW_TESTS"]? == "1"
       expect(str_starts_with?(core.password_hash("hello", "sha512", "mysalt", rounds: JSON::Any.new(1000000000i64)),
         "$6$rounds=999999999$")).must_equal(true)
     end

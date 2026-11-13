@@ -37,18 +37,84 @@ module PluginSpecHelper
   @@tmp_mutex = Mutex.new
   @@tmp_dir_by_fiber = {} of Fiber => String
 
-  # MINITEST_TIMINGS=<file> appends one "<seconds>\t<serial|parallel>\t<test>" line per test as it
-  # finishes (appended, not written at exit: minitest's own at_exit hook runs the tests, so a
-  # hook registered here would fire before them). Serial tests are timed inside STATE_MUTEX, so
-  # waiting for the lock is not counted. Each test is recorded several times (only one with real
-  # time), so summarize with scripts/minitest_timings.sh <file>.
+  # MINITEST_TIMINGS=<file> appends one "<seconds>\t<serial|parallel>\t<test>\t<run>" line per
+  # test as it finishes (appended, not written at exit: minitest's own at_exit hook runs the
+  # tests, so a hook registered here would fire before them). Serial tests are timed inside
+  # STATE_MUTEX, so waiting for the lock is not counted. Each test is recorded several times per
+  # run (only one of those records has the real time) and a loaded run inflates the tests that ran
+  # alongside a CPU-hogging fiber, so scripts/minitest_stats.sh takes the MAX within a run and the
+  # MIN across the last few runs.
   TIMINGS_PATH  = ENV["MINITEST_TIMINGS"]?
   TIMINGS_MUTEX = Mutex.new
+
+  # One id for every shard process of a run, so the balancer can group records per run. The
+  # fallback only matters for a hand-run binary outside scripts/minitest.sh.
+  RUN_ID = ENV["MINITEST_RUN_ID"]? || "#{Time.utc.to_unix}-#{Process.pid}"
 
   def self.record_timing(test : String, serial : Bool, elapsed : Time::Span) : Nil
     return unless path = TIMINGS_PATH
     TIMINGS_MUTEX.synchronize do
-      File.open(path, "a") { |file| file.puts "#{elapsed.total_seconds.round(2)}\t#{serial ? "serial" : "parallel"}\t#{test}" }
+      File.open(path, "a") { |file| file.puts "#{elapsed.total_seconds.round(2)}\t#{serial ? "serial" : "parallel"}\t#{test}\t#{RUN_ID}" }
+    end
+  end
+
+  # Test-level slicing for full-suite sharding (scripts/minitest.sh --shard N).
+  #
+  # The suite used to be split by FILE, with one compiled binary per shard. That
+  # needed N ~2.4GB crystal builds at once and still could not balance: a file's
+  # tests all land on one shard, and test/integration/diff_mode_test.cr alone
+  # outweighed a sixth of the suite's measured time. Now every shard runs the
+  # SAME binary and this gate decides which tests it takes, so the split is per
+  # test and changing the shard count costs no compile at all.
+  #
+  # MINITEST_SLICE_MAP lists "<Class#test_name>\t<shard index>" for every test
+  # the balancer measured; MINITEST_SLICE_INDEX/COUNT identify this process. A
+  # name the map does not know (a test added since the last publish) is hashed
+  # onto a shard instead of being skipped, so nothing is ever silently dropped.
+  struct Slice
+    getter index : Int32
+    getter count : Int32
+
+    def initialize(@index : Int32, @count : Int32, @owned : Set(String), @known : Set(String))
+    end
+
+    # Returns nil (run everything) when this process was not given a slice.
+    def self.load(map_path : String, index : Int32, count : Int32) : Slice?
+      return nil unless count > 0 && index >= 0 && index < count
+      owned = Set(String).new
+      known = Set(String).new
+      File.each_line(map_path) do |line|
+        name, _, shard = line.rstrip.rpartition('\t')
+        next if shard.empty? || name.empty?
+        known << name
+        owned << name if shard.to_i == index
+      end
+      Slice.new(index, count, owned, known)
+    end
+
+    # FNV-1a over the name's bytes: String#hash is seeded per process, so the
+    # shards would disagree about where an unmeasured test belongs.
+    def self.slot(name : String, count : Int32) : Int32
+      hash = 0xcbf29ce484222325_u64
+      name.each_byte { |byte| hash = (hash ^ byte) &* 0x100000001b3_u64 }
+      (hash % count).to_i
+    end
+
+    def runs?(name : String) : Bool
+      return @owned.includes?(name) if @known.includes?(name)
+      Slice.slot(name, @count) == @index
+    end
+  end
+
+  SLICE = begin
+    map, index, count = ENV["MINITEST_SLICE_MAP"]?, ENV["MINITEST_SLICE_INDEX"]?, ENV["MINITEST_SLICE_COUNT"]?
+    if map && index && count
+      begin
+        Slice.load(map, index.to_i, count.to_i)
+      rescue ex : File::Error | ArgumentError
+        STDERR.puts "minitest: ignoring unusable slice (#{map}): #{ex.message}"
+        nil
+      end
     end
   end
 
@@ -582,6 +648,14 @@ class Minitest::Spec
   # One tmp scope per test: setup, body and teardown all run inside run_one
   # on the same worker fiber, so begin/end here bracket exactly one test.
   def run_one(name : String, proc : Test ->) : Nil
+    # Another shard owns this test (see PluginSpecHelper::Slice): returning
+    # before super() leaves it unrecorded, so it is neither run nor counted.
+    if slice = PluginSpecHelper::SLICE
+      return unless slice.runs?("#{self.class.name}##{name}")
+    end
+    # A test filtered out by -n never executes, and recording it as 0.00s would
+    # let one filtered run erase the shard balancer's weights.
+    return unless should_run?(name)
     PluginSpecHelper.begin_test_tmp
     if exclusive?
       PluginSpecHelper.enter_exclusive
