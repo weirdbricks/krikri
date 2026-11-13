@@ -486,16 +486,16 @@ describe "INJECT_FACTS_AS_VARS deprecation" do
     stderr.scan(/DEPRECATION WARNING\]: #{Regex.escape(FACT_DEPRECATION_TEXT)}/).size.must_equal(2)
   end
 
-  it "attributes an include_tasks path read to that argument's own value" do
+  it "attributes a failing include_tasks path read to that argument's own value" do
     # Issue #1093, shifteoops.apache_role: `include_tasks: "setup-{{
     # ansible_os_family }}.yml"` reads the fact while the executor
     # templates the path, not during task-arg finalization, so the read
     # used to stay silent. Real pins it on the path argument's VALUE - the
     # statement's own `include_tasks:` key for the free-form form, `file:`
-    # in the mapping form - live-verified against 2.21.6. The included
-    # files exist so both plays run (a failed host is dropped for later
-    # plays).
-    family = fact_value("ansible_os_family")
+    # in the mapping form - and shows it on the FAILED include's result,
+    # before the [ERROR] line (live-verified against 2.21.6 with the file
+    # missing). One include per run: a failed host is dropped for later
+    # plays.
     stdout, stderr, dir = run_files({
       "play.yml" => <<-PLAYBOOK,
       - hosts: localhost
@@ -504,6 +504,18 @@ describe "INJECT_FACTS_AS_VARS deprecation" do
         tasks:
           - name: free-form include_tasks
             include_tasks: "nosuch-{{ ansible_os_family }}.yml"
+      PLAYBOOK
+    })
+
+    stdout.must_include("TASK [free-form include_tasks]")
+    stderr.must_include("[DEPRECATION WARNING]: #{FACT_DEPRECATION_TEXT}\n")
+    stderr.must_include("Origin: #{File.join(dir, "play.yml")}:6:22\n")
+    stderr.must_include("6       include_tasks: \"nosuch-{{ ansible_os_family }}.yml\"\n")
+    stderr.must_include("^ column 22")
+    stderr.scan(/DEPRECATION WARNING\]: #{Regex.escape(FACT_DEPRECATION_TEXT)}/).size.must_equal(1)
+
+    stdout2, stderr2, dir2 = run_files({
+      "play.yml" => <<-PLAYBOOK,
       - hosts: localhost
         connection: local
         gather_facts: true
@@ -512,21 +524,46 @@ describe "INJECT_FACTS_AS_VARS deprecation" do
             include_tasks:
               file: "nosuch2-{{ ansible_os_family }}.yml"
       PLAYBOOK
-      "nosuch-#{family}.yml"  => "- name: included one\n  debug: {msg: one}\n",
-      "nosuch2-#{family}.yml" => "- name: included two\n  debug: {msg: two}\n",
+    })
+
+    stdout2.must_include("TASK [mapping include_tasks]")
+    stderr2.must_include("[DEPRECATION WARNING]: #{FACT_DEPRECATION_TEXT}\n")
+    stderr2.must_include("Origin: #{File.join(dir2, "play.yml")}:7:15\n")
+    stderr2.must_include("^ column 15")
+    stderr2.scan(/DEPRECATION WARNING\]: #{Regex.escape(FACT_DEPRECATION_TEXT)}/).size.must_equal(1)
+  end
+
+  it "drops a running include_tasks path read's deprecation (issue 1187)" do
+    # ansible-core captures the read into the include task's result, and
+    # the strategy's "included:" display never shows a result's warnings -
+    # so when the file loads, NOTHING prints (live-verified against
+    # 2.21.6): zhan9san.jenkins's
+    # `file: "setup-{{ ansible_os_family | lower }}.yml"` include printed
+    # a spurious INJECT_FACTS_AS_VARS block at the play tail where
+    # ansible-playbook printed none (issue #1187). Only a skipped or
+    # failed include shows what it captured (see the two tests above).
+    family = fact_value("ansible_os_family")
+    stdout, stderr, _dir = run_files({
+      "play.yml" => <<-PLAYBOOK,
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        tasks:
+          - name: free-form include_tasks
+            include_tasks: "runs-{{ ansible_os_family }}.yml"
+          - name: mapping include_tasks
+            include_tasks:
+              file: "runs2-{{ ansible_os_family }}.yml"
+      PLAYBOOK
+      "runs-#{family}.yml"  => "- name: included one\n  debug: {msg: one}\n",
+      "runs2-#{family}.yml" => "- name: included two\n  debug: {msg: two}\n",
     })
 
     stdout.must_include("TASK [free-form include_tasks]")
     stdout.must_include("TASK [mapping include_tasks]")
     stdout.must_include("included one")
     stdout.must_include("included two")
-    stderr.must_include("[DEPRECATION WARNING]: #{FACT_DEPRECATION_TEXT}\n")
-    stderr.must_include("Origin: #{File.join(dir, "play.yml")}:6:22\n")
-    stderr.must_include("6       include_tasks: \"nosuch-{{ ansible_os_family }}.yml\"\n")
-    stderr.must_include("^ column 22")
-    stderr.must_include("Origin: #{File.join(dir, "play.yml")}:13:15\n")
-    stderr.must_include("^ column 15")
-    stderr.scan(/DEPRECATION WARNING\]: #{Regex.escape(FACT_DEPRECATION_TEXT)}/).size.must_equal(2)
+    stderr.wont_include("[DEPRECATION WARNING]: #{FACT_DEPRECATION_TEXT}")
   end
 
   it "drops a passing dynamic include's own when: deprecation" do

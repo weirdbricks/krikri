@@ -496,6 +496,27 @@ module Krikri
       deferred.each(&.call)
     end
 
+    # #finish_deferred_fact_deprecations' take-and-keep sibling: pops the
+    # innermost held readings and hands back their replay closures so the
+    # caller can decide later - a dynamic include's own path readings wait
+    # on the include's verdict, which is only known after the file loads
+    # (see executor_blocks_includes' include_tasks path render).
+    def self.take_deferred_fact_deprecations : Array(Proc(Nil))
+      fiber = Fiber.current
+      return [] of Proc(Nil) unless buffers = @@deferred_fact_deprecations[fiber]?
+      return [] of Proc(Nil) if buffers.empty?
+      deferred = buffers.pop
+      @@deferred_fact_deprecations.delete(fiber) if buffers.empty?
+      deferred
+    end
+
+    # Replays readings #take_deferred_fact_deprecations handed out, at a
+    # display point real shows them at (a failed dynamic include's result
+    # - a running one's "included:" never does).
+    def self.replay_deferred_fact_deprecations(deferred : Array(Proc(Nil))) : Nil
+      deferred.each(&.call)
+    end
+
     # Fiber-scoped stack of task-execution capture windows. Real's
     # TaskExecutor runs every task inside a DeferredWarningContext
     # (executor/task_executor.py's _execute), so a Display.deprecated raised

@@ -156,6 +156,10 @@ module Krikri
 
       run_groups = Hash(String, Array(Host)).new { |hash, key| hash[key] = [] of Host }
       include_names = {} of String => String
+      # Each host's held-back path-render readings (see
+      # ResultDisplay.take_deferred_fact_deprecations), replayed at this
+      # include's failure display points and dropped once it runs.
+      held_path_deprecations = {} of String => Array(Proc(Nil))
       # Per-host resolved no_log for the included: line's censored-item
       # suffix - the suffix appears for ANY no_log include, looped or not
       # (issue #805), so the batched path needs each host's resolution
@@ -180,6 +184,17 @@ module Krikri
         end
         substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
         no_log_by_host[host.name] = resolve_task_no_log(task, vars_context)
+        # The path render's own fact readings are held back like the when:
+        # clause's (issue #974): real attaches them to the include task's
+        # result, and the strategy's "included:" display never shows a
+        # result's warnings - so a RUNNING include prints none of them
+        # (issue #1187: zhan9san.jenkins's
+        # `file: "setup-{{ ansible_os_family | lower }}.yml"` include that
+        # loaded printed a spurious INJECT_FACTS_AS_VARS block where
+        # ansible-playbook printed none), while a FAILED one does
+        # (live-verified vs 2.21.6: the same include with its file missing
+        # prints the block before its [ERROR] line).
+        ResultDisplay.begin_deferred_fact_deprecations
         file_rel = begin
           with_include_tasks_path_site(task) do
             substitutor.substitute(task.include_file.as(String), strict: true)
@@ -189,20 +204,28 @@ module Krikri
           # its path template references an undefined variable, before any
           # file lookup happens - a non-strict render turns the var into
           # the literal text "undefined" and reports the rendered name as
-          # missing instead (live-verified vs 2.19.11).
+          # missing instead (live-verified vs 2.19.11). A failed include
+          # shows what it captured, so the held readings print here.
+          ResultDisplay.finish_deferred_fact_deprecations(flush: true)
           fail_include_tasks_undefined_var(task, host, ex)
           next
+        rescue ex
+          ResultDisplay.finish_deferred_fact_deprecations(flush: true)
+          raise ex
         end
+        path_deprecations = ResultDisplay.take_deferred_fact_deprecations
         raise_include_tasks_non_string_file_crash(task) if task.include_file_native
         resolved_path = PlaybookParser.resolve_include_path(file_rel, task.include_file_dir.as(String), File.expand_path(@playbook_dir))
 
         unless File.exists?(resolved_path)
+          replay_include_path_deprecations(path_deprecations)
           fail_include_tasks_file_not_found(task, host, resolved_path)
           next
         end
 
         run_groups[resolved_path] << host
         include_names[resolved_path] = file_rel
+        held_path_deprecations[host.name] = path_deprecations
       end
 
       run_groups.each do |resolved_path, group_hosts|
@@ -248,10 +271,17 @@ module Krikri
             suffix = included_label ? " => (item=#{included_label})" : ""
             puts "included: #{resolved_path} for #{connection_names.join(", ")}#{suffix}".colorize(:cyan)
             group_hosts.each { |host| register_include_result(task, host, Hash(String, JSON::Any).new, include_names[resolved_path]) }
+            # A running include's "included:" display never shows the
+            # readings its path render captured - real drops them with the
+            # result (see held_path_deprecations), so they die here.
+            group_hosts.each { |host| held_path_deprecations.delete(host.name) }
             next
           end
           unless yaml.as_a?
-            group_hosts.each { |host| fail_include(task, host, "Included tasks file must be a YAML list: #{resolved_path}") }
+            group_hosts.each do |host|
+              replay_include_path_deprecations(held_path_deprecations.delete(host.name))
+              fail_include(task, host, "Included tasks file must be a YAML list: #{resolved_path}")
+            end
             next
           end
 
@@ -306,6 +336,7 @@ module Krikri
           included_label = no_log_by_host[group_hosts.first.name]? ? "(censored due to no_log)" : nil
           suffix = included_label ? " => (item=#{included_label})" : ""
           puts "included: #{resolved_path} for #{connection_names.join(", ")}#{suffix}".colorize(:cyan)
+          group_hosts.each { |host| held_path_deprecations.delete(host.name) }
 
           run_task_batch(included_tasks, group_hosts)
         rescue ex : HandlerNotFoundError
@@ -328,6 +359,7 @@ module Krikri
           # that host, rc=2) - not the whole-run load refusal a top-level
           # occurrence is, so this must not ride the UnresolvedModuleError
           # bypass below.
+          group_hosts.each { |host| replay_include_path_deprecations(held_path_deprecations.delete(host.name)) }
           fail_include_removed_module(task, group_hosts, ex, include_names[resolved_path]?)
         rescue ex : RemovedActionError
           # A bare `include:` inside the loaded file is the include task's
@@ -335,6 +367,7 @@ module Krikri
           # + two-key fatal dump, live-verified vs 2.19.x), not the
           # whole-run refusal a top-level occurrence is. The fatal dump
           # shows the RENDERED include path, not the `{{ }}` as written.
+          group_hosts.each { |host| replay_include_path_deprecations(held_path_deprecations.delete(host.name)) }
           fail_include_removed_module(task, group_hosts, ex, include_names[resolved_path]?)
         rescue ex : RoleNotFoundError
           # A static import_role: inside the included file whose role
@@ -342,6 +375,7 @@ module Krikri
           # Ansible too (same wrapped STDERR block + fatal: shape as the
           # removed-module case above, live-verified vs 2.19.11) - not a
           # "Failed to load included tasks" degradation.
+          group_hosts.each { |host| replay_include_path_deprecations(held_path_deprecations.delete(host.name)) }
           fail_include_not_found(task, group_hosts, ex)
         rescue ex : UnresolvedModuleError
           # Same bypass, same reason: an included file's task naming a
@@ -381,7 +415,10 @@ module Krikri
           # in krikri-playbook.cr prints it.
           raise ex
         rescue ex
-          group_hosts.each { |host| fail_include(task, host, "Failed to load included tasks: #{ex.message}") }
+          group_hosts.each do |host|
+            replay_include_path_deprecations(held_path_deprecations.delete(host.name))
+            fail_include(task, host, "Failed to load included tasks: #{ex.message}")
+          end
         end
       end
     end
@@ -712,6 +749,18 @@ module Krikri
       ensure
         VarSubstitutor.pop_current_task_param
       end
+    end
+
+    # Replays the held readings of an include whose result is about to
+    # DISPLAY (a failure) at that display point - real's callback shows a
+    # failed include's captured warnings before its error text, and shows
+    # none of a running one's (see the path render's deferral at
+    # execute_include_tasks_multi). nil/empty is a no-op: a successful
+    # include drops its readings before any later rescue can see them.
+    private def replay_include_path_deprecations(path_deprecations : Array(Proc(Nil))?) : Nil
+      return unless path_deprecations
+      ResultDisplay.replay_deferred_fact_deprecations(path_deprecations)
+      path_deprecations.clear
     end
 
     # Renders include_vars's own path argument (the free-form statement's
@@ -2686,6 +2735,7 @@ module Krikri
       end
 
       substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
+      ResultDisplay.begin_deferred_fact_deprecations
       file_rel = begin
         with_include_tasks_path_site(task) do
           substitutor.substitute(task.include_file.as(String), strict: true)
@@ -2694,14 +2744,27 @@ module Krikri
         # Same undefined-path failure shape as the batched include path
         # above (live-verified vs 2.19.11). Returns :ok because the
         # failure's stats are booked inside the helper - the looped
-        # caller aggregates a :failed return into a SECOND booking.
+        # caller aggregates a :failed return into a SECOND booking. A
+        # failed include's result shows what it captured, readings
+        # included, so they print here.
+        ResultDisplay.finish_deferred_fact_deprecations(flush: true)
         fail_include_tasks_undefined_var(task, host, ex)
         return :ok
+      rescue ex
+        ResultDisplay.finish_deferred_fact_deprecations(flush: true)
+        raise ex
       end
+      # Held-back readings of this include's own path render (see the
+      # batched path's own note): replayed at this include's failure
+      # display points below, dropped once the include runs. The tail
+      # rescues that can fire before this line see nil and no-op, which
+      # is right - nothing was held yet.
+      path_deprecations = ResultDisplay.take_deferred_fact_deprecations
       raise_include_tasks_non_string_file_crash(task) if task.include_file_native
       resolved_path = PlaybookParser.resolve_include_path(file_rel, task.include_file_dir.as(String), File.expand_path(@playbook_dir))
 
       unless File.exists?(resolved_path)
+        replay_include_path_deprecations(path_deprecations)
         fail_include_tasks_file_not_found(task, host, resolved_path)
         return :ok
       end
@@ -2731,6 +2794,7 @@ module Krikri
         included_label = included_line_item_label(task, item_label, included_line_label_value(task, item_label, vars_context), vars_context)
         suffix = included_label ? " => (item=#{included_label})" : ""
         puts "included: #{resolved_path} for #{host.name}#{suffix}".colorize(:cyan)
+        path_deprecations.clear
         # The zero-task include still registers (issue #888).
         if entries = loop_entries
           if item = vars_context[task.loop_var || "item"]?
@@ -2742,6 +2806,7 @@ module Krikri
         return :ok
       end
       unless yaml.as_a?
+        replay_include_path_deprecations(path_deprecations)
         fail_include(task, host, "Included tasks file must be a YAML list: #{resolved_path}")
         return :ok
       end
@@ -2862,6 +2927,7 @@ module Krikri
       included_label = included_line_item_label(task, item_label, included_line_label_value(task, item_label, vars_context), vars_context)
       suffix = included_label ? " => (item=#{included_label})" : ""
       puts "included: #{resolved_path} for #{connection_names.join(", ")}#{suffix}".colorize(:cyan)
+      path_deprecations.clear
       # The successful include registers its result here (issue #888) - a
       # looped caller collects the entry for its aggregate instead.
       if entries = loop_entries
@@ -2897,6 +2963,7 @@ module Krikri
       # include's load failure prints just the STDERR block in Ansible -
       # no per-item fatal: line (live-verified vs 2.19.11, issue #837) -
       # so keep the same looped rule fail_include_not_found applies.
+      replay_include_path_deprecations(path_deprecations)
       emit_include_removed_module_block(ex)
       emit_include_fatal_lines(task, [host], ex.message || "", include_name: file_rel, print_lines: !task_has_loop?(task))
       :ok
@@ -2907,6 +2974,7 @@ module Krikri
       # degradation. Same looped rule as the RemovedModuleError rescue
       # above: this path only serves looped includes, and a looped
       # include's load failure prints no per-item fatal: line.
+      replay_include_path_deprecations(path_deprecations)
       emit_include_removed_module_block(ex)
       emit_include_fatal_lines(task, [host], ex.message || "", include_name: file_rel, print_lines: !task_has_loop?(task))
       :ok
@@ -2915,6 +2983,7 @@ module Krikri
       # role-not-found rescue above (the single-host path handles the
       # looped/deferred cases the batched one cannot) - not a "Failed to
       # load included tasks" degradation.
+      replay_include_path_deprecations(path_deprecations)
       fail_include_not_found(task, [host], ex)
       :ok
     rescue ex : YamlSyntaxError
@@ -2940,6 +3009,7 @@ module Krikri
       # per-item degradation.
       raise ex
     rescue ex
+      replay_include_path_deprecations(path_deprecations)
       fail_include(task, host, "Failed to load included tasks: #{ex.message}")
       :ok
     end

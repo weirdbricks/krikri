@@ -46,6 +46,7 @@ private def with_package753_shims(
   install_rc : Int32 = 1,
   metadata_err : String = "",
   probe_results : Array(String)? = nil,
+  file_nevra : String = "",
   &
 )
   bin_dir = File.join(Dir.tempdir, "krikri-pkg753-#{Random.rand(1_000_000)}")
@@ -54,15 +55,22 @@ private def with_package753_shims(
 
   rpm_shim = <<-'SH'
     #!/bin/sh
+    if [ "$1" = "-qp" ]; then
+      [ -f "$4" ] || exit 1
+      printf '%s\n' "${KRIKRI_RPM_FILE_NEVRA:-}"
+      exit 0
+    fi
     if [ "$2" = "--whatprovides" ]; then
       for n in ${KRIKRI_RPM_PROVIDES:-}; do
         [ "$3" = "$n" ] && exit 0
       done
       exit 1
     fi
+    qarg="$4"
+    [ -n "$qarg" ] || qarg="$2"
     for pair in ${KRIKRI_RPM_INSTALLED:-}; do
       pkg="${pair%%=*}"; nevra="${pair#*=}"
-      [ "$4" = "$pkg" ] && { printf '%s\n' "$nevra"; exit 0; }
+      [ "$qarg" = "$pkg" ] && { printf '%s\n' "$nevra"; exit 0; }
     done
     exit 1
     SH
@@ -133,6 +141,7 @@ private def with_package753_shims(
     "PATH"                        => "#{bin_dir}:/usr/bin:/bin",
     "KRIKRI_DNF_LOG"              => log,
     "KRIKRI_RPM_INSTALLED"        => installed.join(" "),
+    "KRIKRI_RPM_FILE_NEVRA"       => file_nevra,
     "KRIKRI_DNF_AVAILABLE"        => available.join(" "),
     "KRIKRI_DNF_PROVIDES"         => provides.join(" "),
     "KRIKRI_DNF_CHECK_UPDATE_OUT" => check_update_out,
@@ -631,6 +640,95 @@ describe "package plugin - dnf failed install carries the would-transaction (iss
 
       result["failed"].as_bool.must_equal(true)
       result["results"].as_a.must_equal([] of JSON::Any)
+    end
+  end
+end
+
+# Issue #1187 (zhan9san.jenkins, round29908273, rocky, --check): the role
+# installs its pinned jenkins by local path (`package: name:
+# /tmp/jenkins-2.541.3-1.noarch.rpm, state: present`), and by the check
+# run the file's own header NEVRA was already installed - real's dnf
+# resolves an install of an identical NEVRA to the EMPTY transaction, so
+# ansible-playbook --check reported ok, where this engine's check-mode
+# plan classified every URL/file spec as "would install" and reported
+# changed. The verdict comes from rpm_file_already_installed? (same as
+# the dnf:/yum: plugins' own issue #781 fix), and real's "Installed
+# <filename>" results entry rides on every local file spec whether or
+# not the transaction is empty (issue #844). Live-verified vs
+# ansible-core 2.15.13 on a rockylinux:9 container (the issue's task,
+# `name:` pointing at a dnf-downloaded tree/tmux rpm):
+#   present, file NEVRA installed, --check -> ok: {"changed": false,
+#       "msg": "Nothing to do", "rc": 0, "results": ["Installed /tmp/
+#       tree-1.8.0-10.el9.x86_64.rpm"]}
+#   present, file NEVRA not installed, --check -> changed, results
+#       ["Installed /tmp/tmux-3.2a-5.el9.x86_64.rpm", "Installed:
+#       tmux-3.2a-5.el9.x86_64"]
+#   latest, file NEVRA installed, --check -> the same ok no-op (real's
+#       dnf.py routes filenames through the identical install path for
+#       state: latest)
+describe "package plugin - check mode resolves an rpm file against the installed set (issue 1187)" do
+  it "present for an already-installed local rpm file is the no-op ok, not changed" do
+    with_package753_shims(["tree-1.8.0-10.el9.x86_64=tree-1.8.0-10.el9.x86_64"], [] of String,
+      file_nevra: "tree-1.8.0-10.el9.x86_64") do |env|
+      rpm = PluginSpecHelper.tmp_path("tree-1.8.0-10.el9.x86_64.rpm")
+      File.write(rpm, "not a real rpm - the shims never parse it")
+      result = PluginSpecHelper.run("package", {
+        "name"                => rpm,
+        "state"               => "present",
+        "use"                 => "dnf",
+        "_ansible_check_mode" => "true",
+        "_environment"        => env,
+      })
+
+      result["failed"]?.try(&.as_bool).must_be_nil
+      result.as_h.keys.must_equal(["msg", "changed", "results", "rc"])
+      result["changed"].as_bool.must_equal(false)
+      result["msg"].as_s.must_equal("Nothing to do")
+      result["results"].as_a.map(&.as_s).must_equal(["Installed #{rpm}"])
+      result["rc"].as_i.must_equal(0)
+    end
+  end
+
+  it "present for a pending local rpm file reports the would-install shape with real's filename entry" do
+    with_package753_shims([] of String, [] of String,
+      file_nevra: "tmux-3.2a-5.el9.x86_64") do |env|
+      rpm = PluginSpecHelper.tmp_path("tmux-3.2a-5.el9.x86_64.rpm")
+      File.write(rpm, "not a real rpm - the shims never parse it")
+      result = PluginSpecHelper.run("package", {
+        "name"                => rpm,
+        "state"               => "present",
+        "use"                 => "dnf",
+        "_ansible_check_mode" => "true",
+        "_environment"        => env,
+      })
+
+      result["failed"]?.try(&.as_bool).must_be_nil
+      result["changed"].as_bool.must_equal(true)
+      result["msg"].as_s.must_equal("Check mode: No changes made, but would have if not in check mode")
+      result["results"].as_a.map(&.as_s).must_equal(["Installed #{rpm}", "Installed: tmux-3.2a-5.el9.x86_64"])
+      result["rc"].as_i.must_equal(0)
+    end
+  end
+
+  it "latest for an already-installed local rpm file is the same no-op ok" do
+    with_package753_shims(["tree-1.8.0-10.el9.x86_64=tree-1.8.0-10.el9.x86_64"], [] of String,
+      file_nevra: "tree-1.8.0-10.el9.x86_64") do |env|
+      rpm = PluginSpecHelper.tmp_path("tree-1.8.0-10.el9.x86_64.rpm")
+      File.write(rpm, "not a real rpm - the shims never parse it")
+      result = PluginSpecHelper.run("package", {
+        "name"                => rpm,
+        "state"               => "latest",
+        "use"                 => "dnf",
+        "_ansible_check_mode" => "true",
+        "_environment"        => env,
+      })
+
+      result["failed"]?.try(&.as_bool).must_be_nil
+      result.as_h.keys.must_equal(["msg", "changed", "results", "rc"])
+      result["changed"].as_bool.must_equal(false)
+      result["msg"].as_s.must_equal("Nothing to do")
+      result["results"].as_a.map(&.as_s).must_equal(["Installed #{rpm}"])
+      result["rc"].as_i.must_equal(0)
     end
   end
 end
