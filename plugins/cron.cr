@@ -102,14 +102,20 @@ module Krikri
       env = true?(@params["env"]?)
       insertafter = @params["insertafter"]?
       insertbefore = @params["insertbefore"]?
-      if failure = cron_param_failure(name, env, insertafter, insertbefore)
+      if failure = arg_spec_failure
         return failure
       end
       # Ansible's CronTab.__init__ resolves the crontab binary with
       # get_bin_path(required=True) before any read or write, so even a
-      # cron_file: entry (binary never invoked) fails on a host without it.
+      # cron_file: entry (binary never invoked) fails on a host without
+      # it. cron.py main() builds CronTab before its user-input checks
+      # (missing job, special_time conflict), so a task that is both
+      # invalid and on a crontab-less host reports the binary failure.
       unless find_required_binary("crontab")
         return PluginResult.new(changed: false, failed: true, msg: missing_executable_message("crontab"))
+      end
+      if failure = cron_param_failure(name, env, insertafter, insertbefore)
+        return failure
       end
       state = @params["state"]? || "present"
       job = @params["job"]?
@@ -122,13 +128,11 @@ module Krikri
       end
     end
 
-    # cron.py's own option checks, in source order: the
-    # insertafter/insertbefore exclusion, `value:`'s alias overwrite of
-    # `job:`, the cron_file/user pairing, the present-mode schedule-field
-    # validation, and env mode's name check. Returns the first failure
-    # any of them produces (nil when the params are acceptable).
-    private def cron_param_failure(name : String, env : Bool, insertafter : String?, insertbefore : String?) : PluginResult?
-      if insertafter && insertbefore
+    # The checks AnsibleModule runs from the argument_spec itself, before
+    # main() constructs CronTab: the insertafter/insertbefore
+    # mutually_exclusive pair and `value:`'s alias write of `job:`.
+    private def arg_spec_failure : PluginResult?
+      if @params["insertafter"]? && @params["insertbefore"]?
         return PluginResult.new(changed: false, failed: true, msg: "parameters are mutually exclusive: insertafter|insertbefore")
       end
 
@@ -143,6 +147,14 @@ module Krikri
         @params["job"] = value_param
       end
 
+      nil
+    end
+
+    # cron.py's own option checks, in source order: the
+    # cron_file/user pairing, the present-mode schedule-field
+    # validation, and env mode's name check. Returns the first failure
+    # any of them produces (nil when the params are acceptable).
+    private def cron_param_failure(name : String, env : Bool, insertafter : String?, insertbefore : String?) : PluginResult?
       state = @params["state"]? || "present"
       job = @params["job"]?
 
