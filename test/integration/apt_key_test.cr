@@ -84,27 +84,26 @@ done
 exit 1
 SH
 
-# Installs the apt-key double at the front of PATH for the block's
-# duration; the plugin's local remote_exec shells out via bash and
-# inherits the spec process's environment. ENV is process-global, so
-# under minitest's parallel workers the whole block holds ENV_MUTEX.
+# The child env that lets the plugin see an apt-key double: PATH with the
+# shim dir in front. It is passed as `env:` to PluginSpecHelper.run (merged
+# over this process's own env for the child only) instead of overriding
+# this process's PATH, which is process-global: a plain (non-serial) test
+# keeps spawning commands straight through a serial test's window, so the
+# override used to break whatever it spawned mid-window (issue #1190).
+private def apt_key_shim_env(shim_dir : String, state_file : String) : Hash(String, String)
+  {"PATH" => [shim_dir, ENV["PATH"]?].compact.join(':'), "KRIKRI_APT_KEY_STATE" => state_file}
+end
+
+# Installs the apt-key double at the front of the CHILD's PATH for the
+# block's duration and yields that env for `env:` on PluginSpecHelper.run;
+# the plugin's local remote_exec shells out via bash and inherits it.
 private def with_apt_key_shim(state_file : String, &)
   shim_dir = File.tempname(".krikri-spec-aptkey-shim")
   shim = File.join(shim_dir, "apt-key")
   Dir.mkdir(shim_dir)
   File.write(shim, APT_KEY_SHIM)
   File.chmod(shim, 0o755)
-  PluginSpecHelper::ENV_MUTEX.synchronize do
-    old_path = ENV["PATH"]?
-    ENV["PATH"] = "#{shim_dir}:#{old_path}"
-    ENV["KRIKRI_APT_KEY_STATE"] = state_file
-    begin
-      yield
-    ensure
-      ENV["PATH"] = old_path if old_path
-      ENV.delete("KRIKRI_APT_KEY_STATE")
-    end
-  end
+  yield apt_key_shim_env(shim_dir, state_file)
 ensure
   File.delete(shim.not_nil!) rescue nil
   Dir.delete(shim_dir.not_nil!) rescue nil
@@ -198,47 +197,28 @@ done
 exit 1
 SH
 
-# Installs an arbitrary apt-key double at the front of PATH for the
-# block's duration and yields the shim's own path (the resolved binary
-# path the plugin's failure `cmd` is built from). ENV is process-global,
-# so the whole block holds ENV_MUTEX.
+# Installs an arbitrary apt-key double at the front of the CHILD's PATH
+# for the block's duration and yields the shim's own path (the resolved
+# binary path the plugin's failure `cmd` is built from) and the child env
+# for `env:` on PluginSpecHelper.run.
 private def with_apt_key_shim_body(shim_body : String, state_file : String, &)
   shim_dir = File.tempname(".krikri-spec-aptkey-shim")
   shim = File.join(shim_dir, "apt-key")
   Dir.mkdir(shim_dir)
   File.write(shim, shim_body)
   File.chmod(shim, 0o755)
-  PluginSpecHelper::ENV_MUTEX.synchronize do
-    old_path = ENV["PATH"]?
-    ENV["PATH"] = "#{shim_dir}:#{old_path}"
-    ENV["KRIKRI_APT_KEY_STATE"] = state_file
-    begin
-      yield shim
-    ensure
-      ENV["PATH"] = old_path if old_path
-      ENV.delete("KRIKRI_APT_KEY_STATE")
-    end
-  end
+  yield shim, apt_key_shim_env(shim_dir, state_file)
 ensure
   File.delete(shim.not_nil!) rescue nil
   Dir.delete(shim_dir.not_nil!) rescue nil
 end
 
-# The mirror image of with_apt_key_shim: a PATH with no apt-key
-# anywhere on it, which is the state of every current Debian/Ubuntu
-# host (apt-key was dropped in Debian 12 / Ubuntu 22.04+) and the state
-# Ansible's find_needed_binaries() then fails the task on. PATH is
-# process-global, so the whole block holds ENV_MUTEX.
+# The mirror image of with_apt_key_shim: a CHILD PATH with no apt-key
+# anywhere on it, which is the state of every current Debian/Ubuntu host
+# (apt-key was dropped in Debian 12 / Ubuntu 22.04+) and the state
+# Ansible's find_needed_binaries() then fails the task on.
 private def without_apt_key_on_path(&)
-  PluginSpecHelper::ENV_MUTEX.synchronize do
-    old_path = ENV["PATH"]?
-    ENV["PATH"] = "/nonexistent-apt-key-path"
-    begin
-      yield
-    ensure
-      ENV["PATH"] = old_path if old_path
-    end
-  end
+  yield({"PATH" => "/nonexistent-apt-key-path"})
 end
 
 private def apt_key_spec_state_file : String
@@ -272,8 +252,8 @@ describe "apt_key plugin" do
 
   it "requires url or data when adding a key" do
     state = apt_key_spec_state_file
-    with_apt_key_shim(state) do
-      result = PluginSpecHelper.run("apt_key", {"state" => "present"})
+    with_apt_key_shim(state) do |env|
+      result = PluginSpecHelper.run("apt_key", {"state" => "present"}, env: env)
 
       result["failed"].as_bool.must_equal(true)
       result["msg"].as_s.must_include("url or data")
@@ -283,8 +263,8 @@ describe "apt_key plugin" do
 
   it "requires id when removing a key" do
     state = apt_key_spec_state_file
-    with_apt_key_shim(state) do
-      result = PluginSpecHelper.run("apt_key", {"state" => "absent"})
+    with_apt_key_shim(state) do |env|
+      result = PluginSpecHelper.run("apt_key", {"state" => "absent"}, env: env)
 
       result["failed"].as_bool.must_equal(true)
       result["msg"].as_s.must_include("id")
@@ -302,8 +282,8 @@ describe "apt_key plugin" do
     # in the (empty) listing the task is ok, changed=false, exactly like
     # ansible-playbook's own run.
     state = apt_key_spec_state_file
-    with_apt_key_shim(state) do
-      result = PluginSpecHelper.run("apt_key", {"state" => "absent", "data" => VALID_KEY_ASC})
+    with_apt_key_shim(state) do |env|
+      result = PluginSpecHelper.run("apt_key", {"state" => "absent", "data" => VALID_KEY_ASC}, env: env)
 
       falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
       result["changed"].as_bool.must_equal(false)
@@ -316,8 +296,8 @@ describe "apt_key plugin" do
     # main()'s keyserver check runs before the state branches, for
     # state: present and state: absent alike.
     state = apt_key_spec_state_file
-    with_apt_key_shim(state) do
-      result = PluginSpecHelper.run("apt_key", {"state" => "absent", "keyserver" => "hkp://keys.example.com"})
+    with_apt_key_shim(state) do |env|
+      result = PluginSpecHelper.run("apt_key", {"state" => "absent", "keyserver" => "hkp://keys.example.com"}, env: env)
 
       result["failed"].as_bool.must_equal(true)
       result["msg"].as_s.must_equal("Missing key_id, required with keyserver.")
@@ -328,8 +308,8 @@ describe "apt_key plugin" do
   it "succeeds unchanged for id: alone when the key is already installed (kreinhub.docker_compose_install)" do
     state = apt_key_spec_state_file
     File.write(state, "pub  2048R/#{FAKE_KEY_ID} 2020-01-01\n")
-    with_apt_key_shim(state) do
-      result = PluginSpecHelper.run("apt_key", {"state" => "present", "id" => FAKE_KEY_ID})
+    with_apt_key_shim(state) do |env|
+      result = PluginSpecHelper.run("apt_key", {"state" => "present", "id" => FAKE_KEY_ID}, env: env)
 
       result["changed"].as_bool.must_equal(false)
       falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
@@ -340,8 +320,8 @@ describe "apt_key plugin" do
 
   it "reports already-absent as unchanged for a key id that was never added" do
     state = apt_key_spec_state_file
-    with_apt_key_shim(state) do
-      result = PluginSpecHelper.run("apt_key", {"state" => "absent", "id" => FAKE_KEY_ID})
+    with_apt_key_shim(state) do |env|
+      result = PluginSpecHelper.run("apt_key", {"state" => "absent", "id" => FAKE_KEY_ID}, env: env)
 
       result["changed"].as_bool.must_equal(false)
       falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
@@ -364,8 +344,8 @@ describe "apt_key plugin" do
   # alike: all four report the executable message, none reach their own
   # validation.
   it "fails on a host without apt-key before any key validation, with get_bin_path's own message" do
-    without_apt_key_on_path do
-      result = PluginSpecHelper.run("apt_key", {"state" => "absent", "id" => FAKE_KEY_ID})
+    without_apt_key_on_path do |env|
+      result = PluginSpecHelper.run("apt_key", {"state" => "absent", "id" => FAKE_KEY_ID}, env: env)
 
       result["failed"].as_bool.must_equal(true)
       result["changed"].as_bool.must_equal(false)
@@ -383,8 +363,8 @@ describe "apt_key plugin" do
     # and a real apt-key binary (not installed on this dev machine
     # either), so only the validation path is exercised here.
     state = apt_key_spec_state_file
-    with_apt_key_shim(state) do
-      result = PluginSpecHelper.run("apt_key", {"state" => "present", "keyserver" => "keyserver.ubuntu.com"})
+    with_apt_key_shim(state) do |env|
+      result = PluginSpecHelper.run("apt_key", {"state" => "present", "keyserver" => "keyserver.ubuntu.com"}, env: env)
 
       result["failed"].as_bool.must_equal(true)
       result["msg"].as_s.must_equal("Missing key_id, required with keyserver.")
@@ -422,8 +402,8 @@ describe "apt_key plugin" do
     # benchmark hosts all still had - without it the find_needed_binaries
     # check fails long before the fetch, on this dev machine.
     state = apt_key_spec_state_file
-    with_apt_key_shim(state) do
-      result = PluginSpecHelper.run("apt_key", {"state" => "present", "url" => "#{APT_KEY_TEST_BASE}/permanent-redirect-308"})
+    with_apt_key_shim(state) do |env|
+      result = PluginSpecHelper.run("apt_key", {"state" => "present", "url" => "#{APT_KEY_TEST_BASE}/permanent-redirect-308"}, env: env)
 
       result["failed"].as_bool.must_equal(true)
       result["msg"].as_s.must_equal("Failed to download key at #{APT_KEY_TEST_BASE}/permanent-redirect-308: HTTP Error 308: Permanent Redirect")
@@ -437,8 +417,8 @@ describe "apt_key plugin" do
     # key behind the redirect must still download - reaching the same
     # later failure the plain 200 fetch hits, not a download error.
     state = apt_key_spec_state_file
-    with_apt_key_shim(state) do
-      result = PluginSpecHelper.run("apt_key", {"state" => "present", "url" => "#{APT_KEY_TEST_BASE}/temporary-redirect-307"})
+    with_apt_key_shim(state) do |env|
+      result = PluginSpecHelper.run("apt_key", {"state" => "present", "url" => "#{APT_KEY_TEST_BASE}/temporary-redirect-307"}, env: env)
 
       result["failed"].as_bool.must_equal(true)
       result["msg"].as_s.wont_include("Failed to download key")
@@ -466,20 +446,11 @@ describe "apt_key plugin" do
     File.write(File.join(shim_dir, "apt-key"), APT_KEY_SHIM)
     File.chmod(File.join(shim_dir, "apt-key"), 0o755)
     state = PluginSpecHelper.tmp_path("apt-key-state")
-    PluginSpecHelper::ENV_MUTEX.synchronize do
-      old_path = ENV["PATH"]?
-      ENV["PATH"] = "#{shim_dir}:#{old_path}"
-      ENV["KRIKRI_APT_KEY_STATE"] = state
-      begin
-        result = PluginSpecHelper.run("apt_key", {"state" => "present", "url" => "https://keyserver.example.com/key.gpg"})
+    result = PluginSpecHelper.run("apt_key", {"state" => "present", "url" => "https://keyserver.example.com/key.gpg"},
+      env: apt_key_shim_env(shim_dir, state))
 
-        result["failed"].as_bool.must_equal(true)
-        result["msg"].as_s.must_equal("Failed to download key at https://keyserver.example.com/key.gpg: Request failed: <urlopen error timed out>")
-      ensure
-        ENV["PATH"] = old_path if old_path
-        ENV.delete("KRIKRI_APT_KEY_STATE")
-      end
-    end
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("Failed to download key at https://keyserver.example.com/key.gpg: Request failed: <urlopen error timed out>")
   end
 
   it "attempts a real keyserver fetch (and fails cleanly, not a crash) when id: is given but not yet present" do
@@ -491,8 +462,8 @@ describe "apt_key plugin" do
     # (Ansible's all_keys, added with the round 83166 fix) runs
     # against the apt-key double; its --recv path is left failing.
     state = apt_key_spec_state_file
-    with_apt_key_shim(state) do
-      result = PluginSpecHelper.run("apt_key", {"state" => "present", "keyserver" => "keyserver.ubuntu.com", "id" => FAKE_KEY_ID})
+    with_apt_key_shim(state) do |env|
+      result = PluginSpecHelper.run("apt_key", {"state" => "present", "keyserver" => "keyserver.ubuntu.com", "id" => FAKE_KEY_ID}, env: env)
 
       result["failed"].as_bool.must_equal(true)
       result["msg"].as_s.must_include("Error fetching key")
@@ -510,13 +481,9 @@ describe "apt_key plugin" do
     # them all. The shim's fixed output pins each key's value.
     state = apt_key_spec_state_file
     attempts = File.tempname(".krikri-spec-aptkey-attempts")
-    with_apt_key_shim_body(APT_KEY_RECV_FAIL_SHIM, state) do |shim_path|
-      ENV["KRIKRI_APT_KEY_ATTEMPTS"] = attempts
-      begin
-        result = PluginSpecHelper.run("apt_key", {"state" => "present", "keyserver" => "pool.sks-keyservers.net", "id" => FAKE_KEY_ID})
-      ensure
-        ENV.delete("KRIKRI_APT_KEY_ATTEMPTS")
-      end
+    with_apt_key_shim_body(APT_KEY_RECV_FAIL_SHIM, state) do |shim_path, env|
+      result = PluginSpecHelper.run("apt_key", {"state" => "present", "keyserver" => "pool.sks-keyservers.net", "id" => FAKE_KEY_ID},
+        env: env.merge({"KRIKRI_APT_KEY_ATTEMPTS" => attempts}))
 
       result["failed"].as_bool.must_equal(true)
       result["msg"].as_s.must_equal("Error fetching key #{FAKE_KEY_ID} from keyserver: pool.sks-keyservers.net")
@@ -555,13 +522,9 @@ describe "apt_key plugin" do
     # exactly what ansible would have put there.
     state = apt_key_spec_state_file
     home_file = File.tempname(".krikri-spec-aptkey-homedir")
-    with_apt_key_shim_body(APT_KEY_RECV_RANDOM_HOME_SHIM, state) do
-      ENV["KRIKRI_APT_KEY_HOMEDIR"] = home_file
-      begin
-        result = PluginSpecHelper.run("apt_key", {"state" => "present", "keyserver" => "pool.sks-keyservers.net", "id" => FAKE_KEY_ID})
-      ensure
-        ENV.delete("KRIKRI_APT_KEY_HOMEDIR")
-      end
+    with_apt_key_shim_body(APT_KEY_RECV_RANDOM_HOME_SHIM, state) do |_shim_path, env|
+      result = PluginSpecHelper.run("apt_key", {"state" => "present", "keyserver" => "pool.sks-keyservers.net", "id" => FAKE_KEY_ID},
+        env: env.merge({"KRIKRI_APT_KEY_HOMEDIR" => home_file}))
 
       home = File.read(home_file).strip
       home.must_match(%r{\A/tmp/apt-key-gpghome\.[A-Za-z0-9]{10}\z})
@@ -585,8 +548,8 @@ describe "apt_key plugin" do
     # fails --recv, so reaching "Error fetching key" proves the flow
     # got past the material check instead of failing earlier.
     state = apt_key_spec_state_file
-    with_apt_key_shim(state) do
-      result = PluginSpecHelper.run("apt_key", {"state" => "present", "keyserver" => "keyserver.ubuntu.com", "id" => FAKE_KEY_ID})
+    with_apt_key_shim(state) do |env|
+      result = PluginSpecHelper.run("apt_key", {"state" => "present", "keyserver" => "keyserver.ubuntu.com", "id" => FAKE_KEY_ID}, env: env)
 
       result["failed"].as_bool.must_equal(true)
       result["msg"].as_s.must_include("Error fetching key")
@@ -602,13 +565,13 @@ describe "apt_key plugin" do
     # already present must report changed: false (the rework initially
     # lost that and reported changed: true on every run).
     state = apt_key_spec_state_file
-    with_apt_key_shim(state) do
-      result = PluginSpecHelper.run("apt_key", {"state" => "present", "data" => VALID_KEY_ASC})
+    with_apt_key_shim(state) do |env|
+      result = PluginSpecHelper.run("apt_key", {"state" => "present", "data" => VALID_KEY_ASC}, env: env)
 
       result["changed"].as_bool.must_equal(true)
       falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
 
-      result2 = PluginSpecHelper.run("apt_key", {"state" => "present", "data" => VALID_KEY_ASC})
+      result2 = PluginSpecHelper.run("apt_key", {"state" => "present", "data" => VALID_KEY_ASC}, env: env)
 
       result2["changed"].as_bool.must_equal(false)
       falsey?(result2["failed"]?.try(&.as_bool)).must_equal(true)
@@ -626,8 +589,8 @@ describe "apt_key plugin" do
     # branch reproduces exactly that quirk (expired validity field 'e'
     # in gpg --with-colons output is not recorded).
     state = apt_key_spec_state_file
-    with_apt_key_shim(state) do
-      result = PluginSpecHelper.run("apt_key", {"state" => "present", "data" => EXPIRED_KEY_ASC})
+    with_apt_key_shim(state) do |env|
+      result = PluginSpecHelper.run("apt_key", {"state" => "present", "data" => EXPIRED_KEY_ASC}, env: env)
 
       result["failed"].as_bool.must_equal(true)
       result["changed"].as_bool.must_equal(true)
@@ -650,8 +613,8 @@ describe "apt_key plugin" do
     # coin flip. The double answers --recv with rc 0 and never adds.
     state = apt_key_spec_state_file
     File.write(state, "pub  2048R/D94AA3F0EFE21092 2020-01-01\n")
-    with_apt_key_shim_body(APT_KEY_RECV_OK_NO_ADD_SHIM, state) do
-      result = PluginSpecHelper.run("apt_key", {"state" => "present", "keyserver" => "pgp.mit.edu", "id" => "5072E1F5"})
+    with_apt_key_shim_body(APT_KEY_RECV_OK_NO_ADD_SHIM, state) do |_shim_path, env|
+      result = PluginSpecHelper.run("apt_key", {"state" => "present", "keyserver" => "pgp.mit.edu", "id" => "5072E1F5"}, env: env)
 
       result["failed"].as_bool.must_equal(true)
       result["changed"].as_bool.must_equal(true)
@@ -679,8 +642,8 @@ describe "apt_key plugin" do
     # though apt-key add really had added the key.
     state = apt_key_spec_state_file
     File.write(state, "pub  2048R/#{FAKE_KEY_ID} 2020-01-01\n")
-    with_apt_key_shim(state) do
-      result = PluginSpecHelper.run("apt_key", {"state" => "present", "data" => VALID_KEY_ASC, "id" => "CAFEF00D"})
+    with_apt_key_shim(state) do |env|
+      result = PluginSpecHelper.run("apt_key", {"state" => "present", "data" => VALID_KEY_ASC, "id" => "CAFEF00D"}, env: env)
 
       result["changed"].as_bool.must_equal(false)
       falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
@@ -709,8 +672,8 @@ describe "apt_key plugin" do
     # post-add verification message because the listing's 16-char id
     # can never equal an 8-char one.
     state = apt_key_spec_state_file
-    with_apt_key_shim(state) do
-      result = PluginSpecHelper.run("apt_key", {"state" => "present", "data" => VALID_KEY_ASC, "id" => "1278AEBD"})
+    with_apt_key_shim(state) do |env|
+      result = PluginSpecHelper.run("apt_key", {"state" => "present", "data" => VALID_KEY_ASC, "id" => "1278AEBD"}, env: env)
 
       result["changed"].as_bool.must_equal(true)
       falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
@@ -739,9 +702,9 @@ describe "apt_key plugin" do
     # double exits 1 on --recv, so a success result here proves no
     # fetch ran.
     state = apt_key_spec_state_file
-    with_apt_key_shim(state) do
+    with_apt_key_shim(state) do |env|
       result = PluginSpecHelper.run("apt_key",
-        {"state" => "present", "keyserver" => "keyserver.ubuntu.com", "id" => FAKE_KEY_ID, "_ansible_check_mode" => "true"})
+        {"state" => "present", "keyserver" => "keyserver.ubuntu.com", "id" => FAKE_KEY_ID, "_ansible_check_mode" => "true"}, env: env)
 
       result["changed"].as_bool.must_equal(true)
       falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
@@ -760,9 +723,9 @@ describe "apt_key plugin" do
     # the del never ran.
     state = apt_key_spec_state_file
     File.write(state, "pub  2048R/#{FAKE_KEY_ID} 2020-01-01\n")
-    with_apt_key_shim(state) do
+    with_apt_key_shim(state) do |env|
       result = PluginSpecHelper.run("apt_key",
-        {"state" => "absent", "id" => FAKE_KEY_ID, "_ansible_check_mode" => "true"})
+        {"state" => "absent", "id" => FAKE_KEY_ID, "_ansible_check_mode" => "true"}, env: env)
 
       result["changed"].as_bool.must_equal(true)
       falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
@@ -779,9 +742,9 @@ describe "apt_key plugin" do
     # file (written only by its add branch) must not come into
     # existence.
     state = apt_key_spec_state_file
-    with_apt_key_shim(state) do
+    with_apt_key_shim(state) do |env|
       result = PluginSpecHelper.run("apt_key",
-        {"state" => "present", "data" => VALID_KEY_ASC, "_ansible_check_mode" => "true"})
+        {"state" => "present", "data" => VALID_KEY_ASC, "_ansible_check_mode" => "true"}, env: env)
 
       result["changed"].as_bool.must_equal(true)
       falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)

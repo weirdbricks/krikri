@@ -11,8 +11,14 @@ private def tmp_path(name : String) : String
 end
 
 private def run!(command : String)
-  status = Process.run("/bin/sh", ["-c", command], output: Process::Redirect::Close, error: Process::Redirect::Close)
-  raise "command failed: #{command}" unless status.success?
+  stdout = IO::Memory.new
+  stderr = IO::Memory.new
+  status = Process.run("/bin/sh", ["-c", command], output: stdout, error: stderr)
+  return if status.success?
+  # Keep the child's output: discarding it made a genuine breakage
+  # (issue #1190's PATH window, which surfaced here as "command failed"
+  # with no reason) undiagnosable from a suite log.
+  raise "command failed: #{command}\n--- stdout ---\n#{stdout}--- stderr ---\n#{stderr}"
 end
 
 # Builds a small local repo with two commits on `main`, a "v1" tag on the
