@@ -291,7 +291,7 @@ module Krikri
       # #update_stats would count it toward "ok" instead of
       # "skipped" in the recap.
       record_handler_result(result, results[host.name], host, handler, diff_mode,
-        handler_ignore_errors(handler, host, ignore_errors_resolver))
+        handler_result_ignore_errors(handler, result, host, ignore_errors_resolver))
 
       true
     end
@@ -344,8 +344,13 @@ module Krikri
     # decision already uses - so a templated `ignore_errors: "{{
     # ansible_check_mode }}"` follows the live value, not the parse-time
     # guess; without a resolver the guess stands.
-    private def handler_ignore_errors(handler : Task, host : Host,
-                                      ignore_errors_resolver : Proc(Task, Host, Bool)?) : Bool
+    #
+    # A failure raised before the handler's keywords were post-validated
+    # (a raising when:) only honours a literal boolean, exactly like a
+    # regular task's - see Task#ignore_errors_before_keyword_templating?.
+    private def handler_result_ignore_errors(handler : Task, result : JSON::Any, host : Host,
+                                             ignore_errors_resolver : Proc(Task, Host, Bool)?) : Bool
+      return handler.ignore_errors_before_keyword_templating? if Krikri.pre_keyword_failure_result?(result)
       if resolver = ignore_errors_resolver
         resolver.call(handler, host)
       else

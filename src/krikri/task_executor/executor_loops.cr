@@ -1346,6 +1346,10 @@ module Krikri
       fields = {"changed" => false, "failed" => true, "msg" => msg}
       fields["_ansible_task_error_msg_only"] = true if task && debug_module?(task)
       fields["_ansible_loop_source_error"] = true
+      # Loop-source resolution runs before ansible post-validates the
+      # task's keywords, so a templated ignore_errors: never applies to
+      # this failure (see Task#ignore_errors_before_keyword_templating?).
+      fields["_ansible_pre_keyword_failure"] = true
       JSON.parse(fields.to_json)
     end
 
@@ -2240,7 +2244,7 @@ module Krikri
           # iteration order (the batch-prep loop runs before any item
           # displays). The chain dedups per distinct text, and
           # non-conditional failures (var-render) no-op.
-          item_results[idx] = when_error_result(ex, task, host, loop_item: item, loop_index: idx)
+          item_results[idx] = when_error_result(ex, task, host, loop_item: item, loop_index: idx, pre_keyword_failure: true)
           next
         end
 
@@ -2426,6 +2430,13 @@ module Krikri
       # per-item dump and NO trailing fatal (live-verified vs 2.19.11
       # across debug/fail/file).
       any_when_failed = false
+      # Whether any failed item is a pre-post-validation failure (a
+      # `when:`/loop-source raise) and whether any failed item is not.
+      # ansible ORs ignore_errors: across the loop's item results, and a
+      # pre-keyword item's share of that is only ever its literal boolean
+      # form (see Task#ignore_errors_before_keyword_templating?).
+      any_pre_keyword_failure = false
+      any_post_templating_failure = false
       # True while every executed item so far is a loop_control.label
       # failure that carries the skip context (see
       # loop_label_failure_result) - real's underlying per-item verdict for
@@ -2522,6 +2533,13 @@ module Krikri
           any_unreachable ||= unreachable_task_result?(result)
           any_when_failed ||= failed && (result["_ansible_task_error_msg_only"]?.try(&.as_bool) == true ||
                                          result["_ansible_loop_label_failed"]?.try(&.as_bool) == true)
+          if failed
+            if pre_keyword_failure_result?(result)
+              any_pre_keyword_failure = true
+            else
+              any_post_templating_failure = true
+            end
+          end
           all_items_label_skips = all_items_label_skips &&
                                   (result["_ansible_loop_label_failed"]?.try(&.as_bool) == true &&
                                    !result["skip_reason"]?.nil? && !result["false_condition"]?.nil?)
@@ -2600,7 +2618,7 @@ module Krikri
           # stash_finalization_error_block) - print it in iteration order,
           # just before this item's failed line, where Ansible puts it.
           TaskExecutor.flush_deferred_finalization_error_block(result)
-          ResultDisplay.display_result(host, result, resolve_task_diff_mode(task, base_vars_context), item_label: item_label, ignore_errors: resolve_task_ignore_errors(task, base_vars_context), no_log: resolve_task_no_log(task, base_vars_context), module_name: task.module_name, delegate_target: delegate_target, source_task: task, loop_item: item, loop_var_name: task.loop_var)
+          ResultDisplay.display_result(host, result, resolve_task_diff_mode(task, base_vars_context), item_label: item_label, ignore_errors: resolve_failure_ignore_errors(task, result, base_vars_context), no_log: resolve_task_no_log(task, base_vars_context), module_name: task.module_name, delegate_target: delegate_target, source_task: task, loop_item: item, loop_var_name: task.loop_var)
         end
 
         result_hash = result.as_h.dup
@@ -2618,6 +2636,19 @@ module Krikri
       # counts as executed. Both shapes of when:-skip (all items vs some)
       # and a plugin-side per-item skip fall out of that single rule.
       all_items_skipped = results.all? { |entry| entry.as_h["skipped"]?.try(&.as_bool) == true }
+
+      # ignore_errors: for a loop that failed at least one item. A
+      # pre-post-validation failure (when:/loop-source raise) only
+      # contributes its literal boolean form, while a post-templating one
+      # resolves normally; ansible ORs the two across the loop's item
+      # results (UnifiedTaskResult#ignore_errors is `any(...)` over
+      # loop_results).
+      loop_ignore_errors = if any_pre_keyword_failure
+                             task.ignore_errors_before_keyword_templating? ||
+                               (any_post_templating_failure && resolve_task_ignore_errors(task, base_vars_context))
+                           else
+                             resolve_task_ignore_errors(task, base_vars_context)
+                           end
 
       # Aggregate the whole loop into ONE recap entry, matching
       # Ansible: a looped task counts once, not once per item.
@@ -2749,7 +2780,7 @@ module Krikri
             "changed" => JSON::Any.new(any_changed),
             "failed"  => JSON::Any.new(any_failed),
           }.to_json)
-          ResultDisplay.update_stats(@results[host.name], aggregate_result, resolve_task_ignore_errors(task, base_vars_context))
+          ResultDisplay.update_stats(@results[host.name], aggregate_result, loop_ignore_errors)
           # A when:-failed item's aggregate: real closes the item list
           # with the task-level fatal (see any_when_failed) BEFORE the
           # ...ignoring line. Both are default-callback output - the
@@ -2779,7 +2810,7 @@ module Krikri
           # The per-item display no longer emits it (the loop-failure branch
           # in result_display returns before that suffix).
           unless Krikri::Oneline.enabled?
-            puts "...ignoring".colorize(:red) if any_failed && resolve_task_ignore_errors(task, base_vars_context)
+            puts "...ignoring".colorize(:red) if any_failed && loop_ignore_errors
           else
             # The single per-host aggregate line (the real oneline
             # callback's only rendering of a looped task).
@@ -2821,7 +2852,7 @@ module Krikri
         end
       end
 
-      halt_if_failed(task, host, any_failed && !any_unreachable)
+      halt_if_failed(task, host, any_failed && !any_unreachable, ignore_errors: loop_ignore_errors)
     end
 
     # The msg real gives an SSH-level unreachable loop item: the task-level

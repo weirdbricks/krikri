@@ -179,7 +179,7 @@ module Krikri
           # run_task_batch instead. Only THIS host fails; the rest of
           # run_hosts still proceed (same per-host swallow partition_by_
           # when's own WhenEvaluationError rescue below uses).
-          swallow_when_error(task, host, WhenEvaluationError.new(ex.message || "Failed to render task vars"))
+          swallow_when_error(task, host, WhenEvaluationError.new(ex.message || "Failed to render task vars"), pre_keyword: false)
           next
         end
         substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
@@ -2409,7 +2409,7 @@ module Krikri
         # an unknown filter, Ansible fails just that include task
         # with "No filter named 'X'." instead of the whole process
         # crashing out of execute_task's include_tasks dispatch.
-        swallow_when_error(task, host, WhenEvaluationError.new(ex.message || "Failed to render task vars"))
+        swallow_when_error(task, host, WhenEvaluationError.new(ex.message || "Failed to render task vars"), pre_keyword: false)
         return
       end
       # Must mirror the general task path's fallback chain (see the
@@ -2600,8 +2600,9 @@ module Krikri
           # One aggregate failure for the whole looped include task, not
           # one per raising item (see run_include_tasks_once's own rescue
           # for why). Same ignore_errors: booking swallow_when_error
-          # itself makes when it books directly.
-          if resolve_task_ignore_errors(task, host: host)
+          # itself makes when it books directly - including its
+          # pre-post-validation rule for a raising when:.
+          if task.ignore_errors_before_keyword_templating?
             @results[host.name]["ok"] += 1
             @results[host.name]["ignored"] += 1
           else
@@ -3384,7 +3385,7 @@ module Krikri
         # Ansible fails just that include task with "No filter named
         # 'X'." instead of the whole process crashing out of execute_
         # task's include_role dispatch.
-        swallow_when_error(task, host, WhenEvaluationError.new(ex.message || "Failed to render task vars"))
+        swallow_when_error(task, host, WhenEvaluationError.new(ex.message || "Failed to render task vars"), pre_keyword: false)
         return
       end
       # Same scalar-template loop gap as execute_include_tasks above.

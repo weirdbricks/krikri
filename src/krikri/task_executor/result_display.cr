@@ -38,6 +38,15 @@ module Krikri
     end
   end
 
+  # Whether *result* is a failure raised before the task's keywords were
+  # post-validated (`when:`/loop-source resolution) - the marker
+  # TaskExecutor#when_error_result stamps. Such a failure never honours a
+  # templated ignore_errors: (see Task#ignore_errors_before_keyword_
+  # templating?).
+  def self.pre_keyword_failure_result?(result : JSON::Any) : Bool
+    result.as_h?.try(&.["_ansible_pre_keyword_failure"]?).try(&.as_bool?) == true
+  end
+
   # ResultDisplay - Handles displaying task results and diffs
   module ResultDisplay
     # ansible-playbook -v and above append a small JSON dump to every

@@ -356,7 +356,7 @@ module Krikri
           # skip_hosts. (inherit_on_error's push-down-to-children doesn't
           # apply: the error is deterministic, so every child would fail
           # the same way - swallow once per host instead.)
-          swallow_when_error(task, host, WhenEvaluationError.new(ex.message || "Failed to render task vars"))
+          swallow_when_error(task, host, WhenEvaluationError.new(ex.message || "Failed to render task vars"), pre_keyword: false)
         end
         next if vars_context.nil?
         begin
@@ -1478,7 +1478,12 @@ module Krikri
     # failed/_ansible_*), while a registered var keeps the full
     # changed+failed+msg shape either way (register strips the marker
     # with every other _ansible_* key).
-    private def when_error_result(ex : WhenEvaluationError, task : Task? = nil, host : Host? = nil, loop_item : JSON::Any? = nil, loop_index : Int32? = nil, clause_key : String = "when", clause_raw : String? = nil) : JSON::Any
+    # *pre_keyword_failure* marks a result raised before the task's
+    # keywords were post-validated (`when:`/loop-source evaluation), where
+    # ansible refuses to honour a templated ignore_errors: - see
+    # Task#ignore_errors_before_keyword_templating? and
+    # resolve_failure_ignore_errors below.
+    private def when_error_result(ex : WhenEvaluationError, task : Task? = nil, host : Host? = nil, loop_item : JSON::Any? = nil, loop_index : Int32? = nil, clause_key : String = "when", clause_raw : String? = nil, pre_keyword_failure : Bool = false) : JSON::Any
       # A loop-source typing/lookup failure keeps real's own shape: the
       # bare msg (no "Task failed:" prefix), the module-keyed dump, and
       # the emit_task_error_block suppression marker - see
@@ -1504,6 +1509,7 @@ module Krikri
       # failures stay unmarked: their pre-existing display shape IS the
       # generic path's.
       fields["_ansible_when_error_emitted"] = true if conditional_evaluation_failure?(msg)
+      fields["_ansible_pre_keyword_failure"] = true if pre_keyword_failure
       JSON.parse(fields.to_json)
     end
 
@@ -1512,11 +1518,29 @@ module Krikri
     # ResultDisplay the [ERROR] chain block was already printed by
     # emit_loop_error_chain (its shape - "Task failed." + the value's own
     # defining Origin - is not what the generic failure display builds).
+    # These all raise before keyword post-validation (ansible resolves the
+    # loop source and delegate_to ahead of it), so the result is marked
+    # pre_keyword_failure.
     private def loop_error_result(ex : WhenEvaluationError, task : Task? = nil) : JSON::Any
-      result = when_error_result(ex, task)
+      result = when_error_result(ex, task, pre_keyword_failure: true)
       hash = result.as_h.dup
       hash["_ansible_loop_error_emitted"] = JSON::Any.new(true)
       JSON.parse(hash.to_json)
+    end
+
+    # Whether *result* is a failure raised before the task's keywords were
+    # post-validated (`when:`/loop-source evaluation).
+    private def pre_keyword_failure_result?(result : JSON::Any) : Bool
+      Krikri.pre_keyword_failure_result?(result)
+    end
+
+    # The ignore_errors: decision for a FAILED *result* being booked. A
+    # pre-keyword failure only honours a literal boolean ignore_errors:
+    # (an ansible rule - see Task#ignore_errors_before_keyword_templating?);
+    # everything else resolves the (possibly templated) keyword as before.
+    private def resolve_failure_ignore_errors(task : Task, result : JSON::Any?, vars_context : Hash(String, JSON::Any)? = nil, host : Host? = nil) : Bool
+      return task.ignore_errors_before_keyword_templating? if result && pre_keyword_failure_result?(result)
+      resolve_task_ignore_errors(task, vars_context, host)
     end
 
     # For a `when_passes?` call site with no real per-item result
@@ -1531,9 +1555,19 @@ module Krikri
     # when:-raising task prints "...ignoring" and continues with `ok=2
     # ... ignored=1`, exit 0). Always returns `false`, the same "don't
     # run this task" signal every caller already treats a when:-skip as.
-    private def swallow_when_error(task : Task, host : Host, ex : WhenEvaluationError, item_label : String? = nil, defer_stats : Bool = false, defer_display : Bool = false, emit_chain_for_item : Bool = false, loop_item : JSON::Any? = nil) : Bool
+    #
+    # *pre_keyword* (default, and true for every when:/loop-source raise)
+    # applies the pre-post-validation ignore_errors: rule instead - see
+    # Task#ignore_errors_before_keyword_templating?. The krikri-only
+    # "Failed to render task vars" callers pass false: that failure has no
+    # ansible counterpart to match.
+    private def swallow_when_error(task : Task, host : Host, ex : WhenEvaluationError, item_label : String? = nil, defer_stats : Bool = false, defer_display : Bool = false, emit_chain_for_item : Bool = false, loop_item : JSON::Any? = nil, pre_keyword : Bool = true) : Bool
       msg = decorate_conditional_value_origin(task, ex.message || "Error while evaluating conditional", host)
-      ignore_errors = resolve_task_ignore_errors(task, host: host)
+      ignore_errors = if pre_keyword
+                        task.ignore_errors_before_keyword_templating?
+                      else
+                        resolve_task_ignore_errors(task, host: host)
+                      end
       # A delegated task's fatal/failed lines carry the `-> delegate`
       # label even when the failure happened before any result pipeline
       # ran (CallbackBase.host_label reads the task keyword) - real
@@ -1900,7 +1934,7 @@ module Krikri
             # rather than all at once here during batch-build.
             member_state = :skip unless when_passes?(task, vars_context, host, shared: member_substitutor, defer_stats: true, defer_display: true)
           rescue ex : WhenEvaluationError
-            cache[task] = {when_error_result(ex, task, host), vars_context}
+            cache[task] = {when_error_result(ex, task, host, pre_keyword_failure: true), vars_context}
             # A member whose when: RAISED is a failed task, not a skipped
             # one, and Ansible aborts the play at it - so the group's
             # remaining members must never reach the target. Without this
@@ -1913,7 +1947,7 @@ module Krikri
             # for free: finish_single_task halts the host before the
             # consumer reaches later tasks, while a batch build executes
             # every member it adds.
-            halted = true unless resolve_task_ignore_errors(task, vars_context, host)
+            halted = true unless task.ignore_errors_before_keyword_templating?
             member_state = :when_raised
           end
           outcome = prepare_batch_step(task, host, vars_context, shared: member_substitutor) if member_state == :run
@@ -2770,7 +2804,7 @@ module Krikri
           ResultDisplay.replay_open_task_deprecation_capture
           emit_when_error_chain(task, ex.message || "", host, loop_item: loop_item, loop_index: loop_index, cause_text: ex.cause_text)
         end
-        return when_error_result(ex, task, host, loop_item: loop_item, loop_index: loop_index)
+        return when_error_result(ex, task, host, loop_item: loop_item, loop_index: loop_index, pre_keyword_failure: true)
       end
 
       # A delegated task's CONNECTION is the delegated host's, not the
@@ -4880,8 +4914,13 @@ module Krikri
     # own end) - its @chain_pending_failures classification belongs to
     # that original failure, not to this moment, so it must survive the
     # temporary un-halt the rescue:/always: sections needed.
-    private def halt_if_failed(task : Task, host : Host, failed : Bool, result : JSON::Any? = nil, force_halt : Bool = false, new_failure : Bool = true) : Nil
-      return unless failed && (force_halt || !resolve_task_ignore_errors(task, host: host))
+    # *ignore_errors:* lets a caller that already resolved the decision
+    # (against the failed result, for the pre-post-validation rule) pass
+    # it in instead of this method re-resolving blindly - nil resolves as
+    # before.
+    private def halt_if_failed(task : Task, host : Host, failed : Bool, result : JSON::Any? = nil, force_halt : Bool = false, new_failure : Bool = true, ignore_errors : Bool? = nil) : Nil
+      resolved_ignore_errors = ignore_errors.nil? ? resolve_failure_ignore_errors(task, result, host: host) : ignore_errors
+      return unless failed && (force_halt || !resolved_ignore_errors)
 
       @failed_task_info[host.name] = {task, result} if result
       book_failure_halt(host, new_failure)
