@@ -324,6 +324,85 @@ module Krikri
       # output in the exotic bindings-present case, where the
       # auto-install (whose failure this mirrors) would never run.
       unless @check_mode || apt_get_paths.any? { |path| File.exists?(path) }
+        # apt.py's `module.params.get('update_cache') is False` branch
+        # (a task passing update_cache: no, e.g. timstaley.base's
+        # "Ensure aptitude installed" task, issue #1172) never reaches
+        # the update prefetch: it warns the OTHER variant, "Auto-
+        # installing missing dependency without updating cache", and
+        # goes straight to the install attempt - whose None binary
+        # (no apt-get resolved on the host) run_command silently DROPS
+        # (basic.py's `if x is not None` filter), so argv[0] becomes
+        # 'install' and coreutils' install executes via PATH and dies
+        # on the unknown -y flag: rc 1, "install: invalid option --
+        # 'y'" (observed live on Rocky 9.6, round29908315). Run the
+        # same command so the host's own coreutils produces the exact
+        # stderr, and shape the failure like run_command's check_rc
+        # fail_json: msg = stderr.rstrip, cmd = the shlex-quoted
+        # _clean_args string, the raw rc - and NO exception detail,
+        # unlike the prefetch-ENOENT branch below, because a command
+        # that RAN fails with check_rc's msg/stderr shape, not the
+        # OSError handler's (the [ERROR] block quotes the module msg
+        # itself in the same round's capture).
+        explicitly_no_cache = @params["update_cache"]? ? !true?(@params["update_cache"]?) : false
+        if explicitly_no_cache
+          @dpkg_options = @params["dpkg_options"]? || "force-confdef,force-confold"
+          # The dpkg options ride as ONE argv element in apt.py's
+          # apt_pkg_cmd list (expand_dpkg_options + lock timeout, real's
+          # double-quoted -o values), so both the executed shell word and
+          # the reported cmd quote it as a single argument.
+          dpkg_element = real_dpkg_options(@params["lock_timeout"]?.try(&.to_i) || 60)
+          recommends_arg = if ir = @params["install_recommends"]?
+                             true?(ir) ? " -o APT::Install-Recommends=yes" : " -o APT::Install-Recommends=no"
+                           else
+                             ""
+                           end
+          cmd_string = "install python3-apt -y -q #{shell_single_quote(dpkg_element)}#{recommends_arg}"
+          warning = "Auto-installing missing dependency without updating cache: python3-apt"
+          @omit_cache_updated = true
+          # A host whose PATH has no `install` either (busybox-only
+          # images) never gets a process running at all, so the OSError
+          # handler - not check_rc - shapes the failure: the exact
+          # prefetch-ENOENT shape below but with argv[0]='install' as the
+          # failed exec name (b'install' in the [ERROR] block).
+          if remote_exec("command -v install")[:exit_code] != 0
+            result = PluginResult.new(
+              changed: false,
+              failed: true,
+              msg: "Error executing command.",
+              cmd: cmd_string,
+              rc: 2,
+              stdout: "",
+              stderr: "",
+              stdout_lines: [] of String,
+              stderr_lines: [] of String,
+              key_order: ["changed", "cmd", "msg", "rc", "stderr", "stderr_lines", "stdout", "stdout_lines"],
+              _ansible_error_detail: "Error executing command: [Errno 2] No such file or directory: b'install'"
+            )
+            result.extra["warnings"] = JSON.parse([warning].to_json)
+            return result
+          end
+          # real runs the attempt under APT_ENV_VARS
+          # (run_command_environ_update, set at main() start), whose
+          # locale is always an English one - riding the same prefix keeps
+          # the host's coreutils stderr byte-stable where an sshd-forwarded
+          # LANG would translate it away from real's output. The reported
+          # cmd stays the bare _clean_args string; env never rides in it.
+          cmd_result = remote_exec("#{apt_environment_prefix} #{cmd_string}")
+          result = PluginResult.new(
+            changed: false,
+            failed: true,
+            msg: cmd_result[:stderr].rstrip,
+            cmd: cmd_string,
+            rc: cmd_result[:exit_code],
+            stdout: cmd_result[:stdout],
+            stderr: cmd_result[:stderr],
+            stdout_lines: cmd_result[:stdout].lines,
+            stderr_lines: cmd_result[:stderr].lines,
+            key_order: ["changed", "cmd", "msg", "rc", "stderr", "stderr_lines", "stdout", "stdout_lines"]
+          )
+          result.extra["warnings"] = JSON.parse([warning].to_json)
+          return result
+        end
         # Real run_command's ENOENT shape keeps the bare "Error executing
         # command." as the fatal msg while the [ERROR] block renders the
         # Errno text from the exception field - here carried as
