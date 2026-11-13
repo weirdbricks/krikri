@@ -1759,15 +1759,23 @@ module Krikri
         # every later read of such an item warns again (see
         # VarSubstitutor#emit_loop_item_fact_deprecation). Its own first
         # render is the block at the item's declaration.
-        rendered_items = VarSubstitutor.with_preparing_loop_source_container(task.loop_template, vars_context, host_name) do
-          if unsafe_items
-            loop_items.each { pending_fact_reads << source_tether }
-            loop_items
-          else
-            loop_items.map do |item|
-              rendered, read_fact = VarSubstitutor.with_fact_read_probe { deep_render_item(item, vars_context, host_name) }
-              pending_fact_reads << (read_fact || source_tether)
-              rendered
+        # with_nested:/with_together: carry their bare `{{ var }}` sources
+        # as independent term lists (task.loop_template is nil), so each
+        # one's container is registered for the item render too - otherwise
+        # the fact read inside a nested item leaf has no placeable Origin
+        # and the INJECT_FACTS_AS_VARS block vanishes (issue #1223).
+        nested_containers = task.loop_nested_sources || task.loop_together_sources || [] of String
+        rendered_items = VarSubstitutor.with_preparing_loop_source_containers(nested_containers, vars_context, host_name) do
+          VarSubstitutor.with_preparing_loop_source_container(task.loop_template, vars_context, host_name) do
+            if unsafe_items
+              loop_items.each { pending_fact_reads << source_tether }
+              loop_items
+            else
+              loop_items.map do |item|
+                rendered, read_fact = VarSubstitutor.with_fact_read_probe { deep_render_item(item, vars_context, host_name) }
+                pending_fact_reads << (read_fact || source_tether)
+                rendered
+              end
             end
           end
         end

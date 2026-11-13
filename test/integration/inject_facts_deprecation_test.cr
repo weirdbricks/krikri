@@ -1404,3 +1404,102 @@ describe "INJECT_FACTS_AS_VARS deprecation from a loop item that is a fact value
     stderr.must_match(/:9:11\n/)
   end
 end
+
+# ansible-core tags a loop item built out of a still-templated fact read,
+# so a with_nested: whose source list holds a whole-span fact reference
+# warns three times in one task: once when the item renders (the leaf's
+# own declaration), once per consuming templating operation (the task
+# param), and once for the item label's own resolution of the loop
+# variable, which has no Origin and prints the "While processing" form.
+# Meuk.osxc-common-env's check-mode run lost all three - issue #1223,
+# live-verified against 2.21.6. A free-form key=value directive is ONE
+# templating operation, so its fact-reading params share one block.
+describe "INJECT_FACTS_AS_VARS deprecation from a with_nested: item" do
+  private def run_nested_playbook(playbook_text : String) : {String, String}
+    dir = PluginSpecHelper.tmp_path("inject-facts-nested-#{Random::Secure.hex(4)}")
+    FileUtils.mkdir_p(dir)
+    playbook = File.join(dir, "play.yml")
+    File.write(playbook, playbook_text)
+    stdout = IO::Memory.new
+    stderr = IO::Memory.new
+    Process.run(BINARY, ["-i", "localhost,", playbook], output: stdout, error: stderr, chdir: dir)
+    {stderr.to_s, playbook}
+  end
+
+  it "prints the source leaf, the consuming param and the item-label blocks" do
+    stderr, playbook = run_nested_playbook(<<-PLAYBOOK)
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        vars:
+          affected_users:
+            - "{{ ansible_user_id }}"
+        tasks:
+          - name: nested over a fact-bearing list
+            debug:
+              msg: "{{ item[0] }}/{{ item[1] }}"
+            with_nested:
+              - "{{ affected_users }}"
+              - [ '.bash_profile' ]
+      PLAYBOOK
+
+    stderr.scan(/INJECT_FACTS_AS_VARS default to `True`/).size.must_equal(3)
+    stderr.must_include("Origin: #{playbook}:6:9\n")
+    stderr.must_include("6       - \"{{ ansible_user_id }}\"\n")
+    stderr.must_include("Origin: #{playbook}:10:14\n")
+    stderr.must_include("[DEPRECATION WARNING]: While processing 'item': INJECT_FACTS_AS_VARS")
+    stderr.must_include("Origin: <unknown>\n\nitem\n")
+  end
+
+  it "warns once for a free-form directive's two fact-reading params" do
+    # The role's own shape: lineinfile's free-form `dest=... owner=...`
+    # both read item[0], and real renders the whole args scalar as one
+    # template - one block at the directive, not one per k=v param.
+    stderr, playbook = run_nested_playbook(<<-PLAYBOOK)
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        vars:
+          affected_users:
+            - "{{ ansible_user_id }}"
+        tasks:
+          - name: free-form with two fact-reading params
+            file: path=/tmp/krikri-absent-{{ item[0] }} state=absent owner={{ item[0] }}
+            with_nested:
+              - "{{ affected_users }}"
+              - [ '.bash_profile' ]
+      PLAYBOOK
+
+    stderr.scan(/INJECT_FACTS_AS_VARS default to `True`/).size.must_equal(3)
+    stderr.must_include("Origin: #{playbook}:6:9\n")
+    stderr.scan(/Origin: #{Regex.escape(playbook)}:9:/).size.must_equal(1)
+    stderr.must_include("[DEPRECATION WARNING]: While processing 'item': INJECT_FACTS_AS_VARS")
+  end
+
+  it "keeps the block for a mixed-text leaf out of the item, but not its consumers" do
+    # A leaf that is not one whole-span fact reference renders to a NEW
+    # untagged string in real, so only the source read warns - the item
+    # label and the consuming param stay silent (live-verified against
+    # 2.21.6, same shape as issue #1092's role-default leaf).
+    stderr, playbook = run_nested_playbook(<<-PLAYBOOK)
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        vars:
+          affected_users:
+            - "user-{{ ansible_user_id }}"
+        tasks:
+          - name: nested over a mixed-text list
+            debug:
+              msg: "{{ item[0] }}/{{ item[1] }}"
+            with_nested:
+              - "{{ affected_users }}"
+              - [ '.bash_profile' ]
+      PLAYBOOK
+
+    stderr.scan(/INJECT_FACTS_AS_VARS default to `True`/).size.must_equal(1)
+    stderr.must_include("Origin: #{playbook}:6:9\n")
+    stderr.includes?("While processing").must_equal(false)
+    stderr.includes?(":10:14").must_equal(false)
+  end
+end
