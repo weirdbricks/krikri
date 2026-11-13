@@ -161,6 +161,47 @@ describe "copy:/template: src: with the subdir prefix baked in resolves against 
     FileUtils.rm_rf(src_dir) if src_dir
   end
 
+  it "omits the doubled files/ candidate when src: already starts with files/" do
+    # jpnewman.elk-packetbeat (#1197): `copy: src=files/certs/x` made
+    # krikri advertise <role>/files/files/x, <role>/tasks/files/files/x
+    # and <playbook>/files/files/x in its Searched-in list. Ansible's
+    # path_dwim_relative_stack only prepends the files/ subdir when src's
+    # first path component is not "files" itself.
+    src_dir = File.tempname("copy-role-files-prefix-miss")
+    Dir.mkdir_p(File.join(src_dir, "roles", "myrole", "tasks"))
+    Dir.mkdir_p(File.join(src_dir, "roles", "myrole", "files"))
+    File.write(File.join(src_dir, "roles", "myrole", "tasks", "main.yml"), <<-YAML)
+      - name: Copy missing files/-prefixed src
+        ansible.builtin.copy:
+          src: 'files/certs/absent.crt'
+          dest: #{File.join(src_dir, "absent-out")}
+        ignore_errors: true
+      YAML
+
+    playbook = File.join(src_dir, "pb.yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        roles:
+          - myrole
+      YAML
+
+    status, output = run_playbook(src_dir, playbook)
+
+    status.success?.must_equal(true, output.to_s)
+    role = File.join(src_dir, "roles", "myrole")
+    searched = [
+      File.join(role, "files", "certs", "absent.crt"),
+      File.join(role, "tasks", "files", "certs", "absent.crt"),
+      File.join(src_dir, "files", "certs", "absent.crt"),
+    ].join("\n\t")
+    output.to_s.must_include("Could not find or access 'files/certs/absent.crt'\nSearched in:\n\t#{searched} on the Ansible Controller.")
+    output.to_s.wont_include("files/files")
+  ensure
+    FileUtils.rm_rf(src_dir) if src_dir
+  end
+
   it "resolves a playbook-level src: against the playbook's own files/ dir" do
     # Same candidate list at playbook level: real's _find_needle searches
     # <task_dir>/files/<src> (the basedir entries) - the old roots list

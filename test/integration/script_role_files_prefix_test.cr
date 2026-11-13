@@ -106,7 +106,7 @@ describe "script: src: with the files/ prefix baked in resolves against the role
 
     status.success?.must_equal(true)
     role = File.join(src_dir, "roles", "myrole")
-    searched = "Searched in:\n\t#{role}/files/files/nope.sh\n\t#{role}/files/nope.sh\n\t#{role}/tasks/files/files/nope.sh\n\t#{role}/tasks/files/nope.sh\n\t#{src_dir}/files/files/nope.sh\n\t#{src_dir}/files/nope.sh on the Ansible Controller."
+    searched = "Searched in:\n\t#{role}/files/nope.sh\n\t#{role}/tasks/files/nope.sh\n\t#{src_dir}/files/nope.sh on the Ansible Controller."
     output.to_s.must_include(searched)
   ensure
     FileUtils.rm_rf(src_dir) if src_dir

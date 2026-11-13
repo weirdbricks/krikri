@@ -8,12 +8,13 @@ module Krikri
   # (playbook-dir task and in-role task):
   #
   #   for each path in the task's search stack:
-  #     <path>/<dirname>/<src>      (the `dirname-skip` condition in real
-  #                                 compares bytes against str and never
-  #                                 fires, so this entry is ALWAYS added)
+  #     <path>/<dirname>/<src>      (only when src's first path component
+  #                                 is not <dirname> itself - `copy: src=
+  #                                 files/x` searches <role>/files/x, never
+  #                                 <role>/files/files/x)
   #     <path>/<src>
-  #   then, always, the loader basedir as last resort:
-  #     <basedir>/<dirname>/<src>
+  #   then the loader basedir as last resort:
+  #     <basedir>/<dirname>/<src>   (same dirname-skip condition)
   #     <basedir>/<src>
   #
   # The message shape comes from AnsibleFileNotFound.__init__: with a
@@ -46,6 +47,11 @@ module Krikri
 
     def self.candidates(stack : Array(String), basedir : String, dirname : String, src : String) : Array(String)
       search = [] of String
+      # path_dwim_relative_stack compares src's first path component
+      # against dirname and skips the <dirname>/<src> form when they
+      # match, so a src that already carries its subdir prefix cannot
+      # produce <role>/files/files/<src> candidates (#1197).
+      add_dirname = src.split('/')[0] != dirname
       stack.each do |path|
         upath = File.expand_path(path)
         role_base = File.dirname(upath)
@@ -56,10 +62,10 @@ module Krikri
           search << File.join(File.dirname(role_base), dirname, src)
           search << File.join(role_base, src)
         end
-        search << File.join(upath, dirname, src)
+        search << File.join(upath, dirname, src) if add_dirname
         search << File.join(upath, src)
       end
-      search << File.join(basedir, dirname, src)
+      search << File.join(basedir, dirname, src) if add_dirname
       search << File.join(basedir, src)
       search
     end
