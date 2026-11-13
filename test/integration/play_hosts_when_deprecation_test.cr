@@ -66,6 +66,52 @@ describe "play_hosts deprecation from a when: clause" do
     stderr.scan(/DEPRECATION WARNING\]: The `play_hosts` magic variable/).size.must_equal(1)
   end
 
+  it "attributes a with_items list-element read to that element's scalar" do
+    _stdout, stderr = run(<<-PLAYBOOK)
+      - hosts: localhost
+        gather_facts: false
+        connection: local
+        tasks:
+          - name: loop over play_hosts
+            debug:
+              msg: "{{ item }}"
+            with_items:
+              - "{{ play_hosts }}"
+      PLAYBOOK
+
+    stderr.must_include("[WARNING]: Deprecation warnings can be disabled by setting `deprecation_warnings=False` in ansible.cfg.")
+    stderr.must_include("[DEPRECATION WARNING]: The `play_hosts` magic variable is deprecated. This feature will be removed from ansible-core version 2.23.")
+    # ansible renders the loop source through the templar, which tags the
+    # list ITEM that named the variable - not the with_items: key.
+    stderr.must_include(":9:11\n")
+    stderr.must_include("7         msg: \"{{ item }}\"\n")
+    stderr.must_include("8       with_items:\n")
+    stderr.must_include("9         - \"{{ play_hosts }}\"\n")
+    stderr.must_include("^ column 11")
+    stderr.must_include("Use `ansible_play_batch` instead.")
+  end
+
+  it "attributes a loop: keyword's bare play_hosts source to its value token" do
+    stdout, stderr = run(<<-PLAYBOOK)
+      - hosts: localhost
+        gather_facts: false
+        connection: local
+        tasks:
+          - name: loop over play_hosts
+            debug:
+              msg: "{{ item }}"
+            loop: "{{ play_hosts }}"
+      PLAYBOOK
+
+    stdout.must_include("ok: [localhost] => (item=localhost)")
+    stderr.must_include("[DEPRECATION WARNING]: The `play_hosts` magic variable is deprecated. This feature will be removed from ansible-core version 2.23.")
+    stderr.must_include(":8:13\n")
+    stderr.must_include("6       debug:\n")
+    stderr.must_include("7         msg: \"{{ item }}\"\n")
+    stderr.must_include("8       loop: \"{{ play_hosts }}\"\n")
+    stderr.must_include("^ column 13")
+  end
+
   it "attributes the Origin to a task's own plain when: value token" do
     _stdout, stderr = run(<<-PLAYBOOK)
       - hosts: localhost

@@ -2148,6 +2148,14 @@ module Krikri
         # ResultDisplay.conditional_value_origin.
         return ResultDisplay.conditional_value_origin(site.source_file, site.source_line, "when", name, site.text)
       end
+      # A read while a loop SOURCE renders belongs to the source ELEMENT
+      # that named the variable, not to the loop keyword's own value token
+      # - real renders the items through the templar and tags the element
+      # (`with_items: - "{{ play_hosts }}"` reports the list item's scalar,
+      # the same attribution #fact_read_origin gives a loop-source fact).
+      if loop_site = current_loop_source_site
+        return ResultDisplay.loop_source_origin(loop_site.source_file, loop_site.source_line, loop_site.key, name)
+      end
       return unless site = current_task_param
       return site.origin if site.origin
       # A task's own `name:` opens its mapping (`- name:`), so the list
