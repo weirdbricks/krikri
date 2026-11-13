@@ -324,7 +324,7 @@ describe "gem plugin result key order (sweep8)" do
   end
 end
 describe "apt_repository plugin result key order (sweep8)" do
-  # Ansible 2.19.11 apt_repository.py has a single success exit
+  # Ansible 2.21.6 apt_repository.py has a single success exit
   # exit_json(changed=changed, repo=repo, sources_added=...,
   # sources_removed=..., state=state, diff=diff) - no msg, and `diff`
   # is always present (its source builds diff = [] and only appends
@@ -335,9 +335,10 @@ describe "apt_repository plugin result key order (sweep8)" do
   # "Already ..." msgs were krikri's own - dropped, npm-style.
   #
   # ansible-core deprecates apt_repository itself (issue #918), so the
-  # controller also attaches a `deprecations` entry to every executed
-  # result; krikri's registered-shape partition keeps that
-  # controller-attached entry after the module's own keys.
+  # controller also collects a `deprecations` entry for every executed
+  # result. 2.21's registered export leads with its declared fields, so
+  # both that entry and `diff` (also a declared field) precede the
+  # module's own keys - live-verified vs 2.21.6.
 
   private APT_PLAY = <<-YAML
     - name: repro
@@ -358,26 +359,25 @@ describe "apt_repository plugin result key order (sweep8)" do
             dest: KRIKRI_DUMP_PATH
     YAML
 
-  it "registers an absent no-op as changed, repo, sources_added, sources_removed, state, diff, deprecations" do
+  it "registers an absent no-op as changed, failed, deprecations, diff, repo, sources_added, sources_removed, state" do
     keys = run_registered_dump(APT_PLAY.sub("STATE_LINE", "state: absent"))
-    keys.must_equal(%w[changed failed repo sources_added sources_removed state diff deprecations])
+    keys.must_equal(%w[changed failed deprecations diff repo sources_added sources_removed state])
   end
 
   it "registers a check-mode add in the same shape" do
     keys = run_registered_dump(APT_PLAY.sub("STATE_LINE", "state: present"))
-    keys.must_equal(%w[changed failed repo sources_added sources_removed state diff deprecations])
+    keys.must_equal(%w[changed failed deprecations diff repo sources_added sources_removed state])
   end
 end
 describe "yum_repository plugin result key order (sweep8)" do
-  # Ansible 2.19.11 yum_repository.py exits with a single
+  # Ansible 2.21.6 yum_repository.py exits with a single
   # exit_json(changed=changed, repo=name, state=state, diff=diff), and
   # its diff is the {before_header, before, after_header, after} dict
   # built from the configparser dump UNCONDITIONALLY - not gated on diff
   # mode - so the order is the same on the changed, unchanged and
-  # removal paths. No msg key. Live-verified twice: in a Fedora 41
-  # container against the real /etc/yum.repos.d, and unprivileged on
-  # this host via reposdir: pointed at a temp dir (both engines need no
-  # yum/dnf to run the module, only the reposdir to exist).
+  # removal paths. No msg key. `diff` is a declared field of 2.21's
+  # registered export, so it leads the module's own keys - live-verified
+  # vs 2.21.6 on this host via reposdir: pointed at a temp dir.
 
   private YUM_PLAY = <<-YAML
     - name: repro
@@ -410,10 +410,10 @@ describe "yum_repository plugin result key order (sweep8)" do
     FileUtils.rm_rf(dir) if dir
   end
 
-  it "registers a fresh add as changed, repo, state, diff" do
+  it "registers a fresh add as changed, failed, diff, repo, state" do
     with_reposdir do |dir|
       keys = run_registered_dump(YUM_PLAY.gsub("KRIKRI_REPOSDIR", dir).gsub("            # STATE_SLOT\n", ""))
-      keys.must_equal(%w[changed failed repo state diff])
+      keys.must_equal(%w[changed failed diff repo state])
     end
   end
 
@@ -422,14 +422,14 @@ describe "yum_repository plugin result key order (sweep8)" do
       play = YUM_PLAY.gsub("KRIKRI_REPOSDIR", dir)
       run_registered_dump(play.gsub("            # STATE_SLOT\n", ""))
       keys = run_registered_dump(play.gsub("            # STATE_SLOT\n", ""))
-      keys.must_equal(%w[changed failed repo state diff])
+      keys.must_equal(%w[changed failed diff repo state])
     end
   end
 
   it "registers an already-absent no-op in the same shape" do
     with_reposdir do |dir|
       keys = run_registered_dump(YUM_PLAY.gsub("KRIKRI_REPOSDIR", dir).sub("            # STATE_SLOT", "state: absent"))
-      keys.must_equal(%w[changed failed repo state diff])
+      keys.must_equal(%w[changed failed diff repo state])
     end
   end
 end

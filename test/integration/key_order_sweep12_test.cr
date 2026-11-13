@@ -19,10 +19,11 @@ require "file_utils"
 # exercise (the same PluginResult constructions with the same
 # key_order lists).
 #
-# The single shared-fix pin: Ansible's controller appends the collected
-# `deprecations` AFTER the failed/changed backfill, so mount registers
-# ..., fstype, failed, deprecations (previously krikri's wire-side
-# deprecations landed before the backfilled failed key).
+# The single shared-fix pin: ansible-core 2.21 rebuilds every registered
+# result on its UnifiedTaskResult dataclass, so the collected
+# `deprecations` lead the module's own keys (mount registers changed,
+# failed, deprecations, name, opts, ... - live-verified vs 2.21.6; 2.19
+# appended them after the module's keys instead).
 
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
@@ -225,7 +226,7 @@ describe "storage plugin registered key order (round 992003 kop_storage)" do
     keys["changed"].as_bool.must_equal(false)
   end
 
-  it "mount success registers [..., fstype, failed] - no deprecations key (ansible.posix 2.2.0 dropped the warnings kwarg)" do
+  it "mount success registers [changed, failed, deprecations, name, ..., fstype]" do
     fstab = PluginSpecHelper.tmp_path("mount-keyorder.fstab")
 
     keys = run_registered_dump12(<<-YAML)
@@ -247,13 +248,15 @@ describe "storage plugin registered key order (round 992003 kop_storage)" do
               dest: KRIKRI_DUMP_PATH
       YAML
 
-    keys.as_h.keys.must_equal(["changed", "failed", "name", "opts", "dump", "passno", "fstab", "boot", "backup_file", "src", "fstype", "deprecations"])
+    keys.as_h.keys.must_equal(["changed", "failed", "deprecations", "name", "opts", "dump", "passno", "fstab", "boot", "backup_file", "src", "fstype"])
     keys["changed"].as_bool.must_equal(true)
     # The mount module's ansible.module_utils._text imports still deprecate
-    # under ansible-core 2.21 (mount.py:229), and the controller appends
-    # those entries after every module key (issue #1000) - followed by the
-    # exit_json `warnings`-kwarg deprecation the ansible.posix 2.1.x module
-    # line triggers on every success (issue #1027).
+    # under ansible-core 2.21 (mount.py:229); 2.21 collects every
+    # deprecation the task raised into the registered result's leading
+    # field block, so those entries precede the module's own keys (issue
+    # #1000) - followed by the exit_json `warnings`-kwarg deprecation the
+    # ansible.posix 2.1.x module line triggers on every success (issue
+    # #1027). Live-verified vs 2.21.6.
     keys["deprecations"].as_a.map(&.["msg"].as_s).must_equal([
       "Importing 'to_bytes' from 'ansible.module_utils._text' is deprecated.",
       "Importing 'to_native' from 'ansible.module_utils._text' is deprecated.",
@@ -261,7 +264,7 @@ describe "storage plugin registered key order (round 992003 kop_storage)" do
     ])
   end
 
-  it "mount unmounted registers [..., backup_file, deprecations] (no src/fstype)" do
+  it "mount unmounted registers [changed, failed, deprecations, name, ..., backup_file] (no src/fstype)" do
     fstab = PluginSpecHelper.tmp_path("mount-unmounted-keyorder.fstab")
     File.write(fstab, "tmpfs /var/tmp/kop-mnt-keyorder2 tmpfs defaults 0 0\n")
 
@@ -281,7 +284,7 @@ describe "storage plugin registered key order (round 992003 kop_storage)" do
               dest: KRIKRI_DUMP_PATH
       YAML
 
-    keys.as_h.keys.must_equal(["changed", "failed", "name", "opts", "dump", "passno", "fstab", "boot", "backup_file", "deprecations"])
+    keys.as_h.keys.must_equal(["changed", "failed", "deprecations", "name", "opts", "dump", "passno", "fstab", "boot", "backup_file"])
     # An unmounted against a path that is not mounted (all this sandbox
     # can do) is the round's mount_unmounted_again capture: changed
     # false, same key order - the changed-true umount variant differs

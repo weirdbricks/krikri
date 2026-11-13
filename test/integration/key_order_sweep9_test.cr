@@ -3,37 +3,35 @@ require "../minitest_helper"
 require "socket"
 
 # Registered-result key order for the mysql_variables plugin, pinned to the
-# order live-verified against ansible-playbook 2.19.11 with
-# community.mysql 5.0.2 (which redirects the call to ansible.mysql 5.2.0)
-# against a real MySQL 8.4.11 server, observed through `{{ r | to_json }}`
-# on a registered task - the -v dump sorts alphabetically, so the order is
-# only observable programmatically (see key_order_sweep_test.cr for the
-# general method).
+# order live-verified against ansible-playbook 2.21.6 (this repo's
+# comparison target) with community.mysql 5.0.2 (which redirects the call
+# to ansible.mysql 5.2.0) against a real MySQL 8.4.11 server, observed
+# through `{{ r | to_json }}` on a registered task - the -v dump sorts
+# alphabetically, so the order is only observable programmatically (see
+# key_order_sweep_test.cr for the general method).
+#
+# The order is ansible-core 2.21's UnifiedTaskResult export, not 2.19's
+# "module dict, then controller backfill" (src/krikri/result_shape.cr):
+# declared fields lead (changed, failed, warnings, deprecations, exception,
+# msg, ...), then the module's own keys. So every shape below opens
+# changed, failed, deprecations - `deprecations` is the collection-version
+# redirect community.mysql -> ansible.mysql the collection loader emits,
+# collected into the same field block - and `msg`, also a field, precedes
+# the module's own `queries`/extras.
 #
 # The four shapes the Ansible module has:
-# - a variable change (mode global/persist/persist_only): msg, changed,
-#   queries, failed - `queries` carries the executed SET GLOBAL statement
-#   and is absent on the "already set" no-op, which registers
-#   msg, changed, failed;
-# - the read-only form (no `value:`): msg, failed, changed - the module
-#   passes neither changed nor queries to exit_json there, so the
-#   controller backfills both AFTER the module dict, unlike the change
-#   path where `changed` is a real module kwarg and leads `queries`;
+# - a variable change (mode global/persist/persist_only): changed, failed,
+#   deprecations, msg, queries - `queries` carries the executed SET GLOBAL
+#   statement and is absent on the "already set" no-op, which registers
+#   changed, failed, deprecations, msg;
+# - the read-only form (no `value:`): changed, failed, deprecations, msg;
 # - check mode: the module declares no check-mode support, so the
-#   controller short-circuits with skipped, msg, failed, changed;
-# - an unknown variable name: the module's own fail_json passes
-#   changed=False explicitly, so `changed` LEADS - unlike the arg-spec
-#   and connection failures, which are plain fail_json and keep the
-#   shared default failed, msg, changed, exception order (not pinned
-#   here: that default has its own specs).
-#   Every community.mysql.* result also ends with `deprecations` (the
-#   collection-redirect deprecation entry real attaches to executed tasks).
-#
-# `deprecations`, which Ansible's registered result also carries after
-# `failed`, is the collection-version redirect community.mysql ->
-# ansible.mysql emitted by the collection loader, not part of the
-# module's own result dict; krikri dispatches the module directly and
-# does not carry it.
+#   controller short-circuits with changed, failed, skipped, deprecations,
+#   msg (`skipped` and `deprecations`/`msg` all declared fields: skipped
+#   precedes deprecations precedes msg);
+# - an unknown variable name: the module's own fail_json gives changed,
+#   failed, deprecations, exception, msg (the arg-spec and connection
+#   failure default has its own specs elsewhere);
 #
 # The other four mysql plugins of this sweep got no pin HERE because
 # their key sets diverged at the time - key_order cannot conjure a key
@@ -153,10 +151,10 @@ describe "mysql_variables plugin result key order (sweep9)" do
               content: |-
                 {{ r | to_json }}
     YAML
-    keys.must_equal(%w[msg changed queries failed deprecations])
+    keys.must_equal(%w[changed failed deprecations msg queries])
   end
 
-  it "registers the already-set no-op as msg, changed, failed" do
+  it "registers the already-set no-op as changed, failed, deprecations, msg" do
     skip "no MySQL server at #{MYSQL_HOST}:#{MYSQL_PORT}" unless mysql_reachable?
     # Drive the change to 222 first, so the no-op below is genuine and
     # independent of the previous spec's ordering.
@@ -186,14 +184,13 @@ describe "mysql_variables plugin result key order (sweep9)" do
                 login_password: krikri
               register: r
     YAML
-    keys.must_equal(%w[msg changed failed deprecations])
+    keys.must_equal(%w[changed failed deprecations msg])
   end
 
-  # The read-only form's whole distinction is that `changed` trails
-  # `failed`. This is the one shape where krikri needs failed_flag, or
-  # its own failed: false would be absent from the wire dict and the
-  # executor's backfill would land after `changed` instead.
-  it "registers the read-only form as msg, failed, changed" do
+  # The read-only form passes neither changed nor queries to exit_json,
+  # so the controller backfills changed - and, being a declared field, it
+  # leads the module's own keys like every other registry field.
+  it "registers the read-only form as changed, failed, deprecations, msg" do
     skip "no MySQL server at #{MYSQL_HOST}:#{MYSQL_PORT}" unless mysql_reachable?
     keys = run_registered_dump(registered_dump_play(<<-YAML))
             - name: read max_connections
@@ -205,10 +202,10 @@ describe "mysql_variables plugin result key order (sweep9)" do
                 login_password: krikri
               register: r
     YAML
-    keys.must_equal(%w[msg failed changed deprecations])
+    keys.must_equal(%w[changed failed deprecations msg])
   end
 
-  it "registers a check-mode run as skipped, msg, failed, changed" do
+  it "registers a check-mode run as changed, failed, skipped, deprecations, msg" do
     skip "no MySQL server at #{MYSQL_HOST}:#{MYSQL_PORT}" unless mysql_reachable?
     keys = run_registered_dump(registered_dump_play(<<-YAML))
             - name: check-mode set
@@ -222,12 +219,13 @@ describe "mysql_variables plugin result key order (sweep9)" do
               check_mode: true
               register: r
     YAML
-    keys.must_equal(%w[skipped msg failed changed])
+    keys.must_equal(%w[changed failed skipped deprecations msg])
   end
 
   # The module's own fail_json for an unknown variable passes
-  # changed=False explicitly, so `changed` leads instead of trailing.
-  it "registers an unknown variable failure as changed, failed, msg, exception" do
+  # changed=False explicitly; `exception` and `msg` are both declared
+  # fields, exception first.
+  it "registers an unknown variable failure as changed, failed, deprecations, exception, msg" do
     skip "no MySQL server at #{MYSQL_HOST}:#{MYSQL_PORT}" unless mysql_reachable?
     keys = run_registered_dump(<<-YAML)
       - hosts: localhost
@@ -250,6 +248,6 @@ describe "mysql_variables plugin result key order (sweep9)" do
               content: |-
                 {{ r | to_json }}
     YAML
-    keys.must_equal(%w[changed failed msg exception deprecations])
+    keys.must_equal(%w[changed failed deprecations exception msg])
   end
 end

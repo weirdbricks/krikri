@@ -169,7 +169,7 @@ describe "mount_facts plugin result key order (round 992001)" do
     keys.must_equal(["changed", "failed", "ansible_facts"])
   end
 
-  it "registers a gather with the repeat-mounts warning as ansible_facts, failed, changed, warnings" do
+  it "registers a gather with the repeat-mounts warning as changed, failed, warnings, ansible_facts" do
     source = unique_tmp("kop-dup-mounts")
     File.write(source, "/dev/a /dup ext4 defaults 0 0\n/dev/b /dup ext4 defaults 0 0\n/dev/c /other ext4 defaults 0 0\n")
 
@@ -190,7 +190,10 @@ describe "mount_facts plugin result key order (round 992001)" do
               dest: KRIKRI_DUMP_PATH
     YAML
 
-    keys.must_equal(["changed", "failed", "ansible_facts", "warnings"])
+    # 2.21's registered export leads with its declared fields; `warnings`
+    # is one of them, so it precedes `ansible_facts` (live-verified vs
+    # 2.21.6 on a mount_facts gather and an include_vars warning).
+    keys.must_equal(["changed", "failed", "warnings", "ansible_facts"])
   end
 
   # Nested shape, same capture: each mount entry serializes as the fstab

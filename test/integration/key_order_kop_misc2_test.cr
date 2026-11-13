@@ -413,13 +413,14 @@ describe "round 994002 kop_misc2 registered key order" do
     # The undefine-on-missing-network shape needs `virsh` present (the
     # HAS_VIRT gate); a shim that always fails its probes stands in for
     # a libvirt daemon with no networks - the Ansible module's
-    # EntryNotFound path. The registered shape trails a `deprecations`
+    # EntryNotFound path. The registered shape leads a `deprecations`
     # key: virt_net.py:142 imports to_native from the deprecated
     # ansible.module_utils._text path at module level, so ansible-core
-    # 2.21's shim deprecates it before the body runs and the controller
-    # appends the entry after every module key (the round's 2.19.11
-    # capture predates that shim - the same re-capture issue #992 made
-    # for sysctl; re-verified against ansible-core 2.21.6 real).
+    # 2.21's shim deprecates it before the body runs and 2.21's
+    # registered export puts that collected entry in its leading field
+    # block, ahead of every module key (the round's 2.19.11 capture
+    # predates that shim - the same re-capture issue #992 made for
+    # sysctl; re-verified against ansible-core 2.21.6 real).
     it "registers undefine, failed, changed with no changed on the wire" do
       shim_dir = PluginSpecHelper.tmp_path("kop-virsh-shim")
       Dir.mkdir_p(shim_dir)
@@ -438,7 +439,7 @@ describe "round 994002 kop_misc2 registered key order" do
             command: undefine
           register: KRIKRI_REGISTER
       YAML
-      value.as_h.keys.must_equal(["changed", "failed", "undefine", "deprecations"])
+      value.as_h.keys.must_equal(["changed", "failed", "deprecations", "undefine"])
       value["undefine"].as_nil.must_be_nil
       value["failed"].as_bool.must_equal(false)
       value["changed"].as_bool.must_equal(false)
@@ -620,7 +621,7 @@ describe "round 994002 kop_misc2 registered key order" do
             state: active
           register: KRIKRI_REGISTER
       YAML
-      value.as_h.keys.must_equal(["changed", "failed", "msg", "deprecations"])
+      value.as_h.keys.must_equal(["changed", "failed", "deprecations", "msg"])
       value["changed"].as_bool.must_equal(true)
       value["msg"].raw.must_equal(0_i64)
       value["failed"].as_bool.must_equal(false)
@@ -655,7 +656,7 @@ describe "round 994002 kop_misc2 registered key order" do
             state: inactive
           register: KRIKRI_REGISTER
       YAML
-      value.as_h.keys.must_equal(["changed", "failed", "msg", "deprecations"])
+      value.as_h.keys.must_equal(["changed", "failed", "deprecations", "msg"])
       value["changed"].as_bool.must_equal(true)
       value["msg"].raw.must_equal(0_i64)
     end
@@ -669,7 +670,7 @@ describe "round 994002 kop_misc2 registered key order" do
             state: absent
           register: KRIKRI_REGISTER
       YAML
-      value.as_h.keys.must_equal(["changed", "failed", "msg", "deprecations"])
+      value.as_h.keys.must_equal(["changed", "failed", "deprecations", "msg"])
       value["changed"].as_bool.must_equal(true)
       value["msg"].raw.must_equal(0_i64)
     end

@@ -20,26 +20,43 @@ require "json"
 #   loop aggregate   changed,failed,msg,results
 #
 # So the 2.21 partition krikri must reproduce is:
-#   1. changed, failed, unreachable, skipped, ansible_facts, exception,
-#      finished, msg, rc  - the declared dataclass fields, present ones
-#      only, in declaration order (warnings/deprecations deliberately
-#      NOT here: a result carrying them renders them after the module's
-# own keys, live-verified on a registered debug result).
+#   1. changed, failed, unreachable, skipped, warnings, deprecations,
+#      ansible_facts, exception, finished, msg, rc, diff - the declared
+#      dataclass fields, present ones only, in declaration order.
+#      warnings/deprecations belong HERE: both are dataclass fields
+#      (_warnings/_deprecations, declared between _skipped and
+#      ansible_facts), and 2.21 imports a module's own exit_json
+#      warnings/deprecations dict entries into those fields too, so
+#      they lead whatever their provenance - live-verified vs 2.21.6 on
+#      a community.mysql.mysql_db create (controller-collected
+#      collection-redirect deprecation: changed, failed, deprecations,
+#      db, db_list, executed_commands), a community.mysql.mysql_info
+#      run with a bogus filter element (module-side warn: changed,
+#      failed, warnings, deprecations, server_engine, ...) and an
+#      ansible.posix.mount success (module-side import deprecations:
+#      changed, failed, deprecations, name, opts, ...). `diff` too: it
+#      is a declared field (after msg/rc), so a module's own diff leads
+#      its other keys - live-verified vs 2.21.6 on an
+#      ansible.builtin.apt_repository absent no-op (changed, failed,
+#      deprecations, diff, repo, sources_added, sources_removed, state)
+#      and a yum_repository add (changed, failed, diff, repo, state).
+#      2.19 appended warnings/deprecations after the module's keys, and
+#      krikri used to leave diff wherever the action emitted it, which
+#      is what this list reproduced until issue #1192.
 #   2. the changed_when/failed_when/break_when verdict pairs - result
 #      before its suppressed-exception summary.
 #   3. loop items only: ansible_loop_var, ansible_index_var, the loop
 #      variable itself (named by ansible_loop_var, default item),
 #      ansible_loop - the wrapper keys moved ahead of the module payload.
 #   4. everything else in its existing relative order - the module's own
-#      keys (diff included, wherever the action emitted it), any
-#      controller keys not listed above, an injected `invocation`, and
-#      the derived *_lines (which the task-result build appends after
-#      result_data).
+#      keys, any controller keys not listed above, an injected
+#      `invocation`, and the derived *_lines (which the task-result
+#      build appends after result_data).
 module Krikri
   module ResultShape
     extend self
 
-    private LEAD_KEYS = %w[changed failed unreachable skipped ansible_facts exception finished msg rc]
+    private LEAD_KEYS = %w[changed failed unreachable skipped warnings deprecations ansible_facts exception finished msg rc diff]
 
     # The skip verdict's own body keys: a skipped result carries them
     # right after the declared-field lead (2.21.6: a when:-skipped solo

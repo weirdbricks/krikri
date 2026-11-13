@@ -74,12 +74,12 @@ ensure
 end
 
 describe "kop_pkg_misc round 993004 keyorder: openssl_csr/openssl_csr_info" do
-  it "registers openssl_csr's create result as [privatekey, subject, ..., diff, filename, changed, failed]" do
+  it "registers openssl_csr's create result as [changed, failed, diff, privatekey, subject, ..., filename]" do
     # Real probe openssl_csr_info_helper_csr (the helper task that
     # generates the CSR registers the openssl_csr result itself):
     # 13 keys, ocspMustStaple spelled camelCase, the name_constraints
-    # pair snake_case, diff/filename between them and the changed/failed
-    # tail.
+    # pair snake_case, and 2.21's registered export leading with its
+    # declared fields - `diff` ahead of the module's 12 result keys.
     skip("no openssl binary") unless tool_available?("openssl")
 
     tmp = PluginSpecHelper.tmp_path("csr-helper")
@@ -106,7 +106,7 @@ describe "kop_pkg_misc round 993004 keyorder: openssl_csr/openssl_csr_info" do
       YAML
 
     dump = dumps["helper_csr"]
-    dump.as_h.keys.must_equal(["changed", "failed", "privatekey", "subject", "subjectAltName", "keyUsage", "extendedKeyUsage", "basicConstraints", "ocspMustStaple", "name_constraints_permitted", "name_constraints_excluded", "diff", "filename"])
+    dump.as_h.keys.must_equal(["changed", "failed", "diff", "privatekey", "subject", "subjectAltName", "keyUsage", "extendedKeyUsage", "basicConstraints", "ocspMustStaple", "name_constraints_permitted", "name_constraints_excluded", "filename"])
     dump["privatekey"].as_s.must_equal("#{tmp}/kop.key")
     dump["filename"].as_s.must_equal("#{tmp}/kop.csr")
     dump["subject"].as_a[0].as_a.map(&.as_s).must_equal(["CN", "kop-probe"])
@@ -358,14 +358,15 @@ describe "kop_pkg_misc round 993004 keyorder: java_cert (keytool shim)" do
   @java_cert_cert : String? = nil
   @java_cert_missing : String? = nil
 
-  it "registers the fresh import as [changed, msg, rc, cmd, stdout, error, diff, stdout_lines, failed]" do
+  it "registers the fresh import as [changed, failed, msg, rc, diff, cmd, stdout, error, stdout_lines]" do
     # Real probe java_cert_import: exit_json(changed=True, msg=, rc=,
     # cmd=, stdout=, error=, diff=) - msg is the empty stdout (kept),
-    # keytool's prompts/receipt ride on stderr as `error`, and the
-    # controller backfills failed last. cmd is the ARGV list.
+    # keytool's prompts/receipt ride on stderr as `error`. 2.21's
+    # registered export leads with its declared fields (changed, failed,
+    # msg, rc, diff) and then the module's own keys.
     dump = run_java_cert_probe("import")
 
-    dump.as_h.keys.must_equal(["changed", "failed", "msg", "rc", "cmd", "stdout", "error", "diff", "stdout_lines"])
+    dump.as_h.keys.must_equal(["changed", "failed", "msg", "rc", "diff", "cmd", "stdout", "error", "stdout_lines"])
     dump["changed"].as_bool.must_equal(true)
     dump["msg"].as_s.must_equal("")
     dump["rc"].as_i.must_equal(0)
@@ -405,14 +406,14 @@ describe "kop_pkg_misc round 993004 keyorder: java_cert (keytool shim)" do
     dump["failed"].as_bool.must_equal(false)
   end
 
-  it "registers the alias removal as [changed, msg, rc, cmd, stdout, error, diff, stdout_lines, failed]" do
+  it "registers the alias removal as [changed, failed, msg, rc, diff, cmd, stdout, error, stdout_lines]" do
     # Real probe java_cert_remove (state: absent on the imported alias):
     # same import-family shape, diff before "kopcert\n" / after null,
     # keytool's bare password prompt rides on stderr as `error`.
     dump = run_java_cert_probe("remove")
 
     dump.as_h.keys.must_equal([
-      "changed", "failed", "msg", "rc", "cmd", "stdout", "error", "diff", "stdout_lines",
+      "changed", "failed", "msg", "rc", "diff", "cmd", "stdout", "error", "stdout_lines",
     ])
     dump["changed"].as_bool.must_equal(true)
     dump["msg"].as_s.must_equal("")
@@ -596,14 +597,15 @@ describe "kop_pkg_misc round 993004 keyorder: synchronize (delegate_to same host
 
   # ansible.posix.synchronize's MODULE payload imports to_bytes/to_native
   # from the deprecated ansible.module_utils._text path (synchronize.py:371),
-  # so a run against ansible-core 2.21 registers both entries after every key
-  # the module emitted (issue #1000, live-verified vs 2.21.6).
-  it "registers the push as [changed, msg, rc, cmd, stdout_lines, failed]" do
+  # so a run against ansible-core 2.21 registers both entries - and, per
+  # 2.21's UnifiedTaskResult export, in the leading field block ahead of
+  # every key the module emitted (issue #1000, live-verified vs 2.21.6).
+  it "registers the push as [changed, failed, deprecations, msg, rc, cmd, stdout_lines]" do
     skip("no rsync binary") unless tool_available?("rsync")
 
     dump = run_synchronize_probes["push"]
 
-    dump.as_h.keys.must_equal(["changed", "failed", "msg", "rc", "cmd", "stdout_lines", "deprecations"])
+    dump.as_h.keys.must_equal(["changed", "failed", "deprecations", "msg", "rc", "cmd", "stdout_lines"])
     dump["changed"].as_bool.must_equal(true)
     # Ansible's msg is `out.replace(changed_marker, '')`: the raw rsync
     # stdout INCLUDING its trailing newline (round 995004: real msg ends
@@ -642,7 +644,7 @@ describe "kop_pkg_misc round 993004 keyorder: synchronize (delegate_to same host
 
     dump = run_synchronize_probes["exists"]
 
-    dump.as_h.keys.must_equal(["changed", "failed", "msg", "rc", "cmd", "stdout_lines", "deprecations"])
+    dump.as_h.keys.must_equal(["changed", "failed", "deprecations", "msg", "rc", "cmd", "stdout_lines"])
     dump["changed"].as_bool.must_equal(false)
     dump["msg"].as_s.must_equal("")
     dump["stdout_lines"].as_a.must_be_empty
@@ -653,7 +655,7 @@ describe "kop_pkg_misc round 993004 keyorder: synchronize (delegate_to same host
 
     dump = run_synchronize_probes["check"]
 
-    dump.as_h.keys.must_equal(["changed", "failed", "msg", "rc", "cmd", "stdout_lines", "deprecations"])
+    dump.as_h.keys.must_equal(["changed", "failed", "deprecations", "msg", "rc", "cmd", "stdout_lines"])
     dump["changed"].as_bool.must_equal(false)
     # Real synchronize.py appends --dry-run right after --compress/
     # --timeout and BEFORE --archive (round 995004 synchronize_check).
@@ -661,12 +663,12 @@ describe "kop_pkg_misc round 993004 keyorder: synchronize (delegate_to same host
     dump["cmd"].as_s.wont_include("--compress --archive --dry-run")
   end
 
-  it "registers the missing-source failure as [rc, cmd, failed, msg, changed, exception]" do
+  it "registers the missing-source failure as [changed, failed, deprecations, exception, msg, rc, cmd]" do
     skip("no rsync binary") unless tool_available?("rsync")
 
     dump = run_synchronize_probes["fail"]
 
-    dump.as_h.keys.must_equal(["changed", "failed", "exception", "msg", "rc", "cmd", "deprecations"])
+    dump.as_h.keys.must_equal(["changed", "failed", "deprecations", "exception", "msg", "rc", "cmd"])
     dump["rc"].as_i.must_equal(23)
     dump["msg"].as_s.must_include("No such file or directory")
     dump["changed"].as_bool.must_equal(false)

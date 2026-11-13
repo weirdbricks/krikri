@@ -4267,15 +4267,18 @@ module Krikri
     # redirected community.mysql module that is one entry per task
     # occurrence (the console [DEPRECATION WARNING] line, emitted at
     # task-load time by parse_tasks, dedups separately). A result where
-    # no module ever ran keeps nothing, mirroring the guards
-    # ResultDisplay.consume_pending_module_deprecations already
-    # established for the same class of question: module-side skip,
-    # unreachable, connection failure, uncaught crash.
+    # no module ever ran keeps nothing (unreachable, connection failure,
+    # uncaught crash), but a MODULE-SIDE skip does keep it: the module
+    # was loaded and ran in check mode before exiting skipped=true
+    # (live-verified vs 2.21.6: a check_mode community.mysql.
+    # mysql_variables task registers changed, failed, skipped,
+    # deprecations, msg). A when:-skipped task never reaches this
+    # function at all (its register is built from the evaluated
+    # condition), which is what keeps its entry out.
     private def attach_module_redirect_deprecations(task : Task, result : JSON::Any) : JSON::Any
       entry = PlaybookParser.redirect_deprecation_result_entry(task.module_name) || return result
       hash = result.as_h? || return result
       return result if hash.has_key?("deprecations")
-      return result if hash["skipped"]?.try(&.as_bool?)
       return result if hash["unreachable"]?.try(&.as_bool?)
       return result if hash["_connection_failure"]?.try(&.as_bool?)
       # The load-time module deprecation bypasses the crash wrapper: real

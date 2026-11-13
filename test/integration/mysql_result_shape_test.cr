@@ -3,16 +3,21 @@ require "../minitest_helper"
 require "socket"
 
 # Registered-result SHAPE (keys, values and wire order) for the
-# community.mysql plugins, pinned to ansible-playbook 2.19.11 with
-# community.mysql 5.0.2 against a real MySQL 8.4 server, observed through
-# `{{ r | to_json }}` on a registered task (the -v dump sorts
-# alphabetically, so the order is only observable programmatically - see
-# key_order_sweep9_test.cr for the general method). Ansible's registered
-# result also carries `deprecations` after `failed` - that is the
-# collection-version redirect community.mysql -> ansible.mysql emitted by
-# the collection loader, not part of the module's own result dict - and
-# this engine now emits the same entry, so every registered-dump key list
-# below ends with `deprecations`.
+# community.mysql plugins, pinned to ansible-playbook 2.21.6 (the release
+# this repo compares against) with community.mysql 5.0.2 against a real
+# MySQL 8.4 server, observed through `{{ r | to_json }}` on a registered
+# task (the -v dump sorts alphabetically, so the order is only observable
+# programmatically - see key_order_sweep9_test.cr for the general method).
+#
+# The order is ansible-core 2.21's UnifiedTaskResult export
+# (src/krikri/result_shape.cr), not 2.19's "module dict, then controller
+# backfill": declared fields lead in declaration order - changed, failed,
+# warnings, deprecations, exception, msg, ... - then the module's own
+# keys. So a community.mysql result reads changed, failed, deprecations
+# (the collection-version redirect community.mysql -> ansible.mysql the
+# collection loader emits, not part of the module's own dict), then the
+# module's keys; and `msg`, being a declared field, jumps AHEAD of the
+# module keys mysql_user passes to exit_json.
 #
 # These specs assert VALUES too, not just the key set: real echoes the
 # `name:`/`user:` parameter back and reports the exact SQL statement(s) it
@@ -20,10 +25,19 @@ require "socket"
 # emits the right keys with plausible-but-different content is still
 # caught here.
 #
-# The throwaway MySQL container everything below was verified against:
+# The throwaway MySQL container everything but mysql_user was verified
+# against:
 #   podman run -d --name krikri-kp-mysql -e MYSQL_ROOT_PASSWORD=krikri \
 #     -p 127.0.0.1:33306:3306 docker.io/library/mysql:8.4
-# Every spec skips when it isn't running.
+# and the one mysql_user needs - with no `plugin:` given it hashes the
+# password with mysql_native_password itself, and MySQL 8.4 ships that
+# plugin disabled, so the create fails with error 1524 on the server above:
+#   podman run -d --name krikri-kp-mysql-np -e MYSQL_ROOT_PASSWORD=krikri \
+#     -p 127.0.0.1:33308:3306 docker.io/library/mysql:8.4 \
+#     --mysql-native-password=ON
+# scripts/db_tests.sh brings both up (plus the MariaDB the other MySQL live
+# suites use on 33307). Every spec skips when its own server isn't running,
+# which is how the 2.19-era drift in these pins went unnoticed.
 
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
@@ -31,9 +45,12 @@ private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-ex
 
 private MYSQL_HOST = "127.0.0.1"
 private MYSQL_PORT = 33306
+# See the header: mysql_user's password path needs mysql_native_password
+# loaded, which the 33306 server (plain mysql:8.4) does not do.
+private USER_PORT = 33308
 
-private def mysql_reachable? : Bool
-  sock = TCPSocket.new(MYSQL_HOST, MYSQL_PORT, connect_timeout: 1)
+private def mysql_reachable?(port : Int32 = MYSQL_PORT) : Bool
+  sock = TCPSocket.new(MYSQL_HOST, port, connect_timeout: 1)
   sock.close
   true
 rescue
@@ -45,10 +62,10 @@ end
 # module's params, so the block survives #task_body's re-anchoring. The
 # first line carries none, so it drops straight into an interpolated
 # heredoc as "#{mysql_login_args(12)}" at whatever indent it already has.
-private def mysql_login_args(indent : Int32 = 0) : String
+private def mysql_login_args(indent : Int32 = 0, port : Int32 = MYSQL_PORT) : String
   [
     "login_host: #{MYSQL_HOST}",
-    "login_port: #{MYSQL_PORT}",
+    "login_port: #{port}",
     "login_user: root",
     "login_password: krikri",
   ].join("\n" + " " * indent)
@@ -115,20 +132,20 @@ private def setup_table_play : String
   "        query: \"create table #{MYSQL_TEST_DB}.t1 (i int)\"\n        #{mysql_login_args(8)}\n"
 end
 
-private def drop_users_play(*names : String) : String
+private def drop_users_play(names : Array(String), port : Int32 = MYSQL_PORT) : String
   drops = names.map do |account|
     "          - \"drop user if exists '#{account}'@'localhost'\""
   end.join("\n")
   "- hosts: localhost\n  gather_facts: false\n  connection: local\n  tasks:\n" \
   "    - name: drop users\n      community.mysql.mysql_query:\n        query:\n#{drops}\n" \
-  "        #{mysql_login_args(8)}\n"
+  "        #{mysql_login_args(8, port)}\n"
 end
 
-private def create_user_play(name : String) : String
-  run_play(drop_users_play(name))
+private def create_user_play(name : String, port : Int32 = MYSQL_PORT) : String
+  run_play(drop_users_play([name], port))
   "- hosts: localhost\n  gather_facts: false\n  connection: local\n  tasks:\n" \
   "    - name: create\n      community.mysql.mysql_user:\n        name: \"#{name}\"\n" \
-  "        #{mysql_login_args(8)}\n"
+  "        #{mysql_login_args(8, port)}\n"
 end
 
 # Re-anchors an indented heredoc body (which arrives indented by an
@@ -146,7 +163,7 @@ describe "mysql_db plugin result shape" do
 
   # Ansible's exit_json for present/absent carries no `msg` key at all, and
   # reports `executed_commands` as the mogrified statement it ran.
-  it "registers a create as changed, db, db_list, executed_commands, failed" do
+  it "registers a create as changed, failed, deprecations, db, db_list, executed_commands" do
     skip "no MySQL server at #{MYSQL_HOST}:#{MYSQL_PORT}" unless mysql_reachable?
     run_play(drop_dbs_play("shape_db1"))
     dump = registered_dump(task_body(<<-YAML), drop_dbs_play("shape_db1"))
@@ -157,7 +174,7 @@ describe "mysql_db plugin result shape" do
                 #{mysql_login_args(12)}
               register: r
     YAML
-    dump.as_h.keys.must_equal(%w[changed db db_list executed_commands failed deprecations])
+    dump.as_h.keys.must_equal(%w[changed failed deprecations db db_list executed_commands])
     dump["changed"].as_bool.must_equal(true)
     dump["db"].as_s.must_equal("shape_db1")
     dump["db_list"].as_a.map(&.as_s).must_equal(["shape_db1"])
@@ -176,7 +193,7 @@ describe "mysql_db plugin result shape" do
                 #{mysql_login_args(12)}
               register: r
     YAML
-    dump.as_h.keys.must_equal(%w[changed db db_list executed_commands failed deprecations])
+    dump.as_h.keys.must_equal(%w[changed failed deprecations db db_list executed_commands])
     dump["changed"].as_bool.must_equal(false)
     dump["executed_commands"].as_a.size.must_equal(0)
   end
@@ -195,11 +212,11 @@ describe "mysql_db plugin result shape" do
               register: r
               check_mode: true
     YAML
-    dump.as_h.keys.must_equal(%w[changed db db_list failed deprecations])
+    dump.as_h.keys.must_equal(%w[changed failed deprecations db db_list])
     dump["changed"].as_bool.must_equal(true)
   end
 
-  it "registers a drop as changed, db, db_list, executed_commands, failed" do
+  it "registers a drop as changed, failed, deprecations, db, db_list, executed_commands" do
     skip "no MySQL server at #{MYSQL_HOST}:#{MYSQL_PORT}" unless mysql_reachable?
     dump = registered_dump(task_body(<<-YAML), drop_dbs_play("shape_db4"))
             - name: create
@@ -214,7 +231,7 @@ describe "mysql_db plugin result shape" do
                 #{mysql_login_args(12)}
               register: r
     YAML
-    dump.as_h.keys.must_equal(%w[changed db db_list executed_commands failed deprecations])
+    dump.as_h.keys.must_equal(%w[changed failed deprecations db db_list executed_commands])
     dump["changed"].as_bool.must_equal(true)
     dump["executed_commands"].as_a.map(&.as_s).must_equal(["DROP DATABASE `shape_db4`"])
   end
@@ -236,7 +253,7 @@ describe "mysql_db plugin result shape" do
                 #{mysql_login_args(12)}
               register: r
     YAML
-    dump.as_h.keys.must_equal(%w[changed db db_list executed_commands failed deprecations])
+    dump.as_h.keys.must_equal(%w[changed failed deprecations db db_list executed_commands])
     dump["db"].as_s.must_equal("shape_db5 shape_db6")
     dump["db_list"].as_a.map(&.as_s).must_equal(%w[shape_db5 shape_db6])
     dump["executed_commands"].as_a.map(&.as_s).must_equal([
@@ -254,7 +271,7 @@ describe "mysql_query plugin result shape" do
   # Ansible passes no `msg` on success; `execution_time_ms` is a per
   # statement float (milliseconds, 4 decimals) that cannot be asserted
   # exactly - only its presence and per-statement arity.
-  it "registers a select as changed, executed_queries, query_result, rowcount, execution_time_ms, failed" do
+  it "registers a select as changed, failed, deprecations, executed_queries, query_result, rowcount, execution_time_ms" do
     skip "no MySQL server at #{MYSQL_HOST}:#{MYSQL_PORT}" unless mysql_reachable?
     dump = registered_dump(task_body(<<-YAML))
             - name: select
@@ -263,7 +280,7 @@ describe "mysql_query plugin result shape" do
                 #{mysql_login_args(12)}
               register: r
     YAML
-    dump.as_h.keys.must_equal(%w[changed executed_queries query_result rowcount execution_time_ms failed deprecations])
+    dump.as_h.keys.must_equal(%w[changed failed deprecations executed_queries query_result rowcount execution_time_ms])
     dump["changed"].as_bool.must_equal(false)
     dump["executed_queries"].as_a.map(&.as_s).must_equal(["select 1 as a"])
     dump["query_result"].as_a.map { |rows| rows.as_a.map(&.as_h["a"].as_i) }.must_equal([[1]])
@@ -283,7 +300,7 @@ describe "mysql_query plugin result shape" do
                 #{mysql_login_args(12)}
               register: r
     YAML
-    dump.as_h.keys.must_equal(%w[changed executed_queries query_result rowcount execution_time_ms failed deprecations])
+    dump.as_h.keys.must_equal(%w[changed failed deprecations executed_queries query_result rowcount execution_time_ms])
     dump["executed_queries"].as_a.map(&.as_s).must_equal(["select 1 as a", "select 2 as b"])
     dump["rowcount"].as_a.map(&.as_i).must_equal([1, 1])
     dump["execution_time_ms"].as_a.size.must_equal(2)
@@ -300,7 +317,7 @@ describe "mysql_query plugin result shape" do
                 #{mysql_login_args(12)}
               register: r
     YAML
-    dump.as_h.keys.must_equal(%w[changed executed_queries query_result rowcount execution_time_ms failed deprecations])
+    dump.as_h.keys.must_equal(%w[changed failed deprecations executed_queries query_result rowcount execution_time_ms])
     dump["changed"].as_bool.must_equal(false)
     dump["rowcount"].as_a.map(&.as_i).must_equal([0])
   end
@@ -308,7 +325,11 @@ end
 
 describe "mysql_user plugin result shape" do
   # Shared external DB state (fixed table/role/db names): never run in parallel with
-  # sibling workers (see test/minitest_helper.cr).
+  # sibling workers (see test/minitest_helper.cr). Unlike the other describes
+  # here, these need the mysql_native_password-enabled server on USER_PORT
+  # (see the header): with no `plugin:` given, real hashes the password into
+  # the statement as `IDENTIFIED WITH mysql_native_password`, which a stock
+  # MySQL 8.4 rejects with error 1524.
   serial!
 
   # Ansible's own user_add branch: `user` is the `name:` param echoed
@@ -317,16 +338,16 @@ describe "mysql_user plugin result shape" do
   # unless `attributes:` was given. Each spec owns its own account, so
   # minitest's randomized order cannot make one spec's setup land inside
   # another's window.
-  it "registers a create as changed, user, msg, password_changed, attributes, failed" do
-    skip "no MySQL server at #{MYSQL_HOST}:#{MYSQL_PORT}" unless mysql_reachable?
-    dump = registered_dump(task_body(<<-YAML), drop_users_play("kru_create@localhost"))
+  it "registers a create as changed, failed, msg, user, password_changed, attributes" do
+    skip "no MySQL server at #{MYSQL_HOST}:#{USER_PORT}" unless mysql_reachable?(USER_PORT)
+    dump = registered_dump(task_body(<<-YAML), drop_users_play(["kru_create@localhost"], USER_PORT))
             - name: create
               community.mysql.mysql_user:
                 name: "kru_create@localhost"
-                #{mysql_login_args(12)}
+                #{mysql_login_args(12, USER_PORT)}
               register: r
     YAML
-    dump.as_h.keys.must_equal(%w[changed user msg password_changed attributes failed deprecations])
+    dump.as_h.keys.must_equal(%w[changed failed deprecations msg user password_changed attributes])
     dump["changed"].as_bool.must_equal(true)
     dump["user"].as_s.must_equal("kru_create@localhost")
     dump["msg"].as_s.must_equal("User added")
@@ -335,41 +356,41 @@ describe "mysql_user plugin result shape" do
   end
 
   it "registers the idempotent rerun as unchanged with password_changed false" do
-    skip "no MySQL server at #{MYSQL_HOST}:#{MYSQL_PORT}" unless mysql_reachable?
-    dump = registered_dump(task_body(<<-YAML), create_user_play("kru_rerun@localhost"))
+    skip "no MySQL server at #{MYSQL_HOST}:#{USER_PORT}" unless mysql_reachable?(USER_PORT)
+    dump = registered_dump(task_body(<<-YAML), create_user_play("kru_rerun@localhost", USER_PORT))
             - name: create again
               community.mysql.mysql_user:
                 name: "kru_rerun@localhost"
-                #{mysql_login_args(12)}
+                #{mysql_login_args(12, USER_PORT)}
               register: r
     YAML
-    dump.as_h.keys.must_equal(%w[changed user msg password_changed attributes failed deprecations])
+    dump.as_h.keys.must_equal(%w[changed failed deprecations msg user password_changed attributes])
     dump["changed"].as_bool.must_equal(false)
     dump["msg"].as_s.must_equal("User unchanged")
     dump["password_changed"].as_bool.must_equal(false)
   end
 
   it "registers a delete and the already-absent no-op with Ansible's wording" do
-    skip "no MySQL server at #{MYSQL_HOST}:#{MYSQL_PORT}" unless mysql_reachable?
-    dump = registered_dump(task_body(<<-YAML), create_user_play("kru_delete@localhost"))
+    skip "no MySQL server at #{MYSQL_HOST}:#{USER_PORT}" unless mysql_reachable?(USER_PORT)
+    dump = registered_dump(task_body(<<-YAML), create_user_play("kru_delete@localhost", USER_PORT))
             - name: delete
               community.mysql.mysql_user:
                 name: "kru_delete@localhost"
                 state: absent
-                #{mysql_login_args(12)}
+                #{mysql_login_args(12, USER_PORT)}
               register: r
     YAML
-    dump.as_h.keys.must_equal(%w[changed user msg password_changed attributes failed deprecations])
+    dump.as_h.keys.must_equal(%w[changed failed deprecations msg user password_changed attributes])
     dump["changed"].as_bool.must_equal(true)
     dump["msg"].as_s.must_equal("User deleted")
     dump["password_changed"].as_bool.must_equal(false)
 
-    dump = registered_dump(task_body(<<-YAML), drop_users_play("kru_delete@localhost"))
+    dump = registered_dump(task_body(<<-YAML), drop_users_play(["kru_delete@localhost"], USER_PORT))
             - name: delete again
               community.mysql.mysql_user:
                 name: "kru_delete@localhost"
                 state: absent
-                #{mysql_login_args(12)}
+                #{mysql_login_args(12, USER_PORT)}
               register: r
     YAML
     dump["changed"].as_bool.must_equal(false)
@@ -380,16 +401,16 @@ describe "mysql_user plugin result shape" do
   # The check-mode create is the one path where Ansible reports
   # `password_changed` as null rather than a boolean.
   it "registers a check-mode create with a null password_changed" do
-    skip "no MySQL server at #{MYSQL_HOST}:#{MYSQL_PORT}" unless mysql_reachable?
-    dump = registered_dump(task_body(<<-YAML), drop_users_play("kru_check@localhost"))
+    skip "no MySQL server at #{MYSQL_HOST}:#{USER_PORT}" unless mysql_reachable?(USER_PORT)
+    dump = registered_dump(task_body(<<-YAML), drop_users_play(["kru_check@localhost"], USER_PORT))
             - name: create
               community.mysql.mysql_user:
                 name: "kru_check@localhost"
-                #{mysql_login_args(12)}
+                #{mysql_login_args(12, USER_PORT)}
               register: r
               check_mode: true
     YAML
-    dump.as_h.keys.must_equal(%w[changed user msg password_changed attributes failed deprecations])
+    dump.as_h.keys.must_equal(%w[changed failed deprecations msg user password_changed attributes])
     dump["changed"].as_bool.must_equal(true)
     dump["user"].as_s.must_equal("kru_check@localhost")
     dump["password_changed"].raw.must_be_nil
@@ -401,9 +422,10 @@ describe "mysql_info plugin result shape" do
   # sibling workers (see test/minitest_helper.cr).
   serial!
 
-  # Ansible's exit_json always leads with the three server/connector facts
-  # and then appends exactly the subsets the filter kept, in the order
-  # its own dict declares them.
+  # Inside the module's own keys Ansible always leads with the three
+  # server/connector facts and then appends exactly the subsets the filter
+  # kept, in the order its own dict declares them (the registered shape
+  # leads those with the 2.21 field block: changed, failed, deprecations).
   it "registers every subset, in Ansible's order, with no filter" do
     skip "no MySQL server at #{MYSQL_HOST}:#{MYSQL_PORT}" unless mysql_reachable?
     dump = registered_dump(task_body(<<-YAML))
@@ -413,9 +435,9 @@ describe "mysql_info plugin result shape" do
               register: r
     YAML
     dump.as_h.keys.must_equal(%w[
-      changed server_engine connector_name connector_version
+      changed failed deprecations server_engine connector_name connector_version
       version databases settings global_status engines
-      users users_info master_status slave_hosts slave_status failed deprecations
+      users users_info master_status slave_hosts slave_status
     ])
     dump["changed"].as_bool.must_equal(false)
     dump["server_engine"].as_s.must_equal("MySQL")
@@ -439,7 +461,7 @@ describe "mysql_info plugin result shape" do
                 #{mysql_login_args(12)}
               register: r
     YAML
-    dump.as_h.keys.must_equal(%w[changed server_engine connector_name connector_version version failed deprecations])
+    dump.as_h.keys.must_equal(%w[changed failed deprecations server_engine connector_name connector_version version])
   end
 
   # A YAML list of subset names: Ansible's argspec types `filter` as a list,
@@ -455,7 +477,7 @@ describe "mysql_info plugin result shape" do
                 #{mysql_login_args(12)}
               register: r
     YAML
-    dump.as_h.keys.must_equal(%w[changed server_engine connector_name connector_version version databases failed deprecations])
+    dump.as_h.keys.must_equal(%w[changed failed deprecations server_engine connector_name connector_version version databases])
   end
 
   # The same list reaching the plugin through a variable (`filter: "{{ var }}"`)
@@ -470,7 +492,7 @@ describe "mysql_info plugin result shape" do
                 #{mysql_login_args(12)}
               register: r
     YAML
-    dump.as_h.keys.must_equal(%w[changed server_engine connector_name connector_version version databases failed deprecations])
+    dump.as_h.keys.must_equal(%w[changed failed deprecations server_engine connector_name connector_version version databases])
   end
 
   # Ansible's comma-separated string form of the same list.
@@ -483,7 +505,7 @@ describe "mysql_info plugin result shape" do
                 #{mysql_login_args(12)}
               register: r
     YAML
-    dump.as_h.keys.must_equal(%w[changed server_engine connector_name connector_version version databases failed deprecations])
+    dump.as_h.keys.must_equal(%w[changed failed deprecations server_engine connector_name connector_version version databases])
   end
 
   # Ansible's `!name` exclusion form as a list, and the rule that an
@@ -500,9 +522,9 @@ describe "mysql_info plugin result shape" do
               register: r
     YAML
     dump.as_h.keys.must_equal(%w[
-      changed server_engine connector_name connector_version
+      changed failed deprecations server_engine connector_name connector_version
       version databases global_status
-      users users_info master_status slave_hosts slave_status failed deprecations
+      users users_info master_status slave_hosts slave_status
     ])
   end
 
@@ -519,7 +541,7 @@ describe "mysql_info plugin result shape" do
                 #{mysql_login_args(12)}
               register: r
     YAML
-    dump.as_h.keys.must_equal(%w[changed server_engine connector_name connector_version version failed warnings deprecations])
+    dump.as_h.keys.must_equal(%w[changed failed warnings deprecations server_engine connector_name connector_version version])
     dump["warnings"].as_a.map(&.as_s).must_equal(["filter element: bogus is not allowable, ignored"])
   end
 
@@ -535,15 +557,17 @@ describe "mysql_info plugin result shape" do
               register: r
     YAML
     dump.as_h.keys.must_equal(%w[
-      changed server_engine connector_name connector_version
+      changed failed deprecations server_engine connector_name connector_version
       version databases global_status engines
-      users users_info master_status slave_hosts slave_status failed deprecations
+      users users_info master_status slave_hosts slave_status
     ])
   end
 end
 
-# `exclude_fields:` support in mysql_info, against a throwaway MySQL at
-# 127.0.0.1:33307 (pended when nothing is listening there).
+# `exclude_fields:` support in mysql_info, on the same throwaway MySQL as
+# the describes above (a MariaDB also answers these, but its mysql_info
+# result carries an extra `warnings` entry real only adds for MariaDB, so
+# the key lists here stay MySQL-pinned).
 #
 # Ansible's community.mysql 5.0.2 mysql_info.py passes `exclude_fields` to
 # __get_databases, which drops each named field from the emitted
@@ -551,47 +575,23 @@ end
 # have produced it. Only `db_size` and `db_table_count` are supported -
 # anything else is silently ignored (no warning, no error), as the
 # module's own documentation promises. Every value pinned here was
-# live-verified against ansible-playbook 2.19.11 with
-# community.mysql 5.0.2 on MySQL 8.4.
-private EXCL_HOST = "127.0.0.1"
-private EXCL_PORT = 33307
-
-private def excl_reachable? : Bool
-  sock = TCPSocket.new(EXCL_HOST, EXCL_PORT, connect_timeout: 1)
-  sock.close
-  true
-rescue
-  false
-end
-
-private def excl_login_args(indent : Int32 = 12) : String
-  [
-    "login_host: #{EXCL_HOST}",
-    "login_port: #{EXCL_PORT}",
-    "login_user: root",
-    "login_password: krikri",
-  ].join("\n" + " " * indent)
-end
-
-private def excl_dump(tasks : String) : JSON::Any
-  registered_dump(tasks)
-end
-
-describe "mysql_info exclude_fields (127.0.0.1:33307)" do
+# live-verified against ansible-playbook 2.21.6 with community.mysql
+# 5.0.2 on MySQL 8.4.
+describe "mysql_info exclude_fields plugin result shape" do
   # Shared external DB state: never run in parallel with sibling workers
   # (see test/minitest_helper.cr).
   serial!
 
   it "emits size and tables per database when no field is excluded" do
-    skip "no MySQL server at #{EXCL_HOST}:#{EXCL_PORT}" unless excl_reachable?
-    dump = excl_dump(task_body(<<-YAML))
+    skip "no MySQL server at #{MYSQL_HOST}:#{MYSQL_PORT}" unless mysql_reachable?
+    dump = registered_dump(task_body(<<-YAML))
             - name: databases
               community.mysql.mysql_info:
                 filter: databases
-                #{excl_login_args}
+                #{mysql_login_args(12)}
               register: r
     YAML
-    dump.as_h.keys.must_equal(%w[changed server_engine connector_name connector_version databases failed deprecations])
+    dump.as_h.keys.must_equal(%w[changed failed deprecations server_engine connector_name connector_version databases])
     dump["databases"].as_h.each_value do |entry|
       entry.as_h.keys.must_equal(%w[size tables])
     end
@@ -599,13 +599,13 @@ describe "mysql_info exclude_fields (127.0.0.1:33307)" do
   end
 
   it "omits size when exclude_fields names db_size" do
-    skip "no MySQL server at #{EXCL_HOST}:#{EXCL_PORT}" unless excl_reachable?
-    dump = excl_dump(task_body(<<-YAML))
+    skip "no MySQL server at #{MYSQL_HOST}:#{MYSQL_PORT}" unless mysql_reachable?
+    dump = registered_dump(task_body(<<-YAML))
             - name: databases without size
               community.mysql.mysql_info:
                 filter: databases
                 exclude_fields: db_size
-                #{excl_login_args}
+                #{mysql_login_args(12)}
               register: r
     YAML
     dump["databases"].as_h.each_value do |entry|
@@ -616,13 +616,13 @@ describe "mysql_info exclude_fields (127.0.0.1:33307)" do
   end
 
   it "emits an empty per-database dict when both fields are excluded" do
-    skip "no MySQL server at #{EXCL_HOST}:#{EXCL_PORT}" unless excl_reachable?
-    dump = excl_dump(task_body(<<-YAML))
+    skip "no MySQL server at #{MYSQL_HOST}:#{MYSQL_PORT}" unless mysql_reachable?
+    dump = registered_dump(task_body(<<-YAML))
             - name: databases without either field
               community.mysql.mysql_info:
                 filter: databases
                 exclude_fields: db_size,db_table_count
-                #{excl_login_args}
+                #{mysql_login_args(12)}
               register: r
     YAML
     # Ansible still names every database it found - the dict is per
@@ -636,14 +636,14 @@ describe "mysql_info exclude_fields (127.0.0.1:33307)" do
   # Ansible's argspec types `exclude_fields` as a list, so a YAML list
   # reaches the same code as the comma-separated string form.
   it "honors a YAML list of exclude_fields" do
-    skip "no MySQL server at #{EXCL_HOST}:#{EXCL_PORT}" unless excl_reachable?
-    dump = excl_dump(task_body(<<-YAML))
+    skip "no MySQL server at #{MYSQL_HOST}:#{MYSQL_PORT}" unless mysql_reachable?
+    dump = registered_dump(task_body(<<-YAML))
             - name: databases without tables
               community.mysql.mysql_info:
                 filter: databases
                 exclude_fields:
                   - db_table_count
-                #{excl_login_args}
+                #{mysql_login_args(12)}
               register: r
     YAML
     dump["databases"].as_h.each_value do |entry|
@@ -654,16 +654,16 @@ describe "mysql_info exclude_fields (127.0.0.1:33307)" do
   # An unsupported element is silently ignored: the full per-database
   # dict comes back and no warning is raised.
   it "ignores an unsupported exclude_fields element without warning" do
-    skip "no MySQL server at #{EXCL_HOST}:#{EXCL_PORT}" unless excl_reachable?
-    dump = excl_dump(task_body(<<-YAML))
+    skip "no MySQL server at #{MYSQL_HOST}:#{MYSQL_PORT}" unless mysql_reachable?
+    dump = registered_dump(task_body(<<-YAML))
             - name: databases with a bogus exclusion
               community.mysql.mysql_info:
                 filter: databases
                 exclude_fields: bogus_field
-                #{excl_login_args}
+                #{mysql_login_args(12)}
               register: r
     YAML
-    dump.as_h.keys.must_equal(%w[changed server_engine connector_name connector_version databases failed deprecations])
+    dump.as_h.keys.must_equal(%w[changed failed deprecations server_engine connector_name connector_version databases])
     dump["databases"].as_h.each_value do |entry|
       entry.as_h.keys.must_equal(%w[size tables])
     end
@@ -673,14 +673,14 @@ describe "mysql_info exclude_fields (127.0.0.1:33307)" do
   # (no tables at all); an excluded field must be absent from those
   # entries too, not defaulted to 0.
   it "keeps exclude_fields on the empty databases return_empty_dbs adds" do
-    skip "no MySQL server at #{EXCL_HOST}:#{EXCL_PORT}" unless excl_reachable?
-    dump = registered_dump(task_body(<<-YAML), create_db_play("excl_shape_db", EXCL_HOST, EXCL_PORT))
+    skip "no MySQL server at #{MYSQL_HOST}:#{MYSQL_PORT}" unless mysql_reachable?
+    dump = registered_dump(task_body(<<-YAML), create_db_play("excl_shape_db"))
             - name: every database without size
               community.mysql.mysql_info:
                 filter: databases
                 return_empty_dbs: true
                 exclude_fields: db_size
-                #{excl_login_args}
+                #{mysql_login_args(12)}
               register: r
     YAML
     dump["databases"].as_h.each_value do |entry|

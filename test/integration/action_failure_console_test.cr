@@ -155,7 +155,7 @@ describe "include_vars failure registration" do
     result["message"].as_s.must_equal("/nonexistent/varsdir directory does not exist")
   end
 
-  it "registers the wrapped facts and the trailing null-lookup warning for name: with no file" do
+  it "registers the wrapped facts and the leading null-lookup warning for name: with no file" do
     result = registered_dump([
       "      - ansible.builtin.include_vars:",
       "          name: a.yml",
@@ -163,8 +163,12 @@ describe "include_vars failure registration" do
       "        register: r",
     ])
 
+    # 2.21's registered export leads with its declared fields, and
+    # `warnings` is one of them - so it precedes `ansible_facts` (the
+    # module's own `message`/`ansible_included_var_files` stay in the
+    # tail). Live-verified vs 2.21.6.
     result.as_h.keys.must_equal(
-      ["changed", "failed", "ansible_facts", "exception", "msg", "message", "ansible_included_var_files", "warnings"]
+      ["changed", "failed", "warnings", "ansible_facts", "exception", "msg", "message", "ansible_included_var_files"]
     )
     result["ansible_facts"].as_h.keys.must_equal(["a.yml"])
     result["warnings"].as_a.map(&.as_s).must_equal(

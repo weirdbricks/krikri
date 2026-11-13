@@ -173,7 +173,10 @@ describe "package plugin result key order (sweep7)" do
               dest: KRIKRI_DUMP_PATH
     YAML
 
-    keys.must_equal(["changed", "failed", "stdout", "stderr", "diff", "cache_updated", "cache_update_time", "stdout_lines", "stderr_lines"])
+    # 2.21's registered export leads with its declared fields, so the
+    # module's own `diff` precedes the result_data keys (live-verified vs
+    # 2.21.6 on an apt check-mode install).
+    keys.must_equal(["changed", "failed", "diff", "stdout", "stderr", "cache_updated", "cache_update_time", "stdout_lines", "stderr_lines"])
   end
 
   # The remove target must be a package that is PRESENT on every host
@@ -202,7 +205,10 @@ describe "package plugin result key order (sweep7)" do
               dest: KRIKRI_DUMP_PATH
     YAML
 
-    keys.must_equal(["changed", "failed", "stdout", "stderr", "diff", "cache_updated", "cache_update_time", "stdout_lines", "stderr_lines"])
+    # 2.21's registered export leads with its declared fields, so the
+    # module's own `diff` precedes the result_data keys (live-verified vs
+    # 2.21.6 on an apt check-mode install).
+    keys.must_equal(["changed", "failed", "diff", "stdout", "stderr", "cache_updated", "cache_update_time", "stdout_lines", "stderr_lines"])
   end
 end
 

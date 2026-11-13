@@ -21,8 +21,9 @@ require "../../src/krikri/plugin_helpers/mysql_salted_hash"
 # reports ok with the same hash bytes stored via `AS 0x...`.
 #
 # Specs skip when no MySQL/MariaDB server is up on the documented test
-# ports; the salt path further skips servers without caching_sha2_password
-# (MariaDB), decided by a throwaway probe the server itself judges.
+# ports; the salt path additionally skips that server's iteration when it
+# has no caching_sha2_password (MariaDB), decided by a throwaway probe the
+# server itself judges.
 
 private SERVERS = [
   {host: "127.0.0.1", port: 33306, password: ENV["KRIKRI_MYSQL_ROOT_PASS"]? || "krikri"},
@@ -84,7 +85,11 @@ describe "mysql_user server-side comparison reads" do
 
     servers.each do |server|
       drop_spec_user(server)
-      skip "server has no caching_sha2_password" unless caching_sha2_available?(server)
+      # `next`, not `skip`: this runs per server, and a skip here would
+      # report the whole test as skipped even after the MySQL server's
+      # assertions ran (krikri's own db_tests.sh brings both up, so the
+      # MariaDB iteration would swallow the result).
+      next unless caching_sha2_available?(server)
 
       password = "krikri-salt-pass"
       salt = "krikri0123456789abcd"

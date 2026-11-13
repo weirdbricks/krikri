@@ -300,8 +300,8 @@ describe "timezone plugin result key order" do
   end
 end
 
-describe "normalize_module_result warnings tail" do
-  it "re-appends module warnings after the failed/changed backfill (Ansible 2.19.11 find: skipped_paths, failed, warnings)" do
+describe "normalize_module_result warnings/deprecations lead" do
+  it "registers module warnings in the 2.21 field block (find: changed, failed, warnings, msg, ...)" do
     keys = run_registered_dump2(<<-YAML)
       - hosts: localhost
         connection: local
@@ -315,6 +315,9 @@ describe "normalize_module_result warnings tail" do
                 {{ r | to_json }}
               dest: KRIKRI_DUMP_PATH
       YAML
-    keys.must_equal(["changed", "failed", "msg", "files", "matched", "examined", "skipped_paths", "warnings"])
+    # ansible-core 2.21's registered export leads with its declared fields,
+    # so a module's own `warnings` (imported into the _warnings field)
+    # precede `msg` and the module's keys - live-verified vs 2.21.6.
+    keys.must_equal(["changed", "failed", "warnings", "msg", "files", "matched", "examined", "skipped_paths"])
   end
 end
