@@ -1124,6 +1124,22 @@ describe "INJECT_FACTS_AS_VARS deprecation and a template's unentered frames" do
     stderr.must_include("Origin: ")
   end
 
+  it "warns after a top-level set the render binds" do
+    _stdout, stderr = run_template_file("{% set x = 1 %}{{ x }}" \
+                                        "{% for i in ['a'] %}{{ ansible_distribution }}{% endfor %}ok\n")
+
+    stderr.scan(/DEPRECATION WARNING\]: INJECT_FACTS_AS_VARS/).size.must_equal(1)
+    stderr.must_include("Origin: ")
+  end
+
+  it "warns after a set a taken branch binds" do
+    _stdout, stderr = run_template_file("{% if true %}{% set x = 1 %}{% endif %}{{ x }}" \
+                                        "{% for i in ['a'] %}{{ ansible_distribution }}{% endfor %}ok\n")
+
+    stderr.scan(/DEPRECATION WARNING\]: INJECT_FACTS_AS_VARS/).size.must_equal(1)
+    stderr.must_include("Origin: ")
+  end
+
   it "stays silent for a macro body the template never calls" do
     _stdout, stderr = run_template_file("{% macro m() %}{{ ansible_distribution }}{% endmacro %}ok\n")
 
