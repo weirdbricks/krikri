@@ -115,11 +115,39 @@ module Krikri
       roots.each do |root|
         path = File.join(root, candidate)
         next unless File.exists?(path)
-        # Ansible runs a found path through normpath/unfrackpath, so the
-        # surfaced path (a with_first_found: loop item, the loaded file's
-        # name) is the collapsed one. A relative join is left alone -
-        # normalising could flip leading ../ out of the root's meaning.
-        return path.starts_with?("/") ? Path.new(path).normalize.to_s : path
+        return normalize_found_path(path)
+      end
+      nil
+    end
+
+    private def normalize_found_path(path : String) : String
+      # Ansible runs a found path through normpath/unfrackpath, so the
+      # surfaced path (a with_first_found: loop item, the loaded file's
+      # name) is the collapsed one. A relative join is left alone -
+      # normalising could flip leading ../ out of the root's meaning.
+      path.starts_with?("/") ? Path.new(path).normalize.to_s : path
+    end
+
+    # include_vars' own resolution: Ansible's _find_needle('vars', src)
+    # walks path_dwim_relative_stack, so each search-path base offers
+    # <base>/vars/<src> before <base>/<src>. A play-level bare
+    # `include_vars: Debian-vars.yml` therefore finds the playbook
+    # directory's vars/Debian-vars.yml (live-verified vs ansible-core
+    # 2.21.6, issue #1194); only the failure message's "Searched in:"
+    # list knew about that join before.
+    private def first_existing_include_vars(roots : Array(String), candidate : String) : String?
+      # Ansible's candidate list never has <base>/vars/vars/<src>: the
+      # dirname join is skipped when the source already starts with vars/,
+      # and a root that IS a vars/ dir (a role's own vars/, the first root
+      # resolve_include_vars_path adds) must not get a second one glued on.
+      add_vars_dir = candidate.split('/')[0] != "vars"
+      roots.each do |root|
+        if add_vars_dir && File.basename(root) != "vars"
+          path = File.join(root, "vars", candidate)
+          return normalize_found_path(path) if File.exists?(path)
+        end
+        path = File.join(root, candidate)
+        return normalize_found_path(path) if File.exists?(path)
       end
       nil
     end
