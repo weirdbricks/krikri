@@ -70,6 +70,9 @@ module Krikri
 
     def execute : PluginResult
       validate_bool_params!
+      if failure = main_arg_failure
+        return failure
+      end
       devices = pattern_list("devices")
       fstypes = pattern_list("fstypes")
       sources = get_sources
@@ -108,6 +111,48 @@ module Krikri
           key_order: ["ansible_facts"]
         )
       end
+    end
+
+    # mount_facts.py's own main() guards its two type-loosely-declared
+    # options after AnsibleModule's generic argspec validation: timeout must
+    # be a positive number or null, and mount_binary must be a string or
+    # null (both `type` declarations - float and raw - let the offending
+    # value through the generic check untouched). The plugin wire demotes an
+    # unquoted YAML scalar to its text, so the native value survives only in
+    # BasePlugin#non_string_param - which is what tells an unquoted
+    # `mount_binary: 81` apart from the legitimate string "81".
+    private def main_arg_failure : PluginResult?
+      if timeout = @params["timeout"]?
+        unless timeout.empty? || explicit_null_param?("timeout")
+          # Ansible's float checker converts a native bool (float(True) is
+          # 1.0); the wire only reaches here with the bool's text.
+          seconds = case non_string_param("timeout").try(&.as_bool?)
+                    when true  then 1.0
+                    when false then 0.0
+                    else            timeout.to_f64?
+                    end
+          if seconds.nil? || seconds <= 0
+            return PluginResult.new(
+              changed: false,
+              failed: true,
+              # Ansible prints the argspec-converted float, not the wire
+              # text, so `timeout: 0` reports "0.0".
+              msg: "argument 'timeout' must be a positive number or null, not #{seconds || timeout}"
+            )
+          end
+        end
+      end
+
+      if native = non_string_param("mount_binary")
+        return PluginResult.new(
+          changed: false,
+          failed: true,
+          # Python str() of the native value: True/False for bools, the
+          # plain spelling for ints/floats.
+          msg: "argument 'mount_binary' must be a string or null, not #{Krikri.non_string_param_text(native)}"
+        )
+      end
+      nil
     end
 
     # ----- source resolution (mirrors get_sources() in the Ansible module) -----
