@@ -2256,8 +2256,14 @@ module Krikri
             # cache_updated, cache_update_time, stdout_lines,
             # stderr_lines); a name apt cannot resolve fails the task
             # with apt.py's own "No package matching 'X' is available"
-            # (live-verified in check mode).
-            sim = remote_exec("apt-get install --simulate #{shell_pkg} 2>&1")
+            # (live-verified in check mode). --simulate goes BEFORE the
+            # operation, like apt.py's own check_arg slot: apt's boolean
+            # options consume an immediately following boolean-looking
+            # token as their value, so `apt-get install --simulate 1`
+            # reads "1" as simulate=true, installs nothing and exits 0.
+            # Real ansible fails that task in its own cache resolution
+            # (issue #1238, `name: 1` chaos case).
+            sim = remote_exec("apt-get --simulate install #{shell_pkg} 2>&1")
             if sim[:exit_code] == 0
               return simulate_result(sim[:stdout], sim[:stderr])
             end
@@ -2396,7 +2402,9 @@ module Krikri
             # registers the same simulate shape as the install side
             # (live-verified); an apt-get refusal (e.g. essential-package
             # protection) surfaces as run_command's failure shape.
-            sim = remote_exec("apt-get remove --simulate #{remove_pkg} 2>&1")
+            # --simulate before the operation, for the reason on the
+            # install branch above (issue #1238).
+            sim = remote_exec("apt-get --simulate remove #{remove_pkg} 2>&1")
             if sim[:exit_code] == 0
               return simulate_result(sim[:stdout], sim[:stderr])
             end
@@ -2459,8 +2467,27 @@ module Krikri
           return handle_apt_wildcard_latest(dpkg_opts, lock_timeout)
         end
         if @check_mode
-          check_upgrade = remote_exec("apt-get install --simulate #{shell_pkg} 2>&1 | grep -i upgrade")
-          if check_upgrade[:exit_code] == 0
+          # --simulate before the operation: apt's boolean options eat a
+          # following boolean-looking token, so `install --simulate 1`
+          # would simulate nothing and exit 0 (issue #1238, `name: 1`).
+          sim = remote_exec("apt-get --simulate install #{shell_pkg} 2>&1")
+          folded = sim[:stdout] + sim[:stderr]
+          # ansible's install() resolves every name against the apt cache
+          # before apt-get runs, check mode included, so a name the cache
+          # cannot resolve fails the task instead of reaching a simulate
+          # run - same mapping as the present-state check branch.
+          if sim[:exit_code] != 0
+            if missing = apt_first_missing_name(folded, names)
+              return PluginResult.new(
+                changed: false,
+                failed: true,
+                msg: no_package_msg(missing)
+              )
+            end
+          end
+          # `grep -i upgrade` over the folded simulate output, kept as the
+          # original pipeline's match test.
+          if folded.downcase.includes?("upgrade")
             return PluginResult.new(
               changed: true,
               failed: false,
