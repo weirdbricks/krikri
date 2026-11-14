@@ -563,6 +563,10 @@ module Krikri
 
     private def self.lookup_template(ctx : KrikriJinja::Context, path : String,
                                      kwargs : Hash(String, AnyValue), role_path : String?) : AnyValue
+      # Ansible names the template lookup's deprecated options before it
+      # even searches for the file (its set_options runs first) - see
+      # emit_template_lookup_option_deprecations' own comment.
+      ResultDisplay.emit_template_lookup_option_deprecations(kwargs.keys)
       resolved = LookupPlugins.resolve_template_lookup_path(path, role_path)
       unless File.exists?(resolved)
         # find_file_in_search_path prints this warning for a lookup file

@@ -127,6 +127,12 @@ module Krikri
         # see the reconciliation at the end of the render below).
         path = parts[1]?.try { |part| evaluate(part.strip) }
         return "undefined" unless path
+        # Ansible names the template lookup's deprecated options before it
+        # even searches for the file (its set_options runs first) - see
+        # emit_template_lookup_option_deprecations' own comment.
+        ResultDisplay.emit_template_lookup_option_deprecations(
+          kwargs.map { |kwarg| kwarg.strip.partition('=').first.strip }
+        )
         resolved_path = resolve_template_lookup_path(path)
 
         # Ansible's template lookup fails a file it cannot find, and

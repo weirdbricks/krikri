@@ -143,4 +143,78 @@ describe "lookup('template', missing file)" do
     combined.must_include("Unable to find '#{MISSING}' in expected paths (use -vvvvv to see paths)")
     combined.must_include("An error occurred while running the lookup plugin 'template': the template file #{MISSING} could not be found for the lookup")
   end
+
+  # Issue #1252 (dubzland.hostname): ansible-core 2.21.6's template lookup
+  # DOCUMENTATION marks its convert_data and jinja2_native options
+  # deprecated, so the plugin's set_options reports a two-line
+  # [DEPRECATION WARNING] block whenever a caller passes either as a direct
+  # kwarg - even when the value IS the option's default (convert_data=False
+  # warns; live-verified against 2.21.6). The remaining alternatives
+  # sentence differs per option, a multi-line message takes one blank line
+  # after it, and Display dedups the formatted block per run.
+  it "prints the deprecated convert_data option block once per run" do
+    tpl = PluginSpecHelper.tmp_path("template_lookup_convert_data_spec", "host.j2")
+    Dir.mkdir_p(File.dirname(tpl))
+    File.write(tpl, "host\n")
+    status, out, err = run_playbook_binary(<<-YAML
+      - name: repro
+        hosts: localhost
+        gather_facts: false
+        tasks:
+          - name: S1 set_fact through a convert_data lookup
+            ansible.builtin.set_fact:
+              first: "{{ lookup('template', '#{tpl}', convert_data=False) | from_yaml }}"
+          - name: S2 the second convert_data lookup repeats no block
+            ansible.builtin.set_fact:
+              second: "{{ lookup('template', '#{tpl}', convert_data=False) | from_yaml }}"
+          - name: S3 shows the rendered value
+            ansible.builtin.debug:
+              var: second
+      YAML
+    )
+    combined = out + err
+    status.success?.must_equal(true, combined)
+    out.must_include("host")
+    err.must_include("[DEPRECATION WARNING]: convert_data option. Reason: This option is no longer used in the Ansible Core code base.\nAlternatives: Jinja2 native mode is now the default and only option, which is mutually exclusive with this option. This feature will be removed from lookup plugin 'template' in ansible-core version 2.23.\n\n")
+    err.scan("convert_data option").size.must_equal(1)
+  end
+
+  it "prints the jinja2_native option's own alternatives sentence" do
+    tpl = PluginSpecHelper.tmp_path("template_lookup_jinja2_native_spec", "host.j2")
+    Dir.mkdir_p(File.dirname(tpl))
+    File.write(tpl, "host\n")
+    status, out, err = run_playbook_binary(<<-YAML
+      - name: repro
+        hosts: localhost
+        gather_facts: false
+        tasks:
+          - name: S1 set_fact through a jinja2_native lookup
+            ansible.builtin.set_fact:
+              first: "{{ lookup('template', '#{tpl}', jinja2_native=False) | from_yaml }}"
+          - name: S2 shows the rendered value
+            ansible.builtin.debug:
+              var: first
+      YAML
+    )
+    combined = out + err
+    status.success?.must_equal(true, combined)
+    out.must_include("host")
+    err.must_include("[DEPRECATION WARNING]: jinja2_native option. Reason: This option is no longer used in the Ansible Core code base.\nAlternatives: Jinja2 native mode is now the default and only option. This feature will be removed from lookup plugin 'template' in ansible-core version 2.23.\n\n")
+    err.wont_include("convert_data option")
+  end
+
+  it "reports the deprecated option from the hand-rolled evaluator path too" do
+    tpl = PluginSpecHelper.tmp_path("template_lookup_convert_data_handrolled_spec", "host.j2")
+    Dir.mkdir_p(File.dirname(tpl))
+    File.write(tpl, "host\n")
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new({} of String => JSON::Any)
+    held = Krikri::ResultDisplay.capture_stderr do
+      # Spaced around the `=` on purpose: Jinja parses the spacing away
+      # before ansible's plugin ever sees the kwarg name, so this engine's
+      # raw `key=value` split must trim it the same way.
+      evaluator.evaluate("lookup('template', '#{tpl}', convert_data = False)").must_include("host")
+    end
+    emitted = Krikri::ResultDisplay.capture_stderr { held.emit }.text
+    emitted.must_include("[DEPRECATION WARNING]: convert_data option. Reason: This option is no longer used in the Ansible Core code base.\nAlternatives: Jinja2 native mode is now the default and only option, which is mutually exclusive with this option. This feature will be removed from lookup plugin 'template' in ansible-core version 2.23.\n\n")
+  end
 end
