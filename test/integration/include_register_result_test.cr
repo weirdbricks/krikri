@@ -188,4 +188,50 @@ describe "register: on an include_tasks:/include_role: statement" do
   ensure
     FileUtils.rm_rf(src_dir) if src_dir && Dir.exists?(src_dir)
   end
+
+  it "registers a failed include_role so a later when: sees it as unsucceeded" do
+    # Issue #1274: a bad rolespec_validate fails the include_role task, and
+    # real registers that failure like any other task's
+    # (live-verified vs 2.21.6) - {failed: true, msg: ...} - so a
+    # `when: reg is succeeded` on the next task SKIPS instead of erroring
+    # out on an undefined name. The convertible public:/allow_duplicates:
+    # here are what used to stop the keyword conversion scan early.
+    src_dir = File.tempname("include-register-role-failed")
+    Dir.mkdir_p(File.join(src_dir, "roles", "kpg_register_role", "tasks"))
+    File.write(File.join(src_dir, "roles", "kpg_register_role", "tasks", "main.yml"), <<-YAML)
+      - ansible.builtin.debug:
+          msg: never runs
+      YAML
+    tasks_file = File.join(src_dir, "included.yml")
+    File.write(tasks_file, "- ansible.builtin.debug:\n    msg: never includes\n")
+    playbook = File.join(src_dir, "pb.yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        gather_facts: false
+        tasks:
+          - ansible.builtin.include_role:
+              allow_duplicates: true
+              name: kpg_register_role
+              public: true
+              rolespec_validate: bluqcw
+            register: role_reg
+            ignore_errors: true
+          - ansible.builtin.include_tasks:
+              file: #{tasks_file}
+            when: role_reg is succeeded
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output, chdir: src_dir)
+
+    status.success?.must_equal(true)
+    output.to_s.must_include(%("msg": "Task failed: Error processing keyword 'rolespec_validate'))
+    output.to_s.wont_include("never runs")
+    output.to_s.wont_include("never includes")
+    output.to_s.wont_include("is undefined")
+    output.to_s.must_match(/ok=1\s+changed=0\s+.*failed=0\s+skipped=1/)
+    output.to_s.must_match(/ignored=1/)
+  ensure
+    FileUtils.rm_rf(src_dir) if src_dir && Dir.exists?(src_dir)
+  end
 end

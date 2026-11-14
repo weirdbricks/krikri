@@ -154,7 +154,7 @@ describe "PlaybookParser include directive argument validation" do
     # Live-verified vs 2.19.11: real converts each keyword in order and
     # reports the first that fails, so a convertible public:/
     # allow_duplicates: ahead of an unconvertible rolespec_validate:
-    # does not hide it (issue #1275).
+    # does not hide it (issues #1274, #1275).
     {"public", "allow_duplicates"}.each do |keyword|
       args = Hash(YAML::Any, YAML::Any).new
       args[YAML::Any.new(keyword)] = YAML::Any.new(true)
@@ -171,6 +171,11 @@ describe "PlaybookParser include directive argument validation" do
 
     args = Hash(YAML::Any, YAML::Any).new
     args[YAML::Any.new("public")] = YAML::Any.new(true)
+    Krikri::RoleBoolKeywords.failure(args).must_be_nil
+
+    args = Hash(YAML::Any, YAML::Any).new
+    args[YAML::Any.new("allow_duplicates")] = YAML::Any.new(false)
+    args[YAML::Any.new("rolespec_validate")] = YAML::Any.new(true)
     Krikri::RoleBoolKeywords.failure(args).must_be_nil
   end
 
