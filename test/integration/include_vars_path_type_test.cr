@@ -344,4 +344,65 @@ describe "include_vars with a non-string file:/dir: literal" do
 
     output.must_include(%("msg": 1))
   end
+
+  # Ansible's strategy evaluates the task's conditional BEFORE it invokes
+  # the include_vars action, so a raising or false `when:` keeps the
+  # action's own argument validation from ever running (live-verified vs
+  # 2.21.6, issue #1232 - a `meta:` task's register: leaves no variable at
+  # all, so `when: reg is not skipped` raises right beside a typo'd `flie:`).
+  it "reports a raising when: before validating include_vars's arguments" do
+    _, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: meta leaves no registered variable
+            ansible.builtin.meta: clear_facts
+            register: kpg_task_0
+            ignore_errors: true
+          - name: typo'd argument behind a raising when
+            include_vars:
+              hash_behaviour: merge
+              flie: vars.yml
+            when: kpg_task_0 is not skipped
+            ignore_errors: true
+    YAML
+
+    output.must_include("A 'when' expression failed: Error while evaluating conditional: 'kpg_task_0' is undefined")
+    output.wont_include("is not a valid option in include_vars")
+  end
+
+  it "skips a typo'd include_vars behind a false when: instead of failing it" do
+    _, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - include_vars:
+              hash_behaviour: merge
+              flie: vars.yml
+            when: false
+    YAML
+
+    output.must_include("skipping: [localhost]")
+    output.wont_include("is not a valid option in include_vars")
+  end
+
+  it "fails a looped typo'd include_vars per item once its when: passes" do
+    _, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - include_vars:
+              hash_behaviour: merge
+              flie: vars.yml
+            loop: [1, 2]
+            ignore_errors: true
+    YAML
+
+    output.must_include(%(failed: [localhost] (item=1) => {"ansible_loop_var": "item", "changed": false, "item": 1, "msg": "Task failed: flie is not a valid option in include_vars"}))
+    output.must_include(%(failed: [localhost] (item=2) => {"ansible_loop_var": "item", "changed": false, "item": 2, "msg": "Task failed: flie is not a valid option in include_vars"}))
+    output.must_match(/ignored=1/)
+  end
 end
