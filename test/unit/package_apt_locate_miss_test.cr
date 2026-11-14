@@ -429,3 +429,71 @@ describe "package:/apt plus-modifier name mapping (issue 288)" do
     end
   end
 end
+
+# Issue #1238 (`package: {name: 1}`, check mode): apt's boolean options
+# take an immediately following boolean-looking token as their value, so
+# `apt-get install --simulate 1` parses "1" as simulate=true, installs
+# nothing and exits 0 - this backend reported changed where ansible's
+# apt.py fails the task while resolving the name against the apt cache
+# ("No package matching '1' is available"). Real apt.py places its
+# check_arg BEFORE the operation (`apt-get ... --simulate install
+# <pkgs>`), so the shim reproduces apt's own parse: a boolean token
+# right after --simulate means an empty package list and exit 0, any
+# other first package name is the unresolvable one.
+private def with_simulate_value_apt_get_shim(&)
+  shim_dir = PluginSpecHelper.tmp_path("fake-apt-get-simulate-value")
+  Dir.mkdir_p(shim_dir)
+  File.write("#{shim_dir}/apt-get", <<-SH)
+    #!/bin/sh
+    prev=
+    for arg in "$@"; do
+      if [ "$prev" = "--simulate" ]; then
+        case "$arg" in
+          0|1|true|false|yes|no|on|off) exit 0 ;;
+        esac
+      fi
+      prev="$arg"
+    done
+    echo "E: Unable to locate package 1" >&2
+    exit 100
+    SH
+  File.chmod("#{shim_dir}/apt-get", 0o755)
+  PluginSpecHelper::ENV_MUTEX.synchronize do
+    old_path = ENV["PATH"]?
+    ENV["PATH"] = "#{shim_dir}:#{old_path}"
+    begin
+      yield
+    ensure
+      old_path ? (ENV["PATH"] = old_path) : (ENV.delete("PATH"))
+    end
+  end
+ensure
+  FileUtils.rm_r(shim_dir) if shim_dir
+end
+
+describe "package:/apt check-mode simulate flag ordering (issue 1238)" do
+  serial!
+
+  it "fails a boolean-looking name instead of reporting a simulated change (present)" do
+    with_simulate_value_apt_get_shim do
+      result = PluginSpecHelper.run("package",
+        {"name" => "1", "state" => "present", "use" => "apt", "_ansible_check_mode" => "true"})
+
+      result["failed"].as_bool.must_equal(true)
+      result["changed"].as_bool.must_equal(false)
+      result["msg"].as_s.must_equal("No package matching '1' is available")
+      result.as_h.has_key?("stderr").must_equal(false)
+    end
+  end
+
+  it "fails a boolean-looking name instead of reporting already-at-latest (latest)" do
+    with_simulate_value_apt_get_shim do
+      result = PluginSpecHelper.run("package",
+        {"name" => "1", "state" => "latest", "use" => "apt", "_ansible_check_mode" => "true"})
+
+      result["failed"].as_bool.must_equal(true)
+      result["changed"].as_bool.must_equal(false)
+      result["msg"].as_s.must_equal("No package matching '1' is available")
+    end
+  end
+end
