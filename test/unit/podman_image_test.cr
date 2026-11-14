@@ -2,6 +2,7 @@ require "../minitest_helper"
 require "../../src/krikri/plugin_helpers/podman_image"
 require "../../src/krikri/playbook_parser"
 require "../../src/krikri/plugin_manager"
+require "../../src/krikri/module_utils_deprecations"
 
 # Unit-tests the podman_image reference/creds logic; execution needs a
 # real podman host, the command shapes don't.
@@ -78,14 +79,31 @@ describe "podman_image result shape" do
       output: Process::Redirect::Close, error: Process::Redirect::Close).success?
   end
 
+  # containers.podman 1.17.0's podman_image.py imports to_native from the
+  # deprecated ansible.module_utils._text path (line 438), and real's
+  # controller appends the matching `deprecations` entry after the
+  # module's own keys (live-verified against ansible-core 2.21.6: the
+  # registered result carries it). The engine's wire also carries the
+  # console-text twin its Display consumes. A controller without that
+  # collection, or a release that migrated the import, gets the bare
+  # module shape, so the expectation follows the installed payload exactly
+  # like the plugin does.
+  def podman_image_result_keys : Array(String)
+    keys = ["changed", "actions", "podman_actions", "image", "stdout", "stdout_lines", "failed"]
+    if Krikri::ModuleUtilsDeprecations.text_import_deprecation_result_entries("podman_image").present?
+      keys << "deprecations"
+      keys << "_ansible_core_deprecations"
+    end
+    keys
+  end
+
   it "matches Ansible's absent-and-missing key set and order" do
     skip_unless_live_docker
     skip "podman not available" unless podman_available?
     result = PluginSpecHelper.run("podman_image", {
       "name" => "docker.io/library/krikri-pi-shape-gone-#{Process.pid}", "state" => "absent",
     })
-    result.as_h.keys.to_a.must_equal(
-      ["changed", "actions", "podman_actions", "image", "stdout", "stdout_lines", "failed"])
+    result.as_h.keys.to_a.must_equal(podman_image_result_keys)
     result["changed"].as_bool.must_equal(false)
     result["image"].as_h.empty?.must_equal(true)
     result["podman_actions"].as_a.map(&.as_s).first.ends_with?("image exists docker.io/library/krikri-pi-shape-gone-#{Process.pid}").must_equal(true)
@@ -99,8 +117,7 @@ describe "podman_image result shape" do
       result = PluginSpecHelper.run("podman_image", {
         "name" => "docker.io/library/krikri-pi-shape", "tag" => "1",
       })
-      result.as_h.keys.to_a.must_equal(
-        ["changed", "actions", "podman_actions", "image", "stdout", "stdout_lines", "failed"])
+      result.as_h.keys.to_a.must_equal(podman_image_result_keys)
       result["changed"].as_bool.must_equal(false)
       result["actions"].as_a.must_be_empty
       result["image"].as_a.wont_be_empty
@@ -118,8 +135,7 @@ describe "podman_image result shape" do
       result = PluginSpecHelper.run("podman_image", {
         "name" => "docker.io/library/krikri-pi-shape2", "tag" => "1", "state" => "absent",
       })
-      result.as_h.keys.to_a.must_equal(
-        ["changed", "actions", "podman_actions", "image", "stdout", "stdout_lines", "failed"])
+      result.as_h.keys.to_a.must_equal(podman_image_result_keys)
       result["changed"].as_bool.must_equal(true)
       result["actions"].as_a.map(&.as_s).must_equal(["Removed image docker.io/library/krikri-pi-shape2"])
       result["image"].as_h["state"].as_s.must_equal("Deleted")
