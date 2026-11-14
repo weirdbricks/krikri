@@ -1253,17 +1253,22 @@ module Krikri
     # inventory group parent/child nesting already has here.
     private def execute_set_stats(params : Hash(String, String), host : Host, vars_context : Hash(String, JSON::Any)) : JSON::Any
       data_json = params["data"]?
-      # A None data (`data:` with no value - the parser wires literal
-      # nulls as NONE_SENTINEL, same as a whole-span null template) is
-      # Ansible's missing-required-argument shape, same as the empty string.
-      data_json = "" if data_json == Krikri::NONE_SENTINEL
-      if data_json.nil? || data_json.empty?
-        return JSON.parse({"changed" => false, "failed" => true, "msg" => "missing required argument: data"}.to_json)
+      # set_stats is a controller-side ACTION plugin that defaults an absent
+      # data: to {} without running any module, so a task carrying only
+      # aggregate:/per_host: succeeds (live-verified against 2.21.6). Only a
+      # data: key that is present but unusable fails.
+      if data_json.nil?
+        return JSON.parse({"changed" => false, "failed" => false, "msg" => ""}.to_json)
       end
-
+      # A present-but-null data: (the parser wires literal nulls as
+      # NONE_SENTINEL, same as a whole-span null template), a plain string,
+      # a list and the empty string are all still non-dicts after
+      # templating, so the action plugin's isinstance(data, dict) check
+      # rejects every one of them with Ansible's own wording
+      # (live-verified against 2.21.6).
       data = JSON.parse(data_json) rescue nil
       unless data && data.as_h?
-        return JSON.parse({"changed" => false, "failed" => true, "msg" => "data must be a dictionary of stat name -> value"}.to_json)
+        return JSON.parse({"changed" => false, "failed" => true, "msg" => "The 'data' option needs to be a dictionary/hash"}.to_json)
       end
 
       aggregate = !["false", "no", "0", "off"].includes?(params["aggregate"]?.try(&.downcase))
