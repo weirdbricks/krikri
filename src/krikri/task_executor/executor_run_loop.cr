@@ -71,29 +71,14 @@ module Krikri
     # include_role? (recurse into their own nested task lists and
     # ensure_grouped calls via run_task_batch - kept serial to sidestep any
     # question of concurrent re-entrancy into the batching planner), and
-    # the non-looped include_tasks? case (handled by its own
-    # execute_include_tasks_multi path in run_task_batch before this is
-    # ever consulted).
-    #
-    # A *looped* include_tasks: (task_has_loop? true - e.g. robertdebock.
-    # users' "Loop over users_groups") IS allowed through here: each host's
-    # execute_task -> execute_include_tasks call re-parses its own fresh
-    # `included_tasks` Task array (no shared object with any other host's
-    # fiber) and only ever touches per-host keys of hashes pre-seeded with
-    # every host's key in #initialize - the same safety argument
-    # run_task_for_hosts_in_parallel's own docs make for plain tasks. The
-    # one shared mutable state a nested run_task_list/ensure_grouped call
-    # touches is @task_group/@grouped_lists, keyed by each per-host task
-    # list's own object_id, so concurrent hosts never collide on the same
-    # key; TaskBatcher.plan itself does no I/O, so a fiber never yields
-    # mid-mutation. Before this, a looped include_tasks: ran every whole
-    # host's full loop serially before the next host started - the same
-    # one-host-at-a-time bug round 37 (0.9.383) fixed for the non-looped
-    # case, just never extended to this narrower, rarer shape.
+    # include_tasks? (both the plain and the looped shape are handled by
+    # their own multi-host paths in run_task_batch, before this is ever
+    # consulted - they have to run include-by-include across hosts, not as
+    # one host's whole subtree).
     private def task_forkable?(task : Task) : Bool
       return false if task.run_once?
       return false if task.block?
-      return false if task.include_tasks? && !task_has_loop?(task)
+      return false if task.include_tasks?
       return false if task.include_role?
       # A meta: task does no remote work, so a worker fiber buys nothing -
       # and it must not need one: a raising when: on a meta: aborts the
@@ -105,16 +90,8 @@ module Krikri
       true
     end
 
-    # True if *task* has ANY loop source configured (loop:/with_items:/
-    # with_dict:/with_fileglob:/with_first_found:/with_flattened:/
-    # with_subelements:/etc), regardless of whether it can be resolved
-    # yet. Used to keep a looped `include_tasks:` (rare - e.g.
-    # robertdebock.users' own "Loop over users_groups") off
-    # execute_include_tasks_multi below, which doesn't attempt to thread a
-    # per-item `item` binding across a host group - it still goes through
-    # execute_include_tasks's own single-host per-iteration loop, just now
-    # fanned out across hosts concurrently via task_forkable? instead of
-    # one whole host's loop finishing before the next host starts.
+    # --step gate: asks before each task; "c" continues without asking for
+    # the rest of the run, and a closed stdin (EOF) declines.
     private def step_allows?(task : Task) : Bool
       return true unless CliOptions.step?
       return true if @step_continue
@@ -277,9 +254,13 @@ module Krikri
           next
         end
 
-        if task.include_tasks? && !task_has_loop?(task)
+        if task.include_tasks? && !task.run_once?
           flush_pending_unreachable(pending_unreachable)
-          execute_include_tasks_multi(task, active_hosts)
+          if task_has_loop?(task)
+            execute_include_tasks_looped_multi(task, active_hosts)
+          else
+            execute_include_tasks_multi(task, active_hosts)
+          end
           next
         end
 
@@ -309,7 +290,13 @@ module Krikri
         # the fatal line first (live-verified vs 2.19.11).
         flush_pending_unreachable(pending_unreachable)
 
-        if @forks > 1 && task_forkable?(task) && active_hosts.size > 1 && task.throttle != 1 && (task.debugger || @debugger).nil?
+        if task.include_role? && !task.is_static_import? && !task.run_once? && active_hosts.size > 1
+          # A dynamic include_role: runs its loaded tasks on every host in
+          # lockstep (issue #1240) - a static import_role: is transparent
+          # here, and run_once: keeps its own single-host election in
+          # execute_task, so each of those keeps its previous dispatch.
+          execute_include_role_multi(task, active_hosts)
+        elsif @forks > 1 && task_forkable?(task) && active_hosts.size > 1 && task.throttle != 1 && (task.debugger || @debugger).nil?
           run_task_for_hosts_in_parallel(task, active_hosts)
         else
           active_hosts.each { |host| execute_task(task, host) }
