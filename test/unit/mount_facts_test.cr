@@ -83,9 +83,29 @@ describe "mount_facts: mount_facts.py main() argument guards" do
   # crosses the strings-only plugin wire under NON_STRING_PARAM_PREFIX,
   # which is the only place the native type survives.
   it "fails an unquoted non-string mount_binary like Ansible's own main() check" do
-    result = run_mount_facts({"mount_binary" => Krikri::NON_STRING_PARAM_PREFIX + "81"}.to_json)
-    result["failed"].as_bool.must_equal(true)
-    result["msg"].as_s.must_equal("argument 'mount_binary' must be a string or null, not 81")
+    {
+      Krikri::NON_STRING_PARAM_PREFIX + "81"   => "81",
+      Krikri::NON_STRING_PARAM_PREFIX + "81.5" => "81.5",
+      Krikri::NON_STRING_PARAM_PREFIX + "true" => "True",
+    }.each do |value, printed|
+      result = run_mount_facts({"mount_binary" => value}.to_json)
+      result["failed"].as_bool.must_equal(true)
+      result["msg"].as_s.must_equal("argument 'mount_binary' must be a string or null, not #{printed}")
+    end
+  end
+
+  # A list arg whose members the parser marked reaches the wire comma-joined
+  # with NON_STRING_MEMBER_PREFIX; main()'s f-string prints Python's repr of
+  # the whole list, so the string members are single-quoted.
+  it "fails a list mount_binary with Python's repr of it" do
+    {
+      "a," + Krikri::NON_STRING_MEMBER_PREFIX + "1" => "['a', 1]",
+      Krikri::NON_STRING_MEMBER_PREFIX + "81"       => "[81]",
+    }.each do |value, printed|
+      result = run_mount_facts({"mount_binary" => value}.to_json)
+      result["failed"].as_bool.must_equal(true)
+      result["msg"].as_s.must_equal("argument 'mount_binary' must be a string or null, not #{printed}")
+    end
   end
 
   it "fails a non-positive timeout like Ansible's own main() check" do
@@ -101,7 +121,7 @@ describe "mount_facts: mount_facts.py main() argument guards" do
   end
 
   it "keeps accepting a string mount_binary and an explicit null" do
-    ["mount", Krikri::NONE_SENTINEL].each do |binary|
+    ["mount", "81", Krikri::NONE_SENTINEL].each do |binary|
       result = run_mount_facts({"mount_binary" => binary}.to_json)
       result["failed"]?.try(&.as_bool).must_equal(false) if result["failed"]?
       result["ansible_facts"]?.wont_be_nil
