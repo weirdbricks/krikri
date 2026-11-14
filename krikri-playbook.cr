@@ -21,6 +21,7 @@ require "./src/krikri/task_executor/output_routing"
 
 require "option_parser"
 require "colorize"
+require "json"
 require "./src/krikri/version"
 require "./src/krikri/yaml_bigint"
 require "./src/krikri/unsafe_values"
@@ -560,6 +561,15 @@ begin
 
     parser.on("--version", "Show version information") do
       puts Krikri.version_info
+      exit
+    end
+
+    # The supported-module listing krikri-playbook-generator's scope
+    # rotation is sourced from: the registry is the single source of truth,
+    # so the generator cannot drift from what this engine actually
+    # implements. JSON so a caller can consume it without parsing prose.
+    parser.on("--list-modules", "Print krikri's supported module FQCNs as a JSON array and exit") do
+      puts Krikri::PlaybookParser::AVAILABLE_PLUGINS.to_a.sort.to_json
       exit
     end
 
