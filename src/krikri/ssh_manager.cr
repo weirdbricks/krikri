@@ -698,8 +698,25 @@ module Krikri
     # Whether a daemon for this key is worth attempting at all. Public
     # so PluginManager can skip the attempt before building a request,
     # rather than learning about it from a raised exception.
-    def self.daemon_unavailable?(host : String, user : String, port : Int32?, become_user : String?, sig : String = "") : Bool
-      @@daemon_failures[{host, user, port, become_user, sig}] >= MAX_DAEMON_FAILURES
+    def self.daemon_unavailable?(host : String, user : String, port : Int32?, become_user : String?, sig : String = "", daemon_scope : String? = nil) : Bool
+      @@daemon_failures[{host, user, port, become_user, daemon_key_sig(sig, daemon_scope)}] >= MAX_DAEMON_FAILURES
+    end
+
+    # A daemon is one resident process serving exactly one fiber's requests
+    # (see @@daemon_processes' one-fiber-per-host argument). A
+    # `delegate_to:` task breaks that: every delegating host runs on its
+    # own fiber but all of them connect to the same delegate, so keying the
+    # daemon by the delegate alone would hand them one pipe - and a daemon
+    # serves one request at a time, so those tasks would run one after
+    # another where ansible runs them in parallel. Folding the delegating
+    # host into the connection signature gives each of those fibers its own
+    # connection and daemon, which is also what ansible does (one
+    # connection per host).
+    def self.daemon_key_sig(sig : String, daemon_scope : String?) : String
+      return sig unless daemon_scope
+      digest = OpenSSL::Digest.new("SHA256")
+      digest.update("#{sig}\0#{daemon_scope}")
+      digest.final.hexstring[0, 16]
     end
 
     # Spec seams: install/remove a Process as the cached daemon for a
@@ -804,9 +821,10 @@ module Krikri
       become_user : String? = nil,
       become_password : String? = nil,
       extra_args : Array(String) = [] of String,
+      daemon_scope : String? = nil,
     ) : JSON::Any
       init
-      key = {host, user, port, become_user, connection_sig(identity_file, extra_args, password_for(host, user, port))}
+      key = {host, user, port, become_user, daemon_key_sig(connection_sig(identity_file, extra_args, password_for(host, user, port)), daemon_scope)}
       # Provenance of the process used below - it decides how a lost
       # response is classified (see the read rescue).
       fresh_spawn = @@daemon_processes[key]?.nil?

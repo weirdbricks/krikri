@@ -49,24 +49,24 @@ private def command_config(raw : String) : JSON::Any
   }.to_json)
 end
 
-private def spec_send(config : JSON::Any, timeout : Int32 = 10, plugin_path : String? = nil, become_user : String? = nil) : JSON::Any
+private def spec_send(config : JSON::Any, timeout : Int32 = 10, plugin_path : String? = nil, become_user : String? = nil, daemon_scope : String? = nil) : JSON::Any
   Krikri::LocalPluginDaemon.send(
     spec_host, "command", config,
     plugin_path || fat_binary,
-    become_user: become_user, timeout: timeout
+    become_user: become_user, timeout: timeout, daemon_scope: daemon_scope
   )
 end
 
-private def seed_daemon(process : Process, become_user : String? = nil) : Nil
-  Krikri::LocalPluginDaemon.seed_daemon_process_for_spec(spec_host, become_user, process)
+private def seed_daemon(process : Process, become_user : String? = nil, daemon_scope : String? = nil) : Nil
+  Krikri::LocalPluginDaemon.seed_daemon_process_for_spec(spec_host, become_user, process, daemon_scope)
 end
 
-private def clear_daemon(become_user : String? = nil) : Nil
-  Krikri::LocalPluginDaemon.clear_daemon_for_spec(spec_host, become_user)
+private def clear_daemon(become_user : String? = nil, daemon_scope : String? = nil) : Nil
+  Krikri::LocalPluginDaemon.clear_daemon_for_spec(spec_host, become_user, daemon_scope)
 end
 
-private def cached_process : Process?
-  Krikri::LocalPluginDaemon.daemon_process_for_spec(spec_host, nil)
+private def cached_process(become_user : String? = nil, daemon_scope : String? = nil) : Process?
+  Krikri::LocalPluginDaemon.daemon_process_for_spec(spec_host, become_user, daemon_scope)
 end
 
 private def fake_daemon(command : String) : Process
@@ -111,6 +111,36 @@ describe "LocalPluginDaemon send against the real fat plugin" do
       # The SAME resident process answered both requests - no re-spawn.
       cached_process.must_equal(process)
     ensure
+      clear_daemon
+    end
+  end
+
+  it "gives a delegating host its own daemon instead of the delegate's own, so delegated tasks do not share one pipe" do
+    skip "fat plugin binary not built (run ./build.sh first)" unless File.exists?(fat_binary)
+
+    begin
+      delegated = spec_send(command_config("echo delegated"), daemon_scope: "origin-a")
+      delegated["stdout"].as_s.must_equal("delegated")
+
+      own = spec_send(command_config("echo own-host"))
+      own["stdout"].as_s.must_equal("own-host")
+
+      delegated_process = cached_process(daemon_scope: "origin-a")
+      own_process = cached_process
+      delegated_process.nil?.must_equal(false)
+      own_process.nil?.must_equal(false)
+      # A daemon serves one request at a time, so handing the delegate's
+      # own daemon to its delegating hosts would run those tasks one
+      # after another - ansible runs them in parallel.
+      delegated_process.wont_equal(own_process)
+
+      # Each scope still keeps REUSING its own daemon, the same way a
+      # single host's tasks do.
+      spec_send(command_config("echo delegated-two"), daemon_scope: "origin-a")["stdout"].as_s.must_equal("delegated-two")
+      cached_process(daemon_scope: "origin-a").must_equal(delegated_process)
+      cached_process.must_equal(own_process)
+    ensure
+      clear_daemon(nil, "origin-a")
       clear_daemon
     end
   end
