@@ -4101,7 +4101,17 @@ module Krikri
       # handlers get in #initialize, needed here too since this is the
       # other (and only other) place a block-type Task can enter
       # @handler_runner's flat handler list.
-      @handler_runner.handlers.concat(flatten_handler_blocks(included_handlers)) unless included_handlers.empty?
+      unless included_handlers.empty?
+        # One handler block for this include, loaded after everything
+        # static - ansible appends a dynamic role's handler blocks to the
+        # play's list, and its reversed-block search then prefers them
+        # over every earlier block (see Task#handler_block_id). Set
+        # before flattening so a block:-wrapped handler's children
+        # inherit it.
+        block_id = (@handler_runner.handlers.max_of?(&.handler_block_id) || 0) + 1
+        included_handlers.each { |handler| handler.handler_block_id = block_id }
+        @handler_runner.handlers.concat(flatten_handler_blocks(included_handlers))
+      end
 
       # Tag selection over the run-time-loaded tasks - see
       # #filter_runtime_loaded. For a static import_role: the statement's

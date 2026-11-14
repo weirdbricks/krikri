@@ -141,18 +141,17 @@ describe Krikri::HandlerRunner do
   end
 
   it "attaches a notification to the LAST copy of a same-named handler, not the first" do
-    # Ansible resolves a flush-time notification against the handler list
-    # REVERSED ("last handler loaded with the same name wins"), so when a
-    # role's handlers exist twice - loaded statically as a dependency and
-    # again through a later include_role: - the notification executes the
-    # include_role copy, at its position AFTER the dependent role's own
-    # handlers. Matching the first (static dependency) copy instead made
-    # the notified handler run at that early position: issue #804,
-    # 0x0i.geth ran "Reload systemd units" (static dependency copy)
-    # before "Restart Geth service" where ansible ran "Restart Geth
+    # Ansible resolves a flush-time notification by walking the play's
+    # handler blocks REVERSED ("last handler loaded with the same name
+    # wins") but each block forward, so when a role's handlers exist
+    # twice - loaded statically as a dependency and again through a later
+    # include_role: - the notification executes the include_role copy, at
+    # its position AFTER the dependent role's own handlers. Matching the
+    # wrong copy made the notified handler run at that early position:
+    # issue #804, 0x0i.geth ran "Reload systemd units" (static dependency
+    # copy) before "Restart Geth service" where ansible ran "Restart Geth
     # service" first, then the include_role copy of "Reload systemd
-    # units". The listen: rule behaves the same way - among same-named
-    # copies only the last definition is notified.
+    # units". The listen: rule behaves the same way.
     host = make_host
     static_reload = make_handler("Reload units")
     static_reload.listen = ["reload"]
@@ -160,6 +159,12 @@ describe Krikri::HandlerRunner do
     restart.listen = ["restart"]
     dynamic_reload = make_handler("Reload units")
     dynamic_reload.listen = ["reload"]
+    # The static dependency's handlers and the include_role:'s are separate
+    # handler BLOCKS (their own handler_block_id), which is what makes the
+    # later-loaded copy the one ansible runs.
+    static_reload.handler_block_id = 1
+    restart.handler_block_id = 1
+    dynamic_reload.handler_block_id = 2
     runner = Krikri::HandlerRunner.new([static_reload, restart, dynamic_reload], [host])
     runner.notify(host, "restart")
     runner.notify(host, "reload")
@@ -172,6 +177,35 @@ describe Krikri::HandlerRunner do
     runner.run(callback, fresh_results(host), false)
 
     order.must_equal([restart, dynamic_reload])
+  end
+
+  it "runs the FIRST same-named handler inside one handler block, not the last" do
+    # Regression (issue #1254, mahdi22.postgresql): a role's
+    # handlers/main.yml is ONE handler BLOCK for ansible's notification
+    # search, and a block is walked forward, so two same-named handlers
+    # in it resolve to the FIRST definition. The globally-reversed sweep
+    # ran the last (unguarded) copy instead, so the role's `when:`-guarded
+    # first "Apt Update" never reported its skipping line, its cache
+    # update ran, the postgresql package then appeared installable and
+    # the play continued where ansible had failed.
+    host = make_host
+    guarded = make_handler("Apt Update")
+    guarded.listen = ["apt update"]
+    unguarded = make_handler("Apt Update")
+    unguarded.listen = ["apt update"]
+    runner = Krikri::HandlerRunner.new([guarded, unguarded], [host])
+    runner.notify(host, "Apt Update")
+    runner.notify(host, "apt update")
+
+    ran = [] of Krikri::Task
+    callback = ->(handler : Krikri::Task, _host : Krikri::Host) {
+      ran << handler
+      JSON.parse({"changed" => true, "failed" => false}.to_json)
+    }
+    runner.run(callback, fresh_results(host), false)
+
+    # Neither the name pass nor the listen pass may attach the later copy.
+    ran.must_equal([guarded])
   end
 
   it "second-pass backward notification matches the earlier handler's RENDERED name" do

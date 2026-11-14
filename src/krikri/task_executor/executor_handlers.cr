@@ -193,6 +193,10 @@ module Krikri
 
         children = handler.block_tasks || [] of Task
         propagate_role_context(handler, children)
+        # A block:-wrapped handler belongs to its parent's handler block
+        # (see Task#handler_block_id) - the flat handler list only knows
+        # the expanded children.
+        children.each { |child| child.handler_block_id = handler.handler_block_id }
         if when_condition = handler.when_condition
           inherit_when_condition(when_condition, handler.when_condition_list, children)
         end

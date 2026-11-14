@@ -786,7 +786,7 @@ module Krikri
       # unreachable here before their dedup moved to run time, so this
       # guard is what keeps the play's handler list free of the identical
       # second definition a re-occurrence would otherwise append.
-      handlers.concat(role_handlers) if first_contribution
+      append_role_handlers(handlers, role_handlers) if first_contribution
 
       # Returned so a DECLARING role can pick these up as its own
       # dependency defaults (see the `dependency_defaults` merge above).
@@ -794,6 +794,16 @@ module Krikri
         defaults_origins.each { |key, origin| out[key] = origin }
       end
       defaults
+    end
+
+    # Appends a role's handlers to the play's list as ONE handler BLOCK, in
+    # load order (a role's dependencies before the role itself, like
+    # ansible's get_handler_blocks) - see Task#handler_block_id for why the
+    # block grouping has to survive into the flat handler list.
+    private def self.append_role_handlers(handlers : Array(Task), role_handlers : Array(Task)) : Nil
+      block_id = (handlers.max_of?(&.handler_block_id) || 0) + 1
+      role_handlers.each { |handler| handler.handler_block_id = block_id }
+      handlers.concat(role_handlers)
     end
 
     # Publishes a first load's own vars/defaults into the play-wide layers

@@ -404,13 +404,20 @@ module Krikri
     end
 
     # Which handler indices (copies) a single notification attaches to,
-    # mirroring Ansible's search_handlers_by_notification: the name pass
-    # iterates the handler list REVERSED and stops at the first match -
-    # i.e. the LAST handler answering to the notification runs, none of
-    # the earlier same-named copies - and the listen pass then attaches
-    # every handler whose listen: covers the notification, again
-    # reversed and deduped by handler name so that among same-named
-    # copies only the last definition is notified.
+    # mirroring Ansible's search_handlers_by_notification. Ansible walks
+    # the play's handler BLOCKS in reverse (a later block's copy wins
+    # over an earlier block's) but each block FORWARD, so among
+    # same-named copies inside ONE block the first definition is the one
+    # that runs, while a later block's copy still beats an earlier
+    # block's. Flattening that into a single global reverse sweep made
+    # the last definition win everywhere: issue #804 needed the
+    # include_role copy to win over the statically-loaded dependency copy
+    # (separate blocks), but issue #1254 hit the other half, where the
+    # block-local copy ansible ran was the FIRST same-named definition.
+    # The name pass stops at the first match, and the listen pass then
+    # attaches every handler whose listen: covers the notification in the
+    # same order, deduped by handler name so that among same-named copies
+    # only that block-order-first one is notified.
     private def attachments_for_notification(host : Host, notification : String,
                                              rendered_names : Array(String),
                                              name_resolver : Proc(Task, Host, String)?,
@@ -434,17 +441,19 @@ module Krikri
         end
       }
 
-      last_name_match : Int32? = nil
-      @handlers.each_with_index do |handler, index|
+      ordered_indices = handler_indices_in_block_order
+
+      ordered_indices.each do |index|
+        handler = @handlers[index]
         next if unusable_handlers.try(&.includes?(handler))
-        last_name_match = index if name_matches_notification?(handler, rendered_at.call(index), notification)
-      end
-      if match = last_name_match
-        targets << match
+        if name_matches_notification?(handler, rendered_at.call(index), notification)
+          targets << index
+          break
+        end
       end
 
       seen_names = Set(String).new
-      (@handlers.size - 1).downto(0) do |index|
+      ordered_indices.each do |index|
         handler = @handlers[index]
         next if unusable_handlers.try(&.includes?(handler))
         next unless (handler.listen || [] of String).includes?(notification)
@@ -455,6 +464,19 @@ module Krikri
       end
 
       targets
+    end
+
+    # Handler indices in Ansible's resolution order: blocks from last to
+    # first, each block's own handlers in definition order. Handlers a
+    # dynamic include_role: appends mid-run carry a block id beyond the
+    # play's static ones (see Task#handler_block_id), so they keep
+    # winning over everything loaded before them.
+    private def handler_indices_in_block_order : Array(Int32)
+      by_block = Hash(Int32, Array(Int32)).new
+      @handlers.each_with_index do |handler, index|
+        (by_block[handler.handler_block_id] ||= [] of Int32) << index
+      end
+      by_block.keys.sort!.reverse!.flat_map { |block_id| by_block[block_id] }
     end
 
     # The name-attachment predicate shared by every flush-time resolution
