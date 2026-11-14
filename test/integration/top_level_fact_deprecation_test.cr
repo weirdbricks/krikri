@@ -534,6 +534,30 @@ describe "INJECT_FACTS_AS_VARS deprecation" do
     (stderr.index!(":7:18") < stderr.index!(":8:15")).must_equal(true)
   end
 
+  it "attributes a module name: list item read to that item, not the task name" do
+    # Issue #1267, alexpdp7.ansible_puppet: `yum: name:` holds a block
+    # sequence, so the module's `name:` key line has no inline value and
+    # the task's own `name:` above it won the key-line scan - krikri
+    # reported the task name's value token where real reports the list
+    # item that named the fact (live-verified against 2.21.6).
+    stdout, stderr, dir = run_files({"play.yml" => <<-PLAYBOOK})
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        tasks:
+          - name: install epel
+            yum:
+              name:
+              - "https://example/{{ ansible_distribution_major_version }}.rpm"
+      PLAYBOOK
+
+    stdout.must_include("TASK [install epel]")
+    stderr.must_include("[DEPRECATION WARNING]: #{FACT_DEPRECATION_TEXT}\n")
+    stderr.must_include("Origin: #{File.join(dir, "play.yml")}:8:11\n")
+    stderr.must_include("            ^ column 11")
+    stderr.wont_include(":5:13\n")
+  end
+
   it "attributes an include_vars path read to that argument's own value" do
     # Issue #974, nycrecords.nginx: `include_vars: "{{ ansible_os_family
     # }}.yml"` reads the fact while the executor templates the path, not

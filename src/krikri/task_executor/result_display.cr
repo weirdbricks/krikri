@@ -2245,18 +2245,18 @@ module Krikri
     # (dtoch56.prepare_host's `'"systemd-timesyncd.service" in services'`
     # pair, issue #1021) and real pins each read at ITS OWN item's scalar
     # token - only the evaluated clause disambiguates them.
-    def self.conditional_value_origin(path : String?, source_line : Int32, key : String, name : String? = nil, clause : String? = nil) : String?
+    def self.conditional_value_origin(path : String?, source_line : Int32, key : String, name : String? = nil, clause : String? = nil, text : String? = nil) : String?
       return nil unless path && source_line > 0 && File.file?(path)
 
       lines = File.read_lines(path)
       # No `<key>:` line at all: a free-form key=value action directive
       # (`fail: msg="..."`), which param_value_origin can place at its
       # `<key>=` token.
-      return param_value_origin(path, source_line, key) unless idx = param_key_line_index(lines, source_line, key)
+      return param_value_origin(path, source_line, key, text: text) unless idx = param_key_line_index(lines, source_line, key, text)
       key_line = lines[idx]
       needle = "#{key}:"
       rest = key_line[(key_line.index!(needle) + needle.size)..]
-      return param_value_origin(path, source_line, key) unless rest.strip.empty?
+      return param_value_origin(path, source_line, key, text: text) unless rest.strip.empty?
 
       key_indent = key_line.size - key_line.lstrip.size
       items = [] of {Int32, Int32}
@@ -2288,7 +2288,7 @@ module Krikri
         return ErrorBlock.origin_context(path, hit[0] + 1, hit[1] + 3)
       end
       return ErrorBlock.origin_context(path, items.first[0] + 1, items.first[1] + 3) if items.size == 1
-      param_value_origin(path, source_line, key)
+      param_value_origin(path, source_line, key, text: text)
     end
 
     # Whether a block-sequence ITEM's own scalar is exactly *clause* - the
@@ -2313,6 +2313,7 @@ module Krikri
       needle = "#{key}:"
       want = text ? strip_yaml_scalar_quotes(text.strip) : nil
       fallback = nil
+      block_hit = nil
       ((source_line - 1)...lines.size).each do |idx|
         line = lines[idx]
         at = line.index(needle)
@@ -2337,9 +2338,39 @@ module Krikri
         # param sits deeper in it, and each read belongs to the one whose
         # value is the text being rendered.
         return idx if want && strip_yaml_scalar_quotes(line[(at + needle.size)..].strip) == want
+        # A param whose value is a block SEQUENCE keeps its scalars on the
+        # item lines BELOW the key, so its key line can never match *want*
+        # itself - real tags each item, and the container text being
+        # rendered names them (issue #1267, alexpdp7.ansible_puppet's
+        # `yum: name:` list; without this the task's own `name:` line wins
+        # as the first fallback).
+        if want && block_hit.nil? && line[(at + needle.size)..].strip.empty? &&
+           block_sequence_names?(lines, idx, want)
+          block_hit = idx
+        end
         fallback ||= idx
       end
-      fallback
+      block_hit || fallback
+    end
+
+    # Whether the block sequence opened by the `<key>:` line at *key_idx*
+    # holds an item whose own scalar appears in *want* - the text being
+    # rendered for that param. Best-effort, like the scans above: a shape
+    # the scan cannot read just leaves the caller's usual fallback.
+    private def self.block_sequence_names?(lines : Array(String), key_idx : Int32, want : String) : Bool
+      key_indent = lines[key_idx].size - lines[key_idx].lstrip.size
+      ((key_idx + 1)...lines.size).each do |idx|
+        line = lines[idx]
+        stripped = line.strip
+        next if stripped.empty? || stripped.starts_with?("#")
+        indent = line.size - line.lstrip.size
+        break if indent < key_indent
+        break if indent == key_indent && !stripped.starts_with?("- ")
+        next unless stripped.starts_with?("- ")
+        item = strip_yaml_scalar_quotes(stripped[2..].strip)
+        return true if !item.empty? && want.includes?(item)
+      end
+      false
     end
 
     private def self.strip_yaml_scalar_quotes(text : String) : String
