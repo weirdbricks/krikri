@@ -323,4 +323,29 @@ describe Krikri::HandlerRunner do
     results[host.name]["ok"].must_equal(0)
     results[host.name]["ignored"].must_equal(0)
   end
+
+  it "consults the threaded delegate resolver for a recorded handler result" do
+    # Issue #1245: a delegated handler's result line carries ansible's
+    # `host -> delegate` label. HandlerRunner has no variable context of
+    # its own, so TaskExecutor resolves the name and threads it in - the
+    # recording step must ask for it, or the label never reaches
+    # ResultDisplay.
+    host = make_host
+    handler = make_handler("delegated handler")
+    handler.delegate_to = "helper"
+    runner = Krikri::HandlerRunner.new([handler], [host])
+    runner.notify(host, "delegated handler")
+
+    seen = [] of String
+    callback = ->(_handler : Krikri::Task, _host : Krikri::Host) {
+      JSON.parse({"changed" => false, "failed" => false}.to_json)
+    }
+    resolver = ->(task : Krikri::Task, _host : Krikri::Host) : String? {
+      seen << task.delegate_to.to_s
+      "helper"
+    }
+    runner.run(callback, fresh_results(host), false, nil, nil, nil, nil, resolver)
+
+    seen.must_equal(["helper"])
+  end
 end

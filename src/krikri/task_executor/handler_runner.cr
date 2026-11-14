@@ -96,6 +96,11 @@ module Krikri
     # ignored in the recap, never failed (issue #1112) - the same
     # resolution execute_handler_internal's own halt decision uses, so
     # display, stats and halting can never disagree.
+    # *delegate_resolver* renders a handler's `delegate_to:` for the
+    # result line's `host -> delegate` label (ansible's
+    # CallbackBase.host_label reads the task keyword for handlers too -
+    # live-verified, issue #1245); HandlerRunner has no variable context
+    # of its own to resolve it against.
     # *halted_hosts* - hosts a prior task already failed on (unrescued,
     # no ignore_errors:) for this run. Ansible never runs a
     # halted host's own notified handlers at the end-of-play flush -
@@ -118,6 +123,7 @@ module Krikri
       halted_hosts : Set(String)? = nil,
       unusable_handlers : Set(Task)? = nil,
       ignore_errors_resolver : Proc(Task, Host, Bool)? = nil,
+      delegate_resolver : Proc(Task, Host, String?)? = nil,
     )
       return unless any_notified?
 
@@ -191,8 +197,8 @@ module Krikri
           @hosts.each do |host|
             run_handler_on_host(handler, handler_index, host, pass,
               execute_callback, results, diff_mode, name_resolver, halted_hosts,
-              ignore_errors_resolver, attachments[host.name], already_ran[host.name],
-              second_pass[host.name], bannered)
+              ignore_errors_resolver, delegate_resolver, attachments[host.name],
+              already_ran[host.name], second_pass[host.name], bannered)
           end
         end
 
@@ -221,6 +227,7 @@ module Krikri
                                     name_resolver : Proc(Task, Host, String)?,
                                     halted_hosts : Set(String)?,
                                     ignore_errors_resolver : Proc(Task, Host, Bool)?,
+                                    delegate_resolver : Proc(Task, Host, String?)?,
                                     attached : Set(Int32),
                                     already_ran : Set(String),
                                     second_pass : Set(String),
@@ -291,7 +298,8 @@ module Krikri
       # #update_stats would count it toward "ok" instead of
       # "skipped" in the recap.
       record_handler_result(result, results[host.name], host, handler, diff_mode,
-        handler_result_ignore_errors(handler, result, host, ignore_errors_resolver))
+        handler_result_ignore_errors(handler, result, host, ignore_errors_resolver),
+        delegate_resolver.try(&.call(handler, host)))
 
       true
     end
@@ -363,7 +371,8 @@ module Krikri
     # ordinary one that still needs displaying.
     private def record_handler_result(result : JSON::Any, stats : Hash(String, Int32),
                                       host : Host, handler : Task, diff_mode : Bool,
-                                      ignore_errors : Bool) : Nil
+                                      ignore_errors : Bool,
+                                      delegate_target : String? = nil) : Nil
       if result["handler_unreachable_counted"]?.try(&.as_bool)
         # The unreachable was already booked (fatal report, unreachable
         # stat, host halted) inside TaskExecutor#execute_handler_internal -
@@ -398,7 +407,7 @@ module Krikri
         # sites - see resolve_task_no_log there), so a templated value
         # still falls back to the parse-time guess here specifically -
         # same pre-existing gap as before this fix, not a regression.
-        ResultDisplay.display_result(host, result, diff_mode, ignore_errors: ignore_errors, no_log: handler.no_log?, module_name: handler.module_name, source_task: handler)
+        ResultDisplay.display_result(host, result, diff_mode, ignore_errors: ignore_errors, no_log: handler.no_log?, module_name: handler.module_name, delegate_target: delegate_target, source_task: handler)
         ResultDisplay.update_stats(stats, result, ignore_errors)
       end
     end

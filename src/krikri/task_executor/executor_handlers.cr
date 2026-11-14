@@ -222,6 +222,12 @@ module Krikri
       ignore_errors_resolver = ->(handler : Task, host : Host) : Bool {
         resolve_task_ignore_errors(handler, host: host)
       }
+      # A delegated handler's result line carries ansible's
+      # `host -> delegate` label (CallbackBase.host_label reads the task
+      # keyword for handlers exactly as it does for tasks - issue #1245).
+      delegate_resolver = ->(handler : Task, host : Host) : String? {
+        delegate_display_target(handler, host)
+      }
 
       # Handlers whose templated name fails to render against the
       # PLAY-LEVEL variables are unusable (see
@@ -244,7 +250,8 @@ module Krikri
       # handlers. Ansible keeps failed=1 and rc=2 either way - the
       # flag only decides whether the handler runs.
       @handler_runner.run(execute_callback, @results, @diff_mode, name_resolver,
-        @force_handlers ? nil : @halted_hosts, unusable_handlers, ignore_errors_resolver)
+        @force_handlers ? nil : @halted_hosts, unusable_handlers, ignore_errors_resolver,
+        delegate_resolver)
     end
 
     # Execute a handler (internal - called via callback)
@@ -811,11 +818,25 @@ module Krikri
     # goes through - unchanged from before loop: support was added, just
     # extracted so execute_handler_loop can call it once per item.
     private def execute_handler_plugin_attempt(handler : Task, host : Host, vars_context : Hash(String, JSON::Any)) : JSON::Any
+      # delegate_to: on a handler runs its module over the DELEGATE's
+      # connection while the handler stays booked on the notified host -
+      # the same rule a regular task follows (issue #1245, live-verified
+      # against ansible-core 2.21.6: `ok: [host1 -> helper]`, and a
+      # handler delegated to a local host runs even when the notifying
+      # host itself is unreachable over ssh). Resolved before the when:
+      # gate because real templates delegate_to: first.
+      exec_host = begin
+        resolve_delegate_host(handler, host, vars_context, strict: true)
+      rescue ex : WhenEvaluationError
+        return when_error_result(ex, handler, host, pre_keyword_failure: true)
+      end
+      dispatch_vars = exec_host == host ? vars_context : delegated_dispatch_vars(host, exec_host, vars_context)
+
       # Same connection-plugin resolution a regular task gets (see
       # execute_task_once's own check): a fired handler whose connection
       # type resolves to nothing fails the handler, not a silent SSH
       # fallback.
-      if (conn_type = vars_context["ansible_connection"]?.try(&.as_s?)) &&
+      if (conn_type = dispatch_vars["ansible_connection"]?.try(&.as_s?)) &&
          PluginManager.connection_plugin_not_found?(conn_type)
         return JSON.parse({
           "changed" => false,
@@ -1091,7 +1112,7 @@ module Krikri
       end
 
       if handler.module_name == "ansible.builtin.reboot"
-        result = execute_reboot(substituted_params, host, vars_context, resolve_task_check_mode(handler, vars_context))
+        result = execute_reboot(substituted_params, exec_host, dispatch_vars, resolve_task_check_mode(handler, dispatch_vars))
         result = apply_changed_failed_when(handler, result, vars_context, host)
         if register_name = handler.register
           register_result(host, register_name, result) unless register_name.empty?
@@ -1108,7 +1129,7 @@ module Krikri
       # fixed for regular tasks. Found while auditing that fix, not yet
       # hit by a real role in this round.
       substituted_params = resolve_role_relative_src(handler, substituted_params)
-      copied = inline_copy_source_content(handler, substituted_params, host, vars_context)
+      copied = inline_copy_source_content(handler, substituted_params, exec_host, dispatch_vars)
       if copied.is_a?(JSON::Any)
         result = apply_changed_failed_when(handler, copied, vars_context, host)
         if register_name = handler.register
@@ -1128,7 +1149,7 @@ module Krikri
         end
         return result
       end
-      staged = stage_unarchive_remote_src(handler, substituted_params, host, vars_context)
+      staged = stage_unarchive_remote_src(handler, substituted_params, exec_host, dispatch_vars)
       if staged.is_a?(JSON::Any)
         result = apply_changed_failed_when(handler, staged, vars_context, host)
         if register_name = handler.register
@@ -1137,7 +1158,7 @@ module Krikri
         return result
       end
       substituted_params = staged
-      staged_script = stage_script_src(handler, substituted_params, host, vars_context)
+      staged_script = stage_script_src(handler, substituted_params, exec_host, dispatch_vars)
       if staged_script.is_a?(JSON::Any)
         result = apply_changed_failed_when(handler, staged_script, vars_context, host)
         if register_name = handler.register
@@ -1146,7 +1167,7 @@ module Krikri
         return result
       end
       substituted_params = staged_script
-      staged_assemble = stage_assemble_dir(handler, substituted_params, host, vars_context)
+      staged_assemble = stage_assemble_dir(handler, substituted_params, exec_host, dispatch_vars)
       if staged_assemble.is_a?(JSON::Any)
         result = apply_changed_failed_when(handler, staged_assemble, vars_context, host)
         if register_name = handler.register
@@ -1195,15 +1216,13 @@ module Krikri
         # in play - same rule as the regular-task call sites in
         # executor_run_loop.cr (synchronize's dest_is_local branch must not
         # fire for a plain remote handler; see there for the round-2300304
-        # detail). Handler delegate_to: keeps today's semantics (task_host
-        # set, module dispatched on the host) since the handler path never
-        # resolved a separate exec host.
+        # detail).
         action_result = execute_action_with_deadline(handler_deadline) do
           ActionPluginManager.execute_action(
             handler.module_name,
             substituted_params,
             vars_context,
-            host,
+            exec_host,
             @inventory,
             handler.delegate_to ? host : nil,
             resolve_task_check_mode(handler, vars_context),
@@ -1268,9 +1287,22 @@ module Krikri
       # Build config for plugin - serialized once, with
       # ansible_connection=local already in the wire payload when this
       # handler runs over SSH (same treatment as execute_task_once).
+      #
+      # A delegated handler's module runs under the DELEGATE's interpreter
+      # vars in real ansible - that is how `delegate_to: localhost` picks up
+      # the implicit localhost's own ansible_python_interpreter (issue
+      # #1005) - while everything else keeps the notified host's context.
       wire_vars = vars_context
-      if PluginManager.remote_execution?(handler.module_name, host, vars_context)
+      if exec_host != host
         wire_vars = vars_context.dup
+        INTERPRETER_VAR_KEYS.each do |key|
+          if value = dispatch_vars[key]?
+            wire_vars[key] = value
+          end
+        end
+      end
+      if PluginManager.remote_execution?(handler.module_name, exec_host, dispatch_vars)
+        wire_vars = dispatch_vars.dup
         wire_vars["ansible_connection"] = JSON::Any.new("local")
       end
 
@@ -1279,7 +1311,7 @@ module Krikri
       # under a `connection: local` override with an interpreter that
       # only exists on the remote host fails in real before any module
       # code runs.
-      if failure = local_interpreter_missing_result(handler, host, host, vars_context, substitutor)
+      if failure = local_interpreter_missing_result(handler, host, exec_host, vars_context, substitutor)
         return apply_changed_failed_when(handler, failure, vars_context, host)
       end
 
@@ -1289,7 +1321,7 @@ module Krikri
         return keyword_failure_json(ex, handler)
       end
 
-      config = build_plugin_config(handler, host, substituted_params, wire_vars, substituted_become_user, substituted_env, become_flag: become, become_flags: substituted_become_flags)
+      config = build_plugin_config(handler, exec_host, substituted_params, wire_vars, substituted_become_user, substituted_env, become_flag: become, become_flags: substituted_become_flags)
 
       become_user = nil
 
@@ -1314,8 +1346,8 @@ module Krikri
       result = PluginManager.execute_plugin(
         handler.module_name,
         config,
-        host,
-        vars_context,
+        exec_host,
+        dispatch_vars,
         become,
         become_user,
         dispatch_timeout,
