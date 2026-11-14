@@ -1589,6 +1589,10 @@ module Krikri
           # this method's skipped bookkeeping below must not run for it.
           next if print_skipped_looped_task(nested_task, host, inherited_when)
         elsif nested_task.module_name == "_meta"
+          # Real aborts on an unrecognized meta action before its own
+          # conditional handling, so the block's false condition never
+          # turns it into a skip line (see validate_meta_action).
+          validate_meta_action(nested_task)
           # Real still raises its "does not support when conditional"
           # warning for a meta: action reached under a False block
           # condition - the block's clause makes the child's own

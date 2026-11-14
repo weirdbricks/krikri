@@ -1954,6 +1954,71 @@ describe "krikri-playbook CLI (--check mode)" do
       end
     end
 
+    it "reports an unsupported meta action even when the task's when: is false" do
+      # Ansible's _execute_meta only reaches _evaluate_conditional from
+      # inside its recognized branches, so an unrecognized action raises
+      # before the task's own when: is looked at: the TASK banner prints
+      # and the run aborts with the invalid-action [ERROR], rc 1 and no
+      # recap - never a "skipping:" line (live-verified vs 2.21.6 with
+      # `meta: flush_handlers_bogus` under a false when: plus
+      # ignore_errors:, issue #1233's generated shape).
+      tmp = File.tempname("meta-unsupported-when-false", ".yml")
+      File.write(tmp, <<-YAML)
+        - name: unsupported meta under a false when
+          hosts: testservers
+          gather_facts: false
+          tasks:
+            - name: frobnicate
+              ansible.builtin.meta: frobnicate
+              ignore_errors: true
+              when: false
+        YAML
+      begin
+        captured = IO::Memory.new
+        status = Process.run(BINARY, ["-i", testservers_inventory, tmp], output: captured, error: captured)
+        captured.to_s.must_include("TASK [frobnicate]")
+        captured.to_s.must_include("[ERROR]: invalid meta action requested: frobnicate")
+        captured.to_s.must_include("Origin: ")
+        captured.to_s.wont_include("skipping:")
+        captured.to_s.wont_include("PLAY RECAP")
+        status.success?.must_equal(false)
+      ensure
+        File.delete(tmp) rescue nil
+      end
+    end
+
+    it "reports an unsupported meta action inside a when:-false block" do
+      # The block's condition is inherited onto each child, but real still
+      # reaches the child meta task's own action check before any
+      # conditional handling: the child's TASK banner prints, then the
+      # invalid-action [ERROR] aborts the run - no skipping line for it
+      # and no recap (live-verified vs 2.21.6).
+      tmp = File.tempname("meta-unsupported-block", ".yml")
+      File.write(tmp, <<-YAML)
+        - name: unsupported meta under a false block
+          hosts: testservers
+          gather_facts: false
+          tasks:
+            - name: gated block
+              when: false
+              block:
+                - name: frobnicate
+                  ansible.builtin.meta: frobnicate
+        YAML
+      begin
+        captured = IO::Memory.new
+        status = Process.run(BINARY, ["-i", testservers_inventory, tmp], output: captured, error: captured)
+        captured.to_s.must_include("TASK [frobnicate]")
+        captured.to_s.must_include("[ERROR]: invalid meta action requested: frobnicate")
+        captured.to_s.must_include("Origin: ")
+        captured.to_s.wont_include("skipping:")
+        captured.to_s.wont_include("PLAY RECAP")
+        status.success?.must_equal(false)
+      ensure
+        File.delete(tmp) rescue nil
+      end
+    end
+
     it "warns on stderr when pause would prompt with a non-interactive stdin" do
       # Ansible 2.19.11, live-verified with stdin from /dev/null: `pause: {}`
       # (no duration - the action always prompts for Enter) raises

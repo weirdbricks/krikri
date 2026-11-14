@@ -1479,10 +1479,7 @@ module Krikri
       # nothing further runs, and there is no recap - rc 1 (live-verified
       # vs 2.19.11). See PlaybookParser.parse_meta_task for the parse-time
       # shapes this engine still refuses outright.
-      action = task.meta_action
-      unless action && Krikri::PlaybookParser::SUPPORTED_META_ACTIONS.includes?(action)
-        abort_invalid_meta_action(task, action || "None")
-      end
+      action = validate_meta_action(task)
       # Three actions refuse a `when:` outright: real's strategy warns
       # once ("<action> task does not support when conditional") and then
       # never evaluates the conditional, so the action still takes effect
@@ -1647,6 +1644,26 @@ module Krikri
         @facts_dict_cache.delete(host.name)
         @hv_generation += 1
       end
+    end
+
+    # The strategy-time action check, returning the recognized action.
+    # Real's _execute_meta tests the action against its own elif chain
+    # BEFORE any branch calls _evaluate_conditional, so an unrecognized
+    # action aborts the run even when the task's own `when:` - or an
+    # enclosing block's inherited one - would be false: the conditional
+    # never gets a chance to skip the task (live-verified vs 2.21.6, a
+    # `meta: flush_handlers_bogus` with `when: <false>` prints the TASK
+    # banner then the invalid-action [ERROR], rc 1, with no skipping line
+    # and no recap). Every path that can reach a meta: task therefore
+    # validates BEFORE deciding whether it runs or skips - including the
+    # skipped-block printer, which would otherwise print a skip line for
+    # it.
+    private def validate_meta_action(task : Task) : String
+      action = task.meta_action
+      return action if action && Krikri::PlaybookParser::SUPPORTED_META_ACTIONS.includes?(action)
+
+      abort_invalid_meta_action(task, action || "None")
+      action || "None"
     end
 
     # The strategy-time unknown-meta-action abort (see execute_meta's own
