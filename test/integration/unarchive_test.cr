@@ -1001,6 +1001,21 @@ describe "unarchive plugin" do
     result["msg"].as_s.wont_include("failed to transfer")
   end
 
+  it "reports the dest error, not a download failure, for an unfetchable URL src" do
+    # Issue #1255: a role unarchives a dead URL (HTTP 522) into a missing
+    # dest and real ansible reports the dest error - its action plugin
+    # stats dest before the module, and the URL is only fetched inside the
+    # module (live-verified vs 2.19.11). This previously downloaded first
+    # and failed with "Failure downloading ...".
+    missing_dest = File.join(TMP_DIR, "url-src-missing-dest")
+    FileUtils.rm_rf(missing_dest) if Dir.exists?(missing_dest)
+
+    result = PluginSpecHelper.run("unarchive", {"src" => "#{UNARCHIVE_BASE}/missing.tar.gz", "dest" => missing_dest, "remote_src" => "true"})
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("dest '#{missing_dest}' must be an existing dir")
+  end
+
   it "fails with a clear message when dest doesn't already exist" do
     missing_dest = File.join(TMP_DIR, "does-not-exist-dir")
     FileUtils.rm_rf(missing_dest) if Dir.exists?(missing_dest)

@@ -171,21 +171,26 @@ module Krikri
       # a local FILE PATH on the target, always false for a URL,
       # failing every such task outright with "Source ... failed to
       # transfer" even though the URL itself was perfectly reachable.
+      #
+      # Ansible's unarchive ACTION plugin stats dest before the module ever
+      # runs; a URL src: is only fetched later, INSIDE the module. A role
+      # unarchiving a 522-dead download into a missing dest therefore
+      # reports the dest error, not "Failure downloading ..." (issue #1255).
+      unless remote_dir_exists?(dest)
+        # real: AnsibleActionFail in the controller-side action plugin - a bare
+        # "Task failed: <msg>" block with no "Module failed." segment
+        return PluginResult.new(changed: false, failed: true, msg: "dest '#{dest}' must be an existing dir", _ansible_action_level: true,
+          # Ansible's unarchive action-failure order (unarchive.cr's plugin
+          # binary does not link base_action_plugin.cr, so the shared
+          # Krikri::FAILED_KEY_ORDER_EXCEPTION_FIRST list is spelled out).
+          key_order: ["failed", "exception", "msg", "changed"])
+      end
+
       resolved = resolve_src(src_param)
       return resolved if resolved.is_a?(PluginResult)
       src, tmp_download_path = resolved
 
-      if validation = validate_src_and_dest(src, dest)
-        action_level, error = validation
-        if action_level
-          # real: AnsibleActionFail in the controller-side action plugin - a bare
-          # "Task failed: <msg>" block with no "Module failed." segment
-          return PluginResult.new(changed: false, failed: true, msg: error, _ansible_action_level: true,
-            # Ansible's unarchive action-failure order (unarchive.cr's plugin
-            # binary does not link base_action_plugin.cr, so the shared
-            # Krikri::FAILED_KEY_ORDER_EXCEPTION_FIRST list is spelled out).
-            key_order: ["failed", "exception", "msg", "changed"])
-        end
+      if error = validate_src(src)
         # The source failure is the module's own failure - a plain module-level
         # result, which the executor's retry loop treats like any other
         # module failure (Ansible retries it too).
@@ -198,7 +203,7 @@ module Krikri
       # the controller's src lookup both still fire BEFORE it, and an
       # existing creates: path does NOT save an invalid `remote_src:
       # blah` from failing. This engine therefore validates after
-      # resolve_src/validate_src_and_dest (mirroring the src/dest gates)
+      # resolve_src/validate_src (mirroring the src/dest gates)
       # but before the creates: short-circuit below - which now sits
       # after validation exactly like Ansible's module main() does.
       validate_bool_params!
@@ -359,26 +364,20 @@ module Krikri
       nil
     end
 
-    # Ansible's unarchive action plugin checks dest BEFORE anything touches
-    # src (unarchive.py: _execute_remote_stat(dest) runs before the file
-    # transfer and before the module's own source check ever gets a chance),
-    # so a missing dest with a missing src reports the DEST error, not the
-    # source error (issue #131). The Bool marks which check fired: the dest
-    # failure is the action plugin's own AnsibleActionFail, while the source
-    # failure is the module's own ordinary failure - which Ansible's executor
-    # DOES retry (live-verified vs 2.19.11).
+    # The MODULE's own source check, run only after the action plugin's dest
+    # gate above has passed. Its failure is an ordinary module failure -
+    # which Ansible's executor DOES retry (live-verified vs 2.19.11).
     #
-    # A missing src is then worded by unarchive.py's own main(), which picks
+    # A missing src is worded by unarchive.py's own main(), which picks
     # between two messages on remote_src: a falsy one (src: was supposed to
     # be copied over from the controller, so it never made it) is "failed to
     # transfer", a truthy one is "does not exist". smsilva.ansible_oracle_xe
     # hit the second with `remote_src: yes` on an archive its earlier copy:
     # never placed on the target (issue #997, live-verified vs 2.19.11).
-    private def validate_src_and_dest(src : String, dest : String) : {Bool, String}?
-      return {true, "dest '#{dest}' must be an existing dir"} unless remote_dir_exists?(dest)
+    private def validate_src(src : String) : String?
       unless remote_file_exists?(src)
-        return {false, "Source '#{src}' does not exist"} if remote_src_param?
-        return {false, "Source '#{src}' failed to transfer"}
+        return "Source '#{src}' does not exist" if remote_src_param?
+        return "Source '#{src}' failed to transfer"
       end
       nil
     end
