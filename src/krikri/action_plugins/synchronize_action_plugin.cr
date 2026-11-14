@@ -37,7 +37,9 @@ module Krikri
   # rsync's own ssh remote (`target:/path`, no connection plugin in
   # between, verified live: a local-connection task host still gets
   # qualified by its inventory name and rsync dials it over its own
-  # rsh); the full flag set (archive and its
+  # rsh); delegate_to: a remote host other than the task's own - the
+  # module runs on the delegate and rsync connects out to the inventory
+  # host (issue #1244); the full flag set (archive and its
   # toggles, checksum, compress, delete, dirs, existing_only, recursive,
   # links, copy_links, perms, times, owner, group, rsync_opts, rsync_path,
   # rsync_timeout, partial, verify_host, private_key, link_dest,
@@ -46,12 +48,15 @@ module Krikri
   # Idempotency comes from rsync itself - see SynchronizeRsync's
   # changed-detection comment.
   #
-  # Known divergence: delegate_to: to a host that is neither localhost
-  # nor the sync endpoint (Ansible runs rsync ON the delegate,
-  # connecting out to the inventory host) is not modeled - here the
-  # delegate-resolved host IS the endpoint, which covers the shapes real
-  # roles actually write apart from that one: no delegate_to:, delegate_to:
-  # localhost, and delegate_to: the task's own host.
+  # Known divergences: (1) the `_local_rsync_password` credential real's
+  # action plugin passes to that delegate-side module is not sent (this
+  # engine never ships a connection password to a remote plugin binary),
+  # so a PASSWORD-authenticated inventory host needs key/agent auth for
+  # rsync's own ssh from the delegate; (2) become: is not rewritten into
+  # `rsync_path: sudo rsync` (unmodeled for every shape, delegate or not)
+  # and the delegate-side module is dispatched with the task's own become
+  # setting where real clears it; (3) `_substitute_controller` (a
+  # localhost inventory host with a remote delegate) is unimplemented.
   class SynchronizeActionPlugin < ActionPlugin
     # synchronize's `type: bool` options (ansible.posix.synchronize spec,
     # declaration order minus the engine-internal _substitute_controller).
@@ -259,6 +264,17 @@ module Krikri
       # --ssh-common-args/--ssh-extra-args do, via CliOptions.
       apply_ssh_args_param!
 
+      # delegate_to: a REMOTE host that is not the task's own host - the
+      # case Ansible's use_delegate branch exists for. rsync then runs ON
+      # THE DELEGATE (that is where the module executes) and dials the
+      # INVENTORY host itself, so src is the delegate's local path and the
+      # mode-dependent other end is qualified from the TASK host (issue
+      # #1244: this engine treated the delegate as the sync endpoint
+      # instead, pushing the controller's src into the delegate).
+      if task_host = remote_delegate_host
+        return delegate_rsync_params(task_host, src, dest, mode)
+      end
+
       # delegate_to: a local-transport host (localhost) while the task's
       # own host is a different, non-localhost host: Ansible runs
       # rsync ON THE CONTROLLER (the delegate's connection is local) and
@@ -291,17 +307,7 @@ module Krikri
         return ActionResult.success?(modified_params: @params)
       end
 
-      # The delegate-resolved host (@host) is the sync endpoint. When its
-      # connection is local, both ends are plain local paths (rsync runs
-      # entirely on this machine); otherwise the REMOTE end gets the
-      # user@host: prefix and rsync dials out over its own ssh.
-      if local_connection?
-        # push: src local, dest local; pull: same (both plain paths)
-      elsif mode == "pull"
-        src = SynchronizeRsync.format_rsh_target(connection_host, src, remote_user)
-      else
-        dest = SynchronizeRsync.format_rsh_target(connection_host, dest, remote_user)
-      end
+      src, dest = endpoint_paths(src, dest, mode)
 
       dest_port = resolve_dest_port
 
@@ -324,6 +330,92 @@ module Krikri
         end
       end
       nil
+    end
+
+    # Ansible's use_delegate case (see execute): the TASK host when it is a
+    # remote host other than the delegate, nil for every other shape - no
+    # delegate_to:, a local-transport delegate, and delegate_to naming the
+    # task's own host.
+    private def remote_delegate_host : Host?
+      task_host = @task_host || return nil
+      return nil if delegate_local_connection? || task_host.name == @host.name
+      task_host
+    end
+
+    # The endpoint-on-@host munging: with a local connection both ends stay
+    # plain local paths (rsync runs entirely on this machine); otherwise
+    # the mode-dependent REMOTE end gets the user@host: prefix and rsync
+    # dials out over its own ssh.
+    private def endpoint_paths(src : String, dest : String, mode : String) : {String, String}
+      return {src, dest} if local_connection?
+      if mode == "pull"
+        {SynchronizeRsync.format_rsh_target(connection_host, src, remote_user), dest}
+      else
+        {src, SynchronizeRsync.format_rsh_target(connection_host, dest, remote_user)}
+      end
+    end
+
+    # The munged params for the run-on-the-delegate case, handed back to
+    # the executor so the synchronize module BINARY executes on the
+    # delegate (Ansible's own _execute_module placement). Letting that
+    # host's module resolve rsync, build the argv and run it is what makes
+    # the delegate's data, its rsync bin path in the reported cmd, and its
+    # ssh transport the ones real uses - none of which a controller-side
+    # run can reproduce.
+    private def delegate_rsync_params(task_host : Host, src : String, dest : String, mode : String) : ActionResult
+      # real's `use_delegate` user ladder (action/synchronize.py): the
+      # delegate's own ansible_user, then the origin's (task_vars), then
+      # the delegate connection's remote_user - NOT the !use_delegate
+      # ladder delegate_to_local_controller_path uses, which qualifies
+      # with the task host's user.
+      user = SynchronizeRsync.bool(@params["set_remote_user"]?, default: true) ? delegate_remote_user : nil
+      dest_host = task_host.connection_host
+      if mode == "pull"
+        src = SynchronizeRsync.format_rsh_target(dest_host, src, user)
+      else
+        dest = SynchronizeRsync.format_rsh_target(dest_host, dest, user)
+      end
+
+      params = @params.dup
+      params["src"] = src
+      params["dest"] = dest
+      # The action plugin always hands the module the ssh port of the
+      # OTHER end (inv_port from the ORIGIN's task vars). The module's own
+      # fallback would read the DELEGATE's port, which it now runs on.
+      if !params.has_key?("dest_port") && (port = resolve_dest_port(task_host))
+        params["dest_port"] = port.to_s
+      end
+      # `_tmp_args['private_key'] = _tmp_args.get('private_key',
+      # play_context.private_key_file)`: the task's own private_key: wins,
+      # else the DELEGATE connection's key - the path rsync resolves on
+      # the host it runs on.
+      unless params.has_key?("private_key")
+        if key = ConnectionSettings.resolve(@host, nil).identity_file
+          params["private_key"] = key
+        end
+      end
+      ActionResult.success?(modified_params: params)
+    end
+
+    # The delegate's transport - @host IS the delegate-resolved host, so
+    # its own inventory vars are authoritative (and #677's rule applies: an
+    # inventory-defined localhost without ansible_connection= stays a plain
+    # ssh target; only the implicit localhost is this machine).
+    private def delegate_local_connection? : Bool
+      if conn = @host.vars["ansible_connection"]?.try(&.as_s?)
+        return conn == "local"
+      end
+      return false if (inventory = @inventory) && !inventory.get_hosts(@host.name).empty?
+      @host.name == "localhost" || @host.name == "127.0.0.1"
+    end
+
+    # real's use_delegate user ladder; see delegate_rsync_params.
+    private def delegate_remote_user : String?
+      @host.vars["ansible_ssh_user"]?.try(&.as_s?) ||
+        @host.vars["ansible_user"]?.try(&.as_s?) ||
+        @vars["ansible_ssh_user"]?.try(&.as_s?) ||
+        @vars["ansible_user"]?.try(&.as_s?) ||
+        @host.user
     end
 
     # Shared tail: run the rsync argv and translate its outcome into the

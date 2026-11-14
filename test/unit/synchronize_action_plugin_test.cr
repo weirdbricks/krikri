@@ -30,6 +30,23 @@ private def cleanup_sync_dirs(paths : Array(String?)) : Nil
   paths.each { |path| FileUtils.rm_rf(path) if path }
 end
 
+# A delegate_to: naming a REMOTE host that is not the task's own host.
+# @host is then the delegate (where real runs the module, i.e. where rsync
+# executes) and @task_host the inventory host rsync connects out to.
+private def run_remote_delegate_sync(
+  params : Hash(String, String),
+  delegate_user : String? = "deploy",
+  task_host_user : String? = nil,
+  task_host_port : Int32? = 2200,
+  vars = Hash(String, JSON::Any).new,
+) : Krikri::ActionResult
+  delegate = Krikri::Host.new("remote-delegate-host", delegate_user)
+  delegate.vars["ansible_host"] = JSON::Any.new("192.0.2.20")
+  task_host = Krikri::Host.new("remote-inventory-host", task_host_user, task_host_port)
+  task_host.vars["ansible_host"] = JSON::Any.new("192.0.2.10")
+  Krikri::SynchronizeActionPlugin.new(params, vars, delegate, nil, task_host).execute
+end
+
 describe "SynchronizeActionPlugin argument validation" do
   # Real's ordering, live-verified against ansible-core 2.19.11 +
   # ansible.posix 2.1.0: the action plugin's src/dest check first, then
@@ -304,6 +321,82 @@ describe "SynchronizeActionPlugin delegate_to localhost munging" do
     ensure
       cleanup_sync_dirs([src, dest])
     end
+  end
+end
+
+describe "SynchronizeActionPlugin delegate_to a remote host" do
+  # Issue #1244: delegate_to: <remote host> runs rsync ON THE DELEGATE
+  # with the INVENTORY host as the other end. krikri used to treat the
+  # delegate as the sync endpoint, so a push ran on the controller into
+  # the delegate and reported changed/rc 0 - silently the wrong data flow.
+  it "qualifies a push's dest with the inventory host and runs the module on the delegate" do
+    result = run_remote_delegate_sync({
+      "src"  => "/tmp/marker",
+      "dest" => "/tmp/pushed",
+    })
+
+    result.final_result.must_be_nil
+    params = result.modified_params || raise "expected params for the delegate dispatch"
+    params["src"].must_equal("/tmp/marker")
+    params["dest"].must_equal("deploy@192.0.2.10:/tmp/pushed")
+    params["dest"].wont_include("192.0.2.20")
+  end
+
+  it "qualifies a pull's src with the inventory host, leaving dest delegate-local" do
+    result = run_remote_delegate_sync({
+      "src"  => "/tmp/pulled",
+      "dest" => "/tmp/local-copy",
+      "mode" => "pull",
+    })
+
+    params = result.modified_params || raise "expected params for the delegate dispatch"
+    params["src"].must_equal("deploy@192.0.2.10:/tmp/pulled")
+    params["src"].wont_include("192.0.2.20")
+    params["dest"].must_equal("/tmp/local-copy")
+  end
+
+  # real's use_delegate ladder: the delegate's own ansible_user, then the
+  # origin's (task_vars) - never the !use_delegate (task-host) ladder.
+  it "falls back to the origin's ansible_user when the delegate has none" do
+    result = run_remote_delegate_sync({
+      "src"  => "/tmp/marker",
+      "dest" => "/tmp/pushed",
+    }, delegate_user: nil, task_host_user: "targetuser", vars: {
+      "ansible_user" => JSON::Any.new("originuser"),
+    })
+
+    params = result.modified_params || raise "expected params for the delegate dispatch"
+    params["dest"].must_equal("originuser@192.0.2.10:/tmp/pushed")
+  end
+
+  it "passes the inventory host's ssh port to the module as dest_port" do
+    result = run_remote_delegate_sync({
+      "src"  => "/tmp/marker",
+      "dest" => "/tmp/pushed",
+    }, task_host_port: 2022)
+
+    (result.modified_params || raise "expected params")["dest_port"].must_equal("2022")
+  end
+
+  it "keeps the task's own dest_port override" do
+    result = run_remote_delegate_sync({
+      "src"       => "/tmp/marker",
+      "dest"      => "/tmp/pushed",
+      "dest_port" => "9",
+    }, task_host_port: 2022)
+
+    (result.modified_params || raise "expected params")["dest_port"].must_equal("9")
+  end
+
+  # set_remote_user: false is real's opt-out of the user@host prefix.
+  it "leaves the user@ prefix off under set_remote_user: false" do
+    result = run_remote_delegate_sync({
+      "src"             => "/tmp/marker",
+      "dest"            => "/tmp/pushed",
+      "set_remote_user" => "false",
+    })
+
+    (result.modified_params || raise "expected params")["dest"].must_equal("192.0.2.10:/tmp/pushed")
   end
 end
 
