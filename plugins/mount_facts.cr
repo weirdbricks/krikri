@@ -119,40 +119,74 @@ module Krikri
     # null (both `type` declarations - float and raw - let the offending
     # value through the generic check untouched). The plugin wire demotes an
     # unquoted YAML scalar to its text, so the native value survives only in
-    # BasePlugin#non_string_param - which is what tells an unquoted
-    # `mount_binary: 81` apart from the legitimate string "81".
+    # BasePlugin#non_string_param (a scalar literal) or
+    # #non_string_member_list (a list the parser marked members in) - which
+    # is what tells an unquoted `mount_binary: 81` apart from the legitimate
+    # string "81". A dict (or an all-string list) literal reaches the wire
+    # as bare text that a string holding the same bytes produces too, so it
+    # stays unreachable here.
     private def main_arg_failure : PluginResult?
-      if timeout = @params["timeout"]?
-        unless timeout.empty? || explicit_null_param?("timeout")
-          # Ansible's float checker converts a native bool (float(True) is
-          # 1.0); the wire only reaches here with the bool's text.
-          seconds = case non_string_param("timeout").try(&.as_bool?)
-                    when true  then 1.0
-                    when false then 0.0
-                    else            timeout.to_f64?
-                    end
-          if seconds.nil? || seconds <= 0
-            return PluginResult.new(
-              changed: false,
-              failed: true,
-              # Ansible prints the argspec-converted float, not the wire
-              # text, so `timeout: 0` reports "0.0".
-              msg: "argument 'timeout' must be a positive number or null, not #{seconds || timeout}"
-            )
-          end
+      timeout_arg_failure || mount_binary_arg_failure
+    end
+
+    # timeout must be a positive number or null; `type: float` lets a
+    # non-numeric value through AnsibleModule's generic check untouched.
+    private def timeout_arg_failure : PluginResult?
+      timeout = @params["timeout"]?
+      return nil if timeout.nil? || timeout.empty? || explicit_null_param?("timeout")
+
+      # Ansible's float checker converts a native bool (float(True) is
+      # 1.0); the wire only reaches here with the bool's text.
+      seconds = case non_string_param("timeout").try(&.as_bool?)
+                when true  then 1.0
+                when false then 0.0
+                else            timeout.to_f64?
+                end
+      return nil unless seconds.nil? || seconds <= 0
+
+      PluginResult.new(
+        changed: false,
+        failed: true,
+        # Ansible prints the argspec-converted float, not the wire
+        # text, so `timeout: 0` reports "0.0".
+        msg: "argument 'timeout' must be a positive number or null, not #{seconds || timeout}"
+      )
+    end
+
+    # mount_binary must be a string or null; `type: raw` skips the generic
+    # type check entirely, so both the scalar and the list shapes fail here.
+    private def mount_binary_arg_failure : PluginResult?
+      if native = non_string_param("mount_binary")
+        # A marked native STRING (a quoted literal's marker form) is still
+        # the str ansible-core's isinstance check accepts.
+        unless native.raw.nil? || native.as_s?
+          return PluginResult.new(
+            changed: false,
+            failed: true,
+            # Python str() of the native value: True/False for bools, the
+            # plain spelling for ints/floats.
+            msg: "argument 'mount_binary' must be a string or null, not #{Krikri.non_string_param_text(native)}"
+          )
         end
       end
 
-      if native = non_string_param("mount_binary")
+      if members = non_string_member_list("mount_binary")
         return PluginResult.new(
           changed: false,
           failed: true,
-          # Python str() of the native value: True/False for bools, the
-          # plain spelling for ints/floats.
-          msg: "argument 'mount_binary' must be a string or null, not #{Krikri.non_string_param_text(native)}"
+          # Python repr() of the list inside main()'s f-string.
+          msg: "argument 'mount_binary' must be a string or null, not " \
+               "[#{members.map { |member| python_param_repr(member) }.join(", ")}]"
         )
       end
       nil
+    end
+
+    # Python repr of one value inside a list, for the f-string message
+    # above: repr() single-quotes a string member, every other member is
+    # the plain str() Python prints.
+    private def python_param_repr(value : JSON::Any) : String
+      value.as_s? ? "'#{value.as_s}'" : Krikri.non_string_param_text(value)
     end
 
     # ----- source resolution (mirrors get_sources() in the Ansible module) -----
