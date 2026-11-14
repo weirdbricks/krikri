@@ -18,10 +18,15 @@ Usage:
 Options:
   --krikri PATH   krikri-lint binary (default bin/krikri-lint)
   --json PATH     also write the raw diff as JSON
+  -v, --verbose   also list every triple under its file
+
+By default each file gets one summary line (matches, diverges,
+unimplemented); --json is the machine-readable form.
 """
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -29,6 +34,23 @@ from collections import defaultdict
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
+
+GREEN = "\033[32m"
+YELLOW = "\033[33m"
+RED = "\033[31m"
+RESET = "\033[0m"
+
+
+def paint(text, code):
+    """Color only a real console; krikri-loop logs the child's output plain."""
+    if sys.stdout.isatty() or os.environ.get("KRIKRI_FORCE_COLOR"):
+        return f"{code}{text}{RESET}"
+    return text
+
+
+def count_label(count, noun, code):
+    label = f"{count} {noun}"
+    return paint(label, code) if count else label
 
 # ansible-lint -p line: path:line:col: rule-id[qualifier]: message;
 # some matches (e.g. name[missing]) print without a column.
@@ -80,6 +102,8 @@ def main():
     parser.add_argument("--krikri", default=str(REPO / "bin" / "krikri-lint"))
     parser.add_argument("--ansible-lint", default="ansible-lint")
     parser.add_argument("--json", dest="json_out")
+    parser.add_argument("-v", "--verbose", action="store_true",
+                        help="also list every triple under its file")
     args = parser.parse_args()
 
     targets = [str(Path(t).resolve()) for t in args.targets]
@@ -116,13 +140,23 @@ def main():
         by_file[t[0]].setdefault("unimplemented", []).append(t[1:])
 
     for path in sorted(by_file):
-        print(f"\n{path}")
-        for kind in ("matched", "krikri_only", "upstream_only", "unimplemented"):
-            items = by_file[path].get(kind) or []
-            if items:
-                print(f"  {kind}:")
-                for line, col, rule in items:
-                    print(f"    {line}:{col} {rule}")
+        kinds = by_file[path]
+        matched_n = len(kinds.get("matched") or [])
+        diverged_n = len(kinds.get("krikri_only") or []) + len(kinds.get("upstream_only") or [])
+        unimplemented_n = len(kinds.get("unimplemented") or [])
+        print(f"{path}: {count_label(matched_n, 'matches', GREEN)}, "
+              f"{count_label(diverged_n, 'diverges', RED)}, "
+              f"{count_label(unimplemented_n, 'unimplemented', YELLOW)}")
+
+    if args.verbose:
+        for path in sorted(by_file):
+            print(f"\n{path}")
+            for kind in ("matched", "krikri_only", "upstream_only", "unimplemented"):
+                items = by_file[path].get(kind) or []
+                if items:
+                    print(f"  {kind}:")
+                    for line, col, rule in items:
+                        print(f"    {line}:{col} {rule}")
 
     print(f"PARITY| files={len(by_file)} matched={len(matched)} krikri_only={len(krikri_only)} "
           f"upstream_only={len(real_gaps)} unimplemented={len(gaps)}")
