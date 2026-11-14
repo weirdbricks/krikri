@@ -261,10 +261,10 @@ module Krikri
         # error inside a role PARAM at the playbook's `roles:` entry
         # (live-verified 2.19.11: `roles: [{role: e9, vars: {rp: ...}}]`
         # reports e9.yml's vars value position).
-        name, entry_version, invocation_vars, invocation_tags, entry_when, invocation_origins, entry_timeout = parse_role_entry(entry, play.source_file, source_map, "#{roles_prefix}/#{entry_index}")
+        name, entry_version, invocation_vars, invocation_tags, entry_when, invocation_origins, entry_timeout, entry_when_origin = parse_role_entry(entry, play.source_file, source_map, "#{roles_prefix}/#{entry_index}")
         before_count = tasks.size
         load_role(name, invocation_vars, invocation_tags, play, playbook_dir, seen, tasks, handlers, play_scope: true, role_version: entry_version, role_when: entry_when, invocation_var_origins: invocation_origins, role_timeout: entry_timeout)
-        apply_role_when(tasks, before_count, entry_when)
+        apply_role_when(tasks, before_count, entry_when, entry_when_origin)
       end
 
       {tasks, handlers}
@@ -292,9 +292,9 @@ module Krikri
     # A roles: entry is either a bare string ("common") or a mapping with
     # role:/name: (+ optional vars:/tags:, and Ansible also treats any
     # other top-level key as a role var - `roles: [{role: app, port: 8080}]`).
-    private def self.parse_role_entry(entry : YAML::Any, origin_file : String? = nil, source_map : YamlSourceMap? = nil, path_prefix : String? = nil) : {String, String?, Hash(String, JSON::Any), Array(String), String?, Hash(String, VarOrigin), {Int64?, String?}}
+    private def self.parse_role_entry(entry : YAML::Any, origin_file : String? = nil, source_map : YamlSourceMap? = nil, path_prefix : String? = nil) : {String, String?, Hash(String, JSON::Any), Array(String), String?, Hash(String, VarOrigin), {Int64?, String?}, {String, Int32, Int32}?}
       if bare_name = entry.as_s?
-        return {bare_name, nil, Hash(String, JSON::Any).new, [] of String, nil, Hash(String, VarOrigin).new, {nil, nil}}
+        return {bare_name, nil, Hash(String, JSON::Any).new, [] of String, nil, Hash(String, VarOrigin).new, {nil, nil}, nil}
       end
 
       origins = Hash(String, VarOrigin).new
@@ -379,6 +379,12 @@ module Krikri
       # notion of a `when:` on a role entry at all - it silently
       # dropped through as a role VAR named "when" instead of a gate.
       role_when = hash["when"]?.try { |cond| PlaybookParser.optional_condition_to_string(cond) }
+      # The clause's own value token, so a fact read while the role-level
+      # when: evaluates reports that declaring entry as its Origin - the
+      # position real's tagged value carries into every task the clause
+      # was merged onto (see Task#role_when_origins).
+      role_when_origin = entry_var_origin(origin_file, source_map, path_prefix, "when", nil)
+      role_when_pos = role_when_origin.try { |origin| {origin.path, origin.line, origin.column} }
 
       # `timeout:` on a roles: entry is a valid TASK keyword in real
       # ansible-core (live-verified vs 2.19.11: `roles: [- role: r,
@@ -388,7 +394,7 @@ module Krikri
       # inheritance (precedence task > block > role entry > play).
       role_timeout = PlaybookParser.parse_timeout_value(hash["timeout"]?)
 
-      {name, version, vars, tags, role_when, origins, role_timeout}
+      {name, version, vars, tags, role_when, origins, role_timeout, role_when_pos}
     end
 
     # Refuses a non-mapping `vars:` on a roles:/dependency entry the way
@@ -1013,7 +1019,7 @@ module Krikri
       return collected unless deps
 
       deps.each_with_index do |dep, dep_index|
-        dep_name, dep_version, dep_vars, dep_tags, dep_when, dep_origins = parse_role_entry(dep, meta_path, cached_source_map(meta_path), "dependencies/#{dep_index}")
+        dep_name, dep_version, dep_vars, dep_tags, dep_when, dep_origins, _dep_timeout, dep_when_origin = parse_role_entry(dep, meta_path, cached_source_map(meta_path), "dependencies/#{dep_index}")
         before_count = tasks.size
         dep_default_origins = Hash(String, VarOrigin).new
         # The declaring role joins the path chain (root-first, like the
@@ -1049,7 +1055,7 @@ module Krikri
           attach_cycle_origin(ex, meta_path, dep_index)
           raise ex
         end
-        apply_role_when(tasks, before_count, dep_when)
+        apply_role_when(tasks, before_count, dep_when, dep_when_origin)
         # Origins mirror the value merge below exactly: a key the earlier
         # dependency already provided keeps ITS origin; a key this
         # dependency newly provides takes this dependency's (or none).
@@ -1234,7 +1240,7 @@ module Krikri
     # dependencies, loaded recursively inside the same call) contributed.
     # A no-op when role_when is nil (the common case: no when: on this
     # entry at all).
-    private def self.apply_role_when(tasks : Array(Task), before_count : Int32, role_when : String?) : Nil
+    private def self.apply_role_when(tasks : Array(Task), before_count : Int32, role_when : String?, role_when_origin : {String, Int32, Int32}? = nil) : Nil
       return unless role_when
       (before_count...tasks.size).each do |i|
         task = tasks[i]
@@ -1246,6 +1252,11 @@ module Krikri
         # role condition as its first item too.
         if items = task.when_condition_list
           task.when_condition_list = [role_when] + items
+        end
+        # The clause's declaring position rides along so a fact read while
+        # it evaluates reports that entry (see Task#role_when_origins).
+        if role_when_origin
+          (task.role_when_origins ||= Hash(String, {String, Int32, Int32}).new)[role_when] = role_when_origin
         end
       end
     end

@@ -1064,6 +1064,27 @@ module Krikri
     # "caused by" stanza). 2.19 printed the detail alone.
     WHEN_EXPRESSION_FAILED_PREFIX = "A 'when' expression failed: "
 
+    # The declaring position of a roles:/meta/main.yml `when:` clause this
+    # task carries (Task#role_when_origins) - matched as the exact clause
+    # (a task with no own when:, or a list-form one) or as the prefix of
+    # the joined `(role) and (own)` string apply_role_when builds for a
+    # scalar-own-when task. Ansible tags the clause value itself, so every
+    # fact read it makes reports the DECLARING entry whatever task it was
+    # merged onto (issue #1251: cmusei.fixbuf's dependency when: reading
+    # ansible_os_family must print one block at its meta/main.yml Origin,
+    # not one per dependency task).
+    private def role_when_origin_for(task : Task, when_condition : String) : {String, Int32, Int32}?
+      origins = task.role_when_origins
+      return nil unless origins
+      if pos = origins[when_condition]?
+        return pos
+      end
+      origins.each do |clause, clause_pos|
+        return clause_pos if when_condition.starts_with?("(#{clause}) and (")
+      end
+      nil
+    end
+
     private def evaluate_when(when_condition : String, vars_context : Hash(String, JSON::Any), host : Host, substitutor : VarSubstitutor? = nil, task : Task? = nil) : Bool
       # Ansible compiles the raw conditional as an expression (no `{{ }}`
       # pre-render), so delimiters outside a string literal are its
@@ -1099,6 +1120,7 @@ module Krikri
       # the condition rendering its own template) restore the outer one.
       if task
         exact_pos = task.imported_when_origins.try { |origins| origins[when_condition]? } ||
+                    role_when_origin_for(task, when_condition) ||
                     task.block_inherited_when.try { |inherited| inherited.origins.try { |origins| origins[when_condition]? } } ||
                     task.inherited_when_origin
         # A BLOCK's when: is only ever pre-evaluated here (to decide
