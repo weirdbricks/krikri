@@ -529,6 +529,12 @@ module Krikri
         # runs whatever the conditional says (a false or even a raising
         # one), which is why that conditional must not be evaluated here
         # either.
+        #
+        # An unrecognized action aborts the run before real ever reaches
+        # a conditional, so it must be validated ahead of this gate too -
+        # a false `when:` would otherwise turn the abort into a skip
+        # (see validate_meta_action).
+        validate_meta_action(task)
         if meta_ignores_when?(task)
           execute_meta(task, host)
           return
