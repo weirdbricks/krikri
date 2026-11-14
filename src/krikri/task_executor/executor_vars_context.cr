@@ -302,6 +302,26 @@ module Krikri
         vars_context[key] = @play_vars[key] if @play_vars.has_key?(key)
       end
 
+      # A DELEGATED task's connection magic vars come from the DELEGATE's
+      # play context, not the origin's: ansible's TaskExecutor resolves
+      # the delegated host, builds its vars, then PlayContext.update_vars
+      # seeds ansible_host/ansible_ssh_host, the port/user spellings and
+      # the private key into the task's vars, each only where the origin's
+      # own variables don't already define that name. So `{{
+      # ansible_host }}` in a delegated task renders the delegate's
+      # address, while an origin inventory ansible_host survives untouched
+      # and only the legacy `ansible_ssh_host` spelling picks the
+      # delegate's up - all live-verified against 2.21.5 (issue #1248).
+      # Seeded BEFORE #synthesize_legacy_ssh_aliases runs, because real
+      # fills that alias from the DELEGATE's address rather than echoing
+      # the origin's ansible_host into it; every later author layer
+      # (role/task vars, extra vars) still outranks this fill exactly as
+      # real's fill-only-when-absent check on the final context does.
+      # Withheld from the alias-free loop-source snapshot like the
+      # aliases themselves: ansible resolves a loop source before
+      # _calculate_delegate_to ever runs, so it sees none of this.
+      seed_delegated_connection_vars(task, vars_context) if include_legacy_ssh_aliases
+
       # Synthesized here (not in the cached baseA below) so the legacy
       # spellings can be withheld from loop-source resolution - see
       # #synthesize_legacy_ssh_aliases and #loop_source_vars_context.
@@ -581,6 +601,24 @@ module Krikri
       end
       vars_context["ansible_connection"] ||= JSON::Any.new(default_connection_for(task, host, vars_context))
 
+      # ansible_delegated_vars - the delegate's own variable set, keyed by
+      # the delegate_to: name, which real builds in
+      # VariableManager.get_delegated_vars_and_hostname() before the task's
+      # args/when: are templated. Roles template it to build rsync/ssh
+      # command lines for the delegate (issue #1248); it was entirely
+      # missing here. Only a LITERAL delegate_to: can be resolved at
+      # build time - a templated one names its host per task/item, after
+      # this context exists - and like the seeding above it is absent from
+      # the alias-free loop-source snapshot.
+      if include_legacy_ssh_aliases && (delegate_name = task.delegate_to)
+        unless delegate_name.empty? || delegate_to_templated?(delegate_name)
+          delegate = literal_delegate_host(delegate_name)
+          vars_context["ansible_delegated_vars"] = JSON::Any.new({
+            delegate_name => JSON::Any.new(delegated_vars_for(task, host, delegate, delegate_name, vars_context)),
+          })
+        end
+      end
+
       # loop_lenient_vars: a LOOPED task's vars: must not hard-fail on the
       # pre-loop render. Ansible only ever evaluates a looped task's
       # vars: per actual loop iteration (item bound) - a zero-iteration
@@ -789,6 +827,136 @@ module Krikri
       # gives its fallback Host (implicit localhost is local, everything
       # else ssh), so a `when:` on the task and the dispatch agree.
       delegate_name == "localhost" || delegate_name == "127.0.0.1" ? "local" : "ssh"
+    end
+
+    # The inventory entry a LITERAL delegate_to: names, or nil when no
+    # entry matches it (real hands those a bare Host, whose own delegated
+    # vars carry only their name as the address).
+    private def literal_delegate_host(delegate_name : String) : Host?
+      inventory = @inventory
+      return nil unless inventory
+      resolved = inventory.get_hosts(delegate_name)
+      resolved.empty? ? nil : resolved.first
+    end
+
+    # The delegate's connection details as ansible resolves them for a
+    # delegated task: the delegate's own ssh/host/port/user/private-key
+    # vars (legacy `ansible_ssh_*` spelling first, the order real's
+    # MAGIC_VARIABLE_MAPPING checks), the delegate's name when it defines
+    # no address, and its source play-context private key when it defines
+    # none. port/user stay nil when nothing supplies them (real's
+    # DEFAULT_REMOTE_PORT has no default and an absent remote_user stays
+    # unset) - see the seeding site in #build_vars_context.
+    private def delegated_connection_values(delegate : Host?, delegate_name : String) : NamedTuple(host: String, port: JSON::Any?, user: JSON::Any?, private_key: JSON::Any?)
+      addr = delegate_connection_var(delegate, "ansible_ssh_host").try(&.as_s?) ||
+             delegate_connection_var(delegate, "ansible_host").try(&.as_s?)
+      port = delegate_connection_var(delegate, "ansible_ssh_port") || delegate_connection_var(delegate, "ansible_port")
+      user = delegate_connection_var(delegate, "ansible_ssh_user") || delegate_connection_var(delegate, "ansible_user")
+      key = delegate_connection_var(delegate, "ansible_ssh_private_key_file") || delegate_connection_var(delegate, "ansible_private_key_file")
+      key ||= ConnectionSettings.configured_private_key_file.try { |path| JSON::Any.new(path) }
+      {host: addr || delegate_name, port: port, user: user, private_key: key}
+    end
+
+    # Play vars outrank a host's inventory vars and apply to the DELEGATE
+    # too - real builds the delegated vars with the play in hand
+    # (get_vars(play, host=delegate, ...)), so a play-level
+    # `vars: {ansible_host: ...}` names the delegate's address.
+    private def delegate_connection_var(delegate : Host?, key : String) : JSON::Any?
+      @play_vars[key]? || delegate.try(&.vars[key]?)
+    end
+
+    # PlayContext.update_vars' seeding for a delegated task - see the call
+    # site comment in #build_vars_context. Both spellings of every
+    # connection var get the delegate's value, and only where the origin
+    # has not defined that exact name already (real's update_vars checks
+    # each variable name separately, so a task that pins only the legacy
+    # `ansible_ssh_user` keeps it while the canonical spelling still
+    # takes the delegate's).
+    private def seed_delegated_connection_vars(task : Task, vars_context : Hash(String, JSON::Any)) : Nil
+      delegate_name = task.delegate_to
+      return unless delegate_name && !delegate_name.empty? && !delegate_to_templated?(delegate_name)
+      conn = delegated_connection_values(literal_delegate_host(delegate_name), delegate_name)
+      {"ansible_ssh_host", "ansible_host"}.each do |key|
+        vars_context[key] = JSON::Any.new(conn[:host]) unless vars_context.has_key?(key)
+      end
+      if port = conn[:port]
+        {"ansible_ssh_port", "ansible_port"}.each do |key|
+          vars_context[key] = port unless vars_context.has_key?(key)
+        end
+      end
+      if user = conn[:user]
+        {"ansible_ssh_user", "ansible_user"}.each do |key|
+          vars_context[key] = user unless vars_context.has_key?(key)
+        end
+      end
+      if key = conn[:private_key]
+        {"ansible_ssh_private_key_file", "ansible_private_key_file"}.each do |name|
+          vars_context[name] = key unless vars_context.has_key?(name)
+        end
+      end
+      # ansible_connection is seeded by #default_connection_for (the same
+      # fill-if-absent rule), and an origin's explicit value outranks the
+      # delegate's exactly as update_vars leaves it.
+    end
+
+    # VariableManager.get_delegated_vars_and_hostname()'s dict for one
+    # delegate: the delegate's own merged variables (play vars, inventory
+    # host vars, registered/set_fact, included vars, facts) plus the
+    # inventory magic vars, with the ORIGIN's inventory_hostname stamped
+    # over the delegate's own - real does exactly that
+    # (vars/manager.py, live-verified 2.21.5) because the dispatched
+    # module still runs for the play host. The connection keys follow the
+    # delegate's own values, `ansible_port`/`ansible_user` present-but-null
+    # when nothing defines them (real assigns None there), and
+    # ansible_host falling back to the delegate's name.
+    private def delegated_vars_for(task : Task, host : Host, delegate : Host?, delegate_name : String, vars_context : Hash(String, JSON::Any)) : Hash(String, JSON::Any)
+      # Not the cached base contexts: those index per-PLAY-host stores
+      # with `[]`, and a delegate need not be a host of this play (the
+      # cross-group `delegate_to: other_group_host` idiom). Same layers,
+      # looked up optionally.
+      delegated = Hash(String, JSON::Any).new(initial_capacity: 128)
+      if delegate
+        delegate.vars.each { |key, value| delegated[key] = value }
+        set_fact_keys = @set_facts[delegate.name]?
+        @facts[delegate.name]?.try do |facts|
+          facts.each { |key, value| delegated[key] ||= value unless set_fact_keys.try(&.has_key?(key)) }
+        end
+      end
+      @play_vars.each { |key, value| delegated[key] = value }
+      if delegate
+        @included_vars[delegate.name]?.try(&.each { |key, value| delegated[key] = value })
+        @registered_vars[delegate.name]?.try(&.each { |key, value| delegated[key] = value })
+        set_fact_keys.try(&.each { |key, value| delegated[key] = value })
+        group_names = @inventory.try(&.groups_for(delegate.name)) || [] of String
+        delegated["group_names"] = JSON::Any.new(group_names.map { |name| JSON::Any.new(name) })
+        delegated["ansible_facts"] = JSON::Any.new(
+          @facts.has_key?(delegate.name) ? facts_dict_for(delegate.name) : {} of String => JSON::Any
+        )
+      else
+        delegated["group_names"] = JSON::Any.new([] of JSON::Any)
+        delegated["ansible_facts"] = JSON::Any.new({} of String => JSON::Any)
+      end
+      delegated["ansible_connection"] = JSON::Any.new(delegate_connection_from(delegate_name))
+      conn = delegated_connection_values(delegate, delegate_name)
+      unless delegated.has_key?("ansible_ssh_host") || delegated.has_key?("ansible_host")
+        delegated["ansible_host"] = JSON::Any.new(conn[:host])
+      end
+      unless delegated.has_key?("ansible_ssh_port") || delegated.has_key?("ansible_port")
+        delegated["ansible_port"] = JSON::Any.new(nil)
+      end
+      unless delegated.has_key?("ansible_ssh_user") || delegated.has_key?("ansible_user")
+        user = task.remote_user || @remote_user
+        delegated["ansible_user"] = user ? JSON::Any.new(user) : JSON::Any.new(nil)
+      end
+      delegated["inventory_hostname"] = JSON::Any.new(host.name)
+      delegated["inventory_hostname_short"] = JSON::Any.new(delegate_name.split('.').first)
+      if groups = vars_context["groups"]?
+        delegated["groups"] = groups
+      end
+      if hostvars = vars_context["hostvars"]?
+        delegated["hostvars"] = hostvars
+      end
+      delegated
     end
 
     # Names whose current value came from EXECUTION (register:, set_fact:,

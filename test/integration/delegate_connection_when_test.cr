@@ -117,4 +117,62 @@ describe "delegated task's ansible_connection magic var (issue #352)" do
     output.wont_include("UNREACHABLE")
     output.must_match(/h1\s*: ok=1\s+changed=1\s+unreachable=0\s+failed=0\s+skipped=0/)
   end
+
+  # Issue #1248: the same PlayContext.update_vars seeding also hands a
+  # delegated task the DELEGATE's ansible_host and the rest of its
+  # connection vars, and TaskExecutor builds ansible_delegated_vars for
+  # it. Both were entirely missing here, so `{{ ansible_host }}` named
+  # the ORIGIN host and a role templating the delegate's connection
+  # details (rsync/ssh command lines) got undefined values - verified
+  # against ansible-core 2.21.5 with ansible_connection=local fixtures.
+  it "seeds the delegate's ansible_host and ansible_delegated_vars into a delegated task (issue #1248)" do
+    status, output = run_playbook(
+      "[all]\nhost1 ansible_connection=local\n[other]\nhelper ansible_connection=local ansible_host=127.0.0.1 ansible_user=helperuser\n",
+      <<-YAML
+        - hosts: host1
+          gather_facts: false
+          tasks:
+            - ansible.builtin.command: sh -c 'echo ansible_host={{ ansible_host | default("unset") }} delegated_defined={{ ansible_delegated_vars is defined }}'
+              delegate_to: helper
+              register: dv
+              changed_when: false
+            - ansible.builtin.debug:
+                msg:
+                  - "{{ dv.stdout }}"
+                  - "dv_host={{ ansible_delegated_vars.helper.ansible_host | default('unset') }}"
+                  - "dv_user={{ ansible_delegated_vars.helper.ansible_user | default('unset') }}"
+              delegate_to: helper
+        YAML
+    )
+
+    status.exit_code.must_equal(0)
+    output.must_include("ansible_host=127.0.0.1 delegated_defined=True")
+    output.must_include("dv_host=127.0.0.1")
+    output.must_include("dv_user=helperuser")
+  end
+
+  # update_vars fills each variable NAME only when it is absent from the
+  # final task vars, so an origin inventory ansible_host survives
+  # delegation while the legacy ansible_ssh_host spelling - which the
+  # origin never defined - takes the delegate's address (the same
+  # live-verified 2.21.5 matrix).
+  it "keeps an origin inventory ansible_host but takes the delegate's ansible_ssh_host" do
+    status, output = run_playbook(
+      "h1 ansible_connection=local ansible_host=10.9.9.9\n[other]\nhelper ansible_connection=local ansible_host=127.0.0.1\n",
+      <<-YAML
+        - hosts: h1
+          gather_facts: false
+          tasks:
+            - ansible.builtin.debug:
+                msg:
+                  - "host={{ ansible_host | default('unset') }}"
+                  - "ssh_host={{ ansible_ssh_host | default('unset') }}"
+              delegate_to: helper
+        YAML
+    )
+
+    status.exit_code.must_equal(0)
+    output.must_include("host=10.9.9.9")
+    output.must_include("ssh_host=127.0.0.1")
+  end
 end
