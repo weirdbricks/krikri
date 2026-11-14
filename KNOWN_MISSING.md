@@ -520,6 +520,17 @@ because anyone intends to fix them.
   krikri shows `ok`). krikri's plugins are standalone binaries with no payload in `/tmp`, so the mount
   succeeds and the play continues. An artifact of Ansible's execution model, not a krikri gap.
 
+- **`mount_facts`' repeat-mounts warning order differs between podman containers (#1236).** The
+  warning prints a source's mount points in the order the source file lists them (Ansible's
+  `handle_deduplication` keeps `mounts_by_source` insertion order and never sorts), and `/etc/mtab`
+  is `/proc/self/mounts`, whose order podman randomises per container for the mounts it injects
+  (`/etc/hosts`, `/etc/hostname`, `/etc/resolv.conf`, `/dev/shm`, `/run/.containerenv`). Two
+  containers started from the same image list them in different orders, so the kpg harness's two
+  containers disagree on those entries while everything else in the list matches. Running both
+  engines inside one container produces byte-identical warnings, so this is not a krikri gap; the
+  generator would need a mask for that list's order, as it already has for other per-process
+  orderings.
+
 ### Everything else
 
 - **`ansible-playbook`'s CLI flag surface is fully covered by name, and all but one flag is

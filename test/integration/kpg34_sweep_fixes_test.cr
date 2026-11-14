@@ -236,6 +236,18 @@ describe "mount_facts plugin - dedup warning format (kpg34)" do
     text = warnings.map(&.as_s).join("\n")
     text.must_include("mount_facts: ignoring repeat mounts in the following sources: #{source} (['/dup', '/dup', '/other'])")
   end
+
+  it "lists a source's mount points in file order, repeats included" do
+    source = PluginSpecHelper.tmp_path("kpg34-mounts", "unsorted")
+    Dir.mkdir_p(File.dirname(source))
+    File.write(source, "/dev/a /zeta ext4 defaults 0 0\n/dev/b /alpha ext4 defaults 0 0\n/dev/c /zeta ext4 defaults 0 0\n")
+
+    result = PluginSpecHelper.run("mount_facts", {"sources" => "[\"#{source}\"]"})
+
+    warnings = result["warnings"]?.try(&.as_a?) || [] of JSON::Any
+    text = warnings.map(&.as_s).join("\n")
+    text.must_include("mount_facts: ignoring repeat mounts in the following sources: #{source} (['/zeta', '/alpha', '/zeta'])")
+  end
 end
 
 describe "kernel_blacklist plugin - failure result surface (kpg34)" do
