@@ -634,6 +634,22 @@ module Krikri
       # MODULE_SEARCH_COLLECTIONS.
       "ansible.builtin.make" => "community.general.make",
       "ansible.legacy.make"  => "community.general.make",
+      # community.general shipped the docker_* modules before they moved
+      # to community.docker, and its own meta/runtime.yml still redirects
+      # every one of those pre-2.0 FQCNs to the new collection (only
+      # docker_compose/docker_service/docker_image_facts are tombstoned
+      # instead - see REMOVED_MODULE_TOMBSTONES). Real therefore resolves
+      # community.general.docker_container and RUNS the module;
+      # salessandri.monero (round 1794677073) writes that spelling, and
+      # without these entries the task became an unavailable-module skip
+      # in --check mode (recap skipped=1, exit 4) where real ran it and
+      # hit its own docker connection failure (failed=1, exit 2). The
+      # bare spellings need no entries - community.docker is already in
+      # MODULE_SEARCH_COLLECTIONS.
+      "community.general.docker_container"    => "community.docker.docker_container",
+      "community.general.docker_image"        => "community.docker.docker_image",
+      "community.general.docker_network"      => "community.docker.docker_network",
+      "community.general.docker_network_info" => "community.docker.docker_network_info",
       # virt_net's collection namespace (see its AVAILABLE_PLUGINS entry).
       "community.libvirt.virt_net" => "virt_net",
     }
