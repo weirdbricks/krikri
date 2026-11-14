@@ -310,7 +310,38 @@ module Krikri
       # inline task's required option is satisfied by a play var of the
       # same name) - the inline task's own `provided_arguments:` dict
       # merely wins over same-named vars.
+      #
+      # Before any of that, real rejects a non-mapping provided_arguments
+      # exactly like a non-mapping argument_spec (2.19.11 plugin source:
+      # the argument_spec check first, then provided_arguments'), so a
+      # bare `provided_arguments: 49` fails the task instead of silently
+      # validating the vars context alone.
       provided = task.validate_argument_spec_provided
+      if provided_type = task.validate_argument_spec_non_dict_provided_type
+        return validate_args_spec_type_failure(task, host, provided_type, "provided_arguments")
+      end
+      # A Jinja-string provided_arguments is resolved during task-arg
+      # finalization in real; the dict check then runs against the
+      # RESOLVED value, so a template yielding a mapping validates
+      # normally while one yielding anything else fails with that type's
+      # class.
+      if raw_provided = task.validate_argument_spec_raw_provided
+        unless raw_provided.includes?("{{") || raw_provided.includes?("{%")
+          return validate_args_spec_type_failure(task, host, "ansible.module_utils._internal._datatag._AnsibleTaggedStr", "provided_arguments")
+        end
+        begin
+          rendered = substitutor.substitute(raw_provided, strict: true)
+          parsed = Krikri.parse_json_or_python_literal(rendered)
+          if provided_hash = parsed.as_h?
+            provided = Hash(String, JSON::Any).new
+            provided_hash.each { |option_name, value| provided[option_name] = value }
+          else
+            return validate_args_spec_type_failure(task, host, datatag_class_name(parsed), "provided_arguments")
+          end
+        rescue ex : UndefinedVariableError
+          return validate_args_templating_failure(task, host, ex.message || "", options)
+        end
+      end
       effective = if provided && !provided.empty?
                     merged = vars_context.dup
                     provided.each { |option_name, value| merged[option_name] = value }
@@ -623,14 +654,15 @@ module Krikri
     end
 
     # Real's validate_argument_spec action plugin rejects a non-mapping
-    # argument_spec with its own AnsibleActionFail before any option
-    # validation runs (issue #764, live-verified vs 2.19.11): the collapsed
-    # one-segment [ERROR] chain at the task's own Origin (the
-    # _ansible_action_level route in ResultDisplay) and the "Task failed: "
-    # brief in the fatal msg - no argument_errors/argument_spec_data keys,
-    # unlike the spec-validation failure shape.
-    private def validate_args_spec_type_failure(task : Task, host : Host, type_name : String) : Nil
-      message = "Incorrect type for argument_spec, expected dict and got <class '#{type_name}'>"
+    # argument_spec (and, with the same shape, provided_arguments) with its
+    # own AnsibleActionFail before any option validation runs (issue #764,
+    # live-verified vs 2.19.11): the collapsed one-segment [ERROR] chain at
+    # the task's own Origin (the _ansible_action_level route in
+    # ResultDisplay) and the "Task failed: " brief in the fatal msg - no
+    # argument_errors/argument_spec_data keys, unlike the
+    # spec-validation failure shape.
+    private def validate_args_spec_type_failure(task : Task, host : Host, type_name : String, arg_name : String = "argument_spec") : Nil
+      message = "Incorrect type for #{arg_name}, expected dict and got <class '#{type_name}'>"
       result = JSON::Any.new({
         "changed"               => JSON::Any.new(false),
         "failed"                => JSON::Any.new(true),
