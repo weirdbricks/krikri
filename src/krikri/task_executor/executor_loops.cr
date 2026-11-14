@@ -1950,6 +1950,16 @@ module Krikri
           # iteration N-1's accumulated list, not the loop's
           # starting value every time.
           running_vars_context = base_vars_context.dup
+          # set_fact names THIS loop has already written (see the
+          # per-item ansible_facts merge below) - they outrank the
+          # task's own vars: for every later iteration even though
+          # merge_ansible_facts only publishes them to @set_facts once
+          # the whole loop finishes (finish_looped_task). That is
+          # exactly what a `set_fact: x: "{{ x + [item] }}"` loop with
+          # a `vars: {x: []}` seed relies on (ansible accumulates; the
+          # pre-fix engine re-read the seed every iteration and kept
+          # only the last item).
+          loop_set_fact_keys = Set(String).new
           loop_var = task.loop_var
           index_var = task.index_var
           rendered_items.map_with_index do |item, idx|
@@ -2012,6 +2022,7 @@ module Krikri
             # same key.
             task.vars.each do |key, raw_value|
               next if key == "item" || key == loop_var || key == index_var
+              next if loop_set_fact_keys.includes?(key) || set_fact_outranks_task_var?(host.name, key)
               vars_context[key] = raw_value
             end
             # A filter failure with `item` now BOUND is the real
@@ -2133,7 +2144,11 @@ module Krikri
               next nil
             end
             if result && (facts = result["ansible_facts"]?) && (facts_hash = facts.as_h?)
-              facts_hash.each { |key, value| running_vars_context[key] = value }
+              set_fact_result = task.module_name.ends_with?("set_fact")
+              facts_hash.each do |key, value|
+                running_vars_context[key] = value
+                loop_set_fact_keys << key if set_fact_result
+              end
             end
             result
           end
@@ -2257,6 +2272,7 @@ module Krikri
         # (including its inherited-outer-item skip keys) exactly.
         task.vars.each do |key, raw_value|
           next if key == "item" || key == loop_var || key == index_var
+          next if set_fact_outranks_task_var?(host.name, key)
           vars_context[key] = raw_value
         end
         # Same item-bound-filter-failure channeling as the one-at-a-time
@@ -2435,6 +2451,7 @@ module Krikri
       # Ansible's "uninstall auditbeat").
       task.vars.each do |key, raw_value|
         next if key == "item" || key == task.loop_var || key == task.index_var
+        next if set_fact_outranks_task_var?(host.name, key)
         label_context[key] = raw_value
       end
       # The vars: themselves already got
@@ -2997,6 +3014,7 @@ module Krikri
         vars_context["ansible_loop"] = ansible_loop_vars(loop_items, idx) if task.loop_extended?
         task.vars.each do |key, raw_value|
           next if key == "item" || key == loop_var || key == index_var
+          next if set_fact_outranks_task_var?(host.name, key)
           vars_context[key] = raw_value
         end
         begin

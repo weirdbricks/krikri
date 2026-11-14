@@ -1203,6 +1203,21 @@ module Krikri
       result
     end
 
+    # A set_fact ranks ABOVE a task's own `vars:` on Ansible's precedence
+    # ladder, so a name a set_fact already holds for this host can never
+    # be read through a same-named task var. The loop paths restore a
+    # task's raw vars: text per item to re-render values referencing
+    # `item` - that restore must leave such a name alone, or every
+    # iteration reads the task var instead of the fact. Found with
+    # cowops.debian-php-extensions' `set_fact: php_packages: "{{
+    # php_packages + [...] }}"` loop (`vars: php_packages: []`):
+    # ansible accumulates across items, krikri re-seeded the empty task
+    # var each iteration and ended with only the last package, which
+    # then decided which missing package its apt task reported.
+    private def set_fact_outranks_task_var?(host_name : String, key : String) : Bool
+      @set_facts[host_name]?.try(&.has_key?(key)) || false
+    end
+
     # Memoized "ansible_facts.*" dict for one host - see
     # build_vars_context's own comment for why this dict has to exist
     # separately from the flat `ansible_os_family`-style keys already in
