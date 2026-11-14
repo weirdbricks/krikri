@@ -93,6 +93,72 @@ describe "debug: var result key" do
     File.delete(playbook) if playbook && File.exists?(playbook)
   end
 
+  # Real debug templates the looked-up value through the Templar, which
+  # renders a value made up ONLY of `{% %}` statement tags (no `{{ }}`
+  # span at all) too - the lazy-render gate admitted `{{` only, so the
+  # raw block-tag text was printed as the value (issue #1247). A
+  # block-tag template that produces no output is a native None in
+  # ansible (its Jinja concat returns None for an empty node list) and
+  # prints as null, while a whole `{{ '' }}` span keeps the empty
+  # string. Every shape below is live-verified against ansible-core
+  # 2.21.6.
+  it "renders var values made only of statement tags" do
+    playbook = File.tempname("debug-var-block-tag", ".yml")
+    File.write(playbook, <<-YAML)
+      - name: repro
+        hosts: localhost
+        gather_facts: false
+        tasks:
+          - name: statement block
+            ansible.builtin.debug:
+              var: krikri_spec_stmt
+            vars:
+              krikri_spec_stmt: "{% if true %}yes{% else %}no{% endif %}"
+          - name: folded multiline block
+            ansible.builtin.debug:
+              var: krikri_spec_folded
+            vars:
+              krikri_spec_folded: >-
+                {% if true %}
+                multi
+                {% endif %}
+          - name: loop block
+            ansible.builtin.debug:
+              var: krikri_spec_loop
+            vars:
+              krikri_spec_loop: "{% for i in [1, 2] %}{{ i }}{% endfor %}"
+          - name: comment only renders null
+            ansible.builtin.debug:
+              var: krikri_spec_comment
+            vars:
+              krikri_spec_comment: "{# just a comment #}"
+          - name: false branch renders null
+            ansible.builtin.debug:
+              var: krikri_spec_false
+            vars:
+              krikri_spec_false: "{% if false %}x{% endif %}"
+          - name: empty expression stays empty
+            ansible.builtin.debug:
+              var: krikri_spec_empty
+            vars:
+              krikri_spec_empty: "{{ '' }}"
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+
+    status.success?.must_equal(true)
+    output.to_s.must_include(%("krikri_spec_stmt": "yes"))
+    output.to_s.must_include(%("krikri_spec_folded": " multi "))
+    output.to_s.must_include(%("krikri_spec_loop": "12"))
+    output.to_s.must_include(%("krikri_spec_comment": null))
+    output.to_s.must_include(%("krikri_spec_false": null))
+    output.to_s.must_include(%("krikri_spec_empty": ""))
+    output.to_s.wont_include("{%")
+  ensure
+    File.delete(playbook) if playbook && File.exists?(playbook)
+  end
+
   # ansible-core's debug evaluates the raw `var` text as a Jinja
   # EXPRESSION (action/debug.py: evaluate_expression(raw_var_arg)), so a
   # filter chain resolves to its value while the result key keeps the raw

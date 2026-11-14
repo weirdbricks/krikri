@@ -137,18 +137,29 @@ module Krikri
       result.extra[var_name] = rendered
     end
 
-    # Render lazy `{{ ... }}` template strings inside a looked-up var
-    # value (recursively - real Templar.template templates containers
-    # element-by-element too). Strings without any `{{` pass through
-    # untouched; the render deliberately lets exceptions propagate to
-    # the caller, which turns them into a failed task.
+    # Render lazy template strings inside a looked-up var value
+    # (recursively - real Templar.template templates containers
+    # element-by-element too). The gate must admit `{% %}`/`{# #}` too:
+    # real debug's Templar renders a value that is ONLY a statement block
+    # (`a: "{% if true %}yes{% else %}no{% endif %}"` prints yes, issue
+    # #1247), and an `{{`-only gate leaked that raw template text.
+    # Untemplated strings pass through untouched; the render deliberately
+    # lets exceptions propagate to the caller, which turns them into a
+    # failed task.
     private def render_lazy_templates(value : JSON::Any) : JSON::Any
       case value.raw
       when String
         raw = value.as_s
         return value if UnsafeValues.unsafe_text?(raw)
-        return value unless raw.includes?("{{")
-        JSON::Any.new(VarSubstitutor.new(vars: @vars, host_name: @host.name).substitute(raw))
+        return value unless raw.includes?("{{") || raw.includes?("{%") || raw.includes?("{#")
+        substituted = VarSubstitutor.new(vars: @vars, host_name: @host.name).substitute(raw)
+        # A block-tag template that rendered NO output is a native None in
+        # ansible (its Jinja concat returns None when the render produced
+        # no nodes), and real debug prints it as null; a whole `{{ '' }}`
+        # span stays the empty string (live-verified 2.21.6) - same split
+        # the executor's task-param substitution applies.
+        return JSON::Any.new(nil) if substituted.empty? && (raw.includes?("{%") || raw.includes?("{#"))
+        JSON::Any.new(substituted)
       when Array
         JSON::Any.new(value.as_a.map { |item| render_lazy_templates(item) })
       when Hash
