@@ -531,24 +531,18 @@ module Krikri
       @allow_unauthenticated = true?(@params["allow_unauthenticated"]?)
       @allow_downgrade = true?(@params["allow_downgrade"]?)
       @allow_change_held_packages = true?(@params["allow_change_held_packages"]?)
-      @default_release = @params["default_release"]?
-      # python-apt opens the cache with APT::Default-Release set and raises
-      # SystemError("E:The value ... is invalid ...") for an unknown release -
-      # an unhandled module exception, surfaced as "Task failed: Module failed:"
-      # in the fatal msg and the [ERROR] block (live-verified vs 2.19.11).
-      if release = @default_release.presence
-        probe = remote_exec("apt-get -o APT::Default-Release=#{Process.quote(release)} check 2>&1")
-        if line = probe[:stdout].lines.find(&.includes?("is invalid for APT::Default-Release"))
-          detail = line.strip.sub(/\AE: /, "E:")
-          return PluginResult.new(changed: false, failed: true, msg: "Task failed: Module failed: #{detail}", _ansible_error_detail: detail)
-        end
-      end
-      if ir = @params["install_recommends"]?
-        @install_recommends = true?(ir)
-      end
-
-      changed = false
-      messages = [] of String
+      # Get package name(s) - can be optional if just updating cache, or
+      # running autoremove/autoclean/clean (Ansible's apt module
+      # supports all four with no `name:` at all - konstruktoid-hardening's
+      # own "Run apt-get autoremove"/"Run apt-get clean" handlers do
+      # exactly `autoremove: true` and `autoclean: true, clean: true`
+      # with no name).
+      name_param = name_or_pkg_param?
+      autoremove = true?(@params["autoremove"]?)
+      autoclean = true?(@params["autoclean"]?)
+      clean = true?(@params["clean"]?)
+      upgrade = @params["upgrade"]?
+      upgrade = nil if upgrade == "no"
 
       # Ansible's own apt.py only lets a cache refresh contribute to
       # the task's overall `changed:` when update_cache: is the ONLY
@@ -577,6 +571,33 @@ module Krikri
       # None (`if p['upgrade'] == 'no': p['upgrade'] = None`), i.e. no upgrade
       upgrade_requested = (raw_upgrade = @params["upgrade"]?) && raw_upgrade != "no"
       cache_update_is_sole_operation = no_effective_packages && !upgrade_requested && !@params["deb"]?
+
+      @default_release = @params["default_release"]?
+      # python-apt opens the cache with APT::Default-Release set and raises
+      # SystemError("E:The value ... is invalid ...") for an unknown release -
+      # an unhandled module exception, surfaced as "Task failed: Module failed:"
+      # in the fatal msg and the [ERROR] block (live-verified vs 2.19.11).
+      # apt.py reaches that cache open only after its `clean:` block, which
+      # is main()'s FIRST action and - for a task with no name/upgrade/deb -
+      # exit_json()s right there: a clean-only task never evaluates
+      # default_release at all (kpg 000034-multi-apt-chaos: real ansible
+      # reported `changed` for `clean: true` plus an unknown
+      # default_release where this engine failed on the probe below).
+      if release = @default_release.presence
+        unless clean && cache_update_is_sole_operation
+          probe = remote_exec("apt-get -o APT::Default-Release=#{Process.quote(release)} check 2>&1")
+          if line = probe[:stdout].lines.find(&.includes?("is invalid for APT::Default-Release"))
+            detail = line.strip.sub(/\AE: /, "E:")
+            return PluginResult.new(changed: false, failed: true, msg: "Task failed: Module failed: #{detail}", _ansible_error_detail: detail)
+          end
+        end
+      end
+      if ir = @params["install_recommends"]?
+        @install_recommends = true?(ir)
+      end
+
+      changed = false
+      messages = [] of String
 
       # Real apt.py reads the lists-dir mtime unconditionally at the top
       # of its cache pass (get_updated_cache_time()) - not just when an
@@ -670,19 +691,6 @@ module Krikri
           end
         end
       end
-
-      # Get package name(s) - can be optional if just updating cache, or
-      # running autoremove/autoclean/clean (Ansible's apt module
-      # supports all four with no `name:` at all - konstruktoid-hardening's
-      # own "Run apt-get autoremove"/"Run apt-get clean" handlers do
-      # exactly `autoremove: true` and `autoclean: true, clean: true`
-      # with no name).
-      name_param = name_or_pkg_param?
-      autoremove = true?(@params["autoremove"]?)
-      autoclean = true?(@params["autoclean"]?)
-      clean = true?(@params["clean"]?)
-      upgrade = @params["upgrade"]?
-      upgrade = nil if upgrade == "no"
 
       # Ansible's apt module NEVER reaches its own cleanup()
       # (autoremove/autoclean) when `upgrade:` is set: upgrade() always

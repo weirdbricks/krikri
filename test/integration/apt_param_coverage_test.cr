@@ -24,7 +24,7 @@ require "file_utils"
 # The dpkg Status-Abbrev the dpkg-query shim reports for the requested
 # package: "ii" installed, "un" never installed, "rc" removed with
 # config files still on disk.
-private def with_apt_param_shims(dpkg_status : String, fail_apt : Bool = false, policy_path : String? = nil, op_stdout : String = "", &)
+private def with_apt_param_shims(dpkg_status : String, fail_apt : Bool = false, policy_path : String? = nil, op_stdout : String = "", bad_release : String = "", &)
   dir = File.join(Dir.tempdir, "krikri-apt-param-#{Random.rand(1_000_000)}")
   log = File.join(dir, "calls.log")
   FileUtils.mkdir_p(dir)
@@ -52,6 +52,17 @@ private def with_apt_param_shims(dpkg_status : String, fail_apt : Bool = false, 
           exit 0
         fi
         printf 'Reading package lists...\nBuilding dependency tree...\nReading state information...\n0 upgraded, 0 newly installed, 0 to remove and 0 not upgraded.\n'
+        exit 0
+        ;;
+      *" -o APT::Default-Release="*)
+        # apt.py pushes default_release into APT::Default-Release and
+        # reopens the cache, which raises for a release the sources do
+        # not carry - a real `apt-get -o APT::Default-Release=... check`
+        # prints this same E: line and exits non-zero.
+        if [ -n "$KRIKRI_APT_BAD_RELEASE" ]; then
+          echo "E:The value '$KRIKRI_APT_BAD_RELEASE' is invalid for APT::Default-Release as such a release is not available in the sources" >&2
+          exit 100
+        fi
         exit 0
         ;;
       *)
@@ -84,12 +95,13 @@ private def with_apt_param_shims(dpkg_status : String, fail_apt : Bool = false, 
   File.chmod(File.join(dir, "apt-cache"), 0o755)
   File.chmod(File.join(dir, "apt-mark"), 0o755)
   env = {
-    "PATH"                 => "#{dir}:/usr/bin:/bin",
-    "KRIKRI_APT_CALLS"     => log,
-    "KRIKRI_DPKG_STATUS"   => dpkg_status,
-    "KRIKRI_POLICY_PATH"   => policy_path || "",
-    "KRIKRI_APT_FAIL"      => (fail_apt ? "1" : ""),
-    "KRIKRI_APT_OP_STDOUT" => op_stdout,
+    "PATH"                   => "#{dir}:/usr/bin:/bin",
+    "KRIKRI_APT_CALLS"       => log,
+    "KRIKRI_DPKG_STATUS"     => dpkg_status,
+    "KRIKRI_POLICY_PATH"     => policy_path || "",
+    "KRIKRI_APT_FAIL"        => (fail_apt ? "1" : ""),
+    "KRIKRI_APT_OP_STDOUT"   => op_stdout,
+    "KRIKRI_APT_BAD_RELEASE" => bad_release,
   }.to_json
   yield env, log
 ensure
@@ -513,6 +525,44 @@ describe "apt plugin - parameter coverage" do
         lines = read_log(log)
         lines.size.must_equal(1)
         lines.first.must_equal("clean")
+      end
+    end
+
+    # apt.py main() runs aptclean() - and the decision to exit there -
+    # BEFORE get_cache() and before `default_release` is pushed into
+    # APT::Default-Release, so a clean-only task never evaluates the
+    # release at all. kpg 000034-multi-apt-chaos (check mode, `clean:
+    # true` with `default_release: igmnjz`): real ansible reported
+    # `changed` while this engine failed on the release probe.
+    it "never evaluates an unknown default_release when the clean-only early exit fires" do
+      with_apt_param_shims("ii", bad_release: "igmnjz") do |env, log|
+        result = PluginSpecHelper.run("apt", {
+          "clean"               => "true",
+          "default_release"     => "igmnjz",
+          "_ansible_check_mode" => "true",
+          "_environment"        => env,
+        })
+        falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+        result["changed"]?.try(&.as_bool).must_equal(true)
+        read_log(log).each do |line|
+          line.wont_include("APT::Default-Release")
+        end
+      end
+    end
+
+    # The opposite side of the same ordering: once the module keeps
+    # running (the aptclean() exit does not fire), the release IS
+    # evaluated and an unknown one fails the task exactly like apt.py's
+    # cache reopen.
+    it "fails on an unknown default_release when the module gets past the clean early exit" do
+      with_apt_param_shims("un", bad_release: "igmnjz") do |env, _log|
+        result = PluginSpecHelper.run("apt", {
+          "name"            => "krikri-fake-pkg",
+          "default_release" => "igmnjz",
+          "_environment"    => env,
+        })
+        result["failed"]?.try(&.as_bool).must_equal(true)
+        result["msg"]?.try(&.as_s).not_nil!.must_include("is invalid for APT::Default-Release")
       end
     end
 
