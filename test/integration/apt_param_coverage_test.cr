@@ -566,6 +566,50 @@ describe "apt plugin - parameter coverage" do
       end
     end
 
+    # aptclean() is apt.py's FIRST branch, so it exits before the cache
+    # is opened with APT::Default-Release and before the update_cache
+    # pass - a clean-only task with an unknown default_release: succeeds
+    # on real Ansible (live-verified 2.21.6, podman: `changed` with only
+    # `apt-get clean` run) and never fails python-apt's
+    # "is invalid for APT::Default-Release" (issue #1265).
+    it "exits after apt-get clean before validating default_release or refreshing the cache" do
+      with_apt_param_shims("ii") do |env, log|
+        result = PluginSpecHelper.run("apt", {
+          "clean"           => "true",
+          "default_release" => "igmnjz",
+          "update_cache"    => "true",
+          "autoclean"       => "false",
+          "autoremove"      => "false",
+          "force"           => "true",
+          "force_apt_get"   => "true",
+          "only_upgrade"    => "true",
+          "_environment"    => env,
+        })
+        falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+        result["changed"]?.try(&.as_bool).must_equal(true)
+        # Only aptclean ran: no update, no Default-Release probe.
+        read_log(log).must_equal(["clean"])
+      end
+    end
+
+    # The reorder above must not turn clean: into a no-op when the task
+    # does carry a package list - apt.py still runs aptclean() before
+    # the install.
+    it "runs apt-get clean before installing when a package list is present" do
+      with_apt_param_shims("un") do |env, log|
+        result = PluginSpecHelper.run("apt", {
+          "name"         => "krikri-fake-pkg",
+          "state"        => "present",
+          "clean"        => "true",
+          "_environment" => env,
+        })
+        falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+        lines = read_log(log)
+        lines.first.must_equal("clean")
+        install_call(log).wont_be_nil
+      end
+    end
+
     # apt.py cleanup(): `changed = CLEAN_OP_CHANGED_STR[operation] in
     # out` - the exit_json shape is (changed, stdout, stderr, diff)
     # plus the controller-appended stdout_lines/stderr_lines pair and

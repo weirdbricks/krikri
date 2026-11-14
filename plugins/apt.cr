@@ -573,6 +573,67 @@ module Krikri
       cache_update_is_sole_operation = no_effective_packages && !upgrade_requested && !@params["deb"]?
 
       @default_release = @params["default_release"]?
+      if ir = @params["install_recommends"]?
+        @install_recommends = true?(ir)
+      end
+
+      changed = false
+      messages = [] of String
+
+      # aptclean() is apt.py's FIRST branch: `apt-get clean` runs - and,
+      # when no package/upgrade/deb was requested, immediately exits
+      # changed=True on aptclean's own result - before the package cache
+      # is ever opened. That means APT::Default-Release is never set for
+      # such a task (an unknown default_release: goes unvalidated) and the
+      # update_cache pass never runs. Both orderings are observable: with
+      # clean: true + update_cache: true + an unknown default_release:,
+      # real Ansible reported changed without touching the lists, while
+      # this engine failed the task with python-apt's invalid-release
+      # error (issue #1265).
+      if clean
+        clean_result = if @check_mode
+                         messages << "Would run: apt-get clean"
+                         {exit_code: 0, stdout: "", stderr: ""}
+                       else
+                         # `apt-get clean` contends for the dpkg lock
+                         # like every other apt-get op - same lock_timeout
+                         # retry + PolicyRcD wrap as the cleanup() ops
+                         # below. aptclean() runs the bare command, with
+                         # no dpkg options at all.
+                         res = with_policy_rc_d { apt_with_lock_retry("apt-get clean", lock_timeout, ->remote_exec(String)) }
+                         if res[:exit_code] != 0
+                           return PluginResult.new(changed: false, failed: true, msg: "apt-get clean failed: #{res[:stderr]}")
+                         end
+                         messages << "cache cleaned"
+                         res
+                       end
+        # aptclean()'s own result is discardable when the module keeps
+        # running (a package install's exit_json overwrites it) - its
+        # changed: only matters through this early exit, which is
+        # UNCONDITIONAL (`not p['package'] and p['upgrade'] == 'no' and
+        # not p['deb']`), not output-matched (exit_json(changed=True,
+        # msg=<clean stdout>, stdout=..., stderr=..., diff=...) - an empty
+        # clean output still carries its empty msg key, include_empty_msg).
+        changed = true
+        if cache_update_is_sole_operation
+          # aptclean()'s exit carries NO cache keys (its exit_json never
+          # saw the cache pass) - suppress the engine's cache_updated
+          # backfill the same way the deb path does.
+          @omit_cache_updated = true
+          return PluginResult.new(
+            changed: true,
+            failed: false,
+            msg: @check_mode ? messages.join(", ") : clean_result[:stdout],
+            stdout: clean_result[:stdout],
+            stderr: clean_result[:stderr],
+            diff: @diff_mode && !@check_mode ? apt_install_diff(clean_result[:stdout]) : JSON.parse("{}"),
+            include_empty_msg: true,
+            failed_flag: true,
+            key_order: ["changed", "msg", "stdout", "stderr", "diff", "stdout_lines", "stderr_lines", "failed"],
+          )
+        end
+      end
+
       # python-apt opens the cache with APT::Default-Release set and raises
       # SystemError("E:The value ... is invalid ...") for an unknown release -
       # an unhandled module exception, surfaced as "Task failed: Module failed:"
@@ -592,12 +653,6 @@ module Krikri
           end
         end
       end
-      if ir = @params["install_recommends"]?
-        @install_recommends = true?(ir)
-      end
-
-      changed = false
-      messages = [] of String
 
       # Real apt.py reads the lists-dir mtime unconditionally at the top
       # of its cache pass (get_updated_cache_time()) - not just when an
@@ -722,18 +777,16 @@ module Krikri
       # andrelohmann.docker's "Apt | Remove distribution packages" task
       # (purge+autoclean+autoremove+name, round 1300020) failed on every
       # run where Ansible just purged the packages.
-      # `clean` stays unconditional: real aptclean() runs before the
-      # package dispatch with or without packages (its early-exit only
-      # short-circuits the RESULT, not the `apt-get clean` run).
-      if (autoremove || autoclean || clean) && !upgrade
+      # (`clean` is NOT part of this guard: aptclean() runs before that
+      # dispatch with or without packages and with or without upgrade:,
+      # and is handled above, before the cache pass.)
+      if (autoremove || autoclean) && !upgrade
         # Ansible's cleanup() builds `apt-get -y <dpkg_options>
         # <purge> <force_yes> <operation> <check_arg>` - the purge/force
         # flags and the dpkg options apply to autoremove/autoclean too
         # (`purge: true` + `autoremove: true` is its own documented
         # idiom: "Remove dependencies that are no longer required and
-        # purge their configuration files"). `apt-get clean` is the
-        # exception: Ansible's aptclean() runs the bare command with no
-        # options at all, so it stays bare here.
+        # purge their configuration files").
         # Ansible's main() builds its `dpkg_options` ONCE - the
         # expanded list PLUS the lock-timeout override - and passes that
         # same value to cleanup(), install(), remove() and upgrade()
@@ -763,52 +816,6 @@ module Krikri
         # reaches autoclean/autoremove at all (the no-name tail below
         # returns that exit).
         cache_pass_exits = (update_cache || has_cache_valid_time) && cache_update_is_sole_operation
-        if clean
-          clean_result = if @check_mode
-                           messages << "Would run: apt-get clean"
-                           {exit_code: 0, stdout: "", stderr: ""}
-                         else
-                           # `apt-get clean` contends for the dpkg lock
-                           # like every other apt-get op - same
-                           # lock_timeout retry + PolicyRcD wrap as the
-                           # cleanup() ops below.
-                           res = with_policy_rc_d { apt_with_lock_retry("apt-get clean", lock_timeout, ->remote_exec(String)) }
-                           if res[:exit_code] != 0
-                             return PluginResult.new(changed: false, failed: true, msg: "apt-get clean failed: #{res[:stderr]}")
-                           end
-                           messages << "cache cleaned"
-                           res
-                         end
-          # aptclean()'s own result is discardable when the module keeps
-          # running (a package install's exit_json overwrites it) - its
-          # changed: only matters through this early exit, which is
-          # UNCONDITIONAL (`not p['package'] and p['upgrade'] == 'no'
-          # and not p['deb']`), not output-matched, and ends the module
-          # BEFORE the update_cache pass and the autoclean/autoremove
-          # tail are ever reached (exit_json(changed=True, msg=<clean
-          # stdout>, stdout=..., stderr=..., diff=...) - an empty clean
-          # output still carries its empty msg key, include_empty_msg).
-          changed = true
-          if cache_update_is_sole_operation
-            # cleanup()/aptclean() exits carry NO cache keys (their
-            # exit_json never saw the cache pass) - suppress the
-            # engine's cache_updated backfill the same way the deb path
-            # does.
-            @omit_cache_updated = true
-            return PluginResult.new(
-              changed: true,
-              failed: false,
-              msg: @check_mode ? messages.join(", ") : clean_result[:stdout],
-              stdout: clean_result[:stdout],
-              stderr: clean_result[:stderr],
-              diff: @diff_mode && !@check_mode ? apt_install_diff(clean_result[:stdout]) : JSON.parse("{}"),
-              include_empty_msg: true,
-              failed_flag: true,
-              key_order: ["changed", "msg", "stdout", "stderr", "diff", "stdout_lines", "stderr_lines", "failed"],
-            )
-          end
-        end
-
         if autoclean && no_effective_packages && !cache_pass_exits
           cmd = "#{apt_get_bin} -y#{cleanup_flags.empty? ? "" : " " + cleanup_flags} autoclean"
           # check mode still runs the op - with --simulate, exactly like
