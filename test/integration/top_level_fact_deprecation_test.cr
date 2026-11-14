@@ -85,6 +85,61 @@ describe "INJECT_FACTS_AS_VARS deprecation" do
     stderr.must_include("Use `ansible_facts[\"fact_name\"]` (no `ansible_` prefix) instead.")
   end
 
+  it "attributes a meta dependency's when: read to the dependency entry" do
+    # Issue #1251, cmusei.fixbuf: the dependency entry's own `when:` is
+    # merged onto EVERY task of the dependency, but real tags the clause
+    # value itself, so all those evaluations report the DECLARING entry
+    # (deduplicated into one block) - not the dependency task each
+    # evaluation happened on. Both merged shapes are covered: a task with
+    # an own scalar when: (joined into one string) and one with an own
+    # when: list (the role clause is prepended as its first item).
+    stdout, stderr, dir = run_files({
+      "play.yml" => <<-PLAYBOOK,
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        roles:
+          - role: parent
+      PLAYBOOK
+      "roles/parent/meta/main.yml" => <<-META,
+      ---
+      dependencies:
+        - role: dep
+          when: ansible_os_family == 'NoSuchFamily'
+      META
+      "roles/parent/tasks/main.yml" => <<-TASKS,
+      - name: parent task
+        debug:
+          msg: parent
+      TASKS
+      "roles/dep/tasks/main.yml" => <<-TASKS,
+      - name: dep scalar when
+        debug:
+          msg: one
+        when: 1 == 1
+      - name: dep list when
+        debug:
+          msg: two
+        when:
+          - 1 == 1
+      - name: dep no own when
+        debug:
+          msg: three
+      TASKS
+    })
+
+    stdout.must_include("TASK [dep : dep scalar when]")
+    stdout.must_include("TASK [dep : dep list when]")
+    stdout.must_include("TASK [dep : dep no own when]")
+    stderr.must_include("Origin: #{File.join(dir, "roles", "parent", "meta", "main.yml")}:4:11\n")
+    stderr.must_include("2 dependencies:\n")
+    stderr.must_include("3   - role: dep\n")
+    stderr.must_include("4     when: ansible_os_family == 'NoSuchFamily'\n")
+    stderr.must_include("^ column 11")
+    stderr.wont_include("roles/dep/tasks/main.yml:")
+    stderr.scan(/DEPRECATION WARNING\]: #{Regex.escape(FACT_DEPRECATION_TEXT)}/).size.must_equal(1)
+  end
+
   it "warns once per distinct block when: Origin" do
     # The role that reported this gates a whole `block:` - so the clause is
     # the BLOCK's, evaluated by each of its children (or re-evaluated by

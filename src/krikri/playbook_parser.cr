@@ -277,6 +277,18 @@ module Krikri
     # the executor can look up the failing clause directly. nil when no
     # import when: contributed clauses with a locatable position.
     property imported_when_origins : Hash(String, {String, Int32, Int32})? = nil
+    # A roles:/meta/main.yml `when:` entry's clause position (path,
+    # 1-based line/col of the value token), keyed by the exact clause
+    # string role_loader prepends onto this task - the role-level
+    # counterpart of imported_when_origins above. Ansible anchors every
+    # read that clause makes at the DECLARING entry, not at the
+    # dependency task whose when: it was merged onto, so a dependency
+    # whose when: reads a top-level fact prints ONE
+    # INJECT_FACTS_AS_VARS block (deduplicated by its formatted Origin)
+    # instead of one per task it gated (cmusei.fixbuf's
+    # `dependencies: [{role: ..., when: ansible_os_family == ...}]`,
+    # issue #1251). nil when no role-level when: contributed.
+    property role_when_origins : Hash(String, {String, Int32, Int32})? = nil
     property when_condition : String?
     # The when: LIST's own per-item condition strings, kept alongside the
     # " and "-joined `when_condition` so the STRICT when: evaluation path
