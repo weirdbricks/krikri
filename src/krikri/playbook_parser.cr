@@ -7979,6 +7979,16 @@ module Krikri
             # empty-list/dict-member-list/JSON branches so every fail msg
             # container takes this wire. Templated values are never marked.
             params[key.to_s] = Krikri::NON_STRING_PARAM_PREFIX + value.to_json
+          elsif (module_name == "ansible.builtin.set_stats" || module_name == "set_stats") && key.to_s == "data" && value.as_h?
+            # set_stats is a controller-side ACTION plugin, and its `data`
+            # is templated natively before the dict-shape check: a YAML
+            # mapping succeeds while a STRING that merely looks like JSON
+            # (`data: '{"a": 1}'`) fails with "The 'data' option needs to
+            # be a dictionary/hash". The generic wire below stringifies
+            # both shapes to the same JSON text, so the mapping rides
+            # NATIVE_TYPED_PREFIX - the marker the executor's
+            # #execute_set_stats decodes (issue #1242).
+            params[key.to_s] = Krikri::NATIVE_TYPED_PREFIX + value.to_json
           elsif (module_name == "ansible.builtin.add_host" || module_name == "add_host") && key.to_s.in?({"name", "hostname", "host"}) && (value.raw.is_a?(Hash) || value.raw.is_a?(Array))
             # A dict/list-valued add_host name: Ansible's AddHost result
             # field validation rejects it as non-str, but the generic

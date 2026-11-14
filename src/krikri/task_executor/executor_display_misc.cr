@@ -1251,34 +1251,90 @@ module Krikri
     # walks group hierarchy (only exact group-name matches), so it's
     # inert beyond documentation today - same limitation static
     # inventory group parent/child nesting already has here.
+    #
+    # ansible.builtin.set_stats is a controller-side ACTION plugin
+    # (plugins/action/set_stats.py), not a module: `data` defaults to an
+    # empty dict when the argument is absent entirely, every other
+    # non-dict value (a string, an explicit null, a list, a number) fails
+    # with the action's own wording, and the applied stats ride back in
+    # the result's `ansible_stats` key. All shapes live-verified against
+    # ansible-core 2.21.6 (issue #1242).
     private def execute_set_stats(params : Hash(String, String), host : Host, vars_context : Hash(String, JSON::Any)) : JSON::Any
-      data_json = params["data"]?
-      # set_stats is a controller-side ACTION plugin that defaults an absent
-      # data: to {} without running any module, so a task carrying only
-      # aggregate:/per_host: succeeds (live-verified against 2.21.6). Only a
-      # data: key that is present but unusable fails.
-      if data_json.nil?
-        return JSON.parse({"changed" => false, "failed" => false, "msg" => ""}.to_json)
-      end
-      # A present-but-null data: (the parser wires literal nulls as
-      # NONE_SENTINEL, same as a whole-span null template), a plain string,
-      # a list and the empty string are all still non-dicts after
-      # templating, so the action plugin's isinstance(data, dict) check
-      # rejects every one of them with Ansible's own wording
-      # (live-verified against 2.21.6).
-      data = JSON.parse(data_json) rescue nil
+      data = if raw = params["data"]?
+               set_stats_data(raw)
+             else
+               JSON.parse("{}")
+             end
       unless data && data.as_h?
-        return JSON.parse({"changed" => false, "failed" => true, "msg" => "The 'data' option needs to be a dictionary/hash"}.to_json)
+        msg = "The 'data' option needs to be a dictionary/hash"
+        # A controller-side ACTION failure: Ansible's [ERROR] chain has no
+        # "Module failed." middle segment, it reads "Task failed: Action
+        # failed: <msg>" (see ResultDisplay's _ansible_action_level route).
+        return JSON.parse({
+          "changed"               => false,
+          "failed"                => true,
+          "msg"                   => msg,
+          "_ansible_action_level" => true,
+          "_ansible_error_detail" => "Action failed: #{msg}",
+        }.to_json)
       end
 
-      aggregate = !["false", "no", "0", "off"].includes?(params["aggregate"]?.try(&.downcase))
-      per_host = ["true", "yes", "1", "on"].includes?(params["per_host"]?.try(&.downcase))
+      aggregate = set_stats_boolean(params["aggregate"]?, default: true)
+      per_host = set_stats_boolean(params["per_host"]?, default: false)
 
       data.as_h.each do |key, value|
         CustomStats.set(key, value, aggregate, host.name, per_host)
       end
 
-      JSON.parse({"changed" => false, "failed" => false, "msg" => ""}.to_json)
+      JSON.parse({
+        "changed"       => false,
+        "failed"        => false,
+        "ansible_stats" => {
+          "data"      => data,
+          "per_host"  => per_host,
+          "aggregate" => aggregate,
+        },
+      }.to_json)
+    end
+
+    # The value behind set_stats' `data`, or nil for every shape Ansible's
+    # action plugin rejects. A literal YAML mapping and a whole-span dict
+    # template both carry NATIVE_TYPED_PREFIX (parse_module_params /
+    # substitute_task_params), which is what separates them from a STRING
+    # that merely looks like JSON - Ansible rejects that one.
+    private def set_stats_data(raw : String) : JSON::Any?
+      return nil unless raw.starts_with?(Krikri::NATIVE_TYPED_PREFIX)
+      JSON.parse(raw[Krikri::NATIVE_TYPED_PREFIX.size..])
+    rescue JSON::ParseException
+      nil
+    end
+
+    # ansible's non-strict boolean() over a set_stats option. `default` is
+    # the action plugin's own initial value, used only when the argument
+    # is absent or an explicit null (`if val is not None`); every
+    # unrecognized value is False, exactly like boolean(..., strict=False).
+    private def set_stats_boolean(raw : String?, default : Bool) : Bool
+      return default if raw.nil? || raw == Krikri::NONE_SENTINEL
+      native = if raw.starts_with?(Krikri::NATIVE_TYPED_PREFIX)
+                 (JSON.parse(raw[Krikri::NATIVE_TYPED_PREFIX.size..]) rescue nil)
+               else
+                 Krikri.non_string_scalar(raw) || JSON::Any.new(raw)
+               end
+      return false unless native
+      case value = native.raw
+      when Bool
+        value
+      when Int32, Int64, Float64
+        value == 1
+      when String
+        case value.strip.downcase
+        when "y", "yes", "on", "1", "true", "t"  then true
+        when "n", "no", "off", "0", "false", "f" then false
+        else                                          false
+        end
+      else
+        false
+      end
     end
 
     private def debug_if_requested(task : Task, host : Host, result : JSON::Any) : JSON::Any

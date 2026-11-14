@@ -3052,6 +3052,18 @@ module Krikri
       Krikri::NATIVE_TYPED_PREFIX + typed.to_json
     end
 
+    # The NATIVE_TYPED_PREFIX-marked counterpart of
+    # #native_typed_container_value, for the parse-time literal containers
+    # (set_stats' `data` mapping): strips the marker, types the leaves,
+    # then puts the marker back so the consumer still knows the argument's
+    # own type. nil when the rewriter cannot type every leaf (a `{% %}`
+    # block tag renders to plain text), leaving the marked value to the
+    # flat substitution - the dict-ness survives either way.
+    private def native_typed_marked_container_value(substitutor : VarSubstitutor, stripped_value : String) : String?
+      return nil unless stripped_value.starts_with?(Krikri::NATIVE_TYPED_PREFIX)
+      native_typed_container_value(substitutor, stripped_value[Krikri::NATIVE_TYPED_PREFIX.size..])
+    end
+
     private def rewrite_native_json_leaves(substitutor : VarSubstitutor, node : JSON::Any) : JSON::Any?
       case raw = node.raw
       when String
@@ -3282,6 +3294,15 @@ module Krikri
         # asks for.
         native_msg_param = (key == "msg" && module_name == "ansible.builtin.debug") ||
                            (module_name == "ansible.builtin.assert" && key.in?({"fail_msg", "msg", "success_msg"}))
+        # set_stats' `data` is the one module-looking argument Ansible
+        # templates natively before its ACTION plugin inspects the type:
+        # `data: "{{ a_dict }}"` stays a dict, `data: "{{ a_string }}"`
+        # stays a string its own dict-shape check rejects, and a literal
+        # mapping keeps its dict-ness (the parser marks it
+        # NATIVE_TYPED_PREFIX - see parse_module_params) even though a
+        # string that merely looks like JSON reaches the same wire
+        # (issue #1242).
+        set_stats_data_param = key == "data" && module_name.try(&.ends_with?("set_stats")) == true
         begin
           # inside the begin: native_typed_value's strict-undefined check must
           # get the same "Error while resolving value for '<key>'" wrapper
@@ -3297,7 +3318,7 @@ module Krikri
                            # same rescue chain as every other msg shape.
                            render_debug_msg_container(substitutor, msg_container)
                          else
-                           (native_containers || native_msg_param) && whole_single_span ? native_typed_value(substitutor, stripped_value) : nil
+                           (native_containers || native_msg_param || set_stats_data_param) && whole_single_span ? native_typed_value(substitutor, stripped_value) : nil
                          end
           unless native_typed
             # A set_fact param whose parse-time wire is a JSON container
@@ -3312,6 +3333,13 @@ module Krikri
             # other templated leaf (mixed text, block tags) falls back to
             # the flat substitution, which owns those shapes.
             native_typed = native_containers ? native_typed_container_value(substitutor, stripped_value) : nil
+          end
+          # set_stats' parse-time literal mapping rides the same
+          # NATIVE_TYPED_PREFIX marker, so its templated leaves get the
+          # per-leaf native typing too while the marker tells
+          # #execute_set_stats the argument really was a dict.
+          if !native_typed && set_stats_data_param && stripped_value.starts_with?(Krikri::NATIVE_TYPED_PREFIX)
+            native_typed = native_typed_marked_container_value(substitutor, stripped_value)
           end
           # A MIXED value (literal text around the span) under
           # native_containers still renders to TEXT in real ansible-core -
