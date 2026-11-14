@@ -828,39 +828,33 @@ module Krikri
       VarOrigin.vars_file_origins(path, loaded.keys).each { |key, origin| origins[key] = origin }
     end
 
-    private def execute_include_vars(task : Task, host : Host) : Nil
-      begin
-        vars_context = build_vars_context(task, host)
-      rescue ex : VariableSubstitutor::FilterEngine::UnknownFilterError
-        # Same degrade-to-one-clean-failed-task shape as the include_
-        # tasks/include_role paths' own build_vars_context rescues: the
-        # include_vars: statement's own `vars:` block used an unknown
-        # filter, Ansible fails just that task with "No filter
-        # named 'X'." - via this file's own include_vars failure shape
-        # (stats/halt/print, respecting ignore_errors:).
-        finish_include_vars_failure(task, host, ex.message || "Failed to render task vars")
-        return
-      end
-
-      # Ansible's include_vars action validates its own arguments at the
-      # START of its run (the Ansible module's validate
-      # loop), before anything is looked up: the first unknown key fails
-      # the task ("<key> is not a valid option in include_vars"), then a
-      # file:-style key beside a dir:-style key fails ("You are mixing
-      # file only and dir only arguments, these are incompatible"), and
-      # with neither file nor dir the null source_file reaches
-      # _find_needle - which warns on stderr and fails with "Could not
-      # find file on the Ansible Controller. ...". The first two shapes
-      # are an AnsibleActionFail (fatal dump carries only changed + the
-      # wrapped msg); the null-file one is the action's own failed result
-      # (message + empty ansible_facts/ansible_included_var_files).
+    # Ansible's include_vars action validates its own arguments at the
+    # START of its run (the module's validate loop), before anything is
+    # looked up: the first unknown key fails the task ("<key> is not a
+    # valid option in include_vars"), then a file:-style key beside a
+    # dir:-style key fails ("You are mixing file only and dir only
+    # arguments, these are incompatible"), and with neither file nor dir
+    # the null source_file reaches _find_needle - which warns on stderr
+    # and fails with "Could not find file on the Ansible Controller. ...".
+    # The first shapes are an AnsibleActionFail (fatal dump carries only
+    # changed + the wrapped msg); the null-file one is the action's own
+    # failed result (message + empty ansible_facts/
+    # ansible_included_var_files).
+    #
+    # Callers run this ONLY after their `when:` verdict: real's strategy
+    # evaluates the conditional before it ever invokes the action, so a
+    # `when:` that skips the task (or raises) keeps every failure below
+    # from being reached at all (issue #1232).
+    #
+    # Returns the failure message plus whether it is the AnsibleActionFail
+    # shape (true) or the action's own failed result (false), or nil when
+    # the arguments are valid.
+    private def include_vars_early_failure(task : Task, name_unhashable : String?) : {String, Bool}?
       if invalid = task.include_vars_invalid_arg
-        finish_include_vars_arg_failure(task, host, "#{invalid} is not a valid option in include_vars")
-        return
+        return {"#{invalid} is not a valid option in include_vars", true}
       end
       if task.include_vars_mixed?
-        finish_include_vars_arg_failure(task, host, "You are mixing file only and dir only arguments, these are incompatible")
-        return
+        return {"You are mixing file only and dir only arguments, these are incompatible", true}
       end
       # A truthy non-string file:/dir: crashes Ansible's own action plugin
       # where it uses the value as a path (include_vars.py's
@@ -875,25 +869,23 @@ module Krikri
       # 2.21.6).
       # 2.20 deprecated (but still accepts) a bare-string
       # `ignore_files:`; the warning rides the console like every other
-      # deprecation, deduped by the display.
+      # deprecation, deduped by the display. It is emitted here (not by
+      # the callers) so a skipped when: prints nothing, as real's own
+      # never-run action does.
       if task.include_vars_ignore_files_string_deprecated?
         ResultDisplay.emit_core_deprecation(
           "Specifying 'ignore_files' as a string is deprecated. This feature will be removed from action plugin 'include_vars' in ansible-core version 2.24.")
       end
       # 2.20 turned a non-list `extensions:` into a hard failure.
       if task.include_vars_extensions_type_error?
-        finish_include_vars_arg_failure(task, host, "The 'extensions' option must be a list.")
-        return
+        return {"The 'extensions' option must be a list.", true}
       end
       if type_name = task.include_vars_dir_type_error
-        finish_include_vars_arg_failure(task, host, "join() argument must be str, bytes, or os.PathLike object, not '#{type_name}'")
-        return
+        return {"join() argument must be str, bytes, or os.PathLike object, not '#{type_name}'", true}
       end
       if type_name = task.include_vars_file_type_error
-        finish_include_vars_arg_failure(task, host, "'#{type_name}' object has no attribute 'split'")
-        return
+        return {"'#{type_name}' object has no attribute 'split'", true}
       end
-      name_key, name_unhashable = include_vars_name_shape(task)
       unless task.include_vars_dir || task.include_vars_file
         # The dataloader's "null lookup value" warning rides the
         # result's own `warnings` key (printed by the result display,
@@ -904,12 +896,36 @@ module Krikri
         # truthy unhashable `name:` supersedes the null-file failure
         # with the unhashable crash (see include_vars_name_shape).
         if unhashable = name_unhashable
-          finish_include_vars_arg_failure(task, host, "unhashable type: '#{unhashable}'")
-        else
-          finish_include_vars_failure(task, host, "include_vars: null file")
+          return {"unhashable type: '#{unhashable}'", true}
         end
+        return {"include_vars: null file", false}
+      end
+      nil
+    end
+
+    private def execute_include_vars(task : Task, host : Host) : Nil
+      begin
+        vars_context = build_vars_context(task, host)
+      rescue ex : VariableSubstitutor::FilterEngine::UnknownFilterError
+        # Same degrade-to-one-clean-failed-task shape as the include_
+        # tasks/include_role paths' own build_vars_context rescues: the
+        # include_vars: statement's own `vars:` block used an unknown
+        # filter, Ansible fails just that task with "No filter
+        # named 'X'." - via this file's own include_vars failure shape
+        # (stats/halt/print, respecting ignore_errors:).
+        finish_include_vars_failure(task, host, ex.message || "Failed to render task vars")
         return
       end
+
+      # Ansible's include_vars action validates its own arguments only once
+      # it RUNS, and the strategy's conditional stage runs first: a `when:`
+      # that skips the task, or raises while being evaluated, wins over
+      # every argument failure there is (issue #1232 - a typo'd `flie:`
+      # beside a `when:` reading a `meta:` task's absent register reported
+      # the argument error where real reported the conditional's raise).
+      # Every path below therefore calls include_vars_early_failure only
+      # after its when: verdict (or per item, for a loop).
+      name_key, name_unhashable = include_vars_name_shape(task)
 
       # The dir: form (load every vars file in a directory) runs through
       # its own path below - before the loop machinery, which keys off
@@ -1052,6 +1068,27 @@ module Krikri
             puts "failed: [#{failed_host_label}] => (item=#{item_label})".colorize(:red)
             puts "  Message: #{ex.message}".colorize(:red)
             failed = true
+            next
+          end
+
+          if early = include_vars_early_failure(task, name_unhashable)
+            message, arg_level = early
+            unless arg_level
+              # The null-file lookup is the action's own failure result
+              # (message + empty ansible_facts), whose display shape
+              # display_include_vars_failure already owns.
+              finish_include_vars_failure(task, host, message)
+              return
+            end
+            display_include_vars_item_arg_failure(task, host, item_context, item, item_label, message)
+            failed = true
+            item_results << JSON::Any.new({
+              "item"      => item,
+              "changed"   => JSON::Any.new(false),
+              "failed"    => JSON::Any.new(true),
+              "exception" => JSON::Any.new("(traceback unavailable)"),
+              "msg"       => JSON::Any.new("Task failed: #{message}"),
+            } of String => JSON::Any)
             next
           end
 
@@ -1304,6 +1341,18 @@ module Krikri
         return
       end
 
+      # The conditional has passed, so real now runs the action and hits
+      # its own argument validation / null-file lookup.
+      if early = include_vars_early_failure(task, name_unhashable)
+        message, arg_level = early
+        if arg_level
+          finish_include_vars_arg_failure(task, host, message)
+        else
+          finish_include_vars_failure(task, host, message)
+        end
+        return
+      end
+
       # The file may be chosen by with_first_found (exposed as `item`) or
       # given directly; either way it is templated.
       substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
@@ -1431,6 +1480,14 @@ module Krikri
         return unless when_passes?(task, vars_context, host)
       rescue ex : WhenEvaluationError
         swallow_when_error(task, host, ex)
+        return
+      end
+
+      # The conditional has passed, so real now runs the action and hits
+      # its own argument validation (see include_vars_early_failure).
+      if early = include_vars_early_failure(task, nil)
+        message, _arg_level = early
+        finish_include_vars_arg_failure(task, host, message)
         return
       end
 
@@ -1962,6 +2019,24 @@ module Krikri
       h["_ansible_action_level"] = JSON::Any.new(true)
       h["_ansible_error_detail"] = JSON::Any.new("Action failed: Unknown error.")
       ResultDisplay.display_result(host, JSON::Any.new(h), @diff_mode, item_label: item_label, ignore_errors: task.ignore_errors?, no_log: include_vars_no_log?(task, host), module_name: task.module_name, delegate_target: delegate_display_target(task, host, item_context), source_task: task, loop_item: item, loop_var_name: task.loop_var)
+    end
+
+    # A looped include_vars:'s argument-validation failure is the
+    # AnsibleActionFail shape (only changed + the wrapped msg, no
+    # ansible_facts/message keys), reported per item - real raises it
+    # inside the action for every item the conditional lets through
+    # (live-verified vs 2.21.6: `flie:` with a two-item loop prints two
+    # `failed: [host] (item=N) => {changed, failed, msg}` lines, one
+    # [ERROR] chain over the task).
+    private def display_include_vars_item_arg_failure(task : Task, host : Host, item_context : Hash(String, JSON::Any), item : JSON::Any, item_label : String, message : String) : Nil
+      result_json = JSON::Any.new({
+        "changed"               => JSON::Any.new(false),
+        "failed"                => JSON::Any.new(true),
+        "msg"                   => JSON::Any.new("Task failed: #{message}"),
+        "_ansible_action_level" => JSON::Any.new(true),
+        "_ansible_error_detail" => JSON::Any.new(message),
+      } of String => JSON::Any)
+      ResultDisplay.display_result(host, result_json, @diff_mode, item_label: item_label, ignore_errors: task.ignore_errors?, no_log: include_vars_no_log?(task, host), module_name: task.module_name, delegate_target: delegate_display_target(task, host, item_context), source_task: task, loop_item: item, loop_var_name: task.loop_var)
     end
 
     # The "Could not find or access '<file>'" message Ansible 2.19.11
