@@ -39,6 +39,11 @@ module Krikri
     # comes close to this; the cap only stops adversarial cycles.
     private MAX_REDIRECT_HOPS = 12
 
+    # ansible-core's own MODULE_IGNORE_EXTS: the extensions its loader's
+    # fuzzy module match skips, so an editor backup or a README beside a
+    # module never counts as the module.
+    MODULE_IGNORE_EXTS = %w[.pyc .pyo .swp .bak ~ .rpm .md .txt .rst .yaml .yml .ini]
+
     # Collection roots: directories that CONTAIN an `ansible_collections/`
     # tree, in real's own search order (ANSIBLE_COLLECTIONS_PATH first,
     # then the user and system install locations, then the ansible-core
@@ -920,6 +925,11 @@ module Krikri
     end
 
     private def self.collection_leaf_file?(kind : String, dir : String, leaf : String) : Bool
+      # A dotted leaf is not a file name at all: ansible-core's FQCR
+      # grammar reads it as subdir segments (below the plugin-type dir)
+      # plus the resource and resolves it via the collection package
+      # importer - see collection_subdir_leaf_file?.
+      return collection_subdir_leaf_file?(kind, dir, leaf) if leaf.includes?('.')
       # The lookup kind checks ONLY the lookup plugin directory - a
       # collection that ships a module named X does not provide a lookup
       # named X, and treating it as one would keep the bare-name
@@ -927,6 +937,69 @@ module Krikri
       return File.exists?(File.join(dir, "plugins", "lookup", "#{leaf}.py")) if kind == "lookup"
       return true if File.exists?(File.join(dir, "plugins", "modules", "#{leaf}.py"))
       kind == "action" && File.exists?(File.join(dir, "plugins", "action", "#{leaf}.py"))
+    end
+
+    # An FQCR may carry plugin-type SUBDIR segments
+    # (`ns.coll.subdir.resource`), and ansible-core resolves one by
+    # importing `ansible_collections.ns.coll.plugins.<kind>.<subdirs>` as
+    # a package and looking the resource up beside it. A subdir segment
+    # naming a plugin FILE (plugins/modules/subdir.py) is imported as a
+    # package whose dirname is the plugin-type directory itself, so the
+    # resource lookup happens in that directory: that is why
+    # `community.general.locale_gen.locale_gen` resolves to
+    # plugins/modules/locale_gen.py and RUNS it (live-verified against
+    # ansible-core 2.21.6 - lifeofguenter.reset_locale, issue #1253,
+    # where real ran the role past this task while this engine refused
+    # the whole playbook at load). A segment that is neither a real
+    # directory nor the LAST segment naming a plugin file kills the
+    # import, and real refuses the name.
+    private def self.collection_subdir_leaf_file?(kind : String, dir : String, leaf : String) : Bool
+      segments = leaf.split('.')
+      resource = segments.pop
+      return false if segments.empty? || resource.empty?
+
+      path = File.join(dir, "plugins", kind)
+      segments.each_with_index do |segment, index|
+        nested = File.join(path, segment)
+        if Dir.exists?(nested)
+          path = nested
+          next
+        end
+        return false unless index == segments.size - 1 && File.exists?(File.join(path, "#{segment}.py"))
+        return plugin_resource_file?(kind, path, resource)
+      end
+      plugin_resource_file?(kind, path, resource)
+    end
+
+    # The resource file beside a resolved subdir "package": modules load
+    # extension-lessly (exact name, then a fuzzy `<resource>.*` match
+    # excluding MODULE_IGNORE_EXTS), action/lookup plugins need `.py`.
+    private def self.plugin_resource_file?(kind : String, dir : String, resource : String) : Bool
+      exact = File.join(dir, resource)
+      case kind
+      when "modules"
+        return true if File.exists?(exact)
+        Dir.glob("#{exact}.*").sort.any? do |candidate|
+          File.file?(candidate) && !MODULE_IGNORE_EXTS.any? { |ext| candidate.ends_with?(ext) }
+        end
+      else
+        File.exists?(File.join(dir, "#{resource}.py"))
+      end
+    end
+
+    # Whether real's loader resolves `name` as an FQCR whose subdir
+    # segments sit below the collection's plugins/modules/ dir (see
+    # collection_subdir_leaf_file?). The parser uses this to map such a
+    # name onto the resource module it actually runs, so a name the
+    # controller would refuse never resolves here either.
+    def self.fqcr_subdir_resolves?(name : String) : Bool
+      parts = name.split('.')
+      return false if parts.size < 4
+      return false if parts[0] == "ansible" && (parts[1] == "builtin" || parts[1] == "legacy")
+      dirs = collection_dirs["#{parts[0]}.#{parts[1]}"]?
+      return false unless dirs
+      leaf = parts[2..].join('.')
+      dirs.any? { |dir| collection_subdir_leaf_file?("modules", dir, leaf) }
     end
 
     # Role-private / playbook-adjacent `library/<name>` module source -
@@ -938,7 +1011,6 @@ module Krikri
       short = name.rpartition('.')[2]
       return false if short.empty?
 
-      ignore_exts = [".pyc", ".pyo", ".swp", ".bak", "~", ".rpm", ".md", ".txt", ".rst", ".yaml", ".yml", ".ini"]
       roots = [] of String
       roots << File.join(role_path, "library") if role_path
       roots.concat(PythonFilterRunner.loaded_role_roots("library"))
@@ -951,7 +1023,7 @@ module Krikri
         # btrfs_subvolume.py -> ../submodules/..., an uninitialised git
         # submodule) is no module file: ansible-core refuses the name.
         found = Dir.glob(File.join(root, "#{short}.*")).sort.any? do |other|
-          File.file?(other) && !ignore_exts.any? { |ext| other.ends_with?(ext) }
+          File.file?(other) && !MODULE_IGNORE_EXTS.any? { |ext| other.ends_with?(ext) }
         end
         return true if found
       end
