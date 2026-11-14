@@ -75,3 +75,36 @@ describe "mount_facts: ansible_facts shape" do
     end
   end
 end
+
+describe "mount_facts: mount_facts.py main() argument guards" do
+  # mount_facts.py declares mount_binary `type: raw` and timeout `type:
+  # float`, so AnsibleModule's generic argspec checks let a wrong-typed
+  # value through and main() rejects it itself. An unquoted YAML scalar
+  # crosses the strings-only plugin wire under NON_STRING_PARAM_PREFIX,
+  # which is the only place the native type survives.
+  it "fails an unquoted non-string mount_binary like Ansible's own main() check" do
+    result = run_mount_facts({"mount_binary" => Krikri::NON_STRING_PARAM_PREFIX + "81"}.to_json)
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("argument 'mount_binary' must be a string or null, not 81")
+  end
+
+  it "fails a non-positive timeout like Ansible's own main() check" do
+    result = run_mount_facts({"timeout" => "0"}.to_json)
+    result["failed"].as_bool.must_equal(true)
+    # Ansible reports the argspec-converted float, so an int 0 prints 0.0.
+    result["msg"].as_s.must_equal("argument 'timeout' must be a positive number or null, not 0.0")
+  end
+
+  it "converts a native bool timeout the way Ansible's float checker does" do
+    result = run_mount_facts({"timeout" => Krikri::NON_STRING_PARAM_PREFIX + "false"}.to_json)
+    result["msg"].as_s.must_equal("argument 'timeout' must be a positive number or null, not 0.0")
+  end
+
+  it "keeps accepting a string mount_binary and an explicit null" do
+    ["mount", Krikri::NONE_SENTINEL].each do |binary|
+      result = run_mount_facts({"mount_binary" => binary}.to_json)
+      result["failed"]?.try(&.as_bool).must_equal(false) if result["failed"]?
+      result["ansible_facts"]?.wont_be_nil
+    end
+  end
+end
