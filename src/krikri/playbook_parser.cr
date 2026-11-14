@@ -673,6 +673,17 @@ module Krikri
     # the keyword-failure chain's middle link must be pointed at the
     # block's own line the way ansible-core 2.19 does.
     property block_name_chain_origins : Array(String?)?
+    # Which of Ansible's handler BLOCKS this handler was loaded in. The
+    # strategy resolves a notification by walking the play's handler
+    # blocks in REVERSE (a later block wins over an earlier one) but each
+    # block FORWARD, so inside one block the FIRST same-named definition
+    # wins, not the last. Each role's handlers/main.yml and the play's own
+    # handlers: section are one block apiece. Without this id the flat
+    # handler list let the last definition win everywhere, so
+    # mahdi22.postgresql's two same-named "Apt Update" handlers ran the
+    # unguarded copy under krikri while ansible ran (and skipped) the
+    # guarded first one (issue #1254).
+    property handler_block_id : Int32 = 0
     # Set on every task loaded from a role (tasks/main.yml and
     # handlers/main.yml alike) by RoleLoader. role_defaults is the lowest
     # precedence tier (role's defaults/main.yml); role_vars sits above
@@ -2993,6 +3004,10 @@ module Krikri
       if handlers_yaml = yaml["handlers"]?.try(&.as_a?)
         own_handlers = parse_tasks(handlers_yaml, play, "handler", playbook_dir, playbook_dir: playbook_dir, source_file: source_file, source_map: source_map, source_prefix: "#{index}/handlers", handler: true)
       end
+      # The play's own handlers: section is one handler block of its own,
+      # loaded after every role's blocks - see Task#handler_block_id.
+      play_handlers_block_id = (role_handlers.max_of?(&.handler_block_id) || 0) + 1
+      own_handlers.each { |handler| handler.handler_block_id = play_handlers_block_id }
       play.handlers = role_handlers + own_handlers
 
       # Play-level ignore_errors: reaches every task and handler (ansible
