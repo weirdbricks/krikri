@@ -321,4 +321,36 @@ describe "validate_argument_spec output parity" do
     output.must_include("Incorrect type for provided_arguments, expected dict and got <class 'ansible.module_utils._internal._datatag._AnsibleTaggedInt'>")
     output.must_include("ignored=1")
   end
+
+  it "keeps a template's own value type instead of re-parsing its text (issue #1264)" do
+    status, output = run_playbook("pb.yml", {
+      "pb.yml" => "- hosts: all\n  gather_facts: false\n  vars:\n    json_text: '{\"a\": 1}'\n    bool_text: 'true'\n    float_val: 1.5\n    bool_val: true\n  tasks:\n    - name: json-looking string template provided\n      ansible.builtin.validate_argument_spec:\n        argument_spec: {}\n        provided_arguments: \"{{ json_text }}\"\n      ignore_errors: true\n    - name: bool-looking string template provided\n      ansible.builtin.validate_argument_spec:\n        argument_spec: {}\n        provided_arguments: \"{{ bool_text }}\"\n      ignore_errors: true\n    - name: float provided\n      ansible.builtin.validate_argument_spec:\n        argument_spec: {}\n        provided_arguments: \"{{ float_val }}\"\n      ignore_errors: true\n    - name: bool provided\n      ansible.builtin.validate_argument_spec:\n        argument_spec: {}\n        provided_arguments: \"{{ bool_val }}\"\n      ignore_errors: true\n",
+    })
+
+    # Real templates the args and type-checks the RESULT, so a variable
+    # holding the STRING '{"a": 1}' (or 'true') stays a tagged str and
+    # fails instead of being read back as a container/bool; floats and
+    # bools keep their own classes (live-verified vs 2.19.11).
+    status.exit_code.must_equal(0)
+    output.must_include("provided_arguments, expected dict and got <class 'ansible.module_utils._internal._datatag._AnsibleTaggedStr'>")
+    output.must_include("provided_arguments, expected dict and got <class 'ansible.module_utils._internal._datatag._AnsibleTaggedFloat'>")
+    output.must_include("provided_arguments, expected dict and got <class 'bool'>")
+    output.wont_include("missing required arguments")
+    output.wont_include("ok: [localhost]")
+    output.must_include("ignored=4")
+  end
+
+  it "still registers a failed provided_arguments type check (issue #1264)" do
+    status, output = run_playbook("pb.yml", {
+      "pb.yml" => "- hosts: all\n  gather_facts: false\n  tasks:\n    - name: 'Validate_argument_spec #20.0'\n      ansible.builtin.validate_argument_spec:\n        argument_spec: {}\n        provided_arguments: 49\n      register: kpg_task_0\n      ignore_errors: true\n    - name: gated on the register\n      ansible.builtin.debug:\n        msg: ran\n      when: kpg_task_0 is not skipped\n",
+    })
+
+    # The action-level failure still lands the register, so a later
+    # `when: <reg> is not skipped` gate runs its task instead of raising
+    # an undefined-name error.
+    status.exit_code.must_equal(0)
+    output.must_include("...ignoring")
+    output.must_include("ran")
+    output.must_include("ignored=1")
+  end
 end
