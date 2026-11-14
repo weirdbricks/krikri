@@ -101,6 +101,57 @@ describe "register: on an include_tasks:/include_role: statement" do
     File.delete(playbook) if playbook && File.exists?(playbook)
   end
 
+  it "registers the failed result of an unconvertible bool keyword, so a later when: skips" do
+    # Issue #1275: real converts the bool keywords before resolving the
+    # role, fails the task on rolespec_validate even when an earlier
+    # keyword (public:) is convertible, and registers the failed result -
+    # so `when: reg is succeeded` skips where krikri failed it as
+    # "'reg' is undefined" (live-verified vs 2.21.6 in and out of --check).
+    src_dir = File.tempname("include-register-boolkw")
+    Dir.mkdir_p(File.join(src_dir, "roles", "kpg_boolkw_role", "tasks"))
+    File.write(File.join(src_dir, "roles", "kpg_boolkw_role", "tasks", "main.yml"), <<-YAML)
+      - ansible.builtin.debug:
+          msg: never runs
+      YAML
+    playbook = File.join(src_dir, "pb.yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        gather_facts: false
+        tasks:
+          - ansible.builtin.include_role:
+              name: kpg_boolkw_role
+              public: true
+              rolespec_validate: bluqcw
+            register: role_reg
+            ignore_errors: true
+          - ansible.builtin.debug:
+              var: role_reg
+          - ansible.builtin.debug:
+              msg: ran
+            when: role_reg is succeeded
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output, chdir: src_dir)
+    status.success?.must_equal(true)
+    output.to_s.must_include(%("failed": true))
+    output.to_s.must_include(
+      %("msg": "Task failed: Error processing keyword 'rolespec_validate': The value 'bluqcw' could not be converted to 'bool'."))
+    output.to_s.wont_include(%("msg": "never runs"))
+    output.to_s.wont_include(%("msg": "ran"))
+
+    [["--check"], [] of String].each do |extra|
+      output = IO::Memory.new
+      status = Process.run(BINARY, ["-i", INVENTORY] + extra + [playbook],
+        output: output, error: output, chdir: src_dir)
+      status.success?.must_equal(true)
+      output.to_s.wont_include(%("msg": "ran"))
+      output.to_s.must_match(/failed=0\s+skipped=1\s+rescued=0\s+ignored=1/)
+    end
+  ensure
+    FileUtils.rm_rf(src_dir) if src_dir && Dir.exists?(src_dir)
+  end
+
   it "registers the include_role's include_args with the rendered role name" do
     # Same layout the other role integration specs use: a tempdir with a
     # roles/ subtree next to the playbook, so the role resolves without any

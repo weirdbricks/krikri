@@ -3514,6 +3514,20 @@ module Krikri
       delegate_target = delegate_display_target(task, host)
       fatal_host_label = delegate_target ? "#{host.name} -> #{delegate_target}" : connection_host
       brief = "Task failed: #{failure.brief}"
+      # Real registers the failed result like any other task failure
+      # (live-verified vs 2.21.6: {changed, failed, exception, msg}), so a
+      # later `when: reg is succeeded` skips instead of failing on an
+      # undefined var (issue #1275). register_result backfills the
+      # `exception` placeholder and ansible's key order.
+      if register_name = task.register
+        unless register_name.empty?
+          register_result(host, register_name, JSON::Any.new({
+            "changed" => JSON::Any.new(false),
+            "failed"  => JSON::Any.new(true),
+            "msg"     => JSON::Any.new(brief),
+          } of String => JSON::Any))
+        end
+      end
       if Krikri::Oneline.enabled?
         # The [ERROR] chain block and the fatal:/failed: shape are
         # default-callback output; oneline renders the exception line

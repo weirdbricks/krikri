@@ -87,7 +87,11 @@ module Krikri
         value = role_args[keyword]?
         next unless value
         next if templated?(value)
-        return nil if convertible_to_bool?(value)
+        # One convertible keyword says nothing about the rest: real
+        # converts every one of them in order and reports the first that
+        # fails, so `public: true` followed by `rolespec_validate:
+        # bluqcw` fails on rolespec_validate (live-verified vs 2.21.6).
+        next if convertible_to_bool?(value)
         return Failure.new(keyword, python_repr(value))
       end
       nil
