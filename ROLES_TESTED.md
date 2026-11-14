@@ -15847,7 +15847,7 @@ Local probe roles, not Galaxy roles: each probed task registers its result and d
 | `hemanth22.centosgui` | rocky | ✅ Clean (round29895558, 0.9.2292 debug). |
 | `hyperized.unattended_upgrades` | ubuntu | ✅ Clean (round29895509, 0.9.2292 debug). |
 | `iancleary.colorls` | ubuntu | ❌ Divergent - issue #788 (round29895573, 0.9.2292 debug). |
-| `indigo-dc_ambertools` | ubuntu | ❌ BLOCKED: (round29895555, 0.9.2292 debug). |
+| `indigo-dc_ambertools` | ubuntu | ❌ BLOCKED: (round29910463, 0.9.2707 debug, ansible-core 2.21.6). |
 | `infra_monkey.linux_user` | rocky | ✅ Clean (round29895514, 0.9.2292 debug). |
 | `infra_monkey.system_update` | rocky | ✅ Clean (round29895568, 0.9.2292 debug). |
 | `jacoelho.elixir` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29895542, 0.9.2292 debug). |
@@ -17601,3 +17601,102 @@ Local probe roles, not Galaxy roles: each probed task registers its result and d
 | `victorock.network_discovery` | rocky | ✅ Clean (round29909912, 0.9.2685 debug, ansible-core 2.21.6). |
 | `webarchitect609.oracle_java` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29909862, 0.9.2685 debug, ansible-core 2.21.6). |
 | `wms_ansible.yum` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29909851, 0.9.2685 debug, ansible-core 2.21.6). |
+| `0xRedpoll.ludus_cobaltstrike_teamserver` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29910475, 0.9.2707 debug, ansible-core 2.21.6). |
+| `Akman.ocstore_log` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29910538, 0.9.2707 debug, ansible-core 2.21.6). |
+| `AlbanAndrieu.private_bower` | ubuntu | ✅ Clean (round29910543, 0.9.2707 debug, ansible-core 2.21.6). |
+| `AlbanAndrieu.zfs` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29910521, 0.9.2707 debug, ansible-core 2.21.6). |
+| `AlphaHydrae.go` | rocky | ✅ Clean (round29910540, 0.9.2707 debug, ansible-core 2.21.6). |
+| `CarlosLongarela.prestashop` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29910502, 0.9.2707 debug, ansible-core 2.21.6). |
+| `Cloud-PG.mesos` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29910528, 0.9.2707 debug, ansible-core 2.21.6). |
+| `abarrak.docker_server_role` | ubuntu | ❌ Divergent - issue #1256 (round29910523, 0.9.2707 debug, ansible-core 2.21.6). |
+| `aboveops.ct_monicahq` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29910494, 0.9.2707 debug, ansible-core 2.21.6). |
+| `abrararshad.mariadb_import` | ubuntu | ❌ Divergent - issue #1257 (round29910493, 0.9.2707 debug, ansible-core 2.21.6). |
+| `abrararshad.rabbitmq_consumer` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29910513, 0.9.2707 debug, ansible-core 2.21.6). |
+| `adamus1red.ansible_snmp` | rocky | ✅ Clean (round29910534, 0.9.2707 debug, ansible-core 2.21.6). |
+| `adrianlut.expinfo` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29910542, 0.9.2707 debug, ansible-core 2.21.6). |
+| `ajay0988.k8s_master_configuration` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29910539, 0.9.2707 debug, ansible-core 2.21.6). |
+| `ajeetrai266.kube_master` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29910544, 0.9.2707 debug, ansible-core 2.21.6). |
+| `almaops.systemd` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29910474, 0.9.2707 debug, ansible-core 2.21.6). |
+| `amine7777_ansible` | ubuntu | ❌ BLOCKED: (round29910504, 0.9.2707 debug, ansible-core 2.21.6). |
+| `amtega.ocs_agent` | rocky | ✅ Clean (round29910466, 0.9.2707 debug, ansible-core 2.21.6). |
+| `andrewrothstein.druid` | rocky | ✅ Clean (round29910512, 0.9.2707 debug, ansible-core 2.21.6). |
+| `andrewrothstein.rstudio` | rocky | ✅ Clean (round29910550, 0.9.2707 debug, ansible-core 2.21.6). |
+| `andrewrothstein.traefik` | ubuntu | ✅ Clean (round29910467, 0.9.2707 debug, ansible-core 2.21.6). |
+| `antoniobarbaro.ossec-server` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29910548, 0.9.2707 debug, ansible-core 2.21.6). |
+| `ashokgelal.mysql` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29910549, 0.9.2707 debug, ansible-core 2.21.6). |
+| `ateoto.docker` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29910546, 0.9.2707 debug, ansible-core 2.21.6). |
+| `authsec.myzsh` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29910496, 0.9.2707 debug, ansible-core 2.21.6). |
+| `bastly.pythondev` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29910487, 0.9.2707 debug, ansible-core 2.21.6). |
+| `cecepm.locale` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29910476, 0.9.2707 debug, ansible-core 2.21.6). |
+| `cetic.liferay` | rocky | ✅ Clean (round29910522, 0.9.2707 debug, ansible-core 2.21.6). |
+| `chilcano.istio` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29910552, 0.9.2707 debug, ansible-core 2.21.6). |
+| `chriscroome.kitty` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29910464, 0.9.2707 debug, ansible-core 2.21.6). |
+| `ckaserer.nginx` | ubuntu | ✅ Clean (round29910473, 0.9.2707 debug, ansible-core 2.21.6). |
+| `cmusei.rwreceiver` | ubuntu | ❌ Divergent - issue #1258 (round29910465, 0.9.2707 debug, ansible-core 2.21.6). |
+| `coxley.packer` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29910541, 0.9.2707 debug, ansible-core 2.21.6). |
+| `daniel-rhoades.hippo-tomcat` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29910507, 0.9.2707 debug, ansible-core 2.21.6). |
+| `derekmerck.redis_docker` | ubuntu | ✅ Clean (round29910491, 0.9.2707 debug, ansible-core 2.21.6). |
+| `devops_cmp.ansible_filebeat` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29910559, 0.9.2707 debug, ansible-core 2.21.6). |
+| `devops.sshd` | rocky | ✅ Clean (round29910506, 0.9.2707 debug, ansible-core 2.21.6). |
+| `devsoul.phpcpd` | rocky | ✅ Clean (round29910500, 0.9.2707 debug, ansible-core 2.21.6). |
+| `djangoxv.awx_debian` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29910536, 0.9.2707 debug, ansible-core 2.21.6). |
+| `donbowman.ansible-network-interfaces` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29910531, 0.9.2707 debug, ansible-core 2.21.6). |
+| `drew1kun.pihole` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29910482, 0.9.2707 debug, ansible-core 2.21.6). |
+| `dubzland.hostname` | rocky | ❌ Divergent - issue #1259 (round29910532, 0.9.2707 debug, ansible-core 2.21.6). |
+| `elnebuloso.optipng` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29910535, 0.9.2707 debug, ansible-core 2.21.6). |
+| `emmetog.ansible_role_redis` | rocky | ✅ Clean (round29910480, 0.9.2707 debug, ansible-core 2.21.6). |
+| `franlr.ocs` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29910472, 0.9.2707 debug, ansible-core 2.21.6). |
+| `freedomofpress.signal-desktop` | ubuntu | ✅ Clean (round29910489, 0.9.2707 debug, ansible-core 2.21.6). |
+| `freehck.cassandra` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29910469, 0.9.2707 debug, ansible-core 2.21.6). |
+| `gcoop-libre.suitecrm` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29910470, 0.9.2707 debug, ansible-core 2.21.6). |
+| `guillermodotn.vscodium` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29910524, 0.9.2707 debug, ansible-core 2.21.6). |
+| `hnakamur.osx-login-shell` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29910471, 0.9.2707 debug, ansible-core 2.21.6). |
+| `idealista.jira-role` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29910561, 0.9.2707 debug, ansible-core 2.21.6). |
+| `idealista.superset_role` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29910527, 0.9.2707 debug, ansible-core 2.21.6). |
+| `indexyz.wireguard` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29910495, 0.9.2707 debug, ansible-core 2.21.6). |
+| `insight_nervos.btcpool` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29910560, 0.9.2707 debug, ansible-core 2.21.6). |
+| `jeqo.netbeans` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29910511, 0.9.2707 debug, ansible-core 2.21.6). |
+| `jumperfly.java` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29910483, 0.9.2707 debug, ansible-core 2.21.6). |
+| `klaatu51.packer` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29910555, 0.9.2707 debug, ansible-core 2.21.6). |
+| `kunik.nginx-extras` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29910553, 0.9.2707 debug, ansible-core 2.21.6). |
+| `laniakea.jupyterhub` | ubuntu | ✅ Clean (round29910547, 0.9.2707 debug, ansible-core 2.21.6). |
+| `laxathom.cachet` | rocky | ✅ Clean (round29910490, 0.9.2707 debug, ansible-core 2.21.6). |
+| `lean_delivery.minio` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29910545, 0.9.2707 debug, ansible-core 2.21.6). |
+| `lifeofguenter.dante` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29910492, 0.9.2707 debug, ansible-core 2.21.6). |
+| `lifeofguenter.reset_locale` | rocky | ❌ Divergent - issue #1260 (round29910516, 0.9.2707 debug, ansible-core 2.21.6). |
+| `lifeofguenter.timezone` | ubuntu | ✅ Clean (round29910519, 0.9.2707 debug, ansible-core 2.21.6). |
+| `mahadzar81.thruk` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29910499, 0.9.2707 debug, ansible-core 2.21.6). |
+| `mahdi22.postgresql` | ubuntu | ❌ Divergent - issue #1261 (round29910551, 0.9.2707 debug, ansible-core 2.21.6). |
+| `maruina.nginx` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29910481, 0.9.2707 debug, ansible-core 2.21.6). |
+| `mtangaro.vault_secrets_example` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29910503, 0.9.2707 debug, ansible-core 2.21.6). |
+| `mullholland.restic` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29910477, 0.9.2707 debug, ansible-core 2.21.6). |
+| `mylocaldevstack.snipeit` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29910562, 0.9.2707 debug, ansible-core 2.21.6). |
+| `nabello.install_gnu` | ubuntu | ✅ Clean (round29910557, 0.9.2707 debug, ansible-core 2.21.6). |
+| `oasis_roles.package_updater` | rocky | ✅ Clean (round29910468, 0.9.2707 debug, ansible-core 2.21.6). |
+| `onelove-roles.freebsd_node` | ubuntu | ✅ Clean (round29910501, 0.9.2707 debug, ansible-core 2.21.6). |
+| `openapphack.postfix` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29910505, 0.9.2707 debug, ansible-core 2.21.6). |
+| `palkan-ansible.ruby` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29910526, 0.9.2707 debug, ansible-core 2.21.6). |
+| `philnewm_system_packages` | ubuntu | ❌ BLOCKED: (round29910508, 0.9.2707 debug, ansible-core 2.21.6). |
+| `pradeepazavea.azaveapapertrail` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29910485, 0.9.2707 debug, ansible-core 2.21.6). |
+| `probakilla.apt_install` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29910558, 0.9.2707 debug, ansible-core 2.21.6). |
+| `redbeard28.bootstrap` | rocky | ✅ Clean (round29910554, 0.9.2707 debug, ansible-core 2.21.6). |
+| `saravanaprakashbe.was` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29910556, 0.9.2707 debug, ansible-core 2.21.6). |
+| `shomatan.dhcpd` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29910479, 0.9.2707 debug, ansible-core 2.21.6). |
+| `sirreeall.tomcat` | rocky | ✅ Clean (round29910520, 0.9.2707 debug, ansible-core 2.21.6). |
+| `slb350.Ansible-Burrow` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29910478, 0.9.2707 debug, ansible-core 2.21.6). |
+| `softasap.sa-dev-pgweb` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29910530, 0.9.2707 debug, ansible-core 2.21.6). |
+| `ssato.nw_backup_config` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29910486, 0.9.2707 debug, ansible-core 2.21.6). |
+| `stancel.remove_website_user_access` | ubuntu | ✅ Clean (round29910537, 0.9.2707 debug, ansible-core 2.21.6). |
+| `stancel.setup_website_user_access` | ubuntu | ✅ Clean (round29910533, 0.9.2707 debug, ansible-core 2.21.6). |
+| `stephrobert.sshd` | ubuntu | ✅ Clean (round29910525, 0.9.2707 debug, ansible-core 2.21.6). |
+| `titom73.op_deployment` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29910497, 0.9.2707 debug, ansible-core 2.21.6). |
+| `trallnag.asdf_plugin` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29910529, 0.9.2707 debug, ansible-core 2.21.6). |
+| `tschifftner.roundcube` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29910509, 0.9.2707 debug, ansible-core 2.21.6). |
+| `udelarinterior.firewall_proxmox` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29910488, 0.9.2707 debug, ansible-core 2.21.6). |
+| `ufirstgroup.nginx-base-config` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29910484, 0.9.2707 debug, ansible-core 2.21.6). |
+| `weareinteractive.files` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29910510, 0.9.2707 debug, ansible-core 2.21.6). |
+| `webofmars.magephp` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29910517, 0.9.2707 debug, ansible-core 2.21.6). |
+| `weldpua2008.openjdk` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29910515, 0.9.2707 debug, ansible-core 2.21.6). |
+| `wms_ansible.tomcat` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29910498, 0.9.2707 debug, ansible-core 2.21.6). |
+| `wtanaka.m4` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29910514, 0.9.2707 debug, ansible-core 2.21.6). |
+| `youyo.upstart` | rocky | ✅ Clean (round29910518, 0.9.2707 debug, ansible-core 2.21.6). |
