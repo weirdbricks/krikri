@@ -29,7 +29,10 @@ BUILD_MODE="debug"
 STATIC=false
 FORCE=false
 STATIC_PODMAN=false
-SKIP_FUZZ=false
+# bin/differential_fuzz is a dev-only evaluator sweep tool (see
+# src/krikri/differential_fuzz/); nothing shipped links it, so it is
+# opt-in via --differential-fuzz rather than built on every ./build.sh.
+BUILD_FUZZ=false
 
 # Stamp file recording what the binaries in $OUTPUT_DIR were last built
 # as (build mode + static/dynamic linkage + crystal version) - see the
@@ -110,8 +113,14 @@ while [[ $# -gt 0 ]]; do
             STATIC_PODMAN=true
             shift
             ;;
+        --differential-fuzz)
+            BUILD_FUZZ=true
+            shift
+            ;;
         --no-differential-fuzz)
-            SKIP_FUZZ=true
+            # Kept for compatibility with existing scripts/notes: the
+            # tool is already off by default.
+            BUILD_FUZZ=false
             shift
             ;;
         --clean)
@@ -154,7 +163,10 @@ while [[ $# -gt 0 ]]; do
             echo "             at ~/.cache/krikri-static mounted at /cache), installing the"
             echo "             Alpine static libs above first. Implies --release --static,"
             echo "             and adds --force when the stamp says bin/ isn't static."
-            echo "  --no-differential-fuzz  Skip bin/differential_fuzz (a dev-only sweep tool)"
+            echo "  --differential-fuzz  Also build bin/differential_fuzz, the dev-only"
+            echo "             differential sweep tool for the two Jinja evaluators (off by"
+            echo "             default; no shipped binary links it). Its fixed-seed slice"
+            echo "             still runs in the normal test suite."
             echo "  --clean    Remove build artifacts"
             echo ""
             echo "Environment:"
@@ -691,42 +703,46 @@ fi
 echo ""
 
 # Build differential_fuzz (differential fuzzing harness, see
-# src/krikri/differential_fuzz/)
-echo -e "${YELLOW}🔨 Building differential_fuzz...${NC}"
+# src/krikri/differential_fuzz/). Opt-in: no shipped binary links it, and
+# its fixed-seed slice already runs in the test suite, so a plain
+# ./build.sh skips it.
+if [ "$BUILD_FUZZ" = true ]; then
+    echo -e "${YELLOW}🔨 Building differential_fuzz...${NC}"
 
-FUZZ_BINARY="$OUTPUT_DIR/differential_fuzz"
-FUZZ_SOURCE="scripts/differential_fuzz.cr"
+    FUZZ_BINARY="$OUTPUT_DIR/differential_fuzz"
+    FUZZ_SOURCE="scripts/differential_fuzz.cr"
 
-NEEDS_BUILD=false
+    NEEDS_BUILD=false
 
-if [ "$FORCE_ALL" = true ]; then
-    NEEDS_BUILD=true
-elif [ ! -f "$FUZZ_BINARY" ]; then
-    NEEDS_BUILD=true
-elif [ "$FUZZ_SOURCE" -nt "$FUZZ_BINARY" ]; then
-    NEEDS_BUILD=true
-elif find src -name '*.cr' -newer "$FUZZ_BINARY" -print -quit | grep -q .; then
-    # All of src/, not just src/krikri/differential_fuzz: runner.cr
-    # requires ../variable_substitutor, which pulls in 63 of the 65 src
-    # files this binary is built from - both evaluators, filters/,
-    # lookups/, krikri_jinja_filters.cr, jinja_datetime.cr and more.
-    # The subtree-only scan therefore missed exactly the edits this tool
-    # exists to check: after touching an evaluator, a fuzz run reported
-    # "no divergence" from a binary compiled against the old one.
-    NEEDS_BUILD=true
-elif [ -d lib ] && find lib -name '*.cr' -newer "$FUZZ_BINARY" -print -quit | grep -q .; then
-    NEEDS_BUILD=true
-elif [ -n "$(binary_build_flavor "$FUZZ_BINARY")" ] && [ "$(binary_build_flavor "$FUZZ_BINARY")" != "$BUILD_MODE" ]; then
-    NEEDS_BUILD=true
-fi
+    if [ "$FORCE_ALL" = true ]; then
+        NEEDS_BUILD=true
+    elif [ ! -f "$FUZZ_BINARY" ]; then
+        NEEDS_BUILD=true
+    elif [ "$FUZZ_SOURCE" -nt "$FUZZ_BINARY" ]; then
+        NEEDS_BUILD=true
+    elif find src -name '*.cr' -newer "$FUZZ_BINARY" -print -quit | grep -q .; then
+        # All of src/, not just src/krikri/differential_fuzz: runner.cr
+        # requires ../variable_substitutor, which pulls in 63 of the 65 src
+        # files this binary is built from - both evaluators, filters/,
+        # lookups/, krikri_jinja_filters.cr, jinja_datetime.cr and more.
+        # The subtree-only scan therefore missed exactly the edits this tool
+        # exists to check: after touching an evaluator, a fuzz run reported
+        # "no divergence" from a binary compiled against the old one.
+        NEEDS_BUILD=true
+    elif [ -d lib ] && find lib -name '*.cr' -newer "$FUZZ_BINARY" -print -quit | grep -q .; then
+        NEEDS_BUILD=true
+    elif [ -n "$(binary_build_flavor "$FUZZ_BINARY")" ] && [ "$(binary_build_flavor "$FUZZ_BINARY")" != "$BUILD_MODE" ]; then
+        NEEDS_BUILD=true
+    fi
 
-if [ "$SKIP_FUZZ" = true ]; then
-    echo -e "   ${BLUE}-${NC} differential_fuzz (skipped: --no-differential-fuzz)"
-elif [ "$NEEDS_BUILD" = true ]; then
-    MAIN_BUILDS+=("differential_fuzz|$FUZZ_SOURCE|$FUZZ_BINARY")
+    if [ "$NEEDS_BUILD" = true ]; then
+        MAIN_BUILDS+=("differential_fuzz|$FUZZ_SOURCE|$FUZZ_BINARY")
+    else
+        echo -e "   ${BLUE}✓${NC} differential_fuzz (up to date)"
+        echo -e "${GREEN}✅ differential_fuzz up to date${NC}"
+    fi
 else
-    echo -e "   ${BLUE}✓${NC} differential_fuzz (up to date)"
-    echo -e "${GREEN}✅ differential_fuzz up to date${NC}"
+    echo -e "   ${BLUE}-${NC} differential_fuzz (skipped: off by default, use --differential-fuzz)"
 fi
 echo ""
 

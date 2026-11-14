@@ -298,7 +298,9 @@ krikri aims for byte-for-byte identical stdout/stderr/exit code to `ansible-play
   indexing (`missing_var[9]` stays the "undefined" sentinel - the load-bearing shape behind
   `x | default(other.thing.y)`). These live as tight predicates in
   `src/krikri/differential_fuzz/runner.cr` (`KNOWN_DIFFERENCES`); the fixed-seed CI slice is
-  `test/unit/differential_fuzz_test.cr`.
+  `test/unit/differential_fuzz_test.cr`, which runs in the normal suite. The exploratory sweep
+  binary is dev-only and opt-in: no shipped binary links it, so `./build.sh` skips it unless you
+  pass `--differential-fuzz`.
 
 ### Unsafe-data taint is a provenance-closed registry, not an AnsibleUnsafe type
 
