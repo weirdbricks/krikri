@@ -406,3 +406,46 @@ describe "include_vars with a non-string file:/dir: literal" do
     output.must_match(/ignored=1/)
   end
 end
+
+# The dir: form reaches the action through its own executor path, so its
+# argument validation must also sit behind the when: gate (live-verified vs
+# ansible-playbook 2.21.6: a `when: false` typo'd dir: task prints a plain
+# `skipping:`, while a passing condition still reports the bad option).
+describe "include_vars dir: argument validation behind the when: gate" do
+  it "skips a when: false task without reporting its typo'd option" do
+    _, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: dir form
+            include_vars:
+              dir: .
+              flie: vars.yml
+            when: false
+          - debug:
+              msg: after
+    YAML
+
+    output.must_include("skipping: [localhost]")
+    output.wont_include("is not a valid option in include_vars")
+    output.must_include(%("msg": "after"))
+    output.must_match(/skipped=1/)
+  end
+
+  it "still validates the args a passing when: lets through" do
+    _, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - include_vars:
+              dir: .
+              flie: vars.yml
+            when: true
+            ignore_errors: true
+    YAML
+
+    output.must_include("[ERROR]: Task failed: flie is not a valid option in include_vars")
+  end
+end
