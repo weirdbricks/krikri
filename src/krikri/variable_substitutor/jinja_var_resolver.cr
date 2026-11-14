@@ -60,6 +60,16 @@ module Krikri
 
       def resolve(name : String) : KrikriJinja::AnyValue?
         if cached = @cache[name]?
+          # ansible's deprecation tags fire on the READ, not on the value's
+          # preparation. One substitutor renders every param of a task, so a
+          # later param reading a name this resolver already prepared is
+          # still its own templating operation, and real prints its own
+          # block (#1249: yum_repository's baseurl and gpgkey both read
+          # `ansible_distribution` and real warns once per param). The
+          # per-operation records in VarSubstitutor keep a repeated read
+          # inside ONE operation silent, exactly like real's per-tag
+          # first-access rule.
+          note_resolved_name(name)
           return cached
         end
         value = if name == "vars"
@@ -126,6 +136,23 @@ module Krikri
         VarSubstitutor.emit_loop_item_fact_deprecation(name)
         return unless VarSubstitutor.top_level_fact_name?(name, @raw_vars)
         VarSubstitutor.emit_fact_deprecation(VarSubstitutor.fact_read_origin(name))
+      end
+
+      # The read-time deprecations for a name this resolver serves from its
+      # cache: preparing the VALUE is memoized, but ansible warns per
+      # templating operation, so a later operation's read of the same name
+      # still warns. Materializing the whole `vars` dict resolves every
+      # name without any template reading it, which must stay silent.
+      private def note_resolved_name(name : String) : Nil
+        return if JinjaVarResolver.materializing_vars?
+        if name == "vars"
+          VarSubstitutor.emit_vars_dict_deprecation(VarSubstitutor.vars_dict_read_origin)
+          return
+        end
+        return unless @raw_vars.has_key?(name)
+        Krikri::ResultDisplay.emit_play_hosts_deprecation(VarSubstitutor.play_hosts_read_origin) if name == "play_hosts"
+        emit_fact_deprecation(name)
+        VarSubstitutor.flush_pending_var_deprecations(name)
       end
 
       # Ansible's `vars` magic variable: the whole current scope as a

@@ -451,6 +451,34 @@ describe "INJECT_FACTS_AS_VARS deprecation" do
     (stderr.index!(":5:14") < stderr.index!(":6:14")).must_equal(true)
   end
 
+  it "prints one block per param that reads the same fact" do
+    # Issue #1249, abarrak.docker_server_role: a yum_repository task whose
+    # baseurl and gpgkey both template `ansible_distribution`. Each param
+    # is its own templating operation in real (live-verified against
+    # 2.21.6: two blocks, each at its own value token), even though the
+    # second read resolves the same value the first one already prepared.
+    stdout, stderr, dir = run_files({"play.yml" => <<-PLAYBOOK})
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        tasks:
+          - name: two fact-reading params
+            ansible.builtin.copy:
+              content: "x{{ (ansible_distribution == 'Fedora') | ternary('fedora','centos') }}x"
+              dest: "{{ (ansible_distribution == 'Fedora') | ternary('fedora','centos') }}-out.txt"
+      PLAYBOOK
+
+    stdout.must_include("TASK [two fact-reading params]")
+    stdout.wont_include("FAILED")
+    stderr.scan(/DEPRECATION WARNING\]: #{Regex.escape(FACT_DEPRECATION_TEXT)}/).size.must_equal(2)
+    stderr.must_include("Origin: #{File.join(dir, "play.yml")}:7:18\n")
+    stderr.must_include("Origin: #{File.join(dir, "play.yml")}:8:15\n")
+    stderr.scan(":7:18\n").size.must_equal(1)
+    stderr.scan(":8:15\n").size.must_equal(1)
+    # In the params' own operation order.
+    (stderr.index!(":7:18") < stderr.index!(":8:15")).must_equal(true)
+  end
+
   it "attributes an include_vars path read to that argument's own value" do
     # Issue #974, nycrecords.nginx: `include_vars: "{{ ansible_os_family
     # }}.yml"` reads the fact while the executor templates the path, not
