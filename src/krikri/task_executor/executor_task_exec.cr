@@ -324,22 +324,26 @@ module Krikri
       # finalization in real; the dict check then runs against the
       # RESOLVED value, so a template yielding a mapping validates
       # normally while one yielding anything else fails with that type's
-      # class.
+      # class. The resolution keeps the value's own type rather than
+      # re-parsing its TEXT: a variable holding the string '{"a": 1}'
+      # stays a tagged str and fails (live-verified vs 2.19.11) - the
+      # strict pass only exists so an undefined name fails the task like
+      # real's finalization instead of rendering to a str.
       if raw_provided = task.validate_argument_spec_raw_provided
         unless raw_provided.includes?("{{") || raw_provided.includes?("{%")
           return validate_args_spec_type_failure(task, host, "ansible.module_utils._internal._datatag._AnsibleTaggedStr", "provided_arguments")
         end
         begin
-          rendered = substitutor.substitute(raw_provided, strict: true)
-          parsed = Krikri.parse_json_or_python_literal(rendered)
-          if provided_hash = parsed.as_h?
-            provided = Hash(String, JSON::Any).new
-            provided_hash.each { |option_name, value| provided[option_name] = value }
-          else
-            return validate_args_spec_type_failure(task, host, datatag_class_name(parsed), "provided_arguments")
-          end
+          substitutor.substitute(raw_provided, strict: true)
+          resolved = VariableSubstitutor::Rerender.if_templated(vars_context, JSON::Any.new(raw_provided)) || JSON::Any.new(raw_provided)
         rescue ex : UndefinedVariableError
           return validate_args_templating_failure(task, host, ex.message || "", options)
+        end
+        if provided_hash = resolved.as_h?
+          provided = Hash(String, JSON::Any).new
+          provided_hash.each { |option_name, value| provided[option_name] = value }
+        else
+          return validate_args_spec_type_failure(task, host, datatag_class_name(resolved), "provided_arguments")
         end
       end
       effective = if provided && !provided.empty?
