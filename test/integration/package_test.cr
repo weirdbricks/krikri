@@ -230,7 +230,9 @@ describe "package plugin - same-name repo package vs a Provides: match (issue 73
       result = PluginSpecHelper.run("package", {"name" => "php-json", "state" => "present", "use" => "dnf"})
       falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
       result["changed"].as_bool.must_equal(false)
-      result["msg"].as_s.must_equal("Package php-json already installed")
+      result["msg"].as_s.must_equal("Nothing to do")
+      result["rc"].as_i.must_equal(0)
+      result["results"].as_a.must_equal([] of JSON::Any)
       # Issue #1019: the satisfied no-op still runs dnf's own metadata
       # load before it can know the transaction is empty (ansible's
       # fill_sack() happens before any resolution), so the install probe
