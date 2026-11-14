@@ -372,6 +372,39 @@ module Krikri
       end
     end
 
+    # The template lookup's deprecated options, as ansible-core 2.21.6's
+    # lookup plugin DOCUMENTATION marks them (convert_data and
+    # jinja2_native, both removed in 2.23 and both unused by the plugin
+    # already). Ansible reports each one the moment the plugin's
+    # set_options sees it as a DIRECT kwarg - so `convert_data=False`
+    # warns even though False is the option's own default, and the warning
+    # still prints when the lookup then fails to find its template
+    # (live-verified 2.21.6, issue #1252: dubzland.hostname's three
+    # `lookup("template", ..., convert_data=False)` calls). The message
+    # body carries a newline between the reason and the alternatives, and
+    # a multi-line message is followed by one blank line; Display dedups
+    # the formatted block, so each option prints once per run.
+    TEMPLATE_LOOKUP_DEPRECATED_OPTIONS = {
+      "convert_data"  => "Jinja2 native mode is now the default and only option, which is mutually exclusive with this option.",
+      "jinja2_native" => "Jinja2 native mode is now the default and only option.",
+    }
+
+    @@template_lookup_option_deprecation_texts = Set(String).new
+
+    def self.emit_template_lookup_option_deprecations(option_names : Array(String)) : Nil
+      TEMPLATE_LOOKUP_DEPRECATED_OPTIONS.each do |option, alternatives|
+        next unless option_names.includes?(option)
+        lines = [
+          "[DEPRECATION WARNING]: #{option} option. Reason: This option is no longer used in the Ansible Core code base.".colorize(:light_magenta).to_s,
+          "Alternatives: #{alternatives} This feature will be removed from lookup plugin 'template' in ansible-core version 2.23.".colorize(:light_magenta).to_s,
+          "",
+        ]
+        key = lines.join("\n")
+        next if hold_task_deprecation(@@template_lookup_option_deprecation_texts, key, lines)
+        emit_or_defer_deprecation(@@template_lookup_option_deprecation_texts, key, lines)
+      end
+    end
+
     # The one-time "can be disabled" hint Ansible prints before a run's
     # first deprecation of ANY kind - shared by every deprecation emitter
     # so a later source never repeats it. Only ever printed alongside a
