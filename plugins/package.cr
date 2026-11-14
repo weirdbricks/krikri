@@ -1244,7 +1244,9 @@ module Krikri
     # (msg "Nothing to do"). The package plugin used to report its own
     # invented "Would install/remove ... (check mode)" msgs with no
     # results/rc keys at all, so playbooks reading result.results
-    # (issue #753) died with "dict has no attribute 'results'".
+    # (issue #753) died with "dict has no attribute 'results'". The same
+    # exit_json(**response) shape is what a REAL run's empty transaction
+    # registers (issue #1243), so the already-installed no-op uses it too.
     private def dnf_check_mode_transaction_result(changed : Bool, results : Array(String)) : PluginResult
       PluginResult.new(
         changed: changed,
@@ -1423,11 +1425,14 @@ module Krikri
             failure = dnf_present_noop_probe_failure(name, shell_pkg, names)
             return failure if failure
           end
-          PluginResult.new(
-            changed: false,
-            failed: false,
-            msg: "Package #{name} already installed"
-          )
+          # The dnf module's empty transaction exits through
+          # exit_json(**response), so a real (non-check) run on an
+          # already-installed spec still registers rc 0 and results [],
+          # with msg "Nothing to do" (issue #1243: `package:` on a dnf
+          # host returned only changed/failed/msg, so a playbook reading
+          # out.results died with "object of type 'dict' has no attribute
+          # 'results'").
+          dnf_check_mode_transaction_result(false, [] of String)
         else
           if @check_mode
             return PluginResult.new(

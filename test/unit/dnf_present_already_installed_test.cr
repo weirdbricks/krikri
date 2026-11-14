@@ -190,9 +190,32 @@ describe "package plugin - an already-installed plain name still runs the dnf tr
       })
       result["failed"]?.try(&.as_bool?).must_be_nil
       result["changed"].as_bool.must_equal(false)
-      result["msg"].as_s.must_equal("Package tree already installed")
+      result["msg"].as_s.must_equal("Nothing to do")
       calls = File.exists?(log) ? File.read(log) : ""
       calls.includes?("install").must_equal(true)
+    end
+  end
+
+  # Issue #1243: `package:` on a dnf host registered only
+  # changed/failed/msg for an already-installed name, so a playbook
+  # reading out.results died with "object of type 'dict' has no
+  # attribute 'results'". Ansible's package action plugin delegates to
+  # the dnf module, whose empty transaction exits with its full response
+  # dict - live-verified on Rocky 10 (ansible-core 2.21.6): msg "Nothing
+  # to do", rc 0, results [].
+  it "reports the dnf response shape with rc and results on the already-installed no-op (issue 1243)" do
+    with_dnf1019_shims(false) do |env, _log|
+      result = PluginSpecHelper.run("package", {
+        "name"         => "tree",
+        "state"        => "present",
+        "use"          => "dnf",
+        "_environment" => env,
+      })
+      result.as_h.keys.must_equal(["msg", "changed", "results", "rc"])
+      result["changed"].as_bool.must_equal(false)
+      result["msg"].as_s.must_equal("Nothing to do")
+      result["results"].as_a.must_equal([] of JSON::Any)
+      result["rc"].as_i.must_equal(0)
     end
   end
 end
