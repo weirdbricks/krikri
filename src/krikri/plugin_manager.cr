@@ -1301,10 +1301,11 @@ module Krikri
       become_user : String?,
       task_timeout : Int64? = nil,
       become_flags : String? = nil,
+      daemon_scope : String? = nil,
     ) : JSON::Any
       if remote_execution?(plugin_name, host, vars)
         apply_task_end_remote_cleanup(
-          execute_remote_plugin(plugin_name, config, host, vars, become, become_user, task_timeout, become_flags),
+          execute_remote_plugin(plugin_name, config, host, vars, become, become_user, task_timeout, become_flags, daemon_scope),
           host, vars
         )
       elsif controller_only?(plugin_name)
@@ -1322,9 +1323,9 @@ module Krikri
         # root --`, which fails outright with "sudo: a password is
         # required" on any controller account without passwordless sudo
         # configured for itself - unrelated to the actual remote target).
-        execute_local_plugin(plugin_name, config, host, false, nil, nil, task_timeout)
+        execute_local_plugin(plugin_name, config, host, false, nil, nil, task_timeout, nil, daemon_scope)
       else
-        execute_local_plugin(plugin_name, config, host, become, become_user, Passwords.become(vars, host), task_timeout, become_flags)
+        execute_local_plugin(plugin_name, config, host, become, become_user, Passwords.become(vars, host), task_timeout, become_flags, daemon_scope)
       end
     end
 
@@ -1366,7 +1367,7 @@ module Krikri
     end
 
     # Execute plugin locally
-    private def self.execute_local_plugin(plugin_name : String, config : String, host : Host, become : Bool, become_user : String?, become_password : String? = nil, task_timeout : Int64? = nil, become_flags : String? = nil) : JSON::Any
+    private def self.execute_local_plugin(plugin_name : String, config : String, host : Host, become : Bool, become_user : String?, become_password : String? = nil, task_timeout : Int64? = nil, become_flags : String? = nil, daemon_scope : String? = nil) : JSON::Any
       # The local persistent daemon (the ansible_connection=local analogue
       # of the ssh daemon - see LocalPluginDaemon's own header) is tried
       # first when enabled and eligible; on any failure that means the
@@ -1378,7 +1379,7 @@ module Krikri
       # nested measure in the same "transport" group is not recorded at
       # all (see TimingProfile.measure's group rule), and the daemon round
       # trip is its own transport bucket the way the ssh daemon's is.
-      if result = try_local_daemon(plugin_name, config, host, become, become_user, become_password, task_timeout, become_flags)
+      if result = try_local_daemon(plugin_name, config, host, become, become_user, become_password, task_timeout, become_flags, daemon_scope)
         return result
       end
       TimingProfile.measure("transport.local_exec", "transport") do
@@ -1400,7 +1401,7 @@ module Krikri
     # mode; a daemon attempt on one would fail three times, trip the
     # breaker and never fall back transparently, so it is skipped up front
     # instead.
-    private def self.try_local_daemon(plugin_name : String, config : String, host : Host, become : Bool, become_user : String?, become_password : String?, task_timeout : Int64? = nil, become_flags : String? = nil) : JSON::Any?
+    private def self.try_local_daemon(plugin_name : String, config : String, host : Host, become : Bool, become_user : String?, become_password : String?, task_timeout : Int64? = nil, become_flags : String? = nil, daemon_scope : String? = nil) : JSON::Any?
       return nil unless @@daemon_enabled
       # A `timeout:` task's deadline kill needs a process it owns - a
       # plugin running INSIDE the resident daemon process cannot be
@@ -1429,7 +1430,7 @@ module Krikri
       # a key stops being attempted at all, so a host where the daemon can
       # never come up doesn't pay a wasted spawn attempt on every
       # remaining task.
-      return nil if LocalPluginDaemon.daemon_unavailable?(host.name, sudo_user)
+      return nil if LocalPluginDaemon.daemon_unavailable?(host.name, sudo_user, daemon_scope)
       plugin_path = staged_local_plugin_path(plugin_name, plugin_path) if sudo_user
 
       result = begin
@@ -1440,6 +1441,7 @@ module Krikri
           plugin_path,
           become_user: sudo_user,
           become_password: become_password,
+          daemon_scope: daemon_scope,
         )
       rescue ex : SSHManager::DaemonDispatchUnknownError
         # The request reached the daemon but its response did not come
@@ -1893,8 +1895,9 @@ module Krikri
       become_user : String?,
       task_timeout : Int64? = nil,
       become_flags : String? = nil,
+      daemon_scope : String? = nil,
     ) : JSON::Any
-      normalize_module_result(execute_remote_plugin_transport(plugin_name, config, host, vars, become, become_user, task_timeout, become_flags))
+      normalize_module_result(execute_remote_plugin_transport(plugin_name, config, host, vars, become, become_user, task_timeout, become_flags, daemon_scope))
     rescue ex : PluginArchUnsupportedError
       # One clean failed task carrying the actionable arch message (see
       # PluginArchUnsupportedError's own comment) - not an unreachable,
@@ -2081,6 +2084,7 @@ module Krikri
       become_user : String?,
       task_timeout : Int64? = nil,
       become_flags : String? = nil,
+      daemon_scope : String? = nil,
     ) : JSON::Any
       # The task's EFFECTIVE connection settings: a task-level (or block/
       # play-level) connection var changes the actual ssh target/user/
@@ -2291,13 +2295,14 @@ module Krikri
       become_flags : String?,
       task_timeout : Int64?,
       conn : ConnectionSettings,
+      daemon_scope : String? = nil,
     ) : JSON::Any?
       return nil unless @@daemon_enabled && task_timeout.nil? && daemon_eligible?(plugin_name, become, become_flags)
 
       extra_args = conn.ssh_extra_options
       daemon_user = become_needed?(become, become_user || "root", conn.user) ? (become_user || "root") : nil
       return nil if SSHManager.daemon_unavailable?(conn.conn_host, conn.user, conn.port, daemon_user,
-                      SSHManager.connection_sig(conn.identity_file, extra_args, conn.password))
+                      SSHManager.connection_sig(conn.identity_file, extra_args, conn.password), daemon_scope)
 
       begin
         SSHManager.daemon_send(
@@ -2310,7 +2315,8 @@ module Krikri
           identity_file: conn.identity_file,
           become_user: daemon_user,
           become_password: Passwords.become(vars, host),
-          extra_args: extra_args
+          extra_args: extra_args,
+          daemon_scope: daemon_scope
         )
       rescue ex : SSHManager::DaemonDispatchUnknownError
         # The request reached the daemon but its response did not come

@@ -974,6 +974,19 @@ module Krikri
       dispatch
     end
 
+    # The persistent plugin daemon is one resident process per key, and it
+    # serves one request at a time (plugin_daemon.cr's own serve loop).
+    # That is safe only because a given key is touched by exactly one
+    # fiber: the worker that plays that host. A `delegate_to:` task breaks
+    # that premise - every played host's fiber connects to the SAME
+    # delegate - so without a per-origin key the delegating hosts' tasks
+    # take turns on one daemon instead of running in parallel the way
+    # ansible runs them. The delegating host's own name therefore scopes
+    # its daemon, exactly as it scopes its fiber.
+    private def daemon_scope_for(host : Host, exec_host : Host) : String?
+      exec_host.name == host.name ? nil : host.name
+    end
+
     # The vars that select the Python a module runs under (issue #1005):
     # ansible_python_interpreter when the host pins one, and the
     # interpreter discovery recorded in discovered_interpreter_python.
@@ -3432,7 +3445,7 @@ module Krikri
       # when_passes? let it through (see its own comment), so a python
       # module behind a false when: still skips normally.
       if task.unavailable_module && (py_source = python_module_source_for(task))
-        result = execute_python_module(task, File.read(py_source), substituted_params, exec_host, dispatch_vars, wire_vars, become, become_user, substituted_become_user, substituted_env, dispatch_timeout, substituted_become_flags)
+        result = execute_python_module(task, File.read(py_source), substituted_params, exec_host, dispatch_vars, wire_vars, become, become_user, substituted_become_user, substituted_env, dispatch_timeout, substituted_become_flags, daemon_scope_for(host, exec_host))
         if period = marker_task_timeout(result)
           return task_timeout_result(period)
         end
@@ -3460,7 +3473,7 @@ module Krikri
       # exactly where the skip above would have done it.
       if (unavailable = task.unavailable_module) && python_module_source_for(task).nil? &&
          K8S_IMPORT_GATE_MODULES.includes?(unavailable)
-        result = execute_python_module(task, PythonModuleRunner.k8s_import_gate_source, substituted_params, exec_host, dispatch_vars, wire_vars, become, become_user, substituted_become_user, substituted_env, dispatch_timeout, substituted_become_flags)
+        result = execute_python_module(task, PythonModuleRunner.k8s_import_gate_source, substituted_params, exec_host, dispatch_vars, wire_vars, become, become_user, substituted_become_user, substituted_env, dispatch_timeout, substituted_become_flags, daemon_scope_for(host, exec_host))
         if period = marker_task_timeout(result)
           return task_timeout_result(period)
         end
@@ -3486,7 +3499,8 @@ module Krikri
         become,
         become_user,
         dispatch_timeout,
-        substituted_become_flags
+        substituted_become_flags,
+        daemon_scope_for(host, exec_host)
       )
 
       if period = marker_task_timeout(result)
@@ -3951,7 +3965,7 @@ module Krikri
     # hosts; the module's argument dict mirrors Ansible's typed
     # JSON args for new-style modules (the params the parser already
     # JSON-encoded come back as real arrays/dicts for the module).
-    private def execute_python_module(task : Task, source_text : String, substituted_params : Hash(String, String), exec_host : Host, vars_context : Hash(String, JSON::Any), wire_vars : Hash(String, JSON::Any), become : Bool, become_user : String?, substituted_become_user : String?, substituted_env : Hash(String, String)? = nil, task_timeout : Int64? = nil, become_flags : String? = nil) : JSON::Any
+    private def execute_python_module(task : Task, source_text : String, substituted_params : Hash(String, String), exec_host : Host, vars_context : Hash(String, JSON::Any), wire_vars : Hash(String, JSON::Any), become : Bool, become_user : String?, substituted_become_user : String?, substituted_env : Hash(String, String)? = nil, task_timeout : Int64? = nil, become_flags : String? = nil, daemon_scope : String? = nil) : JSON::Any
       module_name = PythonModuleRunner.short_name(task.unavailable_module || task.module_name)
       # Ansible's modularizer rewrites the legacy boilerplate marker
       # into the import that pulls AnsibleModule in BEFORE style
@@ -4035,7 +4049,7 @@ module Krikri
           inner_config = build_plugin_config(inner_task, exec_host, inner_params, wire_vars,
             substituted_become_user, substituted_env, become_flag: become)
           PluginManager.execute_plugin(inner_module, inner_config, exec_host, vars_context,
-            become, become_user, task_timeout, become_flags)
+            become, become_user, task_timeout, become_flags, daemon_scope)
         }
         begin
           result = PythonActionRunner.run_action(action_plugin, module_name, args, connection,
@@ -4202,7 +4216,9 @@ module Krikri
         vars_context,
         become,
         become_user,
-        task_timeout
+        task_timeout,
+        nil,
+        daemon_scope
       )
     end
 

@@ -60,12 +60,19 @@ module Krikri
   # process-level property the daemon changes vs the one-fork path is
   # therefore only lifetime, not state.
   module LocalPluginDaemon
-    # (inventory host name, become_user-or-nil). The host_name dimension
-    # keeps the one-fiber-per-host promise: two local-connection hosts are
-    # two fibers, so they get two daemons and never share a pipe. A nil
-    # become_user is the unprivileged daemon; each distinct become_user
-    # gets its own, exactly like SSHManager's table.
-    alias LocalDaemonKey = {String, String?}
+    # (inventory host name, become_user-or-nil, daemon_scope). The
+    # host_name dimension keeps the one-fiber-per-host promise: two
+    # local-connection hosts are two fibers, so they get two daemons and
+    # never share a pipe. A nil become_user is the unprivileged daemon;
+    # each distinct become_user gets its own, exactly like SSHManager's
+    # table.
+    #
+    # The scope is the DELEGATING host's name for a `delegate_to:` task:
+    # several origin hosts can delegate to the same inventory host, and
+    # each of those runs on its own fiber - keying them into one pipe
+    # makes the daemon serve them one at a time, where ansible runs them
+    # concurrently. An empty scope is "this host's own tasks".
+    alias LocalDaemonKey = {String, String?, String}
 
     @@daemons = Hash(LocalDaemonKey, Process).new
 
@@ -78,24 +85,28 @@ module Krikri
 
     # Whether a daemon for this key is worth attempting at all. Public so
     # PluginManager can skip the attempt before resolving a plugin path.
-    def self.daemon_unavailable?(host_name : String, become_user : String?) : Bool
-      @@daemon_failures[{host_name, become_user}] >= SSHManager::MAX_DAEMON_FAILURES
+    def self.daemon_unavailable?(host_name : String, become_user : String?, daemon_scope : String? = nil) : Bool
+      @@daemon_failures[daemon_key(host_name, become_user, daemon_scope)] >= SSHManager::MAX_DAEMON_FAILURES
+    end
+
+    private def self.daemon_key(host_name : String, become_user : String?, daemon_scope : String?) : LocalDaemonKey
+      {host_name, become_user, daemon_scope || ""}
     end
 
     # Spec seams, mirroring SSHManager's: install/remove a Process as the
     # cached daemon for a key so the failure-classification logic can be
     # driven against fake processes with no real plugin binary involved.
-    def self.seed_daemon_process_for_spec(host_name : String, become_user : String?, process : Process) : Nil
-      @@daemons[{host_name, become_user}] = process
+    def self.seed_daemon_process_for_spec(host_name : String, become_user : String?, process : Process, daemon_scope : String? = nil) : Nil
+      @@daemons[daemon_key(host_name, become_user, daemon_scope)] = process
     end
 
-    def self.daemon_process_for_spec(host_name : String, become_user : String?) : Process?
-      @@daemons[{host_name, become_user}]?
+    def self.daemon_process_for_spec(host_name : String, become_user : String?, daemon_scope : String? = nil) : Process?
+      @@daemons[daemon_key(host_name, become_user, daemon_scope)]?
     end
 
-    def self.clear_daemon_for_spec(host_name : String, become_user : String?) : Nil
-      kill_daemon(host_name, become_user)
-      @@daemon_failures.delete({host_name, become_user})
+    def self.clear_daemon_for_spec(host_name : String, become_user : String?, daemon_scope : String? = nil) : Nil
+      kill_daemon(host_name, become_user, daemon_scope)
+      @@daemon_failures.delete(daemon_key(host_name, become_user, daemon_scope))
     end
 
     # Sends one request and returns the plugin's own JSON result,
@@ -114,13 +125,14 @@ module Krikri
       become_user : String? = nil,
       become_password : String? = nil,
       timeout : Int32 = SSHManager::DEFAULT_EXEC_TIMEOUT_SECONDS,
+      daemon_scope : String? = nil,
     ) : JSON::Any
-      key = {host_name, become_user}
+      key = daemon_key(host_name, become_user, daemon_scope)
       # Provenance of the process used below - it decides how a lost
       # response is classified (same rule as SSHManager.daemon_send).
       fresh_spawn = @@daemons[key]?.nil?
       process = @@daemons[key]? ||
-                spawn_daemon(host_name, become_user, plugin_path, become_password)
+                spawn_daemon(host_name, become_user, plugin_path, become_password, daemon_scope)
 
       request = {"module" => module_name, "config" => config}.to_json
 
@@ -132,7 +144,7 @@ module Krikri
           end
         rescue ex
           @@daemon_failures[key] += 1
-          kill_daemon(host_name, become_user)
+          kill_daemon(host_name, become_user, daemon_scope)
           raise ex
         end
 
@@ -140,7 +152,7 @@ module Krikri
           run_io_with_timeout(timeout) { read_daemon_frame(process.output) }
         rescue ex
           @@daemon_failures[key] += 1
-          kill_daemon(host_name, become_user)
+          kill_daemon(host_name, become_user, daemon_scope)
           raise ex if fresh_spawn
           raise SSHManager::DaemonDispatchUnknownError.new("daemon request for '#{module_name}' was sent but its response was lost (#{ex.class.name}: #{ex.message})", ex)
         end
@@ -152,7 +164,7 @@ module Krikri
         BigJson.parse(response)
       rescue ex
         @@daemon_failures[key] += 1
-        kill_daemon(host_name, become_user)
+        kill_daemon(host_name, become_user, daemon_scope)
         # A response DID arrive and frame cleanly; only its content is
         # unusable. Whatever produced it already ran - never re-execute.
         raise SSHManager::DaemonDispatchUnknownError.new("daemon response for '#{module_name}' was not valid JSON (#{ex.message})", ex)
@@ -181,7 +193,7 @@ module Krikri
     # inside the daemon and mangle the failed-task JSON, and inheriting
     # would print backtraces to the user's terminal that the one-fork
     # path never showed.
-    private def self.spawn_daemon(host_name : String, become_user : String?, plugin_path : String, become_password : String?) : Process
+    private def self.spawn_daemon(host_name : String, become_user : String?, plugin_path : String, become_password : String?, daemon_scope : String?) : Process
       interactive = false
       if become_user && become_password
         interactive = !PluginManager.sudo_noninteractive?(become_user)
@@ -220,14 +232,14 @@ module Krikri
           process.terminate(graceful: false) unless process.terminated?
         rescue
         end
-        @@daemon_failures[{host_name, become_user}] = SSHManager::MAX_DAEMON_FAILURES
+        @@daemon_failures[daemon_key(host_name, become_user, daemon_scope)] = SSHManager::MAX_DAEMON_FAILURES
         raise ex
       end
 
       # Cached under the SAME key #send looked up with, so the next request
-      # for this (host, become_user) reuses the pipe instead of respawning
-      # - the entire point of the transport.
-      @@daemons[{host_name, become_user}] = process
+      # for this (host, become_user, scope) reuses the pipe instead of
+      # respawning - the entire point of the transport.
+      @@daemons[daemon_key(host_name, become_user, daemon_scope)] = process
       process
     end
 
@@ -295,8 +307,8 @@ module Krikri
     # Best-effort, no grace period - used from #send's own rescues, where
     # something has already gone wrong and the priority is dropping the
     # stale daemon so the NEXT call spawns a fresh one.
-    private def self.kill_daemon(host_name : String, become_user : String?) : Nil
-      process = @@daemons.delete({host_name, become_user})
+    private def self.kill_daemon(host_name : String, become_user : String?, daemon_scope : String? = nil) : Nil
+      process = @@daemons.delete(daemon_key(host_name, become_user, daemon_scope))
       return unless process
 
       begin
