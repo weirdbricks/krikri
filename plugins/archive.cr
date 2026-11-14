@@ -137,7 +137,13 @@ module Krikri
       # this point: expand_paths keeps those, so "no source paths were
       # found" fires only when the whole set was excluded (or was empty
       # to begin with, e.g. only unmatched globs), not when the sources
-      # are merely absent on disk.
+      # are merely absent on disk. A `path:` that rendered to "" is NOT
+      # an empty set either: AnsibleModule's type='list' conversion is
+      # `value.split(",")`, so "" becomes the one-element list [''] -
+      # expand_paths keeps it as a nonexistent literal and the module
+      # reports the absent (ok) result (round 1794627831,
+      # abrararshad.mariadb_import's `path: "{{ ... }}"` with an empty
+      # default).
       if candidate_paths.empty?
         return PluginResult.new(changed: false, failed: true,
           msg: "Error, no source paths were found",
@@ -175,12 +181,24 @@ module Krikri
       build_and_finalize(dest, format, single_compress, root, members, found_paths, missing, expanded_paths, expanded_excludes, remove)
     end
 
+    # AnsibleModule's type='list' conversion, verbatim: `value.split(",")`
+    # with no stripping and no dropping of empty members. Keeping the
+    # empty members matters beyond `path:` - `exclude_path: ""` really is
+    # [''], and subtracting that from an equally empty `path:` leaves
+    # Ansible with nothing, so it fails where a rejected-empty list would
+    # have skipped the subtraction. (A literal YAML `path: []` reaches
+    # here as the same comma-joined "", so it cannot be told apart from
+    # `path: ""` - the wire form has no empty-list representation.)
     private def split_csv_values(value : String) : Array(String)
-      value.split(",").map(&.strip).reject(&.empty?)
+      value.split(",")
     end
 
+    # A param absent from the call is [] in Ansible (its spec default is
+    # None, then `module.params[key] or []`), distinct from a param that
+    # was passed as the empty string.
     private def param_list(key : String) : Array(String)
-      split_csv_values(@params[key]? || "")
+      value = @params[key]?
+      value ? split_csv_values(value) : [] of String
     end
 
     private def absent_result(dest : String?, missing : Array(String), expanded_paths : Array(String), expanded_exclude_paths : Array(String)) : PluginResult

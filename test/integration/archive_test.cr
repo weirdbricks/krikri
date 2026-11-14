@@ -232,6 +232,26 @@ describe "archive plugin" do
     result["expanded_paths"].as_s.must_be_empty
   end
 
+  # AnsibleModule's type='list' conversion is `value.split(",")`, so a
+  # `path:` that rendered to "" arrives as the one-element list [''] - a
+  # nonexistent literal, NOT an empty list. Ansible therefore reports the
+  # absent (ok) result instead of the "no source paths were found" fatal.
+  # Captured live on community.general's archive with ansible-playbook:
+  # round 1794627831's abrararshad.mariadb_import passes
+  # `path: "{{ mariadb_import_dump_file_path }}"`, whose default is '',
+  # and its Archive DB task is ok there while krikri used to fail it.
+  it "treats a path that rendered to the empty string as one absent entry, not as no entries at all" do
+    dest = dest_path("empty-path.zip")
+    result = PluginSpecHelper.run("archive", {"path" => "", "dest" => dest, "format" => "zip"})
+
+    result["changed"].as_bool.must_equal(false)
+    result["dest_state"].as_s.must_equal("absent")
+    result["missing"].as_a.map(&.as_s).must_equal([""])
+    result["expanded_paths"].as_a.map(&.as_s).must_equal([""])
+    result["expanded_exclude_paths"].as_a.size.must_equal(0)
+    File.exists?(dest).must_equal(false)
+  end
+
   it "removes the source after a successful archive when remove: true" do
     source_dir = PluginSpecHelper.tmp_path("removeme")
     FileUtils.mkdir_p(source_dir)
