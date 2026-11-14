@@ -3135,6 +3135,55 @@ describe Krikri::PlaybookParser do
       end
     end
 
+    # issue #1253: an FQCR may carry plugin-type SUBDIR segments
+    # (`ns.coll.subdir.resource`), and ansible-core runs the RESOURCE
+    # module of that collection for one - lifeofguenter.reset_locale's own
+    # tasks/locales.yml spells community.general.locale_gen.locale_gen,
+    # which real resolves to community.general's locale_gen.py and runs
+    # (live-verified against ansible-core 2.21.6). This engine treated the
+    # whole dotted leaf as a module name, found nothing, and refused the
+    # entire playbook at load (rc=4, zero tasks) where real ran the role
+    # on to its next task.
+    describe "FQCRs with plugin-type subdir segments (issue #1253)" do
+      it "runs the resource module the controller resolves, not the dotted leaf" do
+        # Machine-state guard on the PLAIN FQCN (a name this issue's rule
+        # does not touch), so the spec still exercises the regression on
+        # any controller that ships locale_gen rather than turning itself
+        # off with the bug.
+        if Krikri::CollectionIndex.controller_resolves?("community.general.locale_gen")[:resolves]
+          task = single_task(<<-YAML)
+            - name: t
+              community.general.locale_gen.locale_gen:
+                name: en_US.UTF-8
+                state: present
+            YAML
+          task.module_name.must_equal("community.general.locale_gen")
+          Krikri::PluginManager.simple_plugin_name(task.module_name).must_equal("locale_gen")
+          task.unavailable_module.must_be_nil
+          # The banner still echoes the source spelling, as real's does.
+          task.action_name.must_equal("community.general.locale_gen.locale_gen")
+        end
+      end
+
+      it "still refuses a dotted leaf the controller cannot resolve" do
+        # No installed collection ships a `bogus_subdir` plugin file for
+        # the subdir package to import: real refuses the whole playbook at
+        # load, exactly as this engine's controller check does.
+        assert_raises_message(Krikri::UnresolvedModuleError,
+          "couldn't resolve module/action 'community.general.bogus_subdir.locale_gen'. " \
+          "This often indicates a misspelling, missing collection, or incorrect module path.") do
+          Krikri::PlaybookParser.parse_string(<<-YAML
+            - hosts: all
+              tasks:
+                - name: bogus subdir segment
+                  community.general.bogus_subdir.locale_gen:
+                    name: en_US.UTF-8
+            YAML
+          )
+        end
+      end
+    end
+
     # Already-resolved FQCNs and `ansible.builtin.*` short names must
     # still work unchanged.
     describe "FQCNs and ansible.builtin are unchanged" do

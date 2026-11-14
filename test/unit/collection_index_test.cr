@@ -83,6 +83,30 @@ describe Krikri::CollectionIndex do
     result[:resolves].must_equal(false)
   end
 
+  # issue #1253: an FQCR may carry plugin-type SUBDIR segments
+  # (`ns.coll.subdir.resource`). ansible-core imports the subdir as a
+  # package under plugins/modules/ and looks the resource up beside it; a
+  # subdir naming a module FILE is imported with that file's directory as
+  # the search root, so `testns.prov.thing.thing` resolves to thing.py and
+  # real RUNS it (live-verified against ansible-core 2.21.6 with
+  # community.general.locale_gen.locale_gen).
+  it "resolves an FQCR whose subdir segment and resource both name module files" do
+    result = Krikri::CollectionIndex.controller_resolves?("testns.prov.thing.thing")
+    result[:resolves].must_equal(true)
+    Krikri::CollectionIndex.fqcr_subdir_resolves?("testns.prov.thing.thing").must_equal(true)
+  end
+
+  it "refuses an FQCR whose subdir segment names nothing in the collection" do
+    result = Krikri::CollectionIndex.controller_resolves?("testns.prov.nosuchsubdir.thing")
+    result[:resolves].must_equal(false)
+    Krikri::CollectionIndex.fqcr_subdir_resolves?("testns.prov.nosuchsubdir.thing").must_equal(false)
+  end
+
+  it "refuses an FQCR whose subdir segment resolves but whose resource file is missing" do
+    result = Krikri::CollectionIndex.controller_resolves?("testns.prov.thing.nosuchresource")
+    result[:resolves].must_equal(false)
+  end
+
   # The release-version lookups the deprecation model's 2.1.x-vs-2.2.x
   # gate rides on (issue #1060): the resolved module's collection
   # release, read from the copy real's loader would import from, for

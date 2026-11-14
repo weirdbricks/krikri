@@ -2306,7 +2306,31 @@ module Krikri
         return qualified if AVAILABLE_PLUGINS.includes?(qualified)
       end
 
+      # An FQCR with subdir segments runs the RESOURCE module of that
+      # collection, not a module named after the whole dotted leaf: real
+      # executes plugins/modules/<resource>.py for
+      # `ns.coll.subdir.resource` (see
+      # CollectionIndex.collection_subdir_leaf_file?), so it maps onto
+      # this engine's own plugin for the same `ns.coll.<resource>` name.
+      # Only when the controller really resolves it - a subdir the
+      # controller lacks makes real refuse the playbook at load, and this
+      # engine must not run a module real never gets to.
+      if canonical = collection_subdir_module_name(raw)
+        return canonical if AVAILABLE_PLUGINS.includes?(canonical)
+      end
+
       nil
+    end
+
+    # The canonical `ns.coll.resource` real's loader actually runs for an
+    # FQCR whose extra segments are plugintype SUBDIRS
+    # (`community.general.locale_gen.locale_gen`, issue #1253), or nil
+    # when the name is not one or the controller does not resolve it.
+    private def self.collection_subdir_module_name(raw : String) : String?
+      parts = raw.split('.')
+      return nil if parts.size < 4
+      return nil unless CollectionIndex.fqcr_subdir_resolves?(raw)
+      "#{parts[0]}.#{parts[1]}.#{parts[-1]}"
     end
 
     # Parse playbook from file
