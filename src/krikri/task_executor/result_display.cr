@@ -2466,6 +2466,18 @@ module Krikri
         # directly (no key/value pairs) - bare action-level failure,
         # collapsed chain, no middle segment.
         root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(msg))
+      when "set_stats"
+        # set_stats' whole implementation lives in its controller-side
+        # ACTION plugin, and an unusable data: makes it RETURN a failed
+        # result instead of raising - which real's task executor then wraps
+        # in an AnsibleActionFail, giving the block the "Action failed."
+        # middle segment (live-verified against 2.21.6). Its Invalid-options
+        # argspec refusal is handled above as a bare collapsed segment.
+        if msg == "The 'data' option needs to be a dictionary/hash"
+          root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new("Action failed.").with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(msg)))
+        else
+          root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new("Module failed.").with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(msg)))
+        end
       when "unarchive"
         # Ansible's unarchive action raises a non-contributing AnsibleError
         # for a controller-side src miss: the fatal msg carries the

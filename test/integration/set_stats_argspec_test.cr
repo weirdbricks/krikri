@@ -56,4 +56,39 @@ describe "ansible.builtin.set_stats argument validation" do
     output.must_include("ok: [localhost]")
     output.wont_include("Invalid options")
   end
+
+  # set_stats is implemented entirely by its ACTION plugin, so a data: value
+  # that never becomes a dict is an action-level failure with the plugin's
+  # own wording (live-verified vs ansible-core 2.21.6, issue #1241).
+  it "fails a non-dictionary data value with the action plugin's wording" do
+    status, output = run_set_stats_playbook(<<-YAML)
+      - name: set_stats wrong type
+        ansible.builtin.set_stats:
+          aggregate: true
+          data: lfsusj
+          per_host: false
+        ignore_errors: true
+    YAML
+
+    status.exit_code.must_equal(0)
+    output.must_include("[ERROR]: Task failed: Action failed: The 'data' option needs to be a dictionary/hash")
+    output.must_include(%({"changed": false, "msg": "The 'data' option needs to be a dictionary/hash"}))
+    output.must_include("...ignoring")
+    output.must_include("ignored=1")
+  end
+
+  # The same action plugin defaults an absent data: to {} and never runs a
+  # module, so a task with only aggregate:/per_host: succeeds
+  # (live-verified vs ansible-core 2.21.6, issue #1241).
+  it "succeeds when data is not given at all" do
+    status, output = run_set_stats_playbook(<<-YAML)
+      - name: set_stats without data
+        ansible.builtin.set_stats:
+          aggregate: true
+    YAML
+
+    status.exit_code.must_equal(0)
+    output.must_include("ok: [localhost]")
+    output.wont_include("[ERROR]")
+  end
 end
