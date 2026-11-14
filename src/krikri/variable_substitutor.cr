@@ -2158,17 +2158,16 @@ module Krikri
       end
       return unless site = current_task_param
       return site.origin if site.origin
-      # A task's own `name:` opens its mapping (`- name:`), so the list
-      # dash is part of that key's line prefix.
-      if site.key == "name"
-        return ResultDisplay.param_value_origin(site.source_file, site.source_line, site.key, text: site.text)
-      end
       # A block-sequence param value is its own set of YAML scalars, and
       # real tags each of them, so a fact read inside one is pinned at the
       # ITEM that named it - `debug: msg: [...]` containing the fact
       # reported the list item's token, not the `msg:` key's value
-      # position (fabiohbarbosa.synapse's role banner, issue #1089).
-      ResultDisplay.conditional_value_origin(site.source_file, site.source_line, site.key, name, site.text)
+      # position (fabiohbarbosa.synapse's role banner, issue #1089). The
+      # rendered text also picks which `name:` line is the site: a task's
+      # own `name:` opens its mapping (`- name:`) while a module's `name:`
+      # param may hold this same block sequence (alexpdp7.ansible_puppet's
+      # `yum: name:` list, issue #1267).
+      ResultDisplay.conditional_value_origin(site.source_file, site.source_line, site.key, name, site.text, text: site.text)
     end
 
     def self.play_hosts_read_origin : String?
