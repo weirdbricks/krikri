@@ -2490,9 +2490,17 @@ module Krikri
               )
             end
           end
-          # `grep -i upgrade` over the folded simulate output, kept as the
-          # original pipeline's match test.
-          if folded.downcase.includes?("upgrade")
+          # Ansible's install() only builds an apt-get command line for a
+          # spec whose candidate differs from the installed version, and its
+          # changed flag is just "was that command line non-empty". Every
+          # simulate run prints a summary containing "upgraded", so a
+          # substring test over the whole output reported changed on an
+          # already-current package forever (onelove-roles.freebsd_node,
+          # round 29910501: `package: {name: npm, state: latest}` in check
+          # mode was `changed` where Ansible said `ok`). `^Inst` matches
+          # only an actual install/upgrade action line, which is what
+          # apt.cr's sibling dispatch already keys on.
+          if folded.lines.any?(&.starts_with?("Inst"))
             return PluginResult.new(
               changed: true,
               failed: false,
