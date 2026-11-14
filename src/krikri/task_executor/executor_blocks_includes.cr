@@ -3,6 +3,29 @@ require "../unsafe_values"
 
 module Krikri
   class TaskExecutor
+    # One include statement's loaded task list, parked until every host has
+    # had its own statement processed. Ansible's linear strategy expands an
+    # include once per (file, item) group and then runs the loaded tasks in
+    # lockstep across that group's hosts, so every `included:` line prints
+    # before the first included task starts and each included task reaches
+    # all hosts before the next one begins (issue #1240) - the split-out
+    # load result is what lets the flusher reproduce that order.
+    #
+    # *discriminator* separates loads that are NOT interchangeable even
+    # though they share a name: a role's rendered invocation vars/tasks_from
+    # are baked into its loaded tasks, so two hosts only share one task list
+    # when those agree too.
+    struct DeferredInclude
+      getter host : Host
+      getter path : String
+      getter label : String?
+      getter discriminator : String
+      getter tasks : Array(Task)
+
+      def initialize(@host : Host, @path : String, @label : String?, @discriminator : String, @tasks : Array(Task))
+      end
+    end
+
     # ansible_failed_task / ansible_failed_result inside rescue: (and the
     # always: that follows it); they stay bound until the next block failure
     # replaces them, matching real, where they are ordinary host vars set when
@@ -2463,7 +2486,11 @@ module Krikri
     # TASK header per task since these live inside a block rather than the
     # play's top-level task list, so `run` never prints one for them. Stops
     # early once the host halts (a task failed without ignore_errors).
-    private def execute_include_tasks(task : Task, host : Host) : Nil
+    # *deferred*, when given, parks this host's per-iteration load results
+    # (see DeferredInclude) instead of printing their `included:` lines and
+    # running them - the multi-host looped caller drains them together so
+    # every host's include is processed before any included task runs.
+    private def execute_include_tasks(task : Task, host : Host, deferred : Array(DeferredInclude)? = nil) : Nil
       begin
         # loop_lenient_vars: a looped include_tasks:'s own vars: render
         # with `item` unbound here, but Ansible only ever evaluates
@@ -2659,7 +2686,13 @@ module Krikri
           # ultimately skipped still got counted as `ok` AND `skipped`
           # for the same task. See the non-looped branch's comment below
           # for how this was found.
-          status = run_include_tasks_once(task, host, vars_context, item_label, defer_when_stats: true, defer_run: true, collected: deferred_iterations, loop_entries: include_loop_entries, loop_index: idx)
+          status = run_include_tasks_once(task, host, vars_context, item_label,
+            defer_when_stats: true,
+            defer_run: deferred.nil?,
+            collected: deferred.nil? ? deferred_iterations : nil,
+            loop_entries: include_loop_entries,
+            loop_index: idx,
+            deferred: deferred)
           looped_when_failed = true if status == :failed
           any_iteration_ran = true unless status == :skipped
         end
@@ -2721,11 +2754,61 @@ module Krikri
         # `ok` here unconditionally, then run_include_tasks_once's own
         # when:-false path adding `skipped` on top, with no when: check
         # in between.
-        run_include_tasks_once(task, host, base_vars_context, nil)
+        run_include_tasks_once(task, host, base_vars_context, nil, deferred: deferred)
       end
     end
 
-    private def run_include_tasks_once(task : Task, host : Host, vars_context : Hash(String, JSON::Any), item_label : String?, defer_when_stats : Bool = false, defer_run : Bool = false, collected : Array(Array(Task))? = nil, loop_entries : Array(JSON::Any)? = nil, loop_index : Int32? = nil) : Symbol
+    # The multi-host looped include_tasks: counterpart (issue #1240).
+    # Ansible's linear strategy processes the looped include for EVERY host
+    # before any included task runs - one `included: <file> for host1,
+    # host2 => (item=...)` line per item, then each item's loaded tasks on
+    # all hosts in lockstep. Running one host's whole loop (and its included
+    # tasks) before the next host started reordered side effects for
+    # anything serial:/run_once:/later tasks depend on.
+    private def execute_include_tasks_looped_multi(task : Task, hosts : Array(Host)) : Nil
+      include_display_name = render_task_name_for_display(task, hosts.first)
+      Krikri::OutputBanner.banner("TASK [#{task_role_prefix(task)}#{include_display_name}]")
+      Krikri::ProfileTasks.record_task_start(task, include_display_name)
+      print_task_path(task)
+
+      deferred = [] of DeferredInclude
+      hosts.each { |host| execute_include_tasks(task, host, deferred) }
+      flush_deferred_includes(deferred)
+    end
+
+    # Drains the include load results every host parked, in Ansible's own
+    # display shape: one `included:` line per (file/role, item, invocation
+    # vars) group listing ALL its hosts, printed before the first included
+    # task runs, then each group's loaded tasks across its hosts in
+    # lockstep. A host that reports the same group twice (duplicate loop
+    # items) opens a SECOND group rather than merging into the first -
+    # IncludedFile#add_host refuses a host it already holds, so real prints
+    # two lines and runs the tasks twice.
+    private def flush_deferred_includes(records : Array(DeferredInclude)) : Nil
+      groups = [] of {String, String, String?, Array(Task), Array(Host)}
+      occurrences = Hash(String, Hash(String, Int32)).new
+      records.each do |record|
+        identity = "#{record.path}\u0000#{record.discriminator}\u0000#{record.label.inspect}"
+        per_host = occurrences[record.host.name] ||= Hash(String, Int32).new
+        nth = per_host[identity]? || 0
+        per_host[identity] = nth + 1
+        key = "#{identity}\u0000#{nth}"
+
+        if group = groups.find { |candidate| candidate[0] == key }
+          group[4] << record.host
+        else
+          groups << {key, record.path, record.label, record.tasks, [record.host]}
+        end
+      end
+
+      groups.each do |group|
+        suffix = group[2] ? " => (item=#{group[2]})" : ""
+        puts "included: #{group[1]} for #{group[4].map(&.name).join(", ")}#{suffix}".colorize(:cyan)
+      end
+      groups.each { |group| run_task_batch(group[3], group[4]) }
+    end
+
+    private def run_include_tasks_once(task : Task, host : Host, vars_context : Hash(String, JSON::Any), item_label : String?, defer_when_stats : Bool = false, defer_run : Bool = false, collected : Array(Array(Task))? = nil, loop_entries : Array(JSON::Any)? = nil, loop_index : Int32? = nil, deferred : Array(DeferredInclude)? = nil) : Symbol
       if task.when_condition
         begin
           when_result = evaluate_include_when_items(task, vars_context, host)
@@ -2868,8 +2951,13 @@ module Krikri
         # templated value) for a looped iteration, and on the resolved one
         # even with no loop item at all - included_line_item_label.
         included_label = included_line_item_label(task, item_label, included_line_label_value(task, item_label, vars_context), vars_context)
-        suffix = included_label ? " => (item=#{included_label})" : ""
-        puts "included: #{resolved_path} for #{host.name}#{suffix}".colorize(:cyan)
+        if collector = deferred
+          item_discriminator = (item = vars_context[task.loop_var || "item"]?).try(&.to_json) || ""
+          collector << DeferredInclude.new(host, resolved_path, included_label, item_discriminator, [] of Task)
+        else
+          suffix = included_label ? " => (item=#{included_label})" : ""
+          puts "included: #{resolved_path} for #{host.name}#{suffix}".colorize(:cyan)
+        end
         path_deprecations.clear
         # The zero-task include still registers (issue #888).
         if entries = loop_entries
@@ -3001,8 +3089,18 @@ module Krikri
       # after the load succeeds, before any included task runs.
       connection_names = [host.name]
       included_label = included_line_item_label(task, item_label, included_line_label_value(task, item_label, vars_context), vars_context)
-      suffix = included_label ? " => (item=#{included_label})" : ""
-      puts "included: #{resolved_path} for #{connection_names.join(", ")}#{suffix}".colorize(:cyan)
+      if collector = deferred
+        # Real groups results on the whole loop item, not just its display
+        # label (IncludedFile carries the loop binding in its special
+        # vars), so two items that only LOOK alike must stay separate
+        # groups - and the item is baked into the loaded tasks, so only
+        # hosts with an identical one can share a list.
+        item_discriminator = (item = vars_context[task.loop_var || "item"]?).try(&.to_json) || ""
+        collector << DeferredInclude.new(host, resolved_path, included_label, item_discriminator, included_tasks)
+      else
+        suffix = included_label ? " => (item=#{included_label})" : ""
+        puts "included: #{resolved_path} for #{connection_names.join(", ")}#{suffix}".colorize(:cyan)
+      end
       path_deprecations.clear
       # The successful include registers its result here (issue #888) - a
       # looped caller collects the entry for its aggregate instead.
@@ -3013,6 +3111,10 @@ module Krikri
       else
         register_include_result(task, host, vars_context, file_rel)
       end
+
+      # The multi-host looped caller runs the parked list itself, once
+      # every host's statement has reported (see flush_deferred_includes).
+      return :ok if deferred
 
       if defer_run
         collected.try(&.push(included_tasks))
@@ -3444,7 +3546,7 @@ module Krikri
     # recap, matching ansible-core 2.19.4: its `TASK [clear]` banner
     # prints with no `ok:` beneath it, and the meta task is absent from
     # the play recap's ok= total.
-    private def execute_include_role(task : Task, host : Host) : Nil
+    private def execute_include_role(task : Task, host : Host, deferred : Array(DeferredInclude)? = nil) : Nil
       begin
         # loop_lenient_vars: same zero-iteration-loop reasoning as
         # execute_include_tasks's own build above (stackhpc.luks round
@@ -3544,7 +3646,7 @@ module Krikri
             swallow_when_error(task, host, WhenEvaluationError.new(ex.message), item_label: include_item_display_label(task, item, vars_context, host), loop_item: vars_context[loop_var || "item"]?)
             next
           end
-          status = run_include_role_once(task, host, vars_context, include_item_display_label(task, item, vars_context, host), idx, role_loop_entries)
+          status = run_include_role_once(task, host, vars_context, include_item_display_label(task, item, vars_context, host), idx, role_loop_entries, deferred)
           role_loop_failed = true if status == :failed
         end
         # Same aggregate rule as the looped include_tasks path above: skip
@@ -3558,11 +3660,22 @@ module Krikri
           register_include_loop_aggregate(task, host, role_loop_entries, false)
         end
       else
-        run_include_role_once(task, host, base_vars_context, nil)
+        run_include_role_once(task, host, base_vars_context, nil, deferred: deferred)
       end
     end
 
-    private def run_include_role_once(task : Task, host : Host, vars_context : Hash(String, JSON::Any), item_label : String?, loop_index : Int32? = nil, loop_entries : Array(JSON::Any)? = nil) : Symbol
+    # The multi-host include_role: counterpart (issue #1240). Ansible's
+    # linear strategy loads the role once per host group and then runs its
+    # task list in lockstep - `included: r for host1, host2`, then "role
+    # task one" on both hosts, then "role task two" on both - where krikri
+    # used to run the whole role on host1 before starting host2.
+    private def execute_include_role_multi(task : Task, hosts : Array(Host)) : Nil
+      deferred = [] of DeferredInclude
+      hosts.each { |host| execute_include_role(task, host, deferred) }
+      flush_deferred_includes(deferred)
+    end
+
+    private def run_include_role_once(task : Task, host : Host, vars_context : Hash(String, JSON::Any), item_label : String?, loop_index : Int32? = nil, loop_entries : Array(JSON::Any)? = nil, deferred : Array(DeferredInclude)? = nil) : Symbol
       # A static import_role: (Task#is_static_import) is resolved at
       # parse time in Ansible - the import line itself produces NO
       # task result at all, ever (see the "ok" comment below), and a
@@ -3880,6 +3993,7 @@ module Krikri
       @results[host.name]["ok"] += 1 unless task.is_static_import?
 
       # Real v2_playbook_on_include line for a dynamic include_role.
+      deferred_label : String? = nil
       unless task.is_static_import?
         connection_name = host.name
         # The ` => (item=...)` suffix follows the include callback's
@@ -3891,8 +4005,11 @@ module Krikri
         if (label_obj = included_line_label_value(task, item_label, vars_context)) && Krikri.python_falsy?(label_obj)
           shown_label = nil
         end
-        suffix = shown_label ? " => (item=#{shown_label})" : ""
-        puts "included: #{role_name} for #{connection_name}#{suffix}".colorize(:cyan)
+        deferred_label = shown_label
+        unless deferred
+          suffix = shown_label ? " => (item=#{shown_label})" : ""
+          puts "included: #{role_name} for #{connection_name}#{suffix}".colorize(:cyan)
+        end
         # The successful include registers its result here (issue #888) - a
         # looped caller collects the entry for its aggregate instead.
         if entries = loop_entries
@@ -3993,6 +4110,18 @@ module Krikri
       # include_role: they deliberately did not - real Ansible gives the
       # children only the parent-chain context.
       included_tasks = filter_runtime_loaded(included_tasks, task)
+
+      if collector = deferred
+        # A role's rendered invocation vars, from-files and loop binding
+        # are baked into the loaded tasks, so hosts may only share one
+        # list when those agree too - the same identity Ansible's
+        # IncludedFile equality compares before it hands two hosts the
+        # same blocks.
+        item_discriminator = (item = vars_context[task.loop_var || "item"]?).try(&.to_json) || ""
+        discriminator = "#{rendered_include_vars.to_a.sort_by(&.[0]).to_json}\u0000#{runtime_tasks_from}\u0000#{task.include_role_dir}\u0000#{item_discriminator}"
+        collector << DeferredInclude.new(host, role_name, deferred_label, discriminator, included_tasks)
+        return :ok
+      end
 
       run_task_list(included_tasks, host)
       :ok
