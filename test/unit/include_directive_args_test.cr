@@ -150,6 +150,30 @@ describe "PlaybookParser include directive argument validation" do
       "Error processing keyword 'rescuable': The value 'snhvdg' could not be converted to 'bool'.")
   end
 
+  it "keeps scanning the bool keywords past a convertible one" do
+    # Live-verified vs 2.19.11: real converts each keyword in order and
+    # reports the first that fails, so a convertible public:/
+    # allow_duplicates: ahead of an unconvertible rolespec_validate:
+    # does not hide it (issue #1275).
+    {"public", "allow_duplicates"}.each do |keyword|
+      args = Hash(YAML::Any, YAML::Any).new
+      args[YAML::Any.new(keyword)] = YAML::Any.new(true)
+      args[YAML::Any.new("rolespec_validate")] = YAML::Any.new("bluqcw")
+      failure = Krikri::RoleBoolKeywords.failure(args)
+      failure.try(&.keyword).must_equal("rolespec_validate")
+      failure.try(&.value_repr).must_equal("'bluqcw'")
+    end
+
+    args = Hash(YAML::Any, YAML::Any).new
+    args[YAML::Any.new("public")] = YAML::Any.new("yes")
+    args[YAML::Any.new("rolespec_validate")] = YAML::Any.new(2)
+    Krikri::RoleBoolKeywords.failure(args).try(&.value_repr).must_equal("2")
+
+    args = Hash(YAML::Any, YAML::Any).new
+    args[YAML::Any.new("public")] = YAML::Any.new(true)
+    Krikri::RoleBoolKeywords.failure(args).must_be_nil
+  end
+
   it "refuses a non-string *_from value at parse time WITHOUT an Origin block" do
     # The FROM_ARGS raise carries no obj=data in Ansible's source, so its
     # block is just the [ERROR] line (live-verified vs 2.19.11).
