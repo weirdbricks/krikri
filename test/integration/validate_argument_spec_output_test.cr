@@ -285,4 +285,40 @@ describe "validate_argument_spec output parity" do
     output.wont_include("ok: [localhost]")
     output.must_include("ignored=5")
   end
+
+  it "rejects a non-mapping provided_arguments with the action's Incorrect type brief (issue #1263)" do
+    status, output = run_playbook("pb.yml", {
+      "pb.yml" => "- hosts: all\n  gather_facts: false\n  tasks:\n    - name: int provided\n      ansible.builtin.validate_argument_spec:\n        argument_spec: {}\n        provided_arguments: 49\n      ignore_errors: true\n    - name: string provided\n      ansible.builtin.validate_argument_spec:\n        argument_spec: {}\n        provided_arguments: hello\n      ignore_errors: true\n    - name: list provided\n      ansible.builtin.validate_argument_spec:\n        argument_spec: {}\n        provided_arguments: [a, b]\n      ignore_errors: true\n    - name: null provided\n      ansible.builtin.validate_argument_spec:\n        argument_spec: {}\n        provided_arguments: null\n      ignore_errors: true\n",
+    })
+
+    # Real's action plugin checks the provided_arguments type right after
+    # argument_spec's (live-verified vs 2.19.11), so each shape fails with
+    # its own Python class instead of validating the vars context alone -
+    # the generator caught the recap as ok instead of ignored.
+    status.exit_code.must_equal(0)
+    output.must_include("[ERROR]: Task failed: Incorrect type for provided_arguments, expected dict and got <class 'ansible.module_utils._internal._datatag._AnsibleTaggedInt'>")
+    output.must_include("pb.yml:4:7")
+    output.must_include("^ column 7")
+    output.must_include("fatal: [localhost]: FAILED! => {\"changed\": false, \"msg\": \"Task failed: Incorrect type for provided_arguments, expected dict and got <class 'ansible.module_utils._internal._datatag._AnsibleTaggedInt'>\"}")
+    output.must_include("Incorrect type for provided_arguments, expected dict and got <class 'ansible.module_utils._internal._datatag._AnsibleTaggedStr'>")
+    output.must_include("Incorrect type for provided_arguments, expected dict and got <class 'ansible.module_utils._internal._datatag._AnsibleTaggedList'>")
+    output.must_include("Incorrect type for provided_arguments, expected dict and got <class 'NoneType'>")
+    output.wont_include("ok: [localhost]")
+    output.must_include("ignored=4")
+  end
+
+  it "resolves a Jinja-string provided_arguments and types the resolved value (issue #1263)" do
+    status, output = run_playbook("pb.yml", {
+      "pb.yml" => "- hosts: all\n  gather_facts: false\n  vars:\n    provided: {a: hello}\n    provided_int: 7\n  tasks:\n    - name: templated dict provided\n      ansible.builtin.validate_argument_spec:\n        argument_spec:\n          a: {type: str, required: true}\n        provided_arguments: \"{{ provided }}\"\n    - name: templated int provided\n      ansible.builtin.validate_argument_spec:\n        argument_spec: {}\n        provided_arguments: \"{{ provided_int }}\"\n      ignore_errors: true\n",
+    })
+
+    # The dict check runs on the RESOLVED value (real templates the task's
+    # args during finalization): a template yielding a mapping satisfies
+    # the required option, one yielding an int fails as a tagged int
+    # (live-verified vs 2.19.11).
+    status.exit_code.must_equal(0)
+    output.wont_include("missing required arguments: a")
+    output.must_include("Incorrect type for provided_arguments, expected dict and got <class 'ansible.module_utils._internal._datatag._AnsibleTaggedInt'>")
+    output.must_include("ignored=1")
+  end
 end

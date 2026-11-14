@@ -1039,6 +1039,17 @@ module Krikri
     # form). These override same-named vars in the vars context
     # (combine_vars order) and are templated at execution time.
     property validate_argument_spec_provided : Hash(String, JSON::Any)?
+    # Inline-only: a `provided_arguments:` written as a JINJA STRING,
+    # kept raw for execution-time resolution (a template resolving to a
+    # mapping validates normally; any other resolved type fails the
+    # action plugin's dict check).
+    property validate_argument_spec_raw_provided : String?
+    # Inline-only: the Python class name for a literal non-mapping
+    # `provided_arguments:` (int/list/null/...). Real's action plugin
+    # checks its type right after argument_spec's, before any option
+    # validation (live-verified vs 2.19.11: an explicit null is
+    # `<class 'NoneType'>`, ints/lists the _AnsibleTagged* subclasses).
+    property validate_argument_spec_non_dict_provided_type : String?
 
     def initialize(@name : String, @module_name : String)
       @params = Hash(String, String).new
@@ -1126,6 +1137,8 @@ module Krikri
       @validate_argument_spec_inline = false
       @validate_argument_spec_raw_options = nil
       @validate_argument_spec_provided = nil
+      @validate_argument_spec_raw_provided = nil
+      @validate_argument_spec_non_dict_provided_type = nil
       @validate_argument_spec_non_dict_type = nil
     end
 
@@ -5798,10 +5811,21 @@ module Krikri
           # explicit null from an absent key.
           task.validate_argument_spec_non_dict_type = include_arg_type_name(spec)
         end
-        if provided_hash = hash["provided_arguments"]?.try(&.as_h?)
-          provided = Hash(String, JSON::Any).new
-          provided_hash.each { |key, provided_value| provided[key.to_s] = Vault.yaml_value_to_json(provided_value) }
-          task.validate_argument_spec_provided = provided
+        if provided_value = hash["provided_arguments"]?
+          if provided_hash = provided_value.as_h?
+            provided = Hash(String, JSON::Any).new
+            provided_hash.each { |key, item_value| provided[key.to_s] = Vault.yaml_value_to_json(item_value) }
+            task.validate_argument_spec_provided = provided
+          elsif provided_raw = provided_value.as_s?
+            task.validate_argument_spec_raw_provided = provided_raw
+          else
+            # Real's action plugin checks provided_arguments' type the same
+            # way as argument_spec's (a bare int/list/null fails with its own
+            # Python class before any option validation), so capture the
+            # class here where an explicit null is still distinguishable
+            # from an absent key.
+            task.validate_argument_spec_non_dict_provided_type = include_arg_type_name(provided_value)
+          end
         end
       end
 
