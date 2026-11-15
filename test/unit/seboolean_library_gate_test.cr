@@ -83,4 +83,61 @@ describe "seboolean plugin python library gate" do
     result["failed"].as_bool.must_equal(true)
     result["msg"].as_s.must_equal("argument 'state' of type bool could not be converted to a bool")
   end
+
+  # getenforce/getsebool/setsebool shims plus a python3 that reports both
+  # SELinux bindings importable: the boolean failure branches only run on
+  # a host where the library gate and the SELinux-enabled check both pass,
+  # which no CI host guarantees, so the CLI tools are faked instead.
+  private def with_seboolean_shims(getsebool_exit : Int32, getsebool_output : String,
+                                   setsebool_exit : Int32, &)
+    bin_dir = PluginSpecHelper.tmp_path("seboolean-shims")
+    Dir.mkdir_p(bin_dir)
+    scripts = {
+      "getenforce" => "#!/bin/sh\necho Enforcing\n",
+      "getsebool"  => "#!/bin/sh\necho '#{getsebool_output}'\nexit #{getsebool_exit}\n",
+      "setsebool"  => "#!/bin/sh\nexit #{setsebool_exit}\n",
+      "python3"    => "#!/bin/sh\nprintf 'exe=/usr/bin/python3\\nselinux=yes\\nsemanage=yes\\n'\n",
+    }
+    scripts.each do |name, body|
+      path = File.join(bin_dir, name)
+      File.write(path, body)
+      File.chmod(path, 0o755)
+    end
+    yield bin_dir
+  end
+
+  # Ansible's get_boolean_value failure calls fail_json(msg=...) without
+  # the name/persistent/state result dict, so a failed task registers only
+  # failed/msg/changed/exception (run against ansible.posix 2.1.0 on
+  # ansible-core 2.21.6). krikri used to leak those three extras through the
+  # failed result.
+  it "fails with Ansible's bare fail_json shape when getsebool cannot resolve the boolean" do
+    with_seboolean_shims(1, "enqrie: boolean not found", 0) do |bin_dir|
+      result = PluginSpecHelper.run("seboolean", {
+        "name"       => "enqrie",
+        "state"      => "false",
+        "persistent" => "false",
+      }, env: {"PATH" => "#{bin_dir}:/usr/bin:/bin"})
+
+      result["failed"].as_bool.must_equal(true)
+      result["msg"].as_s.must_equal("Failed to determine current state for boolean enqrie")
+      keys = result.as_h.keys
+      ["name", "persistent", "state"].each { |key| keys.includes?(key).must_equal(false) }
+    end
+  end
+
+  it "reports a setsebool failure with Ansible's bool wording and no extras" do
+    with_seboolean_shims(0, "enqrie --> off", 1) do |bin_dir|
+      result = PluginSpecHelper.run("seboolean", {
+        "name"       => "enqrie",
+        "state"      => "true",
+        "persistent" => "false",
+      }, env: {"PATH" => "#{bin_dir}:/usr/bin:/bin"})
+
+      result["failed"].as_bool.must_equal(true)
+      result["msg"].as_s.must_equal("Failed to set boolean enqrie to True")
+      keys = result.as_h.keys
+      ["name", "persistent", "state"].each { |key| keys.includes?(key).must_equal(false) }
+    end
+  end
 end

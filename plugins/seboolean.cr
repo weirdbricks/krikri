@@ -81,45 +81,52 @@ module Krikri
         return PluginResult.new(changed: false, failed: true, msg: "SELinux is disabled on this host.") unless selinux_enabled?
       end
 
+      # Ansible builds its name/persistent/state result dict before the
+      # boolean work, but every failure path calls fail_json(msg=...)
+      # without it - a FAILED seboolean task registers only
+      # changed/msg/exception, so the extras belong to the success shape
+      # alone (found via the kpg seboolean diff, issue #1298).
       result = PluginResult.new(changed: false, failed: false, msg: "")
-      result.extra["name"] = JSON.parse(name.to_json)
-      result.extra["persistent"] = JSON.parse(persistent.to_json)
-      result.extra["state"] = JSON.parse(desired_on.to_json)
 
       # Ansible's persistent branch talks to the semanage policy store
       # regardless of the running kernel state; the non-persistent
       # branch is guarded by is_selinux_enabled() - a disabled host is
       # a no-op success there, matching real.
       unless persistent
-        return result unless selinux_enabled?
+        return with_boolean_extras(result, name, desired_on, persistent) unless selinux_enabled?
       end
       set_boolean(name, desired_on, persistent, result)
+    end
+
+    private def with_boolean_extras(result : PluginResult, name : String, desired_on : Bool, persistent : Bool) : PluginResult
+      result.extra["name"] = JSON.parse(name.to_json)
+      result.extra["persistent"] = JSON.parse(persistent.to_json)
+      result.extra["state"] = JSON.parse(desired_on.to_json)
+      result
     end
 
     private def set_boolean(name : String, desired_on : Bool, persistent : Bool, result : PluginResult) : PluginResult
       current = remote_exec("getsebool #{shell_single_quote(name)}")
       unless current[:exit_code] == 0
-        result.failed = true
-        result.msg = "Failed to determine current state for boolean #{name}"
-        return result
+        return PluginResult.new(changed: false, failed: true, msg: "Failed to determine current state for boolean #{name}")
       end
 
       # `getsebool <name>` prints "<name> --> on" / "<name> --> off".
       current_on = current[:stdout].strip.ends_with?("--> on")
 
-      return result if current_on == desired_on
+      return with_boolean_extras(result, name, desired_on, persistent) if current_on == desired_on
 
       value = desired_on ? "on" : "off"
       flag = persistent ? "-P " : ""
       set_result = remote_exec("setsebool #{flag}#{shell_single_quote(name)} #{value}")
       unless set_result[:exit_code] == 0
-        result.failed = true
-        result.msg = "Failed to set boolean #{name} to #{value}: #{set_result[:stderr]}"
-        return result
+        # Ansible interpolates the bool parameter itself here ("True"/
+        # "False"), with no libselinux error detail appended.
+        return PluginResult.new(changed: false, failed: true, msg: "Failed to set boolean #{name} to #{desired_on ? "True" : "False"}")
       end
 
       result.changed = true
-      result
+      with_boolean_extras(result, name, desired_on, persistent)
     end
 
     # Ansible's enabled check is libselinux's is_selinux_enabled(); the
