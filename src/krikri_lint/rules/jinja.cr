@@ -43,46 +43,85 @@ module Krikri
         violation.rule_id == "jinja[spacing]"
       end
 
+      # Conditional keywords hold a bare Jinja expression, so upstream
+      # treats their values as implicit templates: it wraps the value in
+      # `{{ ... }}` for parsing and strips a wrapper again afterwards.
+      # For a value that is already a complete `{{ ... }}` template that
+      # strip always removes the delimiters, which is why ansible-lint
+      # reports `changed_when: "{{ x }}"` (and when/failed_when/until)
+      # as jinja[spacing] recommending `x`, even when the inner spacing
+      # is already correct.
+      IMPLICIT_KEYS = %w[changed_when failed_when until when]
+
       def check(file : PositionedFile, violations : Array(Violation)) : Nil
         TaskWalker.each_task(file) do |task|
-          found = [] of {String, Int32, Int32}
-          collect_templates(task.node, found)
-          found.each do |(value, line, column)|
+          found = [] of {String, Int32, Int32, Bool}
+          collect_templates(task.node, false, found)
+          found.each do |(value, line, column, implicit)|
             unless valid_jinja?(value)
               violations << Violation.new(file.path, line, column,
                 "jinja[invalid]", severity,
                 "Syntax error in jinja2 template: #{value}", task.line)
               next
             end
-            if (reformatted = spacing_fix(value)) && reformatted != value
+            reformatted, details = reformat(value, implicit)
+            if reformatted && reformatted != value
               violations << Violation.new(file.path, line, column,
                 "jinja[spacing]", severity,
                 "Jinja2 spacing could be improved: #{value} -> #{reformatted}",
-                task.line, false,
-                "Jinja2 template rewrite recommendation: `#{reformatted}`.")
+                task.line, false, details)
             end
           end
         end
       end
 
+      # Upstream's check_whitespace: normalize the spacing, then for an
+      # implicit conditional value strip the wrapper it would have
+      # added. The recommendation is only attached when the
+      # normalization itself changed the text (the wrapper strip alone
+      # produces a match with no details, because upstream derives the
+      # details from its pre-uncook comparison).
+      private def reformat(value : String, implicit : Bool) : {String?, String}
+        normalized = spacing_fix(value)
+        unless implicit && value.starts_with?("{{") && value.ends_with?("}}")
+          return {normalized, recommendation(normalized)}
+        end
+        text = normalized || value
+        inner = text[3, Math.max(text.size - 6, 0)]
+        details = normalized ? recommendation_text(inner) : ""
+        {inner, details}
+      end
+
+      private def recommendation(normalized : String?) : String
+        normalized ? recommendation_text(normalized) : ""
+      end
+
+      private def recommendation_text(fixed : String) : String
+        "Jinja2 template rewrite recommendation: `#{fixed}`."
+      end
+
       # Walks every string value in the task (skipping the name key and
       # block/rescue/always sublists, like upstream's nested_items_path).
-      private def collect_templates(node : YAML::Nodes::Node, found : Array({String, Int32, Int32})) : Nil
+      # `implicit` marks a scalar sitting directly under a conditional
+      # keyword; list items under one are not implicit (upstream keys
+      # them by index, so it never cooks them).
+      private def collect_templates(node : YAML::Nodes::Node, implicit : Bool, found : Array({String, Int32, Int32, Bool})) : Nil
         case node
         when YAML::Nodes::Mapping
           NodeUtil.each_entry(node) do |k, v|
             key = k.as?(YAML::Nodes::Scalar).try(&.value)
             next if key == "name" || key == "block" || key == "rescue" ||
                     key == "always"
-            collect_templates(v, found)
+            implicit_child = key.nil? ? false : IMPLICIT_KEYS.includes?(key)
+            collect_templates(v, implicit_child, found)
           end
         when YAML::Nodes::Sequence
           node.nodes.each do |child|
-            collect_templates(child, found)
+            collect_templates(child, false, found)
           end
         when YAML::Nodes::Scalar
           if (value = node.value) && value.includes?("{{")
-            found << {value, NodeUtil.line(node), NodeUtil.column(node)}
+            found << {value, NodeUtil.line(node), NodeUtil.column(node), implicit}
           end
         end
       end
