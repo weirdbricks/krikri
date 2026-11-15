@@ -16,20 +16,20 @@ require "../minitest_helper"
 # reach the branch). The libselinux import gate still sits ahead of it,
 # which is why the tests skip on a host where importing the bindings
 # fails - the kpg34 sweep pins that gate itself.
-describe "selinux plugin runtime-state warning" do
-  def gate_passes? : Bool
-    # Same first-hit order as the plugin's own interpreter discovery
-    # (python_lib_gate's INTERPRETER_FALLBACK), trimmed to the entries
-    # that differ on common dev machines.
-    ["python3.13", "python3", "/usr/bin/python3"].each do |name|
-      next unless resolved = Process.find_executable(name)
-      status = Process.run(resolved, {"-c", "import selinux"},
-        output: Process::Redirect::Close, error: Process::Redirect::Close)
-      return status.success?
-    end
-    false
+private def selinux_bindings_importable? : Bool
+  # Same first-hit order as the plugin's own interpreter discovery
+  # (python_lib_gate's INTERPRETER_FALLBACK), trimmed to the entries
+  # that differ on common dev machines.
+  ["python3.13", "python3", "/usr/bin/python3"].each do |name|
+    next unless resolved = Process.find_executable(name)
+    status = Process.run(resolved, {"-c", "import selinux"},
+      output: Process::Redirect::Close, error: Process::Redirect::Close)
+    return status.success?
   end
+  false
+end
 
+describe "selinux plugin runtime-state warning" do
   private def run_selinux(scratch : String, config_content : String,
                           params : Hash(String, String), enforce_content : String? = nil) : JSON::Any
     config_file = File.join(scratch, "config")
@@ -43,7 +43,7 @@ describe "selinux plugin runtime-state warning" do
   end
 
   it "warns and asks for a reboot when the runtime is disabled and the state differs" do
-    skip "host cannot import the selinux bindings, so the gate fails first" unless gate_passes?
+    skip "host cannot import the selinux bindings, so the gate fails first" unless selinux_bindings_importable?
     scratch = PluginSpecHelper.tmp_path("selinux-runtime-warn")
     Dir.mkdir_p(scratch)
 
@@ -60,7 +60,7 @@ describe "selinux plugin runtime-state warning" do
   end
 
   it "still warns and writes the config when the config state differs" do
-    skip "host cannot import the selinux bindings, so the gate fails first" unless gate_passes?
+    skip "host cannot import the selinux bindings, so the gate fails first" unless selinux_bindings_importable?
     scratch = PluginSpecHelper.tmp_path("selinux-runtime-write")
     Dir.mkdir_p(scratch)
 
@@ -76,7 +76,7 @@ describe "selinux plugin runtime-state warning" do
   end
 
   it "warns in check mode too, with the config write only predicted" do
-    skip "host cannot import the selinux bindings, so the gate fails first" unless gate_passes?
+    skip "host cannot import the selinux bindings, so the gate fails first" unless selinux_bindings_importable?
     scratch = PluginSpecHelper.tmp_path("selinux-runtime-check")
     Dir.mkdir_p(scratch)
 
@@ -92,7 +92,7 @@ describe "selinux plugin runtime-state warning" do
   end
 
   it "runtime enforcing (flag file '1'): no warning and no reboot" do
-    skip "host cannot import the selinux bindings, so the gate fails first" unless gate_passes?
+    skip "host cannot import the selinux bindings, so the gate fails first" unless selinux_bindings_importable?
     scratch = PluginSpecHelper.tmp_path("selinux-runtime-enforcing")
     Dir.mkdir_p(scratch)
 
@@ -105,7 +105,7 @@ describe "selinux plugin runtime-state warning" do
   end
 
   it "runtime permissive (flag file '0'): a matching state stays silent" do
-    skip "host cannot import the selinux bindings, so the gate fails first" unless gate_passes?
+    skip "host cannot import the selinux bindings, so the gate fails first" unless selinux_bindings_importable?
     scratch = PluginSpecHelper.tmp_path("selinux-runtime-permissive")
     Dir.mkdir_p(scratch)
 
@@ -118,7 +118,7 @@ describe "selinux plugin runtime-state warning" do
   end
 
   it "state=disabled against a disabled runtime needs no reboot and no warning" do
-    skip "host cannot import the selinux bindings, so the gate fails first" unless gate_passes?
+    skip "host cannot import the selinux bindings, so the gate fails first" unless selinux_bindings_importable?
     scratch = PluginSpecHelper.tmp_path("selinux-runtime-disabled")
     Dir.mkdir_p(scratch)
 
@@ -136,7 +136,7 @@ describe "selinux plugin runtime-state warning" do
   # policy-store error real only reaches much later - real fails the
   # config-file check first, with the literal path in the message.
   it "honors configfile: for the config-file existence check" do
-    skip "host cannot import the selinux bindings, so the gate fails first" unless gate_passes?
+    skip "host cannot import the selinux bindings, so the gate fails first" unless selinux_bindings_importable?
     scratch = PluginSpecHelper.tmp_path("selinux-configfile-missing")
     Dir.mkdir_p(scratch)
     absent = File.join(scratch, "absent-config")
@@ -152,7 +152,7 @@ describe "selinux plugin runtime-state warning" do
   end
 
   it "reads and rewrites the file named by configfile:, not /etc/selinux/config" do
-    skip "host cannot import the selinux bindings, so the gate fails first" unless gate_passes?
+    skip "host cannot import the selinux bindings, so the gate fails first" unless selinux_bindings_importable?
     scratch = PluginSpecHelper.tmp_path("selinux-configfile-write")
     Dir.mkdir_p(scratch)
     custom_config = File.join(scratch, "custom-config")
@@ -168,7 +168,7 @@ describe "selinux plugin runtime-state warning" do
   end
 
   it "treats a present conf:/file: alias as overriding configfile:" do
-    skip "host cannot import the selinux bindings, so the gate fails first" unless gate_passes?
+    skip "host cannot import the selinux bindings, so the gate fails first" unless selinux_bindings_importable?
     scratch = PluginSpecHelper.tmp_path("selinux-configfile-alias")
     Dir.mkdir_p(scratch)
     alias_path = File.join(scratch, "alias-config")
@@ -180,5 +180,23 @@ describe "selinux plugin runtime-state warning" do
 
     result["failed"].as_bool.must_equal(true)
     result["msg"].as_s.must_equal("Unable to find file #{alias_path}")
+  end
+end
+
+# Found via kpg 000029 (ansible.posix.selinux with configfile: ppaslc):
+# the config-file check runs before the policy-required rule and names
+# the requested file, so a missing `configfile:` alongside state=enforcing
+# and no policy: fails with "Unable to find file ppaslc" - not
+# "Policy is required if state is not 'disabled'".
+describe "selinux plugin configfile argument (kpg 000029)" do
+  it "names the requested configfile before the policy-required rule" do
+    skip "host cannot import the selinux bindings, so the gate fails first" unless selinux_bindings_importable?
+
+    result = PluginSpecHelper.run("selinux",
+      {"configfile" => "kpg-000029-nosuch-config", "state" => "enforcing", "update_kernel_param" => "true"})
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("Unable to find file kpg-000029-nosuch-config")
+    result["details"].as_s.must_equal("Please install SELinux-policy package, if this package is not installed previously.")
   end
 end
