@@ -165,8 +165,12 @@ module Krikri
       executed_queries = [] of JSON::Any
       execution_times = [] of JSON::Any
       changed = false
+      server_version = ""
 
       DB.open(uri) do |connection|
+        # Upstream's get_server_implementation warns about MariaDB right
+        # after the connection, before the first statement runs.
+        server_version = connection.query_one("SELECT VERSION()", as: String)
         statements.each do |stmt|
           started = Time.monotonic
           if read_statement?(stmt)
@@ -204,6 +208,7 @@ module Krikri
       # fail_json) sits downstream of the connector warn inside
       # mysql_connect, so even a refused connection's result carries it.
       PluginHelpers::MysqlConnection.add_mysqldb_connector_warning(result)
+      PluginHelpers::MysqlConnection.add_mariadb_warning(result, server_version)
     rescue ex : DB::ConnectionRefused
       PluginHelpers::MysqlConnection.add_mysqldb_connector_warning(
         PluginResult.new(changed: false, failed: true, msg: "unable to connect to database, check login_user and login_password are correct or login_unix_socket password is empty: #{ex.message}"))

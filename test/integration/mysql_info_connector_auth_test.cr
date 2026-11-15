@@ -1,5 +1,6 @@
 require "../minitest_helper"
 require "socket"
+require "../../src/krikri/plugin_helpers/mysql_connection"
 
 # Regression specs for the KNOWN_MISSING "MySQL driver gaps" mysql_info
 # items: Ansible reports the PYTHON connector it used (pymysql and its
@@ -101,6 +102,32 @@ describe "mysql_info users authentication_string" do
       entries.each do |entry|
         entry["authentication_string"]?.must_be_nil
       end
+    end
+  end
+end
+
+# ansible.mysql's get_server_implementation warns right after a successful
+# connection whenever SELECT VERSION() says MariaDB, and mysql_info reports
+# that same detection as `server_engine`. It also resolves SHOW SLAVE HOSTS
+# to MariaDB's SHOW REPLICA HOSTS - MariaDB rejects MySQL's SHOW REPLICAS
+# with a syntax error, which is what made a plain mysql_info read fail.
+describe "mysql_info MariaDB deprecation warning" do
+  it "warns about the upcoming MariaDB support drop and names the MariaDB engine" do
+    servers = SERVERS.select { |server| daemon_reachable?(server[:host], server[:port]) }
+    skip "no MySQL/MariaDB server on 33306/33307" if servers.empty?
+
+    mariadb_servers = servers.select do |server|
+      version = mysql_query(server, "SELECT VERSION() AS v")
+      version["query_result"][0][0]["v"].as_s.downcase.includes?("mariadb")
+    end
+    skip "no MariaDB server on 33307" if mariadb_servers.empty?
+
+    mariadb_servers.each do |server|
+      result = PluginSpecHelper.run("mysql_info", {"filter" => "slave_hosts"}.merge(login_args(server)))
+      failed?(result).must_equal(false, result.to_json)
+      result["server_engine"].as_s.must_equal("MariaDB")
+      result["warnings"].as_a.map(&.as_s).must_equal([Krikri::PluginHelpers::MysqlConnection::MARIADB_WARNING])
+      result["slave_hosts"].as_h.must_be_empty
     end
   end
 end

@@ -5,6 +5,7 @@ require "mysql"
 require "../src/krikri/base_plugin"
 require "../src/krikri/plugin_helpers/ansible_arg_validation"
 require "../src/krikri/plugin_helpers/db_errors"
+require "../src/krikri/plugin_helpers/mysql_command_resolver"
 require "../src/krikri/plugin_helpers/mysql_connection"
 require "../src/krikri/plugin_helpers/mysql_info_version"
 require "../src/krikri/plugin_helpers/mysql_privileges"
@@ -164,19 +165,27 @@ module Krikri
         key_order: SUCCESS_KEY_ORDER)
 
       # Upstream's mysql_connect warns about the MySQLdb connector before
-      # get_info emits its per-filter warnings, and both land in the same
-      # `warnings` list in that record order.
+      # get_server_implementation warns about MariaDB, and get_info emits its
+      # per-filter warnings last; all three land in the same `warnings` list
+      # in that record order.
       PluginHelpers::MysqlConnection.add_mysqldb_connector_warning(result)
 
-      # Ansible's module.warn for every filter element that isn't a known
-      # subset name (mysql_info.py's get_info): the element is ignored and
-      # the warning rides on the result, after `failed`.
-      unless unknown.empty?
-        result.extra["warnings"] = JSON::Any.new(unknown.map { |entry| JSON::Any.new("filter element: #{entry} is not allowable, ignored") })
-      end
-
       DB.open(uri) do |connection|
+        version = server_version(connection)
         engine_name = implementation_of(connection)
+        result.extra["server_engine"] = JSON::Any.new(engine_name)
+        PluginHelpers::MysqlConnection.add_mariadb_warning(result, version)
+
+        # Ansible's module.warn for every filter element that isn't a known
+        # subset name (mysql_info.py's get_info, which runs after the
+        # connection): the element is ignored and the warning rides on the
+        # result, after `failed`.
+        unless unknown.empty?
+          texts = result.extra["warnings"]?.try(&.as_a?) || [] of JSON::Any
+          texts += unknown.map { |entry| JSON::Any.new("filter element: #{entry} is not allowable, ignored") }
+          result.extra["warnings"] = JSON::Any.new(texts)
+        end
+
         collect(connection, wanted, excluded_fields) do |name, value|
           result.extra[name] = value
         end
@@ -196,10 +205,13 @@ module Krikri
     # Ansible's get_server_implementation: a server that identifies itself
     # as MariaDB is the only thing it ever calls MariaDB.
     private def implementation_of(db : DB::Database) : String
+      server_version(db).downcase.includes?("mariadb") ? "MariaDB" : "MySQL"
+    end
+
+    private def server_version(db : DB::Database) : String
       rows = rows_as_hashes(db, "SELECT VERSION() AS version")
       first = rows.first?
-      version = first ? (first["version"]? || "") : ""
-      version.downcase.includes?("mariadb") ? "MariaDB" : "MySQL"
+      first ? (first["version"]? || "") : ""
     end
 
     # Every row of *sql* as a {column => value-as-text} Hash - the shape
@@ -490,37 +502,8 @@ module Krikri
       JSON::Any.new(status)
     end
 
-    # Ansible's own CommandResolver picks the statement a given server
-    # actually understands (MySQL 8.2+ dropped SHOW MASTER STATUS for SHOW
-    # BINARY LOG STATUS, 8.0.22+ the REPLICA spellings, MariaDB its own).
     private def replication_command(db : DB::Database, command : String) : String
-      mariadb = implementation_of(db) == "MariaDB"
-      version = server_version_tuple(db)
-      if command == "SHOW MASTER STATUS"
-        return "SHOW BINLOG STATUS" if mariadb && version_at_least?(version, [10, 5, 2])
-        return "SHOW BINARY LOG STATUS" if !mariadb && version_at_least?(version, [8, 2, 0])
-        return "SHOW MASTER STATUS"
-      end
-      renamed = (!mariadb && version_at_least?(version, [8, 0, 22])) || (mariadb && version_at_least?(version, [10, 5, 1]))
-      return command unless renamed
-      case command
-      when "SHOW SLAVE STATUS" then "SHOW REPLICA STATUS"
-      when "SHOW SLAVE HOSTS"  then "SHOW REPLICAS"
-      else                          "SHOW REPLICA HOSTS"
-      end
-    end
-
-    private def server_version_tuple(db : DB::Database) : Array(Int32)
-      rows = rows_as_hashes(db, "SELECT VERSION() AS version")
-      first = rows.first?
-      raw = first ? (first["version"]? || "") : ""
-      parts = [] of Int32
-      raw.split(/[^0-9]+/).first(3).each { |part| parts << (part.to_i32? || 0) }
-      (parts + [0, 0, 0])[0, 3]
-    end
-
-    private def version_at_least?(actual : Array(Int32), wanted : Array(Int32)) : Bool
-      wanted <= actual[0, wanted.size]
+      PluginHelpers::MysqlCommandResolver.resolve(command, implementation_of(db), server_version(db))
     end
 
     # Ansible's __convert: every value arrives from the driver as text and

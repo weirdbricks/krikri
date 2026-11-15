@@ -122,7 +122,11 @@ module Krikri
         tls: PluginHelpers::MysqlConnection.tls_options(@params),
       )
 
+      server_version = ""
       result = DB.open(uri) do |connection|
+        # Upstream's get_server_implementation warns about MariaDB right
+        # after the connection, before the variable is even read.
+        server_version = connection.query_one("SELECT VERSION()", as: String)
         # `next` (not return): none of the four post-connect outcomes may
         # skip the connector-warning attach below - upstream fails "Variable
         # not available" AFTER mysql_connect too, with the warn riding it.
@@ -153,6 +157,7 @@ module Krikri
       # mysql_connect (whose connector warn is what issue #351 tracks), so
       # every post-connect outcome here carries it, failures included.
       PluginHelpers::MysqlConnection.add_mysqldb_connector_warning(result)
+      PluginHelpers::MysqlConnection.add_mariadb_warning(result, server_version)
     rescue ex : DB::ConnectionRefused
       PluginHelpers::MysqlConnection.add_mysqldb_connector_warning(
         PluginResult.new(changed: false, failed: true, msg: "unable to connect to database, check login_user and login_password are correct or login_unix_socket password is empty: #{ex.message}"))
