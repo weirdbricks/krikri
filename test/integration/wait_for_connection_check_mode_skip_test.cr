@@ -7,7 +7,9 @@ require "file_utils"
 # fires outside check mode, but AFTER the plugin's int() conversions of the
 # four numeric args. krikri used to run its action-level "Invalid options"
 # check first, so a typo'd option failed the task under --check where Ansible
-# skips (issue #1084, live-verified vs ansible-core 2.21.6).
+# skips (issue #1084, live-verified vs ansible-core 2.21.6). For the same
+# reason a non-convertible numeric arg preempts the option rejection in both
+# modes (issue #1284).
 private PROJECT_ROOT_WFC_CM = File.expand_path("../..", __DIR__)
 private BINARY_WFC_CM       = File.join(PROJECT_ROOT_WFC_CM, "bin", "krikri-playbook")
 private INVENTORY_WFC_CM    = File.join(__DIR__, "..", "fixtures", "inventory-explicit-localhost.ini")
@@ -90,6 +92,51 @@ describe "wait_for_connection check mode action skip" do
     status.exit_code.must_equal(0)
     output.must_include("invalid literal for int() with base 10: 'zayose'")
     output.wont_include("skipping:")
+  end
+
+  it "reports int()'s ValueError ahead of the option rejection under --check" do
+    # The int() conversion is the first thing Ansible's action plugin does,
+    # so a typo'd option never gets its own "Invalid options" rejection
+    # when a numeric arg cannot be converted (issue #1284; live-verified vs
+    # 2.21.6 - the fatal msg names the VALUE, 'trtsjf', not the typos).
+    status, output = wfc_cm_playbook(<<-YAML, ["--check"])
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: non-numeric sleep plus typo'd options
+            ansible.builtin.wait_for_connection:
+              delay: "0"
+              sleep: trtsjf
+              connect_timeuot: "5"
+              delay_bogus: "0"
+            ignore_errors: true
+      YAML
+
+    status.exit_code.must_equal(0)
+    output.must_include("invalid literal for int() with base 10: 'trtsjf'")
+    output.wont_include("Invalid options")
+    output.wont_include("skipping:")
+  end
+
+  it "reports int()'s ValueError ahead of the option rejection outside check mode" do
+    status, output = wfc_cm_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: non-numeric sleep plus typo'd options
+            ansible.builtin.wait_for_connection:
+              delay: "0"
+              sleep: trtsjf
+              connect_timeuot: "5"
+              delay_bogus: "0"
+            ignore_errors: true
+      YAML
+
+    status.exit_code.must_equal(0)
+    output.must_include("invalid literal for int() with base 10: 'trtsjf'")
+    output.wont_include("Invalid options")
   end
 
   it "still fails a typo'd option outside check mode" do

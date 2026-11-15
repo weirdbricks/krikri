@@ -3957,17 +3957,22 @@ module Krikri
         }.to_json)
       end
       # wait_for_connection's action plugin runs its int() conversions of the
-      # four numeric args BEFORE its check-mode return, so a non-numeric value
-      # still fails under --check (the plugin binary owns that exact failure);
-      # only once the conversions succeed does it return dict(skipped=True) -
-      # ahead of the option rejection, so a typo'd option like `slepe` skips
-      # under --check instead of failing "Invalid options for ..." (issue
-      # #1084, live-verified vs 2.21.6; the registered shape is the bare
-      # {skipped, failed, changed} - no msg).
-      if check_mode && action_level_only &&
-         task.module_name == "ansible.builtin.wait_for_connection" &&
-         wait_for_connection_int_args_convertible?(params)
-        return JSON.parse({"skipped" => true, "failed" => false, "changed" => false}.to_json)
+      # four numeric args BEFORE its check-mode return and before
+      # ActionBase.run's _VALID_ARGS rejection, so a non-numeric value fails
+      # the task with int()'s own ValueError - in check mode too, and even
+      # when the same task also carries typo'd options, which are never
+      # reached (issue #1284, live-verified vs 2.21.6). The plugin binary
+      # owns that exact failure, so the action-level option rejection must
+      # not preempt it here. Only once the conversions succeed does check
+      # mode return dict(skipped=True) ahead of the option rejection, so a
+      # typo'd option like `slepe` skips under --check instead of failing
+      # "Invalid options for ..." (issue #1084; the registered shape is the
+      # bare {skipped, failed, changed} - no msg).
+      if action_level_only && task.module_name == "ansible.builtin.wait_for_connection"
+        return nil unless wait_for_connection_int_args_convertible?(params)
+        if check_mode
+          return JSON.parse({"skipped" => true, "failed" => false, "changed" => false}.to_json)
+        end
       end
       # Those same int() conversions run before ActionBase's _VALID_ARGS
       # check too, so a non-numeric numeric arg outranks the option
