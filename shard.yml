@@ -41,8 +41,8 @@ development_dependencies:
     github: crystal-ameba/ameba
     version: 1.7.0
   minitest:
-    github: ysbaddaden/minitest.cr
-    version: 1.6.2
+    github: weirdbricks/minitest.cr
+    tag: v1.7.0-weirdbricks.2
 
 crystal: ">= 1.0.0"
 
