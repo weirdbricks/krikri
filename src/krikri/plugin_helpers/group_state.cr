@@ -16,6 +16,20 @@ module Krikri
         Group.new(fields[0], fields[2])
       end
 
+      # Existence check for a single `getent group <key>` reply. Ansible's
+      # group_exists() asks grp.getgrnam(), which resolves the NAME only,
+      # while `getent group <key>` also accepts a numeric key as a GID - so
+      # a task name like "45" must not be treated as already present just
+      # because the group "sasl" owns gid 45 (live-verified vs 2.21.6:
+      # check mode create of name "45" reports changed). The name compare
+      # also matches getent's own resolution order (name first, then gid):
+      # a group actually NAMED "45" still resolves normally.
+      def self.parse_lookup(line : String, name : String) : Group?
+        group = parse(line)
+        return nil unless group && group.name == name
+        group
+      end
+
       # `local: true`'s existence check - Ansible's own group_exists
       # reads /etc/group directly (its own comment: the grp module "does not
       # distinguish between local and directory accounts") instead of any

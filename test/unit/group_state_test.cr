@@ -21,6 +21,23 @@ describe GroupState do
     end
   end
 
+  describe ".parse_lookup" do
+    it "accepts the line getent returns for the requested name" do
+      group = GroupState.parse_lookup("adm:x:4:labros\n", "adm").as(GroupState::Group)
+      group.gid.must_equal("4")
+    end
+
+    it "rejects a line that only matched the name numerically as a gid" do
+      # `getent group 45` answers with "sasl:x:45:" on a numeric key, but
+      # Ansible's grp.getgrnam("45") finds no group by that name.
+      GroupState.parse_lookup("sasl:x:45:\n", "45").must_be_nil
+    end
+
+    it "returns nil for a malformed line" do
+      GroupState.parse_lookup("not-enough-fields", "not-enough-fields").must_be_nil
+    end
+  end
+
   describe ".local_parse" do
     it "finds the group's line in a full /etc/group listing" do
       group = GroupState.local_parse(<<-FILE, "adm")

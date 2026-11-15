@@ -130,7 +130,7 @@ module Krikri
 
       result = remote_exec("getent group #{shell_single_quote(name)}")
       return nil unless result[:exit_code] == 0
-      PluginHelpers::GroupState.parse(result[:stdout])
+      PluginHelpers::GroupState.parse_lookup(result[:stdout], name)
     end
 
     private def local? : Bool
