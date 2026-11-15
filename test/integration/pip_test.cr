@@ -1379,6 +1379,95 @@ describe "pip plugin" do
       end
     end
 
+    # Issue #1290: pip.py folds version: into its single package before
+    # the check_mode block, so the probe sees name==version rather than
+    # the bare name. A version the requirement grammar rejects survives
+    # that fold as an unparseable Package that still carries the BARE
+    # name: pip <24.1 cannot resolve it, so it warns and _is_present
+    # answers False (changed for state=present) where probing the bare
+    # name reported ok; pip >=24.1 resolves the bare name through
+    # `install --dry-run --report` and compares the version it lands on.
+    it "folds version: into the check-mode probe like pip.py (issue #1290)" do
+      shim_dir = File.tempname(".krikri-spec-pip-version")
+      Dir.mkdir(shim_dir)
+
+      old_pip = File.join(shim_dir, "old-pip")
+      File.write(old_pip, <<-SH
+        #!/bin/sh
+        export PATH=/usr/local/bin:/usr/bin:/bin
+        case "$1" in
+          show) echo "Name: pip"; echo "Version: 23.0.2"; exit 0 ;;
+          list|freeze) echo "pip==22.0.2"; echo "alpha==1.0"; exit 0 ;;
+        esac
+        exit 0
+        SH
+      )
+
+      new_pip = File.join(shim_dir, "new-pip")
+      File.write(new_pip, <<-SH
+        #!/bin/sh
+        export PATH=/usr/local/bin:/usr/bin:/bin
+        case "$1" in
+          show) echo "Name: pip"; echo "Version: 25.1.1"; exit 0 ;;
+          list|freeze) echo "pip==22.0.2"; echo "alpha==1.0"; exit 0 ;;
+          install)
+            for arg in "$@"; do
+              case "$arg" in
+                --report=*) printf '{"install": [{"metadata": {"name": "pip", "version": "22.0.2"}}]}' > "${arg#--report=}" ;;
+              esac
+            done
+            exit 0
+            ;;
+        esac
+        exit 0
+        SH
+      )
+      File.chmod(old_pip, 0o755)
+      File.chmod(new_pip, 0o755)
+      begin
+        rejected = PluginSpecHelper.run("pip", {
+          "name"                => "pip",
+          "version"             => "oduuxb",
+          "executable"          => old_pip,
+          "_ansible_check_mode" => "true",
+        })
+        falsey?(rejected["failed"]?.try(&.as_bool)).must_equal(true)
+        rejected["changed"].as_bool.must_equal(true)
+        rejected["warnings"].as_a.map(&.as_s).must_equal([
+          "Using check mode with packages from vcs urls, file paths, or archives will not behave as expected when using pip versions <24.1.",
+        ])
+
+        resolved = PluginSpecHelper.run("pip", {
+          "name"                => "pip",
+          "version"             => "oduuxb",
+          "executable"          => new_pip,
+          "_ansible_check_mode" => "true",
+        })
+        falsey?(resolved["failed"]?.try(&.as_bool)).must_equal(true)
+        resolved["changed"].as_bool.must_equal(false)
+
+        satisfied = PluginSpecHelper.run("pip", {
+          "name"                => "alpha",
+          "version"             => "1.0",
+          "executable"          => old_pip,
+          "_ansible_check_mode" => "true",
+        })
+        falsey?(satisfied["failed"]?.try(&.as_bool)).must_equal(true)
+        satisfied["changed"].as_bool.must_equal(false)
+
+        unsatisfied = PluginSpecHelper.run("pip", {
+          "name"                => "alpha",
+          "version"             => "2.0",
+          "executable"          => old_pip,
+          "_ansible_check_mode" => "true",
+        })
+        falsey?(unsatisfied["failed"]?.try(&.as_bool)).must_equal(true)
+        unsatisfied["changed"].as_bool.must_equal(true)
+      ensure
+        FileUtils.rm_rf(shim_dir)
+      end
+    end
+
     it "reports changed for an unsatisfied version pin in an existing virtualenv" do
       venv = File.join(Dir.tempdir, "krikri-pip-spec-venv-#{Random::Secure.hex(8)}")
       begin
