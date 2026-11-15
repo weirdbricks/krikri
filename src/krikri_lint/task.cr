@@ -280,6 +280,43 @@ module Krikri
         collect_tasks(file).each { |task| yield task }
       end
 
+      # Yield every block parent mapping (a list entry carrying a `block:`
+      # key), nested ones included - collect_tasks deliberately skips them
+      # because a block has no module to run, but upstream models a block
+      # as a task with a dummy "block/always/rescue" action, so rules that
+      # look at the task's own keys (name) must see it too.
+      def self.each_block(file : PositionedFile, &block : YAML::Nodes::Mapping ->) : Nil
+        root = file.root || return
+        list = root.as?(YAML::Nodes::Sequence) || return
+        if playbook_root?(file)
+          list.nodes.each do |play_node|
+            play = play_node.as?(YAML::Nodes::Mapping) || next
+            %w[pre_tasks tasks post_tasks handlers].each do |section|
+              if (entry = NodeUtil.entry(play, section)) &&
+                 (tasks_list = entry[1].as?(YAML::Nodes::Sequence))
+                walk_blocks(tasks_list, &block)
+              end
+            end
+          end
+        else
+          walk_blocks(list, &block)
+        end
+      end
+
+      private def self.walk_blocks(list : YAML::Nodes::Sequence, &block : YAML::Nodes::Mapping ->) : Nil
+        list.nodes.each do |item|
+          node = item.as?(YAML::Nodes::Mapping) || next
+          next if NodeUtil.entry(node, "block").nil?
+          block.call(node)
+          %w[block rescue always].each do |section|
+            if (entry = NodeUtil.entry(node, section)) &&
+               (sub = entry[1].as?(YAML::Nodes::Sequence))
+              walk_blocks(sub, &block)
+            end
+          end
+        end
+      end
+
       private def self.walk_list(list : YAML::Nodes::Sequence, file : PositionedFile, tasks : Array(LintTask), in_handlers : Bool = false) : Nil
         list.nodes.each do |item|
           node = item.as?(YAML::Nodes::Mapping) || next

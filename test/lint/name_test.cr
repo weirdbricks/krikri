@@ -94,5 +94,74 @@ module Krikri::Lint
       v.size.must_equal(1)
       v.first.rule_id.must_equal("name[missing]")
     end
+
+    # ansible-lint normalizes a block to a task with the dummy action
+    # "block/always/rescue", so the block parent itself must be named.
+    it "flags an unnamed block parent" do
+      v = lint_yaml(rule, <<-YAML)
+        ---
+        - name: Play
+          hosts: all
+          tasks:
+            - block:
+                - name: Named child
+                  ansible.builtin.debug:
+                    msg: hi
+              when: true
+        YAML
+      v.size.must_equal(1)
+      v.first.rule_id.must_equal("name[missing]")
+      v.first.line.must_equal(5)
+      v.first.column.must_equal(0)
+    end
+
+    it "flags a lowercase block name at the name key" do
+      v = lint_yaml(rule, <<-YAML)
+        ---
+        - name: Play
+          hosts: all
+          tasks:
+            - name: lowercase block
+              block:
+                - name: Named child
+                  ansible.builtin.debug:
+                    msg: hi
+        YAML
+      v.size.must_equal(1)
+      v.first.rule_id.must_equal("name[casing]")
+      v.first.line.must_equal(5)
+      v.first.column.must_equal(13)
+    end
+
+    it "flags every unnamed block parent, nested ones included" do
+      v = lint_yaml(rule, <<-YAML)
+        ---
+        - block:
+            - block:
+                - name: Named child
+                  ansible.builtin.debug:
+                    msg: hi
+        YAML
+      v.map(&.rule_id).must_equal(["name[missing]", "name[missing]"])
+      v.map(&.line).must_equal([2, 3])
+    end
+
+    it "checks block parents in a tasks file" do
+      v = lint_yaml(rule, <<-YAML, FileType::TASKS)
+        ---
+        - name: rescue block
+          block:
+            - name: Named child
+              ansible.builtin.debug:
+                msg: hi
+          rescue:
+            - name: Named rescue
+              ansible.builtin.debug:
+                msg: rescue
+        YAML
+      v.size.must_equal(1)
+      v.first.rule_id.must_equal("name[casing]")
+      v.first.line.must_equal(2)
+    end
   end
 end
