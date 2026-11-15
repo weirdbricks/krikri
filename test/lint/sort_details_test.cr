@@ -82,6 +82,25 @@ module Krikri::Lint
         missing.details.must_equal("Task/Handler: ping ")
       end
 
+      # A block is a task to Ansible, and upstream normalizes it to the
+      # "block/always/rescue" action: the detail is the block's own name,
+      # or that action with the empty argument list (trailing space
+      # included).
+      it "describes a matched block with its name or block/always/rescue" do
+        violations = run_rules_yaml(
+          "---\n- hosts: localhost\n  tasks:\n    - name: lowercase block\n" \
+          "      block:\n        - name: Child\n          ansible.builtin.ping:\n" \
+          "    - block:\n        - name: Other\n          ansible.builtin.ping:\n",
+          [NameRule.new],
+        )
+        named = violations.find { |v| v.line == 4 }
+        raise "no name[casing] violation" unless named
+        named.details.must_equal("Task/Handler: lowercase block")
+        unnamed = violations.find { |v| v.rule_id == "name[missing]" }
+        raise "no name[missing] violation" unless unnamed
+        unnamed.details.must_equal("Task/Handler: block/always/rescue ")
+      end
+
       it "lists fqcn before name[missing] on the same task line, like upstream" do
         violations = run_rules_yaml(
           "---\n- hosts: localhost\n  tasks:\n    - ping:\n",
