@@ -101,4 +101,20 @@ describe "get_certificate plugin argument validation" do
     result["failed"].as_bool.must_equal(true)
     result["msg"].as_s.must_equal("missing required arguments: port")
   end
+
+  # The skip also wins over the ca_cert existence check, because that check
+  # lives in the module body ansible never runs under --check (kpg issue
+  # #1314: a missing ca_cert used to fail the task instead of skipping it,
+  # flipping a following `when: r is succeeded` gate).
+  it "skips in check mode before the missing ca_cert error" do
+    result = PluginSpecHelper.run("get_certificate", {
+      "host"                => "127.0.0.1",
+      "port"                => "443",
+      "ca_cert"             => "/tmp/krikri-get-certificate-check-mode-missing.pem",
+      "_ansible_check_mode" => "true",
+    })
+
+    result.as_h.keys.must_equal(["skipped", "msg"])
+    result["msg"].as_s.must_equal("remote module (community.crypto.get_certificate) does not support check mode")
+  end
 end
