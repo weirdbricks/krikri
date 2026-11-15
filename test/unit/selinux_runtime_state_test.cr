@@ -129,4 +129,56 @@ describe "selinux plugin runtime-state warning" do
     result["reboot_required"].as_bool.must_equal(false)
     result["changed"].as_bool.must_equal(false)
   end
+
+  # ansible.posix.selinux's `configfile` (aliases conf/file) picks the
+  # file every check and rewrite uses. Ignoring it made a `configfile:
+  # jssvzf` task fall through to /etc/selinux/config and fail with the
+  # policy-store error real only reaches much later - real fails the
+  # config-file check first, with the literal path in the message.
+  it "honors configfile: for the config-file existence check" do
+    skip "host cannot import the selinux bindings, so the gate fails first" unless gate_passes?
+    scratch = PluginSpecHelper.tmp_path("selinux-configfile-missing")
+    Dir.mkdir_p(scratch)
+    absent = File.join(scratch, "absent-config")
+
+    result = PluginSpecHelper.run("selinux",
+      {"state" => "permissive", "policy" => "sikvti", "configfile" => absent},
+      env: {"KRIKRI_SELINUX_ENFORCE_PATH" => File.join(scratch, "enforce")})
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("Unable to find file #{absent}")
+    result["details"].as_s
+      .must_equal("Please install SELinux-policy package, if this package is not installed previously.")
+  end
+
+  it "reads and rewrites the file named by configfile:, not /etc/selinux/config" do
+    skip "host cannot import the selinux bindings, so the gate fails first" unless gate_passes?
+    scratch = PluginSpecHelper.tmp_path("selinux-configfile-write")
+    Dir.mkdir_p(scratch)
+    custom_config = File.join(scratch, "custom-config")
+    File.write(custom_config, "SELINUX=enforcing\nSELINUXTYPE=targeted\n")
+
+    result = PluginSpecHelper.run("selinux",
+      {"state" => "permissive", "policy" => "targeted", "configfile" => custom_config},
+      env: {"KRIKRI_SELINUX_ENFORCE_PATH" => File.join(scratch, "enforce")})
+
+    result["changed"].as_bool.must_equal(true)
+    File.read(custom_config).strip
+      .must_equal("SELINUX=permissive\nSELINUXTYPE=targeted")
+  end
+
+  it "treats a present conf:/file: alias as overriding configfile:" do
+    skip "host cannot import the selinux bindings, so the gate fails first" unless gate_passes?
+    scratch = PluginSpecHelper.tmp_path("selinux-configfile-alias")
+    Dir.mkdir_p(scratch)
+    alias_path = File.join(scratch, "alias-config")
+
+    result = PluginSpecHelper.run("selinux",
+      {"state" => "permissive", "policy" => "sikvti", "conf" => alias_path,
+       "configfile" => File.join(scratch, "ignored-config")},
+      env: {"KRIKRI_SELINUX_ENFORCE_PATH" => File.join(scratch, "enforce")})
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("Unable to find file #{alias_path}")
+  end
 end
