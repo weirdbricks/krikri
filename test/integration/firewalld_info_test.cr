@@ -109,6 +109,66 @@ describe "firewalld_info plugin" do
       "Please note: zone:(krikri-spec-undefined-zone) have been ignored in the gathering process.")
   end
 
+  # ansible.posix 2.2.0 moved the note from a ','.join in exit_json's
+  # `warnings` kwarg to module.warn(... % ", ".join(...)). Real derives the
+  # list from a Python set (hash-randomized per module process), so krikri
+  # keeps the specified order and only the separator follows the release.
+  it "joins several ignored zones with the resolved release's separator" do
+    python = Process.find_executable("python3") || Process.find_executable("python")
+    skip "no python interpreter on this host" unless python
+
+    stub = PluginSpecHelper.tmp_path("firewalld-stub")
+    Dir.mkdir_p(File.join(stub, "dbus"))
+    Dir.mkdir_p(File.join(stub, "firewall"))
+    File.write(File.join(stub, "dbus", "__init__.py"), [
+      "class exceptions:",
+      "    class DBusException(Exception):",
+      "        pass",
+      "",
+    ].join("\n"))
+    File.write(File.join(stub, "firewall", "__init__.py"), "")
+    File.write(File.join(stub, "firewall", "config.py"), "VERSION = \"2.4.4\"\n")
+    File.write(File.join(stub, "firewall", "client.py"), [
+      "class _Settings:",
+      "    def getTarget(self): return \"default\"",
+      "    def getIcmpBlockInversion(self): return False",
+      "    def getInterfaces(self): return []",
+      "    def getSources(self): return []",
+      "    def getServices(self): return []",
+      "    def getPorts(self): return []",
+      "    def getProtocols(self): return []",
+      "    def getMasquerade(self): return False",
+      "    def getForwardPorts(self): return []",
+      "    def getSourcePorts(self): return []",
+      "    def getIcmpBlocks(self): return []",
+      "    def getRichRules(self): return []",
+      "    def getForward(self): return False",
+      "",
+      "",
+      "class FirewallClient:",
+      "    def getDefaultZone(self): return \"public\"",
+      "    def getZones(self): return [\"public\", \"trusted\"]",
+      "    def getActiveZones(self): return {\"public\": []}",
+      "    def getZoneSettings(self, zone): return _Settings()",
+      "",
+    ].join("\n"))
+
+    zones = %(["krikri-spec-undefined-a", "krikri-spec-undefined-b", "krikri-spec-undefined-c"])
+    expected = %w[krikri-spec-undefined-a krikri-spec-undefined-b krikri-spec-undefined-c]
+
+    legacy = PluginSpecHelper.run("firewalld_info", {"zones" => zones},
+      env: {"PYTHONPATH" => stub}, collection_version: "2.1.0")
+    legacy["undefined_zones"].as_a.map(&.as_s).must_equal(expected)
+    legacy_note = legacy["warnings"].as_a[0].as_s
+    legacy_note.match!(/zone:\((.*)\) have been ignored/)[1].split(",").must_equal(expected)
+
+    modern = PluginSpecHelper.run("firewalld_info", {"zones" => zones},
+      env: {"PYTHONPATH" => stub}, collection_version: "2.2.2")
+    modern["undefined_zones"].as_a.map(&.as_s).must_equal(expected)
+    modern_note = modern["warnings"].as_a[0].as_s
+    modern_note.match!(/zone:\((.*)\) have been ignored/)[1].split(", ").must_equal(expected)
+  end
+
   # The exit_json `warnings` deprecation models the 2.1.x module line,
   # whose result passes `warnings` to exit_json - ansible.posix 2.2.x
   # triggers no deprecation at all (issue #1060's release split, the
