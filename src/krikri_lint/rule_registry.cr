@@ -21,6 +21,7 @@ module Krikri
           VarNamingRule.new,
           NoHandlerRule.new,
           NoJinjaWhenRule.new,
+          NoTabsRule.new,
           JinjaRule.new,
           SchemaMetaRule.new,
           KeyOrderRule.new,

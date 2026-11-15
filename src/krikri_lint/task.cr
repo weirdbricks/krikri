@@ -317,6 +317,53 @@ module Krikri
         end
       end
 
+      # Every task-statement mapping in the file's task lists, block
+      # statements included. Upstream builds a Task for a block statement
+      # too (with the synthetic action "block/always/rescue") and keeps
+      # its nested task lists in the normalized task, so a rule walking
+      # those values sees a nested task's values twice - through the
+      # enclosing block and as a task of its own.
+      def self.each_task_mapping(file : PositionedFile, &) : Nil
+        root = file.root || return
+        list = root.as?(YAML::Nodes::Sequence) || return
+        statements = [] of YAML::Nodes::Mapping
+        if playbook_root?(file)
+          list.nodes.each do |play_node|
+            play = play_node.as?(YAML::Nodes::Mapping) || next
+            %w[pre_tasks tasks post_tasks handlers].each do |section|
+              if (entry = NodeUtil.entry(play, section)) &&
+                 (tasks_list = entry[1].as?(YAML::Nodes::Sequence))
+                collect_statements(tasks_list, statements)
+              end
+            end
+          end
+        else
+          collect_statements(list, statements)
+        end
+        statements.each { |node| yield node }
+      end
+
+      # A yielding helper cannot recurse here (Crystal inlines blocks, so
+      # the call would expand forever); an explicit stack collects the
+      # same statements. The order is irrelevant - the report sorts
+      # violations by position.
+      private def self.collect_statements(list : YAML::Nodes::Sequence, statements : Array(YAML::Nodes::Mapping)) : Nil
+        stack = [] of YAML::Nodes::Sequence
+        stack << list
+        while current = stack.pop?
+          current.nodes.each do |item|
+            node = item.as?(YAML::Nodes::Mapping) || next
+            statements << node
+            %w[block rescue always].each do |section|
+              if (entry = NodeUtil.entry(node, section)) &&
+                 (sub = entry[1].as?(YAML::Nodes::Sequence))
+                stack << sub
+              end
+            end
+          end
+        end
+      end
+
       private def self.walk_list(list : YAML::Nodes::Sequence, file : PositionedFile, tasks : Array(LintTask), in_handlers : Bool = false) : Nil
         list.nodes.each do |item|
           node = item.as?(YAML::Nodes::Mapping) || next
