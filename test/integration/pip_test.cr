@@ -1119,6 +1119,59 @@ describe "pip plugin" do
     end
   end
 
+  # pip.py's Package.__init__ joins name and version, then hands the
+  # result to packaging's Requirement parser; a version that parser
+  # rejects is dropped from the requirement entirely, so the install
+  # proceeds against the BARE package name rather than an invalid
+  # requirement pip itself refuses. Live-verified against ansible-core
+  # 2.21.6: `hikuzk`, `=1.2`, `>=banana` and `1.0 2` all reach pip as
+  # `install present-pkg` (issue #1287).
+  describe "pip version: Ansible's requirement parser rejects" do
+    it "installs the bare package name, unpinned, like Ansible" do
+      ["hikuzk", "=1.2", ">=banana", "1.0 2"].each do |version|
+        shim_dir = File.tempname(".krikri-spec-pip-version")
+        Dir.mkdir(shim_dir)
+        pip = write_pip_shim(shim_dir)
+        begin
+          result = PluginSpecHelper.run("pip", {
+            "name"       => "present-pkg",
+            "version"    => version,
+            "executable" => pip,
+          })
+
+          result["failed"]?.try(&.as_bool).wont_equal(true)
+          File.read(File.join(shim_dir, "marker")).must_include("args=install present-pkg\n")
+        ensure
+          FileUtils.rm_rf(shim_dir)
+        end
+      end
+    end
+
+    it "keeps a pin packaging accepts, normalized and sorted like str(Requirement)" do
+      {
+        "1.2"         => "args=install present-pkg==1.2\n",
+        ">=3.0"       => "args=install present-pkg>=3.0\n",
+        ">= 1.0,<2.0" => "args=install present-pkg<2.0,>=1.0\n",
+      }.each do |version, expected|
+        shim_dir = File.tempname(".krikri-spec-pip-version")
+        Dir.mkdir(shim_dir)
+        pip = write_pip_shim(shim_dir)
+        begin
+          result = PluginSpecHelper.run("pip", {
+            "name"       => "present-pkg",
+            "version"    => version,
+            "executable" => pip,
+          })
+
+          result["failed"]?.try(&.as_bool).wont_equal(true)
+          File.read(File.join(shim_dir, "marker")).must_include(expected)
+        ensure
+          FileUtils.rm_rf(shim_dir)
+        end
+      end
+    end
+  end
+
   # --- state: latest + version: parity ---------------------------------
   #
   # pip.py guards `if state == 'latest' and version is not None` INSIDE

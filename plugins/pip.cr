@@ -23,9 +23,9 @@ module Krikri
   # - version: install exactly this version - appended to name with
   #   `==` when the version starts with a digit, or with a comparison
   #   operator (`>=22` -> `pip>=22`); a version that is not a valid
-  #   PEP 440 specifier (a bare word like `oduuxb`, or a malformed
-  #   version like `1..2`) is ignored and the package installed
-  #   unpinned, matching Ansible's own pip module
+  #   PEP 440 specifier (a bare word like `oduuxb`/`hikuzk`, a single
+  #   `=`, or a malformed version like `1..2`) is ignored and the
+  #   package installed unpinned, matching Ansible's own pip module
   # - state: present (default) | absent | latest | forcereinstall
   # - virtualenv: path to a venv - created via `python3 -m venv` if it
   #   doesn't already exist, and used instead of the system pip
@@ -949,17 +949,25 @@ module Krikri
     # version starts with a digit - anything else keeps a SPACE as the
     # separator (`pip >=22`), and the join is only kept when
     # `packaging` parses it as a PEP 508 requirement. An unparsable
-    # join (a bare garbage suffix like `oduuxb`, or a malformed version
-    # that merely starts with a digit, like `3abc` or `1..2`) falls
-    # back to the bare package name, so Ansible installs the package
-    # UNPINNED and reports ok. Building `pip==oduuxb` unconditionally
-    # made pip reject the task instead (issue #1288). Building the
+    # join (a bare garbage suffix like `oduuxb`/`hikuzk`, a single `=`
+    # in front of the version, or a malformed version that merely
+    # starts with a digit, like `3abc` or `1..2`) falls back to the
+    # bare package name, so Ansible installs the package UNPINNED and
+    # reports ok. Building `pip==oduuxb` unconditionally made pip
+    # reject the task instead (issues #1288, #1287). Building the
     # unconditional `pip==>=22` made pip reject the requirement
     # outright ("Invalid requirement") where ansible-playbook installs
     # fine (issue #357). A version that is only whitespace strips to
     # nothing, so it installs the package unpinned - Ansible would
     # crash here; any unpinned outcome matches the falsy-empty
     # handling above.
+    #
+    # A parseable join is re-rendered from the Requirement, so a
+    # comma-separated list is sent specifier-sorted exactly like
+    # `str(Requirement)`: live-verified against ansible-core 2.21.6,
+    # `version: '>= 1.0,<2.0'` reaches pip as `setuptools<2.0,>=1.0`,
+    # while `hikuzk`, `=1.2` and `>=banana` reach it as `install
+    # setuptools` (issue #1287).
     private def target_spec(name : String?, version : String?) : String?
       return nil unless name
       return name if version.nil? || version.empty?
@@ -972,7 +980,8 @@ module Krikri
 
     # The specifier part of `name: ... version: ...`, in the compact
     # form `str(packaging.requirements.Requirement(...))` produces
-    # (operators and versions stripped of surrounding whitespace), or
+    # (operators and versions stripped of surrounding whitespace,
+    # specifiers sorted, since `str(SpecifierSet)` sorts them), or
     # nil when packaging's grammar rejects it. `SpecifierSet` accepts
     # exactly one dangling trailing comma; any other empty piece (a
     # leading comma, a doubled one) makes the whole requirement
@@ -986,7 +995,7 @@ module Krikri
       pieces.pop if pieces.size > 1 && pieces.last.empty?
       normalized = pieces.compact_map { |piece| normalized_specifier_piece(piece) }
       return nil unless normalized.size == pieces.size
-      normalized.join(',')
+      normalized.sort.join(',')
     end
 
     private def normalized_specifier_piece(piece : String) : String?
