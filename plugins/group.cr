@@ -128,6 +128,21 @@ module Krikri
         return PluginHelpers::GroupState.local_parse(result[:stdout], name)
       end
 
+      # Ansible's group_exists asks grp.getgrnam(), a NAME-only lookup;
+      # `getent group <key>` is not one for a purely numeric key, where
+      # glibc resolves the GID first and never the name (live-verified on
+      # Debian trixie: `getent group 45` prints sasl:x:45: even with a
+      # literal `45:x:9999:` line present). Reading that answer made
+      # `group: name: 45` report an unrelated existing group and skip the
+      # create path, so the task stayed ok while Ansible runs groupadd and
+      # fails with "groupadd: '45' is not a valid group name" (kpg 000028).
+      # Answer numeric names from the full NSS listing, matched by name.
+      if name.matches?(/\A[0-9]+\z/)
+        result = remote_exec("getent group")
+        return nil unless result[:exit_code] == 0
+        return PluginHelpers::GroupState.find_by_name(result[:stdout], name)
+      end
+
       result = remote_exec("getent group #{shell_single_quote(name)}")
       return nil unless result[:exit_code] == 0
       PluginHelpers::GroupState.parse_lookup(result[:stdout], name)

@@ -16,18 +16,32 @@ module Krikri
         Group.new(fields[0], fields[2])
       end
 
-      # Existence check for a single `getent group <key>` reply. Ansible's
-      # group_exists() asks grp.getgrnam(), which resolves the NAME only,
-      # while `getent group <key>` also accepts a numeric key as a GID - so
-      # a task name like "45" must not be treated as already present just
-      # because the group "sasl" owns gid 45 (live-verified vs 2.21.6:
-      # check mode create of name "45" reports changed). The name compare
-      # also matches getent's own resolution order (name first, then gid):
-      # a group actually NAMED "45" still resolves normally.
+      # Existence check for a single `getent group <name>` reply - the
+      # non-numeric path, where getent resolves the name only. Ansible's
+      # group_exists() asks grp.getgrnam(), which is likewise name-only, so
+      # a reply naming a different group must not count as present
+      # (live-verified vs 2.21.6: check mode create of name "45" reports
+      # changed). A purely numeric name never gets here: it is resolved
+      # from the full listing by find_by_name instead.
       def self.parse_lookup(line : String, name : String) : Group?
         group = parse(line)
         return nil unless group && group.name == name
         group
+      end
+
+      # Name-only lookup over a full `getent group` listing: the CLI
+      # equivalent of the grp.getgrnam() call Ansible's group_exists makes.
+      # Needed because `getent group <key>` is NOT name-only for a purely
+      # numeric key - glibc resolves it as a GID first and never as a name
+      # (live-verified on Debian trixie: `getent group 45` prints
+      # sasl:x:45: even with a literal `45:x:9999:` line in /etc/group), so
+      # such a key must be matched against the listing's own name field.
+      def self.find_by_name(content : String, name : String) : Group?
+        content.each_line do |line|
+          next unless line.starts_with?("#{name}:")
+          return parse(line)
+        end
+        nil
       end
 
       # `local: true`'s existence check - Ansible's own group_exists

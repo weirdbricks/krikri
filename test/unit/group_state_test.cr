@@ -38,6 +38,17 @@ describe GroupState do
     end
   end
 
+  describe ".find_by_name" do
+    it "matches by the listing's name field, never by gid" do
+      GroupState.find_by_name("sasl:x:45:\n", "45").must_be_nil
+      GroupState.find_by_name("sasl:x:45:\n45:x:9999:\n", "45").as(GroupState::Group).gid.must_equal("9999")
+    end
+
+    it "returns nil when the name is not in the listing, without prefix matches" do
+      GroupState.find_by_name("root:x:0:\n451:x:45:\n", "45").must_be_nil
+    end
+  end
+
   describe ".local_parse" do
     it "finds the group's line in a full /etc/group listing" do
       group = GroupState.local_parse(<<-FILE, "adm")
