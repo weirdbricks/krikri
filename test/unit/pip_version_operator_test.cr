@@ -65,6 +65,66 @@ describe "pip: operator-prefixed version pins" do
   end
 end
 
+# Regression spec for Ansible's fallback when `version:` is not a parsable
+# PEP 440 specifier (issue #1288): pip.py joins name and version, keeps
+# the result only when `packaging` parses it as a requirement, and
+# otherwise installs the bare package name UNPINNED. krikri built
+# `pip==oduuxb` unconditionally, which pip rejects, failing the task
+# where ansible-playbook reports ok.
+describe "pip: unparsable version pins fall back to unpinned" do
+  it "installs unpinned for a bare-word version (oduuxb)" do
+    with_recording_fake_pip do |script, recorded|
+      result = PluginSpecHelper.run("pip", {
+        "name"       => "pip",
+        "version"    => "oduuxb",
+        "executable" => script,
+      })
+
+      (result["failed"]?.try(&.as_bool) || false).must_equal(false)
+      File.read(recorded).chomp.must_equal("pip")
+    end
+  end
+
+  it "installs unpinned for a malformed digit-leading version (1..2)" do
+    with_recording_fake_pip do |script, recorded|
+      result = PluginSpecHelper.run("pip", {
+        "name"       => "pip",
+        "version"    => "1..2",
+        "executable" => script,
+      })
+
+      (result["failed"]?.try(&.as_bool) || false).must_equal(false)
+      File.read(recorded).chomp.must_equal("pip")
+    end
+  end
+
+  it "installs unpinned for a release followed by garbage (3abc)" do
+    with_recording_fake_pip do |script, recorded|
+      result = PluginSpecHelper.run("pip", {
+        "name"       => "pip",
+        "version"    => "3abc",
+        "executable" => script,
+      })
+
+      (result["failed"]?.try(&.as_bool) || false).must_equal(false)
+      File.read(recorded).chomp.must_equal("pip")
+    end
+  end
+
+  it "keeps a PEP 440 local version pin (1.0+abc)" do
+    with_recording_fake_pip do |script, recorded|
+      result = PluginSpecHelper.run("pip", {
+        "name"       => "pip",
+        "version"    => "1.0+abc",
+        "executable" => script,
+      })
+
+      (result["failed"]?.try(&.as_bool) || false).must_equal(false)
+      File.read(recorded).chomp.must_equal("pip==1.0+abc")
+    end
+  end
+end
+
 # Writes a fake pip shell script that records every `install` argument
 # (one per line, in order) and reports a successful install, hands the
 # script and recording paths to the caller, and cleans up after.
