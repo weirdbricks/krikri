@@ -65,11 +65,14 @@ module Krikri
     # body never runs on a conversion failure. Found by the kpg43 fuzz
     # round: a chaos-mutated `dirs: ylazyy` ran the whole rsync on this
     # engine while real ansible failed the task in module setup.
+    # use_ssh_args is deliberately absent: real's action plugin pops it out
+    # of the task args before invoking the module (see
+    # #consume_use_ssh_args!), so the module's argspec never validates it.
     include PluginHelpers::StrictBoolValidation
 
     protected def bool_params : Array(String)
       %w[delete archive checksum compress existing_only dirs recursive links
-        copy_links perms times owner group set_remote_user use_ssh_args
+        copy_links perms times owner group set_remote_user
         ssh_connection_multiplexing partial verify_host delay_updates]
     end
 
@@ -233,6 +236,12 @@ module Krikri
       if failure = munging_literal_type_failure
         return failure
       end
+      # Real's action plugin pops use_ssh_args out of the task args before
+      # the module is ever invoked, so the module's argspec never sees it -
+      # a bad value cannot fail module setup or win the first-violation race
+      # against another bad bool (issue #1309: real reported the task's
+      # `delay_updates`, this engine reported `use_ssh_args`).
+      use_ssh_args = consume_use_ssh_args!
       # The native-type probes above are the only readers of the parser's
       # non-string-literal markers on this plugin (they reach it because
       # execute_action opts synchronize out of the strip); demote so every
@@ -268,7 +277,7 @@ module Krikri
       # parsing at all (env/CLI only), so real's ansible.cfg `ssh_args`
       # half of that join contributes nothing here - the CLI
       # --ssh-common-args/--ssh-extra-args do, via CliOptions.
-      apply_ssh_args_param!
+      apply_ssh_args_param!(use_ssh_args)
 
       # delegate_to: a REMOTE host that is not the task's own host - the
       # case Ansible's use_delegate branch exists for. rsync then runs ON
@@ -499,17 +508,41 @@ module Krikri
       fallback_host.port
     end
 
+    # ansible.posix's `use_ssh_args = _tmp_args.pop('use_ssh_args', False)`:
+    # the action plugin consumes the option - the module never receives it -
+    # and gates on plain Python truthiness (`if use_ssh_args and
+    # self._connection.transport == 'ssh'`), not the module's strict bool
+    # conversion. So `use_ssh_args: hkipap` enables the fold and passes
+    # module setup unharmed, while a YAML-literal false (marked on the wire,
+    # see Krikri.non_string_scalar) stays falsy. Returns the flag and
+    # removes the key, mirroring the pop.
+    private def consume_use_ssh_args! : Bool
+      raw = @params.delete("use_ssh_args") || return false
+      native = Krikri.non_string_scalar(raw) || return !raw.empty?
+      case value = native.raw
+      when Bool                    then value
+      when Nil                     then false
+      when Int                     then value != 0
+      when Float                   then value != 0.0
+      when String                  then !value.empty?
+      when Array(JSON::Any)        then !value.empty?
+      when Hash(String, JSON::Any) then !value.empty?
+      else                              false
+      end
+    end
+
     # The `_ssh_args` module param real's action plugin sets for
     # `use_ssh_args: yes` - a space-joined string SynchronizeRsync
     # appends to its --rsh ssh command (its own comment quotes the
     # module line this mirrors). Gated on the same two conditions real
-    # applies (the flag, and an ssh - not local - transport), so the
-    # default synchronize keeps its agent/IdentitiesOnly-agnostic rsh
-    # exactly like ansible.posix. No-op (and no `_ssh_args` key at all)
-    # otherwise, so the params handed to a module dispatch stay
-    # byte-identical to what real passes when the flag is off.
-    private def apply_ssh_args_param! : Nil
-      return unless SynchronizeRsync.bool(@params["use_ssh_args"]?, default: false)
+    # applies (the truthy flag #consume_use_ssh_args! reports, and an ssh -
+    # not local - transport), so the default synchronize keeps its
+    # agent/IdentitiesOnly-agnostic rsh exactly like ansible.posix. No-op
+    # (and no `_ssh_args` key at all) otherwise, so the params handed to a
+    # module dispatch stay byte-identical to what real passes when the flag
+    # is off.
+    private def apply_ssh_args_param!(use_ssh_args : Bool) : Nil
+      return unless use_ssh_args
       return if local_connection?
       conn = ConnectionSettings.resolve(@host, @vars)
       args = CliOptions.extra_ssh_args + conn.ssh_extra_options
