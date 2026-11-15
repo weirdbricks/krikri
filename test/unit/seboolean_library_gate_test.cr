@@ -141,3 +141,74 @@ describe "seboolean plugin python library gate" do
     end
   end
 end
+
+# The persistent branch asks the semanage policy store whether the
+# boolean exists before touching the running kernel, so a name the
+# policy does not define gets real's message and real's failure shape
+# (fail_json drops the exit_json name/persistent/state dict). The stub
+# python3 answers both probes the plugin makes: the library gate (no
+# extra argv) and the exists probe (the name as argv[1]).
+describe "seboolean plugin persistent policy check" do
+  it "reports a persistent boolean missing from the policy store like Ansible" do
+    fake_bin = PluginSpecHelper.tmp_path("seboolean-persistent-store-bin")
+    FileUtils.rm_rf(fake_bin)
+    FileUtils.mkdir_p(fake_bin)
+    python3 = File.join(fake_bin, "python3")
+    File.write(python3, <<-SH)
+      #!/bin/sh
+      if [ "$#" -gt 2 ]; then
+        echo undefined
+      else
+        echo "exe=/usr/bin/python3"
+        echo "selinux=yes"
+        echo "semanage=yes"
+      fi
+      SH
+    File.chmod(python3, 0o755)
+
+    result = PluginSpecHelper.run("seboolean", {
+      "name"                 => "girroy",
+      "state"                => "false",
+      "persistent"           => "true",
+      "ignore_selinux_state" => "true",
+    }, env: {"PATH" => "#{fake_bin}:#{ENV["PATH"]}"})
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("SELinux boolean girroy is not defined in persistent policy")
+    result.as_h.has_key?("name").must_equal(false)
+    result.as_h.has_key?("persistent").must_equal(false)
+    result.as_h.has_key?("state").must_equal(false)
+  end
+
+  # The other side of the same probe: a policy-defined boolean must not
+  # short-circuit the task. It falls through to the CLI path, and a
+  # no-change success still carries the exit_json extras.
+  it "keeps going when the policy store defines the persistent boolean" do
+    fake_bin = PluginSpecHelper.tmp_path("seboolean-persistent-defined-bin")
+    FileUtils.rm_rf(fake_bin)
+    FileUtils.mkdir_p(fake_bin)
+    scripts = {
+      "python3"    => "#!/bin/sh\nif [ \"$#\" -gt 2 ]; then echo defined; else printf 'exe=/usr/bin/python3\\nselinux=yes\\nsemanage=yes\\n'; fi\n",
+      "getenforce" => "#!/bin/sh\necho Enforcing\n",
+      "getsebool"  => "#!/bin/sh\necho 'httpd_can_network_connect --> on'\n",
+      "setsebool"  => "#!/bin/sh\nexit 0\n",
+    }
+    scripts.each do |name, body|
+      path = File.join(fake_bin, name)
+      File.write(path, body)
+      File.chmod(path, 0o755)
+    end
+
+    result = PluginSpecHelper.run("seboolean", {
+      "name"       => "httpd_can_network_connect",
+      "state"      => "true",
+      "persistent" => "true",
+    }, env: {"PATH" => "#{fake_bin}:/usr/bin:/bin"})
+
+    result.as_h.has_key?("failed").must_equal(false)
+    result["changed"].as_bool.must_equal(false)
+    result["name"].as_s.must_equal("httpd_can_network_connect")
+    result["persistent"].as_bool.must_equal(true)
+    result["state"].as_bool.must_equal(true)
+  end
+end

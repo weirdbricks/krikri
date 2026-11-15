@@ -37,6 +37,11 @@ module Krikri
   # talks to the semanage policy store directly), so it still fails here
   # when there is no store, just via a different mechanism.
   #
+  # The persistent branch resolves the boolean against the POLICY STORE,
+  # not the running kernel: a name the policy does not define fails with
+  # "SELinux boolean <name> is not defined in persistent policy" (issue
+  # #1300), before any runtime getsebool is attempted.
+  #
   # Supported parameters:
   # - name: required.
   # - state: required. Boolean-ish string (true/false/yes/no/1/0/on/off).
@@ -47,6 +52,8 @@ module Krikri
   #   pre-check (Ansible module's own escape hatch for chrooted targets
   #   where the real runtime state can't be queried).
   class SebooleanPlugin < BasePlugin
+    @python_interpreter : String? = nil
+
     def execute : PluginResult
       missing = ["name", "state"].select { |arg| @params[arg]?.nil? }
       unless missing.empty?
@@ -106,6 +113,14 @@ module Krikri
     end
 
     private def set_boolean(name : String, desired_on : Bool, persistent : Bool, result : PluginResult) : PluginResult
+      # Real's persistent branch never reads the running kernel: it asks
+      # the semanage policy store first, so a boolean absent from the
+      # policy fails there ("not defined in persistent policy") instead of
+      # through security_get_boolean_active's OSError.
+      if persistent && persistent_boolean_defined?(name) == false
+        return PluginResult.new(changed: false, failed: true, msg: "SELinux boolean #{name} is not defined in persistent policy")
+      end
+
       current = remote_exec("getsebool #{shell_single_quote(name)}")
       unless current[:exit_code] == 0
         # Real seboolean.py reads the persistent branch through
@@ -140,6 +155,50 @@ module Krikri
       with_boolean_extras(result, name, desired_on, persistent)
     end
 
+    # Ansible's semanage_bool_exists() against the persistent policy store,
+    # through the interpreter the library gate already proved imports
+    # semanage. nil (no interpreter, or the store cannot answer) keeps the
+    # caller's CLI-based fallback.
+    private def persistent_boolean_defined?(name : String) : Bool?
+      interpreter = @python_interpreter
+      return nil unless interpreter
+      probe = <<-PYTHON
+        import sys
+        try:
+            import semanage
+            handle = semanage.semanage_handle_create()
+            if not handle:
+                sys.exit(2)
+            if semanage.semanage_connect(handle) < 0:
+                sys.exit(2)
+            rc, t_b = semanage.semanage_bool_create(handle)
+            if rc < 0:
+                sys.exit(2)
+            if semanage.semanage_bool_set_name(handle, t_b, sys.argv[1]) < 0:
+                sys.exit(2)
+            rc, boolkey = semanage.semanage_bool_key_extract(handle, t_b)
+            if rc < 0:
+                sys.exit(2)
+            rc, exists = semanage.semanage_bool_exists(handle, boolkey)
+            semanage.semanage_bool_key_free(boolkey)
+            semanage.semanage_bool_free(t_b)
+            semanage.semanage_disconnect(handle)
+            semanage.semanage_handle_destroy(handle)
+            if rc < 0:
+                sys.exit(2)
+            print("defined" if exists else "undefined")
+        except Exception:
+            sys.exit(2)
+        PYTHON
+      io = IO::Memory.new
+      status = Process.run(interpreter, {"-c", probe, name}, output: io, error: Process::Redirect::Close)
+      return nil unless status.success?
+      answer = io.to_s.strip
+      return true if answer == "defined"
+      return false if answer == "undefined"
+      nil
+    end
+
     # Ansible's enabled check is libselinux's is_selinux_enabled(); the
     # closest CLI proxy is whether `getenforce` runs and reports
     # something other than Disabled.
@@ -172,6 +231,7 @@ module Krikri
         executable = found["exe"]? || interpreter
         return missing_library("libselinux-python", executable) if found["selinux"]? != "yes"
         return missing_library("libsemanage-python or python3-libsemanage", executable) if found["semanage"]? != "yes"
+        @python_interpreter = interpreter
         return nil
       end
       nil
