@@ -61,6 +61,32 @@ describe "mysql_variables plugin argument validation" do
       "login_user, mode, value, variable (ssl_ca, ssl_cert, ssl_key).")
   end
 
+  it "names the invoked ansible.mysql spelling in the unsupported-param error" do
+    result = PluginSpecHelper.run("mysql_variables", {
+      "variable"          => "version",
+      "krikri_bogus"      => "x",
+      "login_user"        => "root",
+      "login_unix_socket" => "/run/mysqld/mysqld.sock",
+      "_module_name"      => "ansible.mysql.mysql_variables",
+    })
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.starts_with?(
+      "Unsupported parameters for (ansible.mysql.mysql_variables) module: krikri_bogus. ").must_equal(true)
+  end
+
+  it "names the invoked ansible.mysql spelling in the check-mode skip" do
+    result = PluginSpecHelper.run("mysql_variables", {
+      "variable"            => "version",
+      "login_user"          => "root",
+      "login_unix_socket"   => "/run/mysqld/mysqld.sock",
+      "_ansible_check_mode" => "true",
+      "_module_name"        => "ansible.mysql.mysql_variables",
+    })
+
+    result["msg"].as_s.must_equal("remote module (ansible.mysql.mysql_variables) does not support check mode")
+  end
+
   it "fails a non-integer login_port" do
     result = PluginSpecHelper.run("mysql_variables", {
       "variable"          => "version",

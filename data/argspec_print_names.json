@@ -1927,6 +1927,19 @@
   "supported": null,
   "unsupported": null
  },
+ "ansible.mysql.mysql_variables|ansible.mysql.mysql_variables": {
+  "dump": {
+   "ansible_facts": {
+    "discovered_interpreter_python": "/usr/bin/python3.13"
+   },
+   "changed": false,
+   "msg": "missing required arguments: variable"
+  },
+  "error_line": "[ERROR]: Task failed: Module failed: missing required arguments: variable",
+  "printed_name": null,
+  "supported": null,
+  "unsupported": null
+ },
  "ansible.posix.acl|ansible.posix.acl": {
   "dump": {
    "ansible_facts": {

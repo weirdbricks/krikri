@@ -90,9 +90,8 @@ module Krikri
 
       check_mode = true?(@params["_ansible_check_mode"]?)
       if check_mode
-        invoked = @params["_module_name"]? || "community.mysql.mysql_variables"
         return PluginResult.new(changed: false, failed: false,
-          msg: "remote module (#{invoked}) does not support check mode", skipped: true,
+          msg: "remote module (#{invoked_module_name}) does not support check mode", skipped: true,
           failed_flag: true, key_order: SKIP_KEY_ORDER)
       end
 
@@ -161,6 +160,14 @@ module Krikri
       PluginHelpers::MysqlConnection.add_mysqldb_connector_warning(PluginHelpers::DbErrors.query_failed(ex, "MySQL"))
     end
 
+    # Real ansible names the FQCN the task spelled in module-level errors,
+    # and ansible-core 2.21 ships this plugin as
+    # ansible.mysql.mysql_variables (community.mysql is a redirect-only
+    # shell), so a fixed community.mysql name would diverge there.
+    private def invoked_module_name : String
+      @params["_module_name"]? || "community.mysql.mysql_variables"
+    end
+
     # AnsibleModule setup order for this spec (no mutually-exclusive
     # constraints): required args, then the spec's types in declaration
     # order, then the mode choices (all arg_spec.py errors, of which the
@@ -194,7 +201,7 @@ module Krikri
 
       unsupported = unsupported_param_keys(@params, SPEC)
       unless unsupported.empty?
-        return unsupported_params_error("community.mysql.mysql_variables", unsupported, SPEC)
+        return unsupported_params_error(invoked_module_name, unsupported, SPEC)
       end
 
       nil

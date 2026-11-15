@@ -5978,6 +5978,79 @@
   "required_one_of": [],
   "required_together": []
  },
+ "ansible.mysql.mysql_variables": {
+  "mutually_exclusive": [],
+  "options": {
+   "login_user": {
+    "type": "str",
+    "default": null
+   },
+   "login_password": {
+    "type": "str"
+   },
+   "login_host": {
+    "type": "str",
+    "default": "localhost"
+   },
+   "login_port": {
+    "type": "int",
+    "default": 3306
+   },
+   "login_unix_socket": {
+    "type": "str"
+   },
+   "config_file": {
+    "type": "path",
+    "default": "~/.my.cnf"
+   },
+   "connect_timeout": {
+    "type": "int",
+    "default": 30
+   },
+   "client_cert": {
+    "aliases": [
+     "ssl_cert"
+    ],
+    "type": "path"
+   },
+   "client_key": {
+    "aliases": [
+     "ssl_key"
+    ],
+    "type": "path"
+   },
+   "ca_cert": {
+    "aliases": [
+     "ssl_ca"
+    ],
+    "type": "path"
+   },
+   "check_hostname": {
+    "type": "bool",
+    "default": null
+   },
+   "variable": {
+    "type": "str",
+    "required": true
+   },
+   "value": {
+    "type": "str"
+   },
+   "mode": {
+    "type": "str",
+    "choices": [
+     "global",
+     "persist",
+     "persist_only"
+    ],
+    "default": "global"
+   }
+  },
+  "required_by": {},
+  "required_if": [],
+  "required_one_of": [],
+  "required_together": []
+ },
  "ansible.posix.acl": {
   "mutually_exclusive": [],
   "options": {

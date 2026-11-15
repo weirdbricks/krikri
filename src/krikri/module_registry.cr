@@ -330,6 +330,12 @@ module Krikri
       # 310090 calls it). The FQCN-stripping regex already maps both
       # community.mysql. and ansible.mysql. spellings to the binary.
       "community.mysql.mysql_variables",
+      # mysql_variables under the collection's new namespace: ansible-core
+      # 2.21's community.mysql is a redirect-only shell, so real ansible
+      # ships (and ansible-doc lists) ansible.mysql.mysql_variables. Without
+      # this entry krikri dropped the task as "uses unimplemented plugin"
+      # and the generator's rotation could never exercise it.
+      "ansible.mysql.mysql_variables",
       # docker_login (0.9.943): registry authentication stored in the
       # docker CLI config file (oasis_roles.molecule_docker_ci round
       # 300108 calls it). Credential validation/storage goes through the
