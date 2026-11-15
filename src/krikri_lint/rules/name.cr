@@ -32,26 +32,40 @@ module Krikri
       def check(file : PositionedFile, violations : Array(Violation)) : Nil
         check_plays(file, violations)
         TaskWalker.each_task(file) do |task|
-          name = task.name
-          if name.nil? || name.empty?
-            # Upstream reports name[missing] at the task line with no column.
-            violations << Violation.new(file.path, task.line, 0,
-              "name[missing]", severity, "All tasks should be named.", task.line)
-            next
-          end
-          name_value = task.name_node
-          line = name_value ? NodeUtil.line(name_value) : task.line
-          column = name_value ? NodeUtil.column(name_value) : NodeUtil.column(task.node)
-          if name[0].letter? && name[0].lowercase?
-            violations << Violation.new(file.path, line, column,
-              "name[casing]", severity,
-              "All names should start with an uppercase letter.", task.line)
-          end
-          if templated_inside?(name)
-            violations << Violation.new(file.path, line, column,
-              "name[template]", severity,
-              "Jinja templates should only be at the end of 'name'", task.line)
-          end
+          check_task_like(task.node, file, violations)
+        end
+        # Upstream hands block parents to its task rules as tasks with a
+        # dummy "block/always/rescue" action, so an unnamed or lowercase
+        # block name is reported exactly like a task's.
+        TaskWalker.each_block(file) do |block|
+          check_task_like(block, file, violations)
+        end
+      end
+
+      private def check_task_like(node : YAML::Nodes::Mapping,
+                                  file : PositionedFile,
+                                  violations : Array(Violation)) : Nil
+        task_line = NodeUtil.line(node)
+        name_entry = NodeUtil.entry(node, "name")
+        name = name_entry.try { |entry| NodeUtil.scalar_value(entry[1]) }
+        if name.nil? || name.empty?
+          # Upstream reports name[missing] at the task line with no column.
+          violations << Violation.new(file.path, task_line, 0,
+            "name[missing]", severity, "All tasks should be named.", task_line)
+          return
+        end
+        name_value = name_entry.try(&.[1])
+        line = name_value ? NodeUtil.line(name_value) : task_line
+        column = name_value ? NodeUtil.column(name_value) : NodeUtil.column(node)
+        if name[0].letter? && name[0].lowercase?
+          violations << Violation.new(file.path, line, column,
+            "name[casing]", severity,
+            "All names should start with an uppercase letter.", task_line)
+        end
+        if templated_inside?(name)
+          violations << Violation.new(file.path, line, column,
+            "name[template]", severity,
+            "Jinja templates should only be at the end of 'name'", task_line)
         end
       end
 
