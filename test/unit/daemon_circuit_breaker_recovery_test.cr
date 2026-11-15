@@ -311,3 +311,58 @@ describe "PluginManager.drop_stale_plugin_beliefs (issue #1158)" do
     end
   end
 end
+
+# Issue #1303: `delegate_to:` over SSH. Every delegating host runs on its
+# own fiber but connects to the SAME delegate, so the delegate's daemon
+# key has to carry the delegating host's name. Without that, the first
+# delegated task only LOOKS parallel (both fibers find no cached daemon
+# and each spawns one), and every later task finds the one cached
+# process and takes turns on it - where ansible runs them concurrently.
+describe "PluginManager remote daemon scope (issue #1303)" do
+  serial! # plugin-state cache, daemon caches, and the global daemon switch
+
+  before_each do
+    Krikri::PluginManager.daemon_enabled = true
+  end
+
+  after_each do
+    Krikri::PluginManager.daemon_enabled = false
+  end
+
+  it "keys a delegated task's daemon by the delegating host, not just the delegate" do
+    previous = ENV["XDG_CACHE_HOME"]?
+    dir = PluginSpecHelper.tmp_path("delegate-daemon-scope-cache")
+    Dir.mkdir_p(dir)
+    ENV["XDG_CACHE_HOME"] = dir
+    Krikri::PluginManager.clear_cache
+    host = Krikri::Host.new(spec_host, "spec-user", nil)
+    vars = {} of String => JSON::Any
+    conn = Krikri::ConnectionSettings.resolve(host, vars)
+    sig = Krikri::SSHManager.connection_sig(conn.identity_file, conn.ssh_extra_options, conn.password)
+    scoped_sig = Krikri::SSHManager.daemon_key_sig(sig, "origin-a")
+    begin
+      skip "plugin binaries not built (run ./build.sh first)" unless File.exists?(File.join(PluginSpecHelper::PLUGINS_DIR, "command"))
+
+      # The upload leg is not what this pins; the recorded host state
+      # turns it into a cache hit instead of a real scp to a fake host.
+      md5 = Digest::MD5.new.file(Krikri::PluginManager.local_plugin_path_for_spec("command", nil)).hexfinal
+      Krikri::PluginManager.record_host_state_for_spec(conn.spec_key, {"command" => md5}, nil)
+
+      # An unscoped daemon that cannot answer stands for the delegate's
+      # own daemon, shared by every delegating host: if the transport
+      # drops the scope, the request lands here and the task fails.
+      Krikri::SSHManager.seed_daemon_process_for_spec(conn.conn_host, conn.user, conn.port, nil, dead_process, sig)
+      Krikri::SSHManager.seed_daemon_process_for_spec(conn.conn_host, conn.user, conn.port, nil,
+        fake_daemon("echo #{framed_b64(%({"changed": true, "rc": 0, "stdout": "scoped"}))} | base64 -d; sleep 5"), scoped_sig)
+
+      result = Krikri::PluginManager.execute_remote_plugin(
+        "command", %({"params": {"_raw_params": "echo hi"}}), host, vars, false, nil, nil, nil, "origin-a")
+      result["stdout"].as_s.must_equal("scoped")
+    ensure
+      Krikri::SSHManager.clear_daemon_for_spec(conn.conn_host, conn.user, conn.port, nil, sig)
+      Krikri::SSHManager.clear_daemon_for_spec(conn.conn_host, conn.user, conn.port, nil, scoped_sig)
+      Krikri::PluginManager.clear_cache
+      previous ? (ENV["XDG_CACHE_HOME"] = previous) : ENV.delete("XDG_CACHE_HOME")
+    end
+  end
+end
