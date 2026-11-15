@@ -10,6 +10,7 @@ module Krikri
       def self.default : RuleRegistry
         new([
           LoadFailureRule.new,
+          SyntaxCheckRule.new,
           CommandInsteadOfShellRule.new,
           CommandInsteadOfModuleRule.new,
           NoChangedWhenRule.new,

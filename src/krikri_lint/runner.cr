@@ -4,7 +4,8 @@ module Krikri
       @registry : RuleRegistry
       @config : LintConfig
 
-      def initialize(@registry, @config = LintConfig.new)
+      def initialize(@registry, @config = LintConfig.new,
+                     @syntax_check : SyntaxCheck? = nil)
       end
 
       def run(paths : Array(String), targets : Array(String) = paths) : Array(Violation)
@@ -16,14 +17,15 @@ module Krikri
         task_spans = {} of String => Array({Int32, Int32})
         task_names = {} of String => Hash(Int32, String)
         needs_tasks = rules.any?(&.task_scoped?)
-        # Upstream runs no rule at all on a file its playbook syntax
-        # check failed on, and krikri-lint has no syntax-check match to
-        # show for such a file (see SyntaxCheck).
-        syntax_check = SyntaxCheck.new(paths, targets)
+        # A file whose playbook syntax check failed gets only the
+        # syntax-check match upstream has for it; anything the failed
+        # check never loaded is not linted at all (see SyntaxCheck).
+        syntax_check = @syntax_check || SyntaxCheck.new(paths, targets)
         paths.each do |path|
           next if excluded?(path)
+          next if syntax_check.suppressed?(path)
           file = PositionedFile.load(path)
-          next if syntax_check.silenced?(file)
+          check_failed = syntax_check.failed?(file)
           source = File.exists?(path) ? File.read(path) : ""
           noqa_maps[path] = Noqa.build_map(source)
           # Collected once per file, on first need: the enclosing-task
@@ -39,6 +41,7 @@ module Krikri
           end
           rules.each do |rule|
             next unless rule.applies?(file)
+            next if check_failed && rule.id != "syntax-check"
             rule.check(file, violations)
           end
         end
