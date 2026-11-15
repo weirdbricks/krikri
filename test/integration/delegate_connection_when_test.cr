@@ -175,4 +175,77 @@ describe "delegated task's ansible_connection magic var (issue #352)" do
     output.must_include("host=10.9.9.9")
     output.must_include("ssh_host=127.0.0.1")
   end
+
+  # Issue #1304, the follow-up to #1248 above: playbooks normally name the
+  # delegate with a variable (`delegate_to: "{{ some_host }}"`), and real
+  # resolves that name in _calculate_delegate_to before the task's args
+  # are templated, merging the same ansible_delegated_vars it builds for a
+  # literal delegate_to: - live-verified against ansible-core 2.21.6 with
+  # ansible_connection=local fixtures ("ansible_host=helper2
+  # keys=[helper2] ih=host1").
+  it "seeds the delegate's ansible_host and ansible_delegated_vars for a templated delegate_to: (issue #1304)" do
+    status, output = run_playbook(
+      "[all]\nhost1 ansible_connection=local\nhelper2 ansible_connection=local\n",
+      <<-YAML
+        - hosts: host1
+          gather_facts: false
+          vars: {delegate: helper2}
+          tasks:
+            - ansible.builtin.command: sh -c 'echo ansible_host={{ ansible_host | default("unset") }} keys={{ (ansible_delegated_vars | default({})).keys() | list }} ih={{ ansible_delegated_vars[delegate].inventory_hostname | default("unset") }}'
+              delegate_to: "{{ delegate }}"
+              register: dv
+              changed_when: false
+            - ansible.builtin.debug: {var: dv.stdout}
+        YAML
+    )
+
+    status.exit_code.must_equal(0)
+    output.must_include("ansible_host=helper2 keys=[helper2] ih=host1")
+  end
+
+  # The same late resolution fills the rest of the delegate's connection
+  # magic, while the origin's OWN ansible_host survives (real fills a name
+  # only where the origin's task vars don't carry it) - live-verified vs
+  # 2.21.6: "host=10.9.9.9 ssh_host=127.0.0.1 user=duser port=2222".
+  it "keeps an origin ansible_host but takes a templated delegate's ansible_ssh_host/user/port (issue #1304)" do
+    status, output = run_playbook(
+      "[all]\norigin ansible_connection=local ansible_host=10.9.9.9\ndhelper ansible_connection=local ansible_host=127.0.0.1 ansible_user=duser ansible_port=2222\n",
+      <<-YAML
+        - hosts: origin
+          gather_facts: false
+          vars: {delegate: dhelper}
+          tasks:
+            - ansible.builtin.command: sh -c 'echo host={{ ansible_host | default("unset") }} ssh_host={{ ansible_ssh_host | default("unset") }} user={{ ansible_user | default("unset") }} port={{ ansible_port | default("unset") }}'
+              delegate_to: "{{ delegate }}"
+              register: dv
+              changed_when: false
+            - ansible.builtin.debug: {var: dv.stdout}
+        YAML
+    )
+
+    status.exit_code.must_equal(0)
+    output.must_include("host=10.9.9.9 ssh_host=127.0.0.1 user=duser port=2222")
+  end
+
+  # ansible_connection rides the same fill, so a `when:` guard on a
+  # templated delegate_to: sees the DELEGATE's connection exactly as it
+  # does for a literal one (live-verified vs 2.21.6: "conn=local").
+  it "takes a templated delegate's ansible_connection for a guarded when: (issue #1304)" do
+    status, output = run_playbook(
+      "[all]\norigin ansible_host=x.invalid\ndhelper ansible_connection=local\n",
+      <<-YAML
+        - hosts: origin
+          gather_facts: false
+          vars: {delegate: dhelper}
+          tasks:
+            - ansible.builtin.debug: {msg: "conn={{ ansible_connection | default('unset') }}"}
+              delegate_to: "{{ delegate }}"
+              when: ansible_connection == 'local'
+        YAML
+    )
+
+    status.exit_code.must_equal(0)
+    output.must_include("conn=local")
+    output.wont_include("skipping: [origin]")
+  end
 end

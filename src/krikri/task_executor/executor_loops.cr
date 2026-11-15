@@ -2059,6 +2059,14 @@ module Krikri
             # clean-failed-task rescue) instead of resolving a
             # Host literally named "undefined".
             item_exec_host = task.delegate_to ? resolve_delegate_host(task, host, vars_context, strict: true) : exec_host
+            # The delegate's own ansible_delegated_vars/connection magic
+            # for THIS item. A templated delegate_to: naming its host from
+            # the loop variable is only known here, and real hands these
+            # vars to the item's when:/args exactly as it does for a
+            # literal delegate_to: (issue #1304).
+            if (delegate_text = task.delegate_to) && delegate_to_templated?(delegate_text)
+              apply_delegated_task_vars(task, host, item_exec_host.name, vars_context)
+            end
             fact_hosts[idx] = item_exec_host if task.delegate_facts? && task.delegate_to
             delegate_hosts[idx] = item_exec_host if task.delegate_to
 

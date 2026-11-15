@@ -579,9 +579,9 @@ module Krikri
       # host, yet keeps running where the origin's inventory entry
       # explicitly carries ansible_connection=ssh (the explicit value
       # is already in the task vars, so update_vars fills nothing).
-      # A templated delegate_to: is left alone here - this context is
-      # consumed before any delegate name resolution, so only a literal
-      # name is knowable at build time.
+      # A templated delegate_to: is answered at the end of this method
+      # instead (#apply_templated_delegate_vars), where the name is
+      # finally knowable; the origin fallback here is overwritten there.
       # play-level `connection:` keyword - Ansible's vars-vs-keyword rule
       # puts any ansible_connection var ABOVE the play keyword (live-
       # verified vs 2.19: an inventory ansible_connection=ssh entry keeps
@@ -606,10 +606,11 @@ module Krikri
       # VariableManager.get_delegated_vars_and_hostname() before the task's
       # args/when: are templated. Roles template it to build rsync/ssh
       # command lines for the delegate (issue #1248); it was entirely
-      # missing here. Only a LITERAL delegate_to: can be resolved at
-      # build time - a templated one names its host per task/item, after
-      # this context exists - and like the seeding above it is absent from
-      # the alias-free loop-source snapshot.
+      # missing here. Only a LITERAL delegate_to: is named this early - a
+      # templated one names its host later in this method, once the vars
+      # its template reads exist (#apply_templated_delegate_vars) - and
+      # like the seeding above it is absent from the alias-free
+      # loop-source snapshot.
       if include_legacy_ssh_aliases && (delegate_name = task.delegate_to)
         unless delegate_name.empty? || delegate_to_templated?(delegate_name)
           delegate = literal_delegate_host(delegate_name)
@@ -717,6 +718,12 @@ module Krikri
         vars_context["ansible_user"] = JSON::Any.new(env_user)
         vars_context["ansible_ssh_user"] = JSON::Any.new(env_user)
       end
+
+      # A templated delegate_to: is named here, once every variable layer
+      # is merged. Withheld from the alias-free loop-source snapshot for
+      # the same reason as the literal seeding above: real resolves a
+      # loop source before _calculate_delegate_to ever runs.
+      apply_templated_delegate_vars(task, host, vars_context) if include_legacy_ssh_aliases
 
       # The SSH connection keys are read DIRECTLY out of this hash by
       # ConnectionSettings.resolve (controller-side dispatch, batching,
@@ -875,28 +882,101 @@ module Krikri
     private def seed_delegated_connection_vars(task : Task, vars_context : Hash(String, JSON::Any)) : Nil
       delegate_name = task.delegate_to
       return unless delegate_name && !delegate_name.empty? && !delegate_to_templated?(delegate_name)
+      seed_delegated_connection_vars(delegate_name, vars_context) { |key| vars_context.has_key?(key) }
+    end
+
+    # The same fill, with the caller deciding what counts as the origin
+    # already carrying a name. A templated delegate is resolved after
+    # every variable layer merged, where this method's own magic fallbacks
+    # (the inventory-name ansible_host, the synthesized legacy aliases,
+    # the connection default) are already present in the context but are
+    # NOT origin definitions - real's fill only skips a name the origin's
+    # own task vars carry (issue #1304).
+    private def seed_delegated_connection_vars(delegate_name : String, vars_context : Hash(String, JSON::Any), &origin_defines : String -> Bool) : Nil
       conn = delegated_connection_values(literal_delegate_host(delegate_name), delegate_name)
       {"ansible_ssh_host", "ansible_host"}.each do |key|
-        vars_context[key] = JSON::Any.new(conn[:host]) unless vars_context.has_key?(key)
+        vars_context[key] = JSON::Any.new(conn[:host]) unless origin_defines.call(key)
       end
       if port = conn[:port]
         {"ansible_ssh_port", "ansible_port"}.each do |key|
-          vars_context[key] = port unless vars_context.has_key?(key)
+          vars_context[key] = port unless origin_defines.call(key)
         end
       end
       if user = conn[:user]
         {"ansible_ssh_user", "ansible_user"}.each do |key|
-          vars_context[key] = user unless vars_context.has_key?(key)
+          vars_context[key] = user unless origin_defines.call(key)
         end
       end
       if key = conn[:private_key]
         {"ansible_ssh_private_key_file", "ansible_private_key_file"}.each do |name|
-          vars_context[name] = key unless vars_context.has_key?(name)
+          vars_context[name] = key unless origin_defines.call(name)
         end
       end
       # ansible_connection is seeded by #default_connection_for (the same
       # fill-if-absent rule), and an origin's explicit value outranks the
       # delegate's exactly as update_vars leaves it.
+    end
+
+    # Whether the ORIGIN host's own variable layers define *key*. Only
+    # those count: ansible's delegated fill (PlayContext.update_vars)
+    # skips a name present in the origin's final task vars, while the
+    # magic values #build_vars_context injects itself (ansible_host
+    # defaulting to the inventory name, the synthesized legacy aliases,
+    # the connection fallback) are exactly what a delegated task must see
+    # replaced by the delegate's - live-verified vs 2.21.6 (issue #1304:
+    # an origin ansible_host survives, its ansible_ssh_host/ansible_user/
+    # ansible_port do not). A task `connection:` keyword also counts for
+    # ansible_connection: it is that task's own explicit choice.
+    private def origin_defines_connection_var?(task : Task, host : Host, key : String) : Bool
+      return true if key == "ansible_connection" && task.connection
+      return true if @play_vars.has_key?(key) || host.vars.has_key?(key)
+      return true if @registered_vars[host.name].has_key?(key) || @facts[host.name].has_key?(key)
+      return true if @set_facts[host.name]?.try(&.has_key?(key))
+      return true if @included_vars[host.name]?.try(&.has_key?(key))
+      return true if @all_role_defaults.has_key?(key) || @all_role_vars.has_key?(key)
+      return true if task.role_defaults.try(&.has_key?(key)) || task.role_vars.try(&.has_key?(key))
+      return true if task.vars.has_key?(key) || @extra_vars.has_key?(key)
+      return false if @vars_files.empty?
+      load_vars_files(host).has_key?(key)
+    end
+
+    # ansible_delegated_vars plus PlayContext.update_vars' connection
+    # magic for *delegate_name*, applied to a task vars context whose
+    # delegate has just been named. Shared by the build-time resolution
+    # of a templated delegate_to: and the per-item re-resolution of one
+    # that templates from the loop variable (issue #1304).
+    private def apply_delegated_task_vars(task : Task, host : Host, delegate_name : String, vars_context : Hash(String, JSON::Any)) : Nil
+      return if delegate_name.empty?
+      delegate = literal_delegate_host(delegate_name)
+      vars_context["ansible_delegated_vars"] = JSON::Any.new({
+        delegate_name => JSON::Any.new(delegated_vars_for(task, host, delegate, delegate_name, vars_context)),
+      })
+      seed_delegated_connection_vars(delegate_name, vars_context) { |key| origin_defines_connection_var?(task, host, key) }
+      unless origin_defines_connection_var?(task, host, "ansible_connection")
+        vars_context["ansible_connection"] = JSON::Any.new(delegate_connection_from(delegate_name))
+      end
+    end
+
+    # A templated delegate_to: names its host only once the task's whole
+    # variable set exists, which is why real's _calculate_delegate_to runs
+    # against the finalized task vars. Resolving it at the end of
+    # #build_vars_context lets exactly those vars name it, and hands the
+    # delegate's ansible_delegated_vars/connection magic to every later
+    # template (args, when:, failed_when:) the way a literal delegate_to:
+    # already does (issue #1304).
+    private def apply_templated_delegate_vars(task : Task, host : Host, vars_context : Hash(String, JSON::Any)) : Nil
+      delegate_to = task.delegate_to
+      return unless delegate_to && delegate_to_templated?(delegate_to)
+      # A name that cannot be templated yet (a looped delegate_to:
+      # referencing the not-yet-bound loop variable) keeps the origin
+      # fallbacks; the per-item re-resolution applies the real one.
+      delegate_name = begin
+        VarSubstitutor.new(vars: vars_context, host_name: host.name).substitute(delegate_to)
+      rescue
+        nil
+      end
+      return unless delegate_name && !delegate_name.empty?
+      apply_delegated_task_vars(task, host, delegate_name, vars_context)
     end
 
     # VariableManager.get_delegated_vars_and_hostname()'s dict for one
