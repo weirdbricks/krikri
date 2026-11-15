@@ -34,7 +34,7 @@ shards:
 
   minitest:
     git: https://github.com/ysbaddaden/minitest.cr.git
-    version: 1.6.1+git.commit.678126f87b2f75b0bf02b0f92ff943fcaa01f498
+    version: 1.6.2
 
   mysql:
     git: https://github.com/weirdbricks/crystal-mysql.git
