@@ -97,7 +97,7 @@ describe "podman_image result shape" do
     keys
   end
 
-  it "matches Ansible's absent-and-missing key set and order" do
+  it "matches Ansible's absent-and-missing key set and order", tags: :docker do
     skip_unless_live_docker
     skip "podman not available" unless podman_available?
     result = PluginSpecHelper.run("podman_image", {
@@ -109,7 +109,7 @@ describe "podman_image result shape" do
     result["podman_actions"].as_a.map(&.as_s).first.ends_with?("image exists docker.io/library/krikri-pi-shape-gone-#{Process.pid}").must_equal(true)
   end
 
-  it "matches Ansible's present key set and order" do
+  it "matches Ansible's present key set and order", tags: :docker do
     skip_unless_live_docker
     skip "podman not available" unless podman_available?
     skip "alpine image not present locally" unless tag_alpine("docker.io/library/krikri-pi-shape:1")
@@ -127,7 +127,7 @@ describe "podman_image result shape" do
     end
   end
 
-  it "matches Ansible's removed key set and order" do
+  it "matches Ansible's removed key set and order", tags: :docker do
     skip_unless_live_docker
     skip "podman not available" unless podman_available?
     skip "alpine image not present locally" unless tag_alpine("docker.io/library/krikri-pi-shape2:1")

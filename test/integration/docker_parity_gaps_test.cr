@@ -60,7 +60,7 @@ end
 describe "docker_container published_ports" do
   serial!
 
-  it "binds published_ports into HostConfig.PortBindings with HostIp 0.0.0.0" do
+  it "binds published_ports into HostConfig.PortBindings with HostIp 0.0.0.0", tags: :docker do
     skip_unless_live_docker
     skip("no podman socket at #{PODMANN_SOCKET_PATH}") unless podman_socket?
     name = "krikri-spec___#{Process.pid}-pubport"
@@ -87,7 +87,7 @@ describe "docker_container published_ports" do
     end
   end
 
-  it "keeps `ports:` (the alias) binding the same way" do
+  it "keeps `ports:` (the alias) binding the same way", tags: :docker do
     skip_unless_live_docker
     skip("no podman socket at #{PODMANN_SOCKET_PATH}") unless podman_socket?
     name = "krikri-spec___#{Process.pid}-pubport-alias"
@@ -112,7 +112,7 @@ describe "docker_container published_ports" do
     end
   end
 
-  it "is idempotent on re-run (allow_more_present subset match)" do
+  it "is idempotent on re-run (allow_more_present subset match)", tags: :docker do
     skip_unless_live_docker
     skip("no podman socket at #{PODMANN_SOCKET_PATH}") unless podman_socket?
     name = "krikri-spec___#{Process.pid}-pubport-idem"
@@ -168,7 +168,7 @@ end
 describe "docker compose CLI-client prefix (--host)" do
   serial!
 
-  it "runs compose through the docker --host <docker_host> CLI prefix" do
+  it "runs compose through the docker --host <docker_host> CLI prefix", tags: :docker do
     skip_unless_live_docker
     skip("no podman socket at #{PODMANN_SOCKET_PATH}") unless podman_socket?
     FileUtils.mkdir_p(COMPOSE_PROJECT_DIR)

@@ -143,7 +143,7 @@ describe "docker_compose_v2 plugin (live docker)" do
   # never run alongside sibling workers (see test/minitest_helper.cr).
   serial!
 
-  it "converges a project and is idempotent on re-run" do
+  it "converges a project and is idempotent on re-run", tags: :docker do
     skip_unless_live_docker
     skip "docker compose CLI not available" unless compose_available?
 
@@ -207,7 +207,7 @@ describe "docker_compose_v2 result shape" do
   # never run alongside sibling workers (see test/minitest_helper.cr).
   serial!
 
-  it "matches Ansible's up key set and order" do
+  it "matches Ansible's up key set and order", tags: :docker do
     skip_unless_live_docker
     skip "docker compose CLI not available" unless compose_available?
 
@@ -236,7 +236,7 @@ describe "docker_compose_v2 result shape" do
     end
   end
 
-  it "matches Ansible's down key set and order" do
+  it "matches Ansible's down key set and order", tags: :docker do
     skip_unless_live_docker
     skip "docker compose CLI not available" unless compose_available?
 
