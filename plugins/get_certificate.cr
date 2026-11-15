@@ -5,6 +5,7 @@ require "../src/krikri/base_plugin"
 require "../src/krikri/plugin_helpers/ansible_arg_validation"
 require "../src/krikri/plugin_helpers/x509_cert_info"
 require "../src/krikri/plugin_helpers/python_lib_gate"
+require "../src/krikri/plugin_helpers/socket_connect"
 
 module Krikri
   # get_certificate plugin (community.crypto.get_certificate) - connects
@@ -98,11 +99,22 @@ module Krikri
       proxy_host = @params["proxy_host"]?
       proxy_port = @params["proxy_port"]?.try(&.to_i) || 8080
 
+      # Real applies the module's `timeout` (default 10) as
+      # setdefaulttimeout() to every socket operation it then makes, so a
+      # target the kernel never answers fails with TimeoutError("timed
+      # out") once that deadline expires. `timeout: 0` is falsy for the
+      # module's `if timeout:`, leaving Python's no-timeout default in
+      # place. Without this deadline the connect below blocked until the
+      # kernel's own SYN retries gave up (minutes), long after the
+      # playbook (and the generator's round) had moved on.
+      timeout_seconds = @params["timeout"]?.try(&.to_i) || 10
+      timeout = timeout_seconds > 0 ? timeout_seconds.seconds : nil
+
       # Real connects natively (socket.create_connection, or an explicit
       # socket() + HTTP CONNECT hop when proxy_host is set) and wraps ANY
       # connection exception in the same fail_json: its `error: {e}` tail
-      # is the raw Python exception text (gaierror/OSSetErrno shapes).
-      pems, conn_error = fetch_certs(host, port, sni, ca_cert.try { |value| expand_tilde(value) }, proxy_host, proxy_port)
+      # is the raw Python exception text (gaierror/OSError/timeout shapes).
+      pems, conn_error = fetch_certs(host, port, sni, ca_cert.try { |value| expand_tilde(value) }, proxy_host, proxy_port, timeout)
       if err = conn_error
         return failure(proxy_host ? "Failed to get cert via proxy #{proxy_host}:#{proxy_port} from #{host}:#{port}, error: #{err}" : "Failed to get cert from #{host}:#{port}, error: #{err}")
       end
@@ -207,52 +219,49 @@ module Krikri
     # The connection attempt, real-shaped: a native TCP connect (through
     # the proxy pair when proxy_host is set) reproduces Python's own
     # failure texts - a getaddrinfo failure becomes the gaierror
-    # "[Errno -N] <gai_strerror>" and a refused/unreachable hop the
-    # OSError "[Errno N] <strerror>". On success the certificate chain is
-    # still collected through the `openssl s_client` CLI (the module's
-    # TLS specifics - SNI, CA verification - apply to the second
-    # connection the same way).
+    # "[Errno -N] <gai_strerror>", a refused/unreachable hop the
+    # OSError "[Errno N] <strerror>", and a hop the kernel never answers
+    # the bare "timed out" of Python's TimeoutError. On success the
+    # certificate chain is still collected through the `openssl s_client`
+    # CLI (the module's TLS specifics - SNI, CA verification - apply to
+    # the second connection the same way).
     private def fetch_certs(host : String, port : Int32, sni : String, ca_cert : String?,
-                            proxy_host : String?, proxy_port : Int32) : {Array(String)?, String?}
+                            proxy_host : String?, proxy_port : Int32,
+                            timeout : Time::Span?) : {Array(String)?, String?}
       connect_host = proxy_host || host
       connect_port = proxy_host ? proxy_port : port
-      error = probe_tcp(connect_host, connect_port)
+      error = probe_tcp(connect_host, connect_port, timeout)
       return {nil, error} if error
 
-      {s_client_certs(host, port, sni, ca_cert, proxy_host ? "#{proxy_host}:#{proxy_port}" : nil), nil}
+      {s_client_certs(host, port, sni, ca_cert, proxy_host ? "#{proxy_host}:#{proxy_port}" : nil, timeout), nil}
+    rescue IO::TimeoutError
+      {nil, "timed out"}
     end
 
-    # One native TCP connect with Python's error classification: the
-    # getaddrinfo failure (gaierror) short-circuits exactly like Ansible's
-    # create_connection; resolution hits then try each address in order,
-    # reporting the last connect errno the way create_connection does.
-    private def probe_tcp(host : String, port : Int32) : String?
-      hints = LibC::Addrinfo.new
-      hints.ai_family = LibC::AF_UNSPEC
-      hints.ai_socktype = LibC::SOCK_STREAM
-      gai = LibC.getaddrinfo(host, port.to_s, pointerof(hints), out addr_ptr)
-      return gaierror_text(gai) unless gai == 0 && addr_ptr
-
-      last_errno = LibC::ECONNREFUSED
-      info = addr_ptr
-      while info
-        begin
-          sock = Socket.new(family(info.value), Socket::Type::STREAM,
-            Socket::Protocol::TCP, blocking: true)
-          sock.connect(Socket::IPAddress.from(info.value.ai_addr, info.value.ai_addrlen))
-          sock.close
-          return nil
-        rescue e : Socket::Error
-          last_errno = e.os_error.try { |err| err.value } || last_errno
-        ensure
-          info = info.value.ai_next
-        end
-      end
-      oserror_text(last_errno)
+    # One native TCP connect with Python's error classification, under the
+    # module's timeout: the getaddrinfo failure (gaierror) short-circuits
+    # exactly like Ansible's create_connection, resolution hits are tried in
+    # order until one connects, and a connect still in flight at the
+    # deadline raises TimeoutError - whose str() is the bare "timed out"
+    # Ansible's message carries.
+    private def probe_tcp(host : String, port : Int32, timeout : Time::Span?) : String?
+      PluginHelpers::SocketConnect.open(host, port, timeout).close
+      nil
+    rescue IO::TimeoutError
+      "timed out"
+    rescue ex : Socket::Addrinfo::Error
+      dns_error_text(ex)
+    rescue ex : Socket::ConnectError
+      errno = ex.os_error.as?(Errno)
+      errno ? oserror_text(errno.value) : (ex.message || "unknown error")
     end
 
-    private def family(info : LibC::Addrinfo) : Socket::Family
-      info.ai_family == LibC::AF_INET6 ? Socket::Family::INET6 : Socket::Family::INET
+    # Python socket.gaierror's str(), from the negative EAI_* code Crystal's
+    # getaddrinfo failure carries in os_error.
+    private def dns_error_text(ex : Socket::Addrinfo::Error) : String
+      code = ex.os_error.as?(Errno).try(&.value.to_i32)
+      return ex.message || "unknown error" unless code && code < 0
+      gaierror_text(code)
     end
 
     # Python socket.gaierror's str(), glibc's gai_strerror texts.
@@ -282,14 +291,23 @@ module Krikri
     # stdout. With ca_cert the connection additionally demands a chain
     # that verifies against that store (the Ansible module's validation
     # scope: the chain, not the hostname). With proxy_host the TCP hop
-    # goes through an HTTP CONNECT proxy (s_client -proxy).
-    private def s_client_certs(host : String, port : Int32, sni : String, ca_cert : String?, proxy : String?) : Array(String)?
+    # goes through an HTTP CONNECT proxy (s_client -proxy). The run is
+    # bounded by the module's timeout the same way the TCP connect is, so a
+    # server that accepts and then stalls still fails instead of hanging the
+    # task forever. (Python fails the stalled handshake at that same
+    # deadline, but the text it carries is CPython's own
+    # "_ssl.c:<line>: The handshake operation timed out", whose file:line
+    # belongs to the target's Python build and cannot be reproduced here.)
+    private def s_client_certs(host : String, port : Int32, sni : String, ca_cert : String?,
+                               proxy : String?, timeout : Time::Span?) : Array(String)?
       args = ["s_client", "-connect", "#{host}:#{port}", "-servername", sni]
       args << "-proxy" << proxy if proxy
       args << "-verify_return_error" << "-CAfile" << ca_cert if ca_cert
       output = IO::Memory.new
-      status = Process.run("openssl", args, input: Process::Redirect::Close, output: output,
+      process = Process.new("openssl", args, input: Process::Redirect::Close, output: output,
         error: Process::Redirect::Close)
+      status = wait_with_deadline(process, timeout)
+      raise IO::TimeoutError.new("timed out") unless status
       return nil if !status.success? && output.to_s.empty?
 
       certs = [] of String
@@ -301,6 +319,25 @@ module Krikri
         scanner = scanner[(stop + 25)..]
       end
       certs.empty? ? nil : certs
+    end
+
+    # Waits for `process`, killing it (and reporting nil) when it outlives
+    # `timeout`. A nil timeout waits forever, matching Python's own
+    # no-timeout default.
+    private def wait_with_deadline(process : Process, timeout : Time::Span?) : Process::Status?
+      return process.wait unless timeout
+
+      finished = Channel(Process::Status).new(1)
+      spawn do
+        finished.send(process.wait)
+      end
+      select
+      when status = finished.receive
+        status
+      when timeout(timeout)
+        process.signal(Signal::KILL)
+        nil
+      end
     end
   end
 end
