@@ -108,7 +108,8 @@ module Krikri
       Dir.mkdir_p(work_dir, 0o700)
       begin
         params_path = File.join(work_dir, "params.json")
-        File.write(params_path, {active_zones: active_zones, zones: zones}.to_json)
+        File.write(params_path, {active_zones: active_zones, zones: zones,
+                                 warn_separator: ignored_zones_separator}.to_json)
         script_path = File.join(work_dir, "firewalld_info_probe.py")
         File.write(script_path, GATHER_SCRIPT)
 
@@ -152,6 +153,13 @@ module Krikri
       # the same release gate mount.cr's identical helper takes.
       add_exit_json_warnings_deprecation(result) if resolved_collection_version_before?(2, 2, 0)
       result
+    end
+
+    # ansible.posix 2.2.0 moved the ignored-zones note out of the exit_json
+    # `warnings` kwarg into module.warn(... % ", ".join(...)), so a 2.2.x
+    # collection prints a space after each comma where 2.1.x used ','.
+    private def ignored_zones_separator : String
+      resolved_collection_version_before?(2, 2, 0) ? "," : ", "
     end
 
     private def python_imports?(interpreter : String, import_stmt : String) : Bool
@@ -229,6 +237,7 @@ module Krikri
               params = json.load(handle)
           active_zones = params.get("active_zones", False)
           zones_param = params.get("zones")
+          warn_separator = params.get("warn_separator", ",")
 
           firewalld_info = {}
           warn = []
@@ -245,12 +254,16 @@ module Krikri
               elif zones_param:
                   all_zones = client.getZones()
                   specified = list(zones_param)
+                  # Real builds both lists from Python sets, whose order is
+                  # hash-randomized per module process (two ansible runs
+                  # already disagree); keep the specified order so krikri's
+                  # own output at least holds still.
                   collected_zones = [z for z in specified if z in all_zones]
                   undefined_zones = [z for z in specified if z not in all_zones]
                   if undefined_zones:
                       warn.append(
                           "Please note: zone:(%s) have been ignored in the gathering process."
-                          % ",".join(undefined_zones)
+                          % warn_separator.join(undefined_zones)
                       )
               else:
                   collected_zones = list(client.getZones())
