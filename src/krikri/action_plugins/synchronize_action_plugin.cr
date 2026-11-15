@@ -151,8 +151,14 @@ module Krikri
       if !src_param || !dest_param || src_param.empty? || dest_param.empty? ||
          marked_null_param?(src_param) || marked_null_param?(dest_param) ||
          src_param == Krikri::NONE_SENTINEL || dest_param == Krikri::NONE_SENTINEL
+        # Real returns this dict straight from the action plugin, so its
+        # _execute_module call - and with it the synchronize module
+        # payload's `_text` import deprecations - never happens: the
+        # marker keeps the executor from attaching the module's lines to
+        # this action-level failure (issue #1306).
         return ActionResult.final(Krikri.mark_failed_key_order(ActionResult.plugin_result_json(
           false, true, "synchronize requires both src and dest parameters are set",
+          extra: {"_ansible_module_never_ran" => JSON::Any.new(true)},
           key_order: PARAM_FAILURE_KEY_ORDER
         ), PARAM_FAILURE_KEY_ORDER))
       end
