@@ -1112,7 +1112,7 @@ module Krikri
       end
 
       if handler.module_name == "ansible.builtin.reboot"
-        result = execute_reboot(substituted_params, exec_host, dispatch_vars, resolve_task_check_mode(handler, dispatch_vars))
+        result = execute_reboot(substituted_params, exec_host, dispatch_vars, resolve_task_check_mode(handler, dispatch_vars), handler, substitutor, host)
         result = apply_changed_failed_when(handler, result, vars_context, host)
         if register_name = handler.register
           register_result(host, register_name, result) unless register_name.empty?

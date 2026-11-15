@@ -140,3 +140,80 @@ describe "ansible.builtin.reboot's elapsed result field" do
     output.must_include("changed=0")
   end
 end
+
+# The reboot task itself is controller-side and reaches the target only
+# through `ssh`, so a stub `ssh` on the child's PATH is a complete host
+# for it. That is the only way to prove a host which accepted the reboot
+# command but never went down is not reported as rebooted - a real
+# reboot would take the test machine with it.
+private def run_reboot_against_fake_ssh(reboots : Bool)
+  dir = PluginSpecHelper.tmp_path("reboot-fake-ssh")
+  Dir.mkdir_p(dir)
+  state = File.join(dir, "boot-id")
+  File.write(state, "11111111-1111-1111-1111-111111111111\n")
+  on_reboot = reboots ? %(echo '22222222-2222-2222-2222-222222222222' > "#{state}") : "true"
+  File.write(File.join(dir, "ssh"), "#!/bin/sh\n" \
+                                    "case \"$*\" in\n" \
+                                    "  *boot_id*) cat \"#{state}\" ;;\n" \
+                                    "  *whoami*) echo tester ;;\n" \
+                                    "  *systemctl*|*reboot*) #{on_reboot} ;;\n" \
+                                    "esac\n" \
+                                    "exit 0\n")
+  File.chmod(File.join(dir, "ssh"), 0o755)
+
+  inventory = File.join(dir, "inventory.ini")
+  File.write(inventory, "[fake]\nfakehost ansible_connection=ssh ansible_host=127.0.0.1 ansible_port=2200 ansible_user=tester\n")
+
+  File.write(File.join(dir, "site.yml"), <<-YAML)
+    - name: repro
+      hosts: all
+      gather_facts: false
+      tasks:
+        - name: reboot the box
+          ansible.builtin.reboot:
+            reboot_timeout: 2
+            connect_timeout: 1
+            pre_reboot_delay: 0
+          register: rv
+          ignore_errors: true
+        - name: show
+          ansible.builtin.debug:
+            msg: "rebooted={{ rv.rebooted }} msg={{ rv.msg }}"
+    YAML
+
+  # The child resolves `ssh` through its own PATH (Crystal looks the
+  # executable up with the PARENT's PATH), so the fake must go into the
+  # environment the krikri-playbook process itself gets.
+  env = ENV.to_h
+  env["PATH"] = "#{dir}:#{ENV["PATH"]?}"
+  output = IO::Memory.new
+  status = Process.run(BINARY, ["-i", inventory, File.join(dir, "site.yml")],
+    output: output, error: output, chdir: dir, env: env)
+  {status, output.to_s}
+ensure
+  FileUtils.rm_rf(dir) if dir && Dir.exists?(dir)
+end
+
+describe "ansible.builtin.reboot's reboot verification" do
+  it "times out instead of reporting Reboot complete when the boot id never changes" do
+    # Issue #1305: a host that took the reboot command but never went down
+    # answered the whoami probe right away, so this engine reported
+    # `changed: true, rebooted: true, msg: "Reboot complete", elapsed: 5`
+    # while ansible-playbook waits for /proc/sys/kernel/random/boot_id to
+    # change (65s on the reporting host) and only then succeeds.
+    status, output = run_reboot_against_fake_ssh(reboots: false)
+
+    status.success?.must_equal(true)
+    output.must_include("Timed out waiting for last boot time check (timeout=2)")
+    output.wont_include("Reboot complete")
+    output.must_include("ignored=1")
+  end
+
+  it "reports Reboot complete once the boot id does change" do
+    status, output = run_reboot_against_fake_ssh(reboots: true)
+
+    status.success?.must_equal(true)
+    output.must_include("Reboot complete")
+    output.must_include("changed=1")
+  end
+end

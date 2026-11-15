@@ -1291,7 +1291,8 @@ module Krikri
     # Ansible's own custom-stats block covers the WHOLE run, and
     # krikri-playbook.cr constructs a fresh TaskExecutor per play).
     private def execute_reboot(params : Hash(String, String), exec_host : Host, vars_context : Hash(String, JSON::Any),
-                               check_mode : Bool = @check_mode) : JSON::Any
+                               check_mode : Bool = @check_mode, task : Task? = nil, substitutor : VarSubstitutor? = nil,
+                               origin_host : Host? = nil) : JSON::Any
       # Ansible's reboot ACTION plugin refuses a local connection before it
       # ever looks at check mode (run() tests `self._connection.transport ==
       # 'local'` first, and only then `self._task.check_mode`), so `--check`
@@ -1320,51 +1321,136 @@ module Krikri
       # no attribute 'elapsed'" where Ansible succeeded.
       return JSON.parse({"changed" => true, "elapsed" => 0, "failed" => false, "msg" => "Would have rebooted"}.to_json) if check_mode
 
-      reboot_timeout = params["reboot_timeout"]?.try(&.to_i?) || 600
-      connect_timeout = params["connect_timeout"]?.try(&.to_i?) || 5
-      pre_reboot_delay = params["pre_reboot_delay"]?.try(&.to_i?) || 2
-      post_reboot_delay = params["post_reboot_delay"]?.try(&.to_i?) || 0
+      # An unquoted YAML number (`reboot_timeout: 2`) reaches this
+      # strings-only params wire carrying the parser's non-string marker,
+      # so read the native scalar first - every unquoted value here used
+      # to fall back to the default.
+      int_param = ->(key : String) : Int32? do
+        raw = params[key]?
+        if raw
+          if native = Krikri.non_string_scalar(raw)
+            native.as_i64?.try(&.to_i32)
+          else
+            raw.to_i?
+          end
+        end
+      end
+      reboot_timeout = int_param.call("reboot_timeout") || 600
+      connect_timeout = int_param.call("connect_timeout") || 5
+      pre_reboot_delay = int_param.call("pre_reboot_delay") || 2
+      post_reboot_delay = int_param.call("post_reboot_delay") || 0
       # A None test/reboot command (YAML `test_command:` with no value -
       # the parser wires literal nulls as NONE_SENTINEL - or a whole-span
       # null template) falls back to Ansible's argspec defaults, same as an
       # empty string always did.
       test_command = params["test_command"]?.try { |v| v == Krikri::NONE_SENTINEL || v.empty? ? nil : v } || "whoami"
       reboot_command = params["reboot_command"]?.try { |v| v == Krikri::NONE_SENTINEL || v.empty? ? nil : v } || "systemctl reboot"
+      boot_time_command = params["boot_time_command"]?.try { |v| v == Krikri::NONE_SENTINEL || v.empty? ? nil : v } || "cat /proc/sys/kernel/random/boot_id"
 
       connection_host = PluginManager.get_connection_host(exec_host, vars_context)
       conn = ConnectionSettings.resolve(exec_host, vars_context)
       user = conn.user
       identity_file = conn.identity_file
 
+      # Ansible's reboot action runs every command it issues through
+      # `_low_level_execute_command(..., sudoable=True)`, so a `become:`
+      # task's shutdown command is escalated exactly like a module's -
+      # without that, the very common passwordless-sudo target ran
+      # `systemctl reboot` as the login user, which fails, and the engine
+      # still reported "Reboot complete" (issue #1305).
+      become = false
+      become_user = nil
+      become_flags = nil
+      become_password = nil
+      if (t = task) && (sub = substitutor)
+        resolve_host = origin_host || exec_host
+        begin
+          become = resolve_task_become(t, resolve_host, vars_context, sub)
+          if become
+            candidate = resolve_task_become_user(t, resolve_host, vars_context, sub)
+            become_user = (candidate.nil? || candidate.empty?) ? "root" : candidate
+            unless PluginManager.valid_become_user?(become_user)
+              return JSON.parse({
+                "changed" => false,
+                "failed"  => true,
+                "msg"     => "become_user #{become_user.inspect} is not a valid username",
+              }.to_json)
+            end
+          end
+          become_flags = resolve_task_become_flags(t, resolve_host, vars_context, sub)
+          become_password = Passwords.become(vars_context, exec_host)
+        rescue ex : UndefinedVariableError
+          return keyword_failure_json(ex, t)
+        end
+      end
+
+      run_remote = ->(command : String, timeout : Int32) : NamedTuple(exit_code: Int32, stdout: String, stderr: String)? do
+        wrapper = PluginManager.become_shell_wrapper(command, become, become_user, conn.user, become_password, become_flags)
+        if wrapper[:via_stdin]
+          SSHManager.exec_script(connection_host, user, wrapper[:command], conn.port, timeout: timeout, identity_file: identity_file, extra_args: conn.ssh_extra_options) rescue nil
+        else
+          SSHManager.exec(connection_host, user, wrapper[:command], conn.port, timeout: timeout, identity_file: identity_file, extra_args: conn.ssh_extra_options) rescue nil
+        end
+      end
+
+      # Ansible captures the boot time BEFORE rebooting and fails the task
+      # when that read fails. It is also what the wait below compares
+      # against: a host that never actually went down keeps reporting the
+      # same boot id, which is the whole difference between a real reboot
+      # and this engine's old "one successful whoami means rebooted"
+      # (issue #1305: `changed: true, rebooted: true, msg: "Reboot
+      # complete", elapsed: 5` on a host whose boot id never changed,
+      # where ansible-playbook reboots for ~65s and only then reports).
+      boot_time_before = run_remote.call(boot_time_command, connect_timeout)
+      if boot_time_before.nil? || boot_time_before[:exit_code] != 0
+        rc = boot_time_before ? boot_time_before[:exit_code] : 255
+        stdout = boot_time_before ? boot_time_before[:stdout] : ""
+        stderr = boot_time_before ? boot_time_before[:stderr] : ""
+        action_name = task.try(&.action_name) || "ansible.builtin.reboot"
+        return JSON.parse({
+          "changed"  => false,
+          "elapsed"  => 0,
+          "failed"   => true,
+          "rebooted" => false,
+          "msg"      => "#{action_name}: failed to get host boot time info, rc: #{rc}, stdout: #{stdout}, stderr: #{stderr}",
+        }.to_json)
+      end
+      previous_boot_time = boot_time_before[:stdout].strip
+
       sleep pre_reboot_delay.seconds if pre_reboot_delay > 0
 
-      # A reboot command genuinely killing its own SSH session mid-
-      # response (rc 255, broken pipe, etc.) is the EXPECTED successful
-      # outcome here, not an error - only a clean non-zero exit from the
-      # remote shell itself (the command was rejected outright, e.g.
-      # permission denied) is worth surfacing.
-      issue_result = SSHManager.exec(connection_host, user, "(sleep 1; #{reboot_command}) &", conn.port, timeout: 15, identity_file: identity_file, extra_args: conn.ssh_extra_options) rescue nil
+      # Ansible runs the shutdown command through the connection and reads
+      # its exit status (a transport-level failure - the command killing
+      # its own SSH session mid-response - counts as issued; only a clean
+      # non-zero exit from the remote shell is a failed reboot). This used
+      # to be backgrounded with its stderr discarded, so a rejected
+      # `systemctl reboot` (no privileges, an absent systemd, ...) could
+      # never be reported at all (issue #1305).
+      issue_result = run_remote.call(reboot_command, 15)
       # Ansible stamps its elapsed clock the moment the shutdown command
       # returns (result['start'] in the action plugin) and reports elapsed as
       # integer seconds on EVERY path after that point - including when the
       # wait itself times out - so a registered rv.elapsed is always readable.
       reboot_started_at = Time.instant
-      if issue_result && issue_result[:exit_code] != 0 && issue_result[:exit_code] != 255 && !issue_result[:stderr].empty?
+      if issue_result && issue_result[:exit_code] != 0 && issue_result[:exit_code] != 255
         return JSON.parse({
-          "changed" => false,
-          "elapsed" => 0,
-          "failed"  => true,
-          "msg"     => "Failed to issue reboot command: #{issue_result[:stderr]}",
+          "changed"  => false,
+          "elapsed"  => (Time.instant - reboot_started_at).total_seconds.to_i,
+          "failed"   => true,
+          "msg"      => "Reboot command failed. Error was: '#{issue_result[:stdout].strip}, #{issue_result[:stderr].strip}'",
+          "rebooted" => false,
         }.to_json)
       end
 
-      # Give the box a moment to actually start going down before
-      # polling for it to come back - polling immediately risks a false
-      # "success" against the OLD, not-yet-dead SSH session/ControlMaster.
-      sleep 5.seconds
+      sleep post_reboot_delay.seconds if post_reboot_delay > 0
 
+      # Phase one is Ansible's "last boot time check": poll the boot time
+      # until it differs from the pre-reboot value. A reachable host that
+      # answers with the SAME boot id has not rebooted, so it keeps
+      # polling (and eventually times out) instead of being accepted by the
+      # first successful probe.
       deadline = Time.instant + reboot_timeout.seconds
-      reconnected = false
+      boot_time_changed = false
       last_result = nil
       last_attempt_timed_out = false
       until Time.instant >= deadline
@@ -1373,16 +1459,21 @@ module Krikri
         # Ansible treats an expiring ssh ConnectTimeout as a transport
         # failure (UNREACHABLE), so time the attempt itself to catch that.
         attempt_started = Time.instant
-        last_result = SSHManager.exec(connection_host, user, test_command, conn.port, timeout: connect_timeout, identity_file: identity_file, extra_args: conn.ssh_extra_options) rescue nil
+        last_result = run_remote.call(boot_time_command, connect_timeout)
         last_attempt_timed_out = (Time.instant - attempt_started) >= connect_timeout.seconds
         if last_result && last_result[:exit_code] == 0
-          reconnected = true
-          break
+          current_boot_time = last_result[:stdout].strip
+          # FreeBSD returns an empty string immediately before it goes
+          # down; Ansible refuses that as "boot time has not changed" too.
+          if !current_boot_time.empty? && current_boot_time != previous_boot_time
+            boot_time_changed = true
+            break
+          end
         end
         sleep Math.min(connect_timeout, 5).seconds
       end
 
-      unless reconnected
+      unless boot_time_changed
         # Ansible's reboot action runs the task-end tmpdir cleanup (the
         # `rm -f -r <tmpdir>` over ssh) AFTER the wait loop - so when the
         # wait times out on a host that never came back, that cleanup is
@@ -1391,9 +1482,9 @@ module Krikri
         # ansible-playbook reports: UNREACHABLE (exit 4, unreachable=1
         # failed=0) carrying the ssh error, never its own timeout
         # message. A wait that timed out with the host still reachable
-        # over ssh (e.g. test_command keeps returning non-zero) keeps the
-        # cleanup working and reports FAILED with the timeout message -
-        # that path below stays as it always was.
+        # over ssh (the boot id simply never changed) keeps the cleanup
+        # working and reports FAILED with the timeout message - that path
+        # below stays as it always was.
         if ssh_error = TaskExecutor.reboot_wait_unreachable_error(last_result, last_attempt_timed_out, connection_host, conn.port)
           # The plain lead even under pipelining (SSHUnreachableMsg's other
           # shape): the failure stands in for ansible's task-end tmpdir
@@ -1408,22 +1499,55 @@ module Krikri
           return JSON.parse(timed_out_unreachable.to_json)
         end
         return JSON.parse({
-          "changed" => false,
-          "elapsed" => (Time.instant - reboot_started_at).total_seconds.to_i,
-          "failed"  => true,
-          "msg"     => "Timed out waiting for #{connection_host} to come back after reboot (#{reboot_timeout}s)",
+          "changed"  => false,
+          "elapsed"  => (Time.instant - reboot_started_at).total_seconds.to_i,
+          "failed"   => true,
+          "msg"      => "Timed out waiting for last boot time check (timeout=#{reboot_timeout})",
+          "rebooted" => true,
         }.to_json)
       end
 
-      sleep post_reboot_delay.seconds if post_reboot_delay > 0
+      # Phase two is Ansible's post-reboot test command, with its own full
+      # timeout (each stage of the action plugin's
+      # do_until_success_or_timeout starts a fresh deadline).
+      deadline = Time.instant + reboot_timeout.seconds
+      reconnected = false
+      until Time.instant >= deadline
+        attempt_started = Time.instant
+        last_result = run_remote.call(test_command, connect_timeout)
+        last_attempt_timed_out = (Time.instant - attempt_started) >= connect_timeout.seconds
+        if last_result && last_result[:exit_code] == 0
+          reconnected = true
+          break
+        end
+        sleep Math.min(connect_timeout, 5).seconds
+      end
 
-      # post_reboot_delay sits inside Ansible's elapsed window too (its
-      # action plugin sleeps before validating the reboot, both after start).
-      elapsed_seconds = (Time.instant - reboot_started_at).total_seconds.to_i
+      unless reconnected
+        if ssh_error = TaskExecutor.reboot_wait_unreachable_error(last_result, last_attempt_timed_out, connection_host, conn.port)
+          timed_out_unreachable = {
+            "changed"     => false,
+            "unreachable" => true,
+            "msg"         => "Failed to connect to the host via ssh: #{ssh_error}",
+            "stderr"      => ssh_error,
+          }
+          return JSON.parse(timed_out_unreachable.to_json)
+        end
+        return JSON.parse({
+          "changed"  => false,
+          "elapsed"  => (Time.instant - reboot_started_at).total_seconds.to_i,
+          "failed"   => true,
+          "msg"      => "Timed out waiting for post-reboot test command (timeout=#{reboot_timeout})",
+          "rebooted" => true,
+        }.to_json)
+      end
 
+      # post_reboot_delay already elapsed above, inside Ansible's elapsed
+      # window (its action plugin sleeps before validating, both after
+      # start).
       JSON.parse({
         "changed"  => true,
-        "elapsed"  => elapsed_seconds,
+        "elapsed"  => (Time.instant - reboot_started_at).total_seconds.to_i,
         "failed"   => false,
         "rebooted" => true,
         "msg"      => "Reboot complete",

@@ -3059,7 +3059,7 @@ module Krikri
       end
 
       if task.module_name == "ansible.builtin.reboot"
-        result = execute_reboot(substituted_params, exec_host, dispatch_vars, resolve_task_check_mode(task, dispatch_vars))
+        result = execute_reboot(substituted_params, exec_host, dispatch_vars, resolve_task_check_mode(task, dispatch_vars), task, substitutor, host)
         return apply_changed_failed_when(task, result, vars_context, host)
       end
 

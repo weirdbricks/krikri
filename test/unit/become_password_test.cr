@@ -144,4 +144,39 @@ describe "become password command construction (become_password_test.cr)" do
       step.become_user.must_equal("deploy")
     end
   end
+
+  describe "PluginManager.become_shell_wrapper (plain commands, e.g. reboot's shutdown)" do
+    it "wraps a command in the same sudo -H -n escalation a module gets" do
+      # Ansible's reboot action runs its shutdown/boot-time/test commands
+      # through _low_level_execute_command(..., sudoable=True), so they
+      # escalate like a module does (issue #1305).
+      wrapper = Krikri::PluginManager.become_shell_wrapper("systemctl reboot", true, "appuser", "deploy")
+      wrapper[:command].must_equal("sudo -H -n -u appuser -- /bin/sh -c 'systemctl reboot'")
+      wrapper[:via_stdin].must_equal(false)
+    end
+
+    it "leaves the command alone when the task has no become" do
+      wrapper = Krikri::PluginManager.become_shell_wrapper("cat /proc/sys/kernel/random/boot_id", false, nil, "root")
+      wrapper[:command].must_equal("cat /proc/sys/kernel/random/boot_id")
+      wrapper[:via_stdin].must_equal(false)
+    end
+
+    it "needs no sudo when escalating to the user we already are" do
+      Krikri::PluginManager.become_shell_wrapper("whoami", true, "root", "root")[:command]
+        .must_equal("whoami")
+    end
+
+    it "feeds a become password on stdin through sudo -S and keeps it out of argv" do
+      wrapper = Krikri::PluginManager.become_shell_wrapper("systemctl reboot", true, "appuser", "deploy", "pw123")
+      wrapper[:via_stdin].must_equal(true)
+      wrapper[:command].includes?("if sudo -n -u appuser -- true 2>/dev/null; ").must_equal(true)
+      wrapper[:command].includes?("then sudo -H -n -u appuser -- /bin/sh -c 'systemctl reboot'; ").must_equal(true)
+      wrapper[:command].includes?("printf '%s\\n' 'pw123' | sudo -H -S -p '' -u appuser -- /bin/sh -c 'systemctl reboot'; fi").must_equal(true)
+    end
+
+    it "shell-quotes a command carrying quotes and metacharacters" do
+      Krikri::PluginManager.become_shell_wrapper(%(sh -c "echo hi; reboot"), true, "appuser", "deploy")[:command]
+        .must_equal(%(sudo -H -n -u appuser -- /bin/sh -c 'sh -c "echo hi; reboot"'))
+    end
+  end
 end

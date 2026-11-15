@@ -2621,6 +2621,37 @@ module Krikri
       "sudo #{home_flag} -S -p '' -u #{q_user} -- #{plugin_path}; fi"
     end
 
+    # The plain-command equivalent of the wrapper above (no staged plugin
+    # binary is involved): Ansible's reboot action runs its shutdown/
+    # boot-time/test commands through
+    # `_low_level_execute_command(..., sudoable=True)`, so they carry the
+    # task's become escalation just like a module does. krikri used to run
+    # them as the login user, which on a passwordless-sudo target made
+    # `systemctl reboot` fail before anything was rebooted (issue #1305).
+    #
+    # *via_stdin* true marks the become-password variant: its password
+    # line has to reach sudo on the SSH process's own stdin, so the
+    # caller must send the text with SSHManager.exec_script - never with
+    # exec, whose command is argv, where a password must never sit.
+    def self.become_shell_wrapper(command : String, become : Bool, become_user : String?, remote_user : String?,
+                                  become_password : String? = nil, become_flags : String? = nil) : NamedTuple(command: String, via_stdin: Bool)
+      return {command: command, via_stdin: false} unless become_needed?(become, become_user, remote_user)
+
+      home_flag = become_login_shell?(become_flags) ? "-i" : "-H"
+      q_user = Shell.quote_arg(become_user.to_s)
+      target = "/bin/sh -c #{Shell.quote_arg(command)}"
+      return {command: "sudo #{home_flag} -n -u #{q_user} -- #{target}", via_stdin: false} unless become_password
+
+      # Same probe-then-fallback shape as sudo_password_become_wrapper,
+      # but no `cat`: nothing downstream reads stdin, so the only bytes
+      # that ever flow there are the password printf produces.
+      wrapper = "if sudo -n -u #{q_user} -- true 2>/dev/null; " \
+                "then sudo #{home_flag} -n -u #{q_user} -- #{target}; " \
+                "else printf '%s\\n' #{Shell.single_quote(become_password)} | " \
+                "sudo #{home_flag} -S -p '' -u #{q_user} -- #{target}; fi"
+      {command: wrapper, via_stdin: true}
+    end
+
     # `ANSIBLE_BECOME_ALLOW_SAME_USER` - Ansible's own config knob,
     # default false, forcing the escalation even when it is a no-op.
     def self.become_allow_same_user? : Bool
