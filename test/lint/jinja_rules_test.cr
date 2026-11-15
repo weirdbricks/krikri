@@ -88,5 +88,38 @@ module Krikri::Lint
       v = lint_yaml(rule, "---\n- hosts: all\n  tasks:\n    - name: A\n      command: echo '{%- raw -%}{{.Names}}{%- endraw -%}'\n", FileType::PLAYBOOK)
       v.must_be_empty
     end
+
+    # ansible-lint parses conditional keywords as implicit templates and
+    # strips any `{{ }}` wrapper afterwards, so a correctly spaced value
+    # that is itself a whole template still gets a spacing match whose
+    # recommendation is the bare expression.
+    it "flags braces around a conditional keyword value" do
+      v = lint_yaml(rule, "---\n- hosts: all\n  tasks:\n    - name: A\n      command: ls\n      until: \"{{ job_result.finished }}\"\n", FileType::PLAYBOOK)
+      v.size.must_equal(1)
+      v.first.rule_id.must_equal("jinja[spacing]")
+      v.first.column.must_equal(14)
+      v.first.message.must_equal("Jinja2 spacing could be improved: {{ job_result.finished }} -> job_result.finished")
+      v.first.details.must_equal("")
+    end
+
+    it "flags poor spacing inside a wrapped changed_when value" do
+      v = lint_yaml(rule, "---\n- hosts: all\n  tasks:\n    - name: A\n      command: ls\n      changed_when: \"{{x}}\"\n", FileType::PLAYBOOK)
+      v.size.must_equal(1)
+      v.first.rule_id.must_equal("jinja[spacing]")
+      v.first.message.must_equal("Jinja2 spacing could be improved: {{x}} -> x")
+      v.first.details.must_equal("Jinja2 template rewrite recommendation: `x`.")
+    end
+
+    it "allows bare conditional keyword expressions" do
+      v = lint_yaml(rule, "---\n- hosts: all\n  tasks:\n    - name: A\n      command: ls\n      changed_when: rc_result.rc != 0\n", FileType::PLAYBOOK)
+      v.must_be_empty
+    end
+
+    # Upstream keys list items by index, so they never take the
+    # implicit-template path even under a conditional keyword.
+    it "allows braces in a conditional keyword's list item" do
+      v = lint_yaml(rule, "---\n- hosts: all\n  tasks:\n    - name: A\n      command: ls\n      changed_when:\n        - \"{{ x }}\"\n", FileType::PLAYBOOK)
+      v.must_be_empty
+    end
   end
 end
