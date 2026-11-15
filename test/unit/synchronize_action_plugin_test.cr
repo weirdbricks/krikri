@@ -72,6 +72,45 @@ describe "SynchronizeActionPlugin argument validation" do
     json.as_h.keys.first(3).must_equal(["failed", "msg", "changed"])
   end
 
+  # Real's action plugin pops use_ssh_args out of the task args before the
+  # module runs, so the module's argspec never converts it and it cannot
+  # win the first-violation race (issue #1309, kpg seed 1794776999: with
+  # both values non-boolean, real reported only delay_updates - the one
+  # the module actually sees - while this engine reported use_ssh_args).
+  it "does not let the action-plugin-only use_ssh_args win the bool error race" do
+    result = run_delegate_sync("localhost", {
+      "src"           => "/tmp/sync-spec-src/",
+      "dest"          => "/tmp/sync-spec-dest/",
+      "delay_updates" => "zlukpi",
+      "use_ssh_args"  => "hkipap",
+    })
+
+    json = result.final_result || raise "expected a final result"
+    json.as_h["failed"].as_bool.must_equal(true)
+    json.as_h["msg"].as_s.must_include("argument 'delay_updates' is of type str")
+    json.as_h["msg"].as_s.wont_include("use_ssh_args")
+  end
+
+  # The pop itself: a non-boolean use_ssh_args alone must pass module setup
+  # (real never validates it) and must not be forwarded to the module. The
+  # delegate_to-own-host shape hands the params back for a module dispatch,
+  # so the dispatched params are directly observable here.
+  it "consumes use_ssh_args instead of passing it to the module" do
+    task_host = Krikri::Host.new("unresolvable-sync-spec-host")
+    plugin = Krikri::SynchronizeActionPlugin.new({
+      "src"          => "/tmp/sync-spec-src",
+      "dest"         => "/tmp/sync-spec-dest",
+      "use_ssh_args" => "hkipap",
+    }, Hash(String, JSON::Any).new, task_host, nil, task_host)
+    result = plugin.execute
+
+    result.final_result.must_be_nil
+    result.modified_params.must_equal({
+      "src"  => "/tmp/sync-spec-src",
+      "dest" => "/tmp/sync-spec-dest",
+    })
+  end
+
   it "rejects mode: PUSH (choices validation is case-sensitive and reports the raw value)" do
     result = run_delegate_sync("localhost", {
       "src"  => "/tmp/sync-spec-src/",
