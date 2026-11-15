@@ -81,10 +81,12 @@ module Krikri
       # validation, unlike an action plugin's) exits with a skip instead
       # of ever connecting - live-verified vs 2.21.6: under --check the
       # module skips with this msg while an invalid port still fails
-      # validation. Without the gate this plugin made the real
-      # connection under --check and reported a failure ansible never
-      # had, which also turned a following `when: r is not skipped`
-      # task from skipped into a run (kpg issue #1312).
+      # validation. The skip therefore also wins over the ca_cert
+      # existence check that lives in the module body. Without the gate
+      # this plugin made the real connection under --check and reported a
+      # failure ansible never had, which also turned a following
+      # `when: r is not skipped` task from skipped into a run (kpg issues
+      # #1312, #1314).
       if true?(@params["_ansible_check_mode"]?)
         invoked = @params["_module_name"]? || "community.crypto.get_certificate"
         return PluginResult.new(changed: false, failed: false,
