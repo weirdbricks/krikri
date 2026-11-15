@@ -13,6 +13,8 @@ module Krikri
   #   state (REQUIRED): enforcing, permissive, or disabled
   #   policy (optional): targeted, minimum, mls, or a custom name -
   #     required by Ansible whenever state is not "disabled"
+  #   configfile (optional, default /etc/selinux/config, aliases conf/file):
+  #     the file both read and rewritten instead of the default path
   #   check_mode: dry-run (predict, don't apply)
   #
   # Ansible.posix.selinux enforces the running SELinux mode and
@@ -44,7 +46,7 @@ module Krikri
       # them at spec scratch files - sandboxes without /etc/selinux/config
       # or /sys/fs/selinux can exercise the runtime-state branch they
       # otherwise never reach. Unset env = the real module's own paths.
-      config_path = ENV["KRIKRI_SELINUX_CONFIG_PATH"]? || CONFIG_PATH
+      config_path = config_file_path
       enforce_path = ENV["KRIKRI_SELINUX_ENFORCE_PATH"]? || ENFORCE_PATH
 
       # Runtime probe (selinux.py:252-263): is_selinux_enabled() == 0
@@ -172,6 +174,19 @@ module Krikri
         result.extra["reboot_required"] = JSON::Any.new(false)
       end
       result
+    end
+
+    # ansible.posix.selinux's `configfile` parameter (type str, default
+    # /etc/selinux/config, aliases conf/file) names the file every check
+    # and rewrite targets. AnsibleModule's _handle_aliases copies a
+    # present alias over the canonical key, so the aliases win. This
+    # plugin used to hardwire CONFIG_PATH, so `configfile: jssvzf`
+    # silently checked /etc/selinux/config instead and reported the
+    # later policy-store error where real fails with "Unable to find
+    # file jssvzf" first.
+    private def config_file_path : String
+      @params["conf"]? || @params["file"]? || @params["configfile"]? ||
+        ENV["KRIKRI_SELINUX_CONFIG_PATH"]? || CONFIG_PATH
     end
 
     private def extract(content : String, key : String) : String
