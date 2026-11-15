@@ -45,6 +45,23 @@ describe "group plugin" do
     `getent group #{NONEXISTENT_GROUP}`.strip.must_be_empty
   end
 
+  # Ansible's group_exists() uses grp.getgrnam(), which resolves the name
+  # ONLY, while `getent group <key>` accepts a numeric key as a GID too - a
+  # numeric name that happens to equal another group's gid is therefore NOT
+  # that group for Ansible (live-verified vs ansible-core 2.21.6: check mode
+  # create of name "45" reports changed even though gid 45 belongs to
+  # "sasl"). Before the name check, krikri treated it as an existing group
+  # with no gid change to make and reported ok/no-change instead.
+  it "looks a numeric name up by name only, never by gid (check mode, no real creation)" do
+    root_gid = `getent group root`.strip.split(":")[2]
+    `getent group #{root_gid}`.strip.split(":")[0].wont_equal(root_gid)
+
+    result = PluginSpecHelper.run("group", {"name" => root_gid, "_ansible_check_mode" => "true"})
+
+    result["changed"].as_bool.must_equal(true)
+    result.as_h.keys.must_equal(["changed"])
+  end
+
   # Real group.py echoes name/state with changed: false for a group that
   # doesn't exist - no msg key (live-verified: [name, state, changed,
   # failed]).
