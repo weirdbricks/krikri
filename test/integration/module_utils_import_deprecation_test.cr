@@ -446,6 +446,44 @@ describe "deprecated ansible.module_utils import warnings in play output" do
     stdout.to_s.must_include("2 2")
   end
 
+  # synchronize's action plugin returns its own failed dict for a missing
+  # src/dest, before it ever reaches _execute_module, so the module payload
+  # (whose imports produce the to_bytes/to_native lines) never runs: real
+  # prints only the action plugin's own pair and registers no deprecations
+  # (live-verified vs ansible-core 2.21.6 + ansible.posix 2.1.0, issue
+  # #1306).
+  it "prints only the action plugin's imports when synchronize fails before running its module" do
+    root = PluginSpecHelper.tmp_path("module-utils-import-deprecation-missing-dest")
+    Dir.mkdir_p(root)
+    playbook = File.join(root, "sync.yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        gather_facts: false
+        connection: local
+        tasks:
+          - name: sync without dest
+            ansible.posix.synchronize:
+              src: #{root}/src/
+            ignore_errors: true
+      YAML
+
+    stdout = IO::Memory.new
+    stderr = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: stdout, error: stderr)
+    err = stderr.to_s
+
+    status.success?.must_equal(true)
+    err.must_include("Importing 'to_text' from 'ansible.module_utils._text' is deprecated. " \
+                     "This feature will be removed from ansible-core version 2.24. " \
+                     "Use ansible.module_utils.common.text.converters instead.")
+    err.must_include("The `ansible.module_utils.common._collections_compat` module is deprecated. " \
+                     "This feature will be removed from ansible-core version 2.24. " \
+                     "Use `collections.abc` from the Python standard library instead.")
+    err.wont_include("Importing 'to_bytes'")
+    err.wont_include("Importing 'to_native'")
+    stdout.to_s.must_include("synchronize requires both src and dest parameters are set")
+  end
+
   # Real's linear/free strategy loads every task's action plugin class while
   # iterating, block children included, so a collection action plugin inside
   # a `when:`-guarded block warns exactly like a top-level one - the plugin

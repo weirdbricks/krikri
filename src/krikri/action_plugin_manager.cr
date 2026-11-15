@@ -214,6 +214,12 @@ module Krikri
       return true if hash["skipped"]?.try(&.as_bool?)
       return true if hash["unreachable"]?.try(&.as_bool?)
       return true if hash["_connection_failure"]?.try(&.as_bool?)
+      # An action plugin that answers the task with its own failed dict
+      # before it ever calls _execute_module (synchronize's src/dest guard)
+      # never imports the module payload, so real prints only the action
+      # plugin's own deprecations and registers none (live-verified vs
+      # ansible-core 2.21.6 + ansible.posix 2.1.0, issue #1306).
+      return true if hash["_ansible_module_never_ran"]?.try(&.as_bool?)
       hash["failed"]?.try(&.as_bool?) == true &&
         (hash["msg"]?.try(&.as_s?) || "").starts_with?("Task failed: Module failed: ")
     end
