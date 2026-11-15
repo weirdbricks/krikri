@@ -75,6 +75,23 @@ module Krikri
       if err = validate_arguments
         return err
       end
+
+      # get_certificate.py passes no supports_check_mode=True to its
+      # AnsibleModule, so basic.py's own gate (which sits AFTER argument
+      # validation, unlike an action plugin's) exits with a skip instead
+      # of ever connecting - live-verified vs 2.21.6: under --check the
+      # module skips with this msg while an invalid port still fails
+      # validation. Without the gate this plugin made the real
+      # connection under --check and reported a failure ansible never
+      # had, which also turned a following `when: r is not skipped`
+      # task from skipped into a run (kpg issue #1312).
+      if true?(@params["_ansible_check_mode"]?)
+        invoked = @params["_module_name"]? || "community.crypto.get_certificate"
+        return PluginResult.new(changed: false, failed: false,
+          msg: "remote module (#{invoked}) does not support check mode", skipped: true,
+          omit_changed: true, key_order: ["skipped", "msg"])
+      end
+
       host = @params["host"]
       port = @params["port"].to_i
 

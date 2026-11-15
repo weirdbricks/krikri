@@ -69,4 +69,36 @@ describe "get_certificate plugin argument validation" do
     result["failed"].as_bool.must_equal(true)
     result["msg"].as_s.must_equal("value of select_crypto_backend must be one of: auto, cryptography, got: banana")
   end
+
+  # get_certificate.py declares no supports_check_mode, so basic.py skips
+  # the task under --check instead of connecting (kpg issue #1312: the
+  # plugin used to dial out, fail on the unresolvable host, and register a
+  # failed result where ansible had a skip).
+  it "skips in check mode like a module without supports_check_mode" do
+    result = PluginSpecHelper.run("get_certificate", {
+      "host"                => "acmaxz",
+      "port"                => "41",
+      "timeout"             => "8",
+      "_ansible_check_mode" => "true",
+    })
+
+    result["skipped"].as_bool.must_equal(true)
+    # The module's wire dict carries only exit_json's own kwargs; the
+    # controller backfills changed/failed (registered order
+    # changed, failed, skipped, msg, live-verified vs 2.21.6).
+    result.as_h.keys.must_equal(["skipped", "msg"])
+    result["msg"].as_s.must_equal("remote module (community.crypto.get_certificate) does not support check mode")
+  end
+
+  # basic.py's gate sits after argument validation, so a bad arg still
+  # fails (live-verified vs 2.21.6 under --check).
+  it "validates arguments before the check-mode skip" do
+    result = PluginSpecHelper.run("get_certificate", {
+      "host"                => "acmaxz",
+      "_ansible_check_mode" => "true",
+    })
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("missing required arguments: port")
+  end
 end
