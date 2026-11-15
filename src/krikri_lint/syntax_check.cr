@@ -13,24 +13,22 @@ module Krikri
     # ansiblelint/file_utils.py and runner.py, and the file.failed()
     # guards at the top of name.py's matchplay/matchtask). A task whose
     # module name the controller cannot resolve aborts the check with
-    # "couldn't resolve module/action 'x'" (syntax-check[unknown-module]),
-    # so upstream reports just that one match for the file - a rule
-    # krikri-lint deliberately does not implement, which the parity
-    # harness books as an unimplemented-rule gap - and the file must
-    # emit no violations at all for the triples to stay identical. A play
+    # "couldn't resolve module/action 'x'" (syntax-check[unknown-module]):
+    # #violation builds that single match and the runner emits it, so the
+    # file reports nothing else and the triples stay identical. A play
     # whose `roles:` entry names a role no search path holds fails the
     # check on the playbook itself (syntax-check[specific]), which the
     # SyntaxCheckRule reports at the entry.
     #
-    # Only the files the failing check actually NAMES go silent (each
-    # verified against ansible-lint 25.2.1): the playbook carrying the
-    # bad task, and role content a check loads - a role's
+    # Only the files the failing check actually NAMES report the match
+    # (each verified against ansible-lint 25.2.1): the playbook carrying
+    # the bad task, and role content a check loads - a role's
     # tasks/handlers/meta entry points and their static imports, reached
     # from a playbook's `roles:`/import_role or from a targeted role. A
     # task file nothing loads (a sibling of main.yml, a dynamic
     # include_tasks/include_role) and a non-role task file imported from
-    # a playbook are not silenced upstream - its failed-file marking
-    # misses them - and they keep reporting here too.
+    # a playbook are not named upstream - its failed-file marking misses
+    # them - and they keep reporting here too.
     #
     # A playbook the check itself failed on is never walked for children
     # upstream (runner.py's `if lintable.failed(): continue`), so nothing
@@ -49,22 +47,25 @@ module Krikri
         collect_suppressed(roots)
       end
 
-      # Whether upstream's failed-file gate silences this file: its
-      # tasks carry a module name the controller cannot resolve, and the
-      # file is one a playbook/role syntax check names.
-      def silenced?(file : PositionedFile) : Bool
-        return false unless file.root
+      # The match upstream reports for this file, and the reason it runs
+      # no other rule on it: its tasks carry a module name the controller
+      # cannot resolve, and the file is one a playbook/role syntax check
+      # names. Nil for every file the check does not fail on.
+      def violation(file : PositionedFile) : Violation?
+        return nil unless file.root
         role = role_dir_for(file.path)
         named_by_check = playbook_kind?(file) ||
                          (!role.nil? && @walked.includes?(Imports.relative(file.path)))
-        return false unless named_by_check
-        unresolvable_name?(file, role)
+        return nil unless named_by_check
+        unknown_module(file, role)
       end
 
-      # Whether this file's own playbook syntax check failed, so no rule
-      # but syntax-check may report on it.
+      # Whether this file's own playbook syntax check failed on a role no
+      # search path holds, so no rule but syntax-check may report on it.
+      # (An unresolvable module name is the match #violation reports; the
+      # runner never reaches here for such a file.)
       def failed?(file : PositionedFile) : Bool
-        silenced?(file) || @missing.has_key?(Imports.relative(file.path))
+        @missing.has_key?(Imports.relative(file.path))
       end
 
       # Whether upstream never had this file as a lintable at all: only a
@@ -201,15 +202,17 @@ module Krikri
         nil
       end
 
-      # True when the file's own tasks carry a module name the real
-      # controller cannot resolve to a module file - the same verdict
-      # behind the engine's playbook-load refusal (CollectionIndex
-      # #controller_resolves?, consulted exactly like the parser: the
-      # task's own `collections:` replaces the play's list plus the
-      # role's meta declaration). Names resolution cannot decide (no
-      # discoverable ansible-core, templated action strings) stay
-      # permissive, so a file goes silent only on a definite negative.
-      private def unresolvable_name?(file : PositionedFile, role_path : String?) : Bool
+      # The match for the file's own first task carrying a module name
+      # the real controller cannot resolve to a module file - the same
+      # verdict behind the engine's playbook-load refusal
+      # (CollectionIndex #controller_resolves?, consulted exactly like
+      # the parser: the task's own `collections:` replaces the play's
+      # list plus the role's meta declaration). Ansible's check stops at
+      # the first such name, so only that task is reported. Names
+      # resolution cannot decide (no discoverable ansible-core,
+      # templated action strings) stay permissive, so a file reports only
+      # on a definite negative.
+      private def unknown_module(file : PositionedFile, role_path : String?) : Violation?
         playbook_dir = File.dirname(File.expand_path(file.path))
         inherited = play_collections(file) +
                     CollectionIndex.role_meta_collections(role_path)
@@ -218,9 +221,11 @@ module Krikri
           collections = task_collections(task) || inherited
           resolution = CollectionIndex.controller_resolves?(name, collections,
             role_path, playbook_dir)
-          return true if resolution[:resolves] == false
+          if resolution[:resolves] == false
+            return SyntaxCheckRule.unknown_module(file, task, name)
+          end
         end
-        false
+        nil
       end
 
       # The module a task calls, the way ansible's loader reads it: a

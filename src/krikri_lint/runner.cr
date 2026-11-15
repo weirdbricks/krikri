@@ -25,20 +25,14 @@ module Krikri
           next if excluded?(path)
           next if syntax_check.suppressed?(path)
           file = PositionedFile.load(path)
+          if (match = syntax_check.violation(file))
+            violations << match
+            next
+          end
           check_failed = syntax_check.failed?(file)
           source = File.exists?(path) ? File.read(path) : ""
           noqa_maps[path] = Noqa.build_map(source)
-          # Collected once per file, on first need: the enclosing-task
-          # spans a task-scoped rule's violations belong to, and the task
-          # names those violations are described with.
-          if needs_tasks && !task_spans.has_key?(path)
-            tasks = TaskWalker.collect_tasks(file)
-            covered = YamlText.scalar_continuation_lines(file)
-            task_spans[path] = tasks.map { |task| {task.line, task.end_line(covered)} }
-            task_names[path] = tasks.each_with_object({} of Int32 => String) do |task, map|
-              map[task.line] = task.display_name
-            end
-          end
+          collect_task_metadata(file, task_spans, task_names) if needs_tasks
           rules.each do |rule|
             next unless rule.applies?(file)
             next if check_failed && rule.id != "syntax-check"
@@ -54,6 +48,21 @@ module Krikri
         end
         kept = violations.reject { |v| suppressed?(v, scoped, noqa_maps, task_spans) }
         apply_warn_list(kept.map { |v| describe(v, task_names) })
+      end
+
+      # Collected once per file, on first need: the enclosing-task spans a
+      # task-scoped rule's violations belong to, and the task names those
+      # violations are described with.
+      private def collect_task_metadata(file : PositionedFile,
+                                        task_spans : Hash(String, Array({Int32, Int32})),
+                                        task_names : Hash(String, Hash(Int32, String))) : Nil
+        return if task_spans.has_key?(file.path)
+        tasks = TaskWalker.collect_tasks(file)
+        covered = YamlText.scalar_continuation_lines(file)
+        task_spans[file.path] = tasks.map { |task| {task.line, task.end_line(covered)} }
+        task_names[file.path] = tasks.each_with_object({} of Int32 => String) do |task, map|
+          map[task.line] = task.display_name
+        end
       end
 
       # Upstream's matchtask enrichment (_enrich_matcherror_with_task_details)
