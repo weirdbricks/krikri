@@ -44,6 +44,7 @@ module Krikri
           ArgsModuleRule.new,
           PartialBecomeRule.new,
           NoFreeFormRule.new,
+          ComplexityRule.new,
         ])
       end
 
