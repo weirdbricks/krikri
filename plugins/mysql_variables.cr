@@ -162,7 +162,12 @@ module Krikri
       PluginHelpers::MysqlConnection.add_mysqldb_connector_warning(
         PluginResult.new(changed: false, failed: true, msg: "unable to connect to database, check login_user and login_password are correct or login_unix_socket password is empty: #{ex.message}"))
     rescue ex : MySql::Connection::PacketError
-      PluginHelpers::MysqlConnection.add_mysqldb_connector_warning(PluginHelpers::DbErrors.query_failed(ex, "MySQL"))
+      # A SET GLOBAL failing after the connect still carries both warns real
+      # recorded before it ran (get_server_implementation's MariaDB notice
+      # included), so this failure keeps them too.
+      result = PluginHelpers::DbErrors.query_failed(ex, "MySQL")
+      PluginHelpers::MysqlConnection.add_mysqldb_connector_warning(result)
+      PluginHelpers::MysqlConnection.add_mariadb_warning(result, server_version || "")
     end
 
     # Real ansible names the FQCN the task spelled in module-level errors,

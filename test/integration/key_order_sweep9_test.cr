@@ -1,6 +1,7 @@
 require "../minitest_helper"
 
 require "socket"
+require "../../src/krikri/plugin_helpers/mysql_connection"
 
 # Registered-result key order for the mysql_variables plugin, pinned to the
 # order live-verified against ansible-playbook 2.21.6 (this repo's
@@ -47,13 +48,17 @@ private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-ex
 
 private MYSQL_HOST = "127.0.0.1"
 private MYSQL_PORT = 33306
+# The MariaDB the other MySQL live suites use. ansible.mysql's
+# get_server_implementation only warns on a MariaDB server (issue #1297),
+# so the one spec exercising that warning needs this port.
+private MARIADB_PORT = 33307
 
 # The throwaway MySQL container this sweep verified against: podman run -d
 # --name krikri-kp-mysql -e MYSQL_ROOT_PASSWORD=krikri -p
 # 127.0.0.1:33306:3306 docker.io/library/mysql:8.4. Every play below
-# skips when it isn't running.
-private def mysql_reachable? : Bool
-  sock = TCPSocket.new(MYSQL_HOST, MYSQL_PORT, connect_timeout: 1)
+# skips when its own server isn't running.
+private def mysql_reachable?(port : Int32 = MYSQL_PORT) : Bool
+  sock = TCPSocket.new(MYSQL_HOST, port, connect_timeout: 1)
   sock.close
   true
 rescue
@@ -64,13 +69,19 @@ end
 # file, then returns the dumped object's key order (writing the dump
 # through copy: avoids the display layer's JSON escaping entirely).
 private def run_registered_dump(yaml : String) : Array(String)
+  run_registered_json(yaml).as_h.keys
+end
+
+# The same run, returning the whole dumped object - for a spec that
+# asserts a declared field's VALUE (`warnings`), not only its position.
+private def run_registered_json(yaml : String) : JSON::Any
   dump = PluginSpecHelper.tmp_path("key-order-dump9.json")
   playbook = File.tempname("key-order-sweep9", ".yml")
   File.write(playbook, yaml.gsub("KRIKRI_DUMP_PATH", dump))
   output = IO::Memory.new
   status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
   status.success?.must_equal(true, output.to_s[-800..]? || output.to_s)
-  JSON.parse(File.read(dump)).as_h.keys
+  JSON.parse(File.read(dump))
 ensure
   File.delete(playbook) if playbook && File.exists?(playbook)
 end
@@ -249,5 +260,28 @@ describe "mysql_variables plugin result key order (sweep9)" do
                 {{ r | to_json }}
     YAML
     keys.must_equal(%w[changed failed deprecations exception msg])
+  end
+
+  # mysql_variables.py calls get_server_implementation right after
+  # mysql_connect, before it reads the variable, so on MariaDB the
+  # module's deprecation notice rides this result even though the console
+  # prints it once per run. `warnings` is a declared field: it precedes
+  # the community.mysql redirect's `deprecations` and the module's `msg` -
+  # live-verified against ansible-playbook 2.21.6 + ansible.mysql 5.2.0
+  # on MariaDB 10.11.
+  it "registers the MariaDB deprecation warning get_server_implementation emits" do
+    skip "no MariaDB server at #{MYSQL_HOST}:#{MARIADB_PORT}" unless mysql_reachable?(MARIADB_PORT)
+    dump = run_registered_json(registered_dump_play(<<-YAML))
+            - name: read max_connections
+              community.mysql.mysql_variables:
+                variable: max_connections
+                login_host: #{MYSQL_HOST}
+                login_port: #{MARIADB_PORT}
+                login_user: root
+                login_password: krikri
+              register: r
+    YAML
+    dump.as_h.keys.must_equal(%w[changed failed warnings deprecations msg])
+    dump["warnings"].as_a.map(&.as_s).must_equal([Krikri::PluginHelpers::MysqlConnection::MARIADB_WARNING])
   end
 end

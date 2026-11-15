@@ -1,6 +1,7 @@
 require "../minitest_helper"
 
 require "socket"
+require "../../src/krikri/plugin_helpers/mysql_connection"
 
 # Registered-result SHAPE (keys, values and wire order) for the
 # community.mysql plugins, pinned to ansible-playbook 2.21.6 (the release
@@ -45,6 +46,10 @@ private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-ex
 
 private MYSQL_HOST = "127.0.0.1"
 private MYSQL_PORT = 33306
+# The MariaDB server the other MySQL live suites use (scripts/db_tests.sh):
+# ansible.mysql's get_server_implementation only warns on MariaDB, and
+# every other spec here runs on the MySQL 8.4 server above (issue #1297).
+private MARIADB_PORT = 33307
 # See the header: mysql_user's password path needs mysql_native_password
 # loaded, which the 33306 server (plain mysql:8.4) does not do.
 private USER_PORT = 33308
@@ -320,6 +325,25 @@ describe "mysql_query plugin result shape" do
     dump.as_h.keys.must_equal(%w[changed failed deprecations executed_queries query_result rowcount execution_time_ms])
     dump["changed"].as_bool.must_equal(false)
     dump["rowcount"].as_a.map(&.as_i).must_equal([0])
+  end
+
+  # mysql_query.py's get_server_implementation runs right after
+  # mysql_connect, so on MariaDB module.warn()s the collection's
+  # deprecation notice and exit_json's result carries it. `warnings` is a
+  # declared field, so it precedes the module's own keys (and the
+  # community.mysql redirect's `deprecations`) - live-verified against
+  # ansible-playbook 2.21.6 + ansible.mysql 5.2.0 on MariaDB 10.11.
+  it "registers the MariaDB deprecation warning get_server_implementation emits" do
+    skip "no MariaDB server at #{MYSQL_HOST}:#{MARIADB_PORT}" unless mysql_reachable?(MARIADB_PORT)
+    dump = registered_dump(task_body(<<-YAML))
+            - name: select
+              community.mysql.mysql_query:
+                query: "select 1 as a"
+                #{mysql_login_args(12, MARIADB_PORT)}
+              register: r
+    YAML
+    dump.as_h.keys.must_equal(%w[changed failed warnings deprecations executed_queries query_result rowcount execution_time_ms])
+    dump["warnings"].as_a.map(&.as_s).must_equal([Krikri::PluginHelpers::MysqlConnection::MARIADB_WARNING])
   end
 end
 
