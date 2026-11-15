@@ -108,4 +108,33 @@ describe "wait_for_connection check mode action skip" do
     status.exit_code.must_equal(0)
     output.must_include("Invalid options for ansible.builtin.wait_for_connection: slepe")
   end
+
+  it "reports a non-numeric numeric arg before Invalid options when both apply" do
+    # The int() conversions run before ActionBase's _VALID_ARGS check, so a
+    # typo'd option never hides a bad numeric arg - in either mode (issue
+    # #1283, live-verified vs 2.21.6).
+    yaml = <<-YAML
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: bad int plus typo'd options
+            ansible.builtin.wait_for_connection:
+              delay: "0"
+              sleep: trtsjf
+              connect_timeuot: "5"
+              delay_bogus: "0"
+            ignore_errors: true
+      YAML
+
+    status, output = wfc_cm_playbook(yaml)
+    status.exit_code.must_equal(0)
+    output.must_include("invalid literal for int() with base 10: 'trtsjf'")
+    output.wont_include("Invalid options")
+
+    status, output = wfc_cm_playbook(yaml, ["--check"])
+    status.exit_code.must_equal(0)
+    output.must_include("invalid literal for int() with base 10: 'trtsjf'")
+    output.wont_include("Invalid options")
+  end
 end

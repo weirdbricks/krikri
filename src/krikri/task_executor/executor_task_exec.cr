@@ -3969,6 +3969,18 @@ module Krikri
          wait_for_connection_int_args_convertible?(params)
         return JSON.parse({"skipped" => true, "failed" => false, "changed" => false}.to_json)
       end
+      # Those same int() conversions run before ActionBase's _VALID_ARGS
+      # check too, so a non-numeric numeric arg outranks the option
+      # rejection as well: with a typo'd option alongside it the task fails
+      # on the conversion, not "Invalid options for ..." - inside or outside
+      # check mode (issue #1283, live-verified vs 2.21.6). Leave that failure
+      # to the controller-only plugin, which emits Ansible's own "invalid
+      # literal for int()" msg.
+      if action_level_only &&
+         task.module_name == "ansible.builtin.wait_for_connection" &&
+         !wait_for_connection_int_args_convertible?(params)
+        return nil
+      end
       failure = ArgspecValidator.validate(action_name, task.module_name, params, vars_context)
       return nil unless failure
       # The pre-action hook (action_level_only) takes only the
