@@ -49,7 +49,23 @@ describe "openssh_keypair backend selection" do
     result["msg"].as_s.must_equal(
       "For ECDSA keys, size determines the key length by selecting from one of three elliptic curve sizes: " \
       "256, 384 or 521 bits. Attempting to use bit lengths other than these three values for ECDSA keys " \
-      "will cause the module to fail.")
+      "will cause this module to fail.")
+  end
+
+  it "keeps community.crypto's own 'this module' wording for a tiny ECDSA size" do
+    work = PluginSpecHelper.tmp_path("keypair-ecdsa-size-tiny")
+    Dir.mkdir_p(work)
+
+    result = PluginSpecHelper.run("openssh_keypair", {
+      "path" => File.join(work, "id_test"),
+      "type" => "ecdsa",
+      "size" => "2",
+    })
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal(
+      "For ECDSA keys, size determines the key length by selecting from one of three elliptic curve sizes: " \
+      "256, 384 or 521 bits. Attempting to use bit lengths other than these three values for ECDSA keys " \
+      "will cause this module to fail.")
   end
 
   it "reports public_key without the comment" do

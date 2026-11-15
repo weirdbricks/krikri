@@ -260,7 +260,7 @@ module Krikri
       when "ecdsa"
         size = requested || 256
         if !([256, 384, 521].includes?(size))
-          return PluginResult.new(changed: false, failed: true, msg: "For ECDSA keys, size determines the key length by selecting from one of three elliptic curve sizes: 256, 384 or 521 bits. Attempting to use bit lengths other than these three values for ECDSA keys will cause the module to fail.")
+          return PluginResult.new(changed: false, failed: true, msg: "For ECDSA keys, size determines the key length by selecting from one of three elliptic curve sizes: 256, 384 or 521 bits. Attempting to use bit lengths other than these three values for ECDSA keys will cause this module to fail.")
         end
         size
       else # ed25519 - user size is ignored
