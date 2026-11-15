@@ -2113,7 +2113,12 @@ module Krikri
 
       # Perf items 1-3: the daemon leg first - see #try_daemon_dispatch
       # for the full reasoning (fallback contract, spawn path, keying).
-      if daemon_result = try_daemon_dispatch(plugin_name, config, host, vars, become, become_user, become_flags, task_timeout, conn)
+      # daemon_scope rides along so a delegate is reached through one
+      # daemon per DELEGATING host: without it every delegating fiber
+      # would share the delegate's single-request-at-a-time daemon and
+      # its tasks would run one after another, where ansible runs them
+      # in parallel.
+      if daemon_result = try_daemon_dispatch(plugin_name, config, host, vars, become, become_user, become_flags, task_timeout, conn, daemon_scope)
         return daemon_result
       end
 
@@ -2207,7 +2212,7 @@ module Krikri
         # run. Re-running is safe: the exec above failed with the binary
         # MISSING, so the module never ran. The one-shot retry below
         # stays as the fallback with the same single-retry bound.
-        if daemon_result = try_daemon_dispatch(plugin_name, config, host, vars, become, become_user, become_flags, task_timeout, conn)
+        if daemon_result = try_daemon_dispatch(plugin_name, config, host, vars, become, become_user, become_flags, task_timeout, conn, daemon_scope)
           return daemon_result
         end
         # The re-upload is krikri-only transfer time too (see above): the
