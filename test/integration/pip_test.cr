@@ -1468,6 +1468,49 @@ describe "pip plugin" do
       end
     end
 
+    # Issue #1289: pip.py folds version: into the package BEFORE its
+    # check-mode block (Package(name_string, version_string)), joining with
+    # `==` only when the version starts with a digit and with a plain space
+    # otherwise. "setuptools hikuzk" carries no usable version specifier,
+    # so the packaging grammar rejects it and pip.py has a package to
+    # RESOLVE - and on a pip older than 24.1 it cannot resolve, so it
+    # warns and leaves the task changed. Check mode used to drop version:
+    # here, parse the bare name, and answer silently. Verified against
+    # real ansible-playbook 2.21.6 in a container whose pip is 24.0: the
+    # same task prints this warning on stderr and reports changed.
+    it "warns about an unusable version: ref on an old pip, like pip.py's check-mode warning (issue #1289)" do
+      shim_dir = File.tempname(".krikri-spec-pip-old-version")
+      Dir.mkdir(shim_dir)
+      shim = File.join(shim_dir, "old-pip")
+      File.write(shim, <<-SH
+        #!/bin/sh
+        export PATH=/usr/local/bin:/usr/bin:/bin
+        case "$1" in
+          show) echo "Name: pip"; echo "Version: 23.0"; exit 0 ;;
+          list|freeze) echo "alpha==1.0"; exit 0 ;;
+        esac
+        exit 0
+        SH
+      )
+      File.chmod(shim, 0o755)
+      begin
+        result = PluginSpecHelper.run("pip", {
+          "name"                => "setuptools",
+          "version"             => "hikuzk",
+          "executable"          => shim,
+          "_ansible_check_mode" => "true",
+        })
+
+        result["failed"]?.try(&.as_bool).wont_equal(true)
+        result["changed"].as_bool.must_equal(true)
+        result["warnings"].as_a.map(&.as_s).must_equal([
+          "Using check mode with packages from vcs urls, file paths, or archives will not behave as expected when using pip versions <24.1.",
+        ])
+      ensure
+        FileUtils.rm_rf(shim_dir)
+      end
+    end
+
     it "reports changed for an unsatisfied version pin in an existing virtualenv" do
       venv = File.join(Dir.tempdir, "krikri-pip-spec-venv-#{Random::Secure.hex(8)}")
       begin
