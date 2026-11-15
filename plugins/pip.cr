@@ -21,9 +21,11 @@ module Krikri
   #   passed straight through to pip, which already understands this
   #   syntax natively
   # - version: install exactly this version - appended to name with
-  #   `==` when the version starts with a digit, or with NO separator
-  #   when it starts with a comparison operator (`>=22` -> `pip>=22`),
-  #   matching Ansible's own pip module
+  #   `==` when the version starts with a digit, or with a comparison
+  #   operator (`>=22` -> `pip>=22`); a version that is not a valid
+  #   PEP 440 specifier (a bare word like `oduuxb`, or a malformed
+  #   version like `1..2`) is ignored and the package installed
+  #   unpinned, matching Ansible's own pip module
   # - state: present (default) | absent | latest | forcereinstall
   # - virtualenv: path to a venv - created via `python3 -m venv` if it
   #   doesn't already exist, and used instead of the system pip
@@ -830,22 +832,107 @@ module Krikri
     # unsatisfiable - Ansible's pip install succeeds (unpinned).
     # Ansible's pip.py (Package.__init__) does version_string.lstrip()
     # and then joins name and version with `==` only when the stripped
-    # version starts with a digit - a version starting with a comparison
-    # operator keeps the operator as the separator itself (`pip>=22`,
-    # `pip~=1.2`). Building the unconditional `pip==>=22` made pip reject
-    # the requirement outright ("Invalid requirement") where
-    # ansible-playbook installs fine (issue #357). A version that is
-    # only whitespace strips to nothing, so it installs the package
-    # unpinned - Ansible would crash here; any unpinned outcome matches
-    # the falsy-empty handling above.
+    # version starts with a digit - anything else keeps a SPACE as the
+    # separator (`pip >=22`), and the join is only kept when
+    # `packaging` parses it as a PEP 508 requirement. An unparsable
+    # join (a bare garbage suffix like `oduuxb`, or a malformed version
+    # that merely starts with a digit, like `3abc` or `1..2`) falls
+    # back to the bare package name, so Ansible installs the package
+    # UNPINNED and reports ok. Building `pip==oduuxb` unconditionally
+    # made pip reject the task instead (issue #1288). Building the
+    # unconditional `pip==>=22` made pip reject the requirement
+    # outright ("Invalid requirement") where ansible-playbook installs
+    # fine (issue #357). A version that is only whitespace strips to
+    # nothing, so it installs the package unpinned - Ansible would
+    # crash here; any unpinned outcome matches the falsy-empty
+    # handling above.
     private def target_spec(name : String?, version : String?) : String?
       return nil unless name
       return name if version.nil? || version.empty?
       stripped = version.lstrip
       return name if stripped.empty?
-      separator = stripped[0].in?('<', '>', '=', '!', '~') ? "" : "=="
-      "#{name}#{separator}#{stripped}"
+      joined = stripped[0].ascii_number? ? "==#{stripped}" : " #{stripped}"
+      specifier = normalized_specifier(joined)
+      specifier ? "#{name}#{specifier}" : name
     end
+
+    # The specifier part of `name: ... version: ...`, in the compact
+    # form `str(packaging.requirements.Requirement(...))` produces
+    # (operators and versions stripped of surrounding whitespace), or
+    # nil when packaging's grammar rejects it. `SpecifierSet` accepts
+    # exactly one dangling trailing comma; any other empty piece (a
+    # leading comma, a doubled one) makes the whole requirement
+    # unparsable. Markers are not version syntax and packaging would
+    # reject a malformed one, so anything containing `;` is treated as
+    # unparsable here.
+    private def normalized_specifier(spec_text : String) : String?
+      return nil if spec_text.includes?(';')
+      pieces = spec_text.strip.split(',')
+      return nil if pieces.empty?
+      pieces.pop if pieces.size > 1 && pieces.last.empty?
+      normalized = pieces.compact_map { |piece| normalized_specifier_piece(piece) }
+      return nil unless normalized.size == pieces.size
+      normalized.join(',')
+    end
+
+    private def normalized_specifier_piece(piece : String) : String?
+      match = /\A\s*(~=|===|==|!=|<=|>=|<|>)\s*(.*?)\s*\z/m.match(piece)
+      return nil unless match
+      operator = match[1]
+      version = match[2]
+      return nil unless specifier_version?(operator, version)
+      "#{operator}#{version}"
+    end
+
+    # packaging's per-operator version rules: `===` takes any
+    # non-blank text, a `.*` wildcard and a `+local` suffix are only
+    # allowed after `==`/`!=`, the compatible `~=` needs at least two
+    # release components (and no local suffix), and the ordered
+    # operators take neither a wildcard nor a local suffix.
+    private def specifier_version?(operator : String, version : String) : Bool
+      case operator
+      when "==="
+        !version.matches?(/[\s;)]/)
+      when "==", "!="
+        version.matches?(PEP440_WILDCARD_VERSION)
+      when "~="
+        version.matches?(PEP440_COMPATIBLE_VERSION)
+      else
+        version.matches?(PEP440_ORDERED_VERSION)
+      end
+    end
+
+    # packaging's VERSION_PATTERN with the optional `.*` wildcard and
+    # `+local` suffix (`==`/`!=` only).
+    PEP440_WILDCARD_VERSION = /\A
+      v?(?:[0-9]+!)?[0-9]+(?:\.[0-9]+)*
+      (?:
+        \.\*
+        |
+        (?:[-_.]?(?:alpha|beta|preview|pre|a|b|c|rc)[-_.]?[0-9]*)?
+        (?:(?:-[0-9]+)|(?:[-_.]?(?:post|rev|r)[-_.]?[0-9]*))?
+        (?:[-_.]?dev[-_.]?[0-9]*)?
+        (?:\+[a-z0-9]+(?:[-_.][a-z0-9]+)*)?
+      )?
+    \z/ix
+
+    # packaging's VERSION_PATTERN without a local suffix, with the
+    # release segment required to have two or more components (`~=`).
+    PEP440_COMPATIBLE_VERSION = /\A
+      v?(?:[0-9]+!)?[0-9]+(?:\.[0-9]+)+
+      (?:[-_.]?(?:alpha|beta|preview|pre|a|b|c|rc)[-_.]?[0-9]*)?
+      (?:(?:-[0-9]+)|(?:[-_.]?(?:post|rev|r)[-_.]?[0-9]*))?
+      (?:[-_.]?dev[-_.]?[0-9]*)?
+    \z/ix
+
+    # packaging's VERSION_PATTERN without a local suffix or wildcard
+    # (`<`, `<=`, `>`, `>=`).
+    PEP440_ORDERED_VERSION = /\A
+      v?(?:[0-9]+!)?[0-9]+(?:\.[0-9]+)*
+      (?:[-_.]?(?:alpha|beta|preview|pre|a|b|c|rc)[-_.]?[0-9]*)?
+      (?:(?:-[0-9]+)|(?:[-_.]?(?:post|rev|r)[-_.]?[0-9]*))?
+      (?:[-_.]?dev[-_.]?[0-9]*)?
+    \z/ix
 
     # Resolves the venv (creating it if needed) or the system pip
     # executable. Returns a PluginResult only on failure (venv creation
