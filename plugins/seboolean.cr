@@ -108,7 +108,18 @@ module Krikri
     private def set_boolean(name : String, desired_on : Bool, persistent : Bool, result : PluginResult) : PluginResult
       current = remote_exec("getsebool #{shell_single_quote(name)}")
       unless current[:exit_code] == 0
-        return PluginResult.new(changed: false, failed: true, msg: "Failed to determine current state for boolean #{name}")
+        # Real seboolean.py reads the persistent branch through
+        # semanage_bool_exists(), whose "not defined in persistent policy"
+        # wording an unknown boolean fails with; the non-persistent branch
+        # reads the running kernel (security_get_boolean_active) and its
+        # OSError lands in the "determine current state" message instead
+        # (issue #1301).
+        msg = if persistent
+                "SELinux boolean #{name} is not defined in persistent policy"
+              else
+                "Failed to determine current state for boolean #{name}"
+              end
+        return PluginResult.new(changed: false, failed: true, msg: msg)
       end
 
       # `getsebool <name>` prints "<name> --> on" / "<name> --> off".
