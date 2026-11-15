@@ -378,5 +378,54 @@ module Krikri::Lint
         FileUtils.rm_rf(dir)
       end
     end
+
+    it "reports a play role no search path holds and drops what it loads" do
+      # The playbook's own directory is named like the role it lists, so
+      # krikri's wider role-file lookup still finds that directory's
+      # tasks while ansible's search paths (the playbook's roles/ dir,
+      # roles_path, the playbook's dir) hold no `<dir>/kop_probe_role`.
+      # ansible aborts the load with "The role 'kop_probe_role' was not
+      # found in: ..." at the entry (line 5, column 7 - verified against
+      # ansible-lint 25.2.1), which also stops it from walking the
+      # playbook's children, so its tasks report nothing.
+      dir = PluginSpecHelper.tmp_path("lint_missing_role")
+      playbook_dir = File.join(dir, "kop_probe_role")
+      FileUtils.mkdir_p(File.join(playbook_dir, "tasks"))
+      File.write(File.join(playbook_dir, "tasks", "main.yml"),
+        "---\n- ansible.builtin.debug:\n    msg: hi\n")
+      path = File.join(playbook_dir, "play.yml")
+      File.write(path, "---\n- name: Play\n  hosts: localhost\n  roles:\n" \
+                        + "    - role: kop_probe_role\n")
+      begin
+        violations = Runner.new(RuleRegistry.default).run(Imports.expand([path]), [path])
+        violations.size.must_equal(1)
+        violation = violations.first
+        violation.rule_id.must_equal("syntax-check[specific]")
+        violation.path.must_equal(Imports.relative(path))
+        violation.line.must_equal(5)
+        violation.column.must_equal(7)
+      ensure
+        FileUtils.rm_rf(dir)
+      end
+    end
+
+    it "still lints a role a playbook resolves through its roles/ dir" do
+      dir = PluginSpecHelper.tmp_path("lint_found_role")
+      playbook_dir = File.join(dir, "site")
+      role_tasks = File.join(playbook_dir, "roles", "probe_role", "tasks")
+      FileUtils.mkdir_p(role_tasks)
+      File.write(File.join(role_tasks, "main.yml"),
+        "---\n- ansible.builtin.debug:\n    msg: hi\n")
+      path = File.join(playbook_dir, "play.yml")
+      File.write(path, "---\n- name: Play\n  hosts: localhost\n  roles:\n" \
+                        + "    - probe_role\n")
+      begin
+        violations = Runner.new(RuleRegistry.default).run(Imports.expand([path]), [path])
+        violations.map(&.rule_id).must_equal(["name[missing]"])
+        violations.first.path.must_equal(Imports.relative(File.join(role_tasks, "main.yml")))
+      ensure
+        FileUtils.rm_rf(dir)
+      end
+    end
   end
 end

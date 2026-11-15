@@ -210,13 +210,16 @@ module Krikri::Lint
     files = Imports.expand(FileDiscovery.discover(targets))
       .reject { |path| config.excluded?(path) }
     missing = FileDiscovery.missing_targets(targets)
+    syntax_check = SyntaxCheck.new(files, targets)
     # A directory target is walked but yields no matches; upstream still
     # counts it, so the summary's file total has to include it. Missing
-    # targets count too - they lint as load-failure matches.
-    file_count = files.size +
+    # targets count too - they lint as load-failure matches. Files only a
+    # failed playbook would have loaded are not lintables upstream, so
+    # they are not counted either.
+    file_count = files.count { |path| !syntax_check.suppressed?(path) } +
                  FileDiscovery.directory_targets(targets).size + missing.size
 
-    runner = Runner.new(registry, config)
+    runner = Runner.new(registry, config, syntax_check)
     violations = begin
       runner.run(files, targets)
     rescue ex

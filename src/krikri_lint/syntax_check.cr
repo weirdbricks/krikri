@@ -4,8 +4,9 @@ require "./imports"
 
 module Krikri
   module Lint
-    # Upstream's failed-file gate, for the one syntax-check failure kind
-    # krikri-lint can reach a verdict on: unresolvable module names.
+    # Upstream's failed-file gate, for the two syntax-check failure kinds
+    # krikri-lint can reach a verdict on: unresolvable module names and
+    # unresolvable play `roles:` entries.
     # ansible-lint runs `ansible-playbook --syntax-check` per
     # playbook/role lintable and then runs NO other rule on a file the
     # check failed on (Lintable.failed()/stop_processing in
@@ -16,7 +17,10 @@ module Krikri
     # so upstream reports just that one match for the file - a rule
     # krikri-lint deliberately does not implement, which the parity
     # harness books as an unimplemented-rule gap - and the file must
-    # emit no violations at all for the triples to stay identical.
+    # emit no violations at all for the triples to stay identical. A play
+    # whose `roles:` entry names a role no search path holds fails the
+    # check on the playbook itself (syntax-check[specific]), which the
+    # SyntaxCheckRule reports at the entry.
     #
     # Only the files the failing check actually NAMES go silent (each
     # verified against ansible-lint 25.2.1): the playbook carrying the
@@ -27,10 +31,22 @@ module Krikri
     # include_tasks/include_role) and a non-role task file imported from
     # a playbook are not silenced upstream - its failed-file marking
     # misses them - and they keep reporting here too.
+    #
+    # A playbook the check itself failed on is never walked for children
+    # upstream (runner.py's `if lintable.failed(): continue`), so nothing
+    # it loads is linted either - which is why a playbook broken on a
+    # missing role reports one match and no role-file matches.
     class SyntaxCheck
       def initialize(files : Array(String), targets : Array(String))
         @walked = Set(String).new
-        expand(walk_roots(files, targets))
+        @missing = {} of String => RoleLookup::Missing
+        @suppressed = Set(String).new
+        @kept = Set(String).new
+        @targets = targets
+        roots = walk_roots(files, targets)
+        expand(roots)
+        mark_missing_roles
+        collect_suppressed(roots)
       end
 
       # Whether upstream's failed-file gate silences this file: its
@@ -43,6 +59,24 @@ module Krikri
                          (!role.nil? && @walked.includes?(Imports.relative(file.path)))
         return false unless named_by_check
         unresolvable_name?(file, role)
+      end
+
+      # Whether this file's own playbook syntax check failed, so no rule
+      # but syntax-check may report on it.
+      def failed?(file : PositionedFile) : Bool
+        silenced?(file) || @missing.has_key?(Imports.relative(file.path))
+      end
+
+      # Whether upstream never had this file as a lintable at all: only a
+      # failed playbook could have loaded it, and a failed playbook is
+      # never walked for children. Explicit targets and files another
+      # passing root loads stay linted.
+      def suppressed?(path : String) : Bool
+        return false if @suppressed.empty?
+        rel = Imports.relative(path)
+        return false unless @suppressed.includes?(rel)
+        return false if @kept.includes?(rel)
+        !explicit_target?(path)
       end
 
       # Walk roots: every playbook in the run is syntax-checked itself,
@@ -70,6 +104,54 @@ module Krikri
           next unless File.exists?(normalized)
           next unless @walked.add?(normalized)
           queue.concat(Imports.static_children(normalized))
+        end
+      end
+
+      private def mark_missing_roles : Nil
+        @walked.each do |path|
+          file = PositionedFile.load(path)
+          next unless playbook_kind?(file)
+          if missing = RoleLookup.first_missing(file)
+            @missing[path] = missing
+          end
+        end
+      end
+
+      # Children of a failed playbook are not lintables upstream, and
+      # neither are their children - `_emit_matches` skips a failed file
+      # before walking it. Everything a root that did not fail on a
+      # missing role reaches stays.
+      private def collect_suppressed(roots : Array(String)) : Nil
+        @missing.each_key { |path| collect_children(path, @suppressed) }
+        roots.each do |root|
+          rel = Imports.relative(root)
+          next if @missing.has_key?(rel)
+          @kept << rel
+          collect_children(root, @kept)
+        end
+      end
+
+      private def collect_children(root : String, into : Set(String)) : Nil
+        queue = Imports.children(root)
+        until queue.empty?
+          child = queue.shift
+          next unless child
+          rel = Imports.relative(child)
+          next unless File.exists?(rel)
+          next unless into.add?(rel)
+          queue.concat(Imports.children(rel))
+        end
+      end
+
+      # A path the user named outright (a file target, or any file under
+      # a directory target) is a lintable whatever a playbook's check
+      # says, so it is never suppressed.
+      private def explicit_target?(path : String) : Bool
+        real = File.exists?(path) ? File.realpath(path) : File.expand_path(path)
+        @targets.any? do |target|
+          next false unless File.exists?(target)
+          expanded = File.realpath(target)
+          File.directory?(expanded) ? real.starts_with?(expanded + "/") : real == expanded
         end
       end
 
