@@ -320,14 +320,14 @@ module Krikri
       # installed-but-outdated package reports ok like Ansible's own - a
       # real install would upgrade it, but check mode does not look at
       # the index at all (issue #1004).
-      packages, resolution_warning = resolve_check_packages(pip_bin, split_requirements(name))
+      probes, resolution_warning = resolve_check_requirements(pip_bin, check_mode_requirements(name))
 
       # pip.py's loop with its early break: state=present changes when ANY
       # requirement is missing/unsatisfied, state=absent when ANY is present.
       changed = if state == "absent"
-                  packages.any? { |package| requirement_present?(package, probe_out) }
+                  probes.any? { |probe| check_requirement_present?(probe, probe_out) }
                 else
-                  packages.any? { |package| !requirement_present?(package, probe_out) }
+                  probes.any? { |probe| !check_requirement_present?(probe, probe_out) }
                 end
 
       # exit_json(changed=..., cmd=pkg_cmd, stdout=..., stderr=...): the
@@ -340,45 +340,92 @@ module Krikri
       result
     end
 
-    # pip.py's _resolve_package_names(): a ref that is NOT a parseable
+    # One requirement pip.py's check_mode block probes. `requirement` is
+    # what _is_present compares against the frozen list. `resolve_as` is
+    # what str(Package) hands to `pip install --dry-run` when the
+    # requirement did not parse: Package's version join only rebinds a
+    # local name_string, so package_name - and thus str() - stays the BARE
+    # ref it was constructed with. `parsable` false means _is_present
+    # answers False for every installed package (is_satisfied_by is False
+    # for a Package that failed to parse) until resolution replaces it.
+    record CheckRequirement, requirement : String, resolve_as : String, parsable : Bool
+
+    # pip.py folds version: into its single Package BEFORE the check_mode
+    # block (`packages[0] = Package(to_native(packages[0]), version)`), so
+    # check mode probes the PINNED requirement, never the bare name. A
+    # version packaging's grammar accepts becomes name==version (or
+    # name>=version, checked against the frozen list like any specifier);
+    # one it rejects leaves an unparseable Package whose package_name is
+    # still the bare name - so under pip <24.1 it can never be present
+    # (real reports changed for `name: pip, version: oduuxb` and prints
+    # its resolver warning), and under pip >=24.1 its resolver pins the
+    # bare name to whatever the index serves (issue #1290). The separator
+    # follows pip.py: `==` when the version starts with a digit, a space
+    # otherwise.
+    private def check_mode_requirements(name : String) : Array(CheckRequirement)
+      packages = split_requirements(name)
+      stripped = @params["version"]?.try(&.lstrip) || ""
+      if packages.size == 1 && !stripped.empty?
+        package = packages[0]
+        folded = "#{package}#{stripped[0].ascii_number? ? "==" : " "}#{stripped}"
+        parsable = parsable_requirement?(folded)
+        return [CheckRequirement.new(folded, parsable ? folded : package, parsable)]
+      end
+
+      packages.map do |package|
+        parsable = parsable_requirement?(package)
+        CheckRequirement.new(package, package, parsable)
+      end
+    end
+
+    # pip.py's _resolve_package_names(): a probe that is NOT a parseable
     # requirement is replaced by the concrete name==version pip would
     # install, read back from `pip install --dry-run --ignore-installed
     # --report=<tmpfile>`. pip older than 24.1 cannot report reliably, so
-    # it keeps those refs and warns (real's own wording). Any failure
+    # it keeps those probes and warns (real's own wording). Any failure
     # of the probe leaves the list untouched - real raises and fails the
     # task, but a check-mode probe is not worth failing a dry run over.
-    private def resolve_check_packages(pip_bin : String, packages : Array(String)) : {Array(String), String?}
-      to_resolve = packages.reject { |package| parsable_requirement?(package) }
-      return {packages, nil} if to_resolve.empty?
+    private def resolve_check_requirements(pip_bin : String, probes : Array(CheckRequirement)) : {Array(CheckRequirement), String?}
+      to_resolve = probes.reject(&.parsable)
+      return {probes, nil} if to_resolve.empty?
 
       version = installed_pip_version(pip_bin)
       if version.nil? || pip_version_cmp(version, "24.1") < 0
-        return {packages, "Using check mode with packages from vcs urls, file paths, or archives will not behave as expected when using pip versions <24.1."}
+        return {probes, "Using check mode with packages from vcs urls, file paths, or archives will not behave as expected when using pip versions <24.1."}
       end
 
       report_path = File.tempname("krikri-pip-report", ".json")
       begin
         report_arg = Process.quote("--report=#{report_path}")
-        result = remote_exec("#{quoted_command(pip_bin)} install --dry-run --ignore-installed #{report_arg} #{to_resolve.map { |package| Process.quote(package) }.join(" ")}")
-        return {packages, nil} unless result[:exit_code] == 0 && File.exists?(report_path)
+        result = remote_exec("#{quoted_command(pip_bin)} install --dry-run --ignore-installed #{report_arg} #{to_resolve.map { |probe| Process.quote(probe.resolve_as) }.join(" ")}")
+        return {probes, nil} unless result[:exit_code] == 0 && File.exists?(report_path)
 
         report = JSON.parse(File.read(report_path)) rescue nil
         resolved = report.try(&.["install"]?).try(&.as_a?)
-        return {packages, nil} unless resolved
+        return {probes, nil} unless resolved
 
-        other_packages = packages.reject { |package| to_resolve.includes?(package) }
+        other_packages = probes.select(&.parsable)
         resolved_packages = resolved.compact_map do |entry|
           metadata = entry["metadata"]?
           next unless metadata
           name = metadata["name"]?.try(&.as_s?)
           version_string = metadata["version"]?.try(&.as_s?)
           next unless name && version_string
-          "#{name}==#{version_string}"
+          requirement = "#{name}==#{version_string}"
+          CheckRequirement.new(requirement, requirement, true)
         end
         {other_packages + resolved_packages, nil}
       ensure
         File.delete(report_path) if File.exists?(report_path)
       end
+    end
+
+    # _is_present for one probe: an unresolved unparseable requirement is
+    # never present (pip.py's is_satisfied_by returns False for it), and a
+    # resolved/parseable one is compared by name and specifiers.
+    private def check_requirement_present?(probe : CheckRequirement, freeze_out : String) : Bool
+      return false unless probe.parsable
+      requirement_present?(probe.requirement, freeze_out)
     end
 
     # pip.py's Package.has_requirement is literally `self._requirement is
@@ -387,7 +434,11 @@ module Krikri
     # _resolve_package_names replaces with a resolved name==version are
     # the ones that grammar REJECTS: VCS urls, local file paths/archives
     # and a direct `name @ url` reference (`six` alone parses,
-    # `git+https://host/x.git` and `/tmp/x.tar.gz` do not).
+    # `git+https://host/x.git` and `/tmp/x.tar.gz` do not). What follows
+    # the name must be a versionspec packaging accepts (spaces around it
+    # are allowed, as is a trailing `; marker`); a bare word after the
+    # name does not parse, which is how pip.py's own space-joined
+    # `name version` fold of a rejected version reaches this path.
     private def parsable_requirement?(package : String) : Bool
       piece = package.strip
       return false if piece.empty?
@@ -395,10 +446,71 @@ module Krikri
       return false if {"git+", "hg+", "bzr+", "svn+"}.any? { |prefix| piece.starts_with?(prefix) }
       return false if piece.starts_with?('/') || piece.starts_with?('.') || piece.starts_with?('~')
 
-      # PEP 508's name rule: alphanumerics at both ends, `-_.` inside.
-      name = piece.split(/[=<>!~(\[;\s]/, 2)[0].strip
-      name.matches?(/\A[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?\z/)
+      # PEP 508's name rule: alphanumerics at both ends, `-_.` inside,
+      # optionally followed by `[extras]`.
+      parsed = piece.match(/\A[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?(?:\[[^\]]*\])?(.*)\z/)
+      return false unless parsed
+      rest = parsed[1].strip
+      return true if rest.empty?
+      return true if rest.starts_with?(';')
+
+      versionspec = rest.split(';', 2)[0].strip
+      return true if versionspec.empty?
+      versionspec.split(',').all? { |spec| parsable_versionspec?(spec.strip) }
     end
+
+    # One comma-separated specifier as packaging's SpecifierSet grammar
+    # accepts it: arbitrary equality (`===anything`) or an operator glued
+    # to a version. The per-operator rules are packaging's own: `.*` and
+    # `+local` only after `==`/`!=`, `~=` needs two release components,
+    # and the ordered operators take neither.
+    private def parsable_versionspec?(spec : String) : Bool
+      parsed = spec.match(/\A\s*(~=|===|==|!=|<=|>=|<|>)\s*(.*?)\s*\z/m)
+      return false unless parsed
+      wanted = parsed[2]
+      case parsed[1]
+      when "==="
+        !wanted.matches?(/[\s;)]/)
+      when "==", "!="
+        wanted.matches?(CHECK_REQ_WILDCARD_VERSION)
+      when "~="
+        wanted.matches?(CHECK_REQ_COMPATIBLE_VERSION)
+      else
+        wanted.matches?(CHECK_REQ_ORDERED_VERSION)
+      end
+    end
+
+    # packaging's VERSION_PATTERN with the optional `.*` wildcard and
+    # `+local` suffix (`==`/`!=` only).
+    CHECK_REQ_WILDCARD_VERSION = /\A
+      v?(?:[0-9]+!)?[0-9]+(?:\.[0-9]+)*
+      (?:
+        \.\*
+        |
+        (?:[-_.]?(?:alpha|beta|preview|pre|a|b|c|rc)[-_.]?[0-9]*)?
+        (?:(?:-[0-9]+)|(?:[-_.]?(?:post|rev|r)[-_.]?[0-9]*))?
+        (?:[-_.]?dev[-_.]?[0-9]*)?
+        (?:\+[a-z0-9]+(?:[-_.][a-z0-9]+)*)?
+      )?
+    \z/ix
+
+    # packaging's VERSION_PATTERN without a local suffix, with the
+    # release segment required to have two or more components (`~=`).
+    CHECK_REQ_COMPATIBLE_VERSION = /\A
+      v?(?:[0-9]+!)?[0-9]+(?:\.[0-9]+)+
+      (?:[-_.]?(?:alpha|beta|preview|pre|a|b|c|rc)[-_.]?[0-9]*)?
+      (?:(?:-[0-9]+)|(?:[-_.]?(?:post|rev|r)[-_.]?[0-9]*))?
+      (?:[-_.]?dev[-_.]?[0-9]*)?
+    \z/ix
+
+    # packaging's VERSION_PATTERN without a local suffix or wildcard
+    # (`<`, `<=`, `>`, `>=`).
+    CHECK_REQ_ORDERED_VERSION = /\A
+      v?(?:[0-9]+!)?[0-9]+(?:\.[0-9]+)*
+      (?:[-_.]?(?:alpha|beta|preview|pre|a|b|c|rc)[-_.]?[0-9]*)?
+      (?:(?:-[0-9]+)|(?:[-_.]?(?:post|rev|r)[-_.]?[0-9]*))?
+      (?:[-_.]?dev[-_.]?[0-9]*)?
+    \z/ix
 
     # `pip show pip`'s Version line (real's _get_package_info on itself).
     private def installed_pip_version(pip_bin : String) : String?
@@ -435,6 +547,8 @@ module Krikri
     # check-mode task report changed, exactly like pip.py's
     # is_satisfied_by returning False for a Package that failed to parse.
     private def requirement_present?(package : String, freeze_out : String) : Bool
+      return false unless parsable_requirement?(package)
+
       canonical = canonical_pip_name(distribution_name(package))
       specs = requirement_specs(package)
 
@@ -1086,7 +1200,7 @@ module Krikri
       if vcs_name = vcs_distribution_name(package)
         return vcs_name
       end
-      package.split(/[=<>!~]/, 2)[0].sub(/\[[^\]]*\]\z/, "")
+      package.split(/[=<>!~]/, 2)[0].sub(/\[[^\]]*\]\z/, "").strip
     end
 
     # A VCS requirement (`git+https://github.com/grycap/clues.git@master`)
