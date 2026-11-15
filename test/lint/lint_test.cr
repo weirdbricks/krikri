@@ -262,7 +262,7 @@ module Krikri::Lint
       end
     end
 
-    it "runs no rules on a file whose module the controller cannot resolve" do
+    it "reports only the syntax-check match on a file whose module the controller cannot resolve" do
       # Upstream runs no rules at all on a file whose
       # `ansible-playbook --syntax-check` fails: an unnamed play around
       # an unresolvable module reports only syntax-check[unknown-module]
@@ -274,7 +274,35 @@ module Krikri::Lint
       File.write(path, "---\n- hosts: all\n  tasks:\n" \
                         + "    - name: P1\n      krikri_lint_unknown_mod:\n")
       violations = Runner.new(RuleRegistry.default).run([path])
-      violations.must_be_empty
+      violations.map(&.rule_id).must_equal(["syntax-check[unknown-module]"])
+    end
+
+    it "reports syntax-check[unknown-module] where ansible's own error points" do
+      # ansible-playbook --syntax-check names the first task whose module
+      # it cannot resolve: the task mapping's position (an unnamed task
+      # points at its module key, a named one at `name`, column 7 here)
+      # and the name exactly as written.
+      dir = PluginSpecHelper.tmp_path("lint_syntax_match")
+      FileUtils.mkdir_p(dir)
+      path = File.join(dir, "play.yml")
+      File.write(path, "---\n- hosts: all\n  tasks:\n" \
+                        + "    - name: P1\n      krikri_lint_missing_mod:\n")
+      violations = Runner.new(RuleRegistry.default).run([path])
+      violations.size.must_equal(1)
+      match = violations.first
+      match.rule_id.must_equal("syntax-check[unknown-module]")
+      {match.line, match.column}.must_equal({4, 7})
+      match.message.must_equal("couldn't resolve module/action " \
+                               "'krikri_lint_missing_mod'. This often indicates a misspelling, " \
+                               "missing collection, or incorrect module path.")
+    end
+
+    it "registers the syntax-check rule" do
+      # The runner's gate reports the match, but the rule still has to
+      # be registered for --list-rules and the profile/skip lookups.
+      rule = RuleRegistry.default.find("syntax-check")
+      raise "syntax-check is not registered" unless rule
+      rule.tags.must_equal(["core", "unskippable"])
     end
 
     it "keeps linting when the module resolves from the playbook's library/ dir" do
@@ -293,7 +321,7 @@ module Krikri::Lint
       raise "no name[play] violation" unless play_match
     end
 
-    it "reports nothing on a playbook whose module names the controller cannot resolve" do
+    it "reports only the syntax-check match on a playbook whose module names the controller cannot resolve" do
       # Upstream: the unresolvable `krikri_ok` fails ansible's playbook
       # syntax check (syntax-check[unknown-module]) and no other rule
       # runs on the file - verified against ansible-lint 25.2.1.
@@ -303,7 +331,7 @@ module Krikri::Lint
                            + "    - ansible.builtin.debug:\n        msg: hi\n")
       begin
         violations = Runner.new(RuleRegistry.default).run([path])
-        violations.size.must_equal(0)
+        violations.map(&.rule_id).must_equal(["syntax-check[unknown-module]"])
       ensure
         File.delete(path)
       end
@@ -322,7 +350,7 @@ module Krikri::Lint
       end
     end
 
-    it "reports nothing on role files a targeted role's syntax check walks" do
+    it "reports only the syntax-check match on role files a targeted role's syntax check walks" do
       dir = File.tempname("lintrole")
       tasks_dir = File.join(dir, "roles", "myrole", "tasks")
       Dir.mkdir_p(tasks_dir)
@@ -331,7 +359,8 @@ module Krikri::Lint
       begin
         violations = Runner.new(RuleRegistry.default)
           .run([path], [File.join(dir, "roles", "myrole")])
-        violations.size.must_equal(0)
+        violations.map(&.rule_id).must_equal(["syntax-check[unknown-module]"])
+        violations.first.path.must_equal(path)
       ensure
         FileUtils.rm_rf(dir)
       end
