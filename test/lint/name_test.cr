@@ -163,5 +163,41 @@ module Krikri::Lint
       v.first.rule_id.must_equal("name[casing]")
       v.first.line.must_equal(2)
     end
+
+    it "flags lowercase names on nested blocks in a tasks file" do
+      v = lint_yaml(rule, <<-YAML, FileType::TASKS)
+        ---
+        - name: outer block
+          block:
+            - name: Child task
+              ansible.builtin.debug:
+                msg: hi
+            - name: inner block
+              block:
+                - name: Other child
+                  ansible.builtin.debug:
+                    msg: hi
+        YAML
+      v.map { |violation| violation.line }.must_equal([2, 7])
+      v.each { |violation| violation.rule_id.must_equal("name[casing]") }
+    end
+
+    it "checks the name of a handler block" do
+      v = lint_yaml(rule, <<-YAML)
+        ---
+        - name: Play
+          hosts: all
+          handlers:
+            - name: restart the service
+              block:
+                - name: Service task
+                  ansible.builtin.service:
+                    name: foo
+                    state: restarted
+        YAML
+      v.size.must_equal(1)
+      v.first.rule_id.must_equal("name[casing]")
+      v.first.line.must_equal(5)
+    end
   end
 end

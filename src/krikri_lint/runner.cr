@@ -60,9 +60,26 @@ module Krikri
         tasks = TaskWalker.collect_tasks(file)
         covered = YamlText.scalar_continuation_lines(file)
         task_spans[file.path] = tasks.map { |task| {task.line, task.end_line(covered)} }
-        task_names[file.path] = tasks.each_with_object({} of Int32 => String) do |task, map|
+        task_names[file.path] = collect_task_names(file, tasks)
+      end
+
+      # The "Task/Handler: <name>" description of every task in a file. A
+      # block parent is a task to Ansible, so it is described too (an
+      # unnamed one as its dummy "block/always/rescue" action), but it
+      # stays out of the task spans: a `# noqa:` buried in a child task
+      # must not suppress a match on the block itself.
+      private def collect_task_names(file : PositionedFile,
+                                     tasks : Array(LintTask)) : Hash(Int32, String)
+        names = tasks.each_with_object({} of Int32 => String) do |task, map|
           map[task.line] = task.display_name
         end
+        TaskWalker.each_block(file) do |block|
+          block_entry = NodeUtil.entry(block, "block") || next
+          lint_task = LintTask.new(block, file, "block/always/rescue",
+            block_entry[1], block_entry[0])
+          names[lint_task.line] ||= lint_task.display_name
+        end
+        names
       end
 
       # Upstream's matchtask enrichment (_enrich_matcherror_with_task_details)

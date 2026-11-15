@@ -6,6 +6,9 @@ module Krikri
     #  - name[missing]: task has no name
     #  - name[casing]:  name does not start with an uppercase letter
     #  - name[template]: Jinja expression not at the end of the name
+    # Ansible runs a block as a task of its own, so block/rescue/always
+    # containers are checked like any task here (ansible-lint's name rule
+    # does the same) even though module-oriented rules skip them.
     class NameRule < Rule
       def id : String
         "name"
@@ -165,11 +168,12 @@ module Krikri
       end
 
       # Upstream also rewrites notify entries whose value equals the
-      # original task name (string or list form).
+      # original task name (string or list form). Blocks can carry
+      # notify: too, so every task mapping is scanned.
       private def sync_notify(buffer : FixBuffer, file : PositionedFile,
                               old_name : String, new_name : String) : Nil
-        TaskWalker.collect_tasks(file).each do |task|
-          notify_entry = NodeUtil.entry(task.node, "notify") || next
+        TaskWalker.each_task_mapping(file) do |node|
+          notify_entry = NodeUtil.entry(node, "notify") || next
           rewrite_scalar(buffer, notify_entry[1], old_name, new_name)
           notify_entry[1].as?(YAML::Nodes::Sequence).try do |seq|
             seq.nodes.each { |item| rewrite_scalar(buffer, item, old_name, new_name) }
