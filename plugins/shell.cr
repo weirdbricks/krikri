@@ -95,12 +95,10 @@ module Krikri
     }
 
     property? check_mode : Bool
-    property? diff_mode : Bool
 
     def initialize(config : JSON::Any)
       super(config)
       @check_mode = true?(@params["_ansible_check_mode"]?)
-      @diff_mode = true?(@params["_ansible_diff"]?)
     end
 
     # See command.cr's copy for the full rationale: relative
@@ -548,15 +546,6 @@ module Krikri
       result = pty_result || remote_exec(remote_command, force_shell: true)
       real_pty = !pty_result.nil?
 
-      # Build diff data if diff mode enabled
-      diff_data = nil
-      if @diff_mode
-        diff_hash = {
-          "prepared" => "$ #{full_cmd}\n#{result[:stdout]}",
-        }
-        diff_data = JSON.parse(diff_hash.to_json)
-      end
-
       # Shell commands always report changed (Ansible behavior)
       # unless they were skipped by creates/removes
       #
@@ -609,7 +598,6 @@ module Krikri
         end: Time.utc.to_s("%F %H:%M:%S.%6N"),
         delta: python_delta(Time.utc - started_at),
         failed_flag: false,
-        diff: diff_data,
         # Success paths only - a non-zero rc is a failure result and takes
         # FAILED_KEY_ORDER (Ansible's separate failure shape).
         key_order: result[:exit_code] == 0 ? SUCCESS_KEY_ORDER : FAILED_KEY_ORDER

@@ -97,7 +97,10 @@ rescue ex : IO::Error
   Krikri::OutputRouting.exit_quietly_if_broken_pipe(ex)
 end
 
-def print(*objects) : Nil
+# The `: _` restriction has to match the stdlib's own signature: a bare
+# `*objects` makes this a separate overload, so stdlib print (writing
+# straight to STDOUT) wins resolution and the redirect silently misses.
+def print(*objects : _) : Nil
   Krikri::OutputRouting.current_io.print(*objects)
 rescue ex : IO::Error
   Krikri::OutputRouting.exit_quietly_if_broken_pipe(ex)

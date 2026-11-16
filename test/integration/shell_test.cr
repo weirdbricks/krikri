@@ -29,6 +29,17 @@ describe "shell plugin" do
     result["stderr"].as_s.must_equal("oops")
   end
 
+  # command.py declares diff_mode: support: none and never sets a diff
+  # key, so --diff (or _ansible_diff) must leave the result without one
+  # (live-verified vs ansible-core 2.21.6 -v --diff: the changed line is
+  # the usual 10 keys, no "diff"). The plugin used to invent a
+  # {"prepared": "$ cmd\nstdout"} payload there.
+  it "carries no diff payload under diff mode" do
+    result = PluginSpecHelper.run("shell", {"cmd" => "echo hello", "_ansible_diff" => "true"})
+
+    result["diff"]?.must_be_nil
+  end
+
   it "preserves the command's own embedded single quotes when executable: names a custom shell" do
     # Real bug found benchmarking ansible-community.ansible-vault's own
     # "Get installed Vault version" task (`args: {executable: /bin/bash}`,

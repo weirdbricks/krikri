@@ -86,6 +86,48 @@ module Krikri
         ["semanage", "fcontext", modify ? "-m" : "-a", "-e", substitute, target]
       end
 
+      # The module's diff-mode "prepared" blocks, byte for byte: its own
+      # branch titles ("Addition"/"Change"/"Deletion to semanage ..."),
+      # the six-space column padding, and the raw ftype letter in the
+      # additions and changes (the listing comparison uses the file-type
+      # string, the diff does not). A "<<None>>" record has no
+      # user/role/range, and Python formats those None fields as "None".
+      def self.add_fcontext_diff(target : String, ftype : String, seuser : String?, setype : String, serange : String?) : String
+        "# Addition to semanage file context mappings\n" \
+        "+#{target}      #{ftype}      #{python_str(seuser)}:object_r:#{setype}:#{python_str(serange)}\n"
+      end
+
+      def self.change_fcontext_diff(target : String, ftype : String, orig_seuser : String?, orig_serole : String?,
+                                    orig_setype : String?, orig_serange : String?,
+                                    seuser : String?, setype : String, serange : String?) : String
+        "# Change to semanage file context mappings\n" \
+        "-#{target}      #{ftype}      #{python_str(orig_seuser)}:#{python_str(orig_serole)}:#{python_str(orig_setype)}:#{python_str(orig_serange)}\n" \
+        "+#{target}      #{ftype}      #{python_str(seuser)}:#{python_str(orig_serole)}:#{setype}:#{python_str(serange)}\n"
+      end
+
+      def self.delete_fcontext_diff(target : String, ftype : String, seuser : String?, serole : String?,
+                                    setype : String?, serange : String?) : String
+        "# Deletion to semanage file context mappings\n" \
+        "-#{target}      #{ftype}      #{python_str(seuser)}:#{python_str(serole)}:#{python_str(setype)}:#{python_str(serange)}\n"
+      end
+
+      def self.add_substitution_diff(target : String, substitute : String) : String
+        "# Addition to semanage file context path substitutions\n+#{target} = #{substitute}\n"
+      end
+
+      def self.change_substitution_diff(target : String, orig_substitute : String, substitute : String) : String
+        "# Change to semanage file context path substitutions\n" \
+        "-#{target} = #{orig_substitute}\n+#{target} = #{substitute}\n"
+      end
+
+      def self.delete_substitution_diff(target : String, orig_substitute : String) : String
+        "# Deletion to semanage file context path substitutions\n-#{target} = #{orig_substitute}\n"
+      end
+
+      private def self.python_str(value : String?) : String
+        value || "None"
+      end
+
       private def self.modify_like_command(flag : String, target : String, setype : String, ftype : String, seuser : String, serange : String) : Array(String)
         cmd = ["semanage", "fcontext", flag, "-t", setype]
         cmd += ["-s", seuser]

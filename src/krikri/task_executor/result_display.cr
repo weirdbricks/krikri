@@ -3113,6 +3113,19 @@ module Krikri
       elsif diff["before"]?.try(&.as_h?) && diff["after"]?.try(&.as_h?)
         display_attribute_diff(diff)
       end
+      # A module that builds its own diff text (apt, sefcontext) hands it
+      # back under "prepared"; Ansible's callback appends that string
+      # verbatim - no ---/+++ headers, no separating blank line - and
+      # Display.display only rewrites CRLF and guarantees the final
+      # newline. An empty payload is skipped by the callback's own
+      # falsy-diff guard.
+      if prepared = diff["prepared"]?.try(&.as_s?)
+        unless prepared.empty?
+          text = Krikri::OutputRouting.normalize_for_display(prepared)
+          print text
+          puts "" unless text.ends_with?('\n')
+        end
+      end
     end
 
     # Display content diff (for file content changes)
