@@ -23,7 +23,9 @@ require "file_utils"
 #   of type <class 'NoneType'>)", Origin: <unknown> + invoke_lookup()),
 #   also with a bare registered msg;
 # - a `with_items:` over a null keeps real's own scalar-wrapping
-#   leniency (one iteration with item=None, success).
+#   leniency (one iteration with item=None, success), and a `with_list:`
+#   does the same even when the null hides behind a filter chain
+#   (`| default([])` leaves a DEFINED null alone - issue #1390).
 #
 # This engine used to (a) treat the defined-null loop as empty and skip
 # (when:-shielding swallowed the type error) and (b) print the
@@ -344,6 +346,35 @@ describe "loop: source typing errors" do
             with_list: strongswan
       YAML
     output.must_include("WL|strongswan")
+  end
+
+  # andiveloper.hadoop (issue #1390): `with_list: "{{ pkgs | default([]) }}"`
+  # where `pkgs` is DEFINED as null - `default([])` only replaces an
+  # undefined name, so the lookup term stays None. Ansible listifies that
+  # non-iterable term to ONE item, runs the task once with `item=None` and
+  # lets the task's own when: skip it (live-verified vs ansible-core 2.21.6
+  # locally: `skipping: [localhost] => (item=None)` then
+  # `skipping: [localhost]`, exit 0). This engine raised the `loop:` type
+  # error instead and failed the play with "not 'NoneType'".
+  it "with_list over a defined null behind a filter chain wraps to one item" do
+    ok, output, _pb = run_play_file(<<-YAML)
+      - hosts: localhost
+        gather_facts: false
+        connection: local
+        vars:
+          sample_pkgs: null
+        tasks:
+          - ansible.builtin.debug:
+              msg: "WLN|{{ item }}"
+            when: sample_pkgs != None
+            with_list: "{{ sample_pkgs | default([]) }}"
+      YAML
+
+    ok.must_equal(true)
+    output.must_include("skipping: [localhost] => (item=None)")
+    output.must_include("failed=0")
+    output.wont_include("WLN|")
+    output.wont_include("must resolve to a 'list'")
   end
 
   it "with_items on a bare int loops once with the int" do
