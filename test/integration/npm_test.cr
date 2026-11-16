@@ -198,6 +198,45 @@ describe "npm plugin" do
       "npm ERR! 404 Not Found - GET https:********@1.2.3' is not in this registry.")
   end
 
+  it "echoes npm's per-run debug-log trailer verbatim in stderr and msg" do
+    # npm ends a failed run with "A complete log of this run can be found
+    # in:" and a $HOME/.npm/_logs/<start-time>-debug-0.log path, and
+    # Ansible carries that trailer through untouched (the path's stamp
+    # cannot match between the two engines' runs, issue #1374, so the
+    # parity harness masks exactly that component). Keeping the line and
+    # its split intact here is what gives that mask a stable anchor.
+    dir = PluginSpecHelper.tmp_path("npm-failed-install-log-trailer")
+    Dir.mkdir_p(dir)
+    stub = File.join(dir, "npm")
+    File.write(stub, <<-SH)
+      #!/bin/sh
+      if [ "$1" = "list" ]; then echo '{"dependencies":{}}'; exit 0; fi
+      printf '%s\\n' 'npm ERR! code E404' >&2
+      printf '%s\\n' 'npm ERR! A complete log of this run can be found in:' >&2
+      printf '%s\\n' 'npm ERR!     /root/.npm/_logs/2026-11-16T12_10_51_052Z-debug-0.log' >&2
+      exit 1
+      SH
+    File.chmod(stub, 0o755)
+
+    result = PluginSpecHelper.run("npm", {
+      "name"       => "krikri-test-package",
+      "global"     => "true",
+      "executable" => stub,
+    })
+
+    log_line = "npm ERR!     /root/.npm/_logs/2026-11-16T12_10_51_052Z-debug-0.log"
+    expected = [
+      "npm ERR! code E404",
+      "npm ERR! A complete log of this run can be found in:",
+      log_line,
+    ].join("\n")
+
+    result["failed"].as_bool.must_equal(true)
+    result["stderr"].as_s.must_equal("#{expected}\n")
+    result["stderr_lines"].as_a.map(&.as_s).must_equal(expected.split("\n"))
+    result["msg"].as_s.must_equal(expected)
+  end
+
   it "crashes like community.general 11.2.1 when version is given without name" do
     # 11.2.1 builds name_version as `self.name + '@' + str(version)`, so
     # version: with no name: raises TypeError out of Npm.__init__ before
