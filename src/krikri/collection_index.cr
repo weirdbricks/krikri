@@ -669,6 +669,48 @@ module Krikri
       bare_resolution(name, task_collections, role_path, playbook_dir)
     end
 
+    # Whether real's plugin loader would find an ACTION plugin for the
+    # task action AS WRITTEN, inside the task's own collections scope.
+    # Real's TaskExecutor._get_action_handler runs
+    # `action_loader.has_plugin(action, collection_list=task.collections)`
+    # (and falls back to the generic `normal` handler) before importing
+    # one, and that import is the only thing that raises the collection
+    # plugin's own deprecated module_utils imports.
+    #
+    # The module LOADER searches every installed collection for a bare
+    # name (bare `k8s:` found kubernetes.core.k8s with no `collections:`
+    # keyword at all), but the ACTION loader does not: real runs such a
+    # task through `normal` and imports no action plugin, so its
+    # `to_bytes`/`to_native`/`to_text` deprecations never print
+    # (issue #1352, shonpaz123.dockercoins). A bare name does load one
+    # when ansible_builtin_runtime.yml redirects the ACTION routing for
+    # it (bare `synchronize:`/`patch:`) or a collection the task's scope
+    # lists provides it (`collections: [kubernetes.core]` before bare
+    # `k8s:` - both live-verified vs ansible-core 2.21.6 + kubernetes.core
+    # 6.1.0). A modules-only routing redirect is not enough: `k8s` has
+    # one to kubernetes.core.k8s, which is exactly why the module
+    # resolved while no action plugin loaded.
+    # nil/unknown scope and one-dot names stay permissive.
+    def self.action_plugin_in_scope?(name : String, task_collections : Array(String)? = nil) : Bool
+      return true if name.empty? || name.includes?("{{")
+      parts = name.split('.')
+      return true if parts.size == 2
+      if parts.size >= 3
+        # FQCN spellings resolve inside their own collection (the model
+        # only ever reads an installed action plugin file anyway);
+        # ansible.builtin/legacy need no collection tree.
+        return true if parts[0] == "ansible" && (parts[1] == "builtin" || parts[1] == "legacy")
+        return chain_resolves?("action", name, Set(String).new)[:resolves] != false
+      end
+      return true unless task_collections
+      builtin = builtin_module?(name)
+      return true unless builtin == false
+      if result = action_redirect_resolution(name)
+        return result[:resolves] != false
+      end
+      listed_collections_provide?(name, task_collections)
+    end
+
     # The FQCN (three-dot-plus) branch. ansible.builtin./ansible.legacy.
     # spellings stay on krikri's own resolution (today's behavior) - the
     # builtin collection is by definition always present on a controller
