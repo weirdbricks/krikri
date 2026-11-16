@@ -381,10 +381,17 @@ module Krikri
 
       # The socket path of a unix:// URL: urlparse() puts a legacy
       # unix://path URL's first component in the authority, and the SDK
-      # joins it back onto the path.
+      # joins it back onto the path. Its UnixHTTPAdapter then prefixes the
+      # missing "/" (unixconn.py), so "unix://var/run/docker.sock" - the
+      # value aem_design.nexus ships as its docker_host default - reaches
+      # /var/run/docker.sock like real does, not a path relative to the
+      # plugin's working directory (issue #1357: same unreachable socket,
+      # but krikri reported FileNotFoundError where real reported
+      # PermissionError).
       private def self.socket_path_for(authority : String, path : String) : String?
         socket = (authority.empty? ? path : "#{authority}/#{path}").rstrip('/')
-        socket.empty? ? nil : socket
+        return nil if socket.empty?
+        socket.starts_with?('/') ? socket : "/#{socket}"
       end
 
       # Python's urlparse() scheme detection: a leading

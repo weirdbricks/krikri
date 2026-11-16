@@ -176,6 +176,20 @@ module Krikri
         parsed.socket_path.must_equal("/tmp/krikri-no-such-sock")
       end
 
+      # aem_design.nexus's docker_host default is "unix://var/run/docker.sock"
+      # (one slash short). urlparse reads "var" as the authority AND keeps
+      # "/run/docker.sock" as the path, so the SDK joins them with a double
+      # slash and its UnixHTTPAdapter then prefixes the leading "/" the
+      # SDK's unix connect uses. krikri used to hand the result to
+      # UNIXSocket with no leading slash - a cwd-relative path - so the same
+      # unreachable socket reported FileNotFoundError here where real
+      # reported PermissionError (issue #1357).
+      it "absolutizes a legacy unix://host/path socket like the SDK's adapter" do
+        parsed = DockerClient.parse_host("unix://var/run/docker.sock")
+        parsed.tcp?.must_equal(false)
+        parsed.socket_path.must_equal("/var//run/docker.sock")
+      end
+
       it "treats an empty value and unix:// as the SDK's default socket" do
         DockerClient.parse_host(nil).socket_path.must_be_nil
         DockerClient.parse_host("").socket_path.must_be_nil
