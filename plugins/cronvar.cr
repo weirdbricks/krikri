@@ -26,11 +26,11 @@ module Krikri
   #     (while still reporting changed - real cronvar's own quirk)
   #   backup (optional): write a timestamped backup before changing
   #
-  # Unlike the Ansible module (supports_check_mode=False, so Ansible
-  # skips the task under --check), this plugin honors check_mode by
-  # computing the would-be result without writing - consistent with
-  # every other check_mode-aware plugin here, and strictly safer than
-  # real cronvar's "run it for real or skip" behavior.
+  # Real cronvar passes no supports_check_mode=True to its AnsibleModule,
+  # so basic.py's __init__ gate skips it under --check (see #execute).
+  # This plugin used to compute the would-be result without writing
+  # instead, which turned a skipped task into an ok one and flipped any
+  # following `when: r is not skipped` from skipped into a run.
   class CronVarPlugin < BasePlugin
     # argument_spec's `state` choices, in the Ansible module's order (the
     # wording "value of state must be one of: absent, present, got: X"
@@ -60,6 +60,19 @@ module Krikri
         return PluginResult.new(changed: false, failed: true, msg: "value of state must be one of: #{STATE_CHOICES.join(", ")}, got: #{state}")
       end
 
+      # basic.py's gate sits AFTER argument-spec validation (so a bogus
+      # state still fails above) but BEFORE CronVar.__init__'s
+      # parent-directory guard and main()'s "You must specify 'value'"
+      # check - live-verified vs 2.21.6: under --check both of those
+      # answer with this skip instead. registered: skipped, msg,
+      # failed, changed.
+      if true?(@params["_ansible_check_mode"]?)
+        invoked = @params["_module_name"]? || "community.general.cronvar"
+        return PluginResult.new(changed: false, failed: false,
+          msg: "remote module (#{invoked}) does not support check mode", skipped: true,
+          omit_changed: true, key_order: ["skipped", "msg"])
+      end
+
       # Real CronVar.__init__ resolves cron_file (absolute as-is, relative
       # against /etc/cron.d) and fails when its parent directory is not
       # one - a check that runs inside the constructor, i.e. BEFORE
@@ -76,8 +89,7 @@ module Krikri
         return PluginResult.new(changed: false, failed: true, msg: "You must specify 'value' to insert a new cron variable")
       end
 
-      check_mode = true?(@params["_ansible_check_mode"]?)
-      cron_file ? execute_file(cron_file, name, value, state, insertbefore, insertafter, check_mode) : execute_user_crontab(name, value, state, insertbefore, insertafter, check_mode)
+      cron_file ? execute_file(cron_file, name, value, state, insertbefore, insertafter) : execute_user_crontab(name, value, state, insertbefore, insertafter)
     end
 
     # Real CronVar.__init__'s parent-directory guard, or nil when the
@@ -92,7 +104,7 @@ module Krikri
         msg: "Parent directory '#{parent}' does not exist for cron_file: '#{cron_file}'")
     end
 
-    private def execute_file(raw_cron_file : String, name : String, value : String?, state : String, insert_before : String?, insert_after : String?, check_mode : Bool) : PluginResult
+    private def execute_file(raw_cron_file : String, name : String, value : String?, state : String, insert_before : String?, insert_after : String?) : PluginResult
       # Ansible resolves a relative cron_file: against /etc/cron.d -
       # only an absolute path is used as-is (CronVar.__init__).
       path = raw_cron_file.starts_with?("/") ? raw_cron_file : File.join("/etc/cron.d", raw_cron_file)
@@ -101,7 +113,7 @@ module Krikri
       new_content, changed = PluginHelpers::CronVar.upsert(original_content, name, state == "absent" ? nil : value, insert_before, insert_after)
 
       backup_file = ""
-      if changed && !check_mode
+      if changed
         backup_file = write_backup(path) if should_backup?(path)
         if failure = write_file_failure(path, new_content)
           return failure
@@ -126,7 +138,7 @@ module Krikri
       result
     end
 
-    private def execute_user_crontab(name : String, value : String?, state : String, insert_before : String?, insert_after : String?, check_mode : Bool) : PluginResult
+    private def execute_user_crontab(name : String, value : String?, state : String, insert_before : String?, insert_after : String?) : PluginResult
       target_user = @params["user"]?
       crontab_target = target_user ? "-u #{target_user}" : ""
 
@@ -138,7 +150,7 @@ module Krikri
 
       new_content, changed = PluginHelpers::CronVar.upsert(original_content, name, state == "absent" ? nil : value, insert_before, insert_after)
 
-      if changed && !check_mode
+      if changed
         failure = install_user_crontab(crontab_target, new_content)
         return failure if failure
       end
