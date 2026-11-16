@@ -1233,7 +1233,8 @@ if playbook && inventory
   # This used to raise, uncaught, killing the run with a stack trace and
   # discarding the reachable hosts' results entirely.
   Krikri::TimingProfile.measure("upload.plugins") do
-    Krikri::PluginManager.batch_upload_plugins_for_playbook(playbook, inventory, forks)
+    Krikri::PluginManager.batch_upload_plugins_for_playbook(playbook, inventory, forks,
+      limit_hosts.empty? ? nil : limit_hosts)
   end.each do |name, detail|
     unreachable_hosts << name
     unreachable_ssh_errors[name] = detail

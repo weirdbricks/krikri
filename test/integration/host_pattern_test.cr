@@ -90,4 +90,33 @@ describe "--limit patterns" do
     hosts_for("all", limit: "prod:!db").must_equal(["web1", "web2"])
     hosts_for("all", limit: "web:&prod").must_equal(["web1", "web2"])
   end
+
+  # The implicit Gathering Facts task uploads the facts plugin before any
+  # task runs, and that eager pass walked the play's whole `hosts:` pattern
+  # - so an out-of-limit host was still contacted, appeared in the recap as
+  # unreachable=1 and made the exit code non-zero. ansible-playbook only
+  # ever connects to the limited host (live-verified vs ansible-core
+  # 2.21.6, issue #1411).
+  it "does not contact out-of-limit hosts while gathering facts" do
+    dir = File.tempname("limit-facts")
+    Dir.mkdir_p(dir)
+    File.write(File.join(dir, "inv.ini"), <<-INI)
+      inlimit ansible_connection=local
+      outlimit ansible_host=127.0.0.1 ansible_port=1
+      INI
+    File.write(File.join(dir, "pb.yml"), <<-YAML)
+      - hosts: all
+        tasks:
+          - ansible.builtin.debug: {msg: "H={{ inventory_hostname }}"}
+      YAML
+
+    stdout_io = IO::Memory.new
+    status = Process.run(BINARY, ["-i", "inv.ini", "--limit", "inlimit", "pb.yml"],
+      output: stdout_io, error: stdout_io, chdir: dir)
+    output = stdout_io.to_s
+    output.includes?("outlimit").must_equal(false)
+    status.success?.must_equal(true)
+  ensure
+    FileUtils.rm_rf(dir) if dir && Dir.exists?(dir)
+  end
 end
