@@ -140,4 +140,58 @@ describe "strict conditional origin for compound expressions" do
     status.exit_code.must_equal(2)
     output.must_include("Conditional result (False) was derived from value of type 'NoneType' at '<unknown>'. Conditionals must have a boolean result.")
   end
+
+  # Issue #1349 (idealista.php_role): a block-tag `set_fact:` template
+  # (`{% if x %}True{% endif %}`) leaves a plain STRING in variable
+  # storage - real ansible-core only keeps an expression's native type
+  # for a whole-value `{{ }}` template - so "False" is truthy text
+  # there. `not php_is_installed` is therefore False under `or` and the
+  # chain walks on to php_new_version, whose own "True" string is what
+  # real labels the failure with (verified live against 2.21.6; the
+  # pre-fix engine stopped at the `not` operand and ran the task).
+  it "walks past a false-looking 'not' operand to the string operand that decides" do
+    status, output, playbook = run_playbook(<<-YAML)
+    - hosts: localhost
+      connection: local
+      gather_facts: false
+      vars:
+        php_reinstall: false
+        php_version: 7.4.2
+      tasks:
+        - name: PHP | Set installed fact
+          set_fact:
+            php_is_installed: "{% if false %}True{% else %}False{% endif %}"
+        - name: PHP | Set new version fact
+          set_fact:
+            php_new_version: "{% if php_version not in 'nope' %}True{% else %}False{% endif %}"
+        - name: PHP | Install
+          fail:
+            msg: install
+          when: php_reinstall or not php_is_installed or php_new_version
+    YAML
+
+    status.exit_code.must_equal(2)
+    output.must_include("Conditional result (True) was derived from value of type 'str' at '#{playbook}:13:26'. Conditionals must have a boolean result.")
+  end
+
+  it "skips a 'not' on a block-tag set_fact string whose text reads False" do
+    status, output, _playbook = run_playbook(<<-YAML)
+    - hosts: localhost
+      connection: local
+      gather_facts: false
+      tasks:
+        - name: set flag
+          set_fact:
+            php_is_installed: "{% if false %}True{% else %}False{% endif %}"
+        - name: gated
+          debug:
+            msg: must not run
+          when: not php_is_installed
+    YAML
+
+    status.success?.must_equal(true)
+    output.must_include("skipping: [localhost]")
+    output.wont_include("must not run")
+    output.must_include("failed=0")
+  end
 end

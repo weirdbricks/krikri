@@ -412,7 +412,7 @@ module Krikri
       end
     end
 
-    def self.evaluate(condition : String, vars : Hash(String, JSON::Any), strict : Bool = false, raise_undefined : Bool = false) : Bool
+    def self.evaluate(condition : String, vars : Hash(String, JSON::Any), strict : Bool = false, raise_undefined : Bool = false, python_truthiness : Bool = false) : Bool
       # Ansible's per-access laziness applies to `when:` exactly as it
       # does to module-arg finalization (issue #422:
       # `when: BOOTSTRAP.install_tools` on a defaults dict carrying an
@@ -427,13 +427,13 @@ module Krikri
       # whole-container serializers.
       VarSubstitutor.enter_conditional_eval
       begin
-        evaluate_bracketed(condition, vars, strict, raise_undefined)
+        evaluate_bracketed(condition, vars, strict, raise_undefined, python_truthiness)
       ensure
         VarSubstitutor.exit_conditional_eval
       end
     end
 
-    private def self.evaluate_bracketed(condition : String, vars : Hash(String, JSON::Any), strict : Bool, raise_undefined : Bool) : Bool
+    private def self.evaluate_bracketed(condition : String, vars : Hash(String, JSON::Any), strict : Bool, raise_undefined : Bool, python_truthiness : Bool = false) : Bool
       # The strict-undefined PROBE (see Krikri.strict_undefined_probe_
       # message): when undefined references must raise, give the whole
       # condition one strict-engine evaluation first. This closes the
@@ -480,11 +480,11 @@ module Krikri
         end
       end
       TimingProfile.measure("controller.conditionals", "controller") do
-        evaluate_measured(condition, vars, strict, raise_undefined)
+        evaluate_measured(condition, vars, strict, raise_undefined, python_truthiness)
       end
     end
 
-    private def self.evaluate_measured(condition : String, vars : Hash(String, JSON::Any), strict : Bool = false, raise_undefined : Bool = false) : Bool
+    private def self.evaluate_measured(condition : String, vars : Hash(String, JSON::Any), strict : Bool = false, raise_undefined : Bool = false, python_truthiness : Bool = false) : Bool
       # Strip whitespace, then unwrap a fully-parenthesized expression.
       # condition_to_string wraps each list-`when:` clause in parens
       # (`(a != 'x') and (b != 'y')`), and the recursion here hands each
@@ -752,7 +752,7 @@ module Krikri
       if condition.includes?(" or ")
         parts = split_by_operator(condition, " or ")
         if split_progressed?(parts, condition)
-          return evaluate_short_circuit_operator(parts, vars, strict, raise_undefined, is_or: true)
+          return evaluate_short_circuit_operator(parts, vars, strict, raise_undefined, is_or: true, python_truthiness: python_truthiness)
         end
       end
 
@@ -772,7 +772,7 @@ module Krikri
         # Non-strict per operand - see the identical rationale on the
         # 'or' branch just above.
         if split_progressed?(parts, condition)
-          return evaluate_short_circuit_operator(parts, vars, strict, raise_undefined, is_or: false)
+          return evaluate_short_circuit_operator(parts, vars, strict, raise_undefined, is_or: false, python_truthiness: python_truthiness)
         end
       end
 
@@ -815,11 +815,15 @@ module Krikri
       # no opener - which then poisons every later split, e.g.
       # `not(x | trim == '')` recursed on "x | trim == '')" and failed
       # with "''')' is undefined" before this was caught in testing.)
+      # The negated operand's own truthiness must be Python's under a
+      # strict evaluation: a stored plain "False" STRING is truthy
+      # there, so `not php_is_installed` with php_is_installed = "False"
+      # is False, exactly as real ansible-core answers it (issue #1349).
       if condition.starts_with?("not(")
-        return !evaluate(condition[3..-1].strip, vars, false, raise_undefined)
+        return !evaluate(condition[3..-1].strip, vars, false, raise_undefined, python_truthiness: strict || python_truthiness)
       end
       if condition.starts_with?("not ")
-        return !evaluate(condition[4..-1].strip, vars, false, raise_undefined)
+        return !evaluate(condition[4..-1].strip, vars, false, raise_undefined, python_truthiness: strict || python_truthiness)
       end
 
       # Handle 'is version(comparison_version, operator)' - Ansible's own
@@ -1409,7 +1413,7 @@ module Krikri
       end
 
       # Handle bare variable (truthiness check)
-      evaluate_truthiness(condition, vars, strict, raise_undefined)
+      evaluate_truthiness(condition, vars, strict, raise_undefined, python_truthiness)
     end
 
     # If *expr* is entirely wrapped in one matching pair of outer parens
@@ -1468,7 +1472,7 @@ module Krikri
     # regardless of its own type. See the 'or' branch's own comment in
     # #evaluate_measured for the two real-host cases (ANXS.postgresql,
     # stackhpc.systemd_networkd) this reconciles.
-    private def self.evaluate_short_circuit_operator(parts : Array(String), vars : Hash(String, JSON::Any), strict : Bool, raise_undefined : Bool, is_or : Bool) : Bool
+    private def self.evaluate_short_circuit_operator(parts : Array(String), vars : Hash(String, JSON::Any), strict : Bool, raise_undefined : Bool, is_or : Bool, python_truthiness : Bool = false) : Bool
       deciding = parts.last
       parts.each do |part|
         # A quoted string LITERAL operand's own truthiness is Python's
@@ -1487,10 +1491,19 @@ module Krikri
         # answer than Ansible, where Python's `or` short-circuits to
         # the non-empty string itself and never evaluates the second
         # operand at all.
+        # The probe answers Python's own question - which operand would
+        # the real expression return - so under a strict (when:/
+        # changed_when:/failed_when:) evaluation it has to use Python
+        # truthiness: a stored plain "False" STRING is truthy there, and
+        # reading it as falsy stopped the walk at the wrong operand
+        # (`php_reinstall or not php_is_installed or php_new_version`
+        # short-circuited on `not php_is_installed` and never reached the
+        # genuinely string-valued php_new_version real ansible fails on -
+        # issue #1349).
         part_truthy = if content = quoted_string_literal(part)
                         !content.empty?
                       else
-                        evaluate(part.strip, vars, false, raise_undefined)
+                        evaluate(part.strip, vars, false, raise_undefined, python_truthiness: strict || python_truthiness)
                       end
         if part_truthy == is_or
           deciding = part
@@ -1516,7 +1529,7 @@ module Krikri
         end
         return !content.empty?
       end
-      evaluate(deciding.strip, vars, strict, raise_undefined)
+      evaluate(deciding.strip, vars, strict, raise_undefined, python_truthiness: python_truthiness)
     end
 
     # If *expr* is entirely one quoted string literal (after stripping
@@ -3642,8 +3655,9 @@ module Krikri
       enabled
     end
 
-    # Evaluate truthiness of a value
-    private def self.evaluate_truthiness(condition : String, vars : Hash(String, JSON::Any), strict : Bool = false, raise_undefined : Bool = false) : Bool
+    # Evaluate truthiness of a value. *python_truthiness* selects real
+    # Python/Jinja string truthiness (see the String case below).
+    private def self.evaluate_truthiness(condition : String, vars : Hash(String, JSON::Any), strict : Bool = false, raise_undefined : Bool = false, python_truthiness : Bool = false) : Bool
       # Ansible/Python `bool([])` and `bool({})` are both False -
       # but #evaluate_value's own return union (String | Int64 | Bool |
       # Nil | Array(String)) has no Hash case at all (an empty Hash's
@@ -3794,6 +3808,18 @@ module Krikri
           raise ConditionalBooleanError.new(
             "Conditional result (False) was derived from value of type 'NoneType'. " \
             "Conditionals must have a boolean result.")
+        end
+        if python_truthiness
+          # Real Python/Jinja truthiness: EVERY non-empty string is
+          # truthy, the literal text "False"/"false" included - only
+          # this engine's own unresolved-lookup sentinel stands for
+          # None/Undefined and is falsy. `not php_is_installed` with
+          # php_is_installed = "False" (a genuine str: ansible keeps a
+          # block-tag set_fact template's rendered text a str, issue
+          # #469) is False in real ansible-core and was True here, which
+          # let idealista.php_role's install block run where ansible
+          # fails the strict-conditional check (issue #1349).
+          return !value.empty? && value != "undefined"
         end
         !value.empty? && value != "false" && value != "False" && value != "undefined"
       when Int32, Int64
