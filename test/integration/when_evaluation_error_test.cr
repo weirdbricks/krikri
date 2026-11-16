@@ -754,4 +754,57 @@ describe "ignore_errors: on an ordinary (non-when-related) task failure" do
   ensure
     FileUtils.rm_rf(dir) if dir && Dir.exists?(dir)
   end
+
+  # Issue #1395: an UNFILTERED dotted operand tests its nested leaf's own
+  # stored value, so real's lineage labels where that leaf was written -
+  # mateothegreat.aws_ec2_hostname's role-default mapping
+  # `aws_ec2_hostname: {tag_based: "true"}` behind
+  # `when: aws_ec2_hostname.tag_based` is labeled with the leaf's value
+  # token (defaults/main.yaml:2:14), not the task's when: token, which is
+  # what the compound-expression fallback printed.
+  it "labels an unfiltered dotted when: operand with its nested leaf's default position" do
+    dir = File.tempname("when-dotted-operand-origin", ".d")
+    Dir.mkdir(dir)
+    Dir.mkdir_p(File.join(dir, "roles", "testrole", "defaults"))
+    Dir.mkdir_p(File.join(dir, "roles", "testrole", "tasks"))
+    File.write(File.join(dir, "roles", "testrole", "defaults", "main.yaml"), <<-YAML)
+      hostname_role:
+        tag_based: "true"
+        name: example
+      YAML
+    apply_file = File.join(dir, "roles", "testrole", "tasks", "apply.yaml")
+    File.write(apply_file, <<-YAML)
+      - name: Get instance id from metadata api
+        ansible.builtin.debug:
+          msg: never runs
+        when: hostname_role.tag_based
+      YAML
+    File.write(File.join(dir, "roles", "testrole", "tasks", "main.yaml"), <<-YAML)
+      - name: Apply
+        ansible.builtin.import_tasks: apply.yaml
+      YAML
+    playbook = File.join(dir, "site.yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        roles:
+          - testrole
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+
+    status.success?.must_equal(false)
+    status.exit_code.must_equal(2)
+    # `tag_based: "true"`'s value token starts at line 2, column 14.
+    defaults_file = File.join(dir, "roles", "testrole", "defaults", "main.yaml")
+    expected = "was derived from value of type 'str' at '#{defaults_file}:2:14'"
+    output.to_s.must_include(expected, output.to_s)
+    output.to_s.must_include(%({"msg": "Task failed: A 'when' expression failed: Conditional result (True) #{expected}. Conditionals must have a boolean result."}), output.to_s)
+    # The task's own when: value token is the pre-fix mislabel.
+    output.to_s.wont_include("was derived from value of type 'str' at '#{apply_file}:4:9'", output.to_s)
+  ensure
+    FileUtils.rm_rf(dir) if dir && Dir.exists?(dir)
+  end
 end

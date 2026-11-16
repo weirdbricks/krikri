@@ -6728,6 +6728,20 @@ module Krikri
            File.file?(clause_origin[0])
           return with_origin_clause(msg, "'#{clause_origin[0]}:#{clause_origin[1]}:#{clause_origin[2]}'")
         end
+        # An unfiltered dotted/subscripted operand (`aws_ec2_hostname.
+        # tag_based`) tests that LEAF's own stored value, so real's
+        # lineage labels where the leaf was written, not the when: token
+        # the compound branch below gives: mateothegreat.aws_ec2_hostname's
+        # role-default mapping `aws_ec2_hostname: {tag_based: "true"}`
+        # behind `when: aws_ec2_hostname.tag_based` is labeled
+        # defaults/main.yaml:2:14 by real (issue #1395). A leaf whose base
+        # variable has no file origin (registered result, fact, loop item)
+        # or whose position can't be located keeps the when-token labeling
+        # rather than guessing.
+        if (h = host) && (parts = plain_path_operand_parts(raw)) &&
+           (leaf = dotted_leaf_origin(task, h, parts)).is_a?(FileVarOrigin) && leaf.column > 0
+          return with_origin_clause(msg, "'#{leaf.path}:#{leaf.line}:#{leaf.column}'")
+        end
         # Any other compound when: (`x is defined and x|length`,
         # `lst | d([], true)`): the tested value is created by the
         # expression itself, and real reports the when: value token's
@@ -6848,9 +6862,27 @@ module Krikri
     # so a subscript key that is itself an expression falls through.
     private def subscripted_default_operand_parts(raw : String) : Array(String)?
       return nil unless (m = raw.strip.match(/\A([A-Za-z_][A-Za-z0-9_]*)((?:(?:\[\s*(?:'[^']+'|"[^"]+")\s*\])|\.[A-Za-z_][A-Za-z0-9_]*)+)\s*\|\s*d(?:efault)?\s*\(.*\)\s*\z/))
-      parts = [m[1]]
-      m[2].scan(/(?:\[\s*(?:'([^']+)'|"([^"]+)")\s*\])|\.([A-Za-z_][A-Za-z0-9_]*)/) do |access|
-        key = access[1] || access[2] || access[3]
+      path_access_parts(m[1], m[2])
+    end
+
+    # The path parts of an UNFILTERED dotted/subscripted operand
+    # (`aws_ec2_hostname.tag_based` -> ["aws_ec2_hostname", "tag_based"],
+    # `roles['db'].port` -> ["roles", "db", "port"]), nil for any other
+    # shape: a filter chain, a compound expression, or a subscript key
+    # that is itself an expression (no single key to look up).
+    private def plain_path_operand_parts(raw : String) : Array(String)?
+      return nil unless (m = raw.strip.match(/\A([A-Za-z_][A-Za-z0-9_]*)((?:(?:\[\s*(?:'[^']+'|"[^"]+")\s*\])|\.[A-Za-z_][A-Za-z0-9_]*)+)\s*\z/))
+      path_access_parts(m[1], m[2])
+    end
+
+    # A base variable name plus its rendered `.key`/`['key']` access
+    # chain, as the nested-key path YamlSourceMap keys positions by.
+    private def path_access_parts(base : String, access : String) : Array(String)
+      parts = [base]
+      access.scan(/(?:\[\s*(?:'([^']+)'|"([^"]+)")\s*\])|\.([A-Za-z_][A-Za-z0-9_]*)/) do |access_match|
+        # A dot access leaves the bracket alternatives' groups unmatched,
+        # so every group must be read optionally.
+        key = access_match[1]? || access_match[2]? || access_match[3]?
         parts << key if key
       end
       parts
