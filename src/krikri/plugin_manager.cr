@@ -456,6 +456,7 @@ module Krikri
       playbook : Playbook,
       inventory : Inventory,
       forks : Int32 = 5,
+      limit : String? = nil,
     ) : Hash(String, String)
       # Collect all unique module names used in the playbook
       required_plugins = Set(String).new
@@ -503,8 +504,19 @@ module Krikri
       spec_conns = Hash(String, ConnectionSettings).new
       spec_contributions = Hash(String, Array({String, Bool})).new
 
+      # --limit restricts every play's hosts to the intersection with the
+      # subset (ansible-playbook only ever connects to the limited hosts),
+      # so this eager pass must not reach past it either: uploading to an
+      # out-of-limit host contacted it, stalled the run on a blackhole
+      # address and pre-marked it unreachable so the recap listed it
+      # (live-verified vs ansible-core 2.21.6, issue #1411).
+      limit_names = limit.try { |pattern| inventory.get_hosts(pattern).map(&.name).to_set }
+
       playbook.plays.each do |play|
         hosts = inventory.get_hosts(play.hosts.to_s)
+        if names = limit_names
+          hosts = hosts.select { |host| names.includes?(host.name) }
+        end
 
         hosts.each do |host|
           # Skip localhost. Checked against the HOST's own inventory

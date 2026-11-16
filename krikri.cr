@@ -499,7 +499,8 @@ playbook.plays = [play]
 # come out before any play/task output); the executor's per-task
 # unreachable report now does, carrying the ssh error detail returned
 # here.
-unreachable_ssh_errors = Krikri::PluginManager.batch_upload_plugins_for_playbook(playbook, inventory, forks)
+unreachable_ssh_errors = Krikri::PluginManager.batch_upload_plugins_for_playbook(playbook, inventory, forks,
+  limit_hosts.empty? ? nil : limit_hosts)
 unreachable_hosts = unreachable_ssh_errors.keys
 # Same startup cache-configuration warning ansible warns with (see
 # krikri-playbook.cr).
