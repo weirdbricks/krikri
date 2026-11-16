@@ -208,6 +208,8 @@ module Krikri
     end
 
     def execute_inner : PluginResult
+      resolve_param_aliases!
+
       # Ansible's apt module rejects ANY parameter outside its own
       # argument_spec at module-arg validation, before any action runs -
       # notably `use:`, which is a PACKAGE action-plugin parameter (the
@@ -1171,6 +1173,24 @@ module Krikri
         # Unreachable in practice: state was already validated against
         # real apt.py's choice list at module-setup above.
         choices_error("state", APT_STATES, state)
+      end
+    end
+
+    # AnsibleModule's own _handle_aliases copies an alias spelling onto its
+    # canonical spec key before the module body reads any parameter, so
+    # apt.py sees `update-cache=yes` exactly as `update_cache=yes`,
+    # `default-release` as `default_release`, and so on. Nothing in this
+    # plugin did that copy: every read below only ever looked for the
+    # canonical key, so a playbook using an alias spelling silently ran a
+    # no-op. AlbanAndrieu.ansible_jenkins_slave's "jenkins-slave | Update
+    # the apt cache (in case of issue)" is `action: apt update-cache=yes`
+    # (round 29913583): real ansible reported changed, this engine ok,
+    # because the refresh request never reached the cache-update branch.
+    private def resolve_param_aliases! : Nil
+      APT_SPEC.each do |canonical, aliases|
+        aliases.each do |alias_name|
+          @params[canonical] = @params[alias_name] if @params.has_key?(alias_name)
+        end
       end
     end
 
