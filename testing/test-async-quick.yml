@@ -1,11 +1,8 @@
 # async:/poll:/async_status: smoke test. Targets "testservers" (same
 # convention as test-copy.yml/test-package.yml/etc.) rather than
 # localhost directly: under the generic empty inventory used by every
-# other testing/*.yml fixture this play is skipped outright, which
-# matters here specifically because a --check run would skip the async
-# command task itself (command: doesn't support check mode) without
-# registering an ansible_job_id, leaving the async_status: task below with
-# nothing valid to check.
+# other testing/*.yml fixture this play is skipped outright, so its real
+# jobs only run in the end-to-end test that gives it a real inventory.
 
 - name: async / poll / async_status test
   hosts: testservers

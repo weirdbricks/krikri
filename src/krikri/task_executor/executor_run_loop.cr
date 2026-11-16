@@ -3502,7 +3502,19 @@ module Krikri
       # then gates the async path on Python truthiness, where 0 is falsy -
       # e.g. async: "{{ not ansible_check_mode }}" on a real run is plain
       # synchronous execution with a registered result, not a job.
-      if (async_secs = task.async_seconds) && async_secs != 0 && !resolve_task_check_mode(task, wire_vars)
+      #
+      # Check mode is NOT a reason to skip the job: ansible's _execute
+      # gates the async path on async_val alone and just forwards
+      # check_mode onto the synthetic async_status task, so a --check run
+      # still launches the job, prints "ASYNC OK on <host>: jid=<jid>"
+      # and registers the wrapped result whose module half is the
+      # module's own check-mode reply (live-verified vs 2.21.6 under
+      # --check: started/finished/ansible_job_id/results_file around
+      # "Command would have run if not in check mode", skipped: true).
+      # The check-mode gate that used to sit here skipped the whole job,
+      # so the registered result lost those async keys and no ASYNC OK
+      # line appeared (issue #1409).
+      if (async_secs = task.async_seconds) && async_secs != 0
         # async: writes this config verbatim to a job file; the detached
         # __async_run process resolves become:/become_user: back out of
         # it via the JSON::Any entry point, exactly as before. Remote
