@@ -82,7 +82,7 @@ module Krikri
 
       loaded = module_loaded(name)
       if loaded.is_a?(String)
-        return PluginResult.new(changed: false, failed: true, msg: loaded)
+        return module_check_failure(name, state, loaded)
       end
 
       if state == "present"
@@ -90,6 +90,24 @@ module Krikri
       else
         ensure_unloaded(modprobe_path, name, loaded, check_mode)
       end
+    end
+
+    # module_loaded() fails through fail_json(msg=f"{e}",
+    # exception=traceback.format_exc(), **self.result), so the failure
+    # still carries the result property's name/params/state, exactly like
+    # the load/unload failures below - live-verified against ansible-core
+    # 2.21.6 in a container without modules.builtin, whose registered
+    # result reads changed, failed, exception, msg, name, params, state
+    # (issue #1370).
+    private def module_check_failure(name : String, state : String, msg : String) : PluginResult
+      PluginResult.new(
+        changed: false,
+        failed: true,
+        msg: msg,
+        name: name,
+        params: @params["params"]? || "",
+        state: state,
+      )
     end
 
     # Real modprobe.py exits every success path through
@@ -134,7 +152,12 @@ module Krikri
         return true if is_loaded
 
         module_file = "/#{name}.ko"
-        path = "/lib/modules/#{kernel_release}/modules.builtin"
+        # Probe path overridable solely so the regression test can point
+        # it at a spec scratch path - hosts that DO ship modules.builtin
+        # otherwise never reach the OSError branch (same pattern as
+        # selinux's own probe-path override). Unset env = the real
+        # module's path.
+        path = ENV["KRIKRI_MODPROBE_MODULES_BUILTIN"]? || "/lib/modules/#{kernel_release}/modules.builtin"
         File.each_line(path) do |line|
           return true if line.rstrip.ends_with?(module_file)
         end

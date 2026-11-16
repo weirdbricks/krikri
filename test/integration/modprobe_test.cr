@@ -49,4 +49,34 @@ describe "modprobe plugin" do
     falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
     result["changed"].as_bool.must_equal(false)
   end
+
+  # That OSError is raised inside module_loaded(), which real modprobe.py
+  # exits through fail_json(msg=f"{e}", exception=traceback.format_exc(),
+  # **self.result) - so the failure still carries the result property's
+  # name/params/state (live-verified vs ansible-core 2.21.6 in a
+  # container without modules.builtin: registered shape is changed,
+  # failed, exception, msg, name, params, state). kpg's
+  # multi-modprobe-chaos playbooks caught krikri dropping those three
+  # keys (issue #1370). The probe-path override reproduces a container
+  # without modules.builtin on a host that ships one.
+  it "carries name/params/state on the missing modules.builtin OSError failure" do
+    modprobe_present = !Process.find_executable("modprobe").nil? ||
+                       %w[/sbin /usr/sbin /bin /usr/bin].any? { |dir| File::Info.executable?(File.join(dir, "modprobe")) }
+    skip "no modprobe binary on this host" unless modprobe_present
+
+    missing = PluginSpecHelper.tmp_path("modprobe-no-builtin", File.read("/proc/sys/kernel/osrelease").chomp, "modules.builtin")
+
+    result = PluginSpecHelper.run(
+      "modprobe",
+      {"name" => "krikri-notamodule", "state" => "absent", "params" => "numdummies=2"},
+      env: {"KRIKRI_MODPROBE_MODULES_BUILTIN" => missing}
+    )
+
+    result["failed"].as_bool.must_equal(true)
+    result["changed"].as_bool.must_equal(false)
+    result["msg"].as_s.must_equal("[Errno 2] No such file or directory: '#{missing}'")
+    result["name"].as_s.must_equal("krikri-notamodule")
+    result["params"].as_s.must_equal("numdummies=2")
+    result["state"].as_s.must_equal("absent")
+  end
 end
