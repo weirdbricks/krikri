@@ -58,6 +58,10 @@ module Krikri
     # [rc, out, err, failed, msg, changed, exception]).
     private PARTED_FAIL_KEY_ORDER = %w[rc out err failed msg changed exception]
 
+    # fail_json(msg=..., err=<parsed pair>) - kwargs lead, then fail_json's
+    # own failed/msg, then the controller's changed/exception backfill.
+    private PARTED_FORMAT_FAIL_KEY_ORDER = %w[err failed msg changed exception]
+
     # The single success exit: exit_json(changed=changed, disk=...,
     # partitions=..., script=...) plus the controller's failed backfill.
     private PARTED_KEY_ORDER = %w[changed disk partitions script]
@@ -110,6 +114,20 @@ module Krikri
           return PluginResult.new(changed: false, failed: true,
             msg: "The partition number must be greater then 0.")
         end
+      end
+
+      # Real parted.py's conditioning block validates BOTH boundary
+      # arguments before it touches the device (`check_size_format`, which
+      # itself fail_json's on an unparseable value). A bad part_start
+      # therefore reports the size-interpretation error even when the
+      # device does not exist at all - not parted's "Could not stat
+      # device" (kpg 000000-multi-nsupdate-chaos: part_start "vqcisp"
+      # against device "qzjsnk").
+      if error = validate_size_format("part_start", part_start)
+        return error
+      end
+      if error = validate_size_format("part_end", part_end)
+        return error
       end
 
       # Read the current disk information (this is where Ansible runs
@@ -295,6 +313,33 @@ module Krikri
         end
       end
       nil
+    end
+
+    # Real check_size_format: `parse_unit(value)[1] in parted_units`.
+    # parse_unit exits via fail_json when the value matches neither the
+    # "<number>[<unit>]" nor the "<cyl>,<head>,<sector>" form, so the
+    # caller only ever sees the unit verdict. A bare number carries the
+    # empty unit, which is not in parted_units, hence its own format
+    # failure with the parsed (size, unit) pair as `err` - live-verified
+    # against real parted: part_start "10XB" -> err [10.0, "XB"],
+    # part_start "10" -> err [10.0, ""].
+    private def validate_size_format(param : String, value : String) : PluginResult?
+      if match = value.match(/^(-?[\d.]+) *([\w%]+)?$/)
+        unit = match[2]? || ""
+        unless PARTED_UNITS_ORDER.includes?(unit)
+          return PluginResult.new(changed: false, failed: true,
+            msg: "The argument '#{param}' doesn't respect required format.The size unit is case sensitive.",
+            err: JSON::Any.new([JSON::Any.new(match[1].to_f), JSON::Any.new(unit)]),
+            key_order: PARTED_FORMAT_FAIL_KEY_ORDER)
+        end
+        nil
+      else
+        # "<cyl>,<head>,<sector>" parses as the "chs" unit, which
+        # parted_units accepts.
+        return nil if value.matches?(/^(\d+),(\d+),(\d+)$/)
+        PluginResult.new(changed: false, failed: true,
+          msg: "Error interpreting parted size output: '#{value}'")
+      end
     end
 
     private def parse_flags : Array(String)?

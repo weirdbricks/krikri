@@ -38,6 +38,40 @@ describe "parted plugin" do
     result["msg"].as_s.must_include("Error while getting device information with parted script:")
     result["rc"].as_i64.must_equal(1)
   end
+
+  it "rejects an unparseable part_start before touching the device" do
+    # Real parted.py's conditioning block runs check_size_format on both
+    # boundaries before get_device_info, so the size-interpretation error
+    # wins over the missing device's parted failure (kpg
+    # 000000-multi-nsupdate-chaos).
+    result = PluginSpecHelper.run("parted", {
+      "device"     => "/dev/krikri-no-such-disk",
+      "number"     => "38",
+      "part_start" => "vqcisp",
+      "part_end"   => "100%",
+      "state"      => "present",
+    })
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("Error interpreting parted size output: 'vqcisp'")
+    result.as_h.has_key?("rc").must_equal(false)
+  end
+
+  it "rejects a part_start unit outside parted's own unit set" do
+    result = PluginSpecHelper.run("parted", {
+      "device"     => "/dev/krikri-no-such-disk",
+      "number"     => "38",
+      "part_start" => "10XB",
+      "part_end"   => "100%",
+      "state"      => "present",
+    })
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("The argument 'part_start' doesn't respect required format.The size unit is case sensitive.")
+    parsed = result["err"].as_a
+    parsed[0].as_f.must_equal(10.0)
+    parsed[1].as_s.must_equal("XB")
+  end
 end
 
 describe "lvg plugin" do
