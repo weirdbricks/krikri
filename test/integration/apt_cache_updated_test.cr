@@ -80,6 +80,24 @@ describe "apt plugin cache_updated result key" do
     end
   end
 
+  # AnsibleModule._handle_aliases copies `update-cache` onto `update_cache`
+  # before apt.py reads anything, so real ansible runs the cache refresh for
+  # AlbanAndrieu.ansible_jenkins_slave's `action: apt update-cache=yes`
+  # ("jenkins-slave | Update the apt cache (in case of issue)", round
+  # 29913583) and reports changed. This engine only ever read the canonical
+  # key, dropped the alias spelling on the floor and reported ok.
+  it "runs the cache refresh for the update-cache alias spelling" do
+    with_stub_path(move: true) do |path, stamp|
+      result = PluginSpecHelper.run("apt", {
+        "update-cache" => "yes",
+        "_environment" => env_param(path, stamp),
+      })
+
+      result["changed"].as_bool.must_equal(true)
+      result["cache_updated"].as_bool.must_equal(true)
+    end
+  end
+
   it "reports cache_updated: false when the update ran but the mtime did not move (already-fresh mirror)" do
     with_stub_path(move: false) do |path, stamp|
       result = PluginSpecHelper.run("apt", {
