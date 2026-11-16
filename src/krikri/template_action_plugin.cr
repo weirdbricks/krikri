@@ -659,8 +659,12 @@ module Krikri
     # print a fact reading a template reaches through a forwarding chain.
     # nil otherwise: no such value, a value with no template in it (nothing
     # re-renders, so no fact is read), several chain candidates that
-    # disagree, or a defining site the executor cannot place.
-    private def re_rendered_var_fact_origin(name : String, seen : Set(String) = Set(String).new) : String?
+    # disagree, or a defining site the executor cannot place. *access* is
+    # the subscript path the template applied to the name (see
+    # #record_read_path): a container read reaches only that subtree, so
+    # the leaf it names - not a fact-naming sibling - is the Origin
+    # (issue #1354).
+    private def re_rendered_var_fact_origin(name : String, seen : Set(String) = Set(String).new, access : Array(String)? = nil) : String?
       return nil unless seen.add?(name)
       value = @vars[name]? || return nil
       host_name = @vars["inventory_hostname"]?.try(&.as_s?)
@@ -671,7 +675,7 @@ module Krikri
         origins = referenced_var_names(raw).compact_map { |ref| re_rendered_var_fact_origin(ref, seen) }.uniq!
         origins.size == 1 ? origins[0] : nil
       when Hash, Array
-        components = VarSubstitutor.fact_leaf_components(value, @vars)
+        components = VarSubstitutor.fact_leaf_components(value, @vars, access)
         return nil unless components
         VarSubstitutor.published_var_origin(host_name, name, components)
       end
@@ -767,15 +771,16 @@ module Krikri
       # reads are tested, so the scope's eager pre-render cannot produce
       # a warning for a value this template never uses.
       var_value_origin : String? = nil
+      read_paths = {} of String => Array(String)
       names_a_fact_through_its_value = ->(read : String) do
-        if (origin = re_rendered_var_fact_origin(read))
+        if (origin = re_rendered_var_fact_origin(read, access: read_paths[read]?))
           var_value_origin = origin
           true
         else
           false
         end
       end
-      if probe_walk(names_a_fact_through_its_value, template, failed)
+      if probe_walk(names_a_fact_through_its_value, template, failed, read_paths)
         VarSubstitutor.emit_fact_deprecation(var_value_origin)
       end
       # The internal `vars`-dict deprecation (issue #1028,
@@ -823,10 +828,48 @@ module Krikri
       ->(name : String) { !names.includes?(name) && matcher.call(name) }
     end
 
+    # Issue #1354: `{{ c.key }}` reaches one leaf, while a bare `{{ c }}` or
+    # a loop over the whole value reaches every leaf - the two readings
+    # must not be confused, since only the first would warn. A walk that
+    # wants this records, per name, the subscript path of its FIRST read
+    # (see #record_read_path); every other probe walk leaves this nil and
+    # pays nothing.
+    @read_paths : Hash(String, Array(String))? = nil
+    @read_path_stack = [] of String?
+
+    private def record_read_path(name : String) : Nil
+      paths = @read_paths || return
+      return if paths.has_key?(name)
+      # A dynamic subscript (`c[key]`, a slice) names no single leaf; the
+      # read then counts as a whole-container one.
+      return if @read_path_stack.any?(Nil)
+      paths[name] = @read_path_stack.compact.reverse!
+    end
+
+    private def with_read_path_component(component : String?, & : -> Bool) : Bool
+      return yield unless @read_paths
+      @read_path_stack.push(component)
+      begin
+        yield
+      ensure
+        @read_path_stack.pop
+      end
+    end
+
+    private def read_path_component(node : KrikriJinja::Nodes::ExprNode) : String?
+      case value = node.as?(KrikriJinja::Nodes::ConstNode).try(&.value)
+      when String
+        value
+      when Int64, Float64, Bool
+        value.to_s
+      end
+    end
+
     private def template_reads_name?(matcher : String -> Bool, node : KrikriJinja::Nodes::Node,
                                      bound : Set(String) = Set(String).new) : Bool
       case node
       when KrikriJinja::Nodes::NameNode
+        record_read_path(node.name)
         matcher.call(node.name)
       when KrikriJinja::Nodes::TextNode, KrikriJinja::Nodes::ConstNode,
            KrikriJinja::Nodes::InTestNode
@@ -969,11 +1012,12 @@ module Krikri
           exprs_read_names?(matcher, node.args, bound) ||
           node.kwargs.any? { |kwarg| template_reads_name?(matcher, kwarg[1], bound) }
       when KrikriJinja::Nodes::GetattrNode
-        template_reads_name?(matcher, node.obj, bound)
+        with_read_path_component(node.attr) { template_reads_name?(matcher, node.obj, bound) }
       when KrikriJinja::Nodes::GetitemNode
-        template_reads_name?(matcher, node.obj, bound) || template_reads_name?(matcher, node.key, bound)
+        with_read_path_component(read_path_component(node.key)) { template_reads_name?(matcher, node.obj, bound) } ||
+          template_reads_name?(matcher, node.key, bound)
       when KrikriJinja::Nodes::SliceNode
-        template_reads_name?(matcher, node.obj, bound) ||
+        with_read_path_component(nil) { template_reads_name?(matcher, node.obj, bound) } ||
           (node.start.try { |expr| template_reads_name?(matcher, expr, bound) } || false) ||
           (node.stop.try { |expr| template_reads_name?(matcher, expr, bound) } || false) ||
           (node.step.try { |expr| template_reads_name?(matcher, expr, bound) } || false)
@@ -1043,16 +1087,23 @@ module Krikri
 
     # One deprecation probe walk: resets the frame gate's walk-position
     # state and scans the whole template for a read the matcher accepts.
+    # *paths* is filled with each name's first-read subscript path when the
+    # caller cares (see #record_read_path).
     private def probe_walk(matcher : String -> Bool, template : KrikriJinja::Nodes::TemplateNode,
-                           failed : Bool = false) : Bool
+                           failed : Bool = false, paths : Hash(String, Array(String))? = nil) : Bool
       previous_dead, previous_live, previous_macro, previous_failed =
         @gate_dead, @gate_live, @gate_in_macro, @gate_render_failed
+      previous_paths = @read_paths
       @gate_dead, @gate_live, @gate_in_macro, @gate_render_failed = false, true, false, failed
+      @read_paths = paths
+      @read_path_stack.clear
       begin
         template_reads_name?(matcher, template)
       ensure
         @gate_dead, @gate_live, @gate_in_macro, @gate_render_failed =
           previous_dead, previous_live, previous_macro, previous_failed
+        @read_paths = previous_paths
+        @read_path_stack.clear
       end
     end
 
