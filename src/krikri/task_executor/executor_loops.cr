@@ -1785,17 +1785,32 @@ module Krikri
         # one's container is registered for the item render too - otherwise
         # the fact read inside a nested item leaf has no placeable Origin
         # and the INJECT_FACTS_AS_VARS block vanishes (issue #1223).
-        nested_containers = task.loop_nested_sources || task.loop_together_sources || [] of String
-        rendered_items = VarSubstitutor.with_preparing_loop_source_containers(nested_containers, vars_context, host_name) do
-          VarSubstitutor.with_preparing_loop_source_container(task.loop_template, vars_context, host_name) do
-            if unsafe_items
-              loop_items.each { pending_fact_reads << source_tether }
-              loop_items
-            else
-              loop_items.map do |item|
-                rendered, read_fact = VarSubstitutor.with_fact_read_probe { deep_render_item(item, vars_context, host_name) }
-                pending_fact_reads << (read_fact || source_tether)
-                rendered
+        # with_flattened: has the same shape (its sources live in
+        # task.loop_flattened, never loop_template), so a leaf of the list
+        # it iterates is equally unplaceable without this - and real warns
+        # at that leaf's declaration exactly as it does for loop:.
+        nested_containers = task.loop_nested_sources || task.loop_together_sources ||
+                            task.loop_flattened || [] of String
+        # with_flattened:'s keyword has no locatable position (its two
+        # spellings collapse into one task field), so its item render pass
+        # also has no templating-operation identity from the loop site -
+        # real renders the whole list in ONE templar call and its shared
+        # deprecate tag keeps only the first fact access, so a list whose
+        # several leaves read the same fact warns once (live-verified vs
+        # 2.21.6), not once per item.
+        pass_op = task.loop_flattened ? "loop-items:#{task.source_file}:#{task.source_line}:#{task.object_id}" : nil
+        rendered_items = VarSubstitutor.with_loop_item_render_op(pass_op) do
+          VarSubstitutor.with_preparing_loop_source_containers(nested_containers, vars_context, host_name) do
+            VarSubstitutor.with_preparing_loop_source_container(task.loop_template, vars_context, host_name) do
+              if unsafe_items
+                loop_items.each { pending_fact_reads << source_tether }
+                loop_items
+              else
+                loop_items.map do |item|
+                  rendered, read_fact = VarSubstitutor.with_fact_read_probe { deep_render_item(item, vars_context, host_name) }
+                  pending_fact_reads << (read_fact || source_tether)
+                  rendered
+                end
               end
             end
           end
@@ -2632,6 +2647,18 @@ module Krikri
         result = item_results[idx]
         next unless result
 
+        # A looped until: item's retry lines belong to THIS item's output:
+        # ansible's retry callback fires while the item runs and the item's
+        # result is displayed right after its last attempt, so the lines sit
+        # between the item's own attempts and its status line - not every
+        # item's attempt lines packed ahead of every item's result, which is
+        # what printing them inline (before this in-order display) produced.
+        if result_hash = result.as_h?
+          result_hash.delete("_ansible_retry_lines").try(&.as_a?).try &.each do |line|
+            puts line.as_s? || line.to_s
+          end
+        end
+
         # loop_control.label renders against this item, so it needs a
         # context carrying it - this method is handed only the results.
         # No label configured -> no context needed at all.
@@ -3256,6 +3283,12 @@ module Krikri
       attempt = 0
       condition_met = false
       exception_escape = false
+      # A LOOPED task's retry lines wait for the item's own display point
+      # (see finish_looped_task): ansible's callback prints them while the
+      # item runs, and the loop displays each item's result as soon as its
+      # last attempt returns, so the lines precede THAT item's status line
+      # - not every item's attempt lines ahead of every item's result.
+      retry_lines = [] of String
 
       while attempt < total_runs
         attempt += 1
@@ -3406,6 +3439,7 @@ module Krikri
               register_result(host, register_name, failed_result)
               vars_context[register_name] = @registered_vars[host.name][register_name]
             end
+            return attach_looped_retry_lines(failed_result, retry_lines) if defer_loop_stats
             return failed_result
           end
         end
@@ -3422,7 +3456,12 @@ module Krikri
         # remaining count (3, 2, 1) - live-verified against both releases.
         # get_name() prefixes the role name, so this line carries the same
         # "<role> : " prefix the TASK banner does (issue #959).
-        puts "FAILED - RETRYING: [#{host.name}]: #{task_role_prefix(task)}#{render_task_name_for_display(task, host)} (#{total_runs - attempt - 1} retries left)."
+        retry_line = "FAILED - RETRYING: [#{host.name}]: #{task_role_prefix(task)}#{render_task_name_for_display(task, host)} (#{total_runs - attempt - 1} retries left)."
+        if defer_loop_stats
+          retry_lines << retry_line
+        else
+          puts retry_line
+        end
         sleep(delay.seconds)
       end
 
@@ -3465,7 +3504,19 @@ module Krikri
         end
       end
 
-      result
+      defer_loop_stats ? attach_looped_retry_lines(result, retry_lines) : result
+    end
+
+    # Hangs a LOOPED until: task's retry lines on the item result so the
+    # loop's display point prints them just before that item's own line
+    # (see finish_looped_task, which strips the marker). Registered before
+    # this runs, so a `register:` of the task never sees the marker.
+    private def attach_looped_retry_lines(result : JSON::Any?, lines : Array(String)) : JSON::Any?
+      return result if lines.empty?
+      result_hash = result.try(&.as_h?) || return result
+      copy = result_hash.dup
+      copy["_ansible_retry_lines"] = JSON::Any.new(lines.map { |line| JSON::Any.new(line) })
+      JSON::Any.new(copy)
     end
 
     # Same int coercion real applies to a templated retries:/delay: value:

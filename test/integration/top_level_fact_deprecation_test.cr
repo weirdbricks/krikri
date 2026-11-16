@@ -1414,4 +1414,51 @@ describe "INJECT_FACTS_AS_VARS deprecation" do
     stdout.wont_include("\"deprecations\"")
     stderr.scan(/DEPRECATION WARNING\]: #{Regex.escape(FACT_DEPRECATION_TEXT)}/).size.must_equal(1)
   end
+
+  it "warns once for a with_flattened item list whose leaves read a fact" do
+    # Round 29914162, ipr-cnrs.openmanage: the role's with_flattened:
+    # repositories list holds `state` leaves computed from a default that
+    # reads ansible_system_vendor. Real renders the whole list in one
+    # templar call and keeps only the first fact access, so it prints ONE
+    # block, pinned at the first item's leaf declaration (live-verified
+    # against 2.21.6: 5:12 below). Krikri stayed silent - with_flattened's
+    # sources live in their own task field, so the item render had no
+    # registered container to place the read at (issue #1392).
+    stdout, stderr, dir = run_files({
+      "play.yml" => <<-PLAYBOOK,
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        roles:
+          - flat
+      PLAYBOOK
+      "roles/flat/defaults/main.yml" => <<-YAML,
+        ---
+        deploy_state: '{{ "present" if ansible_system_vendor is search("Dell") else "absent" }}'
+        repos:
+          - repo: one
+            state: '{{ deploy_state if (ansible_distribution_release in ["bookworm"]) else "absent" }}'
+          - repo: two
+            state: '{{ deploy_state if (ansible_distribution_release in ["bookworm"]) else "absent" }}'
+        YAML
+      "roles/flat/tasks/main.yml" => <<-YAML,
+        ---
+        - name: add repo
+          ansible.builtin.debug:
+            msg: '{{ item.repo }} {{ item.state }}'
+          with_flattened:
+            - '{{ repos }}'
+        YAML
+    })
+
+    defaults = File.join(dir, "roles", "flat", "defaults", "main.yml")
+    stdout.must_include("TASK [flat : add repo]")
+    stdout.scan(/\(item=\{'repo': 'one'/).size.must_equal(1)
+    stdout.scan(/\(item=\{'repo': 'two'/).size.must_equal(1)
+    stderr.must_include("[DEPRECATION WARNING]: #{FACT_DEPRECATION_TEXT}\n")
+    stderr.must_include("Origin: #{defaults}:5:12\n")
+    stderr.must_include("5     state: '{{ deploy_state if (ansible_distribution_release in [\"bookworm\"]) else \"absent\" }}'\n")
+    stderr.must_include("^ column 12")
+    stderr.scan(/DEPRECATION WARNING\]: #{Regex.escape(FACT_DEPRECATION_TEXT)}/).size.must_equal(1)
+  end
 end
