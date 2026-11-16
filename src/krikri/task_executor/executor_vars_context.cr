@@ -4365,17 +4365,19 @@ module Krikri
       l2 = free_form_directive ? "Finalization of task args for '#{finalization_module_name(task)}' failed: #{msg}" : "Finalization of task args for '#{finalization_module_name(task)}' failed."
       l1 = "Task failed: Finalization of task args for '#{finalization_module_name(task)}' failed: #{msg}"
 
-      # A test-plugin failure carries one MORE cause level: Ansible's chain
-      # ends "... : The test plugin 'FQCN' failed: <cause>" and the block
-      # then shows "Error while resolving value for 'KEY': The test
+      # A test-plugin failure can carry one MORE cause level: Ansible's
+      # chain ends "... : The test plugin 'FQCN' failed: <cause>" and the
+      # block then shows "Error while resolving value for 'KEY': The test
       # plugin 'FQCN' failed." (Origin at the param), then the bare
-      # <cause> text with NO Origin (live-captured 2.19.11).
-      # The TEST plugin case splits the cause into its own innermost
-      # stanza; the FILTER plugin case (mandatory) keeps the full text in
+      # <cause> text with NO Origin. That extra level only exists when the
+      # plugin wrapped an underlying Python exception; a validation error
+      # it raised directly stays inline on the params stanza
+      # (live-verified vs 2.21.6, issue #1365).
+      # The FILTER plugin case (mandatory) keeps the full text in
       # the middle stanza with no extra level (live-captured 2.19.11).
       test_plugin_pattern = /\A(Error while resolving value for '[^']+': The test plugin '[^']+' failed): (.*)\z/m
       plugin_cause = nil
-      if (m = msg.match(test_plugin_pattern)) && !m[2].empty?
+      if (m = msg.match(test_plugin_pattern)) && !m[2].empty? && ConditionalEvaluator.chained_test_plugin_cause?(m[2])
         l3 = m[1] + "."
         plugin_cause = m[2]
       end
