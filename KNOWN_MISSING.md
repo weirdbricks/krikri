@@ -644,6 +644,14 @@ because anyone intends to fix them.
   linuxbrew roles (`ctorgalson.linuxbrew`, `markosamuli.linuxbrew`), which then diverge by design:
   krikri skips those tasks, ansible runs them (and the Linux brew path fails on this hardware
   anyway - Homebrew's x86_64 build needs an SSSE3 CPU).
+- `community.general.portage` - unimplemented; Gentoo-only, and this engine targets Ubuntu and the
+  RHEL family. `fgierlinger.docker` is the role that calls it (issue #1359), and the divergence is
+  the documented skip: krikri drops both `portage:` tasks and runs on to the role's `service:` task,
+  while real Ansible executes the module, whose own source respawns itself under a hard-coded
+  `/usr/bin/python` when the Gentoo python bindings are absent, so it fatals with `[Errno 2] No such
+  file or directory: '/usr/bin/python'` on a non-Gentoo host. The unimplemented module keeps the run
+  at rc 4 (`unavailable_module_report_test.cr` pins that a later failing task does not downgrade it
+  to 2), which is what the role tester reads as COMMUNITY_MODULE_MISSING.
 - `ansible.posix.firewalld` - `zone:` defaults to the system default zone (`firewall-offline-cmd
   --get-default-zone`) and Ansible's `permanent`/`immediate`/`offline` validation is matched to Ansible's observed behavior, so
   `offline: true, permanent: true` isn't required explicitly. A running firewalld daemon (auto-detected
