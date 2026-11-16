@@ -2784,7 +2784,14 @@ module Krikri
     # items) opens a SECOND group rather than merging into the first -
     # IncludedFile#add_host refuses a host it already holds, so real prints
     # two lines and runs the tasks twice.
-    private def flush_deferred_includes(records : Array(DeferredInclude)) : Nil
+    #
+    # *print_included* is false for a static import_role:, which Ansible
+    # resolves at parse time and never announces as an include - only its
+    # spliced-in tasks show up, and they still run in lockstep.
+    # *interleave_groups* is for that same static import: its host groups
+    # are only separate loads, not separate items, so Ansible's play-level
+    # task list still reaches every host with each task before moving on.
+    private def flush_deferred_includes(records : Array(DeferredInclude), print_included : Bool = true, interleave_groups : Bool = false) : Nil
       groups = [] of {String, String, String?, Array(Task), Array(Host)}
       occurrences = Hash(String, Hash(String, Int32)).new
       records.each do |record|
@@ -2801,9 +2808,21 @@ module Krikri
         end
       end
 
-      groups.each do |group|
-        suffix = group[2] ? " => (item=#{group[2]})" : ""
-        puts "included: #{group[1]} for #{group[4].map(&.name).join(", ")}#{suffix}".colorize(:cyan)
+      if print_included
+        groups.each do |group|
+          suffix = group[2] ? " => (item=#{group[2]})" : ""
+          puts "included: #{group[1]} for #{group[4].map(&.name).join(", ")}#{suffix}".colorize(:cyan)
+        end
+      end
+      if interleave_groups && groups.size > 1
+        depth = groups.max_of? { |group| group[3].size } || 0
+        depth.times do |index|
+          groups.each do |group|
+            next unless task = group[3][index]?
+            run_task_batch([task], group[4])
+          end
+        end
+        return
       end
       groups.each { |group| run_task_batch(group[3], group[4]) }
     end
@@ -3678,15 +3697,19 @@ module Krikri
       end
     end
 
-    # The multi-host include_role: counterpart (issue #1240). Ansible's
-    # linear strategy loads the role once per host group and then runs its
-    # task list in lockstep - `included: r for host1, host2`, then "role
-    # task one" on both hosts, then "role task two" on both - where krikri
-    # used to run the whole role on host1 before starting host2.
+    # The multi-host include_role:/import_role: counterpart (issues #1240,
+    # #1389). Ansible's linear strategy loads the role once per host group
+    # and then runs its task list in lockstep - `included: r for host1,
+    # host2`, then "role task one" on both hosts, then "role task two" on
+    # both - where krikri used to run the whole role on host1 before
+    # starting host2. A static import_role: has no `included:` line of its
+    # own (Ansible resolves it at parse time, so nothing is announced), but
+    # its role tasks are spliced into the play and reach the hosts in that
+    # same lockstep.
     private def execute_include_role_multi(task : Task, hosts : Array(Host)) : Nil
       deferred = [] of DeferredInclude
       hosts.each { |host| execute_include_role(task, host, deferred) }
-      flush_deferred_includes(deferred)
+      flush_deferred_includes(deferred, print_included: !task.is_static_import?, interleave_groups: task.is_static_import?)
     end
 
     private def run_include_role_once(task : Task, host : Host, vars_context : Hash(String, JSON::Any), item_label : String?, loop_index : Int32? = nil, loop_entries : Array(JSON::Any)? = nil, deferred : Array(DeferredInclude)? = nil) : Symbol

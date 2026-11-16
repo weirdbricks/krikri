@@ -107,3 +107,120 @@ describe "multi-host include_role ordering" do
     ])
   end
 end
+
+# Verified against ansible-core 2.21.6 (issue #1389's own repro): a static
+# import_role: is spliced into the play itself, so the linear strategy
+# still runs its first task on every host before its second - and the
+# import prints no `included:` line of its own.
+describe "multi-host import_role ordering" do
+  it "runs each imported role task on every host before the next role task" do
+    code, output = run_lockstep_play({
+      "pb.yml" => <<-YAML,
+        - hosts: all
+          gather_facts: false
+          tasks:
+            - name: Import role
+              ansible.builtin.import_role:
+                name: r
+        YAML
+      "roles/r/tasks/main.yml" => <<-YAML,
+        - name: role task one
+          ansible.builtin.debug:
+            msg: "one on {{ inventory_hostname }}"
+        - name: role task two
+          ansible.builtin.debug:
+            msg: "two on {{ inventory_hostname }}"
+        YAML
+    })
+
+    code.must_equal(0)
+    output.includes?("included:").must_equal(false)
+    assert_output_order(self, output, [
+      "TASK [r : role task one]",
+      "one on localhost",
+      "one on node1",
+      "TASK [r : role task two]",
+      "two on localhost",
+      "two on node1",
+    ])
+  end
+
+  it "lists both hosts on an include_tasks line inside the imported role" do
+    code, output = run_lockstep_play({
+      "pb.yml" => <<-YAML,
+        - hosts: all
+          gather_facts: false
+          tasks:
+            - name: Import role
+              ansible.builtin.import_role:
+                name: r
+        YAML
+      "roles/r/tasks/main.yml" => <<-YAML,
+        - name: role task one
+          ansible.builtin.debug:
+            msg: "one on {{ inventory_hostname }}"
+        - name: include more
+          ansible.builtin.include_tasks: more.yml
+        - name: role task two
+          ansible.builtin.debug:
+            msg: "two on {{ inventory_hostname }}"
+        YAML
+      "roles/r/tasks/more.yml" => <<-YAML,
+        - name: included task
+          ansible.builtin.debug:
+            msg: "in include on {{ inventory_hostname }}"
+        YAML
+    })
+
+    code.must_equal(0)
+    assert_output_order(self, output, [
+      "TASK [r : role task one]",
+      "one on localhost",
+      "one on node1",
+      "TASK [r : include more]",
+      "more.yml for localhost, node1",
+      "TASK [r : included task]",
+      "in include on localhost",
+      "in include on node1",
+      "TASK [r : role task two]",
+      "two on localhost",
+      "two on node1",
+    ])
+  end
+
+  it "keeps the task-by-task order when the import's vars render per host" do
+    code, output = run_lockstep_play({
+      "pb.yml" => <<-YAML,
+        - hosts: all
+          gather_facts: false
+          tasks:
+            - name: Import role
+              ansible.builtin.import_role:
+                name: r
+              vars:
+                marker: "{{ inventory_hostname }}"
+        YAML
+      "roles/r/tasks/main.yml" => <<-YAML,
+        - name: role task one
+          ansible.builtin.debug:
+            msg: "one on {{ inventory_hostname }}"
+        - name: marker task
+          ansible.builtin.debug:
+            msg: "marker on {{ marker }}"
+        - name: role task two
+          ansible.builtin.debug:
+            msg: "two on {{ inventory_hostname }}"
+        YAML
+    })
+
+    code.must_equal(0)
+    assert_output_order(self, output, [
+      "one on localhost",
+      "one on node1",
+      "marker on localhost",
+      "marker on node1",
+      "two on localhost",
+      "two on node1",
+    ])
+  end
+end
