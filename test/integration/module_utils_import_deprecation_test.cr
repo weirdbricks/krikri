@@ -62,6 +62,41 @@ describe "deprecated ansible.module_utils import warnings from native plugins" d
       "Importing 'to_native' from 'ansible.module_utils._text' is deprecated.")
   end
 
+  it "carries docker_container's _collections_compat module deprecation (issue #1318)" do
+    # community.docker 4.7.0's docker_container.py imports module_utils/
+    # module_container/docker_api.py, which imports module_utils/
+    # common_api.py, whose opening `_collections_compat` import deprecates
+    # the module itself - one console line and one registered entry, even
+    # when the task fails argument validation afterwards (live-verified vs
+    # ansible-core 2.21.6 + community.docker 4.7.0).
+    root = PluginSpecHelper.tmp_path("module-utils-docker-compat")
+    base = File.join(root, "ansible_collections", "community", "docker", "plugins")
+    FileUtils.mkdir_p(File.join(base, "modules"))
+    FileUtils.mkdir_p(File.join(base, "module_utils", "module_container"))
+    File.write(File.join(base, "modules", "docker_container.py"),
+      "from ansible_collections.community.docker.plugins.module_utils.module_container.docker_api import DockerAPI\n")
+    File.write(File.join(base, "module_utils", "module_container", "docker_api.py"),
+      "from ansible_collections.community.docker.plugins.module_utils.common_api import AnsibleDockerClientBase\n")
+    File.write(File.join(base, "module_utils", "common_api.py"),
+      "from ansible.module_utils.common._collections_compat import Mapping, Sequence\n")
+
+    result = PluginSpecHelper.run("docker_container", {} of String => String,
+      collection_version: "4.7.0", env: {"ANSIBLE_COLLECTIONS_PATH" => root})
+
+    result["failed"].as_bool.must_equal(true)
+    result["_ansible_core_deprecations"].as_a.map(&.as_s).must_equal([
+      Krikri::ModuleUtilsDeprecations::COLLECTIONS_COMPAT_DEPRECATION_TEXT,
+    ])
+    result["deprecations"].as_a.must_equal([
+      JSON.parse({
+        "msg"             => Krikri::ModuleUtilsDeprecations::COLLECTIONS_COMPAT_DEPRECATION_MSG,
+        "collection_name" => "ansible.builtin",
+        "version"         => "2.24",
+        "deprecator"      => {"resolved_name" => "ansible.builtin", "type" => nil},
+      }.to_json),
+    ])
+  end
+
   it "carries amazon.aws's payload import deprecations where the target sees no collection tree (issue #1199)" do
     # The native ec2_vpc_net_info binary runs on the TARGET, which has no
     # amazon.aws tree to scan, so only the modeled table can reproduce
@@ -242,6 +277,43 @@ describe "module_utils import deprecations follow the installed payload source" 
     # the module at all, so the modeled pair stands (the issue #1000
     # behavior).
     Krikri::ModuleUtilsDeprecations.text_import_deprecation_symbols("totally.absent.mount").must_equal(["to_bytes", "to_native"])
+  end
+
+  it "models docker_container's _collections_compat event until community.docker 4.8.0 (issue #1318)" do
+    # The SSH-round shape: docker_container's plugin binary runs on the
+    # TARGET, where no community.docker tree exists to scan, so the
+    # controller-pinned release decides. 4.7.x's common_api.py deprecates
+    # the module on import; 4.8.0 moved to six.moves.collections_abc and
+    # warns nothing (source-verified against the tagged releases).
+    Krikri::ModuleUtilsDeprecations.text_import_deprecation_symbols("totally.absent.docker_container", "4.7.0")
+      .must_equal([Krikri::ModuleUtilsDeprecations::COLLECTIONS_COMPAT_SYMBOL])
+    Krikri::ModuleUtilsDeprecations.text_import_deprecation_texts("totally.absent.docker_container", "4.7.0")
+      .must_equal([Krikri::ModuleUtilsDeprecations::COLLECTIONS_COMPAT_DEPRECATION_TEXT])
+    Krikri::ModuleUtilsDeprecations.text_import_deprecation_result_entries("totally.absent.docker_container", "4.7.0")[0]["msg"]
+      .as_s.must_equal(Krikri::ModuleUtilsDeprecations::COLLECTIONS_COMPAT_DEPRECATION_MSG)
+    Krikri::ModuleUtilsDeprecations.text_import_deprecation_symbols("totally.absent.docker_container", "4.8.0")
+      .must_equal([] of String)
+    Krikri::ModuleUtilsDeprecations.text_import_deprecation_symbols("totally.absent.docker_container", "5.2.1")
+      .must_equal([] of String)
+  end
+
+  it "derives the _collections_compat event from an installed payload chain (issue #1318)" do
+    # docker_container.py -> module_container/docker_api.py ->
+    # common_api.py, whose compat import is the payload's only
+    # deprecated one - no _text name anywhere, so the old text-only
+    # filter dropped the event entirely.
+    base = File.join(@fixture_root, "ansible_collections", "community", "docker", "plugins")
+    FileUtils.mkdir_p(File.join(base, "modules"))
+    FileUtils.mkdir_p(File.join(base, "module_utils", "module_container"))
+    File.write(File.join(base, "modules", "docker_container.py"),
+      "from ansible_collections.community.docker.plugins.module_utils.module_container.docker_api import DockerAPI\n")
+    File.write(File.join(base, "module_utils", "module_container", "docker_api.py"),
+      "from ansible_collections.community.docker.plugins.module_utils.common_api import AnsibleDockerClientBase\n")
+    File.write(File.join(base, "module_utils", "common_api.py"),
+      "from ansible.module_utils.common._collections_compat import Mapping, Sequence\n")
+
+    Krikri::ModuleUtilsDeprecations.text_import_deprecation_symbols("community.docker.docker_container")
+      .must_equal([Krikri::ModuleUtilsDeprecations::COLLECTIONS_COMPAT_SYMBOL])
   end
 
   it "keeps the modeled podman_container pair until its own migration boundary (issue #1156)" do
