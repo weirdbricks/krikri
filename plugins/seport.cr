@@ -2,6 +2,7 @@
 
 require "json"
 require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/python_lib_gate"
 
 module Krikri
   # Seport plugin - manages an SELinux port type mapping via `semanage
@@ -71,6 +72,21 @@ module Krikri
         end
       end
       ignore_selinux_state = true?(@params["ignore_selinux_state"]?)
+
+      # Real seport.py's module-level import gates, in their own order:
+      # `import selinux` -> missing_required_lib("libselinux-python"),
+      # then `import seobject` -> missing_required_lib("policycoreutils-python"),
+      # both before the runtime-state check. This plugin shells out to
+      # `semanage` instead of binding the libraries, so it used to sail
+      # past a target whose python lacks them and report its own
+      # downstream state instead (issue #1416, dtoch56.ssh: Ansible
+      # failed on the gate while krikri reported the task ok).
+      if gate = Krikri.missing_python_library("libselinux-python", "selinux")
+        return PluginResult.new(changed: false, failed: true, msg: gate[:msg])
+      end
+      if gate = Krikri.missing_python_library("policycoreutils-python", "seobject")
+        return PluginResult.new(changed: false, failed: true, msg: gate[:msg])
+      end
 
       unless ignore_selinux_state
         enforce = remote_exec("getenforce")

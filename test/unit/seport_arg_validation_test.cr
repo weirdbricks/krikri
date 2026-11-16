@@ -58,11 +58,20 @@ describe "seport argument validation order" do
   end
 
   it "still fails valid-args cases on the SELinux gate (not the new validations)" do
+    # The library gates added for issue #1416 sit between the argspec and
+    # the SELinux runtime gate, so this fake host has to present an
+    # interpreter that imports libselinux/seobject for the runtime gate
+    # to stay reachable.
+    scratch = PluginSpecHelper.tmp_path("seport-arg-order-python")
+    Dir.mkdir_p(scratch)
+    File.write(File.join(scratch, "python3.13"), "#!/bin/sh\nexit 0\n")
+    File.chmod(File.join(scratch, "python3.13"), 0o755)
+
     result = PluginSpecHelper.run("seport", {
       "ports"  => "8080",
       "proto"  => "tcp",
       "setype" => "krikri_port_t",
-    })
+    }, env: {"PATH" => "#{scratch}:#{ENV["PATH"]}"})
 
     result["msg"].as_s.must_equal("SELinux is disabled on this host.")
   end

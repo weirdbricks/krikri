@@ -22,6 +22,11 @@ describe "seport check mode and port-ownership semantics" do
     listing = PluginSpecHelper.tmp_path("listing")
     File.write(listing, LISTING)
     File.write(File.join(bin, "getenforce"), "#!/bin/bash\necho Enforcing\n")
+    # seport's data path only runs once the module's libselinux/seobject
+    # import gates pass (issue #1416), so the fake host needs an
+    # interpreter that imports both.
+    File.write(File.join(bin, "python3.13"), "#!/bin/sh\nexit 0\n")
+    File.chmod(File.join(bin, "python3.13"), 0o755)
     File.write(File.join(bin, "semanage"), <<-SH)
       #!/bin/bash
       if [ "$1 $2" = "port -l" ]; then
