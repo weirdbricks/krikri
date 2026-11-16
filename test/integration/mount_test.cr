@@ -432,4 +432,28 @@ describe "mount plugin" do
     result["changed"].as_bool.must_equal(true)
     File.exists?(fstab).must_equal(true)
   end
+
+  # mount.py creates the missing fstab with `open(args['fstab'], 'a')`,
+  # i.e. Python's 0666 opener, leaving the umask to decide the mode -
+  # 0664 under umask 002, not Crystal's fixed 0644 default
+  # (live-verified against ansible.posix 2.2.2 with ansible-core 2.21.5).
+  it "creates a missing fstab file 0666 & ~umask, like mount.py's bare open()" do
+    fstab = PluginSpecHelper.tmp_path("umask-002.fstab")
+
+    PluginSpecHelper.run("mount", {
+      "path" => PluginSpecHelper.tmp_path("umask-mount-point"), "state" => "remounted",
+      "fstab" => fstab, "_ansible_check_mode" => "true",
+    }, umask: 0o002)
+
+    File.info(fstab).permissions.value.must_equal(0o664)
+
+    fstab = PluginSpecHelper.tmp_path("umask-022.fstab")
+
+    PluginSpecHelper.run("mount", {
+      "path" => PluginSpecHelper.tmp_path("umask-mount-point"), "state" => "remounted",
+      "fstab" => fstab, "_ansible_check_mode" => "true",
+    }, umask: 0o022)
+
+    File.info(fstab).permissions.value.must_equal(0o644)
+  end
 end
