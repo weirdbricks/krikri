@@ -75,6 +75,11 @@ module Krikri
   # `uninstall`/`common_opts` source directly (flag order included), via
   # a new pure `PluginHelpers::GemCommand`.
   #
+  # check_mode follows gem.py's own `supports_check_mode=True` handling
+  # (issue #1346): install()/uninstall() return immediately under
+  # --check, AFTER exists() has run its `gem list` probe, so the task
+  # reports the same changed/ok answer without touching the host.
+  #
   # Not implemented: `install_dir:` (real additionally exports GEM_HOME).
   class GemPlugin < BasePlugin
     def execute : PluginResult
@@ -127,9 +132,19 @@ module Krikri
         return probe_error
       end
 
+      # gem.py declares supports_check_mode=True and both mutating helpers
+      # open with `if module.check_mode: return` - so a check-mode task
+      # still runs exists()'s `gem list` probe (which can fail hard, as it
+      # does for real) and reports the usual changed/ok answer, but never
+      # runs `gem install`/`gem uninstall`. Without this, kpg's
+      # 000006-multi-gem-chaos (issue #1346) ran the install for real
+      # under --check and failed on an unresolvable gem where Ansible
+      # reported changed.
+      check_mode = true?(@params["_ansible_check_mode"]?)
+
       case state
       when "absent"
-        remove(executable, name, version)
+        remove(executable, name, version, check_mode)
       when "latest"
         # Ansible resolves the latest REMOTE version first and then
         # runs the same exact-version installed check as state=present,
@@ -144,9 +159,9 @@ module Krikri
         # string, so the module reinstalls on every run. Matching that
         # exactly, including the non-idempotence.
         resolved = list_versions(executable, name, remote: true)[0]?
-        install(executable, name, install_target, resolved)
+        install(executable, name, install_target, resolved, check_mode)
       else
-        install(executable, name, install_target, version)
+        install(executable, name, install_target, version, check_mode)
       end
     end
 
@@ -258,8 +273,12 @@ module Krikri
       version ? versions.includes?(version) : !versions.empty?
     end
 
-    private def install(executable : String?, name : String, target : String, version : String?) : PluginResult
+    private def install(executable : String?, name : String, target : String, version : String?, check_mode : Bool) : PluginResult
       return gem_success(false, name, version) if installed?(executable, name, version)
+
+      # gem.py's install() short-circuits under --check, and main() still
+      # marks the task changed because exists() said the gem is missing.
+      return gem_success(true, name, version) if check_mode
 
       user_install = @params["user_install"]?.nil? || true?(@params["user_install"]?)
       bindir = @params["bindir"]?
@@ -289,8 +308,14 @@ module Krikri
       gem_success(true, name, version)
     end
 
-    private def remove(executable : String?, name : String, version : String?) : PluginResult
+    private def remove(executable : String?, name : String, version : String?, check_mode : Bool) : PluginResult
       return gem_success(false, name, version) unless installed?(executable, name, version)
+
+      # gem.py's uninstall() short-circuits under --check; main() reports
+      # changed because exists() found the gem. Its follow-up "still
+      # present after gem uninstall" check only runs when uninstall
+      # actually produced command output, so check mode never fails here.
+      return gem_success(true, name, version) if check_mode
 
       cmd = PluginHelpers::GemCommand.uninstall_command(gem_binary(executable), name, version, effective_norc, true?(@params["force"]?))
       result = remote_exec(cmd)
