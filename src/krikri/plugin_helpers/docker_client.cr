@@ -11,11 +11,13 @@ module Krikri
     # docker_container.cr/docker_image.cr/docker_network.cr instead of
     # each duplicating the same docker_host:/TLS param parsing.
     #
-    # - docker_host: "unix:///path/to.sock" (or a bare path) /
-    #   "tcp://host:port" / "https://host:port" - defaults to the
-    #   DOCKER_HOST environment variable (the same convention the Docker
-    #   CLI and every other Docker SDK honor), falling back further to
-    #   Docr::Client's own UNIX-socket default when neither is set.
+    # - docker_host: "unix:///path/to.sock" / "tcp://host:port" /
+    #   "https://host:port" - defaults to the DOCKER_HOST environment
+    #   variable (the same convention the Docker CLI and every other
+    #   Docker SDK honor), falling back further to Docr::Client's own
+    #   UNIX-socket default when neither is set. Parsed the way the SDK's
+    #   parse_host() reads it (see #parse_host), so a value real rejects
+    #   fails here too instead of being read as a socket path.
     # - tls: bool, default false (or the DOCKER_TLS env var if the param
     #   itself is omitted, matching Ansible's own documented
     #   fallback) - secures the connection with TLS *without* verifying
@@ -92,6 +94,23 @@ module Krikri
       }
       # _util.py's DOCKER_REQUIRED_TOGETHER - shared by every API module.
       COMMON_REQUIRED_TOGETHER = %w[client_cert client_key]
+
+      # Raised for a docker_host: the SDK's parse_host() rejects before it
+      # can build a transport. Real's Client.__init__ lets the SDK's
+      # DockerException escape and AnsibleDockerClientBase wraps it in
+      # "Error connecting: <text>" - note the missing "Error while
+      # fetching server API version:" middle, since this happens before
+      # the api_version round trip.
+      class InvalidDockerHostError < Exception
+      end
+
+      # docker_host: as parse_host() reads it: a UNIX socket path, or a
+      # TCP endpoint (host + port).
+      record ParsedHost, socket_path : String?, host : String?, port : Int32? do
+        def tcp? : Bool
+          !host.nil?
+        end
+      end
 
       # Raised by sdk_import_gate so BasePlugin#run_and_capture can turn it
       # into the exact failure real's client construction produces (msg in
@@ -237,16 +256,170 @@ module Krikri
 
       def self.build(params : Hash(String, String)) : {Docr::Client, String}
         docker_host = resolved_docker_host(params)
+        # The SDK's fail_on_missing_imports() runs at the top of
+        # Client.__init__, BEFORE parse_host() - so a target missing
+        # `requests` fails with the missing-library wording even when
+        # docker_host: is unparsable.
+        sdk_import_gate
+        parsed = parse_host(docker_host)
 
-        if docker_host && (docker_host.starts_with?("tcp://") || docker_host.starts_with?("https://") || docker_host.starts_with?("http://"))
-          build_tcp(params, docker_host)
+        if (host = parsed.host) && (port = parsed.port)
+          build_tcp(params, docker_host, host, port)
         else
-          socket_path = docker_host.try(&.sub(/^unix:\/\//, ""))
-          sdk_import_gate
+          socket_path = parsed.socket_path
+          # AnsibleDockerClientBase parses its pinned api_version right
+          # after constructing the client (so after parse_host), and
+          # before any request goes out.
           validate_api_version!(params)
           client = Docr::Client.new(socket_path)
           {client, socket_path || "default socket #{Docr::Client::DEFAULT_SOCKET_PATH}"}
         end
+      end
+
+      # "Error connecting: ..." for a failure while building or using the
+      # client: an unparsable docker_host: carries the SDK's own text (its
+      # client construction fails before the version round trip), any
+      # other failure the requests-shaped version-fetch text.
+      def self.connect_failure_text(ex : Exception, params : Hash(String, String)) : String
+        return DockerSdkError.client_init_error_text(ex) if ex.is_a?(InvalidDockerHostError)
+        if ex.is_a?(Socket::ConnectError)
+          return DockerSdkError.connect_error_text(ex, resolved_docker_host(params))
+        end
+        "Error connecting: #{ex.message}"
+      end
+
+      # The SDK's parse_host() (module_utils/_api/utils/utils.py), the
+      # first thing Client.__init__ runs on the resolved docker_host:
+      # urlparse() the value, rewrite http/https and http+unix onto
+      # tcp/unix, and reject what docker cannot represent. Every failure
+      # text here is the SDK's own DockerException wording, which real
+      # reports as "Error connecting: <text>".
+      #
+      # A scheme-less value is a TCP endpoint (urlparse's "//addr" retry),
+      # not a socket path: "docker_host: spcyng" is host spcyng with no
+      # port, which the SDK rejects outright - port 2375/2376 is no
+      # longer defaulted (docker-py 7.x).
+      def self.parse_host(docker_host : String?) : ParsedHost
+        return ParsedHost.new(nil, nil, nil) if docker_host.nil?
+        addr = docker_host.strip
+        # "" and "unix://" both mean the SDK's default socket.
+        return ParsedHost.new(nil, nil, nil) if addr.empty? || addr == "unix://"
+
+        proto, rest = parse_scheme(addr)
+        authority, path = split_authority(rest)
+        validate_authority!(addr, proto, rest, authority, path)
+
+        case proto
+        when "tcp", "ssh"
+          tcp_endpoint(addr, proto, authority)
+        else
+          # unix, plus npipe - docr has no Windows transport, so that one
+          # keeps the raw value as a socket path rather than inventing a
+          # connection.
+          ParsedHost.new(socket_path_for(authority, path), nil, nil)
+        end
+      end
+
+      # urlparse()'s scheme detection followed by the SDK's own rewrites
+      # (http/https onto tcp, http+unix onto unix).
+      private def self.parse_scheme(addr : String) : {String, String}
+        proto, rest = split_scheme(addr)
+        # urlparse() finds no scheme when none is followed by ':', or when
+        # the scheme has characters docker does not accept (the SDK keeps
+        # only letters and '+'); such values are retried as "//addr" over
+        # tcp.
+        if proto.nil? || !proto.each_char.all? { |char| char.ascii_letter? || char == '+' }
+          proto = "tcp"
+          rest = "//#{addr}"
+        end
+
+        proto = "tcp" if proto == "http" || proto == "https"
+        proto = "unix" if proto == "http+unix"
+
+        unless %w[tcp unix npipe ssh].includes?(proto)
+          raise InvalidDockerHostError.new("Invalid bind address protocol: #{addr}")
+        end
+        {proto, rest}
+      end
+
+      # The shapes parse_host() refuses even though urlparse() can carry
+      # them.
+      private def self.validate_authority!(addr : String, proto : String, rest : String, authority : String, path : String) : Nil
+        # Credentials, query strings, fragments and params.
+        if rest.includes?('?') || rest.includes?('#') || path.includes?(';') ||
+           (authority.includes?('@') && authority.split('@').first.includes?(':'))
+          raise InvalidDockerHostError.new("Invalid bind address format: #{addr}")
+        end
+
+        # "tcp://" is exceptionally disallowed by convention.
+        if proto == "tcp" && authority.empty?
+          raise InvalidDockerHostError.new("Invalid bind address format: #{addr}")
+        end
+
+        if proto == "ssh" && !path.empty?
+          raise InvalidDockerHostError.new("Invalid bind address format: no path allowed for this protocol: #{addr}")
+        end
+      end
+
+      private def self.tcp_endpoint(addr : String, proto : String, authority : String) : ParsedHost
+        hostname, port = authority_host_port(authority)
+        port = 22 if proto == "ssh" && port.nil?
+        if port.nil?
+          raise InvalidDockerHostError.new("Invalid bind address format: port is required: #{addr}")
+        end
+        ParsedHost.new(nil, hostname.empty? ? "127.0.0.1" : hostname, port)
+      end
+
+      # The socket path of a unix:// URL: urlparse() puts a legacy
+      # unix://path URL's first component in the authority, and the SDK
+      # joins it back onto the path.
+      private def self.socket_path_for(authority : String, path : String) : String?
+        socket = (authority.empty? ? path : "#{authority}/#{path}").rstrip('/')
+        socket.empty? ? nil : socket
+      end
+
+      # Python's urlparse() scheme detection: a leading
+      # [A-Za-z][A-Za-z0-9+.-]* followed by ':', with everything after the
+      # colon as the remainder. {nil, addr} when there is no scheme.
+      private def self.split_scheme(addr : String) : {String?, String}
+        if match = addr.match(/\A([A-Za-z][A-Za-z0-9+.\-]*):(.*)\z/m)
+          {match[1], match[2]}
+        else
+          {nil, addr}
+        end
+      end
+
+      # The URL authority (everything after a leading "//", up to the path)
+      # and the path remainder - urlparse()'s own split.
+      private def self.split_authority(rest : String) : {String, String}
+        return {"", rest} unless rest.starts_with?("//")
+        after = rest[2..]
+        stop = after.index(/[\/?#]/) || after.size
+        {after[0...stop], after[stop..]}
+      end
+
+      # [userinfo@]host[:port] from a URL authority, bracketed IPv6
+      # literals included. A nil port means the authority carried none (or
+      # a non-positive/unparsable one, which the SDK treats the same).
+      private def self.authority_host_port(authority : String) : {String, Int32?}
+        host_port = authority.includes?('@') ? authority.split('@').last : authority
+
+        if host_port.starts_with?('[')
+          close = host_port.index(']')
+          return {host_port, nil} unless close
+          rest = host_port[(close + 1)..]
+          return {host_port[1...close], positive_port(rest[1..])} if rest.starts_with?(':')
+          return {host_port[1...close], nil}
+        end
+
+        host, _, port_text = host_port.rpartition(':')
+        return {host_port, nil} if host.empty?
+        {host, positive_port(port_text)}
+      end
+
+      private def self.positive_port(text : String) : Int32?
+        port = text.to_i?
+        port && port > 0 ? port : nil
       end
 
       # The docker_host the plugin will actually talk to: the docker_host:
@@ -273,14 +446,10 @@ module Krikri
         {} of String => String
       end
 
-      private def self.build_tcp(params : Hash(String, String), docker_host : String) : {Docr::Client, String}
-        uri = URI.parse(docker_host)
-        host = uri.host || raise "docker_host: '#{docker_host}' is missing a hostname"
-        port = uri.port || 2376
+      private def self.build_tcp(params : Hash(String, String), docker_host : String?, host : String, port : Int32) : {Docr::Client, String}
         tls_hostname = params["tls_hostname"]? || env_overlay(params)["DOCKER_TLS_HOSTNAME"]? || ENV["DOCKER_TLS_HOSTNAME"]?
 
         tls = build_tls_context(params, docker_host)
-        sdk_import_gate
         validate_api_version!(params)
         client = Docr::Client.new(host, port, tls, tls_hostname)
         {client, "#{docker_host}#{tls ? " (TLS)" : ""}"}
@@ -290,7 +459,7 @@ module Krikri
       # or tls:/validate_certs: was explicitly given (as a param or via
       # DOCKER_TLS/DOCKER_TLS_VERIFY) - see the class doc comment above
       # for why cert paths alone deliberately do NOT trigger this.
-      private def self.build_tls_context(params : Hash(String, String), docker_host : String) : OpenSSL::SSL::Context::Client?
+      private def self.build_tls_context(params : Hash(String, String), docker_host : String?) : OpenSSL::SSL::Context::Client?
         overlay = env_overlay(params)
         return nil unless tls_requested?(params, docker_host, overlay)
         validate = flag?(params["validate_certs"]? || params["tls_verify"]? || overlay["DOCKER_TLS_VERIFY"]? || ENV["DOCKER_TLS_VERIFY"]?)
@@ -308,8 +477,8 @@ module Krikri
       # validate_certs: param or their DOCKER_TLS/DOCKER_TLS_VERIFY env
       # fallbacks (task environment: overlay first) turn it on - see the
       # class doc comment for why cert paths alone do not.
-      private def self.tls_requested?(params : Hash(String, String), docker_host : String, overlay : Hash(String, String)) : Bool
-        return true if docker_host.starts_with?("https://")
+      private def self.tls_requested?(params : Hash(String, String), docker_host : String?, overlay : Hash(String, String)) : Bool
+        return true if docker_host.try(&.starts_with?("https://"))
         return true if flag?(params["tls"]? || overlay["DOCKER_TLS"]? || ENV["DOCKER_TLS"]?)
 
         flag?(params["validate_certs"]? || params["tls_verify"]? || overlay["DOCKER_TLS_VERIFY"]? || ENV["DOCKER_TLS_VERIFY"]?)

@@ -93,4 +93,32 @@ describe "docker_login plugin argument validation" do
     result.as_h.keys.to_a.must_equal(["changed", "login_result", "failed"])
     result["login_result"].as_h.empty?.must_equal(true)
   end
+
+  # docker_login.py's main() constructs its AnsibleDockerClient before
+  # LoginManager.run() branches on state:, so state=absent still resolves
+  # docker_host: (the SDK's parse_host, in the client's __init__) and
+  # still makes the client's first GET /version round trip. Both failures
+  # are real's "Error connecting: ..." wording.
+  it "state=absent still builds the client, so an unparsable docker_host fails" do
+    skip("the docker SDK's python deps (requests) are not importable on this host's python") unless PluginSpecHelper.docker_sdk_importable?
+    result = PluginSpecHelper.run("docker_login", {
+      "state"       => "absent",
+      "docker_host" => "spcyng",
+    })
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("Error connecting: Invalid bind address format: port is required: spcyng")
+  end
+
+  it "state=absent still pings the daemon, so an unreachable one fails" do
+    skip("the docker SDK's python deps (requests) are not importable on this host's python") unless PluginSpecHelper.docker_sdk_importable?
+    result = PluginSpecHelper.run("docker_login", {
+      "state"       => "absent",
+      "docker_host" => "unix:///tmp/krikri-login-absent-#{Process.pid}.sock",
+    })
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("Error connecting: Error while fetching server API version: " \
+                                  "('Connection aborted.', FileNotFoundError(2, 'No such file or directory'))")
+  end
 end
