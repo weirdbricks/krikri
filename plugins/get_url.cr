@@ -673,6 +673,14 @@ module Krikri
     # existed to keep the rename unconditionally atomic before that
     # fallback landed (issue #475).
     #
+    # Under an unprivileged become_user real deliberately sends
+    # _ansible_tmpdir=None, so the module rebuilds its tmp dir from
+    # remote_tmp as that user; when that home is uncreatable (loki's
+    # createhome: no) basic.py warns and stages in the system temp dir
+    # instead. krikri has no executor-level tmp dir to hand down, so it
+    # stages under remote_tmp whenever that resolves and makes the same
+    # system-temp fallback when it does not (issue #1353).
+    #
     # An explicit tmp_dest: is always honoured (its own validity checks
     # ran in #execute, and a task that names an unwritable one must fail
     # on it rather than quietly stage somewhere else). Staging away from
@@ -685,8 +693,18 @@ module Krikri
         return mkstemp_path(tmp_dest)
       end
 
-      tmpdir = expand_tilde("~/.ansible/tmp/ansible-tmp-#{sprintf("%.7f", Time.local.to_unix_f)}-#{Process.pid}-#{Random.rand(100_000_000_000_000..999_999_999_999_999)}")
-      Dir.mkdir_p(tmpdir, mode: 0o700)
+      if basedir = module_remote_tmp
+        tmpdir = File.join(basedir, "ansible-tmp-#{sprintf("%.7f", Time.local.to_unix_f)}-#{Process.pid}-#{Random.rand(100_000_000_000_000..999_999_999_999_999)}")
+        Dir.mkdir_p(tmpdir, mode: 0o700)
+        return mkstemp_path(tmpdir)
+      end
+
+      # basic.py's tempfile.mkdtemp(dir=None): a fresh 0700 dir in the
+      # system temp dir, named ansible-moduletmp-<time>-<rand>.
+      random_chars = "abcdefghijklmnopqrstuvwxyz0123456789_"
+      suffix = String.build(8) { |builder| 8.times { builder << random_chars[Random.rand(random_chars.size)] } }
+      tmpdir = File.join(Dir.tempdir, "ansible-moduletmp-#{sprintf("%.7f", Time.local.to_unix_f)}-#{suffix}")
+      Dir.mkdir(tmpdir, mode: 0o700)
       mkstemp_path(tmpdir)
     end
 
@@ -713,13 +731,15 @@ module Krikri
       raise "unable to create a temporary file in #{dir}"
     end
 
-    # The ansible-tmp staging dir is plugin-local (krikri has no
-    # executor-level cleanup of it), so drop it as soon as the staged
-    # file is gone - rmdir only succeeds on an empty dir, so the
-    # best-effort delete can never remove anything else.
+    # The ansible-tmp (or system-temp ansible-moduletmp) staging dir is
+    # plugin-local (krikri has no executor-level cleanup of it), so drop
+    # it as soon as the staged file is gone - rmdir only succeeds on an
+    # empty dir, so the best-effort delete can never remove anything
+    # else.
     private def cleanup_staging_dir(tmp_path : String) : Nil
       tmpdir = File.dirname(tmp_path)
-      return unless File.basename(tmpdir).starts_with?("ansible-tmp-")
+      basename = File.basename(tmpdir)
+      return unless basename.starts_with?("ansible-tmp-") || basename.starts_with?("ansible-moduletmp-")
       begin
         Dir.delete(tmpdir)
       rescue

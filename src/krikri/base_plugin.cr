@@ -625,18 +625,55 @@ module Krikri
       end
       return nil if cwd_accessible
 
+      resolve_remote_tmp
+      return @remote_tmp_failure_warning if @remote_tmp_failure_warning
+      return nil unless @remote_tmp_created && (basedir = @remote_tmp_basedir)
+
+      "Module remote_tmp #{basedir} did not exist and was created with a mode of 0700, this may cause issues when running as another user. To avoid this, create the remote_tmp dir with the correct permissions manually"
+    end
+
+    @remote_tmp_basedir : String?
+    @remote_tmp_failure_warning : String?
+    @remote_tmp_created = false
+    @remote_tmp_resolved = false
+
+    # basic.py's tmpdir property resolves remote_tmp once per module run
+    # and memoizes the result: _set_cwd reaches for the property before
+    # the plugin body, and a plugin that stages a file (get_url asks for
+    # module.tmpdir) reaches for the same property later. Real warns at
+    # most once per run, so the creation attempt and its warning happen
+    # once here too.
+    private def resolve_remote_tmp : Nil
+      return if @remote_tmp_resolved
+      @remote_tmp_resolved = true
+
       configured = @vars["ansible_remote_tmp"]?.try(&.as_s?)
       basedir = expand_tilde(expand_dollar_vars(configured && !configured.empty? ? configured : "~/.ansible/tmp"))
-      return nil if basedir.empty? || File.exists?(basedir)
+      return if basedir.empty?
+      if File.exists?(basedir)
+        @remote_tmp_basedir = basedir
+        return
+      end
 
       missing = remote_tmp_missing_dirs(basedir)
       begin
         missing.reverse_each { |dir| Dir.mkdir(dir, 0o700) }
       rescue ex : File::Error
-        return remote_tmp_create_failure_warning(basedir, ex)
+        @remote_tmp_failure_warning = remote_tmp_create_failure_warning(basedir, ex)
+        return
       end
+      @remote_tmp_basedir = basedir
+      @remote_tmp_created = true
+    end
 
-      "Module remote_tmp #{basedir} did not exist and was created with a mode of 0700, this may cause issues when running as another user. To avoid this, create the remote_tmp dir with the correct permissions manually"
+    # The remote_tmp basic.py's tmpdir property resolved, or nil when it
+    # could not be created (the property then falls back to the system
+    # temp dir). Plugins staging files under module.tmpdir stage under
+    # this directory too, so a become_user whose home is uncreatable
+    # falls back exactly like real instead of crashing (issue #1353).
+    protected def module_remote_tmp : String?
+      resolve_remote_tmp
+      @remote_tmp_basedir
     end
 
     # os.makedirs(path, mode=0o700) modes every directory component it
@@ -731,7 +768,15 @@ module Krikri
     # wrapper.
     private def run_and_capture_result : String
       remote_tmp_warning = remote_tmp_init_warning
-      finalize_result(attach_remote_tmp_warning(execute, remote_tmp_warning)).to_json
+      # A plugin that stages files asks for module.tmpdir during execute,
+      # so its fallback warning is collected only after the body returns.
+      # Prepending the init warning afterwards keeps real's order: init
+      # runs first, and the two are the same text when init already
+      # resolved remote_tmp itself (deduped by the attach helper). Read
+      # the recorded warning directly: resolving remote_tmp here would
+      # create the directory for plugins that never ask for it.
+      result = attach_remote_tmp_warning(execute, @remote_tmp_failure_warning)
+      finalize_result(attach_remote_tmp_warning(result, remote_tmp_warning)).to_json
     rescue ex : BoolParamError
       # The message is already the exact user-facing failure Ansible
       # produces at module setup (parameters.py's check_type_bool wrapper,

@@ -1907,6 +1907,41 @@ describe "get_url plugin" do
     FileUtils.rm_rf(File.dirname(dest)) if dest && Dir.exists?(File.dirname(dest))
   end
 
+  it "falls back to the system temp dir when remote_tmp cannot be created (issue #1353)" do
+    # softasap.sa_loki_promtail downloads as `become_user: loki`, a
+    # createhome: no user whose /home/loki does not exist. Real's
+    # basic.py tmpdir then warns "Unable to use ... as temporary
+    # directory, falling back to system default" and stages under
+    # tempfile.gettempdir(); krikri used to crash on the mkdir and fail
+    # the whole role run with "Plugin execution failed".
+    skip "root bypasses the HOME permissions this fallback needs" if PluginSpecHelper.running_as_root?
+
+    home = PluginSpecHelper.tmp_path("geturl-fallback-home-#{Random::Secure.hex(4)}")
+    dest = File.join(PluginSpecHelper.tmp_path("geturl-fallback-dest-#{Random::Secure.hex(4)}"), "file.txt")
+    FileUtils.mkdir_p(home)
+    FileUtils.mkdir_p(File.dirname(dest))
+    File.chmod(home, 0o555)
+    begin
+      result = PluginSpecHelper.run("get_url", {"url" => "#{GET_URL_TEST_BASE}/file.txt", "dest" => dest}, env: {"HOME" => home})
+
+      falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+      result["changed"].as_bool.must_equal(true)
+      File.read(dest).must_equal(FILE_CONTENT)
+      basedir = File.join(home, ".ansible/tmp")
+      cause = "[Errno 13] Permission denied: '#{File.join(home, ".ansible")}'"
+      msg = "Unable to use '#{basedir}' as temporary directory, falling back to system default"
+      result["warnings"]?.try(&.as_a?).try(&.map(&.as_s)).must_equal([
+        "#{msg}: #{cause}\n\n#{msg}.\n\n<<< caused by >>>\n\n#{cause}",
+      ])
+      result["src"].as_s.must_match(%r{\A#{Regex.escape(Dir.tempdir)}/ansible-moduletmp-[\d.]+-[a-z0-9_]{8}/tmp[a-z0-9_]{8}\z})
+      Dir.exists?(File.dirname(result["src"].as_s)).must_equal(false)
+    ensure
+      File.chmod(home, 0o755)
+      FileUtils.rm_rf(home)
+      FileUtils.rm_rf(File.dirname(dest))
+    end
+  end
+
   it "resolves a checksum URL by parsing the per-file hash from a sha256sums file" do
     # Real bug found benchmarking andrewrothstein.terraform (round 154 v3):
     # Ansible's get_url documents checksum: as accepting a URL
