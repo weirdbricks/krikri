@@ -25,6 +25,16 @@ deleted from here.
   suites and tears them down (they skip silently without a server, so use the script
   rather than a bare `scripts/minitest.sh` when touching the DB drivers).
 - `docker_image_build`'s nonexistent-`path` test skips where `docker` is podman's shim.
+- **A machine that runs out of disk space diverges by runtime footprint, not by behavior.** When a
+  role fills the disk mid-run, each engine fails at whatever its own runtime writes next - ansible's
+  python-apt cache save (`apt.Cache()`) and module payload transfer, krikri's plugin upload - with
+  that runtime's own error text, and krikri does not imitate ansible's transport or cache internals.
+  The outputs can never be byte-identical there, so a full-disk divergence is environment, not a gap:
+  krikri #1369 (closed as an ansible artefact: "with disk space, output/exit code match byte for
+  byte") and krikri #1355 (same root cause: `webarchitect609.k8slens` drove the microvm guest's 2.5G
+  root fs to exactly zero free bytes mid-install). `krikri-role-tester`'s microvm backend now grows
+  every guest disk to 10G so rounds stop landing on that knife edge; only chase a divergence that
+  reproduces with disk room.
 
 ## Deliberate limits (decided, not defects)
 

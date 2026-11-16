@@ -17893,7 +17893,7 @@ Local probe roles, not Galaxy roles: each probed task registers its result and d
 | `totaldebug.motd` | ubuntu | ❌ Divergent - issue #1368 (round29913569, 0.9.2777 debug, ansible-core 2.21.6). |
 | `tychobrouwer.wiki_js` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29913592, 0.9.2777 debug, ansible-core 2.21.6). |
 | `vmpr.xcp_ng_guest_utilities` | rocky | ✅ Clean (round29913602, 0.9.2777 debug, ansible-core 2.21.6). |
-| `webarchitect609.k8slens` | ubuntu | ❌ Divergent - issue #1369 (round29913623, 0.9.2777 debug, ansible-core 2.21.6). |
+| `webarchitect609.k8slens` | ubuntu | ✅ Root-caused as a guest-disk artifact, not a krikri gap (issues #1355/#1369, round29913623): the role filled the microvm guest's 2.5G root fs to ENOSPC mid-install and the two runtimes then fail at different points on a full disk; fixed in `krikri-role-tester` (guest disks grown to 10G), confirm round pending. Times: cold py 96.8s vs cr 97.6s; warm py 4.4s vs cr 2.9s (0.9.2777 debug, ansible-core 2.21.6). |
 | `winggundamth.pdns_recursor-ansible` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29913561, 0.9.2777 debug, ansible-core 2.21.6). |
 | `wstrange.opendj` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29913574, 0.9.2777 debug, ansible-core 2.21.6). |
 | `xcezx.aliases` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29913630, 0.9.2777 debug, ansible-core 2.21.6). |
