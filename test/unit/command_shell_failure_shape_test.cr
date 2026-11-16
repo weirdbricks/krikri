@@ -199,6 +199,42 @@ describe "command/shell failure-path result shape" do
     end
   end
 
+  # Issue #1403 (jackl0phty.nmap's "Execute configure script" in --check):
+  # real command.py os.chdir()s BEFORE its check-mode branch, so a missing
+  # chdir: fails the task under --check too - "skipping:", the answer when
+  # NO chdir: is given, was the divergence (ansible failed=1, exit code 2;
+  # this engine reported the task as skipped and kept going).
+  describe "check mode with a nonexistent chdir" do
+    it "fails the task instead of reporting the check-mode skip, for both command and shell" do
+      {"command" => "pwd", "shell" => "pwd"}.each do |plugin, cmd|
+        result = PluginSpecHelper.run(plugin, {
+          "cmd"                 => cmd,
+          "chdir"               => "/nonexistent-krikri-spec-dir-zzz",
+          "_ansible_check_mode" => "true",
+        })
+
+        result["failed"].as_bool.must_equal(true)
+        result["msg"].as_s.must_equal("Unable to change directory before execution.")
+        result["changed"].as_bool.must_equal(false)
+        result.as_h.has_key?("skipped").must_equal(false)
+        result.as_h.has_key?("rc").must_equal(false)
+      end
+    end
+
+    it "still reports the check-mode skip when chdir exists" do
+      {"command" => "pwd", "shell" => "pwd"}.each do |plugin, cmd|
+        result = PluginSpecHelper.run(plugin, {
+          "cmd"                 => cmd,
+          "chdir"               => "/tmp",
+          "_ansible_check_mode" => "true",
+        })
+
+        result["skipped"].as_bool.must_equal(true)
+        result["changed"].as_bool.must_equal(false)
+      end
+    end
+  end
+
   # Issue #960 (adarnimrod.openwrt-bootstrap): real's raw action hands the
   # bare command to the CONNECTION (raw.py defaults `executable` to False,
   # so the action base never adds its `<exe> -c` wrap unless the task names

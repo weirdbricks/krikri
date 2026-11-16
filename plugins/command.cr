@@ -285,6 +285,41 @@ module Krikri
         end
       end
 
+      # real command.py os.chdir()s BEFORE its check-mode branch, so a
+      # missing chdir: fails the task even under --check. Live-verified
+      # against ansible-core 2.21.6 in check mode (issue #1403,
+      # jackl0phty.nmap's "Execute configure script", whose chdir is
+      # created by an unarchive: task that check mode skips): ansible
+      # fails with "Unable to change directory before execution." and exit
+      # code 2, where this engine fell through to the check-mode skip.
+      if chdir && !File.directory?(chdir)
+        # The result keeps the FULL real command-module shape
+        # (cmd/stdout/stdout_lines/stderr/stderr_lines/start/end/delta)
+        # but carries NO rc key - Ansible's chdir failure happens inside
+        # run_command, whose fail_json seeds rc=None, yet the controller's
+        # result normalization (UnifiedTaskResult.as_result_dict) drops
+        # every declared field whose value is null. So the rendered and
+        # registered result has no rc at all, while start/end/delta
+        # (arbitrary extra keys, not declared fields) stay null.
+        # Emitting rc:null here diverged on ansible-core 2.21.6 (podman-diff,
+        # krikri 0.9.2474); the pre-2.21 shape genuinely had rc:null, but the
+        # reference engine krikri targets now omits it.
+        return with_executable_warning(PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: "Unable to change directory before execution.",
+          _ansible_error_detail: chdir_error_detail(chdir),
+          cmd: cmd_list,
+          stdout: "",
+          stdout_lines: [] of String,
+          stderr: "",
+          stderr_lines: [] of String,
+          start: nil,
+          end: nil,
+          delta: nil
+        ))
+      end
+
       # Command module doesn't support check mode (Ansible behavior).
       # Ansible's own command/shell action plugin still populates the FULL
       # normal result shape (cmd/rc/stdout/stdout_lines/stderr/
@@ -354,10 +389,11 @@ module Krikri
       # Get optional parameters
       stdin_data = @params["stdin"]?
 
-      # Fail the task up front when chdir doesn't exist or isn't a
-      # directory (Ansible's command module does the same), but do
-      # NOT mutate this process's own cwd at all - the child below gets
-      # its cwd via Process.new's chdir: instead. The old approach
+      # The missing-chdir: failure was already returned above (it has to
+      # precede the check-mode branch), so only the execution itself is
+      # left here. Do NOT mutate this process's own cwd at all - the child
+      # below gets its cwd via Process.new's chdir: instead. The old
+      # approach
       # (process-global Dir.cd) relied on this plugin process being
       # one-shot-per-task, which is true for the normal exec path but
       # FALSE under --persistent-daemon mode: there ONE long-lived
@@ -378,33 +414,6 @@ module Krikri
       # `command: ... chdir: X become_user: www-data` tasks hit that
       # every time (robertdebock.nextcloud's own `Configure nextcloud`
       # task, `chdir: /var/www/html/nextcloud`, `become_user: www-data`).
-      if chdir && !File.directory?(chdir)
-        # The result keeps the FULL real command-module shape
-        # (cmd/stdout/stdout_lines/stderr/stderr_lines/start/end/delta)
-        # but carries NO rc key - Ansible's chdir failure happens inside
-        # run_command, whose fail_json seeds rc=None, yet the controller's
-        # result normalization (UnifiedTaskResult.as_result_dict) drops
-        # every declared field whose value is null. So the rendered and
-        # registered result has no rc at all, while start/end/delta
-        # (arbitrary extra keys, not declared fields) stay null.
-        # Emitting rc:null here diverged on ansible-core 2.21.6 (podman-diff,
-        # krikri 0.9.2474); the pre-2.21 shape genuinely had rc:null, but the
-        # reference engine krikri targets now omits it.
-        return with_executable_warning(PluginResult.new(
-          changed: false,
-          failed: true,
-          msg: "Unable to change directory before execution.",
-          _ansible_error_detail: chdir_error_detail(chdir),
-          cmd: cmd_list,
-          stdout: "",
-          stdout_lines: [] of String,
-          stderr: "",
-          stderr_lines: [] of String,
-          start: nil,
-          end: nil,
-          delta: nil
-        ))
-      end
 
       # Execute command using Crystal's Process
       stdout = IO::Memory.new

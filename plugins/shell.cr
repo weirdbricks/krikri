@@ -261,6 +261,36 @@ module Krikri
         end
       end
 
+      # Ansible's shell module reports the result's `cmd` key as the raw
+      # command string (the pre-chdir form), not the argv list command
+      # uses and not the `cd X && ...` prefixed form the shell actually
+      # runs - needed here already by the chdir: failure below.
+      command_string = argv_parts ? argv_parts.map { |arg| shell_single_quote(arg) }.join(" ") : cmd.to_s
+
+      # real command.py os.chdir()s BEFORE its check-mode branch, so a
+      # missing chdir: fails the task even under --check. Live-verified
+      # against ansible-core 2.21.6 in check mode (issue #1403,
+      # jackl0phty.nmap's "Execute configure script", whose chdir is
+      # created by an unarchive: task that check mode skips): ansible
+      # fails with "Unable to change directory before execution." and exit
+      # code 2, where this engine fell through to the check-mode skip.
+      if chdir && !File.directory?(expand_tilde(chdir))
+        return PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: "Unable to change directory before execution.",
+          _ansible_error_detail: chdir_error_detail(expand_tilde(chdir)),
+          cmd: command_string,
+          stdout: "",
+          stdout_lines: [] of String,
+          stderr: "",
+          stderr_lines: [] of String,
+          start: nil,
+          end: nil,
+          delta: nil
+        )
+      end
+
       # Shell commands don't support check mode (Ansible behavior).
       # Ansible's own command/shell action plugin still populates the
       # FULL normal result shape (cmd/rc/stdout/stdout_lines/stderr/
@@ -327,12 +357,8 @@ module Krikri
 
       # Build full command. argv: form is quoted element-wise and joined
       # (see the comment above); cmd:/free-form is passed through verbatim
-      # - the shell does the splitting. `command_string` (the pre-chdir
-      # form) is what Ansible's shell module reports as the result's
-      # `cmd` key - the raw command string, not the argv list command uses
-      # and not the `cd X && ...` prefixed form the shell actually runs.
-      command_string = argv_parts ? argv_parts.map { |arg| shell_single_quote(arg) }.join(" ") : cmd.to_s
-
+      # - the shell does the splitting. `command_string` itself was built
+      # above, before the chdir: failure.
       full_cmd = command_string
 
       # Add chdir if specified
@@ -340,33 +366,9 @@ module Krikri
         full_cmd = "cd #{chdir} && #{full_cmd}"
       end
 
-      # Ansible's run_command tries os.chdir(chdir) BEFORE spawning
-      # anything, so a nonexistent/non-directory chdir fails the MODULE
-      # (changed: false, full command-module shape) instead of surfacing
-      # as a shell exit code with changed: true - the `cd X &&` prefix
-      # above would have run and failed inside the shell. command.py's own
-      # result dict seeds rc=None, but the controller's result
-      # normalization (UnifiedTaskResult.as_result_dict) drops every
-      # declared field whose value is null, so the rendered/registered
-      # result carries NO rc key at all - only start/end/delta (arbitrary
-      # extra keys, not declared fields) survive as nulls. Emitting rc:null
-      # here diverged on ansible-core 2.21.6 (podman-diff, krikri 0.9.2474).
-      if chdir && !File.directory?(expand_tilde(chdir))
-        return PluginResult.new(
-          changed: false,
-          failed: true,
-          msg: "Unable to change directory before execution.",
-          _ansible_error_detail: chdir_error_detail(expand_tilde(chdir)),
-          cmd: command_string,
-          stdout: "",
-          stdout_lines: [] of String,
-          stderr: "",
-          stderr_lines: [] of String,
-          start: nil,
-          end: nil,
-          delta: nil
-        )
-      end
+      # The missing-chdir: failure was already returned above (it has to
+      # precede the check-mode branch) instead of surfacing as a shell
+      # exit code with changed: true from the `cd X &&` prefix.
 
       # Ansible hands `executable:` to run_command as the SHELL
       # BINARY itself (subprocess executable=), so a nonexistent one
