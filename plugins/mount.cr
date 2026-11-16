@@ -233,7 +233,11 @@ module Krikri
 
       if local_connection?
         begin
-          File.touch(fstab)
+          # mount.py's `open(args['fstab'], 'a')` creates the file with
+          # Python's 0666, so the umask decides the mode (0664 under
+          # umask 002). Crystal's File.touch/File.write default to 0644,
+          # which already lacks group-write and so ignores umask 002.
+          File.open(fstab, "a", perm: 0o666) { }
         rescue e : File::AccessDeniedError
           return fstab_open_failure(fstab, permission: true, detail: e.message.to_s)
         rescue e
