@@ -1,5 +1,39 @@
 require "../minitest_helper"
+require "file_utils"
 require "../../src/krikri/plugin_helpers/mysql_connection"
+
+# Two interpreter fallback candidates at once, the shape the benchmark
+# goldens have: discovery picks the first, and the second stands in for
+# the next candidate up Ansible's INTERPRETER_FALLBACK list. Each shim
+# answers the two driver-probe imports with the requested outcome.
+private def with_mysql_driver_gate_shim(first_imports : Bool, second_imports : Bool, &) : Nil
+  dir = PluginSpecHelper.tmp_path("mysql-driver-gate-shim")
+  FileUtils.rm_rf(dir)
+  FileUtils.mkdir_p(dir)
+
+  [{Krikri::INTERPRETER_FALLBACK[0], first_imports},
+   {Krikri::INTERPRETER_FALLBACK[1], second_imports}].each do |name, imports|
+    interpreter = File.join(dir, name)
+    File.write(interpreter, <<-SHIM)
+      #!/bin/sh
+      case "$*" in
+        *"import pymysql"*|*"import MySQLdb"*)
+          exit #{imports ? 0 : 1} ;;
+        *) exit 0 ;;
+      esac
+      SHIM
+    File.chmod(interpreter, 0o755)
+  end
+
+  original_path = ENV["PATH"]?
+  ENV["PATH"] = "#{dir}:#{original_path}"
+  begin
+    yield dir
+  ensure
+    ENV["PATH"] = original_path if original_path
+    FileUtils.rm_rf(dir)
+  end
+end
 
 describe Krikri::PluginHelpers::MysqlConnection do
   serial! # mutates process-global state (ENV / engine settings)
@@ -172,6 +206,30 @@ describe Krikri::PluginHelpers::MysqlConnection do
 
     it "returns nil so the module carries on when a driver imports" do
       Krikri::PluginHelpers::MysqlConnection.mysql_driver_missing_result(interpreter: "/bin/true").must_be_nil
+    end
+  end
+
+  # Issue #1394: the benchmark's krikri-side rocky golden has only a
+  # driver-capable python3.9 (the role installs python3-PyMySQL for it),
+  # the reference-side golden adds a driver-less python3.12, and both
+  # engines run Ansible's discovery - so the gate has to keep asking the
+  # interpreter discovery picks first, never search the rest of the list
+  # for one whose import succeeds.
+  describe "mysql driver gate under interpreter discovery" do
+    it "fails when discovery picks a driver-less interpreter, though a lower-ranked one imports PyMySQL" do
+      with_mysql_driver_gate_shim(first_imports: false, second_imports: true) do |dir|
+        Krikri.discovered_target_python.must_equal(File.join(dir, Krikri::INTERPRETER_FALLBACK[0]))
+        result = Krikri::PluginHelpers::MysqlConnection.mysql_driver_missing_result
+        result.try(&.failed?).must_equal(true)
+        result.try(&.msg).must_equal(Krikri::PluginHelpers::MysqlConnection::MYSQL_DRIVER_FAIL_MSG)
+      end
+    end
+
+    it "carries on when discovery picks a driver-capable interpreter, though a lower-ranked one does not import one" do
+      with_mysql_driver_gate_shim(first_imports: true, second_imports: false) do |dir|
+        Krikri.discovered_target_python.must_equal(File.join(dir, Krikri::INTERPRETER_FALLBACK[0]))
+        Krikri::PluginHelpers::MysqlConnection.mysql_driver_missing_result.must_be_nil
+      end
     end
   end
 

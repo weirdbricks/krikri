@@ -377,8 +377,16 @@ krikri aims for byte-for-byte identical stdout/stderr/exit code to `ansible-play
   both report the same missing-library message, and a requests-capable first candidate makes both
   reach the same connect error) - a harness asymmetry, not a krikri defect. A rocky host can never
   be identical for both engines: the reference engine needs python3.12 to exist to run at all.
-- The fix belongs in the harness: give the reference golden's python3.12 `requests`
-  (e.g. `python3.12 -m pip install requests`) so both hosts behave like a requests-capable target.
+- Live case (issue #1394, `laxathom.passbolt`): `geerlingguy.mysql`'s `Remove MySQL test
+  database.` task. The role installs `python3-PyMySQL`, which lands in python3.9's site-packages,
+  so the krikri host reaches the module with a driver and the task succeeds, while the reference
+  host's discovery picks the driver-less `/usr/bin/python3.12` and the module stops at `A MySQL
+  module is required: ...`. krikri's mysql driver gate probes the same
+  `discovered_interpreter_python` real's module runs under, so given ONE host both engines print
+  byte-identical output (pinned in `test/unit/mysql_connection_test.cr`).
+- The fix belongs in the harness: give the reference golden's python3.12 `requests` and
+  `PyMySQL` (e.g. `python3.12 -m pip install requests PyMySQL`) so both hosts behave like a
+  target that has those libraries installed.
   Do not "fix" it here by probing interpreters that discovery would not pick - that diverges from
   real ansible on every host that does not look like these two.
 
