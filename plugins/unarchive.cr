@@ -80,10 +80,11 @@ module Krikri
   # `archive` plugin does.
   #
   # Idempotency for tar-based archives uses `tar --compare` against dest,
-  # the same mechanism Ansible's TgzArchive#is_unarchived uses. For
-  # zip, a simpler per-member checksum comparison is used instead of
-  # replicating Ansible's much more involved zipinfo/permission-based
-  # check - an approximation, documented as such.
+  # the same mechanism Ansible's TgzArchive#is_unarchived uses. For zip,
+  # each member's zipinfo timestamp, size, mode and ownership are
+  # compared against what is already at dest, following
+  # ZipArchive#is_unarchived's own clauses (directory members and the
+  # symlink TARGET check are the remaining approximations).
   #
   # - extra_opts: raw flags passed straight through to `tar` (e.g.
   #   `--strip-components=1`) AND to `unzip` for zip archives, exactly as
@@ -791,6 +792,7 @@ module Krikri
     # find-globs over paths that were never extracted. Memoized per src:
     # one probe result is shared by the --diff and --extract commands.
     @tar_zipflag_cache = {} of String => String?
+    @system_umask : Int32?
 
     private def tar_zipflag(src : String) : String?
       return @tar_zipflag_cache[src] if @tar_zipflag_cache.has_key?(src)
@@ -953,89 +955,147 @@ module Krikri
       end
     end
 
-    # Approximation of Ansible's much more involved zipinfo/
-    # permission-based idempotency check: compares each member file's
-    # content checksum (from inside the zip) against what's already at
-    # dest/member, plus (Ansible 2.19 ZipArchive#is_unarchived) each
-    # member's zipinfo -T timestamp against the dest file's own mtime,
-    # ignoring members that are directories.
+    # What Ansible's ZipArchive#is_unarchived reads from one parsed
+    # `zipinfo -T -s` line: field 0's permission string, field 3's
+    # uncompressed size and field 6's timestamp.
+    private record ZipMemberRecord, perms : String, size : Int64, timestamp : Int64
+
+    # Ansible's ZipArchive#is_unarchived, which is wider than a content
+    # comparison: real flags a member as changed when its zipinfo
+    # timestamp, size, mode or ownership differs from what is already at
+    # dest/member, and re-extracts. Comparing content alone (this
+    # method's earlier shape) reported ok where real reported changed -
+    # e.g. softasap.sa_loki_promtail's `unarchive: mode: u+rw,g-wx,o-rwx`
+    # over the binary its own later task already chmod'd to 0755: real's
+    # mode clause recomputes 0740 against that and every check run
+    # re-extracts (issue #1367) while this engine called it unchanged.
+    # Directory members are still skipped (an approximation carried over
+    # from before; real type-checks those too).
     private def zip_changed?(src : String, dest : String, exclude : Array(String), include_files : Array(String), keep_newer : Bool = false) : Bool
+      records = zip_member_records(src)
+      # An unreadable listing is a change outright: real starts from
+      # `unarchived = rc == 0` and never gets past it.
+      return true if records.nil?
+      desired_uid, desired_gid = zip_desired_ownership
+
+      zip_members_to_compare(src, exclude, include_files).any? do |member|
+        zip_member_changed?(src, dest, member, records, desired_uid, desired_gid, keep_newer)
+      end
+    end
+
+    # The member list real's is_unarchived walks: the archive listing
+    # after include:/exclude:, without directory entries.
+    private def zip_members_to_compare(src : String, exclude : Array(String), include_files : Array(String)) : Array(String)
       wanted = members(:zip, src).reject(&.ends_with?("/"))
       wanted = wanted.select { |member| include_files.empty? || include_files.includes?(member) }
-      wanted = wanted.reject { |member| exclude.includes?(member) }
-      zip_timestamps = zip_member_timestamps(src)
+      wanted.reject { |member| exclude.includes?(member) }
+    end
 
-      wanted.any? do |member|
-        # A member escaping dest never exists on disk at any path we're
-        # allowed to look at: tar refuses it at extraction and unzip
-        # strips it to somewhere inside dest, so there is no meaningful
-        # on-disk counterpart - and the literal joined path would point
-        # OUTSIDE dest, making the idempotency comparison read/hash an
-        # arbitrary attacker-chosen file. Skip it (reporting "unchanged"
-        # for that member; Ansible's own zipinfo comparison lstats
-        # the literal joined path instead, i.e. it reads the escaping
-        # file - a divergence documented in favor of containment).
-        dest_path = contained_member_path(dest, member)
-        if dest_path.nil?
-          next false
-        end
+    # One member's full is_unarchived verdict, in real's own clause order:
+    # type, timestamp (with keep_newer's exclusion), size, mode,
+    # ownership, then the content check this engine has always used.
+    private def zip_member_changed?(src : String, dest : String, member : String, records : Hash(String, ZipMemberRecord), desired_uid : Int64, desired_gid : Int64, keep_newer : Bool) : Bool
+      # A member escaping dest never exists on disk at any path we're
+      # allowed to look at: tar refuses it at extraction and unzip
+      # strips it to somewhere inside dest, so there is no meaningful
+      # on-disk counterpart - and the literal joined path would point
+      # OUTSIDE dest, making the idempotency comparison read/hash an
+      # arbitrary attacker-chosen file. Skip it (reporting "unchanged"
+      # for that member; Ansible's own zipinfo comparison lstats
+      # the literal joined path instead, i.e. it reads the escaping
+      # file - a divergence documented in favor of containment).
+      dest_path = contained_member_path(dest, member)
+      return false if dest_path.nil?
 
-        # A symlink zip member (common for a shared LICENSE/README
-        # linked into multiple sub-crate dirs, e.g. square/sudo_pair's
-        # own release archive) stores its TARGET STRING as the member's
-        # own content - `unzip -p` on it correctly returns that short
-        # string. `md5sum < dest_path` on the extracted symlink follows
-        # it (shell redirection always dereferences), comparing the
-        # short target string against the potentially much larger
-        # DEREFERENCED target file's content - permanently mismatched
-        # even though extraction itself was byte-correct, making any
-        # such archive permanently non-idempotent (re-extracted on
-        # every single run). Found benchmarking robertdebock.sudo_pair.
-        # `readlink` (not dereferenced) is the correct comparison.
-        symlink_result = remote_exec("test -L #{shell_single_quote(dest_path)} && readlink #{shell_single_quote(dest_path)}")
-        if symlink_result[:exit_code] == 0
-          archive_checksum = remote_exec("unzip -p #{shell_single_quote(src)} #{shell_single_quote(member)} 2>/dev/null")[:stdout].strip
-          next archive_checksum != symlink_result[:stdout].strip
-        end
+      # Real never looks at a member whose zipinfo line it could not
+      # parse, so there is nothing to compare it against.
+      record = records[member]?
+      return false unless record
 
-        next true unless remote_file_exists?(dest_path)
-
-        # Ansible's ZipArchive#is_unarchived compares the zipinfo -T
-        # timestamp against the existing file's mtime and reports changed
-        # (itemize `.f..t....??`) when they differ, re-extracting even
-        # though the CONTENT matches - krikri previously compared content
-        # only, so a second run over an already-extracted dest reported
-        # ok where real ansible reported changed. unzip's own written
-        # mtime and zipinfo -T's printed one can also legitimately
-        # differ (see #ansible_zip_epoch for the hour-wide DST case);
-        # ansible deliberately treats that as a change - its own
-        # comment: "this timestamp calculation has a rounding error
-        # somewhere... unzip and this timestamp can be one second off.
-        # When that happens, we report a change and re-unzip the file."
-        # stat's %Y (whole seconds) is equivalent to ansible's float
-        # compare against lstat mtime: unzip always writes whole-second
-        # mtimes.
-        if (zip_ts = zip_timestamps[member]?) &&
-           (dest_mtime = remote_exec("stat -c %Y #{shell_single_quote(dest_path)} 2>/dev/null")[:stdout].strip.to_i64?)
-          if keep_newer
-            # Ansible's keep_newer: an OLDER dest file is replaced
-            # (changed), a NEWER one is excluded from every further
-            # comparison - including the content check below - instead
-            # of being flagged.
-            if zip_ts > dest_mtime
-              next true
-            elsif zip_ts < dest_mtime
-              next false
-            end
-          elsif zip_ts != dest_mtime
-            next true
-          end
-        end
-
-        archive_checksum = remote_exec("unzip -p #{shell_single_quote(src)} #{shell_single_quote(member)} 2>/dev/null | md5sum")[:stdout].strip
-        dest_checksum = remote_exec("md5sum < #{shell_single_quote(dest_path)} 2>/dev/null")[:stdout].strip
-        archive_checksum.split(" ").first? != dest_checksum.split(" ").first?
+      if symlink_target = zip_symlink_target(dest_path)
+        return zip_symlink_changed?(src, dest_path, member, symlink_target, desired_uid, desired_gid)
       end
+
+      stat = member_stat_fields(dest_path)
+      return true unless stat
+
+      # Ansible's ZipArchive#is_unarchived compares the zipinfo -T
+      # timestamp against the existing file's mtime and reports changed
+      # (itemize `.f..t....??`) when they differ, re-extracting even
+      # though the CONTENT matches - krikri previously compared content
+      # only, so a second run over an already-extracted dest reported
+      # ok where real ansible reported changed. unzip's own written
+      # mtime and zipinfo -T's printed one can also legitimately
+      # differ (see #ansible_zip_epoch for the hour-wide DST case);
+      # ansible deliberately treats that as a change - its own
+      # comment: "this timestamp calculation has a rounding error
+      # somewhere... unzip and this timestamp can be one second off.
+      # When that happens, we report a change and re-unzip the file."
+      # stat's %Y (whole seconds) is equivalent to ansible's float
+      # compare against lstat mtime: unzip always writes whole-second
+      # mtimes.
+      #
+      # keep_newer: an OLDER dest file is replaced (changed), a NEWER
+      # one is excluded from every further comparison - including
+      # size/mode/ownership and the content check below - instead of
+      # being flagged.
+      if keep_newer
+        return true if record.timestamp > stat[:mtime]
+        return false if record.timestamp < stat[:mtime]
+      elsif record.timestamp != stat[:mtime]
+        return true
+      end
+
+      # The remaining ZipArchive#is_unarchived clauses: size, then the
+      # mode the task (or the archive itself) asks for, then owner and
+      # group against the user the module runs as.
+      return true if record.size != stat[:size]
+      return true if zip_member_target_mode(record.perms, stat[:mode]) != stat[:mode]
+      return true if zip_ownership_changed?(stat, desired_uid, desired_gid)
+
+      zip_content_changed?(src, dest_path, member)
+    end
+
+    # A symlink zip member (common for a shared LICENSE/README linked
+    # into multiple sub-crate dirs, e.g. square/sudo_pair's own release
+    # archive) stores its TARGET STRING as the member's own content -
+    # `unzip -p` on it correctly returns that short string. `md5sum <
+    # dest_path` on the extracted symlink follows it (shell redirection
+    # always dereferences), comparing the short target string against the
+    # potentially much larger DEREFERENCED target file's content -
+    # permanently mismatched even though extraction itself was
+    # byte-correct, making any such archive permanently non-idempotent
+    # (re-extracted on every single run). Found benchmarking
+    # robertdebock.sudo_pair. `readlink` (not dereferenced) is the
+    # correct comparison.
+    #
+    # Real skips only the MODE clause for a link member
+    # (set_mode_if_different never chmods through a link, so its net
+    # effect on the target is nil); the owner/group clauses still run
+    # against the link's own lstat.
+    private def zip_symlink_changed?(src : String, dest_path : String, member : String, symlink_target : String, desired_uid : Int64, desired_gid : Int64) : Bool
+      archive_checksum = remote_exec("unzip -p #{shell_single_quote(src)} #{shell_single_quote(member)} 2>/dev/null")[:stdout].strip
+      return true if archive_checksum != symlink_target
+      stat = member_stat_fields(dest_path)
+      return false unless stat
+      zip_ownership_changed?(stat, desired_uid, desired_gid)
+    end
+
+    private def zip_ownership_changed?(stat : NamedTuple(size: Int64, uid: Int64, gid: Int64, mode: Int32, mtime: Int64), desired_uid : Int64, desired_gid : Int64) : Bool
+      stat[:uid] != desired_uid || stat[:gid] != desired_gid
+    end
+
+    private def zip_content_changed?(src : String, dest_path : String, member : String) : Bool
+      archive_checksum = remote_exec("unzip -p #{shell_single_quote(src)} #{shell_single_quote(member)} 2>/dev/null | md5sum")[:stdout].strip
+      dest_checksum = remote_exec("md5sum < #{shell_single_quote(dest_path)} 2>/dev/null")[:stdout].strip
+      archive_checksum.split(" ").first? != dest_checksum.split(" ").first?
+    end
+
+    # The target string of an extracted symlink member; nil when the path
+    # is not a symlink at all.
+    private def zip_symlink_target(dest_path : String) : String?
+      result = remote_exec("test -L #{shell_single_quote(dest_path)} && readlink #{shell_single_quote(dest_path)}")
+      result[:exit_code] == 0 ? result[:stdout].strip : nil
     end
 
     # Ansible parses `zipinfo -T -s` with shape-strict checks: exactly 8
@@ -1043,19 +1103,109 @@ module Krikri
     # containing spaces survives intact in field 7), a permission string
     # 7/8/10 chars long whose characters all come from "rwxstah-" - the
     # checks that reject zipinfo's own "Archive:"/"files," header and
-    # footer lines - and a 15-char timestamp field.
-    private def zip_member_timestamps(src : String) : Hash(String, Int64)
-      timestamps = {} of String => Int64
-      remote_exec("zipinfo -T -s #{shell_single_quote(src)} 2>/dev/null")[:stdout].each_line do |line|
+    # footer lines - and a 15-char timestamp field. Everything a member
+    # is compared by sits on that same line, so one pass collects it;
+    # nil when the listing itself failed, which real reads as changed.
+    private def zip_member_records(src : String) : Hash(String, ZipMemberRecord)?
+      listing = remote_exec("zipinfo -T -s #{shell_single_quote(src)} 2>/dev/null")
+      return nil unless listing[:exit_code] == 0
+      records = {} of String => ZipMemberRecord
+      listing[:stdout].each_line do |line|
         pcs = line.split(/\s+/, 8)
         next unless pcs.size == 8
         perms = pcs[0]
         next unless perms.size.in?(7, 8, 10)
         next unless "dl-?".includes?(perms[0]) && perms[1..].chars.all? { |perm_char| "rwxstah-".includes?(perm_char) }
         next unless pcs[6].size == 15
-        timestamps[pcs[7]] = ansible_zip_epoch(pcs[6])
+        records[pcs[7]] = ZipMemberRecord.new(perms: perms, size: pcs[3].to_i64, timestamp: ansible_zip_epoch(pcs[6]))
       end
-      timestamps
+      records
+    end
+
+    # The ownership real compares every member against: the task's own
+    # owner:/group: when given, else the user/group the module itself
+    # runs as. A name that cannot be looked up falls back to that same
+    # run user, exactly as unarchive.py's pwd.getpwnam/grp.getgrnam
+    # except-path does.
+    private def zip_desired_ownership : {Int64, Int64}
+      uid = LibC.getuid.to_i64
+      gid = LibC.getgid.to_i64
+
+      if owner = @params["owner"]?.presence
+        begin
+          uid = resolve_owner_uid(owner).to_i64
+        rescue OwnerLookupFailure
+        end
+      end
+
+      if group = @params["group"]?.presence
+        begin
+          gid = resolve_group_gid(group).to_i64
+        rescue OwnerLookupFailure
+        end
+      end
+
+      {uid, gid}
+    end
+
+    # lstat(2) of one already-extracted member. `stat` without -L is the
+    # same non-dereferencing call, so a symlink member reports the LINK's
+    # own mode/uid/gid/mtime, which is what real's os.lstat reads.
+    private def member_stat_fields(path : String) : NamedTuple(size: Int64, uid: Int64, gid: Int64, mode: Int32, mtime: Int64)?
+      result = remote_exec("stat -c '%s|%u|%g|%a|%Y' #{shell_single_quote(path)} 2>/dev/null")
+      fields = result[:stdout].strip.split("|")
+      return nil unless result[:exit_code] == 0 && fields.size == 5
+      {
+        size:  fields[0].to_i64,
+        uid:   fields[1].to_i64,
+        gid:   fields[2].to_i64,
+        mode:  fields[3].to_i(8),
+        mtime: fields[4].to_i64,
+      }
+    end
+
+    # The mode real compares a member's extracted file against: the
+    # task's own mode: when given (octal used as-is, symbolic resolved
+    # against the file's current bits), else the mode the archive itself
+    # spells out.
+    private def zip_member_target_mode(perms : String, current : Int32) : Int32
+      if mode = @params["mode"]?.presence
+        return mode.to_i(8) if mode.matches?(/\A0?[0-7]{1,4}\z/)
+        return resolve_symbolic_mode(current, mode)
+      end
+      zip_permstr_to_octal(perms)
+    end
+
+    # ZipArchive#_permstr_to_octal: reverse the permission string, add
+    # 1 << (i + 3*j) for each r/w/x/s/t bit, then mask the umask off. The
+    # 6/7-char FAT spellings first get their 777/666 base substituted
+    # together with the module's own umask; a 9-char unix spelling is
+    # used verbatim (file_umask 0 on Linux).
+    private def zip_permstr_to_octal(perms : String) : Int32
+      modestr = perms[1..]
+      umask = 0
+      if modestr.size == 6
+        modestr = modestr == "rwx---" ? "rwxrwxrwx" : "rw-rw-rw-"
+        umask = system_umask
+      elsif modestr.size == 7
+        modestr = modestr == "rwxa---" ? "rwxrwxrwx" : "rw-rw-rw-"
+        umask = system_umask
+      end
+
+      revstr = modestr.reverse
+      mode = 0
+      3.times do |j|
+        3.times do |i|
+          mode |= 1 << (i + 3 * j) if "rwxst".includes?(revstr[i + 3 * j])
+        end
+      end
+      mode & ~umask
+    end
+
+    # `umask` is a shell builtin, so ask the shell the plugin itself runs
+    # through - never LibC.umask, which would mutate this process.
+    private def system_umask : Int32
+      @system_umask ||= remote_exec("umask")[:stdout].strip.to_i(8)
     end
 
     # Ansible's ZipArchive#_valid_time_stamp: regex-parse
