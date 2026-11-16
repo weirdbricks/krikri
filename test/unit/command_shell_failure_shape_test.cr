@@ -284,4 +284,42 @@ describe "command/shell failure-path result shape" do
       result["stderr"].as_s.must_equal("/bin/sh: 1: nosuchcmd_krikri_960_zzz: not found\n")
     end
   end
+
+  # Issue #1407 (mcgrof.selftests): real command.py os.chdir()s BEFORE its
+  # check_mode branch, so under --check a bad chdir is a FAILED module result,
+  # never a skip. The role's own `changed_when: self_out.rc == 0` then raises
+  # on the rc-less chdir failure, which is what makes real fail the task and
+  # exit 2 where this engine used to report `skipping:` and exit 0.
+  describe "check-mode chdir failure result keys" do
+    it "fails the command task before check mode can report a skip" do
+      result = PluginSpecHelper.run("command", {
+        "cmd"                 => "pwd",
+        "chdir"               => "/nonexistent-krikri-spec-dir-zzz",
+        "_ansible_check_mode" => "true",
+      })
+
+      result["failed"].as_bool.must_equal(true)
+      result["changed"].as_bool.must_equal(false)
+      result["msg"].as_s.must_equal("Unable to change directory before execution.")
+      # The same rc-less shape a real (non-check) chdir failure produces,
+      # which is what raises the role's changed_when expression.
+      result.as_h.has_key?("rc").must_equal(false)
+      result.as_h.has_key?("skipped").must_equal(false)
+    end
+
+    it "fails the shell task before check mode can report a skip" do
+      result = PluginSpecHelper.run("shell", {
+        "cmd"                 => "true",
+        "chdir"               => "/nonexistent-krikri-spec-dir-zzz",
+        "_ansible_check_mode" => "true",
+      })
+
+      result["failed"].as_bool.must_equal(true)
+      result["changed"].as_bool.must_equal(false)
+      result["msg"].as_s.must_equal("Unable to change directory before execution.")
+      result["cmd"].as_s.must_equal("true")
+      result.as_h.has_key?("rc").must_equal(false)
+      result.as_h.has_key?("skipped").must_equal(false)
+    end
+  end
 end
