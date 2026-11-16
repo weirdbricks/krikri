@@ -80,7 +80,13 @@ describe "cron plugin result key order" do
 end
 
 describe "cronvar plugin result key order" do
-  it "registers vars, changed first (Ansible 2.19.11: vars, changed, failed, changed/unchanged identical)" do
+  # community.general.cronvar has no supports_check_mode, so Ansible
+  # skips it outright under --check (basic.py's init gate) and there is
+  # no registered order to observe that way - hence the task runs for
+  # real against a scratch cron_file. Live-verified vs 2.21.6 on the
+  # cron_file path: changed, failed, vars, cron_file.
+  it "registers vars, cron_file after changed/failed (Ansible: changed, failed, vars, cron_file)" do
+    path = PluginSpecHelper.tmp_path("cronvar-order-#{Random::Secure.hex(4)}.txt")
     keys = run_registered_dump2(<<-YAML)
       - hosts: localhost
         connection: local
@@ -89,7 +95,7 @@ describe "cronvar plugin result key order" do
           - cronvar:
               name: KRIKRI_KEY_ORDER_PROBE
               value: "x"
-            check_mode: true
+              cron_file: #{path}
             register: r
           - copy:
               content: |-
@@ -97,7 +103,7 @@ describe "cronvar plugin result key order" do
               dest: KRIKRI_DUMP_PATH
       YAML
     keys.first(2).must_equal(["changed", "failed"])
-    keys.last.must_equal("state")
+    keys.last.must_equal("cron_file")
   end
 end
 

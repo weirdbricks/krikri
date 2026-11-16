@@ -145,7 +145,13 @@ describe "cronvar plugin" do
     lines.index("PATH=/usr/local/bin").must_equal(1)
   end
 
-  it "does not write to disk in check mode" do
+  # Real cronvar's AnsibleModule declares no supports_check_mode, so
+  # basic.py's __init__ gate answers --check with a skip instead of ever
+  # reaching the body (live-verified vs 2.21.6: registered skipped, msg,
+  # failed, changed; the recap counts skipped). This plugin used to
+  # compute the would-be result and report changed, which turned a
+  # skipped task into an ok one.
+  it "is skipped under check_mode, matching Ansible's own skip text" do
     path = tmp_path("cronvar-check-mode.txt")
     File.delete(path) if File.exists?(path)
 
@@ -156,8 +162,39 @@ describe "cronvar plugin" do
       "_ansible_check_mode" => "true",
     })
 
-    result["changed"].as_bool.must_equal(true)
+    result["skipped"].as_bool.must_equal(true)
+    falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+    result["msg"].as_s.must_equal("remote module (community.general.cronvar) does not support check mode")
+    result.as_h.keys.must_equal(["skipped", "msg"])
     File.exists?(path).must_equal(false)
+  end
+
+  # The gate sits after argument-spec validation but before
+  # CronVar.__init__'s parent-directory guard and main()'s missing-value
+  # check, so under --check both of those lose to the skip
+  # (live-verified vs 2.21.6).
+  it "skips under check_mode before the cron_file parent-directory guard" do
+    result = PluginSpecHelper.run("cronvar", {
+      "name"                => "MAILTO",
+      "value"               => "admin@example.com",
+      "cron_file"           => "/krikri/definitely/not/here/vars",
+      "_ansible_check_mode" => "true",
+    })
+
+    result["skipped"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("remote module (community.general.cronvar) does not support check mode")
+  end
+
+  it "still fails a bogus state under check_mode, since argument-spec validation runs first" do
+    result = PluginSpecHelper.run("cronvar", {
+      "name"                => "MAILTO",
+      "state"               => "bogus",
+      "cron_file"           => tmp_path("cronvar-check-mode-bad-state.txt"),
+      "_ansible_check_mode" => "true",
+    })
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("value of state must be one of: absent, present, got: bogus")
   end
 
   it "writes a timestamped backup before changing when backup=true" do
