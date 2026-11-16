@@ -292,11 +292,15 @@ module Krikri
         # the fatal line first (live-verified vs 2.19.11).
         flush_pending_unreachable(pending_unreachable)
 
-        if task.include_role? && !task.is_static_import? && !task.run_once? && active_hosts.size > 1
-          # A dynamic include_role: runs its loaded tasks on every host in
-          # lockstep (issue #1240) - a static import_role: is transparent
-          # here, and run_once: keeps its own single-host election in
-          # execute_task, so each of those keeps its previous dispatch.
+        if task.include_role? && !task.run_once? && active_hosts.size > 1
+          # Both include_role: forms run their loaded tasks on every host in
+          # lockstep. A dynamic include_role: because Ansible expands it per
+          # host group (issue #1240); a static import_role: because Ansible
+          # splices its tasks into the play itself, so the linear strategy
+          # still walks one role task at a time across every host (issue
+          # #1389) - running the whole role for one host first reordered side
+          # effects for run_once:/throttle:/any later cross-host task.
+          # run_once: keeps its own single-host election in execute_task.
           execute_include_role_multi(task, active_hosts)
         elsif @forks > 1 && task_forkable?(task) && active_hosts.size > 1 && task.throttle != 1 && (task.debugger || @debugger).nil?
           run_task_for_hosts_in_parallel(task, active_hosts)
