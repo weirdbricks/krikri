@@ -876,6 +876,57 @@ describe "INJECT_FACTS_AS_VARS deprecation from a when: clause" do
     stderr.wont_include("setup-RedHat.yml:")
   end
 
+  # Issue #1396 (securCom.repo_nginx): the same inherited import clause, but
+  # the imported task is LOOPED over an undefined source. Real decides the
+  # task from the import's clause (one block, at the import line's `when:`
+  # token) and never labels anything at the imported file. krikri's probe of
+  # the undefined loop source re-evaluated the merged `(import) and (child)`
+  # string - a text no per-clause position record matches - so the fact read
+  # fell back to the child's own `when:` line and printed a second block
+  # there.
+  it "keeps a looped imported task's fact read at the import's when: token" do
+    dir = PluginSpecHelper.tmp_path("inject-facts-import-loop-#{Random::Secure.hex(4)}")
+    tasks_dir = File.join(dir, "roles", "repo_like", "tasks")
+    FileUtils.mkdir_p(tasks_dir)
+    File.write(File.join(tasks_dir, "main.yml"), <<-YAML)
+      ---
+      - import_tasks: inner.yml
+        when: ansible_distribution == 'NotARealDistro'
+      YAML
+    File.write(File.join(tasks_dir, "inner.yml"), <<-YAML)
+      ---
+      - name: looped step
+        ansible.builtin.debug:
+          msg: "{{ pkg }}"
+        loop: "{{ no_such_loop_source }}"
+        loop_control:
+          loop_var: pkg
+        when: keep_going
+      YAML
+    playbook = File.join(dir, "play.yml")
+    File.write(playbook, <<-PLAYBOOK)
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        vars:
+          keep_going: true
+        roles:
+          - repo_like
+      PLAYBOOK
+
+    stdout = IO::Memory.new
+    stderr = IO::Memory.new
+    Process.run(BINARY, ["-i", "localhost,", playbook], output: stdout, error: stderr, chdir: dir)
+
+    stdout.to_s.must_include("skipping: [localhost]")
+    stderr = stderr.to_s
+    stderr.scan(/DEPRECATION WARNING\]: INJECT_FACTS_AS_VARS/).size.must_equal(1)
+    stderr.must_include("Origin: #{File.join(tasks_dir, "main.yml")}:3:9\n")
+    stderr.must_include("3   when: ansible_distribution == 'NotARealDistro'\n")
+    stderr.must_include("          ^ column 9")
+    stderr.wont_include("inner.yml:")
+  end
+
   # afpacket.devops_tools (issue #1130): a block:'s own when: reads the fact
   # and each child carries its own when:. Real evaluates the block clause
   # per child as the FIRST conditional of the child's parent chain, so the
