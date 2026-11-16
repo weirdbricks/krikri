@@ -368,12 +368,29 @@ module Krikri
       result = remote_exec(argv.map { |arg| Shell.single_quote(arg) }.join(' '))
       if result[:exit_code] != 0 && !result[:stderr].includes?("unrecognised disk label")
         return PluginResult.new(changed: false, failed: true,
-          msg: "Error while getting device information with parted script: '#{argv.join(' ')}'",
+          msg: "Error while getting device information with parted script: '#{device_info_script_text(device, unit, parted_path)}'",
           rc: result[:exit_code], out: result[:stdout], err: result[:stderr],
           key_order: PARTED_FAIL_KEY_ORDER)
       end
 
       parse_partition_info(result[:stdout], unit)
+    end
+
+    # community.general 9.0.0 rewrote get_device_info's command from a
+    # shell string ("... -- unit '%s' print") to an argv list, which
+    # dropped the single quotes around the unit from the script text
+    # ansible prints when the parted run fails (kpg
+    # 000006-multi-parted-chaos: the reference host's 8.3.0 shows them).
+    # An unpinned collection keeps the current wording.
+    private def quotes_unit_in_device_info_script? : Bool
+      version = resolved_collection_version
+      return false unless version
+      CollectionIndex.version_before?(version, 9, 0)
+    end
+
+    private def device_info_script_text(device : String, unit : String, parted_path : String) : String
+      shown_unit = quotes_unit_in_device_info_script? ? "'#{unit}'" : unit
+      [parted_path, "-s", "-m", device, "--", "unit", shown_unit, "print"].join(' ')
     end
 
     # Mirrors real parse_partition_info: line 1 is the disk header
