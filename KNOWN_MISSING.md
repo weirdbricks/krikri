@@ -340,6 +340,24 @@ krikri aims for byte-for-byte identical stdout/stderr/exit code to `ansible-play
   2.x-shaped comparison target, and this project's sub-1.0 version would make every such min-version
   check fail unconditionally. It will not drift to match whatever is locally installed.
 
+### Module argument specs are a captured collection snapshot, not the target's installed collection
+
+- `data/argspecs.json` is captured by `scripts/gen_argspecs.py` from the collections installed at
+  capture time (CI pins community.docker 5.2.1, community.general 12.5.0, ...), and every run
+  replays that snapshot. A host whose distro ships an older collection validates differently under
+  real `ansible-playbook`, and a baked table cannot adapt per host. Live case (issue #1319): kpg's
+  Ubuntu microVM golden keeps the collections of Ubuntu's `ansible` package - Debian/Ubuntu
+  ansible-core puts `/usr/lib/python3/dist-packages` on its collection search path, so
+  `ansible-galaxy collection install community.docker` is a no-op there and the reference engine
+  runs 3.7.0, which has no `definition`, `wait` or `docker_host|cli_context` at all: a
+  `docker_compose_v2` task with `client_cert` alone fails with
+  `parameters are required together: client_cert, client_key`, where krikri (the 5.2.1
+  snapshot) reports `parameters are mutually exclusive: docker_host|cli_context,
+  definition|project_src, definition|files`. The same playbook is byte-identical on both
+  engines against community.docker 5.2.1 (this host) and 4.7.0 (kpg's Debian template), so
+  the fix belongs in the harness: pin or force the collection versions it installs instead
+  of keeping the distro copy.
+
 ### `aem_design.aem_license`'s `no_log`-vs-fail-hard divergence is a human security judgment call
 
 - A `no_log: true` task masking a license-key value diverges from Ansible in a way that is

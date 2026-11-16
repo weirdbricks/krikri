@@ -493,6 +493,26 @@ describe Krikri::ArgspecValidator do
       vars).must_be_nil
   end
 
+  # Ansible's check_mutually_exclusive collects every failing group into
+  # one message, in spec order, and errors.msg reports that first error
+  # only - verified live against 2.21.6 + community.docker 5.2.1, where
+  # AnsibleModuleDockerClient prepends the docker_host|cli_context group
+  # before the compose module_utils pairs. kpg's Ubuntu golden still runs
+  # the distro collection (3.7.0) instead, which has no groups at all, so
+  # its first error is required_together (#1319).
+  it "reports all failing mutually-exclusive groups for docker_compose_v2 in spec order" do
+    failure = Krikri::ArgspecValidator.validate(
+      "docker_compose_v2", "community.docker.docker_compose_v2",
+      {"docker_host" => "cofxhf", "cli_context" => "lvuejy",
+       "definition" => "/opt/kpg-fixtures/compose.yml",
+       "project_name" => "ozqykd", "project_src" => "/opt/kpg-fixtures/dir",
+       "files" => "[]", "client_cert" => "/tmp/kpg-work/out3.cfg"},
+      vars)
+    failure.wont_be_nil
+    failure.as(Failure).msg.must_equal(
+      "parameters are mutually exclusive: docker_host|cli_context, definition|project_src, definition|files")
+  end
+
   it "never validates the modules Ansible does not validate" do
     {"ansible.builtin.fetch"     => {"src" => "/etc/hostname", "dest" => "/tmp/x", "zz" => "1"},
      "ansible.builtin.set_fact"  => {"zz" => "1"},
