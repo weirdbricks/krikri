@@ -866,6 +866,30 @@ describe "lineinfile plugin - parameter coverage (firstmatch/search_string/valid
       File.delete(path) if path && File.exists?(path)
     end
 
+    # Real lineinfile never materializes a create: true destination up
+    # front - the file only appears through write_changes/atomic_move -
+    # so a validator rejecting the staged content on a missing file
+    # leaves no file (and no staging temp) behind. Live-verified against
+    # ansible-core 2.21.6, issue #1386.
+    it "leaves no destination behind when the validator fails on a missing file with create: true" do
+      dir = PluginSpecHelper.tmp_path("lineinfile-validate-create-fail")
+      FileUtils.mkdir_p(dir)
+      path = File.join(dir, "new.conf")
+
+      result = PluginSpecHelper.run("lineinfile", {
+        "path"     => path,
+        "line"     => "x",
+        "create"   => "true",
+        "mode"     => "0640",
+        "validate" => "/bin/false %s",
+      })
+
+      result["failed"].as_bool.must_equal(true)
+      result["msg"].as_s.must_include("failed to validate: rc:1")
+      File.exists?(path).must_equal(false)
+      Dir.children(dir).must_equal([] of String)
+    end
+
     # Live-verified against ansible-core 2.19.4: the validator only
     # runs on the actual write path - an already-present line with a
     # /bin/false validator still reports ok/changed: false.

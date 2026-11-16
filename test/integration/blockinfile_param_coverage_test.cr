@@ -156,6 +156,30 @@ describe "blockinfile plugin - parameter coverage (destfile/insertafter/validate
       File.delete(path) if path && File.exists?(path)
     end
 
+    # Real blockinfile never materializes a create: true destination up
+    # front - the file only appears through write_changes/atomic_move -
+    # so a validator rejecting the staged content on a missing file
+    # leaves no file (and no staging temp) behind. Live-verified against
+    # ansible-core 2.21.6, issue #1386.
+    it "leaves no destination behind when the validator fails on a missing file with create: true" do
+      dir = PluginSpecHelper.tmp_path("blockinfile-validate-create-fail")
+      FileUtils.mkdir_p(dir)
+      path = File.join(dir, "new.conf")
+
+      result = PluginSpecHelper.run("blockinfile", {
+        "path"     => path,
+        "block"    => "x",
+        "create"   => "true",
+        "mode"     => "0640",
+        "validate" => "/bin/false %s",
+      })
+
+      result["failed"].as_bool.must_equal(true)
+      result["msg"].as_s.must_include("failed to validate: rc:1")
+      File.exists?(path).must_equal(false)
+      Dir.children(dir).must_equal([] of String)
+    end
+
     it "does not run the validator when nothing would change" do
       path = param_path("blockinfile-validate-nochange.txt")
       File.write(path, "line1\n# BEGIN ANSIBLE MANAGED BLOCK\nsame\n# END ANSIBLE MANAGED BLOCK\n")

@@ -102,11 +102,6 @@ module Krikri
       # RedHatGov.content's `regexp: "^{{ content_public_ip }}"` with its
       # own empty-list default, the same "^[]" shape.
       if detail = regex_compile_error(state, regexp, @params["insertafter"]?, @params["insertbefore"]?)
-        # Real present() compiles only after the missing-dest checks but
-        # before ANY write (the create:true file materializes in
-        # write_changes at the very end), so a crash there leaves no file
-        # behind - undo the eager creation here for the same side effects.
-        File.delete(path) if being_created && !check_mode && File.exists?(path)
         return PluginResult.new(changed: false, failed: true, msg: "Task failed: Module failed: #{detail}",
           _ansible_error_detail: detail)
       end
@@ -171,8 +166,14 @@ module Krikri
       PluginResult.new(changed: false, failed: true, msg: "Missing required parameter: #{name}")
     end
 
-    # Returns {being_created, error}. Creates an empty file (unless
-    # check_mode) when it's missing and `create:` was requested.
+    # Returns {being_created, error}. A missing destination with `create:`
+    # only gets its parent directory made here - real lineinfile never
+    # materializes the file up front, it appears solely through
+    # write_changes/atomic_move at the end (its atomic_move gives a new
+    # file Python's default 0666 & ~umask, which the task's mode: then
+    # drifts from; live-verified vs 2.19.11). Anything that fails before
+    # that write - a failed validate:, an invalid regexp: - must therefore
+    # leave nothing behind (issue #1386).
     private def ensure_file_exists(path : String, create : Bool, check_mode : Bool) : {Bool, PluginResult?}
       return {false, nil} if File.exists?(path)
 
@@ -186,19 +187,6 @@ module Krikri
       unless check_mode
         dir = File.dirname(path)
         Dir.mkdir_p(dir) unless Dir.exists?(dir)
-        # Real creates a missing file via atomic_move at Python's default
-        # 0666 & ~umask - NOT File.write's 0644 default. The task's
-        # mode: is applied afterwards by set_fs_attributes_if_different
-        # and its drift feeds the "and ownership, perms or SE linux
-        # context changed" msg suffix (live-verified vs 2.19.11).
-        # The dest didn't exist, so atomic_move's own relabel gives it
-        # matchpathcon's policy default context (issue #911).
-        secontext = prewrite_selinux_context(path)
-        File.write(path, "")
-        File.chmod(path, 0o666 & ~creation_umask)
-        if failure = relabel_written_file(path, secontext)
-          return {false, failure}
-        end
       end
 
       {true, nil}

@@ -103,6 +103,14 @@ module Krikri
       PluginResult.new(changed: false, failed: true, msg: "Missing required parameter: #{name}")
     end
 
+    # Returns {being_created, error}. A missing destination with `create:`
+    # only gets its parent directory made here - real blockinfile never
+    # materializes the file up front, it appears solely through
+    # write_changes/atomic_move once the content is ready (its
+    # atomic_move's relabel gives a new dest matchpathcon's policy default
+    # context, issue #911). Anything that fails before that write - a
+    # failed validate: - must therefore leave nothing behind (issue
+    # #1386).
     private def ensure_file_exists(path : String, create : Bool, check_mode : Bool) : {Bool, PluginResult?}
       return {false, nil} if File.exists?(path)
 
@@ -117,13 +125,6 @@ module Krikri
       unless check_mode
         dir = File.dirname(path)
         Dir.mkdir_p(dir) unless Dir.exists?(dir)
-        # The dest didn't exist, so atomic_move's own relabel gives the
-        # file matchpathcon's policy default context (issue #911).
-        secontext = prewrite_selinux_context(path)
-        File.write(path, "")
-        if failure = relabel_written_file(path, secontext)
-          return {false, failure}
-        end
       end
 
       {true, nil}
