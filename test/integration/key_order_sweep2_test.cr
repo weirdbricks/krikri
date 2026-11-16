@@ -105,6 +105,30 @@ describe "cronvar plugin result key order" do
     keys.first(2).must_equal(["changed", "failed"])
     keys.last.must_equal("cron_file")
   end
+
+  # The check-mode skip is registerable too, and `| to_json` preserves
+  # its insertion order: live-verified in a provisioned Debian target
+  # under ansible-core 2.21.6 as changed, failed, skipped, warnings,
+  # ansible_facts, msg. krikri's own result is the same minus the
+  # target-only warnings/ansible_facts pair, so msg stays last.
+  it "registers the check-mode skip as changed, failed, skipped, msg" do
+    keys = run_registered_dump2(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - cronvar:
+              name: KRIKRI_KEY_ORDER_PROBE
+              value: "x"
+            check_mode: true
+            register: r
+          - copy:
+              content: |-
+                {{ r | to_json }}
+              dest: KRIKRI_DUMP_PATH
+      YAML
+    keys.must_equal(["changed", "failed", "skipped", "msg"])
+  end
 end
 
 describe "git plugin result key order" do
