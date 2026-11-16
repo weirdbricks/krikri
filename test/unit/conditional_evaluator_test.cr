@@ -1633,6 +1633,38 @@ describe Krikri::ConditionalEvaluator do
       ).must_equal(true)
     end
 
+    # Issue #1349 (idealista.php_role): real Python/Jinja truthiness of a
+    # stored plain "False" string is TRUE (only "" is falsy), so `not`
+    # negates it to False and an and/or walk must not stop on it. The
+    # "False" here is a block-tag set_fact template's rendered text,
+    # which real ansible-core keeps a str - unlike a whole-value
+    # `{{ expr }}`, whose native bool type survives storage.
+    it "treats a stored plain \"False\" string as truthy under 'not'" do
+      v = Hash(String, JSON::Any).new
+      v["php_is_installed"] = JSON::Any.new("False")
+      Krikri::ConditionalEvaluator.evaluate("not php_is_installed", v, strict: true).must_equal(false)
+    end
+
+    it "does not stop an 'or' chain on a false-looking 'not' operand" do
+      v = Hash(String, JSON::Any).new
+      v["php_reinstall"] = JSON::Any.new(false)
+      v["php_is_installed"] = JSON::Any.new("False")
+      v["php_new_version"] = JSON::Any.new("True")
+      assert_raises_message(Krikri::ConditionalEvaluator::ConditionalBooleanError, /type 'str'/) do
+        Krikri::ConditionalEvaluator.evaluate(
+          "php_reinstall or not php_is_installed or php_new_version", v, strict: true
+        )
+      end
+    end
+
+    it "treats a stored plain \"False\" string as truthy as an 'and' operand" do
+      v = Hash(String, JSON::Any).new
+      v["php_is_installed"] = JSON::Any.new("False")
+      Krikri::ConditionalEvaluator.evaluate(
+        "php_is_installed and (1 == 1)", v, strict: true
+      ).must_equal(true)
+    end
+
     it "does not raise for a plain non-boolean string operand mid-'and'-chain, only the overall result matters" do
       # Real bug found benchmarking ANXS.postgresql's own `when:
       # postgresql_apt_key_url and postgresql_apt_key_id and

@@ -6935,19 +6935,24 @@ module Krikri
           return nil if vars.has_key?(defined_test[1]) == is_or
           next
         end
+        # `not NAME` is a real boolean too, but its truthiness still
+        # decides whether the walk reaches the operand whose OWN value the
+        # chain ends up returning: idealista.php_role's
+        # `php_reinstall or not php_is_installed or php_new_version` with
+        # php_is_installed = "False" (a genuine str, so truthy) has the
+        # `not` operand False under `or`, and real labels the failure with
+        # php_new_version's defining site - the third operand - not the
+        # when: token (issue #1349). An operand that decides here has a
+        # bool value of its own, so there is no variable value to
+        # attribute.
+        if (negated = operand.match(/\Anot\s+([A-Za-z_][A-Za-z0-9_]*)\z/))
+          value = vars[negated[1]]? || (return nil)
+          return nil if (!python_truthy_value?(value.raw)) == is_or
+          next
+        end
         return nil unless operand.matches?(/\A[A-Za-z_][A-Za-z0-9_]*\z/)
         value = vars[operand]? || (return nil)
-        truthy = case raw = value.raw
-                 when Nil     then false
-                 when Bool    then raw
-                 when String  then !raw.empty?
-                 when Int64   then raw != 0
-                 when Float64 then raw != 0.0
-                 when Array   then !raw.empty?
-                 when Hash    then !raw.empty?
-                 else              true
-                 end
-        return operand if truthy == is_or
+        return operand if python_truthy_value?(value.raw) == is_or
       end
       # No operand decided the chain, so every operand's truthiness matched
       # the operator: Jinja keeps evaluating and the chain returns the LAST
@@ -6956,6 +6961,23 @@ module Krikri
       last = strip_chain_operand(operands.last)
       return last if last.matches?(/\A[A-Za-z_][A-Za-z0-9_]*\z/)
       nil
+    end
+
+    # Real Python/Jinja truthiness of a stored variable value: every
+    # non-empty STRING is truthy, the literal text "False" included - a
+    # block-tag `set_fact` template's rendered text stays a str in
+    # ansible, and its bare truthiness is never a bool (issue #1349).
+    private def python_truthy_value?(raw : JSON::Any::Type) : Bool
+      case raw
+      when Nil     then false
+      when Bool    then raw
+      when String  then !raw.empty?
+      when Int64   then raw != 0
+      when Float64 then raw != 0.0
+      when Array   then !raw.empty?
+      when Hash    then !raw.empty?
+      else              true
+      end
     end
 
     # Parenthesized operands are invisible to which variable decided an
