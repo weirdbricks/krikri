@@ -1487,9 +1487,14 @@ module Krikri
       end
 
       KrikriJinja.register_default_json_filter("from_json") do |value, _args, _kwargs|
-        JSON.parse(value.to_s)
-      rescue ex : JSON::ParseException
-        raise KrikriJinja::TemplateError.new(ex.message || "invalid JSON", 0)
+        text = value.to_s
+        begin
+          JSON.parse(text)
+        rescue JSON::ParseException
+          # json.loads' own wording, so the failure reads the same as
+          # ansible's from_json filter (see Krikri::PyJson).
+          raise KrikriJinja::TemplateError.new(Krikri::PyJson.error_message(text), 0)
+        end
       end
 
       KrikriJinja.register_default_json_filter("from_yaml") do |value, _args, _kwargs|

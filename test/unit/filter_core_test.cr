@@ -220,7 +220,44 @@ describe Krikri::VariableSubstitutor::FilterCore do
 
     it "from_json raises on invalid input" do
       core.from_json(%({"a": 1}))["a"].as_i.must_equal(1)
-      assert_raises_message(Exception, "invalid JSON") { core.from_json("{nope}") }
+      assert_raises_message(Exception, "Expecting property name enclosed in double quotes") { core.from_json("{nope}") }
+    end
+
+    it "from_json reports json.loads' error text and position (ansible's own wording)" do
+      # Real divergence found benchmarking kameshsampath.minikube: in
+      # check mode its `command` result is skipped, so
+      # profile_check_result.stdout is empty and the role's
+      # `{{ profile_check_result.stdout | from_json }}` set_fact fails.
+      # ansible fails it with json.loads' own message, which krikri
+      # replaced with a generic invalid-JSON text - the only check-mode
+      # output difference in the role. Every case below was verified
+      # against CPython 3.13's json.loads (the C scanner, whose escape
+      # positions differ from the pure-Python decoder's).
+      core = Krikri::VariableSubstitutor::FilterCore
+      {
+        ""                => "Expecting value: line 1 column 1 (char 0)",
+        "\ufeff{}"        => "Unexpected UTF-8 BOM (decode using utf-8-sig): line 1 column 1 (char 0)",
+        " "               => "Expecting value: line 1 column 2 (char 1)",
+        "{"               => "Expecting property name enclosed in double quotes: line 1 column 2 (char 1)",
+        "[1"              => "Expecting ',' delimiter: line 1 column 3 (char 2)",
+        "{}x"             => "Extra data: line 1 column 3 (char 2)",
+        %({"a":1,})       => "Illegal trailing comma before end of object: line 1 column 7 (char 6)",
+        "[1,]"            => "Illegal trailing comma before end of array: line 1 column 3 (char 2)",
+        %("abc)           => "Unterminated string starting at: line 1 column 1 (char 0)",
+        %({"a" 1})        => "Expecting ':' delimiter: line 1 column 6 (char 5)",
+        "[1 2]"           => "Expecting ',' delimiter: line 1 column 4 (char 3)",
+        %({"a": tru})     => "Expecting value: line 1 column 7 (char 6)",
+        %("a\\qb")        => "Invalid \\escape: line 1 column 3 (char 2)",
+        %("\\u12")        => "Invalid \\uXXXX escape: line 1 column 3 (char 2)",
+        %("\\u0041)       => "Invalid \\uXXXX escape: line 1 column 3 (char 2)",
+        %("\\ud83d\\ude0) => "Invalid \\uXXXX escape: line 1 column 9 (char 8)",
+        "01"              => "Extra data: line 1 column 2 (char 1)",
+        "\n\n{"           => "Expecting property name enclosed in double quotes: line 3 column 2 (char 3)",
+        %({\n"a" 1})      => "Expecting ':' delimiter: line 2 column 5 (char 6)",
+      }.each do |text, expected|
+        ex = assert_raises(Exception) { core.from_json(text) }
+        ex.message.must_equal(expected)
+      end
     end
 
     it "from_yaml passes non-string values through unchanged (Ansible behavior)" do

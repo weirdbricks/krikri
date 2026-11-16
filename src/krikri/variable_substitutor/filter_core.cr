@@ -1,6 +1,7 @@
 require "json"
 require "../bigint_json"
 require "../py_dump"
+require "../py_json"
 require "../py_set"
 require "uri"
 require "../plugin_helpers/crypt_hash"
@@ -345,11 +346,13 @@ module Krikri
       # raises on invalid input (Ansible does too). The bigint-aware
       # parse keeps an integer too wide for Int64 a number (sentinel-
       # carried), where plain JSON.parse would raise - Python's
-      # json.loads has no such limit.
+      # json.loads has no such limit. The failure text is json.loads'
+      # own (PyJson), because ansible's from_json filter puts that
+      # message straight into the task error.
       def self.from_json(s : String) : JSON::Any
         Krikri::BigJson.parse(s)
       rescue
-        raise "from_json: invalid JSON input"
+        raise Krikri::PyJson.error_message(s)
       end
 
       # from_yaml() - Ansible only calls yaml.safe_load when the
