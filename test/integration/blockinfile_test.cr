@@ -21,6 +21,28 @@ describe "blockinfile plugin" do
     File.read(path).to_slice.hexstring.includes?("636166e90a").must_equal(true)
   end
 
+  # ansible-core 2.21.5 stages the new content first and applies mode: to
+  # the file afterwards, so a plain non-root user can create a 0440
+  # managed file. Settling the staging temp to 0440 BEFORE writing it made
+  # the write's open fail EACCES and left the read-only .tmp in the dest
+  # directory (issue #1385).
+  it "creates a 0440 file as the non-root run user, leaving no temp file" do
+    path = PluginSpecHelper.tmp_path("blockinfile-readonly.conf")
+
+    result = PluginSpecHelper.run("blockinfile", {
+      "path"   => path,
+      "create" => "true",
+      "block"  => "x",
+      "mode"   => "0440",
+    })
+
+    falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+    result["changed"].as_bool.must_equal(true)
+    File.info(path).permissions.value.must_equal(0o440)
+    File.read(path).must_include("x")
+    Dir.children(File.dirname(path)).count { |name| name.includes?(".krikri-playbook-") }.must_equal(0)
+  end
+
   it "fails on content its encoding: cannot decode, with CPython's message (2.21)" do
     path = PluginSpecHelper.tmp_path("blockinfile-undecodable.txt")
     File.open(path, "wb") { |file| file.write(Bytes[0x6f, 0x6b, 0x0a, 0xff, 0xfe, 0x0a]) }

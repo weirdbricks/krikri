@@ -507,9 +507,9 @@ module Krikri
           # Ansible creates its own per-run tmp dir 0700 (the remote_tmp
           # convention its cleanup and validators both assume).
           FileUtils.mkdir_p(run_dir, mode: 0o700)
-          # SECURITY: the temp is created EMPTY at 0600 and settled to its
-          # final mode BEFORE the rendered bytes land - see
-          # BasePlugin#create_staging_temp. The final mode is an existing
+          # SECURITY: the rendered bytes land at 0600 and the final mode is
+          # applied right after, still before validate: and the move - see
+          # BasePlugin#write_staging_temp. The final mode is an existing
           # dest's own mode when there is one (the way Ansible's
           # atomic_move preserves it), 0666 & ~umask narrowed by the
           # task's numeric mode: for a fresh dest - the rename carries the
@@ -517,16 +517,13 @@ module Krikri
           # package-shipped 0600 configs: nickjj.monit templates
           # /etc/monit/monitrc with no mode:, and monit refuses to start
           # on 0644 ("control file ... permission 0644 is wrong"), which
-          # fails the role's service: state=started task. The old
-          # write-first shape held a rendered secret (vault-decrypted
-          # values interpolated in) at 0644 & ~umask for the whole write +
-          # validate + move span.
-          create_staging_temp(temp_file, staging_temp_mode(dest, 0o666))
+          # fails the role's service: state=started task. Applying the
+          # mode before the write (the old shape) breaks every read-only
+          # mode: the non-root owner cannot open its own temp (issue
+          # #1385).
           # Write the OUTPUT-ENCODED bytes (see output_encoding above) -
-          # not the UTF-8 string. perm 0600 only matters if the temp
-          # vanished between creation and here: recreate narrow, never
-          # wide.
-          File.write(temp_file, content_bytes, perm: 0o600)
+          # not the UTF-8 string.
+          write_staging_temp(temp_file, content_bytes, staging_temp_mode(dest, 0o666))
         rescue ex
           return PluginResult.new(
             changed: false,
@@ -818,13 +815,14 @@ module Krikri
     # new content. nil on success.
     private def unsafe_write_dest(dest : String, content_bytes : Bytes) : PluginResult?
       begin
-        # Same narrow-then-settle staging discipline as the temp above for
-        # a not-yet-existing dest; an existing dest's mode is untouched by
-        # opening it for writing.
-        unless File.exists?(dest)
-          create_staging_temp(dest, staging_temp_mode(dest, 0o666, preserve_dest_mode: false))
+        # An existing dest's mode is untouched by opening it for writing; a
+        # fresh one gets the bytes at 0600 and its final mode right after -
+        # see BasePlugin#write_staging_temp.
+        if File.exists?(dest)
+          File.write(dest, content_bytes, perm: 0o600)
+        else
+          write_staging_temp(dest, content_bytes, staging_temp_mode(dest, 0o666, preserve_dest_mode: false))
         end
-        File.write(dest, content_bytes, perm: 0o600)
         nil
       rescue ex
         PluginResult.new(

@@ -231,14 +231,13 @@ module Krikri
 
       temp_file = File.join(File.dirname(dest), ".krikri-playbook-assemble-#{Random::Secure.hex(8)}.tmp")
       begin
-        # SECURITY: created EMPTY at 0600 and settled to 0644 & ~umask
-        # (narrowed by the task's numeric mode:) BEFORE the assembled
-        # content lands - see BasePlugin#create_staging_temp. This temp
-        # is deleted after validation, it never becomes dest, so it
-        # never inherits a dest mode. The old write-first shape held the
-        # bytes at 0644 & ~umask for the whole validate run.
-        create_staging_temp(temp_file, staging_temp_mode(dest, 0o644, preserve_dest_mode: false))
-        File.write(temp_file, content, perm: 0o600)
+        # SECURITY: the assembled content lands at 0600 and the final mode
+        # (0644 & ~umask, narrowed by the task's numeric mode:) is applied
+        # right after, before the validate command runs - see
+        # BasePlugin#write_staging_temp. This temp is deleted after
+        # validation, it never becomes dest, so it never inherits a dest
+        # mode. A read-only mode can only be applied after the write.
+        write_staging_temp(temp_file, content, staging_temp_mode(dest, 0o644, preserve_dest_mode: false))
         cmd = validate_cmd.gsub("%s", shell_single_quote(temp_file))
         output = IO::Memory.new
         result = Process.run("/bin/sh", ["-c", cmd], output: output, error: output)
@@ -319,28 +318,27 @@ module Krikri
         # A bare relative filename: the rename onto the bare name
         # succeeds (creating the file in the cwd), then the creating-
         # branch os.stat(os.path.dirname(b_dest)) stats b'' and fails.
-        # SECURITY: created EMPTY at 0600 and settled to its final mode
+        # SECURITY: the assembled content lands at 0600 and the final mode
         # (0666 & ~umask - Ansible's atomic_move opens the source at
         # Python's default 0666 and the umask trims it; live-verified
         # vs 2.19.11: umask 002 -> mode "0664" on the assembled dest -
-        # narrowed by the task's numeric mode:) before
-        # the assembled content lands - see BasePlugin#create_staging_temp.
-        create_staging_temp(dest, staging_temp_mode(dest, 0o666, preserve_dest_mode: false))
-        File.write(dest, content, perm: 0o600)
+        # narrowed by the task's numeric mode:) is applied right after -
+        # see BasePlugin#write_staging_temp.
+        write_staging_temp(dest, content, staging_temp_mode(dest, 0o666, preserve_dest_mode: false))
         return module_crash_result("[Errno 2] No such file or directory: b''")
       end
 
-      # SECURITY: a not-yet-existing dest is created EMPTY at 0600 and
-      # settled to its final mode (0666 & ~umask - see the bare-relative
-      # case above for the real-Ansible reading) before the assembled
-      # content lands - see BasePlugin#create_staging_temp. An existing
-      # dest's mode is untouched by opening it for writing (and the
-      # task's mode:/owner: are applied to dest after this returns, as
-      # before).
-      unless File.exists?(dest)
-        create_staging_temp(dest, staging_temp_mode(dest, 0o666, preserve_dest_mode: false))
+      # SECURITY: a not-yet-existing dest gets the assembled content at
+      # 0600 and its final mode (0666 & ~umask - see the bare-relative
+      # case above for the real-Ansible reading) right after - see
+      # BasePlugin#write_staging_temp. An existing dest's mode is untouched
+      # by opening it for writing (and the task's mode:/owner: are applied
+      # to dest after this returns, as before).
+      if File.exists?(dest)
+        File.write(dest, content, perm: 0o600)
+      else
+        write_staging_temp(dest, content, staging_temp_mode(dest, 0o666, preserve_dest_mode: false))
       end
-      File.write(dest, content, perm: 0o600)
       backup_file
     end
   end

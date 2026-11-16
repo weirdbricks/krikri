@@ -805,6 +805,28 @@ describe "template plugin param coverage" do
       File.delete(playbook) if playbook && File.exists?(playbook)
     end
   end
+
+  describe "mode: (read-only, as the non-root run user)" do
+    # ansible-core 2.21.5 writes the staged bytes first and only then
+    # applies mode: (atomic_move), so a 0440 template is createable by a
+    # plain non-root user. Applying the mode to the staging temp BEFORE
+    # the write made that open fail EACCES and left a read-only .tmp
+    # behind (issue #1385), live-verified as the reported failure.
+    it "renders a 0440 dest and leaves no temp file behind" do
+      dest = tmp_path("readonly.conf")
+      result = PluginSpecHelper.run("template", {
+        "content" => "read only\n",
+        "dest"    => dest,
+        "mode"    => "0440",
+      })
+
+      falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+      result["changed"].as_bool.must_equal(true)
+      File.info(dest).permissions.value.must_equal(0o440)
+      File.read(dest).must_equal("read only\n")
+      Dir.children(File.dirname(dest)).count { |name| name.includes?(".krikri-playbook-") }.must_equal(0)
+    end
+  end
 end
 
 describe "Python %-formatting in the Crinja engine (the `str % args` operator)" do
