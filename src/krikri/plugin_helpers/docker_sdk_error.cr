@@ -232,10 +232,11 @@ module Krikri
       # exception's repr for a UNIX-socket connect
       # ("('Connection aborted.', FileNotFoundError(2, 'No such file or
       # directory'))"), or urllib3's pool-retry prose for a TCP one.
-      # docker_host is the resolved docker_host (param or environment) -
-      # only needed to pick the TCP branch's pool spelling.
-      def self.connect_error_text(ex : Socket::ConnectError, docker_host : String? = nil) : String
-        "Error connecting: Error while fetching server API version: #{transport_error_text(ex, docker_host)}"
+      # docker_host is the resolved docker_host (param or environment) and
+      # tls its effective TLS state - together they pick the TCP branch's
+      # pool spelling.
+      def self.connect_error_text(ex : Exception, docker_host : String?, tls : Bool = false) : String
+        "Error connecting: Error while fetching server API version: #{transport_error_text(ex, docker_host, tls)}"
       end
 
       # AnsibleDockerClientBase's wrapper for an exception escaping the
@@ -246,25 +247,61 @@ module Krikri
         "Error connecting: #{ex.message}"
       end
 
-      def self.transport_error_text(ex : Socket::ConnectError, docker_host : String?) : String
-        tcp = docker_host.try { |host| {"tcp://", "http://", "https://"}.any? { |scheme| host.starts_with?(scheme) } } || false
-        if tcp
-          uri = URI.parse(docker_host || "")
-          https = docker_host.try(&.starts_with?("https://")) || false
-          port = uri.port || (https ? 2376 : 2375)
-          pool = "#{https ? "HTTPS" : "HTTP"}ConnectionPool(host='#{uri.host || ""}', port=#{port})"
-          cause = errno_cause_text(ex, uri.host, port)
-          # urllib3 renders the failed connection attempt's own object
-          # address in the cause ("...HTTPConnection object at 0x7fa5..."),
-          # which is the Python process's live heap pointer - real's own
-          # text is not stable across runs there, so this quotes THIS
-          # process's exception object id in the same shape.
-          "#{pool}: Max retries exceeded with url: /version " \
-          "(Caused by NewConnectionError('<urllib3.connection.#{https ? "HTTPS" : "HTTP"}Connection " \
-          "object at 0x#{ex.object_id.to_s(16).rjust(12, '0')}>: Failed to establish a new connection: #{cause}'))"
+      def self.transport_error_text(ex : Exception, docker_host : String?, tls : Bool = false) : String
+        return unix_transport_error_text(ex) unless tcp_docker_host?(docker_host)
+
+        uri = URI.parse(docker_host || "")
+        https = tls || docker_host.try(&.starts_with?("https://")) || false
+        tcp_transport_error_text(ex, uri, https)
+      end
+
+      private def self.tcp_docker_host?(docker_host : String?) : Bool
+        docker_host.try { |host| {"tcp://", "http://", "https://"}.any? { |scheme| host.starts_with?(scheme) } } || false
+      end
+
+      private def self.tcp_transport_error_text(ex : Exception, uri : URI, https : Bool) : String
+        host = uri.host || ""
+        port = uri.port || (https ? 2376 : 2375)
+        pool = "#{https ? "HTTPS" : "HTTP"}ConnectionPool(host='#{host}', port=#{port})"
+        # urllib3 renders the failed connection attempt's own object
+        # address in the cause ("...HTTPConnection object at 0x7fa5..."),
+        # which is the Python process's live heap pointer - real's own
+        # text is not stable across runs there, so this quotes THIS
+        # process's exception object id in the same shape.
+        connection = "urllib3.connection.#{https ? "HTTPS" : "HTTP"}Connection object at 0x#{ex.object_id.to_s(16).rjust(12, '0')}"
+        "#{pool}: Max retries exceeded with url: /version (Caused by #{connection_error_cause(ex, host, port, connection)})"
+      end
+
+      # A failed name lookup is urllib3's NameResolutionError, not a
+      # NewConnectionError: requests never gets as far as a socket.
+      private def self.connection_error_cause(ex : Exception, host : String, port : Int32, connection : String) : String
+        if dns_error = ex.as?(Socket::Addrinfo::Error)
+          "NameResolutionError(\"<#{connection}>: Failed to resolve '#{host}' (#{gai_error_text(dns_error)})\")"
+        elsif connect_error = ex.as?(Socket::ConnectError)
+          "NewConnectionError('<#{connection}>: Failed to establish a new connection: #{errno_cause_text(connect_error, host, port)}')"
         else
-          "('Connection aborted.', #{wrapped_exception_text(ex)})"
+          "#{ex.message || ex.class.name}'"
         end
+      end
+
+      private def self.unix_transport_error_text(ex : Exception) : String
+        if connect_error = ex.as?(Socket::ConnectError)
+          "('Connection aborted.', #{wrapped_exception_text(connect_error)})"
+        else
+          "('Connection aborted.', #{ex.message || ex.class.name})"
+        end
+      end
+
+      # socket.gaierror's own rendering of a failed name lookup
+      # ("[Errno -2] Name or service not known"), which is what urllib3's
+      # NameResolutionError quotes. Crystal keeps the getaddrinfo code in
+      # the exception but renders its own wording, so the code is turned
+      # back into glibc's text here.
+      private def self.gai_error_text(ex : Socket::Addrinfo::Error) : String
+        errno = ex.os_error.as?(Errno)
+        return "[Errno -2] Name or service not known" unless errno
+
+        "[Errno #{errno.value}] #{String.new(LibC.gai_strerror(errno.value))}"
       end
 
       private def self.errno_cause_text(ex : Socket::ConnectError, host : String? = nil, port : Int32? = nil) : String

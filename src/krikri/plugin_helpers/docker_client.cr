@@ -282,10 +282,19 @@ module Krikri
       # other failure the requests-shaped version-fetch text.
       def self.connect_failure_text(ex : Exception, params : Hash(String, String)) : String
         return DockerSdkError.client_init_error_text(ex) if ex.is_a?(InvalidDockerHostError)
-        if ex.is_a?(Socket::ConnectError)
-          return DockerSdkError.connect_error_text(ex, resolved_docker_host(params))
+        if ex.is_a?(Socket::ConnectError) || ex.is_a?(Socket::Addrinfo::Error)
+          return DockerSdkError.connect_error_text(ex, resolved_docker_host(params), tls_enabled?(params))
         end
         "Error connecting: #{ex.message}"
+      end
+
+      # The connection's effective TLS state, the same one real's
+      # get_connect_params computes before handing docker_host to the SDK
+      # (https:// implies it; otherwise tls:/validate_certs: or their env
+      # fallbacks). The transport-error text needs it for the pool
+      # spelling.
+      def self.tls_enabled?(params : Hash(String, String)) : Bool
+        tls_requested?(params, resolved_docker_host(params) || "", env_overlay(params))
       end
 
       # The SDK's parse_host() (module_utils/_api/utils/utils.py), the
