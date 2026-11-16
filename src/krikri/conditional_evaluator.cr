@@ -29,14 +29,19 @@ module Krikri
     end
   end
 
-  # A TEST PLUGIN's runtime failure - ansible-core 2.19 wraps it as
-  # "The test plugin '<fqcn>' failed: <cause>" and the [ERROR] chain block
-  # shows the cause as its own innermost stanza. test_name carries the
-  # real FQCN spelling for the wrapper.
+  # A TEST PLUGIN's runtime failure - ansible-core wraps it as
+  # "The test plugin '<fqcn>' failed: <cause>". Only a cause the plugin
+  # raised from inside its own Python `except` block (the version test's
+  # comparison try/except) gets a separate innermost [ERROR] stanza; a
+  # validation error raised directly by the plugin (empty input, a bad
+  # keyword, a bad regex) stays on the wrapper's own line (live-verified
+  # vs 2.21.6, issue #1365). cause_text is nil for the latter so the
+  # display can tell the two apart. test_name carries the real FQCN
+  # spelling for the wrapper.
   class TestPluginError < Exception
-    getter cause_text : String
+    getter cause_text : String?
 
-    def initialize(message : String, @cause_text : String)
+    def initialize(message : String, @cause_text : String? = nil)
       super(message)
     end
   end
@@ -3145,13 +3150,23 @@ module Krikri
 
     # The uniform test-failure framing for every version-test validation
     # error: ansible-core wraps test exceptions as "The test plugin
-    # 'ansible.builtin.<name>' failed: <inner>", with the inner text as
-    # the cause.
+    # 'ansible.builtin.<name>' failed: <inner>".
     private def self.version_test_fail(test_name : String, inner : String) : NoReturn
       raise TestPluginError.new(
         "The test plugin 'ansible.builtin.#{test_name}' failed: #{inner}",
-        inner
+        chained_test_plugin_cause?(inner) ? inner : nil
       )
+    end
+
+    # Whether a test plugin's cause is one ansible renders as its own
+    # innermost [ERROR] stanza. Its Display walks the exception chain, so
+    # only a cause the plugin raised from inside an `except` block becomes
+    # a record of its own; ansible's version test does that exactly once,
+    # around the comparison itself ("Version comparison failed: ..."),
+    # while its validation errors are raised directly and stay inline
+    # (live-verified vs 2.21.6, issue #1365).
+    def self.chained_test_plugin_cause?(cause : String) : Bool
+      cause.starts_with?("Version comparison failed: ")
     end
 
     private def self.evaluate_version_test(left_expr : String, test_name : String, positional : Array(String), kwargs : Hash(String, String), vars : Hash(String, JSON::Any), raise_undefined : Bool = false) : Bool

@@ -88,6 +88,26 @@ describe "when: filter-plugin runtime failure chain" do
     output.wont_include("ALLOW_BROKEN_CONDITIONALS")
   end
 
+  # A validation error the test plugin raises directly (no wrapped Python
+  # exception) has no separate chain record in real ansible: the middle
+  # link keeps the full "failed: <cause>" text (live-verified vs 2.21.6,
+  # issue #1365).
+  it "keeps a directly raised test-plugin error inline in the when: chain" do
+    status, output, _ = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: Version check
+            debug: msg=ran
+            when: "'' is version('1.0')"
+      YAML
+
+    status.exit_code.must_equal(2)
+    output.must_include("<<< caused by >>>\n\nA 'when' expression failed: The test plugin 'ansible.builtin.version' failed: Input version value cannot be empty\nOrigin: ")
+    output.wont_include("<<< caused by >>>\n\nInput version value cannot be empty\n")
+  end
+
   # The same filter-plugin wording raised from a TASK ARG (not a when:)
   # keeps its own finalization-chain display - the when:-failure marker
   # on the result must not suppress that path.
