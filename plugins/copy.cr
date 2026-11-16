@@ -105,6 +105,12 @@ module Krikri
     # {diff: [], changed: true} (live-verified, src and content paths
     # alike).
     private CHECK_KEY_ORDER = %w[diff changed failed]
+    # remote_src on a directory: the copy MODULE's own res_args - the
+    # user's src echoed under dest, nil checksums (a directory has no
+    # file checksum) and add_path_info's stat block - with no msg and no
+    # diff key (live-verified against ansible-core 2.21.6, registered
+    # result).
+    private REMOTE_SRC_DIR_KEY_ORDER = %w[changed failed dest src md5sum checksum uid gid owner group mode state size]
 
     # ansible.builtin.copy's `type: bool` options, in the real argument-spec
     # declaration order (ansible-doc -j ansible.builtin.copy). Validated at
@@ -151,14 +157,15 @@ module Krikri
       rescue ex : BoolParamError
         PluginResult.new(changed: false, failed: true, msg: ex.message || "invalid boolean parameter")
       end
-      # Real copy's wire result ALWAYS carries a `diff` key - an empty
+      # Real copy's wire result carries a `diff` key on the LOCAL flow
+      # (the action plugin seeds one before the module runs) - an empty
       # LIST when no diff data was computed (live-verified vs 2.19.11 at
       # -vvv, run and --check alike; the display layer strips it below
-      # -vvv, so only -vvv sees it). Failed module results keep it too -
-      # the registered result of a failed copy shows `"diff": []` (argspec
-      # failures and module failures alike, live-verified). A real diff
-      # payload (diff mode) keeps the computed content.
-      if result.diff.nil?
+      # -vvv, so only -vvv sees it). remote_src runs the module directly,
+      # skipping the action plugin's _get_diff_data entirely, so its
+      # result has NO diff key (live-verified against ansible-core
+      # 2.21.6 for both a file and a directory remote_src copy).
+      if result.diff.nil? && !true?(@params["remote_src"]?)
         result.diff = JSON::Any.new([] of JSON::Any)
       end
       # Ansible 2.19.11's CHECK-MODE content copy reports its module
@@ -998,12 +1005,21 @@ module Krikri
       changed = changed_by_attributes ? true : false
       copied = 0
 
-      # directory_mode: Ansible applies this to every directory the
-      # copy itself CREATES (live-verified against ansible-core 2.19.4:
-      # created dirs get exactly directory_mode, pre-existing dirs are
-      # left untouched, and the file's own mode: is NOT applied to
-      # created directories - they get the umask default instead).
+      # directory_mode: on a LOCAL directory copy Ansible applies this
+      # to every directory the copy itself CREATES (live-verified
+      # against ansible-core 2.19.4: created dirs get exactly
+      # directory_mode, pre-existing dirs are left untouched, and the
+      # file's own mode: is NOT applied to created directories - they
+      # get the umask default instead).
+      #
+      # remote_src is different (live-verified against ansible-core
+      # 2.21.6): the copy module's own shutil.copytree keeps each source
+      # directory's mode, and directory_mode is applied to the
+      # top-level destination directory only. Applying it down the tree
+      # (issue #1388) chmod'd subdirectories ansible left at the source
+      # modes.
       directory_mode = @params["directory_mode"]?.presence
+      remote_src_directory = true?(@params["remote_src"]?)
 
       # local_follow: Ansible's default (None) follows symlinks in
       # the SOURCE tree - the target's content arrives as a regular file
@@ -1032,7 +1048,15 @@ module Krikri
         if File.directory?(entry)
           unless Dir.exists?(dest_path)
             Dir.mkdir_p(dest_path)
-            apply_directory_mode(dest_path, directory_mode) if directory_mode
+            if remote_src_directory
+              # shutil.copytree/copy_left_only run shutil.copystat, so a
+              # created remote_src subdirectory carries the source
+              # directory's permission bits (umask/default creation
+              # above would otherwise leave it at 0755).
+              File.chmod(dest_path, File.info(entry).permissions)
+            elsif directory_mode
+              apply_directory_mode(dest_path, directory_mode)
+            end
             changed = true
           end
           next
@@ -1059,13 +1083,29 @@ module Krikri
         copied += 1
       end
 
-      result = PluginResult.new(
-        changed: changed,
-        failed: false,
-        msg: changed ? "Directory copied successfully" : "Directory already up to date",
-        dest: dest_root,
-        key_order: CHANGED_KEY_ORDER
-      )
+      if remote_src_directory
+        # The module's own res_args for a directory source: the user's
+        # src echoed back, nil checksums (a directory has no file
+        # checksum) and - via add_path_info below - the top-level dest's
+        # stat block. Its successful exit_json carries no msg.
+        result = PluginResult.new(
+          changed: changed,
+          failed: false,
+          dest: dest_root,
+          src: @params["src"],
+          md5sum: JSON::Any.new(nil),
+          checksum: JSON::Any.new(nil),
+          key_order: REMOTE_SRC_DIR_KEY_ORDER
+        )
+      else
+        result = PluginResult.new(
+          changed: changed,
+          failed: false,
+          msg: changed ? "Directory copied successfully" : "Directory already up to date",
+          dest: dest_root,
+          key_order: CHANGED_KEY_ORDER
+        )
+      end
       # Ansible's add_path_info runs over the directory-copy result
       # too (dest is an existing directory at exit time) - stat fields
       # with state "directory", no checksum (its checksum: field is the

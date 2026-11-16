@@ -76,4 +76,39 @@ describe "copy plugin - directory src" do
     second = PluginSpecHelper.run("copy", {"src" => "#{src}/", "dest" => "#{dest}/"})
     second["changed"].as_bool.must_equal(false)
   end
+
+  it "keeps source modes for subdirectories on a remote_src copy, applying directory_mode to the top-level dest only" do
+    # Live-verified against ansible-core 2.21.6: remote_src runs the
+    # copy module itself, whose shutil.copytree preserves every source
+    # directory's mode, and directory_mode is applied to the top-level
+    # destination directory alone (issue #1388).
+    src = File.tempname("copy-dir-spec-rs-src")
+    Dir.mkdir_p(File.join(src, "a", "b"))
+    File.chmod(File.join(src, "a"), 0o750)
+    File.chmod(File.join(src, "a", "b"), 0o751)
+
+    dest = File.tempname("copy-dir-spec-rs-dest")
+    result = PluginSpecHelper.run("copy", {
+      "src"            => "#{src}/",
+      "dest"           => "#{dest}/",
+      "remote_src"     => "true",
+      "directory_mode" => "0700",
+    })
+
+    result["changed"].as_bool.must_equal(true)
+    (File.info(dest).permissions.value & 0o777).must_equal(0o700)
+    (File.info(File.join(dest, "a")).permissions.value & 0o777).must_equal(0o750)
+    (File.info(File.join(dest, "a", "b")).permissions.value & 0o777).must_equal(0o751)
+
+    # The module's own result for a remote_src directory: the user's src
+    # echoed back, nil checksums, no msg and no diff key.
+    result["src"].as_s.must_equal("#{src}/")
+    result["md5sum"].raw.must_be_nil
+    result["checksum"].raw.must_be_nil
+    result["msg"]?.must_be_nil
+    result["diff"]?.must_be_nil
+  ensure
+    FileUtils.rm_rf(src) if src
+    FileUtils.rm_rf(dest) if dest
+  end
 end
