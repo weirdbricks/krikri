@@ -252,28 +252,49 @@ module Krikri
       installed = [] of String
       missing = [] of String
 
-      collect_installed(result[:stdout], installed, missing)
+      has_dependencies = collect_installed(result[:stdout], installed, missing)
 
-      if name_version && !installed.includes?(name_version) && name && !missing.includes?(name)
-        missing << name
+      # Ansible's list() splits on whether the probe's JSON has a
+      # "dependencies" key: with one it appends the name only when
+      # name@version is absent, WITHOUT one it appends the name
+      # UNCONDITIONALLY - even when no `name:` was given at all. A Python
+      # `missing` of [None] is truthy, so a bare `path:` install over a
+      # dependency-free project still predicts `changed` and fires the
+      # notified handler (issue #1377: kpg's npm task with only
+      # path/no_bin_links/force/registry came back `ok` from krikri but
+      # `changed` from ansible). The nameless entry's value is never read -
+      # only the list's emptiness matters - so a placeholder stands in for
+      # it.
+      if has_dependencies
+        if name_version && !installed.includes?(name_version) && name && !missing.includes?(name)
+          missing << name
+        end
+      else
+        missing << (name || "")
       end
 
       {installed, missing}
     end
 
     # Parse `npm list --json --long` output into the installed/missing
-    # sets. Malformed/empty output - treated as nothing installed,
-    # matching this codebase's general "fail closed to a safe no-op
-    # read, let the actual install/uninstall command surface any
-    # real error" convention used elsewhere (pip.cr, etc).
-    private def collect_installed(stdout : String, installed : Array(String), missing : Array(String)) : Nil
+    # sets, reporting whether the payload carried a "dependencies" key at
+    # all - Ansible's list() branches on exactly that. Malformed/empty
+    # output - treated as nothing installed, matching this codebase's
+    # general "fail closed to a safe no-op read, let the actual
+    # install/uninstall command surface any real error" convention used
+    # elsewhere (pip.cr, etc).
+    private def collect_installed(stdout : String, installed : Array(String), missing : Array(String)) : Bool
       data = JSON.parse(stdout.empty? ? "{}" : stdout)
       if deps = data["dependencies"]?.try(&.as_h?)
         deps.each do |dep, props|
           add_dependency(dep, props.as_h?, installed, missing)
         end
+        true
+      else
+        false
       end
     rescue
+      false
     end
 
     # Classify a single dependency entry from npm list output

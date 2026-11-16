@@ -109,6 +109,58 @@ describe "npm plugin" do
     File.read(log).must_equal("list --json --long --global\n")
   end
 
+  it "check mode predicts changed for a path-only install when npm lists no dependencies" do
+    # Ansible's list() has an `else` for probe output WITHOUT a
+    # "dependencies" key: `missing.append(self.name)` runs even with no
+    # `name:` given, leaving a [None] list that is truthy - so
+    # `state: present` predicts `changed` (live-verified vs ansible
+    # 2.21.6: a bare `path:` task over a directory npm reports no
+    # dependencies for is `changed: [localhost]` in --check). krikri
+    # required a name, reported `ok`, and never fired the notified
+    # handler (issue #1377).
+    dir = PluginSpecHelper.tmp_path("npm-path-only-no-deps")
+    Dir.mkdir_p(dir)
+    stub = File.join(dir, "npm")
+    File.write(stub, <<-SH)
+      #!/bin/sh
+      echo '{"name":"empty-project","_dependencies":{},"devDependencies":{}}'
+      SH
+    File.chmod(stub, 0o755)
+
+    result = PluginSpecHelper.run("npm", {
+      "path"                => dir,
+      "force"               => "true",
+      "no_bin_links"        => "true",
+      "registry"            => "krikri-invalid-registry",
+      "executable"          => stub,
+      "_ansible_check_mode" => "true",
+    })
+
+    result["changed"].as_bool.must_equal(true)
+  end
+
+  it "check mode stays ok for a path-only install when npm lists an empty dependency set" do
+    # The same task over output WITH a "dependencies" key: Ansible's
+    # append is gated on `self.name_version`, which is None without a
+    # `name:`, so `missing` stays empty and nothing is predicted.
+    dir = PluginSpecHelper.tmp_path("npm-path-only-empty-deps")
+    Dir.mkdir_p(dir)
+    stub = File.join(dir, "npm")
+    File.write(stub, <<-SH)
+      #!/bin/sh
+      echo '{"dependencies":{}}'
+      SH
+    File.chmod(stub, 0o755)
+
+    result = PluginSpecHelper.run("npm", {
+      "path"                => dir,
+      "executable"          => stub,
+      "_ansible_check_mode" => "true",
+    })
+
+    result["changed"].as_bool.must_equal(false)
+  end
+
   it "reports the full argv of a failed install in cmd, with the sanitized msg" do
     # Real ansible (live-verified vs 2.19.11) fails the task with cmd set
     # to the whole command it ran - flags and package spec included - and
