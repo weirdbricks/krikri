@@ -309,6 +309,12 @@ module Krikri
       # Registered bare - community.libvirt is not in simple_plugin_name's
       # strip list - with the FQCN spelling mapped through MODULE_ALIASES.
       "virt_net",
+      # virt_pool: libvirt storage-pool management via the virsh CLI
+      # (ghyde.libvirt round29913554 calls `command: list_pools` in
+      # check mode and branches on the registered list; dropping the task
+      # made the block's `when:` fatal where real answered ok, issue
+      # #1360).
+      "virt_pool",
       # maven_artifact (0.9.934): Maven artifact download
       # (lean_delivery.jmeter round 210778 hard-stopped on it).
       "community.general.maven_artifact",
@@ -657,7 +663,8 @@ module Krikri
       "community.general.docker_network"      => "community.docker.docker_network",
       "community.general.docker_network_info" => "community.docker.docker_network_info",
       # virt_net's collection namespace (see its AVAILABLE_PLUGINS entry).
-      "community.libvirt.virt_net" => "virt_net",
+      "community.libvirt.virt_net"  => "virt_net",
+      "community.libvirt.virt_pool" => "virt_pool",
     }
 
     # The MODULE_ALIASES spellings aliased onto community.mysql's
