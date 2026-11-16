@@ -51,6 +51,40 @@ private def with_gate_shim(requests_behavior : String, &) : Nil
   end
 end
 
+# Two fallback candidates at once, the shape the benchmark goldens have:
+# the first one discovery picks answers `import requests` with
+# `first_behavior`, the next one up the list with `second_behavior`.
+private def with_split_gate_shim(first_behavior : String, second_behavior : String, &) : Nil
+  dir = PluginSpecHelper.tmp_path("docker-sdk-gate-split")
+  FileUtils.rm_rf(dir)
+  FileUtils.mkdir_p(dir)
+
+  [{Krikri::INTERPRETER_FALLBACK[0], first_behavior},
+   {Krikri::INTERPRETER_FALLBACK[1], second_behavior}].each do |name, behavior|
+    interpreter = File.join(dir, name)
+    File.write(interpreter, <<-SHIM)
+      #!/bin/sh
+      case "$*" in
+        *"print(sys.executable)"*) echo "#{GATE_SHIM_PY}" ;;
+        *"import requests"*)
+          #{behavior}
+          exit $? ;;
+        *) exit 0 ;;
+      esac
+      SHIM
+    File.chmod(interpreter, 0o755)
+  end
+
+  original_path = ENV["PATH"]?
+  ENV["PATH"] = "#{dir}:#{original_path}"
+  begin
+    yield dir
+  ensure
+    ENV["PATH"] = original_path if original_path
+    FileUtils.rm_rf(dir) if dir && Dir.exists?(dir)
+  end
+end
+
 describe "docker sdk import gate" do
   serial!
 
@@ -91,5 +125,35 @@ describe "docker sdk import gate" do
 
     Krikri::PluginHelpers::DockerClient.reset_sdk_import_gate
     Krikri::PluginHelpers::DockerClient.sdk_import_gate
+  end
+
+  # Issue #1348: the benchmark's krikri-side rocky golden has only a
+  # requests-capable python3.9, the reference-side golden adds a
+  # requests-less python3.12, and both engines run Ansible's discovery -
+  # so the gate has to keep reporting on the interpreter discovery picks
+  # first, never search the rest of the list for one that would fail.
+  it "stays silent when the interpreter discovery picks imports requests, though a lower-ranked one would not" do
+    Krikri::PluginHelpers::DockerClient.reset_sdk_import_gate
+    with_split_gate_shim("exit 0",
+      %(echo "ModuleNotFoundError: No module named 'requests'" >&2; exit 1)) do |dir|
+      Krikri.discovered_target_python.must_equal(File.join(dir, Krikri::INTERPRETER_FALLBACK[0]))
+      Krikri::PluginHelpers::DockerClient.sdk_import_gate
+    end
+  end
+
+  it "names the interpreter discovery picks when that one lacks requests, though a lower-ranked one has it" do
+    Krikri::PluginHelpers::DockerClient.reset_sdk_import_gate
+    with_split_gate_shim(%(echo "ModuleNotFoundError: No module named 'requests'" >&2; exit 1), "exit 0") do |dir|
+      Krikri.discovered_target_python.must_equal(File.join(dir, Krikri::INTERPRETER_FALLBACK[0]))
+      expected = "Failed to import the required Python library (requests) " \
+                 "on #{System.hostname}'s Python #{GATE_SHIM_PY}. " \
+                 "Please read the module documentation and install it in the appropriate location. " \
+                 "If the required library is installed, but Ansible is using the wrong Python interpreter, " \
+                 "please consult the documentation on ansible_python_interpreter"
+      error = assert_raises(Krikri::SdkImportGateError) do
+        Krikri::PluginHelpers::DockerClient.sdk_import_gate
+      end
+      error.message.must_equal(expected)
+    end
   end
 end

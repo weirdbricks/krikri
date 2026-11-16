@@ -358,6 +358,30 @@ krikri aims for byte-for-byte identical stdout/stderr/exit code to `ansible-play
   the fix belongs in the harness: pin or force the collection versions it installs instead
   of keeping the distro copy.
 
+### The benchmark's two microVM goldens install different Python interpreters, so a module's missing-library gate can diverge
+
+- `krikri-role-tester`'s rocky microVM pair boots two different goldens: the krikri side is the
+  Rocky GenericCloud image plus `python3`/`python3-pip` (`/usr/bin/python3.9`, which imports
+  `requests` because the image's `cloud-init` package requires `python3-requests`), while the
+  reference side is that same golden plus `python3.12` - added only so ansible-core 2.21.6 can be
+  pip-installed on a python3.9 distro. Both engines resolve a module's interpreter by running
+  Ansible's `INTERPRETER_PYTHON_FALLBACK` (`command -v` over python3.14 ... `/usr/bin/python3`), so
+  the reference host's first hit is the requests-less `/usr/bin/python3.12` where the krikri host's
+  only hit is `/usr/bin/python3.9`.
+- Live case (issue #1348, `aem_design.nexus`): its `docker_container` task therefore fails on the
+  reference side with `Failed to import the required Python library (requests) on localhost's Python
+  /usr/bin/python3.12` and on the krikri side with the daemon-connect error the module reaches after
+  that gate. krikri's docker SDK import gate probes the same discovered interpreter real's module
+  runs under, so given ONE host both engines print byte-identical output (live-verified with the
+  role's own playbook: a python whose `import requests` fails as the first fallback candidate makes
+  both report the same missing-library message, and a requests-capable first candidate makes both
+  reach the same connect error) - a harness asymmetry, not a krikri defect. A rocky host can never
+  be identical for both engines: the reference engine needs python3.12 to exist to run at all.
+- The fix belongs in the harness: give the reference golden's python3.12 `requests`
+  (e.g. `python3.12 -m pip install requests`) so both hosts behave like a requests-capable target.
+  Do not "fix" it here by probing interpreters that discovery would not pick - that diverges from
+  real ansible on every host that does not look like these two.
+
 ### `aem_design.aem_license`'s `no_log`-vs-fail-hard divergence is a human security judgment call
 
 - A `no_log: true` task masking a license-key value diverges from Ansible in a way that is
