@@ -64,6 +64,27 @@ describe "parted plugin - get_bin_path ordering (kpg34)" do
       "'#{Process.find_executable("parted").not_nil!} -s -m krikri-no-such-disk -- unit KiB print'")
     result["rc"].as_i64.must_equal(1)
   end
+
+  it "quotes the unit in that script message for pre-9.0.0 collections" do
+    unless parted = Process.find_executable("parted")
+      return
+    end
+
+    # get_device_info built a shell string with the unit single-quoted
+    # until community.general 9.0.0 switched to an argv list, so on 8.3.0
+    # (the kpg reference host) the printed script carries the quotes.
+    legacy = PluginSpecHelper.run("parted",
+      {"device" => "krikri-no-such-disk", "state" => "info"}, collection_version: "8.3.0")
+    legacy["msg"].as_s.must_equal(
+      "Error while getting device information with parted script: " \
+      "'#{parted} -s -m krikri-no-such-disk -- unit 'KiB' print'")
+
+    modern = PluginSpecHelper.run("parted",
+      {"device" => "krikri-no-such-disk", "state" => "info"}, collection_version: "13.4.0")
+    modern["msg"].as_s.must_equal(
+      "Error while getting device information with parted script: " \
+      "'#{parted} -s -m krikri-no-such-disk -- unit KiB print'")
+  end
 end
 
 describe "lvg plugin - kpg34 arg surface and vgs gate" do
