@@ -29,11 +29,14 @@ require "./task_executor/result_display"
 # AnsibleModule.__init__ error selection: only the FIRST error in that
 # order is ever surfaced (errors[0]):
 #   mutually_exclusive -> required -> types -> choices -> required_together
-#   -> required_one_of -> required_if -> required_by -> unsupported params
+#   -> required_one_of -> required_if -> required_by -> sub-specs
+#   -> unsupported params
 # (unsupported-params is collected during the walk but appended to the
 # error list LAST, so a missing-required error beats a typo'd parameter -
 # live-verified: docker_container with a typo and no name reports
-# "missing required arguments: name", not the typo).
+# "missing required arguments: name", not the typo. Sub-spec validation
+# (_validate_sub_spec) also runs before unsupported-params: docker_image's
+# `build: {}` reports "missing required arguments: path found in build").
 module Krikri
   module ArgspecValidator
     extend self
@@ -1016,6 +1019,131 @@ module Krikri
       end
       if msg = check_required_by(entry, provided, defaults)
         return msg
+      end
+      # Ansible's _validate_sub_spec runs AFTER every top-level check and
+      # its errors land BEFORE the trailing Unsupported-parameters one, so
+      # a nested spec error beats a typo'd top-level parameter
+      # (live-verified vs 2.21.6: docker_image's `build: {}` plus two
+      # bogus top-level keys reports "missing required arguments: path
+      # found in build", issue #1338).
+      if msg = check_sub_spec(options, provided, order)
+        return msg
+      end
+      nil
+    end
+
+    # The nested-spec validation Ansible runs over every provided option
+    # that declares its own `options:` sub-spec (_validate_sub_spec): each
+    # element is validated as a dict against that sub-spec, with any
+    # failure suffixed "found in <option chain>". Only the first error is
+    # ever surfaced (AnsibleModule fails on errors[0]); the walk follows
+    # the module's declaration order like the top-level checks.
+    private def check_sub_spec(options : Hash(String, JSON::Any), provided : Hash(String, String),
+                               order : Array(String)?) : String?
+      ordered_option_pairs(options, order).each do |name, spec|
+        next unless sub_spec_shaped?(spec)
+        raw = provided[name]?
+        next unless raw
+        next if raw == Krikri::NONE_SENTINEL
+        elements = sub_spec_elements(raw, spec["type"]?.try(&.as_s?) || "str")
+        return sub_spec_type_error(name) unless elements
+        elements.each do |element|
+          return sub_spec_type_error(name) unless element.as_h?
+          if msg = sub_spec_required_error(spec, element, [name])
+            return msg
+          end
+        end
+      end
+      nil
+    end
+
+    # True for the option kinds _validate_sub_spec descends into: a
+    # type=dict with `options:`, or a type=list of elements=dict with
+    # `options:`.
+    private def sub_spec_shaped?(spec : JSON::Any) : Bool
+      return false unless spec["options"]?.try(&.as_h?)
+      case spec["type"]?.try(&.as_s?)
+      when "dict" then true
+      when "list" then spec["elements"]?.try(&.as_s?) == "dict"
+      else             false
+      end
+    end
+
+    private def sub_spec_type_error(name : String) : String
+      "value of '#{name}' must be of type dict or list of dicts"
+    end
+
+    # The dict element(s) Ansible's _validate_sub_spec would iterate. The
+    # top-level type pass has already accepted the wire text, so this is
+    # the decoded container: a JSON object (or key=value/Python-literal
+    # dict) for type=dict, a JSON array for the list form - and "" is the
+    # empty list check_type_list makes of it. Anything else cannot be
+    # iterated as dicts.
+    private def sub_spec_elements(raw : String, wanted : String) : Array(JSON::Any)?
+      if json = (JSON.parse(raw) rescue nil)
+        case json.raw
+        when Hash then return [json]
+        when Array
+          # The types pass converts each elements=dict member through
+          # check_type_dict before the sub-spec walk sees it, so a string
+          # member that parsed there (JSON object, Python literal, or
+          # key=value) is a dict here too.
+          return json.as_a.map { |element| (text = element.as_s?) ? (parsed_dict_value(text) || element) : element }
+        end
+      end
+      if wanted == "dict"
+        if !raw.strip.empty? && (parsed = parsed_dict_value(raw))
+          return [parsed]
+        end
+      elsif raw.empty?
+        return [] of JSON::Any
+      end
+      nil
+    end
+
+    # check_required_arguments against one nested dict, then the nested
+    # dicts inside it recursed the same way (options_context grows into
+    # "build -> container_limits"). Ansible's _set_defaults fills a
+    # non-null default in before the check, so a defaulted key is present;
+    # a null default never satisfies `required:`.
+    private def sub_spec_required_error(spec : JSON::Any, params : JSON::Any, context : Array(String)) : String?
+      sub_options = spec["options"]?.try(&.as_h?) || return nil
+      params_h = params.as_h? || return nil
+      missing = sub_spec_missing_keys(sub_options, params_h)
+      unless missing.empty?
+        return "missing required arguments: #{missing.sort.join(", ")} found in #{context.join(" -> ")}"
+      end
+      sub_spec_nested_error(sub_options, params_h, context)
+    end
+
+    # check_required_arguments over a sub-spec: every `required:` key the
+    # nested dict omits, unless a non-null default stands in for it.
+    private def sub_spec_missing_keys(sub_options : Hash(String, JSON::Any),
+                                      params_h : Hash(String, JSON::Any)) : Array(String)
+      sub_options.select do |name, sub|
+        next false unless sub["required"]?.try(&.as_bool?) == true
+        next false if params_h.has_key?(name)
+        default = sub["default"]?
+        !(default && !default.raw.nil?)
+      end.keys
+    end
+
+    # The recursive half of the nested walk: each dict element a
+    # sub-spec-shaped option holds is validated against that option's own
+    # sub-spec.
+    private def sub_spec_nested_error(sub_options : Hash(String, JSON::Any),
+                                      params_h : Hash(String, JSON::Any),
+                                      context : Array(String)) : String?
+      sub_options.each do |name, sub|
+        next unless sub_spec_shaped?(sub)
+        value = params_h[name]?
+        next unless value && !value.raw.nil?
+        (value.as_a? || [value]).each do |element|
+          next unless element.as_h?
+          if msg = sub_spec_required_error(sub, element, context + [name])
+            return msg
+          end
+        end
       end
       nil
     end
