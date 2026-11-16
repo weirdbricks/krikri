@@ -256,4 +256,46 @@ describe "npm plugin" do
     result["msg"].as_s.must_equal("Task failed: Module failed: unsupported operand type(s) for +: 'NoneType' and 'str'")
     File.exists?(path).must_equal(false)
   end
+
+  it "runs the install for a bare path: when list output has no dependencies key" do
+    # Live-verified vs a real npm 9 in an empty directory: `npm list
+    # --json --long` prints "_dependencies"/devDependencies/
+    # peerDependencies but NO "dependencies", and real ansible's list()
+    # still appends self.name (None) to `missing`, so its `if missing:`
+    # branch runs `npm install`, which fails on the absent package.json
+    # (issue #1376). This plugin treated that output as "nothing
+    # missing" and reported an already-converged ok.
+    dir = PluginSpecHelper.tmp_path("npm-no-dependencies-key")
+    Dir.mkdir_p(dir)
+    log = File.join(dir, "commands.log")
+    stub = File.join(dir, "npm")
+    File.write(stub, <<-SH)
+      #!/bin/sh
+      echo "$@" >> #{Process.quote(log)}
+      if [ "$1" = "list" ]; then
+        echo '{"name":"emptydir","_dependencies":{},"devDependencies":{},"peerDependencies":{}}'
+        exit 0
+      fi
+      echo 'npm ERR! code ENOENT' >&2
+      echo 'npm ERR! enoent ENOENT: no such file or directory, open package.json' >&2
+      exit 254
+      SH
+    File.chmod(stub, 0o755)
+    work = File.join(dir, "work")
+    Dir.mkdir_p(work)
+
+    result = PluginSpecHelper.run("npm", {
+      "path"         => work,
+      "force"        => "true",
+      "no_bin_links" => "true",
+      "registry"     => "krikri-invalid-registry",
+      "executable"   => stub,
+    })
+
+    result["failed"].as_bool.must_equal(true)
+    result["rc"].as_i.must_equal(254)
+    result["cmd"].as_s.must_equal(
+      "#{stub} install --registry krikri-invalid-registry --no-bin-links --force")
+    File.read(log).must_include("install --registry krikri-invalid-registry")
+  end
 end
