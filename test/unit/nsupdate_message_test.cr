@@ -150,10 +150,40 @@ describe Krikri::PluginHelpers::NsupdateMessage do
 
       msg[2, 2].must_equal(Bytes[0x28, 0x00])       # opcode 5 (UPDATE) in the flags
       msg[4, 6].must_equal(Bytes[0, 1, 0, 1, 0, 1]) # ZOCOUNT/PRCOUNT/UPCOUNT
-      # delete-style updates carry class NONE and ttl 0
+      # delete-style updates carry class ANY (RRset delete) and ttl 0
       del = Krikri::PluginHelpers::NsupdateMessage.update_delete("host.example.com.", 1)
-      del.class_code.must_equal(254)
+      del.class_code.must_equal(255)
       del.ttl.must_equal(0)
+      del.rdata.size.must_equal(0)
+    end
+
+    it "uses class ANY for the value-independent prerequisite" do
+      # Bind9 answers FORMERR to a class-IN A prerequisite with an empty
+      # rdata, so a class-IN probe made every nsupdate run diverge from
+      # Ansible (whose dnspython probe carries class ANY).
+      prereq = Krikri::PluginHelpers::NsupdateMessage.prerequisite_present("host.example.com.", 1)
+      prereq.class_code.must_equal(255)
+      prereq.ttl.must_equal(0)
+      prereq.rdata.size.must_equal(0)
+    end
+
+    it "absolutizes relative owner names against the zone" do
+      # Ansible's Update#present/#add resolve "host" against the zone, so a
+      # bare "host." on the wire put every RR outside the zone and Bind9
+      # answered NOTZONE.
+      prereq = Krikri::PluginHelpers::NsupdateMessage.prerequisite_present("host", 1)
+      update = Krikri::PluginHelpers::NsupdateMessage.update_add("host", 1, 3600,
+        Krikri::PluginHelpers::NsupdateMessage.encode_rdata("A", "192.0.2.7"))
+      msg = Krikri::PluginHelpers::NsupdateMessage.build_update(0x00ffu16, "example.com.", [prereq], [update], nil)
+
+      pos = 12
+      _, pos = Krikri::PluginHelpers::NsupdateMessage.decode_name(msg, pos)
+      pos += 4 # zone section type + class
+      prereq_name, pos = Krikri::PluginHelpers::NsupdateMessage.decode_name(msg, pos)
+      prereq_name.must_equal("host.example.com.")
+      pos += 10 # type, class, ttl, rdlength
+      update_name, _ = Krikri::PluginHelpers::NsupdateMessage.decode_name(msg, pos)
+      update_name.must_equal("host.example.com.")
     end
   end
 

@@ -389,7 +389,10 @@ module Krikri
       failure = send_update(server, port, protocol, zone, prerequisites, [] of PluginHelpers::NsupdateMessage::RR)
       return failure if failure
       if @dns_rc == 0
-        changed_ttl = ttl_changed(server, port, protocol, zone, record, type_code)
+        # the Ansible module's ttl_changed() queries self.fqdn (the record
+        # made absolute against the zone), not the bare record parameter
+        absolute = record.ends_with?(".") ? record : "#{record}.#{zone}"
+        changed_ttl = ttl_changed(server, port, protocol, zone, absolute, type_code)
         return changed_ttl if changed_ttl.is_a?(PluginResult)
         return changed_ttl ? 2 : 1
       end
