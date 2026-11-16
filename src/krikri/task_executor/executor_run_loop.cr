@@ -5271,8 +5271,17 @@ module Krikri
     # real prints them, once per run (Display dedups the text). Handler
     # flushes are left alone: real's handler pass never performs this
     # pre-load, so a skipped handler warns nothing there.
+    #
+    # What real imports is decided by the action name AS WRITTEN and the
+    # task's collections scope, not by the module its bare spelling
+    # ultimately resolves to: bare `k8s:` with no `collections:` keyword
+    # resolves its MODULE through every installed collection but runs on
+    # the `normal` action plugin, so kubernetes.core.k8s's action plugin
+    # (and its three `_text` deprecations) never loads - issue #1352.
     private def emit_action_plugin_import_deprecations(task : Task) : Nil
       return if @in_handler_flush
+      written = task.action_name || task.module_name
+      return unless CollectionIndex.action_plugin_in_scope?(written, task.collection_scope)
       ModuleUtilsDeprecations.action_plugin_text_import_deprecation_texts(
         task.module_name, CollectionIndex.module_provider_version(task.module_name)).each do |text|
         Krikri::ResultDisplay.emit_core_deprecation(text)

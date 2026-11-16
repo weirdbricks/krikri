@@ -469,6 +469,36 @@ describe "module_utils import deprecations follow the installed payload source" 
     Krikri::ModuleUtilsDeprecations.text_import_deprecation_symbols("containers.podman.podman_container")
       .must_equal(["to_native"])
   end
+
+  it "scopes the action plugin lookup to the task's own collections (issue #1352)" do
+    # Real's action loader only searches the collections a task scopes
+    # (its own `collections:`, else the play's plus the role's
+    # meta/main.yml list), while its MODULE loader finds a bare name in
+    # every installed collection - so an unscoped bare name that resolves
+    # its module elsewhere still runs through the generic `normal` action
+    # plugin and imports no action plugin at all (live-verified vs
+    # ansible-core 2.21.6 + kubernetes.core 6.1.0: bare `k8s:` warns
+    # nothing, bare `k8s:` under `collections: [kubernetes.core]` warns
+    # the plugin's three `_text` imports).
+    base = File.join(@fixture_root, "ansible_collections", "fixture", "example", "plugins")
+    FileUtils.mkdir_p(File.join(base, "modules"))
+    FileUtils.mkdir_p(File.join(base, "action"))
+    File.write(File.join(base, "modules", "krikri_issue_1352_sample.py"), "# module\n")
+    File.write(File.join(base, "action", "krikri_issue_1352_sample.py"),
+      "from ansible.module_utils._text import to_bytes\n")
+
+    Krikri::CollectionIndex.action_plugin_in_scope?("krikri_issue_1352_sample", [] of String)
+      .must_equal(false)
+    Krikri::CollectionIndex.action_plugin_in_scope?("krikri_issue_1352_sample", ["fixture.example"])
+      .must_equal(true)
+    Krikri::CollectionIndex.action_plugin_in_scope?("fixture.example.krikri_issue_1352_sample", [] of String)
+      .must_equal(true)
+    # ansible_builtin_runtime.yml's ACTION routing redirect makes an
+    # unscoped bare name load its collection's plugin (a `when:`-skipped
+    # bare synchronize/patch task still warns).
+    Krikri::CollectionIndex.action_plugin_in_scope?("synchronize", [] of String)
+      .must_equal(true)
+  end
 end
 
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
@@ -632,5 +662,77 @@ describe "deprecated ansible.module_utils import warnings in play output" do
     err.scan(action_text).size.must_equal(1)
     out.must_include("TASK [sync inside a skipped block]")
     out.must_include("skipping: [localhost]")
+  end
+end
+
+private def run_scoped_action_plugin_playbook(playbook : String, collections_root : String) : String
+  stderr = IO::Memory.new
+  status = Process.run(BINARY, ["-i", INVENTORY, playbook],
+    output: IO::Memory.new, error: stderr,
+    env: {"ANSIBLE_COLLECTIONS_PATH" => collections_root})
+  status.success?.must_equal(true)
+  stderr.to_s
+end
+
+# A bare module name resolves its MODULE through every installed
+# collection (or through ansible_builtin_runtime.yml's module routing),
+# but real's ACTION plugin lookup only searches the collections the task
+# scopes - its own `collections:` keyword, else the play's list plus the
+# role's meta/main.yml declaration. Bare `k8s:` with none runs through the
+# generic `normal` action plugin, so kubernetes.core's action plugin (and
+# the deprecated `_text` imports it makes) is never imported and real
+# prints nothing (issue #1352, shonpaz123.dockercoins). Scoping the same
+# name with `collections: [kubernetes.core]` does load it, live-verified
+# against ansible-core 2.21.6 + kubernetes.core 6.1.0.
+describe "action plugin import warnings follow the task's collections scope (issue #1352)" do
+  it "stays silent for an unscoped bare name whose module resolves through a routing redirect" do
+    root = PluginSpecHelper.tmp_path("module-utils-action-scope")
+    module_dir = File.join(root, "ansible_collections", "kubernetes", "core", "plugins", "modules")
+    action_dir = File.join(root, "ansible_collections", "kubernetes", "core", "plugins", "action")
+    Dir.mkdir_p(module_dir)
+    Dir.mkdir_p(action_dir)
+    File.write(File.join(module_dir, "k8s.py"), "# module\n")
+    File.write(File.join(action_dir, "k8s.py"),
+      "from ansible.module_utils._text import to_bytes, to_native, to_text\n")
+
+    unscoped = File.join(root, "unscoped.yml")
+    File.write(unscoped, <<-YAML)
+      - hosts: localhost
+        gather_facts: false
+        connection: local
+        tasks:
+          - name: unscoped bare k8s
+            k8s:
+              state: present
+            when: false
+      YAML
+
+    scoped = File.join(root, "scoped.yml")
+    File.write(scoped, <<-YAML)
+      - hosts: localhost
+        gather_facts: false
+        connection: local
+        collections:
+          - kubernetes.core
+        tasks:
+          - name: scoped bare k8s
+            k8s:
+              state: present
+            when: false
+      YAML
+
+    # The module resolves (it ships in the fixture collection and the
+    # builtin runtime routes the bare name to it), but no action plugin is
+    # in the task's scope, so nothing may print.
+    plain_err = run_scoped_action_plugin_playbook(unscoped, root)
+    plain_err.wont_include("Importing 'to_bytes'")
+    plain_err.wont_include("Importing 'to_native'")
+    plain_err.wont_include("Importing 'to_text'")
+    plain_err.wont_include("[DEPRECATION WARNING]")
+
+    scoped_err = run_scoped_action_plugin_playbook(scoped, root)
+    scoped_err.must_include("Importing 'to_bytes' from 'ansible.module_utils._text' is deprecated.")
+    scoped_err.must_include("Importing 'to_native' from 'ansible.module_utils._text' is deprecated.")
+    scoped_err.must_include("Importing 'to_text' from 'ansible.module_utils._text' is deprecated.")
   end
 end

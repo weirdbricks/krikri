@@ -38,6 +38,16 @@ module Krikri
     # argspec validation needs it alongside the resolved module_name.
     # nil for tasks built outside the parser (defaults to module_name).
     property action_name : String?
+    # The `collections:` scope this task's bare action name resolves
+    # through: its own `collections:` keyword when written, else the
+    # play's list plus the role's meta/main.yml declaration. Ansible's
+    # action-plugin lookup consults exactly this scope before importing a
+    # plugin (see CollectionIndex.action_plugin_in_scope?), which is
+    # narrower than the module search that resolves the same bare name
+    # against every installed collection. nil means unknown (a templated
+    # action name, or a task built outside the parser) and keeps the
+    # permissive modelling.
+    property collection_scope : Array(String)? = nil
     # Set for ANY module name that resolves to nothing this engine ships -
     # a role-private `library/<name>.py` module (module_name above keeps
     # the raw requested name, e.g. "sr_fingerprint", whose source
@@ -4545,6 +4555,7 @@ module Krikri
       # the source spelling, not `ansible.builtin.debug`.
       as_written_module_name = module_name
       mapping_module_unresolvable = false
+      task_collections : Array(String)? = nil
       if templated_action_string
         # Never unavailable/skipped - resolved (or failed) at run time.
         resolved_module_name = nil
@@ -4689,6 +4700,7 @@ module Krikri
 
       task = Task.new(name || as_written_module_name, module_name)
       task.action_name = as_written_module_name
+      task.collection_scope = task_collections
       task.has_explicit_name = !name.nil?
       if templated_action_string
         task.templated_action = templated_action_string
