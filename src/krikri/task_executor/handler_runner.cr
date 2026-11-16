@@ -289,10 +289,11 @@ module Krikri
         end
       end
 
-      # A handler whose own `when:` evaluated false already
-      # printed its own "skipping: [host]" line inside
-      # execute_handler_internal (mirroring a regular task's
-      # when:-skip). ResultDisplay#display_result has no notion
+      # A skipped handler already printed its own "skipping: [host]"
+      # line inside the executor - a false when: and the other
+      # pre-dispatch skips in execute_handler_plugin_attempt, a
+      # module-side (check mode / plugin-voluntary) skip at the end of
+      # that same method. ResultDisplay#display_result has no notion
       # of "skipped" at all - it would otherwise print a second,
       # contradictory "ok:" line right underneath, and
       # #update_stats would count it toward "ok" instead of

@@ -1273,6 +1273,7 @@ module Krikri
             return timeout_with_console
           end
           result = apply_changed_failed_when(handler, final, vars_context, host)
+          display_handler_module_skip(handler, host, vars_context, result)
           if register_name = handler.register
             register_result(host, register_name, result) unless register_name.empty?
           end
@@ -1380,12 +1381,43 @@ module Krikri
       # ansible-playbook's own run of the identical role reports
       # this handler as "changed", not failed.
       result = apply_changed_failed_when(handler, result, vars_context, host)
+      display_handler_module_skip(handler, host, vars_context, result)
 
       if register_name = handler.register
         register_result(host, register_name, result) unless register_name.empty?
       end
 
       result
+    end
+
+    # The `skipping:` line for a handler whose MODULE skipped itself: check
+    # mode reaching a module that refuses it (alexrmarques.nfs_server's
+    # "Restart NFS CentOS" `command: exportfs -va` handler, issue #1399),
+    # or a module/action plugin skipping itself (`debug:` below its
+    # verbosity:). Unlike every other handler skip shape - a false when:,
+    # an unavailable module, an empty/all-skipped loop - which all print
+    # their own line before returning, these come straight back from the
+    # action-plugin/module dispatch, so nothing displayed them at all
+    # while HandlerRunner's skipped branch still booked the recap stat.
+    # Real's callback renders it exactly like a regular task's skip line
+    # (finish_single_task's skipped branch): bare at default verbosity, the
+    # full module result dumped after it at -v, plus the item suffix inside
+    # a looped handler.
+    private def display_handler_module_skip(handler : Task, host : Host, vars_context : Hash(String, JSON::Any), result : JSON::Any) : Nil
+      return unless result["skipped"]?.try(&.as_bool)
+      return if Krikri.result_failed_flag(result)
+      item = vars_context["item"]?
+      # The oneline callback carries each item in its single aggregate
+      # line instead of printing per-item lines (the non-looped shape
+      # still prints).
+      return if Krikri::Oneline.enabled? && item
+      # Same label rules as this file's when:-false skip sites.
+      shown = if item
+                skipped_loop_item_censored_label(handler, vars_context) ||
+                  include_item_display_label(handler, item, vars_context, host)
+              end
+      suffix = shown ? " => (item=#{shown}) " : ""
+      puts Krikri::Oneline.skip_line(host.name, "#{suffix}#{Krikri::ResultDisplay.skip_result_suffix(result, item, handler.loop_var)}").colorize(:cyan)
     end
   end
 end
