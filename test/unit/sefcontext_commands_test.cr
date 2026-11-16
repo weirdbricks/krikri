@@ -68,4 +68,38 @@ describe Krikri::PluginHelpers::SefcontextCommands do
         .must_equal(["semanage", "fcontext", "-m", "-e", "/var/lib/containers", "/srv/containers"])
     end
   end
+
+  # The module's diff_mode prepared blocks (live-verified against
+  # community.general's sefcontext.py in --check --diff): the branch
+  # titles, the six-space column padding, and the raw ftype letter.
+  describe "prepared diff blocks" do
+    it "spells the substitution branches as the module does" do
+      Krikri::PluginHelpers::SefcontextCommands.add_substitution_diff("defaub", "nmgmed")
+        .must_equal("# Addition to semanage file context path substitutions\n+defaub = nmgmed\n")
+      Krikri::PluginHelpers::SefcontextCommands.change_substitution_diff("defaub", "oldsub", "nmgmed")
+        .must_equal("# Change to semanage file context path substitutions\n-defaub = oldsub\n+defaub = nmgmed\n")
+      Krikri::PluginHelpers::SefcontextCommands.delete_substitution_diff("defaub", "nmgmed")
+        .must_equal("# Deletion to semanage file context path substitutions\n-defaub = nmgmed\n")
+    end
+
+    it "spells the fcontext branches as the module does" do
+      Krikri::PluginHelpers::SefcontextCommands.add_fcontext_diff("/srv/x(/.*)?", "d", "system_u", "httpd_t", "s0")
+        .must_equal("# Addition to semanage file context mappings\n+/srv/x(/.*)?      d      system_u:object_r:httpd_t:s0\n")
+      Krikri::PluginHelpers::SefcontextCommands.change_fcontext_diff("/srv/x(/.*)?", "a",
+        "system_u", "object_r", "old_t", "s0", "user_u", "httpd_t", "s0")
+        .must_equal("# Change to semanage file context mappings\n" \
+                    "-/srv/x(/.*)?      a      system_u:object_r:old_t:s0\n" \
+                    "+/srv/x(/.*)?      a      user_u:object_r:httpd_t:s0\n")
+      Krikri::PluginHelpers::SefcontextCommands.delete_fcontext_diff("/srv/x(/.*)?", "a",
+        "system_u", "object_r", "old_t", "s0")
+        .must_equal("# Deletion to semanage file context mappings\n-/srv/x(/.*)?      a      system_u:object_r:old_t:s0\n")
+    end
+
+    it "renders missing context fields as Python's None" do
+      # A "<<none>>" record stores no user/role/range, so the module
+      # formats those None fields literally as "None".
+      Krikri::PluginHelpers::SefcontextCommands.delete_fcontext_diff("/srv/x", "a", nil, nil, "<<none>>", nil)
+        .must_equal("# Deletion to semanage file context mappings\n-/srv/x      a      None:None:<<none>>:None\n")
+    end
+  end
 end

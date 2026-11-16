@@ -103,8 +103,16 @@ module Krikri
       existing = Krikri::PluginHelpers::SefcontextCommands.parse_equivalences(listing)[target]?
       if state == "absent"
         return PluginResult.new(changed: false, failed: false, msg: "") unless existing
+        # semanage_fcontext_delete only drops the equivalence when the
+        # stored substitute is the one asked for - a different mapping
+        # on the same target is left alone (live-verified: an existing
+        # "defaub = oldsub" stays put for state=absent with substitute
+        # nmgmed, reported as ok).
+        return PluginResult.new(changed: false, failed: false, msg: "") unless existing == substitute
         run!(["semanage", "fcontext", "-d", target], "delete SELinux file context substitution", check_mode)
-        return PluginResult.new(changed: true, failed: false, msg: "")
+        res = PluginResult.new(changed: true, failed: false, msg: "")
+        res.diff = prepared_diff(Krikri::PluginHelpers::SefcontextCommands.delete_substitution_diff(target, existing))
+        return res
       end
 
       return PluginResult.new(changed: false, failed: false, msg: "") if existing == substitute
@@ -113,6 +121,11 @@ module Krikri
         "#{modify ? "modify" : "add"} SELinux file context substitution", check_mode)
 
       res = PluginResult.new(changed: true, failed: false, msg: "")
+      res.diff = prepared_diff(if orig = existing
+        Krikri::PluginHelpers::SefcontextCommands.change_substitution_diff(target, orig, substitute)
+      else
+        Krikri::PluginHelpers::SefcontextCommands.add_substitution_diff(target, substitute)
+      end)
       res.extra["target"] = JSON::Any.new(target)
       res.extra["substitute"] = JSON::Any.new(substitute)
       res
@@ -129,12 +142,16 @@ module Krikri
 
       if state == "absent"
         return PluginResult.new(changed: false, failed: false, msg: "") unless existing
+        res = PluginResult.new(changed: true, failed: false, msg: "")
+        orig_seuser, orig_serole, orig_setype, orig_serange = split_context(existing.context)
+        res.diff = prepared_diff(Krikri::PluginHelpers::SefcontextCommands.delete_fcontext_diff(
+          target, ftype, orig_seuser, orig_serole, orig_setype, orig_serange))
         run!(Krikri::PluginHelpers::SefcontextCommands.delete_command(target, ftype),
           "delete SELinux file context mapping", check_mode)
-        return PluginResult.new(changed: true, failed: false, msg: "")
+        return res
       end
 
-      orig_seuser, orig_setype, orig_serange = existing ? split_context(existing.context) : {nil, nil, nil}
+      orig_seuser, orig_serole, orig_setype, orig_serange = existing ? split_context(existing.context) : {nil, nil, nil, nil}
       eff_seuser = seuser || orig_seuser || "system_u"
       eff_serange = serange || orig_serange || "s0"
       eff_setype = setype.not_nil!
@@ -143,15 +160,20 @@ module Krikri
         return PluginResult.new(changed: false, failed: false, msg: "")
       end
 
+      res = PluginResult.new(changed: true, failed: false, msg: "")
       if existing
         run!(Krikri::PluginHelpers::SefcontextCommands.modify_command(target, eff_setype, ftype, eff_seuser, eff_serange),
           "modify SELinux file context mapping", check_mode)
+        res.diff = prepared_diff(Krikri::PluginHelpers::SefcontextCommands.change_fcontext_diff(
+          target, ftype, orig_seuser, orig_serole, orig_setype, orig_serange,
+          seuser || orig_seuser, eff_setype, serange || orig_serange))
       else
         run!(Krikri::PluginHelpers::SefcontextCommands.add_command(target, eff_setype, ftype, eff_seuser, eff_serange),
           "add SELinux file context mapping", check_mode)
+        res.diff = prepared_diff(Krikri::PluginHelpers::SefcontextCommands.add_fcontext_diff(
+          target, ftype, eff_seuser, eff_setype, eff_serange))
       end
 
-      res = PluginResult.new(changed: true, failed: false, msg: "")
       res.extra["target"] = JSON::Any.new(target)
       res.extra["ftype"] = JSON::Any.new(ftype)
       res.extra["setype"] = JSON::Any.new(eff_setype)
@@ -160,13 +182,21 @@ module Krikri
       res
     end
 
+    # The module's diff_mode payload: a self-built "prepared" block that
+    # Ansible's callback prints verbatim. nil when diff mode is off.
+    private def prepared_diff(text : String) : JSON::Any?
+      return nil unless @diff_mode
+      JSON.parse({"prepared" => text}.to_json)
+    end
+
     # Splits a "seuser:role:setype:range" context string; "<<None>>"
-    # maps to no user/type/range at all (the Ansible module's nil fields).
-    private def split_context(context : String) : {String?, String?, String?}
-      return {nil, nil, nil} if context == "<<None>>"
+    # maps to no user/role/type/range at all (the Ansible module's nil
+    # fields). The role is only needed by the diff-mode prepared blocks.
+    private def split_context(context : String) : {String?, String?, String?, String?}
+      return {nil, nil, nil, nil} if context == "<<None>>"
       parts = context.split(':')
-      return {nil, nil, nil} unless parts.size >= 3
-      {parts[0], parts[2], parts[3]?}
+      return {nil, nil, nil, nil} unless parts.size >= 3
+      {parts[0], parts[1], parts[2], parts[3]?}
     end
 
     # AnsibleModule setup surface, live-verified via the podman-diff

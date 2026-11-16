@@ -135,6 +135,30 @@ describe Krikri::ResultDisplay do
       out = capture_output { Krikri::ResultDisplay.display_diff(diff) }
       out.must_equal("diff skipped: source file appears to be binary\ndiff skipped: destination file size is greater than 104448\n")
     end
+
+    # A module that builds its own diff text hands it back under
+    # "prepared" (apt, community.general.sefcontext); Ansible's callback
+    # appends that string verbatim - no ---/+++ headers, and no blank
+    # line between it and the task's status line (live-verified vs
+    # ansible-core 2.21.6 --check --diff on sefcontext's substitution
+    # branch, issue #1383).
+    it "prints a prepared diff verbatim with no added blank line" do
+      diff = JSON.parse(%({"prepared": "# Addition to semanage file context path substitutions\\n+defaub = nmgmed\\n"}))
+      out = capture_output { Krikri::ResultDisplay.display_diff(diff) }
+      out.must_equal("# Addition to semanage file context path substitutions\n+defaub = nmgmed\n")
+    end
+
+    it "terminates a prepared diff that lacks its own final newline" do
+      diff = JSON.parse(%({"prepared": "just this"}))
+      out = capture_output { Krikri::ResultDisplay.display_diff(diff) }
+      out.must_equal("just this\n")
+    end
+
+    it "prints nothing for an empty prepared diff" do
+      diff = JSON.parse(%({"prepared": ""}))
+      out = capture_output { Krikri::ResultDisplay.display_diff(diff) }
+      out.must_equal("")
+    end
   end
 
   describe ".display_diff attribute diffs" do
