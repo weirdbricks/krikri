@@ -174,7 +174,7 @@ describe "community.general.mail plugin" do
     result["rc"].as_i.must_equal(1)
   end
 
-  it "reports a refused connect like real's uncaught OSError text" do
+  it "reports a refused connect as real's module crash chain" do
     probe = TCPServer.new("127.0.0.1", 0)
     dead_port = probe.local_address.port
     probe.close
@@ -188,9 +188,27 @@ describe "community.general.mail plugin" do
     })
     result["failed"].as_bool.must_equal(true)
     # Real crashes the module with the bare Python OSError str
-    # (mail.py's `except smtplib.SMTPException` does not catch it);
-    # live-verified vs 2.19.11 on 127.0.0.1:1.
-    result["msg"].as_s.must_equal("[Errno 111] Connection refused")
+    # (mail.py's `except smtplib.SMTPException` does not catch it), so
+    # the controller's wrapper reports the "Task failed: Module failed:"
+    # chain - live-verified vs 2.19.11 on 127.0.0.1:1.
+    result["msg"].as_s.must_equal("Task failed: Module failed: [Errno 111] Connection refused")
+    result["rc"]?.must_be_nil
+  end
+
+  it "reports an unresolvable host with gaierror's text, not strerror's" do
+    # Live-verified vs 2.19.11 on an unresolvable host: the crash chain
+    # carries socket.gaierror's "[Errno -2] Name or service not known"
+    # (gai_strerror), where errno(-2)'s strerror entry says "Unknown error -2".
+    result = run_mail({
+      "host"    => "krikri-dns-probe-test.invalid",
+      "secure"  => "never",
+      "subject" => "probe",
+      "to"      => "log_team@example.com",
+      "timeout" => "5",
+    })
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("Task failed: Module failed: [Errno -2] Name or service not known")
+    result["rc"]?.must_be_nil
   end
 
   it "fails an auth rejection with the real wording" do

@@ -80,6 +80,12 @@ module Krikri
     # carry the already-formatted user-facing message.
     class MailFailure < Exception; end
 
+    # mail.py only wraps smtplib.SMTPException, so a connect-time OSError
+    # (DNS failure, refused port, timeout) escapes main() and Ansible's
+    # module wrapper reports the "Task failed: Module failed: <str>"
+    # crash chain instead of a fail_json dict.
+    class ModuleCrash < Exception; end
+
     # smtplib exception family. smtp_str reproduces Python's __str__ for
     # the classes mail.py's own handlers (or the uncaught-crash path)
     # actually print: SMTPResponseException is "code: b'text'" (the
@@ -156,6 +162,14 @@ module Krikri
         result.extra["rc"] = JSON::Any.new(1_i64)
         attach_warnings(result)
         result
+      rescue ex : ModuleCrash
+        # Real's crash wrapper reports the bare exception text under the
+        # "Task failed: Module failed: " brief, with no rc/changed in the
+        # module dict and no warnings (they are collected only by the
+        # wrapper that never runs here).
+        detail = ex.message.to_s
+        PluginResult.new(changed: false, failed: true,
+          msg: "Task failed: Module failed: #{detail}", _ansible_error_detail: detail)
       end
     end
 
@@ -197,7 +211,7 @@ module Krikri
       rescue ex : SMTPServerDisconnected
         fail("Unable to Connect #{host}:#{port}: #{ex.message}")
       rescue ex : Exception
-        fail(python_os_error_text(ex))
+        crash(python_os_error_text(ex))
       end
       {smtp, false, smtp.greeting_code}
     end
@@ -317,6 +331,10 @@ module Krikri
       raise MailFailure.new(msg)
     end
 
+    private def crash(detail : String) : NoReturn
+      raise ModuleCrash.new(detail)
+    end
+
     # Wire params are strings; list params (to/cc/bcc/attach/headers)
     # ride comma-joined with the parser's non-string member markers -
     # the same defensive re-parse find.cr/apt.cr document (a whole-value
@@ -350,14 +368,16 @@ module Krikri
 
     # Python's str(OSError): "[Errno 111] Connection refused" - errno
     # value plus strerror. DNS resolution failure carries an EAI_* code
-    # (negative in Python), which Crystal does not surface as Errno:
-    # map the common text, pass anything else through.
+    # (negative in Python), whose text comes from gai_strerror: the plain
+    # strerror table has no entry for it ("Unknown error -2").
     private def python_os_error_text(ex : Exception, path : String? = nil) : String
       msg = ex.message.to_s
       return "[Errno -2] Name or service not known" if msg.includes?("Name or service not known")
       return "timed out" if ex.is_a?(IO::TimeoutError)
       if ex.responds_to?(:os_error) && (errno = ex.os_error)
-        "[Errno #{errno.value}] #{strerror(errno.value.to_i)}#{path ? ": '#{path}'" : ""}"
+        value = errno.value.to_i32
+        text = value < 0 ? String.new(LibC.gai_strerror(value)) : strerror(value)
+        "[Errno #{value}] #{text}#{path ? ": '#{path}'" : ""}"
       else
         msg
       end
