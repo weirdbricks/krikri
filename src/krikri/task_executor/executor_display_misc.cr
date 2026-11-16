@@ -995,13 +995,7 @@ module Krikri
         sleep poll.seconds
         if status = AsyncJobs.read_status(jid)
           if AsyncJobs.finished?(status)
-            # ansible-playbook prints "ASYNC OK on <host>: jid=<jid>" when a
-            # polled job ends successfully (and ASYNC FAILED for a failure,
-            # which the fatal display already reports) - omitting it made a
-            # finished job look silently unfinished next to real ansible
-            # output.
-            failed = status["failed"]?.try(&.as_bool?) || (status["rc"]?.try(&.as_i?) || 0) != 0
-            puts "ASYNC OK on #{exec_host.name}: jid=#{jid}" unless failed
+            print_async_outcome(exec_host.name, jid, async_job_failed?(status))
             return async_status_wrapped_result(jid, status)
           end
         end
@@ -1020,6 +1014,31 @@ module Krikri
       }.to_json)
     end
 
+    # Marker the remote async launch script prefixes its copy of the
+    # target's async dir with, so it can be picked out of the script's own
+    # stdout without mistaking an ssh login banner or any other output for it.
+    ASYNC_DIR_MARKER = "KRIKRI_ASYNC_DIR="
+
+    # ansible-playbook's default callback announces every polled job's fate
+    # once the poll loop ends: "ASYNC OK on <host>: jid=<jid>" for a success
+    # and "ASYNC FAILED on <host>: jid=<jid>" for a failure, printed before
+    # the task's own error block (callback/default.py's
+    # v2_runner_on_async_ok/-_failed). Omitting either made a finished job
+    # look silently unfinished next to real ansible output; omitting only
+    # the FAILED half (the OK half already existed) left a failed async
+    # task's output short one line.
+    private def print_async_outcome(host_name : String, jid : String, failed : Bool) : Nil
+      outcome = failed ? "ASYNC FAILED" : "ASYNC OK"
+      puts "#{outcome} on #{host_name}: jid=#{jid}"
+    end
+
+    # The async_status module marks a job failed off the module result's own
+    # failed: (or a non-zero rc), which is exactly what Ansible's callback
+    # branches on to pick ASYNC FAILED over ASYNC OK.
+    private def async_job_failed?(status : JSON::Any) : Bool
+      status["failed"]?.try(&.as_bool?) || (status["rc"]?.try(&.as_i?) || 0) != 0
+    end
+
     # Ansible's poll>0 final registered shape (live-verified via
     # `{{ r.keys() | list | to_json }}` on a registered poll: 5 command
     # job): the async_status ACTION plugin's base dict - started,
@@ -1030,7 +1049,7 @@ module Krikri
     # duplicate keys keep their base position with the file's value, the
     # module's own keys append in file order (for a command job: changed,
     # rc, cmd, start, end, delta, msg, failed).
-    private def async_status_wrapped_result(jid : String, status : JSON::Any) : JSON::Any
+    private def async_status_wrapped_result(jid : String, status : JSON::Any, results_file : String? = nil) : JSON::Any
       merged = JSON.parse({
         "started"        => true,
         "finished"       => true,
@@ -1039,7 +1058,7 @@ module Krikri
         "stdout_lines"   => [] of String,
         "stderr_lines"   => [] of String,
         "ansible_job_id" => jid,
-        "results_file"   => AsyncJobs.status_path(jid),
+        "results_file"   => results_file || AsyncJobs.status_path(jid),
       }.to_json).as_h
       status.as_h.each do |key, value|
         merged[key] = value
@@ -1136,6 +1155,7 @@ module Krikri
                  inner_encoded = Base64.strict_encode(inner)
                  <<-SCRIPT
                    mkdir -p #{dir}
+                   printf '#{ASYNC_DIR_MARKER}%s\\n' #{dir}
                    echo '{"started": 1, "finished": 0, "ansible_job_id": "#{jid}"}' > #{dir}/#{jid}
                    echo '#{encoded}' | base64 -d > #{dir}/#{jid}.cfg
                    echo '#{inner_encoded}' | base64 -d > #{dir}/#{jid}.run
@@ -1144,6 +1164,7 @@ module Krikri
                else
                  <<-SCRIPT
                    mkdir -p #{dir}
+                   printf '#{ASYNC_DIR_MARKER}%s\\n' #{dir}
                    echo '{"started": 1, "finished": 0, "ansible_job_id": "#{jid}"}' > #{dir}/#{jid}
                    echo '#{encoded}' | base64 -d > #{dir}/#{jid}.cfg
                    nohup sh -c '#{target} < #{dir}/#{jid}.cfg > #{dir}/#{jid}.tmp 2>&1; mv #{dir}/#{jid}.tmp #{dir}/#{jid}' >/dev/null 2>&1 &
@@ -1158,6 +1179,14 @@ module Krikri
           "msg"     => "remote async launch failed: #{launched[:stderr].strip}",
         }.to_json)
       end
+
+      # The launch script reports where the shell's own ~ expansion put the
+      # async dir, so a finished job's registered results_file carries the
+      # target's absolute path like Ansible's does (its async_status action
+      # plugin resolves ~/.ansible_async on the remote host). Without it the
+      # wrapped result had no path to report at all (issue #1397).
+      remote_async_dir = launched[:stdout].lines.find(&.starts_with?(ASYNC_DIR_MARKER)).try(&.lchop(ASYNC_DIR_MARKER).strip)
+      results_file = remote_async_dir ? File.join(remote_async_dir, jid) : AsyncJobs.status_path(jid)
 
       poll = task.poll_seconds || 10
       if poll <= 0
@@ -1188,12 +1217,12 @@ module Krikri
             # the deadline, then the same async-timeout failure
             # ansible-core reports.
             if AsyncJobs.finished?(status)
-              # ansible-playbook prints "ASYNC OK on <host>: jid=<jid>" when
-              # a polled job ends successfully (and ASYNC FAILED for a
-              # failure, which the fatal display already reports).
-              failed = status["failed"]?.try(&.as_bool?) || (status["rc"]?.try(&.as_i?) || 0) != 0
-              puts "ASYNC OK on #{exec_host.name}: jid=#{jid}" unless failed
-              return status
+              print_async_outcome(exec_host.name, jid, async_job_failed?(status))
+              # The job file holds the module's raw result only - Ansible's
+              # async_status ACTION plugin wraps it in its base dict, which
+              # is what a registered poll>0 result (and the fatal: dump of a
+              # failed one) carries on real ansible.
+              return async_status_wrapped_result(jid, status, results_file)
             end
           end
         end
