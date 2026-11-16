@@ -6,6 +6,11 @@ require "../oneline_output"
 require "../variable_substitutor/filter_core"
 require "../argspec_validator"
 require "../difflib"
+# The task-result `deprecations` entries below reuse the builder
+# module_utils_deprecations already ships for a module's own deprecations -
+# one shape, so the controller-side entries cannot drift from the module
+# ones real files the same way.
+require "../module_utils_deprecations"
 require "./error_block"
 # The become-failure key-rejection below reads the shared become message
 # constants. They live in a leaf file (plugin_manager.cr re-exports them
@@ -157,7 +162,13 @@ module Krikri
       return "" unless RunOptions.verbosity >= 1
       top = result.as_h
       return "" if top.empty?
-      cleaned = RunOptions.verbosity >= 3 ? top.reject("skipped", "skipped_reason", "failed") : top.reject("skipped", "skipped_reason", "failed", "invocation", "warnings", "deprecations")
+      cleaned = if RunOptions.verbosity >= 3
+                  # `deprecations` is popped before the dump at every
+                  # verbosity (2.21's _handle_warnings), so it never shows.
+                  top.reject("skipped", "skipped_reason", "failed", "deprecations")
+                else
+                  top.reject("skipped", "skipped_reason", "failed", "invocation", "warnings", "deprecations")
+                end
       if item
         var_name = loop_var_name.try { |name| !name.empty? ? name : nil } || "item"
         cleaned["ansible_loop_var"] = JSON::Any.new(var_name)
@@ -197,7 +208,17 @@ module Krikri
     # member an earlier member's failure keeps the play from ever reaching -
     # leaves no trace in the run-wide sets and a later real read of the same
     # origin still prints (issue #979).
-    record PendingDeprecation, dedupe : Set(String), key : String, lines : Array(String)
+    #
+    # `entry` is the same block in the shape ansible files on the task
+    # result's own `deprecations` list: real's TaskExecutor collects every
+    # controller-side deprecation raised while the task runs (a when:
+    # clause reading a top-level fact, issue #1351) into the result, so a
+    # `register:` of that task carries it - independent of the console
+    # dedupe, which only suppresses the printed block (live-verified vs
+    # 2.21.6: two tasks reading the same clause Origin both register an
+    # entry while the second prints no block). nil for a block real never
+    # files on the result.
+    record PendingDeprecation, dedupe : Set(String), key : String, lines : Array(String), entry : JSON::Any? = nil
 
     # Fiber-scoped stack of active stderr captures: real prints a task's
     # warnings and deprecations at display time, i.e. only when that task is
@@ -243,9 +264,9 @@ module Krikri
     # the block is held back (see PendingDeprecation), otherwise it claims
     # its dedupe key and prints - unchanged for every path that never
     # batches.
-    def self.emit_or_defer_deprecation(dedupe : Set(String), key : String, lines : Array(String)) : Nil
+    def self.emit_or_defer_deprecation(dedupe : Set(String), key : String, lines : Array(String), entry : JSON::Any? = nil) : Nil
       if frames = @@stderr_warning_captures[Fiber.current]?
-        frames.last.parts << PendingDeprecation.new(dedupe, key, lines)
+        frames.last.parts << PendingDeprecation.new(dedupe, key, lines, entry)
         return
       end
       DEPRECATION_CLAIM_MUTEX.synchronize do
@@ -437,8 +458,9 @@ module Krikri
         "Use `ansible_play_batch` instead.".colorize(:light_magenta).to_s,
         "",
       ]
-      return if hold_task_deprecation(@@play_hosts_deprecation_origins, origin, lines)
-      emit_or_defer_deprecation(@@play_hosts_deprecation_origins, origin, lines)
+      entry = ModuleUtilsDeprecations.deprecation_result_entry("The `play_hosts` magic variable is deprecated.", "2.23")
+      return if hold_task_deprecation(@@play_hosts_deprecation_origins, origin, lines, entry)
+      emit_or_defer_deprecation(@@play_hosts_deprecation_origins, origin, lines, entry)
     end
 
     # The INJECT_FACTS_AS_VARS deprecation (ansible-core 2.21): reading a
@@ -449,7 +471,8 @@ module Krikri
     # while a second template printing at its own Origin gets its own
     # (live-verified against 2.21.6).
     @@top_level_fact_deprecation_origins = Set(String).new
-    TOP_LEVEL_FACT_DEPRECATION_TEXT = "INJECT_FACTS_AS_VARS default to `True` is deprecated, top-level facts will not be auto injected after the change. This feature will be removed from ansible-core version 2.24."
+    TOP_LEVEL_FACT_DEPRECATION_MSG  = "INJECT_FACTS_AS_VARS default to `True` is deprecated, top-level facts will not be auto injected after the change."
+    TOP_LEVEL_FACT_DEPRECATION_TEXT = "#{TOP_LEVEL_FACT_DEPRECATION_MSG} This feature will be removed from ansible-core version 2.24."
 
     # The buffer behind #begin_deferred_fact_deprecations: one entry per
     # open deferral scope on this fiber, so a nested scope pops back to its
@@ -474,8 +497,9 @@ module Krikri
         "Use `ansible_facts[\"fact_name\"]` (no `ansible_` prefix) instead.".colorize(:light_magenta).to_s,
         "",
       ]
-      return if hold_task_deprecation(@@top_level_fact_deprecation_origins, origin, lines)
-      emit_or_defer_deprecation(@@top_level_fact_deprecation_origins, origin, lines)
+      entry = ModuleUtilsDeprecations.deprecation_result_entry(TOP_LEVEL_FACT_DEPRECATION_MSG)
+      return if hold_task_deprecation(@@top_level_fact_deprecation_origins, origin, lines, entry)
+      emit_or_defer_deprecation(@@top_level_fact_deprecation_origins, origin, lines, entry)
     end
 
     # The same block when the reading template carries no Origin at all -
@@ -492,8 +516,9 @@ module Krikri
         "Use `ansible_facts[\"fact_name\"]` (no `ansible_` prefix) instead.".colorize(:light_magenta).to_s,
         "",
       ]
-      return if hold_task_deprecation(@@top_level_fact_deprecation_origins, origin, lines)
-      emit_or_defer_deprecation(@@top_level_fact_deprecation_origins, origin, lines)
+      entry = ModuleUtilsDeprecations.deprecation_result_entry(TOP_LEVEL_FACT_DEPRECATION_MSG)
+      return if hold_task_deprecation(@@top_level_fact_deprecation_origins, origin, lines, entry)
+      emit_or_defer_deprecation(@@top_level_fact_deprecation_origins, origin, lines, entry)
     end
 
     # The internal `vars` dictionary deprecation (ansible-core 2.21,
@@ -504,7 +529,8 @@ module Krikri
     # or by two hosts, prints once (live-verified against 2.21.6, issue
     # #1028: ome.debug_dumpallvars' dumpall.j2 `{{ vars | ... }}`).
     @@vars_dict_deprecation_origins = Set(String).new
-    VARS_DICT_DEPRECATION_TEXT = "The internal \"vars\" dictionary is deprecated. This feature will be removed from ansible-core version 2.24."
+    VARS_DICT_DEPRECATION_MSG  = "The internal \"vars\" dictionary is deprecated."
+    VARS_DICT_DEPRECATION_TEXT = "#{VARS_DICT_DEPRECATION_MSG} This feature will be removed from ansible-core version 2.24."
 
     def self.emit_vars_dict_deprecation(origin : String?) : Nil
       return unless origin
@@ -521,8 +547,9 @@ module Krikri
         "Use the `vars` and `varnames` lookups instead.".colorize(:light_magenta).to_s,
         "",
       ]
-      return if hold_task_deprecation(@@vars_dict_deprecation_origins, origin, lines)
-      emit_or_defer_deprecation(@@vars_dict_deprecation_origins, origin, lines)
+      entry = ModuleUtilsDeprecations.deprecation_result_entry(VARS_DICT_DEPRECATION_MSG)
+      return if hold_task_deprecation(@@vars_dict_deprecation_origins, origin, lines, entry)
+      emit_or_defer_deprecation(@@vars_dict_deprecation_origins, origin, lines, entry)
     end
 
     # ansible-core captures every warning and deprecation raised while a task
@@ -606,10 +633,52 @@ module Krikri
     # instead of printing it; returns true when held. The include-deferral
     # check in the emitters runs first, so an include's held-back reads
     # keep their own drop/flush contract (issue #974).
-    private def self.hold_task_deprecation(dedupe : Set(String), key : String, lines : Array(String)) : Bool
+    private def self.hold_task_deprecation(dedupe : Set(String), key : String, lines : Array(String), entry : JSON::Any? = nil) : Bool
       return false unless (frames = @@task_deprecation_captures[Fiber.current]?) && !frames.empty?
-      frames.last << PendingDeprecation.new(dedupe, key, lines)
+      frames.last << PendingDeprecation.new(dedupe, key, lines, entry)
       true
+    end
+
+    # The result-shaped entries of the blocks the innermost open window
+    # holds so far, in the order they were raised - what real's
+    # DeferredWarningContext has collected for the running task. Reading
+    # leaves the window intact: the blocks still have to reach the console
+    # at the display point. Empty with no window (a task that never opened
+    # one, or one whose window a skip/include already closed).
+    #
+    # One entry per distinct block Origin: the window holds every read (its
+    # dedupe claims only at replay), while real records at most one entry
+    # per templating operation - a template that resolves a deprecated name
+    # more than once still files ONE entry (live-verified vs 2.21.6 with
+    # `msg: "{{ play_hosts }}"`). Two different Origins reading the same
+    # fact stay two entries, identical dicts included: the entry carries no
+    # Origin.
+    def self.pending_result_deprecations : Array(JSON::Any)
+      return [] of JSON::Any unless frames = @@task_deprecation_captures[Fiber.current]?
+      return [] of JSON::Any if frames.empty?
+      seen = Set(String).new
+      entries = [] of JSON::Any
+      frames.last.each do |pending|
+        entry = pending.entry
+        next unless entry
+        next unless seen.add?(pending.key)
+        entries << entry
+      end
+      entries
+    end
+
+    # Attaches this task's collected controller-side deprecations to
+    # *result*, where ansible keeps them for `register:` (a fact read in a
+    # when: clause, issue #1351). They go before any entry the module's own
+    # payload produced: the controller raised them while it was still
+    # templating the task, before the module ran.
+    def self.attach_pending_result_deprecations(result : JSON::Any) : JSON::Any
+      entries = pending_result_deprecations
+      return result if entries.empty?
+      hash = result.as_h? || return result
+      existing = hash["deprecations"]?.try(&.as_a?) || [] of JSON::Any
+      hash["deprecations"] = JSON::Any.new(entries + existing)
+      result
     end
 
     # Replays and clears whatever the innermost open window has held,
@@ -882,6 +951,12 @@ module Krikri
       # unless -vvv (getent-style results carry one for `register`). At -vvv
       # and above Ansible keeps all of them inside the dumps.
       #
+      # `deprecations` alone is popped at EVERY verbosity - 2.21's
+      # CallbackBase._handle_warnings pops it (and `warnings`) off the result
+      # before the dump, which is why a -vvv dump of a task whose when: read
+      # a fact shows the block and no result key (live-verified vs 2.21.6),
+      # while the REGISTERED value keeps it.
+      #
       # Ansible's become failure is a plain {changed, msg} dump; the
       # `_connection_failure` marker only exists to keep failed_when: from
       # reinterpreting it.
@@ -890,8 +965,11 @@ module Krikri
          top["msg"]?.try(&.as_s?) == "Task failed: #{BecomeMessages::CHOWN_FAILURE}")
         result = JSON::Any.new(top.reject("_connection_failure"))
       end
-      if Krikri::RunOptions.verbosity < 3 && (top = result.as_h?) && (top.has_key?("warnings") || top.has_key?("invocation") || top.has_key?("deprecations") || top.has_key?("_ansible_core_deprecations") || top.has_key?("_ansible_pause_console"))
-        result = JSON::Any.new(top.reject("warnings", "invocation", "deprecations", "_ansible_core_deprecations", "_ansible_pause_console"))
+      if (top = result.as_h?) && top.has_key?("deprecations")
+        result = JSON::Any.new(top.reject("deprecations"))
+      end
+      if Krikri::RunOptions.verbosity < 3 && (top = result.as_h?) && (top.has_key?("warnings") || top.has_key?("invocation") || top.has_key?("_ansible_core_deprecations") || top.has_key?("_ansible_pause_console"))
+        result = JSON::Any.new(top.reject("warnings", "invocation", "_ansible_core_deprecations", "_ansible_pause_console"))
       end
 
       # no_log: print the status line and NOTHING else - no msg, no
