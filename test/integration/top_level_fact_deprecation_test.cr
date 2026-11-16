@@ -522,6 +522,52 @@ describe "INJECT_FACTS_AS_VARS deprecation" do
     stderr.scan(/DEPRECATION WARNING\]: #{Regex.escape(FACT_DEPRECATION_TEXT)}/).size.must_equal(1)
   end
 
+  it "attributes a one-element loop source's read to the value it references" do
+    # Issue #1391, azmodude.pycharm: `with_items:` holding one bare
+    # `{{ desktopicon_location }}` element makes real template that role
+    # default's OWN value, so the fact read inside it deprecates at the
+    # value's declaration - real tags the value, while the loop keyword's
+    # element names only the variable. Live-verified against 2.21.6: one
+    # block per reading task, the looped one at defaults/main.yml:3:31.
+    stdout, stderr, dir = run_files({
+      "play.yml" => <<-PLAYBOOK,
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        roles:
+          - lv
+      PLAYBOOK
+      "roles/lv/defaults/main.yml" => <<-YAML,
+        ---
+        pycharm_installation_location: "{{ ansible_env.HOME }}/pycharm"
+        pycharm_desktopicon_location: "{{ ansible_env.HOME }}/.local/share/applications"
+        YAML
+      "roles/lv/tasks/main.yml" => <<-YAML,
+        ---
+        - name: check install path
+          debug:
+            msg: "{{ pycharm_installation_location }}/bin/pycharm.sh"
+        - name: create destination directories
+          debug:
+            msg: "{{ item }}"
+          with_items:
+            - "{{ pycharm_desktopicon_location }}"
+        YAML
+    })
+
+    defaults = File.join(dir, "roles", "lv", "defaults", "main.yml")
+    stdout.must_include("TASK [lv : create destination directories]")
+    stdout.must_include("/.local/share/applications)")
+    stderr.must_include("[DEPRECATION WARNING]: #{FACT_DEPRECATION_TEXT}\n")
+    stderr.must_include("Origin: #{defaults}:3:31\n")
+    stderr.must_include("3 pycharm_desktopicon_location: \"{{ ansible_env.HOME }}/.local/share/applications\"\n")
+    stderr.must_include("^ column 31")
+    stderr.scan(/DEPRECATION WARNING\]: #{Regex.escape(FACT_DEPRECATION_TEXT)}/).size.must_equal(2)
+    # Never pinned on the loop keyword's own line, which names the
+    # variable rather than the fact.
+    stderr.wont_include("Origin: #{File.join(dir, "roles", "lv", "tasks", "main.yml")}")
+  end
+
   it "attributes a template file's indirect read to the value, not the file" do
     # A `.j2` that reads a variable whose own value names a fact: real's
     # Origin is the value's declaration, not the template file (different
