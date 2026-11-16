@@ -92,6 +92,9 @@ private def with_deb_fixture_shims(dpkg_install_exit : Int32 = 0,
       for n in $KRIKRI_APT_PROVIDES; do
         name="${n%%:*}"
         if [ "$name" = "$2" ]; then
+          echo "Package: $2"
+          echo "Versions: "
+          echo ""
           echo "Reverse Provides: "
           rest="${n#*:}"
           oldIFS="$IFS"; IFS=","
@@ -103,12 +106,19 @@ private def with_deb_fixture_shims(dpkg_install_exit : Int32 = 0,
     fi
     for n in $KRIKRI_APT_VIRTUAL_NAMES; do
       if [ "$n" = "$2" ]; then
-        echo "Candidate: (none)"
+        echo "$2:"
+        echo "  Installed: (none)"
+        echo "  Candidate: (none)"
+        echo "  Version table:"
       fi
     done
     for n in $KRIKRI_APT_CANDIDATE_NAMES; do
       if [ "$n" = "$2" ]; then
-        echo "Candidate: 1.0"
+        echo "$2:"
+        echo "  Installed: (none)"
+        echo "  Candidate: 1.0"
+        echo "  Version table:"
+        echo "     1.0 500"
       fi
     done
     exit 0
