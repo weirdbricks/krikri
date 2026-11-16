@@ -142,7 +142,7 @@ module Krikri
         # Real main(): the ci branch runs `npm ci` unconditionally and
         # exits changed=true (no list, no installed-set check).
         result = run_npm(exe_parts, ["ci"], name_version, global, path)
-        return failure(exe_parts, result, ["ci"]) unless result[:exit_code] == 0
+        return failure(exe_parts, result) unless result[:exit_code] == 0
         return PluginResult.new(changed: true, failed: false)
       end
 
@@ -183,7 +183,7 @@ module Krikri
         return PluginResult.new(changed: false, failed: false, key_order: %w[changed])
       end
       result = run_npm(exe_parts, ["uninstall"], name_version, global, path)
-      return failure(exe_parts, result, ["uninstall"]) unless result[:exit_code] == 0
+      return failure(exe_parts, result) unless result[:exit_code] == 0
       # Ansible 2.19.11 (live-verified + module source): npm.py has ONE
       # exit - exit_json(changed=changed) - so success results carry no
       # msg/stdout at all (the "Package removed"/"already absent" msgs
@@ -207,15 +207,17 @@ module Krikri
         return PluginResult.new(changed: false, failed: false, key_order: %w[changed])
       end
       result = run_npm(exe_parts, ["install"], name_version, global, path)
-      return failure(exe_parts, result, ["install"]) unless result[:exit_code] == 0
+      return failure(exe_parts, result) unless result[:exit_code] == 0
       PluginResult.new(changed: true, failed: false, key_order: %w[changed])
     end
 
     # Real _exec with check_rc=True: a started-but-failed command fails
-    # with msg=stderr.rstrip() plus cmd/rc/stdout/stderr.
-    private def failure(exe_parts : Array(String), result, args : Array(String)) : PluginResult
+    # with msg=stderr.rstrip() plus cmd/rc/stdout/stderr. `cmd` is the
+    # FULL argv Ansible ran - every global/production/ignore_scripts/
+    # name_version/registry flag included, never just the subcommand.
+    private def failure(exe_parts : Array(String), result) : PluginResult
       PluginHelpers::RunCommandFailure.nonzero_exit(
-        (exe_parts + args).join(' '), result[:exit_code], result[:stdout], result[:stderr]
+        (exe_parts + result[:args]).join(' '), result[:exit_code], result[:stdout], result[:stderr]
       )
     end
 
@@ -279,19 +281,20 @@ module Krikri
     # (missing/unexecutable binary) surfaces before anything runs as
     # run_command's OSError shape with the SPACE-JOINED raw args as cmd
     # (Ansible's _clean_args - no shell quoting).
-    private def run_npm(exe_parts : Array(String), subcommand : Array(String), name_version : String?, global : Bool, path : String?, mutating : Bool = true) : NamedTuple(exit_code: Int32, stdout: String, stderr: String)
+    private def run_npm(exe_parts : Array(String), subcommand : Array(String), name_version : String?, global : Bool, path : String?, mutating : Bool = true) : NamedTuple(exit_code: Int32, stdout: String, stderr: String, args: Array(String))
+      args = build_args(subcommand, name_version, global, mutating)
+
       # Ansible's _exec gate (`if not self.module.check_mode or
       # (self.module.check_mode and run_in_check_mode)`): only the list
       # probe runs in check mode - install/uninstall/ci are predicted
       # (`changed` from the installed-set check) but never started, and
       # the skipped run still counts as success.
-      return {exit_code: 0, stdout: "", stderr: ""} if mutating && check_mode?
-
-      args = build_args(subcommand, name_version, global, mutating)
+      return {exit_code: 0, stdout: "", stderr: "", args: args} if mutating && check_mode?
 
       cmd = "#{Process.quote(npm_binary)} #{args.map { |arg| Process.quote(arg) }.join(' ')}"
       cmd = "cd #{Process.quote(expand_tilde(path))} && #{cmd}" if path
-      remote_exec(cmd)
+      result = remote_exec(cmd)
+      {exit_code: result[:exit_code], stdout: result[:stdout], stderr: result[:stderr], args: args}
     end
 
     # The flag sequence Ansible's CmdRunner composes, in its own order

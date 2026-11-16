@@ -1,4 +1,5 @@
 require "./ansible_splitlines"
+require "./heuristic_log_sanitize"
 
 module Krikri
   module PluginHelpers
@@ -58,7 +59,7 @@ module Krikri
       # str.splitlines semantics, empty output -> []).
       def nonzero_exit(cmd : String, rc : Int32, stdout : String, stderr : String) : Krikri::PluginResult
         Krikri::PluginResult.new(
-          changed: false, failed: true, msg: stderr.rstrip,
+          changed: false, failed: true, msg: HeuristicLogSanitize.sanitize(stderr.rstrip),
           cmd: cmd, rc: rc, stdout: stdout, stderr: stderr,
           stdout_lines: AnsibleSplitlines.split(stdout),
           stderr_lines: AnsibleSplitlines.split(stderr),
