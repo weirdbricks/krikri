@@ -2145,19 +2145,6 @@ module Krikri
       # version" wording the unchanged path reports, changed: false.
       if wildcard_skipped.present? && active_packages.empty?
         messages << "Package#{packages.size > 1 ? "s" : ""} #{packages.join(", ")} already at latest version"
-      elsif @check_mode
-        # `grep -i upgrade` matched the ALWAYS-present "N upgraded, M newly
-        # installed" summary line of simulate output, so check mode never
-        # converged to ok. `^Inst` only matches an actual install/upgrade
-        # action line.
-        check_cmds = active_packages.map { |pkg| "apt-get install --simulate #{shell_single_quote(pkg)} 2>&1 | grep '^Inst'" }
-        check_result = remote_exec(check_cmds.join(" || "))
-        if check_result[:exit_code] == 0
-          messages << "Would upgrade #{active_packages.join(", ")} to latest"
-          changed = true
-        else
-          messages << "Package#{packages.size > 1 ? "s" : ""} #{packages.join(", ")} already at latest version"
-        end
       else
         # `--only-upgrade` skips a package that isn't ALREADY installed
         # entirely ("Skipping grafana, it is not installed and only
@@ -2194,13 +2181,13 @@ module Krikri
         # capture or apt.py format string produces.
         pkg_list = spec_list.map { |spec| naive_single_quote(spec) }.join(" ")
         # Real install()'s EXACT eight-slot format (same construction the
-        # state=present path below mirrors): the `fixed` and `check_arg`
-        # slots are always empty here - state=fixed routes through its own
-        # handler and check mode returns through the simulate branch above
-        # - but each empty slot KEEPS its separators, so the default shape
-        # carries the seven-space run before "install" that Ansible's
-        # "'cmd' failed" msg shows (buluma.handbrake round 29883637:
-        # the five-space run this path used to emit diverged there).
+        # state=present path below mirrors): the `fixed` slot is always
+        # empty here (state=fixed routes through its own handler) and the
+        # `check_arg` slot carries --simulate in check mode, but each
+        # empty slot KEEPS its separators, so a normal-run shape carries
+        # the seven-space run before "install" that Ansible's "'cmd'
+        # failed" msg shows (buluma.handbrake round 29883637: the
+        # five-space run this path used to emit diverged there).
         flags = [
           real_dpkg_options(lock_timeout),
           @only_upgrade ? "--only-upgrade" : "",
@@ -2208,63 +2195,106 @@ module Krikri
           @force ? "--force-yes" : "",
           true?(@params["autoremove"]?) ? "--auto-remove" : "",
           @fail_on_autoremove ? "--no-remove" : "",
-          "",
+          @check_mode ? "--simulate" : "",
         ]
         latest_cmd = "#{apt_get_bin} -y #{flags.join(" ")} install #{pkg_list}#{apt_install_trailing_flags}"
-        upgrade_result = with_policy_rc_d { apt_install_with_implicit_cache_retry(latest_cmd, lock_timeout, ->remote_exec(String)) }
 
-        # apt-get exits 100 when a package can't be located at all
-        # ("E: Unable to locate package sensu" - e.g. a repo that carries
-        # no candidate for this release). That's a hard failure the way
-        # Ansible's apt module fails with "No package matching X is
-        # available", NOT a clean "already at latest" - the previous code
-        # fell through to success here (found via buluma.sensu-install,
-        # where packagecloud's sensu/stable repo has no jammy candidate).
-        if upgrade_result[:exit_code] != 0
-          # apt.py's install() runs its trailing mark_installed before
-          # returning even the rc!=0 data, and that fail_json preempts it
-          # (see apt_mark_manual_failure).
-          if mark_failure = apt_mark_manual_failure(requested_specs)
-            return mark_failure
+        if @check_mode
+          # Real install() RUNS this exact command in check mode and a
+          # non-zero exit is the same "'cmd' failed" task failure a
+          # normal run gets. The old pipeline, `apt-get install
+          # --simulate <name> 2>&1 | grep '^Inst'`, could not tell that
+          # apart from a clean no-op - grep exits 1 both when apt-get
+          # succeeded with nothing to install and when apt-get itself
+          # failed - so the failure surfaced as "already at latest
+          # version"/ok (round 29913645 monsieurbiz.blackfire: the
+          # dotdeb php7.0 packages had candidates but unsatisfiable
+          # dependencies, so ansible's --check failed every loop item
+          # with "you have held broken packages" while this engine
+          # reported ok for each).
+          check_result = with_policy_rc_d do
+            apt_with_lock_retry("#{apt_environment_prefix} #{latest_cmd}", lock_timeout, ->remote_exec(String))
           end
-          # Real install()'s rc!=0 failure msg: "'%s' failed: %s" over the
-          # full apt-get command and stderr - the shape the round-2300027
-          # git-core capture shows ("'/usr/bin/apt-get -y -o ... install
-          # 'git-core=1:2.34.1-1ubuntu1.17'' failed: E: Version ... was not
-          # found"); this path previously said its own "Failed to install
-          # latest: ..." instead.
-          # Real's failure data is dict(msg=..., stdout=out, stderr=err,
-          # rc=rc) with main() appending the cache keys, and _return_formatted
-          # adding the *_lines pair (buluma.handbrake round 29883637: the
-          # bare-msg-only failure this path used to emit diverged there -
-          # same shape the state=present failure below mirrors).
-          return PluginResult.new(
-            changed: changed,
-            failed: true,
-            msg: "'#{latest_cmd}' failed: #{upgrade_result[:stderr]}",
-            stdout: upgrade_result[:stdout],
-            stderr: upgrade_result[:stderr],
-            stdout_lines: PluginHelpers::AnsibleSplitlines.split(upgrade_result[:stdout]),
-            stderr_lines: PluginHelpers::AnsibleSplitlines.split(upgrade_result[:stderr]),
-            rc: upgrade_result[:exit_code],
-            cache_update_time: @cache_update_time,
-            key_order: ["stdout", "stderr", "rc", "cache_updated", "cache_update_time", "failed", "msg", "stdout_lines", "stderr_lines"]
-          )
-        end
-
-        # "N upgraded, M newly installed, ..." is apt's own reliable,
-        # locale-stable summary line - checking for the English phrase
-        # "already the newest version" (the previous approach) missed
-        # the "not installed and only upgrades are requested" case
-        # entirely (a different message, so the check wrongly concluded
-        # something HAD changed).
-        summary = upgrade_result[:stdout][/(\d+) upgraded, (\d+) newly installed/]?
-        was_upgraded = summary ? summary.scan(/\d+/).sum(&.[0].to_i) > 0 : upgrade_result[:exit_code] == 0
-        if was_upgraded
-          messages << "Package#{packages.size > 1 ? "s" : ""} #{active_packages.join(", ")} upgraded to latest"
-          changed = true
+          if check_result[:exit_code] != 0
+            return PluginResult.new(
+              changed: changed,
+              failed: true,
+              msg: "'#{latest_cmd}' failed: #{check_result[:stderr]}",
+              stdout: check_result[:stdout],
+              stderr: check_result[:stderr],
+              stdout_lines: PluginHelpers::AnsibleSplitlines.split(check_result[:stdout]),
+              stderr_lines: PluginHelpers::AnsibleSplitlines.split(check_result[:stderr]),
+              rc: check_result[:exit_code],
+              cache_update_time: @cache_update_time,
+              key_order: ["stdout", "stderr", "rc", "cache_updated", "cache_update_time", "failed", "msg", "stdout_lines", "stderr_lines"]
+            )
+          end
+          # `grep -i upgrade` matched the ALWAYS-present "N upgraded, M
+          # newly installed" summary line of simulate output, so check
+          # mode never converged to ok. `^Inst` only matches an actual
+          # install/upgrade action line.
+          if check_result[:stdout].lines.any?(&.starts_with?("Inst"))
+            messages << "Would upgrade #{active_packages.join(", ")} to latest"
+            changed = true
+          else
+            messages << "Package#{packages.size > 1 ? "s" : ""} #{packages.join(", ")} already at latest version"
+          end
         else
-          messages << "Package#{packages.size > 1 ? "s" : ""} #{packages.join(", ")} already at latest version"
+          upgrade_result = with_policy_rc_d { apt_install_with_implicit_cache_retry(latest_cmd, lock_timeout, ->remote_exec(String)) }
+
+          # apt-get exits 100 when a package can't be located at all
+          # ("E: Unable to locate package sensu" - e.g. a repo that carries
+          # no candidate for this release). That's a hard failure the way
+          # Ansible's apt module fails with "No package matching X is
+          # available", NOT a clean "already at latest" - the previous code
+          # fell through to success here (found via buluma.sensu-install,
+          # where packagecloud's sensu/stable repo has no jammy candidate).
+          if upgrade_result[:exit_code] != 0
+            # apt.py's install() runs its trailing mark_installed before
+            # returning even the rc!=0 data, and that fail_json preempts it
+            # (see apt_mark_manual_failure).
+            if mark_failure = apt_mark_manual_failure(requested_specs)
+              return mark_failure
+            end
+            # Real install()'s rc!=0 failure msg: "'%s' failed: %s" over the
+            # full apt-get command and stderr - the shape the round-2300027
+            # git-core capture shows ("'/usr/bin/apt-get -y -o ... install
+            # 'git-core=1:2.34.1-1ubuntu1.17'' failed: E: Version ... was not
+            # found"); this path previously said its own "Failed to install
+            # latest: ..." instead.
+            # Real's failure data is dict(msg=..., stdout=out, stderr=err,
+            # rc=rc) with main() appending the cache keys, and _return_formatted
+            # adding the *_lines pair (buluma.handbrake round 29883637: the
+            # bare-msg-only failure this path used to emit diverged there -
+            # same shape the state=present failure below mirrors).
+            return PluginResult.new(
+              changed: changed,
+              failed: true,
+              msg: "'#{latest_cmd}' failed: #{upgrade_result[:stderr]}",
+              stdout: upgrade_result[:stdout],
+              stderr: upgrade_result[:stderr],
+              stdout_lines: PluginHelpers::AnsibleSplitlines.split(upgrade_result[:stdout]),
+              stderr_lines: PluginHelpers::AnsibleSplitlines.split(upgrade_result[:stderr]),
+              rc: upgrade_result[:exit_code],
+              cache_update_time: @cache_update_time,
+              key_order: ["stdout", "stderr", "rc", "cache_updated", "cache_update_time", "failed", "msg", "stdout_lines", "stderr_lines"]
+            )
+          end
+
+          # "N upgraded, M newly installed, ..." is apt's own reliable,
+          # locale-stable summary line - checking for the English phrase
+          # "already the newest version" (the previous approach) missed
+          # the "not installed and only upgrades are requested" case
+          # entirely (a different message, so the check wrongly concluded
+          # something HAD changed).
+          summary = upgrade_result[:stdout][/(\d+) upgraded, (\d+) newly installed/]?
+          was_upgraded = summary ? summary.scan(/\d+/).sum(&.[0].to_i) > 0 : upgrade_result[:exit_code] == 0
+          if was_upgraded
+            messages << "Package#{packages.size > 1 ? "s" : ""} #{active_packages.join(", ")} upgraded to latest"
+            changed = true
+          else
+            messages << "Package#{packages.size > 1 ? "s" : ""} #{packages.join(", ")} already at latest version"
+          end
         end
       end
 
