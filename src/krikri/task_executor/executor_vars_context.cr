@@ -2302,91 +2302,22 @@ module Krikri
       # resolves the ternary to the actual list and iterates it fine.
       if current && (raw = current.raw).is_a?(String) && (raw.includes?("{{") || raw.includes?("{%") || raw.includes?("{#")) &&
          !VarSubstitutor.unsafe_root?(vars_context, template) && !UnsafeValues.unsafe_text?(raw)
-        # ansible compiles the variable's value when the loop source reads
-        # it, and a `{% do %}` tag there is a hard syntax error (issue #322).
-        if (do_error = Krikri::TemplateDoTagScanner.do_tag_error(raw))
-          raise VariableSubstitutor::TemplateSyntaxError.new("Syntax error in template: #{do_error}")
-        end
-        # A raw value that's a PURE block-tag expression (`{%- if ... -%}
-        # ruby {%- else -%} ruby2.0 {%- endif -%}`, no `{{` at all) needs
-        # the full Crinja renderer, same as every other "{{ OR {% OR {#"
-        # re-render check in this codebase (see retemplated_lookup_
-        # value's identical branch) - the plain ExpressionEvaluator only
-        # understands `{{ }}` expressions. Found via diodonfrost.
-        # amazon_codedeploy's own `package_requirements: '{%- if ... -%}
-        # ruby {%- else -%} ruby2.0 {%- endif -%}'` fed to `with_items:
-        # "{{ package_requirements }}"` - the old `raw.includes?("{{")`
-        # check was false (no literal "{{" anywhere in the block-tag
-        # text), so this whole re-render branch was skipped and the RAW
-        # unrendered block-tag string was returned as the loop source,
-        # failing downstream with "The `loop` value must resolve to a
-        # 'list', not 'str'" instead of the single-item list
-        # Ansible produces from with_items:'s own scalar-wrapping.
-        if raw.includes?("{%") || raw.includes?("{#")
-          # Ansible's native templating types a rendered template by
-          # RUNTIME output chunks, not by static AST: when the taken
-          # branch contributes exactly ONE `{{ }}` expression chunk and
-          # no text of its own, that chunk keeps its native type (a
-          # `{% if %}{{ a_real_list }}{% else %}['dummy']{% endif %}`
-          # over a present fact iterates as a list - HanXHX.debian_
-          # bootstrap's warm phase); literal text - including the
-          # `['dummy']` else-branch of that same template - finalizes
-          # as a plain STRING however list-looking it reads (the cold
-          # phase then hard-fails "The `loop` value must resolve to a
-          # 'list', not 'str'."; live-verified vs 2.19.11, issue #379).
-          # Re-parsing the rendered text unconditionally (the old
-          # behavior) silently iterated the cold case.
-          renderer = VariableSubstitutor::JinjaRenderer.new(vars_context)
-          rendered = renderer.render(raw)
-          current = JSON::Any.new(rendered)
-          raw.scan(/\{\{(.*?)\}\}/m) do |span_match|
-            span = span_match[1].strip
-            next if span.empty?
-            # The span's alone-rendered display equals the whole
-            # template's render iff that expression was the only output
-            # chunk the taken path emitted (literal text or untrimmed
-            # whitespace around it would make the two differ - exactly
-            # ansible's multi-chunk finalization staying a string).
-            next unless renderer.render("{{ #{span} }}") == rendered
-            typed = begin
-              VariableSubstitutor::JinjaRenderer.evaluate_structured(span, vars_context)
-            rescue
-              nil
-            end
-            if typed
-              current = typed
-              break
-            end
-          end
-        else
-          current = evaluate_bare_mustache_preserving_type(raw, vars_context) || begin
-            inner = raw.strip
-            if inner.starts_with?("{{") && inner.ends_with?("}}") && inner.scan("{{").size == 1
-              # Strict, like ansible's own loop-source templating: an undefined
-              # name inside the expression (`[user_name] + extra_list`) fails the
-              # task with "'user_name' is undefined" - the lenient evaluator
-              # turned it into a None item and the task ran (issue #210).
-              rendered = VarSubstitutor.new(vars: vars_context).substitute(raw.strip, strict: true)
-              Krikri.parse_json_or_python_literal(rendered)
-            else
-              # MIXED literal-plus-expression text (`mixed: "a-{{
-              # lookup('env', 'HOME') }}-b"`, relayed via
-              # `with_items: "{{ mixed }}"`): stripping the outer braces
-              # of such a value's FIRST and LAST span and evaluating the
-              # leftovers as ONE expression turned "a-{{ x }}-b" into the
-              # garbage fragment "a- x -b" (live-verified against
-              # ansible-playbook 2.19.11, which iterates the RENDERED
-              # string `a-/home/labros-b` as the single item - this
-              # engine produced the literal "undefined" sentinel instead)
-              # - a two-span value like "a-{{ x }}-b-{{ y }}" mangles the
-              # same way even though a single {{ }} wrapper "protects" a
-              # one-span value. Render through the full substitute path
-              # (the same templating task params get) so literal text is
-              # kept and every embedded span evaluates.
-              rendered = VarSubstitutor.new(vars: vars_context).substitute(inner, strict: true)
-              Krikri.parse_json_or_python_literal(rendered)
-            end
-          end
+        # real tags every stored value with its DEFINING position and
+        # templating that value is what reads the fact, so this re-render
+        # of the referenced value's own text makes the fact read deprecate
+        # at the value's declaration (azmodude.pycharm's
+        # defaults/main.yml:4:31, issue #1391) - the loop keyword's element
+        # names only the variable, which leaves the read unplaceable and
+        # its block missing. Only a plain name is registered: a
+        # dotted/indexed reference renders a nested LEAF, whose own
+        # declaration this record cannot name (the same registration
+        # issue #1219's loop-item render needed).
+        ref = parts.size == 1 ? parts[0] : nil
+        begin
+          VarSubstitutor.push_preparing_var(VarSubstitutor.host_from_vars(vars_context), ref, raw, current) if ref
+          current = retemplated_loop_source_value(raw, vars_context)
+        ensure
+          VarSubstitutor.pop_preparing_var if ref
         end
       end
 
@@ -2401,6 +2332,99 @@ module Krikri
       raise UndefinedVariableError.new(Krikri.strict_undefined_message(match[1], vars_context)) if current.nil?
 
       current
+    end
+
+    # The re-render of a loop source whose bare `{{ name }}` reference
+    # resolved to *raw* - that value's OWN still-unrendered template text
+    # (see #resolve_template_value).
+    private def retemplated_loop_source_value(raw : String, vars_context : Hash(String, JSON::Any)) : JSON::Any?
+      # ansible compiles the variable's value when the loop source reads
+      # it, and a `{% do %}` tag there is a hard syntax error (issue #322).
+      if (do_error = Krikri::TemplateDoTagScanner.do_tag_error(raw))
+        raise VariableSubstitutor::TemplateSyntaxError.new("Syntax error in template: #{do_error}")
+      end
+      # A raw value that's a PURE block-tag expression (`{%- if ... -%}
+      # ruby {%- else -%} ruby2.0 {%- endif -%}`, no `{{` at all) needs
+      # the full Crinja renderer, same as every other "{{ OR {% OR {#"
+      # re-render check in this codebase (see retemplated_lookup_
+      # value's identical branch) - the plain ExpressionEvaluator only
+      # understands `{{ }}` expressions. Found via diodonfrost.
+      # amazon_codedeploy's own `package_requirements: '{%- if ... -%}
+      # ruby {%- else -%} ruby2.0 {%- endif -%}'` fed to `with_items:
+      # "{{ package_requirements }}"` - the old `raw.includes?("{{")`
+      # check was false (no literal "{{" anywhere in the block-tag
+      # text), so this whole re-render branch was skipped and the RAW
+      # unrendered block-tag string was returned as the loop source,
+      # failing downstream with "The `loop` value must resolve to a
+      # 'list', not 'str'" instead of the single-item list
+      # Ansible produces from with_items:'s own scalar-wrapping.
+      if raw.includes?("{%") || raw.includes?("{#")
+        # Ansible's native templating types a rendered template by
+        # RUNTIME output chunks, not by static AST: when the taken
+        # branch contributes exactly ONE `{{ }}` expression chunk and
+        # no text of its own, that chunk keeps its native type (a
+        # `{% if %}{{ a_real_list }}{% else %}['dummy']{% endif %}`
+        # over a present fact iterates as a list - HanXHX.debian_
+        # bootstrap's warm phase); literal text - including the
+        # `['dummy']` else-branch of that same template - finalizes
+        # as a plain STRING however list-looking it reads (the cold
+        # phase then hard-fails "The `loop` value must resolve to a
+        # 'list', not 'str'."; live-verified vs 2.19.11, issue #379).
+        # Re-parsing the rendered text unconditionally (the old
+        # behavior) silently iterated the cold case.
+        renderer = VariableSubstitutor::JinjaRenderer.new(vars_context)
+        rendered = renderer.render(raw)
+        value = JSON::Any.new(rendered)
+        raw.scan(/\{\{(.*?)\}\}/m) do |span_match|
+          span = span_match[1].strip
+          next if span.empty?
+          # The span's alone-rendered display equals the whole
+          # template's render iff that expression was the only output
+          # chunk the taken path emitted (literal text or untrimmed
+          # whitespace around it would make the two differ - exactly
+          # ansible's multi-chunk finalization staying a string).
+          next unless renderer.render("{{ #{span} }}") == rendered
+          typed = begin
+            VariableSubstitutor::JinjaRenderer.evaluate_structured(span, vars_context)
+          rescue
+            nil
+          end
+          if typed
+            value = typed
+            break
+          end
+        end
+        value
+      else
+        evaluate_bare_mustache_preserving_type(raw, vars_context) || begin
+          inner = raw.strip
+          if inner.starts_with?("{{") && inner.ends_with?("}}") && inner.scan("{{").size == 1
+            # Strict, like ansible's own loop-source templating: an undefined
+            # name inside the expression (`[user_name] + extra_list`) fails the
+            # task with "'user_name' is undefined" - the lenient evaluator
+            # turned it into a None item and the task ran (issue #210).
+            rendered = VarSubstitutor.new(vars: vars_context).substitute(raw.strip, strict: true)
+            Krikri.parse_json_or_python_literal(rendered)
+          else
+            # MIXED literal-plus-expression text (`mixed: "a-{{
+            # lookup('env', 'HOME') }}-b"`, relayed via
+            # `with_items: "{{ mixed }}"`): stripping the outer braces
+            # of such a value's FIRST and LAST span and evaluating the
+            # leftovers as ONE expression turned "a-{{ x }}-b" into the
+            # garbage fragment "a- x -b" (live-verified against
+            # ansible-playbook 2.19.11, which iterates the RENDERED
+            # string `a-/home/labros-b` as the single item - this
+            # engine produced the literal "undefined" sentinel instead)
+            # - a two-span value like "a-{{ x }}-b-{{ y }}" mangles the
+            # same way even though a single {{ }} wrapper "protects" a
+            # one-span value. Render through the full substitute path
+            # (the same templating task params get) so literal text is
+            # kept and every embedded span evaluates.
+            rendered = VarSubstitutor.new(vars: vars_context).substitute(inner, strict: true)
+            Krikri.parse_json_or_python_literal(rendered)
+          end
+        end
+      end
     end
 
     # Evaluates task.when_condition (if any) against vars_context, printing
