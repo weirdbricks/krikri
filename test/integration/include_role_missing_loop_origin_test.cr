@@ -2,17 +2,18 @@ require "../minitest_helper"
 require "file_utils"
 
 # The looped include_role: whose role name does not resolve - real
-# ansible-core 2.21.6 (live-verified, minimal repro) prints NO fatal:
-# line per failing item on stdout, only one "[ERROR]: The role 'x' was
-# not found in: <search paths>" block per item on STDERR, whose Origin
-# points at that loop ITEM's own YAML position (not the name: value);
-# the recap still counts failed=1 per item and every item is attempted.
+# ansible-core 2.21.6 (live-verified with the two streams captured
+# separately, minimal repro) prints NO fatal: line per failing item,
+# only one "[ERROR]: The role 'x' was not found in: <search paths>"
+# block per item on STDOUT, whose Origin points at that loop ITEM's own
+# YAML position (not the name: value); the recap still counts failed=1
+# per item and every item is attempted.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 
 describe "looped include_role: with an unresolvable role name" do
-  it "prints only stderr [ERROR] blocks with per-item Origins, no fatal lines, failed=2" do
+  it "prints only stdout [ERROR] blocks with per-item Origins, no fatal lines, failed=2" do
     src_dir = File.tempname("include-role-missing-loop")
     Dir.mkdir_p(src_dir)
 
@@ -41,12 +42,13 @@ describe "looped include_role: with an unresolvable role name" do
     out.each_line.none?(&.starts_with?("fatal:")).must_equal(true)
     out.wont_include("FAILED!")
 
-    err.must_include("[ERROR]: The role 'stafwag.libvirt' was not found in: ")
-    err.must_include("[ERROR]: The role 'stafwag.also_missing' was not found in: ")
+    err.wont_include("[ERROR]")
+    out.must_include("[ERROR]: The role 'stafwag.libvirt' was not found in: ")
+    out.must_include("[ERROR]: The role 'stafwag.also_missing' was not found in: ")
     # Both items' Origins point at their own YAML line (column 11 = the
     # scalar after the 8-space indent + "- "), not at the name: value.
-    err.must_include("Origin: #{playbook}:10:11\n")
-    err.must_include("Origin: #{playbook}:11:11\n")
+    out.must_include("Origin: #{playbook}:10:11\n")
+    out.must_include("Origin: #{playbook}:11:11\n")
 
     # Every item is attempted and counted: failed=2 in the recap, and
     # the play halts for the host (rc=2).
@@ -58,8 +60,8 @@ describe "looped include_role: with an unresolvable role name" do
 
   it "keeps the fatal line and the name-value Origin for a non-loop include_role" do
     # Guard for the loop-only change: the single (non-loop) role-not-found
-    # shape - one fatal: line per host on stdout with the name-value
-    # Origin on stderr - must be untouched.
+    # shape - one fatal: line per host on stdout, preceded by the
+    # name-value Origin block on that same stream - must be untouched.
     src_dir = File.tempname("include-role-missing-single")
     Dir.mkdir_p(src_dir)
 
@@ -81,8 +83,9 @@ describe "looped include_role: with an unresolvable role name" do
     out = stdout.to_s
     err = stderr.to_s
 
-    out.must_include("fatal: [localhost]: FAILED! => {\"changed\": false, \"reason\": \"The role 'stafwag.nope' was not found in: ")
-    err.must_include("Origin: #{playbook}:8:15\n")
+    out.must_include("fatal: [localhost]: FAILED! => {\"changed\": false, \"msg\": \"The role 'stafwag.nope' was not found in: ")
+    err.wont_include("[ERROR]")
+    out.must_include("Origin: #{playbook}:8:15\n")
     out.must_match(/ok=0\s+changed=0\s+unreachable=0\s+failed=1\s+skipped=0\s+rescued=0\s+ignored=0/)
     status.exit_code.must_equal(2)
 
@@ -114,11 +117,12 @@ describe "looped include_role: with an unresolvable role name" do
     out = stdout.to_s
     err = stderr.to_s
 
-    out.must_include("fatal: [localhost]: FAILED! => {\"changed\": false, \"reason\": \"The role 'stafwag.nope' was not found in: ")
+    out.must_include("fatal: [localhost]: FAILED! => {\"changed\": false, \"msg\": \"The role 'stafwag.nope' was not found in: ")
     # Line 7, column 21 = the k=v string's first char (6-space indent +
     # "include_role: ").
-    err.must_include("Origin: #{playbook}:7:21\n")
-    err.must_include("^ column 21\n")
+    err.wont_include("[ERROR]")
+    out.must_include("Origin: #{playbook}:7:21\n")
+    out.must_include("^ column 21\n")
     out.must_match(/ok=0\s+changed=0\s+unreachable=0\s+failed=1\s+skipped=0\s+rescued=0\s+ignored=0/)
     status.exit_code.must_equal(2)
 

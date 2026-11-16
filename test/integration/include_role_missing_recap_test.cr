@@ -45,17 +45,62 @@ describe "include_role: naming a role that doesn't exist" do
 
     # Ansible 2.21.6's fatal include shape (live-verified, both from a play
     # task and from inside a role's own tasks): the loader's AnsibleError
-    # goes to STDERR as an "[ERROR]: The role 'x' was not found in: <search
-    # paths>" block whose Origin points at the role-name VALUE inside the
-    # role's own tasks file, the task result line is the two-key fatal
-    # dump, and the play halts for that host unconditionally (ignore_
-    # errors: does not apply - failed=1 ignored=0).
-    output.must_include(%(fatal: [localhost]: FAILED! => {"changed": false, "reason": "The role 'nonexistent_role_xyz' was not found in: #{src_dir}/roles:))
+    # is the task result's own exception, so the callback writes the
+    # "[ERROR]: The role 'x' was not found in: <search paths>" block to
+    # STDOUT whose Origin points at the role-name VALUE inside the role's
+    # own tasks file, the task result line is the two-key fatal dump with
+    # the message under "msg", and the play halts for that host
+    # unconditionally (ignore_errors: does not apply - failed=1 ignored=0).
+    output.must_include(%(fatal: [localhost]: FAILED! => {"changed": false, "msg": "The role 'nonexistent_role_xyz' was not found in: #{src_dir}/roles:))
+    output.wont_include(%("reason":))
     output.must_include("[ERROR]: The role 'nonexistent_role_xyz' was not found in: ")
     output.must_include("Origin: #{src_dir}/roles/outer/tasks/main.yml:3:11")
     output.wont_include("should not run")
     output.must_match(/ok=0\s+changed=0\s+unreachable=0\s+failed=1\s+skipped=0\s+rescued=0\s+ignored=0/)
     exit_code.must_equal(2)
+
+    FileUtils.rm_rf(src_dir)
+  end
+
+  it "writes the role-not-found block to STDOUT, ahead of the fatal line and the recap" do
+    # Issue #1398 (stephan_koch.ilo_kickstart): the block belongs to the
+    # task RESULT, and ansible's callback routes exception blocks for task
+    # results to stdout unless `display_failed_stderr` is turned on
+    # (default off). Verified against ansible-core 2.21.6 with the two
+    # streams captured separately: stderr is empty and stdout holds the
+    # block, then the fatal line, then the recap - krikri wrote the block
+    # to stderr, so its capture (stdout + stderr) put the block after the
+    # recap.
+    src_dir = File.tempname("include-role-missing-streams")
+    Dir.mkdir_p(File.join(src_dir, "roles", "outer", "tasks"))
+    File.write(File.join(src_dir, "roles", "outer", "tasks", "main.yml"), <<-YAML)
+      - name: Installing missing role
+        include_role:
+          name: nonexistent_role_xyz
+      YAML
+
+    playbook = File.join(src_dir, "pb.yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        roles:
+          - outer
+      YAML
+
+    stdout = IO::Memory.new
+    stderr = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: stdout, error: stderr, chdir: src_dir, input: IO::Memory.new)
+    out = stdout.to_s
+
+    stderr.to_s.wont_include("[ERROR]")
+    out.must_include("Origin: #{src_dir}/roles/outer/tasks/main.yml:3:11")
+    block_at = out.index!("Origin: #{src_dir}/roles/outer/tasks/main.yml:3:11")
+    fatal_at = out.index!("fatal: [localhost]: FAILED!")
+    recap_at = out.index!("PLAY RECAP")
+    assert block_at < fatal_at, "the [ERROR] block must precede the fatal line"
+    assert fatal_at < recap_at, "the fatal line must precede the recap"
+    status.exit_code.must_equal(2)
 
     FileUtils.rm_rf(src_dir)
   end

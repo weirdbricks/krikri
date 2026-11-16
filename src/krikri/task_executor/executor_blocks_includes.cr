@@ -3304,16 +3304,18 @@ module Krikri
     # include_role: whose named role resolves nowhere - Ansible's
     # own fatal shape (live-verified vs 2.21.6, both from a play task
     # and from inside a role's own tasks): the loader's AnsibleError is
-    # printed on STDERR as an "[ERROR]: The role 'x' was not found in:
-    # <search paths>" block whose Origin points at the role-name VALUE,
-    # the task result line is the two-key fatal dump, the task counts as
-    # failed only, and the play halts for that host UNCONDITIONALLY -
-    # ignore_errors: does not apply to a role-resolution failure (real:
-    # `failed=1 ignored=0`, the next task never runs, rc=2), unlike
-    # every ordinary module failure.
+    # the TASK RESULT's own exception, so the callback prints the
+    # "[ERROR]: The role 'x' was not found in: <search paths>" block on
+    # STDOUT (its `display_failed_stderr` option defaults to false),
+    # ahead of the fatal line, with an Origin pointing at the role-name
+    # VALUE; the task result line is the two-key fatal dump carrying the
+    # message under "msg", the task counts as failed only, and the play
+    # halts for that host UNCONDITIONALLY - ignore_errors: does not apply
+    # to a role-resolution failure (real: `failed=1 ignored=0`, the next
+    # task never runs, rc=2), unlike every ordinary module failure.
     # looped include_role: whose named role resolves nowhere - Ansible
-    # prints NO fatal: line per failing item on stdout, only the
-    # "[ERROR]: The role 'x' was not found in:" block per item on STDERR
+    # prints NO fatal: line per failing item, only the
+    # "[ERROR]: The role 'x' was not found in:" block per item on STDOUT
     # (live-verified vs 2.21.6), whose Origin points at that loop
     # item's own YAML position when the name is exactly the loop
     # variable - the failed count and the unconditional halt are the
@@ -3349,13 +3351,13 @@ module Krikri
              else
                ErrorBlock::Node.new(message)
              end
-      ErrorBlock.emit_stderr(node)
+      ErrorBlock.emit(node)
       if Krikri::Oneline.enabled?
-        puts "#{connection_host} | FAILED! => #{ResultDisplay.dump_oneline_json(JSON.parse({"changed" => false, "reason" => message}.to_json))}".colorize(:red)
+        puts "#{connection_host} | FAILED! => #{ResultDisplay.dump_oneline_json(JSON.parse({"changed" => false, "msg" => message}.to_json))}".colorize(:red)
       elsif !task_has_loop?(task)
         delegate_target = delegate_display_target(task, host)
         fatal_host_label = delegate_target ? "#{host.name} -> #{delegate_target}" : connection_host
-        puts "fatal: [#{fatal_host_label}]: FAILED! => {\"changed\": false, \"reason\": #{message.to_json}}".colorize(:red)
+        puts "fatal: [#{fatal_host_label}]: FAILED! => {\"changed\": false, \"msg\": #{message.to_json}}".colorize(:red)
       end
       @results[host.name]["failed"] += 1
       halt_if_failed(task, host, true, force_halt: true)
@@ -3911,10 +3913,11 @@ module Krikri
       rescue ex : RoleNotFoundError
         # include_role: naming a role that resolves nowhere is
         # Ansible's own fatal include failure shape (live-verified vs
-        # 2.21.6): the loader's AnsibleError goes to STDERR as an
-        # "[ERROR]: The role 'x' was not found in: <search paths>" block
-        # with the role-name VALUE's own Origin, the task result is the
-        # two-key fatal dump `{"changed": false, "reason": ...}`, and
+        # 2.21.6): the loader's AnsibleError is the task result's own
+        # exception, so the callback prints the "[ERROR]: The role 'x'
+        # was not found in: <search paths>" block on STDOUT with the
+        # role-name VALUE's own Origin, the task result is the
+        # two-key fatal dump `{"changed": false, "msg": ...}`, and
         # the play HALTS for that host unconditionally - ignore_errors:
         # does NOT apply (live-verified: `failed=1 ignored=0`, the next
         # task never runs, rc=2), unlike every ordinary module failure.
