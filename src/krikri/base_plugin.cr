@@ -316,6 +316,16 @@ module Krikri
     end
   end
 
+  # Raised by PluginHelpers::DockerClient's api_version validation, which
+  # mirrors the checks the vendored Docker SDK's Client.__init__ runs at
+  # client construction. The message is already Ansible's user-facing
+  # failure text ("Error connecting: invalid version number 'atoobk'"),
+  # and real's fail_json carries no exception for it, so unlike
+  # SdkImportGateError there is no separate detail for the [ERROR] block.
+  # Lives here for the same reason as SdkImportGateError.
+  class DockerClientConfigError < Exception
+  end
+
   lib LibLocale
     LC_ALL = 6
     fun setlocale(category : Int32, locale : UInt8*) : UInt8*
@@ -710,6 +720,15 @@ module Krikri
       Krikri.unquote_bigint_json(run_and_capture_result)
     end
 
+    # Every failure exit below still runs through #finalize_result: real
+    # collects the payload's deprecated module_utils imports BEFORE the
+    # module body (or its argument validation) runs, so those console
+    # lines and registered entries ride the fail_json result too - a
+    # docker_network_info task with a bogus api_version prints the
+    # `_collections_compat` warning before the version-parse error
+    # (community.docker 4.7.x, issue #1340). The generic engine-crash
+    # rescue at the bottom deliberately skips it, matching real's crash
+    # wrapper.
     private def run_and_capture_result : String
       remote_tmp_warning = remote_tmp_init_warning
       finalize_result(attach_remote_tmp_warning(execute, remote_tmp_warning)).to_json
@@ -720,7 +739,7 @@ module Krikri
       # instead of the generic "Plugin execution failed: " wrapper real
       # never produces, same reasoning as the OwnerLookupFailure rescue
       # below.
-      attach_remote_tmp_warning(PluginResult.new(changed: false, failed: true, msg: ex.message || "invalid boolean parameter"), remote_tmp_warning).to_json
+      finalize_result(attach_remote_tmp_warning(PluginResult.new(changed: false, failed: true, msg: ex.message || "invalid boolean parameter"), remote_tmp_warning)).to_json
     rescue ex : OwnerLookupFailure
       # The message is already the exact user-facing failure
       # Ansible produces ("chown failed: failed to look up user <name>"
@@ -731,7 +750,7 @@ module Krikri
       # rather than return PluginResult so every plugin applying
       # file-common owner:/group: args gets Ansible's failure shape
       # without each one hand-rolling it.
-      attach_remote_tmp_warning(PluginResult.new(changed: false, failed: true, msg: ex.message || "owner lookup failed"), remote_tmp_warning).to_json
+      finalize_result(attach_remote_tmp_warning(PluginResult.new(changed: false, failed: true, msg: ex.message || "owner lookup failed"), remote_tmp_warning)).to_json
     rescue ex : SdkImportGateError
       # The Docker SDK import gate (docker_client.cr's sdk_import_gate)
       # raises rather than returning a PluginResult so every SDK-based
@@ -739,7 +758,13 @@ module Krikri
       # shared DockerClient.build - the message is real's own
       # missing_required_lib wording, the detail belongs in the [ERROR]
       # block only, like the OwnerLookupFailure reasoning above.
-      attach_remote_tmp_warning(PluginResult.new(changed: false, failed: true, msg: ex.message || "", _ansible_error_detail: ex.detail), remote_tmp_warning).to_json
+      finalize_result(attach_remote_tmp_warning(PluginResult.new(changed: false, failed: true, msg: ex.message || "", _ansible_error_detail: ex.detail), remote_tmp_warning)).to_json
+    rescue ex : DockerClientConfigError
+      # The Docker client-construction checks (api_version parse/minimum)
+      # produce real's fail_json msg with no exception argument, so the
+      # result carries the bare message and the [ERROR] block stays the
+      # generic "Task failed: Module failed: <msg>" chain.
+      finalize_result(attach_remote_tmp_warning(PluginResult.new(changed: false, failed: true, msg: ex.message || ""), remote_tmp_warning)).to_json
     rescue ex : SpawnError
       # #704: a process that could not be spawned at all (fd exhaustion,
       # fork failure, pipe setup failure - a bad target executable stays a
@@ -750,7 +775,7 @@ module Krikri
       # failure). Echo to STDERR so a full-suite shard log shows the cause
       # even when the result JSON is consumed silently.
       STDERR.puts ex.message.to_s
-      attach_remote_tmp_warning(PluginResult.new(changed: false, failed: true, msg: ex.message || "Failed to spawn process"), remote_tmp_warning).to_json
+      finalize_result(attach_remote_tmp_warning(PluginResult.new(changed: false, failed: true, msg: ex.message || "Failed to spawn process"), remote_tmp_warning)).to_json
     rescue ex : Exception
       # The engine-internal crash shape ("Plugin execution failed: ")
       # deliberately does NOT carry the init warning: real's module crash

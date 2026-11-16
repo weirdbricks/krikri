@@ -106,6 +106,20 @@ describe "docker_network_info plugin argument validation" do
     result["msg"].as_s.must_equal("parameters are required together: client_cert, client_key")
   end
 
+  it "fails an unparseable api_version at client construction like the SDK" do
+    result = PluginSpecHelper.run("docker_network_info", {"name" => "krikri-net", "api_version" => "atoobk"})
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("Error connecting: invalid version number 'atoobk'")
+  end
+
+  it "fails an api_version below the module's minimum API version" do
+    result = PluginSpecHelper.run("docker_network_info", {"name" => "krikri-net", "api_version" => "1.24"})
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("Docker API version is 1.24. Minimum version required is 1.25.")
+  end
+
   it "rejects unsupported parameters with the all-aliases parenthetical" do
     result = PluginSpecHelper.run("docker_network_info", {"name" => "krikri-net", "banana" => "x"})
 
