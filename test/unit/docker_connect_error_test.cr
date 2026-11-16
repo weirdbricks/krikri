@@ -86,6 +86,29 @@ module Krikri
           text.must_include("HTTPSConnectionPool(host='127.0.0.1', port=2376)")
           text.must_include("urllib3.connection.HTTPSConnection")
         end
+
+        it "renders an unresolvable TCP host in urllib3's NameResolutionError shape (pointer aside)" do
+          # A parseable TCP hostname fails at name resolution, which
+          # urllib3 reports as NameResolutionError rather than a
+          # NewConnectionError. The live lookup supplies the getaddrinfo
+          # code the message quotes.
+          ex = begin
+            Socket::Addrinfo.resolve("krikri-no-such-host.invalid", 2376, type: Socket::Type::STREAM)
+            raise "unreachable: the .invalid TLD must not resolve"
+          rescue error : Socket::Addrinfo::Error
+            error
+          end
+          text = DockerSdkError.connect_error_text(ex, "tcp://kxqsrj:2376")
+          text.must_equal("Error connecting: Error while fetching server API version: " \
+                          "HTTPConnectionPool(host='kxqsrj', port=2376): Max retries exceeded with url: /version " \
+                          "(Caused by NameResolutionError(\"<urllib3.connection.HTTPConnection object at #{text[/object at (0x[0-9a-f]+)>/, 1]}>: " \
+                          "Failed to resolve 'kxqsrj' ([Errno -2] Name or service not known)\"))")
+        end
+
+        it "uses the TLS pool for a TLS TCP host" do
+          text = DockerSdkError.connect_error_text(connect_error(Errno::ECONNREFUSED), "tcp://127.0.0.1:2375", true)
+          text.must_include("HTTPSConnectionPool(host='127.0.0.1', port=2375)")
+        end
       end
 
       describe ".transport_error_text without a docker_host" do

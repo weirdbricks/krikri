@@ -135,7 +135,7 @@ module Krikri
         msg: "Logging into #{registry_url} for user #{username} failed - #{login[:stderr].strip.presence || login[:stdout].strip.presence || "docker login returned #{login[:exit_code]}"}"), password) if login[:exit_code] != 0
 
       censor(success_result(changed: true, login_result: login_result(registry_url, username)), password)
-    rescue ex : PluginHelpers::DockerClient::InvalidDockerHostError | Socket::ConnectError
+    rescue ex : PluginHelpers::DockerClient::InvalidDockerHostError | Socket::ConnectError | Socket::Addrinfo::Error
       PluginResult.new(changed: false, failed: true, msg: PluginHelpers::DockerClient.connect_failure_text(ex, @params))
     end
 

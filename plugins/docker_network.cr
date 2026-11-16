@@ -190,7 +190,7 @@ module Krikri
       end
     rescue ex : Docr::Errors::DockerAPIError
       PluginResult.new(changed: false, failed: true, msg: "#{API_ERROR_PREFIX}#{PluginHelpers::DockerSdkError.api_error_text(client, @params, ex)}")
-    rescue ex : PluginHelpers::DockerClient::InvalidDockerHostError | Socket::ConnectError
+    rescue ex : PluginHelpers::DockerClient::InvalidDockerHostError | Socket::ConnectError | Socket::Addrinfo::Error
       PluginResult.new(changed: false, failed: true, msg: PluginHelpers::DockerClient.connect_failure_text(ex, @params))
     end
 
