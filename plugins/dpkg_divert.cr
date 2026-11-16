@@ -96,41 +96,52 @@ module Krikri
           blocker = state == "absent" ? diversion_before["divert"] : diversion_wanted["divert"]
           if rename && path_exists && ((state == "absent" && truename_exists) || (state == "present" && remote_file_exists?(blocker || "")))
             unless force
-              return PluginResult.new(changed: false, failed: true,
-                msg: "Set 'force' param to True to force renaming of files.", stderr: stderr, stdout: stdout)
+              return command_failure("Set 'force' param to True to force renaming of files.",
+                main_command, rc, stdout, stderr, diversion_before)
             end
           else
-            return PluginResult.new(changed: false, failed: true,
-              msg: "Unexpected error while changing state of the diversion.", stderr: stderr, stdout: stdout)
+            return command_failure("Unexpected error while changing state of the diversion.",
+              main_command, rc, stdout, stderr, diversion_before)
           end
 
           if check_mode
-            return PluginResult.new(changed: false, failed: true,
-              msg: "Unexpected error while changing state of the diversion.", stderr: stderr, stdout: stdout)
+            return command_failure("Unexpected error while changing state of the diversion.",
+              main_command, rc, stdout, stderr, diversion_before)
           end
 
           unlink_result = remote_exec("rm -f #{shell_single_quote(blocker || "")}")
           if unlink_result[:exit_code] != 0
-            return PluginResult.new(changed: false, failed: true,
-              msg: "Failed to remove #{blocker}: #{unlink_result[:stderr]}")
+            return command_failure("Failed to remove #{blocker}: #{unlink_result[:stderr]}",
+              main_command, rc, stdout, stderr, diversion_before)
           end
           rerun = remote_exec(main_command)
-          return failed_result("dpkg-divert failed: #{rerun[:stderr]}") if rerun[:exit_code] != 0
+          unless rerun[:exit_code] == 0
+            return PluginHelpers::RunCommandFailure.nonzero_exit(
+              main_command, rerun[:exit_code], rerun[:stdout], rerun[:stderr])
+          end
           messages = [rerun[:stdout].strip]
+          rc, stdout, stderr = rerun[:exit_code], rerun[:stdout], rerun[:stderr]
         else
           # updating holder/divert of an existing diversion: dpkg-divert
           # cannot do that in place - remove, then re-add
           rm_command = PluginHelpers::DpkgDivertCommand.remove_command(dpkg_divert, path)
           rm_command = PluginHelpers::DpkgDivertCommand.with_test(rm_command) if check_mode
           rm_result = remote_exec(rm_command)
-          return failed_result("dpkg-divert failed: #{rm_result[:stderr]}") if rm_result[:exit_code] != 0
+          unless rm_result[:exit_code] == 0
+            return PluginHelpers::RunCommandFailure.nonzero_exit(
+              rm_command, rm_result[:exit_code], rm_result[:stdout], rm_result[:stderr])
+          end
 
           if check_mode
             messages = [rm_result[:stdout].strip, "Running in check mode"]
           else
             rerun = remote_exec(main_command)
-            return failed_result("dpkg-divert failed: #{rerun[:stderr]}") if rerun[:exit_code] != 0
+            unless rerun[:exit_code] == 0
+              return PluginHelpers::RunCommandFailure.nonzero_exit(
+                main_command, rerun[:exit_code], rerun[:stdout], rerun[:stderr])
+            end
             messages = [rm_result[:stdout].strip, rerun[:stdout].strip]
+            rc, stdout, stderr = rerun[:exit_code], rerun[:stdout], rerun[:stderr]
 
             old_divert = diversion_before["divert"]?
             new_divert = diversion_wanted["divert"]?
@@ -156,9 +167,31 @@ module Krikri
           diversion: diversion_after, commands: [main_command], messages: messages,
           key_order: ["changed", "diversion", "commands", "messages", "diff"])
       else
-        PluginResult.new(changed: changed, failed: true,
-          msg: "Unexpected error: see stdout and stderr for details.")
+        command_failure("Unexpected error: see stdout and stderr for details.",
+          main_command, rc, stdout, stderr, diversion_after, changed: changed)
       end
+    end
+
+    # Real dpkg_divert.py's post-command fail_json calls all pass the same
+    # kwargs set - changed, cmd=maincommand, rc, msg, stderr, stdout,
+    # diversion - so a failed run reports the command it ran, its exit
+    # status and the diversion it saw, not just the message. The chaos
+    # loop's rename clash carried msg/stderr/stdout only (issue #1344,
+    # kpg 000023/000026-multi-dpkg_divert-chaos). Real's callback derives
+    # stdout_lines/stderr_lines for its dump, so the result carries them
+    # here too: krikri dumps the plugin's raw result.
+    private def command_failure(msg : String, command : String, rc : Int32,
+                                stdout : String, stderr : String,
+                                diversion : Hash(String, String?),
+                                changed : Bool = false) : PluginResult
+      PluginResult.new(
+        changed: changed, failed: true, msg: msg,
+        cmd: command, rc: rc, stdout: stdout, stderr: stderr,
+        stdout_lines: PluginHelpers::AnsibleSplitlines.split(stdout),
+        stderr_lines: PluginHelpers::AnsibleSplitlines.split(stderr),
+        diversion: diversion,
+        key_order: ["changed", "cmd", "stderr", "stdout", "diversion"],
+      )
     end
 
     # {"path" => ..., "state" => ..., "holder" => ...?, "divert" => ...?}
@@ -200,10 +233,6 @@ module Krikri
     private def exec_split(command : String) : {Int32, String, String}
       result = remote_exec(command)
       {result[:exit_code], result[:stdout], result[:stderr]}
-    end
-
-    private def failed_result(msg : String) : PluginResult
-      PluginResult.new(changed: false, failed: true, msg: msg)
     end
   end
 end
