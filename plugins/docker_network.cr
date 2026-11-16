@@ -190,8 +190,8 @@ module Krikri
       end
     rescue ex : Docr::Errors::DockerAPIError
       PluginResult.new(changed: false, failed: true, msg: "#{API_ERROR_PREFIX}#{PluginHelpers::DockerSdkError.api_error_text(client, @params, ex)}")
-    rescue ex : Socket::ConnectError
-      PluginResult.new(changed: false, failed: true, msg: PluginHelpers::DockerSdkError.connect_error_text(ex, PluginHelpers::DockerClient.resolved_docker_host(@params)))
+    rescue ex : PluginHelpers::DockerClient::InvalidDockerHostError | Socket::ConnectError
+      PluginResult.new(changed: false, failed: true, msg: PluginHelpers::DockerClient.connect_failure_text(ex, @params))
     end
 
     private def ensure_present(

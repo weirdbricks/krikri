@@ -234,11 +234,19 @@ module Krikri
       # directory'))"), or urllib3's pool-retry prose for a TCP one.
       # docker_host is the resolved docker_host (param or environment) -
       # only needed to pick the TCP branch's pool spelling.
-      def self.connect_error_text(ex : Exception, docker_host : String? = nil) : String
+      def self.connect_error_text(ex : Socket::ConnectError, docker_host : String? = nil) : String
         "Error connecting: Error while fetching server API version: #{transport_error_text(ex, docker_host)}"
       end
 
-      def self.transport_error_text(ex : Exception, docker_host : String?) : String
+      # AnsibleDockerClientBase's wrapper for an exception escaping the
+      # SDK Client's __init__ BEFORE its api_version round trip - notably
+      # parse_host()'s own DockerException for an unusable docker_host:.
+      # The message is the SDK's text alone, with no version-fetch middle.
+      def self.client_init_error_text(ex : Exception) : String
+        "Error connecting: #{ex.message}"
+      end
+
+      def self.transport_error_text(ex : Socket::ConnectError, docker_host : String?) : String
         tcp = docker_host.try { |host| {"tcp://", "http://", "https://"}.any? { |scheme| host.starts_with?(scheme) } } || false
         if tcp
           uri = URI.parse(docker_host || "")
@@ -259,7 +267,7 @@ module Krikri
         end
       end
 
-      private def self.errno_cause_text(ex : Exception, host : String? = nil, port : Int32? = nil) : String
+      private def self.errno_cause_text(ex : Socket::ConnectError, host : String? = nil, port : Int32? = nil) : String
         errno = ex.os_error.as?(Errno)
         # Crystal's non-blocking connect raises on connect()'s immediate
         # EINPROGRESS/EAGAIN return without ever reading SO_ERROR, so the
@@ -303,7 +311,7 @@ module Krikri
       #     ConnectionRefusedError(111, 'Connection refused')
       #     PermissionError(13, 'Permission denied')
       # (each itself wrapped in ('Connection aborted.', ...) by requests).
-      private def self.wrapped_exception_text(ex : Exception) : String
+      private def self.wrapped_exception_text(ex : Socket::ConnectError) : String
         errno = ex.os_error.as?(Errno)
         return "OSError('#{ex.message}')" unless errno
 

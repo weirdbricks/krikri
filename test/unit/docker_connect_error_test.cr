@@ -15,8 +15,11 @@ module Krikri
     # Pure message construction - no daemon needed.
     describe DockerSdkError do
       describe ".connect_error_text" do
-        def connect_error(errno : Errno) : Exception
-          Socket::ConnectError.from_os_error("connect", errno)
+        # from_os_error's static return type is Socket::Error, but every
+        # instance it builds is a ConnectError (the runtime class the
+        # plugins' rescue clauses see).
+        def connect_error(errno : Errno) : Socket::ConnectError
+          Socket::ConnectError.from_os_error("connect", errno).as(Socket::ConnectError)
         end
 
         it "renders a nonexistent socket path as requests' FileNotFoundError tuple" do
@@ -87,7 +90,7 @@ module Krikri
 
       describe ".transport_error_text without a docker_host" do
         it "uses the unix-socket tuple shape when no docker_host is known" do
-          ex = Socket::ConnectError.from_os_error("connect", Errno::ENOENT)
+          ex = Socket::ConnectError.from_os_error("connect", Errno::ENOENT).as(Socket::ConnectError)
           DockerSdkError.transport_error_text(ex, nil)
             .must_equal("('Connection aborted.', FileNotFoundError(2, 'No such file or directory'))")
         end
@@ -108,6 +111,60 @@ module Krikri
       it "ignores a malformed environment overlay instead of failing" do
         params = {"_environment" => "not json"} of String => String
         DockerClient.env_overlay(params).must_equal({} of String => String)
+      end
+    end
+
+    # The SDK's parse_host() runs inside Client.__init__ (before any
+    # request), and real reports its DockerException as
+    # "Error connecting: <text>" - byte-verified against docker-py 7.x,
+    # the SDK the reference environments' community.docker drives.
+    describe "DockerClient.parse_host" do
+      it "rejects a scheme-less host with no port (docker-py 7.x no longer defaults one)" do
+        assert_raises_message(DockerClient::InvalidDockerHostError,
+          "Invalid bind address format: port is required: spcyng") do
+          DockerClient.parse_host("spcyng")
+        end
+      end
+
+      it "reads a scheme-less value as a TCP endpoint, port included" do
+        parsed = DockerClient.parse_host("127.0.0.1:2375")
+        parsed.tcp?.must_equal(true)
+        parsed.host.must_equal("127.0.0.1")
+        parsed.port.must_equal(2375)
+      end
+
+      it "rejects a scheme the SDK does not know" do
+        assert_raises_message(DockerClient::InvalidDockerHostError,
+          "Invalid bind address protocol: localhost:2375") do
+          DockerClient.parse_host("localhost:2375")
+        end
+      end
+
+      it "rejects a bare socket path (no unix:// scheme)" do
+        assert_raises_message(DockerClient::InvalidDockerHostError,
+          "Invalid bind address format: /var/run/docker.sock") do
+          DockerClient.parse_host("/var/run/docker.sock")
+        end
+      end
+
+      it "keeps unix:// paths as socket paths" do
+        parsed = DockerClient.parse_host("unix:///tmp/krikri-no-such-sock")
+        parsed.tcp?.must_equal(false)
+        parsed.socket_path.must_equal("/tmp/krikri-no-such-sock")
+      end
+
+      it "treats an empty value and unix:// as the SDK's default socket" do
+        DockerClient.parse_host(nil).socket_path.must_be_nil
+        DockerClient.parse_host("").socket_path.must_be_nil
+        DockerClient.parse_host("unix://").socket_path.must_be_nil
+      end
+
+      it "requires a port for tcp:// too, and defaults ssh:// to 22" do
+        assert_raises_message(DockerClient::InvalidDockerHostError,
+          "Invalid bind address format: port is required: tcp://h") do
+          DockerClient.parse_host("tcp://h")
+        end
+        DockerClient.parse_host("ssh://u@h").port.must_equal(22)
       end
     end
   end

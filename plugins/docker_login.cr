@@ -27,7 +27,10 @@
 #   achieves), changed=true.
 # - state=absent: the registry's auth entry is erased from the config
 #   file (0600, like the real DockerFileStore._write) when present,
-#   changed=false otherwise - no docker binary needed.
+#   changed=false otherwise - no docker binary needed. The daemon client
+#   is still built and pinged first, because the module constructs it in
+#   main() before branching on state (so a bad docker_host:/unreachable
+#   daemon fails the logout too).
 require "json"
 require "base64"
 require "../src/krikri/base_plugin"
@@ -87,7 +90,15 @@ module Krikri
                                  @params["dockercfg_path"]?.presence ||
                                  PluginHelpers::DockerLogin::DEFAULT_CONFIG_PATH)
 
-      return censor(logout(registry_url, config_path), password) if state == "absent"
+      # docker_login.py's main constructs its AnsibleDockerClient BEFORE
+      # LoginManager.run() looks at state:, so an unusable daemon fails a
+      # state=absent logout too: the SDK client validates docker_host: in
+      # __init__ and its first round trip is GET /version.
+      client, _ = PluginHelpers::DockerClient.build(@params)
+      if state == "absent"
+        PluginHelpers::DockerSdkError.negotiated_api_version(client)
+        return censor(logout(registry_url, config_path), password)
+      end
 
       # Real required_if: (state, present, [username, password]) - key
       # PRESENCE, not non-emptiness (an explicit empty username passes
@@ -111,7 +122,6 @@ module Krikri
       # _login) and fails with the SDK's own APIError wording - the CLI
       # below only runs once the daemon accepted them, so a wrong password
       # never produces the CLI's own error text.
-      client, _ = PluginHelpers::DockerClient.build(@params)
       if err = PluginHelpers::DockerSdkError.registry_auth_error(client, @params, registry_url, username, password)
         return censor(PluginResult.new(changed: false, failed: true,
           msg: "Logging into #{registry_url} for user #{username} failed - #{err}"), password)
@@ -125,8 +135,8 @@ module Krikri
         msg: "Logging into #{registry_url} for user #{username} failed - #{login[:stderr].strip.presence || login[:stdout].strip.presence || "docker login returned #{login[:exit_code]}"}"), password) if login[:exit_code] != 0
 
       censor(success_result(changed: true, login_result: login_result(registry_url, username)), password)
-    rescue ex : Socket::ConnectError
-      PluginResult.new(changed: false, failed: true, msg: PluginHelpers::DockerSdkError.connect_error_text(ex, PluginHelpers::DockerClient.resolved_docker_host(@params)))
+    rescue ex : PluginHelpers::DockerClient::InvalidDockerHostError | Socket::ConnectError
+      PluginResult.new(changed: false, failed: true, msg: PluginHelpers::DockerClient.connect_failure_text(ex, @params))
     end
 
     # A successful login/logout carries no msg: Ansible's `actions` list
