@@ -1448,6 +1448,15 @@ module Krikri
       # member's banner, instead of each under its own. The member's skip
       # print is deferred and emitted by execute_task when it consumes the
       # nil (skipped) result from the batch cache, in proper task order.
+
+      # A when:-skipped task's register carries the controller deprecations
+      # its clause raised, like any other result (live-verified vs 2.21.6,
+      # issue #1351) - snapshotted here, before the replay below empties
+      # the window. A batch member's register is built during the group's
+      # build (its blocks live in the build capture instead), so it keeps
+      # none.
+      skip_deprecations = ResultDisplay.pending_result_deprecations
+
       unless defer_display
         # A solo skip's own fact reads (the clause itself, templated no_log:)
         # print before the skipping line - real displays the captured blocks
@@ -1486,7 +1495,7 @@ module Krikri
           puts "skipping: [#{host.name}]#{suffix}#{dump_suffix}".colorize(:cyan)
         end
       end
-      register_skip_result(task, host)
+      register_skip_result(task, host, deprecations: skip_deprecations)
     end
 
     # Builds the `failed: true` result shape a raised when: evaluation

@@ -1140,7 +1140,7 @@ module Krikri
     # registered `{{ var.results }}`) to a list of dicts, then yield
     # [parent_dict, subelement] pairs for each element of each dict's `key`
     # sub-list. Returns nil when the task has no with_subelements source.
-    private def register_skip_result(task : Task, host : Host, false_condition_override : String? = nil) : Nil
+    private def register_skip_result(task : Task, host : Host, false_condition_override : String? = nil, deprecations : Array(JSON::Any) = [] of JSON::Any) : Nil
       register_name = task.register
       return if register_name.nil? || register_name.empty?
 
@@ -1158,14 +1158,23 @@ module Krikri
       # every host's when: in sequence, so @last_false_condition holds the
       # LAST host's clause by then - the caller supplies each host's own
       # failing clause instead (issue #888's skip half).
+      #
+      # deprecations: the controller deprecations this task's own when:
+      # raised - real files them on the skipped result too, so a register
+      # sees them (live-verified vs 2.21.6, issue #1351). Only the
+      # plain-task skip path supplies them; the batched include path would
+      # have to attribute one fiber-wide evaluation sequence to individual
+      # hosts.
       condition = false_condition_override || @last_false_condition
       false_condition = condition == "false" ? JSON::Any.new(false) : JSON::Any.new(condition || "")
-      register_result(host, register_name, JSON::Any.new({
+      skipped_result = {
         "changed"         => JSON::Any.new(false),
         "skipped"         => JSON::Any.new(true),
         "skip_reason"     => JSON::Any.new("Conditional result was False"),
         "false_condition" => false_condition,
-      } of String => JSON::Any))
+      } of String => JSON::Any
+      skipped_result["deprecations"] = JSON::Any.new(deprecations) unless deprecations.empty?
+      register_result(host, register_name, JSON::Any.new(skipped_result))
     end
 
     # Reports a when:-skipped batch member: the print and skipped counter
@@ -1595,6 +1604,14 @@ module Krikri
                                    vars_context : Hash(String, JSON::Any)? = nil, exec_host : Host? = nil) : Nil
       result = debug_if_requested(task, host, result)
       merge_ansible_facts(fact_host, result, task.module_name.ends_with?("set_fact"), task)
+      # Real's TaskExecutor puts every controller-side deprecation the task
+      # raised on the result itself (a when: clause reading a top-level
+      # fact, issue #1351), so `register:` sees it - the console block is
+      # only its display form. A batched member had its build-time blocks
+      # seeded into this window at consumption (see
+      # defer_captured_deprecations_for_display), so one attach covers both
+      # paths.
+      result = ResultDisplay.attach_pending_result_deprecations(result)
 
       if register_name = task.register
         register_result(host, register_name, result) unless register_name.empty?

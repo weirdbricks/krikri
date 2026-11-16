@@ -16,6 +16,7 @@ require "../minitest_helper"
 private PROJECT_ROOT          = File.expand_path("../..", __DIR__)
 private BINARY                = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private FACT_DEPRECATION_TEXT = "INJECT_FACTS_AS_VARS default to `True` is deprecated, top-level facts will not be auto injected after the change. This feature will be removed from ansible-core version 2.24."
+private FACT_DEPRECATION_MSG  = "INJECT_FACTS_AS_VARS default to `True` is deprecated, top-level facts will not be auto injected after the change."
 
 private def run(playbook_text : String) : {String, String}
   stdout, stderr, _dir = run_files({"play.yml" => playbook_text})
@@ -25,8 +26,9 @@ end
 # Writes *files* (playbook text keyed by path relative to a fresh scratch
 # dir, roles included; the playbook itself is always "play.yml") and runs
 # the binary there. Returns the scratch dir too, so a spec can assert the
-# absolute Origins the engine prints.
-private def run_files(files : Hash(String, String)) : {String, String, String}
+# absolute Origins the engine prints. *args* extra flags go before the
+# playbook path.
+private def run_files(files : Hash(String, String), args : Array(String) = [] of String) : {String, String, String}
   dir = PluginSpecHelper.tmp_path("fact-deprecation-#{Random::Secure.hex(4)}")
   FileUtils.mkdir_p(dir)
   files.each do |relative, content|
@@ -36,7 +38,7 @@ private def run_files(files : Hash(String, String)) : {String, String, String}
   end
   stdout = IO::Memory.new
   stderr = IO::Memory.new
-  Process.run(BINARY, ["-i", "localhost,", File.join(dir, "play.yml")], output: stdout, error: stderr, chdir: dir)
+  Process.run(BINARY, ["-i", "localhost,"] + args + [File.join(dir, "play.yml")], output: stdout, error: stderr, chdir: dir)
   {stdout.to_s, stderr.to_s, dir}
 end
 
@@ -1204,5 +1206,92 @@ describe "INJECT_FACTS_AS_VARS deprecation" do
     stderr.must_include(":6:15\n")
     stderr.must_include("6       action: shell echo {{ ansible_service_mgr }}\n")
     stderr.must_include("                ^ column 15")
+  end
+
+  it "files a when: read on the task's own registered result" do
+    # Issue #1351, jetune.git: real's TaskExecutor puts the deprecations a
+    # task raised on the TASK RESULT, so `register:` sees them - the
+    # [DEPRECATION WARNING] block is only their console form. The entry is
+    # the same msg without the removal tail, under ansible.builtin, with
+    # the version Display appends to the printed block (live-verified
+    # against 2.21.6).
+    stdout, stderr = run(<<-PLAYBOOK)
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        tasks:
+          - name: gate the read
+            block:
+              - name: check the version
+                command: echo hi
+                changed_when: false
+                register: version_result
+
+              - name: print the result
+                debug:
+                  var: version_result
+            when: ansible_os_family == ansible_os_family
+      PLAYBOOK
+
+    stdout.must_include("TASK [print the result]")
+    stdout.scan(/"msg": "#{Regex.escape(FACT_DEPRECATION_MSG)}"/).size.must_equal(1)
+    stdout.must_include("\"collection_name\": \"ansible.builtin\"")
+    stdout.must_include("\"resolved_name\": \"ansible.builtin\"")
+    stdout.must_include("\"type\": null")
+    stdout.must_include("\"version\": \"2.24\"")
+    stderr.scan(/DEPRECATION WARNING\]: #{Regex.escape(FACT_DEPRECATION_TEXT)}/).size.must_equal(1)
+  end
+
+  it "files a skipped task's when: read on its registered result" do
+    # A when: that ends up False is evaluated inside the same window, so
+    # real's skipped result carries the entry too (live-verified against
+    # 2.21.6: `changed`, `deprecations`, `failed`, `false_condition`,
+    # `skip_reason`, `skipped`).
+    stdout, stderr = run(<<-PLAYBOOK)
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        tasks:
+          - name: never runs
+            debug:
+              msg: hi
+            register: skipped_result
+            when: ansible_os_family == 'NoSuchFamily'
+
+          - name: print the skipped result
+            debug:
+              var: skipped_result
+      PLAYBOOK
+
+    stdout.must_include("TASK [print the skipped result]")
+    stdout.must_include("\"skipped\": true")
+    stdout.must_include("\"skip_reason\": \"Conditional result was False\"")
+    stdout.must_include("\"msg\": \"#{FACT_DEPRECATION_MSG}\"")
+    stdout.must_include("\"version\": \"2.24\"")
+    stderr.scan(/DEPRECATION WARNING\]: #{Regex.escape(FACT_DEPRECATION_TEXT)}/).size.must_equal(1)
+  end
+
+  it "leaves the deprecations key out of a -vvv result dump" do
+    # CallbackBase._handle_warnings pops `warnings`/`deprecations` off the
+    # result before `_dump_results`, at EVERY verbosity - so a -vvv dump
+    # of a task whose when: read a fact shows the block and no
+    # `deprecations` key (live-verified vs 2.21.6), while the registered
+    # copy keeps it (see the var: specs above).
+    stdout, stderr, _dir = run_files({"play.yml" => <<-PLAYBOOK}, ["-vvv"])
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        tasks:
+          - name: gated command
+            command: echo hi
+            changed_when: false
+            register: dumped_result
+            when: ansible_os_family == ansible_os_family
+      PLAYBOOK
+
+    stdout.must_include("TASK [gated command]")
+    stdout.must_include("ok: [localhost] => {")
+    stdout.wont_include("\"deprecations\"")
+    stderr.scan(/DEPRECATION WARNING\]: #{Regex.escape(FACT_DEPRECATION_TEXT)}/).size.must_equal(1)
   end
 end
