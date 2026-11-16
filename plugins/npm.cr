@@ -270,6 +270,11 @@ module Krikri
           missing << name
         end
       else
+        # The placeholder also makes a bare `path:` install over a
+        # directory with no package.json run the plain `npm install`,
+        # which fails on that missing file exactly as ansible's does
+        # (issue #1376); dropping it read the same output as "nothing
+        # missing" and reported a bogus ok.
         missing << (name || "")
       end
 
