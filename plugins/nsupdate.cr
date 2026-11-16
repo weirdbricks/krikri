@@ -299,9 +299,16 @@ module Krikri
       # a pre-12.3 release has no name resolution at all: dnspython's
       # af_for_address rejects the raw server string with a bare ValueError,
       # and the uncaught exception reaches ansible as a message-less module
-      # failure
+      # failure. That bare `raise` sits inside an `except SyntaxError` block,
+      # so Python hangs the implicit __context__ off it and ansible-core 2.21
+      # splits the [ERROR] block into a second segment plus a caused-by
+      # section, unlike a crash without a context (see
+      # ResultDisplay.task_error_chain's crash_context argument).
       if @server_ips.empty?
-        return PluginResult.new(changed: false, failed: true, msg: "Task failed: Module failed.")
+        return PluginResult.new(changed: false, failed: true,
+          msg: "Task failed: Module failed.",
+          _ansible_error_detail: "",
+          _ansible_crash_context: true)
       end
 
       last_error = nil.as(Exception?)
