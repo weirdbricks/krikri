@@ -575,6 +575,18 @@ because anyone intends to fix them.
   generator would need a mask for that list's order, as it already has for other per-process
   orderings.
 
+- **A failed `npm install` names a per-run debug log (kpg npm cases, issue #1374).** npm writes its
+  debug log to `$HOME/.npm/_logs/<YYYY-MM-DD>T<hh>_<mm>_<ss>_<ms>Z-debug-0.log` and repeats that path in
+  the last line of its stderr ("A complete log of this run can be found in:"), which Ansible carries into
+  the result verbatim (raw in `stderr`/`stderr_lines`, and inside the sanitized `msg`). The stamp is the
+  wall-clock moment npm started, and the two engines run in two containers seconds apart, so it can never
+  match byte for byte - two runs of real Ansible disagree the same way. Every other field of that failed
+  result already matches (`cmd`, the sanitized `msg` text, `stderr`, rc and the recap), so this is not a
+  krikri gap: the generator needs a mask for the `_logs/<timestamp>-debug-0.log` component, like the ones
+  it has for its other per-run values. The rest of the diff this issue originally showed (krikri's raw,
+  unsanitized `msg` and a bare `install` as `cmd`) was a real engine gap, fixed with the sanitiser in
+  issue #1372.
+
 ### Everything else
 
 - **`ansible-playbook`'s CLI flag surface is fully covered by name, and all but one flag is
