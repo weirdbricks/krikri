@@ -106,9 +106,11 @@ describe "copy diff headers" do
       "_ansible_diff" => "true",
     })
 
-    # The wire always carries the empty-list diff shape; a real diff dict
-    # (headers included) must not appear.
-    result["diff"].as_a.must_equal([] of JSON::Any)
+    # remote_src runs the copy module directly, so its result carries no
+    # diff key at all - no empty-list shape either (live-verified against
+    # ansible-core 2.21.6's registered result for both file and directory
+    # remote_src copies).
+    result["diff"]?.must_be_nil
   end
 
   it "marks a binary source side with src_binary instead of its raw bytes" do
