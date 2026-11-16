@@ -108,4 +108,41 @@ describe "npm plugin" do
     result["changed"].as_bool.must_equal(true)
     File.read(log).must_equal("list --json --long --global\n")
   end
+
+  it "reports the full argv of a failed install in cmd, with the sanitized msg" do
+    # Real ansible (live-verified vs 2.19.11) fails the task with cmd set
+    # to the whole command it ran - flags and package spec included - and
+    # with msg run through heuristic_log_sanitize, so that a later
+    # `'pkg@version'` rewinds to the earlier https:// and blanks
+    # everything between. This plugin used to echo only "install" and
+    # the raw stderr (issue #1372).
+    dir = PluginSpecHelper.tmp_path("npm-failed-install-cmd")
+    Dir.mkdir_p(dir)
+    stub = File.join(dir, "npm")
+    File.write(stub, <<-SH)
+      #!/bin/sh
+      if [ "$1" = "list" ]; then echo '{"dependencies":{}}'; exit 0; fi
+      echo 'npm ERR! 404 Not Found - GET https://registry.npmjs.org/krikri-test-package - Not found' >&2
+      echo 'npm ERR! 404  '"'"'krikri-test-package@1.2.3'"'"' is not in this registry.' >&2
+      exit 1
+      SH
+    File.chmod(stub, 0o755)
+
+    result = PluginSpecHelper.run("npm", {
+      "name"           => "krikri-test-package",
+      "version"        => "1.2.3",
+      "global"         => "true",
+      "ignore_scripts" => "true",
+      "registry"       => "krikri-invalid-registry",
+      "force"          => "false",
+      "executable"     => stub,
+    })
+
+    result["failed"].as_bool.must_equal(true)
+    result["rc"].as_i.must_equal(1)
+    result["cmd"].as_s.must_equal(
+      "#{stub} install --global --ignore-scripts krikri-test-package@1.2.3 --registry krikri-invalid-registry")
+    result["msg"].as_s.must_equal(
+      "npm ERR! 404 Not Found - GET https:********@1.2.3' is not in this registry.")
+  end
 end
