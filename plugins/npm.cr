@@ -104,6 +104,20 @@ module Krikri
       end
 
       version = @params["version"]?
+      # community.general 11.2.1 (the sweep environment's, Debian
+      # trixie's ansible package) builds name_version by concatenation -
+      # `self.name + '@' + str(kwargs['version'])` - so a `version:`
+      # without `name:` raises Python's TypeError out of Npm.__init__,
+      # after the executable lookup but before any path handling or npm
+      # command, and reaches the user through the module-crash wrapper
+      # (krikri-playbook-generator's chaos playbook #19, issue #1375).
+      # A later collection switched this to an f-string, which would
+      # render "None@<version>" instead; the sweep's version is the
+      # parity target.
+      if version && !version.empty? && state != "absent" && name.nil?
+        return PluginResult.new(changed: false, failed: true,
+          msg: "Task failed: Module failed: unsupported operand type(s) for +: 'NoneType' and 'str'")
+      end
       name_version = version ? "#{name}@#{version}" : name
 
       ci = true?(@params["ci"]?)

@@ -145,4 +145,24 @@ describe "npm plugin" do
     result["msg"].as_s.must_equal(
       "npm ERR! 404 Not Found - GET https:********@1.2.3' is not in this registry.")
   end
+
+  it "crashes like community.general 11.2.1 when version is given without name" do
+    # 11.2.1 builds name_version as `self.name + '@' + str(version)`, so
+    # version: with no name: raises TypeError out of Npm.__init__ before
+    # the path is created or any npm command runs (live-verified against
+    # the sweep container's 11.2.1 collection). Later collections use an
+    # f-string and render "None@<version>"; krikri-playbook-generator's
+    # chaos playbook #19 caught the difference (issue #1375).
+    path = PluginSpecHelper.tmp_path("npm-version-without-name")
+
+    result = PluginSpecHelper.run("npm", {
+      "path"    => path,
+      "state"   => "latest",
+      "version" => "jjzpct",
+    })
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("Task failed: Module failed: unsupported operand type(s) for +: 'NoneType' and 'str'")
+    File.exists?(path).must_equal(false)
+  end
 end
