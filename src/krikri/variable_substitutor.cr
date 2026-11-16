@@ -2345,16 +2345,45 @@ module Krikri
       found.first?
     end
 
-    # The same path for the unique leaf whose stored template text NAMES
-    # one of the injected top-level facts - the static template-file scan's
-    # shape (TemplateActionPlugin#re_rendered_var_fact_origin), which
-    # knows the read name but not which leaf the render touched. nil when
-    # no leaf (or more than one) names a fact: several declarations are
-    # ambiguous, so the read stays silent rather than mislabel one.
-    def self.fact_leaf_components(container : JSON::Any?, vars : Hash(String, JSON::Any)) : Array(String)?
+    # The same path for the FIRST leaf, in declaration order, whose stored
+    # template text NAMES one of the injected top-level facts - the static
+    # template-file scan's shape
+    # (TemplateActionPlugin#re_rendered_var_fact_origin). A templating
+    # operation keeps only a fact's FIRST access (see
+    # #current_fact_deprecation_op) and a container's leaves render in
+    # declaration order, so a template that consumes the whole value warns
+    # once, at the earliest fact-naming leaf (issue #1354: totaldebug
+    # .motd's motd_info list names five facts and real pins its one block
+    # at the first).
+    #
+    # *access* is the key/index path the template itself subscripts the
+    # name with, when the parsed AST showed one: that read reaches only
+    # the named subtree, so a fact-naming sibling never gets the warning.
+    # A path that does not resolve there reads nothing real would warn
+    # about (an undefined subscript, a plain leaf), so the answer is nil.
+    def self.fact_leaf_components(container : JSON::Any?, vars : Hash(String, JSON::Any), access : Array(String)? = nil) : Array(String)?
+      base = container
+      prefix = [] of String
+      if access
+        access.each do |component|
+          case raw = base.try(&.raw)
+          when Array
+            index = component.to_i?
+            return nil unless index && index >= 0 && index < raw.size
+            base = raw[index]
+          when Hash
+            entry = raw[component]?
+            return nil unless entry
+            base = entry
+          else
+            return nil
+          end
+          prefix << component
+        end
+      end
       found = [] of Array(String)
-      collect_fact_leaf_components(container, vars, [] of String, found)
-      found.size == 1 ? found[0] : nil
+      collect_fact_leaf_components(base, vars, prefix, found)
+      found.first?
     end
 
     # The same path for the unique leaf whose stored template text READS

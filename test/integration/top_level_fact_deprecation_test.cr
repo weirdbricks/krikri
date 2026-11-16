@@ -298,6 +298,80 @@ describe "INJECT_FACTS_AS_VARS deprecation" do
     stderr.scan(/DEPRECATION WARNING\]: #{Regex.escape(FACT_DEPRECATION_TEXT)}/).size.must_equal(1)
   end
 
+  it "attributes a template file's whole-container read to its first fact-naming leaf" do
+    # Issue #1354, totaldebug.motd: motd.j2 loops `motd_info`, a role
+    # default whose dict values each name a different fact, and real
+    # prints exactly one block - the render is one templating operation,
+    # which keeps only the first fact access, and the leaves render in
+    # declaration order, so the Origin is the FIRST fact-naming leaf's
+    # declaration (live-verified against 2.21.6: 7:23 below, the FQDN
+    # value's opening quote). krikri stayed silent because several leaves
+    # named a fact and none was unique.
+    stdout, stderr, dir = run_files({
+      "play.yml" => <<-PLAYBOOK,
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        vars:
+          motd_server_role: unknown
+          motd_info:
+            - " FQDN:    ": "{{ ansible_fqdn }} - {{ motd_server_role }}"
+            - " Distro:  ": "{{ ansible_distribution }} {{ ansible_distribution_version }}"
+        tasks:
+          - name: render the motd
+            template:
+              src: motd.j2
+              dest: motd.txt
+      PLAYBOOK
+      "templates/motd.j2" => <<-J2,
+      {% for item in motd_info %}
+      {% for key, value in item.items() %}
+      {{ key }}{{ value }}
+      {% endfor %}
+      {% endfor %}
+      J2
+    })
+
+    stdout.must_include("TASK [render the motd]")
+    stderr.must_include("Origin: #{File.join(dir, "play.yml")}:7:23\n")
+    stderr.must_include(%(7       - " FQDN:    ": "{{ ansible_fqdn }} - {{ motd_server_role }}"\n))
+    stderr.must_include("^ column 23")
+    stderr.wont_include(":8:23")
+    stderr.scan(/DEPRECATION WARNING\]: #{Regex.escape(FACT_DEPRECATION_TEXT)}/).size.must_equal(1)
+  end
+
+  it "attributes a template file's single-leaf read to that leaf, not a fact-naming sibling" do
+    # Issue #1354's counterpart: the same container shape read through one
+    # subscript reaches only that leaf. Real templates the reached value
+    # only, so `{{ holder.j }}` reports j's declaration (7:10 below,
+    # live-verified against 2.21.6) and the fact-naming k sibling never
+    # gets the block - the whole-container rule must not claim it.
+    stdout, stderr, dir = run_files({
+      "play.yml" => <<-PLAYBOOK,
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        vars:
+          holder:
+            k: "{{ ansible_distribution }}"
+            j: "{{ ansible_os_family }}"
+        tasks:
+          - name: read the second leaf only
+            template:
+              src: leaf.j2
+              dest: leaf.txt
+      PLAYBOOK
+      "templates/leaf.j2" => "{{ holder.j }}\n",
+    })
+
+    stdout.must_include("TASK [read the second leaf only]")
+    stderr.must_include("Origin: #{File.join(dir, "play.yml")}:7:10\n")
+    stderr.must_include(%(7       j: "{{ ansible_os_family }}"\n))
+    stderr.must_include("^ column 10")
+    stderr.wont_include(":6:10")
+    stderr.scan(/DEPRECATION WARNING\]: #{Regex.escape(FACT_DEPRECATION_TEXT)}/).size.must_equal(1)
+  end
+
   it "ignores a loop target that shadows a same-named injected fact" do
     # Issue #1087, Turgon37.sssd: sssd.conf.j2 iterates
     # `{% for domain in sssd__domains %}` while the gathered facts inject
