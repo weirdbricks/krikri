@@ -1292,7 +1292,18 @@ module Krikri
           # their INJECT_FACTS_AS_VARS deprecation before the loop error is
           # re-raised (brentwg.docker's import-line
           # `when: ansible_os_family == ...`, issue #1089).
-          !evaluate_when(when_condition, vars_context, host, substitutor, task)
+          # A CLAUSE at a time when the task carries a list: real labels
+          # each clause at its own token, and an import-merged clause's
+          # position is recorded per clause text - the joined `(import)
+          # and (child)` string matches no record, so the read fell back
+          # to the child's own `when:` line and printed a second block
+          # there where real showed only the import line's token
+          # (securCom.repo_nginx, issue #1396).
+          if task.when_condition_list
+            !evaluate_when_items(task, vars_context, host, substitutor)
+          else
+            !evaluate_when(when_condition, vars_context, host, substitutor, task)
+          end
         rescue err : WhenEvaluationError
           when_undefined_name_is_loop_var?(err.message) && when_tolerates_undefined?(when_condition)
         rescue
