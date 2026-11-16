@@ -64,8 +64,9 @@ module Krikri
       # state still fails above) but BEFORE CronVar.__init__'s
       # parent-directory guard and main()'s "You must specify 'value'"
       # check - live-verified vs 2.21.6: under --check both of those
-      # answer with this skip instead. registered: skipped, msg,
-      # failed, changed.
+      # answer with this skip instead. The registered result comes out
+      # changed, failed, skipped, msg on both engines (the controller
+      # backfills changed/failed ahead of the skip text).
       if true?(@params["_ansible_check_mode"]?)
         invoked = @params["_module_name"]? || "community.general.cronvar"
         return PluginResult.new(changed: false, failed: false,
