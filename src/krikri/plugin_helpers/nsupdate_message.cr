@@ -265,8 +265,8 @@ module Krikri
       end
 
       # An RFC2136 UPDATE message: zone section, prerequisite RRs
-      # (class IN, "must exist" style), update RRs (add: class IN;
-      # delete: class NONE).
+      # (class ANY, "must exist" style), update RRs (add: class IN;
+      # RRset delete: class ANY).
       def self.build_update(id : UInt16, zone : String, prerequisites : Array(RR), updates : Array(RR), tsig : Tsig?) : Bytes
         io = IO::Memory.new
         put16(io, id)
@@ -277,15 +277,35 @@ module Krikri
         put16(io, updates.size.to_u16)       # UPCOUNT
         put16(io, tsig ? 1u16 : 0u16)        # ARCOUNT
         io.write(encode_name(zone))
-        prerequisites.each { |record| pack_rr(io, record) }
-        updates.each { |record| pack_rr(io, record) }
+        # ZTYPE/ZCLASS: RFC2136 2.3 makes the zone section one record
+        # (ZNAME ZTYPE ZCLASS), so omitting the type and class shifted every
+        # following section by four bytes and Bind9 answered FORMERR where
+        # Ansible's message got a real rcode.
+        put16(io, 6u16)            # ZTYPE = SOA
+        put16(io, CLASS_IN.to_u16) # ZCLASS
+        prerequisites.each { |record| pack_rr(io, absolute_name(record, zone)) }
+        updates.each { |record| pack_rr(io, absolute_name(record, zone)) }
         append_tsig(io, tsig, id) if tsig
         io.to_slice
       end
 
-      # "this RRSET exists (independent of rdata)" prerequisite.
+      # dnspython resolves the names Ansible hands Update#add/present/delete
+      # against the zone (they go on the wire relative to it), so a record
+      # given as "host" becomes host.<zone>. Encoding it as a bare "host."
+      # leaves every RR outside the zone, which a real server answers
+      # NOTZONE, failing the task where Ansible succeeds.
+      private def self.absolute_name(rr : RR, zone : String) : RR
+        name = rr.name
+        return rr if name.empty? || name == "." || name.ends_with?(".")
+        RR.new("#{name}.#{zone}", rr.type_code, rr.class_code, rr.ttl, rr.rdata)
+      end
+
+      # "this RRSET exists (independent of rdata)" prerequisite. Class ANY
+      # (RFC2136 2.4.1), not the zone class: a class-IN A RR with an empty
+      # rdata is malformed, and Bind9 answers the whole message FORMERR -
+      # where Ansible's dnspython-built probe gets a normal rcode.
       def self.prerequisite_present(name : String, type_code : Int32) : RR
-        RR.new(name, type_code, CLASS_IN, 0, Bytes.new(0))
+        RR.new(name, type_code, CLASS_ANY, 0, Bytes.new(0))
       end
 
       # "RRSET exists with this rdata" prerequisite.
@@ -297,8 +317,12 @@ module Krikri
         RR.new(name, type_code, CLASS_IN, ttl, rdata)
       end
 
+      # "delete this RRSET" (RFC2136 2.5.2): class ANY with an empty rdata.
+      # Class NONE is the delete-an-individual-RR form and needs the rdata it
+      # removes, so an empty-rdata class-NONE RR is malformed and Bind9
+      # answers FORMERR - which is what Ansible's dnspython delete never sends.
       def self.update_delete(name : String, type_code : Int32) : RR
-        RR.new(name, type_code, CLASS_NONE, 0, Bytes.new(0))
+        RR.new(name, type_code, CLASS_ANY, 0, Bytes.new(0))
       end
 
       # RFC2845 TSIG RR appended to the additional section: the MAC is
