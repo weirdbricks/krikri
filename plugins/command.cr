@@ -289,7 +289,8 @@ module Krikri
       # missing chdir: fails the task even under --check. Live-verified
       # against ansible-core 2.21.6 in check mode (issue #1403,
       # jackl0phty.nmap's "Execute configure script", whose chdir is
-      # created by an unarchive: task that check mode skips): ansible
+      # created by an unarchive: task that check mode skips; the same
+      # shape resurfaced as issue #1407, mcgrof.selftests): ansible
       # fails with "Unable to change directory before execution." and exit
       # code 2, where this engine fell through to the check-mode skip.
       if chdir && !File.directory?(chdir)
