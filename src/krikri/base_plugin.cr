@@ -1042,25 +1042,38 @@ module Krikri
     end
 
     # SECURITY: a staging temp file that will hold copy/template/
-    # lineinfile-style content must never hold those bytes at a wider
-    # mode than the content's final one. Creating the temp with a
-    # default perm (0644 & ~umask) and chmod-ing only after the write
-    # leaves the bytes briefly readable at the wider mode - the
-    # create-then-chmod window the vault-decrypted staging
-    # (TaskExecutor#stage_vault_decrypted_source) and
-    # AsyncJobs.write_status already avoid by settling the mode BEFORE
-    # the payload lands. This creates *path* EMPTY at 0600 (narrow under
-    # any umask), then settles it to *mode* while still empty - widening
-    # an empty file is harmless; widening one that already holds the
-    # secret is exactly the bug. Callers pass the mode already narrowed
-    # by #staging_temp_mode, so this never creates wide-then-narrow.
-    private def create_staging_temp(path : String, mode : Int32) : Nil
-      File.write(path, "", perm: 0o600)
+    # lineinfile-style content must never hold those bytes readable by
+    # anyone the final mode keeps out. Creating the temp with a default
+    # perm (0644 & ~umask) and chmod-ing only after the write briefly left
+    # the bytes world-readable - the create-then-chmod window the
+    # vault-decrypted staging (TaskExecutor#stage_vault_decrypted_source)
+    # and AsyncJobs.write_status already avoid. Here the content goes in
+    # at 0600 (owner-only under any umask) and *mode* - already narrowed
+    # by #staging_temp_mode - is applied immediately after, so the bytes
+    # only ever widen to exactly what the task asked for.
+    #
+    # That order is Ansible's own: copy.py's atomic_move writes the temp,
+    # then chmods/chowns it. Settling the temp to its FINAL mode before
+    # the write (the old shape here) only worked for writable modes: the
+    # non-root owner of a 0440/0400/0444 temp cannot open its own file
+    # for writing, so copy/template/blockinfile died "Failed to write
+    # temporary file ... Permission denied" and left the empty read-only
+    # .tmp behind (live-verified against ansible-core 2.21.5, which
+    # creates all of them).
+    private def write_staging_temp(path : String, content : String, mode : Int32) : Nil
+      File.write(path, content, perm: 0o600)
       File.chmod(path, mode)
     end
 
-    # The mode a staging temp should be settled at before content lands
-    # in it: the task's own numeric `mode:` (the authoritative final
+    # Bytes overload for the output-encoded writes (template/lineinfile/
+    # blockinfile).
+    private def write_staging_temp(path : String, content : Bytes, mode : Int32) : Nil
+      File.write(path, content, perm: 0o600)
+      File.chmod(path, mode)
+    end
+
+    # The mode a staging temp should be settled at once its content lands:
+    # the task's own numeric `mode:` (the authoritative final
     # mode - re-applying it post-write is a no-op, so final-state
     # behavior is unchanged), or when no numeric mode is given, the
     # existing dest's own mode when one is being overwritten (the

@@ -437,21 +437,20 @@ module Krikri
       dest = File.symlink?(path) ? File.realpath(path) : path
       temp_file = File.join(File.dirname(dest), ".krikri-playbook-lineinfile-#{Random::Secure.hex(8)}.tmp")
       begin
-        # SECURITY: created EMPTY at 0600 and settled to its final mode
+        # SECURITY: the content's final mode
         # (0666 & ~umask for a new dest - Ansible's atomic_move gives a new
         # file Python's default 0666 & ~umask and does NOT pre-apply the
         # task's mode:, which set_fs_attributes_if_different then
         # applies AFTER the move, reporting the drift as the "and
         # ownership, perms or SE linux context changed" msg suffix;
         # live-verified vs 2.19.11 - an existing dest keeps its own
-        # mode the same way) BEFORE the content lands - see
-        # BasePlugin#create_staging_temp. The old write-first shape
-        # held the bytes at 0644 & ~umask until the mode preservation
-        # below ran after the write.
-        create_staging_temp(temp_file, staging_temp_mode(path, 0o666, apply_task_mode: false))
+        # mode the same way) is applied right after the bytes land at
+        # 0600 - see BasePlugin#write_staging_temp. A read-only mode can
+        # only be settled after the write (its non-root owner cannot open
+        # the temp otherwise).
         bytes, encode_failure = PluginHelpers::TextFileIO.encode(content, file_encoding)
         return PluginResult.new(changed: false, failed: true, msg: encode_failure) if encode_failure
-        File.write(temp_file, bytes, perm: 0o600)
+        write_staging_temp(temp_file, bytes, staging_temp_mode(path, 0o666, apply_task_mode: false))
       rescue ex
         return PluginResult.new(changed: false, failed: true, msg: "Failed to write temporary file: #{ex.message}")
       end
@@ -468,7 +467,7 @@ module Krikri
       end
 
       # Preserve an existing dest's ownership (the mode is already
-      # settled on the empty temp above; a rename would otherwise reset
+      # settled on the temp above; a rename would otherwise reset
       # it to the temp file's). Read the owner off dest itself - the
       # realpath - so a symlinked dest keeps its target's owner the
       # same way a plain dest keeps its own (the symlink's own owner
@@ -575,12 +574,16 @@ module Krikri
     # content). nil on success.
     private def unsafe_write_fallback(dest : String, content : String, secontext : Array(String?)?) : PluginResult?
       begin
-        unless File.exists?(dest)
-          create_staging_temp(dest, staging_temp_mode(dest, 0o644, preserve_dest_mode: false))
-        end
         bytes, encode_failure = PluginHelpers::TextFileIO.encode(content, file_encoding)
         return PluginResult.new(changed: false, failed: true, msg: encode_failure) if encode_failure
-        File.write(dest, bytes, perm: 0o600)
+        # An existing dest's mode is untouched by opening it for writing; a
+        # fresh one gets the bytes at 0600 and its final mode right after -
+        # see BasePlugin#write_staging_temp.
+        if File.exists?(dest)
+          File.write(dest, bytes, perm: 0o600)
+        else
+          write_staging_temp(dest, bytes, staging_temp_mode(dest, 0o644, preserve_dest_mode: false))
+        end
       rescue ex
         return PluginResult.new(changed: false, failed: true, msg: "Failed to write file (unsafe_writes fallback): #{ex.message}")
       end

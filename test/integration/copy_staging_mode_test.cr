@@ -65,3 +65,51 @@ describe "copy: staging temp never holds content wider than its final mode" do
     end
   end
 end
+
+describe "copy: read-only mode: as the non-root run user" do
+  # ansible-core 2.21.5 writes the content into its staging temp and only
+  # then applies the final mode (atomic_move's chmod), so a non-root user
+  # can create - and overwrite - a 0440/0400/0444 dest. Pre-settling the
+  # temp to that mode made the write's open fail EACCES ("Failed to write
+  # temporary file ... Permission denied") and left the empty read-only
+  # .tmp in the dest directory (issue #1385).
+  it "creates a 0440/0400/0444 dest without leaving a temp file" do
+    with_temp_dir do |dir|
+      {"0440" => 0o440, "0400" => 0o400, "0444" => 0o444}.each do |mode, bits|
+        dest = File.join(dir, "readonly-#{mode}.conf")
+
+        result = PluginSpecHelper.run("copy", {
+          "content" => "read only\n",
+          "dest"    => dest,
+          "mode"    => mode,
+        })
+
+        falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+        result["changed"].as_bool.must_equal(true)
+        File.info(dest).permissions.value.must_equal(bits)
+        File.read(dest).must_equal("read only\n")
+      end
+      Dir.children(dir).count { |name| name.includes?(".tmp") }.must_equal(0)
+    end
+  end
+
+  it "overwrites an existing 0440 dest" do
+    with_temp_dir do |dir|
+      dest = File.join(dir, "existing.conf")
+      File.write(dest, "old\n")
+      File.chmod(dest, 0o440)
+
+      result = PluginSpecHelper.run("copy", {
+        "content" => "new\n",
+        "dest"    => dest,
+        "mode"    => "0440",
+      })
+
+      falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+      result["changed"].as_bool.must_equal(true)
+      File.info(dest).permissions.value.must_equal(0o440)
+      File.read(dest).must_equal("new\n")
+      Dir.children(dir).count { |name| name.includes?(".tmp") }.must_equal(0)
+    end
+  end
+end

@@ -934,22 +934,22 @@ module Krikri
                     original_content.byte_slice(section_end, original_content.bytesize - section_end)
 
       temp_file = File.join(File.dirname(path), ".krikri-playbook-replace-#{Random::Secure.hex(8)}.tmp")
+      staging_mode = staging_temp_mode(path, 0o644, apply_task_mode: false)
       begin
-        # SECURITY: created EMPTY at 0600 and settled to its final mode
-        # (the task's numeric mode:, else the existing path's own mode -
-        # replace only ever rewrites an existing file) BEFORE the new
-        # content lands - see BasePlugin#create_staging_temp. The old
-        # write-first shape held the bytes at 0644 & ~umask until the
-        # mode preservation below ran after the write.
+        # SECURITY: the new content lands at 0600 and the final mode (the
+        # existing path's own mode - replace only ever rewrites an
+        # existing file) is applied right after - see
+        # BasePlugin#write_staging_temp. The mode cannot be pre-settled: a
+        # read-only path (0440) could not be opened for writing by its own
+        # non-root owner.
         # apply_task_mode: false - the task's numeric mode: must NOT be
-        # settled onto the temp at creation, or apply_attributes below
+        # settled onto the temp, or apply_attributes below
         # sees no drift after the rename and the result msg loses real
         # replace.py's "and ownership, perms or SE linux context changed"
         # suffix (Ansible's atomic_move preserves the DEST's mode, and
         # check_file_attrs runs after the write and detects the drift
         # itself - same reasoning as lineinfile's own apply_task_mode:
         # false, see staging_temp_mode's block comment).
-        create_staging_temp(temp_file, staging_temp_mode(path, 0o644, apply_task_mode: false))
         # surrogateescape read: the content holds private-use twins for
         # the file's undecodable bytes, so encode() restores the exact
         # original bytes and the rewritten region's replacements land as
@@ -963,6 +963,7 @@ module Krikri
         else
           File.write(temp_file, new_content, perm: 0o600)
         end
+        File.chmod(temp_file, staging_mode)
       rescue ex
         return PluginResult.new(changed: false, failed: true, msg: "Failed to write temporary file: #{ex.message}")
       end

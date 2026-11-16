@@ -1150,16 +1150,14 @@ module Krikri
 
       temp_file = File.join(Dir.tempdir, ".krikri-playbook-copy-#{Random::Secure.hex(8)}.tmp")
       begin
-        # SECURITY: created EMPTY 0600 and settled to its final mode
-        # (0666 & ~umask for a new dest, narrowed by the task's numeric
-        # mode: - this staging file is mv'd in as a new inode, it does
-        # NOT inherit an existing dest's mode, matching the old perm:
-        # 0o666 creation semantics) BEFORE the content lands - see
-        # BasePlugin#create_staging_temp. The old write-then-chmod
-        # shape held the bytes at 0666 & ~umask for the whole write +
-        # validate + move span.
-        create_staging_temp(temp_file, staging_temp_mode(dest, 0o666, preserve_dest_mode: false))
-        File.write(temp_file, content, perm: 0o600)
+        # SECURITY: the content lands at 0600 and the final mode (0666 &
+        # ~umask for a new dest, narrowed by the task's numeric mode: -
+        # this staging file is mv'd in as a new inode, it does NOT inherit
+        # an existing dest's mode, matching the old perm: 0o666 creation
+        # semantics) is applied right after, before validate: ever sees
+        # it - see BasePlugin#write_staging_temp. Read-only modes must go
+        # on after the write or the temp cannot be opened at all.
+        write_staging_temp(temp_file, content, staging_temp_mode(dest, 0o666, preserve_dest_mode: false))
       rescue ex
         File.delete(temp_file) if File.exists?(temp_file)
         return {failure: PluginResult.new(changed: false, failed: true, msg: "Failed to write temporary file: #{ex.message}"), staged: nil}
@@ -1383,17 +1381,19 @@ module Krikri
       # atomic_move's context capture, BEFORE the rename (issue #911).
       secontext = prewrite_selinux_context(dest, keep_dest_attrs)
       begin
-        # SECURITY: the temp is created EMPTY at 0600 and settled to its
-        # final mode (the task's numeric mode:, else the dest's preserved
-        # mode, else 0666 & ~umask) BEFORE any content lands in it - see
-        # BasePlugin#create_staging_temp. Writing first and chmod-ing
-        # later (the old shape, with the temp at 0666 & ~umask while the
-        # bytes were already on disk) briefly left a copied private key
-        # readable at the default mode before the mode: was applied.
-        create_staging_temp(temp_file, staging_temp_mode(dest, 0o666))
+        # SECURITY: the content lands at 0600 (owner-only, narrower than
+        # any final mode) and the final mode (the task's numeric mode:,
+        # else the dest's preserved mode, else 0666 & ~umask) is applied
+        # right after - see BasePlugin#write_staging_temp. Ansible writes
+        # first and chmods afterwards too (copy.py's atomic_move): a temp
+        # settled to a read-only mode (0440/0400/0444) before the write
+        # cannot be opened by its own non-root owner, which is what made
+        # those copies fail and leave a read-only .tmp behind.
+        File.write(temp_file, content, perm: 0o600)
+        File.chmod(temp_file, staging_temp_mode(dest, 0o666))
 
         # Ownership of an existing dest is still reconciled onto the temp
-        # before the rename (the mode is already settled above).
+        # before the rename.
         begin
           if !File.symlink?(dest) && (info = File.info?(dest, follow_symlinks: false))
             begin
@@ -1407,11 +1407,6 @@ module Krikri
           # Stat itself failed (broken dest?) - proceed without
           # ownership preservation.
         end
-
-        # perm 0600 only matters if the temp vanished between creation
-        # and here (an external /tmp cleaner): recreate narrow, never
-        # wide.
-        File.write(temp_file, content, perm: 0o600)
       rescue ex
         return {failure: PluginResult.new(changed: false, failed: true, msg: "Failed to write temporary file: #{ex.message}"), staged: nil}
       end
@@ -1466,13 +1461,15 @@ module Krikri
       # Same umask-default contract as #atomic_write's temp file: 0666 &
       # ~umask for a new file, existing file's mode untouched (opening an
       # existing file for writing never changes its mode, so there is no
-      # window to close in that case). A new dest is created EMPTY 0600
-      # and settled to its final mode before the bytes land - see
-      # BasePlugin#create_staging_temp.
-      unless File.exists?(dest)
-        create_staging_temp(dest, staging_temp_mode(dest, 0o666, preserve_dest_mode: false))
+      # window to close in that case). A new dest gets the bytes at 0600
+      # first and its final mode right after - see
+      # BasePlugin#write_staging_temp (read-only modes can only be applied
+      # after the write).
+      if File.exists?(dest)
+        File.write(dest, content, perm: 0o600)
+      else
+        write_staging_temp(dest, content, staging_temp_mode(dest, 0o666, preserve_dest_mode: false))
       end
-      File.write(dest, content, perm: 0o600)
       relabel_written_file(dest, secontext)
     rescue ex
       PluginResult.new(changed: false, failed: true, msg: "Failed to write #{dest} (unsafe_writes fallback): #{ex.message}")
