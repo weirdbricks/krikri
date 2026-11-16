@@ -2604,7 +2604,40 @@ module Krikri
         # here, so without the text the second read was deduped away.
         return "param:#{site.source_file}:#{site.source_line}:#{site.key}:#{site.text}"
       end
-      nil
+      # A loop's ITEM RENDER pass with no site of its own (with_flattened:
+      # cannot be located - its two spellings share one task field, see
+      # TaskExecutor#loop_source_keyword): real still renders the whole
+      # list through one templar call, whose shared deprecate tag keeps
+      # only the first fact access, so the pass keeps that identity (see
+      # #with_loop_item_render_op).
+      return current_loop_item_render_op
+    end
+
+    # Templating-operation identity for a loop's ITEM RENDER pass, used when
+    # the loop form has no site of its own to name one (with_flattened:).
+    # ansible renders the loop's item list through a single templar call,
+    # and the deprecate tag every injected fact shares keeps only that
+    # operation's FIRST access - so a list whose several leaves read the
+    # same fact warns once, at the earliest such leaf (live-verified vs
+    # 2.21.6: five with_flattened items reading it print one block).
+    @@loop_item_render_ops = {} of Fiber => Array(String)
+
+    def self.with_loop_item_render_op(op : String?, & : -> T) : T forall T
+      return yield unless op
+      fiber = Fiber.current
+      (@@loop_item_render_ops[fiber] ||= Array(String).new).push(op)
+      begin
+        yield
+      ensure
+        if stack = @@loop_item_render_ops[fiber]?
+          stack.pop
+          @@loop_item_render_ops.delete(fiber) if stack.empty?
+        end
+      end
+    end
+
+    def self.current_loop_item_render_op : String?
+      @@loop_item_render_ops[Fiber.current]?.try(&.last?)
     end
 
     # Fiber-scoped probes behind #with_fact_read_probe: the loop executor

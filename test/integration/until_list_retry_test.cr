@@ -87,4 +87,43 @@ describe "until: list-form retry loop" do
     output.must_include(%(failed: [localhost] (item=one) => {"ansible_loop_var": "item", "attempts": 3, "changed": false, "item": "one", "msg": "boom"}))
     output.must_include(%(failed: [localhost] (item=two) => {"ansible_loop_var": "item", "attempts": 3, "changed": false, "item": "two", "msg": "boom"}))
   end
+
+  it "interleaves each item's retry lines with that item's own result" do
+    # ansible's retry callback fires while one ITEM's attempt loop runs, and
+    # that item's result is displayed as soon as its last attempt returns -
+    # so item one's three retry lines (and the task's one [ERROR] block)
+    # precede item one's failed line, and item two's follow it. Printing
+    # every item's retry lines first and every item's result afterwards
+    # reordered the whole block (round 29914162, ipr-cnrs.openmanage,
+    # issue #1392, live-verified against 2.21.6).
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: fail per item
+            ansible.builtin.fail:
+              msg: boom
+            loop:
+              - one
+              - two
+            register: result
+            retries: 3
+            until: '"failed" not in result'
+            delay: 0
+      YAML
+
+    status.exit_code.must_equal(2)
+    lines = output.lines
+    retry_idxs = [] of Int32
+    lines.each_with_index { |line, idx| retry_idxs << idx if line.includes?("FAILED - RETRYING") }
+    item_one = lines.index! { |line| line.includes?("(item=one)") }
+    item_two = lines.index! { |line| line.includes?("(item=two)") }
+    error_idx = lines.index! { |line| line.starts_with?("[ERROR]: Task failed:") }
+
+    retry_idxs.size.must_equal(6)
+    retry_idxs[0, 3].all? { |idx| idx < error_idx }.must_equal(true, output)
+    (error_idx < item_one).must_equal(true, output)
+    retry_idxs[3, 3].all? { |idx| item_one < idx && idx < item_two }.must_equal(true, output)
+  end
 end
