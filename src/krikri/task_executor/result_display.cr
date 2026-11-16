@@ -2502,6 +2502,19 @@ module Krikri
         return root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new("Module failed.").with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(detail)))
       end
 
+      # A crash with NO message at all (the exception's str() is empty)
+      # reaches the wire as the bare "Task failed: Module failed." - and
+      # 2.21.6 prints it twice: the brief, then the captured module error
+      # under an (empty) caused-by section, at the task's own Origin
+      # (live-verified on the nsupdate run in issue #1381, where dnspython's
+      # bare ValueError kills the module). The detail-carrying crash above
+      # collapses instead, so this shape needs its own chain; the empty
+      # source context on the child keeps the fold from swallowing it.
+      if msg == "Task failed: Module failed."
+        return ErrorBlock::Node.new(msg, source_context: origin)
+          .with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new("", source_context: ""))
+      end
+
       # set_fact's strict cacheable: and gather_facts' strict parallel:
       # conversion failure (a plain convert_bool TypeError raised inside the
       # action plugin - no result contribution, no handling chain): the

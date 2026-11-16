@@ -112,4 +112,99 @@ describe "nsupdate plugin validation surface" do
     result["failed"].as_bool.must_equal(true)
     result["msg"].as_s.must_include("DNS server error")
   end
+
+  # community.general 12.3.0 added server FQDN support: from that release
+  # the module resolves the server parameter (AAAA first, then A) before
+  # TSIG, zone and record work, so a NAME with no answer fails ahead of
+  # those checks. Confirmed against ansible-playbook (13.x) for the issue
+  # #1381 playbook, where server: 19 is not an IPv4/IPv6 literal and is
+  # therefore asked of DNS as a name - and never exists there - and for
+  # the same playbook with a key_name but no key_secret, where the
+  # resolution failure still wins.
+  it "fails a numeric non-address server as unresolvable on 12.3.0+, before any TSIG work" do
+    result = PluginSpecHelper.run("nsupdate", {
+      "server"   => "19",
+      "record"   => "33",
+      "zone"     => "kpg-test.zone",
+      "state"    => "absent",
+      "key_name" => "key-without-secret",
+    }, collection_version: "13.2.0")
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("Failed to resolve server '19' to an IP address")
+  end
+
+  # Python's ipaddress accepts only a four-strict-octet IPv4 literal, so
+  # 127.0.1 is asked of DNS as a name and fails there; getaddrinfo would
+  # read it as 127.0.0.1 and go on to query (confirmed against
+  # ansible-playbook on the same host).
+  it "fails an IPv4 shorthand server as unresolvable instead of querying 127.0.0.1" do
+    result = PluginSpecHelper.run("nsupdate", {
+      "server" => "127.0.1",
+      "record" => "33",
+      "zone"   => "kpg-test.zone",
+      "state"  => "absent",
+    }, collection_version: "13.2.0")
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("Failed to resolve server '127.0.1' to an IP address")
+  end
+
+  it "fails an empty server as unresolvable" do
+    result = PluginSpecHelper.run("nsupdate", {
+      "server" => "",
+      "record" => "33",
+      "zone"   => "kpg-test.zone",
+      "state"  => "absent",
+    }, collection_version: "13.2.0")
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("Failed to resolve server '' to an IP address")
+  end
+
+  # Before 12.3.0 there is no resolution at all: the raw server string goes
+  # to dnspython, whose address-family probe raises a bare ValueError for
+  # any non-literal. Ansible reports that uncaught crash as a message-less
+  # module failure ("Task failed: Module failed."), and it happens at the
+  # first network call - not up front - so the key/TSIG checks still run
+  # first and the record type is still validated ahead of it (both
+  # confirmed against ansible-playbook with Debian's community.general
+  # 11.2.1, the release its ansible package ships).
+  it "reports a non-literal server as a message-less module crash on 11.2.1" do
+    result = PluginSpecHelper.run("nsupdate", {
+      "server" => "19",
+      "record" => "33",
+      "zone"   => "kpg-test.zone",
+      "state"  => "absent",
+    }, collection_version: "11.2.1")
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("Task failed: Module failed.")
+  end
+
+  it "keeps the key_secret check ahead of the 11.2.1 crash" do
+    result = PluginSpecHelper.run("nsupdate", {
+      "server"   => "19",
+      "record"   => "33",
+      "zone"     => "kpg-test.zone",
+      "state"    => "absent",
+      "key_name" => "key-without-secret",
+    }, collection_version: "11.2.1")
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("Missing key_secret")
+  end
+
+  it "keeps the unknown record type check ahead of the 11.2.1 crash" do
+    result = PluginSpecHelper.run("nsupdate", {
+      "server" => "19",
+      "record" => "33",
+      "zone"   => "kpg-test.zone",
+      "state"  => "absent",
+      "type"   => "NOTATYPE",
+    }, collection_version: "11.2.1")
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("Record error: DNS resource record type is unknown.")
+  end
 end

@@ -49,6 +49,8 @@ module Krikri
     @tsig : PluginHelpers::NsupdateMessage::Tsig?
     @dns_rc = 0
     @query_timeout = 10.0
+    @server_ips = [] of String
+    @server_fqdn_supported = true
 
     def execute : PluginResult
       server = @params["server"]?
@@ -90,6 +92,22 @@ module Krikri
       return PluginResult.new(changed: false, failed: true,
         msg: "record cannot be empty.") if record.empty?
 
+      # community.general 12.3.0 added server FQDN support (AAAA/A lookup
+      # plus the "Failed to resolve server ... to an IP address" failure);
+      # every older release hands the raw server string to dnspython, whose
+      # address-family probe rejects any non-literal with an uncaught
+      # ValueError - ansible reports that crash as a message-less module
+      # failure ("Task failed: Module failed."), and it happens at the first
+      # network call, not up front, so TSIG/key checks still run first.
+      @server_fqdn_supported = !resolved_collection_version_before?(12, 3)
+      if @server_fqdn_supported
+        resolved = resolve_server(server.not_nil!)
+        return resolved.as(PluginResult) if resolved.is_a?(PluginResult)
+        @server_ips = resolved.as(Array(String))
+      elsif ip_literal?(server.not_nil!)
+        @server_ips = [server.not_nil!]
+      end
+
       @tsig = nil
       tsig = build_tsig(key_algorithm)
       return tsig.as(PluginResult) if tsig.is_a?(PluginResult)
@@ -104,7 +122,7 @@ module Krikri
       if zone.nil? || zone.empty?
         return PluginResult.new(changed: false, failed: true,
           msg: "record must be absolute when omitting zone parameter") unless record.ends_with?(".")
-        zone = lookup_zone(server.not_nil!, port, protocol, record)
+        zone = lookup_zone(port, protocol, record)
         return zone if zone.is_a?(PluginResult)
         zone = zone.as(String)
       else
@@ -122,7 +140,7 @@ module Krikri
       end
       type_code = PluginHelpers::NsupdateMessage::TYPES[record_type.upcase].to_i32
 
-      result = state == "absent" ? remove_record(server.not_nil!, port, protocol, zone.as(String), record, type_code) : create_or_update_record(server.not_nil!, port, protocol, zone.as(String), record, fqdn, type_code, ttl, values)
+      result = state == "absent" ? remove_record(port, protocol, zone.as(String), record, type_code) : create_or_update_record(port, protocol, zone.as(String), record, fqdn, type_code, ttl, values)
       return result if result.is_a?(PluginResult)
 
       changed, failed = result.as(Tuple(Bool, Bool))
@@ -142,6 +160,74 @@ module Krikri
 
     private def result_msg(changed : Bool, state : String) : String
       changed ? "DNS record #{state == "absent" ? "removed" : "created/updated"}" : "no change needed"
+    end
+
+    # The Ansible module resolves the server parameter up front: a literal
+    # address is used as-is, anything else is looked up as a NAME and the
+    # queries then go to the addresses it returned. A name with no AAAA/A
+    # answer fails the task before any TSIG, zone or record work, and the
+    # later record operations see the resolved addresses, not the name.
+    private def resolve_server(server : String) : (Array(String) | PluginResult)
+      return [server] if ip_literal?(server)
+      # Python's ipaddress rejects 19, 127.0.1 and 1.2.3.04 as literals (none
+      # of them is a four-strict-octet IPv4 address), so the module asks DNS
+      # for them as names - where they never exist. getaddrinfo would instead
+      # read them as the shorthands 0.0.0.19 / 127.0.0.1 / 1.2.3.4 and happily
+      # query those, so that shape is pinned to the module's outcome.
+      return unresolvable_server(server, nil) if digits_and_dots?(server)
+
+      addresses = [] of String
+      failure = nil.as(Socket::Addrinfo::Error?)
+      # AAAA first, then A - the order the module builds its address list in.
+      # One family having no answer is not a failure: the module suppresses
+      # NXDOMAIN/NoAnswer per rdatatype and keeps what the other one returned.
+      [Socket::Family::INET6, Socket::Family::INET].each do |family|
+        begin
+          Socket::Addrinfo.udp(server, 53, family, @query_timeout.seconds).each do |addrinfo|
+            addresses << addrinfo.ip_address.address
+          end
+        rescue e : Socket::Addrinfo::Error
+          failure = e
+        end
+      end
+
+      return addresses unless addresses.empty?
+      unresolvable_server(server, failure)
+    end
+
+    # Python's ipaddress.ip_address: four decimal IPv4 octets (no leading
+    # zeros) or an IPv6 literal, scoped forms included. Everything else is a
+    # hostname to the module.
+    private def ip_literal?(value : String) : Bool
+      !Socket::IPAddress.parse_v4_fields?(value).nil? || !Socket::IPAddress.parse_v6_fields?(value).nil?
+    end
+
+    private def digits_and_dots?(value : String) : Bool
+      !value.empty? && value.each_char.all? { |char| char.ascii_number? || char == '.' }
+    end
+
+    private def unresolvable_server(server : String, failure : Socket::Addrinfo::Error?) : PluginResult
+      code = failure.try(&.os_error).as?(Errno).try(&.value)
+      # EAI_NONAME is what dnspython's suppressed NXDOMAIN/NoAnswer leaves
+      # behind - no address at all. Any other resolver failure (a dead
+      # nameserver, no resolver configured) is an error the module surfaces
+      # on its own "DNS resolution error" line.
+      if code.nil? || code == LibC::EAI_NONAME
+        return PluginResult.new(changed: false, failed: true,
+          msg: "Failed to resolve server '#{server}' to an IP address")
+      end
+
+      PluginResult.new(changed: false, failed: true,
+        msg: "DNS resolution error for server '#{server}': #{python_resolver_error(code)}")
+    end
+
+    # Python's str(socket.gaierror) - "[Errno -3] Temporary failure in name
+    # resolution" - for the resolver-outage case, whose dnspython wording
+    # (LifetimeTimeout) embeds timing and server detail no reimplementation
+    # can reproduce. Built from the same host's gai_strerror, like the
+    # urlopen DNS text in SocketConnect.
+    private def python_resolver_error(code : Int32) : String
+      "[Errno #{code}] #{String.new(LibC.gai_strerror(code))}"
     end
 
     private def build_tsig(key_algorithm : String) : (PluginHelpers::NsupdateMessage::Tsig | PluginResult | Nil)
@@ -209,45 +295,66 @@ module Krikri
     # Network layer
     # ------------------------------------------------------------------
 
-    private def query_wire(server : String, port : Int32, protocol : String, message : Bytes) : (Bytes | PluginResult)
-      begin
-        if protocol == "tcp"
-          socket = PluginHelpers::SocketConnect.open(server, port, @query_timeout.seconds)
-          socket.read_timeout = @query_timeout.seconds
-          socket.write_timeout = @query_timeout.seconds
-          begin
-            header = IO::Memory.new
-            header.write_bytes(message.size.to_u16, IO::ByteFormat::NetworkEndian)
-            socket.write(header.to_slice)
-            socket.write(message)
-            socket.flush
-            len_bytes = Bytes.new(2)
-            socket.read_fully(len_bytes)
-            len = (len_bytes[0].to_u16 << 8) | len_bytes[1]
-            response = Bytes.new(len)
-            socket.read_fully(response)
-            response
-          ensure
-            socket.close
-          end
-        else
-          socket = UDPSocket.new
-          socket.connect(server, port)
-          socket.read_timeout = @query_timeout.seconds
-          socket.write_timeout = @query_timeout.seconds
-          begin
-            socket.write(message)
-            socket.flush
-            response = Bytes.new(65535)
-            received = socket.read(response)
-            response[0, received]
-          ensure
-            socket.close
-          end
+    private def query_wire(port : Int32, protocol : String, message : Bytes) : (Bytes | PluginResult)
+      # a pre-12.3 release has no name resolution at all: dnspython's
+      # af_for_address rejects the raw server string with a bare ValueError,
+      # and the uncaught exception reaches ansible as a message-less module
+      # failure
+      if @server_ips.empty?
+        return PluginResult.new(changed: false, failed: true, msg: "Task failed: Module failed.")
+      end
+
+      last_error = nil.as(Exception?)
+      # the Ansible module's query() walks EVERY address the name resolved
+      # to and keeps the last transport failure for its message, so a
+      # dual-stack name whose first family is unreachable still gets tried
+      # on the other one
+      @server_ips.each do |server_ip|
+        begin
+          return query_wire_once(server_ip, port, protocol, message)
+        rescue e
+          last_error = e
         end
-      rescue e
-        PluginResult.new(changed: false, failed: true,
-          msg: "DNS server error: #{python_transport_error(e, protocol)}")
+      end
+
+      PluginResult.new(changed: false, failed: true,
+        msg: "DNS server error: #{python_transport_error(last_error.not_nil!, protocol)}")
+    end
+
+    private def query_wire_once(server : String, port : Int32, protocol : String, message : Bytes) : Bytes
+      if protocol == "tcp"
+        socket = PluginHelpers::SocketConnect.open(server, port, @query_timeout.seconds)
+        socket.read_timeout = @query_timeout.seconds
+        socket.write_timeout = @query_timeout.seconds
+        begin
+          header = IO::Memory.new
+          header.write_bytes(message.size.to_u16, IO::ByteFormat::NetworkEndian)
+          socket.write(header.to_slice)
+          socket.write(message)
+          socket.flush
+          len_bytes = Bytes.new(2)
+          socket.read_fully(len_bytes)
+          len = (len_bytes[0].to_u16 << 8) | len_bytes[1]
+          response = Bytes.new(len)
+          socket.read_fully(response)
+          response
+        ensure
+          socket.close
+        end
+      else
+        socket = UDPSocket.new
+        socket.connect(server, port)
+        socket.read_timeout = @query_timeout.seconds
+        socket.write_timeout = @query_timeout.seconds
+        begin
+          socket.write(message)
+          socket.flush
+          response = Bytes.new(65535)
+          received = socket.read(response)
+          response[0, received]
+        ensure
+          socket.close
+        end
       end
     end
 
@@ -285,8 +392,8 @@ module Krikri
 
     # Sends a message, checks the response id; returns the parsed
     # response or a failure result.
-    private def do_query(server : String, port : Int32, protocol : String, message : Bytes) : PluginResult?
-      response = query_wire(server, port, protocol, message)
+    private def do_query(port : Int32, protocol : String, message : Bytes) : PluginResult?
+      response = query_wire(port, protocol, message)
       return response.as(PluginResult) if response.is_a?(PluginResult)
 
       parsed = PluginHelpers::NsupdateMessage.parse_response(response.as(Bytes))
@@ -302,18 +409,18 @@ module Krikri
     # Zone lookup (the Ansible module's lookup_zone)
     # ------------------------------------------------------------------
 
-    private def lookup_zone(server : String, port : Int32, protocol : String, record : String) : (String | PluginResult)
+    private def lookup_zone(port : Int32, protocol : String, record : String) : (String | PluginResult)
       name = record
       loop do
         id = new_id
         message = PluginHelpers::NsupdateMessage.build_query(id, name, 6, @tsig) # SOA
-        if (failure = do_query(server, port, protocol, message))
+        if (failure = do_query(port, protocol, message))
           return failure
         end
 
         if [2, 5].includes?(@dns_rc) # SERVFAIL, REFUSED
           return PluginResult.new(changed: false, failed: true,
-            msg: "Zone lookup failure: '#{server}' will not respond to queries regarding '#{record}'.")
+            msg: "Zone lookup failure: '#{@params["server"]?}' will not respond to queries regarding '#{record}'.")
         end
 
         response = @last_response.not_nil!
@@ -345,19 +452,19 @@ module Krikri
     # Record operations (the Ansible module's methods, same rc bookkeeping)
     # ------------------------------------------------------------------
 
-    private def send_update(server : String, port : Int32, protocol : String, zone : String,
+    private def send_update(port : Int32, protocol : String, zone : String,
                             prerequisites : Array(PluginHelpers::NsupdateMessage::RR),
                             updates : Array(PluginHelpers::NsupdateMessage::RR)) : PluginResult?
       message = PluginHelpers::NsupdateMessage.build_update(new_id, zone, prerequisites, updates, @tsig)
-      do_query(server, port, protocol, message)
+      do_query(port, protocol, message)
     end
 
     # 0 = record missing, 1 = record present with our values, 2 = record
     # present but values or TTL differ.
-    private def record_exists(server : String, port : Int32, protocol : String,
+    private def record_exists(port : Int32, protocol : String,
                               zone : String, record : String, type_code : Int32,
                               values : Array(String)?) : (Int32 | PluginResult)
-      failure = send_update(server, port, protocol, zone,
+      failure = send_update(port, protocol, zone,
         [PluginHelpers::NsupdateMessage.prerequisite_present(record, type_code)], [] of PluginHelpers::NsupdateMessage::RR)
       # a transport-level error (unreachable/refusing server) fails the
       # task, the way the Ansible module's __do_update exceptions do - only
@@ -386,13 +493,13 @@ module Krikri
         PluginHelpers::NsupdateMessage.prerequisite_present_with(record, type_code, rdata)
       end
 
-      failure = send_update(server, port, protocol, zone, prerequisites, [] of PluginHelpers::NsupdateMessage::RR)
+      failure = send_update(port, protocol, zone, prerequisites, [] of PluginHelpers::NsupdateMessage::RR)
       return failure if failure
       if @dns_rc == 0
         # the Ansible module's ttl_changed() queries self.fqdn (the record
         # made absolute against the zone), not the bare record parameter
         absolute = record.ends_with?(".") ? record : "#{record}.#{zone}"
-        changed_ttl = ttl_changed(server, port, protocol, zone, absolute, type_code)
+        changed_ttl = ttl_changed(port, protocol, zone, absolute, type_code)
         return changed_ttl if changed_ttl.is_a?(PluginResult)
         return changed_ttl ? 2 : 1
       end
@@ -405,11 +512,11 @@ module Krikri
       @type_name
     end
 
-    private def ttl_changed(server : String, port : Int32, protocol : String,
+    private def ttl_changed(port : Int32, protocol : String,
                             zone : String, fqdn : String, type_code : Int32) : (Bool | PluginResult)
       id = new_id
       message = PluginHelpers::NsupdateMessage.build_query(id, fqdn, type_code, @tsig)
-      if (failure = do_query(server, port, protocol, message))
+      if (failure = do_query(port, protocol, message))
         @dns_rc = 0
         return failure
       end
@@ -426,13 +533,13 @@ module Krikri
 
     @ttl_value : Int32?
 
-    private def create_or_update_record(server : String, port : Int32, protocol : String,
+    private def create_or_update_record(port : Int32, protocol : String,
                                         zone : String, record : String, fqdn : String,
                                         type_code : Int32, ttl : Int32, values : Array(String)?) : (Tuple(Bool, Bool) | PluginResult)
       @ttl_value = ttl
       @type_name = (@params["type"]? || "A").upcase
 
-      exists = record_exists(server, port, protocol, zone, record, type_code, values)
+      exists = record_exists(port, protocol, zone, record, type_code, values)
       return exists if exists.is_a?(PluginResult)
 
       if exists == 1
@@ -447,7 +554,7 @@ module Krikri
           return PluginResult.new(changed: false, failed: true,
             msg: "value needed when state=present")
         end
-        rcode = create_record(server, port, protocol, zone, record, type_code, ttl, values.not_nil!)
+        rcode = create_record(port, protocol, zone, record, type_code, ttl, values.not_nil!)
         return PluginResult.new(changed: false, failed: true,
           msg: "Failed to create DNS record (rc: #{@dns_rc})",
           dns_rc: @dns_rc, dns_rc_str: PluginHelpers::NsupdateMessage.rcode_to_text(@dns_rc)) if rcode != 0
@@ -456,7 +563,7 @@ module Krikri
           return PluginResult.new(changed: false, failed: true,
             msg: "value needed when state=present")
         end
-        rcode = modify_record(server, port, protocol, zone, record, type_code, ttl, values.not_nil!)
+        rcode = modify_record(port, protocol, zone, record, type_code, ttl, values.not_nil!)
         return PluginResult.new(changed: false, failed: true,
           msg: "Failed to update DNS record (rc: #{@dns_rc})",
           dns_rc: @dns_rc, dns_rc_str: PluginHelpers::NsupdateMessage.rcode_to_text(@dns_rc)) if rcode != 0
@@ -479,7 +586,7 @@ module Krikri
       rrs
     end
 
-    private def create_record(server : String, port : Int32, protocol : String,
+    private def create_record(port : Int32, protocol : String,
                               zone : String, record : String, type_code : Int32,
                               ttl : Int32, values : Array(String)) : Int32
       if values.empty?
@@ -490,12 +597,12 @@ module Krikri
       rrs = encode_values(record, type_code, ttl, values)
       return 1 if rrs.is_a?(PluginResult)
 
-      send_update(server, port, protocol, zone, [] of PluginHelpers::NsupdateMessage::RR, rrs.as(Array(PluginHelpers::NsupdateMessage::RR)))
+      send_update(port, protocol, zone, [] of PluginHelpers::NsupdateMessage::RR, rrs.as(Array(PluginHelpers::NsupdateMessage::RR)))
 
       @dns_rc
     end
 
-    private def modify_record(server : String, port : Int32, protocol : String,
+    private def modify_record(port : Int32, protocol : String,
                               zone : String, record : String, type_code : Int32,
                               ttl : Int32, values : Array(String)) : Int32
       type = (@params["type"]? || "A").upcase
@@ -507,7 +614,7 @@ module Krikri
         # afterwards (see the Ansible module's modify_record).
         id = new_id
         message = PluginHelpers::NsupdateMessage.build_query(id, record, type_code, @tsig)
-        if do_query(server, port, protocol, message)
+        if do_query(port, protocol, message)
           return 1
         end
 
@@ -536,7 +643,7 @@ module Krikri
         updates += rrs.as(Array(PluginHelpers::NsupdateMessage::RR))
       end
 
-      send_update(server, port, protocol, zone, [] of PluginHelpers::NsupdateMessage::RR, updates)
+      send_update(port, protocol, zone, [] of PluginHelpers::NsupdateMessage::RR, updates)
 
       @dns_rc
     end
@@ -587,16 +694,16 @@ module Krikri
       end
     end
 
-    private def remove_record(server : String, port : Int32, protocol : String,
+    private def remove_record(port : Int32, protocol : String,
                               zone : String, record : String, type_code : Int32) : (Tuple(Bool, Bool) | PluginResult)
-      exists = record_exists(server, port, protocol, zone, record, type_code, nil)
+      exists = record_exists(port, protocol, zone, record, type_code, nil)
       return exists if exists.is_a?(PluginResult)
       return {false, false} if exists == 0
 
       check_mode = true?(@params["_ansible_check_mode"]?)
       return PluginResult.new(changed: true, failed: false, msg: "check mode") if check_mode
 
-      failure = send_update(server, port, protocol, zone, [] of PluginHelpers::NsupdateMessage::RR,
+      failure = send_update(port, protocol, zone, [] of PluginHelpers::NsupdateMessage::RR,
         [PluginHelpers::NsupdateMessage.update_delete(record, type_code)])
       if failure
         return PluginResult.new(changed: false, failed: true,
