@@ -19,4 +19,23 @@ describe "task_error_chain with a pre-prefixed module-crash msg" do
     cause.chain.as(Krikri::ErrorBlock::Node).msg.must_equal("unknown encoding: 27")
     Krikri::ErrorBlock.brief_message(chain).must_equal(MSG)
   end
+
+  # A crash whose exception carries NO message (nsupdate's bare ValueError
+  # out of dnspython's address-family probe, issue #1381) reaches the wire
+  # as the bare prefix. Ansible 2.21.6 prints it twice - the brief, then
+  # the captured module error under an empty caused-by section at the
+  # task's own Origin - unlike the detail-carrying crash above, which
+  # collapses into one segment (live-verified against ansible-playbook
+  # 2.21.6).
+  it "renders a message-less crash with the empty caused-by section" do
+    chain = Krikri::ResultDisplay.task_error_chain(
+      "community.general.nsupdate", "Task failed: Module failed.", "Origin: /pb.yml:6")
+
+    Krikri::ErrorBlock.format_event(chain).must_equal(
+      "Task failed: Module failed.\n\n" \
+      "Task failed: Module failed.\nOrigin: /pb.yml:6\n\n" \
+      "<<< caused by >>>\n\n"
+    )
+    Krikri::ErrorBlock.brief_message(chain).must_equal("Task failed: Module failed.")
+  end
 end
