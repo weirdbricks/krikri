@@ -854,6 +854,48 @@ describe "unarchive plugin" do
     result["changed"].as_bool.must_equal(false)
   end
 
+  it "reports changed when the task's mode: does not resolve to an existing zip member's mode" do
+    # Regression (issue #1367): zip_changed? compared mtime and content
+    # only, so softasap.sa_loki_promtail's `unarchive: mode: u+rw,g-wx,
+    # o-rwx` over a binary its own later task had chmod'd to 0755
+    # reported ok under --check, while real ansible's
+    # ZipArchive#is_unarchived resolves that symbolic mode against the
+    # file's current bits (0740), sees them differ and re-extracts.
+    # The member's mtime and content still match here, so only the
+    # permission clause can flag it.
+    dest = fresh_dest("zip-mode-changed")
+    PluginSpecHelper.run("unarchive", {"src" => File.join(TMP_DIR, "archive.zip"), "dest" => dest})
+    align_zip_member_mtimes(File.join(TMP_DIR, "archive.zip"), dest)
+    mode_before = File.info(File.join(dest, "src", "a.txt")).permissions.value
+
+    result = PluginSpecHelper.run("unarchive", {
+      "src"                 => File.join(TMP_DIR, "archive.zip"),
+      "dest"                => dest,
+      "mode"                => "u+rw,g-wx,o-rwx",
+      "_ansible_check_mode" => "true",
+    })
+
+    result["changed"].as_bool.must_equal(true)
+    (File.info(File.join(dest, "src", "a.txt")).permissions.value).must_equal(mode_before)
+  end
+
+  it "reports changed when a zip member's mode drifts from the archive's own recorded mode" do
+    # Same is_unarchived clause with no mode: given: real falls back to
+    # _permstr_to_octal over the archive's own permission string, so a
+    # member the role chmod'd afterwards is re-extracted even though
+    # its timestamp and content still match.
+    dest = fresh_dest("zip-embedded-mode-changed")
+    PluginSpecHelper.run("unarchive", {"src" => File.join(TMP_DIR, "archive.zip"), "dest" => dest})
+    align_zip_member_mtimes(File.join(TMP_DIR, "archive.zip"), dest)
+    # File.write never sets the execute bit, so 0755 can never match the
+    # mode the fixture's `zip` recorded, whatever the umask.
+    File.chmod(File.join(dest, "src", "a.txt"), 0o755)
+
+    result = PluginSpecHelper.run("unarchive", {"src" => File.join(TMP_DIR, "archive.zip"), "dest" => dest})
+
+    result["changed"].as_bool.must_equal(true)
+  end
+
   it "skips entirely when creates: already exists" do
     dest = fresh_dest("creates-skip")
     File.write(File.join(dest, "marker.txt"), "already here")
