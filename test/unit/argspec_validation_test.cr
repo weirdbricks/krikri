@@ -115,6 +115,34 @@ describe Krikri::ArgspecValidator do
     failure.as(Failure).msg.must_equal("missing required arguments: name, selection")
   end
 
+  # A nested `options:` sub-spec is validated after every top-level check
+  # but before the Unsupported-parameters error, so a suboption's own
+  # required key wins over a typo'd top-level parameter (live-verified vs
+  # 2.21.6 + community.docker 5.2.1, issue #1338).
+  it "reports a dict sub-spec's missing required key ahead of unsupported top-level params" do
+    failure = Krikri::ArgspecValidator.validate(
+      "docker_image", "community.docker.docker_image",
+      {"name" => "busybox:latest", "source" => "pull", "build" => "{}",
+       "client_cert_bogus" => "/tmp/x", "force_atg" => "true"}, vars)
+    failure.as(Failure).msg.must_equal("missing required arguments: path found in build")
+  end
+
+  it "reports a list-of-dicts sub-spec's missing required key with the found-in suffix" do
+    failure = Krikri::ArgspecValidator.validate(
+      "docker_container", "community.docker.docker_container",
+      {"name" => "c1", "networks" => "[{}]"}, vars)
+    failure.as(Failure).msg.must_equal("missing required arguments: name found in networks")
+  end
+
+  it "leaves a satisfied dict sub-spec to the top-level unsupported-params error" do
+    failure = Krikri::ArgspecValidator.validate(
+      "docker_image", "community.docker.docker_image",
+      {"name" => "busybox:latest", "source" => "build", "build" => "{\"path\":\"/tmp\"}",
+       "bogus_thing" => "1"}, vars)
+    failure.as(Failure).msg.starts_with?(
+      "Unsupported parameters for (community.docker.docker_image) module: bogus_thing. ")
+  end
+
   it "emits Ansible's exact bool-conversion failure wording" do
     failure = Krikri::ArgspecValidator.validate(
       "lineinfile", "ansible.builtin.lineinfile",
