@@ -34,6 +34,38 @@ describe Krikri::PluginHelpers::GemCommand do
       )
       cmd.must_equal(%(gem install --norc --version 13.0.6 --source "https://example.com" --ignore-dependencies --no-user-install --bindir "/opt/bin" --no-document rake))
     end
+
+    # Issue #1345: real's install args_order has no `name` at all - its
+    # positional is gem_source (defaulted to name), so a gem_source path
+    # replaces the gem name. build_flags follow `--`; include_doc true
+    # omits --no-document; pre_release/env_shebang/force add their flags
+    # in real's order. Live-verified argv (ansible-playbook 2.21.6):
+    # `gem install --norc --user-install /tmp/kpg-work/sub -- eifxzc`.
+    it "adds --pre/--env-shebang/--force and passes build_flags after -- in real's order" do
+      cmd = Krikri::PluginHelpers::GemCommand.install_command(
+        "gem", "/tmp/kpg-work/sub", nil, true, nil, nil, true, true,
+        pre_release: true, include_doc: false, env_shebang: true,
+        build_flags: "eifxzc", force: true,
+      )
+      cmd.must_equal(%(gem install --norc --user-install --pre --no-document --env-shebang /tmp/kpg-work/sub -- eifxzc --force))
+    end
+
+    it "omits --no-document when include_doc is true" do
+      cmd = Krikri::PluginHelpers::GemCommand.install_command(
+        "gem", "crtibd", nil, true, nil, nil, true, true, include_doc: true
+      )
+      cmd.must_equal(%(gem install --norc --user-install crtibd))
+    end
+
+    # Real hands gem_source to run_command as a single argv element, so a
+    # path with a space must not word-split; shlex.join (real's cmd
+    # display) renders the same path single-quoted.
+    it "keeps a gem_source path with a space as one argv element" do
+      cmd = Krikri::PluginHelpers::GemCommand.install_command(
+        "gem", "/tmp/a b/sub.gem", nil, true, nil, nil, true, false
+      )
+      cmd.must_equal(%(gem install --user-install --no-document '/tmp/a b/sub.gem'))
+    end
   end
 
   describe ".uninstall_command" do

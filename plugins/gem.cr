@@ -61,12 +61,21 @@ module Krikri
   #   the RubyGems version (>= 2.5.2, unparseable probe output
   #   disables); mirrored here, default True included
   #
+  # - gem_source: the install positional - a local .gem file path, and
+  #   real's default for it is name, so an unset gem_source installs the
+  #   gem by name exactly as before
+  # - build_flags: appended as `-- <flags>` so `gem` treats them as
+  #   build flags rather than as more gem names
+  # - pre_release: `--pre`; include_doc: `--no-document` only when FALSE
+  #   (real's default), env_shebang: `--env-shebang` - all default false
+  # - force: `--force` on install and uninstall (real's force only adds
+  #   the flag; it does NOT skip the installed check)
+  #
   # Verified against real community.general gem.py's own `install`/
   # `uninstall`/`common_opts` source directly (flag order included), via
   # a new pure `PluginHelpers::GemCommand`.
   #
-  # Not implemented: `pre_release:`, `gem_source:` (local .gem file
-  # installs), `force:`.
+  # Not implemented: `install_dir:` (real additionally exports GEM_HOME).
   class GemPlugin < BasePlugin
     def execute : PluginResult
       name = @params["name"]?
@@ -105,6 +114,11 @@ module Krikri
         return PluginResult.new(changed: false, failed: true, msg: "install_dir requires user_install=false")
       end
 
+      # Real gem.py defaults gem_source to name immediately after those
+      # pre-checks, and gem_source is the only positional its install
+      # args_order has - name never reaches the install command line.
+      install_target = gem_source.presence || name
+
       # Ansible's gem module's first COMMAND is always `<gem> --version`
       # (get_rubygems_version via common_opts, run with check_rc=True) -
       # a missing/unexecutable binary fails here, after the pre-checks
@@ -130,9 +144,9 @@ module Krikri
         # string, so the module reinstalls on every run. Matching that
         # exactly, including the non-idempotence.
         resolved = list_versions(executable, name, remote: true)[0]?
-        install(executable, name, resolved, force: false)
+        install(executable, name, install_target, resolved)
       else
-        install(executable, name, version, force: false)
+        install(executable, name, install_target, version)
       end
     end
 
@@ -244,18 +258,21 @@ module Krikri
       version ? versions.includes?(version) : !versions.empty?
     end
 
-    private def install(executable : String?, name : String, version : String?, force : Bool) : PluginResult
-      unless force
-        return gem_success(false, name, version) if installed?(executable, name, version)
-      end
+    private def install(executable : String?, name : String, target : String, version : String?) : PluginResult
+      return gem_success(false, name, version) if installed?(executable, name, version)
 
       user_install = @params["user_install"]?.nil? || true?(@params["user_install"]?)
       bindir = @params["bindir"]?
       include_dependencies = @params["include_dependencies"]?.nil? || true?(@params["include_dependencies"]?)
 
       cmd = PluginHelpers::GemCommand.install_command(
-        gem_binary(executable), name, version, user_install, bindir,
-        @params["repository"]?, include_dependencies, effective_norc
+        gem_binary(executable), target, version, user_install, bindir,
+        @params["repository"]?, include_dependencies, effective_norc,
+        pre_release: true?(@params["pre_release"]?),
+        include_doc: true?(@params["include_doc"]?),
+        env_shebang: true?(@params["env_shebang"]?),
+        build_flags: @params["build_flags"]?,
+        force: true?(@params["force"]?),
       )
 
       result = remote_exec(cmd)
@@ -275,7 +292,7 @@ module Krikri
     private def remove(executable : String?, name : String, version : String?) : PluginResult
       return gem_success(false, name, version) unless installed?(executable, name, version)
 
-      cmd = PluginHelpers::GemCommand.uninstall_command(gem_binary(executable), name, version, effective_norc)
+      cmd = PluginHelpers::GemCommand.uninstall_command(gem_binary(executable), name, version, effective_norc, true?(@params["force"]?))
       result = remote_exec(cmd)
 
       unless result[:exit_code] == 0

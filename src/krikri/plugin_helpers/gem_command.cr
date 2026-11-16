@@ -1,3 +1,5 @@
+require "../shell"
+
 module Krikri
   module PluginHelpers
     # GemCommand - pure logic for building `gem install`/`gem uninstall`
@@ -11,10 +13,17 @@ module Krikri
     # `--version`/name pattern: gem versions and names carry no shell
     # metacharacters).
     module GemCommand
+      # *target* is the module's gem_source (which real gem.py defaults to
+      # name): the install positional, never name itself. *include_doc*
+      # defaults to FALSE in real's argument_spec, so the common case adds
+      # --no-document and an explicit include_doc: true omits it.
       def self.install_command(
-        executable : String, name : String, version : String?,
+        executable : String, target : String, version : String?,
         user_install : Bool, bindir : String?, repository : String?,
         include_dependencies : Bool, norc : Bool,
+        pre_release : Bool = false, include_doc : Bool = false,
+        env_shebang : Bool = false, build_flags : String? = nil,
+        force : Bool = false,
       ) : String
         String.build do |io|
           io << executable << " install"
@@ -24,16 +33,24 @@ module Krikri
           io << " --ignore-dependencies" unless include_dependencies
           io << (user_install ? " --user-install" : " --no-user-install")
           io << " --bindir \"" << bindir << "\"" if bindir
-          io << " --no-document"
-          io << " " << name
+          io << " --pre" if pre_release
+          io << " --no-document" unless include_doc
+          io << " --env-shebang" if env_shebang
+          # gem_source and build_flags are each ONE argv element in real
+          # (fmt.as_list / as_opt_val), so a path or flag string with a
+          # space must not word-split; quote_arg also reproduces the
+          # quoting shlex.join puts in real's displayed cmd.
+          io << " " << Shell.quote_arg(target)
+          io << " -- " << Shell.quote_arg(build_flags) if build_flags
+          io << " --force" if force
         end
       end
 
-      def self.uninstall_command(executable : String, name : String, version : String?, norc : Bool) : String
+      def self.uninstall_command(executable : String, name : String, version : String?, norc : Bool, force : Bool = false) : String
         # Real uninstall's args_order: subcmd, norc, install_dir, bindir,
         # version (--version X, or --all when no version), --executable
         # (as_fixed - always emitted), force (only when the force param is
-        # set - krikri's remove() has no force), name.
+        # set), name.
         String.build do |io|
           io << executable << " uninstall"
           io << " --norc" if norc
@@ -43,6 +60,7 @@ module Krikri
             io << " --all"
           end
           io << " --executable"
+          io << " --force" if force
           io << " " << name
         end
       end

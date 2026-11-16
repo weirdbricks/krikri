@@ -68,4 +68,31 @@ describe "gem install failure shape (issue 788)" do
       result["stderr_lines"].as_a.size.must_equal(2)
     end
   end
+
+  # Issue #1345 (multi-gem chaos): real gem.py defaults gem_source to
+  # name and its install args_order has only gem_source as a positional, so
+  # `gem install` must target gem_source (here a local path) rather than
+  # name, with build_flags after `--` and `--no-document` omitted because
+  # include_doc is true. Live-verified against ansible-playbook 2.21.6 +
+  # the same shim: `install --norc --user-install /tmp/kpg-work/sub -- eifxzc`.
+  it "targets gem_source, passes build_flags after -- and honours include_doc: true (issue 1345)" do
+    with_failing_gem_shim do |shim|
+      result = PluginSpecHelper.run("gem", {
+        "name"         => "crtibd",
+        "executable"   => shim,
+        "gem_source"   => "/tmp/kpg-work/sub",
+        "build_flags"  => "eifxzc",
+        "include_doc"  => "true",
+        "env_shebang"  => "false",
+        "pre_release"  => "false",
+        "norc"         => "true",
+        "user_install" => "true",
+      })
+
+      result["failed"].as_bool.must_equal(true)
+      result["cmd"].as_s.must_equal(
+        "#{shim} install --norc --user-install /tmp/kpg-work/sub -- eifxzc"
+      )
+    end
+  end
 end
