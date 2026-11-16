@@ -138,4 +138,47 @@ describe "openssl_publickey plugin" do
     result["failed"].as_bool.must_equal(true)
     result["msg"].as_s.must_equal("Wrong or empty passphrase provided for private key")
   end
+
+  # kpg #1317: Ansible's check-mode branch exits before generate(), so a
+  # missing private key only means "the public key is not there yet" -
+  # it is reported as a change, never as a failure.
+  it "reports a change in check mode when the private key is missing" do
+    pub = PluginSpecHelper.tmp_path("check-orphan.pub")
+
+    result = PluginSpecHelper.run("openssl_publickey", {
+      "path"                  => pub,
+      "privatekey_path"       => PluginSpecHelper.tmp_path("nope.key"),
+      "format"                => "OpenSSH",
+      "privatekey_passphrase" => "guagri",
+      "_ansible_check_mode"   => "true",
+    })
+
+    result["failed"]?.must_be_nil
+    result["changed"].as_bool.must_equal(true)
+    File.exists?(pub).must_equal(false)
+  end
+
+  it "compares against the public key that is already there in check mode" do
+    key = PluginSpecHelper.tmp_path("check.key")
+    pub = PluginSpecHelper.tmp_path("check.pub")
+    `openssl genrsa -out #{key} 2048 2>/dev/null`
+    PluginSpecHelper.run("openssl_publickey", {"path" => pub, "privatekey_path" => key})
+
+    same = PluginSpecHelper.run("openssl_publickey", {
+      "path"                => pub,
+      "privatekey_path"     => key,
+      "_ansible_check_mode" => "true",
+    })
+
+    same["changed"].as_bool.must_equal(false)
+
+    forced = PluginSpecHelper.run("openssl_publickey", {
+      "path"                => pub,
+      "privatekey_path"     => key,
+      "force"               => "true",
+      "_ansible_check_mode" => "true",
+    })
+
+    forced["changed"].as_bool.must_equal(true)
+  end
 end

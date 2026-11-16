@@ -86,25 +86,28 @@ module Krikri
       if privatekey_path && privatekey_content
         return failure("parameters are mutually exclusive: privatekey_path|privatekey_content")
       end
-      if privatekey_path
-        return failure("The private key #{privatekey_path} does not exist") unless File.exists?(privatekey_path)
-      end
-
       base_dir = File.dirname(path)
       return failure("The directory #{base_dir} does not exist or the file is not a directory") unless Dir.exists?(base_dir)
 
       format = @params["format"]? || "PEM"
       return failure("value of format must be one of: OpenSSH, PEM, got: #{format}") unless ["OpenSSH", "PEM"].includes?(format)
 
+      # Ansible's check-mode branch exits before generate(), so a private
+      # key that does not exist yet is just a difference to report, never
+      # an error (kpg #1317).
+      if check_mode
+        return check_present(path, format, privatekey_path, privatekey_content)
+      end
+
+      if privatekey_path
+        return failure("The private key #{privatekey_path} does not exist") unless File.exists?(privatekey_path)
+      end
+
       desired, load_error = derive(path, format, privatekey_path, privatekey_content)
       return failure(load_error) if load_error
       return failure("Unable to derive a public key from the private key (wrong passphrase?)") unless desired
 
       changed = true?(@params["force"]?) || !File.exists?(path) || !same_key(File.read(path), desired, format)
-
-      if changed && check_mode
-        return result(true, path, privatekey_path, format, nil, desired)
-      end
 
       if changed
         backup_file = backup(path)
@@ -173,6 +176,36 @@ module Krikri
       res.extra["filename"] = JSON::Any.new(path)
       res.extra["backup_file"] = JSON::Any.new(backup_file) if backup_file
       res
+    end
+
+    # Ansible's check-mode branch (`PublicKey.check()`): it computes
+    # `changed` from the file that is there right now and never writes or
+    # derives a key that does not exist (a missing private key makes
+    # `_check_privatekey` return False, i.e. changed). Only when both the
+    # public key file and the private key are present does it derive and
+    # compare, and a bad passphrase is still an error there.
+    private def check_present(path : String, format : String, privatekey_path : String?,
+                              privatekey_content : String?) : PluginResult
+      changed = true?(@params["force"]?)
+      if !changed && !File.exists?(path)
+        changed = true
+      elsif !changed && privatekey_path && !File.exists?(privatekey_path)
+        changed = true
+      elsif !changed
+        existing = begin
+          File.read(path)
+        rescue
+          nil
+        end
+        if existing.nil?
+          changed = true
+        else
+          desired, load_error = derive(path, format, privatekey_path, privatekey_content)
+          return failure(load_error) if load_error
+          changed = desired.nil? || !same_key(existing, desired, format)
+        end
+      end
+      result(changed, path, privatekey_path, format, nil, nil)
     end
 
     # Loads the private key through libcrypto (what the Ansible module's
