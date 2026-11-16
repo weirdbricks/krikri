@@ -50,4 +50,40 @@ describe "task-arg undefined-variable failure message" do
   ensure
     File.delete(playbook) if playbook && File.exists?(playbook)
   end
+
+  # YAML lets whitespace sit between a key and its colon, and ansible-core
+  # 2.19.11 still treats `- name :` as the task's name and `cron :` as the
+  # module key, Origins each chain level at its own key (live-captured on
+  # infOpen.archive-files, issue #1362). Matching only `name:`/`cron:` made
+  # the task look nameless and collapsed the three-level block into the
+  # two-level one, whose first stanza also carried the finalization wrapper.
+  it "keeps the three chain levels when task keys space their colons" do
+    playbook = File.tempname("task-arg-colon-space", ".yml")
+    File.write(playbook, <<-YAML)
+      - name: repro
+        hosts: localhost
+        gather_facts: false
+        vars:
+          cron_items:
+            - hello
+        tasks:
+          - name : Deploy crontabs tasks
+            cron :
+              cron_file : "{{ item.cron.cronfile }}"
+              job       : "true"
+            with_items : cron_items
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, "--check", playbook], output: output, error: output)
+    out = output.to_s
+    path = File.expand_path(playbook)
+
+    status.success?.must_equal(false)
+    out.must_include("Task failed.\nOrigin: #{path}:8:7")
+    out.must_include("Finalization of task args for 'ansible.builtin.cron' failed.\nOrigin: #{path}:9:7")
+    out.must_include("Error while resolving value for 'cron_file': object of type 'str' has no attribute 'cron'\nOrigin: #{path}:10:21")
+  ensure
+    File.delete(playbook) if playbook && File.exists?(playbook)
+  end
 end
