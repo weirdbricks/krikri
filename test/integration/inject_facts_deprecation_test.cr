@@ -958,6 +958,47 @@ describe "INJECT_FACTS_AS_VARS deprecation from a when: clause" do
   end
 end
 
+describe "INJECT_FACTS_AS_VARS deprecation from a templated action's own render" do
+  # ansible-core's linear strategy renders a task's action: field once in the
+  # MAIN process, to decide whether the action is `meta:` or a
+  # BYPASS_HOST_LOOP plugin, and swallows the undefined variable a loop
+  # template raises there (`except AnsibleUndefinedVariable: pass`). That
+  # render runs outside the task's DeferredWarningContext and before the
+  # task-start banner, so a fact read inside the directive warns even when a
+  # `when:` skips the task, and one that later runs still gets exactly one
+  # block (AlbanAndrieu.ansible_jenkins_slave's check-mode round printed the
+  # two skipped `jenkins_jdk8_enable: false` openjdk tasks' blocks as well as
+  # the running ones' - issue #1356, live-verified against 2.21.6).
+  it "warns for a fact read inside an action template, skipped or not" do
+    stderr = run_playbook(<<-PLAYBOOK)
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        tasks:
+          - name: skipped plain action
+            action: "{{ ansible_pkg_mgr }} name=foo state=present"
+            when: false
+
+          - name: skipped looped action
+            action: "{{ ansible_pkg_mgr }} name={{ item }} state=present"
+            with_items:
+              - foo
+            when: false
+
+          - name: running action
+            action: "{{ 'debug' }} msg={{ ansible_pkg_mgr }}"
+      PLAYBOOK
+
+    # One block per directive, including the loop template real never
+    # resolves at strategy time - and no second one for the task that runs.
+    stderr.scan(/DEPRECATION WARNING\]: INJECT_FACTS_AS_VARS/).size.must_equal(3)
+    stderr.must_include(":6:15\n")
+    stderr.must_include("6       action: \"{{ ansible_pkg_mgr }} name=foo state=present\"\n")
+    stderr.must_include(":10:15\n")
+    stderr.must_include(":16:15\n")
+  end
+end
+
 # The template action hands the engine its whole variable scope up front, so
 # it re-renders every stored value eagerly - while ansible-core templates a
 # value lazily at the render that consumes it. A value nothing consumes must

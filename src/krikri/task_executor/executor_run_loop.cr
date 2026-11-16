@@ -248,6 +248,8 @@ module Krikri
           next
         end
 
+        render_strategy_action_reads(task, active_hosts.first? || hosts.first)
+
         if task.block?
           flush_pending_unreachable(pending_unreachable)
           execute_block_multi(task, active_hosts)
@@ -2721,6 +2723,43 @@ module Krikri
         yield
       ensure
         VarSubstitutor.pop_current_task_param
+      end
+    end
+
+    # ansible-core's linear strategy renders a task's action: field once in
+    # the MAIN process, before it sends the task-start callback: that render
+    # decides whether the action is `meta:` or a BYPASS_HOST_LOOP action
+    # plugin, and an undefined variable in it is swallowed (`except
+    # AnsibleUndefinedVariable: pass`). Running outside the task's own
+    # DeferredWarningContext, a top-level fact read inside it prints its
+    # deprecation immediately - ABOVE the "TASK [...]" banner, and whether
+    # or not a `when:` later skips the task. AlbanAndrieu.ansible_jenkins_slave
+    # in check mode showed both halves: every `action: "{{ ansible_pkg_mgr }}
+    # ..."` install task printed a block above its banner, including the two
+    # whose `jenkins_jdk8_enable: false` clause skipped them (issue #1356,
+    # live-verified against 2.21.6). The per-Origin record keeps the later
+    # post-validation render of the same field from printing a second block,
+    # so a task that really runs still gets exactly one.
+    private def render_strategy_action_reads(task : Task, host : Host?) : Nil
+      raw = task.templated_action
+      return unless raw && host
+      vars_context = begin
+        build_vars_context(task, host)
+      rescue
+        # A task whose own `vars:` cannot render fails at execution; the
+        # strategy render only ever contributes a deprecation, never a
+        # verdict, so nothing is lost by leaving the failure to that path.
+        return
+      end
+      substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
+      with_templated_action_param_site(task, raw) do
+        begin
+          substitutor.substitute(raw)
+        rescue
+          # real's `except AnsibleUndefinedVariable: pass`: a loop-dependent
+          # action template never resolves here, but every fact read made
+          # before the failure already printed its block.
+        end
       end
     end
 
