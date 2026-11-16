@@ -217,3 +217,37 @@ describe "task-arg finalization error block (quoted templated set_fact key + loo
     FileUtils.rm_rf(dir) if dir && Dir.exists?(dir)
   end
 end
+
+describe "task-arg finalization error block (whitespace before a key's colon, issue #1350)" do
+  it "keeps all three levels for a task whose name and module keys are padded" do
+    # YAML lets a mapping key be padded before its colon, and ansible-core
+    # 2.19 origins the chain exactly as for the tight form (live-captured
+    # 2.19.11 on infOpen.archive-files' `- name : ...` / `cron :`): the
+    # padded shapes used to look nameless, degrading the block to the
+    # two-level form and dropping the middle stanza.
+    playbook = File.tempname("finalization-block-padded-keys", ".yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        gather_facts: false
+        connection: local
+        vars:
+          d: {a: 1}
+        tasks:
+          - name : Named task with padded colons
+            ansible.builtin.debug :
+              msg : "{{ d.a.b }}"
+      YAML
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+    text = output.to_s
+
+    status.exit_code.must_equal(2)
+    text.must_include("[ERROR]: Task failed: Finalization of task args for 'ansible.builtin.debug' failed: Error while resolving value for 'msg': object of type 'int' has no attribute 'b'")
+    text.must_include("\nTask failed.\nOrigin: #{playbook}:7:7")
+    text.must_include("\nFinalization of task args for 'ansible.builtin.debug' failed.\nOrigin: #{playbook}:8:7")
+    text.must_include("Error while resolving value for 'msg': object of type 'int' has no attribute 'b'\nOrigin: #{playbook}:9:15")
+    text.must_include("9         msg : \"{{ d.a.b }}\"\n                ^ column 15\n")
+  ensure
+    File.delete(playbook) if playbook && File.exists?(playbook)
+  end
+end
