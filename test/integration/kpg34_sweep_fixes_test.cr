@@ -397,3 +397,22 @@ describe "deploy_helper plugin - finalize without the release tree (kpg34)" do
     result["changed"].as_bool.must_equal(false)
   end
 end
+
+# get_device_info built its parted command as a shell string until
+# community.general 9.0.0, so a pre-9.0.0 reference host sees the unit
+# single-quoted in the failure's echoed script; the wording has to follow
+# the resolved collection version rather than one hardcoded form.
+describe "parted plugin - collection-version-aware unit quoting (#1384)" do
+  it "quotes whichever unit the pre-9.0.0 script carried" do
+    unless parted = Process.find_executable("parted")
+      return
+    end
+
+    legacy = PluginSpecHelper.run("parted",
+      {"device" => "krikri-no-such-disk", "state" => "info", "unit" => "MiB"},
+      collection_version: "8.3.0")
+    legacy["msg"].as_s.must_equal(
+      "Error while getting device information with parted script: " \
+      "'#{parted} -s -m krikri-no-such-disk -- unit 'MiB' print'")
+  end
+end
