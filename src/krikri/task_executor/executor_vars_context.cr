@@ -5774,7 +5774,12 @@ module Krikri
       lines.each_with_index do |line, idx|
         stripped = line.strip
         next unless stripped.starts_with?("- ")
-        next unless (name_match = stripped.match(/\A-\s*name:\s*(.+)\z/))
+        # YAML lets whitespace sit between a key and its colon, and ansible
+        # still Origins the task level at the `name` key's first character
+        # (`- name : foo` -> column 3, live-captured 2.19.11 on
+        # infOpen.archive-files, issue #1362). Matching only `name:` made
+        # such a task look nameless, demoting it to the two-level block.
+        next unless (name_match = stripped.match(/\A-\s*name[ \t]*:[ \t]*(.+)\z/))
         name_value = unquote_yaml_scalar_name(name_match[1].strip)
         next unless name_value == task.name
         col = line.index("name")
@@ -5821,14 +5826,17 @@ module Krikri
 
     # The task's module key line (first non-`- ` line after the name
     # whose stripped text starts with the invoked or FQCN-stripped module
-    # name); column is the key's first character.
+    # name); column is the key's first character. Whitespace before the
+    # colon is YAML-legal and keeps the key the module key (`cron :` ->
+    # Origin at the key, live-captured 2.19.11, issue #1362).
     private def locate_module_key_line(lines : Array(String), from_idx : Int32, module_name : String) : {Int32, Int32}?
       short = module_name.split(".").last
+      module_needle = /\A(?:#{Regex.escape(module_name)}|#{Regex.escape(short)})[ \t]*:/
       ((from_idx + 1)...lines.size).each do |idx|
         line = lines[idx]
         stripped = line.strip
         break if next_task_marker?(lines, from_idx, line)
-        if stripped.starts_with?("#{module_name}:") || stripped.starts_with?("#{short}:")
+        if module_needle.matches?(stripped)
           return {idx, line.size - line.lstrip.size + 1}
         end
       end
