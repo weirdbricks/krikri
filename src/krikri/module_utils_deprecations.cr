@@ -94,7 +94,19 @@ module Krikri
     # The 2.2.0 gate alone would model the pair for every 1.x release
     # forever, including the ones real is silent on.
     LATER_MIGRATION_BOUNDARIES = {
-      "podman_container"    => {1, 19, 0},
+      "podman_container" => {1, 19, 0},
+      # community.docker 4.7.0's module_utils/common_api.py (and common.py)
+      # opens with `from ansible.module_utils.common._collections_compat
+      # import Mapping, Sequence`; 4.8.0 moved both onto
+      # `ansible.module_utils.six.moves.collections_abc`, so that release
+      # line warns nothing (source-verified against the 4.7.0 and 4.8.0
+      # tags). The modules listed in COMPAT_IMPORT_DEPRECATIONS below reach
+      # those files in 4.7.x.
+      "docker_container"    => {4, 8, 0},
+      "docker_image"        => {4, 8, 0},
+      "docker_login"        => {4, 8, 0},
+      "docker_network"      => {4, 8, 0},
+      "docker_network_info" => {4, 8, 0},
       "ec2_ami_info"        => {11, 3, 0},
       "ec2_instance"        => {11, 3, 0},
       "ec2_key"             => {11, 3, 0},
@@ -125,9 +137,32 @@ module Krikri
     # `_collections_compat` deprecates the MODULE rather than one imported
     # name (ansible/module_utils/common/_collections_compat.py's own
     # module-level deprecate() call), so its line has no "Importing ..." stem.
-    COLLECTIONS_COMPAT_DEPRECATION_TEXT = "The `ansible.module_utils.common._collections_compat` module is deprecated. " \
-                                          "This feature will be removed from ansible-core version 2.24. " \
-                                          "Use `collections.abc` from the Python standard library instead."
+    COLLECTIONS_COMPAT_DEPRECATION_MSG  = "The `ansible.module_utils.common._collections_compat` module is deprecated."
+    COLLECTIONS_COMPAT_DEPRECATION_TEXT = COLLECTIONS_COMPAT_DEPRECATION_MSG + " " \
+                                                                               "This feature will be removed from ansible-core version 2.24. " \
+                                                                               "Use `collections.abc` from the Python standard library instead."
+
+    # Marks that module-level event inside the symbol lists below: unlike
+    # every other entry it names no imported symbol, so text/result
+    # formatting (and the fallback tables) must tell it apart.
+    COLLECTIONS_COMPAT_SYMBOL = "__ansible_collections_compat__"
+
+    # Modules whose real payload reaches `_collections_compat` instead of
+    # (or besides) `_text`, for plugin binaries with no installed
+    # collection file to read (see the intro). community.docker's
+    # docker_container imports it through module_utils/module_container/
+    # docker_api.py -> module_utils/common_api.py, and docker_image,
+    # docker_login, docker_network and docker_network_info import
+    # common_api directly; each shows up as the module's own
+    # module-level deprecation event (issue #1318). Gated by
+    # LATER_MIGRATION_BOUNDARIES above, so 4.8.0+ models nothing.
+    COMPAT_IMPORT_DEPRECATIONS = Set{
+      "docker_container",
+      "docker_image",
+      "docker_login",
+      "docker_network",
+      "docker_network_info",
+    }
 
     # The `ansible.errors` names ansible-core 2.21 deprecates through that
     # module's own __getattr__, the `_text` shim's twin: Display merges the
@@ -153,18 +188,23 @@ module Krikri
       "#{entry["help_text"]}"
     end
 
-    # The `_text` symbols one module imports, in the module's own import
-    # order; empty for every name outside the installed payload and the
-    # fallback table alike - and for every name when `collection_version`
+    # The deprecated module_utils import events one module's payload makes,
+    # in the module's own import order - a `_text` symbol, or
+    # COLLECTIONS_COMPAT_SYMBOL for the module-level `_collections_compat`
+    # deprecation; empty for every name outside the installed payload and
+    # the fallback tables alike - and for every name when `collection_version`
     # pins a release that no longer makes those imports (the 2.2.0 gate
     # below, tightened per module by LATER_MIGRATION_BOUNDARIES).
     def self.text_import_deprecation_symbols(name : String?, collection_version : String? = nil) : Array(String)
       return [] of String unless name
       return [] of String unless deprecated_text_imports?(name, collection_version)
       if events = installed_payload_events(name)
-        return events.select { |kind, _| kind == "text" }.map { |_, symbol| symbol }
+        return events.map { |kind, symbol| kind == "compat" ? COLLECTIONS_COMPAT_SYMBOL : symbol }
       end
-      TEXT_IMPORT_DEPRECATIONS[name.split(".").last?]? || [] of String
+      leaf = name.split(".").last?
+      symbols = TEXT_IMPORT_DEPRECATIONS[leaf]? || [] of String
+      return symbols unless COMPAT_IMPORT_DEPRECATIONS.includes?(leaf)
+      symbols + [COLLECTIONS_COMPAT_SYMBOL]
     end
 
     # The console text real prints for one imported symbol: the deprecation's
@@ -173,17 +213,26 @@ module Krikri
     # field that only the console line merges in - see
     # text_import_deprecation_result_entries).
     def self.text_import_deprecation_texts(name : String?, collection_version : String? = nil) : Array(String)
-      text_import_deprecation_symbols(name, collection_version).map { |symbol| text_import_deprecation_text(symbol) }
+      text_import_deprecation_symbols(name, collection_version).map do |symbol|
+        symbol == COLLECTIONS_COMPAT_SYMBOL ? COLLECTIONS_COMPAT_DEPRECATION_TEXT : text_import_deprecation_text(symbol)
+      end
     end
 
     # The `deprecations` entries those imports leave on the module result
     # (live-verified vs ansible-core 2.21.6 through `register`: the deprecator
     # resolves to ansible.builtin - `_text` is ansible-core's own
     # module_utils, not the importing module's collection - and the msg
-    # carries no removal tail; only the console line does).
+    # carries no removal tail; only the console line does. The
+    # `_collections_compat` event registers its msg alone, live-verified the
+    # same way).
     def self.text_import_deprecation_result_entries(name : String?, collection_version : String? = nil) : Array(JSON::Any)
       text_import_deprecation_symbols(name, collection_version).map do |symbol|
-        deprecation_result_entry("Importing '#{symbol}' from 'ansible.module_utils._text' is deprecated.")
+        msg = if symbol == COLLECTIONS_COMPAT_SYMBOL
+                COLLECTIONS_COMPAT_DEPRECATION_MSG
+              else
+                "Importing '#{symbol}' from 'ansible.module_utils._text' is deprecated."
+              end
+        deprecation_result_entry(msg)
       end
     end
 
