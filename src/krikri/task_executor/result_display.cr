@@ -1833,7 +1833,11 @@ module Krikri
       # ansible-playbook 2.19 (issue #523). The msg reaching the chain is the
       # bare exception detail via _ansible_error_detail, so the generic
       # "Module failed." middle segment reproduces the brief exactly.
-      ErrorBlock.emit(task_error_chain(source_task.module_name, msg, origin))
+      # A crash whose exception was raised inside an `except` block carries
+      # Python's implicit __context__; the module API serializes that link,
+      # and ansible-core 2.21 does not collapse it into the flat block (see
+      # task_error_chain's crash_context argument).
+      ErrorBlock.emit(task_error_chain(source_task.module_name, msg, origin, crash_context: result["_ansible_crash_context"]?.try(&.as_bool?) == true))
     end
 
     # `debug: var: undefined_name` renders the error inline ("<< error 1 - ...
@@ -2486,8 +2490,25 @@ module Krikri
     #   message (the module API's own wrapper), collapsed.
     # Public (not private) only so the unit suite can pin each module's
     # chain shape directly, the way the other display helpers here are.
-    def self.task_error_chain(module_name : String?, msg : String, origin : String) : ErrorBlock::Node
+    def self.task_error_chain(module_name : String?, msg : String, origin : String, crash_context : Bool = false) : ErrorBlock::Node
       root = ErrorBlock::Node.new("Task failed.", source_context: origin)
+
+      # An uncaught module exception raised inside an `except` block carries
+      # Python's implicit __context__, which the module API serializes as a
+      # NON-FOLLOWING "<<< while handling >>>" link. ansible-core 2.21
+      # renders that link as a separate "Task failed." + "Module failed."
+      # segment with a "<<< caused by >>>" section whose leaf is the crash
+      # message (blank for a message-less exception), instead of the flat
+      # collapsed block a crash without a __context__ gets (live-verified vs
+      # 2.21.6: a bare `raise ValueError()` vs one raised from inside
+      # `except`). The context event itself never prints - the link does not
+      # follow.
+      if crash_context
+        detail = msg.starts_with?("Task failed: Module failed: ") ? msg["Task failed: Module failed: ".size..] : msg
+        return root.with_chain(ErrorBlock::DIRECT_CAUSE, true,
+          ErrorBlock::Node.new("Module failed.").with_chain(ErrorBlock::DIRECT_CAUSE, true,
+            ErrorBlock::Node.new(detail).with_chain(ErrorBlock::HANDLING, false, ErrorBlock::Node.new(""))))
+      end
 
       # A module's uncaught-exception crash reaches the wire with the module
       # API's wrapper prefix already baked into the msg ("Task failed:
