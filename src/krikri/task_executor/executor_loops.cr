@@ -339,13 +339,15 @@ module Krikri
         # one level and iterates ONCE with the scalar as `item`. Same
         # array-wrapped fallback the direct-resolution path below applies.
         return [filter_chain_loop_item(result, bare, vars_context)] if task.loop_template_array_wrapped?
-        # A complex `loop:`/`with_list:` source that resolved to a
-        # non-list scalar gets the same hard type error the direct
-        # scalar form already raises (live-verified matrix vs 2.19.11:
+        # A complex `loop:` source that resolved to a non-list scalar
+        # gets the same hard type error the direct scalar form already
+        # raises (live-verified matrix vs 2.19.11:
         # `loop: "{{ d.missing is defined }}"` → "The `loop` value must
-        # resolve to a 'list', not 'bool'."). with_items: keeps its own
+        # resolve to a 'list', not 'bool'."). with_list: is the lookup-
+        # based legacy spelling instead, so its non-list term follows the
+        # lookup convention below; with_items: keeps its own
         # scalar-wrapping convention (see the direct path's comment).
-        if kind == "loop" || kind == "with_list"
+        if kind == "loop"
           resolved = structured_loop_source_value(bare, vars_context) ||
                      Krikri.parse_json_or_python_literal(result)
           # LoopTypeError (not UndefinedVariableError): a defined source
@@ -356,14 +358,22 @@ module Krikri
           raise LoopTypeError.new(
             "The `loop` value must resolve to a 'list', not '#{python_type_name(resolved)}'.")
         end
-        # with_items: scalar-wraps a non-list filter-chain resolution exactly
-        # like the direct path above (`with_items: "{{ myscalar }}"` iterates
-        # ONCE with the scalar as item, live-verified vs 2.19.11) - a
-        # filter-chain source (`{{ xclip_packages | default('xclip') }}`,
-        # nephelaiio.xclip) used to fall through to `return nil` and run the
-        # task ONCE with `item` unbound ("'item' is undefined") instead of
-        # looping once with the scalar.
-        return [filter_chain_loop_item(result, bare, vars_context)] if kind == "with_items"
+        # with_items:/with_list: scalar-wrap a non-list filter-chain
+        # resolution exactly like the direct path above (`with_items: "{{
+        # myscalar }}"` iterates ONCE with the scalar as item, live-verified
+        # vs 2.19.11) - a filter-chain source (`{{ xclip_packages |
+        # default('xclip') }}`, nephelaiio.xclip) used to fall through to
+        # `return nil` and run the task ONCE with `item` unbound ("'item' is
+        # undefined") instead of looping once with the scalar. with_list:
+        # wraps too: ansible listifies every lookup term, so a DEFINED null
+        # behind a filter chain (`with_list: "{{ pkgs | default([]) }}"`,
+        # andiveloper.hadoop - `default` only replaces undefined names)
+        # iterates once with `item=None` and the task's own `when:` skips it,
+        # where this raised "not 'NoneType'" and failed the play (issue
+        # #1390, live-verified vs ansible-core 2.21.6 local).
+        if kind == "with_items" || kind == "with_list"
+          return [filter_chain_loop_item(result, bare, vars_context)]
+        end
         return nil
       end
 
