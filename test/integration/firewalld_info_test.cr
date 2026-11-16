@@ -169,6 +169,24 @@ describe "firewalld_info plugin" do
     modern_note.match!(/zone:\((.*)\) have been ignored/)[1].split(", ").must_equal(expected)
   end
 
+  # Same release split, but over the host's own firewalld stack rather than
+  # a stub, and asserting the whole note - the kpg repro for issue #1299
+  # only caught it because a real 2.2.x collection was installed.
+  it "joins the ignored-zones note with the resolved release line's separator" do
+    skip "no firewalld python stack on this host" unless firewalld_python_stack?
+    skip "no running firewalld on this host" unless firewalld_daemon_running?
+
+    zones = %(["krikri-spec-undefined-a", "krikri-spec-undefined-b"])
+
+    legacy = PluginSpecHelper.run("firewalld_info", {"zones" => zones}, collection_version: "2.1.0")
+    legacy["warnings"].as_a[0].as_s.must_equal(
+      "Please note: zone:(krikri-spec-undefined-a,krikri-spec-undefined-b) have been ignored in the gathering process.")
+
+    modern = PluginSpecHelper.run("firewalld_info", {"zones" => zones}, collection_version: "2.2.2")
+    modern["warnings"].as_a[0].as_s.must_equal(
+      "Please note: zone:(krikri-spec-undefined-a, krikri-spec-undefined-b) have been ignored in the gathering process.")
+  end
+
   # The exit_json `warnings` deprecation models the 2.1.x module line,
   # whose result passes `warnings` to exit_json - ansible.posix 2.2.x
   # triggers no deprecation at all (issue #1060's release split, the
