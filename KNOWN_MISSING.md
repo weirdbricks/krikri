@@ -596,7 +596,9 @@ because anyone intends to fix them.
   `TaskExecutor#resolve_templated_action`); `weareinteractive.users_oh_my_zsh`'s shape is covered by
   `playbook_parser.cr`'s `ACTION_DIRECTIVE_KEYS` branch.
 - `docker_*`'s `api_version:` pin - not implemented, not planned: `docr` uses unversioned endpoint URLs
-  throughout, and they negotiate fine against current Docker/Podman.
+  throughout, and they negotiate fine against current Docker/Podman. The value is still VALIDATED at
+  client construction the way real's vendored SDK does (an unparseable or below-minimum version fails
+  the task with real's own message), since that decides whether the task runs at all.
 - `containers.podman.podman_container` (issue #1156) - ported surface: the AnsibleModule argument
   validation (1.17.0 spec), main()'s present/created-without-image check, and the
   `get_bin_path(executable, required=True)` probe real runs before ANY state's work, check mode or

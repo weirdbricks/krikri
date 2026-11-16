@@ -97,6 +97,36 @@ describe "deprecated ansible.module_utils import warnings from native plugins" d
     ])
   end
 
+  it "carries docker_network_info's _collections_compat deprecation on a client-construction failure (issue #1340)" do
+    # A bogus api_version fails inside the client construction, i.e. in a
+    # rescued failure exit rather than through #execute's return - real
+    # still printed the payload's import-time deprecation first
+    # (live-verified vs ansible-core 2.21.6 + community.docker 4.7.0:
+    # the warning lines sit above "invalid version number 'atoobk'" and
+    # the registered result carries the entry).
+    root = PluginSpecHelper.tmp_path("module-utils-docker-network-info-compat")
+    base = File.join(root, "ansible_collections", "community", "docker", "plugins")
+    FileUtils.mkdir_p(File.join(base, "modules"))
+    FileUtils.mkdir_p(File.join(base, "module_utils"))
+    File.write(File.join(base, "modules", "docker_network_info.py"),
+      "from ansible_collections.community.docker.plugins.module_utils.common_api import AnsibleDockerClient\n")
+    File.write(File.join(base, "module_utils", "common_api.py"),
+      "from ansible.module_utils.common._collections_compat import Mapping, Sequence\n")
+
+    result = PluginSpecHelper.run("docker_network_info",
+      {"name" => "krikri-net", "api_version" => "atoobk"},
+      collection_version: "4.7.0", env: {"ANSIBLE_COLLECTIONS_PATH" => root})
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("Error connecting: invalid version number 'atoobk'")
+    result["_ansible_core_deprecations"].as_a.map(&.as_s).must_equal([
+      Krikri::ModuleUtilsDeprecations::COLLECTIONS_COMPAT_DEPRECATION_TEXT,
+    ])
+    result["deprecations"].as_a.size.must_equal(1)
+    result["deprecations"][0]["msg"].as_s.must_equal(
+      Krikri::ModuleUtilsDeprecations::COLLECTIONS_COMPAT_DEPRECATION_MSG)
+  end
+
   it "carries amazon.aws's payload import deprecations where the target sees no collection tree (issue #1199)" do
     # The native ec2_vpc_net_info binary runs on the TARGET, which has no
     # amazon.aws tree to scan, so only the modeled table can reproduce

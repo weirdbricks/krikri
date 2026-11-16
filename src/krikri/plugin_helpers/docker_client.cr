@@ -58,12 +58,16 @@ module Krikri
     #   `HTTP::Client` has no hook to override just the verification
     #   hostname while still connecting to a different one.
     #
-    # Not implemented: `api_version:` (this codebase's `docr`-based API
-    # calls have no version prefix on any endpoint URL at all, on a
-    # local socket either - adding version negotiation would mean
-    # touching every endpoint across `docr`, not just connection setup
-    # here, a meaningfully bigger change than anything else in this
-    # file).
+    # Not implemented: pinning the requests to an `api_version:` (this
+    # codebase's `docr`-based API calls have no version prefix on any
+    # endpoint URL at all, on a local socket either - adding version
+    # negotiation would mean touching every endpoint across `docr`, not
+    # just connection setup here, a meaningfully bigger change than
+    # anything else in this file). The VALUE is still validated, though:
+    # real's SDK Client.__init__ parses an explicitly pinned version and
+    # fails client construction on a bad one (see #validate_api_version!),
+    # and skipping that made every chaos playbook carrying a bogus
+    # `api_version:` diverge - krikri ran the task where real failed it.
     module DockerClient
       # Real community.docker's DOCKER_COMMON_ARGS:
       # the connection parameters every API module's argument_spec merges
@@ -135,6 +139,102 @@ module Krikri
         @@gate_checked = false
       end
 
+      # _api/constants.py's MINIMUM_DOCKER_API_VERSION, which
+      # Client.__init__ rejects below inside the "Error connecting:"
+      # wrapper, and _common_api.py's fallback for a module that passes
+      # no min_docker_api_version: (none of the five SDK-based modules
+      # this engine implements does), which fails with its own bare
+      # message.
+      MINIMUM_DOCKER_API_VERSION     = "1.21"
+      DEFAULT_MIN_DOCKER_API_VERSION = "1.25"
+
+      # distutils.version.StrictVersion's grammar, the parser behind the
+      # vendored SDK's version_lt: [major].[minor][.[patch]][a|b<N>].
+      private record ApiVersion, major : Int32, minor : Int32, patch : Int32, prerelease : Bool
+
+      private def self.parse_strict_version(value : String) : ApiVersion?
+        match = value.match(/\A([0-9]+)\.([0-9]+)(?:\.([0-9]+))?([ab]([0-9]+))?\z/)
+        return nil unless match
+
+        major = match[1].to_i32?
+        minor = match[2].to_i32?
+        return nil unless major && minor
+
+        patch = 0
+        if raw_patch = match[3]?
+          patch = raw_patch.to_i32? || return nil
+        end
+
+        ApiVersion.new(major, minor, patch, !match[4]?.nil?)
+      end
+
+      # StrictVersion ordering against a release-form minimum:
+      # major.minor.patch decide first, then a prerelease ("1.25a1")
+      # sorts BELOW the bare release.
+      private def self.version_lt?(version : ApiVersion, major : Int32, minor : Int32) : Bool
+        return version.major < major if version.major != major
+        return version.minor < minor if version.minor != minor
+        return false if version.patch > 0
+        version.prerelease
+      end
+
+      # The module's own minimum, compared the way
+      # AnsibleDockerClientBase compares it: with LooseVersion rather than
+      # StrictVersion. That is why "1.25a1" passes while "1.24a1" fails -
+      # LooseVersion splits into digit/word components ([1, 24, "a", 1]),
+      # and a longer list with an equal prefix sorts ABOVE the shorter one.
+      private def self.loose_version_lt?(value : String, major : Int64, minor : Int64) : Bool
+        minimum = [major, minor]
+        value.scan(/[0-9]+|[a-z]+/).each_with_index do |component, index|
+          # Longer than [major, minor] with an equal prefix: greater.
+          return false if index >= minimum.size
+          if number = component[0].to_i64?
+            return true if number < minimum[index]
+            return false if number > minimum[index]
+          else
+            # Python 3 raises comparing a word with an int here; treat it
+            # as not-less rather than inventing a crash krikri never sees.
+            return false
+          end
+        end
+        false
+      end
+
+      # Real's client construction parses an explicitly pinned
+      # api_version before any network I/O: the vendored SDK's
+      # Client.__init__ runs version_lt(version, MINIMUM_DOCKER_API_VERSION)
+      # through StrictVersion, so an unparseable value raises
+      # "invalid version number '<value>'", which AnsibleDockerClientBase
+      # wraps in "Error connecting: ". krikri's docr client never prefixes
+      # its URLs with a version (see the class comment), but the parse
+      # MUST still fail like real's or a bogus api_version silently
+      # succeeds here where real fails the task.
+      def self.validate_api_version!(params : Hash(String, String)) : Nil
+        version = resolved_api_version(params)
+        # "auto" means "negotiate with the daemon", real's default: there
+        # is no pinned value to parse.
+        return if version.downcase == "auto"
+
+        parsed = parse_strict_version(version)
+        raise DockerClientConfigError.new("Error connecting: invalid version number '#{version}'") unless parsed
+
+        if version_lt?(parsed, 1, 21)
+          raise DockerClientConfigError.new("Error connecting: API versions below #{MINIMUM_DOCKER_API_VERSION} are no longer supported by this library.")
+        end
+        if loose_version_lt?(version, 1, 25)
+          raise DockerClientConfigError.new("Docker API version is #{version}. Minimum version required is #{DEFAULT_MIN_DOCKER_API_VERSION}.")
+        end
+      end
+
+      # _common_api.py's get_connect_params order: the param (or its
+      # docker_api_version alias), then the DOCKER_API_VERSION env var
+      # (task environment: overlay first, same as resolved_docker_host),
+      # then "auto".
+      def self.resolved_api_version(params : Hash(String, String)) : String
+        params["api_version"]? || params["docker_api_version"]? ||
+          env_overlay(params)["DOCKER_API_VERSION"]? || ENV["DOCKER_API_VERSION"]? || "auto"
+      end
+
       def self.build(params : Hash(String, String)) : {Docr::Client, String}
         docker_host = resolved_docker_host(params)
 
@@ -143,6 +243,7 @@ module Krikri
         else
           socket_path = docker_host.try(&.sub(/^unix:\/\//, ""))
           sdk_import_gate
+          validate_api_version!(params)
           client = Docr::Client.new(socket_path)
           {client, socket_path || "default socket #{Docr::Client::DEFAULT_SOCKET_PATH}"}
         end
@@ -180,6 +281,7 @@ module Krikri
 
         tls = build_tls_context(params, docker_host)
         sdk_import_gate
+        validate_api_version!(params)
         client = Docr::Client.new(host, port, tls, tls_hostname)
         {client, "#{docker_host}#{tls ? " (TLS)" : ""}"}
       end
