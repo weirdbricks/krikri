@@ -166,4 +166,78 @@ describe "changed_when:/failed_when: evaluation errors keep the module's own msg
     # both changed_when: and failed_when: tasks fail.
     output.scan(%(Syntax error in template: No filter named 'nosuchfilterx'.)).size.must_equal 10
   end
+
+  it "stores a raising string method with real's bare expression-render wording" do
+    _status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          haystack: "Python 3.10.12"
+          needle: "3.6.10"
+        tasks:
+          - name: substring lookup that raises under failed_when
+            ansible.builtin.debug:
+              msg: hello
+            failed_when: not haystack.index(needle)
+            register: probe
+            ignore_errors: true
+          - name: substring lookup that raises under changed_when
+            ansible.builtin.debug:
+              msg: hello
+            changed_when: not haystack.index(needle)
+            register: probe_changed
+            ignore_errors: true
+          - name: surface the stored texts and prove the run continued
+            ansible.builtin.debug:
+              msg: "ran={{ probe.failed_when_result }} / {{ probe_changed.changed_when_result }}"
+      YAML
+
+    # A Python str.index miss on a bare clause is real's
+    # RenderExpressionError: the *_when_result field carries the plain
+    # "Error rendering expression: " prefix and no conditional wrapper
+    # (live-verified vs 2.21.6, issue #1423 - softasap.sa_python3's
+    # `failed_when: not py3_version.stdout.index(python_version)`).
+    # Uncaught, the raise escaped the clause handling and took the whole
+    # run down instead of failing (and ignoring) just this task.
+    output.must_include("[ERROR]: Task failed: Action failed: A 'failed_when' expression failed: Error rendering expression: substring not found")
+    output.must_include("[ERROR]: Task failed: Action failed: A 'changed_when' expression failed: Error rendering expression: substring not found")
+    output.wont_include("Unhandled exception")
+    output.must_include(%("msg": "ran=Error rendering expression: substring not found / Error rendering expression: substring not found"))
+  end
+
+  it "keeps a raising failed_when in an included file a task failure, not a load failure" do
+    included = PluginSpecHelper.tmp_path("included.yml")
+    File.write(included, <<-YAML)
+      - name: substring lookup that raises
+        ansible.builtin.debug:
+          msg: hello
+        failed_when: not haystack.index(needle)
+        register: probe
+        ignore_errors: true
+      YAML
+
+    _status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          haystack: "Python 3.10.12"
+          needle: "3.6.10"
+        tasks:
+          - ansible.builtin.include_tasks: #{included}
+          - name: surface the stored text and prove the run continued
+            ansible.builtin.debug:
+              msg: "ran={{ probe.failed_when_result }}"
+      YAML
+
+    # The raise used to bubble into include_tasks:'s own rescue, reporting
+    # the whole include as unloadable ("Failed to load included tasks:
+    # substring not found") instead of failing just the task - the exact
+    # shape issue #1423's role hit.
+    output.must_include("[ERROR]: Task failed: Action failed: A 'failed_when' expression failed: Error rendering expression: substring not found")
+    output.wont_include("Failed to load included tasks")
+    output.wont_include("Unhandled exception")
+    output.must_include(%("msg": "ran=Error rendering expression: substring not found"))
+  end
 end
