@@ -10,7 +10,7 @@ require "./python_module_runner"
 require "./role_loader"
 require "./argspec_validator"
 require "./role_bool_keywords"
-require "./play_bool_keywords"
+require "./play_keywords"
 require "./throttle_value"
 require "./task_executor/error_block"
 require "./vault"
@@ -1277,11 +1277,12 @@ module Krikri
     # under it, facts are gathered solely for plays that asked in so many
     # words, so "unset" and "explicitly true" cannot be conflated.
     property? gather_facts_set : Bool = false
-    # The play's first unconvertible bool keyword, if it wrote one: real
-    # post-validates `gather_facts:`/`force_handlers:` when the play
-    # starts and aborts the run (rc=4) before its banner, so the executor
-    # reports this instead of running the play.
-    property bool_keyword_failure : PlayBoolKeywords::Failure? = nil
+    # The play's first unconvertible always-post-validated keyword, if it
+    # wrote one: real post-validates `gather_facts:`/`force_handlers:`/
+    # `max_fail_percentage:` when the play starts and aborts the run (rc=4)
+    # before its banner, so the executor reports this instead of running
+    # the play.
+    property keyword_failure : PlayKeywords::Failure? = nil
     property tags : Array(String)
     property handlers : Array(Task)
     # `force_handlers: true` play keyword - run notified handlers even
@@ -2880,7 +2881,7 @@ module Krikri
       play.gather_facts = gather_facts_parsed.nil? ? true : gather_facts_parsed
       play.gather_facts_set = !gather_facts_yaml.nil?
       play.force_handlers = parse_become_value(yaml["force_handlers"]?) || false
-      play.bool_keyword_failure = PlayBoolKeywords.failure(yaml.as_h, source_map, index.to_s)
+      play.keyword_failure = PlayKeywords.failure(yaml.as_h, source_map, index.to_s)
       play.check_mode = parse_optional_bool_or_template(yaml["check_mode"]?)
       play.check_mode_expr = template_expression(yaml["check_mode"]?)
 
@@ -2957,7 +2958,7 @@ module Krikri
       play.module_defaults = parse_module_defaults(yaml["module_defaults"]?)
       play.any_errors_fatal = parse_become_value(yaml["any_errors_fatal"]?) || false
       if mfp = yaml["max_fail_percentage"]?
-        play.max_fail_percentage = safe_yaml_to_string(mfp).to_f?
+        play.max_fail_percentage = PlayKeywords.percent_value(mfp)
       end
 
       # collections: - a string or a list of namespace.collection names

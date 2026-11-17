@@ -104,7 +104,7 @@ module Krikri
       value.as_s?.try { |text| text.includes?("{{") } || false
     end
 
-    # Shared with PlayBoolKeywords: ansible converts play keywords through
+    # Shared with PlayKeywords: ansible converts play keywords through
     # the same `boolean(strict=True)` tables.
     def self.convertible_to_bool?(value : YAML::Any) : Bool
       case raw = value.raw
