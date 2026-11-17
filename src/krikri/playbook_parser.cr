@@ -3099,6 +3099,16 @@ module Krikri
       tasks = [] of Task
 
       tasks_yaml.each_with_index do |task_yaml, index|
+        # ansible-core's load_list_of_blocks silently DROPS a null list entry
+        # (`- ` with nothing after it) - it never reaches load_list_of_tasks,
+        # which would refuse a non-dict. dzangolab.gitlab_runner ends its
+        # tasks/global-setup.yml with exactly that stray entry and real
+        # ansible-playbook 2.21.6 runs the file's two tasks with no output
+        # about it, while this engine degraded it to a raw "Warning:
+        # Skipping task in imported <file> 3: Task must be a YAML mapping
+        # (hash)" on stdout (issue #1417, live-verified). Anything else
+        # non-mapping stays a parse failure exactly as before.
+        next if task_yaml.raw.nil?
         begin
           if imported = try_parse_import_tasks(task_yaml, play, file_dir, known_vars, role_path, playbook_dir, source_file, source_map, source_prefix, index, handler)
             tasks.concat(imported)

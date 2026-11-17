@@ -2482,6 +2482,30 @@ module Krikri
       end
     end
 
+    # Renders one looped include_tasks:'s item the way real's loop-keyword
+    # templating does. The item's own strings are templated with the loop
+    # SOURCE's file position registered and, when the source is one bare
+    # `{{ name }}` reference, its container on the preparing stack - without
+    # both, a top-level fact read inside a role default's leaf (dzangolab.
+    # gitlab_runner's `- name: '{{ ansible_hostname }}'`) has no placeable
+    # Origin and the [DEPRECATION WARNING] real prints when it templated the
+    # item there vanished (issue #1417). The returned flag says the item's
+    # own value ended up being a deprecated fact's value, which the label
+    # read on a when:-skipped item trips again (see
+    # VarSubstitutor#emit_loop_item_fact_deprecation).
+    private def render_include_loop_item(
+      task : Task,
+      item : JSON::Any,
+      loop_vars_context : Hash(String, JSON::Any),
+      host_name : String,
+    ) : {JSON::Any, Bool}
+      with_loop_source_site(task) do
+        VarSubstitutor.with_preparing_loop_source_container(task.loop_template, loop_vars_context, host_name) do
+          VarSubstitutor.with_fact_read_probe { deep_render_item(item, loop_vars_context, host_name, strict: false) }
+        end
+      end
+    end
+
     # Runs a nested task list (block:/rescue:/always:), printing its own
     # TASK header per task since these live inside a block rather than the
     # play's top-level task list, so `run` never prints one for them. Stops
@@ -2594,6 +2618,10 @@ module Krikri
         loop_var = task.loop_var
         index_var = task.index_var
         unsafe_items = loop_items_derive_from_unsafe_data?(task, host.name)
+        # One flag per (flattened) item: whether its value IS a deprecated
+        # fact's own value, so its when:-skip line's label read trips that
+        # block again (see render_include_loop_item).
+        pending_fact_reads = [] of Bool
         if task.loop_items_needs_flatten?
           # with_items:'s implicit flatten(levels=1) needs each raw item
           # RENDERED first (a raw item here is still an unrendered "{{
@@ -2602,9 +2630,19 @@ module Krikri
           # the rendered values. Unsafe-derived items are already rendered
           # data; their pass would be a second render, so it is skipped
           # (see loop_items_derive_from_unsafe_data?).
+          aligned_fact_reads = [] of Bool
           loop_items = flatten_with_items_one_level(
-            unsafe_items ? loop_items : loop_items.map { |item| deep_render_item(item, loop_vars_context, host.name, strict: false) }
+            unsafe_items ? loop_items : loop_items.map do |item|
+              rendered_item, read_fact = render_include_loop_item(task, item, loop_vars_context, host.name)
+              if inner = rendered_item.as_a?
+                inner.size.times { aligned_fact_reads << read_fact }
+              else
+                aligned_fact_reads << read_fact
+              end
+              rendered_item
+            end
           )
+          pending_fact_reads = aligned_fact_reads
         end
         mark_unsafe_loop_items(loop_items) if unsafe_items
         looped_when_failed = false
@@ -2636,7 +2674,11 @@ module Krikri
           # unsafe-derived loop this pass would be the item's second
           # render, so it is skipped - the item value is already rendered
           # data (see loop_items_derive_from_unsafe_data?).
-          rendered_item = unsafe_items ? item : deep_render_item(item, loop_vars_context, host.name, strict: false)
+          rendered_item, item_fact_read = if unsafe_items
+                                            {item, false}
+                                          else
+                                            render_include_loop_item(task, item, loop_vars_context, host.name)
+                                          end
           # loop_control.loop_var REPLACES "item" - ansible-core binds
           # the item ONLY under the custom name (see the task-loop sites in
           # executor_loops.cr).
@@ -2692,7 +2734,8 @@ module Krikri
             collected: deferred.nil? ? deferred_iterations : nil,
             loop_entries: include_loop_entries,
             loop_index: idx,
-            deferred: deferred)
+            deferred: deferred,
+            item_fact_read: pending_fact_reads[idx]? || item_fact_read)
           looped_when_failed = true if status == :failed
           any_iteration_ran = true unless status == :skipped
         end
@@ -2827,7 +2870,7 @@ module Krikri
       groups.each { |group| run_task_batch(group[3], group[4]) }
     end
 
-    private def run_include_tasks_once(task : Task, host : Host, vars_context : Hash(String, JSON::Any), item_label : String?, defer_when_stats : Bool = false, defer_run : Bool = false, collected : Array(Array(Task))? = nil, loop_entries : Array(JSON::Any)? = nil, loop_index : Int32? = nil, deferred : Array(DeferredInclude)? = nil) : Symbol
+    private def run_include_tasks_once(task : Task, host : Host, vars_context : Hash(String, JSON::Any), item_label : String?, defer_when_stats : Bool = false, defer_run : Bool = false, collected : Array(Array(Task))? = nil, loop_entries : Array(JSON::Any)? = nil, loop_index : Int32? = nil, deferred : Array(DeferredInclude)? = nil, item_fact_read : Bool = false) : Symbol
       if task.when_condition
         begin
           when_result = evaluate_include_when_items(task, vars_context, host)
@@ -2854,6 +2897,14 @@ module Krikri
 
         unless when_result
           connection_host = host.name
+          # Real labels the skipped item by resolving the loop variable's
+          # name as a fresh template, so an item that IS a deprecated
+          # fact's value trips that block again right before its skip line
+          # - it prints the when: clause's block first, then this one
+          # (live-verified vs 2.21.6; issue #1417, dzangolab.gitlab_runner's
+          # looped skipped `include_tasks:`). A RUNNING include never shows
+          # it: real's "included:" path drops the result's warnings.
+          emit_loop_item_label_fact_deprecation(task) if item_fact_read
           shown = skipped_loop_item_censored_label(task, vars_context) || item_label
           suffix = shown ? " => (item=#{shown}) " : ""
           # A looped include's per-item skip lines drop under oneline (the
