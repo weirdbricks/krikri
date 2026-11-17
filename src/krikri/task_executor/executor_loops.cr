@@ -3312,6 +3312,13 @@ module Krikri
       # last attempt returns, so the lines precede THAT item's status line
       # - not every item's attempt lines ahead of every item's result.
       retry_lines = [] of String
+      # Ansible's v2_runner_retry stamps the line with
+      # CallbackBase.host_label, which reads the task's delegate_to:
+      # keyword - a delegated retry line reads
+      # "FAILED - RETRYING: [host -> delegate]:" (live-verified vs 2.21.6,
+      # issue #1450).
+      delegate_target = delegate_display_target(task, host, vars_context)
+      retry_host_label = delegate_target ? "#{host.name} -> #{delegate_target}" : host.name
 
       while attempt < total_runs
         attempt += 1
@@ -3479,7 +3486,7 @@ module Krikri
         # remaining count (3, 2, 1) - live-verified against both releases.
         # get_name() prefixes the role name, so this line carries the same
         # "<role> : " prefix the TASK banner does (issue #959).
-        retry_line = "FAILED - RETRYING: [#{host.name}]: #{task_role_prefix(task)}#{render_task_name_for_display(task, host)} (#{total_runs - attempt - 1} retries left)."
+        retry_line = "FAILED - RETRYING: [#{retry_host_label}]: #{task_role_prefix(task)}#{render_task_name_for_display(task, host)} (#{total_runs - attempt - 1} retries left)."
         if defer_loop_stats
           retry_lines << retry_line
         else
