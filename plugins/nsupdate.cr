@@ -209,10 +209,15 @@ module Krikri
     private def unresolvable_server(server : String, failure : Socket::Addrinfo::Error?) : PluginResult
       code = failure.try(&.os_error).as?(Errno).try(&.value)
       # EAI_NONAME is what dnspython's suppressed NXDOMAIN/NoAnswer leaves
-      # behind - no address at all. Any other resolver failure (a dead
-      # nameserver, no resolver configured) is an error the module surfaces
-      # on its own "DNS resolution error" line.
-      if code.nil? || code == LibC::EAI_NONAME
+      # behind - no address at all. EAI_NODATA ("No address associated with
+      # hostname", what glibc returns for an EMPTY name and for a host that
+      # exists without records of that type) is the same suppressed-NoAnswer
+      # shape, live-verified on this host (dnspython raises NoAnswer for
+      # `resolve('')`, so the module reports its own unresolvable failure).
+      # Any other resolver failure (a dead nameserver, no resolver
+      # configured) is an error the module surfaces on its own "DNS
+      # resolution error" line.
+      if code.nil? || code == LibC::EAI_NONAME || code == LibC::EAI_NODATA
         return PluginResult.new(changed: false, failed: true,
           msg: "Failed to resolve server '#{server}' to an IP address")
       end

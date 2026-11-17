@@ -1267,7 +1267,12 @@ module Krikri
       # [host]`), so the diff prints here, ahead of every status branch
       # below; the trailing blank line inside display_diff separates it
       # from the status line.
-      if diff_mode && result["diff"]?
+      # The callback's v2_on_file_diff only renders a result that is
+      # actually CHANGED (`result.result.get('changed', False)`), so a
+      # module that carries a diff payload on an idempotent run - file:
+      # state=touch always seeds one, even when nothing was applied -
+      # prints an `ok:` line and no diff block (live-verified vs 2.21.6).
+      if diff_mode && changed && result["diff"]?
         display_diff(result["diff"])
       end
 
