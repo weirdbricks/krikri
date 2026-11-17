@@ -1842,6 +1842,26 @@ module Krikri
             ErrorBlock::Node.new("Action failed.").with_chain(ErrorBlock::DIRECT_CAUSE, true, cause)))
         return
       end
+      # debug:'s `var:` expression failures carry their own cause origin -
+      # the `var:` VALUE token - because ansible's action plugin raises the
+      # evaluation error with that tagged origin (live-verified vs 2.21.6).
+      # When the executor's var-definition scan reproduced the inner failure
+      # from a variable's own templated value, real chains one segment
+      # deeper to that DEFINITION and shortens this one to the bare
+      # "Error while resolving `var` expression." stanza.
+      if msg.starts_with?(DEBUG_VAR_EXPRESSION_PREFIX) &&
+         source_task.module_name.try { |name| name.split(".").last == "debug" }
+        inner = result["_ansible_var_chain_inner"]?.try(&.as_s?)
+        cause = ErrorBlock::Node.new(inner ? "Error while resolving `var` expression." : msg,
+          source_context: task_param_value_origin(source_task, "var"))
+        if inner
+          cause = cause.with_chain(ErrorBlock::DIRECT_CAUSE, true,
+            ErrorBlock::Node.new(inner, source_context: result["_ansible_var_chain_origin"]?.try(&.as_s?)))
+        end
+        ErrorBlock.emit(ErrorBlock::Node.new("Task failed.", source_context: origin)
+          .with_chain(ErrorBlock::DIRECT_CAUSE, true, cause))
+        return
+      end
       # A plugin flagging _ansible_action_level failed in Ansible's controller-
       # side ACTION plugin (a bare AnsibleActionFail: no "Module failed."
       # middle segment), e.g. assemble's remote_src: false isdir() check.

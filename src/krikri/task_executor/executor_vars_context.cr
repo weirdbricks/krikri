@@ -5645,6 +5645,30 @@ module Krikri
         attribute_miss_value_origin(task, detail, action_result.error_origin?, host)
     end
 
+    # debug:'s `var:` expression failures are ACTION-level exceptions (see
+    # DEBUG_VAR_EXPRESSION_PREFIX): real 2.21.6 dumps the fatal line msg-only
+    # while the REGISTERED result keeps changed: false, and when the failing
+    # value is itself an unrendered variable whose DEFINITION reproduces the
+    # inner failure (a `{% do %}` tag in its text, an undefined name it
+    # reaches) the [ERROR] chain gains one more segment pointing at that
+    # definition - live-verified on both shapes, and absent for a failure
+    # with no template origin of its own (a missing lookup plugin only fails
+    # when rendered, so the chain stops at the `var:` value).
+    private def shape_debug_var_expression_failure(task : Task, result : JSON::Any) : Nil
+      hash = result.as_h?
+      return unless hash
+      detail = hash["_ansible_error_detail"]?.try(&.as_s?)
+      return unless detail && detail.starts_with?(DEBUG_VAR_EXPRESSION_PREFIX)
+      return unless task.module_name.try { |name| name.split(".").last == "debug" }
+      hash["_ansible_task_error_msg_only"] = JSON::Any.new(true)
+      hash["_ansible_register_changed"] = JSON::Any.new(false)
+      inner = detail[DEBUG_VAR_EXPRESSION_PREFIX.size..]
+      origin = undef_chain_origin_block(task, inner)
+      return unless origin
+      hash["_ansible_var_chain_inner"] = JSON::Any.new(inner)
+      hash["_ansible_var_chain_origin"] = JSON::Any.new(origin)
+    end
+
     # The template action's attribute-miss crash ("object of type 'dict'
     # has no attribute 'iteritems'", issue #451 chris1984.motd): the
     # failing expression lived in a VARIABLE's own template value - the
