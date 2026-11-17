@@ -31,8 +31,11 @@ module Krikri
   #   supports).
   # - gpgcheck / enabled / countme / enablegroups / keepalive /
   #   module_hotfixes / protect / repo_gpgcheck / s3_enabled /
-  #   skip_if_unavailable / ssl_check_cert_permissions / sslverify:
-  #   booleans, rendered as 1/0
+  #   skip_if_unavailable / ssl_check_cert_permissions / sslverify /
+  #   async: booleans, rendered as 1/0. `async` is deprecated (removed in
+  #   ansible-core 2.22) but still written to the file while it exists
+  #   there - real 2.21.6 output for `async: true` starts the section with
+  #   `async = 1`, and `async: false` writes `async = 0`.
   # - gpgkey (see baseurl above) / exclude / includepkgs: lists,
   #   `exclude`/`includepkgs` space-joined on one line
   # - priority, bandwidth, cost, deltarpm_metadata_percentage,
@@ -89,9 +92,7 @@ module Krikri
   # other's section and both re-reporting changed: true on every rerun
   # forever.
   #
-  # Not implemented: `async` (a legacy, Python-reserved-word-workaround
-  # param, essentially unused in real playbooks - and removed from
-  # Ansible's own argument_spec entirely on devel), SELinux options,
+  # Not implemented: SELinux options,
   # `attributes`, `unsafe_writes`.
   # `no_log` redaction of `password:`/`proxy_password:` was investigated
   # (0.9.376) and found to be a non-issue as things stand: no plugin or
@@ -134,7 +135,7 @@ module Krikri
     end
 
     BOOL_KEYS = %w[
-      enabled gpgcheck countme enablegroups keepalive module_hotfixes protect
+      async enabled gpgcheck countme enablegroups keepalive module_hotfixes protect
       repo_gpgcheck s3_enabled skip_if_unavailable ssl_check_cert_permissions sslverify
     ]
     # Space-joined on one line (exclude/includepkgs); baseurl/gpgkey are
