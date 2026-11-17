@@ -1213,9 +1213,12 @@ module Krikri
   # The strategies this engine implements. host_pinned is accepted and
   # behaves as free: its only difference is worker affinity, which this
   # engine has no equivalent of. `debug` is Ansible's interactive
-  # debugger strategy and is deliberately NOT accepted here - see
-  # KNOWN_MISSING.md's note on `debugger:`.
-  VALID_STRATEGIES = ["linear", "free", "host_pinned"]
+  # debugger strategy - linear plus a stdin prompt when a task fails -
+  # so it runs as linear here; a play whose tasks all succeed prints the
+  # same output either way (live-verified vs ansible-core 2.21.6, issue
+  # #1439). Anything else is a third-party strategy plugin, resolved by
+  # PlaybookParser.strategy_plugin_source and also run as linear.
+  VALID_STRATEGIES = ["linear", "free", "host_pinned", "debug"]
 
   class Play
     property name : String
@@ -2881,12 +2884,19 @@ module Krikri
         path = safe_yaml_to_string(fact_path_yaml).strip
         play.fact_path = path unless path.empty?
       end
-      # Ansible REFUSES an unknown strategy - "[ERROR]: Invalid play
-      # strategy specified: nonsense", exit 1 - rather than falling back
-      # to linear (verified against ansible-core 2.19.4).
+      # Ansible REFUSES a strategy it cannot resolve - "[ERROR]: Invalid
+      # play strategy specified: nonsense", exit 1 - rather than falling
+      # back to linear (verified against ansible-core 2.19.4). A
+      # third-party strategy plugin IS resolvable there, and 2.21.6
+      # deprecates it with two stderr lines before the PLAY banner
+      # (issue #1439).
       if strategy = play.strategy
         unless strategy.empty? || VALID_STRATEGIES.includes?(strategy)
-          raise InvalidStrategyError.new("Invalid play strategy specified: #{strategy}")
+          if strategy_plugin_source(strategy, playbook_dir)
+            warn_third_party_strategy_deprecation
+          else
+            raise InvalidStrategyError.new("Invalid play strategy specified: #{strategy}")
+          end
         end
       end
       play.module_defaults = parse_module_defaults(yaml["module_defaults"]?)
@@ -5642,6 +5652,42 @@ module Krikri
       warn_reserved_toplevel_vars(path, keys)
     rescue
       nil
+    end
+
+    # A third-party strategy plugin named *name*, when one of Ansible's
+    # loader paths carries it: the playbook-adjacent `strategy_plugins/`
+    # directory comes first, then ANSIBLE_STRATEGY_PLUGINS (which
+    # REPLACES the configured defaults) or ANSIBLE_HOME's and the
+    # system-wide `plugins/strategy/`. A Python strategy plugin is
+    # control-plane code driving Ansible's own iterator, which this
+    # engine cannot execute, so such a play runs as linear rather than
+    # being refused outright - the playbook-adjacent `plugins/strategy/`
+    # directory is NOT a loader path (live-verified path order vs
+    # ansible-core 2.21.6, issue #1439).
+    private def self.strategy_plugin_source(name : String, playbook_dir : String) : String?
+      roots = [File.join(playbook_dir, "strategy_plugins")]
+      roots.concat(PythonFilterRunner.configured_roots("strategy", "ANSIBLE_STRATEGY_PLUGINS"))
+      roots.each do |root|
+        candidate = File.join(root, "#{name}.py")
+        return candidate if File.file?(candidate)
+      end
+      nil
+    end
+
+    # Ansible's loader deprecates any strategy whose resolved source is
+    # not ansible.builtin: Display._deprecated's one-time "can be
+    # disabled" hint first, then the warning, both on stderr before the
+    # PLAY banner (live-verified vs ansible-core 2.21.6, issue #1439).
+    STRATEGY_PLUGIN_DEPRECATION_MUTEX = Mutex.new
+    @@strategy_plugin_deprecation_printed = false
+
+    private def self.warn_third_party_strategy_deprecation : Nil
+      STRATEGY_PLUGIN_DEPRECATION_MUTEX.synchronize do
+        next if @@strategy_plugin_deprecation_printed
+        @@strategy_plugin_deprecation_printed = true
+        DeprecationHint.print_hint_once
+        STDERR.puts "[DEPRECATION WARNING]: Use of strategy plugins not included in ansible.builtin are deprecated and do not carry any backwards compatibility guarantees. No alternative for third party strategy plugins is currently planned. This feature will be removed from ansible-core in a future release."
+      end
     end
 
     # Same ansible-core 2.19 SourceContext format as

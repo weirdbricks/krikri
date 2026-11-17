@@ -198,6 +198,23 @@ single aggregate (the per-iteration results never reach this engine as one aggre
 Decided 2026-10-10.
 
 
+### Third-party strategy plugins are accepted but always run as linear
+
+`strategy:` resolves `linear`/`free`/`host_pinned`/`debug`, and for any other name looks for a
+`<name>.py` on Ansible's strategy loader paths: the playbook-adjacent `strategy_plugins/` first, then
+`ANSIBLE_STRATEGY_PLUGINS` (replacing the defaults) or the configured `plugins/strategy/` roots. A
+plugin found there is accepted and the play runs as linear, with Ansible's two-line deprecation
+warning for a non-`ansible.builtin` strategy reproduced. A fully qualified collection strategy name
+(`namespace.collection.name`) is not resolved and still errors. A strategy plugin is Python
+control-plane code driving Ansible's own iterator, which this engine has no seam for; refusing the
+play outright (krikri's behavior before issue #1439) makes such a play unrunnable, and a linear run
+is the closest available behavior. `debug` is Ansible's linear strategy plus an interactive stdin
+prompt on a failed task: the linear half runs, the prompt does not. A name on none of those paths
+still fails with Ansible's own `[ERROR]: Invalid play strategy specified: <name>` (rc 1), except
+that real also prints the deprecation warning and the PLAY banner before that error while krikri
+refuses at parse time. Decided 2026-11-16.
+
+
 ### `ansible.cfg` is located but never parsed: settings come from `ANSIBLE_*` vars and play vars
 
 - krikri finds `ansible.cfg` the way Ansible does (its path shows on the `-v` config line and in the
