@@ -80,6 +80,13 @@ describe "serial:" do
     run_serial(%("50%")).must_equal(%w[A-h1 A-h2 B-h1 B-h2 A-h3 A-h4 B-h3 B-h4])
   end
 
+  # pct_to_int strips EVERY '%' before int()ing the rest, not just the
+  # trailing one: "50%%" is int("50"), i.e. 50% of the hosts
+  # (live-verified vs 2.21.6).
+  it "strips every percent sign like ansible" do
+    run_serial(%("50%%")).must_equal(%w[A-h1 A-h2 B-h1 B-h2 A-h3 A-h4 B-h3 B-h4])
+  end
+
   # A list sizes successive batches, and the LAST entry sizes every
   # remaining batch - so [1, 2] over four hosts is 1, then 2, then the
   # one host left.
