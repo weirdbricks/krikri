@@ -96,9 +96,17 @@ module Krikri
         # already registered by RoleLoader, so vars without the magic
         # var still scan those.
         Krikri::PythonFilterRunner.scan_for_filter_use(cached_template(text), @vars["playbook_dir"]?.try(&.as_s?))
-        TimingProfile.measure("controller.jinja", "controller.jinja") do
+        rendered = TimingProfile.measure("controller.jinja", "controller.jinja") do
           render_measured!(text)
         end
+        # A template file (or a block tag) rendering a container that
+        # carries the deprecated `skipped_reason` leaf serializes that
+        # leaf into its output, which is what reveals the tag in real -
+        # see ResultDisplay.emit_skipped_reason_deprecation.
+        if Krikri::ResultDisplay.deprecated_skipped_reason_rendered?(rendered)
+          Krikri::ResultDisplay.emit_skipped_reason_deprecation(VarSubstitutor.current_deprecation_origin("skipped_reason"))
+        end
+        rendered
       end
 
       private def render_measured!(text : String) : String
@@ -395,7 +403,14 @@ module Krikri
         )
         return nil if value.raw.is_a?(KrikriJinja::Undefined)
 
-        JinjaRenderer.elide_omitted(KrikriJinja.to_json_any(value))
+        result = JinjaRenderer.elide_omitted(KrikriJinja.to_json_any(value))
+        # A structured result that IS a result carrying the deprecated
+        # `skipped_reason` leaf is the whole-value read real warns for -
+        # see ResultDisplay.emit_skipped_reason_deprecation.
+        if Krikri::ResultDisplay.deprecated_skipped_reason_read?(result)
+          Krikri::ResultDisplay.emit_skipped_reason_deprecation(VarSubstitutor.current_deprecation_origin("skipped_reason"))
+        end
+        result
       end
 
       # Ansible's `omit` inside a CONTAINER removes that entry
@@ -729,7 +744,14 @@ module Krikri
           host_context: JinjaHostContext.new(vars)
         )
         return nil if value.raw.is_a?(KrikriJinja::Undefined)
-        KrikriJinja.to_json_any(value)
+        result = KrikriJinja.to_json_any(value)
+        # A structured result that IS a result carrying the deprecated
+        # `skipped_reason` leaf is the whole-value read real warns for -
+        # see ResultDisplay.emit_skipped_reason_deprecation.
+        if Krikri::ResultDisplay.deprecated_skipped_reason_read?(result)
+          Krikri::ResultDisplay.emit_skipped_reason_deprecation(VarSubstitutor.current_deprecation_origin("skipped_reason"))
+        end
+        result
       end
 
       # Real bug found benchmarking geerlingguy.postgresql: its own

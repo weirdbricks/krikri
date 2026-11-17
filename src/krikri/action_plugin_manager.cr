@@ -1,6 +1,7 @@
 require "json"
 require "./needle_lookup"
 require "./module_utils_deprecations"
+require "./variable_substitutor"
 require "./base_action_plugin"
 require "./template_action_plugin"
 require "./action_plugins/debug_action_plugin"
@@ -108,6 +109,8 @@ module Krikri
       check_mode : Bool = false,
       deadline : Time::Instant? = nil,
       action_name : String? = nil,
+      task_source_file : String? = nil,
+      task_source_line : Int32 = 0,
     ) : ActionResult
       # Get action plugin class
       plugin_class = ACTION_PLUGINS[module_name]?
@@ -174,10 +177,30 @@ module Krikri
         return ActionResult.pass_through
       end
 
-      # Execute action on controller
-      result = action_plugin.execute
+      # Execute action on controller. debug:'s `var:` is resolved inside
+      # the plugin (real's action/debug.py evaluates it through the
+      # Templar), so the param's own source position has to be registered
+      # here for a deprecation that read trips to carry the Origin real
+      # prints - the task-param substitution sites that normally provide
+      # it have already been popped by this point.
+      result = if debug_var_param?(module_name, params) && task_source_file
+                 VarSubstitutor.set_current_task_param(task_source_file, task_source_line, "var")
+                 begin
+                   action_plugin.execute
+                 ensure
+                   VarSubstitutor.pop_current_task_param
+                 end
+               else
+                 action_plugin.execute
+               end
       attach_module_utils_import_deprecations(module_name, result)
       result
+    end
+
+    private def self.debug_var_param?(module_name : String, params : Hash(String, String)) : Bool
+      return false unless module_name == "ansible.builtin.debug" || module_name == "debug"
+      var = params["var"]?
+      !var.nil? && !var.empty?
     end
 
     # A controller-side action plugin standing in for a module real ansible

@@ -353,6 +353,33 @@ module Krikri
         VarSubstitutor.emit_fact_deprecation(VarSubstitutor.fact_read_origin(name))
       end
 
+      # A dotted/bracket access that lands on the deprecated leaf itself
+      # is a read of the tagged value, so real warns - while every other
+      # leaf of the same container stays silent (live-verified vs 2.21.6:
+      # `{{ r.skipped_reason }}` warns, `{{ r.skip_reason }}`,
+      # `{{ r.changed }}` and `{{ r.results }}` do not).
+      private def emit_skipped_reason_leaf_read(container : JSON::Any, part : String) : Nil
+        return unless part == "skipped_reason"
+        return unless Krikri::ResultDisplay.deprecated_skipped_reason_result?(container)
+        Krikri::ResultDisplay.emit_skipped_reason_deprecation(VarSubstitutor.current_deprecation_origin("skipped_reason"))
+      end
+
+      # What a dict subscript read owes ansible besides the value: a MISSING
+      # key trips the same strict-undefined signal the dotted form raises
+      # (real's identical "object of type 'dict' has no attribute ..."
+      # message), a fetched STRING key whose value is the deprecated
+      # skipped_reason leaf warns, and a fetched hostvars entry re-anchors
+      # the Origin to that host.
+      private def note_dict_read(current : JSON::Any, key : String | Int32 | Float64, fetched : JSON::Any?) : Nil
+        unless fetched
+          KrikriJinja.note_miss
+          return
+        end
+        return unless key.is_a?(String)
+        emit_skipped_reason_leaf_read(current, key)
+        enter_hostvars_origin(current, key)
+      end
+
       # Marks *host* as the origin host when *current* IS the hostvars
       # magic container and *key* fetched one of its entries - every
       # later fetch inside that entry (and every internal re-render of a
@@ -664,6 +691,7 @@ module Krikri
           # consumed or tolerated.
           KrikriJinja.note_miss unless fetched
           return nil unless fetched
+          emit_skipped_reason_leaf_read(current, part)
           enter_hostvars_origin(current, part)
           fetched
         when Array
@@ -1275,11 +1303,7 @@ module Krikri
           idx ? current[idx]? : nil
         when Hash
           fetched = current[key.to_s]?
-          # Missing dict key via bracket subscript - same strict-undefined
-          # miss signal as the dotted form (real raises the identical
-          # "object of type 'dict' has no attribute ..." message).
-          KrikriJinja.note_miss unless fetched
-          enter_hostvars_origin(current, key.to_s) if fetched && key.is_a?(String)
+          note_dict_read(current, key, fetched)
           fetched
         when String
           # Jinja2/Python character indexing (`elasticsearch_version[0]`

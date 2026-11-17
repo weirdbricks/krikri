@@ -3,6 +3,7 @@ require "../unsafe_values"
 require "../base_action_plugin"
 require "../param_sentinels"
 require "../variable_substitutor"
+require "../task_executor/result_display"
 require "../variable_substitutor/variable_lookup"
 
 module Krikri
@@ -196,6 +197,16 @@ module Krikri
         return ActionResult.failure("Error while resolving `var` expression: #{ex.message}")
       rescue ex
         return ActionResult.failure(ex.message || "templating var '#{var_name}' failed")
+      end
+
+      # Real debug's Templar walks the looked-up value, revealing the
+      # deprecated `skipped_reason` leaf an empty loop's aggregate carries
+      # - the Origin is the `var:` argument's own value position (the
+      # action plugin manager registers it around this dispatch), the
+      # same one real's `evaluate_expression(raw_var_arg)` reports. See
+      # ResultDisplay.emit_skipped_reason_deprecation.
+      if Krikri::ResultDisplay.deprecated_skipped_reason_read?(rendered)
+        Krikri::ResultDisplay.emit_skipped_reason_deprecation(VarSubstitutor.current_deprecation_origin("skipped_reason"))
       end
 
       # Real debug renders the resolved value as native JSON (a bool

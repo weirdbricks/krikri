@@ -463,6 +463,74 @@ module Krikri
       emit_or_defer_deprecation(@@play_hosts_deprecation_origins, origin, lines, entry)
     end
 
+    # ansible-core 2.21 tags the `skipped_reason` a zero-item loop's
+    # aggregate carries with deprecate_value (task_executor.py's
+    # set_skipped('No items in the list', include_skipped_reason=True)),
+    # so every templating operation that CONSUMES that value prints this
+    # block, deduplicated per Origin exactly like the play_hosts read
+    # above.
+    # The tag rides the leaf, so it fires wherever the value survives - a
+    # set_fact copy, a combine()d copy, a whole-container render, the
+    # leaf itself - while the same container's other leaves stay silent
+    # (live-verified against 2.21.6: `{{ r }}` and `{{ r.skipped_reason
+    # }}` warn, `{{ r.results }}`, `{{ r.changed }}` and
+    # `{{ r.skip_reason }}` do not). krikri has no tag to carry through
+    # JSON, so the executor records the reason text the one path that
+    # tags anything emits, and the value-shape checks below treat a
+    # result carrying that exact text as deprecated.
+    @@deprecated_skipped_reasons = Set(String).new
+    @@skipped_reason_deprecation_origins = Set(String).new
+
+    def self.mark_deprecated_skipped_reason(reason : String) : Nil
+      @@deprecated_skipped_reasons.add(reason)
+    end
+
+    # Whether *value* is a result whose `skipped_reason` carries a
+    # deprecated reason - the whole-value read real warns for.
+    def self.deprecated_skipped_reason_result?(value : JSON::Any) : Bool
+      return false if @@deprecated_skipped_reasons.empty?
+      hash = value.as_h? || return false
+      reason = hash["skipped_reason"]?.try(&.as_s?) || return false
+      @@deprecated_skipped_reasons.includes?(reason)
+    end
+
+    # Whether rendered TEXT carries a deprecated `skipped_reason`
+    # key/value pair - a container stringified by a template operation
+    # (Python repr in mixed text, JSON through to_json), which real
+    # warns for because serializing the container reveals the tagged
+    # leaf.
+    def self.deprecated_skipped_reason_rendered?(text : String) : Bool
+      return false if @@deprecated_skipped_reasons.empty?
+      return false unless text.includes?("skipped_reason")
+      @@deprecated_skipped_reasons.any? do |reason|
+        text.includes?("'skipped_reason': '#{reason}'") || text.includes?(%("skipped_reason": "#{reason}"))
+      end
+    end
+
+    # Whether *value* - a templating operation's result - carries the
+    # deprecated `skipped_reason` leaf: either the result itself (`{{ r }}`
+    # evaluated natively, `debug: var=r`) or text a container was
+    # serialized into (`{{ r | to_json }}`).
+    def self.deprecated_skipped_reason_read?(value : JSON::Any) : Bool
+      return true if deprecated_skipped_reason_result?(value)
+      text = value.as_s? || return false
+      deprecated_skipped_reason_rendered?(text)
+    end
+
+    def self.emit_skipped_reason_deprecation(origin : String?) : Nil
+      return unless origin
+      lines = [
+        "[DEPRECATION WARNING]: The 'skipped_reason' value is deprecated. This feature will be removed from ansible-core version 2.24.".colorize(:light_magenta).to_s,
+        origin.colorize(:light_magenta).to_s,
+        "",
+        "Use 'skip_reason' instead.".colorize(:light_magenta).to_s,
+        "",
+      ]
+      entry = ModuleUtilsDeprecations.deprecation_result_entry("The 'skipped_reason' value is deprecated.", "2.24")
+      return if hold_task_deprecation(@@skipped_reason_deprecation_origins, origin, lines, entry)
+      emit_or_defer_deprecation(@@skipped_reason_deprecation_origins, origin, lines, entry)
+    end
+
     # The INJECT_FACTS_AS_VARS deprecation (ansible-core 2.21): reading a
     # gathered fact's top-level `ansible_`-prefixed spelling from any
     # template prints this block, deduplicated per distinct Origin per run
@@ -2396,8 +2464,18 @@ module Krikri
       want = text ? strip_yaml_scalar_quotes(text.strip) : nil
       fallback = nil
       block_hit = nil
+      # A param belongs to THIS task's own mapping. Without the stop, a
+      # free-form directive (`debug: var=x`) finds no `var:` on its own
+      # lines and picks a LATER task's keyed `var:` instead, reporting
+      # that task's Origin (issue #1424: stancel.restore_db_and_files
+      # mixes both spellings).
+      task_indent = source_line > 0 && source_line <= lines.size ? lines[source_line - 1].size - lines[source_line - 1].lstrip.size : 0
       ((source_line - 1)...lines.size).each do |idx|
         line = lines[idx]
+        if idx > source_line - 1
+          indent = line.size - line.lstrip.size
+          break if indent <= task_indent && line.lstrip.starts_with?("- ")
+        end
         at = line.index(needle)
         next unless at
         prefix = line[0...at]

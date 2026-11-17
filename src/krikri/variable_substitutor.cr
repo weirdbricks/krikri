@@ -3606,6 +3606,13 @@ module Krikri
           end
         raise UndecryptableVaultError.new("Attempt to use undecryptable variable: #{detail}")
       end
+      # A templated param whose render serialized a container carrying
+      # the deprecated `skipped_reason` leaf (the repr of `{{ r }}` in
+      # mixed text, `{{ r | to_json }}`) is a read that reveals the tag in
+      # real - see ResultDisplay.emit_skipped_reason_deprecation.
+      if Krikri::ResultDisplay.deprecated_skipped_reason_rendered?(rendered)
+        Krikri::ResultDisplay.emit_skipped_reason_deprecation(self.class.current_deprecation_origin("skipped_reason"))
+      end
       rendered
     end
 
