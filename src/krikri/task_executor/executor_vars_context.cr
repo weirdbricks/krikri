@@ -4823,6 +4823,19 @@ module Krikri
     # direct, non-chained undefined) keeps the three-stanza block, never
     # a mislabeled Origin.
     private def chain_value_failure_stanza(task : Task, msg : String, host : Host, vars_context : Hash(String, JSON::Any)? = nil) : String?
+      # An unresolvable filter/test NAME in the failing value's own variable
+      # definition is a compile failure of that definition, which
+      # ansible-core chains exactly like an undefined name: the innermost
+      # stanza keeps the message and points its Origin at the definition's
+      # value token (live-verified vs 2.21.6, `v: "{{ 'x' | nosuchfilter }}"`
+      # read through a debug msg:).
+      if (fm = msg.match(/\AError while resolving value for '([^']+)': (Syntax error in template: (?:No filter|No test) named '[^']+'\.)\z/))
+        seed = task.params[fm[1]]?
+        origin = value_failure_var_origin(task, fm[2], reachable_from: seed.is_a?(String) ? seed : nil)
+        return nil unless origin
+        return "#{fm[2]}\n" +
+          origin_context_block(origin.path, File.read_lines(origin.path), origin.line, origin.column)
+      end
       m = msg.match(/\A(Error while resolving value for '([^']+)': )'([A-Za-z_][A-Za-z0-9_]*)' is undefined\z/)
       unless m
         # Same fourth stanza for an empty-key `groups[...]` miss inside the
@@ -5362,6 +5375,18 @@ module Krikri
           rescue e : UndefinedVariableError
             next unless e.message == message
             matches << origin
+          rescue e : VariableSubstitutor::FilterEngine::UnknownFilterError
+            # A filter NAME the engine cannot resolve is a Jinja compile
+            # failure, which every caller words with the "Syntax error in
+            # template: " prefix; a filter that WAS found and raised
+            # (FilterFailureError) is a runtime failure no definition scan
+            # should claim.
+            next if e.is_a?(VariableSubstitutor::FilterEngine::FilterFailureError)
+            next unless "Syntax error in template: #{e.message}" == message
+            matches << origin
+          rescue e : VariableSubstitutor::UnknownTestError
+            next unless "Syntax error in template: #{e.message}" == message
+            matches << origin
           rescue
             # A `{%`-bearing value can fail to render in ways no
             # undefined-name report describes (a template syntax error);
@@ -5553,6 +5578,11 @@ module Krikri
         return nil unless origin
         return ErrorBlock.origin_context(origin.path, origin.line, origin.column)
       end
+      if m = bare_msg.match(/\ASyntax error in template: No test named '(.+)'\.\z/)
+        origin = unknown_test_var_origin(task, m[1], template_path)
+        return nil unless origin
+        return ErrorBlock.origin_context(origin.path, origin.line, origin.column)
+      end
       m = bare_msg.match(/\A'([A-Za-z_][A-Za-z0-9_]*)' is undefined\z/)
       return nil unless m
       origin = undef_chain_var_origin(task, m[1])
@@ -5619,14 +5649,25 @@ module Krikri
     # source mentions the earliest first-occurrence wins, and only when the
     # template names none of them does a sole match stand.
     private def unknown_filter_var_origin(task : Task, filter_name : String, template_path : String? = nil) : FileVarOrigin?
+      unknown_name_var_origin(task, Regex.new("\\|\\s*#{Regex.escape(filter_name)}(?![A-Za-z0-9_.])"), template_path)
+    end
+
+    # Same scan for a test NAME (`x is bogus_test`, `x is not bogus_test`):
+    # Jinja resolves test names at compile time just like filter names, so
+    # the chain real prints has the identical shape (live-verified vs
+    # 2.21.6, the caret at the defining value token).
+    private def unknown_test_var_origin(task : Task, test_name : String, template_path : String? = nil) : FileVarOrigin?
+      unknown_name_var_origin(task, Regex.new("\\bis\\s+(?:not\\s+)?#{Regex.escape(test_name)}(?![A-Za-z0-9_.])"), template_path)
+    end
+
+    private def unknown_name_var_origin(task : Task, use_pattern : Regex, template_path : String?) : FileVarOrigin?
       merged, origins = merged_role_var_layers(task)
-      filter_use = Regex.new("\\|\\s*#{Regex.escape(filter_name)}(?![A-Za-z0-9_.])")
       source = template_path && File.file?(template_path) ? File.read(template_path) : nil
       matches = [] of FileVarOrigin
       named = [] of {FileVarOrigin, Int32}
       merged.each do |key, value|
         raw = value.raw
-        next unless raw.is_a?(String) && raw.matches?(filter_use)
+        next unless raw.is_a?(String) && raw.matches?(use_pattern)
         origin = origins[key]?
         next unless origin.is_a?(FileVarOrigin) && origin.column > 0 && File.file?(origin.path)
         matches << origin
