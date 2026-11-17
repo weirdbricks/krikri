@@ -108,7 +108,12 @@ module Krikri
       check_mode = true?(@params["_ansible_check_mode"]?)
       diff_mode = true?(@params["_ansible_diff"]?)
 
-      diff = diff_mode ? generate_unified_diff(existing || "", content, dest, dest) : nil
+      # assemble.py has no _diff support at all - it never sets a diff key,
+      # so the module-side path (remote_src absent or truthy) prints no
+      # diff even under --diff (live-verified vs 2.21.6, issue #1452).
+      # Only the action plugin's controller-side branch (remote_src falsy)
+      # builds one, via _get_diff_data.
+      diff = diff_mode && remote_src_delegated? ? generate_unified_diff(existing || "", content, dest, dest) : nil
       backup_file = ""
 
       if changed
