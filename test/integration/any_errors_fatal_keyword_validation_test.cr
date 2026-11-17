@@ -138,4 +138,43 @@ describe "any_errors_fatal: keyword post-validation" do
   ensure
     File.delete(playbook) if playbook && File.exists?(playbook)
   end
+
+  it "fails an imported role's first task on an unconvertible inherited value" do
+    dir = File.tempname("any-errors-fatal-import-role")
+    Dir.mkdir_p(File.join(dir, "roles", "r1", "tasks"))
+    File.write(File.join(dir, "roles", "r1", "tasks", "main.yml"), <<-YAML)
+      - name: role task
+        ansible.builtin.debug:
+          msg: ROLE-TASK-RAN
+      YAML
+    playbook = File.join(dir, "play.yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        any_errors_fatal: kpg-maybe
+        tasks:
+          - name: Static import
+            ansible.builtin.import_role:
+              name: r1
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-c", "local", "-i", INVENTORY, playbook], output: output, error: output)
+
+    output_text = output.to_s
+    # A role's tasks are loaded at run time, so the play-level value must
+    # reach them through the import statement (real inherits it along the
+    # parent chain).
+    status.success?.must_equal(false, output_text)
+    output_text.must_include("TASK [r1 : role task]")
+    output_text.includes?("Error processing keyword 'any_errors_fatal': The value 'kpg-maybe' could not be converted to 'bool'.").must_equal(true, output_text)
+    output_text.wont_include(%("msg": "ROLE-TASK-RAN"))
+    # The role's own file holds no such keyword: both lower links point at
+    # the play's value token.
+    output_text.must_include("Origin: #{File.expand_path(playbook)}:4:21")
+    output_text.must_match(/failed=1\b/)
+  ensure
+    FileUtils.rm_rf(dir) if dir && Dir.exists?(dir)
+  end
 end

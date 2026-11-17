@@ -2630,11 +2630,18 @@ module Krikri
     # evaluator limitation into a conversion error real reports
     # differently.
     private def boolean_keyword_invalid_error(task : Task, vars_context : Hash(String, JSON::Any)) : KeywordBooleanError?
-      if raw = task.diff_mode_invalid
-        return KeywordBooleanError.new("diff", raw)
-      end
+      # A task with several unconvertible keywords reports the FIRST one
+      # real validates: check_mode:/diff: run in PlayContext.post_validate
+      # (check_mode before diff - its fattribute order), ahead of the
+      # task's own post_validate, where run_once: sits before both
+      # (live-verified vs 2.21.6: `check_mode: banana` plus
+      # `run_once: kpg-maybe` reports check_mode, and `check_mode` beats
+      # `diff` for literal and templated values alike, issue #1467).
       if raw = task.check_mode_invalid
         return KeywordBooleanError.new("check_mode", raw)
+      end
+      if raw = task.diff_mode_invalid
+        return KeywordBooleanError.new("diff", raw)
       end
       # run_once: is post-validated the same way, whether the task wrote
       # the value or inherited it from the play (issue #1444).
@@ -2642,14 +2649,17 @@ module Krikri
         return KeywordBooleanError.new("run_once", raw)
       end
       # any_errors_fatal: too - play-level values reach every task AND
-      # handler, and each one fails as it runs (issue #1465).
+      # handler, and each one fails as it runs (issue #1465). It sits after
+      # run_once: in real's fattribute order (live-verified vs 2.21.6:
+      # `any_errors_fatal: kpg-maybe` beside an inherited invalid
+      # `run_once:` reports run_once).
       if raw = task.any_errors_fatal_invalid
         return KeywordBooleanError.new("any_errors_fatal", raw)
       end
-      if (expr = task.diff_mode_expr) && (error = templated_bool_keyword_error("diff", expr, vars_context))
+      if (expr = task.check_mode_expr) && (error = templated_bool_keyword_error("check_mode", expr, vars_context))
         return error
       end
-      if (expr = task.check_mode_expr) && (error = templated_bool_keyword_error("check_mode", expr, vars_context))
+      if (expr = task.diff_mode_expr) && (error = templated_bool_keyword_error("diff", expr, vars_context))
         return error
       end
       nil

@@ -206,6 +206,15 @@ module Krikri
           next
         end
         substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
+        # Real post-validates the include task's own run_once:/check_mode:/
+        # diff: keywords after the conditional passes and before the file is
+        # loaded, so an unconvertible value fails the include_tasks:
+        # statement itself, per host that was not skipped (live-verified vs
+        # 2.21.6, issue #1467).
+        if error = boolean_keyword_invalid_error(task, vars_context)
+          finish_single_task(task, host, keyword_failure_json(error, task), vars_context: vars_context)
+          next
+        end
         no_log_by_host[host.name] = resolve_task_no_log(task, vars_context)
         # The path render's own fact readings are held back like the when:
         # clause's (issue #974): real attaches them to the include task's
@@ -1381,7 +1390,14 @@ module Krikri
       end
 
       # The conditional has passed, so real now runs the action and hits
-      # its own argument validation / null-file lookup.
+      # its own argument validation / null-file lookup. Its task keywords
+      # are post-validated before any of that, so an unconvertible
+      # run_once:/check_mode:/diff: fails the include_vars: statement
+      # first (live-verified vs 2.21.6, issue #1467).
+      if error = boolean_keyword_invalid_error(task, vars_context)
+        finish_single_task(task, host, keyword_failure_json(error, task), vars_context: vars_context)
+        return
+      end
       if early = include_vars_early_failure(task, name_unhashable)
         message, arg_level = early
         if arg_level
@@ -1523,7 +1539,12 @@ module Krikri
       end
 
       # The conditional has passed, so real now runs the action and hits
-      # its own argument validation (see include_vars_early_failure).
+      # its own argument validation (see include_vars_early_failure) -
+      # after post-validating the task's own boolean keywords (issue #1467).
+      if error = boolean_keyword_invalid_error(task, vars_context)
+        finish_single_task(task, host, keyword_failure_json(error, task), vars_context: vars_context)
+        return
+      end
       if early = include_vars_early_failure(task, nil)
         message, _arg_level = early
         finish_include_vars_arg_failure(task, host, message)
@@ -2952,6 +2973,17 @@ module Krikri
         end
       end
 
+      # run_once:/check_mode:/diff: are post-validated for a dynamic
+      # include_tasks: statement exactly as the include_role: path does
+      # (see run_include_role_once): a real Task in ansible, so an
+      # unconvertible value fails the include statement itself, after its
+      # conditional passed and before the file is loaded (live-verified vs
+      # 2.21.6, issue #1467).
+      if error = boolean_keyword_invalid_error(task, vars_context)
+        finish_single_task(task, host, keyword_failure_json(error, task), vars_context: vars_context)
+        return :failed
+      end
+
       # The include itself counts as one `ok` in the recap - but only
       # once the included file actually loads. The credit used to sit
       # right here, before any load attempt, so a load-time failure
@@ -3863,6 +3895,22 @@ module Krikri
       # `ok=0 failed=1` (a fatal, unrescued include_role halts the play for
       # that host immediately, same as any other fatal task), crystal's was
       # `ok=1 failed=1`.
+
+      # Real post-validates a DYNAMIC include_role:'s ordinary task
+      # keywords (run_once:/check_mode:/diff:/any_errors_fatal:) before it
+      # loads the role - the IncludeRole task is a real Task there - so an
+      # unconvertible play-inherited `run_once:` fails the include
+      # statement itself. Only a STATIC import_role: skips that
+      # (post_validate_attribute's `isinstance(self, IncludeRole) and
+      # self.statically_loaded` exemption; its children get the value
+      # instead - see apply_inherited_bool_keywords). Live-verified vs
+      # 2.21.6, issue #1467.
+      unless task.is_static_import?
+        if error = boolean_keyword_invalid_error(task, vars_context)
+          finish_single_task(task, host, keyword_failure_json(error, task), vars_context: vars_context)
+          return :failed
+        end
+      end
 
       # Real converts this include_role:'s own boolean keywords (public,
       # allow_duplicates, rolespec_validate, rescuable) BEFORE it resolves the role,
