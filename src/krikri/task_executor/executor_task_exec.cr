@@ -220,6 +220,14 @@ module Krikri
         return
       end
 
+      # validate_argument_spec: is an ordinary action in real, so its
+      # run_once:/check_mode:/diff: keywords are post-validated right after
+      # the conditional (live-verified vs 2.21.6, issue #1467).
+      if error = boolean_keyword_invalid_error(task, vars_context)
+        finish_single_task(task, host, keyword_failure_json(error, task), vars_context: vars_context)
+        return
+      end
+
       options = task.validate_argument_spec_options || Hash(String, JSON::Any).new
       substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
 

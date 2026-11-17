@@ -608,8 +608,6 @@ module Krikri
       return if role_dep_dedup_skipped_for_host?(task, host)
 
       return execute_block(task, host) if task.block?
-      return execute_include_tasks(task, host) if task.include_tasks?
-      return execute_include_role(task, host) if task.include_role?
       if task.meta?
         # `when:` on a meta: task was previously never evaluated at all -
         # latent since meta: shipped (clear_facts/flush_handlers are
@@ -646,8 +644,6 @@ module Krikri
         execute_meta(task, host) if passes
         return
       end
-      return execute_include_vars(task, host) if task.include_vars?
-      return execute_validate_argument_spec(task, host) if task.validate_argument_spec?
 
       # run_once: only ONE host in the play actually executes it; later
       # hosts get no output/stats at all, matching Ansible - but
@@ -660,6 +656,12 @@ module Krikri
       # host. Election is safe under cooperative scheduling: the
       # check-and-set below has no yield point between the read and the
       # write.
+      #
+      # The include/action dispatches below sit AFTER this election: real
+      # elects run_once: tasks in the strategy, before any executor runs,
+      # so a `run_once: true` include_tasks:/include_role:/include_vars:
+      # is loaded and run for the first host only (live-verified vs
+      # 2.21.6, issue #1467: an imported role's tasks ran on every host).
       if task.run_once?
         @run_once_elected[task] ||= host.name
         if @run_once_elected[task] != host.name
@@ -667,6 +669,11 @@ module Krikri
           return
         end
       end
+
+      return execute_include_tasks(task, host) if task.include_tasks?
+      return execute_include_role(task, host) if task.include_role?
+      return execute_include_vars(task, host) if task.include_vars?
+      return execute_validate_argument_spec(task, host) if task.validate_argument_spec?
 
       # An earlier group member's trigger may have already built this
       # exact context while preparing this task's own batch step
@@ -5417,6 +5424,54 @@ module Krikri
       unless task.effective_module_defaults.empty?
         PlaybookParser.apply_module_defaults(loaded, task.effective_module_defaults)
       end
+      apply_inherited_bool_keywords(task, loaded)
+    end
+
+    # Ansible's include/import statement is the implicit parent Block of
+    # every task it loads, so the boolean keywords it carries - its own, or
+    # the play-level values it inherited - ride down to those children
+    # unless they wrote their own. A role's tasks are loaded at RUN time,
+    # even for a static import_role:, so the parser's apply_play_run_once/
+    # apply_play_any_errors_fatal passes never saw them: a play-level
+    # `run_once: true` ran the imported role on every host, and an
+    # unconvertible play-level value let its tasks run instead of failing
+    # the first one (live-verified vs 2.21.6, issues #1467 and #1465).
+    private def apply_inherited_bool_keywords(statement : Task, loaded : Array(Task)) : Nil
+      origins = statement.inherited_become_origins
+      apply_inherited_bool_keywords(loaded,
+        statement.run_once?, statement.run_once_invalid, origins.try(&.["run_once"]?),
+        statement.any_errors_fatal_invalid, origins.try(&.["any_errors_fatal"]?))
+    end
+
+    private def apply_inherited_bool_keywords(tasks : Array(Task), run_once : Bool, run_once_invalid : String?, run_once_origin : {String, Int32, Int32}?,
+                                              any_errors_fatal_invalid : String?, any_errors_fatal_origin : {String, Int32, Int32}?) : Nil
+      tasks.each do |loaded_task|
+        unless loaded_task.run_once_explicit?
+          loaded_task.run_once = run_once
+          loaded_task.run_once_invalid = run_once_invalid
+          inherit_keyword_origin(loaded_task, "run_once", run_once_origin)
+        end
+        unless loaded_task.any_errors_fatal_explicit?
+          loaded_task.any_errors_fatal_invalid = any_errors_fatal_invalid
+          inherit_keyword_origin(loaded_task, "any_errors_fatal", any_errors_fatal_origin)
+        end
+        [loaded_task.block_tasks, loaded_task.rescue_tasks, loaded_task.always_tasks].each do |children|
+          children.try do |list|
+            apply_inherited_bool_keywords(list, run_once, run_once_invalid, run_once_origin,
+              any_errors_fatal_invalid, any_errors_fatal_origin)
+          end
+        end
+      end
+    end
+
+    # The keyword failure chain's lower links belong at the line that
+    # actually wrote an inherited value; a loaded task's own file never
+    # holds one (see keyword_value_origin).
+    private def inherit_keyword_origin(task : Task, keyword : String, origin : {String, Int32, Int32}?) : Nil
+      return unless origin
+      origins = (task.inherited_become_origins || Hash(String, {String, Int32, Int32}).new).dup
+      origins[keyword] = origin
+      task.inherited_become_origins = origins
     end
 
     # Expands a block:-wrapped handlers/main.yml entry into its own

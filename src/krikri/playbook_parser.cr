@@ -6045,6 +6045,37 @@ module Krikri
       if listen_yaml = task_hash["listen"]?
         task.listen = listen_yaml.as_s? ? [listen_yaml.as_s] : listen_yaml.as_a.map(&.as_s)
       end
+
+      # The include family's parsers (include_tasks:/include_role:/
+      # include_vars:/validate_argument_spec:) return before #parse_task's
+      # own task-keyword tail, so these keywords used to be dropped from an
+      # include statement outright: a dynamic include_role: with
+      # `run_once: kpg-maybe` RAN instead of failing with real's
+      # keyword-conversion error, and `run_once: true` on an include never
+      # limited it to the first host (live-verified vs 2.21.6, issue
+      # #1467). A Block keeps its own ambient-scope handling in
+      # #parse_block_task - its children take the play/block value from
+      # there, so the block Task itself must not shadow it.
+      unless vars_kind == "Block"
+        if (own_check_mode = parse_optional_bool_or_template(task_hash["check_mode"]?)).nil? &&
+           (own_check_mode_expr = template_expression(task_hash["check_mode"]?)).nil?
+          task.check_mode = play.try(&.check_mode?)
+          task.check_mode_expr = play.try(&.check_mode_expr)
+        else
+          task.check_mode = own_check_mode
+          task.check_mode_expr = own_check_mode_expr
+        end
+        task.diff_mode = parse_optional_bool_or_template(task_hash["diff"]?)
+        task.diff_mode_expr = template_expression(task_hash["diff"]?)
+        task.check_mode_invalid = invalid_bool_keyword_text(task_hash["check_mode"]?)
+        task.diff_mode_invalid = invalid_bool_keyword_text(task_hash["diff"]?)
+        task.run_once = parse_become_value(task_hash["run_once"]?) || false
+        task.run_once_explicit = !task_hash["run_once"]?.nil?
+        task.run_once_invalid = invalid_bool_keyword_text(task_hash["run_once"]?)
+        task.any_errors_fatal = parse_become_value(task_hash["any_errors_fatal"]?) || false
+        task.any_errors_fatal_explicit = !task_hash["any_errors_fatal"]?.nil?
+        task.any_errors_fatal_invalid = invalid_bool_keyword_text(task_hash["any_errors_fatal"]?)
+      end
     end
 
     # Real include_vars action's own argument classification
