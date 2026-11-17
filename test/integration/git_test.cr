@@ -145,6 +145,47 @@ describe "git plugin" do
     Dir.exists?(dest).must_equal(false)
   end
 
+  # git.py runs every get_remote_head ls-remote with check_rc=True, so an
+  # unreachable remote fails with git's own stderr as msg plus
+  # cmd/rc/stdout/stderr - never krikri's own "Could not determine remote
+  # revision" wording (#1431: a check-mode clone of an ssh repo whose host
+  # key was unknown reported only that).
+  it "fails a check-mode clone of an unreachable repo with git's own output" do
+    repo = tmp_path("git-missing-repo")
+    dest = tmp_path("git-missing-repo-dest")
+    `rm -rf #{dest}`
+
+    result = PluginSpecHelper.run("git", {"repo" => repo, "dest" => dest, "_ansible_check_mode" => "true"})
+
+    result["failed"].as_bool.must_equal(true)
+    result["rc"].as_i.must_equal(128)
+    result["msg"].as_s.must_include("does not appear to be a git repository")
+    result["msg"].as_s.must_equal(result["stderr"].as_s.rstrip)
+    result["cmd"].as_s.must_include("ls-remote")
+    result["cmd"].as_s.must_include("-h HEAD")
+    result["stdout"].as_s.must_equal("")
+    result["stderr_lines"].as_a.last.as_s.must_equal("and the repository exists.")
+  end
+
+  # The other half of git.py's failure shape: a reachable remote with no
+  # matching refs exits 0 with empty output, and the "Could not determine"
+  # fail_json still carries rc/stdout/stderr.
+  it "reports the remote probe's rc and output when no revision matches" do
+    repo = tmp_path("git-empty-repo")
+    Dir.mkdir_p(repo)
+    run!("cd #{repo} && git init -q -b main")
+    dest = tmp_path("git-empty-repo-dest")
+    `rm -rf #{dest}`
+
+    result = PluginSpecHelper.run("git", {"repo" => repo, "dest" => dest, "_ansible_check_mode" => "true"})
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("Could not determine remote revision for HEAD")
+    result["rc"].as_i.must_equal(0)
+    result["stdout"].as_s.must_equal("")
+    result["stderr"].as_s.must_equal("")
+  end
+
   it "reports no change when the repo is already up to date" do
     repo = tmp_path("git-fixture-uptodate")
     build_fixture_repo(repo)
