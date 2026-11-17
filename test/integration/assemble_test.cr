@@ -260,4 +260,37 @@ describe "assemble plugin" do
     result["uid"].as_i64.must_equal(File.info(dest, follow_symlinks: false).owner_id.to_i64)
     result["state"].as_s.must_equal("file")
   end
+
+  # assemble.py has no --diff support: on the module path (remote_src
+  # absent/truthy) real Ansible prints no diff block even when dest is
+  # created (live-verified vs 2.21.6).
+  it "omits the diff key on the module path even with --diff" do
+    src = as_path("assemble_src_diff_module")
+    dest = as_path("assemble_dest_diff_module.conf")
+    FileUtils.rm_rf(src)
+    Dir.mkdir_p(src)
+    File.write(File.join(src, "a"), "one\n")
+    File.delete(dest) if File.exists?(dest)
+
+    result = PluginSpecHelper.run("assemble", {"src" => src, "dest" => dest, "_ansible_diff" => "true"})
+
+    result["changed"].as_bool.must_equal(true)
+    result["diff"]?.must_be_nil
+  end
+
+  # The remote_src-falsy controller-side branch delegates to the copy
+  # module after _get_diff_data, so that path does carry a diff.
+  it "keeps the diff key on the remote_src false action-plugin branch" do
+    src = as_path("assemble_src_diff_action")
+    dest = as_path("assemble_dest_diff_action.conf")
+    FileUtils.rm_rf(src)
+    Dir.mkdir_p(src)
+    File.write(File.join(src, "a"), "one\n")
+    File.delete(dest) if File.exists?(dest)
+
+    result = PluginSpecHelper.run("assemble", {"src" => src, "dest" => dest, "remote_src" => "false", "_ansible_diff" => "true"})
+
+    result["changed"].as_bool.must_equal(true)
+    result["diff"]?.nil?.must_equal(false)
+  end
 end
