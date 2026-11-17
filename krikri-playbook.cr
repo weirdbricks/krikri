@@ -1324,7 +1324,6 @@ end
 playbook.plays.each_with_index do |play, _play_index|
   warn_unmatched_play_patterns(inventory, play, pattern_warnings)
   Krikri::RunOptions.play_name = play.name
-  Krikri::OutputBanner.banner("PLAY [#{play.name}]")
 
   # Get hosts for this play from inventory, excluding any host that
   # already hard-failed in an earlier play this run.
@@ -1344,6 +1343,23 @@ playbook.plays.each_with_index do |play, _play_index|
   end
 
   hosts = matched_hosts.reject { |host| permanently_failed_hosts.includes?(host.name) }
+
+  # `serial:` tokens are converted the moment real reaches the play: its
+  # PlaybookExecutor._get_serialized_batches runs pct_to_int over them
+  # BEFORE the PLAY banner is printed, so an unconvertible token takes the
+  # whole run down there - rc=250, no banner for this play, earlier plays'
+  # output intact - instead of after this play's tasks had run (issue
+  # #1446, kpg's `serial: kpg-many`; see SerialValueError). Computing the
+  # batches here is what puts that crash at the same point; the run loop
+  # further down reuses them.
+  batches = begin
+    Krikri::SerialBatches.split(Krikri::SerialBatches.order(hosts, play.order), play.serial)
+  rescue ex : Krikri::SerialValueError
+    STDERR.print ex.render
+    exit 250
+  end
+
+  Krikri::OutputBanner.banner("PLAY [#{play.name}]")
 
   if matched_hosts.empty?
     puts "skipping: no hosts matched".colorize(:cyan)
@@ -1463,7 +1479,7 @@ playbook.plays.each_with_index do |play, _play_index|
   # clear_host_errors hosts don't count as failures (see the concat
   # above), matching Ansible's TQM._failed_hosts bookkeeping.
   abort_entire_run = false
-  Krikri::SerialBatches.split(Krikri::SerialBatches.order(hosts, play.order), play.serial).each do |batch_hosts|
+  batches.each do |batch_hosts|
     # Per-batch deltas, mirroring PlaybookExecutor's
     # previously_failed/previously_unreachable counters: a host that was
     # already unreachable before this batch must not count toward this

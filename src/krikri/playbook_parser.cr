@@ -2967,11 +2967,8 @@ module Krikri
       # of them (`serial: [1, 2]`), where each entry sizes one batch and
       # the LAST entry sizes every remaining batch.
       if serial_yaml = yaml["serial"]?
-        if list = serial_yaml.as_a?
-          play.serial = list.map { |entry| safe_yaml_to_string(entry) }
-        else
-          play.serial = [safe_yaml_to_string(serial_yaml)]
-        end
+        entries = serial_yaml.as_a? || [serial_yaml]
+        play.serial = entries.map { |entry| serial_batch_token(entry) }
         play.serial = play.serial.map(&.strip).reject(&.empty?)
       end
 
@@ -9563,6 +9560,22 @@ module Krikri
         ""
       else
         yaml.to_s
+      end
+    end
+
+    # Ansible's pct_to_int calls int() on each serial token, and a YAML
+    # float or bool literal IS int-able - int(2.5) is 2 and int(True) is
+    # 1, live-verified vs 2.21.6 (issue #1446) - so those literals have to
+    # reach SerialBatches already reduced to that integer. Stringifying
+    # them verbatim would instead hand it "2.5"/"true", which the same
+    # conversion does crash on, but only when the playbook really wrote a
+    # STRING (`serial: "2.5"` dies, `serial: 2.5` batches by two).
+    private def self.serial_batch_token(entry : YAML::Any) : String
+      case raw = entry.raw
+      when Int64, Int32 then raw.to_s
+      when Float64      then raw.finite? && raw.abs < Int64::MAX.to_f ? raw.to_i64.to_s : safe_yaml_to_string(entry)
+      when Bool         then raw ? "1" : "0"
+      else                   safe_yaml_to_string(entry)
       end
     end
 
