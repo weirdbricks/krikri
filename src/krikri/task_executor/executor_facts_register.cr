@@ -52,6 +52,10 @@ module Krikri
         puts "task path: #{File.expand_path(file)}:#{@play_source_line}"
       end
 
+      # The implicit task is queued before any other, so real's
+      # dispatch-time `throttle:` conversion runs here first.
+      validate_gather_throttle!(targets)
+
       # A host the pre-upload pass already found unreachable must NOT get
       # a second live SSH attempt here - ansible-playbook only ever
       # tries the connection once (inside this very task, since Gathering

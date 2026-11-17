@@ -11,6 +11,7 @@ require "./role_loader"
 require "./argspec_validator"
 require "./role_bool_keywords"
 require "./play_bool_keywords"
+require "./throttle_value"
 require "./task_executor/error_block"
 require "./vault"
 require "./variable_substitutor"
@@ -219,8 +220,10 @@ module Krikri
     # carries on to the next task (which may itself be unreachable).
     property? ignore_unreachable : Bool = false
     # `throttle:` - cap how many hosts run this task at once, below the
-    # run's own --forks. 0/absent means no extra cap.
-    property throttle : Int32 = 0
+    # run's own --forks. Kept in its as-written shape because real settles
+    # the keyword at task DISPATCH, not at parse time, and an int() it
+    # refuses there aborts the whole run - see ThrottleValue.
+    property throttle_value : ThrottleValue = ThrottleValue::ABSENT
     # `remote_user:` at task scope - see Play#remote_user.
     property remote_user : String? = nil
     # `debugger:` at task scope - see Play#debugger.
@@ -1383,6 +1386,13 @@ module Krikri
     # task > block > play with no parent pointers needed.
     property task_timeout : Int64? = nil
     property task_timeout_expr : String? = nil
+    # `throttle:` at play scope - the cap every task inherits, and the
+    # same ambient-inheritance carrier task_timeout is: parse_block_task
+    # swaps in an enclosing block's own value while its children parse, so
+    # precedence is task > block > play without parent pointers. Kept in
+    # its as-written shape for the same dispatch-time conversion real
+    # performs (see ThrottleValue).
+    property throttle_value : ThrottleValue = ThrottleValue::ABSENT
     # `environment:` at play scope - the env-var dict every task in the
     # play starts from (Ansible's play-level environment keyword; a
     # task's or block's own value wins per variable). Stored as a
@@ -2864,6 +2874,7 @@ module Krikri
       play.connection = yaml["connection"]?.try { |entry| safe_yaml_to_string(entry).strip }
       play.debugger = yaml["debugger"]?.try { |entry| safe_yaml_to_string(entry).strip }
       play.task_timeout, play.task_timeout_expr = parse_timeout_value(yaml["timeout"]?)
+      play.throttle_value = sourced_throttle_value(yaml["throttle"]?, source_file, source_map, "", index)
 
       # environment: at play scope - the env-var dict every task in the
       # play inherits (live-verified vs 2.19.11: a play-level
@@ -5884,7 +5895,17 @@ module Krikri
       task.no_log_raw_truthy = raw_python_truthy?(task_hash["no_log"]?)
       task.no_log_explicit = !task_hash["no_log"]?.nil?
       task.ignore_unreachable = parse_become_value(task_hash["ignore_unreachable"]?) || false
-      task.throttle = task_hash["throttle"]?.try { |tv_blk| safe_yaml_to_string(tv_blk).to_i? } || 0
+      # `throttle:` - the task's OWN keyword first, else the ambient
+      # play/block scope, exactly like `timeout:` below (Ansible's
+      # precedence is task > block > play; play.throttle_value is
+      # temporarily the enclosing block's value while its children parse).
+      own_throttle = sourced_throttle_value(task_hash["throttle"]?, source_file, source_map, source_prefix, source_index)
+      task.throttle_value =
+        if own_throttle.written? || play.nil?
+          own_throttle
+        else
+          play.throttle_value
+        end
       task.remote_user = task_hash["remote_user"]?.try { |entry| safe_yaml_to_string(entry).strip }
       task.debugger = task_hash["debugger"]?.try { |entry| safe_yaml_to_string(entry).strip }
       # `timeout:` - the task's OWN keyword first; unset falls back to the
@@ -7066,6 +7087,14 @@ module Krikri
       play.task_timeout = block_timeout if block_timeout
       play.task_timeout_expr = block_timeout_expr if block_timeout_expr
 
+      # And for the block's own `throttle:` (same task > block > play
+      # precedence): a block that writes one hands it to every child, and
+      # the play's value stays the ambient default for a block that does
+      # not.
+      saved_throttle = play.throttle_value
+      block_throttle = sourced_throttle_value(task_hash["throttle"]?, source_file, source_map, source_prefix, source_index)
+      play.throttle_value = block_throttle if block_throttle.written?
+
       # Same ambient-inheritance pattern for the block's own
       # `environment:` (Ansible's precedence task > block > play, per
       # variable). The block's layer is STACKED onto the ambient list
@@ -7109,6 +7138,7 @@ module Krikri
         play.check_mode_expr = saved_check_mode_expr
         play.task_timeout = saved_task_timeout
         play.task_timeout_expr = saved_task_timeout_expr
+        play.throttle_value = saved_throttle
         play.environment_layers = saved_environment_layers
       end
 
@@ -9526,6 +9556,19 @@ module Krikri
         return {nil, expr}
       end
       {safe_yaml_to_string(yaml).strip.to_i64?, nil}
+    end
+
+    # A `throttle:` value plus the source position of the token itself -
+    # the Origin real labels its dispatch-time int() abort with. *index* is
+    # the entry's index in its containing list (a play in the playbook's
+    # top-level list, or a task in its task list); *source_prefix* is the
+    # enclosing path segment, "" at play scope.
+    private def self.sourced_throttle_value(yaml : YAML::Any?, source_file : String?, source_map : YamlSourceMap?, source_prefix : String, index : Int32) : ThrottleValue
+      value = ThrottleValue.from_yaml(yaml)
+      return value unless value.written?
+      return value unless source_file && source_map
+      return value unless pos = source_map.at?("#{task_source_prefix(source_prefix, index)}/throttle")
+      value.with_origin({File.expand_path(source_file), pos[0], pos[1]})
     end
 
     # Ansible flattens nested tag lists (`tags: [[a, b], c]` -> a, b, c),

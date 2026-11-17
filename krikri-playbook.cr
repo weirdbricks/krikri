@@ -1562,12 +1562,20 @@ playbook.plays.each_with_index do |play, _play_index|
       debugger: play.debugger,
       playbook_file: playbook_file,
       play_source_file: play.source_file,
-      play_source_line: play.source_line
+      play_source_line: play.source_line,
+      play_throttle_value: play.throttle_value
     )
 
     # Run tasks
     begin
       Krikri::TimingProfile.measure("execute", "execute") { executor.run }
+    rescue ex : Krikri::TaskExecutor::ThrottleConversionFatalError
+      # An unconvertible `throttle:` is real's strategy-level AnsibleError:
+      # the [ERROR] block real built at the raise site goes to STDERR and
+      # the whole run ends with rc=1 - no fatal: line, no PLAY RECAP
+      # (live-verified vs 2.21.6, issue #1454).
+      STDERR.print ex.render
+      exit 1
     rescue ex : Krikri::TaskExecutor::MetaWhenFatalError
       # A meta: task's `when:` that raised is NOT a task failure in real:
       # its strategy evaluates those conditions itself, so the exception
