@@ -74,6 +74,23 @@ def warn_unmatched_play_patterns(inventory : Krikri::Inventory, play : Krikri::P
   end
 end
 
+# A play that wrote a bool keyword real's boolean() refuses: the same
+# two-link error block ansible-core prints on stderr for a
+# Play.post_validate failure ("Error processing keyword 'X'." chained to
+# "The value ... could not be converted to 'bool'."), each link pointing
+# at the keyword's value, then the parser-error exit code.
+def fail_play_bool_keyword(play : Krikri::Play, failure : Krikri::PlayBoolKeywords::Failure) : NoReturn
+  source_context = failure.origin.try do |(line, column)|
+    path = play.source_file
+    path ? Krikri::ErrorBlock.origin_context(path, line, column) : nil
+  end
+  outer = Krikri::ErrorBlock::Node.new(failure.keyword_message, source_context)
+  inner = Krikri::ErrorBlock::Node.new(failure.conversion_message, source_context)
+  outer.with_chain(Krikri::ErrorBlock::DIRECT_CAUSE, true, inner)
+  Krikri::ErrorBlock.emit_stderr(outer)
+  exit 4
+end
+
 def which_path(cmd : String) : String?
   output = Process.run(cmd == "python3" ? "python3" : "which", cmd == "python3" ? [] of String : [cmd],
     output: Process::Redirect::Pipe, error: Process::Redirect::Close) do |proc|
@@ -1070,6 +1087,13 @@ if quiet_listing_mode
   listing_playbook.path = playbook_display_path
   playbook.plays.each do |play|
     warn_unmatched_play_patterns(inventory, play, pattern_warnings)
+    # Real post-validates each play before it records the listing, so an
+    # unconvertible bool keyword refuses the whole listing (rc=4, not
+    # even the "playbook:" line) - the same refusal a real run makes
+    # before that play's banner.
+    if failure = play.bool_keyword_failure
+      fail_play_bool_keyword(play, failure)
+    end
   end
 
   if syntax_check_only
@@ -1323,6 +1347,12 @@ end
 
 playbook.plays.each_with_index do |play, _play_index|
   warn_unmatched_play_patterns(inventory, play, pattern_warnings)
+  # Real post-validates the play's always_post_validate keywords here,
+  # before the banner and before the play's hosts are matched, and a
+  # value its boolean() refuses aborts the whole run.
+  if failure = play.bool_keyword_failure
+    fail_play_bool_keyword(play, failure)
+  end
   Krikri::RunOptions.play_name = play.name
 
   # Get hosts for this play from inventory, excluding any host that
