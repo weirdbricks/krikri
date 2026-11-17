@@ -204,8 +204,16 @@ module Krikri
       rescue ex
         # Every other templating failure of the value - a missing lookup, a
         # deprecated filter, a failing test - reaches the same framing
-        # (live-verified vs 2.21.6).
-        return ActionResult.crash_failure("#{Krikri::DEBUG_VAR_EXPRESSION_PREFIX}#{ex.message || "templating var '#{var_name}' failed"}")
+        # (live-verified vs 2.21.6). An unresolvable filter or test NAME is
+        # a Jinja compile failure there, so the Templar prefixes it with
+        # "Syntax error in template: " even when the failing text lives in
+        # the variable's own definition (live-verified vs 2.21.6); a
+        # lookup's runtime failure keeps its bare wording.
+        detail = ex.message || "templating var '#{var_name}' failed"
+        if detail.starts_with?("No filter named '") || detail.starts_with?("No test named '")
+          detail = "Syntax error in template: #{detail}"
+        end
+        return ActionResult.crash_failure("#{Krikri::DEBUG_VAR_EXPRESSION_PREFIX}#{detail}")
       end
 
       # Real debug's Templar walks the looked-up value, revealing the
