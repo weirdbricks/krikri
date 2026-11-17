@@ -122,6 +122,25 @@ describe Krikri::VariableSubstitutor::JinjaRenderer do
     Krikri::VariableSubstitutor::JinjaRenderer.new(t).render("{{ s | wordwrap(5) }}").must_equal("Extra\nspace\ns.")
   end
 
+  it "unpacks a starred sequence into a filter's arguments (issue #1453)" do
+    # kpg-playbook-generator's "Kpg star args" probes put
+    # `{{ 'x' | kpg_multi(*['a', 'b']) }}` in a play var and in a module
+    # arg; Jinja2 treats a filter call like any other call, so the
+    # sequence's elements arrive as separate positional arguments and
+    # ansible renders x|a|b. The engine unpacked `*` only for bare
+    # function calls, so the filter got ONE list argument and rendered
+    # x|['a', 'b'] - listed here with builtin filters so the spec does
+    # not depend on a filter_plugins/*.py being importable.
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(Hash(String, JSON::Any).new)
+
+    renderer.render("{{ 'abc' | replace(*['a', 'x']) }}").must_equal("xbc")
+    renderer.render("{{ ['a', 'b'] | join(*['-']) }}").must_equal("a-b")
+    # `*[]` contributes no argument at all (join's separator stays "").
+    renderer.render("{{ ['a', 'b'] | join(*[]) }}").must_equal("ab")
+    # `**mapping` is the keyword-argument half of the same unpacking.
+    renderer.render("{{ 'a-b' | replace(**{'old': 'a', 'new': 'x'}) }}").must_equal("x-b")
+  end
+
   it "re-renders a nested-template variable back to its real array type, not the array's stringified text" do
     # Real bug found benchmarking robertdebock.docker (round 104):
     # `docker_pip_packages: "{{ _docker_pip_packages[ansible_facts[
