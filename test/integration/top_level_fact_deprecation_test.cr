@@ -1462,3 +1462,85 @@ describe "INJECT_FACTS_AS_VARS deprecation" do
     stderr.scan(/DEPRECATION WARNING\]: #{Regex.escape(FACT_DEPRECATION_TEXT)}/).size.must_equal(1)
   end
 end
+
+# ansible post-validates the play context - which carries a task's own or
+# its parent block's become_user: - BEFORE it evaluates that task's when:
+# (executor/task_executor.py's _execute), so a role default templating that
+# keyword prints its block ahead of the clause's own - the order
+# andrewrothstein.getenvoy's unarchive-deps dependency had real ansible
+# print it in. A conditional that then skips the task keeps that block and
+# only drops the keyword ERROR the render raised (issue #1414,
+# live-verified against 2.21.6 for both fixtures below).
+describe "INJECT_FACTS_AS_VARS deprecation from a parent block's become_user" do
+  it "prints the block before the when: clause the task is gated on" do
+    stdout, stderr, dir = run_files({
+      "play.yml" => <<-PLAYBOOK,
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        roles:
+          - deps
+      PLAYBOOK
+      "roles/deps/defaults/main.yml" => <<-YAML,
+        ---
+        deps_priv_esc: True
+        deps_priv_esc_user: '{{ (ansible_os_family == "Windows") | ternary("System", "root") }}'
+        YAML
+      "roles/deps/tasks/main.yml" => <<-YAML,
+        ---
+        - name: install unarchive deps
+          become: '{{ deps_priv_esc }}'
+          become_user: '{{ deps_priv_esc_user }}'
+          block:
+            - name: install OS packages
+              when: ansible_os_family != "Windows"
+              ansible.builtin.debug:
+                msg: hi
+        YAML
+    })
+
+    defaults = File.join(dir, "roles", "deps", "defaults", "main.yml")
+    tasks = File.join(dir, "roles", "deps", "tasks", "main.yml")
+    stdout.must_include("TASK [deps : install OS packages]")
+    stderr.scan(/DEPRECATION WARNING\]: #{Regex.escape(FACT_DEPRECATION_TEXT)}/).size.must_equal(2)
+    become_at = stderr.index("Origin: #{defaults}:3:21\n")
+    when_at = stderr.index("Origin: #{tasks}:7:13\n")
+    become_at.wont_be_nil
+    when_at.wont_be_nil
+    assert become_at.not_nil! < when_at.not_nil!, stderr
+  end
+
+  it "keeps the block for a skipping task instead of dropping it with the task" do
+    stdout, stderr, dir = run_files({
+      "play.yml" => <<-PLAYBOOK,
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        roles:
+          - deps
+      PLAYBOOK
+      "roles/deps/defaults/main.yml" => <<-YAML,
+        ---
+        deps_priv_esc: True
+        deps_priv_esc_user: '{{ (ansible_os_family == "Windows") | ternary("System", "root") }}'
+        YAML
+      "roles/deps/tasks/main.yml" => <<-YAML,
+        ---
+        - name: install unarchive deps
+          become: '{{ deps_priv_esc }}'
+          become_user: '{{ deps_priv_esc_user }}'
+          block:
+            - name: install OS packages
+              when: false
+              ansible.builtin.debug:
+                msg: hi
+        YAML
+    })
+
+    defaults = File.join(dir, "roles", "deps", "defaults", "main.yml")
+    stdout.must_include("skipping: [localhost]")
+    stdout.wont_include("FAILED")
+    stderr.must_include("Origin: #{defaults}:3:21\n")
+    stderr.scan(/DEPRECATION WARNING\]: #{Regex.escape(FACT_DEPRECATION_TEXT)}/).size.must_equal(1)
+  end
+end

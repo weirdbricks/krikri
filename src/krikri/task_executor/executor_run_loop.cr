@@ -2874,6 +2874,27 @@ module Krikri
     ) : JSON::Any?
       substitutor = shared || VarSubstitutor.new(vars: vars_context, host_name: host.name)
 
+      # Ansible post-validates the play context - which carries this task's
+      # own or its parent block's become_user: - BEFORE it evaluates `when:`
+      # (executor/task_executor.py's _execute), so a fact read templating
+      # that keyword prints its deprecation block ahead of the condition's
+      # own. A conditional that then skips the task keeps that block and
+      # only drops the keyword ERROR a failing render raised
+      # (live-verified vs ansible-core 2.21.6, issue #1414). Render the
+      # keyword here for that ordering, reusing the value (or reporting the
+      # error) below instead of templating it a second time.
+      pre_become_user : String? = nil
+      pre_become_user_done = false
+      pre_become_user_error : Exception? = nil
+      if task.when_condition
+        begin
+          pre_become_user = resolve_task_become_user(task, host, vars_context, substitutor)
+          pre_become_user_done = true
+        rescue ex
+          pre_become_user_error = ex
+        end
+      end
+
       begin
         return nil unless when_passes?(task, vars_context, host, item_label, shared: substitutor, defer_stats: defer_loop_stats, defer_unavailable_module: true)
       rescue ex : WhenEvaluationError
@@ -2949,12 +2970,23 @@ module Krikri
 
       # Same keyword-first ordering as prepare_batch_step. task.become_user
       # itself is never mutated here, since Task is shared/reused across
-      # hosts and loop iterations.
-      substituted_become_user = begin
-        resolve_task_become_user(task, host, vars_context, substitutor)
-      rescue ex : UndefinedVariableError
-        return keyword_failure_json(ex, task)
-      end
+      # hosts and loop iterations. A task with a `when:` already rendered
+      # the keyword ahead of its conditional (see the pre-render above), so
+      # reuse that value, or report the error it hit: real only surfaces
+      # the keyword error once the conditional has passed, and a render
+      # that failed any other way keeps this resolution as its single
+      # reporting path.
+      substituted_become_user = if pre_become_user_done
+                                  pre_become_user
+                                elsif pre_become_user_error.is_a?(UndefinedVariableError)
+                                  return keyword_failure_json(pre_become_user_error.as(UndefinedVariableError), task)
+                                else
+                                  begin
+                                    resolve_task_become_user(task, host, vars_context, substitutor)
+                                  rescue ex : UndefinedVariableError
+                                    return keyword_failure_json(ex, task)
+                                  end
+                                end
 
       # Same keyword-first ordering as prepare_batch_step (issue #465):
       # a templated become: renders before any module arg is finalized.
