@@ -127,6 +127,11 @@ module Krikri
     # ansible's interpreter-not-found fatal block for such hosts instead
     # of the generic two-line failure.
     @facts_interpreter_missing = {} of String => {String, Bool, Bool}
+    # Per-host connection-keyword failures caught for the implicit
+    # Gathering Facts task (a PlayContext post-validation error, see
+    # gather_connection_password_failure): the report prints ansible's
+    # two-link keyword chain for these instead of the generic failure.
+    @facts_connection_keyword_failures = {} of String => ConnectionKeywordError
     # The subset of @facts[host.name] that came from `set_fact`/
     # `register`-style high-precedence writes rather than an ordinary
     # fact-gathering module (setup/package_facts/service_facts/etc).

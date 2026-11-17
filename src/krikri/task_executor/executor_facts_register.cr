@@ -170,6 +170,17 @@ module Krikri
             fatal_line = report_lines.pop
             report_lines.each { |line| puts line }
             puts fatal_line.colorize(:red)
+          elsif (keyword_failure = @facts_connection_keyword_failures[host.name]?) && keyword_failure.message == error_message
+            # ansible's PlayContext post-validation failure: the implicit
+            # task has no source position of its own, so the collapsed
+            # chain prints "Task failed." bare, then the failing keyword
+            # link Origin'd at the variable's defining site
+            # (live-verified vs 2.21.6, issue #1419).
+            ErrorBlock.emit(ErrorBlock::Node.new("Task failed.")
+              .with_chain(ErrorBlock::DIRECT_CAUSE, true,
+                ErrorBlock::Node.new("Error processing keyword '#{keyword_failure.keyword}': #{keyword_failure.conversion}",
+                  source_context: keyword_failure.origin)))
+            puts "fatal: [#{host.name}]: FAILED! => #{keyword_failure_message_json(keyword_failure)}".colorize(:red)
           elsif error_message && error_message.includes?(PluginManager::BECOME_METHOD_EMPTY)
             # The become-method failure dies in real's task executor
             # (become_loader's ValueError) before any module runs: the
@@ -308,6 +319,63 @@ module Krikri
       "Task failed: #{PluginManager::BECOME_METHOD_EMPTY}"
     end
 
+    # The var layers the implicit gather task resolves its connection
+    # keywords against, lowest precedence first: role defaults < inventory
+    # host vars < play vars < vars_files < role vars < -e extra vars. That
+    # is build_vars_context's ladder minus the block/task tiers and the
+    # runtime ones (registered results, facts), none of which can exist
+    # before the play's first task has run. Each layer's own defining
+    # positions ride along so a failing keyword's Origin can point where
+    # ansible points it (the variable's definition).
+    private def gather_connection_var_layers(host : Host) : {Hash(String, JSON::Any), Hash(String, VarOrigin)}
+      context = Hash(String, JSON::Any).new
+      origins = Hash(String, VarOrigin).new
+      merge_var_layer(context, origins, @all_role_defaults, @all_role_default_origins)
+      merge_var_layer(context, origins, host.vars, host.var_origins)
+      merge_var_layer(context, origins, @play_vars, @play_var_origins)
+      # vars_files sit above play vars and below role vars; the implicit
+      # gather task sees them too (live-verified vs 2.21.6: a vars_file's
+      # `ansible_password: "{{ vault_missing }}"` fails Gathering Facts
+      # with the Origin at the file's own line).
+      unless @vars_files.empty?
+        merge_var_layer(context, origins, load_vars_files(host), @vars_files_origins_cache[vars_files_cache_key(host)]?)
+      end
+      merge_var_layer(context, origins, @all_role_vars, @all_role_var_origins)
+      merge_var_layer(context, origins, @extra_vars, @extra_var_origins)
+      {context, origins}
+    end
+
+    # The connection-keyword failure that stops the implicit Gathering
+    # Facts task, or nil. ansible post-validates PlayContext for the
+    # implicit setup task exactly like a regular one, so a role's
+    # exported `ansible_password: "{{ vault_ansible_password }}"` kills
+    # the gather before any facts module runs (issue #1419,
+    # jedimt.authorized_keys - ansible's fatal vs krikri's ok). See
+    # check_task_connection_password for the regular-task path.
+    private def gather_connection_password_failure(host : Host) : ConnectionKeywordError?
+      context, origins = gather_connection_var_layers(host)
+      key = connection_password_var_key(context)
+      return nil unless key
+      text = context[key]?.try(&.as_s?)
+      return nil unless text && connection_password_template?(text)
+
+      begin
+        VarSubstitutor.new(vars: context, host_name: host.name).substitute(text, strict: true)
+      rescue e : UndefinedVariableError
+        return ConnectionKeywordError.new("password", e.message || "", var_origin_error_context(origins[key]?))
+      end
+      nil
+    end
+
+    # The fatal line's JSON payload for that failure, in ansible's own key
+    # order (changed, msg) and Python json.dumps separators.
+    private def keyword_failure_message_json(error : ConnectionKeywordError) : String
+      ResultDisplay.python_json_dump(JSON.parse({
+        "changed" => false,
+        "msg"     => error.message,
+      }.to_json))
+    end
+
     private def gather_facts_for_host_measured(host : Host) : {Bool, String?, Bool}
       vars_context = Hash(String, JSON::Any).new
       host.vars.each { |key, value| vars_context[key] = value }
@@ -335,6 +403,15 @@ module Krikri
       # before its local tasks ever ran.
       if play_connection = @connection
         vars_context["ansible_connection"] ||= JSON::Any.new(play_connection)
+      end
+
+      # ansible post-validates the implicit setup task's PlayContext
+      # BEFORE resolving its connection plugin, so a connection keyword
+      # whose own value fails to render is the failure the gather reports
+      # (issue #1419) - not the plugin resolution below.
+      if keyword_failure = gather_connection_password_failure(host)
+        @facts_connection_keyword_failures[host.name] = keyword_failure
+        return {false, keyword_failure.message, false}
       end
 
       # Ansible resolves the connection plugin for the implicit setup
@@ -473,6 +550,7 @@ module Krikri
         # stamp, so the report below never prints for a host whose facts
         # eventually came through.
         @facts_interpreter_missing.delete(host.name)
+        @facts_connection_keyword_failures.delete(host.name)
         facts = Hash(String, JSON::Any).new
         ansible_facts.as_h.each { |key, value| facts[key] = value }
         # Merge, not replace: with the run-scoped fact store this host may

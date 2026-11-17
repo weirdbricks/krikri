@@ -2365,6 +2365,15 @@ module Krikri
     private def prepare_batch_step(task : Task, host : Host, vars_context : Hash(String, JSON::Any), shared : VarSubstitutor? = nil) : JSON::Any | BatchScript::Step
       substitutor = shared || VarSubstitutor.new(vars: vars_context, host_name: host.name)
 
+      # ansible post-validates PlayContext before the task's own keywords,
+      # so a connection keyword failing its strict template is what a
+      # when:-passing batched member reports first (issue #1419).
+      begin
+        check_task_connection_password(task, host, vars_context, substitutor)
+      rescue ex : ConnectionKeywordError
+        return keyword_failure_json(ex, task)
+      end
+
       # Ansible templates the become_user keyword before any module arg is
       # finalized, so an undefined keyword reports its own error even when
       # an arg is undefined too.
@@ -2905,6 +2914,16 @@ module Krikri
       # ansible templates a delegated task's args against the task's own
       # (origin) vars and books the result on the origin host.
       dispatch_vars = exec_host == host ? vars_context : delegated_dispatch_vars(host, exec_host, vars_context)
+
+      # ansible post-validates PlayContext right after `when:` and before
+      # the connection plugin resolves, so this keyword failure wins over
+      # the unresolvable-connection one below. Loop items each get their
+      # own attempt, matching real's per-item failure lines (issue #1419).
+      begin
+        check_task_connection_password(task, host, vars_context, substitutor)
+      rescue ex : ConnectionKeywordError
+        return keyword_failure_json(ex, task)
+      end
 
       # Ansible resolves the task's effective connection type through
       # its plugin loader right after the when: evaluates and BEFORE the

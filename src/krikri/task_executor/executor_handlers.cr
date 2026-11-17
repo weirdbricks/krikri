@@ -969,6 +969,17 @@ module Krikri
         end
       end
 
+      # ansible's PlayContext post-validation error is deferred until the
+      # handler's when: passes (TaskExecutor._execute_internal), so a
+      # when:-skipped handler never reports a broken connection keyword.
+      # It still precedes the task's own post-validation/action
+      # resolution below (issue #1419).
+      begin
+        check_task_connection_password(handler, host, vars_context, VarSubstitutor.new(vars: vars_context, host_name: host.name))
+      rescue ex : ConnectionKeywordError
+        return keyword_failure_json(ex, handler)
+      end
+
       # include_tasks: on a handler (Anthony25.unbound's own "restart
       # unbound": `include_tasks: tasks/restart_unbound.yml`) -
       # Ansible lets a handler include a task file exactly like a regular
