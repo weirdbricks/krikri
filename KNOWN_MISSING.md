@@ -204,11 +204,13 @@ Decided 2026-10-10.
 `<name>.py` on Ansible's strategy loader paths: the playbook-adjacent `strategy_plugins/` first, then
 `ANSIBLE_STRATEGY_PLUGINS` (replacing the defaults) or the configured `plugins/strategy/` roots. A
 plugin found there is accepted and the play runs as linear, with Ansible's two-line deprecation
-warning for a non-`ansible.builtin` strategy reproduced. A fully qualified collection strategy name
-(`namespace.collection.name`) is not resolved and still errors. A strategy plugin is Python
-control-plane code driving Ansible's own iterator, which this engine has no seam for; refusing the
-play outright (krikri's behavior before issue #1439) makes such a play unrunnable, and a linear run
-is the closest available behavior. `debug` is Ansible's linear strategy plus an interactive stdin
+warning for a non-`ansible.builtin` strategy reproduced, followed by krikri's own
+`[WARNING]: Strategy plugin '<name>' cannot be executed by krikri-playbook and is ignored; the play runs with the linear strategy.`
+line so the plugin's dropped behavior is never silent (issue #1456). A fully qualified collection
+strategy name (`namespace.collection.name`) is not resolved and still errors. A strategy plugin is
+Python control-plane code driving Ansible's own iterator, which this engine has no seam for; refusing
+the play outright (krikri's behavior before issue #1439) makes such a play unrunnable, and a linear
+run is the closest available behavior. `debug` is Ansible's linear strategy plus an interactive stdin
 prompt on a failed task: the linear half runs, the prompt does not. A name on none of those paths
 still fails with Ansible's own `[ERROR]: Invalid play strategy specified: <name>` (rc 1), except
 that real also prints the deprecation warning and the PLAY banner before that error while krikri
