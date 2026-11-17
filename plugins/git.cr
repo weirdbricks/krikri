@@ -325,8 +325,6 @@ module Krikri
           # The cloning context (dest is nil) makes get_remote_head use the
           # repo URL directly instead of trying to read a local HEAD.
           head = get_remote_head(nil, @repo, @version)
-          return PluginResult.new(changed: false, failed: true,
-            msg: "Could not determine remote revision for #{@version}") unless head
           msg = check_mode ? "Would clone repository (check mode)" : "Repository information retrieved (clone: no)"
           return PluginResult.new(changed: true, failed: false, msg: msg, after: head)
         end
@@ -368,8 +366,6 @@ module Krikri
           remote_url = get_remote_url(d)
           remote_url_changed = remote_url ? !same_repo_location?(remote_url, @repo) : false
           head = get_remote_head(d, @remote, @version)
-          return PluginResult.new(changed: false, failed: true,
-            msg: "Could not determine remote revision for #{@version}") unless head
           return PluginResult.new(changed: before != head || remote_url_changed, failed: false,
             msg: "Would update repository (check mode)", before: before, after: head)
         end
@@ -960,31 +956,32 @@ module Krikri
     # Ansible's get_remote_head: resolves the remote SHA for version
     # without any local clone. target is the repo URL when cloning, the
     # remote name otherwise; dest is nil in the cloning case.
-    private def get_remote_head(dest : String?, target : String, version : String) : String?
+    #
+    # Every ls-remote here runs with check_rc=True in git.py, so an
+    # unreachable remote fails the task with basic.py's own
+    # cmd/rc/stdout/stderr payload instead of a "Could not determine"
+    # message (#1431: check-mode cloning of an ssh repo whose host key
+    # is unknown reported only the latter).
+    private def get_remote_head(dest : String?, target : String, version : String) : String
+      tag = false
       if version == "HEAD"
         if dest.nil?
           r = run_git("ls-remote #{sq(target)} -h HEAD", nil)
+          raise_check_rc("ls-remote #{target} -h HEAD", r) unless r[:exit_code] == 0
         else
-          branch = get_head_branch(dest)
-          return nil unless branch
-          r = run_git("ls-remote #{sq(target)} -h refs/heads/#{sq(branch)}", dest)
+          # git.py formats the branch into the f-string before quoting, so
+          # a repo whose HEAD carries no branch probes refs/heads/None.
+          arg = "refs/heads/#{get_head_branch(dest) || "None"}"
+          r = run_git("ls-remote #{sq(target)} -h -- #{sq(arg)}", dest)
+          raise_check_rc("ls-remote #{target} -h -- #{arg}", r) unless r[:exit_code] == 0
         end
       elsif remote_branch?(dest, target, version)
         r = run_git("ls-remote #{sq(target)} -h refs/heads/#{sq(version)}", dest)
+        raise_check_rc("ls-remote #{target} -h refs/heads/#{version}", r) unless r[:exit_code] == 0
       elsif remote_tag?(dest, target, version)
+        tag = true
         r = run_git("ls-remote #{sq(target)} -t refs/tags/#{sq(version)}*", dest)
-        return nil unless r[:exit_code] == 0
-        # Prefer the dereferenced line for annotated tags (Ansible).
-        chosen : String? = nil
-        r[:stdout].each_line do |line|
-          if line.strip.ends_with?("#{version}^{}")
-            chosen = line
-            break
-          elsif line.strip.ends_with?(version)
-            chosen = line
-          end
-        end
-        return chosen.try { |line| line.split[0]? }
+        raise_check_rc("ls-remote #{target} -t refs/tags/#{version}*", r) unless r[:exit_code] == 0
       else
         # 2.21 delta: a value that is neither branch nor tag is no longer
         # returned as-is - it is validated against the remote with a
@@ -996,8 +993,25 @@ module Krikri
         return version
       end
 
-      return nil unless r[:exit_code] == 0
-      r[:stdout].strip.empty? ? nil : r[:stdout].strip.split[0]
+      out = r[:stdout]
+      if out.strip.empty?
+        raise CheckRcFailure.new(fail_with_output(
+          "Could not determine remote revision for #{version}", r))
+      end
+
+      if tag
+        # Prefer the dereferenced line for annotated tags (Ansible).
+        out.each_line do |line|
+          if line.strip.ends_with?("#{version}^{}")
+            out = line
+            break
+          elsif line.strip.ends_with?(version)
+            out = line
+          end
+        end
+      end
+
+      out.strip.split[0]
     end
 
     # get_sha_hash: `git fetch --dry-run <remote> <version>` with
