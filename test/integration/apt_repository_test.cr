@@ -340,4 +340,145 @@ SH
       FileUtils.rm_rf(dir) if dir
     end
   end
+
+  # Issue #1445: real apt_repository's `diff` is built from the
+  # SourcesList dump map and only covers files whose key appears or
+  # disappears, so a created (or emptied) sources file gets a
+  # "/dev/null" sided entry, while appending to a file that already has
+  # lines gets NONE (live-verified against ansible-core 2.21.6, check
+  # mode included - the diff is built before real's save gate).
+  describe "diff result field" do
+    it "reports the created file as a /dev/null -> after diff entry" do
+      sources_list, list_d = scratch_sources("diff-created")
+      dir = File.dirname(sources_list)
+      target = File.join(list_d, "diff-created.list")
+
+      result = PluginSpecHelper.run("apt_repository", {
+        "repo"            => "deb https://packages.totally-fake-example.com/repo stable main",
+        "filename"        => "diff-created",
+        "update_cache"    => "false",
+        "_ansible_diff"   => "true",
+        "_sources_list"   => sources_list,
+        "_sources_list_d" => list_d,
+      })
+
+      entries = result["diff"].as_a
+      entries.size.must_equal(1)
+      entries[0]["before"].as_s.must_equal("")
+      entries[0]["after"].as_s.must_equal("deb https://packages.totally-fake-example.com/repo stable main\n")
+      entries[0]["before_header"].as_s.must_equal("/dev/null")
+      entries[0]["after_header"].as_s.must_equal(target)
+    ensure
+      FileUtils.rm_rf(dir) if dir
+    end
+
+    it "reports no diff entry when the add appends to a file that already has lines" do
+      sources_list, list_d = scratch_sources("diff-append")
+      dir = File.dirname(sources_list)
+      File.write(File.join(list_d, "diff-append.list"), "deb https://already-there.example.com/repo stable main\n")
+
+      result = PluginSpecHelper.run("apt_repository", {
+        "repo"            => "deb https://second.example.com/repo stable main",
+        "filename"        => "diff-append",
+        "update_cache"    => "false",
+        "_ansible_diff"   => "true",
+        "_sources_list"   => sources_list,
+        "_sources_list_d" => list_d,
+      })
+
+      result["changed"].as_bool.must_equal(true)
+      result["diff"].as_a.must_be_empty
+    ensure
+      FileUtils.rm_rf(dir) if dir
+    end
+
+    it "reports the emptied file as a before -> /dev/null diff entry on remove" do
+      sources_list, list_d = scratch_sources("diff-removed")
+      dir = File.dirname(sources_list)
+      target = File.join(list_d, "diff-removed.list")
+      File.write(target, "deb https://packages.totally-fake-example.com/repo stable main\n")
+
+      result = PluginSpecHelper.run("apt_repository", {
+        "repo"            => "deb https://packages.totally-fake-example.com/repo stable main",
+        "state"           => "absent",
+        "update_cache"    => "false",
+        "_ansible_diff"   => "true",
+        "_sources_list"   => sources_list,
+        "_sources_list_d" => list_d,
+      })
+
+      entries = result["diff"].as_a
+      entries.size.must_equal(1)
+      entries[0]["before"].as_s.must_equal("deb https://packages.totally-fake-example.com/repo stable main\n")
+      entries[0]["after"].as_s.must_equal("")
+      entries[0]["before_header"].as_s.must_equal(target)
+      entries[0]["after_header"].as_s.must_equal("/dev/null")
+    ensure
+      FileUtils.rm_rf(dir) if dir
+    end
+
+    it "reports no diff entry when the remove leaves other lines behind" do
+      sources_list, list_d = scratch_sources("diff-kept")
+      dir = File.dirname(sources_list)
+      target = File.join(list_d, "diff-kept.list")
+      File.write(target, "deb https://keep.example.com/repo stable main\ndeb https://packages.totally-fake-example.com/repo stable main\n")
+
+      result = PluginSpecHelper.run("apt_repository", {
+        "repo"            => "deb https://packages.totally-fake-example.com/repo stable main",
+        "state"           => "absent",
+        "update_cache"    => "false",
+        "_ansible_diff"   => "true",
+        "_sources_list"   => sources_list,
+        "_sources_list_d" => list_d,
+      })
+
+      result["changed"].as_bool.must_equal(true)
+      result["diff"].as_a.must_be_empty
+    ensure
+      FileUtils.rm_rf(dir) if dir
+    end
+
+    it "reports the diff entry in check mode too, where nothing is written" do
+      sources_list, list_d = scratch_sources("diff-check")
+      dir = File.dirname(sources_list)
+      target = File.join(list_d, "diff-check.list")
+
+      result = PluginSpecHelper.run("apt_repository", {
+        "repo"                => "deb https://packages.totally-fake-example.com/repo stable main",
+        "filename"            => "diff-check",
+        "update_cache"        => "false",
+        "_ansible_diff"       => "true",
+        "_ansible_check_mode" => "true",
+        "_sources_list"       => sources_list,
+        "_sources_list_d"     => list_d,
+      })
+
+      result["changed"].as_bool.must_equal(true)
+      entries = result["diff"].as_a
+      entries.size.must_equal(1)
+      entries[0]["after"].as_s.must_equal("deb https://packages.totally-fake-example.com/repo stable main\n")
+      entries[0]["after_header"].as_s.must_equal(target)
+      File.exists?(target).must_equal(false)
+    ensure
+      FileUtils.rm_rf(dir) if dir
+    end
+
+    it "keeps diff an empty list when diff mode wasn't asked for" do
+      sources_list, list_d = scratch_sources("diff-off")
+      dir = File.dirname(sources_list)
+
+      result = PluginSpecHelper.run("apt_repository", {
+        "repo"            => "deb https://packages.totally-fake-example.com/repo stable main",
+        "filename"        => "diff-off",
+        "update_cache"    => "false",
+        "_sources_list"   => sources_list,
+        "_sources_list_d" => list_d,
+      })
+
+      result["changed"].as_bool.must_equal(true)
+      result["diff"].as_a.must_be_empty
+    ensure
+      FileUtils.rm_rf(dir) if dir
+    end
+  end
 end
