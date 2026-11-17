@@ -121,6 +121,45 @@ describe "ansible_diff_mode magic var" do
   end
 end
 
+# Ansible's callback (v2_on_file_diff) renders a result's diff only when
+# that result is CHANGED. file: state=touch always carries a diff payload -
+# its initial_diff seeds the path/state pair, which can never be equal -
+# so an idempotent touch keeps the diff in its registered result while the
+# screen shows just `ok: [localhost]` (live-verified vs ansible-core 2.21.6,
+# issue #1441).
+describe "diff display on unchanged results" do
+  it "shows no diff block for an idempotent touch under --diff" do
+    playbook = File.tempname("touch-idempotent-diff", ".yml")
+    target = PluginSpecHelper.tmp_path("touch-idempotent-diff.txt")
+    FileUtils.mkdir_p(File.dirname(target))
+    File.write(target, "hello\n")
+    File.chmod(target, 0o644)
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: Idempotent touch
+            ansible.builtin.file:
+              path: #{target}
+              state: touch
+              mode: "0644"
+              modification_time: preserve
+              access_time: preserve
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["--diff", "-c", "local", "-i", INVENTORY, playbook], output: output, error: output)
+
+    status.success?.must_equal(true)
+    output.to_s.must_include("ok: [localhost]")
+    output.to_s.wont_include("--- before")
+  ensure
+    File.delete(playbook) if playbook && File.exists?(playbook)
+    File.delete(target) if target && File.exists?(target)
+  end
+end
+
 # martin-micimo.haproxy's template/copy tasks all carry
 # `diff: "{{ haproxy_show_template_diffs }}"` (defaults to true): a
 # TEMPLATED diff: keyword. Parse-time it is not a literal boolean, so the

@@ -1048,6 +1048,7 @@ module Krikri
     # Handle state=touch
     private def handle_touch(path : String) : PluginResult
       exists = File.exists?(path)
+      prev_state = touch_prev_state(path)
 
       if exists
         # File exists - Ansible's own idempotency here: touching
@@ -1062,11 +1063,12 @@ module Krikri
         attrs_changed = update_attributes_if_needed(path, is_directory: false)
         times_changed = touch_times_would_change?(path)
         changed = attrs_changed || times_changed
+        diff_data = touch_diff(path, prev_state)
 
         # Check mode verdict mirrors the non-check path: the real verdict
         # is attrs_changed || times_changed, not an unconditional
         # "changed".
-        return touch_existing_result(path, attrs_changed, times_changed) if @check_mode
+        return touch_existing_result(path, attrs_changed, times_changed, diff_data) if @check_mode
 
         if changed
           apply_file_attributes(path) if attrs_changed
@@ -1084,6 +1086,7 @@ module Krikri
           changed: changed,
           failed: false,
           msg: "",
+          diff: diff_data,
           dest: path,
           key_order: SUCCESS_KEY_ORDER
         )
@@ -1139,6 +1142,12 @@ module Krikri
         return result
       end
 
+      # Ansible's execute_touch builds the diff right after creating the
+      # file and before touching its attributes, so a fresh touch diffs an
+      # absent -> touch state transition plus the umask-derived mode the
+      # new file started with.
+      diff_data = touch_diff(path, prev_state)
+
       # Apply attributes
       apply_file_attributes(path)
       update_times(path)
@@ -1147,6 +1156,7 @@ module Krikri
         changed: true,
         failed: false,
         msg: "",
+        diff: diff_data,
         dest: path,
         key_order: SUCCESS_KEY_ORDER
       )
@@ -1156,7 +1166,7 @@ module Krikri
     # the non-check path's own attrs_changed || times_changed computation
     # (update_attributes_if_needed/touch_times_would_change? are both
     # read-only, so safe to run in check mode).
-    private def touch_existing_result(path : String, attrs_changed : Bool, times_changed : Bool) : PluginResult
+    private def touch_existing_result(path : String, attrs_changed : Bool, times_changed : Bool, diff_data : JSON::Any?) : PluginResult
       # No msg - Ansible's file module never carries msg on a touch
       # success path, check mode included (live-verified against
       # ansible-core 2.19.4: the check-mode result is changed/dest/stat
@@ -1165,6 +1175,7 @@ module Krikri
         changed: attrs_changed || times_changed,
         failed: false,
         msg: "",
+        diff: diff_data,
         dest: path,
         key_order: SUCCESS_KEY_ORDER
       )
@@ -2161,6 +2172,88 @@ module Krikri
       System::Group.find_by?(id: gid.to_s).try(&.name) || gid.to_s
     end
 
+    # file.py's get_state() reports the path's own lstat type, and
+    # execute_touch seeds its diff with that as before.state against the
+    # literal "touch" after.state - so a touch on an existing file always
+    # diffs a state transition too, even when no attribute changes.
+    private def touch_prev_state(path : String) : String
+      info = lstat(path)
+      return "absent" unless info
+      kind = info.st_mode & LibC::S_IFMT
+      return "link" if kind == LibC::S_IFLNK
+      return "directory" if kind == LibC::S_IFDIR
+      return "hard" if info.st_nlink > 1
+      "file"
+    end
+
+    # Ansible's execute_touch assigns the diff on every path that gets past
+    # its check-mode-on-absent early return, so --diff carries the seeded
+    # before/after pair even for a task whose only real change is the
+    # implied state transition (the callback still prints it only for a
+    # changed result).
+    private def touch_diff(path : String, prev_state : String) : JSON::Any?
+      return nil unless @diff_mode
+      diff = get_attribute_diff(path, prev_state)
+      return nil unless diff
+
+      info = lstat(path)
+      return diff unless info
+      append_touch_time_diff(diff["before"].as_h, diff["after"].as_h, info)
+      diff
+    end
+
+    # update_timestamp_for_file's diff half: one before/after pair per axis
+    # whose value actually changes. For state=touch an ABSENT
+    # modification_time:/access_time: means "now" (file.py's
+    # keep_backward_compatibility_on_timestamps), and when BOTH axes are
+    # "now" Ansible uses a single time.time() value for the pair - which is
+    # why a plain touch prints identical mtime/atime numbers on the after
+    # side (live-verified vs 2.21.6).
+    private def append_touch_time_diff(before : Hash(String, JSON::Any), after : Hash(String, JSON::Any), info : LibC::Stat) : Nil
+      previous_mtime = Krikri.stat_mtime_f(info)
+      previous_atime = Krikri.stat_atime_f(info)
+      mtime_param = @params["modification_time"]?
+      atime_param = @params["access_time"]?
+
+      if touch_time_now?(mtime_param) && touch_time_now?(atime_param)
+        now = Time.utc.to_unix_f
+        mtime = now
+        atime = now
+      else
+        return if touch_time_preserved?(mtime_param) && touch_time_preserved?(atime_param)
+        mtime = touch_diff_time(mtime_param, modification_time_format, previous_mtime)
+        atime = touch_diff_time(atime_param, access_time_format, previous_atime)
+        return if mtime == previous_mtime && atime == previous_atime
+      end
+
+      if mtime != previous_mtime
+        before["mtime"] = JSON::Any.new(previous_mtime)
+        after["mtime"] = JSON::Any.new(mtime)
+      end
+      if atime != previous_atime
+        before["atime"] = JSON::Any.new(previous_atime)
+        after["atime"] = JSON::Any.new(atime)
+      end
+    end
+
+    private def touch_time_now?(param : String?) : Bool
+      param.nil? || param == "now"
+    end
+
+    private def touch_time_preserved?(param : String?) : Bool
+      param == "preserve"
+    end
+
+    # A single axis' diff value the way update_timestamp_for_file resolves
+    # it: "preserve" keeps the current value, "now" reads the clock, and a
+    # specific timestamp is strptime'd in local time (Python's
+    # time.mktime, which parse_touch_timestamp already mirrors).
+    private def touch_diff_time(param : String?, format : String, previous : Float64) : Float64
+      return previous if param == "preserve"
+      return Time.utc.to_unix_f if param.nil? || param == "now"
+      parse_touch_timestamp(param, format).to_unix_f
+    end
+
     # Generate attribute diff for an existing file. Ansible's shape comes
     # from two places: file.py's initial_diff() seeds before/after with
     # {"path": ...} unconditionally (every state handler builds its diff
@@ -2172,7 +2265,7 @@ module Krikri
     # also the raw numeric uid/gid, never the resolved name:
     # diff['before']['owner'] = orig_uid (an int) in
     # set_owner_if_different/set_group_if_different.
-    private def get_attribute_diff(path : String) : JSON::Any?
+    private def get_attribute_diff(path : String, prev_state : String? = nil) : JSON::Any?
       return nil unless @diff_mode
       info = lstat(path)
       return nil unless info
@@ -2184,6 +2277,13 @@ module Krikri
       skeleton = attribute_diff_skeleton(path)
       before = skeleton[:before]
       after = skeleton[:after]
+
+      # state=touch's initial_diff always records the transition, since
+      # get_state() never reports "touch" for a path that exists.
+      if prev_state
+        before["state"] = JSON::Any.new(prev_state)
+        after["state"] = JSON::Any.new("touch")
+      end
 
       # Get current owner
       if owner = requested_attr("owner")
