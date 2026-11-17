@@ -24,6 +24,35 @@ private def run_playbook(playbook_text : String) : String
   stderr.to_s
 end
 
+# A role whose meta/argument_specs.yml default: reads a top-level fact, run
+# in check mode. Real templates the whole spec while finalizing the
+# synthesized validation task's args, so the read is Origin'd at the spec
+# file's own `default:` value token, as its own templating operation
+# (robertdebock.prosody, issue #1435, byte-compared vs ansible-core 2.21.6).
+private def run_role_spec_playbook(argument_specs : String, role_defaults : String) : String
+  dir = PluginSpecHelper.tmp_path("inject-facts-spec-#{Random::Secure.hex(4)}")
+  role = File.join(dir, "roles", "specfact")
+  FileUtils.mkdir_p(File.join(role, "meta"))
+  FileUtils.mkdir_p(File.join(role, "tasks"))
+  FileUtils.mkdir_p(File.join(role, "defaults"))
+  File.write(File.join(role, "meta", "argument_specs.yml"), argument_specs)
+  File.write(File.join(role, "defaults", "main.yml"), role_defaults)
+  File.write(File.join(role, "tasks", "main.yml"),
+    "---\n- name: consume the default\n  ansible.builtin.debug:\n    msg: \"{{ spec_domain }}\"\n")
+  playbook = File.join(dir, "play.yml")
+  File.write(playbook, <<-PLAYBOOK)
+    - hosts: localhost
+      connection: local
+      gather_facts: true
+      roles:
+        - specfact
+    PLAYBOOK
+  stdout = IO::Memory.new
+  stderr = IO::Memory.new
+  Process.run(BINARY, ["-i", "localhost,", "--check", playbook], output: stdout, error: stderr, chdir: dir)
+  stderr.to_s
+end
+
 # Batching only engages off the local connection, so the batch-shape cases
 # below need a real sshd; they skip without one. The same throwaway server
 # batch_when_error_side_effects_test.cr's header documents works; override
@@ -1006,6 +1035,33 @@ describe "INJECT_FACTS_AS_VARS deprecation from a when: clause" do
     stderr.to_s.scan(/DEPRECATION WARNING\]: INJECT_FACTS_AS_VARS/).size.must_equal(1)
     stderr.to_s.must_include(":18:13\n")
     stderr.to_s.must_include("18       when: ansible_os_family == \"Debian\"\n")
+  end
+end
+
+describe "INJECT_FACTS_AS_VARS deprecation from a role's argument_specs.yml default:" do
+  it "origins the spec default's read at its value token, before the role default's" do
+    stderr = run_role_spec_playbook(<<-SPECS, <<-DEFAULTS)
+      argument_specs:
+        main:
+          short_description: spec
+          options:
+            spec_domain:
+              type: "str"
+              default: "{{ ansible_fqdn }}"
+              description: "the domain"
+      SPECS
+      ---
+      # defaults file
+      spec_domain: "{{ ansible_fqdn }}"
+      DEFAULTS
+
+    stderr.scan(/DEPRECATION WARNING\]: INJECT_FACTS_AS_VARS/).size.must_equal(2)
+    stderr.must_match(/Origin: .*argument_specs\.yml:7:18\n/)
+    stderr.must_match(/Origin: .*defaults\/main\.yml:3:14\n/)
+    stderr.must_match(/ {19}\^ column 18\n/)
+    spec_at = stderr.index!("argument_specs.yml:7:18")
+    defaults_at = stderr.index!("defaults/main.yml:3:14")
+    (spec_at < defaults_at).must_equal(true)
   end
 end
 
