@@ -2839,6 +2839,10 @@ module Krikri
         # skipped_reason.
         aggregate["skip_reason"] = JSON::Any.new("No items in the list")
         aggregate["skipped_reason"] = JSON::Any.new("No items in the list")
+        # The one value ansible-core tags with deprecate_value, so any
+        # later templating operation that consumes it warns - see
+        # ResultDisplay.emit_skipped_reason_deprecation.
+        Krikri::ResultDisplay.mark_deprecated_skipped_reason("No items in the list")
         aggregate["results"] = JSON::Any.new(results)
       else
         aggregate["results"] = JSON::Any.new(results)

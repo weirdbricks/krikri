@@ -1238,7 +1238,9 @@ module Krikri
             handler.delegate_to ? host : nil,
             resolve_task_check_mode(handler, vars_context),
             handler_deadline,
-            handler.action_name
+            handler.action_name,
+            task_source_file: handler.source_file,
+            task_source_line: handler.source_line
           )
         end
         # The deadline expired during the action stage itself - same
