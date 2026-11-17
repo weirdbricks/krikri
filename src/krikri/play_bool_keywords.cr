@@ -25,9 +25,12 @@ module Krikri
   # Only `gather_facts:` and `force_handlers:` reach this: every other
   # bool play keyword (`become:`, `any_errors_fatal:`, `check_mode:`) is
   # an inherited FieldAttribute, and Play.post_validate skips those
-  # unless `always_post_validate` is set (live-verified vs 2.21.6:
-  # `become: bogus` beside `gather_facts: bogus` still reports
-  # gather_facts, and a play with only `become: bogus` runs normally).
+  # unless `always_post_validate` is set. Their conversion failure belongs
+  # to the TASK post-validation each inheriting task (handlers included)
+  # performs when it runs - `Task` sets `_post_validate_object`, unlike
+  # `Play` - which is why `any_errors_fatal: kpg-maybe` fails every task
+  # it reaches instead of the play (issue #1465; see Task#
+  # any_errors_fatal_invalid).
   # The conversion is ansible's `boolean(strict=True)` over the raw
   # value, and the reported value is its Python repr().
   module PlayBoolKeywords

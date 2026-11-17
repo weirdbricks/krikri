@@ -2641,6 +2641,11 @@ module Krikri
       if raw = task.run_once_invalid
         return KeywordBooleanError.new("run_once", raw)
       end
+      # any_errors_fatal: too - play-level values reach every task AND
+      # handler, and each one fails as it runs (issue #1465).
+      if raw = task.any_errors_fatal_invalid
+        return KeywordBooleanError.new("any_errors_fatal", raw)
+      end
       if (expr = task.diff_mode_expr) && (error = templated_bool_keyword_error("diff", expr, vars_context))
         return error
       end

@@ -668,6 +668,19 @@ module Krikri
     # Whether the task wrote its own run_once: - a play-level value only
     # reaches the tasks that did not.
     property? run_once_explicit : Bool = false
+    # any_errors_fatal: - abort the play for ALL hosts once one host fails
+    # this task (the play-level value is inherited by each task).
+    property? any_errors_fatal : Bool = false
+    # Raw text of an any_errors_fatal: value ansible's boolean() refuses -
+    # whether the task wrote it or inherited it from the play's own
+    # any_errors_fatal: (issue #1465). Real post-validates the keyword with
+    # boolean() when each task (handlers included) runs, so an
+    # unconvertible value fails every task it reaches - the parser used to
+    # read it as "false" and run the task anyway.
+    property any_errors_fatal_invalid : String? = nil
+    # Whether the task wrote its own any_errors_fatal: - a play-level value
+    # only reaches the tasks that did not.
+    property? any_errors_fatal_explicit : Bool = false
     # async: / poll: - run the module in the background (as a detached OS
     # process, not a Fiber, so it outlives the poll loop) up to async:
     # seconds, checking every poll: seconds (default 10, matching
@@ -1127,6 +1140,7 @@ module Krikri
       @delegate_to = nil
       @delegate_facts = false
       @run_once = false
+      @any_errors_fatal = false
       @async_seconds = nil
       @poll_seconds = nil
       @async_raw = nil
@@ -2194,7 +2208,7 @@ module Krikri
         # filetree implementation: the task died with "The lookup plugin
         # 'filetree' was not found." where real ansible iterated the tree.
         "with_filetree",
-        "loop_control", "notify", "changed_when", "failed_when", "delegate_to", "delegate_facts", "run_once", "connection",
+        "loop_control", "notify", "changed_when", "failed_when", "delegate_to", "delegate_facts", "run_once", "any_errors_fatal", "connection",
         # `collections:` - a real task keyword (the collections a task's
         # bare module names resolve through, play/block/task scope),
         # not a module; leaving it out made any task carrying one die
@@ -3111,6 +3125,23 @@ module Krikri
       own_handlers.each { |handler| handler.handler_block_id = play_handlers_block_id }
       play.handlers = role_handlers + own_handlers
 
+      # A play-level any_errors_fatal: is inherited by every task AND
+      # handler that does not write its own, and ansible post-validates it
+      # with boolean() when each one runs: an unconvertible value fails
+      # each task as it runs (a skipped task still skips first), with the
+      # chain's lower links Origin'd at the play's value token
+      # (live-verified vs 2.21.6, issue #1465). A templated value is
+      # resolved by real per task; until krikri does the same it keeps the
+      # pre-existing lenient parse.
+      if any_errors_fatal_yaml = yaml["any_errors_fatal"]?
+        unless template_expression(any_errors_fatal_yaml)
+          invalid = invalid_bool_keyword_text(any_errors_fatal_yaml)
+          origin = play_keyword_origin(source_file, source_map, index, "any_errors_fatal")
+          apply_play_any_errors_fatal(play.tasks, invalid, origin)
+          apply_play_any_errors_fatal(play.handlers, invalid, origin)
+        end
+      end
+
       # Play-level ignore_errors: reaches every task and handler (ansible
       # prints `...ignoring` and carries on); a task's or block's own
       # ignore_errors: still wins.
@@ -3154,6 +3185,28 @@ module Krikri
         end
         [task.block_tasks, task.rescue_tasks, task.always_tasks].each do |children|
           children.try { |list| apply_play_run_once(list, value, invalid, origin) }
+        end
+      end
+    end
+
+    # Hands a play-level any_errors_fatal: to every task and handler that
+    # did not write its own, blocks' children included. The play's value
+    # ORIGIN follows it along for the same reason as apply_play_run_once:
+    # the keyword failure chain's lower links belong at the play's value
+    # token, and a role task's own file holds no such line to find.
+    private def self.apply_play_any_errors_fatal(tasks : Array(Task), invalid : String?, origin : {String, Int32, Int32}?) : Nil
+      return unless invalid
+      tasks.each do |task|
+        unless task.any_errors_fatal_explicit?
+          task.any_errors_fatal_invalid = invalid
+          if origin
+            origins = (task.inherited_become_origins || Hash(String, {String, Int32, Int32}).new).dup
+            origins["any_errors_fatal"] = origin
+            task.inherited_become_origins = origins
+          end
+        end
+        [task.block_tasks, task.rescue_tasks, task.always_tasks].each do |children|
+          children.try { |list| apply_play_any_errors_fatal(list, invalid, origin) }
         end
       end
     end
@@ -5236,6 +5289,11 @@ module Krikri
       task.run_once = parse_become_value(task_hash["run_once"]?) || false
       task.run_once_explicit = !task_hash["run_once"]?.nil?
       task.run_once_invalid = invalid_bool_keyword_text(task_hash["run_once"]?)
+      # any_errors_fatal: is a per-task keyword too (block/task scope
+      # overrides the play's inherited value), post-validated the same way.
+      task.any_errors_fatal = parse_become_value(task_hash["any_errors_fatal"]?) || false
+      task.any_errors_fatal_explicit = !task_hash["any_errors_fatal"]?.nil?
+      task.any_errors_fatal_invalid = invalid_bool_keyword_text(task_hash["any_errors_fatal"]?)
 
       # Parse async / poll
       # A literal parses to seconds right away; a template only becomes a
