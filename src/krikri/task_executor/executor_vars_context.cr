@@ -2636,6 +2636,11 @@ module Krikri
       if raw = task.check_mode_invalid
         return KeywordBooleanError.new("check_mode", raw)
       end
+      # run_once: is post-validated the same way, whether the task wrote
+      # the value or inherited it from the play (issue #1444).
+      if raw = task.run_once_invalid
+        return KeywordBooleanError.new("run_once", raw)
+      end
       if (expr = task.diff_mode_expr) && (error = templated_bool_keyword_error("diff", expr, vars_context))
         return error
       end
