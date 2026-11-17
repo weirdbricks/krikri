@@ -153,7 +153,9 @@ describe "cron plugin" do
     result = PluginSpecHelper.run("cron", {"name" => "to remove", "state" => "absent", "cron_file" => path, "user" => "root"})
 
     result["changed"].as_bool.must_equal(true)
-    File.read(path).wont_include("to remove")
+    # cron.py unlinks a cron_file: whose last entry was just removed
+    # instead of leaving an empty file behind.
+    File.exists?(path).must_equal(false)
   end
 
   it "leaves other entries in the file untouched" do
@@ -604,6 +606,71 @@ describe "cron plugin" do
 
       result["jobs"].as_a.map(&.as_s).must_equal(["brand new"])
       result["envs"].as_a.map(&.as_s).must_equal(["MAILTO"])
+    end
+  end
+
+  # cron.py attaches a diff dict to the result only when something changed
+  # AND diff mode is on (task `diff: true` / --diff), with both headers
+  # naming the managed crontab (live-verified against ansible-core 2.21.6).
+  describe "--diff payload" do
+    it "reports the before/after text and file headers for a new entry" do
+      path = tmp_path("cron-diff-add.txt")
+      File.delete(path) if File.exists?(path)
+
+      result = PluginSpecHelper.run("cron", {
+        "name" => "kpg other job",
+        "job" => "/bin/true",
+        "minute" => "5", "day" => "1", "month" => "6",
+        "cron_file" => path, "user" => "root",
+        "_ansible_diff" => "true",
+      })
+
+      diff = result["diff"]
+      diff["before"].as_s.must_equal("")
+      diff["after"].as_s.must_equal("#Ansible: kpg other job\n5 * 1 6 * root /bin/true\n")
+      diff["before_header"].as_s.must_equal(path)
+      diff["after_header"].as_s.must_equal(path)
+    end
+
+    it "omits the diff entirely when diff mode is off" do
+      path = tmp_path("cron-diff-off.txt")
+      File.delete(path) if File.exists?(path)
+
+      result = PluginSpecHelper.run("cron", {"name" => "no diff", "job" => "/bin/true", "cron_file" => path, "user" => "root"})
+
+      result["diff"]?.must_be_nil
+    end
+
+    it "carries the diff on the env: true path too" do
+      path = tmp_path("cron-diff-env.txt")
+      File.delete(path) if File.exists?(path)
+
+      result = PluginSpecHelper.run("cron", {
+        "name" => "MAILTO", "env" => "true", "job" => "root",
+        "cron_file" => path, "user" => "root",
+        "_ansible_diff" => "true",
+      })
+
+      diff = result["diff"]
+      diff["before"].as_s.must_equal("")
+      diff["after"].as_s.must_equal("MAILTO=\"root\"\n")
+    end
+
+    it "unlinks the emptied cron_file and names /dev/null as the after header" do
+      path = tmp_path("cron-diff-remove.txt")
+      File.write(path, "#Ansible: gone\n* * * * * root /bin/true\n")
+
+      result = PluginSpecHelper.run("cron", {
+        "name" => "gone", "state" => "absent", "cron_file" => path, "user" => "root",
+        "_ansible_diff" => "true",
+      })
+
+      result["changed"].as_bool.must_equal(true)
+      File.exists?(path).must_equal(false)
+      diff = result["diff"]
+      diff["before"].as_s.must_equal("#Ansible: gone\n* * * * * root /bin/true\n")
+      diff["after"].as_s.must_equal("")
+      diff["after_header"].as_s.must_equal("/dev/null")
     end
   end
 end

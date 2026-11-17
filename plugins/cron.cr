@@ -223,6 +223,12 @@ module Krikri
       original_content = File.exists?(cron_file) ? File.read(cron_file) : ""
       new_content, changed = PluginHelpers::CronTable.upsert(original_content, name, new_line)
 
+      # A removal that leaves nothing but blank lines unlinks the file
+      # instead of writing an empty one.
+      if emptied = removal_empties_file(cron_file, name, state, original_content, new_content, check_mode)
+        return emptied
+      end
+
       backup_file, failure = persist_file(cron_file, original_content, new_content, changed, check_mode)
       return failure if failure
 
@@ -367,14 +373,16 @@ module Krikri
     # read it, after the rendered result, and both carry the same label -
     # the cron_file path, or a user crontab's own "crontab for user X" /
     # "crontab" header. Absent without diff mode, like the module's
-    # `if module._diff:` guard around the payload.
-    private def cron_diff(before : String, after : String, header : String) : JSON::Any?
+    # `if module._diff:` guard around the payload. A removal that empties
+    # the cron_file labels the after side /dev/null instead (the file is
+    # about to be unlinked).
+    private def cron_diff(before : String, after : String, header : String, after_header : String? = nil) : JSON::Any?
       return nil unless @diff_mode
       JSON::Any.new({
         "before"        => JSON::Any.new(before),
         "before_header" => JSON::Any.new(header),
         "after"         => JSON::Any.new(after),
-        "after_header"  => JSON::Any.new(header),
+        "after_header"  => JSON::Any.new(after_header || header),
       })
     end
 
@@ -396,6 +404,32 @@ module Krikri
         result = result.sub(Regex.new(Regex.escape(line) + "\\r?\\n?"), "")
       end
       result
+    end
+
+    # A state=absent removal that leaves the cron_file: with nothing but
+    # blank lines - the point where cron.py stops writing and unlinks the
+    # file instead.
+    private def entry_removal_empties?(original_content : String, name : String, new_content : String) : Bool
+      PluginHelpers::CronTable.job_names(original_content).includes?(name) &&
+        new_content.lines.all? { |line| line.strip.empty? }
+    end
+
+    # cron.py's early exit once that removal has emptied the cron_file:
+    # unlink it and return before the jobs/envs result is built, with the
+    # diff's after side pointing at /dev/null (live-verified against
+    # 2.21.6 --diff). nil when the file still has content to write.
+    private def removal_empties_file(cron_file : String, name : String, state : String,
+                                     original_content : String, new_content : String, check_mode : Bool) : PluginResult?
+      return nil unless state == "absent" && entry_removal_empties?(original_content, name, new_content)
+      removed = check_mode ? File.exists?(cron_file) : File.delete?(cron_file)
+      PluginResult.new(
+        changed: removed,
+        failed: false,
+        cron_file: cron_file,
+        state: state,
+        diff: cron_diff(original_content, "", cron_file, "/dev/null"),
+        key_order: ["changed", "cron_file", "state", "diff"]
+      )
     end
 
     # env: true renders NAME="value" (state: absent needs no decl, hence
