@@ -654,6 +654,16 @@ module Krikri
     # the play; later hosts skip it outright (no output/stats), same as
     # Ansible.
     property? run_once : Bool
+    # Raw text of a run_once: value ansible's boolean() refuses - whether
+    # the task wrote it or inherited it from the play's own run_once:
+    # (issue #1444). Real post-validates the keyword with boolean() at
+    # execution time, so an unconvertible value fails the first task that
+    # actually runs; krikri's parse used to read it as "false" and run the
+    # task anyway.
+    property run_once_invalid : String? = nil
+    # Whether the task wrote its own run_once: - a play-level value only
+    # reaches the tasks that did not.
+    property? run_once_explicit : Bool = false
     # async: / poll: - run the module in the background (as a detached OS
     # process, not a Fiber, so it outlives the poll loop) up to async:
     # seconds, checking every poll: seconds (default 10, matching
@@ -3053,6 +3063,24 @@ module Krikri
       apply_module_defaults(play.tasks, play.module_defaults)
       apply_module_defaults(play.handlers, play.module_defaults)
 
+      # A play-level run_once: is a field attribute inherited by every task
+      # that does not write its own, and ansible post-validates it with
+      # boolean() when that task runs: an unconvertible value fails the
+      # first task that is not skipped, with the chain's lower links
+      # Origin'd at the play's value token (live-verified vs 2.21.6, issue
+      # #1444: `run_once: kpg-maybe` at play level fails the play's first
+      # task, but a `when: false` first task is skipped and the next one
+      # fails instead). A templated value is resolved by real per task;
+      # until krikri does the same it keeps the pre-existing lenient parse.
+      if run_once_yaml = yaml["run_once"]?
+        unless template_expression(run_once_yaml)
+          apply_play_run_once(play.tasks,
+            run_once_boolean_value(run_once_yaml),
+            invalid_bool_keyword_text(run_once_yaml),
+            play_keyword_origin(source_file, source_map, index, "run_once"))
+        end
+      end
+
       # Parse handlers
       own_handlers = [] of Task
       if handlers_yaml = yaml["handlers"]?.try(&.as_a?)
@@ -3085,6 +3113,53 @@ module Krikri
           children.try { |list| apply_play_ignore_errors(list, value, expr) }
         end
       end
+    end
+
+    # Hands a play-level run_once: to every task that did not write its
+    # own, blocks' children included (the keyword rides the field-attribute
+    # chain block -> task). The play's value ORIGIN follows it along so the
+    # keyword failure chain's lower links point at the play's value token
+    # instead of the task: `keyword_value_origin` reads that map before
+    # scanning the task's own file, and a role task's own file holds no
+    # such line to find.
+    private def self.apply_play_run_once(tasks : Array(Task), value : Bool, invalid : String?, origin : {String, Int32, Int32}?) : Nil
+      tasks.each do |task|
+        unless task.run_once_explicit?
+          task.run_once = value
+          task.run_once_invalid = invalid
+          if origin
+            origins = (task.inherited_become_origins || Hash(String, {String, Int32, Int32}).new).dup
+            origins["run_once"] = origin
+            task.inherited_become_origins = origins
+          end
+        end
+        [task.block_tasks, task.rescue_tasks, task.always_tasks].each do |children|
+          children.try { |list| apply_play_run_once(list, value, invalid, origin) }
+        end
+      end
+    end
+
+    # The boolean ansible's boolean() reads an already validated literal
+    # run_once: value as (its own TRUE set, so `run_once: on` and
+    # `run_once: 1` both mean once).
+    private def self.run_once_boolean_value(yaml : YAML::Any) : Bool
+      case raw = yaml.raw
+      when Bool   then raw
+      when Int    then raw == 1
+      when Float  then raw == 1.0
+      when String then %w[y yes on 1 true t].includes?(raw.strip.downcase)
+      else             false
+      end
+    end
+
+    # A play-level keyword's VALUE token in the playbook source, as an
+    # Origin tuple - what ansible labels the middle/lower links of a
+    # keyword failure with when the value came from the play rather than
+    # the failing task (see apply_play_run_once).
+    private def self.play_keyword_origin(source_file : String?, source_map : YamlSourceMap?, index : Int32, keyword : String) : {String, Int32, Int32}?
+      return nil unless source_file && source_map
+      return nil unless pos = source_map.at?("#{index}/#{keyword}")
+      {File.expand_path(source_file), pos[0], pos[1]}
     end
 
     # Parse a list of task-shaped YAML nodes, skipping (with a warning) any
@@ -5140,6 +5215,8 @@ module Krikri
       task.delegate_to = "localhost" if is_local_action
       task.delegate_facts = parse_become_value(task_hash["delegate_facts"]?) || false
       task.run_once = parse_become_value(task_hash["run_once"]?) || false
+      task.run_once_explicit = !task_hash["run_once"]?.nil?
+      task.run_once_invalid = invalid_bool_keyword_text(task_hash["run_once"]?)
 
       # Parse async / poll
       # A literal parses to seconds right away; a template only becomes a
