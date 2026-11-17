@@ -152,8 +152,7 @@ describe "role-local lookup_plugins/*.py custom lookups" do
       YAML
 
     status.success?.must_equal(false, output)
-    output.must_include("custom lookup 'boom' failed", output)
-    output.must_include("exploding on purpose", output)
+    output.must_include("The lookup plugin 'boom' failed: exploding on purpose", output)
   ensure
     FileUtils.rm_rf(root) if root
   end

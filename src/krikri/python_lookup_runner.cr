@@ -192,8 +192,16 @@ module Krikri
         kind = result["kind"]?.try(&.as_s?) || "error"
         detail = result["error"]?.try(&.as_s?) || "unknown error"
         # Ansible words an import failure while loading the plugin file
-        # as "failed to load", without the exception class name.
-        message = kind == "load" ? "The lookup plugin '#{name}' failed to load: #{detail}" : "custom lookup '#{name}' failed: #{detail}"
+        # as "failed to load", without the exception class name. A plugin
+        # that raises during run() is "The lookup plugin '<name>'
+        # failed: <cause>" - the cause's own message with no class name,
+        # and no colon at all when the cause carries no message
+        # (live-verified vs 2.21.6).
+        message = if kind == "load"
+                    "The lookup plugin '#{name}' failed to load: #{detail}"
+                  else
+                    "The lookup plugin '#{name}' failed#{detail.empty? ? "." : ": #{detail}"}"
+                  end
         raise LookupUnavailableError.new(kind, message)
       end
       result["result"]? || JSON::Any.new(nil)
@@ -366,9 +374,10 @@ module Krikri
       # JSON response - reported as a kind "error" plugin failure here
       # rather than silently degrading the whole mechanism.
       except BaseException as exc:
+          # Ansible reports only the exception's own message as the
+          # lookup failure's cause, never the exception class name.
           sys.stdout.write(json.dumps(
-              {"ok": False, "kind": "error",
-               "error": "%s: %s" % (type(exc).__name__, exc)}))
+              {"ok": False, "kind": "error", "error": "%s" % exc}))
       PYTHON
   end
 end
