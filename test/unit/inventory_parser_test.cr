@@ -374,6 +374,31 @@ describe Krikri::InventoryParser do
     end
   end
 
+  describe "~regex host-pattern matching (ansible's ~ term)" do
+    include RaisesAssertion
+    it "matches host names by regex, anchored at the start only (re.match)" do
+      inventory = build_pattern_inventory
+      inventory.get_hosts("~^web").map(&.name).sort!.must_equal(["web1.example.com", "web10", "web2.example.com"])
+      # re.match() anchors the start, never the end: no `^` needed, and
+      # a longer pattern still matches a name it is a prefix of.
+      inventory.get_hosts("~db1").map(&.name).must_equal(["db1"])
+      # Anchoring means it is not a substring search: "eb" starts no name.
+      inventory.get_hosts("~eb").map(&.name).must_equal([] of Krikri::Host)
+    end
+
+    it "matches a group name by regex and yields that group's hosts" do
+      inventory = build_pattern_inventory
+      # No host is named "web", so this can only come from the group.
+      inventory.get_hosts("~^web$").map(&.name).sort!.must_equal(["web1.example.com", "web10", "web2.example.com"])
+      inventory.get_hosts("~^a").map(&.name).sort!.must_equal(["db1", "web1.example.com", "web10", "web2.example.com"])
+    end
+
+    it "honours a ! exclusion whose own term is a regex" do
+      inventory = build_pattern_inventory
+      inventory.get_hosts("~^web:!~^web1").map(&.name).must_equal(["web2.example.com"])
+    end
+  end
+
   describe "groups_for memoization" do
     include RaisesAssertion
     it "reflects membership changes made after a cached call" do

@@ -114,6 +114,12 @@ module Krikri
 
     # One term of a pattern - the original single-pattern behavior.
     private def single_pattern_hosts(pattern : String) : Array(Host)
+      # Ansible's `~regex` term (manager.py's _match_one_pattern): the
+      # remainder is a raw regex, so it must be tried before the literal
+      # group/host-name lookups below - real only bypasses the pattern
+      # machinery for a term that is an exact HOST name, never a group.
+      return regex_pattern_hosts(pattern) if pattern.starts_with?('~')
+
       case pattern
       when "all", "*"
         @hosts.values
@@ -160,6 +166,45 @@ module Krikri
           [] of Host
         end
       end
+    end
+
+    # A `~regex` term's matches, in Ansible's order (manager.py's
+    # _enumerate_matches): every matching GROUP contributes its transitive
+    # hosts first, then matching HOST names are appended; host names are
+    # always checked for a regex term, even when a group matched. The
+    # pattern is used with re.match(), i.e. anchored at the start only -
+    # `~^be-` and `~be-` match be-1, and `~be` does too, since a trailing
+    # pattern constrains nothing (live-verified against 2.21.6).
+    private def regex_pattern_hosts(pattern : String) : Array(Host)
+      regex = Regex.new("\\A(?:#{pattern.lchop('~')})")
+      matched = [] of Host
+      seen = Set(String).new
+
+      @groups.each_key do |name|
+        next unless regex.matches?(name)
+        # "all" is the implicit group every host belongs to, and it is
+        # kept as an empty HostGroup - single_pattern_hosts("all") takes
+        # the same shortcut.
+        members = name == "all" ? @hosts.values : hosts_in_group(name)
+        members.each do |host|
+          next unless seen.add?(host.name)
+          matched << host
+        end
+      end
+
+      @hosts.each do |name, host|
+        next unless regex.matches?(name)
+        next unless seen.add?(host.name)
+        matched << host
+      end
+
+      matched
+    rescue
+      # An invalid regex (`~(`) is not a host match. Real refuses the run
+      # with "Invalid host list pattern: ~("; treating it as no match
+      # keeps an unparseable pattern from crashing the whole inventory
+      # path, and the caller's own no-hosts handling still reports it.
+      [] of Host
     end
 
     # Translates an fnmatch-style wildcard pattern (`*`, `?`, `[seq]`)
