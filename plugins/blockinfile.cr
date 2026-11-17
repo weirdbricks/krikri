@@ -309,16 +309,22 @@ module Krikri
 
       temp_file = File.join(File.dirname(path), ".krikri-playbook-blockinfile-#{Random::Secure.hex(8)}.tmp")
       begin
-        # SECURITY: the bytes land at 0600 and the final mode (the task's
-        # numeric mode:, else the dest's own mode as resolved by
-        # staging_temp_mode) is applied right after - see
-        # BasePlugin#write_staging_temp. Read-only modes (0440) have to go
-        # on after the write: a temp pre-settled to one cannot be opened
-        # by its own non-root owner, which is what failed these tasks and
-        # left the read-only .tmp behind.
+        # SECURITY: the bytes land at 0600 and the dest's own mode (or
+        # 0666 & ~umask for a not-yet-existing dest) is settled right
+        # after - see BasePlugin#write_staging_temp. Read-only modes
+        # (0440) have to go on after the write: a temp pre-settled to one
+        # cannot be opened by its own non-root owner, which is what
+        # failed these tasks and left the read-only .tmp behind.
+        #
+        # apply_task_mode: false keeps that numeric mode: OFF the staged
+        # file, exactly like Ansible's atomic_move (which copystats the
+        # existing dest, and chmods 0666 & ~umask for a new one) so the
+        # post-write check_file_attrs pass sees the real drift: staging
+        # at the task's mode made the attribute pass a no-op and dropped
+        # the "(file attributes)" diff entry (issue #1469).
         bytes, encode_failure = PluginHelpers::TextFileIO.encode(content, file_encoding)
         return PluginResult.new(changed: false, failed: true, msg: encode_failure) if encode_failure
-        write_staging_temp(temp_file, bytes, staging_temp_mode(path, 0o644))
+        write_staging_temp(temp_file, bytes, staging_temp_mode(path, 0o666, apply_task_mode: false))
       rescue ex
         return PluginResult.new(changed: false, failed: true, msg: "Failed to write temporary file: #{ex.message}")
       end
@@ -368,12 +374,15 @@ module Krikri
             bytes, encode_failure = PluginHelpers::TextFileIO.encode(content, file_encoding)
             return PluginResult.new(changed: false, failed: true, msg: encode_failure) if encode_failure
             # An existing dest keeps its mode (opening it for writing does
-            # not change it); a fresh one gets the bytes at 0600 and its
-            # final mode right after - see BasePlugin#write_staging_temp.
+            # not change it); a fresh one gets the bytes at 0600 and the
+            # creation mode (0666 & ~umask) right after - see
+            # BasePlugin#write_staging_temp. The task's numeric mode: is
+            # deliberately left to the post-write attribute pass, like
+            # the staged write above (issue #1469).
             if File.exists?(dest)
               File.write(dest, bytes, perm: 0o600)
             else
-              write_staging_temp(dest, bytes, staging_temp_mode(dest, 0o644, preserve_dest_mode: false))
+              write_staging_temp(dest, bytes, staging_temp_mode(dest, 0o666, preserve_dest_mode: false, apply_task_mode: false))
             end
           rescue ex
             return PluginResult.new(changed: false, failed: true, msg: "Failed to write file (unsafe_writes fallback): #{ex.message}")
