@@ -37,6 +37,33 @@ ensure
   FileUtils.rm_rf(dir) if dir && Dir.exists?(dir)
 end
 
+# Same playbook, but keeping the streams apart and the exit code: real
+# ansible-playbook DIES on an unconvertible `serial:` token before it ever
+# prints a play, and an engine that merely falls back to "one batch of
+# every host" instead runs the whole play the reference host aborted.
+private def run_serial_streams(serial : String) : {Int32, String, String}
+  dir = File.tempname("serial")
+  Dir.mkdir_p(dir)
+  File.write(File.join(dir, "inv.ini"),
+    "[g]\nh1 ansible_connection=local\nh2 ansible_connection=local\n" \
+    "h3 ansible_connection=local\nh4 ansible_connection=local\n")
+  File.write(File.join(dir, "pb.yml"), <<-YAML)
+    - hosts: all
+      gather_facts: false
+      serial: #{serial}
+      tasks:
+        - name: a
+          ansible.builtin.debug: {msg: "A-{{ inventory_hostname }}"}
+    YAML
+
+  stdout_io = IO::Memory.new
+  stderr_io = IO::Memory.new
+  status = Process.run(BINARY, ["-i", "inv.ini", "pb.yml"], output: stdout_io, error: stderr_io, chdir: dir)
+  {status.exit_code, stdout_io.to_s, stderr_io.to_s}
+ensure
+  FileUtils.rm_rf(dir) if dir && Dir.exists?(dir)
+end
+
 describe "serial:" do
   # One host at a time: the whole play (both tasks) finishes for h1
   # before h2 starts.
@@ -71,5 +98,55 @@ describe "serial:" do
   # Guard: without serial: the play still runs every host at once.
   it "is a no-op when absent" do
     run_serial(nil).must_equal(%w[A-h1 A-h2 A-h3 A-h4 B-h1 B-h2 B-h3 B-h4])
+  end
+
+  # Real's PlaybookExecutor._get_serialized_batches runs helpers.pct_to_int
+  # over the play's serial tokens right before the play starts, and int()
+  # raises an uncaught ValueError for a non-numeric token, so the whole run
+  # dies with this stderr block and rc=250, before any play output
+  # (live-verified vs ansible-core 2.21.6, issue #1446 - kpg's
+  # `serial: kpg-many`).
+  it "dies on a non-integer serial token like ansible" do
+    code, stdout, stderr = run_serial_streams("kpg-many")
+    code.must_equal 250
+    stdout.must_be_empty
+    stderr.must_include "[ERROR]: Unexpected Exception, this is probably a bug: " \
+                        "invalid literal for int() with base 10: 'kpg-many'"
+    stderr.must_include "line 32, in pct_to_int"
+    stderr.must_include "    return int(value)"
+    stderr.must_include "ansible.errors.AnsibleError: Unexpected Exception, " \
+                        "this is probably a bug: invalid literal for int() with base 10: 'kpg-many'"
+    stderr.wont_include "PLAY RECAP"
+  end
+
+  # The percentage branch int()s the text before the '%', so a fractional
+  # or non-numeric percentage dies in that same first traceback frame -
+  # a different helpers.py line from the plain branch above
+  # (live-verified vs 2.21.6).
+  it "dies when a serial percentage prefix is not an integer" do
+    code, stdout, stderr = run_serial_streams(%("abc%"))
+    code.must_equal 250
+    stdout.must_be_empty
+    stderr.must_include "invalid literal for int() with base 10: 'abc'"
+    stderr.must_include "line 29, in pct_to_int"
+    stderr.must_include "    value_pct = int(value.replace(\"%\", \"\"))"
+  end
+
+  # int() accepts a non-integer YAML literal: int(2.5) is 2 and int(True)
+  # is 1 (live-verified vs 2.21.6), so those literals batch instead of
+  # being read as one batch of every host.
+  it "truncates a float serial literal" do
+    run_serial("2.5").must_equal(%w[A-h1 A-h2 B-h1 B-h2 A-h3 A-h4 B-h3 B-h4])
+  end
+
+  it "treats a boolean serial literal as one" do
+    run_serial("true").must_equal(%w[A-h1 B-h1 A-h2 B-h2 A-h3 B-h3 A-h4 B-h4])
+  end
+
+  # Only the tokens real actually reaches are converted: [4, kpg-many]
+  # over four hosts eats every host in its first batch, so the bad second
+  # entry is never looked at (live-verified vs 2.21.6).
+  it "does not convert serial entries past the last batch" do
+    run_serial("[4, kpg-many]").must_equal(%w[A-h1 A-h2 A-h3 A-h4 B-h1 B-h2 B-h3 B-h4])
   end
 end
