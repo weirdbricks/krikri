@@ -1497,6 +1497,144 @@ describe "INJECT_FACTS_AS_VARS deprecation from a loop item that is a fact value
   end
 end
 
+# Issue #1417, dzangolab.gitlab_runner: ansible-playbook 2.21.6 prints two
+# blocks for a when:-skipped looped include_tasks: whose items come from a
+# role default holding `- name: '{{ ansible_hostname }}'` - the LEAF's own
+# declaration while the loop source's items template, then the loop_var
+# label's block the skip line's label read trips. Its tasks/global-setup.yml
+# also ends in a stray null list entry (`- ` with nothing after it), which
+# real silently drops while this engine warned about it. Neither block was
+# attributed: the leaf render carried no Origin at all (so that block
+# surfaced late, at a later task's own loop) and the skipped include's label
+# read emitted nothing. Live-verified against 2.21.6.
+describe "INJECT_FACTS_AS_VARS deprecation from a skipped looped include" do
+  it "orders the loop source leaf and loop_var blocks and drops a null imported entry" do
+    dir = PluginSpecHelper.tmp_path("inject-facts-include-loop-#{Random::Secure.hex(4)}")
+    role = File.join(dir, "roles", "dztest")
+    FileUtils.mkdir_p(File.join(role, "tasks"))
+    FileUtils.mkdir_p(File.join(role, "defaults"))
+
+    defaults = File.join(role, "defaults", "main.yml")
+    File.write(defaults, <<-YAML)
+      ---
+      gitlab_runner_registration_token: ''
+
+      gitlab_runner_runners:
+          # The identifier of the runner.
+        - name: '{{ ansible_hostname }}'
+          # set to 'absent' to delete the runner.
+          state: present
+      YAML
+
+    tasks = File.join(role, "tasks", "main.yml")
+    File.write(tasks, <<-YAML)
+      ---
+      - name: Set global options
+        import_tasks: global-setup.yml
+
+      - name: Register GitLab Runner
+        include_tasks: register-runner.yml
+        when: gitlab_runner_registration_token != ''
+        loop: "{{ gitlab_runner_runners }}"
+        loop_control:
+          index_var: gitlab_runner_index
+          loop_var: gitlab_runner
+
+      - name: Configure GitLab Runner
+        include_tasks: config-runners.yml
+      YAML
+
+    File.write(File.join(role, "tasks", "register-runner.yml"), <<-YAML)
+      ---
+      - name: Register noop
+        debug:
+          msg: register
+      YAML
+
+    # The trailing `- ` is the stray null entry the role's own
+    # global-setup.yml ends with.
+    File.write(File.join(role, "tasks", "global-setup.yml"), <<-YAML)
+      ---
+      - name: Set concurrent option
+        debug:
+          msg: concurrent
+      -
+      YAML
+
+    File.write(File.join(role, "tasks", "config-runners.yml"), <<-YAML)
+      ---
+      - include_tasks: config-runner.yml
+        loop: "{{ runner_configs }}"
+        loop_control:
+          index_var: runner_config_index
+          loop_var: runner_config
+      YAML
+
+    config_runner = File.join(role, "tasks", "config-runner.yml")
+    File.write(config_runner, <<-YAML)
+      ---
+      - name: Isolate runner configuration
+        debug:
+          msg: isolate
+
+      - include_tasks: update-config-runner.yml
+        when:
+          - ('name = "'+gitlab_runner.name|default(ansible_hostname+'-'+gitlab_runner_index|string)+'"') in runner_config
+          - gitlab_runner.state|default('present') == 'present'
+        loop: "{{ gitlab_runner_runners }}"
+        loop_control:
+          index_var: gitlab_runner_index
+          loop_var: gitlab_runner
+      YAML
+
+    File.write(File.join(role, "tasks", "update-config-runner.yml"), <<-YAML)
+      ---
+      - name: Update noop
+        debug:
+          msg: update
+      YAML
+
+    playbook = File.join(dir, "play.yml")
+    File.write(playbook, <<-PLAYBOOK)
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        vars:
+          runner_configs:
+            - 'concurrent = 2'
+          runner_config: 'no match'
+        roles:
+          - dztest
+      PLAYBOOK
+
+    stdout = IO::Memory.new
+    stderr = IO::Memory.new
+    Process.run(BINARY, ["-i", "localhost,", playbook], output: stdout, error: stderr, chdir: dir)
+
+    # Real never mentions the null entry - it is not a task at all.
+    (stdout.to_s + stderr.to_s).includes?("Skipping task").must_equal(false)
+
+    output = stderr.to_s
+    output.scan(/INJECT_FACTS_AS_VARS default to `True`/).size.must_equal(4)
+    # The loop source's leaf first (what real templated when it built the
+    # items), then the skipped item's loop_var label: that order is the
+    # divergence this test guards.
+    output.must_include("Origin: #{defaults}:6:11\n")
+    output.must_include("Origin: #{tasks}:11:15\n")
+    output.must_include("Origin: #{config_runner}:8:7\n")
+    output.must_include("Origin: #{config_runner}:13:15\n")
+    leaf_at = output.index!("Origin: #{defaults}:6:11")
+    skipped_label_at = output.index!("Origin: #{tasks}:11:15")
+    when_at = output.index!("Origin: #{config_runner}:8:7")
+    include_label_at = output.index!("Origin: #{config_runner}:13:15")
+    (leaf_at < skipped_label_at).must_equal(true)
+    (skipped_label_at < when_at).must_equal(true)
+    (when_at < include_label_at).must_equal(true)
+    # Both loop_var label blocks carry the loop variable's own token.
+    output.scan(/loop_var: gitlab_runner\n/).size.must_equal(2)
+  end
+end
+
 # ansible-core tags a loop item built out of a still-templated fact read,
 # so a with_nested: whose source list holds a whole-span fact reference
 # warns three times in one task: once when the item renders (the leaf's
