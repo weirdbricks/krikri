@@ -43,6 +43,43 @@ describe "blockinfile plugin" do
     Dir.children(File.dirname(path)).count { |name| name.includes?(".krikri-playbook-") }.must_equal(0)
   end
 
+  # Ansible's atomic_move keeps an existing dest's mode (shutil.copystat)
+  # and check_file_attrs then applies mode: and records the drift, so a
+  # mode-changing blockinfile carries a "(file attributes)" diff entry.
+  # Pre-applying mode: to the staged temp made that pass a no-op and
+  # dropped the entry (issue #1469, live-verified vs ansible-core
+  # 2.21.6).
+  it "reports the mode change in the file-attributes diff entry" do
+    path = PluginSpecHelper.tmp_path("blockinfile-attr-diff.txt")
+    File.write(path, "alpha\n")
+    File.chmod(path, 0o644)
+
+    result = PluginSpecHelper.run("blockinfile", {
+      "path" => path, "block" => "beta", "mode" => "0440", "_ansible_diff" => "true",
+    })
+
+    entry = result["diff"].as_a[1].as_h
+    entry.keys.must_equal(["before", "after", "before_header", "after_header"])
+    entry["before"].as_h["mode"].as_s.must_equal("0644")
+    entry["after"].as_h["mode"].as_s.must_equal("0440")
+    entry["before_header"].as_s.must_equal("#{path} (file attributes)")
+    File.info(path).permissions.value.must_equal(0o440)
+  end
+
+  it "keeps the file-attributes diff entry header-only when the mode already matches" do
+    path = PluginSpecHelper.tmp_path("blockinfile-attr-diff-noop.txt")
+    File.write(path, "alpha\n")
+    File.chmod(path, 0o644)
+
+    result = PluginSpecHelper.run("blockinfile", {
+      "path" => path, "block" => "beta", "mode" => "0644", "_ansible_diff" => "true",
+    })
+
+    entry = result["diff"].as_a[1].as_h
+    entry.has_key?("before").must_equal(false)
+    entry["before_header"].as_s.must_equal("#{path} (file attributes)")
+  end
+
   it "fails on content its encoding: cannot decode, with CPython's message (2.21)" do
     path = PluginSpecHelper.tmp_path("blockinfile-undecodable.txt")
     File.open(path, "wb") { |file| file.write(Bytes[0x6f, 0x6b, 0x0a, 0xff, 0xfe, 0x0a]) }
