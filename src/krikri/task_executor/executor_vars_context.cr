@@ -740,7 +740,16 @@ module Krikri
       ConnectionSettings::CONNECTION_VAR_KEYS.each do |key|
         next unless (value = vars_context[key]?) && (text = value.as_s?) && text.includes?("{{")
         begin
-          vars_context[key] = JSON::Any.new(Krikri::VarSubstitutor.new(vars: vars_context).substitute(text))
+          # ansible post-validates a connection PASSWORD strictly, so an
+          # undefined reference there has to stay the raw template for
+          # the task's own keyword gate to fail on - the lenient render
+          # would erase it into "undefined" and let the task connect
+          # (issue #1419, jedimt.authorized_keys' role var).
+          if CONNECTION_PASSWORD_VAR_KEYS.includes?(key)
+            vars_context[key] = JSON::Any.new(Krikri::VarSubstitutor.new(vars: vars_context).substitute(text, strict: true))
+          else
+            vars_context[key] = JSON::Any.new(Krikri::VarSubstitutor.new(vars: vars_context).substitute(text))
+          end
         rescue
         end
       end
@@ -2699,6 +2708,74 @@ module Krikri
       raise BecomeMethodError.new("Task failed: #{PluginManager::BECOME_METHOD_EMPTY}")
     end
 
+    # `ansible_password`'s spellings, in ansible's own resolution order: the
+    # `password` entry of MAGIC_VARIABLE_MAPPING, which keeps the first name
+    # PRESENT in the task vars (even when the other spelling has a better
+    # value). The ssh plugin's extra `ansible_ssh_password` option is
+    # deliberately NOT here - PlayContext never reads it, so a broken
+    # template there fails no task (live-verified vs 2.21.6).
+    CONNECTION_PASSWORD_VAR_KEYS = ["ansible_ssh_pass", "ansible_password"]
+
+    # ansible post-validates PlayContext for every task that gets past its
+    # `when:` - the implicit Gathering Facts task included - strictly
+    # templating the magic connection keywords. A connection password
+    # whose own value is Jinja referencing a missing variable therefore
+    # fails that task with "Error processing keyword 'password': '<var>'
+    # is undefined" instead of connecting (issue #1419,
+    # jedimt.authorized_keys' `ansible_password: "{{ vault_ansible_password }}"`
+    # exported from vars/main.yml): krikri read the var raw and connected,
+    # then died on the role's own later `with_items: "{{ vault_pubkeys }}"`.
+    # The chain's inner Origin is the variable's defining site, which is
+    # what var_origin_for resolves (play vars, role vars, -e, inventory).
+    # Only `password` is checked here: it is the keyword the role
+    # surfaced, and each further PlayContext keyword needs its own magic
+    # var mapping and error name (see CONNECTION_PASSWORD_VAR_KEYS).
+    private def check_task_connection_password(task : Task, host : Host, vars_context : Hash(String, JSON::Any), substitutor : VarSubstitutor) : Nil
+      # ansible DELIBERATELY swallows a PlayContext undefined-variable
+      # failure for a delegated task (TaskExecutor._execute_internal's
+      # `context_validation_error` delegate_to carve-out: the delegate's
+      # own cvars decide the connection later, so the origin host's
+      # connection vars are irrelevant) - live-verified vs 2.21.6, a
+      # delegated task with a broken ansible_password runs ok.
+      return if task.delegate_to
+      key = connection_password_var_key(vars_context)
+      return unless key
+      text = vars_context[key]?.try(&.as_s?)
+      return unless text && connection_password_template?(text)
+      begin
+        substitutor.substitute(text, strict: true)
+      rescue e : UndefinedVariableError
+        raise ConnectionKeywordError.new("password", e.message || "", var_origin_error_context(var_origin_for(task, host, key)))
+      end
+    end
+
+    private def connection_password_var_key(vars_context : Hash(String, JSON::Any)) : String?
+      CONNECTION_PASSWORD_VAR_KEYS.each do |key|
+        return key if vars_context.has_key?(key)
+      end
+      nil
+    end
+
+    # ansible's templar treats a value as a template only when it carries
+    # a Jinja delimiter; a literal password must never be rendered (or
+    # echoed) through the evaluator.
+    private def connection_password_template?(text : String) : Bool
+      text.includes?("{{") || text.includes?("{%") || text.includes?("{#")
+    end
+
+    # The `Origin:` block for a variable's defining site, in the shape an
+    # ErrorBlock source_context wants (no trailing newline). A layer with
+    # no file position (an inventory line without a column, a runtime
+    # value) yields nil rather than a mislabeled origin.
+    private def var_origin_error_context(origin : VarOrigin?) : String?
+      return nil unless origin.is_a?(FileVarOrigin)
+      return nil unless File.file?(origin.path)
+      # A column-0 origin is an inventory line, which real labels
+      # line-only (`Origin: <file>:<line>`) with a full-line caret run.
+      return line_origin_block(origin.path, origin.line).chomp if origin.column <= 0
+      ErrorBlock.origin_context(origin.path, origin.line, origin.column)
+    end
+
     # Python truthiness over a raw JSON var value - the gate ansible's
     # `if cvars.get(...)` applies before templating a connection/become
     # var: None, false, "", 0 and empty containers all skip the check.
@@ -4067,6 +4144,22 @@ module Krikri
     # the plain finalization shape.
     private def keyword_failure_json(ex : UndefinedVariableError, task : Task) : JSON::Any
       return become_conversion_failure_json(ex, task) if ex.is_a?(KeywordBooleanError)
+      # A connection keyword whose variable's own value fails ansible's
+      # PlayContext post-validation: real's chain is two links - "Task
+      # failed." at the task, then the keyword message Origin'd at the
+      # VARIABLE's defining site (issue #1419). conversion_origin nil
+      # makes the display collapse the bare message into that middle link,
+      # which is exactly real's shape.
+      if ex.is_a?(ConnectionKeywordError)
+        result = finalization_failure_json(ex, task)
+        result.as_h["_ansible_keyword_conversion"] = JSON.parse({
+          "keyword"           => ex.keyword,
+          "conversion"        => ex.conversion,
+          "origin"            => ex.origin,
+          "conversion_origin" => nil,
+        }.to_json)
+        return result
+      end
       # Any keyword-templating failure shares become:'s chain shapes
       # (issue #694): a direct undefined reference collapses to real's
       # two-link chain (conversion_origin nil, the display path folds the

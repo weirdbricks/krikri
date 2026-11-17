@@ -133,6 +133,24 @@ module Krikri
   class BecomeMethodError < UndefinedVariableError
   end
 
+  # A task's connection VARIABLE (`ansible_password` and its aliases)
+  # failing the strict template ansible applies to every PlayContext
+  # keyword before a task runs: real raises "Error processing keyword
+  # 'password': '<var>' is undefined" and points the chain's inner link at
+  # the variable's own definition (issue #1419,
+  # jedimt.authorized_keys' `ansible_password: "{{ vault_ansible_password }}"`
+  # in vars/main.yml). Carries the pieces so the failure result can build
+  # that two-link chain instead of re-parsing the collapsed brief.
+  class ConnectionKeywordError < UndefinedVariableError
+    getter keyword : String
+    getter conversion : String
+    getter origin : String?
+
+    def initialize(@keyword : String, @conversion : String, @origin : String?)
+      super("Task failed: Error processing keyword '#{@keyword}': #{@conversion}")
+    end
+  end
+
   # A Python list-method call's runtime failure ("'z' is not in list",
   # "pop from empty list", ...) surfacing through a STRICT render: real
   # 2.19.11 words the when:-side failure "Task failed: Error rendering
