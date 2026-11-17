@@ -91,8 +91,16 @@ module Krikri
     # `Display._deduplicate` - one global set, so a loop's per-item
     # failures with identical text, or the same failure on several hosts,
     # display the block once). Returns true when printed.
+    #
+    # Routed through OutputRouting like every other display write: under
+    # `strategy: free`/`host_pinned` (and the --forks per-task fan-out)
+    # each host's whole output - banner included - is buffered per fiber
+    # and flushed later, so writing straight to STDOUT leaked the block
+    # out BEFORE the banner it belongs under. Real prints the banner
+    # first, then `[ERROR]`, then the fatal line (live-verified vs
+    # ansible-core 2.21.6, issue #1472).
     def self.emit(node : Node) : Bool
-      emit_to(STDOUT, node)
+      emit_to(OutputRouting.current_io, node)
     end
 
     # emit variant capturing to an IO instead of printing: TaskExecutor's
