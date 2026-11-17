@@ -131,6 +131,25 @@ describe "strategy:" do
     lines.count(&.starts_with?("TASK [slow")).must_equal(1)
   end
 
+  # Accepting the name is only half of it: the plugin's own `run()` never
+  # executes here, so the run has to say so. Real prints whatever the
+  # plugin itself does (issue #1456's retry_demo warns "retry_demo
+  # strategy is active" and retries failed tasks), while a krikri run
+  # that stayed silent is exactly what the issue reported.
+  it "warns that a third-party strategy plugin is ignored" do
+    warning = "[WARNING]: Strategy plugin 'custom_demo' cannot be executed by krikri-playbook and is ignored; the play runs with the linear strategy."
+
+    code, _, output = run_strategy("custom_demo", plugin: "custom_demo")
+    code.must_equal(0)
+    output.scan(warning).size.must_equal(1)
+
+    # ANSIBLE_STRATEGY resolves the same plugin and warns the same way.
+    code, _, output = run_strategy(nil, plugin: "custom_demo", plugin_env: true,
+      env: {"ANSIBLE_STRATEGY" => "custom_demo"})
+    code.must_equal(0)
+    output.scan(warning).size.must_equal(1)
+  end
+
   # ANSIBLE_STRATEGY supplies the default strategy for a play that does
   # not set `strategy:` - ansible-core's DEFAULT_STRATEGY setting - so the
   # free interleaving has to show up with only the env var set.
