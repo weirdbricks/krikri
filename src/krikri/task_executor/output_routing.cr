@@ -82,6 +82,20 @@ module Krikri
     def self.normalize_for_display(object : T) : T forall T
       object
     end
+
+    # Writes to the real STDOUT, ignoring any per-fiber redirect. Real's
+    # `FAILED - RETRYING` callback line comes from the worker as each
+    # attempt fails, BEFORE the task banner: under free/host_pinned
+    # ansible's default callback prints that banner lazily, on the task's
+    # first RESULT (live-verified vs ansible-core 2.21.6, issue #1472).
+    # krikri's free path buffers a host's whole task output and flushes it
+    # afterwards, so a redirect-aware write would put the retry lines
+    # after the banner - see the retry loop's own call site.
+    def self.puts_live(object : T) : Nil forall T
+      STDOUT.puts normalize_for_display(object)
+    rescue ex : IO::Error
+      exit_quietly_if_broken_pipe(ex)
+    end
   end
 end
 

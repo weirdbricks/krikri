@@ -3489,6 +3489,14 @@ module Krikri
         retry_line = "FAILED - RETRYING: [#{retry_host_label}]: #{task_role_prefix(task)}#{render_task_name_for_display(task, host)} (#{total_runs - attempt - 1} retries left)."
         if defer_loop_stats
           retry_lines << retry_line
+        elsif free_strategy?
+          # Under free/host_pinned ansible's default callback prints the
+          # TASK banner lazily, on the task's first RESULT, so these lines
+          # land AHEAD of it (live-verified vs ansible-core 2.21.6).
+          # krikri's free path prints the banner up front inside the
+          # per-task buffer it flushes afterwards, so go straight to the
+          # real STDOUT to keep them ahead of that banner (issue #1472).
+          OutputRouting.puts_live(retry_line)
         else
           puts retry_line
         end

@@ -192,4 +192,76 @@ describe "strategy:" do
     code.must_equal(1)
     output.must_include("Invalid play strategy specified: bogus")
   end
+
+  # A failure's `[ERROR]:` block belongs under its task banner: real
+  # prints the banner, the block, then the fatal line (live-verified vs
+  # ansible-core 2.21.6). free/host_pinned buffers a host's whole
+  # sequence - banner included - and flushes it later, so a block written
+  # straight to stdout escaped ahead of the banner (issue #1472).
+  it "prints a failure's error block under the task banner with host_pinned" do
+    dir = File.tempname("strategy-error-block")
+    begin
+      Dir.mkdir_p(dir)
+      File.write(File.join(dir, "inv.ini"), "[g]\nh1 ansible_connection=local\n")
+      File.write(File.join(dir, "pb.yml"), <<-YAML)
+        - hosts: all
+          gather_facts: false
+          strategy: host_pinned
+          tasks:
+            - name: fails
+              ansible.builtin.command: /bin/false
+              ignore_errors: true
+        YAML
+      output = IO::Memory.new
+      status = Process.run(BINARY, ["-i", "inv.ini", "pb.yml"],
+        output: output, error: output, chdir: dir, env: {"ANSIBLE_STRATEGY" => nil})
+      status.exit_code.must_equal(0)
+      text = output.to_s
+      banner = text.index!("TASK [fails]")
+      block = text.index!("[ERROR]: Task failed: Module failed: The command exited with a non-zero return code.")
+      fatal = text.index!("fatal: [h1]")
+      (banner < block).must_equal(true)
+      (block < fatal).must_equal(true)
+    ensure
+      FileUtils.rm_rf(dir) if Dir.exists?(dir)
+    end
+  end
+
+  # Under free/host_pinned ansible's default callback prints the task
+  # banner lazily, on the task's first RESULT, so a retried task's
+  # `FAILED - RETRYING` lines precede its banner (live-verified vs
+  # ansible-core 2.21.6). linear still prints the banner up front, before
+  # the retry lines (issue #1472).
+  it "prints FAILED - RETRYING lines before the task banner with host_pinned" do
+    dir = File.tempname("strategy-retry-banner")
+    begin
+      Dir.mkdir_p(dir)
+      File.write(File.join(dir, "inv.ini"), "[g]\nh1 ansible_connection=local\n")
+      {"host_pinned" => false, "linear" => true}.each do |strategy, banner_first|
+        File.write(File.join(dir, "pb.yml"), <<-YAML)
+          - hosts: all
+            gather_facts: false
+            strategy: #{strategy}
+            tasks:
+              - name: retried
+                ansible.builtin.command: /bin/false
+                register: r
+                retries: 2
+                delay: 0
+                until: r.rc == 0
+                ignore_errors: true
+          YAML
+        output = IO::Memory.new
+        status = Process.run(BINARY, ["-i", "inv.ini", "pb.yml"],
+          output: output, error: output, chdir: dir, env: {"ANSIBLE_STRATEGY" => nil})
+        status.exit_code.must_equal(0)
+        text = output.to_s
+        banner = text.index!("TASK [retried]")
+        retry_line = text.index!("FAILED - RETRYING: [h1]: retried (1 retries left).")
+        (banner < retry_line).must_equal(banner_first)
+      end
+    ensure
+      FileUtils.rm_rf(dir) if Dir.exists?(dir)
+    end
+  end
 end
