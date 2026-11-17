@@ -189,6 +189,53 @@ describe "role-local lookup_plugins/*.py custom lookups" do
     FileUtils.rm_rf(root) if root
   end
 
+  # ansible's lookup()/query() accept only a Sequence from the plugin:
+  # one returning a bare str fails the task with "returned <class 'str'>
+  # instead of <class 'list'>" (live-verified vs 2.21.6), and the generic
+  # errors= option turns that into an empty result instead. krikri used
+  # to render the scalar through.
+  it "fails a plugin whose run() returns a non-Sequence like ansible" do
+    root = File.tempname("lookup-plugins-non-sequence")
+    Dir.mkdir_p(File.join(root, "lookup_plugins"))
+    File.write(File.join(root, "lookup_plugins", "scalar.py"), <<-PYTHON)
+      from ansible.plugins.lookup import LookupBase
+
+      class LookupModule(LookupBase):
+          def run(self, terms, variables=None, **kwargs):
+              return 'undefined'
+      PYTHON
+
+    status, output = run_playbook(root, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: plain lookup
+            ansible.builtin.set_fact:
+              scalar: "{{ lookup('scalar') }}"
+      YAML
+
+    status.success?.must_equal(false, output)
+    output.must_include("The lookup plugin 'scalar' failed: returned <class 'str'> instead of <class 'list'>", output)
+
+    status, output = run_playbook(root, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: lookup with errors=ignore
+            ansible.builtin.set_fact:
+              ignored: "{{ lookup('scalar', errors='ignore') }}"
+          - ansible.builtin.debug:
+              var: ignored
+      YAML
+
+    status.success?.must_equal(true, output)
+    output.must_include("\"ignored\": null", output)
+  ensure
+    FileUtils.rm_rf(root) if root
+  end
+
   it "fails an unknown lookup name like ansible instead of a silent empty list (issue #751)" do
     root = File.tempname("lookup-plugins-none")
     Dir.mkdir_p(File.join(root, "roles", "myrole", "tasks"))

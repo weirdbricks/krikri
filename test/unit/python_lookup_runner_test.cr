@@ -137,6 +137,56 @@ describe Krikri::PythonLookupRunner do
     FileUtils.rm_r(role)
   end
 
+  # ansible's templating layer accepts only a Sequence from a lookup
+  # plugin and fails the task with the value's own type otherwise; the
+  # JSON-transported value cannot carry that (a set arrives as list), so
+  # the wrapper reports it alongside - the callers turn it into the same
+  # error real prints.
+  it "reports whether the plugin's result was a Sequence and its Python type" do
+    return unless ansible_importable
+
+    role = File.join(Dir.tempdir, "krikri-pylookup-spec-#{Random.rand(1_000_000)}")
+    Dir.mkdir_p(role)
+    source = write_lookup_plugin(role, "scalar.py", <<-PYTHON)
+      from ansible.plugins.lookup import LookupBase
+
+      class LookupModule(LookupBase):
+          def run(self, terms, variables=None, **kwargs):
+              return 'undefined'
+      PYTHON
+    set_source = write_lookup_plugin(role, "asets.py", <<-PYTHON)
+      from ansible.plugins.lookup import LookupBase
+
+      class LookupModule(LookupBase):
+          def run(self, terms, variables=None, **kwargs):
+              return {'a'}
+      PYTHON
+    list_source = write_lookup_plugin(role, "alist.py", <<-PYTHON)
+      from ansible.plugins.lookup import LookupBase
+
+      class LookupModule(LookupBase):
+          def run(self, terms, variables=None, **kwargs):
+              return ['a']
+      PYTHON
+
+    variables = Hash(String, JSON::Any).new
+    kwargs = Hash(String, JSON::Any).new
+    scalar = Krikri::PythonLookupRunner.call_lookup_result("scalar", source,
+      [] of JSON::Any, variables, kwargs)
+    scalar.sequence.must_equal(false)
+    scalar.type_repr.must_equal("<class 'str'>")
+    scalar.value.as_s.must_equal("undefined")
+    # A set is not a Sequence either, and must not be mistaken for the
+    # list its JSON serialization looks like.
+    set = Krikri::PythonLookupRunner.call_lookup_result("asets", set_source,
+      [] of JSON::Any, variables, kwargs)
+    set.sequence.must_equal(false)
+    set.type_repr.must_equal("<class 'set'>")
+    Krikri::PythonLookupRunner.call_lookup_result("alist", list_source,
+      [] of JSON::Any, variables, kwargs).sequence.must_equal(true)
+    FileUtils.rm_r(role)
+  end
+
   it "surfaces an exception inside the plugin's run() as a real LookupError" do
     return unless ansible_importable
 
