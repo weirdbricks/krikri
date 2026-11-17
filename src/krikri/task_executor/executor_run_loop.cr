@@ -158,6 +158,101 @@ module Krikri
       STDERR.print text
     end
 
+    # A `throttle:` value ansible-core's dispatch-time int() refuses. Real
+    # raises it out of the strategy (plugins/strategy/__init__.py's
+    # _queue_task), so it escapes the play entirely: `[ERROR]:` plus the
+    # keyword VALUE's Origin block on stderr, no fatal: line, no PLAY
+    # RECAP, exit 1 (live-verified vs 2.21.6, issue #1454). *render* is
+    # that whole stderr block, built where the value's origin is still at
+    # hand.
+    class ThrottleConversionFatalError < Exception
+      getter render : String
+
+      def initialize(message : String?, @render : String)
+        super(message)
+      end
+    end
+
+    # Real's per-host conversion of a task's effective `throttle:`
+    # (task > block > play, see ThrottleValue), run where the strategy
+    # queues the task - after its banner, before any when:/skip decision.
+    private def validate_throttle!(task : Task, hosts : Array(Host)) : Nil
+      value = task.throttle_value
+      return unless value.written?
+      raise_static_throttle_failure(value)
+      expr = value.expr || return
+      hosts.each do |host|
+        vars = begin
+          build_vars_context(task, host)
+        rescue
+          next
+        end
+        check_rendered_throttle(value, expr, vars, host)
+      end
+    end
+
+    # The implicit Gathering Facts task is a real queued task too, carrying
+    # only the play's own value - and it is queued FIRST, so a play-level
+    # `throttle:` int() refuses kills the run at its banner, before any
+    # fact is gathered (live-verified vs 2.21.6). Its vars are the layers
+    # that exist before the play's first task (the same ones its
+    # connection keywords resolve against).
+    private def validate_gather_throttle!(hosts : Array(Host)) : Nil
+      value = @play_throttle_value
+      return unless value.written?
+      raise_static_throttle_failure(value)
+      expr = value.expr || return
+      hosts.each do |host|
+        vars = begin
+          gather_connection_var_layers(host).first
+        rescue
+          next
+        end
+        check_rendered_throttle(value, expr, vars, host)
+      end
+    end
+
+    # The value shapes int() refuses with no templating involved: a string
+    # (its text quoted by the ValueError) or a null/list/dict (a TypeError
+    # naming its Python type).
+    private def raise_static_throttle_failure(value : ThrottleValue) : Nil
+      if literal = value.literal
+        detail = ThrottleValue.int_error(literal)
+        raise_throttle_conversion(value, detail) if detail
+      elsif python_type = value.python_type
+        raise_throttle_conversion(value, ThrottleValue.type_error(python_type))
+      end
+    end
+
+    # int() never sees anything but the rendered value, so a template that
+    # fails to render aborts with the renderer's own message ("'nope' is
+    # undefined", live-verified vs 2.21.6).
+    private def check_rendered_throttle(value : ThrottleValue, expr : String, vars : Hash(String, JSON::Any), host : Host) : Nil
+      rendered = begin
+        VarSubstitutor.new(vars: vars, host_name: host.name).substitute(expr, strict: true)
+      rescue e
+        raise_throttle_conversion(value, e.message || expr)
+      end
+      if detail = ThrottleValue.int_error(rendered)
+        raise_throttle_conversion(value, detail)
+      end
+    end
+
+    private def raise_throttle_conversion(value : ThrottleValue, detail : String) : NoReturn
+      message = "Failed to convert the throttle value to an integer: #{detail}"
+      # A null `throttle:` has no source position to label - real's obj is
+      # the None itself, which carries none - so its abort is the bare
+      # [ERROR] line (live-verified vs 2.21.6).
+      origin = value.python_type == "NoneType" ? nil : value.origin
+      render = String.build do |io|
+        io << "[ERROR]: " << message << "\n"
+        if source = origin
+          io << ErrorBlock.origin_context(source[0], source[1], source[2]) << "\n\n"
+        end
+      end
+      raise ThrottleConversionFatalError.new(message, render)
+    end
+
     # Emits Ansible's UNREACHABLE! line for *host* and books it as
     # either ignored (ignore_unreachable:) or unreachable, halting the
     # host in the latter case.
@@ -292,6 +387,14 @@ module Krikri
         # the fatal line first (live-verified vs 2.19.11).
         flush_pending_unreachable(pending_unreachable)
 
+        # `throttle:` is converted by the strategy as it queues a task for
+        # a host, BEFORE the task's when:/skip handling ever runs - so an
+        # unconvertible value takes the whole run down here, whatever the
+        # task would have done (live-verified vs 2.21.6: a play-level
+        # `throttle: kpg-many` prints the first task's banner and then
+        # exits 1 with no result line at all).
+        validate_throttle!(task, active_hosts)
+
         if task.include_role? && !task.run_once? && active_hosts.size > 1
           # Both include_role: forms run their loaded tasks on every host in
           # lockstep. A dynamic include_role: because Ansible expands it per
@@ -302,7 +405,7 @@ module Krikri
           # effects for run_once:/throttle:/any later cross-host task.
           # run_once: keeps its own single-host election in execute_task.
           execute_include_role_multi(task, active_hosts)
-        elsif @forks > 1 && task_forkable?(task) && active_hosts.size > 1 && task.throttle != 1 && (task.debugger || @debugger).nil?
+        elsif @forks > 1 && task_forkable?(task) && active_hosts.size > 1 && task.throttle_value.value != 1 && (task.debugger || @debugger).nil?
           run_task_for_hosts_in_parallel(task, active_hosts)
         else
           active_hosts.each { |host| execute_task(task, host) }
@@ -399,7 +502,7 @@ module Krikri
       # Ansible's own semantics (it never raises the limit, only lowers
       # it). A throttle of 1 makes the task effectively serial.
       max_parallel = Math.min(hosts.size, @forks)
-      max_parallel = Math.min(max_parallel, task.throttle) if task.throttle > 0
+      max_parallel = Math.min(max_parallel, task.throttle_value.value) if task.throttle_value.value > 0
       max_parallel = 1 if max_parallel < 1
       pool = ensure_host_worker_pool(hosts)
       gate = Channel(Nil).new(max_parallel)

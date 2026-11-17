@@ -564,6 +564,10 @@ module Krikri
       # (see Play#source_file/#source_line).
       @play_source_file : String? = nil,
       @play_source_line : Int32 = 0,
+      # See Play#throttle_value - the cap the implicit Gathering Facts
+      # task inherits, and whose dispatch-time conversion real performs
+      # (see ThrottleValue).
+      @play_throttle_value : ThrottleValue = ThrottleValue::ABSENT,
     )
       @results = Hash(String, Hash(String, Int32)).new
       # The caller owns run-scoped stores and hands the same ones to every
