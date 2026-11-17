@@ -904,6 +904,27 @@ module Krikri
       if (resolved = result["_ansible_templated_module_name"]?.try(&.as_s?))
         module_name = resolved
       end
+      # The file diff comes FIRST, ahead of any warning this result
+      # carries: ansible dispatches v2_on_file_diff from the strategy's OK
+      # path, before the runner-on-ok callback that prints warnings and
+      # deprecations, so a task that both diffs and deprecates renders
+      # diff, then [WARNING]/[DEPRECATION WARNING], then its status line
+      # (live-verified vs 2.21.6 with yum_repository's deprecated `async`).
+      # The callback's v2_on_file_diff only renders a result that is
+      # actually CHANGED (`result.result.get('changed', False)`), so a
+      # module that carries a diff payload on an idempotent run - file:
+      # state=touch always seeds one, even when nothing was applied -
+      # prints an `ok:` line and no diff block (live-verified vs 2.21.6).
+      # Only the OK path ever gets a diff - a failed result prints none -
+      # no_log censors it along with the rest of the result, and the
+      # oneline callback renders its own, so each of those keeps its own
+      # later handling below.
+      changed = result["changed"]?.try(&.as_bool) || false
+      failed = Krikri.result_failed_flag(result)
+      if diff_mode && changed && !failed && !no_log && !Krikri::Oneline.enabled? && result["diff"]?
+        display_diff(result["diff"])
+      end
+
       # A validation-passed removed-param deprecation waits for this
       # result to learn whether Ansible's module run would have shown it
       # (normal/fail_json return) or dropped it (uncaught crash, skip,
@@ -914,8 +935,6 @@ module Krikri
       # `ok: [source -> target]` - the task ran against the delegate
       # target even though it reports under the play host.
       host_label = delegate_target ? "#{host.name} -> #{delegate_target}" : host.name
-      changed = result["changed"]?.try(&.as_bool) || false
-      failed = Krikri.result_failed_flag(result)
       # as_s? (not as_s): the debug action plugin keeps a whole-span
       # container msg natively (a real dict/list - see its own re-parse),
       # so a naive as_s cast crashes the whole display fiber on it.
@@ -1261,20 +1280,6 @@ module Krikri
       verbose_always = !failed &&
                        result["_ansible_verbose_always"]?.try(&.as_bool) == true &&
                        result["_ansible_verbose_override"]?.try(&.as_bool) != true
-
-      # Ansible's callback prints a file diff BEFORE the task's own status
-      # line (live-verified against 2.19.11: diff block, blank, `changed:
-      # [host]`), so the diff prints here, ahead of every status branch
-      # below; the trailing blank line inside display_diff separates it
-      # from the status line.
-      # The callback's v2_on_file_diff only renders a result that is
-      # actually CHANGED (`result.result.get('changed', False)`), so a
-      # module that carries a diff payload on an idempotent run - file:
-      # state=touch always seeds one, even when nothing was applied -
-      # prints an `ok:` line and no diff block (live-verified vs 2.21.6).
-      if diff_mode && changed && result["diff"]?
-        display_diff(result["diff"])
-      end
 
       if verbose_always
         cleaned = module_name.try(&.ends_with?("debug")) ? debug_clean_result(result) : clean_for_display(result)

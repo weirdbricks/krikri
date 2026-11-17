@@ -487,6 +487,31 @@ describe "yum_repository plugin" do
     ])
   end
 
+  # Deprecated is not the same as ignored: 2.21.6 still serializes the
+  # param into its own `async = 1` / `async = 0` line (live-verified with
+  # the issue #1442 repro under --diff) while it warns about it, so the
+  # write path must render it like any other bool.
+  it "writes the deprecated async param as async = 1/0 rather than dropping it" do
+    enabled = PluginSpecHelper.run("yum_repository", {
+      "name" => "async-on", "description" => "d", "baseurl" => "https://example.com",
+      "async" => "true", "reposdir" => repo_dir,
+    })
+    enabled["changed"].as_bool.must_equal(true)
+    File.read(repo_path("async-on")).must_equal(
+      "[async-on]\n" \
+      "async = 1\n" \
+      "baseurl = https://example.com\n" \
+      "name = d\n" \
+      "\n"
+    )
+
+    PluginSpecHelper.run("yum_repository", {
+      "name" => "async-off", "description" => "d", "baseurl" => "https://example.com",
+      "async" => "false", "reposdir" => repo_dir,
+    })
+    File.read(repo_path("async-off")).must_include("async = 0\n")
+  end
+
   # add()'s `if value is None: continue` sits BEFORE the deprecate branch,
   # and state=absent never reaches add() at all - so an unpassed param, an
   # explicit null and the absent state all stay silent.
