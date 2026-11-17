@@ -7,8 +7,10 @@ require "../src/krikri/base_plugin"
 require "../src/krikri/plugin_helpers/apt_repository_line"
 require "../src/krikri/plugin_helpers/apt_repository_cache_retry"
 require "../src/krikri/plugin_helpers/apt_lock_retry"
+require "../src/krikri/plugin_helpers/apt_locale"
 require "../src/krikri/plugin_helpers/apt_ppa"
 require "../src/krikri/plugin_helpers/python_lib_gate"
+require "../src/krikri/plugin_helpers/run_command_failure"
 
 module Krikri
   # Apt_repository plugin - adds/removes a Debian/Ubuntu APT source line.
@@ -78,14 +80,17 @@ module Krikri
   # environment has `gpg` but no `apt-key` binary at all), and
   # Ansible already prefers `gpg` when both exist. The already-has-this-key
   # check Ansible does before exporting (`_key_already_exists`,
-  # itself shelling to `apt-key export`/scanning existing keyrings with
-  # `gpg --list-packets`) isn't replicated either - `gpg --export` is
-  # itself idempotent (re-importing/re-writing the same key is a no-op
-  # in effect), so skipping the check trades a little wasted network
-  # traffic on an already-added PPA for meaningfully less code, and
-  # Ansible's own PPA idempotency check (a source-line match,
-  # implemented below) already means the whole key-fetch path is never
-  # even reached on a rerun. `install_python_apt` gates the same
+  # itself shelling to `apt-key export` when apt-key exists, else
+  # scanning existing keyrings with `gpg --list-packets`) IS replicated:
+  # it runs BEFORE Ansible's `if not self.module.check_mode` gate, so a
+  # host whose apt-key cannot work at all - /usr/bin/apt-key present but
+  # no gnupg, apt-key's own first check, exiting 255 with "E: gnupg,
+  # gnupg2 and gnupg1 do not seem to be installed" - fails the task in
+  # CHECK mode too (issue #1428, dmitrybelyakov.localcloud-nginx, where
+  # skipping the probe reported changed and then failed further down the
+  # play on a task real never reached). Its result also decides whether
+  # the key gets imported at all, exactly as in real.
+  # `install_python_apt` gates the same
   # module-start auto-install real performs when the bindings are missing
   # and apt-get exists (`apt-get update`, then
   # `apt-get install python3-apt -y -q`) - a real, persistent host
@@ -133,6 +138,7 @@ module Krikri
 
     include AptRepositoryCacheRetry
     include AptLockRetry
+    include AptLocale
 
     SOURCES_LIST       = "/etc/apt/sources.list"
     SOURCES_LIST_D     = "/etc/apt/sources.list.d"
@@ -269,8 +275,23 @@ module Krikri
         end
       end
 
+      # Ansible's add_source probes for the key right after the metadata
+      # fetch and before its check_mode gate (see #key_already_exists?),
+      # so this runs on a check-mode run too; a key already present
+      # suppresses the import below, as in real.
+      key_present = false
+      if fingerprint
+        begin
+          key_present = key_already_exists?(fingerprint)
+        rescue ex : AptKeyProbeFailure
+          return ex.result
+        end
+      end
+
       filename_source = PluginHelpers::AptPpa.filename_source(ppa, codename)
-      add(normalized, update_cache, check_mode, filename_source) { ensure_ppa_key(ppa, codename, fingerprint) }
+      add(normalized, update_cache, check_mode, filename_source) do
+        key_present ? nil : ensure_ppa_key(ppa, codename, fingerprint)
+      end
     end
 
     private def all_source_files : Array(String)
@@ -668,6 +689,64 @@ module Krikri
     private def ppa_info_failure(ex : Exception) : PluginResult
       inner = ex.message == "Read timed out" ? "Connection failure: The read operation timed out" : (ex.message || "unknown error")
       PluginResult.new(changed: false, failed: true, msg: "failed to fetch PPA information, error was: #{inner}")
+    end
+
+    # Carries the fail_json-shaped result of a probe that could not run at
+    # all (apt-key exists but exits non-zero); #handle_ppa turns it into the
+    # task's own failure.
+    class AptKeyProbeFailure < Exception
+      getter result : PluginResult
+
+      def initialize(@result : PluginResult)
+        super(@result.msg)
+      end
+    end
+
+    # Ansible's UbuntuSourcesList#_key_already_exists, which add_source
+    # calls before its `if not self.module.check_mode` gate: `apt-key
+    # export <fingerprint>` under check_rc=True when apt-key exists,
+    # otherwise `gpg --list-packets` over /etc/apt/trusted.gpg and every
+    # file in APT_KEY_DIRS, looking for the fingerprint in the output.
+    # Real judges only the apt-key stderr (`bool(not err or 'nothing
+    # exported' not in err)`): the deprecation warning it always prints
+    # means nothing, only GnuPG's "nothing exported" means "missing".
+    private def key_already_exists?(fingerprint : String) : Bool
+      if apt_key = Process.find_executable("apt-key")
+        # real's run_command_environ_update for this probe:
+        # get_best_parsable_locale's result in all five locale vars, so
+        # apt-key/gpg messages stay parseable on a non-English host.
+        locale = best_parsable_locale { |cmd| remote_exec(cmd) }
+        locale = "C" unless locale.matches?(/\A[A-Za-z0-9_.@+-]+\z/)
+        result = remote_exec("LANG=#{locale} LC_ALL=#{locale} LC_MESSAGES=#{locale} LC_CTYPE=#{locale} LANGUAGE=#{locale} #{Shell.quote_arg(apt_key)} export #{shell_single_quote(fingerprint)}")
+        if result[:exit_code] != 0
+          raise AptKeyProbeFailure.new(
+            PluginHelpers::RunCommandFailure.nonzero_exit(
+              "#{apt_key} export #{fingerprint}", result[:exit_code], result[:stdout], result[:stderr]
+            )
+          )
+        end
+        return !result[:stderr].includes?("nothing exported")
+      end
+
+      gpg_key_exists?(fingerprint)
+    end
+
+    private def gpg_key_exists?(fingerprint : String) : Bool
+      gpg = Process.find_executable("gpg")
+      return false unless gpg
+
+      keyfiles = ["/etc/apt/trusted.gpg"]
+      PluginHelpers::AptPpa::KEY_DIRS.each do |dir|
+        next unless Dir.exists?(dir)
+        Dir.children(dir).each do |name|
+          keyfiles << File.join(dir, name) unless name.starts_with?('.')
+        end
+      end
+
+      keyfiles.any? do |keyfile|
+        next false unless File.exists?(keyfile)
+        remote_exec("#{Shell.quote_arg(gpg)} --list-packets #{shell_single_quote(keyfile)}")[:stdout].includes?(fingerprint)
+      end
     end
 
     private def ensure_ppa_key(ppa : PluginHelpers::AptPpa::Info, codename : String, fingerprint : String?) : PluginResult?

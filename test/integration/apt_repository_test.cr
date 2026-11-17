@@ -108,6 +108,40 @@ describe "apt_repository plugin" do
     result["repo"].as_s.must_equal("deb https://ppa.launchpadcontent.net/nginx/stable/ubuntu jammy main")
   end
 
+  # Issue #1428 (dmitrybelyakov.localcloud-nginx): Ansible's add_source
+  # calls _key_already_exists - `apt-key export <fingerprint>` under
+  # check_rc=True - BEFORE its check_mode gate, so a host whose apt-key
+  # cannot run at all (the binary is there, gnupg is not: apt-key's own
+  # first check exits 255 with "E: gnupg, gnupg2 and gnupg1 do not seem
+  # to be installed") fails the ppa task in check mode too, with
+  # run_command's cmd/rc/stderr result. Skipping the probe reported
+  # changed and ran the rest of the play, where real stopped here.
+  it "fails a check-mode ppa: add when apt-key cannot run, like real's pre-check_mode key probe (issue #1428)" do
+    sources_list, list_d = scratch_sources("ppa-apt-key-fails")
+    bin_dir = PluginSpecHelper.tmp_path("apt-key-fails-bin")
+    Dir.mkdir_p(bin_dir)
+    fake_apt_key = File.join(bin_dir, "apt-key")
+    File.write(fake_apt_key, <<-SH)
+#!/bin/sh
+echo >&2 "E: gnupg, gnupg2 and gnupg1 do not seem to be installed, but one of them is required for this operation"
+exit 255
+SH
+    File.chmod(fake_apt_key, 0o755)
+
+    result = PluginSpecHelper.run("apt_repository", {
+      "repo" => "ppa:nginx/stable", "codename" => "jammy", "_ansible_check_mode" => "true",
+      "_ppa_api_base" => APT_REPO_LP_TEST_BASE,
+      "_sources_list" => sources_list, "_sources_list_d" => list_d,
+    }, env: {"PATH" => "#{bin_dir}:#{ENV["PATH"]?}"})
+
+    result["changed"].as_bool.must_equal(false)
+    result["failed"].as_bool.must_equal(true)
+    result["rc"].as_i.must_equal(255)
+    result["msg"].as_s.must_equal("E: gnupg, gnupg2 and gnupg1 do not seem to be installed, but one of them is required for this operation")
+    result["cmd"].as_s.must_equal("#{fake_apt_key} export #{APT_REPO_LP_FINGERPRINT}")
+    result["stderr_lines"].as_a.map(&.as_s).must_equal([result["msg"].as_s])
+  end
+
   # Issue #1051 (marauderxtreme.local_system's "Activate all neat PPAs"):
   # ppa:dawidd0811/neofetch was deleted upstream, and a check-mode run
   # must fail on it exactly like a real one - Ansible fails the task with
