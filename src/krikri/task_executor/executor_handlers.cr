@@ -1276,6 +1276,7 @@ module Krikri
           end
           result_json = JSON.parse(failed.to_json)
           Krikri.mark_failed_key_order(result_json, FAILED_KEY_ORDER_MSG_FIRST)
+          shape_debug_var_expression_failure(handler, result_json)
           return result_json
         end
 

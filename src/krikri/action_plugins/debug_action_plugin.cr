@@ -162,8 +162,11 @@ module Krikri
         rescue ex : Exception
           # A `var` expression that raises (division by zero, a failing
           # filter such as mandatory) fails the task in real debug with
-          # this framing rather than printing a marker.
-          return ActionResult.failure("Error while resolving `var` expression: #{ex.message}")
+          # this framing rather than printing a marker. It is an uncaught
+          # exception out of the action plugin, so real's fatal msg carries
+          # its "Task failed: " wrapper and the [ERROR] block is the
+          # action-level two-segment chain.
+          return ActionResult.crash_failure("#{Krikri::DEBUG_VAR_EXPRESSION_PREFIX}#{ex.message}")
         end
       end
       unless var_value
@@ -193,10 +196,16 @@ module Krikri
         rendered = unsafe ? var_value : render_lazy_templates(var_value)
       rescue ex : VariableSubstitutor::TemplateSyntaxError
         # Ansible wraps a compile failure of the looked-up value in its
-        # `var` expression framing (live-verified, issue #322).
-        return ActionResult.failure("Error while resolving `var` expression: #{ex.message}")
+        # `var` expression framing (live-verified, issue #322), with the
+        # failing value's own DEFINITION as a further cause segment - the
+        # executor supplies that origin (see
+        # shape_debug_var_expression_failure).
+        return ActionResult.crash_failure("#{Krikri::DEBUG_VAR_EXPRESSION_PREFIX}#{ex.message}")
       rescue ex
-        return ActionResult.failure(ex.message || "templating var '#{var_name}' failed")
+        # Every other templating failure of the value - a missing lookup, a
+        # deprecated filter, a failing test - reaches the same framing
+        # (live-verified vs 2.21.6).
+        return ActionResult.crash_failure("#{Krikri::DEBUG_VAR_EXPRESSION_PREFIX}#{ex.message || "templating var '#{var_name}' failed"}")
       end
 
       # Real debug's Templar walks the looked-up value, revealing the

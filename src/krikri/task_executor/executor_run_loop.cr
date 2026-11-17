@@ -2602,6 +2602,7 @@ module Krikri
           end
           result_json = JSON.parse(failed.to_json)
           Krikri.mark_failed_key_order(result_json, FAILED_KEY_ORDER_MSG_FIRST)
+          shape_debug_var_expression_failure(task, result_json)
           return apply_changed_failed_when(task, result_json, vars_context, host)
         end
 
@@ -3341,6 +3342,7 @@ module Krikri
           end
           result_json = JSON.parse(failed.to_json)
           Krikri.mark_failed_key_order(result_json, FAILED_KEY_ORDER_MSG_FIRST)
+          shape_debug_var_expression_failure(task, result_json)
           return apply_changed_failed_when(task, result_json, vars_context, host)
         end
 

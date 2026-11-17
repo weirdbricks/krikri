@@ -30,6 +30,14 @@ module Krikri
   # KEYORDER probe).
   FAILED_KEY_ORDER_TIMEOUT = ["timedout", "failed", "exception", "msg", "changed"]
 
+  # debug:'s `var:` option is evaluated as a Jinja EXPRESSION by its action
+  # plugin on the controller, and ansible-core wraps every failure of that
+  # evaluation in this framing (live-verified vs 2.21.6: a missing lookup, a
+  # failing filter, a `{% do %}` tag in the value, a division by zero). The
+  # framing is the fatal msg's and the [ERROR] chain's cause segment, so the
+  # plugin, the executor's result shaping and the display all match on it.
+  DEBUG_VAR_EXPRESSION_PREFIX = "Error while resolving `var` expression: "
+
   # Tags *result* with the real key order its registered FAILED form must
   # carry; see FAILED_KEY_ORDER_DEFAULT.
   def self.mark_failed_key_order(result : JSON::Any, order : Array(String)) : JSON::Any
