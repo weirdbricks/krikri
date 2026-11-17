@@ -291,7 +291,9 @@ module Krikri
             next unless default && (raw_default = default.raw).is_a?(String) && raw_default.includes?("{{")
             begin
               substitutor.scan_strict_expression_refs(raw_default)
-              rendered = substitutor.substitute(raw_default, strict: true)
+              rendered = with_spec_default_origin(spec_file, spec_lines, option_name, raw_default) do
+                substitutor.substitute(raw_default, strict: true)
+              end
               spec_default_resolutions[option_name] = Krikri.parse_json_or_python_literal(rendered)
             rescue ex : UndefinedVariableError
               failed_spec_default = {option_name, ex.message || ""}
@@ -878,6 +880,28 @@ module Krikri
       end
       return unless @@validate_args_error_blocks_seen.add?(text)
       puts text
+    end
+
+    # Runs *block* (one spec option's default render) with the option's
+    # `default:` value token registered as the templating site, so a fact
+    # read inside it prints its INJECT_FACTS_AS_VARS deprecation Origin'd
+    # at that value - ansible-core tags every stored YAML value with the
+    # position it was defined at, and the argument_spec it templates here
+    # is a stored value like any other (robertdebock.prosody's
+    # `prosody_domain: default: "{{ ansible_fqdn }}"` warns at
+    # argument_specs.yml's own `default:` quote, issue #1435). A default
+    # whose position can't be located renders with no site and stays
+    # silent, like every other unplaceable Origin.
+    private def with_spec_default_origin(spec_file : String, spec_lines : Array(String), option_name : String, raw_default : String, &)
+      return yield unless pos = spec_option_default_value_position(spec_lines, option_name)
+      line_num = pos[0] + 1
+      origin = ErrorBlock.origin_context(spec_file, line_num, pos[1])
+      VarSubstitutor.set_current_task_param(spec_file, line_num, "default", raw_default, origin: origin)
+      begin
+        yield
+      ensure
+        VarSubstitutor.pop_current_task_param
+      end
     end
 
     # An option's key-line position in meta/argument_specs.yml (the
