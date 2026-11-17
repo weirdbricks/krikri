@@ -231,7 +231,7 @@ private def debconf_value_set?(pkg : String, question : String, value : String) 
 end
 
 describe "debconf plugin result key order" do
-  it "serializes an already-set question as changed-msg (real: changed, msg, current)" do
+  it "serializes an already-set question as changed-msg-current (real: changed, msg, current)" do
     skip "locales/default_environment_locale is not already en_US.UTF-8 in this host's debconf database" unless debconf_value_set?("locales", "locales/default_environment_locale", "en_US.UTF-8")
     result = PluginSpecHelper.run("debconf", {
       "name"     => "locales",
@@ -241,10 +241,10 @@ describe "debconf plugin result key order" do
     })
 
     result["changed"].as_bool.must_equal(false)
-    result.as_h.keys.must_equal(["changed", "msg"])
+    result.as_h.keys.must_equal(["changed", "msg", "current"])
   end
 
-  it "serializes a check-mode set as changed-msg (real: changed, msg, current, previous, diff)" do
+  it "serializes a check-mode set as changed-msg-current-previous-diff (real: changed, msg, current, previous, diff)" do
     result = PluginSpecHelper.run("debconf", {
       "name"                => "locales",
       "question"            => "locales/default_environment_locale",
@@ -254,7 +254,7 @@ describe "debconf plugin result key order" do
     })
 
     result["changed"].as_bool.must_equal(true)
-    result.as_h.keys.must_equal(["changed", "msg"])
+    result.as_h.keys.must_equal(["changed", "msg", "current", "previous", "diff"])
   end
 end
 

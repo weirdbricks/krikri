@@ -105,7 +105,7 @@ describe "debconf plugin - vtype password read-back (get_password_value)" do
 
     falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
     result["changed"].as_bool.must_equal(false)
-    result["msg"].as_s.must_equal("Value already set")
+    result["msg"].as_s.must_equal("")
     File.read(log).must_equal("call-get-selections\n")
   ensure
     FileUtils.rm_rf(dir) if dir
@@ -125,7 +125,7 @@ describe "debconf plugin - vtype password read-back (get_password_value)" do
 
     falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
     result["changed"].as_bool.must_equal(true)
-    result["msg"].as_s.must_equal("Value set")
+    result["msg"].as_s.must_equal("")
     File.read(log).must_equal("call-get-selections\nspec.pkg spec.pkg/roothost password secret\n")
     File.read(log).wont_include("oldsecret")
   ensure
@@ -145,7 +145,7 @@ describe "debconf plugin - vtype password read-back (get_password_value)" do
 
     falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
     result["changed"].as_bool.must_equal(true)
-    result["msg"].as_s.must_equal("Value set")
+    result["msg"].as_s.must_equal("")
     File.read(log).must_equal("spec.pkg spec.pkg/roothost password secret\n")
   ensure
     FileUtils.rm_rf(dir) if dir

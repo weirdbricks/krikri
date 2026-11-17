@@ -58,14 +58,20 @@ module Krikri
       # "parameters are required together: question, vtype, value".
       # Previously only the question-side half was checked here, so
       # `vtype:`/`value:` alone (or question+value without vtype)
-      # silently "succeeded" as "No question given, nothing to set"
-      # instead of failing like Ansible.
+      # silently succeeded without touching debconf instead of failing
+      # like Ansible.
       if error = validate_question_triple(question, vtype, value)
         return error
       end
 
       if question.nil? || vtype.nil? || value.nil?
-        return PluginResult.new(changed: false, failed: false, msg: "No question given, nothing to set")
+        # debconf.py reads the package's selections BEFORE its
+        # `if question is not None:` guard, so a name-only task still
+        # reports the whole current selection map (and still fails on a
+        # host without debconf-show) instead of skipping debconf-show.
+        prev = get_selections(pkg)
+        return prev if prev.is_a?(PluginResult)
+        return unchanged_result(prev)
       end
 
       apply_selection(pkg, question, vtype, value, unseen)
@@ -98,43 +104,91 @@ module Krikri
       # None there, not an empty string.
       return missing_vtype_or_value if value_param_null?
 
-      # Ansible's `if question not in prev: changed = True` (debconf.py:218)
-      # skips the read-back entirely for a question debconf-show doesn't
-      # know; for a seeded one the `elif vtype == 'password'` branch
-      # (debconf.py:225) replaces prev[question] with get_password_value's
-      # read-back before the comparison - the step a stock image's missing
-      # debconf-utils turns into the task's failure, check mode included.
-      changed =
-        if vtype == "password" && prev.has_key?(question)
-          readback = get_password_value(pkg, question, vtype)
-          if readback.is_a?(PluginResult)
-            return readback
-          end
-          readback != value
-        else
-          value_differs?(prev, question, vtype, value)
-        end
+      # Ansible normalizes a boolean question's value before it is compared
+      # AND before it reaches current/diff or debconf-set-selections:
+      # debconf.py does `value = to_text(value).lower()` (line 214).
+      value = value.downcase if vtype == "boolean"
 
-      if changed && !true?(@params["_ansible_check_mode"]?)
-        if error = selection_type_failure(vtype)
-          return error
-        end
+      changed = selection_changed?(pkg, question, vtype, value, prev)
+      return changed if changed.is_a?(PluginResult)
+      return unchanged_result(prev) unless changed
 
-        result = set_selection(pkg, question, vtype, value, unseen)
-        unless result[:exit_code] == 0
-          return PluginResult.new(changed: false, failed: true, msg: result[:stderr])
-        end
+      msg = ""
+      unless true?(@params["_ansible_check_mode"]?)
+        written = write_selection(pkg, question, vtype, value, unseen)
+        return written if written.is_a?(PluginResult)
+        msg = written
       end
 
-      # Real debconf.py exit shapes (live-verified against Ansible 2.19.11
-      # via registered {{ r | to_json }} dumps in the podman container):
-      # a changed selection (check mode included) exits with
-      # changed,msg,current,previous,diff; an already-set rerun with
-      # changed,msg,current. krikri doesn't emit current/previous/diff
-      # (pre-existing content gap); the pin only fixes the relative
-      # order.
-      PluginResult.new(changed: changed, failed: false, msg: changed ? "Value set" : "Value already set",
-        key_order: changed ? ["changed", "msg", "current", "previous", "diff"] : ["changed", "msg", "current"])
+      changed_result(question, value, prev, msg)
+    end
+
+    # Ansible's `if question not in prev: changed = True` (debconf.py:218)
+    # skips the read-back entirely for a question debconf-show doesn't
+    # know; for a seeded one the `elif vtype == 'password'` branch
+    # (debconf.py:225) replaces prev[question] with get_password_value's
+    # read-back before the comparison - the step a stock image's missing
+    # debconf-utils turns into the task's failure, check mode included.
+    private def selection_changed?(pkg : String, question : String, vtype : String, value : String,
+                                   prev : Hash(String, String)) : Bool | PluginResult
+      return value_differs?(prev, question, vtype, value) unless vtype == "password" && prev.has_key?(question)
+
+      readback = get_password_value(pkg, question, vtype)
+      return readback if readback.is_a?(PluginResult)
+
+      readback != value
+    end
+
+    # The non-check-mode half of Ansible's changed branch. debconf.py does
+    # nothing there in check mode, and a non-string `value:` literal kills
+    # the module inside set_selection (see #selection_type_failure).
+    # Returns the successful debconf-set-selections stdout - main() passes
+    # that straight to exit_json as msg, and the tool is silent on success,
+    # so a real task registers an EMPTY msg (live-verified vs 2.21.6) - or
+    # the failure PluginResult.
+    private def write_selection(pkg : String, question : String, vtype : String, value : String, unseen : Bool) : String | PluginResult
+      if error = selection_type_failure(vtype)
+        return error
+      end
+
+      result = set_selection(pkg, question, vtype, value, unseen)
+      unless result[:exit_code] == 0
+        return PluginResult.new(changed: false, failed: true, msg: result[:stderr])
+      end
+      result[:stdout]
+    end
+
+    # debconf.py's changed exit: current is just this question's new value;
+    # previous is prev NARROWED to the same question ("" when debconf-show
+    # did not know it); and with diff mode on the diff is those two maps,
+    # while without it the module still exits an empty diff dict
+    # (live-verified vs 2.21.6 via {{ r | to_json }}).
+    private def changed_result(question : String, value : String, prev : Hash(String, String), msg : String) : PluginResult
+      current = selection_map({question => value})
+      previous = selection_map({question => prev[question]? || ""})
+      diff =
+        if @diff_mode
+          JSON::Any.new({"before" => previous, "after" => current})
+        else
+          JSON::Any.new({} of String => JSON::Any)
+        end
+
+      PluginResult.new(changed: true, failed: false, msg: msg, diff: diff,
+        current: current, previous: previous, include_empty_msg: true,
+        key_order: ["changed", "msg", "current", "previous", "diff"])
+    end
+
+    # debconf.py's unchanged exit_json(changed=changed, msg=msg,
+    # current=prev): msg is the module's empty default and current the FULL
+    # debconf-show selection map, not just one question.
+    private def unchanged_result(prev : Hash(String, String)) : PluginResult
+      PluginResult.new(changed: false, failed: false, msg: "",
+        current: selection_map(prev), include_empty_msg: true,
+        key_order: ["changed", "msg", "current"])
+    end
+
+    private def selection_map(entries : Hash(String, String)) : JSON::Any
+      JSON::Any.new(entries.to_h { |key, value| {key, JSON::Any.new(value)} })
     end
 
     # question:/selection:/setting: are documented aliases of each other

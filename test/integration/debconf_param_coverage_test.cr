@@ -113,8 +113,51 @@ describe "debconf plugin - required_together (question/vtype/value)" do
 
     falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
     result["changed"].as_bool.must_equal(true)
-    result["msg"].as_s.must_equal("Value set")
+    result["msg"].as_s.must_equal("")
     File.read(log).strip.must_equal("spec.pkg spec.pkg/keyboard-layout string de")
+  ensure
+    FileUtils.rm_rf(dir) if dir
+  end
+
+  # debconf.py's changed exit carries current/previous and, in diff mode,
+  # the before/after maps its --diff output is rendered from. The plugin
+  # used to emit neither, so a --diff run printed no diff block at all
+  # (issue #1466).
+  it "reports current/previous and the before/after diff in diff mode" do
+    dir, log = debconf_shim_dir("diff-payload")
+    result = PluginSpecHelper.run("debconf", {
+      "name"          => "spec.pkg",
+      "question"      => "spec.pkg/keyboard-layout",
+      "vtype"         => "string",
+      "value"         => "de",
+      "_ansible_diff" => "true",
+      "_environment"  => debconf_env(dir, log, "spec.pkg/keyboard-layout: us"),
+    })
+
+    result["changed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("")
+    result["current"].as_h["spec.pkg/keyboard-layout"].as_s.must_equal("de")
+    result["previous"].as_h["spec.pkg/keyboard-layout"].as_s.must_equal("us")
+    result["diff"]["before"].as_h["spec.pkg/keyboard-layout"].as_s.must_equal("us")
+    result["diff"]["after"].as_h["spec.pkg/keyboard-layout"].as_s.must_equal("de")
+  ensure
+    FileUtils.rm_rf(dir) if dir
+  end
+
+  # A name-only task still runs debconf-show first in real, and exits its
+  # no-change shape with the package's whole selection map as current.
+  it "reports the whole selection map for a name-only task" do
+    dir, log = debconf_shim_dir("no-question")
+    result = PluginSpecHelper.run("debconf", {
+      "name"         => "spec.pkg",
+      "_environment" => debconf_env(dir, log, "spec.pkg/keyboard-layout: us"),
+    })
+
+    falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+    result["changed"].as_bool.must_equal(false)
+    result["msg"].as_s.must_equal("")
+    result.as_h.keys.must_equal(["changed", "msg", "current"])
+    result["current"].as_h["spec.pkg/keyboard-layout"].as_s.must_equal("us")
   ensure
     FileUtils.rm_rf(dir) if dir
   end
@@ -131,7 +174,7 @@ describe "debconf plugin - required_together (question/vtype/value)" do
 
     falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
     result["changed"].as_bool.must_equal(false)
-    result["msg"].as_s.must_equal("Value already set")
+    result["msg"].as_s.must_equal("")
     File.exists?(log).must_equal(false)
   ensure
     FileUtils.rm_rf(dir) if dir

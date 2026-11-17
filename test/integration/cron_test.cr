@@ -26,6 +26,45 @@ describe "cron plugin" do
     content.must_include("0 2 * * * root /usr/local/bin/backup.sh")
   end
 
+  # cron.py attaches {before, before_header, after, after_header} to a
+  # changed result whenever diff mode is on, and ansible's callback
+  # renders it as the task's ---/+++ block. Without it a --diff run
+  # printed no diff for a cron change at all (issue #1466's repro).
+  it "reports Ansible's before/after diff in diff mode" do
+    path = tmp_path("cron-diff.txt")
+    File.write(path, "#Ansible: other job\n0 1 * * * root /bin/true\n")
+
+    result = PluginSpecHelper.run("cron", {
+      "name" => "kpg job",
+      "job" => "echo kpg",
+      "minute" => "5",
+      "month" => "6",
+      "weekday" => "1",
+      "cron_file" => path, "user" => "root",
+      "_ansible_diff" => "true",
+    })
+
+    result["changed"].as_bool.must_equal(true)
+    diff = result["diff"]
+    diff["before"].as_s.must_equal("#Ansible: other job\n0 1 * * * root /bin/true\n")
+    diff["before_header"].as_s.must_equal(path)
+    diff["after"].as_s.must_equal("#Ansible: other job\n0 1 * * * root /bin/true\n#Ansible: kpg job\n5 * * 6 1 root echo kpg\n")
+    diff["after_header"].as_s.must_equal(path)
+  end
+
+  it "omits the diff payload when diff mode is off" do
+    path = tmp_path("cron-no-diff.txt")
+    File.delete(path) if File.exists?(path)
+
+    result = PluginSpecHelper.run("cron", {
+      "name" => "kpg job", "job" => "echo kpg",
+      "cron_file" => path, "user" => "root",
+    })
+
+    result["changed"].as_bool.must_equal(true)
+    result["diff"]?.must_be_nil
+  end
+
   it "resolves a relative cron_file: against /etc/cron.d, matching Ansible" do
     # Path-resolution proof (cron.py's CronTab#__init__: a relative
     # cron_file: joins onto /etc/cron.d, only an absolute path is used
