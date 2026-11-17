@@ -1733,3 +1733,44 @@ describe "INJECT_FACTS_AS_VARS deprecation from a with_nested: item" do
     stderr.includes?(":10:14").must_equal(false)
   end
 end
+
+# Issue #1421, mahdi22.puppet_agent: a looped `include_vars:` whose literal
+# with_items: entry is itself a template reading a top-level fact. Real
+# prints the INJECT_FACTS_AS_VARS block while it renders that loop source -
+# Origin'd at the entry that named the fact - and then the next task's own
+# when: block (live-verified against 2.21.6). include_vars' item render ran
+# outside the loop-source registration the general looped-task path uses, so
+# the read had no placeable Origin and the first block vanished.
+describe "INJECT_FACTS_AS_VARS deprecation from a looped include_vars: item" do
+  it "origins the item render at the with_items: entry, ahead of the next task's when:" do
+    dir = PluginSpecHelper.tmp_path("inject-facts-include-vars-#{Random::Secure.hex(4)}")
+    FileUtils.mkdir_p(File.join(dir, "vars"))
+    File.write(File.join(dir, "vars", "Debian.yml"), "---\ndummy: 1\n")
+    playbook = File.join(dir, "play.yml")
+    File.write(playbook, <<-PLAYBOOK)
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        tasks:
+          - name: include distribution dependency variables
+            include_vars: "{{ item }}"
+            with_items:
+              - "{{ ansible_distribution_file_variety }}.yml"
+
+          - name: gated by a top-level fact
+            debug:
+              msg: hi
+            when: ansible_os_family | length > 0
+      PLAYBOOK
+    stdout = IO::Memory.new
+    stderr = IO::Memory.new
+    Process.run(BINARY, ["-i", "localhost,", playbook], output: stdout, error: stderr, chdir: dir)
+    err = stderr.to_s
+
+    err.scan(/INJECT_FACTS_AS_VARS default to `True`/).size.must_equal(2)
+    err.must_include("Origin: #{playbook}:8:11\n")
+    err.must_include("8         - \"{{ ansible_distribution_file_variety }}.yml\"")
+    err.must_include("Origin: #{playbook}:13:13\n")
+    (err.index!("Origin: #{playbook}:8:11") < err.index!("Origin: #{playbook}:13:13")).must_equal(true)
+  end
+end

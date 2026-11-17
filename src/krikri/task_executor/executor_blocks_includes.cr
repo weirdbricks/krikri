@@ -1048,7 +1048,23 @@ module Krikri
         # Unsafe-derived items are already rendered data - the pass below
         # would be their second render, so it is skipped and the values are
         # marked instead (see loop_items_derive_from_unsafe_data?).
-        rendered_items = unsafe_items ? loop_items : loop_items.map { |item| deep_render_item(item, loop_vars_context, host.name, strict: false) }
+        # The item render is part of loop-SOURCE resolution, so a top-level
+        # fact read inside a literal item (`with_items:` holding
+        # `- "{{ ansible_<fact> }}.yml"`) deprecates at that source ELEMENT -
+        # the site the general looped-task path registers around its own
+        # item renders. Without it the read had no placeable Origin and the
+        # INJECT_FACTS_AS_VARS block real prints vanished (issue #1421:
+        # mahdi22.puppet_agent's looped `include_vars:` printed none, while
+        # real prints one here and a second at the next task's when:).
+        rendered_items = if unsafe_items
+                           loop_items
+                         else
+                           with_loop_source_site(task) do
+                             VarSubstitutor.with_preparing_loop_source_container(task.loop_template, loop_vars_context, host.name) do
+                               loop_items.map { |item| deep_render_item(item, loop_vars_context, host.name, strict: false) }
+                             end
+                           end
+                         end
         mark_unsafe_loop_items(rendered_items) if unsafe_items
         rendered_items = flatten_with_items_one_level(rendered_items) if task.loop_items_needs_flatten?
         rendered_items.each_with_index do |item, loop_index|
