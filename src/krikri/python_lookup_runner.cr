@@ -167,6 +167,22 @@ module Krikri
     # lookup error).
     def call_lookup(name : String, source : String, terms : Array(JSON::Any),
                     variables : Hash(String, JSON::Any), kwargs : Hash(String, JSON::Any)) : JSON::Any
+      call_lookup_result(name, source, terms, variables, kwargs).value
+    end
+
+    # A dispatched plugin call's result plus what the plugin actually
+    # returned: ansible's templating layer accepts only a Sequence there
+    # (is_sequence excludes str/bytes) and fails the task with the value's
+    # own type otherwise. The JSON-transported value cannot carry that
+    # distinction itself (a set or bytes arrives as list/str), so the
+    # wrapper reports it alongside the result.
+    record LookupOutcome,
+      value : JSON::Any,
+      sequence : Bool,
+      type_repr : String
+
+    def call_lookup_result(name : String, source : String, terms : Array(JSON::Any),
+                           variables : Hash(String, JSON::Any), kwargs : Hash(String, JSON::Any)) : LookupOutcome
       result = begin
         run_wrapper({
           "path"      => source,
@@ -204,7 +220,11 @@ module Krikri
                   end
         raise LookupUnavailableError.new(kind, message)
       end
-      result["result"]? || JSON::Any.new(nil)
+      LookupOutcome.new(
+        value: result["result"]? || JSON::Any.new(nil),
+        sequence: result["sequence"]?.try(&.as_bool?) != false,
+        type_repr: result["type"]?.try(&.as_s?) || "<class 'NoneType'>"
+      )
     end
 
     # Distinguishes "the mechanism is not available on this controller"
@@ -283,6 +303,8 @@ module Krikri
       import os
       import sys
 
+      from collections.abc import Sequence
+
 
       _unavailable = None
       try:
@@ -336,6 +358,12 @@ module Krikri
           return str(value)
 
 
+      def _is_sequence(value):
+          if isinstance(value, (str, bytes)):
+              return False
+          return isinstance(value, Sequence)
+
+
       def main():
           payload = json.loads(sys.stdin.read())
           if _unavailable is not None:
@@ -363,7 +391,9 @@ module Krikri
           result = instance.run(payload.get("terms") or [],
                                 variables=payload.get("variables") or {},
                                 **(payload.get("kwargs") or {}))
-          sys.stdout.write(json.dumps({"ok": True, "result": result},
+          sys.stdout.write(json.dumps({"ok": True, "result": result,
+                                       "sequence": _is_sequence(result),
+                                       "type": str(type(result))},
                                       default=_serialize))
 
 

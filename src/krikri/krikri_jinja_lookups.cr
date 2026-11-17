@@ -755,13 +755,31 @@ module Krikri
         options[key] = json(value)
       end
       variables = host ? host.lookup_variables : {"omit" => JSON::Any.new(Krikri::OMIT_SENTINEL)}
-      result = begin
-        KrikriJinja.from_json_any(PythonLookupRunner.call_lookup(name, source, terms.map { |term| json(term) }, variables, options))
+      outcome = begin
+        PythonLookupRunner.call_lookup_result(name, source, terms.map { |term| json(term) }, variables, options)
       rescue ex : PythonLookupRunner::LookupUnavailableError
         return AnyValue.new(nil) if ex.unavailable?
         return AnyValue.new(nil) if kwargs["errors"]?.try { |value| text(value).downcase } == "ignore"
         raise ex
       end
+      # ansible's lookup()/query() accept only a Sequence from the plugin
+      # (is_sequence excludes str/bytes): anything else raises
+      # "returned <class 'X'> instead of <class 'list'>" inside the same
+      # try the generic errors= option guards, so warn/ignore carry on
+      # with None ([] under wantlist/query) instead of failing the task.
+      unless outcome.sequence
+        detail = "returned #{outcome.type_repr} instead of <class 'list'>"
+        errors_option = kwargs["errors"]?.try { |value| text(value).strip.downcase }
+        if errors_option.in?("warn", "ignore")
+          if errors_option == "warn"
+            ResultDisplay.emit_display_warning(
+              "An error occurred while running the lookup plugin '#{name}': #{detail}")
+          end
+          return (query_mode || truthy?(kwargs["wantlist"]?)) ? AnyValue.new([] of AnyValue) : AnyValue.new(nil)
+        end
+        raise PythonLookupRunner::LookupError.new("The lookup plugin '#{name}' failed: #{detail}")
+      end
+      result = KrikriJinja.from_json_any(outcome.value)
       # Same list-form convention as the hand-rolled evaluator's
       # evaluate_custom_python_lookup: a list-shaped result is
       # comma-joined into a scalar for a plain lookup() - ansible's

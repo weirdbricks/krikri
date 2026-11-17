@@ -360,7 +360,7 @@ module Krikri
 
         terms = parts[1..].map { |part| evaluate_lookup_term(part) }
         begin
-          result = PythonLookupRunner.call_lookup(lookup_type, source, terms, variables, options)
+          outcome = PythonLookupRunner.call_lookup_result(lookup_type, source, terms, variables, options)
         rescue ex : PythonLookupRunner::LookupUnavailableError
           return nil if ex.unavailable?
           # A dispatched plugin failure is a real task failure in
@@ -371,6 +371,23 @@ module Krikri
           return "" if first_found_errors_ignore?(kwargs)
           raise ex
         end
+        # ansible's lookup()/query() accept only a Sequence from the
+        # plugin (is_sequence excludes str/bytes): anything else raises
+        # "returned <class 'X'> instead of <class 'list'>" inside the
+        # same try the generic errors= option guards, so warn/ignore
+        # carry on with an empty result instead of failing the task.
+        unless outcome.sequence
+          detail = "returned #{outcome.type_repr} instead of <class 'list'>"
+          if first_found_errors_ignore?(kwargs) || lookup_errors_warn?(kwargs)
+            if lookup_errors_warn?(kwargs)
+              ResultDisplay.emit_display_warning(
+                "An error occurred while running the lookup plugin '#{lookup_type}': #{detail}")
+            end
+            return ""
+          end
+          raise PythonLookupRunner::LookupError.new("The lookup plugin '#{lookup_type}' failed: #{detail}")
+        end
+        result = outcome.value
 
         # Same list-form convention as lookup_inventory_hostnames: a
         # list-shaped result is comma-joined into a scalar only when
