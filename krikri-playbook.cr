@@ -74,12 +74,13 @@ def warn_unmatched_play_patterns(inventory : Krikri::Inventory, play : Krikri::P
   end
 end
 
-# A play that wrote a bool keyword real's boolean() refuses: the same
-# two-link error block ansible-core prints on stderr for a
-# Play.post_validate failure ("Error processing keyword 'X'." chained to
-# "The value ... could not be converted to 'bool'."), each link pointing
-# at the keyword's value, then the parser-error exit code.
-def fail_play_bool_keyword(play : Krikri::Play, failure : Krikri::PlayBoolKeywords::Failure) : NoReturn
+# A play that wrote an always-post-validated keyword real's boolean()/
+# float() refuses: the same two-link error block ansible-core prints on
+# stderr for a Play.post_validate failure ("Error processing keyword
+# 'X'." chained to "The value ... could not be converted to '<type>'."),
+# each link pointing at the keyword's value, then the parser-error exit
+# code.
+def fail_play_keyword(play : Krikri::Play, failure : Krikri::PlayKeywords::Failure) : NoReturn
   source_context = failure.origin.try do |(line, column)|
     path = play.source_file
     path ? Krikri::ErrorBlock.origin_context(path, line, column) : nil
@@ -1088,11 +1089,11 @@ if quiet_listing_mode
   playbook.plays.each do |play|
     warn_unmatched_play_patterns(inventory, play, pattern_warnings)
     # Real post-validates each play before it records the listing, so an
-    # unconvertible bool keyword refuses the whole listing (rc=4, not
-    # even the "playbook:" line) - the same refusal a real run makes
-    # before that play's banner.
-    if failure = play.bool_keyword_failure
-      fail_play_bool_keyword(play, failure)
+    # unconvertible keyword refuses the whole listing (rc=4, not even the
+    # "playbook:" line) - the same refusal a real run makes before that
+    # play's banner.
+    if failure = play.keyword_failure
+      fail_play_keyword(play, failure)
     end
   end
 
@@ -1349,9 +1350,9 @@ playbook.plays.each_with_index do |play, _play_index|
   warn_unmatched_play_patterns(inventory, play, pattern_warnings)
   # Real post-validates the play's always_post_validate keywords here,
   # before the banner and before the play's hosts are matched, and a
-  # value its boolean() refuses aborts the whole run.
-  if failure = play.bool_keyword_failure
-    fail_play_bool_keyword(play, failure)
+  # value its boolean()/float() refuses aborts the whole run.
+  if failure = play.keyword_failure
+    fail_play_keyword(play, failure)
   end
   Krikri::RunOptions.play_name = play.name
 
