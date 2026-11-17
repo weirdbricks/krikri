@@ -42,3 +42,38 @@ describe "FAILED - RETRYING line for a role task" do
     status.success?.must_equal(true)
   end
 end
+
+# Issue #1450: ansible's v2_runner_retry stamps its line with
+# CallbackBase.host_label, which appends the task's delegate_to: target -
+# a delegated retry reads "FAILED - RETRYING: [web1 -> web2]:" where
+# krikri printed the bare origin host.
+describe "FAILED - RETRYING line for a delegated task" do
+  it "carries the -> delegate label like real's host_label" do
+    tempdir = PluginSpecHelper.tmp_path("retry-delegate-label")
+    FileUtils.mkdir_p(tempdir)
+    playbook = File.join(tempdir, "site.yml")
+    File.write(playbook, <<-YAML)
+      - hosts: web1
+        gather_facts: false
+        tasks:
+          - name: Retried command
+            ansible.builtin.command:
+              cmd: /bin/false
+            register: result
+            retries: 2
+            delay: 0
+            until: result is succeeded
+            ignore_errors: true
+            delegate_to: web2
+      YAML
+
+    inventory = File.join(PluginSpecHelper::PROJECT_ROOT, "test", "fixtures", "inventory-multi-local.ini")
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", inventory, playbook], output: output, error: output)
+    text = output.to_s
+
+    text.must_include("FAILED - RETRYING: [web1 -> web2]: Retried command (1 retries left).")
+    text.must_include("FAILED - RETRYING: [web1 -> web2]: Retried command (0 retries left).")
+    status.success?.must_equal(true)
+  end
+end
