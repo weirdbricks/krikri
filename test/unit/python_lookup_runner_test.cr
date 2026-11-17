@@ -160,6 +160,43 @@ describe Krikri::PythonLookupRunner do
     FileUtils.rm_r(role)
   end
 
+  it "words a plugin's run() failure as ansible does, without the exception class name" do
+    return unless ansible_importable
+
+    role = File.join(Dir.tempdir, "krikri-pylookup-spec-#{Random.rand(1_000_000)}")
+    Dir.mkdir_p(role)
+    raising = write_lookup_plugin(role, "rage.py", <<-PYTHON)
+      from ansible.errors import AnsibleError
+      from ansible.plugins.lookup import LookupBase
+
+      class LookupModule(LookupBase):
+          def run(self, terms, variables=None, **kwargs):
+              raise AnsibleError('kpg lookup exploded')
+      PYTHON
+    mute = write_lookup_plugin(role, "mute.py", <<-PYTHON)
+      from ansible.plugins.lookup import LookupBase
+
+      class LookupModule(LookupBase):
+          def run(self, terms, variables=None, **kwargs):
+              raise Exception()
+      PYTHON
+
+    begin
+      ex = assert_raises(Krikri::PythonLookupRunner::LookupError) do
+        Krikri::PythonLookupRunner.call_lookup("rage", raising, [] of JSON::Any,
+          empty_vars, empty_kwargs)
+      end
+      ex.message.must_equal("The lookup plugin 'rage' failed: kpg lookup exploded")
+      ex = assert_raises(Krikri::PythonLookupRunner::LookupError) do
+        Krikri::PythonLookupRunner.call_lookup("mute", mute, [] of JSON::Any,
+          empty_vars, empty_kwargs)
+      end
+      ex.message.must_equal("The lookup plugin 'mute' failed.")
+    ensure
+      FileUtils.rm_r(role)
+    end
+  end
+
   private def empty_vars
     Hash(String, JSON::Any).new
   end
