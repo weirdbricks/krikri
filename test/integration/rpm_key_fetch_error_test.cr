@@ -96,3 +96,101 @@ describe "rpm_key URL fetch failure message (issue #339)" do
     end
   end
 end
+
+# Issue #1438 (Amazon Linux 2023): state=absent with a `key:` URL failed with
+# "Failed to get keyid" while ansible reported ok/unchanged. Real rpm_key's
+# RpmKey.__init__ downloads a `://` key to a temp file before it looks at
+# state, so the key ID for an absent task comes from the fetched material too.
+# The fakes below let the whole path run without an RPM database: `gpg`
+# reports a fixed key's colon dump (and records the path it was handed), `rpm`
+# answers -q with the "installed" key ID (empty by default) and records --erase.
+RPM_KEY_ABSENT_KEYID = "deadbeefcafeb00d"
+RPM_KEY_ABSENT_FPR   = "ABCDEF0123456789ABCDEF0123456789ABCDEF01"
+
+RPM_KEY_ABSENT_GPG_SHIM = <<-SH
+#!/bin/sh
+printf '%s\n' "$*" >> "${KRIKRI_FAKE_GPG_LOG:?}"
+echo "pub:u:4096:1:#{RPM_KEY_ABSENT_KEYID}:1700000000:::u:::scESC::::::d:"
+echo "fpr:::::::::#{RPM_KEY_ABSENT_FPR}:"
+exit 0
+SH
+
+RPM_KEY_ABSENT_RPM_SHIM = <<-'SH'
+#!/bin/sh
+if [ "$1" = "-q" ]; then
+  if [ -n "${KRIKRI_FAKE_RPM_INSTALLED:-}" ]; then
+    printf '%s\n' "$KRIKRI_FAKE_RPM_INSTALLED"
+    exit 0
+  fi
+  exit 1
+fi
+if [ "$1" = "--erase" ]; then
+  printf '%s\n' "$*" >> "${KRIKRI_FAKE_RPM_LOG:?}"
+  exit 0
+fi
+exit 0
+SH
+
+# Runs the block with a key-serving local HTTP server and shims first on the
+# plugin's PATH, yielding the key URL plus the two log paths.
+def with_absent_url_key_env(&)
+  server = HTTP::Server.new do |context|
+    context.response.status_code = 200
+    context.response.print("-----BEGIN PGP PUBLIC KEY BLOCK-----\n\nfake\n-----END PGP PUBLIC KEY BLOCK-----\n")
+  end
+  address = server.bind_tcp("127.0.0.1", 0)
+  listening = Channel(Nil).new
+  spawn do
+    server.listen
+    listening.send(nil)
+  end
+
+  shim = PluginSpecHelper.tmp_path("rpm-key-absent-url-shim-#{Random::Secure.hex(4)}")
+  FileUtils.mkdir_p(shim)
+  {"gpg" => RPM_KEY_ABSENT_GPG_SHIM, "rpm" => RPM_KEY_ABSENT_RPM_SHIM}.each do |name, body|
+    path = File.join(shim, name)
+    File.write(path, body)
+    File.chmod(path, 0o755)
+  end
+  gpg_log = PluginSpecHelper.tmp_path("rpm-key-absent-gpg-#{Random::Secure.hex(4)}.log")
+  rpm_log = PluginSpecHelper.tmp_path("rpm-key-absent-rpm-#{Random::Secure.hex(4)}.log")
+
+  begin
+    yield "http://127.0.0.1:#{address.port}/linux_signing_key.pub", gpg_log, rpm_log,
+      {"PATH" => "#{shim}:#{ENV["PATH"]?}", "KRIKRI_FAKE_GPG_LOG" => gpg_log, "KRIKRI_FAKE_RPM_LOG" => rpm_log}
+  ensure
+    server.close
+    listening.receive
+    FileUtils.rm_r(shim)
+    File.delete?(gpg_log)
+    File.delete?(rpm_log)
+  end
+end
+
+describe "rpm_key state absent with a URL key (issue #1438)" do
+  it "fetches the key and reports ok/unchanged when it is not imported" do
+    with_absent_url_key_env do |url, gpg_log, rpm_log, env|
+      result = PluginSpecHelper.run("rpm_key", {"key" => url, "state" => "absent"}, env: env)
+
+      falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+      result["changed"].as_bool.must_equal(false)
+      # Ansible's success exits are bare exit_json(changed=...) - no msg key.
+      result["msg"]?.must_be_nil
+      # The key ID was derived from the downloaded file, never from the URL.
+      File.read(gpg_log).must_include("--import ")
+      File.read(gpg_log).wont_include("://")
+      File.exists?(rpm_log).must_equal(false)
+    end
+  end
+
+  it "erases the key when the fetched key is already imported" do
+    with_absent_url_key_env do |url, _gpg_log, rpm_log, env|
+      result = PluginSpecHelper.run("rpm_key", {"key" => url, "state" => "absent"},
+        env: env.merge({"KRIKRI_FAKE_RPM_INSTALLED" => "cafeb00d"}))
+
+      falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+      result["changed"].as_bool.must_equal(true)
+      File.read(rpm_log).must_include("--erase --allmatches gpg-pubkey-cafeb00d")
+    end
+  end
+end

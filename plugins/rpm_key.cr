@@ -143,23 +143,7 @@ module Krikri
         return PluginResult.new(changed: false, failed: true, msg: "Not a valid key #{key}")
       end
 
-      tmp_path = nil
-      begin
-        if key.includes?("://")
-          # File.tempfile (unguessable name + O_EXCL + 0600), not
-          # Random.rand: the old guessable name let a local user plant a
-          # symlink that curl -o then wrote through as root.
-          tmp = File.tempfile(".krikri-playbook-rpm-key-", nil)
-          tmp_path = tmp.path
-          tmp.close
-          if error = download_key(key, tmp_path)
-            return PluginResult.new(changed: false, failed: true, msg: error)
-          end
-          keyfile = tmp_path
-        else
-          keyfile = key
-        end
-
+      with_key_material(key) do |keyfile|
         pairs = parse_key_material(keyfile)
         return PluginResult.new(changed: false, failed: true, msg: "Failed to get keyid") if pairs.empty?
 
@@ -184,8 +168,31 @@ module Krikri
         end
 
         PluginResult.new(changed: true, failed: false, key_order: %w[changed])
+      end
+    end
+
+    # RpmKey.__init__ resolves a `key:` URL to a downloaded temp file
+    # BEFORE it branches on state, so state=absent derives the key ID from
+    # the fetched key exactly as state=present does (issue #1438: parsing
+    # the URL itself found no key packets and reported "Failed to get
+    # keyid" where ansible was ok/unchanged). Yields the target-side path
+    # of the key material; a fetch failure becomes the task's failed result.
+    private def with_key_material(key : String, & : String -> PluginResult) : PluginResult
+      return yield key unless key.includes?("://")
+
+      # File.tempfile (unguessable name + O_EXCL + 0600), not
+      # Random.rand: the old guessable name let a local user plant a
+      # symlink that curl -o then wrote through as root.
+      tmp = File.tempfile(".krikri-playbook-rpm-key-", nil)
+      tmp_path = tmp.path
+      tmp.close
+      begin
+        if error = download_key(key, tmp_path)
+          return PluginResult.new(changed: false, failed: true, msg: error)
+        end
+        yield tmp_path
       ensure
-        remote_exec("rm -f #{Shell.quote_arg(tmp_path)}") if tmp_path
+        remote_exec("rm -f #{Shell.quote_arg(tmp_path)}")
       end
     end
 
@@ -308,15 +315,18 @@ module Krikri
         return PluginResult.new(changed: false, failed: true, msg: "Not a valid key #{key}")
       end
 
-      short_id =
-        if bare_keyid?(key)
-          normalize_keyid(key)[-8..]? || normalize_keyid(key)
-        else
-          pairs = parse_key_material(key)
-          return PluginResult.new(changed: false, failed: true, msg: "Failed to get keyid") if pairs.empty?
-          pairs.first[0][-8..]? || pairs.first[0]
-        end
+      if bare_keyid?(key)
+        return erase_key_if_installed(normalize_keyid(key)[-8..]? || normalize_keyid(key))
+      end
 
+      with_key_material(key) do |keyfile|
+        pairs = parse_key_material(keyfile)
+        return PluginResult.new(changed: false, failed: true, msg: "Failed to get keyid") if pairs.empty?
+        erase_key_if_installed(pairs.first[0][-8..]? || pairs.first[0])
+      end
+    end
+
+    private def erase_key_if_installed(short_id : String) : PluginResult
       unless installed_short_keyids.includes?(short_id)
         return PluginResult.new(changed: false, failed: false, key_order: %w[changed])
       end
