@@ -4513,6 +4513,19 @@ module Krikri
       # own wrapper, no conditional-evaluation prefix (live-verified vs
       # 2.21.6).
       return message if exc.is_a?(Krikri::FilterPluginError) && message.starts_with?("The filter plugin '")
+      # A bare clause's runtime render failure (a Python string/list method
+      # that raises: `x.index('z')` on a string without 'z') is ansible's
+      # RenderExpressionError class, and real stores it with the "Error
+      # rendering expression: " prefix and no conditional-evaluation wrapper
+      # (live-verified vs 2.21.6, issue #1423: softasap.sa_python3's
+      # `failed_when: not py3_version.stdout.index(python_version)`). A
+      # `{{ }}`-wrapped clause never arrives here - its lenient render
+      # swallows the same raise into the undefined sentinel first. Left
+      # uncaught, the raise escaped #apply_changed_failed_when entirely,
+      # crashing the run for a top-level task and mislabelling the task
+      # "Failed to load included tasks" when it came from an
+      # include_tasks: file.
+      return "Error rendering expression: #{message}" if exc.is_a?(RenderExpressionError)
       # A filter that RAN and raised is the runtime class instead
       # (FilterFailureError subclasses UnknownFilterError): its plugin
       # wrapper, or the conditional-evaluation wording for a bare runtime
@@ -4742,7 +4755,7 @@ module Krikri
             # never gets it - only each item result does.
             hash["changed_when_result"] = JSON::Any.new(changed_when_verdict)
           end
-        rescue e : ConditionalEvaluator::ConditionalBooleanError | ConditionalEvaluator::UndefinedVariableError | Krikri::FilterPluginError | Krikri::TestPluginError | VariableSubstitutor::FilterEngine::UnknownFilterError | ChangedFailedWhenRenderSyntaxError
+        rescue e : ConditionalEvaluator::ConditionalBooleanError | ConditionalEvaluator::UndefinedVariableError | Krikri::FilterPluginError | Krikri::TestPluginError | VariableSubstitutor::FilterEngine::UnknownFilterError | ChangedFailedWhenRenderSyntaxError | RenderExpressionError
           hash["failed"] = JSON::Any.new(true)
           detail = changed_failed_when_error_text(task, "changed_when", changed_when, host, e)
           hash["changed_when_result"] = JSON::Any.new(detail)
@@ -4810,7 +4823,7 @@ module Krikri
               hash["_ansible_error_detail"] = JSON::Any.new("Action failed: Unknown error.")
             end
           end
-        rescue e : ConditionalEvaluator::ConditionalBooleanError | ConditionalEvaluator::UndefinedVariableError | Krikri::FilterPluginError | Krikri::TestPluginError | VariableSubstitutor::FilterEngine::UnknownFilterError | ChangedFailedWhenRenderSyntaxError
+        rescue e : ConditionalEvaluator::ConditionalBooleanError | ConditionalEvaluator::UndefinedVariableError | Krikri::FilterPluginError | Krikri::TestPluginError | VariableSubstitutor::FilterEngine::UnknownFilterError | ChangedFailedWhenRenderSyntaxError | RenderExpressionError
           hash["failed"] = JSON::Any.new(true)
           detail = changed_failed_when_error_text(task, "failed_when", failed_when, host, e)
           hash["failed_when_result"] = JSON::Any.new(detail)
