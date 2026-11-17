@@ -1978,6 +1978,24 @@ module Krikri
         member_state = :run
         outcome = nil
         captured = ResultDisplay.capture_stderr do
+          # ansible post-validates the play context - which carries this
+          # member's own or its parent block's become_user: - BEFORE it
+          # evaluates that member's when: (execute_task_once's identical
+          # pre-render), so a role default templating that keyword prints
+          # its deprecation block ahead of the clause's own. Batch-build
+          # is the only path that evaluated when: first, and it is the
+          # one a real host's run takes (issue #1427).
+          pre_become_user : String? = nil
+          pre_become_user_done = false
+          pre_become_user_error : Exception? = nil
+          if task.when_condition
+            begin
+              pre_become_user = resolve_task_become_user(task, host, vars_context, member_substitutor)
+              pre_become_user_done = true
+            rescue err
+              pre_become_user_error = err
+            end
+          end
           begin
             # defer_stats + defer_display: a when:-skipped batch member has
             # its skipped counter AND its "skipping:" print both deferred -
@@ -2003,7 +2021,11 @@ module Krikri
             halted = true unless task.ignore_errors_before_keyword_templating?
             member_state = :when_raised
           end
-          outcome = prepare_batch_step(task, host, vars_context, shared: member_substitutor) if member_state == :run
+          if member_state == :run
+            outcome = prepare_batch_step(task, host, vars_context, shared: member_substitutor,
+              pre_become_user: pre_become_user, pre_become_user_done: pre_become_user_done,
+              pre_become_user_error: pre_become_user_error)
+          end
         end
         (@batch_captured_warnings[host.name] ||= Hash(Task, ResultDisplay::CapturedStderr).new)[task] = captured unless captured.empty?
 
@@ -2362,7 +2384,7 @@ module Krikri
     # `ansible_check_mode` magic var stays bound to the RUN's mode, not
     # the task's. Live-verified - a `check_mode: true` task inside an
     # ordinary run still sees `ansible_check_mode == false`.
-    private def prepare_batch_step(task : Task, host : Host, vars_context : Hash(String, JSON::Any), shared : VarSubstitutor? = nil) : JSON::Any | BatchScript::Step
+    private def prepare_batch_step(task : Task, host : Host, vars_context : Hash(String, JSON::Any), shared : VarSubstitutor? = nil, pre_become_user : String? = nil, pre_become_user_done : Bool = false, pre_become_user_error : Exception? = nil) : JSON::Any | BatchScript::Step
       substitutor = shared || VarSubstitutor.new(vars: vars_context, host_name: host.name)
 
       # ansible post-validates PlayContext before the task's own keywords,
@@ -2376,12 +2398,22 @@ module Krikri
 
       # Ansible templates the become_user keyword before any module arg is
       # finalized, so an undefined keyword reports its own error even when
-      # an arg is undefined too.
-      substituted_become_user = begin
-        resolve_task_become_user(task, host, vars_context, substitutor)
-      rescue ex : UndefinedVariableError
-        return keyword_failure_json(ex, task)
-      end
+      # an arg is undefined too. A member with a `when:` already rendered
+      # the keyword ahead of its conditional (execute_batch_group's
+      # pre-render, issue #1427), so reuse that value, or report the error
+      # it hit: real only surfaces the keyword error once the conditional
+      # has passed.
+      substituted_become_user = if pre_become_user_done
+                                  pre_become_user
+                                elsif pre_become_user_error.is_a?(UndefinedVariableError)
+                                  return keyword_failure_json(pre_become_user_error.as(UndefinedVariableError), task)
+                                else
+                                  begin
+                                    resolve_task_become_user(task, host, vars_context, substitutor)
+                                  rescue ex : UndefinedVariableError
+                                    return keyword_failure_json(ex, task)
+                                  end
+                                end
       substituted_become_flags = begin
         resolve_task_become_flags(task, host, vars_context, substitutor)
       rescue ex : UndefinedVariableError
