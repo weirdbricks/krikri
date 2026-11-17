@@ -83,9 +83,12 @@ module Krikri
           # the batch-size difference that already exists there.
           total
         elsif token.ends_with?('%')
-          # pct_to_int's percentage branch runs int() over the text
-          # before the '%' - a fractional percentage raises there too.
-          percent_text = token.rchop('%')
+          # pct_to_int's percentage branch runs int() over the text with
+          # EVERY '%' replaced, not just the trailing one: `serial: "50%%"`
+          # is int("50") and batches by 50% while `"4x%%"` crashes on
+          # int("4x"). A fractional percentage raises there too
+          # (live-verified vs 2.21.6).
+          percent_text = token.gsub('%', "")
           percent = percent_text.to_i? || raise SerialValueError.new(crash_render(percent_text, percent: true))
           (total * percent / 100.0).ceil.to_i
         else
