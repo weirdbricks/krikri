@@ -392,6 +392,78 @@ module Krikri
       JSON::Any.new(Array(JSON::Any).new)
     end
 
+    # Real apt_repository diffs the SourcesList dump's filename -> content
+    # map, and only for filenames whose key appears or disappears - so an
+    # add that appends to a file that already has lines reports NO diff
+    # entry at all, while creating a file (or emptying one) reports one
+    # with "/dev/null" as the missing side's header (live-verified against
+    # ansible-core 2.21.6, check mode included: the diff is built from the
+    # in-memory maps before real's `if not module.check_mode` save gate).
+    # generate_unified_diff's key order (before, after, before_header,
+    # after_header) is real's own dict order.
+    private def source_file_diff(before : String?, after : String?, path : String) : JSON::Any
+      return empty_diff_list unless @diff_mode
+      return empty_diff_list if before.nil? == after.nil?
+      JSON::Any.new([generate_unified_diff(
+        before || "",
+        after || "",
+        before.nil? ? "/dev/null" : path,
+        after.nil? ? "/dev/null" : path,
+      )])
+    end
+
+    # SourcesList.dump()'s entry for one file, in its own normalized
+    # form: every loaded line is re-emitted, a blank line becomes "\n",
+    # a disabled line gets the "# " prefix, and an inline comment keeps
+    # its " # " separator. A leading "#" is stripped and the remainder
+    # parsed as a source spec, so a plain comment line dumps as "# \n".
+    # nil means the file contributes no dump key at all - absent or
+    # empty, which dump() skips.
+    private def dumped_source_content(file : String) : String?
+      return nil unless File.exists?(file)
+      lines = File.read_lines(file)
+      return nil if lines.empty?
+      String.build do |io|
+        lines.each do |raw|
+          stripped = raw.strip
+          enabled = true
+          if stripped.starts_with?('#')
+            enabled = false
+            stripped = stripped[1..]
+          end
+          comment = ""
+          if (hash = stripped.index('#')) && hash > 0
+            comment = stripped[(hash + 1)..].strip
+            stripped = stripped[0...hash]
+          end
+          source = stripped.strip
+          unless source.empty?
+            chunks = source.split
+            source = chunks[0].in?(PluginHelpers::AptRepositoryLine::VALID_SOURCE_TYPES) ? chunks.join(' ') : ""
+          end
+          io << "# " unless enabled
+          io << source
+          io << " # " << comment unless comment.empty?
+          io << '\n'
+        end
+      end
+    end
+
+    # Check mode never writes, but real's diff still comes from the
+    # in-memory dump map, so the file's post-add content has to be
+    # simulated: the new line itself whenever the file had no dump entry
+    # to begin with (absent or empty).
+    private def simulated_add_dump(before : String?, normalized : String) : String
+      before || "#{normalized}\n"
+    end
+
+    # The mirror case for a removal: a file left with no lines at all
+    # drops out of the dump map, which is exactly the "/dev/null" side of
+    # real's diff entry.
+    private def simulated_remove_dump(before : String?, emptied : Bool) : String?
+      emptied ? nil : before
+    end
+
     private def add(normalized : String, update_cache : Bool, check_mode : Bool, filename_source : String? = nil, & : -> PluginResult?) : PluginResult
       if find_source(normalized)
         return PluginResult.new(changed: false, failed: false, repo: normalized, state: "present", sources_added: [] of String, sources_removed: [] of String, diff: empty_diff_list, key_order: APT_REPO_ORDER)
@@ -399,9 +471,11 @@ module Krikri
 
       target = target_file(normalized, filename_source || normalized)
       target_had_sources = file_has_sources?(target)
+      before_dump = dumped_source_content(target)
 
       if check_mode
-        return PluginResult.new(changed: true, failed: false, repo: normalized, state: "present", sources_added: target_had_sources ? [] of String : [target], sources_removed: [] of String, diff: empty_diff_list, key_order: APT_REPO_ORDER)
+        after_dump = simulated_add_dump(before_dump, normalized)
+        return PluginResult.new(changed: true, failed: false, repo: normalized, state: "present", sources_added: target_had_sources ? [] of String : [target], sources_removed: [] of String, diff: source_file_diff(before_dump, after_dump, target), key_order: APT_REPO_ORDER)
       end
 
       if error = yield
@@ -411,6 +485,7 @@ module Krikri
       Dir.mkdir_p(File.dirname(target))
       File.open(target, "a", &.puts(normalized))
       apply_owner_group_mode(target, nil, nil, @params["mode"]?)
+      after_dump = dumped_source_content(target)
 
       if update_cache
         retries = int_param("update_cache_retries", AptRepositoryCacheRetry::DEFAULT_UPDATE_CACHE_RETRIES)
@@ -474,7 +549,7 @@ module Krikri
         end
       end
 
-      result = PluginResult.new(changed: true, failed: false, repo: normalized, state: "present", sources_added: target_had_sources ? [] of String : [target], sources_removed: [] of String, diff: empty_diff_list, key_order: APT_REPO_ORDER)
+      result = PluginResult.new(changed: true, failed: false, repo: normalized, state: "present", sources_added: target_had_sources ? [] of String : [target], sources_removed: [] of String, diff: source_file_diff(before_dump, after_dump, target), key_order: APT_REPO_ORDER)
       result.extra["warnings"] = JSON.parse(@warnings.to_json) unless @warnings.empty?
       result
     end
@@ -488,13 +563,16 @@ module Krikri
       remaining_lines = File.read_lines(file).reject { |line| line == normalized }
       file_would_lose_sources = remaining_lines.none? { |line| valid_source_line?(line) }
       original_content = File.read(file)
+      before_dump = dumped_source_content(file)
 
       if check_mode
-        return PluginResult.new(changed: true, failed: false, repo: normalized, state: "absent", sources_added: [] of String, sources_removed: file_would_lose_sources ? [file] : [] of String, diff: empty_diff_list, key_order: APT_REPO_ORDER)
+        after_dump = simulated_remove_dump(before_dump, remaining_lines.empty?)
+        return PluginResult.new(changed: true, failed: false, repo: normalized, state: "absent", sources_added: [] of String, sources_removed: file_would_lose_sources ? [file] : [] of String, diff: source_file_diff(before_dump, after_dump, file), key_order: APT_REPO_ORDER)
       end
 
       File.write(file, remaining_lines.empty? ? "" : remaining_lines.join('\n') + "\n")
       File.delete?(file) if remaining_lines.none? { |line| !line.empty? } && file != sources_list
+      after_dump = dumped_source_content(file)
 
       if update_cache
         retries = int_param("update_cache_retries", AptRepositoryCacheRetry::DEFAULT_UPDATE_CACHE_RETRIES)
@@ -516,7 +594,7 @@ module Krikri
         end
       end
 
-      PluginResult.new(changed: true, failed: false, repo: normalized, state: "absent", sources_added: [] of String, sources_removed: file_would_lose_sources ? [file] : [] of String, diff: empty_diff_list, key_order: APT_REPO_ORDER)
+      PluginResult.new(changed: true, failed: false, repo: normalized, state: "absent", sources_added: [] of String, sources_removed: file_would_lose_sources ? [file] : [] of String, diff: source_file_diff(before_dump, after_dump, file), key_order: APT_REPO_ORDER)
     end
 
     # Real apt_repository computes sources_added/sources_removed as the
