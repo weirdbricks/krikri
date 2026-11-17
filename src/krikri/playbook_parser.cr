@@ -2867,7 +2867,16 @@ module Krikri
           play.vars_prompt << parsed if parsed.has_key?("name")
         end
       end
-      play.strategy = yaml["strategy"]?.try { |value| safe_yaml_to_string(value).strip }
+      # An unset `strategy:` falls back to ANSIBLE_STRATEGY, ansible-core's
+      # DEFAULT_STRATEGY setting; the play keyword always wins over it
+      # (verified against ansible-core 2.21.6: `strategy: linear` still
+      # runs linearly with ANSIBLE_STRATEGY=free). krikri has no
+      # ansible.cfg parser, so the env var is the only source of that
+      # default. An empty value stays unset: ansible's own loader dies on
+      # one with an internal "non-empty plugin name is required" traceback,
+      # which is not behavior worth reproducing.
+      play.strategy = yaml["strategy"]?.try { |value| safe_yaml_to_string(value).strip } ||
+                      ENV["ANSIBLE_STRATEGY"]?.presence
       if subset_yaml = yaml["gather_subset"]?
         play.gather_subset =
           if list = subset_yaml.as_a?
