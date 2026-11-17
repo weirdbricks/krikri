@@ -1318,17 +1318,46 @@ module Krikri
       {rc, stdout, stderr}
     end
 
+    # Only the requested name's OWN stanza may answer for it. apt-cache
+    # falls back to an unanchored POSIX regex over every package name
+    # when no package carries the argument exactly, so `apt-cache policy
+    # python3.6` on jammy prints libcasa-python3-6's stanza - candidate
+    # and all - ahead of the two dead python3.6 remnants. Reading the
+    # first Candidate: line in that output made a name python-apt's
+    # exact cache lookup can't find look installable, and apt-get's own
+    # regex fallback then really installed the unrelated package
+    # (issue #1413, allenluce.python3: `python3.6` reported changed
+    # instead of "No package matching 'python3.6' is available", and the
+    # warm rerun "ok" because that package was already in place).
+    private def exact_policy_stanza(output : String, name : String) : Array(String)
+      # apt-cache reports an arch-qualified request under the bare
+      # package name (`policy libc6:amd64` prints "libc6:").
+      wanted = [name, name.split(':').first]
+      stanza = [] of String
+      found = false
+      output.each_line do |line|
+        header = line.rstrip
+        if !header.empty? && !line.starts_with?(' ') && !line.starts_with?('\t') && header.ends_with?(':')
+          found = wanted.includes?(header.rchop(':'))
+          next
+        end
+        stanza << line if found
+      end
+      stanza
+    end
+
     private def apt_candidate(name : String) : {Bool, String?}
       probe = remote_exec("apt-cache policy #{shell_single_quote(name)} 2>/dev/null")
-      return {false, nil} unless probe[:stdout].includes?("Candidate:")
-      probe[:stdout].each_line do |line|
+      stanza = exact_policy_stanza(probe[:stdout].to_s, name)
+      return {false, nil} if stanza.empty?
+      stanza.each do |line|
         stripped = line.strip
         if stripped.starts_with?("Candidate:")
           version = stripped.lchop("Candidate:").strip
           return {true, version.empty? || version == "(none)" ? nil : version}
         end
       end
-      {true, nil}
+      {false, nil}
     end
 
     # Real install()'s pinned-version probe: version_installable in
@@ -1356,8 +1385,11 @@ module Krikri
       # Below the "Version table:" marker, rows at the table's own
       # indentation are versions (the installed row's `***` marker reads
       # as blank, per apt-cache's column layout); the deeper-indented
-      # rows under it are the per-mirror origin lines.
-      lines = probe[:stdout].split('\n')
+      # rows under it are the per-mirror origin lines. Only the
+      # requested name's own stanza counts - the exact-stanza rule
+      # apt_candidate applies - so the regex fallback's foreign version
+      # table can't resolve a pin for a name the cache doesn't carry.
+      lines = exact_policy_stanza(probe[:stdout].to_s, name)
       start = lines.index(&.includes?("Version table:")) || return nil
       table_indent : Int32? = nil
       lines[(start + 1)..].each do |raw|
@@ -1550,6 +1582,21 @@ module Krikri
             if resolved = resolve_pinned_version(base_name, pinned_version)
               candidates[pkg] = resolved
             else
+              # The pin probe failing means either the name is absent
+              # from the cache entirely or the name exists without that
+              # version. Ansible tells them apart: python-apt's
+              # cache[name] lookup happens first, so a missing name is
+              # "No package matching 'X' is available" (live-verified
+              # with `name: xcowsa.=1.6-1+b1`, state present AND
+              # latest), and only a known name reaches
+              # version_installable's own wording.
+              unless apt_candidate(base_name)[0]
+                return PluginResult.new(
+                  changed: false,
+                  failed: true,
+                  msg: no_package_msg(base_name)
+                )
+              end
               # Ansible's failure travels through install()'s retvals into
               # fail_json - main() appends the cache keys BEFORE the
               # failed/msg pair lands (round-99500x apt_fail_candidate
@@ -2003,7 +2050,10 @@ module Krikri
           no_providers = (apt_reverse_provides_batch([base_name])[base_name]? || [] of String).empty?
           unknown = no_providers && !(dpkg_installed_status([base_name])[base_name]?.try(&.[0]) || false)
         end
-        if pinned_version.nil? && unknown
+        if unknown
+          # A pin doesn't change a missing name's failure: install()
+          # resolves cache[name] before it ever looks at the version
+          # (live-verified with `name: xcowsa.=1.6-1+b1`, state latest).
           return PluginResult.new(
             changed: false,
             failed: true,

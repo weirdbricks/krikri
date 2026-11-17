@@ -651,12 +651,31 @@ module Krikri
       answers
     end
 
+    # apt-cache's per-package stanza header line ("htop:") sits at column
+    # 0 and ends with a colon. An arch-qualified request is reported
+    # under the bare package name (`policy libc6:amd64` prints "libc6:"),
+    # which is why callers compare against the base name too.
+    private def apt_policy_stanza_header(line : String) : String?
+      return nil if line.empty? || line.starts_with?(' ') || line.starts_with?('\t')
+      header = line.rstrip
+      header.ends_with?(':') ? header.rchop(':') : nil
+    end
+
+    private def apt_policy_stanza_matches?(header : String, name : String) : Bool
+      header == name || header == name.split(':').first
+    end
+
     # Batched form of #apt_candidate for the deb: dependency resolution:
     # one apt-cache policy round trip for a whole list of names, with a
     # marker line between probes. Same per-name semantics as its
     # single-name sibling: no stanza at all -> unknown (false, nil),
     # "Candidate: (none)"/empty -> known but purely virtual (true, nil),
-    # otherwise (true, candidate version).
+    # otherwise (true, candidate version). Only a stanza headed by the
+    # requested name answers for it: apt-cache falls back to an
+    # unanchored regex when no package carries the exact name, so
+    # `policy python3.6` prints libcasa-python3-6's stanza first
+    # (issue #1413) and a foreign claim must not be read as the name
+    # being resolvable.
     private def apt_candidates_batch(names : Array(String)) : Hash(String, {Bool, String?})
       result = {} of String => {Bool, String?}
       return result if names.empty?
@@ -665,13 +684,19 @@ module Krikri
       end.join("; ")
       probe = remote_exec(probes)
       current : String? = nil
+      exact = false
       probe[:stdout].each_line do |line|
         if line.starts_with?("==KRIKRI-POLICY== ")
           current = line.lchop("==KRIKRI-POLICY== ").strip
           result[current] = {false, nil}
-        elsif (cur = current) && line.strip.starts_with?("Candidate:")
-          version = line.split("Candidate:")[1]?.try(&.strip) || ""
-          result[cur] = {true, version.empty? || version == "(none)" ? nil : version}
+          exact = false
+        elsif cur = current
+          if header = apt_policy_stanza_header(line)
+            exact = apt_policy_stanza_matches?(header, cur)
+          elsif exact && line.strip.starts_with?("Candidate:")
+            version = line.split("Candidate:")[1]?.try(&.strip) || ""
+            result[cur] = {true, version.empty? || version == "(none)" ? nil : version}
+          end
         end
       end
       result
@@ -683,7 +708,11 @@ module Krikri
     # (= ver)" entry under a probe's "Reverse Provides:" section yields
     # one provider name (arch-qualified entries collapse to their base
     # name, and duplicates drop out); a probe with no Reverse Provides
-    # section, or with none listed, has no providers.
+    # section, or with none listed, has no providers. Only the block
+    # showpkg prints for the requested name itself counts - showpkg has
+    # the same unanchored-regex fallback as `policy` (issue #1413), so a
+    # regex-matched package's providers say nothing about the requested
+    # name.
     private def apt_reverse_provides_batch(names : Array(String)) : Hash(String, Array(String))
       result = {} of String => Array(String)
       return result if names.empty?
@@ -692,15 +721,20 @@ module Krikri
       end.join("; ")
       probe = remote_exec(probes)
       current : String? = nil
+      exact = false
       in_reverse = false
       probe[:stdout].each_line do |line|
         if line.starts_with?("==KRIKRI-PROVIDES== ")
           current = line.lchop("==KRIKRI-PROVIDES== ").strip
           result[current] = [] of String
+          exact = false
+          in_reverse = false
+        elsif (cur = current) && line.starts_with?("Package: ")
+          exact = apt_policy_stanza_matches?(line.lchop("Package: ").strip, cur)
           in_reverse = false
         elsif cur = current
           if line.strip == "Reverse Provides:"
-            in_reverse = true
+            in_reverse = exact
           elsif in_reverse
             if line.strip.empty?
               in_reverse = false
