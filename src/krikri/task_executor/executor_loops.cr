@@ -2333,6 +2333,23 @@ module Krikri
         # read that same one.
         item_substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
 
+        # Same keyword-before-when: ordering as execute_batch_group's
+        # pre-render (issue #1427): ansible validates the play context -
+        # this item's own or its parent block's become_user: - before the
+        # item's when:, so a fact read templating the keyword prints its
+        # deprecation block ahead of the clause's own.
+        pre_become_user : String? = nil
+        pre_become_user_done = false
+        pre_become_user_error : Exception? = nil
+        if task.when_condition
+          begin
+            pre_become_user = resolve_task_become_user(task, host, vars_context, item_substitutor)
+            pre_become_user_done = true
+          rescue err
+            pre_become_user_error = err
+          end
+        end
+
         begin
           item_lbl = begin
             item_label_for(task, item, vars_context, host)
@@ -2367,7 +2384,9 @@ module Krikri
           next
         end
 
-        case outcome = prepare_batch_step(task, host, vars_context, shared: item_substitutor)
+        case outcome = prepare_batch_step(task, host, vars_context, shared: item_substitutor,
+          pre_become_user: pre_become_user, pre_become_user_done: pre_become_user_done,
+          pre_become_user_error: pre_become_user_error)
         when JSON::Any
           item_results[idx] = outcome
         when BatchScript::Step

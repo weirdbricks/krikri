@@ -1,5 +1,7 @@
 require "../minitest_helper"
 
+require "socket"
+
 # ansible-core 2.21 deprecates reading a gathered fact's top-level
 # `ansible_`-prefixed spelling (INJECT_FACTS_AS_VARS defaulting to True) -
 # issue #957, AAROC.AAROC_regional-apel-server: the role's
@@ -1542,5 +1544,82 @@ describe "INJECT_FACTS_AS_VARS deprecation from a parent block's become_user" do
     stdout.wont_include("FAILED")
     stderr.must_include("Origin: #{defaults}:3:21\n")
     stderr.scan(/DEPRECATION WARNING\]: #{Regex.escape(FACT_DEPRECATION_TEXT)}/).size.must_equal(1)
+  end
+
+  # The same ordering on a REMOTE host. Batching only engages off the local
+  # connection (try_batched_result), and batch-build used to evaluate every
+  # member's when: before the play context keyword - so a real host's run
+  # printed the parent block's become_user deprecation AFTER the child's
+  # when: one, which is the andrewrothstein.getenvoy divergence (issue
+  # #1427). Needs a reachable test sshd (see batch_when_error_side_effects_
+  # test.cr's header for the throwaway setup), like the other batch specs.
+  it "prints the block's become_user block before a batched member's when: block" do
+    host = ENV["KRIKRI_TEST_SSHD_HOST"]? || "127.0.0.1"
+    port = (ENV["KRIKRI_TEST_SSHD_PORT"]? || "2224").to_i
+    user = ENV["KRIKRI_TEST_SSHD_USER"]? || "root"
+    key = ENV["KRIKRI_TEST_SSHD_KEY"]? || "/tmp/kkt-key"
+    reachable = begin
+      File.exists?(key) && (TCPSocket.new(host, port, connect_timeout: 1).close; true)
+    rescue
+      false
+    end
+    skip "no reachable test sshd (see batch_when_error_side_effects_test.cr's header)" unless reachable
+
+    dir = PluginSpecHelper.tmp_path("fact-deprecation-batch-#{Random::Secure.hex(4)}")
+    FileUtils.mkdir_p(File.join(dir, "roles", "deps", "defaults"))
+    FileUtils.mkdir_p(File.join(dir, "roles", "deps", "tasks"))
+    # become: stays False (the throwaway sshd has no become password), but
+    # ansible still templates become_user: and so still reads the fact.
+    File.write(File.join(dir, "roles", "deps", "defaults", "main.yml"), <<-YAML)
+      ---
+      deps_priv_esc: False
+      deps_priv_esc_user: '{{ (ansible_os_family == "Windows") | ternary("System", "root") }}'
+      YAML
+    File.write(File.join(dir, "roles", "deps", "tasks", "main.yml"), <<-YAML)
+      ---
+      - name: install unarchive deps
+        become: '{{ deps_priv_esc }}'
+        become_user: '{{ deps_priv_esc_user }}'
+        block:
+          - name: install OS packages
+            when: ansible_os_family != "Windows"
+            ansible.builtin.debug:
+              msg: hi
+          - name: install PowerShell module
+            when: ansible_os_family == "Windows"
+            ansible.builtin.debug:
+              msg: hi
+      YAML
+    File.write(File.join(dir, "play.yml"), <<-PLAYBOOK)
+      - hosts: target
+        gather_facts: true
+        roles:
+          - deps
+      PLAYBOOK
+    inventory = File.join(dir, "inventory.ini")
+    File.write(inventory, "[target]\ntarget ansible_connection=ssh ansible_host=#{host} " \
+                          "ansible_user=#{user} ansible_port=#{port} " \
+                          "ansible_ssh_private_key_file=#{key} " \
+                          "ansible_ssh_common_args='-o StrictHostKeyChecking=no " \
+                          "-o UserKnownHostsFile=/dev/null -o IdentitiesOnly=yes -o ConnectTimeout=5'\n")
+
+    stdout = IO::Memory.new
+    stderr = IO::Memory.new
+    Process.run(BINARY, ["-i", inventory, File.join(dir, "play.yml"), "--check"],
+      output: stdout, error: stderr, chdir: dir, input: IO::Memory.new)
+
+    defaults = File.join(dir, "roles", "deps", "defaults", "main.yml")
+    tasks = File.join(dir, "roles", "deps", "tasks", "main.yml")
+    err = stderr.to_s
+    stdout.to_s.must_include("skipping: [target]")
+    err.scan(/DEPRECATION WARNING\]: #{Regex.escape(FACT_DEPRECATION_TEXT)}/).size.must_equal(3)
+    become_at = err.index("Origin: #{defaults}:3:")
+    first_when_at = err.index("Origin: #{tasks}:7:")
+    second_when_at = err.index("Origin: #{tasks}:11:")
+    become_at.wont_be_nil
+    first_when_at.wont_be_nil
+    second_when_at.wont_be_nil
+    assert become_at.not_nil! < first_when_at.not_nil!, err
+    assert first_when_at.not_nil! < second_when_at.not_nil!, err
   end
 end
