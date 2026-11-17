@@ -251,6 +251,60 @@ describe "apt plugin deb: URL download-then-install" do
     end
   end
 
+  it "downloads a deb: URL in check mode too, then installs it with dpkg --simulate (issue #1434)" do
+    # Ansible's main() fetches the deb URL before install_deb with no
+    # check_mode guard, so a --check run reads the downloaded control
+    # metadata and gets as far as `dpkg --simulate -i`. The old engine
+    # skipped the fetch under --check and handed the raw URL to the
+    # metadata read, failing every check-mode deb: URL with
+    # "Unable to install package: E:Could not open file <url> - open (2:
+    # No such file or directory)" while Ansible reported its --simulate
+    # result (mahdi22.puppet_agent's "Install Repo for Puppet 6" task).
+    with_deb_fixture_shims do |env, fixture, dpkg_log, apt_log|
+      with_local_deb_server(fixture) do |url, requests|
+        result = PluginSpecHelper.run("apt", {
+          "deb"                 => url,
+          "state"               => "present",
+          "_environment"        => env,
+          "_ansible_check_mode" => "true",
+          "_policy_rc_d_path"   => File.join(File.dirname(fixture), "policy-rc.d"),
+        })
+
+        falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+        result["changed"].as_bool.must_equal(true)
+        requests.count.must_equal(1)
+
+        dpkg_calls = File.exists?(dpkg_log) ? File.read_lines(dpkg_log) : [] of String
+        install_calls = dpkg_calls.select(&.includes?(" -i "))
+        install_calls.size.must_equal(1)
+        install_calls.first.must_include("--simulate")
+        install_calls.first.wont_include(url)
+        File.exists?(apt_log).must_equal(false)
+      end
+    end
+  end
+
+  it "reports ok in check mode when the URL deb's package is already installed (issue #1434)" do
+    with_deb_fixture_shims(dpkg_query_lines: "ii 1.0 krikri-spec-deb") do |env, fixture, dpkg_log, _apt_log|
+      with_local_deb_server(fixture) do |url, requests|
+        result = PluginSpecHelper.run("apt", {
+          "deb"                 => url,
+          "state"               => "present",
+          "_environment"        => env,
+          "_ansible_check_mode" => "true",
+          "_policy_rc_d_path"   => File.join(File.dirname(fixture), "policy-rc.d"),
+        })
+
+        falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+        result["changed"].as_bool.must_equal(false)
+        result["msg"]?.must_be_nil
+        requests.count.must_equal(1)
+        dpkg_calls = File.exists?(dpkg_log) ? File.read_lines(dpkg_log) : [] of String
+        dpkg_calls.select(&.includes?(" -i ")).empty?.must_equal(true)
+      end
+    end
+  end
+
   it "fails with the download error when the URL fetch fails" do
     with_deb_fixture_shims do |env, fixture, dpkg_log, apt_log|
       with_local_deb_server(fixture, status_code: 404) do |url, requests|

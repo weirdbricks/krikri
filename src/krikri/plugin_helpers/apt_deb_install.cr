@@ -59,39 +59,45 @@ module Krikri
       downloaded_tmp : String? = nil
 
       if deb_source.starts_with?("http://") || deb_source.starts_with?("https://")
-        if @check_mode
-          messages << "Would download #{deb_source} to a private /tmp staging file"
-        else
-          # File.tempfile (unguessable name + O_EXCL + 0600), not the
-          # URL's own basename: /tmp/<basename> was fully predictable,
-          # and curl -o follows a symlink planted there, clobbering an
-          # arbitrary file as root.
-          # The suffix is not cosmetic: command-line apt-get/dpkg refuse
-          # non-.deb files with "E: Unsupported file ... given on
-          # commandline" (Ansible's apt module uses python-apt, which
-          # never sees the filename, so this only bit us).
-          tmp = File.tempfile(".krikri-playbook-deb-", ".deb")
-          path = tmp.path
-          downloaded_tmp = tmp.path
-          tmp.close
-          # Ansible's apt module fetches the URL through fetch_url and
-          # fetch_file interpolates fetch_url's info['msg'] verbatim into
-          # "Failure downloading <url>, <msg>" - so the fetch goes through
-          # the same HTTPDownload helper get_url/unarchive use (its
-          # FetchError kinds carry exactly that info['msg'] text), not
-          # through curl, whose own error wording ("curl: (22) The
-          # requested URL returned error: 404") used to surface here
-          # instead (issue #205, prince_13.5 ubuntu22.04 404).
-          begin
-            PluginHelpers::HTTPDownload.download(deb_source, path, download_options)
-          rescue ex
-            File.delete(path) rescue nil
-            return PluginResult.new(
-              changed: false,
-              failed: true,
-              msg: "Failure downloading #{deb_source}, #{download_failure_detail(ex)}"
-            )
-          end
+        # Ansible's main() runs `if '://' in p['deb']: p['deb'] =
+        # fetch_file(module, p['deb'])` with no check_mode guard, because
+        # install_deb decides what to do - skip as already installed, or
+        # run `dpkg --simulate -i` - from the DOWNLOADED file's control
+        # metadata. Skipping the fetch under --check left the raw URL
+        # where a local path belongs, so every check-mode deb: URL failed
+        # "Unable to install package: E:Could not open file <url> - open
+        # (2: No such file or directory)" while Ansible reported ok or
+        # changed (issue #1434, mahdi22.puppet_agent's "Install Repo for
+        # Puppet 6" task).
+        # File.tempfile (unguessable name + O_EXCL + 0600), not the
+        # URL's own basename: /tmp/<basename> was fully predictable,
+        # and curl -o follows a symlink planted there, clobbering an
+        # arbitrary file as root.
+        # The suffix is not cosmetic: command-line apt-get/dpkg refuse
+        # non-.deb files with "E: Unsupported file ... given on
+        # commandline" (Ansible's apt module uses python-apt, which
+        # never sees the filename, so this only bit us).
+        tmp = File.tempfile(".krikri-playbook-deb-", ".deb")
+        path = tmp.path
+        downloaded_tmp = tmp.path
+        tmp.close
+        # Ansible's apt module fetches the URL through fetch_url and
+        # fetch_file interpolates fetch_url's info['msg'] verbatim into
+        # "Failure downloading <url>, <msg>" - so the fetch goes through
+        # the same HTTPDownload helper get_url/unarchive use (its
+        # FetchError kinds carry exactly that info['msg'] text), not
+        # through curl, whose own error wording ("curl: (22) The
+        # requested URL returned error: 404") used to surface here
+        # instead (issue #205, prince_13.5 ubuntu22.04 404).
+        begin
+          PluginHelpers::HTTPDownload.download(deb_source, path, download_options)
+        rescue ex
+          File.delete(path) rescue nil
+          return PluginResult.new(
+            changed: false,
+            failed: true,
+            msg: "Failure downloading #{deb_source}, #{download_failure_detail(ex)}"
+          )
         end
       end
 
