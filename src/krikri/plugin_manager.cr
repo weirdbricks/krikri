@@ -15,6 +15,7 @@ require "./shell"
 require "./inventory_parser"
 require "./task_executor/output_routing"
 require "./action_plugin_manager"
+require "./connection_plugin_loader"
 require "./timing_profile"
 require "./become_messages"
 require "./ssh_unreachable_msg"
@@ -512,6 +513,11 @@ module Krikri
       # (live-verified vs ansible-core 2.21.6, issue #1411).
       limit_names = limit.try { |pattern| inventory.get_hosts(pattern).map(&.name).to_set }
 
+      # The playbook-adjacent `connection_plugins/` Ansible's loader
+      # registers for the run's basedir - the same magic var the
+      # per-task connection decisions carry.
+      playbook_dir = File.dirname(File.expand_path(playbook.path))
+
       playbook.plays.each do |play|
         hosts = inventory.get_hosts(play.hosts.to_s)
         if names = limit_names
@@ -519,6 +525,7 @@ module Krikri
         end
 
         hosts.each do |host|
+          role_default_conn = play.all_role_defaults["ansible_connection"]?.try(&.as_s?)
           # Skip localhost. Checked against the HOST's own inventory
           # vars only, not any individual task's connection: override -
           # this pass runs once per play, before any task is even
@@ -539,7 +546,7 @@ module Krikri
           # module for this host happen under a local override" needs
           # a full pass over every play's tasks up front, not just
           # their hosts:.
-          next if local_connection?(host, host.vars)
+          next if local_connection?(host, host.vars, playbook_dir)
           # The play's own `connection: local` keyword routes every task
           # (and the fact gather) through the controller, so an eager SSH
           # upload here would try to reach a host the play never needs to
@@ -547,7 +554,9 @@ module Krikri
           # before the local task that would have succeeded. Only fills
           # where no ansible_connection var does: inventory/play vars
           # outrank the play keyword in Ansible's vars-vs-keyword rule.
-          next if play.connection.try(&.==("local")) &&
+          # A custom connection plugin whose class derives from Ansible's
+          # local connection counts here too (issue #1457).
+          next if play.connection.try { |conn_type| connection_plugin_transport(conn_type, playbook_dir) == "local" } &&
                   !host.vars.has_key?("ansible_connection") &&
                   !play.vars.has_key?("ansible_connection")
 
@@ -561,7 +570,7 @@ module Krikri
           # found as the resolvable twin of issue #811's network_cli
           # case while testing that fix.
           next if !host.vars.has_key?("ansible_connection") &&
-                  play.all_role_defaults["ansible_connection"]?.try(&.as_s?) == "local"
+                  role_default_conn.try { |conn_type| connection_plugin_transport(conn_type, playbook_dir) == "local" }
 
           # A host whose ansible_connection resolves to no connection
           # plugin (Ansible would fail every task with "the
@@ -586,8 +595,8 @@ module Krikri
           # helper) and pre-mark the host unreachable before the gather
           # could fail with the connection-resolution error.
           next if [host.vars["ansible_connection"]?.try(&.as_s?),
-                   play.all_role_defaults["ansible_connection"]?.try(&.as_s?),
-                   play.connection].compact.any? { |conn_type| connection_plugin_not_found?(conn_type) }
+                   role_default_conn,
+                   play.connection].compact.any? { |conn_type| connection_plugin_not_found?(conn_type, playbook_dir) }
 
           # Deduplicate by connection details - the PLAY's effective
           # spec (play vars win over inventory host vars for the
@@ -3031,21 +3040,24 @@ module Krikri
       staged_path
     end
 
-    # Connection types this engine can actually dispatch, matched
-    # CASE-SENSITIVELY exactly like Ansible's own plugin loader,
-    # which looks the name up verbatim against plugin filenames (no
-    # lowercasing anywhere in the resolution path - verified live against
-    # ansible-core 2.19.11: `connection: Local` fails the task with "the
-    # connection plugin 'Local' was not found", and so does any FQCN that
-    # names no real connection plugin, e.g. `community.grafana.grafana`).
-    # "smart" is Ansible's default alias resolving to ssh for a
-    # remote host; paramiko_ssh is still ssh for this engine's purposes.
-    SUPPORTED_CONNECTION_TYPES = Set{
-      "local", "ssh", "smart", "paramiko_ssh",
-      "ansible.builtin.local", "ansible.builtin.ssh", "ansible.builtin.smart",
-      "ansible.builtin.paramiko_ssh",
-      "ansible.legacy.local", "ansible.legacy.ssh", "ansible.legacy.smart",
-      "ansible.legacy.paramiko_ssh",
+    # Connection types this engine can actually dispatch, split by the
+    # transport they mean, matched CASE-SENSITIVELY exactly like Ansible's
+    # own plugin loader, which looks the name up verbatim against plugin
+    # filenames (no lowercasing anywhere in the resolution path - verified
+    # live against ansible-core 2.19.11: `connection: Local` fails the task
+    # with "the connection plugin 'Local' was not found", and so does any
+    # FQCN that names no real connection plugin, e.g.
+    # `community.grafana.grafana`). "smart" is Ansible's default alias
+    # resolving to ssh for a remote host; paramiko_ssh is still ssh for
+    # this engine's purposes.
+    LOCAL_CONNECTION_TYPES = Set{
+      "local", "ansible.builtin.local", "ansible.legacy.local",
+    }
+
+    SSH_CONNECTION_TYPES = Set{
+      "ssh", "smart", "paramiko_ssh",
+      "ansible.builtin.ssh", "ansible.builtin.smart", "ansible.builtin.paramiko_ssh",
+      "ansible.legacy.ssh", "ansible.legacy.smart", "ansible.legacy.paramiko_ssh",
     }
 
     # Connection plugins Ansible RESOLVES (shipped in ansible-core
@@ -3062,31 +3074,49 @@ module Krikri
     # keyword after substitution) names no connection plugin Ansible
     # could resolve either - so a task using it must fail the way
     # Ansible's TaskExecutor._get_connection does, instead of silently
-    # falling back to SSH. A collection-qualified name is checked against
-    # the controller's own collection paths exactly like Ansible's
-    # loader: a plugin that EXISTS there (containers.podman.podman,
-    # community.docker.docker) keeps the engine's long-standing SSH
-    # fallback - this engine can't exec inside a container target, but
-    # that's a transport approximation, not a resolution failure; a
-    # plugin that exists NOWHERE is the not-found verdict.
-    def self.connection_plugin_not_found?(raw : String) : Bool
-      return false if SUPPORTED_CONNECTION_TYPES.includes?(raw)
-      return false if RESOLVABLE_UNIMPLEMENTED_CONNECTION_TYPES.includes?(raw)
+    # falling back to SSH. A plugin name is checked against every path
+    # Ansible's own loader consults (the playbook's and each role's
+    # `connection_plugins/`, ANSIBLE_CONNECTION_PLUGINS, a collection's
+    # `plugins/connection/` - see ConnectionPluginLoader): a plugin that
+    # EXISTS there keeps the engine's long-standing transport
+    # approximation - this engine can't run a Python plugin's connection
+    # lifecycle, but that's an approximation, not a resolution failure -
+    # while a plugin that exists NOWHERE is the not-found verdict.
+    def self.connection_plugin_not_found?(raw : String, playbook_dir : String? = nil) : Bool
+      connection_plugin_transport(raw, playbook_dir).nil?
+    end
 
-      parts = raw.split('.')
-      return true unless parts.size == 3
+    # This engine's transport for *raw*: "local" or "ssh", or nil when
+    # Ansible's loader would not resolve the name either. A built-in name
+    # keeps its fixed transport; any other resolvable plugin resolves to
+    # the transport its own class implies (ConnectionPluginLoader).
+    def self.connection_plugin_transport(raw : String, playbook_dir : String? = nil) : String?
+      return "local" if LOCAL_CONNECTION_TYPES.includes?(raw)
+      return "ssh" if SSH_CONNECTION_TYPES.includes?(raw)
+      return "ssh" if RESOLVABLE_UNIMPLEMENTED_CONNECTION_TYPES.includes?(raw)
 
-      namespace, collection, name = parts[0], parts[1], parts[2]
-      relative = File.join("ansible_collections", namespace, collection,
-        "plugins", "connection", "#{name}.py")
-      RoleLoader.collections_paths.none? { |base| File.exists?(File.join(base, relative)) }
+      source = ConnectionPluginLoader.find_source(raw, playbook_dir)
+      return nil unless source
+
+      ConnectionPluginLoader.local_source?(source) ? "local" : "ssh"
+    end
+
+    # The playbook directory the executor's vars_context carries as the
+    # `playbook_dir` magic variable - nil outside a playbook run (and for
+    # the inventory-only vars some callers pass), where only the
+    # configured and role-local plugin roots can be searched.
+    def self.playbook_dir_from(vars : Hash(String, JSON::Any)) : String?
+      vars["playbook_dir"]?.try(&.as_s?)
     end
 
     # Check if connection is local. Public - TaskExecutor's batch path
     # (item 3) needs the same local/remote decision execute_plugin
     # already makes internally, before deciding whether batching even
-    # applies to a given host.
-    def self.local_connection?(host : Host, vars : Hash(String, JSON::Any)) : Bool
+    # applies to a given host. A custom connection plugin Ansible's
+    # loader resolves is local when its own class derives from Ansible's
+    # local connection (issue #1457), exactly like the built-in name.
+    def self.local_connection?(host : Host, vars : Hash(String, JSON::Any), playbook_dir : String? = nil) : Bool
+      dir = playbook_dir || playbook_dir_from(vars)
       # The host's OWN connection setting wins first. On a delegate_to:
       # task, `vars` here is the vars_context of the host the task would
       # otherwise have run on (build_vars_context injects
@@ -3101,7 +3131,7 @@ module Krikri
       # get_url plugin binary to the controller as if it were a remote
       # target - where Ansible runs the task locally and rc=0s.
       if conn = host.vars["ansible_connection"]?
-        return conn.as_s? == "local"
+        return conn.as_s?.try { |name| connection_plugin_transport(name, dir) == "local" } || false
       end
 
       # Fall back to the passed vars - for the same-host (non-delegate)
@@ -3109,7 +3139,7 @@ module Krikri
       # ansible_connection, or the "ssh" default build_vars_context
       # injects), for a delegate it correctly loses to the check above.
       if conn = vars["ansible_connection"]?
-        return conn.as_s? == "local"
+        return conn.as_s?.try { |name| connection_plugin_transport(name, dir) == "local" } || false
       end
 
       # The HOST NAME itself is never a connection decision (issue #677):

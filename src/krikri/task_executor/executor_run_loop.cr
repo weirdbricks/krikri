@@ -1914,7 +1914,7 @@ module Krikri
       # execute_task_once's own check fails the task like Ansible -
       # the batch script would silently SSH instead.
       return {false, nil} if (conn_type = vars_context["ansible_connection"]?.try(&.as_s?)) &&
-                             PluginManager.connection_plugin_not_found?(conn_type)
+                             PluginManager.connection_plugin_not_found?(conn_type, PluginManager.playbook_dir_from(vars_context))
       # A templated action:/local_action: resolves its Ansible module only
       # inside execute_task_once; the batch script path has no such
       # resolution (and breaks_run? below only keeps the task out of
@@ -3104,7 +3104,7 @@ module Krikri
       # turned into a bogus UNREACHABLE ("Failed to connect to the host
       # via ssh") instead of Ansible's one clean failed task.
       if (conn_type = dispatch_vars["ansible_connection"]?.try(&.as_s?)) &&
-         PluginManager.connection_plugin_not_found?(conn_type)
+         PluginManager.connection_plugin_not_found?(conn_type, PluginManager.playbook_dir_from(dispatch_vars))
         return apply_changed_failed_when(task, JSON.parse({
           "changed" => false,
           "failed"  => true,

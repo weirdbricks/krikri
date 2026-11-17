@@ -242,7 +242,8 @@ module Krikri
     # local/ssh default covers).
     private def unresolvable_connection_message(host : Host, vars_context : Hash(String, JSON::Any)) : String?
       conn_type = vars_context["ansible_connection"]?.try(&.as_s?)
-      return nil unless conn_type && PluginManager.connection_plugin_not_found?(conn_type)
+      return nil unless conn_type &&
+                        PluginManager.connection_plugin_not_found?(conn_type, PluginManager.playbook_dir_from(vars_context))
 
       "Task failed: the connection plugin '#{conn_type}' was not found"
     end
