@@ -66,8 +66,28 @@ module Krikri
       end
     end
 
+    # ansible's built-in `debug` strategy is the linear strategy with the
+    # task debugger globally enabled (strategy/debug.py sets
+    # debugger_active = True), so without any `debugger:` keyword every
+    # failing or unreachable result opens the prompt - live-verified
+    # against ansible-core 2.21.6: a failing command under
+    # `strategy: debug` prints its fatal line, then
+    # `[host] TASK: <name> (debug)> `, and the EOF quit ends the run at
+    # exit 99 with no PLAY RECAP. A task whose own ignore_errors: caught
+    # the failure never prompts (TASK_DEBUGGER_IGNORE_ERRORS defaults
+    # true); the caller decides that, because it is the side that resolves
+    # the keyword.
+    def self.globally_triggered?(result : JSON::Any) : Bool
+      result["failed"]?.try(&.as_bool?) == true ||
+        result["unreachable"]?.try(&.as_bool?) == true
+    end
+
     # Runs the prompt loop. Returns whether the caller should re-run the
     # task; quitting or EOF exits the process, as Ansible does.
+    #
+    # *kind* is the task's own repr prefix: "TASK" for a task, "HANDLER"
+    # for a handler (answerable from Handler's `HANDLER: <name>` repr),
+    # which ansible's Debugger prompt prints verbatim.
     #
     # *task* is mutated in place for `task.args[...] =` assignments (its
     # `params` are this engine's equivalent - the raw, pre-substitution
@@ -79,11 +99,12 @@ module Krikri
     def self.run(task_name : String, host_name : String,
                  result : JSON::Any, vars : Hash(String, JSON::Any),
                  task : Task? = nil,
-                 var_overrides : Hash(String, JSON::Any)? = nil) : Outcome
+                 var_overrides : Hash(String, JSON::Any)? = nil,
+                 kind : String = "TASK") : Outcome
       pending_vars = Hash(String, JSON::Any).new
 
       loop do
-        print "[#{host_name}] TASK: #{task_name} (debug)> "
+        print "[#{host_name}] #{kind}: #{task_name} (debug)> "
 
         line = STDIN.gets
         unless line

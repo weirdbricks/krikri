@@ -1422,9 +1422,25 @@ module Krikri
       end
     end
 
-    private def debug_if_requested(task : Task, host : Host, result : JSON::Any) : JSON::Any
+    # *display*, when given, prints a re-run result the same way the
+    # caller printed the original one: ansible's debugger runs after the
+    # result has gone through the callback, so a redo has to display its
+    # own result rather than replace one the caller already printed.
+    private def debug_if_requested(task : Task, host : Host, result : JSON::Any,
+                                   display : Proc(JSON::Any, Nil)? = nil) : JSON::Any
       setting = task.debugger || @debugger
-      return result unless TaskDebugger.triggered?(setting, result)
+      # ansible's `debug` strategy (also reachable as
+      # ANSIBLE_STRATEGY=debug) is linear with the debugger globally
+      # enabled: every failing or unreachable task prompts, with the
+      # task's own ignore_errors: suppressing it
+      # (TASK_DEBUGGER_IGNORE_ERRORS defaults true) - live-verified
+      # against ansible-core 2.21.6. A `debugger:` keyword written on the
+      # play or task still wins over the strategy.
+      global = setting.nil? && debug_strategy? && !task.ignore_errors?
+      triggered = ->(res : JSON::Any) {
+        global ? TaskDebugger.globally_triggered?(res) : TaskDebugger.triggered?(setting, res)
+      }
+      return result unless triggered.call(result)
 
       current = result
       # `task_vars[...] = v` typed at the prompt lands here once
@@ -1450,7 +1466,8 @@ module Krikri
           var_overrides.each { |key, value| rerun_vars[key] = value }
           rerun = execute_task_once(task, host, rerun_vars)
           current = rerun if rerun
-          return current unless TaskDebugger.triggered?(setting, current)
+          display.try &.call(current)
+          return current unless triggered.call(current)
         end
       end
     end

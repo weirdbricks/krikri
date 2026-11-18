@@ -10,15 +10,18 @@ require "../minitest_helper"
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 
-private def run_debug(playbook : String, input : String?) : {Int32, String}
+private def run_debug(playbook : String, input : String?, env : Hash(String, String)? = nil) : {Int32, String}
   dir = File.tempname("debugger")
   Dir.mkdir_p(dir)
   File.write(File.join(dir, "inv.ini"), "localhost ansible_connection=local\n")
   File.write(File.join(dir, "pb.yml"), playbook)
 
+  # Pin ANSIBLE_STRATEGY as unset unless a test supplies it, so a shell
+  # that exports one cannot change what these playbooks do.
+  child_env = {"ANSIBLE_STRATEGY" => nil}.merge(env || {} of String => String)
   stdout_io = IO::Memory.new
   status = Process.run(BINARY, ["-i", "inv.ini", "pb.yml"],
-    output: stdout_io, error: stdout_io, chdir: dir,
+    output: stdout_io, error: stdout_io, chdir: dir, env: child_env,
     input: input ? IO::Memory.new(input) : Process::Redirect::Close)
   {status.exit_code, stdout_io.to_s}
 ensure
@@ -161,5 +164,93 @@ describe "debugger:" do
       _, output = run_debug(FAILING, "wat\nc\n")
       output.must_include("Unknown command: wat")
     end
+  end
+end
+
+# ansible's built-in `debug` strategy is linear with the task debugger
+# globally enabled (strategy/debug.py sets debugger_active = True), so a
+# non-interactive run that hits an unrescued failure prompts once and then
+# quits on EOF: exit 99 and no PLAY RECAP. Live-verified against
+# ansible-core 2.21.6 with the krikri-playbook-generator's own
+# ANSIBLE_STRATEGY=debug repro (kpg issue #1529).
+private DEBUG_STRATEGY_FAILING = <<-YAML
+  - hosts: all
+    gather_facts: false
+    strategy: debug
+    tasks:
+      - name: fails
+        ansible.builtin.command: /bin/false
+      - name: after
+        ansible.builtin.debug: {msg: unreachable}
+  YAML
+
+describe "strategy: debug" do
+  it "prompts on a failing task, then exits 99 with no PLAY RECAP" do
+    code, output = run_debug(DEBUG_STRATEGY_FAILING, nil)
+    code.must_equal(99)
+    output.must_include("[localhost] TASK: fails (debug)> User interrupted execution")
+    output.wont_include("PLAY RECAP")
+    # The prompt follows the fatal line, as ansible's debugger closure runs
+    # after the result has been handed to the callback.
+    fatal_at = output.index!("FAILED!")
+    prompt_at = output.index!("(debug)>")
+    (fatal_at < prompt_at).must_equal(true)
+  end
+
+  it "prompts the same way when the strategy arrives through ANSIBLE_STRATEGY" do
+    env = {"ANSIBLE_STRATEGY" => "debug"}
+    code, output = run_debug(DEBUG_STRATEGY_FAILING.sub("  strategy: debug\n", ""), nil, env)
+    code.must_equal(99)
+    output.must_include("[localhost] TASK: fails (debug)> User interrupted execution")
+    output.wont_include("PLAY RECAP")
+  end
+
+  it "labels a failing handler's prompt HANDLER, not TASK" do
+    code, output = run_debug(<<-YAML, nil)
+      - hosts: all
+        gather_facts: false
+        strategy: debug
+        tasks:
+          - name: notifier
+            ansible.builtin.command: /bin/true
+            changed_when: true
+            notify: fails
+        handlers:
+          - name: fails
+            ansible.builtin.command: /bin/false
+      YAML
+    code.must_equal(99)
+    output.must_include("[localhost] HANDLER: fails (debug)> User interrupted execution")
+    output.wont_include("PLAY RECAP")
+  end
+
+  it "does not prompt for an ignore_errors failure (TASK_DEBUGGER_IGNORE_ERRORS defaults true)" do
+    code, output = run_debug(<<-YAML, nil)
+      - hosts: all
+        gather_facts: false
+        strategy: debug
+        tasks:
+          - name: fails but is ignored
+            ansible.builtin.command: /bin/false
+            ignore_errors: true
+      YAML
+    code.must_equal(0)
+    output.wont_include("(debug)>")
+    output.must_include("PLAY RECAP")
+  end
+
+  it "still honors debugger: never over the strategy" do
+    code, output = run_debug(<<-YAML, nil)
+      - hosts: all
+        gather_facts: false
+        strategy: debug
+        tasks:
+          - name: fails
+            ansible.builtin.command: /bin/false
+            debugger: never
+      YAML
+    code.must_equal(2)
+    output.wont_include("(debug)>")
+    output.must_include("PLAY RECAP")
   end
 end

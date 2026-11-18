@@ -251,7 +251,7 @@ module Krikri
       # flag only decides whether the handler runs.
       @handler_runner.run(execute_callback, @results, @diff_mode, name_resolver,
         @force_handlers ? nil : @halted_hosts, unusable_handlers, ignore_errors_resolver,
-        delegate_resolver)
+        delegate_resolver, @debugger, debug_strategy?)
     end
 
     # Execute a handler (internal - called via callback)
