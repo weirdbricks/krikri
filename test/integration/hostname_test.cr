@@ -102,4 +102,41 @@ describe "hostname plugin" do
       "+hostname = #{target}\n"
     )
   end
+
+  # The kpg playbook that surfaced this (issue #1552) delegates the hostname
+  # task to a second host with delegate_facts, so the diff's before side must
+  # still be the machine that runs the module - the run host's own live name -
+  # not the delegated host's inventory name and not one derived from `name`,
+  # which is the value the harness mask anchors on. The `[a -> b]` marker on
+  # the result line is Ansible's delegation rendering and must survive the
+  # diff.
+  it "keeps the run host's own hostname on the --diff before side of a delegated task" do
+    target = "krikri-playbook-hostname-delegated-spec"
+    playbook = PluginSpecHelper.tmp_path("hostname_delegated_check_diff.yml")
+    File.write(playbook, <<-YAML)
+      - hosts: hostone
+        gather_facts: false
+        tasks:
+          - name: delegated hostname
+            ansible.builtin.hostname:
+              name: #{target}
+            register: delegated_hostname
+            ignore_errors: true
+            delegate_to: hosttwo
+            delegate_facts: true
+      YAML
+    engine = File.expand_path("../../bin/krikri-playbook", __DIR__)
+    inventory = File.expand_path("../fixtures/inventory-two-local-hosts.ini", __DIR__)
+
+    output = IO::Memory.new
+    status = Process.run(engine, ["-i", inventory, "--check", "--diff", playbook], output: output, error: output)
+
+    status.success?.must_equal(true, output.to_s)
+    output.to_s.must_include(
+      "--- before\n+++ after\n@@ -1 +1 @@\n" \
+      "-hostname = #{System.hostname}\n" \
+      "+hostname = #{target}\n"
+    )
+    output.to_s.must_include("changed: [hostone -> hosttwo]")
+  end
 end
