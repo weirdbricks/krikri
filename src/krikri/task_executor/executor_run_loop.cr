@@ -132,7 +132,14 @@ module Krikri
           # _tqm._failed_hosts here, which never books a failure that
           # left a rescue:/always: chain running (see
           # @chain_pending_failures) - so those hosts don't count.
-          counted = hosts.count { |host| @halted_hosts.includes?(host.name) && !@chain_pending_failures.includes?(host.name) }
+          # An unreachable host is booked in _tqm._unreachable_hosts
+          # instead, so it never counts either: a dead host in the fleet
+          # must not abort the play for the healthy ones still running.
+          counted = hosts.count do |host|
+            @halted_hosts.includes?(host.name) &&
+              !@chain_pending_failures.includes?(host.name) &&
+              !@unreachable_hosts.includes?(host.name)
+          end
           (counted * 100.0 / hosts.size) > limit
         else
           false

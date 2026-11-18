@@ -34,6 +34,39 @@ ensure
   FileUtils.rm_rf(dir) if dir && Dir.exists?(dir)
 end
 
+# Issue #1481's shape: one host of the fleet is simply unreachable (a
+# refused ssh connection, so no real network dependency) while the others
+# are local. Ansible books it in _tqm._unreachable_hosts, never in
+# _tqm._failed_hosts - the population max_fail_percentage: is measured
+# against - so even 0% must not abort the play for the healthy hosts.
+private def run_unreachable_play(keywords : String) : {Int32, Array(String)}
+  dir = File.tempname("aef")
+  Dir.mkdir_p(dir)
+  File.write(File.join(dir, "inv.ini"), <<-INI)
+    [g]
+    h1 ansible_connection=local
+    h2 ansible_connection=local
+    dead ansible_host=127.0.0.1 ansible_port=1
+    INI
+  File.write(File.join(dir, "pb.yml"), <<-YAML)
+    - hosts: all
+      gather_facts: false
+    #{keywords}
+      tasks:
+        - name: first
+          ansible.builtin.command: /bin/true
+        - name: later
+          ansible.builtin.debug: {msg: "LATER-{{ inventory_hostname }}"}
+    YAML
+
+  stdout_io = IO::Memory.new
+  status = Process.run(BINARY, ["-i", "inv.ini", "-f", "1", "pb.yml"],
+    output: stdout_io, error: stdout_io, chdir: dir)
+  {status.exit_code, stdout_io.to_s.scan(/LATER-h\d/).map(&.[0]).sort!}
+ensure
+  FileUtils.rm_rf(dir) if dir && Dir.exists?(dir)
+end
+
 # Issue #1062's shape: a block whose body fails mid-way under
 # max_fail_percentage:. Ansible runs the body's later tasks (on the
 # healthy hosts), the always: section and the play's later tasks - a
@@ -139,6 +172,12 @@ describe "max_fail_percentage:" do
 
   it "aborts on any failure at 0" do
     run_play("  max_fail_percentage: 0")[1].empty?.must_equal(true)
+  end
+
+  it "does not count an unreachable host toward the threshold" do
+    code, later = run_unreachable_play("  max_fail_percentage: 0")
+    code.must_equal(4)
+    later.must_equal(["LATER-h1", "LATER-h2"])
   end
 
   # Issue #1062: a failure inside a block that still owes a rescue:/
