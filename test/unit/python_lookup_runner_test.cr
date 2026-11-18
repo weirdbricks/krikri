@@ -565,3 +565,104 @@ describe "PythonLookupRunner plugin loader fidelity (#778)" do
     FileUtils.rm_r(root)
   end
 end
+
+# A krikri-only controller: python3 exists but the `ansible` package does
+# not, which is the normal krikri deployment while real ansible-playbook
+# always carries its own package. Refusing to load there made kpg's
+# rpm_key rows return null from krikri where real returned the plugin's
+# values (issue #1509), so the wrapper stands in for the ansible surface
+# a lookup plugin imports.
+private def python_lookup_without_ansible_path : String
+  dir = PluginSpecHelper.tmp_path("pylookup-no-ansible")
+  FileUtils.rm_rf(dir)
+  FileUtils.mkdir_p(dir)
+  interpreter = File.join(dir, "python3")
+  # -S drops site-packages, so this interpreter cannot import ansible even
+  # on a host that has it; PATH carries nothing else, so ControllerPython's
+  # ansible-capable retry has no candidate either.
+  File.write(interpreter, "#!/bin/sh\nexec /usr/bin/python3 -S \"$@\"\n")
+  File.chmod(interpreter, 0o755)
+  dir
+end
+
+describe "PythonLookupRunner without ansible installed (#1509)" do
+  exclusive! # ENV["PATH"] is process-wide
+
+  it "runs a plugin that only subclasses LookupBase through the built-in stand-in" do
+    dir = python_lookup_without_ansible_path
+    source = write_lookup_plugin(File.join(dir, "pb"), "shimlist.py", <<-PYTHON)
+      from ansible.plugins.lookup import LookupBase
+
+      class LookupModule(LookupBase):
+          def run(self, terms, variables=None, **kwargs):
+              return ['kpg-a', 'kpg-b']
+      PYTHON
+    previous = ENV["PATH"]?
+    begin
+      ENV["PATH"] = dir
+      empty = {} of String => JSON::Any
+      result = Krikri::PythonLookupRunner.call_lookup("shimlist", source,
+        [] of JSON::Any, empty, empty)
+      result.as_a.map(&.as_s).must_equal(["kpg-a", "kpg-b"])
+    ensure
+      previous ? (ENV["PATH"] = previous) : ENV.delete("PATH")
+      FileUtils.rm_rf(dir)
+    end
+  end
+
+  it "keeps a plugin's own AnsibleError a dispatched failure, not a degradation" do
+    dir = python_lookup_without_ansible_path
+    source = write_lookup_plugin(File.join(dir, "pb"), "shimraise.py", <<-PYTHON)
+      from ansible.errors import AnsibleError
+      from ansible.plugins.lookup import LookupBase
+
+      class LookupModule(LookupBase):
+          def run(self, terms, variables=None, **kwargs):
+              raise AnsibleError('kpg lookup exploded')
+      PYTHON
+    previous = ENV["PATH"]?
+    begin
+      ENV["PATH"] = dir
+      empty = {} of String => JSON::Any
+      ex = assert_raises(Krikri::PythonLookupRunner::LookupUnavailableError) do
+        Krikri::PythonLookupRunner.call_lookup("shimraise", source,
+          [] of JSON::Any, empty, empty)
+      end
+      # ansible reports only the exception's own message, no class name
+      ex.kind.must_equal("error")
+      ex.unavailable?.must_equal(false)
+      ex.message.to_s.must_equal("The lookup plugin 'shimraise' failed: kpg lookup exploded")
+    ensure
+      previous ? (ENV["PATH"] = previous) : ENV.delete("PATH")
+      FileUtils.rm_rf(dir)
+    end
+  end
+
+  it "still degrades a plugin needing more of ansible than the stand-in covers" do
+    dir = python_lookup_without_ansible_path
+    source = write_lookup_plugin(File.join(dir, "pb"), "shimdeep.py", <<-PYTHON)
+      from ansible.module_utils.basic import AnsibleModule
+      from ansible.plugins.lookup import LookupBase
+
+      class LookupModule(LookupBase):
+          def run(self, terms, variables=None, **kwargs):
+              return ['never']
+      PYTHON
+    previous = ENV["PATH"]?
+    begin
+      ENV["PATH"] = dir
+      empty = {} of String => JSON::Any
+      ex = assert_raises(Krikri::PythonLookupRunner::LookupUnavailableError) do
+        Krikri::PythonLookupRunner.call_lookup("shimdeep", source,
+          [] of JSON::Any, empty, empty)
+      end
+      # the caller keeps its previous unknown-lookup behavior instead of
+      # failing the task the way a genuinely broken plugin file would
+      ex.kind.must_equal("unavailable")
+      ex.unavailable?.must_equal(true)
+    ensure
+      previous ? (ENV["PATH"] = previous) : ENV.delete("PATH")
+      FileUtils.rm_rf(dir)
+    end
+  end
+end

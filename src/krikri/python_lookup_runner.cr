@@ -32,14 +32,14 @@ require "./controller_python"
 # `LookupBase.__init__` sets up fine with its own `loader=None,
 # templar=None` defaults), and invokes `run` with the resolved terms/
 # kwargs plus the current task vars as the `variables` dict - printed
-# back as a JSON-encoded result. No Python is embedded or reimplemented
-# here; nothing runs unless a `lookup_plugins/<name>.py` source actually
-# exists for the current role/playbook, and every failure (no python3,
-# the `ansible` package not importable by the controller python3, a
-# plugin syntax error, an exception inside `run`, a non-JSON-serializable
-# result) degrades to the caller - which returns "undefined" exactly as
-# before, so roles WITHOUT custom lookup plugins (the overwhelming
-# majority) behave bit-for-bit identically.
+# back as a JSON-encoded result. Nothing runs unless a
+# `lookup_plugins/<name>.py` source actually exists for the current
+# role/playbook. A plugin that RAN and raised fails the task with its own
+# error, like real; the cases that degrade to the caller's "undefined"
+# fallback are no python3 at all, a plugin whose imports need more of the
+# `ansible` package than the built-in stand-in provides (see WRAPPER), and
+# a file that exposes no `LookupModule` - so roles WITHOUT custom lookup
+# plugins (the overwhelming majority) behave bit-for-bit identically.
 #
 # Deliberately scoped to role-private `lookup_plugins/` directories,
 # the playbook-adjacent `lookup_plugins/` and the `lookup_plugins/` of
@@ -281,10 +281,21 @@ module Krikri
     # **kwargs)`, printing the JSON-encoded result. Always responds with
     # a single-line JSON object ({"ok": true, ...} / {"ok": false, kind,
     # error}), so a plugin that prints its own noise cannot corrupt the
-    # protocol - only the LAST line of stdout is parsed. An `ansible`
-    # package the controller python3 cannot import reports kind
-    # "unavailable" (the whole mechanism degrades; the plugin file
-    # could not have imported its own base class either).
+    # protocol - only the LAST line of stdout is parsed.
+    #
+    # A controller without ansible-core installed is the NORMAL krikri
+    # deployment (krikri does not need it) while real ansible-playbook
+    # always has it, so refusing to load a plugin there returns null
+    # from krikri where real returns the plugin's value (kpg's rpm_key
+    # rows, issue #1509). The wrapper therefore installs a stand-in for
+    # the ansible pieces a lookup plugin imports (LookupBase/
+    # AnsiblePlugin, ansible.errors, Display) when - and only when -
+    # the `ansible` package itself is missing: the same approach
+    # PythonModuleRunner already takes for module_utils on a bare
+    # target. A plugin needing MORE of ansible's controller surface
+    # than the stand-in covers still answers kind "unavailable" and
+    # degrades exactly as before, so only the plugins that now run
+    # change behavior.
     #
     # Two pieces of Ansible's loader are reproduced here because real
     # plugins depend on them: the plugin's DOCUMENTATION options get
@@ -297,7 +308,7 @@ module Krikri
     # `None`. `_templar` stays None, the one piece this wrapper cannot
     # fake. Both are best-effort: any failure leaves the plugin
     # instantiated exactly as before.
-    WRAPPER = <<-PYTHON
+    WRAPPER = <<-'PYTHON'
       import importlib.util
       import json
       import os
@@ -306,9 +317,249 @@ module Krikri
       from collections.abc import Sequence
 
 
+      def _missing_ansible_piece(exc):
+          # ImportError/ModuleNotFoundError for an `ansible.*` module (both
+          # set `name`): the plugin needs more of the real package than the
+          # stand-in below provides.
+          name = getattr(exc, "name", None)
+          return bool(name) and name.split(".")[0] == "ansible"
+
+
+      def _install_ansible_shim():
+          import types
+
+          class AnsibleError(Exception):
+              def __init__(self, message="", orig_exc=None):
+                  super(AnsibleError, self).__init__(message)
+                  self.message = message
+                  self.orig_exc = orig_exc
+
+              def __str__(self):
+                  return self.message
+
+          class AnsibleLookupError(AnsibleError):
+              pass
+
+          class AnsibleFileNotFound(AnsibleError):
+              pass
+
+          class AnsibleOptionsError(AnsibleError):
+              pass
+
+          class AnsibleParserError(AnsibleError):
+              pass
+
+          class AnsibleUndefinedVariable(AnsibleError):
+              pass
+
+          class AnsibleConnectionFailure(AnsibleError):
+              pass
+
+          class AnsibleAuthenticationFailure(AnsibleConnectionFailure):
+              pass
+
+          class AnsibleActionFail(AnsibleError):
+              pass
+
+          class AnsibleActionSkip(AnsibleError):
+              pass
+
+          class Display(object):
+              # Everything goes to stderr: stdout carries this wrapper's
+              # JSON response, so a plugin's console line would corrupt it.
+              def display(self, msg, color=None, stderr=False, screen_only=False,
+                          log_only=False, newline=True):
+                  sys.stderr.write("%s\n" % msg if newline else "%s" % msg)
+
+              def verbose(self, msg, host=None, caplevel=2):
+                  # Settled level unknown on this side, and printing a -vvv
+                  # line on a default-verbosity run (or vice versa) would
+                  # itself be a divergence: stay quiet like real without -v.
+                  pass
+
+              def v(self, msg, host=None):
+                  pass
+
+              def vv(self, msg, host=None):
+                  pass
+
+              def vvv(self, msg, host=None):
+                  pass
+
+              def vvvv(self, msg, host=None):
+                  pass
+
+              def debug(self, msg, host=None):
+                  pass
+
+              def warning(self, msg, formatted=False):
+                  sys.stderr.write("[WARNING]: %s\n" % msg)
+
+              def error(self, msg, wrap_text=True):
+                  sys.stderr.write("[ERROR]: %s\n" % msg)
+
+              def deprecated(self, msg, version=None, removed=False):
+                  if removed:
+                      sys.stderr.write("[ERROR]: %s. This feature was removed%s.\n"
+                                       % (msg, " in " + version if version else ""))
+                  else:
+                      sys.stderr.write("[DEPRECATION WARNING]: %s. This feature will be removed%s.\n"
+                                       % (msg, " in a release after " + version if version else ""))
+
+              def banner(self, msg, color=None):
+                  sys.stderr.write("%s\n" % msg)
+
+          display = Display()
+
+          class AnsiblePlugin(object):
+              allow_extras = False
+              _load_name = ""
+
+              def __init__(self):
+                  self._options = {}
+
+              @property
+              def plugin_type(self):
+                  return self.__class__.__name__.lower().replace("module", "")
+
+              # Real get_option falls back to the DOCUMENTATION-defined
+              # default; reading that needs PyYAML, which a host without
+              # ansible need not have, so only set_options()/set_option()
+              # values resolve here and an unconfigured option raises
+              # KeyError exactly like real's own missing-option path.
+              def get_option(self, option, hostvars=None):
+                  return self._options[option]
+
+              def get_options(self, hostvars=None):
+                  return dict(self._options)
+
+              def set_option(self, option, value):
+                  self._options[option] = value
+
+              def set_options(self, task_keys=None, var_options=None, direct=None):
+                  if direct:
+                      self._options.update(direct)
+
+              def matches_name(self, possible_names):
+                  return False
+
+          class LookupBase(AnsiblePlugin):
+              accept_args_markers = False
+              accept_lazy_markers = False
+
+              def __init__(self, loader=None, templar=None, **kwargs):
+                  super(LookupBase, self).__init__()
+                  self._loader = loader
+                  self._templar = templar
+                  self._display = display
+
+              def get_basedir(self, variables):
+                  if "role_path" in variables:
+                      return variables["role_path"]
+                  if self._loader is not None:
+                      return self._loader.get_basedir()
+                  return variables.get("playbook_dir") or os.getcwd()
+
+              @staticmethod
+              def _flatten(terms):
+                  ret = []
+                  for term in terms:
+                      if isinstance(term, (list, tuple)):
+                          ret.extend(term)
+                      else:
+                          ret.append(term)
+                  return ret
+
+              @staticmethod
+              def _combine(a, b):
+                  results = []
+                  for x in a:
+                      for y in b:
+                          results.append(LookupBase._flatten([x, y]))
+                  return results
+
+              @staticmethod
+              def _flatten_hash_to_list(terms):
+                  ret = []
+                  for key in terms:
+                      ret.append({"key": key, "value": terms[key]})
+                  return ret
+
+              def run(self, terms, variables, **kwargs):
+                  raise NotImplementedError
+
+              def find_file_in_search_path(self, myvars, subdir, needle, ignore_missing=False):
+                  if "ansible_search_path" in myvars:
+                      paths = myvars["ansible_search_path"]
+                  else:
+                      paths = [self.get_basedir(myvars)]
+                  if self._loader is not None:
+                      return self._loader.path_dwim_relative_stack(
+                          paths, subdir, needle, is_role=bool("role_path" in myvars))
+                  for path in paths:
+                      candidate = os.path.join(path, subdir, needle)
+                      if os.path.exists(candidate):
+                          return candidate
+                  return None
+
+              def _deprecate_inline_kv(self):
+                  pass
+
+          def _module(name, package=False):
+              module = types.ModuleType(name)
+              if package:
+                  module.__path__ = []
+              sys.modules[name] = module
+              return module
+
+          ansible = _module("ansible", package=True)
+          errors = _module("ansible.errors")
+          plugins = _module("ansible.plugins", package=True)
+          lookup = _module("ansible.plugins.lookup", package=True)
+          utils = _module("ansible.utils", package=True)
+          display_module = _module("ansible.utils.display")
+
+          errors.AnsibleError = AnsibleError
+          errors.AnsibleLookupError = AnsibleLookupError
+          errors.AnsibleFileNotFound = AnsibleFileNotFound
+          errors.AnsibleOptionsError = AnsibleOptionsError
+          errors.AnsibleParserError = AnsibleParserError
+          errors.AnsibleUndefinedVariable = AnsibleUndefinedVariable
+          errors.AnsibleConnectionFailure = AnsibleConnectionFailure
+          errors.AnsibleAuthenticationFailure = AnsibleAuthenticationFailure
+          errors.AnsibleActionFail = AnsibleActionFail
+          errors.AnsibleActionSkip = AnsibleActionSkip
+          plugins.AnsiblePlugin = AnsiblePlugin
+          plugins.get_plugin_class = lambda obj: (
+              obj.lower().replace("module", "") if isinstance(obj, str)
+              else obj.__class__.__name__.lower().replace("module", ""))
+          lookup.LookupBase = LookupBase
+          lookup.__all__ = ["LookupBase"]
+          display_module.Display = Display
+          display_module.display = display
+
+          ansible.errors = errors
+          ansible.plugins = plugins
+          ansible.utils = utils
+          plugins.lookup = lookup
+          utils.display = display_module
+
+          return LookupBase
+
+
       _unavailable = None
+      _shimmed = False
       try:
           from ansible.plugins.lookup import LookupBase
+      except ModuleNotFoundError as exc:
+          # Only a MISSING ansible package gets the stand-in; an installed
+          # one whose lookup module fails to import keeps the old
+          # unavailable verdict - something else is wrong there.
+          if _missing_ansible_piece(exc):
+              LookupBase = _install_ansible_shim()
+              _shimmed = True
+          else:
+              _unavailable = "%s: %s" % (type(exc).__name__, exc)
       except Exception as exc:
           _unavailable = "%s: %s" % (type(exc).__name__, exc)
 
@@ -375,11 +626,21 @@ module Krikri
           try:
               module = _load_plugin(payload.get("path"))
           except ImportError as exc:
+              # A plugin importing more of ansible than the stand-in
+              # provides cannot run on this controller: degrade exactly as
+              # before instead of turning it into a hard load failure.
+              if _shimmed and _missing_ansible_piece(exc):
+                  sys.stdout.write(json.dumps(
+                      {"ok": False, "kind": "unavailable",
+                       "error": "ansible is not importable by the controller python3 "
+                                "and the built-in stand-in does not cover this plugin: %s"
+                                % exc}))
+                  return
               sys.stdout.write(json.dumps(
                   {"ok": False, "kind": "load", "error": str(exc)}))
               return
           plugin_class = getattr(module, "LookupModule", None)
-          if plugin_class is None or not isinstance(plugin_class, type) or \\
+          if plugin_class is None or not isinstance(plugin_class, type) or \
                   not issubclass(plugin_class, LookupBase):
               sys.stdout.write(json.dumps(
                   {"ok": False, "kind": "not_found",
