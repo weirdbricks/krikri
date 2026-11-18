@@ -172,6 +172,36 @@ describe "file state=touch diff payload (issue #1441, live-verified vs 2.21.6)" 
     File.delete(path) if path && File.exists?(path)
   end
 
+  # A NEW path (kpg playbook 000021-multi-file-happy, issue #1503): the
+  # file did not exist when the task started, so initial_diff() diffs
+  # "absent" against "touch", and update_timestamp_for_file still adds an
+  # atime/mtime pair on BOTH sides - the file's just-created stat times
+  # versus the "now" Ansible reads for the utime(None) it applies. Those
+  # floats are each engine's own wall clock, so two runs can never agree on
+  # them (see KNOWN_MISSING.md); this pins the shape the comparison
+  # harness's epoch mask anchors on: the same four keys on both sides, the
+  # after pair being one shared "now" value, and the state transition on its
+  # own line.
+  it "diffs absent -> touch with an atime/mtime pair on both sides for a new file" do
+    path = tmp_path("touch-diff-new-now.txt")
+
+    result = PluginSpecHelper.run("file", {
+      "path"          => path,
+      "state"         => "touch",
+      "_ansible_diff" => "true",
+    })
+
+    diff = result["diff"]
+    diff["before"].as_h.keys.sort!.must_equal(["atime", "mtime", "path", "state"])
+    diff["after"].as_h.keys.sort!.must_equal(["atime", "mtime", "path", "state"])
+    diff["before"]["state"].as_s.must_equal("absent")
+    diff["after"]["state"].as_s.must_equal("touch")
+    diff["after"]["mtime"].as_f.must_equal(diff["after"]["atime"].as_f)
+    (diff["after"]["mtime"].as_f > diff["before"]["mtime"].as_f).must_equal(true)
+  ensure
+    File.delete(path) if path && File.exists?(path)
+  end
+
   # Ansible attaches the diff even when the task is idempotent (changed:
   # false); the callback's own changed-gate is what keeps the block off the
   # screen, not the module.

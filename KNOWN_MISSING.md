@@ -663,6 +663,18 @@ because anyone intends to fix them.
   unsanitized `msg` and a bare `install` as `cmd`) was a real engine gap, fixed with the sanitiser in
   issue #1372.
 
+- **`file:` with `state: touch` diffs wall-clock timestamps (kpg file cases, issue #1503).** Under
+  `--diff` the module prints `initial_diff()`'s payload, and its `atime`/`mtime` entries are the
+  file's own stat times plus the "now" Ansible reads immediately before applying `utime`
+  (`update_timestamp_for_file`). For a NEW path the hunk carries a pair on both sides (the
+  just-created file's times as the before side, next to the `absent -> touch` transition). Those
+  floats are the wall clock at each engine's own run moment, so the two containers' runs - and even
+  two runs of real Ansible - can never agree on them byte for byte. Every other line of that hunk
+  already matches (the key order, the state transition, the hunk's line counts), so this is not a
+  krikri gap: the generator needs an epoch-seconds mask (`\d{10}\.\d+`) like the ones it has for its
+  other per-run values. `test/integration/touch_result_shape_test.cr` pins the shape such a mask
+  anchors on.
+
 ### Everything else
 
 - **`ansible-playbook`'s CLI flag surface is fully covered by name, and all but one flag is
