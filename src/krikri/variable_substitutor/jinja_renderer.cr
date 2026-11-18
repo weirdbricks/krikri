@@ -398,7 +398,7 @@ module Krikri
         # jinja2 reads every name the expression loads as the frame opens,
         # before this engine's lazy resolution would - see
         # VarSubstitutor.emit_expression_fact_deprecations.
-        VarSubstitutor.emit_expression_fact_deprecations(node, @vars)
+        VarSubstitutor.emit_expression_fact_deprecations(node, @vars, jinja_resolver)
         # Same deferred filter_plugins trigger as #render! (a structured
         # expression's own AST decides, so `{{ 1 + 1 }}` stays silent
         # where `{{ x | first }}` triggers, exactly like real ansible);
@@ -735,10 +735,11 @@ module Krikri
       def self.evaluate_structured(source : String, vars : Hash(String, JSON::Any), strict : Bool = false) : JSON::Any?
         force_whole_structure_leaves!(source, vars)
         node = KrikriJinja.parse_expression(source)
+        resolver = JinjaVarResolver.new(vars, VarSubstitutor.new(vars: vars), strict)
         # See VarSubstitutor.emit_expression_fact_deprecations: the reads
         # jinja2's frame-open name resolution makes happen before the
         # evaluation, whichever arm this engine's lazy resolution reaches.
-        VarSubstitutor.emit_expression_fact_deprecations(node, vars)
+        VarSubstitutor.emit_expression_fact_deprecations(node, vars, resolver)
         # Same deferred filter_plugins trigger as #render!/#evaluate_value!
         # (see PythonFilterRunner#scan_for_filter_use): callers of this
         # class-level entry (conditional probes, handler/loop structured
@@ -746,7 +747,7 @@ module Krikri
         PythonFilterRunner.scan_for_filter_use(node, vars["playbook_dir"]?.try(&.as_s?))
         value = KrikriJinja.default_engine.evaluate_parsed(
           node,
-          resolver: JinjaVarResolver.new(vars, VarSubstitutor.new(vars: vars), strict),
+          resolver: resolver,
           # ansible_strict_undefined (CHAINABLE, like ansible-core's own
           # StrictUndefined): a missing attribute on an undefined value
           # stays undefined until CONSUMED - `nope.x is defined` answers

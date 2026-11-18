@@ -1306,7 +1306,8 @@ module Krikri
         # test is already covered by maybe_fact_alias_defined_deprecation,
         # whose Origin must win.
         unless ConditionalEvaluator.whole_condition_is_defined_test?(when_condition)
-          VarSubstitutor.emit_condition_fact_deprecations(substituted_condition, vars_context)
+          VarSubstitutor.emit_condition_fact_deprecations(substituted_condition, vars_context,
+            VariableSubstitutor::JinjaVarResolver.new(vars_context, sub))
         end
 
         begin

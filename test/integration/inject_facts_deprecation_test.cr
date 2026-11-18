@@ -1898,6 +1898,103 @@ describe "INJECT_FACTS_AS_VARS deprecation from an arm and/or never evaluates" d
     err.must_include("Origin: #{playbook}:8:18\n")
     err.includes?("#{playbook}:6:").must_equal(false)
   end
+
+  # Issue #1524, cchurch.uwsgi: `when: uwsgi_install != 'pkg' and
+  # uwsgi_user_group.group | default('')` on a 'pkg' install. The clause's
+  # frame-open resolution renders the String-valued `uwsgi_user_group`
+  # declared as a template reading `ansible_pkg_mgr`, so real prints the
+  # deprecation at THAT value's line even though the arm it sits in is the
+  # one short-circuited away (live-verified against 2.21.6).
+  it "renders a String-valued variable an arm names but never evaluates" do
+    dir = PluginSpecHelper.tmp_path("inject-facts-arm-var-#{Random::Secure.hex(4)}")
+    FileUtils.mkdir_p(dir)
+    playbook = File.join(dir, "play.yml")
+    File.write(playbook, <<-PLAYBOOK)
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        vars:
+          install: pkg
+          default_groups:
+            apt:
+              name: www-data
+          user_group: "{{ default_groups[ansible_pkg_mgr] | default({}) }}"
+        tasks:
+          - name: short-circuited arm names a String-valued variable
+            debug:
+              msg: hi
+            when: install != 'pkg' and user_group.name | default('')
+      PLAYBOOK
+    stdout = IO::Memory.new
+    stderr = IO::Memory.new
+    Process.run(BINARY, ["-i", "localhost,", "--check", playbook], output: stdout, error: stderr, chdir: dir)
+    err = stderr.to_s
+
+    err.scan(/INJECT_FACTS_AS_VARS default to `True`/).size.must_equal(1)
+    err.must_include("Origin: #{playbook}:9:17\n")
+  end
+
+  # The same frame-open read for an EXPRESSION's untaken arm (a ternary,
+  # not a when: clause) - the renderer's expression path shares the rule
+  # (live-verified against 2.21.6: one block at the value's line).
+  it "renders a String-valued variable named only in an untaken ternary arm" do
+    dir = PluginSpecHelper.tmp_path("inject-facts-ternary-var-#{Random::Secure.hex(4)}")
+    FileUtils.mkdir_p(dir)
+    playbook = File.join(dir, "play.yml")
+    File.write(playbook, <<-PLAYBOOK)
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        vars:
+          default_groups:
+            apt:
+              name: www-data
+          user_group: "{{ default_groups[ansible_pkg_mgr] | default({}) }}"
+        tasks:
+          - name: ternary with an unused arm naming a String-valued variable
+            debug:
+              msg: "{{ user_group.name | default('none') if false else 'taken' }}"
+      PLAYBOOK
+    stdout = IO::Memory.new
+    stderr = IO::Memory.new
+    Process.run(BINARY, ["-i", "localhost,", "--check", playbook], output: stdout, error: stderr, chdir: dir)
+    err = stderr.to_s
+
+    err.scan(/INJECT_FACTS_AS_VARS default to `True`/).size.must_equal(1)
+    err.must_include("Origin: #{playbook}:8:17\n")
+  end
+
+  # 2.21 keeps CONTAINER values lazy, so a dict merely mentioned in an
+  # unused arm renders none of its leaves and prints nothing - the
+  # String-only render above must not reach into them (live-verified
+  # against 2.21.6 with the same dict and string values side by side).
+  it "leaves an unused arm's container value unrendered" do
+    dir = PluginSpecHelper.tmp_path("inject-facts-arm-container-#{Random::Secure.hex(4)}")
+    FileUtils.mkdir_p(dir)
+    playbook = File.join(dir, "play.yml")
+    File.write(playbook, <<-PLAYBOOK)
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        vars:
+          default_groups:
+            apt:
+              name: www-data
+          container:
+            name: "{{ default_groups[ansible_pkg_mgr] | default({}) }}"
+        tasks:
+          - name: unused arm naming a container value
+            debug:
+              msg: hi
+            when: false and container.name == 'x'
+      PLAYBOOK
+    stdout = IO::Memory.new
+    stderr = IO::Memory.new
+    Process.run(BINARY, ["-i", "localhost,", "--check", playbook], output: stdout, error: stderr, chdir: dir)
+    err = stderr.to_s
+
+    err.includes?("INJECT_FACTS_AS_VARS").must_equal(false)
+  end
 end
 
 # Issue #1526, robertdebock.sudo_pair: its `Build sudo_pair` command task
