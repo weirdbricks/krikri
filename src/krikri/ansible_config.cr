@@ -1,3 +1,6 @@
+require "big"
+require "./throttle_value"
+
 module Krikri
   # Reader for ansible.cfg (the INI config ansible-playbook loads at
   # startup).
@@ -263,6 +266,113 @@ module Krikri
         return unquote(from_ini)
       end
       nil
+    end
+
+    # DEFAULT_FORKS: ANSIBLE_FORKS (`integer`) or [defaults] forks.
+    # ansible-core's constants.py resolves this setting while it is being
+    # IMPORTED, which makes it the one config value that stops
+    # ansible-playbook before it has even parsed its own arguments
+    # (`--version` dies on a bad one too, live-verified vs 2.21.6). krikri
+    # used to neither read nor check it, so a run under
+    # ANSIBLE_FORKS=kpg-many played the whole playbook where real printed
+    # nothing and exited 5 (issue #1501, through the generator's
+    # play-keyword axis).
+    #
+    # nil means absent or empty: ansible treats an empty env value as
+    # unset and falls back to the built-in 5 (an empty variable still
+    # outranks the ini, so the ini is not consulted for it either).
+    def self.forks_setting : Int32?
+      raw, _origin = forks_setting_source
+      raw ? python_integer(raw) : nil
+    end
+
+    # The DEFAULT_FORKS text ansible's `integer` coercion refuses together
+    # with the origin ansible blames for it - `env: ANSIBLE_FORKS`, or the
+    # config file's own path - or nil when there is nothing to complain
+    # about. The caller renders ansible's import-time crash from it.
+    def self.invalid_forks_setting : {String, String}?
+      raw, origin = forks_setting_source
+      return nil unless raw
+      python_integer(raw) ? nil : {raw, origin}
+    end
+
+    private def self.forks_setting_source : {String?, String}
+      if env_value = ENV["ANSIBLE_FORKS"]?
+        return {nil, "env: ANSIBLE_FORKS"} if env_value.empty?
+        return {env_value, "env: ANSIBLE_FORKS"}
+      end
+      if from_ini = get("defaults", "forks")
+        if file = path
+          return {from_ini, file}
+        end
+      end
+      {nil, "default"}
+    end
+
+    # ensure_type's `integer` branch: ansible parses the value with
+    # Python's decimal.Decimal and accepts it only when that equals its
+    # own integer part, so `5`, `5.0`, `1e2` and `+3` are fork counts
+    # while `3.5` is not - and `0x10` is not either, because Decimal's
+    # grammar is not int()'s literal grammar. Decimal allows surrounding
+    # whitespace and underscores between digits.
+    #
+    # The result is clamped: a count this engine could never schedule
+    # (or a zero/negative one, which would stall its channel gate) still
+    # has to be accepted or refused the way real ansible does, so only
+    # the effective fan-out is bounded here.
+    private def self.python_integer(raw : String) : Int32?
+      body = raw.strip
+      return nil if body.empty?
+      return nil unless body.matches?(/\A[+-]?(?:\d(?:_?\d)*(?:\.(?:\d(?:_?\d)*)?)?|\.\d(?:_?\d)*)(?:[eE][+-]?\d(?:_?\d)*)?\z/)
+      number = BigDecimal.new(body.delete('_'))
+      integral = number.to_big_i
+      return nil unless number == BigDecimal.new(integral)
+      return 1 if integral < 1
+      return Int32::MAX if integral > Int32::MAX
+      integral.to_i
+    rescue InvalidBigDecimalException
+      nil
+    end
+
+    # The stderr block real ansible-playbook prints for a refused
+    # DEFAULT_FORKS: cli/__init__.py imports constants, the settings'
+    # import-time integer coercion raises, its catch-all prints
+    # "ERROR: <message>" plus traceback.format_exception(ex) - both
+    # chained tracebacks, PEP 657 anchors included - on STDERR, and exits
+    # 5 with no stdout at all (live-verified vs 2.21.6). The install path
+    # and the tilde/caret runs are the kpg podman image's
+    # (debian:trixie-slim, pip-installed ansible-core 2.21.6, Python
+    # 3.13), captured per line.
+    def self.invalid_forks_crash_render(raw : String, origin : String) : String
+      pkg = "/usr/local/lib/python3.13/dist-packages/ansible"
+      event = "Config 'DEFAULT_FORKS' from #{ThrottleValue.python_repr(origin)} has an invalid value: " \
+              "Invalid value provided for 'integer': #{ThrottleValue.python_repr(raw)}"
+      String.build do |io|
+        io << "ERROR: " << event << "\n\n"
+        io << "Traceback (most recent call last):\n"
+        io << "  File \"#{pkg}/config/manager.py\", line 697, in get_config_value_and_origin\n"
+        io << "    value = ensure_type(value, defs[config].get('type'), origin=origin, origin_ftype=origin_ftype)\n"
+        io << "  File \"#{pkg}/config/manager.py\", line 111, in ensure_type\n"
+        io << "    value = _ensure_type(value, value_type, origin)\n"
+        io << "  File \"#{pkg}/config/manager.py\", line 225, in _ensure_type\n"
+        io << "    raise ValueError(f'Invalid value provided for {value_type!r}: {original_value!r}')\n"
+        io << "ValueError: Invalid value provided for 'integer': " << ThrottleValue.python_repr(raw) << "\n\n"
+        io << "The above exception was the direct cause of the following exception:\n\n"
+        io << "Traceback (most recent call last):\n"
+        io << "  File \"#{pkg}/cli/__init__.py\", line 93, in <module>\n"
+        io << "    from ansible import constants as C\n"
+        io << "  File \"#{pkg}/constants.py\", line 186, in <module>\n"
+        io << "    set_constant(setting, config.get_config_value(setting, variables=vars()))\n"
+        io << " " * 26 << "~" * 23 << "^" * 27 << "\n"
+        io << "  File \"#{pkg}/config/manager.py\", line 559, in get_config_value\n"
+        io << "    value, _drop = self.get_config_value_and_origin(config, cfile=cfile, plugin_type=plugin_type, plugin_name=plugin_name,\n"
+        io << " " * 19 << "~" * 32 << "^" * 71 << "\n"
+        io << " " * 52 << "keys=keys, variables=variables, direct=direct, templar=templar)\n"
+        io << " " * 52 << "^" * 63 << "\n"
+        io << "  File \"#{pkg}/config/manager.py\", line 704, in get_config_value_and_origin\n"
+        io << "    raise AnsibleOptionsError(f'Config {_get_config_label(plugin_type, plugin_name, config)} from {origin!r} has an invalid value.') from ex\n"
+        io << "ansible.errors.AnsibleOptionsError: " << event << "\n\n"
+      end
     end
   end
 end
