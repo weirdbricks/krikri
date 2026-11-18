@@ -6,8 +6,9 @@ require "file_utils"
 # - a loop_control.label referencing loop_control.index_var sees the index
 #   ("LBL-0", not "LBL-undefined");
 # - an until:-looped debug task's ok dump is msg-only (no "changed": false);
-# - failed_when on a debug task shows the "Action failed." chain and dumps
-#   msg-only pretty ({"msg": "fw"}), not the module shape.
+# - failed_when on a debug task shows the "Action failed." chain carrying
+#   the replaced exception's wording and dumps msg-only pretty ({"msg":
+#   "fw"}), not the module shape (wording re-verified vs 2.21.6).
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
@@ -38,7 +39,7 @@ describe "loop label index / until dump / debug failed_when shapes" do
 
     text.must_include("ok: [localhost] => (item=LBL-0) =>")
     text.must_include("ok: [localhost] => {\n    \"msg\": \"trying\"\n}")
-    text.must_include("[ERROR]: Task failed: Action failed: fw")
+    text.must_include("[ERROR]: Task failed: Action failed: A 'failed_when' expression evaluated to 'True'.")
     text.must_include("fatal: [localhost]: FAILED! => {\n    \"msg\": \"fw\"\n}")
   ensure
     File.delete(playbook) if playbook && File.exists?(playbook)

@@ -5015,33 +5015,40 @@ module Krikri
               hash["failed_when_suppressed_exception"] = JSON::Any.new("(traceback unavailable)")
             end
             # A True verdict REPLACES the result's exception with a fixed
-            # "A 'failed_when' expression evaluated to 'True'." event, so on
-            # a module failure the [ERROR] block shows that wording while
-            # the dumped msg stays the module's own (live-verified vs
-            # 2.21.6, issue #1133: damianlewis.octobercms' `php installer`
-            # missing-binary failure under a stdout failed_when:). The
-            # detail marker hands the block its text; an action-level
-            # failure's own _ansible_action_level marker (assert:, whose
-            # replaced exception keeps the "Action failed." middle) is
-            # left alone, while a plain module failure carries none and
-            # keeps the "Module failed." middle segment the module-failure
-            # chain uses.
+            # "A 'failed_when' expression evaluated to 'True'." event, so the
+            # [ERROR] block shows that wording whatever the module did - on a
+            # module failure the dumped msg stays the module's own
+            # (live-verified vs 2.21.6, issue #1133: damianlewis.octobercms'
+            # `php installer` missing-binary failure under a stdout
+            # failed_when:). The detail marker hands the block its text; an
+            # action-level failure's own _ansible_action_level marker
+            # (assert:, whose replaced exception keeps the "Action failed."
+            # middle) is left alone, while a plain module failure carries
+            # none and keeps the "Module failed." middle segment the
+            # module-failure chain uses.
             if failed_when_result && module_failed
               hash["_ansible_error_detail"] = JSON::Any.new("A 'failed_when' expression evaluated to 'True'.")
             end
-            # A failed_when:-failed result with NO msg key finalizes through
-            # AnsibleActionCapturedError.normalize_result_exception, whose
-            # message defaults to "Unknown error." - only an EMPTY msg keeps
-            # the bare "Action failed." block (live-verified vs 2.19.11). The
-            # markers route the display through the generic action-level
-            # chain, the same shape include_vars' own action failure uses.
-            # A module failure never enters it: its replaced exception
-            # (above) keeps the module-failure chain and the module's own
-            # msg in the dump.
-            if failed_when_result && !module_failed && !hash.has_key?("msg")
-              hash["msg"] = JSON::Any.new("Task failed: Action failed: Unknown error.")
-              hash["_ansible_action_level"] = JSON::Any.new(true)
-              hash["_ansible_error_detail"] = JSON::Any.new("Action failed: Unknown error.")
+            # A module that did NOT fail has no module-side exception for the
+            # verdict to replace: real's replacement is raised action-level
+            # AFTER its retry loop, so the block reads "Task failed: Action
+            # failed: A 'failed_when' expression evaluated to 'True'." even
+            # when the task contributed a msg of its own (live-verified vs
+            # 2.21.6 on debug:/stat:/command:/set_fact:/assert:, issue #1517)
+            # and the dump keeps that msg, while a result with none gets the
+            # raise's brief as its msg (UnifiedTaskResult's
+            # _create_from_exception refills an empty msg). _ansible_action_level
+            # would be wrong here: it makes the loop skip an until:/retries:
+            # task's remaining attempts, but real still retries a failed_when:
+            # verdict.
+            if failed_when_result && !module_failed
+              detail = "A 'failed_when' expression evaluated to 'True'."
+              hash["_ansible_error_detail"] = JSON::Any.new(detail)
+              hash["_ansible_failed_when_true"] = JSON::Any.new(true)
+              msg_value = hash["msg"]?
+              if msg_value.nil? || msg_value.as_s?.try(&.empty?)
+                hash["msg"] = JSON::Any.new("Task failed: Action failed: #{detail}")
+              end
             end
           end
         rescue e : ConditionalEvaluator::ConditionalBooleanError | ConditionalEvaluator::UndefinedVariableError | Krikri::FilterPluginError | Krikri::TestPluginError | VariableSubstitutor::FilterEngine::UnknownFilterError | ChangedFailedWhenRenderSyntaxError | RenderExpressionError

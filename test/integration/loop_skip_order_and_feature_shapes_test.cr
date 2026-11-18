@@ -5,7 +5,8 @@ require "file_utils"
 # (scripts/output_parity.sh): when:-skipped loop items print in iteration order
 # with a trailing space, block-level ignore_errors reaches rescue tasks,
 # ansible_failed_task/result exist inside rescue, skipped registers carry
-# false_condition and failed_when adds failed_when_result.
+# false_condition and failed_when adds failed_when_result. The failed_when
+# block wording was re-verified vs 2.21.6.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
@@ -72,7 +73,7 @@ describe "feature-level output shapes" do
       YAML
     text.must_include(%("false_condition": false))
     text.must_include(%("skipped": true))
-    text.must_include("[ERROR]: Task failed: Action failed.")
+    text.must_include("[ERROR]: Task failed: Action failed: A 'failed_when' expression evaluated to 'True'.")
     text.must_include(%("failed_when_result": true))
   end
 
