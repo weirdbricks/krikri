@@ -1393,6 +1393,13 @@ module Krikri
     # `debugger:` at play scope - always/never/on_failed/on_skipped/
     # on_unreachable. A task's own debugger: wins.
     property debugger : String? = nil
+    # `ignore_unreachable:` at play scope - every task and handler in the
+    # play inherits it, because ansible makes it an inherited
+    # FieldAttribute (play -> block -> task, issue #1480). Also the
+    # ambient-inheritance carrier parse_block_task swaps for an enclosing
+    # block's own value while its children parse, so precedence is
+    # task > block > play with no parent pointers.
+    property? ignore_unreachable : Bool = false
     # `timeout:` at play scope - the play's default per-task wall-clock
     # limit every task inherits (Ansible's play-level `timeout:` keyword;
     # live-verified vs 2.19.11: a play-level timeout: 2 fails each task
@@ -2915,6 +2922,11 @@ module Krikri
       play.remote_user = yaml["remote_user"]?.try { |entry| safe_yaml_to_string(entry).strip }
       play.connection = yaml["connection"]?.try { |entry| safe_yaml_to_string(entry).strip }
       play.debugger = yaml["debugger"]?.try { |entry| safe_yaml_to_string(entry).strip }
+      # Play-level ignore_unreachable: is inherited by every task and
+      # handler that does not write its own, exactly like ignore_errors:
+      # (ansible makes both inherited FieldAttributes). Read BEFORE the
+      # tasks parse because the ambient value is consumed there.
+      play.ignore_unreachable = parse_become_value(yaml["ignore_unreachable"]?) || false
       play.task_timeout, play.task_timeout_expr = parse_timeout_value(yaml["timeout"]?)
       play.throttle_value = sourced_throttle_value(yaml["throttle"]?, source_file, source_map, "", index)
 
@@ -6047,7 +6059,17 @@ module Krikri
       task.no_log_expr = template_expression(task_hash["no_log"]?)
       task.no_log_raw_truthy = raw_python_truthy?(task_hash["no_log"]?)
       task.no_log_explicit = !task_hash["no_log"]?.nil?
-      task.ignore_unreachable = parse_become_value(task_hash["ignore_unreachable"]?) || false
+      # `ignore_unreachable:` - the task's OWN keyword first, else the
+      # ambient play/block scope (Ansible's precedence is task > block >
+      # play; play.ignore_unreachable is temporarily the enclosing
+      # block's value while its children parse). Reading only the task's
+      # own key made a play-level `ignore_unreachable: true` a no-op:
+      # the host still halted the run as unreachable (issue #1480).
+      if own_ignore_unreachable = task_hash["ignore_unreachable"]?
+        task.ignore_unreachable = parse_become_value(own_ignore_unreachable) || false
+      elsif play
+        task.ignore_unreachable = play.ignore_unreachable?
+      end
       # `throttle:` - the task's OWN keyword first, else the ambient
       # play/block scope, exactly like `timeout:` below (Ansible's
       # precedence is task > block > play; play.throttle_value is
@@ -7259,6 +7281,16 @@ module Krikri
       play.check_mode = parse_optional_bool_or_template(task_hash["check_mode"]?)
       play.check_mode_expr = template_expression(task_hash["check_mode"]?)
 
+      # Same ambient-inheritance pattern for the block's own
+      # `ignore_unreachable:` (task > block > play, ansible's inherited
+      # FieldAttribute chain). A block that does not write one leaves the
+      # play's value as the ambient default underneath; a block that does
+      # hands it to every child that lacks its own.
+      saved_ignore_unreachable = play.ignore_unreachable?
+      if block_ignore_unreachable = task_hash["ignore_unreachable"]?
+        play.ignore_unreachable = parse_become_value(block_ignore_unreachable) || false
+      end
+
       # Same ambient-inheritance pattern for the block's own `timeout:`
       # (ansible-core's per-task wall-clock limit; precedence task >
       # block > play, live-verified vs 2.19.11 - a block-level
@@ -7320,6 +7352,7 @@ module Krikri
         play.inherited_become_origins = saved_become_origins
         play.check_mode = saved_check_mode
         play.check_mode_expr = saved_check_mode_expr
+        play.ignore_unreachable = saved_ignore_unreachable
         play.task_timeout = saved_task_timeout
         play.task_timeout_expr = saved_task_timeout_expr
         play.throttle_value = saved_throttle

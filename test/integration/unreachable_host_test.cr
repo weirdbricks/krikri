@@ -135,4 +135,36 @@ describe "ignore_unreachable:" do
       FileUtils.rm_rf(dir) if Dir.exists?(dir)
     end
   end
+
+  # Play-level ignore_unreachable: is an inherited FieldAttribute in
+  # ansible (play -> block -> task), so every task without its own value
+  # tolerates the dead host and the run exits 0. Live-verified vs
+  # ansible-core 2.21.5: bogus recaps `ok=2 unreachable=0 ignored=2`,
+  # good `ok=2 changed=2`, rc 0 (issue #1480).
+  it "applies a play-level ignore_unreachable: to every task" do
+    dir = File.tempname("play-ignore-unreachable")
+    Dir.mkdir_p(dir)
+    File.write(File.join(dir, "inv.ini"), REACHABLE + UNREACHABLE)
+    File.write(File.join(dir, "pb.yml"), <<-YAML)
+      - hosts: all
+        gather_facts: false
+        ignore_unreachable: true
+        tasks:
+          - ansible.builtin.command: /bin/true
+          - ansible.builtin.command: /bin/true
+      YAML
+
+    begin
+      stdout_io = IO::Memory.new
+      status = Process.run(BINARY, ["-i", "inv.ini", "-T", "5", "pb.yml"],
+        output: stdout_io, error: stdout_io, chdir: dir)
+      output = stdout_io.to_s
+
+      status.exit_code.must_equal(0)
+      output.must_match(/bogus\s+: ok=2\s+changed=0\s+unreachable=0\s+failed=0\s+skipped=0\s+rescued=0\s+ignored=2/)
+      output.must_match(/good\s+: ok=2\s+changed=2/)
+    ensure
+      FileUtils.rm_rf(dir) if Dir.exists?(dir)
+    end
+  end
 end
