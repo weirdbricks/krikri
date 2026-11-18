@@ -3291,6 +3291,46 @@ module Krikri
       native_typed_container_value(substitutor, stripped_value[Krikri::NATIVE_TYPED_PREFIX.size..])
     end
 
+    # The JSON container a uri body wire value carries: a parse-time
+    # literal mapping/list (NON_STRING_PARAM_PREFIX, see
+    # parse_module_params) or the NATIVE_TYPED_PREFIX-marked result of a
+    # whole-span template. nil for every other shape - in particular a
+    # whole-span STRING body, which uri.py sends verbatim (a str body is
+    # never json.dumps'd).
+    private def uri_body_container(value : String) : JSON::Any?
+      text = value.strip
+      payload = if text.starts_with?(Krikri::NON_STRING_PARAM_PREFIX)
+                  text[Krikri::NON_STRING_PARAM_PREFIX.size..]
+                elsif text.starts_with?(Krikri::NATIVE_TYPED_PREFIX)
+                  text[Krikri::NATIVE_TYPED_PREFIX.size..]
+                else
+                  return nil
+                end
+      parsed = begin
+        JSON.parse(payload)
+      rescue JSON::ParseException
+        return nil
+      end
+      parsed.raw.is_a?(Hash) || parsed.raw.is_a?(Array) ? parsed : nil
+    end
+
+    # The wire form for a native uri body container: leaves rendered the
+    # way Ansible templates each mapping value (a whole-span int leaf is
+    # an unquoted JSON number in json.dumps' output), re-marked as a
+    # NON-STRING param so BasePlugin demotes it to plain JSON text for
+    # every body_format that is not json.
+    private def uri_body_container_wire(substitutor : VarSubstitutor, value : String) : String?
+      container = uri_body_container(value)
+      return nil unless container
+      wire = Krikri::NON_STRING_PARAM_PREFIX + render_json_container_leaves(substitutor, container).to_json
+      # The per-leaf structured evaluation above can return a value that
+      # is still a vault token (it does not run the substitutor's own
+      # decryptability check), while ansible fails such a reference at
+      # arg finalization like any other undecryptable param.
+      VarSubstitutor.raise_undecryptable_vault! if wire.includes?("$ANSIBLE_VAULT")
+      wire
+    end
+
     private def rewrite_native_json_leaves(substitutor : VarSubstitutor, node : JSON::Any) : JSON::Any?
       case raw = node.raw
       when String
@@ -3394,6 +3434,13 @@ module Krikri
       # read.
       raw_command_module = module_name.is_a?(String) &&
                            PlaybookParser::RAW_COMMAND_MODULES.includes?(PlaybookParser.resolve_module_name(module_name) || module_name)
+      # uri receives `body:` as the native Python object the playbook
+      # wrote, and uri.py's json.dumps owns body_format: json's wire bytes
+      # - a mapping/list must stay distinguishable from a user-authored
+      # JSON STRING, which is the same text on this strings-only wire
+      # (issue #1489; see parse_module_params' uri branch and
+      # plugins/uri.cr's json serialization).
+      uri_body_module = module_name.try(&.split('.').last) == "uri"
       params.keys.sort! do |a, b|
         (a == "cmd" && raw_command_module ? "_raw_params" : a) <=>
           (b == "cmd" && raw_command_module ? "_raw_params" : b)
@@ -3530,7 +3577,23 @@ module Krikri
         # string that merely looks like JSON reaches the same wire
         # (issue #1242).
         set_stats_data_param = key == "data" && module_name.try(&.ends_with?("set_stats")) == true
+        # uri's `body:` is the same shape: Ansible's templating keeps a
+        # whole-span container native, and uri.py's json.dumps (not the
+        # param wire's compact text) decides the bytes for body_format:
+        # json - see #uri_body_container_wire (issue #1489).
+        uri_body_param = uri_body_module && key == "body"
         begin
+          # A literal mapping/list uri body: Ansible templates each
+          # mapping value natively before json.dumps, so a whole-span int
+          # leaf stays an unquoted JSON number. Rendering the container
+          # leaf-by-leaf preserves that, and the container marker lets
+          # plugins/uri.cr apply json.dumps' own spacing/ensure_ascii
+          # escaping; every other body_format still sees the previous
+          # plain JSON text (BasePlugin demotes the marker) - issue #1489.
+          if uri_body_param && (body_wire = uri_body_container_wire(substitutor, stripped_value))
+            result[key] = body_wire
+            next
+          end
           # inside the begin: native_typed_value's strict-undefined check must
           # get the same "Error while resolving value for '<key>'" wrapper
           native_typed = if native_msg_param && (msg_container = native_typed_msg_container(stripped_value))
@@ -3545,7 +3608,7 @@ module Krikri
                            # same rescue chain as every other msg shape.
                            render_debug_msg_container(substitutor, msg_container)
                          else
-                           (native_containers || native_msg_param || set_stats_data_param) && whole_single_span ? native_typed_value(substitutor, stripped_value) : nil
+                           (native_containers || native_msg_param || set_stats_data_param || uri_body_param) && whole_single_span ? native_typed_value(substitutor, stripped_value) : nil
                          end
           unless native_typed
             # A set_fact param whose parse-time wire is a JSON container
@@ -3567,6 +3630,15 @@ module Krikri
           # #execute_set_stats the argument really was a dict.
           if !native_typed && set_stats_data_param && stripped_value.starts_with?(Krikri::NATIVE_TYPED_PREFIX)
             native_typed = native_typed_marked_container_value(substitutor, stripped_value)
+          end
+          # A whole-span uri body keeps its container (per-leaf native
+          # typing included), re-marked as a NON-STRING container so
+          # BasePlugin still demotes it to the same plain JSON text for
+          # every body_format except json. A whole-span STRING body stays
+          # a str in Ansible (uri.py takes it verbatim), so it drops here
+          # and takes the ordinary substitution.
+          if uri_body_param && native_typed
+            native_typed = uri_body_container_wire(substitutor, native_typed)
           end
           # A MIXED value (literal text around the span) under
           # native_containers still renders to TEXT in real ansible-core -

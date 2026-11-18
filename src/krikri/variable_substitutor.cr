@@ -3492,6 +3492,19 @@ module Krikri
     class UndecryptableVaultError < Exception
     end
 
+    # The failure for a value that still carries a vault token after
+    # rendering. Shared so the executor's per-leaf container assembly
+    # (uri's json body) reports the exact same wording as the ordinary
+    # render check below.
+    def self.raise_undecryptable_vault! : NoReturn
+      detail = if Vault.vault_ids.empty? && Vault.password.nil?
+                 "Attempting to decrypt but no vault secrets found."
+               else
+                 "Decryption failed (no vault secrets were found that could decrypt)."
+               end
+      raise UndecryptableVaultError.new("Attempt to use undecryptable variable: #{detail}")
+    end
+
     # Whether *text* is exactly ONE `{{ }}` span spanning its whole
     # length, ignoring `{{`/`}}` sequences that sit INSIDE a quoted
     # string literal within the expression. The naive whole-text
@@ -3598,13 +3611,7 @@ module Krikri
         # Ansible distinguishes the two cases in its message:
         # nothing supplied at all, versus supplied secrets none of which
         # fit. Verified against ansible-core 2.19.4.
-        detail =
-          if Vault.vault_ids.empty? && Vault.password.nil?
-            "Attempting to decrypt but no vault secrets found."
-          else
-            "Decryption failed (no vault secrets were found that could decrypt)."
-          end
-        raise UndecryptableVaultError.new("Attempt to use undecryptable variable: #{detail}")
+        self.class.raise_undecryptable_vault!
       end
       # A templated param whose render serialized a container carrying
       # the deprecated `skipped_reason` leaf (the repr of `{{ r }}` in

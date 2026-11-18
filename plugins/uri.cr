@@ -8,6 +8,7 @@ require "base64"
 require "system/user"
 require "system/group"
 require "../src/krikri/base_plugin"
+require "../src/krikri/py_dump"
 require "../src/krikri/plugin_helpers/url_preflight"
 require "../src/krikri/plugin_helpers/url_mask"
 require "../src/krikri/plugin_helpers/socket_connect"
@@ -313,12 +314,16 @@ module Krikri
       # for it), live-verified: a 304-in-status_code run succeeds with msg
       # "HTTP Error 304: Not Modified", and a 304 NOT in status_code fails
       # with "Status code was 304 and not [200]: HTTP Error 304: Not
-      # Modified". Other out-of-list statuses (e.g. a 302 with
-      # follow_redirects: none) keep the bare msg.
+      # Modified". Every other out-of-list status went through fetch_url's
+      # success path, so info['msg'] is its own "OK (N bytes)" byte count
+      # (live-verified vs 2.21.6: a 200 not in [201] fails with "Status
+      # code was 200 and not [201]: OK (85 bytes)") - dropping that suffix
+      # left the failure message truncated.
+      default_msg = status >= 400 || status == 304 ? "HTTP Error #{status}: #{http_reason(status, reason)}" : "OK (#{body.bytesize} bytes)"
       msg = if failed
-              status >= 400 || status == 304 ? "Status code was #{status} and not #{status_codes}: HTTP Error #{status}: #{http_reason(status, reason)}" : "Status code was #{status} and not #{status_codes}"
+              "Status code was #{status} and not #{status_codes}: #{default_msg}"
             elsif status == 304
-              "HTTP Error #{status}: #{http_reason(status, reason)}"
+              default_msg
             else
               "OK (#{body.bytesize} bytes)"
             end
@@ -451,7 +456,11 @@ module Krikri
         result.extra["location"] = JSON::Any.new(location)
       end
 
-      if true?(@params["return_content"]?) || content_type == "application/json"
+      # uri.py only materializes `content` when return_content asked for
+      # it (exit_json/content= kwarg); a JSON content-type alone only
+      # fills `json` (live-verified vs 2.21.6: a return_content: false
+      # application/json result has json and NO content).
+      if true?(@params["return_content"]?)
         result.extra["content"] = JSON::Any.new(body)
       end
 
@@ -842,6 +851,12 @@ module Krikri
       case body_format
       when "json"
         headers["Content-Type"] = "application/json" unless headers.has_key?("Content-Type")
+        # uri.py json.dumps's any NON-str body and takes a str verbatim
+        # ("Encode the body unless its a string, then assume it is
+        # pre-formatted JSON"), so a mapping/list body is re-serialized
+        # from the native container the executor marked, never from the
+        # compact JSON text the strings-only wire carries (issue #1489).
+        body = json_body_wire(body, src_body)
       when "form-urlencoded"
         headers["Content-Type"] = "application/x-www-form-urlencoded" unless headers.has_key?("Content-Type")
         body = form_encode(body) if body
@@ -859,6 +874,21 @@ module Krikri
       URI::Params.build { |form| fields.each { |key, value| form.add(key, value.to_s) } }
     rescue
       body
+    end
+
+    # json.dumps' own wire form for uri.py's `body_format: json`: json
+    # separators (", "/": "), ensure_ascii escaping and Python's native
+    # scalar spellings - what a non-str body becomes in ansible. A str
+    # body (src: included) is pre-formatted JSON and goes out untouched,
+    # which is exactly why the parser keeps the container provenance
+    # (see NON_STRING_PARAM_PREFIX) instead of re-parsing the wire text.
+    private def json_body_wire(body : String?, src_body : String?) : String?
+      return body if src_body
+      # An explicit null body is not a str either, so uri.py json.dumps's
+      # it to the four-character "null" (live-verified vs 2.21.6).
+      return "null" if explicit_null_param?("body")
+      native = non_string_param("body") || return body
+      Krikri::PyDump.json(native)
     end
 
     private def resolve_redirect(base : URI, location : String) : String

@@ -66,6 +66,9 @@ describe "uri status_code list wire forms" do
     })
     result["failed"]?.must_equal(true)
     result["status"].must_equal(200)
-    result["msg"].must_equal("Status code was 200 and not [500]")
+    # Live-verified vs 2.21.6: a non-error status outside status_code went
+    # through fetch_url's success path, so uri.py appends info['msg']'s own
+    # byte count - "Status code was 200 and not [500]: OK (7 bytes)".
+    result["msg"].must_equal("Status code was 200 and not [500]: OK (7 bytes)")
   end
 end
