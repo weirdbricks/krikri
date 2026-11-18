@@ -830,7 +830,7 @@ end
 # Parse playbook
 playbook = nil
 begin
-  playbook = Krikri::TimingProfile.measure("parse.playbook") { Krikri::PlaybookParser.parse(playbook_file) }
+  playbook = Krikri::TimingProfile.measure("parse.playbook") { Krikri::PlaybookParser.parse(playbook_file, become_flag, become_user_override) }
 
   # Reaching here means the playbook parsed. A parse failure was already
   # reported and exited 4 by this block's own rescue - which is exactly
@@ -1229,11 +1229,12 @@ end
 # sets an internal default, and leaves the VARIABLE unset (verified -
 # `{{ ansible_become | default(false) }}` still renders False under -b).
 # Setting the var would be visible to any playbook that reads it. They
-# are applied to each play instead, which is the same "supply the
-# default, let the playbook override" position the CLI actually holds -
-# see the play loop below. --become-method has no play field, and
-# ansible_become_method IS a documented Ansible variable, so it stays a
-# host var.
+# are handed to the parser instead (see the parse.playbook call above),
+# which is where Ansible puts them too: base.py's become/become_user
+# FieldAttribute default is the CLI value, so a play, block or task that
+# writes its own keyword still overrides them. --become-method has no
+# play field, and ansible_become_method IS a documented Ansible variable,
+# so it stays a host var.
 if become_method_value = become_method_override
   inventory.hosts.each_value { |host| host.vars["ansible_become_method"] = JSON::Any.new(become_method_value) }
 end
@@ -1530,13 +1531,6 @@ playbook.plays.each_with_index do |play, _play_index|
     Krikri::VarsPrompt.resolve(play.vars_prompt).each do |name, value|
       play.vars[name] = value
     end
-  end
-
-  # -b/--become and --become-user supply a default for the play, exactly
-  # as Ansible does; a play that sets become: itself still wins.
-  play.become = true if become_flag
-  if become_user_value = become_user_override
-    play.become_user ||= become_user_value
   end
 
   tasks_before_tag_filter = tasks_to_run.size
