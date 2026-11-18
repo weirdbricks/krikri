@@ -680,6 +680,19 @@ because anyone intends to fix them.
   other per-run values. `test/integration/touch_result_shape_test.cr` pins the shape such a mask
   anchors on.
 
+- **`assemble:`'s controller-side diff names a per-run staging file (kpg assemble cases, issue
+  #1539).** With `remote_src` falsy under `--diff`, Ansible's assemble action assembles the fragments
+  into a `tempfile.mkstemp` file in its own `~/.ansible/tmp/ansible-local-<pid><rnd>/` and heads the
+  diff's after side with that path (`_get_diff_data(dest, path, ...)`), so `+++ after:` carries a
+  name drawn at random by Ansible's Python runtime - two runs of real Ansible differ in exactly those
+  characters. Everything else in the hunk (the bare `--- before` for a not-yet-existing dest, the
+  body, `changed`) matches byte for byte, so this is not a krikri gap: the generator's
+  `ansible-local-<rnd>/tmp<rnd>/` mask requires a trailing path separator, which the template-shaped
+  header has (staged dir plus the source's basename) but the assemble one does not (the staged FILE
+  is the last component), so that mask needs to accept the end of the path too.
+  `test/integration/assemble_test.cr` pins the file-shaped header so such a mask keeps a stable
+  anchor.
+
 ### Everything else
 
 - **`ansible-playbook`'s CLI flag surface is fully covered by name, and all but one flag is
