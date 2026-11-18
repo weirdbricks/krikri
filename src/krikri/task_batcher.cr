@@ -407,7 +407,10 @@ module Krikri
         # A templated async: only becomes seconds after per-host
         # resolution - async_raw set means async, so it must be excluded
         # from batching exactly like a literal async_seconds.
-        task.until_condition || task.async_seconds || task.async_raw ||
+        # `retries:` without `until:` is an attempt loop too - ansible's
+        # condition then defaults to `not failed` - so it is excluded for
+        # the same sequential-by-nature reason.
+        task.until_condition || task.retries_explicit? || task.async_seconds || task.async_raw ||
         # A `timeout:` task must fail the moment its OWN wall-clock limit
         # expires - inside a batch it shares one SSH round trip with its
         # group, whose per-step results only come back as a whole, so a

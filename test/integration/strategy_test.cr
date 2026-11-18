@@ -155,7 +155,7 @@ describe "strategy:" do
   # strategy is active" and retries failed tasks), while a krikri run
   # that stayed silent is exactly what the issue reported.
   it "warns that a third-party strategy plugin is ignored" do
-    warning = "[WARNING]: Strategy plugin 'custom_demo' cannot be executed by krikri-playbook and is ignored; the play runs with the linear strategy."
+    warning = "[WARNING]: Strategy plugin 'custom_demo' cannot be executed by krikri-playbook and is ignored; the play runs with the linear strategy (a task's own retries:/delay:/until: still retry, and KRIKRI_STRATEGY_RETRIES/KRIKRI_STRATEGY_RETRY_DELAY retry failed tasks in the plugin's place)."
 
     code, _, output = run_strategy("custom_demo", plugin: "custom_demo")
     code.must_equal(0)
@@ -323,6 +323,61 @@ describe "strategy:" do
       skipped.wont_be_nil
       (banner.as(Int32) < skipped.as(Int32)).must_equal(true)
       text.must_include("TASK [after]")
+    ensure
+      FileUtils.rm_rf(dir) if Dir.exists?(dir)
+    end
+  end
+
+  # A strategy plugin that wraps linear and retries failed tasks is the
+  # common case (issue #1542): its Python cannot run here, so without a
+  # stand-in a transient failure fails the host on the first attempt. The
+  # krikri-side settings supply the plugin's attempt count and gap for a
+  # task that wrote no retries: of its own - ansible's task_executor then
+  # retries on `not utr.failed` - so the plugin-less run keeps the same
+  # pass/fail outcome and the same FAILED - RETRYING lines.
+  it "retries failed tasks in place of an ignored strategy plugin" do
+    dir = File.tempname("strategy-retry-fallback")
+    counter = File.join(dir, "count")
+    begin
+      Dir.mkdir_p(File.join(dir, "strategy_plugins"))
+      File.write(File.join(dir, "strategy_plugins", "retry_demo.py"), "")
+      File.write(File.join(dir, "inv.ini"), "[g]\nlocalhost ansible_connection=local\n")
+      File.write(File.join(dir, "pb.yml"), <<-YAML)
+        - hosts: all
+          gather_facts: false
+          strategy: retry_demo
+          tasks:
+            - name: flaky
+              shell: |
+                f=#{counter}; n=$(cat $f 2>/dev/null || echo 0); n=$((n+1)); echo $n > $f
+                [ $n -ge 3 ]
+              changed_when: false
+        YAML
+
+      run_it = ->(env : Hash(String, String?)) do
+        output = IO::Memory.new
+        status = Process.run(BINARY, ["-i", "inv.ini", "pb.yml"],
+          output: output, error: output, chdir: dir,
+          env: {"ANSIBLE_STRATEGY" => nil, "ANSIBLE_STRATEGY_PLUGINS" => nil}.merge(env))
+        {status.exit_code, output.to_s}
+      end
+
+      # Without the fallback this is exactly issue #1542: one attempt,
+      # failed=1.
+      File.delete(counter) if File.exists?(counter)
+      code, _ = run_it.call({} of String => String?)
+      code.must_equal(2)
+      File.read(counter).strip.must_equal("1")
+
+      File.delete(counter) if File.exists?(counter)
+      fallback_env = {"KRIKRI_STRATEGY_RETRIES" => "2", "KRIKRI_STRATEGY_RETRY_DELAY" => "0"} of String => String?
+      code, output = run_it.call(fallback_env)
+      code.must_equal(0)
+      File.read(counter).strip.must_equal("3")
+      output.scan("FAILED - RETRYING: [localhost]: flaky (1 retries left).").size.must_equal(1)
+      output.scan("FAILED - RETRYING: [localhost]: flaky (0 retries left).").size.must_equal(1)
+      output.must_include("ok: [localhost]")
+      output.must_include("ok=1")
     ensure
       FileUtils.rm_rf(dir) if Dir.exists?(dir)
     end
