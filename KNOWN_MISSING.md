@@ -691,7 +691,11 @@ because anyone intends to fix them.
   header has (staged dir plus the source's basename) but the assemble one does not (the staged FILE
   is the last component), so that mask needs to accept the end of the path too.
   `test/integration/assemble_test.cr` pins the file-shaped header so such a mask keeps a stable
-  anchor.
+  anchor. The same task's `backup: true` leaves `<dest>.<pid>.<timestamp>~` behind, and that name
+  embeds each engine's own process id and run moment, so the harness's state diff (which does not
+  apply `ByteDiff::MASKS`) reports it on every run; the backup's content, size and mode already
+  match (Ansible's `backup_local` copies with `shutil.copy2`, so a 0444 destination leaves a 0444
+  backup, which krikri now reproduces).
 
 ### Everything else
 

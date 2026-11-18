@@ -330,7 +330,11 @@ module Krikri
       backup_file = ""
       if existing && true?(@params["backup"]?)
         backup_file = "#{dest}.#{Process.pid}.#{Time.local.to_s("%Y-%m-%d@%H:%M:%S")}~"
-        File.write(backup_file, existing)
+        # Ansible's backup_local copies with shutil.copy2, so the backup
+        # keeps the destination's own mode - a 0444 dest leaves a 0444
+        # backup, not one created at the umask default (live-verified vs
+        # 2.21.6; the kpg harness compares the workdir's modes).
+        File.copy(dest, backup_file)
       end
 
       dest_dir = File.dirname(dest)
