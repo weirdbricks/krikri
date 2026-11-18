@@ -1515,18 +1515,27 @@ module Krikri
           msg: pip_failure_msg(result[:stdout], result[:stderr]), include_empty_msg: true, cmd: argv)
       end
 
-      # Ansible runs `pip uninstall` unconditionally and lets pip's
-      # own "not installed" line decide changed=false - it does NOT
+      # Ansible runs `pip uninstall` unconditionally and does NOT
       # pre-check installed-ness locally. Skipping that invocation made
       # a PEP 668 externally-managed environment report state=absent as
       # ok where Ansible fails (pip refuses to even run), so the
       # command must actually be issued and its output parsed.
-      if not_installed
-        return PluginResult.new(changed: false, failed: false, msg: "Package already absent",
-          key_order: ["changed", "stdout"])
+      #
+      # changed comes from pip's "Successfully uninstalled" line being in
+      # STDOUT, exactly like pip.py's `changed = 'Successfully uninstalled'
+      # in out_pip` - not from the absence of a "not installed" line. A
+      # venv created with --system-site-packages only sees the package
+      # through the system site-packages, so pip exits 0 printing "Not
+      # uninstalling <pkg> at /usr/lib/..., outside environment <venv>"
+      # and "Can't uninstall ...": nothing was removed, Ansible reports
+      # ok, and treating that as changed made every rerun report changed
+      # and never converge (issue #1487).
+      if result[:stdout].includes?("Successfully uninstalled")
+        return PluginResult.new(changed: true, failed: false, msg: "Package removed", key_order: ["changed", "stdout"])
       end
 
-      PluginResult.new(changed: true, failed: false, msg: "Package removed", key_order: ["changed", "stdout"])
+      PluginResult.new(changed: false, failed: false, msg: "Package already absent",
+        key_order: ["changed", "stdout"])
     end
   end
 end
