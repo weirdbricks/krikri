@@ -19,11 +19,11 @@ private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 
-private def run_playbook(pb : String) : {Process::Status, String}
+private def run_playbook(pb : String, inventory : String = INVENTORY) : {Process::Status, String}
   playbook = File.tempname("dnf-backend", ".yml")
   File.write(playbook, pb)
   captured = IO::Memory.new
-  status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: captured, error: captured)
+  status = Process.run(BINARY, ["-i", inventory, playbook], output: captured, error: captured)
   {status, captured.to_s}
 ensure
   File.delete(playbook) if playbook && File.exists?(playbook)
@@ -56,5 +56,56 @@ describe "dnf/yum action-backend resolution failure end to end (round 5310001)" 
       "\"You should manually specify use_backend to tell the module whether to use the dnf4 or dnf5 backend})\"]")
     output.must_include("failed=1")
     status.success?.must_equal(false)
+  end
+
+  # Real's dnf action plugin attaches the pkg_mgr fact it fetched onto the
+  # task result only when the task is NOT delegated, or was delegated with
+  # delegate_facts: true (`not self._task.delegate_to or
+  # self._task.delegate_facts` in plugins/action/dnf.py), and no backend
+  # module runs on this failure path - so a plain `delegate_to:` fatal
+  # carries no ansible_facts at all (issue #1498's podman diff had krikri
+  # adding {"pkg_mgr": "apt"} there).
+  it "omits ansible_facts from a delegated dnf fatal without delegate_facts" do
+    inventory = PluginSpecHelper.tmp_path("dnf-backend-inv") + ".ini"
+    File.write(inventory, "[kpg_targets]\ntarget ansible_connection=local\ntarget2 ansible_connection=local\n")
+    _status, output = run_playbook(<<-YAML, inventory)
+      - hosts: target
+        gather_facts: false
+        vars:
+          ansible_pkg_mgr: apt
+        tasks:
+          - name: dnf not delegated
+            dnf:
+              name: bash
+              state: present
+            ignore_errors: true
+          - name: dnf delegated
+            dnf:
+              name: bash
+              state: present
+            delegate_to: target2
+            ignore_errors: true
+          - name: dnf delegated with delegate_facts
+            dnf:
+              name: bash
+              state: present
+            delegate_to: target2
+            delegate_facts: true
+            ignore_errors: true
+      YAML
+
+    tuple = "\"msg\": [\"Could not detect which major revision of dnf is in use, " \
+            "which is required to determine module backend.\", " \
+            "\"You should manually specify use_backend to tell the module whether to use " \
+            "the dnf4 or dnf5 backend})\"]}"
+    output.must_include(
+      "fatal: [target]: FAILED! => {\"ansible_facts\": {\"pkg_mgr\": \"apt\"}, " \
+      "\"changed\": false, #{tuple}")
+    # The delegated fatal starts its dict at `changed`: real never ran the
+    # backend module, so no module-payload fact can appear either.
+    output.must_include("fatal: [target -> target2]: FAILED! => {\"changed\": false, #{tuple}")
+    output.must_include(
+      "fatal: [target -> target2]: FAILED! => {\"ansible_facts\": {\"pkg_mgr\": \"apt\"}, " \
+      "\"changed\": false, #{tuple}")
   end
 end

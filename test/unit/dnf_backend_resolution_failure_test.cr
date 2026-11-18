@@ -70,6 +70,23 @@ describe "dnf/yum backend resolution failure (round 5310001)" do
     result["_ansible_error_detail"].as_s.must_equal(TUPLE_DETAIL)
   end
 
+  # Real's action plugin only stamps its fetched pkg_mgr fact onto the
+  # result when the task is not delegated or was delegated with
+  # delegate_facts: true, and no backend module runs on this path, so a
+  # plain `delegate_to:` fatal carries no ansible_facts at all (issue
+  # #1498's podman diff: krikri added {"pkg_mgr": "apt"} there).
+  it "omits ansible_facts for a delegated task without delegate_facts" do
+    result = PluginSpecHelper.run("dnf",
+      {"name" => "epel-release", "state" => "present", "_ansible_action_facts" => "false"},
+      vars: {"ansible_pkg_mgr" => "apt"})
+
+    result["failed"]?.try(&.as_bool?).must_equal(true)
+    result["msg"].as_a.map(&.as_s).must_equal(TUPLE_MSGS)
+    result["ansible_facts"]?.must_be_nil
+    result["_ansible_action_level"].as_bool.must_equal(true)
+    result["_ansible_error_detail"].as_s.must_equal(TUPLE_DETAIL)
+  end
+
   it "detects dnf as a valid fact-backed backend (transaction still runs)" do
     with_fake_pkg_shim("dnf") do
       result = PluginSpecHelper.run("dnf",

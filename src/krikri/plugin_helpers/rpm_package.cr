@@ -170,9 +170,12 @@ module Krikri
       # shapes without the fact are the payload-with-its-own-facts replace
       # above and a fetch that never ran (the fact already known from
       # vars); the earlier "failed results never carry it" reading (#894)
-      # over-generalized runs where one of those two applied. The
-      # backend-resolution tuple failure keeps its own ansible_facts -
-      # real's action-level fatal carries it (#768).
+      # over-generalized runs where one of those two applied. A third
+      # shape without the fact is a delegated task lacking
+      # `delegate_facts: true` (real's action gates the attach on it,
+      # issue #1498). The backend-resolution tuple failure keeps its own
+      # ansible_facts the same way - real's action-level fatal carries it
+      # (#768), unless the task is delegated without delegate_facts.
       # Only the module invocations real ansible routes through its dnf
       # ACTION plugin (`dnf:`, and `yum:` via its redirect to dnf) ever
       # carry this attach: upstream ships no plugins/action/dnf5.py, so the
@@ -229,13 +232,36 @@ module Krikri
 
       def finalize_result(result : PluginResult) : PluginResult
         return result unless attaches_pkg_mgr_fact?
+        # A backend-resolution failure never dispatched the backend
+        # module, so there is no module payload whose facts could join
+        # the action-level one.
+        return result if @backend_resolution_failed
         return result unless backend_resolved_from_facts? && pkg_mgr_fact_fetched?
         return result if result.extra.has_key?("ansible_facts")
+        # With `delegate_to:` and no `delegate_facts: true` real attaches
+        # neither fact: the action's pkg_mgr attach is gated on it, and
+        # interpreter discovery is stashed in ansible_delegated_vars
+        # instead of being propagated onto the result (see
+        # action_pkg_mgr_fact_allowed?).
+        return result unless action_pkg_mgr_fact_allowed?
         result.extra["ansible_facts"] = module_payload_ansible_facts
         if order = result.key_order
           result.key_order = ["ansible_facts"] + order
         end
         result
+      end
+
+      # Real's dnf ACTION plugin skips its `result['ansible_facts'] =
+      # {'pkg_mgr': module}` attach when the task is delegated without
+      # `delegate_facts: true` (`(not self._task.delegate_to or
+      # self._task.delegate_facts)` in plugins/action/dnf.py), so such a
+      # task's fatal carries no ansible_facts at all - issue #1498's
+      # podman diff had krikri adding {"pkg_mgr": "apt"} to a delegated
+      # dnf failure. The executor threads the verdict over the wire
+      # (build_plugin_config) because the module binary cannot see the
+      # task; absent means attached, the pre-#1498 behavior.
+      private def action_pkg_mgr_fact_allowed? : Bool
+        @params["_ansible_action_facts"]? != "false"
       end
 
       # Ansible's dnf ACTION plugin only consults the pkg_mgr fact for the
@@ -397,7 +423,9 @@ module Krikri
       # source's own typo, live-captured) render as the action-level
       # "Task failed: Action failed: (...)" [ERROR] block via
       # _ansible_error_detail, while the wire msg keeps the tuple's JSON
-      # array form and ansible_facts mirrors real's on-result setup refresh.
+      # array form and ansible_facts mirrors real's on-result setup refresh
+      # (dropped for a delegated task without delegate_facts: - see
+      # #action_pkg_mgr_fact_allowed?).
       private def dnf_backend_resolution_failure : PluginResult?
         backend = @params["use_backend"]? || "auto"
         return nil unless backend.in?("auto", "yum")
@@ -416,7 +444,7 @@ module Krikri
                "which is required to determine module backend."
         msg2 = "You should manually specify use_backend to tell the module " \
                "whether to use the dnf4 or dnf5 backend})"
-        PluginResult.new(
+        result = PluginResult.new(
           changed: false,
           failed: true,
           native_msg: JSON::Any.new([JSON::Any.new(msg1), JSON::Any.new(msg2)]),
@@ -424,6 +452,12 @@ module Krikri
           _ansible_action_level: true,
           _ansible_error_detail: "Action failed: ('#{msg1}', '#{msg2}')"
         )
+        # No backend module ran here, so no module-payload fact can
+        # replace or join this one - the action's own pkg_mgr attach is
+        # the whole ansible_facts story on this path.
+        @backend_resolution_failed = true
+        result.extra.delete("ansible_facts") unless action_pkg_mgr_fact_allowed?
+        result
       end
 
       # The pkg_mgr fact the backend resolution dispatches on: the gathered
@@ -437,6 +471,10 @@ module Krikri
       # the old symlink probe produced).
       @pkg_mgr_fact : String? = nil
       @pkg_mgr_fact_from_vars = false
+      # Set when the action-level backend resolution failed (see
+      # #dnf_backend_resolution_failure): the backend module never ran,
+      # so #finalize_result must not model a module payload's facts.
+      @backend_resolution_failed = false
 
       protected def pkg_mgr_fact : String
         @pkg_mgr_fact ||= begin

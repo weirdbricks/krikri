@@ -3401,6 +3401,12 @@ module Krikri
       literal_crash_result("a bytes-like object is required, not '#{Krikri.python_value_type_name(native)}'")
     end
 
+    # The modules krikri runs natively through RpmPackage's dnf ACTION
+    # emulation, the only ones that read `_ansible_action_facts` (see
+    # build_plugin_config). A python-dispatched module validates its args
+    # against a real argspec and would reject the key as unsupported.
+    DNF_FAMILY_MODULES = %w[dnf dnf5 yum]
+
     # Build plugin configuration
     private def build_plugin_config(
       task : Task,
@@ -3463,6 +3469,19 @@ module Krikri
       # plugin that shells out (command/shell/apt/systemctl/...) rather
       # than needing separate wiring per plugin.
       final_params["_environment"] = substituted_env.to_json if substituted_env
+      # Real's dnf ACTION plugin stamps the pkg_mgr fact it fetched onto
+      # the task result only when the task is not delegated, or was
+      # delegated with delegate_facts: true (`not self._task.delegate_to
+      # or self._task.delegate_facts` in plugins/action/dnf.py) - a plain
+      # `delegate_to:` dnf failure therefore carries no ansible_facts at
+      # all. The module binary emulating that attach (RpmPackage) has no
+      # task to inspect, so the verdict rides the wire like
+      # _ansible_check_mode - only for the dnf-family plugins that read it,
+      # because python-dispatched modules validate their args against a
+      # real argspec and would reject an unknown key.
+      if DNF_FAMILY_MODULES.includes?(PluginManager.simple_plugin_name(task.module_name))
+        final_params["_ansible_action_facts"] = (!task.delegate_to || task.delegate_facts?).to_s
+      end
 
       # Binary (invalid-UTF-8) param values - a slurp+b64decode'd authkey
       # templated into `copy: content:` (bloxberg.corosync_pacemaker, issue
