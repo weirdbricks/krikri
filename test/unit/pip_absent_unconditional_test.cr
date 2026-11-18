@@ -78,6 +78,27 @@ describe "pip: state=absent runs pip unconditionally" do
       msg.includes?("Failed to uninstall").must_equal(false)
     end
   end
+
+  # Issue #1487: a venv created with --system-site-packages exposes the
+  # system package to pip, which then exits 0 (nothing to fail on) printing
+  # "Not uninstalling <pkg> at /usr/lib/..., outside environment <venv>"
+  # plus "Can't uninstall ...". Ansible's pip.py counts a removal only when
+  # STDOUT carries "Successfully uninstalled", so it reports ok here;
+  # deriving changed from the missing "not installed" line reported changed
+  # on every run for a package pip will never remove. Verified against real
+  # ansible-core 2.21.6 (issue's own playbook: first=False second=False).
+  it "reports changed=false when pip declines to uninstall a system site-packages copy" do
+    with_fake_pip("uninstall-outside-environment") do |script|
+      result = PluginSpecHelper.run("pip", {
+        "name"       => "krikri-no-such-package-zzz",
+        "state"      => "absent",
+        "executable" => script,
+      })
+
+      (result["failed"]?.try(&.as_bool) || false).must_equal(false)
+      result["changed"].as_bool.must_equal(false)
+    end
+  end
 end
 
 # Writes a fake pip shell script whose behavior the uninstall branch
@@ -91,6 +112,8 @@ private def with_fake_pip(mode : String, &)
            %(#!/bin/sh\nif [ "$1" = "uninstall" ]; then echo "WARNING: Skipping krikri-no-such-package-zzz as it is not installed."; exit 0; fi\necho "Successfully installed krikri-no-such-package-zzz"\nexit 0\n)
          when "uninstall-removed"
            %(#!/bin/sh\nif [ "$1" = "uninstall" ]; then echo "Successfully uninstalled krikri-no-such-package-zzz"; exit 0; fi\necho "Successfully installed krikri-no-such-package-zzz"\nexit 0\n)
+         when "uninstall-outside-environment"
+           %(#!/bin/sh\nif [ "$1" = "uninstall" ]; then echo "Found existing installation: krikri-no-such-package-zzz 1.0.0"; echo "Not uninstalling krikri-no-such-package-zzz at /usr/lib/python3/dist-packages, outside environment /tmp/sv"; echo "Can't uninstall 'krikri-no-such-package-zzz'. No files were found to uninstall."; exit 0; fi\nexit 0\n)
          else
            %(#!/bin/sh\nif [ "$1" = "uninstall" ]; then echo "error: externally-managed-environment" >&2; exit 1; fi\nexit 0\n)
          end
