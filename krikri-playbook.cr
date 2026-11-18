@@ -74,6 +74,28 @@ def warn_unmatched_play_patterns(inventory : Krikri::Inventory, play : Krikri::P
   end
 end
 
+# Resolves --limit against the whole inventory and returns the host names it
+# selects. Ansible validates the limit before it touches a play: one warning
+# per token that matches nothing, then the fatal "leaves us with no hosts to
+# target" error (rc 1) when the limit as a whole selects no host at all.
+# Verified against ansible-core 2.21.6: a real run and every listing mode
+# (--list-hosts/--list-tasks/--list-tags/--syntax-check) abort the same way,
+# before any play-pattern warning or listing line.
+def limit_host_names(inventory : Krikri::Inventory, limit_hosts : String) : Set(String)
+  limit_hosts.split(/[,:]/).map(&.strip).reject(&.empty?).each do |token|
+    next if token.starts_with?('!') || token.starts_with?('&')
+    next unless inventory.get_hosts(token).empty?
+    Krikri::ResultDisplay.emit_display_warning("Could not match supplied host pattern, ignoring: #{token}")
+  end
+
+  limited = inventory.get_hosts(limit_hosts)
+  if limited.empty?
+    STDERR.puts "[ERROR]: Specified inventory, host pattern and/or --limit leaves us with no hosts to target.".colorize(:red)
+    exit 1
+  end
+  limited.map(&.name).to_set
+end
+
 # A play that wrote an always-post-validated keyword real's boolean()/
 # float() refuses: the same two-link error block ansible-core prints on
 # stderr for a Play.post_validate failure ("Error processing keyword
@@ -1084,6 +1106,11 @@ end
 # shared with the execution play loop below.
 pattern_warnings = Set(String).new
 if quiet_listing_mode
+  # --limit is resolved (and validated) before the listing as well: a limit
+  # that selects nothing aborts ahead of any listing output - and ahead of
+  # the play-pattern warnings below - exactly as a real run does, so
+  # --list-hosts can never show hosts a limited run would not touch.
+  limit_names = limit_hosts.empty? ? Set(String).new : limit_host_names(inventory, limit_hosts)
   listing_playbook = playbook || raise "BUG: playbook not parsed"
   listing_playbook.path = playbook_display_path
   playbook.plays.each do |play|
@@ -1105,7 +1132,9 @@ if quiet_listing_mode
     Krikri::TaskLister.list_tags(listing_playbook, tags, skip_tags)
   else
     Krikri::TaskLister.list_hosts(listing_playbook) do |play|
-      inventory.get_hosts(play.hosts.to_s).map(&.name)
+      matched = inventory.get_hosts(play.hosts.to_s)
+      matched = matched.select { |host| limit_names.includes?(host.name) } unless limit_hosts.empty?
+      matched.map(&.name)
     end
   end
   exit 0
@@ -1181,16 +1210,6 @@ start_at_pending = !start_at_task.nil?
 
 # At this point inventory is guaranteed to be set
 inventory = inventory || raise "BUG: inventory not set"
-
-# --list-hosts needs the inventory (unlike --list-tasks/--list-tags),
-# so it runs here rather than straight after the parse.
-if list_hosts_only
-  resolved = inventory || raise "BUG: inventory not set"
-  Krikri::TaskLister.list_hosts(playbook || raise "BUG: playbook not parsed") do |play|
-    resolved.get_hosts(play.hosts.to_s).map(&.name)
-  end
-  exit 0
-end
 
 if verbose && verbose_extras
   puts "Available Hosts:".colorize(:cyan).bold
@@ -1310,23 +1329,13 @@ run_registered_store = Hash(String, Hash(String, JSON::Any)).new
 permanently_failed_hosts = Set(String).new
 
 # A --limit that matches nothing in the whole inventory aborts before any
-# play: one warning per unmatched pattern, then the no-hosts error, rc 1.
-# Emitted through ResultDisplay for the same reason as
-# warn_unmatched_play_patterns: Ansible's Display dedupe of identical
-# warning lines is process-wide, so a token already warned elsewhere in
-# the run (a lookup, a play's hosts:) prints once.
-unless limit_hosts.empty?
-  limit_tokens = limit_hosts.split(/[,:]/).map(&.strip).reject(&.empty?)
-  limit_tokens.each do |tok|
-    next if tok.starts_with?('!') || tok.starts_with?('&')
-    next unless inventory.get_hosts(tok).empty?
-    Krikri::ResultDisplay.emit_display_warning("Could not match supplied host pattern, ignoring: #{tok}")
-  end
-  if inventory.get_hosts(limit_hosts).empty?
-    STDERR.puts "[ERROR]: Specified inventory, host pattern and/or --limit leaves us with no hosts to target.".colorize(:red)
-    exit 1
-  end
-end
+# play: one warning per unmatched pattern, then the no-hosts error, rc 1
+# (see limit_host_names, shared with the listing modes). Emitted through
+# ResultDisplay for the same reason as warn_unmatched_play_patterns:
+# Ansible's Display dedupe of identical warning lines is process-wide, so a
+# token already warned elsewhere in the run (a lookup, a play's hosts:)
+# prints once.
+limit_names = limit_hosts.empty? ? Set(String).new : limit_host_names(inventory, limit_hosts)
 
 # The oneline stdout callback's own startup deprecation (2.21-behavior
 # parity, not a krikri deprecation). Real loads the stdout callback when
@@ -1369,7 +1378,6 @@ playbook.plays.each_with_index do |play, _play_index|
   # actually applied anywhere, so it silently ran every play against
   # its full hosts: pattern regardless of --limit.
   unless limit_hosts.empty?
-    limit_names = inventory.get_hosts(limit_hosts).map(&.name).to_set
     matched_hosts = matched_hosts.select { |host| limit_names.includes?(host.name) }
   end
 
