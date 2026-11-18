@@ -837,7 +837,7 @@ module Krikri
       # type resolves to nothing fails the handler, not a silent SSH
       # fallback.
       if (conn_type = dispatch_vars["ansible_connection"]?.try(&.as_s?)) &&
-         PluginManager.connection_plugin_not_found?(conn_type)
+         PluginManager.connection_plugin_not_found?(conn_type, PluginManager.playbook_dir_from(dispatch_vars))
         return JSON.parse({
           "changed" => false,
           "failed"  => true,

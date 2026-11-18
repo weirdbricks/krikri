@@ -94,7 +94,10 @@ module Krikri
         # gzm55.local_ssh_known_hosts, issue #519) and its action_plugins/
         # resolves the depending role's module names, so both ride the
         # same registry the filter/test/library consumers already read.
-        {"filter_plugins", "test_plugins", "library", "lookup_plugins", "action_plugins"}.each do |subdir|
+        # connection_plugins/ is one of those subdirs too - Role.load puts
+        # it on the connection loader for the whole run (issue #1457).
+        {"filter_plugins", "test_plugins", "library", "lookup_plugins",
+         "action_plugins", "connection_plugins"}.each do |subdir|
           dir = File.join(role_path, subdir)
           next unless Dir.exists?(dir)
           roots = @@loaded_role_plugin_roots[subdir] ||= [] of String

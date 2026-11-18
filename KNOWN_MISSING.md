@@ -439,6 +439,21 @@ krikri aims for byte-for-byte identical stdout/stderr/exit code to `ansible-play
   building a bespoke API surface with no other use, for an extension point most Galaxy roles never
   ship. Decision: krikri reports the plugin name as an unimplemented module rather than skipping.
 
+### Python connection plugins are resolved but not executed
+
+- A custom connection plugin (`ANSIBLE_CONNECTION_PLUGINS`, the playbook-adjacent or a loaded role's
+  `connection_plugins/`, or `ansible.legacy.<name>`) is found on Ansible's own loader paths and is no
+  longer refused with "the connection plugin 'X' was not found" (issue #1457). Its connection
+  lifecycle (`_connect`/`exec_command`/`put_file`/`fetch_file`) is the whole transport layer this
+  engine replaces with SSH or local execution, so the plugin's own code never runs: krikri reads the
+  plugin class under the controller's ansible-capable python3 and runs the task with the transport
+  that class derives from - a subclass of `ansible.plugins.connection.local.Connection` executes on
+  the controller (live-verified against ansible-core 2.21.6: the issue's `mylocal` wrapper runs
+  `ok=1`), every other plugin keeps the SSH approximation a resolvable-but-unported collection
+  connection plugin (`containers.podman.podman`) already had. Without an ansible-capable controller
+  python the probe cannot run and every custom plugin takes that SSH approximation. The plugin's own
+  options, credentials and any tunnelling it performs are therefore never applied.
+
 ### Unimplemented community.general filter long tail (usage-audited, watchlist not backlog)
 
 - Unimplemented: the dict-key filters (`keep_keys`, `remove_keys`, `replace_keys`, `dict_kv`,

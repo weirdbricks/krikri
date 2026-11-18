@@ -1,5 +1,6 @@
 require "../minitest_helper"
 require "file_utils"
+require "../../src/krikri/controller_python"
 
 # Connection-plugin resolution parity, end to end. Ansible resolves
 # a task's effective connection type (ansible_connection variable or a
@@ -247,5 +248,123 @@ describe "role-default connection leak reaches the implicit gather" do
     status.success?.must_equal(true, output)
     output.must_include("never reached", output)
     output.wont_include("was not found", output)
+  end
+end
+
+# Ansible's connection loader also searches every plugin directory the run
+# registers: the playbook-adjacent `connection_plugins/`, each loaded
+# role's own, then ANSIBLE_CONNECTION_PLUGINS (which REPLACES the
+# configured defaults). A Python connection plugin cannot be executed by
+# this engine, so a plugin found there runs with the transport its own
+# class implies - a subclass of Ansible's local connection executes on the
+# controller, like that base class. Before issue #1457 such a plugin made
+# every task fail with the false "the connection plugin 'mylocal' was not
+# found" (ansible-core 2.21.6 runs the same play ok=1).
+describe "custom Python connection plugins on Ansible's loader paths" do
+  private def local_wrapper_plugin : String
+    <<-PYTHON
+      from ansible.plugins.connection.local import Connection as LocalConnection
+
+      DOCUMENTATION = """
+          name: mylocal
+          short_description: local connection wrapper
+          options: {}
+      """
+
+
+      class Connection(LocalConnection):
+          transport = "mylocal"
+      PYTHON
+  end
+
+  private def ssh_wrapper_plugin : String
+    <<-PYTHON
+      from ansible.plugins.connection.ssh import Connection as SSHConnection
+
+      DOCUMENTATION = """
+          name: myssh
+          short_description: ssh connection wrapper
+          options: {}
+      """
+
+
+      class Connection(SSHConnection):
+          transport = "myssh"
+      PYTHON
+  end
+
+  # The probe that reads a plugin's class hierarchy runs under a
+  # controller python that can import ansible - the interpreter real
+  # ansible-playbook itself runs under. Without one the plugin keeps the
+  # SSH approximation (asserted as-is, suite green either way).
+  private def ansible_importable : Bool
+    python = Krikri::ControllerPython.executable
+    return false unless python
+    status = Process.run(python, ["-c", "from ansible.plugins.connection.local import Connection"],
+      output: Process::Redirect::Close, error: Process::Redirect::Close)
+    status.success?
+  end
+
+  # Builds a throwaway playbook tree and runs *playbook* against it.
+  # `plugins_next_to_playbook` puts connection_plugins/ beside the
+  # playbook (no env var, Ansible's basedir registration);
+  # ANSIBLE_CONNECTION_PLUGINS names it otherwise. A fresh HOME keeps the
+  # controller's own plugins/connection out of the search path.
+  private def run_custom_connection_play(plugins_next_to_playbook : Bool,
+                                         plugin : String = local_wrapper_plugin,
+                                         plugin_name : String = "mylocal") : {Process::Status, String}
+    root = File.tempname("custom-connection-plugin")
+    Dir.mkdir_p(root)
+    home = File.join(root, "home")
+    Dir.mkdir_p(home)
+    playbook_dir = plugins_next_to_playbook ? File.join(root, "playbooks") : root
+    plugin_dir = File.join(playbook_dir, "connection_plugins")
+    Dir.mkdir_p(plugin_dir)
+    File.write(File.join(plugin_dir, "#{plugin_name}.py"), plugin)
+    File.write(File.join(root, "inv.ini"), "[all]\nhost1 ansible_connection=#{plugin_name}\n")
+    playbook = File.join(playbook_dir, "pb.yml")
+    File.write(playbook, "- hosts: all\n  gather_facts: false\n  tasks:\n    - ansible.builtin.ping:\n")
+
+    env = {
+      "PATH" => ENV["PATH"]? || "/usr/local/bin:/usr/bin:/bin",
+      "HOME" => home,
+    }
+    unless plugins_next_to_playbook
+      env["ANSIBLE_CONNECTION_PLUGINS"] = plugin_dir
+    end
+
+    captured = IO::Memory.new
+    status = Process.run(BINARY, ["-i", File.join(root, "inv.ini"), "-T", "5", playbook],
+      output: captured, error: captured, env: env)
+    {status, captured.to_s}
+  ensure
+    FileUtils.rm_rf(root) if root && Dir.exists?(root)
+  end
+
+  it "runs a local-wrapper plugin found through ANSIBLE_CONNECTION_PLUGINS" do
+    status, output = run_custom_connection_play(plugins_next_to_playbook: false)
+    output.wont_include("was not found", output)
+    if ansible_importable
+      status.success?.must_equal(true, output)
+      output.must_include("ok: [host1]", output)
+      output.must_include("ok=1", output)
+    end
+  end
+
+  it "runs a local-wrapper plugin from the playbook-adjacent connection_plugins/" do
+    status, output = run_custom_connection_play(plugins_next_to_playbook: true)
+    output.wont_include("was not found", output)
+    if ansible_importable
+      status.success?.must_equal(true, output)
+      output.must_include("ok=1", output)
+    end
+  end
+
+  it "keeps the SSH approximation for a resolvable plugin that is not a local connection" do
+    status, output = run_custom_connection_play(plugins_next_to_playbook: false,
+      plugin: ssh_wrapper_plugin, plugin_name: "myssh")
+    output.wont_include("was not found", output)
+    status.success?.must_equal(false, output)
+    output.must_include("UNREACHABLE", output)
   end
 end
