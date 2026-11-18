@@ -222,6 +222,23 @@ describe "hostname plugin - use: parameter coverage" do
       end
     end
 
+    # A fresh podman container's pre-update hostname is the container's own
+    # random 12-hex id, so the generator's two containers can never print the
+    # same before side (issue #1550) while the rest of the hunk matches. Pin
+    # the shape the harness mask anchors on: the before side is the strategy's
+    # CURRENT hostname alone, in container-id form.
+    it "diffs a container-style current hostname as the whole before side (issue #1550 mask anchor)" do
+      with_hostname_shims("2973cd460392", "2973cd460392") do |env, _log|
+        result = PluginSpecHelper.run("hostname", {
+          "name" => "kpg-host", "use" => "systemd", "_ansible_check_mode" => "true", "_environment" => env,
+        })
+        expect_ok(result)
+        result["changed"].as_bool.must_equal(true)
+        result["diff"]["before"].as_s.must_equal("hostname = 2973cd460392\n")
+        result["diff"]["after"].as_s.must_equal("hostname = kpg-host\n")
+      end
+    end
+
     it "fails with Ansible's >64-char message on the actual set only (live-verified text and check-mode behavior)" do
       long_name = "a" * 65
       with_hostname_shims("oldstatic", "oldtrans") do |env, log|
