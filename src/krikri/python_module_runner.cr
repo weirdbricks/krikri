@@ -431,6 +431,60 @@ module Krikri
         PYTHON
     end
 
+    # The same gate for an unported `community.vmware.*` module. The
+    # collection's module_utils/vmware.py imports `requests` and `PyVmomi`
+    # at MODULE level and its PyVmomi class fails at construction time
+    # when either is missing, so on a target without them real ansible
+    # fails the task with basic.py's missing_required_lib text before any
+    # vCenter connection - under --check too, because every module in the
+    # family declares supports_check_mode=True (jedimt.
+    # vmware_vcsa_customization, issue #1523: real failed its first task,
+    # this engine skipped it and then departed at a later task's own
+    # templating fatal). The three deprecated module_utils imports that
+    # module_utils file performs come first, so their [DEPRECATION
+    # WARNING] lines print in real's order and with real's texts; requests
+    # is checked before PyVmomi for the same reason (vmware.py's import
+    # order, and the order PyVmomi.__init__'s fail_json gates run in).
+    # When both libraries import, the module would go on to talk to a
+    # vCenter this engine cannot reach either, so the caller falls back to
+    # the designed unavailable-module skip.
+    def self.vmware_import_gate_source : String
+      <<-PYTHON
+        #!/usr/bin/python3
+        import ansible.module_utils.common._collections_compat as collections_compat
+        from ansible.module_utils._text import to_text, to_native
+        from ansible.module_utils.basic import AnsibleModule, missing_required_lib
+
+        try:
+            import requests
+            HAS_REQUESTS = True
+        except ImportError:
+            HAS_REQUESTS = False
+
+        try:
+            from pyVim import connect
+            from pyVmomi import vim, vmodl, VmomiSupport, VmomiJSONEncoder
+            HAS_PYVMOMI = True
+        except ImportError:
+            HAS_PYVMOMI = False
+
+
+        def main():
+            # The module family supports check mode (real runs it under
+            # --check, which is where its import failure shows), so the
+            # shim's own supports_check_mode gate must not skip the body.
+            module = AnsibleModule(argument_spec={}, supports_check_mode=True)
+            if not HAS_REQUESTS:
+                module.fail_json(msg=missing_required_lib('requests'))
+            if not HAS_PYVMOMI:
+                module.fail_json(msg=missing_required_lib('PyVmomi'))
+            module.exit_json(changed=False, _krikri_vmware_libs_present=True)
+
+
+        main()
+        PYTHON
+    end
+
     # Ansible refuses to ship a module payload whose first line is
     # not a `#!` interpreter line: ActionBase._execute_module's
     # `if not module_shebang and module_style != 'binary'` guard raises
