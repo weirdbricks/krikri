@@ -167,6 +167,26 @@ describe "assemble plugin" do
     File.read(backup_file).must_equal("old content\n")
   end
 
+  # Ansible's backup_local copies with shutil.copy2, so a backup keeps the
+  # destination's own mode: a 0600 dest leaves a 0600 backup, never one
+  # created at the plugin process's umask default (live-verified vs 2.21.6
+  # - the kpg harness diffs the workdir's modes between the engines).
+  it "keeps the destination's mode on the backup file" do
+    src = as_path("assemble_src_backup_mode")
+    dest = as_path("assemble_dest_backup_mode.conf")
+    FileUtils.rm_rf(src)
+    Dir.mkdir_p(src)
+    File.write(dest, "old content\n")
+    File.chmod(dest, 0o600)
+    File.write(File.join(src, "a"), "new content\n")
+
+    result = PluginSpecHelper.run("assemble", {"src" => src, "dest" => dest, "backup" => "true"})
+
+    backup_file = result["backup_file"].as_s
+    backup_file.wont_be_empty
+    (File.info(backup_file).permissions.value & 0o777).must_equal(0o600)
+  end
+
   it "fails when src doesn't exist" do
     result = PluginSpecHelper.run("assemble", {"src" => as_path("no-such-dir"), "dest" => as_path("irrelevant.conf")})
 
