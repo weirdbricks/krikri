@@ -246,6 +246,39 @@ describe Krikri::CollectionIndex do
     result[:resolves].must_equal(true)
   end
 
+  it "refuses an FQCN whose module only a shadowed later collection copy ships" do
+    # ansible-core's collection package loader keeps only the FIRST
+    # candidate path for a collection ("only search within the first
+    # collection we found", _collection_finder.py) and reads that
+    # copy's plugins/modules/ and meta/runtime.yml; a second copy is
+    # invisible. So a module file living only in a later copy is
+    # unresolvable and ansible refuses the playbook at load - exactly
+    # what happens on a controller whose user collections tree holds a
+    # module-less amazon/aws stub ahead of the dist-packages copy that
+    # ships ec2_ami_info (issue #1493).
+    shadow_root = PluginSpecHelper.tmp_path("collection-index-shadow")
+    FileUtils.mkdir_p(File.join(@fixture_root, "ansible_collections", "testns", "dup"))
+    FileUtils.mkdir_p(File.join(shadow_root, "ansible_collections", "testns", "dup", "plugins", "modules"))
+    File.write(File.join(shadow_root, "ansible_collections", "testns", "dup", "plugins", "modules", "shadowed.py"),
+      "# fixture module\n")
+    # The shadowed copy's own meta/runtime.yml is never read either, so
+    # its redirect cannot make a name resolvable.
+    FileUtils.mkdir_p(File.join(shadow_root, "ansible_collections", "testns", "dup", "meta"))
+    File.write(File.join(shadow_root, "ansible_collections", "testns", "dup", "meta", "runtime.yml"),
+      <<-YAML
+        plugin_routing:
+          modules:
+            other:
+              redirect: testns.prov.thing
+        YAML
+    )
+    ENV["ANSIBLE_COLLECTIONS_PATH"] = "#{@fixture_root}:#{shadow_root}"
+    Krikri::CollectionIndex.reset!
+
+    Krikri::CollectionIndex.controller_resolves?("testns.dup.shadowed")[:resolves].must_equal(false)
+    Krikri::CollectionIndex.controller_resolves?("testns.dup.other")[:resolves].must_equal(false)
+  end
+
   it "follows a builtin-runtime redirect to an installed collection's module (openssl_certificate)" do
     result = Krikri::CollectionIndex.controller_resolves?("openssl_certificate")
     result[:resolves].must_equal(true)

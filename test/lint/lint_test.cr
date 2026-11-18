@@ -457,4 +457,40 @@ module Krikri::Lint
       end
     end
   end
+
+  describe "Runner with a shadowed collection copy" do
+    # Poking ANSIBLE_COLLECTIONS_PATH and resetting the CollectionIndex
+    # scan disturbs memoized state every in-process parse reads, so this
+    # describe quiesces the whole process.
+    exclusive!
+
+    it "reports only the syntax-check match when the module lives in a shadowed later copy" do
+      # ansible-core loads a collection from the FIRST copy it finds and
+      # reads no other, so a module shipped only by a later copy is
+      # unresolvable: ansible-playbook --syntax-check fails the playbook
+      # (syntax-check[unknown-module]) and ansible-lint then runs no
+      # other rule on it, leaving the unnamed debug task without the
+      # name[missing] upstream never reports (issue #1493).
+      dir = PluginSpecHelper.tmp_path("lint_shadowed_collection")
+      first = File.join(dir, "first")
+      later = File.join(dir, "later")
+      FileUtils.mkdir_p(File.join(first, "ansible_collections", "testns", "dup"))
+      FileUtils.mkdir_p(File.join(later, "ansible_collections", "testns", "dup", "plugins", "modules"))
+      File.write(File.join(later, "ansible_collections", "testns", "dup", "plugins", "modules", "shadowed.py"),
+        "# fixture module\n")
+      ENV["ANSIBLE_COLLECTIONS_PATH"] = "#{first}:#{later}"
+      Krikri::CollectionIndex.reset!
+      path = File.join(dir, "play.yml")
+      File.write(path, "---\n- hosts: all\n  tasks:\n" \
+                        + "    - testns.dup.shadowed:\n" \
+                           + "    - ansible.builtin.debug:\n        msg: hi\n")
+      begin
+        violations = Runner.new(RuleRegistry.default).run([path])
+        violations.map(&.rule_id).must_equal(["syntax-check[unknown-module]"])
+      ensure
+        ENV.delete("ANSIBLE_COLLECTIONS_PATH")
+        Krikri::CollectionIndex.reset!
+      end
+    end
+  end
 end

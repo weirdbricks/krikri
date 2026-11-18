@@ -204,14 +204,15 @@ module Krikri
 
       # The match for the file's own first task carrying a module name
       # the real controller cannot resolve to a module file - the same
-      # verdict behind the engine's playbook-load refusal
-      # (CollectionIndex #controller_resolves?, consulted exactly like
-      # the parser: the task's own `collections:` replaces the play's
-      # list plus the role's meta declaration). Ansible's check stops at
-      # the first such name, so only that task is reported. Names
-      # resolution cannot decide (no discoverable ansible-core,
-      # templated action strings) stay permissive, so a file reports only
-      # on a definite negative.
+      # CollectionIndex verdict the parser consults, with the same
+      # inputs (the task's own `collections:` replaces the play's list
+      # plus the role's meta declaration), but without the parser's
+      # native-module carve-out: a name krikri has ported still refuses
+      # here, because upstream's ansible-playbook --syntax-check has no
+      # such carve-out. Ansible's check stops at the first such name, so
+      # only that task is reported. Names resolution cannot decide (no
+      # discoverable ansible-core, templated action strings) stay
+      # permissive, so a file reports only on a definite negative.
       private def unknown_module(file : PositionedFile, role_path : String?) : Violation?
         playbook_dir = File.dirname(File.expand_path(file.path))
         inherited = play_collections(file) +

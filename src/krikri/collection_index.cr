@@ -1040,7 +1040,9 @@ module Krikri
     # segments sit below the collection's plugins/modules/ dir (see
     # collection_subdir_leaf_file?). The parser uses this to map such a
     # name onto the resource module it actually runs, so a name the
-    # controller would refuse never resolves here either.
+    # controller would refuse never resolves here either. Only the first
+    # installed copy counts, like installed_collection_resolution: real
+    # imports the collection package from the first path it finds.
     def self.fqcr_subdir_resolves?(name : String) : Bool
       parts = name.split('.')
       return false if parts.size < 4
