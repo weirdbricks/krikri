@@ -27,6 +27,9 @@ KEYID = "deadbeefcafeb00d"
 
 GPG_SHIM = <<-SH
 #!/bin/sh
+if [ -n "${KRIKRI_FAKE_GPG_LOG:-}" ]; then
+  printf '%s\n' "$*" >> "$KRIKRI_FAKE_GPG_LOG"
+fi
 echo "pub::::#{KEYID}:::"
 echo "fpr:::::::::#{FPR}:"
 exit 0
@@ -35,9 +38,13 @@ SH
 RPM_SHIM = <<-'SH'
 #!/bin/sh
 if [ "$1" = "-q" ]; then
+  if [ -n "${KRIKRI_FAKE_RPM_INSTALLED:-}" ]; then
+    echo "$KRIKRI_FAKE_RPM_INSTALLED"
+    exit 0
+  fi
   exit 1
 fi
-if [ "$1" = "--import" ]; then
+if [ "$1" = "--import" ] || [ "$1" = "--erase" ]; then
   printf '%s\n' "$*" >> "${KRIKRI_FAKE_RPM_LOG:?}"
   exit 0
 fi
@@ -45,10 +52,12 @@ exit 1
 SH
 
 # Installs fake `gpg` (fixed colon-dump for any key file) and `rpm`
-# (always "no gpg-pubkey packages installed" for -q, records --import
-# argv) at the front of PATH. The plugin's local remote_exec shells out
-# via bash and inherits the spec process's environment.
-def with_rpm_key_shims(&)
+# ("no gpg-pubkey packages installed" for -q unless *installed* names one,
+# records --import/--erase argv) at the front of PATH. The plugin's local
+# remote_exec shells out via bash and inherits the spec process's
+# environment. The gpg shim's argv log lives beside the rpm one, as
+# "#{log}.gpg".
+def with_rpm_key_shims(installed : String? = nil, &)
   bin_dir = File.tempname("krikri-fake-rpmkey")
   Dir.mkdir_p(bin_dir)
   gpg = File.join(bin_dir, "gpg")
@@ -59,17 +68,25 @@ def with_rpm_key_shims(&)
   File.chmod(rpm, 0o755)
 
   log = File.tempname("krikri-fake-rpmkey-log")
+  gpg_log = "#{log}.gpg"
   previous_path = ENV["PATH"]?
   previous_log = ENV["KRIKRI_FAKE_RPM_LOG"]?
+  previous_gpg_log = ENV["KRIKRI_FAKE_GPG_LOG"]?
+  previous_installed = ENV["KRIKRI_FAKE_RPM_INSTALLED"]?
   ENV["PATH"] = "#{bin_dir}:#{ENV["PATH"]?}"
   ENV["KRIKRI_FAKE_RPM_LOG"] = log
+  ENV["KRIKRI_FAKE_GPG_LOG"] = gpg_log
+  installed ? (ENV["KRIKRI_FAKE_RPM_INSTALLED"] = installed) : ENV.delete("KRIKRI_FAKE_RPM_INSTALLED")
   begin
     yield log
   ensure
     previous_path ? (ENV["PATH"] = previous_path) : ENV.delete("PATH")
     previous_log ? (ENV["KRIKRI_FAKE_RPM_LOG"] = previous_log) : ENV.delete("KRIKRI_FAKE_RPM_LOG")
+    previous_gpg_log ? (ENV["KRIKRI_FAKE_GPG_LOG"] = previous_gpg_log) : ENV.delete("KRIKRI_FAKE_GPG_LOG")
+    previous_installed ? (ENV["KRIKRI_FAKE_RPM_INSTALLED"] = previous_installed) : ENV.delete("KRIKRI_FAKE_RPM_INSTALLED")
     FileUtils.rm_r(bin_dir)
     File.delete(log) if File.exists?(log)
+    File.delete(gpg_log) if File.exists?(gpg_log)
   end
 end
 
@@ -170,6 +187,54 @@ describe "rpm_key plugin fingerprint param" do
         result["msg"].as_s.must_include("does not match any key fingerprints")
         result["msg"].as_s.must_include("fingerprint, '{'0000000000000000000000000000000000000000'}', does not match any key fingerprints in '{'")
         (!File.exists?(log) || File.read(log).empty?).must_equal(true)
+      end
+    end
+  end
+
+  # rpm_key declares supports_check_mode=True and import_key/drop_key skip
+  # ONLY the rpm call itself: Ansible reports changed=True for the key it
+  # would have imported and leaves the database untouched, so a second
+  # --check pass is still "changed" (kpg rpm_key happy, issue #1508).
+  it "reports changed in check mode without importing the key" do
+    with_rpm_key_shims do |log|
+      with_key_file do |key_path|
+        result = PluginSpecHelper.run("rpm_key", {
+          "key"                 => key_path,
+          "_ansible_check_mode" => "True",
+        })
+        falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+        result["changed"].as_bool.must_equal(true)
+        (!File.exists?(log) || File.read(log).empty?).must_equal(true)
+      end
+    end
+  end
+
+  it "reports changed in check mode for an installed key it would drop, without erasing it" do
+    with_rpm_key_shims(installed: KEYID[-8..]) do |log|
+      result = PluginSpecHelper.run("rpm_key", {
+        "key"                 => KEYID,
+        "state"               => "absent",
+        "_ansible_check_mode" => "True",
+      })
+      falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+      result["changed"].as_bool.must_equal(true)
+      (!File.exists?(log) || File.read(log).empty?).must_equal(true)
+    end
+  end
+
+  # Ansible reads key material through librpm in-process; krikri's gpg
+  # fallback must not leave behind the ~/.gnupg tree a gpg with no
+  # configured homedir creates - a host-state difference the kpg generator
+  # reports even when every line of task output matches (issue #1508).
+  it "parses key material in a throwaway GNUPGHOME it removes again" do
+    with_rpm_key_shims do |log|
+      with_key_file do |key_path|
+        PluginSpecHelper.run("rpm_key", {"key" => key_path})
+        argv = File.read("#{log}.gpg")
+        argv.must_include("--homedir")
+        home = argv[/--homedir '?([^ '\n]+)'?/, 1]? || ""
+        home.must_include("krikri-rpm-key-gnupg")
+        Dir.exists?(home).must_equal(false)
       end
     end
   end

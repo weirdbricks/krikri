@@ -232,10 +232,29 @@ describe Krikri::CollectionIndex do
     # The definite negative is what the lookup dispatch's not-found
     # gate (issue #751) refuses on: ansible-core's own plugins/lookup
     # tree, its builtin-runtime lookup redirects and every installed
-    # collection's plugins/lookup all miss. ansible-core must be
-    # discoverable here (same assumption the bare module refusal above
-    # makes) - without it the answer is the permissive nil.
+    # collection's plugins/lookup all miss.
     Krikri::CollectionIndex.bare_lookup_resolves?("nope_nope_bare_missing").must_equal(false)
+  end
+
+  it "answers bare lookup names from the baked ansible-core 2.21.6 tables when no package is installed" do
+    # krikri runs on controllers with no ansible-core at all (the kpg
+    # reference Rocky template is one), where the lookup dispatch used to
+    # get the permissive nil and silently render `lookup('kpg_raise')` as
+    # the literal "undefined" while Ansible fails the task with "was not
+    # found" (issue #1508). The baked name set and redirect table must
+    # answer exactly like the missing package would.
+    ENV["KRIKRI_TEST_NO_ANSIBLE_CORE"] = "1"
+    Krikri::CollectionIndex.reset!
+    begin
+      Krikri::CollectionIndex.bare_lookup_resolves?("file").must_equal(true)
+      Krikri::CollectionIndex.bare_lookup_resolves?("nope_nope_bare_missing").must_equal(false)
+      # ... including the builtin-runtime lookup redirect table, which is
+      # what makes a bare `redis` reach community.general's plugin.
+      Krikri.builtin_runtime_redirects[2]["redis"]?.must_equal("community.general.redis")
+    ensure
+      ENV.delete("KRIKRI_TEST_NO_ANSIBLE_CORE")
+      Krikri::CollectionIndex.reset!
+    end
   end
 
   it "resolves an installed collection's real module even when krikri has not implemented it" do

@@ -313,18 +313,20 @@ module Krikri
     # keyword anywhere). The builtin runtime's plugin_routing.lookup
     # redirect table participates first (`redis` -> community.general),
     # so an ansible-core present but redirect-target collection absent
-    # is a definite false, not unsure. nil = unsure (no ansible-core
-    # installation discoverable) - the caller must not refuse on nil.
+    # is a definite false, not unsure. nil = unsure (neither the
+    # ansible-core package nor its baked 2.21.6 tables could answer) -
+    # the caller must not refuse on nil.
     def self.bare_lookup_resolves?(name : String) : Bool?
       return nil if name.empty? || name.includes?(".")
       case builtin_target?("lookup", name)
       when true
         return true
       when nil
-        # No ansible-core installation discoverable: the installed-
-        # collection scan is still a definite positive when it hits,
-        # but everything else stays unsure - inventing a refusal
-        # without the runtime data would be the dangerous direction.
+        # Neither the package nor the baked name set answered (the baked
+        # set always does, so this is a table-less build): the installed-
+        # collection scan is still a definite positive when it hits, but
+        # everything else stays unsure - inventing a refusal without the
+        # runtime data would be the dangerous direction.
         return true if collection_provides_lookup?(name)
         return nil
       end
@@ -376,11 +378,21 @@ module Krikri
 
     # The ansible-core package directories (dirs containing an `ansible/`
     # package with a modules/ or config/ tree). Empty when no python
-    # ansible installation is discoverable - every builtin-dependent
-    # answer then degrades to nil ("unsure").
+    # ansible installation is discoverable - the baked 2.21.6 tables answer
+    # for modules, actions and lookups then, and only the collection scan
+    # is left unsure.
     private def self.ansible_pkg_dirs : Array(String)
       cached = @@ansible_pkg_dirs
       return cached if cached
+
+      # Test seam: krikri is meant to run on controllers with no ansible-core
+      # package at all, and only the baked 2.21.6 tables answer there - a spec
+      # host that has the package can otherwise never exercise that path.
+      if ENV["KRIKRI_TEST_NO_ANSIBLE_CORE"]? == "1"
+        empty = [] of String
+        @@ansible_pkg_dirs = empty
+        return empty
+      end
 
       dirs = [] of String
       (package_bases(ansible_playbook_shebang_prefix) + ["/usr/lib/python3/dist-packages",
@@ -475,7 +487,7 @@ module Krikri
       # package would carry; round 5440000's confirm roles ran because
       # this fallback used to return nil and every refusal degraded to
       # "unsure").
-      baked_modules, baked_action = Krikri.builtin_runtime_redirects
+      baked_modules, baked_action, baked_lookups = Krikri.builtin_runtime_redirects
       if kind == "modules"
         @@builtin_redirects = baked_modules
         @@builtin_redirects_loaded = true
@@ -485,11 +497,14 @@ module Krikri
         @@builtin_action_redirects_loaded = true
         return baked_action
       end
-      # The lookup kind has no baked table: without a discoverable
-      # ansible-core the caller must treat the answer as unsure (the
-      # bare-name lookup not-found gate only refuses on a definite
-      # negative).
-      nil
+      # The lookup table is baked too: without it a bare lookup name's
+      # not-found gate had no definite negative on such a controller and
+      # every `lookup('typo_or_unknown')` silently rendered the literal
+      # "undefined" where Ansible fails the task (kpg rpm_key, issue
+      # #1508: the reference Rocky host's krikri side has no ansible-core).
+      @@builtin_lookup_redirects = baked_lookups
+      @@builtin_lookup_redirects_loaded = true
+      baked_lookups
     end
 
     # A bare module name's ansible_builtin_runtime.yml redirect target
@@ -922,7 +937,11 @@ module Krikri
       if kind == "lookup"
         # A lookup plugin's file under ansible-core's own plugins/lookup/
         # - no module-file fallback (a module never serves a lookup name).
-        return nil if ansible_pkg_dirs.empty?
+        # With no ansible-core discoverable the baked 2.21.6 name set is
+        # the same answer (and is what keeps a controller krikri alone
+        # runs on from degrading an unknown bare lookup name to
+        # "undefined", issue #1508).
+        return Krikri.builtin_lookup_names.includes?(leaf) if ansible_pkg_dirs.empty?
         return ansible_pkg_dirs.any? { |pkg| File.file?(File.join(pkg, "plugins", "lookup", "#{leaf}.py")) }
       end
       case builtin_action_file?(leaf)

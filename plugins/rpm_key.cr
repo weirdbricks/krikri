@@ -61,15 +61,24 @@ module Krikri
 
       state = @params["state"]?.try(&.downcase) || "present"
 
+      # rpm_key declares supports_check_mode=True and only skips the rpm
+      # mutation itself (import_key/drop_key test module.check_mode), still
+      # reporting changed=True for the key it would have imported or
+      # dropped - so a --check run against a host that lacks the key is
+      # "changed" on every pass. krikri used to import the key for real in
+      # check mode and then report unchanged on the second pass (kpg
+      # rpm_key happy, issue #1508).
+      check_mode = true?(@params["_ansible_check_mode"]?)
+
       # RpmKey.__init__: get_bin_path('rpm', True) before anything touches the key
       unless remote_exec("command -v rpm >/dev/null 2>&1")[:exit_code] == 0
         return PluginResult.new(changed: false, failed: true, msg: missing_executable_message("rpm"))
       end
 
       if state == "absent"
-        remove_key(key)
+        remove_key(key, check_mode)
       else
-        add_key(key)
+        add_key(key, check_mode)
       end
     end
 
@@ -114,27 +123,40 @@ module Krikri
     # apt_key.cr's own #key_fingerprints, but also keeps the keyid (field
     # 4 of a `pub`/`sub` colon line) since rpm keys are matched by short
     # keyid, not fingerprint, by default.
+    #
+    # gpg gets a throwaway --homedir: parsing key material is read-only for
+    # librpm (what the real module uses), while an empty GNUPGHOME-less gpg
+    # CREATES ~/.gnupg (dir + trustdb.gpg + common.conf) as a side effect
+    # the module never has - a state divergence the kpg generator reports
+    # even when every line of task output matches (kpg rpm_key happy,
+    # issue #1508).
     private def parse_key_material(path : String) : Array({String, String})
-      result = remote_exec("gpg --with-colons --import-options show-only --import #{shell_single_quote(path)} 2>/dev/null")
-      pairs = [] of {String, String}
-      pending_keyid = nil
-      result[:stdout].each_line do |line|
-        fields = line.split(':')
-        case fields[0]?
-        when "pub", "sub"
-          pending_keyid = fields[4]?.try(&.downcase)
-        when "fpr"
-          if keyid = pending_keyid
-            fp = fields[9]?
-            pairs << {keyid, fp.upcase} if fp && !fp.empty?
-            pending_keyid = nil
+      home = File.tempname(".krikri-rpm-key-gnupg-")
+      Dir.mkdir(home, 0o700)
+      begin
+        result = remote_exec("gpg --homedir #{Shell.quote_arg(home)} --with-colons --import-options show-only --import #{shell_single_quote(path)} 2>/dev/null")
+        pairs = [] of {String, String}
+        pending_keyid = nil
+        result[:stdout].each_line do |line|
+          fields = line.split(':')
+          case fields[0]?
+          when "pub", "sub"
+            pending_keyid = fields[4]?.try(&.downcase)
+          when "fpr"
+            if keyid = pending_keyid
+              fp = fields[9]?
+              pairs << {keyid, fp.upcase} if fp && !fp.empty?
+              pending_keyid = nil
+            end
           end
         end
+        pairs
+      ensure
+        remote_exec("rm -rf #{Shell.quote_arg(home)}")
       end
-      pairs
     end
 
-    private def add_key(key : String) : PluginResult
+    private def add_key(key : String, check_mode : Bool) : PluginResult
       if result = bare_keyid_result(key)
         return result
       end
@@ -162,9 +184,11 @@ module Krikri
           return PluginResult.new(changed: false, failed: false, key_order: %w[changed])
         end
 
-        result = remote_exec("rpm --import #{shell_single_quote(keyfile)}")
-        unless result[:exit_code] == 0
-          return PluginResult.new(changed: false, failed: true, msg: result[:stderr])
+        unless check_mode
+          result = remote_exec("rpm --import #{shell_single_quote(keyfile)}")
+          unless result[:exit_code] == 0
+            return PluginResult.new(changed: false, failed: true, msg: result[:stderr])
+          end
         end
 
         PluginResult.new(changed: true, failed: false, key_order: %w[changed])
@@ -310,30 +334,32 @@ module Krikri
       "{" + items.uniq.map { |item| "'#{item}'" }.join(", ") + "}"
     end
 
-    private def remove_key(key : String) : PluginResult
+    private def remove_key(key : String, check_mode : Bool) : PluginResult
       unless bare_keyid?(key) || url_or_keyfile?(key)
         return PluginResult.new(changed: false, failed: true, msg: "Not a valid key #{key}")
       end
 
       if bare_keyid?(key)
-        return erase_key_if_installed(normalize_keyid(key)[-8..]? || normalize_keyid(key))
+        return erase_key_if_installed(normalize_keyid(key)[-8..]? || normalize_keyid(key), check_mode)
       end
 
       with_key_material(key) do |keyfile|
         pairs = parse_key_material(keyfile)
         return PluginResult.new(changed: false, failed: true, msg: "Failed to get keyid") if pairs.empty?
-        erase_key_if_installed(pairs.first[0][-8..]? || pairs.first[0])
+        erase_key_if_installed(pairs.first[0][-8..]? || pairs.first[0], check_mode)
       end
     end
 
-    private def erase_key_if_installed(short_id : String) : PluginResult
+    private def erase_key_if_installed(short_id : String, check_mode : Bool) : PluginResult
       unless installed_short_keyids.includes?(short_id)
         return PluginResult.new(changed: false, failed: false, key_order: %w[changed])
       end
 
-      result = remote_exec("rpm --erase --allmatches gpg-pubkey-#{Shell.quote_arg(short_id)}")
-      unless result[:exit_code] == 0
-        return PluginResult.new(changed: false, failed: true, msg: result[:stderr])
+      unless check_mode
+        result = remote_exec("rpm --erase --allmatches gpg-pubkey-#{Shell.quote_arg(short_id)}")
+        unless result[:exit_code] == 0
+          return PluginResult.new(changed: false, failed: true, msg: result[:stderr])
+        end
       end
 
       PluginResult.new(changed: true, failed: false, key_order: %w[changed])
