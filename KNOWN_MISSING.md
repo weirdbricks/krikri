@@ -466,7 +466,13 @@ krikri aims for byte-for-byte identical stdout/stderr/exit code to `ansible-play
   `ok=1`), every other plugin keeps the SSH approximation a resolvable-but-unported collection
   connection plugin (`containers.podman.podman`) already had. Without an ansible-capable controller
   python the probe cannot run and every custom plugin takes that SSH approximation. The plugin's own
-  options, credentials and any tunnelling it performs are therefore never applied.
+  options, credentials and any tunnelling it performs are therefore never applied, so each such
+  plugin name gets one `[WARNING]: Connection plugin 'X' cannot be executed by krikri-playbook and is
+  ignored; tasks run over the <transport> connection instead.` line on stderr (issue #1541) - the
+  alternative is the silent substitution that made an SSM-style plugin ssh to its instance id and
+  report UNREACHABLE with nothing saying the plugin was never used. Running the plugin itself means
+  reimplementing Ansible's whole connection lifecycle, which is the transport layer this engine
+  replaces.
 
 ### Unimplemented community.general filter long tail (usage-audited, watchlist not backlog)
 
