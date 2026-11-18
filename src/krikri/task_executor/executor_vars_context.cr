@@ -2645,6 +2645,15 @@ module Krikri
       if raw = task.diff_mode_invalid
         return KeywordBooleanError.new("diff", raw)
       end
+      # become: is post-validated on the PlayContext, which real finalizes
+      # before the task's own post_validate: it therefore loses to
+      # check_mode:/diff: but beats run_once:/any_errors_fatal:
+      # (live-verified vs 2.21.6). Whether the task wrote the value or
+      # inherited it from the play, an enclosing block or an import line
+      # (issue #1497), an unconvertible one fails the task it reaches.
+      if raw = task.become_invalid
+        return KeywordBooleanError.new("become", raw)
+      end
       # run_once: is post-validated the same way, whether the task wrote
       # the value or inherited it from the play (issue #1444).
       if raw = task.run_once_invalid

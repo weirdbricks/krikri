@@ -5407,6 +5407,15 @@ module Krikri
       end
       inherited.become_user = task.include_apply_become_user || task.become_user
       inherited.become_flags = task.include_apply_become_flags || task.become_flags
+      # An unconvertible apply: become: is the implicit block's own value,
+      # so it shadows the ambient one and fails the loaded tasks at its own
+      # token (issue #1497).
+      if task.include_apply_become_written?
+        inherited.become_invalid = task.include_apply_become_invalid
+        if origin = task.include_apply_become_origin
+          inherited.inherited_become_origins = {"become" => origin}
+        end
+      end
       inherited.check_mode = task.include_apply_check_mode
       inherited.check_mode_expr = task.include_apply_check_mode_expr
       inherited
@@ -5458,17 +5467,35 @@ module Krikri
     # apply_play_any_errors_fatal passes never saw them: a play-level
     # `run_once: true` ran the imported role on every host, and an
     # unconvertible play-level value let its tasks run instead of failing
-    # the first one (live-verified vs 2.21.6, issues #1467 and #1465).
+    # the first one (live-verified vs 2.21.6, issues #1467 and #1465). The
+    # same holds for an unconvertible become: inherited from the play, an
+    # enclosing block or the include's own import_role: line (issue
+    # #1497).
     private def apply_inherited_bool_keywords(statement : Task, loaded : Array(Task)) : Nil
       origins = statement.inherited_become_origins
+      become_invalid, become_origin = if statement.include_apply_become_written?
+                                        {statement.include_apply_become_invalid, statement.include_apply_become_origin}
+                                      else
+                                        {statement.become_invalid, origins.try(&.["become"]?)}
+                                      end
       apply_inherited_bool_keywords(loaded,
+        become_invalid, become_origin,
         statement.run_once?, statement.run_once_invalid, origins.try(&.["run_once"]?),
         statement.any_errors_fatal_invalid, origins.try(&.["any_errors_fatal"]?))
     end
 
-    private def apply_inherited_bool_keywords(tasks : Array(Task), run_once : Bool, run_once_invalid : String?, run_once_origin : {String, Int32, Int32}?,
+    private def apply_inherited_bool_keywords(tasks : Array(Task), become_invalid : String?, become_origin : {String, Int32, Int32}?,
+                                              run_once : Bool, run_once_invalid : String?, run_once_origin : {String, Int32, Int32}?,
                                               any_errors_fatal_invalid : String?, any_errors_fatal_origin : {String, Int32, Int32}?) : Nil
       tasks.each do |loaded_task|
+        # A dynamically loaded task inherits the become: its include
+        # statement carries, which is either the ambient play/block default
+        # or an import_role: line's own value (real applies that to every
+        # task it inlines and never validates the statement itself).
+        unless loaded_task.become_explicit?
+          loaded_task.become_invalid = become_invalid
+          inherit_keyword_origin(loaded_task, "become", become_origin)
+        end
         unless loaded_task.run_once_explicit?
           loaded_task.run_once = run_once
           loaded_task.run_once_invalid = run_once_invalid
@@ -5480,7 +5507,7 @@ module Krikri
         end
         [loaded_task.block_tasks, loaded_task.rescue_tasks, loaded_task.always_tasks].each do |children|
           children.try do |list|
-            apply_inherited_bool_keywords(list, run_once, run_once_invalid, run_once_origin,
+            apply_inherited_bool_keywords(list, become_invalid, become_origin, run_once, run_once_invalid, run_once_origin,
               any_errors_fatal_invalid, any_errors_fatal_origin)
           end
         end

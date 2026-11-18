@@ -551,6 +551,14 @@ module Krikri
       # resolution - and its ansible_become_method var check - run there
       # too; issue #395).
       @play_become : Bool = false,
+      # The play's own unconvertible become: value, if it wrote one (see
+      # Play#become_invalid). The implicit Gathering Facts task inherits
+      # it too and real's PlayContext post-validation fails that task with
+      # the keyword conversion error (issue #1497).
+      @play_become_invalid : String? = nil,
+      # The play's become: value token - the Origin real labels that
+      # Gathering Facts failure's lower chain links with.
+      @play_become_origin : {String, Int32, Int32}? = nil,
       # See Play#debugger.
       @debugger : String? = nil,
       # The playbook FILE path (not just #playbook_dir) - Ansible's

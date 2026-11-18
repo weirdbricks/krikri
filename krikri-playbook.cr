@@ -1637,6 +1637,8 @@ playbook.plays.each_with_index do |play, _play_index|
       remote_user: play.remote_user,
       connection: play.connection,
       play_become: play.become?,
+      play_become_invalid: play.become_invalid,
+      play_become_origin: play.inherited_become_origins.try(&.["become"]?),
       debugger: play.debugger,
       playbook_file: playbook_file,
       play_source_file: play.source_file,
