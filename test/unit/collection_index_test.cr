@@ -101,6 +101,35 @@ describe Krikri::CollectionIndex do
     Krikri::CollectionIndex.controller_resolves?("testns.shadow.thing")[:resolves].must_equal(false)
   end
 
+  # Issue #1494: the first-copy rule covers everything the index reads out
+  # of a collection, not just the name-resolution verdict - the reported
+  # redirect chain, the bare-name provider scan and the FQCR subdir
+  # mapping all read that one copy, because ansible's loader does.
+  it "reads a collection's routing table and module files from its first copy only" do
+    first = PluginSpecHelper.tmp_path("collection-index-first-copy")
+    second = PluginSpecHelper.tmp_path("collection-index-second-copy")
+    FileUtils.mkdir_p(File.join(first, "ansible_collections", "shadow", "routed", "plugins", "module_utils"))
+    base = File.join(second, "ansible_collections", "shadow", "routed", "plugins", "modules")
+    FileUtils.mkdir_p(base)
+    File.write(File.join(base, "shadowprobe.py"), "# fixture module\n")
+    File.write(File.join(base, "subpkg.py"), "# fixture subdir package\n")
+    FileUtils.mkdir_p(File.join(second, "ansible_collections", "shadow", "routed", "meta"))
+    File.write(File.join(second, "ansible_collections", "shadow", "routed", "meta", "runtime.yml"),
+      "plugin_routing:\n  modules:\n    renamed:\n      redirect: shadow.routed.shadowprobe\n")
+
+    ENV["ANSIBLE_COLLECTIONS_PATH"] = second
+    Krikri::CollectionIndex.reset!
+    Krikri::CollectionIndex.module_redirect_chain("shadow.routed.renamed").must_equal("shadow.routed.shadowprobe")
+    Krikri::CollectionIndex.module_provider_collection("shadowprobe").must_equal("shadow.routed")
+    Krikri::CollectionIndex.fqcr_subdir_resolves?("shadow.routed.subpkg.shadowprobe").must_equal(true)
+
+    ENV["ANSIBLE_COLLECTIONS_PATH"] = "#{first}:#{second}"
+    Krikri::CollectionIndex.reset!
+    Krikri::CollectionIndex.module_redirect_chain("shadow.routed.renamed").must_equal("shadow.routed.renamed")
+    Krikri::CollectionIndex.module_provider_collection("shadowprobe").must_be_nil
+    Krikri::CollectionIndex.fqcr_subdir_resolves?("shadow.routed.subpkg.shadowprobe").must_equal(false)
+  end
+
   # issue #1253: an FQCR may carry plugin-type SUBDIR segments
   # (`ns.coll.subdir.resource`). ansible-core imports the subdir as a
   # package under plugins/modules/ and looks the resource up beside it; a
