@@ -716,6 +716,18 @@ because anyone intends to fix them.
   match (Ansible's `backup_local` copies with `shutil.copy2`, so a 0444 destination leaves a 0444
   backup, which krikri now reproduces).
 
+- **`hostname:`'s `--diff` before side is the run host's own name (kpg hostname cases, issue
+  #1547).** The module's diff is the text-string pair `hostname = <name_before>` /
+  `hostname = <name>` (the shape issue #1504 fixed), and `name_before` is whatever the run host
+  currently calls itself. The kpg harness runs each engine in its own podman container with
+  podman's default hostname (the container's own 12-hex id), so the two sides name two different
+  machines and can never agree - two real Ansible runs in two containers disagree the same way.
+  Starting the engine pair with one shared `--hostname` makes the whole run byte-identical, and
+  every other line of the hunk (the `--- before`/`+++ after`/`@@ -1 +1 @@` framing and the after
+  side) already matches, so this is not a krikri gap: the generator needs a mask anchored on
+  `hostname = ` plus that value. `test/integration/hostname_test.cr` pins the hunk's shape and
+  that the before value is the run host's own hostname.
+
 ### Everything else
 
 - **`ansible-playbook`'s CLI flag surface is fully covered by name, and all but one flag is
