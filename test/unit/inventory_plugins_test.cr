@@ -15,6 +15,18 @@ private def yaml_doc(content : String)
   YAML.parse(content)
 end
 
+# A custom inventory plugin file imports BaseInventoryPlugin at its top
+# level, so dispatching one needs a controller python3 with the ansible
+# package; the dispatch specs below skip themselves where it is absent.
+# (The "not supported" fallback itself is asserted by the unknown-plugin
+# spec above, which needs no python at all.)
+private def custom_inventory_plugin_importable : Bool
+  python = Krikri::PythonInventoryRunner.python_executable
+  return false unless python
+  Process.run(python, ["-c", "from ansible.plugins.inventory import BaseInventoryPlugin"],
+    output: Process::Redirect::Close, error: Process::Redirect::Close).success?
+end
+
 private def sample_ec2_xml(instances : Array(String)) : String
   <<-XML
   <?xml version="1.0" encoding="UTF-8"?>
@@ -111,6 +123,145 @@ describe Krikri::InventoryPlugins do
       doc = yaml_doc("plugin: azure.rm.azure_rm_compute\n")
       assert_raises_message(Exception, /not supported/) do
         Krikri::InventoryPlugins.parse_plugin("fake.yml", doc, "azure_rm_compute")
+      end
+    end
+  end
+
+  # A `plugin: <name>` source whose plugin is a CUSTOM Python file, not
+  # one of krikri's own built-ins: ansible-playbook's `auto` inventory
+  # plugin loads it and runs it on the controller, so krikri hands the
+  # source to PythonInventoryRunner instead of rejecting it (issue
+  # #1475 - before this, the source warned "Inventory plugin 'myinv' is
+  # not supported" and the play ran against no hosts at all).
+  describe "custom python inventory plugins" do
+    it "finds a playbook-adjacent inventory_plugins/<name>.py" do
+      dir = PluginSpecHelper.tmp_path("custom-inventory-plugin")
+      plugin_dir = File.join(dir, "inventory_plugins")
+      Dir.mkdir_p(plugin_dir)
+      path = File.join(plugin_dir, "myinv.py")
+      File.write(path, "# test plugin")
+
+      Krikri::PythonInventoryRunner.find_source("myinv", dir).must_equal(path)
+      Krikri::PythonInventoryRunner.find_source("no_such_inventory_xyz", dir).must_be_nil
+    end
+
+    it "parses the source with the plugin instead of calling it unsupported" do
+      return unless custom_inventory_plugin_importable
+
+      dir = PluginSpecHelper.tmp_path("custom-inventory-plugin")
+      plugin_dir = File.join(dir, "inventory_plugins")
+      Dir.mkdir_p(plugin_dir)
+      File.write(File.join(plugin_dir, "myinv.py"), <<-PYTHON)
+        from ansible.plugins.inventory import BaseInventoryPlugin
+
+        DOCUMENTATION = """
+            name: myinv
+            options:
+              plugin:
+                description: token
+                required: true
+        """
+
+        class InventoryModule(BaseInventoryPlugin):
+            NAME = "myinv"
+
+            def verify_file(self, path):
+                return path.endswith("myinv.yml")
+
+            def parse(self, inventory, loader, path, cache=True):
+                super().parse(inventory, loader, path, cache)
+                inventory.add_host("host1")
+                inventory.set_variable("host1", "ansible_connection", "local")
+        PYTHON
+      source = File.join(dir, "myinv.yml")
+      File.write(source, "plugin: myinv\n")
+
+      inventory = Krikri::InventoryParser.parse(source, dir)
+
+      inventory.hosts.keys.must_equal(["host1"])
+      inventory.hosts["host1"].vars["ansible_connection"].as_s.must_equal("local")
+      inventory.hosts["host1"].vars["inventory_file"].as_s.must_equal(source)
+    end
+
+    it "keeps the plugin's groups, their children and their vars" do
+      return unless custom_inventory_plugin_importable
+
+      dir = PluginSpecHelper.tmp_path("custom-inventory-plugin")
+      plugin_dir = File.join(dir, "inventory_plugins")
+      Dir.mkdir_p(plugin_dir)
+      File.write(File.join(plugin_dir, "grp.py"), <<-PYTHON)
+        from ansible.plugins.inventory import BaseInventoryPlugin
+
+        DOCUMENTATION = """
+            name: grp
+            options:
+              plugin:
+                description: token
+                required: true
+        """
+
+        class InventoryModule(BaseInventoryPlugin):
+            NAME = "grp"
+
+            def verify_file(self, path):
+                return path.endswith("grp.yml")
+
+            def parse(self, inventory, loader, path, cache=True):
+                super().parse(inventory, loader, path, cache)
+                inventory.add_group("web")
+                inventory.add_group("prod")
+                inventory.add_child("prod", "web")
+                inventory.add_host("web1", group="web")
+                inventory.set_variable("web", "web_var", "from-web")
+                inventory.set_variable("all", "all_var", "from-all")
+                inventory.add_host("lonely")
+        PYTHON
+      source = File.join(dir, "grp.yml")
+      File.write(source, "plugin: grp\n")
+
+      inventory = Krikri::InventoryParser.parse(source, dir)
+
+      inventory.groups["prod"].children.must_equal(["web"])
+      inventory.groups["web"].hosts.keys.must_equal(["web1"])
+      # `all` is implicit in krikri's model, so a plugin's own `all`
+      # membership must not turn it into a literal host list.
+      inventory.groups["all"].hosts.must_be_empty
+      # Group vars reach the member hosts (`all`'s reach every host), the
+      # same parse-time merge every other inventory format gets.
+      inventory.hosts["web1"].vars["all_var"].as_s.must_equal("from-all")
+      inventory.hosts["lonely"].vars["all_var"].as_s.must_equal("from-all")
+      inventory.hosts["lonely"].vars.has_key?("web_var").must_equal(false)
+    end
+
+    it "reports a plugin that refuses the source instead of running it" do
+      return unless custom_inventory_plugin_importable
+
+      dir = PluginSpecHelper.tmp_path("custom-inventory-plugin")
+      plugin_dir = File.join(dir, "inventory_plugins")
+      Dir.mkdir_p(plugin_dir)
+      File.write(File.join(plugin_dir, "pick.py"), <<-PYTHON)
+        from ansible.plugins.inventory import BaseInventoryPlugin
+
+        DOCUMENTATION = """
+            name: pick
+            options:
+              plugin:
+                description: token
+                required: true
+        """
+
+        class InventoryModule(BaseInventoryPlugin):
+            NAME = "pick"
+
+            def verify_file(self, path):
+                return path.endswith("elsewhere.yml")
+        PYTHON
+      source = File.join(dir, "pick.yml")
+      File.write(source, "plugin: pick\n")
+
+      assert_raises_message(Krikri::PythonInventoryRunner::PluginError,
+        /could not be verified by inventory plugin 'pick'/) do
+        Krikri::InventoryPlugins.parse_plugin(source, yaml_doc("plugin: pick\n"), "pick", playbook_dir: dir)
       end
     end
   end

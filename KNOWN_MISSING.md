@@ -676,8 +676,12 @@ because anyone intends to fix them.
   environment variables. Deliberate approximations: default `hostnames` order is `ip-address`,
   `private-ip-address`, `instance-id`; constructed `filters` are AND-combined `key=value` / bare-key /
   `*` / `!`-negation entries, not Ansible's richer condition syntax; keyed_groups with a dict value make
-  one group per key; a non-empty group-name prefix defeats `leading_separator: false`. Other collection
-  inventory plugins (azure, gcp, openstack, ...) are unimplemented and follow the cloud modules' rule.
+  one group per key; a non-empty group-name prefix defeats `leading_separator: false`. Custom Python
+  inventory plugins (`inventory_plugins/<name>.py` next to the playbook, or in
+  `ANSIBLE_INVENTORY_PLUGINS`) are NOT reimplemented: `src/krikri/python_inventory_runner.cr` runs the
+  user's own plugin file under the controller's `python3` and reads back the hosts, groups and vars it
+  populated, the same delegation the custom lookup/filter runners use. Collection inventory plugins
+  (azure, gcp, openstack, ...) are unimplemented and follow the cloud modules' rule.
 - More of the same "genuinely unimplemented plugin, referenced only in a task this platform never
   actually reaches" class - same root cause each time (this engine's eager parse-time module check
   counts a reference regardless of a gating `when:`, matching real, but the local comparison side has
